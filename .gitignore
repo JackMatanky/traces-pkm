@@ -15,5 +15,6 @@ __MACOSX/
 # Knowledge Graph
 .gitnexus
 
+.rust-docs/
 *digest.txt
 docs/refs/digests/
