@@ -11,6 +11,10 @@ version = "0.1.0"
 edition = "2024"
 license = "MIT"
 description = "Personal knowledge management traces"
+repository = "https://github.com/JackMatanky/traces-pkm"
+readme = "README.md"
+keywords = ["pkm", "templates", "notes"]
+categories = ["command-line-utilities", "development-tools"]
 
 [dependencies]
 dirs = "6.0.0"
@@ -35,7 +39,6 @@ cargo = { level = "warn", priority = -1 }
 #              Allowed (Exceptions & Relaxations)               #
 # ------------------------------------------------------------- #
 multiple_crate_versions = "allow"
-cargo_common_metadata = "allow"
 absolute_paths = "allow"
 pub_with_shorthand = "allow"
 semicolon_inside_block = "allow"

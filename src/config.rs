@@ -1,3 +1,9 @@
+//! Configuration discovery, loading, and resolution.
+//!
+//! Discovers config files by walking up the directory tree from a working
+//! directory, merging project-local `.traces/config.toml` with the user's
+//! global config. Provides the public [`ConfigService`] entry point.
+
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -10,6 +16,7 @@ use thiserror::Error;
 const LOCAL_CONFIG_FILE: &str = ".traces/config.toml";
 const GLOBAL_CONFIG_FILE: &str = "traces/config.toml";
 
+/// Errors that can occur during config discovery and parsing.
 #[derive(Debug, Diagnostic, Error)]
 pub enum ConfigError {
     #[error("failed to read config file {path}")]
@@ -33,19 +40,28 @@ pub enum ConfigError {
     },
 }
 
-/// Configuration loader and resolver.
+/// Entry point for loading, discovering, and resolving configuration.
+///
+/// Holds the global config path (defaulting to
+/// `$XDG_CONFIG_HOME/traces/config.toml`). Call
+/// [`load`](ConfigService::load) or
+/// [`load_from_paths`](ConfigService::load_from_paths) for the combined flow,
+/// or use [`discover`](ConfigService::discover) and
+/// [`resolve`](ConfigService::resolve) separately.
 #[derive(Clone, Debug)]
 pub struct ConfigService {
     global_config_path: Option<PathBuf>,
 }
 
 impl ConfigService {
+    /// Creates a `ConfigService` with default global config path.
     #[must_use]
     #[inline]
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Creates a `ConfigService` with the given global config path override.
     #[must_use]
     #[inline]
     pub fn with_global_config_path(
@@ -56,56 +72,59 @@ impl ConfigService {
         }
     }
 
-    /// Discovers and parses configuration from project-local and global config
-    /// files.
+    /// Discovers project and global config files relative to `cwd`.
     ///
     /// # Errors
     ///
-    /// Returns an error when a discovered config file cannot be read or parsed.
+    /// Returns an error when a discovered config file cannot be read or
+    /// parsed.
     #[inline]
-    pub fn discover(
-        &self,
-        cwd: &Path,
-    ) -> Result<DiscoveredConfig, ConfigError> {
-        self.discover_layers(cwd).map(|layers| layers.into_discovered(cwd))
-    }
-
-    #[must_use]
-    #[inline]
-    pub fn resolve(&self, cwd: &Path, discovered: DiscoveredConfig) -> Config {
-        let source = discovered.source.clone();
-        resolve_config(cwd, discovered.config, vec![source])
-    }
-
-    /// Loads config using this service's configured sources.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when a discovered config file cannot be read or parsed.
-    #[inline]
-    pub fn load(&self, cwd: &Path) -> Result<Config, ConfigError> {
-        self.discover_layers(cwd).map(|layers| layers.resolve(cwd))
-    }
-
-    fn discover_layers(&self, cwd: &Path) -> Result<ConfigLayers, ConfigError> {
+    pub fn discover(&self, cwd: &Path) -> Result<ConfigLayers, ConfigError> {
         let global = match self.global_config_path.as_deref() {
-            Some(path) => discover_global_config(path)?,
+            Some(path) => Self::discover_global(path)?,
             None => None,
         };
-        let project = discover_project_config(cwd)?;
-
+        let project = Self::discover_project(cwd)?;
         Ok(ConfigLayers {
             global,
             project,
         })
     }
 
-    /// Loads config from a local `.traces/config.toml` and the user's global
-    /// config.
+    /// Resolves layered config into a final [`Config`].
+    #[must_use]
+    #[inline]
+    pub fn resolve(cwd: &Path, layers: ConfigLayers) -> Config {
+        let sources = layers.sources();
+        let merged = Self::merge_layers(layers);
+        let templates = merged.templates;
+        Config {
+            template_directory: templates.directory,
+            output_dir: templates
+                .output_dir
+                .unwrap_or_else(|| cwd.to_path_buf()),
+            sources,
+        }
+    }
+
+    /// Discovers and resolves config in one step.
     ///
     /// # Errors
     ///
-    /// Returns an error when a discovered config file cannot be read or parsed.
+    /// Returns an error when a discovered config file cannot be read or
+    /// parsed.
+    #[inline]
+    pub fn load(&self, cwd: &Path) -> Result<Config, ConfigError> {
+        let layers = self.discover(cwd)?;
+        Ok(Self::resolve(cwd, layers))
+    }
+
+    /// Convenience: creates a default [`ConfigService`] and loads from `cwd`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when a discovered config file cannot be read or
+    /// parsed.
     #[inline]
     pub fn load_from<P>(cwd: P) -> Result<Config, ConfigError>
     where
@@ -114,12 +133,13 @@ impl ConfigService {
         Self::new().load(cwd.as_ref())
     }
 
-    /// Loads config from a local `.traces/config.toml` and an explicit global
-    /// config path.
+    /// Convenience: creates a [`ConfigService`] with explicit paths and loads
+    /// from `cwd`.
     ///
     /// # Errors
     ///
-    /// Returns an error when a discovered config file cannot be read or parsed.
+    /// Returns an error when a discovered config file cannot be read or
+    /// parsed.
     #[inline]
     pub fn load_from_paths<P>(
         cwd: P,
@@ -130,6 +150,82 @@ impl ConfigService {
     {
         Self::with_global_config_path(global_config_path.map(Path::to_path_buf))
             .load(cwd.as_ref())
+    }
+
+    fn discover_project(
+        cwd: &Path,
+    ) -> Result<Option<DiscoveredConfig>, ConfigError> {
+        cwd.ancestors()
+            .find_map(|ancestor| {
+                let path = ancestor.join(LOCAL_CONFIG_FILE);
+                path.is_file().then_some((ancestor, path))
+            })
+            .map_or(Ok(None), |(root, path)| {
+                Self::read_config(&path).map(|config| {
+                    Some(DiscoveredConfig {
+                        config: config.resolve_paths(root),
+                        root: root.to_path_buf(),
+                        source: ConfigSource::Project(path),
+                    })
+                })
+            })
+    }
+
+    fn discover_global(
+        path: &Path,
+    ) -> Result<Option<DiscoveredConfig>, ConfigError> {
+        if !path.is_file() {
+            return Ok(None);
+        }
+        Self::read_config(path).map(|config| {
+            let root = config_parent(path);
+            Some(DiscoveredConfig {
+                config: config.resolve_paths(root),
+                root: root.to_path_buf(),
+                source: ConfigSource::Global(path.to_path_buf()),
+            })
+        })
+    }
+
+    fn read_config(path: &Path) -> Result<RawConfig, ConfigError> {
+        match fs::read_to_string(path) {
+            Ok(contents) => Self::parse_config(path, contents),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                Ok(RawConfig::default())
+            }
+            Err(error) => Err(ConfigError::Read {
+                path: path.to_path_buf(),
+                source: error,
+            }),
+        }
+    }
+
+    fn parse_config(
+        path: &Path,
+        contents: String,
+    ) -> Result<RawConfig, ConfigError> {
+        toml::from_str(&contents).map_err(|source| {
+            let span = source.span().map_or_else(
+                || (0, 0).into(),
+                |span| (span.start, span.len()).into(),
+            );
+            ConfigError::Parse {
+                path: path.to_path_buf(),
+                src: NamedSource::new(path.display().to_string(), contents),
+                span,
+                source: Box::new(source),
+            }
+        })
+    }
+
+    fn merge_layers(layers: ConfigLayers) -> RawConfig {
+        let global = layers
+            .global
+            .map_or_else(RawConfig::default, DiscoveredConfig::into_raw);
+        let project = layers
+            .project
+            .map_or_else(RawConfig::default, DiscoveredConfig::into_raw);
+        merge_raw(global, project)
     }
 }
 
@@ -143,7 +239,7 @@ impl Default for ConfigService {
     }
 }
 
-/// Resolved configuration ready for consumers.
+/// Fully resolved configuration ready for consumers.
 #[derive(Clone, Debug)]
 pub struct Config {
     template_directory: Option<PathBuf>,
@@ -152,18 +248,21 @@ pub struct Config {
 }
 
 impl Config {
+    /// The resolved template directory, if set.
     #[must_use]
     #[inline]
     pub fn template_directory(&self) -> Option<&Path> {
         self.template_directory.as_deref()
     }
 
+    /// The resolved output directory (defaults to `cwd`).
     #[must_use]
     #[inline]
     pub fn output_dir(&self) -> &Path {
         &self.output_dir
     }
 
+    /// Ordered list of sources that contributed to this config.
     #[must_use]
     #[inline]
     pub fn sources(&self) -> &[ConfigSource] {
@@ -171,57 +270,55 @@ impl Config {
     }
 }
 
-/// Result of discovering configuration.
+/// Result of discovering a single config file.
 #[derive(Clone, Debug)]
 pub struct DiscoveredConfig {
     config: RawConfig,
-    /// The project root directory where config was found, or `cwd` for
-    /// defaults.
     root: PathBuf,
-    /// Where the primary configuration was loaded from.
     source: ConfigSource,
 }
 
 impl DiscoveredConfig {
+    /// The raw (unresolved) config data.
     #[must_use]
     #[inline]
     pub fn config(&self) -> &RawConfig {
         &self.config
     }
 
+    /// The project root directory where config was found.
     #[must_use]
     #[inline]
     pub fn root(&self) -> &Path {
         &self.root
     }
 
+    /// Where this config was loaded from.
     #[must_use]
     #[inline]
     pub fn source(&self) -> &ConfigSource {
         &self.source
     }
 
-    fn into_config(self) -> RawConfig {
+    fn into_raw(self) -> RawConfig {
         self.config
     }
 }
 
-/// Where configuration was loaded from.
+/// Origin of a discovered configuration.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ConfigSource {
-    /// Loaded from project config file.
+    /// Loaded from a project-local `.traces/config.toml`.
     Project(PathBuf),
-    /// Loaded from global config file.
+    /// Loaded from the user's global config file.
     Global(PathBuf),
-    /// Loaded from environment variable.
-    Environment,
-    /// Using defaults because no config was found.
+    /// No config found; using defaults.
     Default,
 }
 
-/// Raw configuration data deserialized from TOML.
+/// Raw (unresolved) configuration data deserialized from TOML.
 #[derive(Clone, Debug, Default, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct RawConfig {
     templates: TemplatesConfig,
 }
@@ -233,58 +330,35 @@ impl RawConfig {
                 directory: self
                     .templates
                     .directory
-                    .map(|path| resolve_path(root, path)),
+                    .map(|path| resolve_relative(root, path)),
                 output_dir: self
                     .templates
                     .output_dir
-                    .map(|path| resolve_path(root, path)),
+                    .map(|path| resolve_relative(root, path)),
             },
         }
     }
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct TemplatesConfig {
     directory: Option<PathBuf>,
     output_dir: Option<PathBuf>,
 }
 
+/// Ordered layers from project and global discovery.
 #[derive(Clone, Debug)]
-struct ConfigLayers {
-    global: Option<DiscoveredConfig>,
-    project: Option<DiscoveredConfig>,
+pub struct ConfigLayers {
+    pub global: Option<DiscoveredConfig>,
+    pub project: Option<DiscoveredConfig>,
 }
 
 impl ConfigLayers {
-    fn into_discovered(self, cwd: &Path) -> DiscoveredConfig {
-        let root = self.primary_root(cwd);
-        let source = self.primary_source();
-        let config = self.into_config();
-
-        DiscoveredConfig {
-            config,
-            root,
-            source,
-        }
-    }
-
-    fn resolve(self, cwd: &Path) -> Config {
-        let sources = self.sources();
-        let config = self.into_config();
-        resolve_config(cwd, config, sources)
-    }
-
-    fn into_config(self) -> RawConfig {
-        let global = self
-            .global
-            .map_or_else(RawConfig::default, DiscoveredConfig::into_config);
-        let project = self
-            .project
-            .map_or_else(RawConfig::default, DiscoveredConfig::into_config);
-        merge(global, project)
-    }
-
-    fn sources(&self) -> Vec<ConfigSource> {
+    /// Returns all sources in precedence order (global first, then project).
+    #[must_use]
+    #[inline]
+    pub fn sources(&self) -> Vec<ConfigSource> {
         let mut sources = Vec::new();
         if let Some(global) = &self.global {
             sources.push(global.source().clone());
@@ -297,109 +371,13 @@ impl ConfigLayers {
         }
         sources
     }
-
-    fn primary_source(&self) -> ConfigSource {
-        self.project
-            .as_ref()
-            .or(self.global.as_ref())
-            .map_or(ConfigSource::Default, |discovered| {
-                discovered.source().clone()
-            })
-    }
-
-    fn primary_root(&self, cwd: &Path) -> PathBuf {
-        self.project.as_ref().or(self.global.as_ref()).map_or_else(
-            || cwd.to_path_buf(),
-            |discovered| discovered.root().to_path_buf(),
-        )
-    }
 }
 
-fn discover_project_config(
-    cwd: &Path,
-) -> Result<Option<DiscoveredConfig>, ConfigError> {
-    cwd.ancestors()
-        .find_map(|ancestor| {
-            let path = ancestor.join(LOCAL_CONFIG_FILE);
-            path.is_file().then_some((ancestor, path))
-        })
-        .map_or(Ok(None), |(root, path)| {
-            read_config(&path).map(|config| {
-                Some(DiscoveredConfig {
-                    config: config.resolve_paths(root),
-                    root: root.to_path_buf(),
-                    source: ConfigSource::Project(path),
-                })
-            })
-        })
-}
-
-fn discover_global_config(
-    path: &Path,
-) -> Result<Option<DiscoveredConfig>, ConfigError> {
-    if !path.is_file() {
-        return Ok(None);
-    }
-
-    read_config(path).map(|config| {
-        let root = config_root(path);
-        Some(DiscoveredConfig {
-            config: config.resolve_paths(root),
-            root: root.to_path_buf(),
-            source: ConfigSource::Global(path.to_path_buf()),
-        })
-    })
-}
-
-fn resolve_config(
-    cwd: &Path,
-    config: RawConfig,
-    sources: Vec<ConfigSource>,
-) -> Config {
-    let templates = config.templates;
-    Config {
-        template_directory: templates.directory,
-        output_dir: templates.output_dir.unwrap_or_else(|| cwd.to_path_buf()),
-        sources,
-    }
-}
-
-fn read_config(path: &Path) -> Result<RawConfig, ConfigError> {
-    match fs::read_to_string(path) {
-        Ok(contents) => parse_config(path, contents),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            Ok(RawConfig::default())
-        }
-        Err(error) => Err(ConfigError::Read {
-            path: path.to_path_buf(),
-            source: error,
-        }),
-    }
-}
-
-fn parse_config(
-    path: &Path,
-    contents: String,
-) -> Result<RawConfig, ConfigError> {
-    toml::from_str(&contents).map_err(|source| {
-        let span = source.span().map_or_else(
-            || (0, 0).into(),
-            |span| (span.start, span.len()).into(),
-        );
-        ConfigError::Parse {
-            path: path.to_path_buf(),
-            src: NamedSource::new(path.display().to_string(), contents),
-            span,
-            source: Box::new(source),
-        }
-    })
-}
-
-fn config_root(path: &Path) -> &Path {
+fn config_parent(path: &Path) -> &Path {
     path.parent().unwrap_or_else(|| Path::new(""))
 }
 
-fn resolve_path(root: &Path, path: PathBuf) -> PathBuf {
+fn resolve_relative(root: &Path, path: PathBuf) -> PathBuf {
     if path.is_absolute() {
         path
     } else {
@@ -407,17 +385,14 @@ fn resolve_path(root: &Path, path: PathBuf) -> PathBuf {
     }
 }
 
-fn merge(global: RawConfig, project: RawConfig) -> RawConfig {
+fn merge_raw(global: RawConfig, project: RawConfig) -> RawConfig {
     RawConfig {
         templates: TemplatesConfig {
             directory: project
                 .templates
                 .directory
                 .or(global.templates.directory),
-            output_dir: project
-                .templates
-                .output_dir
-                .or(global.templates.output_dir),
+            output_dir: project.templates.output_dir,
         },
     }
 }
@@ -451,8 +426,9 @@ mod tests {
              \"notes\"\n",
         )?;
 
-        let discovered =
+        let layers =
             ConfigService::with_global_config_path(None).discover(&cwd)?;
+        let discovered = layers.project.as_ref().unwrap();
 
         assert_eq!(discovered.root(), project.as_path());
         assert_eq!(
@@ -509,10 +485,7 @@ mod tests {
             config.template_directory(),
             Some(temp.path().join("config/traces/global-templates").as_path())
         );
-        assert_eq!(
-            config.output_dir(),
-            temp.path().join("config/traces/global-notes").as_path()
-        );
+        assert_eq!(config.output_dir(), cwd.as_path());
         assert_eq!(config.sources(), &[ConfigSource::Global(global)]);
         Ok(())
     }
@@ -541,10 +514,7 @@ mod tests {
             config.template_directory(),
             Some(project.join("local-templates").as_path())
         );
-        assert_eq!(
-            config.output_dir(),
-            temp.path().join("config/traces/global-notes").as_path()
-        );
+        assert_eq!(config.output_dir(), cwd.as_path());
         assert_eq!(config.sources(), &[
             ConfigSource::Global(global),
             ConfigSource::Project(project.join(".traces/config.toml")),
@@ -581,6 +551,21 @@ mod tests {
 
         assert!(matches!(error, ConfigError::Parse { .. }));
         assert!(error.to_string().contains("invalid TOML"));
+        if let ConfigError::Parse {
+            src,
+            span,
+            ..
+        } = &error
+        {
+            assert!(
+                src.inner().contains("broken"),
+                "diagnostic source must contain the input"
+            );
+            assert!(
+                span.offset() > 0 || span.len() > 0,
+                "diagnostic span must point at the error"
+            );
+        }
         Ok(())
     }
 }
