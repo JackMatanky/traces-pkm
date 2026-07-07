@@ -1,3 +1,19 @@
+<!-- agent-skills:start -->
+# Agent skills
+
+## Issue tracker
+
+Issues live as local markdown files under `.scratch/`. See `docs/agents/issue-tracker.md`.
+
+## Triage labels
+
+Five canonical roles mapped to local state strings in issue files. See `docs/agents/triage-labels.md`.
+
+## Domain docs
+
+Single-context — one `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.
+<!-- agent-skills:end -->
+
 <!-- mise:start -->
 # Mise — Environment & Task Orchestration
 
