@@ -29,8 +29,20 @@ A custom function that blocks for user input during rendering (text prompt, sele
 _Avoid_: Prompt, modal, dialog
 
 ### Template Directory
-A user-configurable directory containing template files. Local (project-level, `.traces/templates/`) is checked first, then global (user-level, OS-appropriate default). Configured via `.traces/config.toml` (local) or `~/.config/traces/config.toml` (global).
+A user-configurable directory containing template files. Local (project-level, `.traces/templates/`) is checked first, then global (user-level, OS-appropriate default). Configured via the `[templates]` table in `.traces/config.toml` or `~/.config/traces/config.toml`.
 _Avoid_: Templates folder, template location
+
+### Config File
+TOML files at two levels. Local (`.traces/config.toml`) and global (`~/.config/traces/config.toml`). Only the `[templates]` table is defined for MVP:
+
+```toml
+[templates]
+# Either level: replaces the default templates directory for that level
+# directory = ""
+
+# Local only: overrides default output directory (defaults to cwd)
+# output_dir = ""
+```
 
 ### Dry-run
 Rendering a template to stdout without writing to disk.
@@ -47,3 +59,37 @@ _Avoid_: Template lookup, search
 ### No-Declaration Template Format
 Templates declare nothing about what they need. They call interactive functions (`prompt_text`, `suggester`) at the point of need during rendering. No frontmatter declaration, no sidecar config.
 _Avoid_: Declared template, template schema, manifest
+
+### Commands
+
+#### template / tmpl
+The primary command for instantiating a template. `traces template -i <name>` renders a template to a note. `tmpl` is a shorthand. When `traces` is invoked with `-i` but no subcommand, it defaults to the template command.
+_Avoid_: run, apply, new
+
+#### init
+Scaffolds a `.traces/` directory with a default `config.toml` and an empty `templates/` directory. Uses inquire to interactively configure options.
+_Avoid_: setup, create, bootstrap
+
+#### trust
+Marks a directory as safe for template execution. Templates can invoke custom functions and include files, so untrusted directories are rejected by default (or prompt for confirmation). Trust state is stored by directory path hash in the user's data directory, following the same tracked/trusted/ignore pattern as mise.
+_Avoid_: allow, approve, authorize
+
+### Template Output Path
+
+#### set_output(path)
+A custom function callable from within a template to declare the note's output path. If called, it overrides the CLI's `-o` flag. If not called, falls back to `-o` or default naming. Mirror's Obsidian Templater's `tp.file.move()` pattern.
+_Avoid_: move_to, set_destination
+
+### CLI Flags
+
+#### --input / -i
+Specifies the template name or path to instantiate.
+
+#### --output / -o
+Specifies the output path for the resulting note. Overridden if the template calls `set_output()`.
+
+#### --dry-run / -n
+Renders the template to stdout without writing to disk.
+
+#### --force / -f
+Overwrites the output file if it already exists.
