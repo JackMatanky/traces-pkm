@@ -4,9 +4,16 @@
 //! trait so consumers can hold a `&dyn PromptProvider` chosen at runtime
 //! (terminal vs. test fake). [`NoPromptProvider`] is a deterministic fake that
 //! returns pre-configured responses with zero I/O.
+//!
+//! The trait requires `Send + Sync` so a provider can be captured into the
+//! `Send + Sync` custom-function closures `TemplateService` registers on its
+//! minijinja `Environment`. `NoPromptProvider` therefore uses `Mutex`, not
+//! `RefCell`, for its interior mutability.
 
-use core::cell::RefCell;
-use std::collections::VecDeque;
+use std::{
+    collections::VecDeque,
+    sync::{Mutex, PoisonError},
+};
 
 /// Errors returned by a [`PromptProvider`].
 #[derive(Debug, thiserror::Error)]
@@ -28,8 +35,11 @@ pub enum PromptError {
 /// Interactive input, abstracted behind a seam.
 ///
 /// Object-safe: consumers hold a `&dyn PromptProvider`. Methods take `&self`
-/// so a shared reference can be passed to multiple consumers.
-pub trait PromptProvider {
+/// so a shared reference can be passed to multiple consumers. `Send + Sync`
+/// is required so an `Arc<dyn PromptProvider>` can be captured into the
+/// thread-safe closures `TemplateService` registers on its minijinja
+/// `Environment`.
+pub trait PromptProvider: Send + Sync {
     /// Prompt for freeform text, using `default` when the user provides none.
     ///
     /// # Errors
@@ -62,8 +72,8 @@ pub trait PromptProvider {
 /// the `default` supplied at the call site.
 #[derive(Debug, Default)]
 pub struct NoPromptProvider {
-    texts: RefCell<VecDeque<String>>,
-    confirms: RefCell<VecDeque<bool>>,
+    texts: Mutex<VecDeque<String>>,
+    confirms: Mutex<VecDeque<bool>>,
 }
 
 impl NoPromptProvider {
@@ -78,7 +88,7 @@ impl NoPromptProvider {
     #[inline]
     #[must_use]
     pub fn with_text<S: Into<String>>(self, response: S) -> Self {
-        self.texts.borrow_mut().push_back(response.into());
+        lock(&self.texts).push_back(response.into());
         self
     }
 
@@ -86,9 +96,19 @@ impl NoPromptProvider {
     #[inline]
     #[must_use]
     pub fn with_confirm(self, response: bool) -> Self {
-        self.confirms.borrow_mut().push_back(response);
+        lock(&self.confirms).push_back(response);
         self
     }
+}
+
+/// Lock a mutex, recovering the guard if the lock was poisoned.
+///
+/// The fake never panics while holding a lock, so poisoning cannot occur in
+/// practice; recovering keeps the queue usable and avoids an `unwrap` on the
+/// `PoisonError`.
+#[inline]
+fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 impl PromptProvider for NoPromptProvider {
@@ -98,9 +118,7 @@ impl PromptProvider for NoPromptProvider {
         _label: &str,
         default: Option<&str>,
     ) -> Result<String, PromptError> {
-        Ok(self
-            .texts
-            .borrow_mut()
+        Ok(lock(&self.texts)
             .pop_front()
             .unwrap_or_else(|| default.unwrap_or_default().to_owned()))
     }
@@ -111,9 +129,7 @@ impl PromptProvider for NoPromptProvider {
         _label: &str,
         default: Option<bool>,
     ) -> Result<bool, PromptError> {
-        Ok(self
-            .confirms
-            .borrow_mut()
+        Ok(lock(&self.confirms)
             .pop_front()
             .unwrap_or_else(|| default.unwrap_or(false)))
     }
@@ -177,5 +193,15 @@ mod tests {
         let p: &dyn PromptProvider = &concrete;
         assert_eq!(p.text("l", None).unwrap(), "dyn");
         assert!(p.confirm("l", None).unwrap());
+    }
+
+    #[test]
+    fn provider_is_send_and_sync() {
+        // Guards the minijinja integration path: TemplateService captures the
+        // provider into `Send + Sync` custom-function closures. If this stops
+        // compiling, that consumer breaks.
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<NoPromptProvider>();
+        assert_send_sync::<std::sync::Arc<dyn PromptProvider>>();
     }
 }
