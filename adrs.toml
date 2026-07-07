@@ -1,0 +1,47 @@
+# -----------------------------------------------------------------------------
+# Filename:    traces-pkm/adrs.toml
+# Docs:        https://joshrotenberg.com/adrs/
+# Description: CLI and MCP tool for creating and managing Architecture Decision
+#              Records (ADRs).
+# -----------------------------------------------------------------------------
+
+# ADR storage directory (relative to project root)
+adr_dir = "docs/adr"
+
+# Operation mode: "compatible" or "nextgen"
+# - compatible: adr-tools compatible output (default)
+# - nextgen: YAML frontmatter with enhanced features
+mode = "nextgen"
+
+# Default status for newly created ADRs
+# If omitted, defaults to "proposed"
+default_status = "proposed"
+
+# Skip opening the editor when creating a new ADR (for CI/scripting)
+# If omitted, defaults to false
+no_edit = false
+
+# Generate command configuration
+[generate]
+# Default prefix for TOC links (used by 'adrs generate toc' if --prefix is not given)
+# Useful for CI jobs that always regenerate the TOC with the same prefix.
+# If omitted, defaults to empty string (bare filename links)
+# toc_prefix = "./"
+
+# Export command configuration
+[export]
+# Default base URL for source_uri fields in JSON export
+# (used by 'adrs export json' if --base-url is not given)
+# If omitted, defaults to none (no source_uri fields)
+# base_url = "https://github.com/org/repo/blob/main/doc/adr"
+
+# Template configuration
+[templates]
+# Default format: "nygard" or "madr"
+format = "madr"
+
+# Default variant: "full", "minimal", or "bare"
+variant = "full"
+
+# Path to custom template file (optional)
+# custom = "templates/custom.md"

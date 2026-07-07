@@ -28,6 +28,7 @@ shfmt = "latest"
 HK_MISE = "1"
 # pin default toolchain to stable so nightly isn't used unless explicitly requested via +nightly
 RUSTUP_TOOLCHAIN = "stable"
+ADR_DIRECTORY = "docs/adr/"
 
 [tasks.check]
 description = "Fast compilation check"
