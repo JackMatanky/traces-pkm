@@ -12,6 +12,9 @@ __MACOSX/
 
 /target
 
+# Git worktrees
+.worktrees/
+
 # Knowledge Graph
 .gitnexus
 
