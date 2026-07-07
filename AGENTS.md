@@ -91,6 +91,53 @@ This project is indexed by GitNexus as **traces-pkm** (7 symbols, 2 relationship
 | Index, status, clean, wiki CLI commands      | `.agent/skills/gitnexus/gitnexus-cli/SKILL.md`             |
 <!-- gitnexus:end -->
 
+<!-- rust-docs:start -->
+# rust-docs-mcp — Rust Crate Documentation
+
+This project uses **rust-docs-mcp** for querying Rust crate documentation, source code, dependencies, and module structure. All tools are prefixed with `rust-docs_`.
+
+> First cache a crate (`cache_crate_from_cratesio`) before querying it. For workspace crates, specify the `member` parameter (e.g., `crates/rmcp`).
+
+## Always Do
+
+- **Start with `structure`** to get a high-level overview of a crate's module hierarchy.
+- **Use `search_items_preview` first** for name searches (returns id, name, kind) — avoids token limits. Then drill into specific items with `get_item_details`.
+- **Cache from local path** (`cache_crate_from_local`) for workspace-local crates to analyze this project's own source.
+- **Use `get_item_source`** to view actual implementation code with configurable context lines.
+
+## Common Workflows
+
+| Goal | Steps |
+|------|-------|
+| Explore a new crate | `structure` → `search_items_preview` (or `list_crate_items`) → `get_item_details` on interesting items |
+| Find a specific function/type | `search_items_preview({pattern: "foo"})` → `get_item_details({item_id: N})` → `get_item_source({item_id: N})` |
+| Browse all items in a crate | `list_crate_items` with optional `kind_filter` (function, struct, enum, trait) |
+| Fuzzy search (typo-tolerant) | `search_items_fuzzy({query: "concept"})` — searches names + docs + metadata |
+| Trace dependencies | `get_dependencies` — direct deps by default, `include_tree: true` for transitive |
+| View module hierarchy | `structure` with `max_depth`, `focus_on` to zoom into a submodule |
+
+## Tools
+
+| Tool | Use for |
+|------|---------|
+| `cache_crate_from_cratesio` | Download & cache a crate from crates.io |
+| `cache_crate_from_github` | Cache from a GitHub repo (branch or tag) |
+| `cache_crate_from_local` | Cache from local filesystem path |
+| `structure` | Module tree visualization (cargo-modules) |
+| `list_crate_items` | Browse all items in a crate (with kind/path filters) |
+| `search_items_preview` | Search by name — lightweight (id, name, kind only) |
+| `search_items` | Full search with complete docs (may exceed token limits) |
+| `search_items_fuzzy` | Typo-tolerant search across names, docs, metadata |
+| `get_item_details` | Full item info: signature, fields, methods, docs |
+| `get_item_docs` | Extract just the doc string for an item |
+| `get_item_source` | Source code with surrounding context lines |
+| `get_dependencies` | Direct or transitive dependency tree |
+| `get_crates_metadata` | Batch metadata for multiple crates |
+| `list_cached_crates` | List all locally cached crates + sizes |
+| `list_crate_versions` | List cached versions of a specific crate |
+| `remove_crate` | Remove a cached crate to free disk space |
+<!-- rust-docs:end -->
+
 <!-- adrs:start -->
 # ADRs — Architecture Decision Records
 
