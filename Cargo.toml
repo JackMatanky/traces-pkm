@@ -13,6 +13,8 @@ license = "MIT"
 description = "Personal knowledge management traces"
 
 [dependencies]
+inquire = "0.9"
+is-terminal = "0.4"
 thiserror = "2"
 
 [lints.clippy]

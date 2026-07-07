@@ -18,18 +18,29 @@ use std::{
 /// Errors returned by a [`PromptProvider`].
 #[derive(Debug, thiserror::Error)]
 pub enum PromptError {
-    /// The user cancelled the prompt (e.g. Ctrl-C).
-    // ponytail: unused until the terminal impl (issue 02); the seam's error
-    // categories are defined up front so downstream miette layers are stable.
-    #[allow(
-        dead_code,
-        reason = "constructed by TerminalPromptProvider in issue 02"
-    )]
+    /// The user cancelled or interrupted the prompt (e.g. Esc or Ctrl-C).
     #[error("prompt was interrupted")]
     Interrupted,
     /// An I/O error occurred while prompting.
     #[error("prompt I/O error: {0}")]
     Io(#[from] std::io::Error),
+    /// The prompt failed for another reason reported by the backend.
+    #[error("prompt failed: {0}")]
+    Backend(String),
+}
+
+impl From<inquire::InquireError> for PromptError {
+    #[inline]
+    fn from(err: inquire::InquireError) -> Self {
+        use inquire::InquireError as E;
+        match err {
+            E::OperationCanceled | E::OperationInterrupted => Self::Interrupted,
+            E::IO(io) => Self::Io(io),
+            E::NotTTY => Self::Backend("not a terminal".to_owned()),
+            E::InvalidConfiguration(msg) => Self::Backend(msg),
+            E::Custom(e) => Self::Backend(e.to_string()),
+        }
+    }
 }
 
 /// Interactive input, abstracted behind a seam.
@@ -135,6 +146,67 @@ impl PromptProvider for NoPromptProvider {
     }
 }
 
+/// The real [`PromptProvider`], backed by `inquire`.
+///
+/// Before prompting it checks whether stdin is a terminal. In a non-TTY
+/// context (scripts, dry-run, CI) it returns the supplied default without ever
+/// invoking `inquire`, so templates and `init` render without hanging.
+///
+/// TTY-ness is computed on demand, never cached, so stdin redirection can
+/// differ between calls (which tests rely on).
+#[derive(Debug, Default, Clone, Copy)]
+pub struct TerminalPromptProvider;
+
+impl TerminalPromptProvider {
+    /// Create a new terminal-backed prompt provider.
+    #[inline]
+    #[must_use]
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+/// Whether the current process's stdin is an interactive terminal.
+#[inline]
+fn stdin_is_tty() -> bool {
+    use is_terminal::IsTerminal as _;
+    std::io::stdin().is_terminal()
+}
+
+impl PromptProvider for TerminalPromptProvider {
+    #[inline]
+    fn text(
+        &self,
+        label: &str,
+        default: Option<&str>,
+    ) -> Result<String, PromptError> {
+        if !stdin_is_tty() {
+            return Ok(default.unwrap_or_default().to_owned());
+        }
+        let mut prompt = inquire::Text::new(label);
+        if let Some(d) = default {
+            prompt = prompt.with_default(d);
+        }
+        Ok(prompt.prompt()?)
+    }
+
+    #[inline]
+    fn confirm(
+        &self,
+        label: &str,
+        default: Option<bool>,
+    ) -> Result<bool, PromptError> {
+        if !stdin_is_tty() {
+            return Ok(default.unwrap_or(false));
+        }
+        let mut prompt = inquire::Confirm::new(label);
+        if let Some(d) = default {
+            prompt = prompt.with_default(d);
+        }
+        Ok(prompt.prompt()?)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{NoPromptProvider, PromptProvider};
@@ -202,6 +274,65 @@ mod tests {
         // compiling, that consumer breaks.
         fn assert_send_sync<T: Send + Sync>() {}
         assert_send_sync::<NoPromptProvider>();
+        assert_send_sync::<TerminalPromptProvider>();
         assert_send_sync::<std::sync::Arc<dyn PromptProvider>>();
+    }
+
+    // --- TerminalPromptProvider non-TTY fallback ---
+    //
+    // Real TTY paths can't be automated in CI, so these only cover the
+    // non-TTY branch. If a developer runs the suite from an interactive
+    // shell, stdin *is* a terminal and `text`/`confirm` would block on
+    // `inquire`, so each test skips unless stdin is genuinely not a TTY.
+    // Under `cargo test` (CI, mise) stdin is redirected, so the branch runs.
+
+    use super::{TerminalPromptProvider, stdin_is_tty};
+
+    #[test]
+    fn terminal_text_returns_default_when_not_a_tty() {
+        if stdin_is_tty() {
+            return; // ponytail: can't drive a real TTY in a test; skip.
+        }
+        let p = TerminalPromptProvider::new();
+        assert_eq!(p.text("name", Some("carol")).unwrap(), "carol");
+    }
+
+    #[test]
+    fn terminal_text_returns_empty_when_not_a_tty_and_no_default() {
+        if stdin_is_tty() {
+            return;
+        }
+        let p = TerminalPromptProvider::new();
+        assert_eq!(p.text("name", None).unwrap(), "");
+    }
+
+    #[test]
+    fn terminal_confirm_returns_default_when_not_a_tty() {
+        if stdin_is_tty() {
+            return;
+        }
+        let p = TerminalPromptProvider::new();
+        assert!(p.confirm("ok?", Some(true)).unwrap());
+        assert!(!p.confirm("ok?", Some(false)).unwrap());
+    }
+
+    #[test]
+    fn terminal_confirm_returns_false_when_not_a_tty_and_no_default() {
+        if stdin_is_tty() {
+            return;
+        }
+        let p = TerminalPromptProvider::new();
+        assert!(!p.confirm("ok?", None).unwrap());
+    }
+
+    #[test]
+    fn terminal_usable_as_dyn_when_not_a_tty() {
+        if stdin_is_tty() {
+            return;
+        }
+        let concrete = TerminalPromptProvider::new();
+        let p: &dyn PromptProvider = &concrete;
+        assert_eq!(p.text("l", Some("d")).unwrap(), "d");
+        assert!(p.confirm("l", Some(true)).unwrap());
     }
 }
