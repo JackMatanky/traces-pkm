@@ -18,6 +18,15 @@ Add template resolution to `ConfigService`: given a template identifier, resolve
 - [ ] Not-found produces a clear error
 - [ ] Tests cover each priority level, override behavior, ambiguous match, and not-found — using temp dirs
 
+## Rust guidance
+
+Relevant skills: `m06-error-handling`, `m05-type-driven`, `m13-domain-error`.
+
+- **Return type (m05):** don't return a bare `PathBuf`. Return a small struct/tuple carrying both the resolved path **and** its source template directory, so issue tmpl-01 can trust-check the origin without re-deriving it. Consider a `ResolvedTemplate { path, source_dir }` type.
+- **Three-outcome result (m06):** resolution has three outcomes — found-one, found-many (ambiguous), not-found. Model found-many and not-found as distinct `thiserror` variants (`AmbiguousTemplate { candidates: Vec<PathBuf> }`, `TemplateNotFound { name }`), not a generic string error, so callers and miette can render each differently.
+- **Ambiguity is per-priority-level (m13):** two matches at the *same* level is the error; a local match shadowing a global one is normal resolution, not ambiguity. Enforce first-match-wins across levels, ambiguity check within a level.
+- **miette:** the `AmbiguousTemplate` error should list candidate paths as help text so the user can disambiguate; the `TemplateNotFound` error should name the directories searched.
+
 ## Blocked by
 
 - `.scratch/config-service/issues/01-config-discovery-and-merge.md`
