@@ -77,6 +77,67 @@ pub trait PromptProvider: Send + Sync {
     ) -> Result<bool, PromptError>;
 }
 
+/// The real [`PromptProvider`], backed by `inquire`.
+///
+/// Before prompting it checks whether stdin is a terminal. In a non-TTY
+/// context (scripts, dry-run, CI) it returns the supplied default without ever
+/// invoking `inquire`, so templates and `init` render without hanging.
+///
+/// TTY-ness is computed on demand, never cached, so stdin redirection can
+/// differ between calls (which tests rely on).
+#[derive(Copy, Clone, Debug, Default)]
+pub struct TerminalPromptProvider;
+
+impl TerminalPromptProvider {
+    /// Create a new terminal-backed prompt provider.
+    #[inline]
+    #[must_use]
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl PromptProvider for TerminalPromptProvider {
+    #[inline]
+    fn text(
+        &self,
+        label: &str,
+        default: Option<&str>,
+    ) -> Result<String, PromptError> {
+        if !stdin_is_tty() {
+            return Ok(default.unwrap_or_default().to_owned());
+        }
+        let mut prompt = inquire::Text::new(label);
+        if let Some(d) = default {
+            prompt = prompt.with_default(d);
+        }
+        Ok(prompt.prompt()?)
+    }
+
+    #[inline]
+    fn confirm(
+        &self,
+        label: &str,
+        default: Option<bool>,
+    ) -> Result<bool, PromptError> {
+        if !stdin_is_tty() {
+            return Ok(default.unwrap_or(false));
+        }
+        let mut prompt = inquire::Confirm::new(label);
+        if let Some(d) = default {
+            prompt = prompt.with_default(d);
+        }
+        Ok(prompt.prompt()?)
+    }
+}
+
+/// Whether the current process's stdin is an interactive terminal.
+#[inline]
+fn stdin_is_tty() -> bool {
+    use is_terminal::IsTerminal as _;
+    std::io::stdin().is_terminal()
+}
+
 /// A deterministic [`PromptProvider`] fake for tests and non-interactive modes.
 ///
 /// Returns queued responses in order; when a queue is empty it falls back to
@@ -144,67 +205,6 @@ impl PromptProvider for NoPromptProvider {
 #[inline]
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     m.lock().unwrap_or_else(PoisonError::into_inner)
-}
-
-/// The real [`PromptProvider`], backed by `inquire`.
-///
-/// Before prompting it checks whether stdin is a terminal. In a non-TTY
-/// context (scripts, dry-run, CI) it returns the supplied default without ever
-/// invoking `inquire`, so templates and `init` render without hanging.
-///
-/// TTY-ness is computed on demand, never cached, so stdin redirection can
-/// differ between calls (which tests rely on).
-#[derive(Copy, Clone, Debug, Default)]
-pub struct TerminalPromptProvider;
-
-impl TerminalPromptProvider {
-    /// Create a new terminal-backed prompt provider.
-    #[inline]
-    #[must_use]
-    pub fn new() -> Self {
-        Self
-    }
-}
-
-impl PromptProvider for TerminalPromptProvider {
-    #[inline]
-    fn text(
-        &self,
-        label: &str,
-        default: Option<&str>,
-    ) -> Result<String, PromptError> {
-        if !stdin_is_tty() {
-            return Ok(default.unwrap_or_default().to_owned());
-        }
-        let mut prompt = inquire::Text::new(label);
-        if let Some(d) = default {
-            prompt = prompt.with_default(d);
-        }
-        Ok(prompt.prompt()?)
-    }
-
-    #[inline]
-    fn confirm(
-        &self,
-        label: &str,
-        default: Option<bool>,
-    ) -> Result<bool, PromptError> {
-        if !stdin_is_tty() {
-            return Ok(default.unwrap_or(false));
-        }
-        let mut prompt = inquire::Confirm::new(label);
-        if let Some(d) = default {
-            prompt = prompt.with_default(d);
-        }
-        Ok(prompt.prompt()?)
-    }
-}
-
-/// Whether the current process's stdin is an interactive terminal.
-#[inline]
-fn stdin_is_tty() -> bool {
-    use is_terminal::IsTerminal as _;
-    std::io::stdin().is_terminal()
 }
 
 #[cfg(test)]
