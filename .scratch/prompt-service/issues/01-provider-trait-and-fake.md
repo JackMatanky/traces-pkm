@@ -1,6 +1,6 @@
 # PromptProvider trait + NoPromptProvider fake (text, confirm)
 
-Status: ready-for-agent
+Status: done
 
 ## Parent
 
@@ -14,11 +14,11 @@ Establish the interactive-input seam. Define a `PromptProvider` trait with `text
 
 ## Acceptance criteria
 
-- [ ] `PromptProvider` trait defined with `text` and `confirm` methods returning `Result`
-- [ ] `NoPromptProvider` implements the trait and returns configured responses (falling back to the provided default when no response is queued)
-- [ ] Trait is object-safe (`&dyn PromptProvider` usable by consumers)
-- [ ] Unit tests verify `NoPromptProvider` returns exactly the configured responses and honors defaults
-- [ ] Lives in its own module/crate with no dependency beyond what the fake needs (no `inquire` yet)
+- [x] `PromptProvider` trait defined with `text` and `confirm` methods returning `Result` — `src/prompt.rs` lines 38-53, both return `Result<_, PromptError>`.
+- [x] `NoPromptProvider` implements the trait and returns configured responses (falling back to the provided default when no response is queued) — pops from a per-method queue, `unwrap_or_else` -> call-site default.
+- [x] Trait is object-safe (`&dyn PromptProvider` usable by consumers) — `&self` receiver, no generic methods, no `Self` returns; proven by `usable_as_dyn_prompt_provider` test.
+- [x] Unit tests verify `NoPromptProvider` returns exactly the configured responses and honors defaults — 8 tests: queued order, queue-then-fallback, default fallback, empty/`false` fallback, `&dyn` usage.
+- [x] Lives in its own module/crate with no dependency beyond what the fake needs (no `inquire` yet) — `src/prompt.rs` module; only `thiserror` added.
 
 ## Rust guidance
 
@@ -32,3 +32,16 @@ Relevant skills: `m04-zero-cost`, `m06-error-handling`, `m05-type-driven`.
 ## Blocked by
 
 None - can start immediately
+
+## Implementation notes
+
+Branch `feat/prompt-service`. Files: `src/lib.rs` (new), `src/prompt.rs` (new).
+
+- **Crate promoted to lib.** Added `src/lib.rs` exposing `pub mod prompt`. The seam is a reusable component that ConfigService + TemplateService will both depend on; as a `pub` lib API it isn't dead-code-flagged (a binary-only module would be, since `main` doesn't consume it yet). `main.rs` left as-is (its pre-existing `println!` is the only clippy error and predates this work).
+- **Dispatch (m04):** object-safe trait, `&self` receiver, `&dyn PromptProvider`. Borrowed params (`&str`, `Option<&str>`, `Option<bool>`).
+- **Error (m06):** `PromptError` typed enum via `thiserror` with `Interrupted` + `Io(#[from] std::io::Error)`. `Interrupted` is unused until issue 02's terminal impl, so it carries `#[allow(dead_code, reason = "...")]` — categories defined up front so downstream miette layers stay stable.
+- **Fake determinism (m03):** `NoPromptProvider` uses `RefCell<VecDeque<_>>` per method so `&self` calls can pop. Builder API: `.with_text(...)` / `.with_confirm(...)`. Empty queue -> call-site default (`""` for text with no default, `false` for confirm with no default). No panics on any path.
+- **Deps:** added `thiserror = "2"`. No `inquire`.
+- **Verification:** `cargo test --lib` -> 8 passing. `cargo clippy --lib` clean under the repo's strict lints (only remaining warnings are pre-existing package-metadata cargo lints).
+- **Not committed** — left staged for review on `feat/prompt-service`.
+- **Worktree setup:** added `.worktrees/` to root `.gitignore` (committed on `main` as `chore: ignore .worktrees/`).

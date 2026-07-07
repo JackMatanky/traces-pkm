@@ -13,6 +13,7 @@ license = "MIT"
 description = "Personal knowledge management traces"
 
 [dependencies]
+thiserror = "2"
 
 [lints.clippy]
 # ------------------------------------------------------------- #
