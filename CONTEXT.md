@@ -57,7 +57,7 @@ A template name resolves first as an exact path, then as a filename in the local
 _Avoid_: Template lookup, search
 
 ### No-Declaration Template Format
-Templates declare nothing about what they need. They call interactive functions (`prompt_text`, `suggester`) at the point of need during rendering. No frontmatter declaration, no sidecar config.
+Templates declare nothing about what they need. They call interactive functions (`prompt_text`, `select`) at the point of need during rendering. No frontmatter declaration, no sidecar config.
 _Avoid_: Declared template, template schema, manifest
 
 ### Commands
