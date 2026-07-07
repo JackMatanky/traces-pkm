@@ -1,1 +1,19 @@
+# -----------------------------------------------------------------------------
+# Filename:     traces-pkm/.gitignore
+# Docs:         https://git-scm.com/docs/gitignore
+# Description:  Prevents Git from tracking system, environment, editor,
+#               build, and cache files
+# -----------------------------------------------------------------------------
+
+# -------------------- MacOS System Files -------------------- #
+DS_Store
+.DS_Store
+__MACOSX/
+
 /target
+
+# Knowledge Graph
+.gitnexus
+
+*digest.txt
+docs/refs/digests/
