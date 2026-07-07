@@ -7,9 +7,10 @@
         "mcp",
         "serve"
       ],
+      "cwd": "/Users/jack/Documents/41_personal/traces-pkm/",
       "enabled": true,
       "environment": {
-        "ADR_DIRECTORY": "docs/adrs"
+        "ADR_DIRECTORY": "docs/adrs/"
       },
       "type": "local"
     },
