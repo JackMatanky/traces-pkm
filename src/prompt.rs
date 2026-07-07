@@ -112,16 +112,6 @@ impl NoPromptProvider {
     }
 }
 
-/// Lock a mutex, recovering the guard if the lock was poisoned.
-///
-/// The fake never panics while holding a lock, so poisoning cannot occur in
-/// practice; recovering keeps the queue usable and avoids an `unwrap` on the
-/// `PoisonError`.
-#[inline]
-fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-    m.lock().unwrap_or_else(PoisonError::into_inner)
-}
-
 impl PromptProvider for NoPromptProvider {
     #[inline]
     fn text(
@@ -146,6 +136,16 @@ impl PromptProvider for NoPromptProvider {
     }
 }
 
+/// Lock a mutex, recovering the guard if the lock was poisoned.
+///
+/// The fake never panics while holding a lock, so poisoning cannot occur in
+/// practice; recovering keeps the queue usable and avoids an `unwrap` on the
+/// `PoisonError`.
+#[inline]
+fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
 /// The real [`PromptProvider`], backed by `inquire`.
 ///
 /// Before prompting it checks whether stdin is a terminal. In a non-TTY
@@ -154,7 +154,7 @@ impl PromptProvider for NoPromptProvider {
 ///
 /// TTY-ness is computed on demand, never cached, so stdin redirection can
 /// differ between calls (which tests rely on).
-#[derive(Debug, Default, Clone, Copy)]
+#[derive(Copy, Clone, Debug, Default)]
 pub struct TerminalPromptProvider;
 
 impl TerminalPromptProvider {
@@ -164,13 +164,6 @@ impl TerminalPromptProvider {
     pub fn new() -> Self {
         Self
     }
-}
-
-/// Whether the current process's stdin is an interactive terminal.
-#[inline]
-fn stdin_is_tty() -> bool {
-    use is_terminal::IsTerminal as _;
-    std::io::stdin().is_terminal()
 }
 
 impl PromptProvider for TerminalPromptProvider {
@@ -205,6 +198,13 @@ impl PromptProvider for TerminalPromptProvider {
         }
         Ok(prompt.prompt()?)
     }
+}
+
+/// Whether the current process's stdin is an interactive terminal.
+#[inline]
+fn stdin_is_tty() -> bool {
+    use is_terminal::IsTerminal as _;
+    std::io::stdin().is_terminal()
 }
 
 #[cfg(test)]
