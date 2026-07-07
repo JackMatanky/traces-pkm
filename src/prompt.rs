@@ -22,11 +22,22 @@ pub enum PromptError {
     #[error("prompt was interrupted")]
     Interrupted,
     /// An I/O error occurred while prompting.
-    #[error("prompt I/O error: {0}")]
-    Io(#[from] std::io::Error),
+    #[error("prompt I/O error")]
+    Io(#[source] std::io::Error),
     /// The prompt failed for another reason reported by the backend.
-    #[error("prompt failed: {0}")]
-    Backend(String),
+    ///
+    /// The backend error is preserved as the
+    /// [`source`](std::error::Error::source) so the chain can be walked,
+    /// while its concrete type stays out of this crate's public API.
+    #[error("prompt failed")]
+    Backend(#[source] Box<dyn std::error::Error + Send + Sync>),
+}
+
+impl From<std::io::Error> for PromptError {
+    #[inline]
+    fn from(err: std::io::Error) -> Self {
+        Self::Io(err)
+    }
 }
 
 impl From<inquire::InquireError> for PromptError {
@@ -34,11 +45,16 @@ impl From<inquire::InquireError> for PromptError {
     fn from(err: inquire::InquireError) -> Self {
         use inquire::InquireError as E;
         match err {
-            E::OperationCanceled | E::OperationInterrupted => Self::Interrupted,
+            // The TTY guard in `TerminalPromptProvider` means `inquire` is only
+            // invoked with a terminal present, so `NotTTY` is not expected
+            // here; treat it like any other non-completion as an
+            // interruption.
+            E::OperationCanceled | E::OperationInterrupted | E::NotTTY => {
+                Self::Interrupted
+            }
             E::IO(io) => Self::Io(io),
-            E::NotTTY => Self::Backend("not a terminal".to_owned()),
-            E::InvalidConfiguration(msg) => Self::Backend(msg),
-            E::Custom(e) => Self::Backend(e.to_string()),
+            E::InvalidConfiguration(msg) => Self::Backend(msg.into()),
+            E::Custom(err) => Self::Backend(err),
         }
     }
 }
@@ -55,8 +71,10 @@ pub trait PromptProvider: Send + Sync {
     ///
     /// # Errors
     ///
-    /// Returns [`PromptError`] if the prompt is interrupted or an I/O error
-    /// occurs.
+    /// Returns [`PromptError`] if the prompt is interrupted
+    /// ([`Interrupted`](PromptError::Interrupted)), an I/O error occurs
+    /// ([`Io`](PromptError::Io)), or the backend fails for another reason
+    /// ([`Backend`](PromptError::Backend)).
     fn text(
         &self,
         label: &str,
@@ -68,8 +86,10 @@ pub trait PromptProvider: Send + Sync {
     ///
     /// # Errors
     ///
-    /// Returns [`PromptError`] if the prompt is interrupted or an I/O error
-    /// occurs.
+    /// Returns [`PromptError`] if the prompt is interrupted
+    /// ([`Interrupted`](PromptError::Interrupted)), an I/O error occurs
+    /// ([`Io`](PromptError::Io)), or the backend fails for another reason
+    /// ([`Backend`](PromptError::Backend)).
     fn confirm(
         &self,
         label: &str,
@@ -209,7 +229,27 @@ fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 
 #[cfg(test)]
 mod tests {
-    use super::{NoPromptProvider, PromptProvider};
+    use super::*;
+
+    /// Return `true` and print a visible notice when stdin is a real terminal.
+    ///
+    /// The `terminal_*` tests exercise the non-TTY fallback branch, which
+    /// cannot be driven against a real TTY in an automated test. Rather than a
+    /// silent `return` (which reports as a plain pass and hides that nothing
+    /// was asserted), callers `return` on `true` after this has logged the
+    /// skip, so an interactive local run makes the gap observable. Under CI /
+    /// `cargo test`, stdin is redirected, this returns `false`, and the
+    /// assertions run.
+    fn skip_if_tty(test: &str) -> bool {
+        let is_tty = stdin_is_tty();
+        if is_tty {
+            eprintln!(
+                "skipping {test}: stdin is a real TTY, cannot assert the \
+                 non-TTY fallback"
+            );
+        }
+        is_tty
+    }
 
     #[test]
     fn text_returns_queued_responses_in_order() {
@@ -283,15 +323,14 @@ mod tests {
     // Real TTY paths can't be automated in CI, so these only cover the
     // non-TTY branch. If a developer runs the suite from an interactive
     // shell, stdin *is* a terminal and `text`/`confirm` would block on
-    // `inquire`, so each test skips unless stdin is genuinely not a TTY.
-    // Under `cargo test` (CI, mise) stdin is redirected, so the branch runs.
-
-    use super::{TerminalPromptProvider, stdin_is_tty};
+    // `inquire`, so each test skips (visibly, via `skip_if_tty`) unless stdin
+    // is genuinely not a TTY. Under `cargo test` (CI, mise) stdin is
+    // redirected, so the branch runs.
 
     #[test]
     fn terminal_text_returns_default_when_not_a_tty() {
-        if stdin_is_tty() {
-            return; // ponytail: can't drive a real TTY in a test; skip.
+        if skip_if_tty("terminal_text_returns_default_when_not_a_tty") {
+            return;
         }
         let p = TerminalPromptProvider::new();
         assert_eq!(p.text("name", Some("carol")).unwrap(), "carol");
@@ -299,7 +338,9 @@ mod tests {
 
     #[test]
     fn terminal_text_returns_empty_when_not_a_tty_and_no_default() {
-        if stdin_is_tty() {
+        if skip_if_tty(
+            "terminal_text_returns_empty_when_not_a_tty_and_no_default",
+        ) {
             return;
         }
         let p = TerminalPromptProvider::new();
@@ -308,7 +349,7 @@ mod tests {
 
     #[test]
     fn terminal_confirm_returns_default_when_not_a_tty() {
-        if stdin_is_tty() {
+        if skip_if_tty("terminal_confirm_returns_default_when_not_a_tty") {
             return;
         }
         let p = TerminalPromptProvider::new();
@@ -318,7 +359,9 @@ mod tests {
 
     #[test]
     fn terminal_confirm_returns_false_when_not_a_tty_and_no_default() {
-        if stdin_is_tty() {
+        if skip_if_tty(
+            "terminal_confirm_returns_false_when_not_a_tty_and_no_default",
+        ) {
             return;
         }
         let p = TerminalPromptProvider::new();
@@ -327,12 +370,42 @@ mod tests {
 
     #[test]
     fn terminal_usable_as_dyn_when_not_a_tty() {
-        if stdin_is_tty() {
+        if skip_if_tty("terminal_usable_as_dyn_when_not_a_tty") {
             return;
         }
         let concrete = TerminalPromptProvider::new();
         let p: &dyn PromptProvider = &concrete;
         assert_eq!(p.text("l", Some("d")).unwrap(), "d");
         assert!(p.confirm("l", Some(true)).unwrap());
+    }
+
+    // --- PromptError source-chain mapping (fix: err-source-chain) ---
+
+    #[test]
+    fn inquire_cancel_maps_to_interrupted() {
+        let mapped =
+            PromptError::from(inquire::InquireError::OperationCanceled);
+        assert!(matches!(mapped, PromptError::Interrupted));
+    }
+
+    #[test]
+    fn inquire_io_preserves_source_chain() {
+        use std::error::Error as _;
+        let io = std::io::Error::other("boom");
+        let mapped = PromptError::from(inquire::InquireError::IO(io));
+        // `Io` carries the underlying io::Error as its source.
+        assert!(mapped.source().is_some());
+        assert!(matches!(mapped, PromptError::Io(_)));
+    }
+
+    #[test]
+    fn inquire_custom_preserves_source_chain() {
+        use std::error::Error as _;
+        let inner: Box<dyn std::error::Error + Send + Sync> =
+            "validator failed".into();
+        let mapped = PromptError::from(inquire::InquireError::Custom(inner));
+        // `Backend` keeps the backend error walkable without naming `inquire`.
+        let source = mapped.source().expect("Backend should expose a source");
+        assert_eq!(source.to_string(), "validator failed");
     }
 }
