@@ -1,0 +1,27 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "adrs": {
+      "command": [
+        "adrs",
+        "mcp",
+        "serve"
+      ],
+      "enabled": true,
+      "environment": {
+        "ADR_DIRECTORY": "docs/adrs"
+      },
+      "type": "local"
+    },
+    "rust-docs": {
+      "command": [
+        "rust-docs-mcp"
+      ],
+      "enabled": true,
+      "environment": {
+        "RUST_DOCS_MCP_CACHE_DIR": ".rust-docs/cache/"
+      },
+      "type": "local"
+    }
+  }
+}

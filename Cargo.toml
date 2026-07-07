@@ -1,0 +1,83 @@
+# -----------------------------------------------------------------------------
+# Filename:    traces-pkm/Cargo.toml
+# Docs:        https://doc.rust-lang.org/cargo/reference/manifest.html
+# Description: Workspace manifest for the Traces Rust project, defining
+#              package metadata, dependencies, and workspace-wide lints.
+# -----------------------------------------------------------------------------
+
+[package]
+name = "traces-pkm"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Personal knowledge management traces"
+
+[dependencies]
+
+[lints.clippy]
+# ------------------------------------------------------------- #
+#                        Lint Categories                        #
+# ------------------------------------------------------------- #
+complexity = { level = "deny", priority = -1 }
+perf = { level = "deny", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+cargo = { level = "warn", priority = -1 }
+
+# ------------------------------------------------------------- #
+#              Allowed (Exceptions & Relaxations)               #
+# ------------------------------------------------------------- #
+multiple_crate_versions = "allow"
+absolute_paths = "allow"
+pub_with_shorthand = "allow"
+semicolon_inside_block = "allow"
+unseparated_literal_suffix = "allow"
+mod_module_files = "allow"
+std_instead_of_alloc = "allow"
+std_instead_of_core = "allow"
+implicit_return = "allow"
+question_mark_used = "allow"
+shadow_reuse = "allow"
+shadow_same = "allow"
+single_call_fn = "allow"
+min_ident_chars = "allow"
+missing_docs_in_private_items = "allow"
+print_stderr = "allow"
+
+# ------------------------------------------------------------- #
+#            Warnings (Best Practices & Suggestions)            #
+# ------------------------------------------------------------- #
+as_conversions = "warn"
+else_if_without_else = "warn"
+format_push_string = "warn"
+impl_trait_in_params = "warn"
+missing_inline_in_public_items = "warn"
+
+# ------------------------------------------------------------- #
+#                 Denials (Strict Enforcements)                 #
+# ------------------------------------------------------------- #
+exit = "deny"
+expect_used = "deny"
+panic = "deny"
+panic_in_result_fn = "deny"
+todo = "deny"
+unimplemented = "deny"
+unreachable = "deny"
+unwrap_used = "deny"
+missing_errors_doc = "deny"
+missing_panics_doc = "deny"
+undocumented_unsafe_blocks = "deny"
+fn_params_excessive_bools = "deny"
+large_types_passed_by_value = "deny"
+struct_excessive_bools = "deny"
+too_many_lines = "deny"
+unused_self = "deny"
+allow_attributes_without_reason = "deny"
+arithmetic_side_effects = "deny"
+as_pointer_underscore = "deny"
+as_underscore = "deny"
+dbg_macro = "deny"
+disallowed_methods = "deny"
+indexing_slicing = "deny"
+print_stdout = "deny"
+shadow_unrelated = "deny"
+str_to_string = "deny"

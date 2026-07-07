@@ -1,0 +1,102 @@
+# -----------------------------------------------------------------------------
+# Filename:    traces-pkm/mise.toml
+# Docs:        https://mise.jdx.dev/
+# Description: Project-wide tool versioning and task orchestration
+# -----------------------------------------------------------------------------
+
+[tools]
+rust = [
+  { version = "latest", profile = "default", components = "rust-src" },
+  { version = "nightly", components = "rustfmt" },
+]
+hk = "latest"
+taplo = "latest"
+gitleaks = "latest"
+shellcheck = "latest"
+shfmt = "latest"
+
+"cargo:cargo-deny" = "latest"
+"cargo:cargo-nextest" = "latest"
+"cargo:cargo-tarpaulin" = "latest"
+"cargo:cargo-watch" = "latest"
+"cargo:critcmp" = "latest"
+"cargo:wasm-pack" = "latest"
+"cargo:rust-docs-mcp" = "latest"
+"cargo:adrs" = { version = "latest", install_env = { RUSTUP_TOOLCHAIN = "nightly" } }
+
+[env]
+HK_MISE = "1"
+# pin default toolchain to stable so nightly isn't used unless explicitly requested via +nightly
+RUSTUP_TOOLCHAIN = "stable"
+
+[tasks.check]
+description = "Fast compilation check"
+run = "cargo check --workspace"
+alias = "c"
+
+[tasks.build]
+description = "Debug build"
+run = "cargo build"
+alias = "b"
+
+[tasks.test]
+description = "Run tests with nextest"
+run = "cargo nextest run"
+depends = ["check"]
+alias = "t"
+
+[tasks."test-all"]
+description = "Run all tests including doc-tests"
+run = "cargo test --workspace"
+
+[tasks.lint]
+description = "Run all hk linters"
+run = "hk check"
+
+[tasks.fix]
+description = "Auto-fix all hk lint issues"
+run = "hk fix"
+
+[tasks.fmt]
+description = "Format all Rust code (nightly)"
+run = "rustup run nightly cargo fmt --all"
+
+[tasks.clippy]
+description = "Run clippy with deny warnings"
+run = "cargo clippy --workspace -- -D warnings"
+
+[tasks.doc]
+description = "Build documentation"
+run = "cargo doc --no-deps"
+
+[tasks.audit]
+description = "Run cargo deny audit"
+run = "cargo deny check"
+
+[tasks.ci]
+description = "Full CI pipeline"
+depends = ["check", "clippy", "test", "audit"]
+
+[tasks.coverage]
+description = "Code coverage with tarpaulin"
+run = "cargo tarpaulin --workspace --out html"
+
+[tasks.clean]
+description = "Clean build artifacts"
+run = "cargo clean"
+
+[tasks.watch]
+description = "Watch and auto-check on changes"
+run = "cargo watch -x check -x test"
+
+[tasks.setup]
+description = "Install git hooks via hk"
+run = "hk install --mise"
+
+[tasks.release]
+description = "Release build"
+run = "cargo build --release"
+alias = "r"
+
+[hooks]
+postinstall = "hk install --mise"

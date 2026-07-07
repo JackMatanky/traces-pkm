@@ -1,0 +1,96 @@
+# -----------------------------------------------------------------------------
+# Filename:    traces-pkm/clippy.toml
+# Docs:        https://doc.rust-lang.org/clippy/configuration.html
+# Description: Configuration for clippy lints, including complexity thresholds
+#              and project-specific valid identifiers.
+#
+# AI Safeguards:
+# - Cognitive complexity < 25 ensures AI-generated functions stay manageable.
+# - Disallowed methods prevent AI from taking shortcuts like unwrap/expect.
+# -----------------------------------------------------------------------------
+
+# Complexity Thresholds
+cognitive-complexity-threshold = 15
+too-many-lines-threshold = 100
+too-many-arguments-threshold = 5
+type-complexity-threshold = 160
+excessive-nesting-threshold = 5
+
+# Memory & Performance Thresholds
+# Limit large types on stack to encourage boxing or reference passing.
+too-large-for-stack = 128
+# Flags large arrays on stack (>= 1KB).
+array-size-threshold = 1024
+# Limits stack frame size to prevent overflows.
+stack-size-threshold = 4096
+# Prevents boxing large vectors unless capacity planning is deliberate.
+vec-box-size-threshold = 4096
+
+# Structural Restrictions
+max-fn-params-bools = 2
+max-struct-bools = 2
+max-trait-bounds = 3
+enum-variant-size-threshold = 128
+large-error-threshold = 128
+
+# Project Metadata
+msrv = "1.92"
+doc-valid-idents = ["Traces", "Obsidian", "Redb", "rkyv", "CLI", "JSON", "TOML", "YAML"]
+disallowed-names = ["foo", "bar", "baz", "quux", "tmp"]
+
+# Source Ordering
+# Enforce coarse source structure (module/import/type/impl/function ordering)
+# without alphabetizing APIs inside `impl` blocks.
+#
+# NOTE:
+# - Avoid `impl` here: Clippy would alphabetize methods, which fights “tour of the API” ordering.
+# - Avoid `enum` here: alphabetizing variants can harm layout/perf and is rarely what we want.
+# - Avoid `struct` here: Clippy would alphabetize fields; Canonical recommends visibility-based ordering.
+source-item-ordering = ["module", "trait"]
+
+# Match rust-analyzer’s “modules first, then imports, then items” at a coarse level.
+# (Clippy can’t enforce blank-line grouping or std/external/crate import buckets.)
+module-item-order-groupings = [
+    ["modules", ["extern_crate", "mod", "foreign_mod"]],
+    ["use", ["use"]],
+    [
+        "items",
+        [
+            "macro",
+            "global_asm",
+            "static",
+            "const",
+            "ty_alias",
+            "enum",
+            "struct",
+            "union",
+            "trait",
+            "trait_alias",
+            "impl",
+            "fn",
+        ],
+    ],
+]
+
+# Enforce grouping order only (keeps “reader-first” ordering within each group).
+module-items-ordered-within-groupings = "none"
+
+# Make trait contents predictable and easy to scan.
+trait-assoc-item-kinds-order = ["const", "type", "fn"]
+
+# Canonical prefers inherent impls colocated; this makes split impls noisier.
+inherent-impl-lint-scope = "file"
+
+# Test Restrictions (unwrap/expect allowed in tests for simplicity)
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+
+# Disallowed Methods (Prevent common anti-patterns and unsafe shortcuts)
+disallowed-methods = [
+    { path = "std::process::exit", reason = "Use miette and return Result from main. Abrupt exit skips cleanup/Drop." },
+    { path = "std::mem::forget", reason = "Potential memory leak. Use ManuallyDrop or ensure correct RAII management." },
+    { path = "std::env::current_dir", reason = "Global state and potential for race conditions. Prefer explicit path management." },
+    { path = "std::fs::canonicalize", reason = "Expensive I/O operation. Use only when strictly necessary for path resolution." },
+    { path = "std::thread::sleep", reason = "Blocks the current thread. In async code, use tokio::time::sleep." },
+    { path = "std::panic::catch_unwind", reason = "Prefer Result-based error handling. Catching panics is non-idiomatic for control flow." }
+]

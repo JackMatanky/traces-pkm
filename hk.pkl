@@ -1,0 +1,63 @@
+amends "package://github.com/jdx/hk/releases/download/v1.49.0/hk@1.49.0#/Config.pkl"
+import "package://github.com/jdx/hk/releases/download/v1.49.0/hk@1.49.0#/Builtins.pkl"
+
+local linters = new Mapping<String, Step> {
+    ["check-added-large-files"] = (Builtins.check_added_large_files) {
+        check = "hk util check-added-large-files --maxkb 500 {{files}}"
+    }
+    ["check-case-conflict"] = Builtins.check_case_conflict
+    ["check-executables-have-shebangs"] = Builtins.check_executables_have_shebangs
+    ["check-merge-conflict"] = Builtins.check_merge_conflict
+    ["check-symlinks"] = Builtins.check_symlinks
+    ["end-of-file-fixer"] = Builtins.newlines
+    ["trailing-whitespace"] = Builtins.trailing_whitespace
+    ["mixed-line-ending"] = Builtins.mixed_line_ending
+    ["check-json"] = Builtins.jq
+    ["check-toml"] = Builtins.taplo
+    ["check-yaml"] = Builtins.yamllint
+    ["gitleaks"] = (Builtins.gitleaks) {
+        batch = true
+        check = "gitleaks dir --redact --verbose --no-banner ."
+    }
+    ["shellcheck"] = Builtins.shellcheck
+    ["shfmt"] = (Builtins.shfmt) {
+        check = "shfmt -d -i 2 -ci {{files}}"
+        fix = "shfmt -w -i 2 -ci {{files}}"
+    }
+    ["cargo-fmt"] = (Builtins.cargo_fmt) {
+        check = "rustup run nightly cargo fmt --check --manifest-path {{workspace_indicator}}"
+        fix = "rustup run nightly cargo fmt --manifest-path {{workspace_indicator}}"
+    }
+    ["cargo-clippy"] = Builtins.cargo_clippy
+    ["cargo-test"] {
+        glob = List("**/*.rs")
+        workspace_indicator = "Cargo.toml"
+        check = "cargo test --workspace"
+    }
+    ["cargo-deny"] {
+        workspace_indicator = "Cargo.toml"
+        check = "cargo deny check"
+    }
+}
+
+hooks {
+    ["pre-commit"] {
+        fix = true
+        stash = "git"
+        steps = linters
+    }
+    ["commit-msg"] {
+        steps {
+            ["conventional-commit"] = (Builtins.check_conventional_commit) {
+                check = "hk util check-conventional-commit --verbose {{commit_msg_file}}"
+            }
+        }
+    }
+    ["fix"] {
+        fix = true
+        steps = linters
+    }
+    ["check"] {
+        steps = linters
+    }
+}
