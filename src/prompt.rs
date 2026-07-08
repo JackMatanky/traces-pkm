@@ -2,12 +2,13 @@
 //!
 //! [`PromptProvider`] abstracts interactive user input behind an object-safe
 //! trait so consumers can hold a `&dyn PromptProvider` chosen at runtime
-//! (terminal vs. test fake). [`NoPromptProvider`] is a deterministic fake that
-//! returns pre-configured responses with zero I/O.
+//! (terminal vs. non-interactive). [`PresetPromptProvider`] is a deterministic
+//! provider that returns pre-configured responses with zero I/O — used both in
+//! tests and in non-interactive/MCP mode.
 //!
 //! The trait requires `Send + Sync` so a provider can be captured into the
 //! `Send + Sync` custom-function closures `TemplateService` registers on its
-//! minijinja `Environment`. `NoPromptProvider` therefore uses `Mutex`, not
+//! minijinja `Environment`. `PresetPromptProvider` therefore uses `Mutex`, not
 //! `RefCell`, for its interior mutability.
 
 use std::{
@@ -158,17 +159,20 @@ fn stdin_is_tty() -> bool {
     std::io::stdin().is_terminal()
 }
 
-/// A deterministic [`PromptProvider`] fake for tests and non-interactive modes.
+/// A deterministic [`PromptProvider`] that replays preset responses.
 ///
-/// Returns queued responses in order; when a queue is empty it falls back to
-/// the `default` supplied at the call site.
+/// Preset answers with [`with_text`](Self::with_text) /
+/// [`with_confirm`](Self::with_confirm); each call pops the next queued
+/// response, or falls back to the `default` supplied at the call site once the
+/// queue is empty. Used both in tests and in non-interactive/MCP mode, where
+/// answers are supplied up front instead of typed.
 #[derive(Debug, Default)]
-pub struct NoPromptProvider {
+pub struct PresetPromptProvider {
     texts: Mutex<VecDeque<String>>,
     confirms: Mutex<VecDeque<bool>>,
 }
 
-impl NoPromptProvider {
+impl PresetPromptProvider {
     /// Create an empty fake that always falls back to call-site defaults.
     #[inline]
     #[must_use]
@@ -193,7 +197,7 @@ impl NoPromptProvider {
     }
 }
 
-impl PromptProvider for NoPromptProvider {
+impl PromptProvider for PresetPromptProvider {
     #[inline]
     fn text(
         &self,
@@ -253,14 +257,14 @@ mod tests {
 
     #[test]
     fn text_returns_queued_responses_in_order() {
-        let p = NoPromptProvider::new().with_text("alice").with_text("bob");
+        let p = PresetPromptProvider::new().with_text("alice").with_text("bob");
         assert_eq!(p.text("name", None).unwrap(), "alice");
         assert_eq!(p.text("name", None).unwrap(), "bob");
     }
 
     #[test]
     fn text_consumes_queue_then_falls_back() {
-        let p = NoPromptProvider::new().with_text("only");
+        let p = PresetPromptProvider::new().with_text("only");
         assert_eq!(p.text("name", None).unwrap(), "only");
         // queue now exhausted -> default fallback
         assert_eq!(p.text("name", Some("fallback")).unwrap(), "fallback");
@@ -268,40 +272,41 @@ mod tests {
 
     #[test]
     fn text_falls_back_to_default_when_queue_empty() {
-        let p = NoPromptProvider::new();
+        let p = PresetPromptProvider::new();
         assert_eq!(p.text("name", Some("carol")).unwrap(), "carol");
     }
 
     #[test]
     fn text_falls_back_to_empty_when_no_default() {
-        let p = NoPromptProvider::new();
+        let p = PresetPromptProvider::new();
         assert_eq!(p.text("name", None).unwrap(), "");
     }
 
     #[test]
     fn confirm_returns_queued_responses_in_order() {
-        let p = NoPromptProvider::new().with_confirm(true).with_confirm(false);
+        let p =
+            PresetPromptProvider::new().with_confirm(true).with_confirm(false);
         assert!(p.confirm("ok?", None).unwrap());
         assert!(!p.confirm("ok?", None).unwrap());
     }
 
     #[test]
     fn confirm_falls_back_to_default_when_queue_empty() {
-        let p = NoPromptProvider::new();
+        let p = PresetPromptProvider::new();
         assert!(p.confirm("ok?", Some(true)).unwrap());
         assert!(!p.confirm("ok?", Some(false)).unwrap());
     }
 
     #[test]
     fn confirm_falls_back_to_false_when_no_default() {
-        let p = NoPromptProvider::new();
+        let p = PresetPromptProvider::new();
         assert!(!p.confirm("ok?", None).unwrap());
     }
 
     #[test]
     fn usable_as_dyn_prompt_provider() {
         let concrete =
-            NoPromptProvider::new().with_text("dyn").with_confirm(true);
+            PresetPromptProvider::new().with_text("dyn").with_confirm(true);
         let p: &dyn PromptProvider = &concrete;
         assert_eq!(p.text("l", None).unwrap(), "dyn");
         assert!(p.confirm("l", None).unwrap());
@@ -313,7 +318,7 @@ mod tests {
         // provider into `Send + Sync` custom-function closures. If this stops
         // compiling, that consumer breaks.
         fn assert_send_sync<T: Send + Sync>() {}
-        assert_send_sync::<NoPromptProvider>();
+        assert_send_sync::<PresetPromptProvider>();
         assert_send_sync::<TerminalPromptProvider>();
         assert_send_sync::<std::sync::Arc<dyn PromptProvider>>();
     }

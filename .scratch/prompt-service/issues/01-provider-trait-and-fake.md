@@ -35,6 +35,8 @@ None - can start immediately
 
 ## Implementation notes
 
+> **Renamed:** `NoPromptProvider` (the name used throughout this historical record) was later renamed to `PresetPromptProvider` — the "No" prefix was unintuitive and the type serves non-interactive/MCP mode, not just tests. References below keep the original name as-built.
+
 Branch `feat/prompt-service`. Files: `src/lib.rs` (new), `src/prompt.rs` (new).
 
 - **Crate promoted to lib.** Added `src/lib.rs` exposing `pub mod prompt`. The seam is a reusable component that ConfigService + TemplateService will both depend on; as a `pub` lib API it isn't dead-code-flagged (a binary-only module would be, since `main` doesn't consume it yet). `main.rs` left as-is (its pre-existing `println!` is the only clippy error and predates this work).
