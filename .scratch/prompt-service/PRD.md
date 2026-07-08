@@ -29,7 +29,7 @@ A `PromptProvider` trait (and a `TerminalPromptProvider` implementation wrapping
   - `confirm(&self, label: &str, default: Option<bool>) -> Result<bool>`
   - `multi_select(&self, label: &str, items: &[String]) -> Result<Vec<String>>`
 - **TerminalPromptProvider** implements the trait via `inquire`. Checks `is_terminal()` on stdin before prompting. In non-TTY mode, returns defaults without calling inquire.
-- **NoPromptProvider** (test fake) returns configured responses without any I/O. Used in tests and MCP mode.
+- **PresetPromptProvider** (test fake) returns configured responses without any I/O. Used in tests and MCP mode.
 - The trait is defined in its own small crate or module with no dependencies beyond `inquire` and `is-terminal`.
 - ConfigService's `init` command receives a `&dyn PromptProvider`. TemplateService's custom functions also hold a reference to one.
 - Crate: `inquire` for terminal prompts, `is-terminal` for TTY detection.
@@ -37,7 +37,7 @@ A `PromptProvider` trait (and a `TerminalPromptProvider` implementation wrapping
 ## Testing Decisions
 
 - **PromptProvider trait** is designed for testability — tests never need a real TTY.
-- **NoPromptProvider tests**: verify it returns exactly the configured responses.
+- **PresetPromptProvider tests**: verify it returns exactly the configured responses.
 - **TerminalPromptProvider tests**: only test non-TTY fallback paths (no way to automate a real TTY in CI). Verify that when stdin is not a terminal, defaults are returned without calling inquire.
 - Prior art: standard Rust trait + mock testing pattern.
 
