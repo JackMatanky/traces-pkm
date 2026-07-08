@@ -28,6 +28,7 @@ shfmt = "latest"
 HK_MISE = "1"
 # pin default toolchain to stable so nightly isn't used unless explicitly requested via +nightly
 RUSTUP_TOOLCHAIN = "stable"
+RUST_DOCS_MCP_TOOLCHAIN = "nightly"
 ADR_DIRECTORY = "docs/adr/"
 
 [tasks.check]
