@@ -1,51 +1,119 @@
-amends "package://github.com/jdx/hk/releases/download/v1.49.0/hk@1.49.0#/Config.pkl"
-import "package://github.com/jdx/hk/releases/download/v1.49.0/hk@1.49.0#/Builtins.pkl"
+amends "package://github.com/jdx/hk/releases/download/v1.50.0/hk@1.50.0#/Config.pkl"
+import "package://github.com/jdx/hk/releases/download/v1.50.0/hk@1.50.0#/Builtins.pkl"
 
-local linters = new Mapping<String, Step> {
+fail_fast = false
+jobs = 0
+walk_ignore = true
+stash_backup_count = 20
+
+exclude = List(
+    "target",
+    "vendor",
+    ".direnv",
+    ".venv",
+    "node_modules",
+    "dist",
+    "build",
+    "LICENSE"
+)
+
+local hygiene = new Mapping<String, Step> {
+    ["end-of-file-fixer"] = Builtins.newlines
+    ["trailing-whitespace"] = Builtins.trailing_whitespace
+    ["mixed-line-ending"] = Builtins.mixed_line_ending
+}
+
+local shell = new Mapping<String, Step> {
+    ["shfmt"] = (Builtins.shfmt) {
+        check = "shfmt -d -i 2 -ci {{files}}"
+        check_diff = "shfmt -d -i 2 -ci {{files}}"
+        fix = "shfmt -w -i 2 -ci {{files}}"
+    }
+
+    ["shellcheck"] = Builtins.shellcheck
+}
+
+local config = new Mapping<String, Step> {
+    ["check-json"] = Builtins.jq
+    ["check-yaml"] = Builtins.yamllint
+    ["tombi-format"] = Builtins.tombi_format
+    ["tombi"] = Builtins.tombi
+}
+
+local vcs = new Mapping<String, Step> {
     ["check-added-large-files"] = (Builtins.check_added_large_files) {
         check = "hk util check-added-large-files --maxkb 500 {{files}}"
     }
+
     ["check-case-conflict"] = Builtins.check_case_conflict
     ["check-executables-have-shebangs"] = Builtins.check_executables_have_shebangs
     ["check-merge-conflict"] = Builtins.check_merge_conflict
     ["check-symlinks"] = Builtins.check_symlinks
-    ["end-of-file-fixer"] = Builtins.newlines
-    ["trailing-whitespace"] = Builtins.trailing_whitespace
-    ["mixed-line-ending"] = Builtins.mixed_line_ending
-    ["check-json"] = Builtins.jq
-    ["check-toml"] = Builtins.taplo
-    ["check-yaml"] = Builtins.yamllint
+}
+
+local security = new Mapping<String, Step> {
+    ["detect-private-key"] = Builtins.detect_private_key
+
     ["gitleaks"] = (Builtins.gitleaks) {
         batch = true
         check = "gitleaks dir --redact --verbose --no-banner ."
     }
-    ["shellcheck"] = Builtins.shellcheck
-    ["shfmt"] = (Builtins.shfmt) {
-        check = "shfmt -d -i 2 -ci {{files}}"
-        fix = "shfmt -w -i 2 -ci {{files}}"
-    }
+}
+
+local rust = new Mapping<String, Step> {
     ["cargo-fmt"] = (Builtins.cargo_fmt) {
         check = "rustup run nightly cargo fmt --check --manifest-path {{workspace_indicator}}"
         fix = "rustup run nightly cargo fmt --manifest-path {{workspace_indicator}}"
     }
+
     ["cargo-clippy"] = Builtins.cargo_clippy
+
     ["cargo-test"] {
-        glob = List("**/*.rs")
+        glob = List("**/*.rs", "**/Cargo.toml", "**/Cargo.lock")
+        batch = true
         workspace_indicator = "Cargo.toml"
         check = "cargo test --workspace"
     }
+
     ["cargo-deny"] {
+        glob = List("**/Cargo.toml", "**/Cargo.lock")
         workspace_indicator = "Cargo.toml"
         check = "cargo deny check"
     }
 }
 
+local formatting =
+    hygiene +
+    shell +
+    config +
+    new Mapping<String, Step> {
+        ["cargo-fmt"] = rust["cargo-fmt"]
+    }
+
+local validation =
+    vcs +
+    new Mapping<String, Step> {
+        ["tombi"] = config["tombi"]
+    }
+
+local quality =
+    new Mapping<String, Step> {
+        ["cargo-clippy"] = rust["cargo-clippy"]
+        ["cargo-test"] = rust["cargo-test"]
+        ["cargo-deny"] = rust["cargo-deny"]
+    }
+
 hooks {
     ["pre-commit"] {
         fix = true
         stash = "git"
-        steps = linters
+        steps = formatting + validation
     }
+
+    ["pre-push"] {
+        steps = validation + security + quality
+    }
+
     ["commit-msg"] {
         steps {
             ["conventional-commit"] = (Builtins.check_conventional_commit) {
@@ -53,11 +121,13 @@ hooks {
             }
         }
     }
+
     ["fix"] {
         fix = true
-        steps = linters
+        steps = formatting
     }
+
     ["check"] {
-        steps = linters
+        steps = formatting + validation + security + quality
     }
 }
