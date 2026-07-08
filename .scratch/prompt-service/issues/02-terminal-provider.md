@@ -32,7 +32,7 @@ Relevant skills: `m06-error-handling`, `m11-ecosystem`, `m13-domain-error`.
 
 ## Implementation notes
 
-Branch `feat/terminal-provider` (worktree `.worktrees/prompt-terminal-provider`). File: `src/prompt.rs` (extended). Reflects the final state after an ordering pass and a best-practices review (see Commit history below).
+Branch `feat/terminal-provider` (worktree `.worktrees/prompt-terminal-provider`). File: `src/prompt.rs` (extended). Reflects the final state after an ordering pass, a best-practices review, and a rename (see Commit history below).
 
 - **TTY gate (m13):** `TerminalPromptProvider::text`/`confirm` check `stdin_is_tty()` first. Non-TTY is a *fallback*, not an error — returns `Ok(default)` (empty `String` / `false` when no default), never `Err`. The `inquire` prompt is only constructed on the TTY branch, so scripts/dry-run/CI never hang.
 - **inquire error mapping (m06):** `impl From<inquire::InquireError> for PromptError`. `OperationCanceled | OperationInterrupted | NotTTY -> Interrupted`; `IO -> Io`; `InvalidConfiguration | Custom -> Backend`. `inquire` types never cross the seam — the TTY branch uses `prompt.prompt()?` and the `?` converts via this impl. `NotTTY` is unreachable behind the TTY guard, so it folds into `Interrupted` rather than inventing a message.
@@ -40,7 +40,7 @@ Branch `feat/terminal-provider` (worktree `.worktrees/prompt-terminal-provider`)
 - **Detection (m11):** `stdin_is_tty()` uses `is-terminal`'s `IsTerminal` trait on `std::io::stdin()`, once per call before building the prompt. Do-not-construct-then-fail satisfied.
 - **No interior TTY state:** `TerminalPromptProvider` is a unit struct (`#[derive(Copy, Clone, Debug, Default)]`, Copy-first per derive-ordering) — TTY-ness is computed on demand, never cached, so stdin redirection can differ between calls (tests rely on this).
 - **Send + Sync:** the unit struct trivially satisfies the trait's `Send + Sync` supertrait; guarded by extending `provider_is_send_and_sync` to assert over `TerminalPromptProvider`.
-- **Ordering discipline:** per `docs/refs/rust/best_practices_canonical/08_ordering_discipline.md`, the primary impl (`TerminalPromptProvider`) is ordered above the test fake (`NoPromptProvider`); free helpers (`stdin_is_tty`, `lock`) sit below the impl blocks that use them rather than interrupting a type's impl group.
+- **Ordering discipline:** per `docs/refs/rust/best_practices_canonical/08_ordering_discipline.md`, the primary impl (`TerminalPromptProvider`) is ordered above the preset provider (`PresetPromptProvider`); free helpers (`stdin_is_tty`, `lock`) sit below the impl blocks that use them rather than interrupting a type's impl group.
 - **Docs (err-doc-errors):** both trait `# Errors` sections list all three `PromptError` variants with intra-doc links. `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps` is clean.
 - **Tests:** the 5 `terminal_*` tests skip via `skip_if_tty(name)` — which `eprintln!`s a visible skip notice — instead of a silent `return`, so an interactive local run doesn't report a green pass with nothing asserted. Real TTY paths still can't be automated in CI; under `cargo test`/nextest (CI, mise) stdin is redirected so the fallback branch runs. Test module uses a single `use super::*;` (test-use-super). 3 source-chain tests assert `cancel -> Interrupted`, `IO` preserves `.source()`, and `Custom` preserves `.source()`.
 - **Deps:** added `inquire = "0.9"`, `is-terminal = "0.4"`.
