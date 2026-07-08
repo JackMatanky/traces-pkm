@@ -21,13 +21,11 @@ shfmt = "latest"
 "cargo:cargo-watch" = "latest"
 "cargo:critcmp" = "latest"
 "cargo:wasm-pack" = "latest"
-"cargo:rust-docs-mcp" = "latest"
+"cargo:https://github.com/snowmead/rust-docs-mcp" = { version = "branch:main", crate = "rust-docs-mcp" }
 "cargo:adrs" = { version = "latest", install_env = { RUSTUP_TOOLCHAIN = "nightly" } }
 
 [env]
 HK_MISE = "1"
-# pin default toolchain to stable so nightly isn't used unless explicitly requested via +nightly
-RUSTUP_TOOLCHAIN = "stable"
 ADR_DIRECTORY = "docs/adr/"
 
 [tasks.check]
