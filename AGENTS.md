@@ -96,13 +96,14 @@ This project is indexed by GitNexus as **traces-pkm** (7 symbols, 2 relationship
 
 This project uses **rust-docs-mcp** for querying Rust crate documentation, source code, dependencies, and module structure. All tools are prefixed with `rust-docs_`.
 
-> First cache a crate (`cache_crate_from_cratesio`) before querying it. For workspace crates, specify the `member` parameter (e.g., `crates/rmcp`).
+> First cache a crate (`cache_crate`) before querying it. For workspace crates, specify the `member` parameter (e.g., `crates/rmcp`).
 
 ## Always Do
 
+- **Prefer `rust-docs_*` over web search** for any Rust crate documentation, API, or dependency question. Cache the crate first, then query locally.
 - **Start with `structure`** to get a high-level overview of a crate's module hierarchy.
 - **Use `search_items_preview` first** for name searches (returns id, name, kind) — avoids token limits. Then drill into specific items with `get_item_details`.
-- **Cache from local path** (`cache_crate_from_local`) for workspace-local crates to analyze this project's own source.
+- **Cache from local path** (`cache_crate` with `source_type: "local"`) for workspace-local crates to analyze this project's own source.
 - **Use `get_item_source`** to view actual implementation code with configurable context lines.
 
 ## Common Workflows
@@ -120,9 +121,8 @@ This project uses **rust-docs-mcp** for querying Rust crate documentation, sourc
 
 | Tool | Use for |
 |------|---------|
-| `cache_crate_from_cratesio` | Download & cache a crate from crates.io |
-| `cache_crate_from_github` | Cache from a GitHub repo (branch or tag) |
-| `cache_crate_from_local` | Cache from local filesystem path |
+| `cache_crate` | Download & cache a crate (source_type: cratesio, github, local) |
+| `cache_operations` | List, monitor, cancel background caching tasks |
 | `structure` | Module tree visualization (cargo-modules) |
 | `list_crate_items` | Browse all items in a crate (with kind/path filters) |
 | `search_items_preview` | Search by name — lightweight (id, name, kind only) |
