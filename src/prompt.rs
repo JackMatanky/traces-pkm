@@ -385,6 +385,7 @@ mod tests {
     fn inquire_cancel_maps_to_interrupted() {
         let mapped =
             PromptError::from(inquire::InquireError::OperationCanceled);
+
         assert!(matches!(mapped, PromptError::Interrupted));
     }
 
@@ -392,10 +393,13 @@ mod tests {
     fn inquire_io_preserves_source_chain() {
         use std::error::Error as _;
         let io = std::io::Error::other("boom");
+
         let mapped = PromptError::from(inquire::InquireError::IO(io));
-        // `Io` carries the underlying io::Error as its source.
-        assert!(mapped.source().is_some());
+
+        // `Io` carries the underlying io::Error, message intact, as its source.
         assert!(matches!(mapped, PromptError::Io(_)));
+        let source = mapped.source().expect("Io should expose a source");
+        assert!(source.to_string().contains("boom"));
     }
 
     #[test]
@@ -403,7 +407,9 @@ mod tests {
         use std::error::Error as _;
         let inner: Box<dyn std::error::Error + Send + Sync> =
             "validator failed".into();
+
         let mapped = PromptError::from(inquire::InquireError::Custom(inner));
+
         // `Backend` keeps the backend error walkable without naming `inquire`.
         let source = mapped.source().expect("Backend should expose a source");
         assert_eq!(source.to_string(), "validator failed");
