@@ -11,11 +11,22 @@ version = "0.1.0"
 edition = "2024"
 license = "MIT"
 description = "Personal knowledge management traces"
+repository = "https://github.com/JackMatanky/traces-pkm"
+readme = "README.md"
+keywords = ["pkm", "templates", "notes"]
+categories = ["command-line-utilities", "development-tools"]
 
 [dependencies]
+dirs = "6.0.0"
 inquire = "0.9"
 is-terminal = "0.4"
+miette = { version = "7.6.0", features = ["derive"] }
+serde = { version = "1.0.228", features = ["derive"] }
 thiserror = "2"
+toml = "0.9.2"
+
+[dev-dependencies]
+tempfile = "3.20.0"
 
 [lints.clippy]
 # ------------------------------------------------------------- #
