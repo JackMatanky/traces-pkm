@@ -4,7 +4,7 @@ Status: done
 
 ## Parent
 
-`.scratch/prompt-service/PRD.md`
+`.scratch/prompt-service/spec.md`
 
 ## What to build
 
@@ -54,4 +54,4 @@ Branch `feat/terminal-provider` (worktree `.worktrees/prompt-terminal-provider`)
 - `680f703` refactor: order `TerminalPromptProvider` above `NoPromptProvider`.
 - `535cdbb` fix: preserve error source chain (`Backend` boxed `#[source]`), `NotTTY -> Interrupted`, complete `# Errors` docs, visible test skips, single `use super::*;`, 3 source-chain tests.
 - `2c239de` test: tighten `Io` source-chain assertion, apply AAA spacing.
-- rename: `NoPromptProvider` -> `PresetPromptProvider` (unintuitive "No" prefix; the type serves non-interactive/MCP mode, not just tests). PRD + issue 03 updated to the new name.
+- rename: `NoPromptProvider` -> `PresetPromptProvider` (unintuitive "No" prefix; the type serves non-interactive/MCP mode, not just tests). spec + issue 03 updated to the new name.

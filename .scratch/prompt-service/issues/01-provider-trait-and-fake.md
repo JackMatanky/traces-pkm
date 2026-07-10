@@ -4,7 +4,7 @@ Status: done
 
 ## Parent
 
-`.scratch/prompt-service/PRD.md`
+`.scratch/prompt-service/spec.md`
 
 ## What to build
 

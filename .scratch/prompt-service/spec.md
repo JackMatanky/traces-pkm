@@ -49,6 +49,6 @@ A `PromptProvider` trait (and a `TerminalPromptProvider` implementation wrapping
 
 ## Further Notes
 
-- This is the smallest and most foundational PRD — build first.
+- This is the smallest and most foundational spec — build first.
 - ConfigService's `init` command will use this for interactive config scaffolding.
 - TemplateService's interactive functions (`prompt_text`, `select`, `confirm`, `multi_select`) will delegate to this.

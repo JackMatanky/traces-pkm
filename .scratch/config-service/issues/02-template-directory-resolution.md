@@ -4,7 +4,7 @@ Status: implemented
 
 ## Parent
 
-`.scratch/config-service/PRD.md`
+`.scratch/config-service/spec.md`
 
 ## What to build
 

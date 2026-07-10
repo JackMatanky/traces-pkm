@@ -37,7 +37,7 @@ The `template`/`tmpl` CLI command (and the default `-i` dispatch) wraps this ser
 - **TemplateService** takes a reference to ConfigService (for template directory resolution) and owns a minijinja `Environment` pre-configured with all custom functions.
 - **Template resolution** delegates to ConfigService: exact path → local dir → global dir. Returns the template source as a string plus the directory it came from (for trust checking).
 - **Custom functions** are registered via minijinja's `Environment::add_function`. Each is a Rust closure. Built-in set for MVP:
-  - `prompt_text(label)`, `prompt_text(label, default)` — delegates to PromptProvider (see PromptService PRD).
+  - `prompt_text(label)`, `prompt_text(label, default)` — delegates to PromptProvider (see PromptService spec).
   - `select(label, items)` — delegates to PromptProvider.
   - `confirm(label)` — delegates to PromptProvider.
   - `multi_select(label, items)` — delegates to PromptProvider.
@@ -70,11 +70,11 @@ The `template`/`tmpl` CLI command (and the default `-i` dispatch) wraps this ser
 - WASM/user-loadable functions (post-MVP).
 - Note querying / Dataview-like features (post-MVP).
 - Metadata Menu-style file class schema validation (post-MVP).
-- Config service concerns (config discovery, trust) — delegated to ConfigService PRD.
+- Config service concerns (config discovery, trust) — delegated to ConfigService spec.
 - Shell completions (nice-to-have, post-MVP).
 
 ## Further Notes
 
-- TemplateService depends on PromptProvider (see PromptService PRD) for all interactive functions, and on ConfigService for template directory resolution and trust checking. ConfigService and PromptService should be built before TemplateService.
+- TemplateService depends on PromptProvider (see PromptService spec) for all interactive functions, and on ConfigService for template directory resolution and trust checking. ConfigService and PromptService should be built before TemplateService.
 - Function names (e.g., `set_output(path)`) are provisional and may change as the API stabilizes.
 - The 1287-line reference template in `~/obsidian_vault/00_system/07_templates/42_00_action_item.md` exercises every feature described here and serves as the integration test target.

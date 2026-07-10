@@ -42,7 +42,7 @@ Two CLI commands bootstrap and manage the config:
 - **Config schema** is TOML with a single `[templates]` table. Local config has `directory` (String) and `output_dir` (String, defaults to cwd). Global config has only `directory`. Both optional.
 - **Trust storage** follows the mise pattern from `src/config/tracking.rs`: a symlink (or plain file on Windows) in `~/.local/share/traces/trusted/` named by SHA-256 hash of the canonical directory path, pointing back to the directory.
 - **Template directory resolution**: exact filesystem path → path in local template directory → path in global template directory. First match wins. Multiple matches at the same priority level error with candidates listed.
-- **`init` command** uses `PromptProvider` (see PromptService PRD) to interactively configure `[templates].directory` and `[templates].output_dir`, then writes the config file and creates `.traces/templates/`.
+- **`init` command** uses `PromptProvider` (see PromptService spec) to interactively configure `[templates].directory` and `[templates].output_dir`, then writes the config file and creates `.traces/templates/`.
 - **`trust` command** with no args uses `cwd`. With an arg, trusts that path. `trust list` reads symlinks from the trust store. `trust clean` removes dangling symlinks.
 - **Registry**: `mise` crate config tracking tracking pattern via `config/tracking.rs`.
 - **Error reporting**: miette for rich diagnostics. Untrusted directory errors show the path and suggest `traces trust`. Config parse errors show the TOML parse error with context.
@@ -58,16 +58,16 @@ Two CLI commands bootstrap and manage the config:
 
 ## Out of Scope
 
-- The template rendering pipeline (delegated to TemplateService PRD).
+- The template rendering pipeline (delegated to TemplateService spec).
 - User-defined variables in config (future).
 - Folder templates / template-specific settings (future, per Templater settings).
 - Config file watching or hot-reload.
-- Prompt logic and TTY detection (delegated to PromptService PRD — PromptProvider is a dependency).
+- Prompt logic and TTY detection (delegated to PromptService spec — PromptProvider is a dependency).
 
 ## Further Notes
 
-- `traces init` and `traces trust` are the only two CLI commands in this PRD. The `template` command belongs to the TemplateService PRD.
-- ConfigService depends on PromptProvider (see PromptService PRD) for the `init` command's interactive scaffolding.
+- `traces init` and `traces trust` are the only two CLI commands in this spec. The `template` command belongs to the TemplateService spec.
+- ConfigService depends on PromptProvider (see PromptService spec) for the `init` command's interactive scaffolding.
 - ConfigService is a dependency of TemplateService but can be built and tested independently.
 - The `dirs` crate for XDG directory resolution.
 - The `sha2` crate for directory path hashing in the trust store (or reuse if mise's approach uses a simpler hash).

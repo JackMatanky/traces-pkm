@@ -4,7 +4,7 @@ Status: ready-for-agent
 
 ## Parent
 
-`.scratch/template-service/PRD.md`
+`.scratch/template-service/spec.md`
 
 ## What to build
 
