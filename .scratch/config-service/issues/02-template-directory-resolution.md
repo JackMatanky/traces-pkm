@@ -51,9 +51,17 @@ Relevant skills: `m06-error-handling`, `m05-type-driven`, `m13-domain-error`.
 
 ## Config module refactor design (2026-07-08)
 
-Refactor `src/config.rs` into a `src/config/` module with 7 files using typestate wrappers for discovery and building, and `figment` for config merging.
+### Status
 
-### Module structure
+Accepted (implemented)
+
+### Context
+
+`src/config.rs` grew to 571 lines (400 code + 170 tests) with mixed responsibilities — config file discovery, parsing, type definitions, merging, resolution — all in one file. The discovery pipeline read and parsed config files before trust validation, with no structural enforcement of the pipeline order. The `figment` crate provided a standardised config-merge pipeline.
+
+### Decision
+
+Refactor the single `src/config.rs` into a `src/config/` module with 7 files, using typestate-pattern wrappers for discovery and config building, and `figment` for provider-based merging.
 
 ```
 src/config/
@@ -68,9 +76,11 @@ src/config/
 
 **Visibility:** Only `Config`, `ConfigService`, and `ConfigError` are public from the module root. Everything else is `pub(super)` or private.
 
-### raw.rs
+### File Details
 
-One `RawConfig` for both local and global. No separate `RawGlobalConfig` — `output_dir` in global config is silently accepted (known `Option` field defaulting to `None`) and ignored during merge.
+#### `raw.rs`
+
+One `RawConfig` type shared by both local and global layers. `output_dir` in global config is silently accepted (it is a known `Option` field defaulting to `None`) and ignored during merge — no separate `RawGlobalConfig` type needed.
 
 ```rust
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -88,12 +98,14 @@ struct RawTemplateConfig {
 }
 ```
 
-### candidate.rs
+#### `candidate.rs`
+
+A candidate represents a discovered config file with its origin metadata. No `path` field — `ConfigSource` already carries it.
 
 ```rust
 pub(super) struct CandidateConfigFile {
     root: PathBuf,
-    source: ConfigSource,  // carries path
+    source: ConfigSource,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -104,11 +116,15 @@ pub(super) enum ConfigSource {
 }
 ```
 
-### discovery.rs — Typestate DiscoveryProcessor
+#### `discovery.rs` — Typestate DiscoveryProcessor
 
-States: `Init`, `LocalCollected`, `GlobalCollected`. Transitions consume `self`.
+Three states for the discovery pipeline: `Init`, `LocalCollected`, `GlobalCollected`. Each state transition consumes self and returns the next state. File discovery is separated from file reading — candidates are only file paths and source metadata, not parsed content.
 
 ```rust
+struct Init;
+struct LocalCollected;
+struct GlobalCollected;
+
 struct DiscoveryProcessor<State> {
     anchor: PathBuf,
     candidates: Vec<CandidateConfigFile>,
@@ -121,8 +137,10 @@ impl DiscoveryProcessor<Init> {
 }
 
 impl DiscoveryProcessor<LocalCollected> {
-    fn collect_global(self, global_config_path: Option<&Path>)
-        -> Result<DiscoveryProcessor<GlobalCollected>, DiscoveryError>;
+    fn collect_global(
+        self,
+        global_config_path: Option<&Path>,
+    ) -> Result<DiscoveryProcessor<GlobalCollected>, DiscoveryError>;
 }
 
 impl DiscoveryProcessor<GlobalCollected> {
@@ -130,45 +148,75 @@ impl DiscoveryProcessor<GlobalCollected> {
 }
 ```
 
-Candidates accumulate in priority order (global first, then local) for figment's "last wins" merge. Missing file ≠ error — just adds no candidate. I/O errors (permission, etc.) are `DiscoveryError`.
+- `collect_local` walks up the directory tree from `anchor` looking for `.traces/config.toml`.
+- `collect_global` checks `global_config_path` for `traces/config.toml`.
+- Candidates accumulate in priority order (global first, then local) for figment's "last provider wins" merge.
+- `collect_*` always succeeds in terms of state transition — a missing file is not an error, it just adds no candidate. Actual I/O errors (permission denied, etc.) are `DiscoveryError`.
 
-### builder.rs — Typestate ConfigBuilder
+#### `builder.rs` — Typestate ConfigBuilder
 
-States: `Discovered`, `Tracked`, `Parsed`, `Merged`.
-
-Transitions:
-
-```
-Discovered ──track()──→ Tracked ──parse()──→ Parsed ──merge()──→ Merged ──build()──→ Config
-```
-
-- **`Discovered → Tracked`:** No-op (reserved for trust pipeline).
-- **`Tracked → Parsed`:** Each candidate read into its own figment. `extract_inner("templates.directory")` per file extracts provenance-sensitive values → `local_dir`/`global_dir`.
-- **`Parsed → Merged`:** All per-file figments merged via `.merge()`. Combined figment extracts remaining fields.
-- **`Merged → Config`:** Assembles final `Config`.
-
-### domain.rs
+Five states for the build pipeline. `Tracked` is a no-op pass-through (reserved for future trust validation).
 
 ```rust
+struct Discovered;
+struct Tracked;
+struct Trusted;
+struct Parsed;
+struct Merged;
+
+struct ConfigBuilder<State> {
+    candidates: Box<[CandidateConfigFile]>,
+    state: State,
+}
+```
+
+**State transitions:**
+
+```
+Discovered ──track()──→ Tracked ──trust()──→ Trusted ──parse()──→ Parsed ──merge()──→ Merged ──build()──→ Config
+```
+
+- `Discovered → Tracked → Trusted`: No-op state changes (reserved for trust validation pipeline). Data unchanged.
+- `Trusted → Parsed`: Each candidate is read and parsed into its own `Figment`. The provenance-sensitive field `templates.directory` is extracted from each per-file figment via `extract_inner` to populate `local_dir`/`global_dir`.
+- `Parsed → Merged`: All per-file figments are merged into one combined figment via `.merge()`. The merged figment extracts the remaining config fields.
+- `Merged → Config`: Assembles `Config { root, templates, sources }`.
+
+#### `domain.rs`
+
+```rust
+#[derive(Clone, Debug)]
 pub struct Config {
     root: PathBuf,
     templates: TemplateConfig,
     sources: Box<[ConfigSource]>,
 }
 
+#[derive(Clone, Debug)]
 pub struct TemplateConfig {
     local_dir: Option<PathBuf>,
     global_dir: Option<PathBuf>,
     default_output_dir: PathBuf,
 }
+
+#[derive(Debug, Diagnostic, Error)]
+pub enum ConfigError { ... }
+
+#[derive(Debug, Error)]
+pub(super) enum DiscoveryError { ... }
 ```
 
-`ConfigError` keeps today's `Read { path, source }` and `Parse { path, src, span, source }` variants. `DiscoveryError` covers file-walking errors.
+`TemplateConfig` keeps both `local_dir` and `global_dir` separately. Resolution (try local first, fall back to global) is the caller's concern.
 
-### service.rs
+`ConfigError` carries the same variants as today: `Read { path, source }` and `Parse { path, src, span, source }`.
+
+`DiscoveryError` covers file-walking errors (I/O not related to reading/parsing a specific config file).
+
+#### `service.rs`
+
+No internal state — `ConfigService` is a stateless coordinator. The global config path is discovered internally, not stored.
 
 ```rust
-pub struct ConfigService;  // stateless
+pub struct ConfigService;
 
 impl ConfigService {
     pub fn discover(&self, cwd: &Path) -> Result<Box<[CandidateConfigFile]>, DiscoveryError>;
@@ -177,21 +225,45 @@ impl ConfigService {
 }
 ```
 
-No stored `global_config_path` — discovery handles it internally.
+- `discover()` delegates to `DiscoveryProcessor<Init>::new(cwd).collect_local()?.collect_global(...)?.finish()`
+- `build()` delegates to `ConfigBuilder::new(candidates).track().trust().parse()?.merge()?.build()`
+- `load()` is `self.discover(cwd).and_then(|c| self.build(c))`
 
-### Figment roles
+### Figment Integration
 
-1. **Per-file** (`Parsed` state): Each candidate → separate figment → `extract_inner("templates.directory")` for provenance data.
-2. **Merged** (`Merged` state): All figments chained via `.merge()` → extract full `RawConfig` for remaining fields.
+Figment serves two roles:
 
-Replaces manual `toml::from_str` + `merge_raw`. `toml` dependency is replaced by figment's `toml` feature.
+1. **Per-file parsing** (in `Parsed` state): Each candidate config file is read into its own `Figment`. `extract_inner("templates.directory")` on each yields the provenance-sensitive value, which populates `local_dir`/`global_dir` on the final `TemplateConfig`.
+
+2. **Merged extraction** (in `Merged` state): All per-file figments are chained via `.merge()` (global first, then local — later wins). The merged figment extracts the full `RawConfig`, providing the remaining fields (especially `templates.output_dir`).
+
+This replaces the manual `toml::from_str` + custom `merge_raw` logic with a standardised provider pipeline. The `toml` crate dependency is replaced by figment's `toml` feature.
 
 ### Consequences
 
-- Pipeline stages compiler-enforced — can't parse before discover, can't build before merge.
-- Tracked/Trusted placeholders ready for trust validation.
-- More code (typestate wrappers, PhantomData, state markers).
-- New `figment` dependency (~68 KB).
+- **Positive:** File names as documentation — the module structure tells the story by itself.
+- **Positive:** Pipeline stages are compiler-enforced — you cannot parse before discovering, or build before merging.
+- **Positive:** Tracked/Trusted states are placeholders ready for trust validation when needed.
+- **Positive:** Figment unifies config parsing, error reporting, and merge into one API.
+- **Negative:** More total code (typestate wrappers, PhantomData, state marker types).
+- **Negative:** New `figment` dependency (~68 KB).
+- **Negative:** Existing test suite needs restructuring to match new file layout.
+
+## Implementation plan (9 tasks)
+
+All tasks completed on branch `config-02-template-resolution`, merged to `main` at `790562d`.
+
+- [x] **Task 1:** Add figment dependency + Serialize on RawConfig
+- [x] **Task 2:** Create module skeleton and raw.rs + candidate.rs
+- [x] **Task 3:** Implement domain.rs (Config, TemplateConfig, ConfigError, DiscoveryError)
+- [x] **Task 4:** Implement discovery.rs (DiscoveryProcessor typestate with Init/LocalCollected/GlobalCollected)
+- [x] **Task 5:** Implement builder.rs (ConfigBuilder typestate with Disocvered/Tracked/Trusted/Parsed/Merged, figment merge)
+- [x] **Task 6:** Implement service.rs (ConfigService entry point)
+- [x] **Task 7:** Move resolve_template from old config.rs, wire up lib.rs
+- [x] **Task 8:** Finalize tests — move resolution tests, run full suite
+- [x] **Task 9:** Remove old config.rs, verify full CI (check + test + clippy)
+
+Full implementation details (per-task code blocks, intermediate steps, test code): see `docs/superpowers/plans/2026-07-08-config-module-refactor.md`.
 
 ## Blocked by
 
