@@ -18,6 +18,7 @@ use super::{
     discovery::DiscoveryOutcome,
     domain::{Config, TemplateConfig},
     raw::RawConfig,
+    tracker::ConfigTracker,
 };
 
 /// Errors that can occur during config building (parsing, merging).
@@ -71,9 +72,22 @@ impl<'a> ConfigBuilder<'a, Discovered> {
         }
     }
 
-    /// Mark candidates as inspected (no-op — reserved for future validation).
+    /// Records each candidate config path in the tracking store.
+    ///
+    /// Best-effort: tracking is bookkeeping, not a precondition for loading
+    /// a config, so a store write failure is logged via `tracing::warn!` and
+    /// skipped rather than propagated.
     #[inline]
     pub(super) fn track(self) -> ConfigBuilder<'a, Tracked> {
+        for candidate in self.local.iter().chain(self.global) {
+            if let Err(error) = ConfigTracker::track(candidate.path()) {
+                tracing::warn!(
+                    path = %candidate.path().display(),
+                    %error,
+                    "failed to record tracked config"
+                );
+            }
+        }
         ConfigBuilder {
             cwd: self.cwd,
             local: self.local,
@@ -195,9 +209,7 @@ mod tests {
         reason = "test code uses direct assertions and temp-file setup"
     )]
 
-    use std::fs;
-
-    use std::path::Path;
+    use std::{fs, path::Path};
 
     use super::*;
     use crate::config::candidate::{CandidateConfigFile, ConfigSource};
@@ -288,14 +300,10 @@ mod tests {
             "directory = \"templates\"\noutput_dir = \"notes\"",
         )?;
 
-        let config = build(
-            cwd,
-            Vec::new(),
-            vec![CandidateConfigFile::new(
-                global_root.clone(),
-                ConfigSource::Global(global_path.clone()),
-            )],
-        )?;
+        let config = build(cwd, Vec::new(), vec![CandidateConfigFile::new(
+            global_root.clone(),
+            ConfigSource::Global(global_path.clone()),
+        )])?;
 
         assert_eq!(config.local_template_dir(), None);
         assert_eq!(
@@ -346,13 +354,10 @@ mod tests {
             Some(global_root.join("templates").as_path())
         );
         assert_eq!(config.output_dir(), Path::new("notes"));
-        assert_eq!(
-            config.sources(),
-            &[
-                ConfigSource::Global(global_path),
-                ConfigSource::Local(local_path)
-            ]
-        );
+        assert_eq!(config.sources(), &[
+            ConfigSource::Global(global_path),
+            ConfigSource::Local(local_path)
+        ]);
         Ok(())
     }
 
@@ -434,4 +439,15 @@ mod tests {
         );
         Ok(())
     }
+
+    // `track()`'s signature — `fn track(self) -> ConfigBuilder<'a, Tracked>`,
+    // no `Result` — is itself the guarantee that a tracking store failure
+    // can never fail config loading: there's no error variant to propagate.
+    // ConfigTracker's own fallibility (and idempotency, listing, cleaning)
+    // is covered directly in `tracker::tests` against an explicit temp
+    // root. `track()` here calls `ConfigTracker::track`, which hard-wires
+    // to `paths::TRACKED_CONFIGS` (like mise's `Tracker::track` hard-wiring
+    // to `dirs::TRACKED_CONFIGS`) — not an injected field — so it isn't
+    // separately exercised against a redirected root; every test above
+    // already runs `.track()` as part of the normal build chain.
 }

@@ -1,12 +1,13 @@
 //! Two-phase config loading: [`discover`](ConfigService::discover) collects
 //! candidate files, [`build`](ConfigService::build) reads and merges them.
+//! `build` also records loaded candidates in the config tracking store as a
+//! best-effort side effect (see [`super::tracker`]).
 
 use std::path::Path;
 
 use super::{
     builder::{ConfigBuilder, Discovered},
-    discovery::DiscoveryProcessor,
-    discovery::{DiscoveryError, DiscoveryOutcome},
+    discovery::{DiscoveryError, DiscoveryOutcome, DiscoveryProcessor},
     domain::{Config, ConfigError},
 };
 
@@ -48,6 +49,10 @@ impl ConfigService {
     }
 
     /// Builds a [`Config`] from discovered candidates.
+    ///
+    /// Loaded candidates are recorded in the config tracking store as a
+    /// best-effort side effect; a tracking store write failure does not fail
+    /// the build.
     ///
     /// # Errors
     ///
