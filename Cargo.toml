@@ -9,53 +9,53 @@
 name = "traces-pkm"
 version = "0.1.0"
 edition = "2024"
-license = "MIT"
 description = "Personal knowledge management traces"
-repository = "https://github.com/JackMatanky/traces-pkm"
 readme = "README.md"
-keywords = ["pkm", "templates", "notes"]
+repository = "https://github.com/JackMatanky/traces-pkm"
+license = "MIT"
+keywords = ["notes", "pkm", "templates"]
 categories = ["command-line-utilities", "development-tools"]
 
 [dependencies]
 dirs = "6.0.0"
+figment = { version = "0.10", features = ["toml"] }
 inquire = "0.9"
 is-terminal = "0.4"
 miette = { version = "7.6.0", features = ["derive"] }
 serde = { version = "1.0.228", features = ["derive"] }
 thiserror = "2"
-toml = "0.9.2"
 
 [dev-dependencies]
 tempfile = "3.20.0"
 
 [lints.clippy]
+cargo = { level = "warn", priority = -1 }
 # ------------------------------------------------------------- #
 #                        Lint Categories                        #
 # ------------------------------------------------------------- #
 complexity = { level = "deny", priority = -1 }
-perf = { level = "deny", priority = -1 }
 pedantic = { level = "warn", priority = -1 }
-cargo = { level = "warn", priority = -1 }
+perf = { level = "deny", priority = -1 }
 
+absolute_paths = "allow"
+implicit_return = "allow"
+min_ident_chars = "allow"
+missing_docs_in_private_items = "allow"
+mod_module_files = "allow"
 # ------------------------------------------------------------- #
 #              Allowed (Exceptions & Relaxations)               #
 # ------------------------------------------------------------- #
 multiple_crate_versions = "allow"
-absolute_paths = "allow"
+print_stderr = "allow"
 pub_with_shorthand = "allow"
-semicolon_inside_block = "allow"
-unseparated_literal_suffix = "allow"
-mod_module_files = "allow"
-std_instead_of_alloc = "allow"
-std_instead_of_core = "allow"
-implicit_return = "allow"
 question_mark_used = "allow"
+semicolon_inside_block = "allow"
 shadow_reuse = "allow"
 shadow_same = "allow"
 single_call_fn = "allow"
-min_ident_chars = "allow"
-missing_docs_in_private_items = "allow"
-print_stderr = "allow"
+std_instead_of_alloc = "allow"
+std_instead_of_core = "allow"
+unseparated_literal_suffix = "allow"
 
 # ------------------------------------------------------------- #
 #            Warnings (Best Practices & Suggestions)            #
@@ -66,32 +66,32 @@ format_push_string = "warn"
 impl_trait_in_params = "warn"
 missing_inline_in_public_items = "warn"
 
-# ------------------------------------------------------------- #
-#                 Denials (Strict Enforcements)                 #
-# ------------------------------------------------------------- #
-exit = "deny"
-expect_used = "deny"
-panic = "deny"
-panic_in_result_fn = "deny"
-todo = "deny"
-unimplemented = "deny"
-unreachable = "deny"
-unwrap_used = "deny"
-missing_errors_doc = "deny"
-missing_panics_doc = "deny"
-undocumented_unsafe_blocks = "deny"
-fn_params_excessive_bools = "deny"
-large_types_passed_by_value = "deny"
-struct_excessive_bools = "deny"
-too_many_lines = "deny"
-unused_self = "deny"
 allow_attributes_without_reason = "deny"
 arithmetic_side_effects = "deny"
 as_pointer_underscore = "deny"
 as_underscore = "deny"
 dbg_macro = "deny"
 disallowed_methods = "deny"
+# ------------------------------------------------------------- #
+#                 Denials (Strict Enforcements)                 #
+# ------------------------------------------------------------- #
+exit = "deny"
+expect_used = "deny"
+fn_params_excessive_bools = "deny"
 indexing_slicing = "deny"
+large_types_passed_by_value = "deny"
+missing_errors_doc = "deny"
+missing_panics_doc = "deny"
+panic = "deny"
+panic_in_result_fn = "deny"
 print_stdout = "deny"
 shadow_unrelated = "deny"
 str_to_string = "deny"
+struct_excessive_bools = "deny"
+todo = "deny"
+too_many_lines = "deny"
+undocumented_unsafe_blocks = "deny"
+unimplemented = "deny"
+unreachable = "deny"
+unused_self = "deny"
+unwrap_used = "deny"
