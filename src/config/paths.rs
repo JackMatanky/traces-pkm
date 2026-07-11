@@ -9,7 +9,7 @@
 use std::{path::PathBuf, sync::LazyLock};
 
 /// The config tracking store root, under the XDG state dir.
-pub(crate) static TRACKED_CONFIGS: LazyLock<PathBuf> =
+pub(super) static TRACKED_CONFIGS: LazyLock<PathBuf> =
     LazyLock::new(|| state_root().join("tracked-configs"));
 
 /// The trust store root, under the XDG state dir.
@@ -23,7 +23,7 @@ pub(crate) static TRACKED_CONFIGS: LazyLock<PathBuf> =
     reason = "consumed by the trust store (issue 04); this root constant is \
               requested by issue 03's key interfaces"
 )]
-pub(crate) static TRUSTED_CONFIGS: LazyLock<PathBuf> =
+pub(super) static TRUSTED_CONFIGS: LazyLock<PathBuf> =
     LazyLock::new(|| state_root().join("trusted-configs"));
 
 /// Under test, redirect to the OS temp dir rather than the real state dir —

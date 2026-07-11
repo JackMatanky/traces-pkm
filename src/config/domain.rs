@@ -8,8 +8,6 @@ use std::{
 use miette::Diagnostic;
 use thiserror::Error;
 
-use super::candidate::ConfigSource;
-
 /// A resolved template file with its source directory.
 ///
 /// Carries both the path to the file and which template directory it came
@@ -55,23 +53,16 @@ pub struct Config {
     root: PathBuf,
     /// Template directories and output path from merged config.
     templates: TemplateConfig,
-    /// Ordered sources that contributed to this config.
-    sources: Box<[ConfigSource]>,
 }
 
 impl Config {
     /// Creates a resolved config from builder-owned parts.
     #[inline]
     #[must_use]
-    pub(super) fn new(
-        root: PathBuf,
-        templates: TemplateConfig,
-        sources: Box<[ConfigSource]>,
-    ) -> Self {
+    pub(super) fn new(root: PathBuf, templates: TemplateConfig) -> Self {
         Self {
             root,
             templates,
-            sources,
         }
     }
 
@@ -82,39 +73,25 @@ impl Config {
         &self.root
     }
 
-    /// Template directories and output path from merged config.
-    #[inline]
-    #[must_use]
-    pub fn templates(&self) -> &TemplateConfig {
-        &self.templates
-    }
-
     /// The local template directory, if set.
     #[inline]
     #[must_use]
     pub fn local_template_dir(&self) -> Option<&Path> {
-        self.templates.local_dir.as_deref()
+        self.templates.local.as_deref()
     }
 
     /// The global template directory, if set.
     #[inline]
     #[must_use]
     pub fn global_template_dir(&self) -> Option<&Path> {
-        self.templates.global_dir.as_deref()
+        self.templates.global.as_deref()
     }
 
     /// The configured output path, or [`root`](Self::root) when not configured.
     #[inline]
     #[must_use]
     pub fn output_dir(&self) -> &Path {
-        &self.templates.default_output_dir
-    }
-
-    /// Ordered list of sources that contributed to this config.
-    #[inline]
-    #[must_use]
-    pub fn sources(&self) -> &[ConfigSource] {
-        &self.sources
+        &self.templates.output
     }
 
     /// Resolve a template name in priority order.
@@ -259,16 +236,16 @@ fn matching_files_in_dir(dir: &Path, name: &Path) -> Vec<PathBuf> {
 
 /// Template directories and output path from merged config.
 ///
-/// Keeps both `local_dir` and `global_dir` separately. Resolution (try local
+/// Keeps local and global directories separately. Resolution (try local
 /// first, fall back to global) is handled by [`Config::resolve_template`].
 #[derive(Clone, Debug)]
-pub struct TemplateConfig {
+pub(super) struct TemplateConfig {
     /// Local project template directory (from `.traces/config.toml`).
-    pub local_dir: Option<PathBuf>,
+    pub(super) local: Option<PathBuf>,
     /// Global template directory (from `~/.config/traces/config.toml`).
-    pub global_dir: Option<PathBuf>,
+    pub(super) global: Option<PathBuf>,
     /// Configured `output_dir`, or the config root when absent.
-    pub default_output_dir: PathBuf,
+    pub(super) output: PathBuf,
 }
 
 use super::builder::ConfigBuilderError;
@@ -306,11 +283,10 @@ mod tests {
         Config::new(
             root.clone(),
             TemplateConfig {
-                local_dir,
-                global_dir,
-                default_output_dir: root,
+                local: local_dir,
+                global: global_dir,
+                output: root,
             },
-            Box::new([]),
         )
     }
 

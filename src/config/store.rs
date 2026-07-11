@@ -17,7 +17,7 @@ use thiserror::Error;
 
 /// Errors from [`ConfigFileStore`] operations.
 #[derive(Debug, Diagnostic, Error)]
-pub(crate) enum StoreError {
+pub(super) enum StoreError {
     /// The recorded path could not be canonicalized.
     #[error("failed to canonicalize path {path}")]
     #[diagnostic(code(traces::config::store::canonicalize))]
@@ -41,7 +41,7 @@ pub(crate) enum StoreError {
 }
 
 /// Records, lists, and cleans one hash-keyed config file store at a time.
-pub(crate) struct ConfigFileStore;
+pub(super) struct ConfigFileStore;
 
 impl ConfigFileStore {
     /// Records `target`'s canonical path under `root`.
@@ -58,7 +58,7 @@ impl ConfigFileStore {
         reason = "canonicalize-then-hash is the strictly-necessary path \
                   resolution this lint carves out an exception for"
     )]
-    pub(crate) fn record(root: &Path, target: &Path) -> Result<(), StoreError> {
+    pub(super) fn record(root: &Path, target: &Path) -> Result<(), StoreError> {
         let canonical = fs::canonicalize(target).map_err(|source| {
             StoreError::Canonicalize {
                 path: target.to_path_buf(),
@@ -98,7 +98,7 @@ impl ConfigFileStore {
     ///
     /// Returns [`StoreError`] when `root` exists but cannot be read.
     #[inline]
-    pub(crate) fn list_all(root: &Path) -> Result<Vec<PathBuf>, StoreError> {
+    pub(super) fn list_all(root: &Path) -> Result<Vec<PathBuf>, StoreError> {
         if !root.is_dir() {
             return Ok(Vec::new());
         }
@@ -127,7 +127,7 @@ impl ConfigFileStore {
     /// Returns [`StoreError`] when `root` exists but cannot be read, or a
     /// stale entry cannot be removed.
     #[inline]
-    pub(crate) fn clean(root: &Path) -> Result<usize, StoreError> {
+    pub(super) fn clean(root: &Path) -> Result<usize, StoreError> {
         if !root.is_dir() {
             return Ok(0);
         }

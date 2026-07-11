@@ -8,14 +8,11 @@
 //! connecting `ConfigService::discover` to `ConfigService::build`.
 
 pub use builder::ConfigBuilderError;
-pub use candidate::{CandidateConfigFile, ConfigSource};
 pub use discovery::{DiscoveryError, DiscoveryOutcome};
-pub use domain::{
-    Config, ConfigError, ResolutionError, ResolvedTemplate, TemplateConfig,
-};
+pub use domain::{Config, ConfigError, ResolutionError, ResolvedTemplate};
 pub use service::ConfigService;
 
-pub(crate) mod builder;
+mod builder;
 mod candidate;
 mod discovery;
 mod domain;
@@ -23,4 +20,4 @@ mod paths;
 mod raw;
 mod service;
 mod store;
-pub(crate) mod tracker;
+mod tracker;

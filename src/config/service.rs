@@ -105,7 +105,6 @@ mod tests {
 
         assert_eq!(config.root(), cwd.as_path());
         assert_eq!(config.output_dir(), cwd.as_path());
-        assert!(config.sources().is_empty());
         Ok(())
     }
 }

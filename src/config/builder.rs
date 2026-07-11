@@ -158,14 +158,6 @@ impl<'a> ConfigBuilder<'a, Trusted> {
             .and_then(|r| r.output_dir().map(Path::to_path_buf))
             .unwrap_or_else(|| root.clone());
 
-        let sources = self
-            .global
-            .iter()
-            .chain(self.local)
-            .map(|candidate| candidate.source().clone())
-            .collect::<Vec<_>>()
-            .into_boxed_slice();
-
         Ok(ConfigBuilder {
             cwd: self.cwd,
             local: self.local,
@@ -174,11 +166,10 @@ impl<'a> ConfigBuilder<'a, Trusted> {
                 config: Config::new(
                     root,
                     TemplateConfig {
-                        local_dir,
-                        global_dir,
-                        default_output_dir: output,
+                        local: local_dir,
+                        global: global_dir,
+                        output,
                     },
-                    sources,
                 ),
             },
         })
@@ -264,7 +255,6 @@ mod tests {
         );
         assert_eq!(config.global_template_dir(), None);
         assert_eq!(config.output_dir(), Path::new("notes"));
-        assert_eq!(config.sources(), &[ConfigSource::Local(path)]);
         Ok(())
     }
 
@@ -289,7 +279,6 @@ mod tests {
 
         assert_eq!(config.root(), root.as_path());
         assert_eq!(config.output_dir(), root.as_path());
-        assert_eq!(config.sources(), &[ConfigSource::Local(path)]);
         Ok(())
     }
 
@@ -320,7 +309,6 @@ mod tests {
             Some(global_root.join("templates").as_path())
         );
         assert_eq!(config.output_dir(), Path::new("notes"));
-        assert_eq!(config.sources(), &[ConfigSource::Global(global_path)]);
         Ok(())
     }
 
@@ -363,13 +351,6 @@ mod tests {
             Some(global_root.join("templates").as_path())
         );
         assert_eq!(config.output_dir(), Path::new("notes"));
-        assert_eq!(
-            config.sources(),
-            &[
-                ConfigSource::Global(global_path),
-                ConfigSource::Local(local_path)
-            ]
-        );
         Ok(())
     }
 
@@ -420,7 +401,6 @@ mod tests {
         assert_eq!(config.local_template_dir(), None);
         assert_eq!(config.global_template_dir(), None);
         assert_eq!(config.output_dir(), cwd.as_path());
-        assert!(config.sources().is_empty());
         Ok(())
     }
 

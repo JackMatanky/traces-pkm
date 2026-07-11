@@ -70,29 +70,22 @@ impl DiscoveryOutcome {
     /// The working directory used during discovery.
     #[inline]
     #[must_use]
-    pub fn cwd(&self) -> &Path {
+    pub(super) fn cwd(&self) -> &Path {
         &self.cwd
     }
 
     /// Local config candidates found during discovery (empty if none).
     #[inline]
     #[must_use]
-    pub fn local(&self) -> &[CandidateConfigFile] {
+    pub(super) fn local(&self) -> &[CandidateConfigFile] {
         &self.local
     }
 
     /// Global config candidates found during discovery (empty if none).
     #[inline]
     #[must_use]
-    pub fn global(&self) -> &[CandidateConfigFile] {
+    pub(super) fn global(&self) -> &[CandidateConfigFile] {
         &self.global
-    }
-
-    /// Whether any local config was discovered.
-    #[inline]
-    #[must_use]
-    pub fn has_local(&self) -> bool {
-        !self.local.is_empty()
     }
 }
 

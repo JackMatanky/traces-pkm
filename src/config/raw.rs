@@ -10,9 +10,9 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct RawConfig {
-    pub(super) directory: Option<PathBuf>,
+    directory: Option<PathBuf>,
     #[serde(default)]
-    pub(super) output_dir: Option<PathBuf>,
+    output_dir: Option<PathBuf>,
 }
 
 impl RawConfig {

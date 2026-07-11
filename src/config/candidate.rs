@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 /// intentionally private; callers pass it through unchanged rather than
 /// inspect or construct it.
 #[derive(Clone, Debug)]
-pub struct CandidateConfigFile {
+pub(super) struct CandidateConfigFile {
     root: PathBuf,
     source: ConfigSource,
 }
@@ -27,21 +27,22 @@ impl CandidateConfigFile {
     /// The local project root or global config parent directory.
     #[inline]
     #[must_use]
-    pub fn root(&self) -> &Path {
+    pub(super) fn root(&self) -> &Path {
         &self.root
     }
 
     /// Origin of this config file.
     #[inline]
     #[must_use]
-    pub fn source(&self) -> &ConfigSource {
+    #[cfg(test)]
+    pub(super) fn source(&self) -> &ConfigSource {
         &self.source
     }
 
     /// Path to the config file on disk.
     #[inline]
     #[must_use]
-    pub fn path(&self) -> &Path {
+    pub(super) fn path(&self) -> &Path {
         match &self.source {
             ConfigSource::Local(path) | ConfigSource::Global(path) => path,
         }
@@ -50,7 +51,7 @@ impl CandidateConfigFile {
 
 /// Origin of a discovered config candidate.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum ConfigSource {
+pub(super) enum ConfigSource {
     /// Discovered at a local `.traces/config.toml`.
     Local(PathBuf),
     /// Discovered at the user's global config file.

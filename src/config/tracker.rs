@@ -13,7 +13,7 @@ use super::{
 /// Thin adapter over [`ConfigFileStore`] that fixes the store root to
 /// [`paths::TRACKED_CONFIGS`]. A namespace, not a value: there is no
 /// per-instance state.
-pub(crate) struct ConfigTracker;
+pub(super) struct ConfigTracker;
 
 impl ConfigTracker {
     /// Records `target`'s canonical path in the tracked-config store.
@@ -25,7 +25,7 @@ impl ConfigTracker {
     /// Returns [`StoreError`] when `target` cannot be canonicalized, the store
     /// root cannot be created, or the entry cannot be written.
     #[inline]
-    pub(crate) fn track(target: &Path) -> Result<(), StoreError> {
+    pub(super) fn track(target: &Path) -> Result<(), StoreError> {
         ConfigFileStore::record(&paths::TRACKED_CONFIGS, target)
     }
 
@@ -43,7 +43,7 @@ impl ConfigTracker {
                   acceptance criteria as the programmatic capability, ahead \
                   of the CLI/cross-project surface that consumes it"
     )]
-    pub(crate) fn list_all() -> Result<Vec<std::path::PathBuf>, StoreError> {
+    pub(super) fn list_all() -> Result<Vec<std::path::PathBuf>, StoreError> {
         ConfigFileStore::list_all(&paths::TRACKED_CONFIGS)
     }
 
@@ -61,7 +61,7 @@ impl ConfigTracker {
                   acceptance criteria as the programmatic capability, ahead \
                   of the CLI/cross-project surface that consumes it"
     )]
-    pub(crate) fn clean() -> Result<usize, StoreError> {
+    pub(super) fn clean() -> Result<usize, StoreError> {
         ConfigFileStore::clean(&paths::TRACKED_CONFIGS)
     }
 }
