@@ -265,14 +265,6 @@ pub enum ConfigError {
 
 #[cfg(test)]
 mod tests {
-    #![allow(
-        clippy::panic_in_result_fn,
-        clippy::unreachable,
-        clippy::unwrap_used,
-        reason = "test code uses assert/panic patterns that are denied in \
-                  production"
-    )]
-
     use super::*;
 
     fn config_with_dirs(
@@ -290,18 +282,27 @@ mod tests {
         )
     }
 
-    fn write_file(dir: &Path, name: &str) -> PathBuf {
+    fn write_file(
+        dir: &Path,
+        name: &str,
+    ) -> Result<PathBuf, Box<dyn std::error::Error>> {
         let path = dir.join(name);
-        fs::create_dir_all(path.parent().unwrap()).unwrap();
-        fs::write(&path, "content").unwrap();
-        path
+        fs::create_dir_all(
+            path.parent().ok_or("template path has no parent")?,
+        )?;
+        fs::write(&path, "content")?;
+        Ok(path)
     }
 
     #[test]
+    #[allow(
+        clippy::panic_in_result_fn,
+        reason = "tests use assertions plus ? for fallible temp-file setup"
+    )]
     fn exact_absolute_path_resolves_directly()
     -> Result<(), Box<dyn std::error::Error>> {
         let temp = tempfile::tempdir()?;
-        let file = write_file(temp.path(), "my-template.md");
+        let file = write_file(temp.path(), "my-template.md")?;
         let config = config_with_dirs(temp.path().to_path_buf(), None, None);
 
         let resolved = config.resolve_template(&file)?;
@@ -312,10 +313,14 @@ mod tests {
     }
 
     #[test]
+    #[allow(
+        clippy::panic_in_result_fn,
+        reason = "tests use assertions plus ? for fallible temp-file setup"
+    )]
     fn exact_relative_path_resolves_from_root()
     -> Result<(), Box<dyn std::error::Error>> {
         let temp = tempfile::tempdir()?;
-        let file = write_file(temp.path(), "daily.md");
+        let file = write_file(temp.path(), "daily.md")?;
         let config = config_with_dirs(temp.path().to_path_buf(), None, None);
 
         let resolved = config.resolve_template(Path::new("daily.md"))?;
@@ -326,12 +331,16 @@ mod tests {
     }
 
     #[test]
+    #[allow(
+        clippy::panic_in_result_fn,
+        reason = "tests use assertions plus ? for fallible temp-file setup"
+    )]
     fn exact_path_takes_priority_over_local_directory()
     -> Result<(), Box<dyn std::error::Error>> {
         let temp = tempfile::tempdir()?;
-        let exact_file = write_file(temp.path(), "report.md");
+        let exact_file = write_file(temp.path(), "report.md")?;
         let local_dir = temp.path().join("local-templates");
-        write_file(&local_dir, "report.md");
+        write_file(&local_dir, "report.md")?;
         let config =
             config_with_dirs(temp.path().to_path_buf(), Some(local_dir), None);
 
@@ -342,11 +351,15 @@ mod tests {
     }
 
     #[test]
+    #[allow(
+        clippy::panic_in_result_fn,
+        reason = "tests use assertions plus ? for fallible temp-file setup"
+    )]
     fn resolves_template_from_local_directory()
     -> Result<(), Box<dyn std::error::Error>> {
         let temp = tempfile::tempdir()?;
         let local_dir = temp.path().join("local-templates");
-        let file = write_file(&local_dir, "daily");
+        let file = write_file(&local_dir, "daily")?;
         let config = config_with_dirs(
             temp.path().to_path_buf(),
             Some(local_dir.clone()),
@@ -361,11 +374,15 @@ mod tests {
     }
 
     #[test]
+    #[allow(
+        clippy::panic_in_result_fn,
+        reason = "tests use assertions plus ? for fallible temp-file setup"
+    )]
     fn resolves_extension_bearing_template_from_local_directory()
     -> Result<(), Box<dyn std::error::Error>> {
         let temp = tempfile::tempdir()?;
         let local_dir = temp.path().join("local-templates");
-        let file = write_file(&local_dir, "daily.md");
+        let file = write_file(&local_dir, "daily.md")?;
         let config = config_with_dirs(
             temp.path().to_path_buf(),
             Some(local_dir.clone()),
@@ -380,11 +397,15 @@ mod tests {
     }
 
     #[test]
+    #[allow(
+        clippy::panic_in_result_fn,
+        reason = "tests use assertions plus ? for fallible temp-file setup"
+    )]
     fn resolves_nested_template_from_local_directory()
     -> Result<(), Box<dyn std::error::Error>> {
         let temp = tempfile::tempdir()?;
         let local_dir = temp.path().join("local-templates");
-        let file = write_file(&local_dir, "folder/daily.md");
+        let file = write_file(&local_dir, "folder/daily.md")?;
         let config = config_with_dirs(
             temp.path().to_path_buf(),
             Some(local_dir.clone()),
@@ -399,13 +420,17 @@ mod tests {
     }
 
     #[test]
+    #[allow(
+        clippy::panic_in_result_fn,
+        reason = "tests use assertions plus ? for fallible temp-file setup"
+    )]
     fn resolves_template_from_global_directory_when_not_in_local()
     -> Result<(), Box<dyn std::error::Error>> {
         let temp = tempfile::tempdir()?;
         let local_dir = temp.path().join("local-templates");
         fs::create_dir_all(&local_dir)?;
         let global_dir = temp.path().join("global-templates");
-        let file = write_file(&global_dir, "daily");
+        let file = write_file(&global_dir, "daily")?;
         let config = config_with_dirs(
             temp.path().to_path_buf(),
             Some(local_dir),
@@ -420,13 +445,17 @@ mod tests {
     }
 
     #[test]
+    #[allow(
+        clippy::panic_in_result_fn,
+        reason = "tests use assertions plus ? for fallible temp-file setup"
+    )]
     fn local_template_overrides_global()
     -> Result<(), Box<dyn std::error::Error>> {
         let temp = tempfile::tempdir()?;
         let local_dir = temp.path().join("local-templates");
-        let local_file = write_file(&local_dir, "daily");
+        let local_file = write_file(&local_dir, "daily")?;
         let global_dir = temp.path().join("global-templates");
-        write_file(&global_dir, "daily");
+        write_file(&global_dir, "daily")?;
         let config = config_with_dirs(
             temp.path().to_path_buf(),
             Some(local_dir),
@@ -440,6 +469,10 @@ mod tests {
     }
 
     #[test]
+    #[allow(
+        clippy::panic_in_result_fn,
+        reason = "tests use assertions plus ? for fallible temp-file setup"
+    )]
     fn ambiguous_template_returns_error_with_candidates()
     -> Result<(), Box<dyn std::error::Error>> {
         let temp = tempfile::tempdir()?;
@@ -454,25 +487,28 @@ mod tests {
             .resolve_template(Path::new("daily"))
             .expect_err("ambiguous match should fail");
 
-        assert!(matches!(err, ResolutionError::AmbiguousTemplate { .. }));
         let ResolutionError::AmbiguousTemplate {
             candidates,
             ..
         } = &err
         else {
-            unreachable!();
+            return Err("expected ambiguous template error".into());
         };
         assert_eq!(candidates.lines().count(), 2);
         Ok(())
     }
 
     #[test]
+    #[allow(
+        clippy::panic_in_result_fn,
+        reason = "tests use assertions plus ? for fallible temp-file setup"
+    )]
     fn matching_files_ignores_directories()
     -> Result<(), Box<dyn std::error::Error>> {
         let temp = tempfile::tempdir()?;
         let local_dir = temp.path().join("templates");
         fs::create_dir_all(local_dir.join("daily"))?;
-        let file = write_file(&local_dir, "daily.md");
+        let file = write_file(&local_dir, "daily.md")?;
         let config =
             config_with_dirs(temp.path().to_path_buf(), Some(local_dir), None);
 
@@ -483,6 +519,10 @@ mod tests {
     }
 
     #[test]
+    #[allow(
+        clippy::panic_in_result_fn,
+        reason = "tests use assertions plus ? for fallible temp-file setup"
+    )]
     fn template_dir_direct_lookup_rejects_parent_components()
     -> Result<(), Box<dyn std::error::Error>> {
         let temp = tempfile::tempdir()?;
@@ -503,6 +543,10 @@ mod tests {
     }
 
     #[test]
+    #[allow(
+        clippy::panic_in_result_fn,
+        reason = "tests use assertions plus ? for fallible temp-file setup"
+    )]
     fn template_not_found_returns_error_with_searched_directories()
     -> Result<(), Box<dyn std::error::Error>> {
         let temp = tempfile::tempdir()?;
@@ -520,13 +564,12 @@ mod tests {
             .resolve_template(Path::new("nonexistent"))
             .expect_err("not found should fail");
 
-        assert!(matches!(err, ResolutionError::TemplateNotFound { .. }));
         let ResolutionError::TemplateNotFound {
             directories_searched,
             ..
         } = &err
         else {
-            unreachable!();
+            return Err("expected template-not-found error".into());
         };
         assert_eq!(
             directories_searched.as_str(),
@@ -536,6 +579,10 @@ mod tests {
     }
 
     #[test]
+    #[allow(
+        clippy::panic_in_result_fn,
+        reason = "tests use assertions plus ? for fallible temp-file setup"
+    )]
     fn same_local_and_global_directory_is_searched_once()
     -> Result<(), Box<dyn std::error::Error>> {
         let temp = tempfile::tempdir()?;
@@ -556,7 +603,7 @@ mod tests {
             ..
         } = err
         else {
-            unreachable!();
+            return Err("expected template-not-found error".into());
         };
         assert_eq!(directories_searched, dir.display().to_string());
         Ok(())

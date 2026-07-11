@@ -198,13 +198,6 @@ impl ConfigBuilder<'_, Merged> {
 
 #[cfg(test)]
 mod tests {
-    #![allow(
-        clippy::indexing_slicing,
-        clippy::panic_in_result_fn,
-        clippy::unwrap_used,
-        reason = "test code uses direct assertions and temp-file setup"
-    )]
-
     use std::{fs, path::Path};
 
     use super::*;
@@ -229,6 +222,10 @@ mod tests {
     }
 
     #[test]
+    #[allow(
+        clippy::panic_in_result_fn,
+        reason = "tests use assertions plus ? for fallible temp-file setup"
+    )]
     fn local_only_builds_local_template_dir_and_output_dir_relative_to_project_root()
     -> Result<(), Box<dyn std::error::Error>> {
         let temp = tempfile::tempdir()?;
@@ -259,6 +256,10 @@ mod tests {
     }
 
     #[test]
+    #[allow(
+        clippy::panic_in_result_fn,
+        reason = "tests use assertions plus ? for fallible temp-file setup"
+    )]
     fn local_without_output_dir_uses_root_as_output_dir()
     -> Result<(), Box<dyn std::error::Error>> {
         let temp = tempfile::tempdir()?;
@@ -283,6 +284,10 @@ mod tests {
     }
 
     #[test]
+    #[allow(
+        clippy::panic_in_result_fn,
+        reason = "tests use assertions plus ? for fallible temp-file setup"
+    )]
     fn global_only_sets_global_dir_and_output_from_global()
     -> Result<(), Box<dyn std::error::Error>> {
         let temp = tempfile::tempdir()?;
@@ -313,6 +318,10 @@ mod tests {
     }
 
     #[test]
+    #[allow(
+        clippy::panic_in_result_fn,
+        reason = "tests use assertions plus ? for fallible temp-file setup"
+    )]
     fn local_and_global_keep_dirs_separately_and_local_output_wins()
     -> Result<(), Box<dyn std::error::Error>> {
         let temp = tempfile::tempdir()?;
@@ -355,6 +364,10 @@ mod tests {
     }
 
     #[test]
+    #[allow(
+        clippy::panic_in_result_fn,
+        reason = "tests use assertions plus ? for fallible temp-file setup"
+    )]
     fn merge_applies_global_then_local_regardless_of_candidate_order()
     -> Result<(), Box<dyn std::error::Error>> {
         let temp = tempfile::tempdir()?;
@@ -390,6 +403,10 @@ mod tests {
     }
 
     #[test]
+    #[allow(
+        clippy::panic_in_result_fn,
+        reason = "tests use assertions plus ? for fallible temp-file setup"
+    )]
     fn no_real_configs_uses_cwd_as_root_and_output_dir()
     -> Result<(), Box<dyn std::error::Error>> {
         let temp = tempfile::tempdir()?;
@@ -405,6 +422,10 @@ mod tests {
     }
 
     #[test]
+    #[allow(
+        clippy::panic_in_result_fn,
+        reason = "tests use assertions plus ? for fallible temp-file setup"
+    )]
     fn invalid_toml_returns_load_error()
     -> Result<(), Box<dyn std::error::Error>> {
         let temp = tempfile::tempdir()?;

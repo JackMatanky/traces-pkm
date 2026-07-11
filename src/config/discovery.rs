@@ -228,18 +228,15 @@ fn is_config_file(path: &Path) -> Result<bool, DiscoveryError> {
 
 #[cfg(test)]
 mod tests {
-    #![allow(
-        clippy::indexing_slicing,
-        clippy::panic_in_result_fn,
-        clippy::unwrap_used,
-        reason = "test code uses direct assertions and temp-file setup"
-    )]
-
     use std::fs;
 
     use super::*;
 
     #[test]
+    #[allow(
+        clippy::panic_in_result_fn,
+        reason = "tests use assertions plus ? for fallible temp-file setup"
+    )]
     fn is_config_file_returns_false_for_missing_path()
     -> Result<(), Box<dyn std::error::Error>> {
         let temp = tempfile::tempdir()?;
@@ -248,6 +245,10 @@ mod tests {
     }
 
     #[test]
+    #[allow(
+        clippy::panic_in_result_fn,
+        reason = "tests use assertions plus ? for fallible temp-file setup"
+    )]
     fn init_to_local_collected_no_local_found_is_error()
     -> Result<(), Box<dyn std::error::Error>> {
         let temp = tempfile::tempdir()?;
@@ -259,6 +260,10 @@ mod tests {
     }
 
     #[test]
+    #[allow(
+        clippy::panic_in_result_fn,
+        reason = "tests use assertions plus ? for fallible temp-file setup"
+    )]
     fn collect_local_finds_config_in_ancestor()
     -> Result<(), Box<dyn std::error::Error>> {
         let temp = tempfile::tempdir()?;
@@ -271,14 +276,20 @@ mod tests {
 
         let proc = DiscoveryProcessor::new(&cwd).collect_local()?;
 
-        assert_eq!(proc.local.len(), 1);
-        assert_eq!(proc.local[0].root(), project);
-        assert_eq!(proc.local[0].source(), &ConfigSource::Local(config_path));
+        let [local] = proc.local.as_slice() else {
+            return Err("expected exactly one local config".into());
+        };
+        assert_eq!(local.root(), project);
+        assert_eq!(local.source(), &ConfigSource::Local(config_path));
         assert!(proc.global.is_empty());
         Ok(())
     }
 
     #[test]
+    #[allow(
+        clippy::panic_in_result_fn,
+        reason = "tests use assertions plus ? for fallible temp-file setup"
+    )]
     fn finish_returns_empty_outcome() -> Result<(), Box<dyn std::error::Error>>
     {
         let temp = tempfile::tempdir()?;
@@ -301,6 +312,10 @@ mod tests {
     }
 
     #[test]
+    #[allow(
+        clippy::panic_in_result_fn,
+        reason = "tests use assertions plus ? for fallible temp-file setup"
+    )]
     fn finish_returns_cwd_when_local_config_found()
     -> Result<(), Box<dyn std::error::Error>> {
         let temp = tempfile::tempdir()?;
@@ -317,12 +332,11 @@ mod tests {
             .finish();
 
         assert_eq!(discovered.cwd(), cwd);
-        assert_eq!(discovered.local().len(), 1);
-        assert_eq!(discovered.local()[0].root(), project);
-        assert_eq!(
-            discovered.local()[0].source(),
-            &ConfigSource::Local(local_path)
-        );
+        let [local] = discovered.local() else {
+            return Err("expected exactly one local config".into());
+        };
+        assert_eq!(local.root(), project);
+        assert_eq!(local.source(), &ConfigSource::Local(local_path));
         assert!(discovered.global().is_empty());
         Ok(())
     }

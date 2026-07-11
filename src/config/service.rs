@@ -73,13 +73,6 @@ impl ConfigService {
 
 #[cfg(test)]
 mod tests {
-    #![allow(
-        clippy::indexing_slicing,
-        clippy::panic_in_result_fn,
-        clippy::unwrap_used,
-        reason = "test code uses direct assertions and temp-file setup"
-    )]
-
     use std::fs;
 
     use super::*;
@@ -93,6 +86,10 @@ mod tests {
     }
 
     #[test]
+    #[allow(
+        clippy::panic_in_result_fn,
+        reason = "tests use assertions plus ? for fallible temp-file setup"
+    )]
     fn build_default_candidate_returns_default_config()
     -> Result<(), Box<dyn std::error::Error>> {
         let temp = tempfile::tempdir()?;

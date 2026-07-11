@@ -179,18 +179,15 @@ fn hash_path(path: &Path) -> String {
 
 #[cfg(test)]
 mod tests {
-    #![allow(
-        clippy::indexing_slicing,
-        clippy::panic_in_result_fn,
-        clippy::unwrap_used,
-        reason = "test code uses direct assertions and temp-file setup"
-    )]
-
     use std::fs;
 
     use super::*;
 
     #[test]
+    #[allow(
+        clippy::panic_in_result_fn,
+        reason = "tests use assertions plus ? for fallible temp-file setup"
+    )]
     fn record_creates_an_entry() -> Result<(), Box<dyn std::error::Error>> {
         let temp = tempfile::tempdir()?;
         let target = temp.path().join("config.toml");
@@ -207,6 +204,10 @@ mod tests {
     }
 
     #[test]
+    #[allow(
+        clippy::panic_in_result_fn,
+        reason = "tests use assertions plus ? for fallible temp-file setup"
+    )]
     fn re_recording_the_same_path_is_idempotent()
     -> Result<(), Box<dyn std::error::Error>> {
         let temp = tempfile::tempdir()?;
@@ -222,6 +223,10 @@ mod tests {
     }
 
     #[test]
+    #[allow(
+        clippy::panic_in_result_fn,
+        reason = "tests use assertions plus ? for fallible temp-file setup"
+    )]
     fn re_recording_after_target_deleted_and_recreated_is_idempotent()
     -> Result<(), Box<dyn std::error::Error>> {
         let temp = tempfile::tempdir()?;
@@ -243,6 +248,10 @@ mod tests {
     }
 
     #[test]
+    #[allow(
+        clippy::panic_in_result_fn,
+        reason = "tests use assertions plus ? for fallible temp-file setup"
+    )]
     fn list_all_omits_entries_whose_target_was_deleted()
     -> Result<(), Box<dyn std::error::Error>> {
         let temp = tempfile::tempdir()?;
@@ -263,6 +272,10 @@ mod tests {
     }
 
     #[test]
+    #[allow(
+        clippy::panic_in_result_fn,
+        reason = "tests use assertions plus ? for fallible temp-file setup"
+    )]
     fn clean_prunes_stale_entries_and_reports_the_count()
     -> Result<(), Box<dyn std::error::Error>> {
         let temp = tempfile::tempdir()?;
@@ -286,6 +299,10 @@ mod tests {
     }
 
     #[test]
+    #[allow(
+        clippy::panic_in_result_fn,
+        reason = "tests use assertions plus ? for fallible temp-file setup"
+    )]
     fn list_all_on_a_store_with_no_entries_yet_is_empty()
     -> Result<(), Box<dyn std::error::Error>> {
         let temp = tempfile::tempdir()?;
@@ -296,6 +313,10 @@ mod tests {
     }
 
     #[test]
+    #[allow(
+        clippy::panic_in_result_fn,
+        reason = "tests use assertions plus ? for fallible temp-file setup"
+    )]
     fn clean_on_a_store_with_no_entries_yet_removes_nothing()
     -> Result<(), Box<dyn std::error::Error>> {
         let temp = tempfile::tempdir()?;
@@ -306,6 +327,10 @@ mod tests {
     }
 
     #[test]
+    #[allow(
+        clippy::panic_in_result_fn,
+        reason = "tests use assertions plus ? for fallible temp-file setup"
+    )]
     fn record_of_a_nonexistent_target_errors()
     -> Result<(), Box<dyn std::error::Error>> {
         let temp = tempfile::tempdir()?;
@@ -320,6 +345,10 @@ mod tests {
     }
 
     #[test]
+    #[allow(
+        clippy::panic_in_result_fn,
+        reason = "tests use assertions plus ? for fallible temp-file setup"
+    )]
     fn record_when_store_root_is_a_file_errors_with_io()
     -> Result<(), Box<dyn std::error::Error>> {
         let temp = tempfile::tempdir()?;
