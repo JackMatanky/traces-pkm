@@ -16,8 +16,8 @@ pub(crate) static TRACKED_CONFIGS: LazyLock<PathBuf> =
 ///
 /// Not yet consumed within this crate — reserved for the trust store
 /// (issue 04). Whether trust reuses
-/// [`ConfigTracker`](super::tracker::ConfigTracker) with this root or needs its
-/// own logic is an issue-04 decision, not this one.
+/// [`ConfigFileStore`](super::store::ConfigFileStore) with this root or needs
+/// its own logic is an issue-04 decision, not this one.
 #[allow(
     dead_code,
     reason = "consumed by the trust store (issue 04); this root constant is \

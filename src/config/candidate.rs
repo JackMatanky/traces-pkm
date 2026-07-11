@@ -24,7 +24,7 @@ impl CandidateConfigFile {
         }
     }
 
-    /// The project root or global config parent directory.
+    /// The local project root or global config parent directory.
     #[inline]
     #[must_use]
     pub fn root(&self) -> &Path {
@@ -38,7 +38,7 @@ impl CandidateConfigFile {
         &self.source
     }
 
-    /// Absolute path to the config file on disk.
+    /// Path to the config file on disk.
     #[inline]
     #[must_use]
     pub fn path(&self) -> &Path {
@@ -48,11 +48,11 @@ impl CandidateConfigFile {
     }
 }
 
-/// Origin of a discovered configuration.
+/// Origin of a discovered config candidate.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ConfigSource {
-    /// Loaded from a local `.traces/config.toml`.
+    /// Discovered at a local `.traces/config.toml`.
     Local(PathBuf),
-    /// Loaded from the user's global config file.
+    /// Discovered at the user's global config file.
     Global(PathBuf),
 }

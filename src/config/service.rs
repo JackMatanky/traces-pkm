@@ -1,7 +1,6 @@
-//! Two-phase config loading: [`discover`](ConfigService::discover) collects
-//! candidate files, [`build`](ConfigService::build) reads and merges them.
-//! `build` also records loaded candidates in the config tracking store as a
-//! best-effort side effect (see [`super::tracker`]).
+//! Two-phase config loading: [`discover`](ConfigService::discover) finds
+//! candidate files, [`build`](ConfigService::build) records, reads, and merges
+//! them. Tracking is best-effort bookkeeping (see [`super::tracker`]).
 
 use std::path::Path;
 
@@ -13,12 +12,12 @@ use super::{
 
 /// Entry point for discovering and building configuration.
 ///
-/// Stateless coordinator that separates file discovery from parsing, merging,
-/// and resolution.
+/// Stateless coordinator that separates file discovery from tracking, parsing,
+/// merging, and resolution.
 /// Loading is a two-step pipeline: call [`ConfigService::discover`] with the
 /// working directory to collect candidate config files, then pass those
 /// candidates to [`ConfigService::build`] to read, parse, and merge them. This
-/// keeps filesystem discovery separate from the trust/build stages.
+/// keeps filesystem discovery separate from the tracking/build stages.
 #[derive(Clone, Debug, Default)]
 pub struct ConfigService;
 
@@ -30,13 +29,15 @@ impl ConfigService {
         Self
     }
 
-    /// Discovers config files relative to `cwd`.
+    /// Discovers config files from `cwd`.
     ///
-    /// Returns real config files plus the invocation cwd.
+    /// Returns discovered config files plus the invocation cwd. The local
+    /// project config is required; the global config is optional.
     ///
     /// # Errors
     ///
-    /// Returns an error when a path cannot be accessed during discovery.
+    /// Returns an error when local config is absent or when a path cannot be
+    /// accessed during discovery.
     #[inline]
     pub fn discover(
         &self,
@@ -50,9 +51,9 @@ impl ConfigService {
 
     /// Builds a [`Config`] from discovered candidates.
     ///
-    /// Loaded candidates are recorded in the config tracking store as a
-    /// best-effort side effect; a tracking store write failure does not fail
-    /// the build.
+    /// Candidate paths are recorded in the config tracking store before they
+    /// are read. This is a best-effort side effect; a tracking store write
+    /// failure does not fail the build.
     ///
     /// # Errors
     ///

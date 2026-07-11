@@ -2,7 +2,7 @@
 //!
 //! Walks up the directory tree from a cwd path, collecting candidate
 //! config files before any reading or parsing occurs. Produces a
-//! [`DiscoveryOutcome`] token consumed by [`ConfigBuilder`](super::builder::ConfigBuilder).
+//! [`DiscoveryOutcome`] token consumed by [`ConfigService::build`](super::ConfigService::build).
 
 use std::{
     marker::PhantomData,
@@ -39,7 +39,7 @@ pub enum DiscoveryError {
     },
 }
 
-/// Opaque discovery result consumed by [`ConfigBuilder`](super::builder::ConfigBuilder).
+/// Opaque discovery result consumed by [`ConfigService::build`](super::ConfigService::build).
 ///
 /// Carries the invocation cwd plus the local and global candidate files
 /// that were found on disk. Fields are private — callers pass this token
@@ -110,7 +110,8 @@ pub(super) struct GlobalCollected;
 ///
 /// Transitions: `Init` -> `LocalCollected` -> `GlobalCollected`.
 /// Each `collect_*` method consumes `self` and returns the next state.
-/// Missing files are not errors; they simply add no candidate.
+/// Missing global config is not an error; missing local config is reported so
+/// callers can distinguish "no project config" from filesystem access errors.
 #[derive(Debug)]
 pub(super) struct DiscoveryProcessor<State> {
     cwd: PathBuf,

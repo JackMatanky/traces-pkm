@@ -38,11 +38,11 @@ pub enum ConfigBuilderError {
 
 /// Discovery outcome has been handed to the builder.
 pub(super) struct Discovered;
-/// Candidate paths have been recorded in the tracking store.
+/// Candidate paths have passed the best-effort tracking step.
 pub(super) struct Tracked;
-/// Tracked candidates are trusted for read-and-parse.
+/// Candidates have passed the placeholder trust stage.
 pub(super) struct Trusted;
-/// Config files have been read, merged, and resolved.
+/// Config files have been read and merged into a `Config`.
 pub(super) struct Merged {
     config: Config,
 }
@@ -72,7 +72,7 @@ impl<'a> ConfigBuilder<'a, Discovered> {
         }
     }
 
-    /// Records each candidate config path in the tracking store.
+    /// Attempts to record each candidate config path in the tracking store.
     ///
     /// Best-effort: tracking is bookkeeping, not a precondition for loading
     /// a config, so a store write failure is logged via `tracing::warn!` and
@@ -99,7 +99,10 @@ impl<'a> ConfigBuilder<'a, Discovered> {
 }
 
 impl<'a> ConfigBuilder<'a, Tracked> {
-    /// Authorise the builder to read candidate files from disk.
+    /// Pass through the placeholder trust stage.
+    ///
+    /// Issue 04 owns real trust decisions; for now this transition exists to
+    /// keep the pipeline shape explicit without changing behavior.
     #[inline]
     pub(super) fn trust(self) -> ConfigBuilder<'a, Trusted> {
         ConfigBuilder {
@@ -112,10 +115,11 @@ impl<'a> ConfigBuilder<'a, Tracked> {
 }
 
 impl<'a> ConfigBuilder<'a, Trusted> {
-    /// Read each candidate, merge their values, and resolve into a `Config`.
+    /// Read each candidate, merge their values, and build a `Config`.
     ///
-    /// Global providers are merged first, then local — so local values override
-    /// global on conflict.
+    /// Global providers are merged first, then local, so local values override
+    /// global on conflict. Relative template and output paths are preserved;
+    /// consumers resolve them relative to the config root when needed.
     ///
     /// # Errors
     ///
@@ -301,10 +305,14 @@ mod tests {
             "directory = \"templates\"\noutput_dir = \"notes\"",
         )?;
 
-        let config = build(cwd, Vec::new(), vec![CandidateConfigFile::new(
-            global_root.clone(),
-            ConfigSource::Global(global_path.clone()),
-        )])?;
+        let config = build(
+            cwd,
+            Vec::new(),
+            vec![CandidateConfigFile::new(
+                global_root.clone(),
+                ConfigSource::Global(global_path.clone()),
+            )],
+        )?;
 
         assert_eq!(config.local_template_dir(), None);
         assert_eq!(
@@ -355,10 +363,13 @@ mod tests {
             Some(global_root.join("templates").as_path())
         );
         assert_eq!(config.output_dir(), Path::new("notes"));
-        assert_eq!(config.sources(), &[
-            ConfigSource::Global(global_path),
-            ConfigSource::Local(local_path)
-        ]);
+        assert_eq!(
+            config.sources(),
+            &[
+                ConfigSource::Global(global_path),
+                ConfigSource::Local(local_path)
+            ]
+        );
         Ok(())
     }
 

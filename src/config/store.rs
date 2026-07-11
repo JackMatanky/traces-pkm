@@ -1,8 +1,9 @@
 //! Hash-keyed config file store.
 //!
-//! Stores canonical paths as SHA-256-named symlinks (plain files on Windows)
-//! under a caller-provided root. This module owns the cross-platform storage
-//! mechanics; domain modules choose which root to use.
+//! Stores canonical paths as SHA-256-named entries under a caller-provided
+//! root: symlinks on Unix, plain files containing the path on Windows. This
+//! module owns the cross-platform storage mechanics; domain modules choose
+//! which root to use.
 
 use std::{
     fmt::Write as _,
@@ -39,7 +40,7 @@ pub(crate) enum StoreError {
     },
 }
 
-/// Records, lists, and cleans hash-keyed config file stores.
+/// Records, lists, and cleans one hash-keyed config file store at a time.
 pub(crate) struct ConfigFileStore;
 
 impl ConfigFileStore {
@@ -88,9 +89,10 @@ impl ConfigFileStore {
 
     /// Lists the canonical paths of all live entries under `root`.
     ///
-    /// An entry is live when its target still exists on disk. Dangling
-    /// entries are silently omitted. An absent or non-directory `root` is an
-    /// empty list, not an error.
+    /// An entry is live when its target path can be read from the entry and
+    /// still exists on disk. Dangling or unreadable entries are silently
+    /// omitted. An absent or non-directory `root` is an empty list, not an
+    /// error. Ordering follows the filesystem and is not stable.
     ///
     /// # Errors
     ///
@@ -116,8 +118,9 @@ impl ConfigFileStore {
         Ok(targets)
     }
 
-    /// Removes entries under `root` whose target no longer exists. Returns
-    /// the number of entries removed.
+    /// Removes entries under `root` whose target path is unreadable or no
+    /// longer exists. Returns the number of entries removed. An absent or
+    /// non-directory `root` removes nothing.
     ///
     /// # Errors
     ///
@@ -196,9 +199,10 @@ mod tests {
 
         ConfigFileStore::record(&root, &target)?;
 
-        assert_eq!(ConfigFileStore::list_all(&root)?, vec![
-            target.canonicalize()?
-        ]);
+        assert_eq!(
+            ConfigFileStore::list_all(&root)?,
+            vec![target.canonicalize()?]
+        );
         Ok(())
     }
 
@@ -231,9 +235,10 @@ mod tests {
 
         ConfigFileStore::record(&root, &target)?;
 
-        assert_eq!(ConfigFileStore::list_all(&root)?, vec![
-            target.canonicalize()?
-        ]);
+        assert_eq!(
+            ConfigFileStore::list_all(&root)?,
+            vec![target.canonicalize()?]
+        );
         Ok(())
     }
 
@@ -250,9 +255,10 @@ mod tests {
         ConfigFileStore::record(&root, &deleted)?;
         fs::remove_file(&deleted)?;
 
-        assert_eq!(ConfigFileStore::list_all(&root)?, vec![
-            kept.canonicalize()?
-        ]);
+        assert_eq!(
+            ConfigFileStore::list_all(&root)?,
+            vec![kept.canonicalize()?]
+        );
         Ok(())
     }
 
@@ -272,9 +278,10 @@ mod tests {
         let removed = ConfigFileStore::clean(&root)?;
 
         assert_eq!(removed, 1);
-        assert_eq!(ConfigFileStore::list_all(&root)?, vec![
-            kept.canonicalize()?
-        ]);
+        assert_eq!(
+            ConfigFileStore::list_all(&root)?,
+            vec![kept.canonicalize()?]
+        );
         Ok(())
     }
 

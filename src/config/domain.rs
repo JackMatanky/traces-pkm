@@ -48,12 +48,12 @@ pub enum ResolutionError {
     },
 }
 
-/// Fully resolved configuration ready for consumers.
+/// Merged configuration ready for consumers.
 #[derive(Clone, Debug)]
 pub struct Config {
     /// Project root directory.
     root: PathBuf,
-    /// Resolved template directories.
+    /// Template directories and output path from merged config.
     templates: TemplateConfig,
     /// Ordered sources that contributed to this config.
     sources: Box<[ConfigSource]>,
@@ -82,7 +82,7 @@ impl Config {
         &self.root
     }
 
-    /// The resolved template directories.
+    /// Template directories and output path from merged config.
     #[inline]
     #[must_use]
     pub fn templates(&self) -> &TemplateConfig {
@@ -103,8 +103,7 @@ impl Config {
         self.templates.global_dir.as_deref()
     }
 
-    /// The resolved output directory (falls back to [`root`](Self::root) when
-    /// not configured).
+    /// The configured output path, or [`root`](Self::root) when not configured.
     #[inline]
     #[must_use]
     pub fn output_dir(&self) -> &Path {
@@ -121,8 +120,10 @@ impl Config {
     /// Resolve a template name in priority order.
     ///
     /// Resolution follows: exact filesystem path -> local template directory ->
-    /// global template directory. First match wins. Multiple matches at the
-    /// same priority level produce an ambiguous template error.
+    /// global template directory. First match wins. Directory lookup first
+    /// tries `name` directly, then matches files by stem in that directory.
+    /// Multiple stem matches at the same priority level produce an ambiguous
+    /// template error.
     ///
     /// # Errors
     ///
@@ -256,18 +257,17 @@ fn matching_files_in_dir(dir: &Path, name: &Path) -> Vec<PathBuf> {
         .collect()
 }
 
-/// Template directories from resolved config.
+/// Template directories and output path from merged config.
 ///
 /// Keeps both `local_dir` and `global_dir` separately. Resolution (try local
-/// first, fall back to global) is the caller's concern.
+/// first, fall back to global) is handled by [`Config::resolve_template`].
 #[derive(Clone, Debug)]
 pub struct TemplateConfig {
     /// Local project template directory (from `.traces/config.toml`).
     pub local_dir: Option<PathBuf>,
     /// Global template directory (from `~/.config/traces/config.toml`).
     pub global_dir: Option<PathBuf>,
-    /// Default output directory (the cwd at load time, or the configured
-    /// `output_dir`).
+    /// Configured `output_dir`, or the config root when absent.
     pub default_output_dir: PathBuf,
 }
 

@@ -1,10 +1,11 @@
-//! Configuration discovery, loading, and resolution.
+//! Configuration discovery, tracking, loading, and template resolution.
 //!
 //! Discovers config files by walking up the directory tree from a working
-//! directory, merging local `.traces/config.toml` with the user's global
-//! config. Provides the public [`ConfigService`] entry point. The public facade
-//! exposes [`DiscoveryOutcome`] only as the opaque token connecting
-//! `ConfigService::discover` to `ConfigService::build`.
+//! directory. Build records discovered candidates as best-effort tracking,
+//! then merges the user's global config before local `.traces/config.toml` so
+//! local values win. Provides the public [`ConfigService`] entry point plus
+//! read-only config domain types. [`DiscoveryOutcome`] is the opaque token
+//! connecting `ConfigService::discover` to `ConfigService::build`.
 
 pub use builder::ConfigBuilderError;
 pub use candidate::{CandidateConfigFile, ConfigSource};

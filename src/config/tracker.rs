@@ -1,5 +1,5 @@
-//! Config tracking adapter: records config files
-//! [`ConfigService`](super::ConfigService) has loaded, across all projects.
+//! Config tracking adapter: records config file candidates seen by
+//! [`ConfigService`](super::ConfigService), across all projects.
 
 use std::path::Path;
 
@@ -10,8 +10,9 @@ use super::{
 
 /// Records, lists, and cleans the tracked-config store.
 ///
-/// A namespace, not a value — there is no per-instance state (mirrors
-/// mise's `Tracker`, an empty struct grouping associated functions).
+/// Thin adapter over [`ConfigFileStore`] that fixes the store root to
+/// [`paths::TRACKED_CONFIGS`]. A namespace, not a value: there is no
+/// per-instance state.
 pub(crate) struct ConfigTracker;
 
 impl ConfigTracker {
