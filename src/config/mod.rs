@@ -21,4 +21,5 @@ mod domain;
 mod paths;
 mod raw;
 mod service;
+mod store;
 pub(crate) mod tracker;

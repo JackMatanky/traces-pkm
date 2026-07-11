@@ -29,7 +29,7 @@ pub(crate) static TRUSTED_CONFIGS: LazyLock<PathBuf> =
 /// Under test, redirect to the OS temp dir rather than the real state dir —
 /// otherwise every test exercising the `Tracked` builder stage would write
 /// symlinks into the developer's actual `~/.local/state/traces/`. No test
-/// asserts on `TRACKED_CONFIGS`'s contents (`ConfigTracker` is tested
+/// asserts on `TRACKED_CONFIGS`'s contents (`ConfigFileStore` is tested
 /// directly against explicit temp roots), so sharing one scratch location
 /// across test threads is safe.
 #[cfg(test)]

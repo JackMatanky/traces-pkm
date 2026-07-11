@@ -17,7 +17,6 @@ use super::{
     candidate::CandidateConfigFile,
     discovery::DiscoveryOutcome,
     domain::{Config, TemplateConfig},
-    paths,
     raw::RawConfig,
     tracker::ConfigTracker,
 };
@@ -82,9 +81,7 @@ impl<'a> ConfigBuilder<'a, Discovered> {
     #[inline]
     pub(super) fn track(self) -> ConfigBuilder<'a, Tracked> {
         for candidate in self.local.iter().chain(self.global) {
-            if let Err(error) =
-                ConfigTracker::track(&paths::TRACKED_CONFIGS, candidate.path())
-            {
+            if let Err(error) = ConfigTracker::track(candidate.path()) {
                 tracing::warn!(
                     path = %candidate.path().display(),
                     %error,
