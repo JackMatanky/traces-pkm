@@ -21,6 +21,9 @@ Custom functions, output-path control, dry-run, and includes are separate slices
 - [ ] minijinja syntax (conditionals, loops, filters) renders correctly
 - [ ] Rendering from an untrusted source directory is refused with the trust error
 - [ ] Integration tests cover all three invocation forms and the trust refusal — using temp dirs and string templates
+- [ ] Template resolution types and logic currently under `src/config/domain.rs` are moved to the template-service boundary: `ResolvedTemplate`, `ResolutionError`, `Config::resolve_template`, and its helper functions (`one_match`, `searched_directories`, `parent_dir`, `resolve_exact_path`, `direct_template_path`, `is_safe_template_relative_path`, `matching_files_in_dir`)
+- [ ] Config keeps only config loading and resolved settings ownership: `TemplateConfig`, `Config::templates`, `local_template_dir`, `global_template_dir`, and `output_dir` remain usable by template-service without config owning template lookup behavior
+- [ ] Template-directory parsing remains wired from config files: `RawConfig::directory`, `RawConfig::template_directory`, and `ConfigBuilder::merge` continue to populate `TemplateConfig.local_dir` / `global_dir` for template-service to consume
 
 ## Rust guidance
 
@@ -30,6 +33,7 @@ Relevant skills: `domain-cli`, `m11-ecosystem`, `m06-error-handling`, `m01-owner
 - **minijinja ownership (m11/m01):** build one `Environment` and register everything on it. Template source resolved by ConfigService is loaded as an owned `String`; borrow it into `Environment::render_str` or add it as a named template. Keep the `Environment` owned by `TemplateService`.
 - **Trust before render (m06):** resolve → **trust-check the source dir (issue config-03)** → render → write, in that order. A render from an untrusted dir must short-circuit with the trust error *before* any custom function runs (custom functions can read files / prompt). Propagate ConfigService/trust errors up as miette diagnostics; don't `unwrap`.
 - **Default output path:** `./<template-name>.md` is derived from the resolved template's stem, computed at write time — not stored during render (that's issue tmpl-02's concern).
+- **Config boundary cleanup:** Reviewed `src/config/`. Keep discovery/build/parsing plumbing in config (`candidate.rs`, `discovery.rs`, `raw.rs`, `builder.rs`, `service.rs`). Move only template lookup behavior out of `domain.rs`; do not move config-file discovery, config-source tracking, or raw TOML parsing into template-service.
 
 ## Blocked by
 
