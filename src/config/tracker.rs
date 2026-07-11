@@ -3,9 +3,8 @@
 //!
 //! Each recorded path is canonicalized, hashed with SHA-256, and represented
 //! as a symlink (a plain file on Windows) named by the hex-encoded hash under
-//! [`paths::TRACKED_CONFIGS`](super::paths::TRACKED_CONFIGS), pointing back
-//! at the canonical path. Mirrors mise's `config/tracking.rs` `Tracker` —
-//! see ADR 0002.
+//! the caller-provided store root, pointing back at the canonical path. Mirrors
+//! mise's `config/tracking.rs` `Tracker` — see ADR 0002.
 
 use std::{
     fmt::Write as _,
@@ -16,8 +15,6 @@ use std::{
 use miette::Diagnostic;
 use sha2::{Digest, Sha256};
 use thiserror::Error;
-
-use super::paths;
 
 /// Errors from [`ConfigTracker`] operations.
 #[derive(Debug, Diagnostic, Error)]
@@ -47,14 +44,11 @@ pub(crate) enum TrackerError {
 /// Records, lists, and cleans the config tracking store.
 ///
 /// A namespace, not a value — there is no per-instance state (mirrors
-/// mise's `Tracker`, an empty struct grouping associated functions). Every
-/// public method hard-wires to [`paths::TRACKED_CONFIGS`]; the private
-/// `_in`-suffixed methods take an explicit directory and are the seam tests
-/// use directly.
+/// mise's `Tracker`, an empty struct grouping associated functions).
 pub(crate) struct ConfigTracker;
 
 impl ConfigTracker {
-    /// Records `target`'s canonical path in the tracking store.
+    /// Records `target`'s canonical path under `dir`.
     ///
     /// Idempotent: recording an already-tracked path is a no-op.
     ///
@@ -63,58 +57,18 @@ impl ConfigTracker {
     /// Returns [`TrackerError`] when `target` cannot be canonicalized, the
     /// store root cannot be created, or the entry cannot be written.
     #[inline]
-    pub(crate) fn track(target: &Path) -> Result<(), TrackerError> {
-        Self::track_in(&paths::TRACKED_CONFIGS, target)
-    }
-
-    /// Lists the canonical paths of all live entries in the tracking store.
-    ///
-    /// No caller within this crate yet — reserved for the future
-    /// cross-project consumer issue 03 exists to support (e.g. loading
-    /// tracked configs from outside the discovery hierarchy, mirroring
-    /// mise's `Config::get_tracked_config_files`). Kept on `ConfigTracker`,
-    /// not `ConfigService`, per m09/api-design review: nothing in this
-    /// crate consumes it yet, and it belongs with the store, not the
-    /// discover/build coordinator.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`TrackerError`] when the store directory exists but cannot
-    /// be read.
-    #[inline]
     #[allow(
-        dead_code,
-        reason = "no caller yet within this crate; required by issue 03's \
-                  acceptance criteria as the programmatic capability, ahead \
-                  of the CLI/cross-project surface that consumes it"
+        clippy::disallowed_methods,
+        reason = "canonicalize-then-hash is the strictly-necessary path \
+                  resolution this lint carves out an exception for"
     )]
-    pub(crate) fn list_all() -> Result<Vec<PathBuf>, TrackerError> {
-        Self::list_all_in(&paths::TRACKED_CONFIGS)
-    }
-
-    /// Removes dangling entries (target deleted or moved) from the tracking
-    /// store. Returns the number of entries removed.
-    ///
-    /// No caller within this crate yet — see [`Self::list_all`].
-    ///
-    /// # Errors
-    ///
-    /// Returns [`TrackerError`] when the store directory exists but cannot
-    /// be read, or a stale entry cannot be removed.
-    #[inline]
-    #[allow(
-        dead_code,
-        reason = "no caller yet within this crate; required by issue 03's \
-                  acceptance criteria as the programmatic capability, ahead \
-                  of the CLI/cross-project surface that consumes it"
-    )]
-    pub(crate) fn clean() -> Result<usize, TrackerError> {
-        Self::clean_in(&paths::TRACKED_CONFIGS)
-    }
-
-    /// Records `target`'s canonical path as an entry under `dir`.
-    fn track_in(dir: &Path, target: &Path) -> Result<(), TrackerError> {
-        let canonical = canonicalize(target)?;
+    pub(crate) fn track(dir: &Path, target: &Path) -> Result<(), TrackerError> {
+        let canonical = fs::canonicalize(target).map_err(|source| {
+            TrackerError::Canonicalize {
+                path: target.to_path_buf(),
+                source,
+            }
+        })?;
         let entry = dir.join(hash_path(&canonical));
         if entry.exists() {
             return Ok(());
@@ -129,17 +83,28 @@ impl ConfigTracker {
         })
     }
 
-    /// Lists the canonical targets of all live entries under `dir`.
+    /// Lists the canonical paths of all live entries under `dir`.
     ///
     /// An entry is live when its target still exists on disk. Dangling
-    /// entries are silently omitted. An absent `dir` (nothing recorded yet)
-    /// is an empty list, not an error.
-    fn list_all_in(dir: &Path) -> Result<Vec<PathBuf>, TrackerError> {
-        if !dir.exists() {
+    /// entries are silently omitted. An absent or non-directory `dir` is an
+    /// empty list, not an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TrackerError`] when `dir` exists but cannot be read.
+    #[inline]
+    #[allow(
+        dead_code,
+        reason = "no caller yet within this crate; required by issue 03's \
+                  acceptance criteria as the programmatic capability, ahead \
+                  of the CLI/cross-project surface that consumes it"
+    )]
+    pub(crate) fn list_all(dir: &Path) -> Result<Vec<PathBuf>, TrackerError> {
+        if !dir.is_dir() {
             return Ok(Vec::new());
         }
         let mut targets = Vec::new();
-        for entry in read_dir(dir)? {
+        for entry in read_dir_entries(dir)? {
             if let Some(target) = resolve(&entry)
                 && target.exists()
             {
@@ -151,12 +116,24 @@ impl ConfigTracker {
 
     /// Removes entries under `dir` whose target no longer exists. Returns
     /// the number of entries removed.
-    fn clean_in(dir: &Path) -> Result<usize, TrackerError> {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TrackerError`] when `dir` exists but cannot be read, or a
+    /// stale entry cannot be removed.
+    #[inline]
+    #[allow(
+        dead_code,
+        reason = "no caller yet within this crate; required by issue 03's \
+                  acceptance criteria as the programmatic capability, ahead \
+                  of the CLI/cross-project surface that consumes it"
+    )]
+    pub(crate) fn clean(dir: &Path) -> Result<usize, TrackerError> {
         if !dir.is_dir() {
             return Ok(0);
         }
         let mut removed = 0_usize;
-        for entry in read_dir(dir)? {
+        for entry in read_dir_entries(dir)? {
             let live = resolve(&entry).is_some_and(|target| target.exists());
             if live {
                 continue;
@@ -172,7 +149,7 @@ impl ConfigTracker {
 }
 
 /// Reads the entry paths directly under `dir`.
-fn read_dir(dir: &Path) -> Result<Vec<PathBuf>, TrackerError> {
+fn read_dir_entries(dir: &Path) -> Result<Vec<PathBuf>, TrackerError> {
     fs::read_dir(dir)
         .map_err(|source| TrackerError::Io {
             path: dir.to_path_buf(),
@@ -185,18 +162,6 @@ fn read_dir(dir: &Path) -> Result<Vec<PathBuf>, TrackerError> {
             })
         })
         .collect()
-}
-
-#[allow(
-    clippy::disallowed_methods,
-    reason = "canonicalize-then-hash is the strictly-necessary path \
-              resolution this lint carves out an exception for"
-)]
-fn canonicalize(path: &Path) -> Result<PathBuf, TrackerError> {
-    fs::canonicalize(path).map_err(|source| TrackerError::Canonicalize {
-        path: path.to_path_buf(),
-        source,
-    })
 }
 
 fn hash_path(path: &Path) -> String {
@@ -242,17 +207,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn track_in_creates_an_entry() -> Result<(), Box<dyn std::error::Error>> {
+    fn track_creates_an_entry() -> Result<(), Box<dyn std::error::Error>> {
         let temp = tempfile::tempdir()?;
         let target = temp.path().join("config.toml");
         fs::write(&target, "")?;
         let dir = temp.path().join("store");
 
-        ConfigTracker::track_in(&dir, &target)?;
+        ConfigTracker::track(&dir, &target)?;
 
-        assert_eq!(ConfigTracker::list_all_in(&dir)?, vec![
-            target.canonicalize()?
-        ]);
+        assert_eq!(
+            ConfigTracker::list_all(&dir)?,
+            vec![target.canonicalize()?]
+        );
         Ok(())
     }
 
@@ -264,15 +230,36 @@ mod tests {
         fs::write(&target, "")?;
         let dir = temp.path().join("store");
 
-        ConfigTracker::track_in(&dir, &target)?;
-        ConfigTracker::track_in(&dir, &target)?;
+        ConfigTracker::track(&dir, &target)?;
+        ConfigTracker::track(&dir, &target)?;
 
-        assert_eq!(ConfigTracker::list_all_in(&dir)?.len(), 1);
+        assert_eq!(ConfigTracker::list_all(&dir)?.len(), 1);
         Ok(())
     }
 
     #[test]
-    fn list_all_in_omits_entries_whose_target_was_deleted()
+    fn re_tracking_after_target_deleted_and_recreated_is_idempotent()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let temp = tempfile::tempdir()?;
+        let target = temp.path().join("config.toml");
+        fs::write(&target, "")?;
+        let dir = temp.path().join("store");
+
+        ConfigTracker::track(&dir, &target)?;
+        fs::remove_file(&target)?;
+        fs::write(&target, "")?;
+
+        ConfigTracker::track(&dir, &target)?;
+
+        assert_eq!(
+            ConfigTracker::list_all(&dir)?,
+            vec![target.canonicalize()?]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn list_all_omits_entries_whose_target_was_deleted()
     -> Result<(), Box<dyn std::error::Error>> {
         let temp = tempfile::tempdir()?;
         let kept = temp.path().join("kept.toml");
@@ -280,18 +267,16 @@ mod tests {
         fs::write(&kept, "")?;
         fs::write(&deleted, "")?;
         let dir = temp.path().join("store");
-        ConfigTracker::track_in(&dir, &kept)?;
-        ConfigTracker::track_in(&dir, &deleted)?;
+        ConfigTracker::track(&dir, &kept)?;
+        ConfigTracker::track(&dir, &deleted)?;
         fs::remove_file(&deleted)?;
 
-        assert_eq!(ConfigTracker::list_all_in(&dir)?, vec![
-            kept.canonicalize()?
-        ]);
+        assert_eq!(ConfigTracker::list_all(&dir)?, vec![kept.canonicalize()?]);
         Ok(())
     }
 
     #[test]
-    fn clean_in_prunes_stale_entries_and_reports_the_count()
+    fn clean_prunes_stale_entries_and_reports_the_count()
     -> Result<(), Box<dyn std::error::Error>> {
         let temp = tempfile::tempdir()?;
         let kept = temp.path().join("kept.toml");
@@ -299,50 +284,63 @@ mod tests {
         fs::write(&kept, "")?;
         fs::write(&deleted, "")?;
         let dir = temp.path().join("store");
-        ConfigTracker::track_in(&dir, &kept)?;
-        ConfigTracker::track_in(&dir, &deleted)?;
+        ConfigTracker::track(&dir, &kept)?;
+        ConfigTracker::track(&dir, &deleted)?;
         fs::remove_file(&deleted)?;
 
-        let removed = ConfigTracker::clean_in(&dir)?;
+        let removed = ConfigTracker::clean(&dir)?;
 
         assert_eq!(removed, 1);
-        assert_eq!(ConfigTracker::list_all_in(&dir)?, vec![
-            kept.canonicalize()?
-        ]);
+        assert_eq!(ConfigTracker::list_all(&dir)?, vec![kept.canonicalize()?]);
         Ok(())
     }
 
     #[test]
-    fn list_all_in_on_a_store_with_no_entries_yet_is_empty()
+    fn list_all_on_a_store_with_no_entries_yet_is_empty()
     -> Result<(), Box<dyn std::error::Error>> {
         let temp = tempfile::tempdir()?;
         let dir = temp.path().join("store");
 
-        assert!(ConfigTracker::list_all_in(&dir)?.is_empty());
+        assert!(ConfigTracker::list_all(&dir)?.is_empty());
         Ok(())
     }
 
     #[test]
-    fn clean_in_on_a_store_with_no_entries_yet_removes_nothing()
+    fn clean_on_a_store_with_no_entries_yet_removes_nothing()
     -> Result<(), Box<dyn std::error::Error>> {
         let temp = tempfile::tempdir()?;
         let dir = temp.path().join("store");
 
-        assert_eq!(ConfigTracker::clean_in(&dir)?, 0);
+        assert_eq!(ConfigTracker::clean(&dir)?, 0);
         Ok(())
     }
 
     #[test]
-    fn track_in_of_a_nonexistent_target_errors()
+    fn track_of_a_nonexistent_target_errors()
     -> Result<(), Box<dyn std::error::Error>> {
         let temp = tempfile::tempdir()?;
         let dir = temp.path().join("store");
 
-        let err =
-            ConfigTracker::track_in(&dir, &temp.path().join("missing.toml"))
-                .expect_err("canonicalizing a missing path should fail");
+        let err = ConfigTracker::track(&dir, &temp.path().join("missing.toml"))
+            .expect_err("canonicalizing a missing path should fail");
 
         assert!(matches!(err, TrackerError::Canonicalize { .. }));
+        Ok(())
+    }
+
+    #[test]
+    fn track_when_store_root_is_a_file_errors_with_io()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let temp = tempfile::tempdir()?;
+        let target = temp.path().join("config.toml");
+        fs::write(&target, "")?;
+        let dir = temp.path().join("store");
+        fs::write(&dir, "")?;
+
+        let err = ConfigTracker::track(&dir, &target)
+            .expect_err("store root occupied by a file should fail");
+
+        assert!(matches!(err, TrackerError::Io { .. }));
         Ok(())
     }
 }

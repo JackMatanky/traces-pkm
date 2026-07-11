@@ -17,6 +17,7 @@ use super::{
     candidate::CandidateConfigFile,
     discovery::DiscoveryOutcome,
     domain::{Config, TemplateConfig},
+    paths,
     raw::RawConfig,
     tracker::ConfigTracker,
 };
@@ -38,9 +39,9 @@ pub enum ConfigBuilderError {
 
 /// Discovery outcome has been handed to the builder.
 pub(super) struct Discovered;
-/// Candidates have been inspected (existence checked).
+/// Candidate paths have been recorded in the tracking store.
 pub(super) struct Tracked;
-/// Inspected candidates are trusted for read-and-parse.
+/// Tracked candidates are trusted for read-and-parse.
 pub(super) struct Trusted;
 /// Config files have been read, merged, and resolved.
 pub(super) struct Merged {
@@ -76,11 +77,14 @@ impl<'a> ConfigBuilder<'a, Discovered> {
     ///
     /// Best-effort: tracking is bookkeeping, not a precondition for loading
     /// a config, so a store write failure is logged via `tracing::warn!` and
-    /// skipped rather than propagated.
+    /// skipped rather than propagated. This method's no-`Result` signature is
+    /// the guarantee: there is no tracking error variant to propagate.
     #[inline]
     pub(super) fn track(self) -> ConfigBuilder<'a, Tracked> {
         for candidate in self.local.iter().chain(self.global) {
-            if let Err(error) = ConfigTracker::track(candidate.path()) {
+            if let Err(error) =
+                ConfigTracker::track(&paths::TRACKED_CONFIGS, candidate.path())
+            {
                 tracing::warn!(
                     path = %candidate.path().display(),
                     %error,
@@ -439,15 +443,4 @@ mod tests {
         );
         Ok(())
     }
-
-    // `track()`'s signature — `fn track(self) -> ConfigBuilder<'a, Tracked>`,
-    // no `Result` — is itself the guarantee that a tracking store failure
-    // can never fail config loading: there's no error variant to propagate.
-    // ConfigTracker's own fallibility (and idempotency, listing, cleaning)
-    // is covered directly in `tracker::tests` against an explicit temp
-    // root. `track()` here calls `ConfigTracker::track`, which hard-wires
-    // to `paths::TRACKED_CONFIGS` (like mise's `Tracker::track` hard-wiring
-    // to `dirs::TRACKED_CONFIGS`) — not an injected field — so it isn't
-    // separately exercised against a redirected root; every test above
-    // already runs `.track()` as part of the normal build chain.
 }
