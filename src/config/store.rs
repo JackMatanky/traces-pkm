@@ -181,186 +181,141 @@ fn hash_path(path: &Path) -> String {
 mod tests {
     use std::fs;
 
+    use pretty_assertions::assert_eq;
+
     use super::*;
 
     #[test]
-    #[allow(
-        clippy::panic_in_result_fn,
-        reason = "tests use assertions plus ? for fallible temp-file setup"
-    )]
-    fn record_creates_an_entry() -> Result<(), Box<dyn std::error::Error>> {
-        let temp = tempfile::tempdir()?;
+    fn record_creates_an_entry() {
+        let temp = tempfile::tempdir().expect("create temp dir");
         let target = temp.path().join("config.toml");
-        fs::write(&target, "")?;
+        fs::write(&target, "").expect("write config");
         let root = temp.path().join("store");
 
-        ConfigFileStore::record(&root, &target)?;
+        ConfigFileStore::record(&root, &target).expect("record config");
 
         assert_eq!(
-            ConfigFileStore::list_all(&root)?,
-            vec![target.canonicalize()?]
+            ConfigFileStore::list_all(&root).expect("list configs"),
+            vec![target.canonicalize().expect("canonicalize target")]
         );
-        Ok(())
     }
 
     #[test]
-    #[allow(
-        clippy::panic_in_result_fn,
-        reason = "tests use assertions plus ? for fallible temp-file setup"
-    )]
-    fn re_recording_the_same_path_is_idempotent()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let temp = tempfile::tempdir()?;
+    fn re_recording_the_same_path_is_idempotent() {
+        let temp = tempfile::tempdir().expect("create temp dir");
         let target = temp.path().join("config.toml");
-        fs::write(&target, "")?;
+        fs::write(&target, "").expect("write config");
         let root = temp.path().join("store");
 
-        ConfigFileStore::record(&root, &target)?;
-        ConfigFileStore::record(&root, &target)?;
-
-        assert_eq!(ConfigFileStore::list_all(&root)?.len(), 1);
-        Ok(())
-    }
-
-    #[test]
-    #[allow(
-        clippy::panic_in_result_fn,
-        reason = "tests use assertions plus ? for fallible temp-file setup"
-    )]
-    fn re_recording_after_target_deleted_and_recreated_is_idempotent()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let temp = tempfile::tempdir()?;
-        let target = temp.path().join("config.toml");
-        fs::write(&target, "")?;
-        let root = temp.path().join("store");
-
-        ConfigFileStore::record(&root, &target)?;
-        fs::remove_file(&target)?;
-        fs::write(&target, "")?;
-
-        ConfigFileStore::record(&root, &target)?;
+        ConfigFileStore::record(&root, &target).expect("record config");
+        ConfigFileStore::record(&root, &target).expect("record config");
 
         assert_eq!(
-            ConfigFileStore::list_all(&root)?,
-            vec![target.canonicalize()?]
+            ConfigFileStore::list_all(&root).expect("list configs").len(),
+            1
         );
-        Ok(())
     }
 
     #[test]
-    #[allow(
-        clippy::panic_in_result_fn,
-        reason = "tests use assertions plus ? for fallible temp-file setup"
-    )]
-    fn list_all_omits_entries_whose_target_was_deleted()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let temp = tempfile::tempdir()?;
+    fn re_recording_after_target_deleted_and_recreated_is_idempotent() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let target = temp.path().join("config.toml");
+        fs::write(&target, "").expect("write config");
+        let root = temp.path().join("store");
+
+        ConfigFileStore::record(&root, &target).expect("record config");
+        fs::remove_file(&target).expect("remove config");
+        fs::write(&target, "").expect("write config");
+
+        ConfigFileStore::record(&root, &target).expect("record config");
+
+        assert_eq!(
+            ConfigFileStore::list_all(&root).expect("list configs"),
+            vec![target.canonicalize().expect("canonicalize target")]
+        );
+    }
+
+    #[test]
+    fn list_all_omits_entries_whose_target_was_deleted() {
+        let temp = tempfile::tempdir().expect("create temp dir");
         let kept = temp.path().join("kept.toml");
         let deleted = temp.path().join("deleted.toml");
-        fs::write(&kept, "")?;
-        fs::write(&deleted, "")?;
+        fs::write(&kept, "").expect("write kept config");
+        fs::write(&deleted, "").expect("write deleted config");
         let root = temp.path().join("store");
-        ConfigFileStore::record(&root, &kept)?;
-        ConfigFileStore::record(&root, &deleted)?;
-        fs::remove_file(&deleted)?;
+        ConfigFileStore::record(&root, &kept).expect("record kept config");
+        ConfigFileStore::record(&root, &deleted)
+            .expect("record deleted config");
+        fs::remove_file(&deleted).expect("remove deleted config");
 
         assert_eq!(
-            ConfigFileStore::list_all(&root)?,
-            vec![kept.canonicalize()?]
+            ConfigFileStore::list_all(&root).expect("list configs"),
+            vec![kept.canonicalize().expect("canonicalize kept config")]
         );
-        Ok(())
     }
 
     #[test]
-    #[allow(
-        clippy::panic_in_result_fn,
-        reason = "tests use assertions plus ? for fallible temp-file setup"
-    )]
-    fn clean_prunes_stale_entries_and_reports_the_count()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let temp = tempfile::tempdir()?;
+    fn clean_prunes_stale_entries_and_reports_the_count() {
+        let temp = tempfile::tempdir().expect("create temp dir");
         let kept = temp.path().join("kept.toml");
         let deleted = temp.path().join("deleted.toml");
-        fs::write(&kept, "")?;
-        fs::write(&deleted, "")?;
+        fs::write(&kept, "").expect("write kept config");
+        fs::write(&deleted, "").expect("write deleted config");
         let root = temp.path().join("store");
-        ConfigFileStore::record(&root, &kept)?;
-        ConfigFileStore::record(&root, &deleted)?;
-        fs::remove_file(&deleted)?;
+        ConfigFileStore::record(&root, &kept).expect("record kept config");
+        ConfigFileStore::record(&root, &deleted)
+            .expect("record deleted config");
+        fs::remove_file(&deleted).expect("remove deleted config");
 
-        let removed = ConfigFileStore::clean(&root)?;
+        let removed = ConfigFileStore::clean(&root).expect("clean store");
 
         assert_eq!(removed, 1);
         assert_eq!(
-            ConfigFileStore::list_all(&root)?,
-            vec![kept.canonicalize()?]
+            ConfigFileStore::list_all(&root).expect("list configs"),
+            vec![kept.canonicalize().expect("canonicalize kept config")]
         );
-        Ok(())
     }
 
     #[test]
-    #[allow(
-        clippy::panic_in_result_fn,
-        reason = "tests use assertions plus ? for fallible temp-file setup"
-    )]
-    fn list_all_on_a_store_with_no_entries_yet_is_empty()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let temp = tempfile::tempdir()?;
+    fn list_all_on_a_store_with_no_entries_yet_is_empty() {
+        let temp = tempfile::tempdir().expect("create temp dir");
         let root = temp.path().join("store");
 
-        assert!(ConfigFileStore::list_all(&root)?.is_empty());
-        Ok(())
+        assert!(
+            ConfigFileStore::list_all(&root).expect("list configs").is_empty()
+        );
     }
 
     #[test]
-    #[allow(
-        clippy::panic_in_result_fn,
-        reason = "tests use assertions plus ? for fallible temp-file setup"
-    )]
-    fn clean_on_a_store_with_no_entries_yet_removes_nothing()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let temp = tempfile::tempdir()?;
+    fn clean_on_a_store_with_no_entries_yet_removes_nothing() {
+        let temp = tempfile::tempdir().expect("create temp dir");
         let root = temp.path().join("store");
 
-        assert_eq!(ConfigFileStore::clean(&root)?, 0);
-        Ok(())
+        assert_eq!(ConfigFileStore::clean(&root).expect("clean store"), 0);
     }
 
     #[test]
-    #[allow(
-        clippy::panic_in_result_fn,
-        reason = "tests use assertions plus ? for fallible temp-file setup"
-    )]
-    fn record_of_a_nonexistent_target_errors()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let temp = tempfile::tempdir()?;
+    fn record_of_a_nonexistent_target_errors() {
+        let temp = tempfile::tempdir().expect("create temp dir");
         let root = temp.path().join("store");
 
-        let err =
-            ConfigFileStore::record(&root, &temp.path().join("missing.toml"))
-                .expect_err("canonicalizing a missing path should fail");
-
-        assert!(matches!(err, StoreError::Canonicalize { .. }));
-        Ok(())
+        assert!(matches!(
+            ConfigFileStore::record(&root, &temp.path().join("missing.toml")),
+            Err(StoreError::Canonicalize { .. })
+        ));
     }
 
     #[test]
-    #[allow(
-        clippy::panic_in_result_fn,
-        reason = "tests use assertions plus ? for fallible temp-file setup"
-    )]
-    fn record_when_store_root_is_a_file_errors_with_io()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let temp = tempfile::tempdir()?;
+    fn record_when_store_root_is_a_file_errors_with_io() {
+        let temp = tempfile::tempdir().expect("create temp dir");
         let target = temp.path().join("config.toml");
-        fs::write(&target, "")?;
+        fs::write(&target, "").expect("write config");
         let root = temp.path().join("store");
-        fs::write(&root, "")?;
+        fs::write(&root, "").expect("write store root file");
 
-        let err = ConfigFileStore::record(&root, &target)
-            .expect_err("store root occupied by a file should fail");
-
-        assert!(matches!(err, StoreError::Io { .. }));
-        Ok(())
+        assert!(matches!(
+            ConfigFileStore::record(&root, &target),
+            Err(StoreError::Io { .. })
+        ));
     }
 }

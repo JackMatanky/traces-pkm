@@ -200,41 +200,41 @@ impl ConfigBuilder<'_, Merged> {
 mod tests {
     use std::{fs, path::Path};
 
+    use pretty_assertions::assert_eq;
+
     use super::*;
     use crate::config::candidate::{CandidateConfigFile, ConfigSource};
 
-    fn write_config(
-        path: &Path,
-        contents: &str,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        fs::create_dir_all(path.parent().ok_or("config path has no parent")?)?;
-        fs::write(path, contents)?;
-        Ok(())
+    fn write_config(path: &Path, contents: &str) {
+        let parent = path.parent().expect("config path parent");
+        fs::create_dir_all(parent).expect("create config parent");
+        fs::write(path, contents).expect("write config");
     }
 
     fn build(
         cwd: PathBuf,
         local: Vec<CandidateConfigFile>,
         global: Vec<CandidateConfigFile>,
-    ) -> Result<Config, ConfigBuilderError> {
+    ) -> Config {
         let outcome = DiscoveryOutcome::new(cwd, local, global);
-        Ok(ConfigBuilder::new(&outcome).track().trust().merge()?.build())
+        ConfigBuilder::new(&outcome)
+            .track()
+            .trust()
+            .merge()
+            .expect("merge config")
+            .build()
     }
 
     #[test]
-    #[allow(
-        clippy::panic_in_result_fn,
-        reason = "tests use assertions plus ? for fallible temp-file setup"
-    )]
     fn local_only_builds_local_template_dir_and_output_dir_relative_to_project_root()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let temp = tempfile::tempdir()?;
+     {
+        let temp = tempfile::tempdir().expect("create temp dir");
         let root = temp.path().join("project");
         let path = root.join(".traces/config.toml");
         write_config(
             &path,
             "directory = \".traces/templates\"\noutput_dir = \"notes\"",
-        )?;
+        );
 
         let config = build(
             root.clone(),
@@ -243,7 +243,7 @@ mod tests {
                 ConfigSource::Local(path.clone()),
             )],
             Vec::new(),
-        )?;
+        );
 
         assert_eq!(config.root(), root.as_path());
         assert_eq!(
@@ -252,22 +252,16 @@ mod tests {
         );
         assert_eq!(config.global_template_dir(), None);
         assert_eq!(config.output_dir(), Path::new("notes"));
-        Ok(())
     }
 
     #[test]
-    #[allow(
-        clippy::panic_in_result_fn,
-        reason = "tests use assertions plus ? for fallible temp-file setup"
-    )]
-    fn local_without_output_dir_uses_root_as_output_dir()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let temp = tempfile::tempdir()?;
+    fn local_without_output_dir_uses_root_as_output_dir() {
+        let temp = tempfile::tempdir().expect("create temp dir");
         let root = temp.path().join("project");
         let cwd = root.join("notes/daily");
         let path = root.join(".traces/config.toml");
-        fs::create_dir_all(&cwd)?;
-        write_config(&path, "directory = \".traces/templates\"")?;
+        fs::create_dir_all(&cwd).expect("create cwd");
+        write_config(&path, "directory = \".traces/templates\"");
 
         let config = build(
             cwd.clone(),
@@ -276,28 +270,22 @@ mod tests {
                 ConfigSource::Local(path.clone()),
             )],
             Vec::new(),
-        )?;
+        );
 
         assert_eq!(config.root(), root.as_path());
         assert_eq!(config.output_dir(), root.as_path());
-        Ok(())
     }
 
     #[test]
-    #[allow(
-        clippy::panic_in_result_fn,
-        reason = "tests use assertions plus ? for fallible temp-file setup"
-    )]
-    fn global_only_sets_global_dir_and_output_from_global()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let temp = tempfile::tempdir()?;
+    fn global_only_sets_global_dir_and_output_from_global() {
+        let temp = tempfile::tempdir().expect("create temp dir");
         let cwd = temp.path().join("project");
         let global_root = temp.path().join("config/traces");
         let global_path = global_root.join("config.toml");
         write_config(
             &global_path,
             "directory = \"templates\"\noutput_dir = \"notes\"",
-        )?;
+        );
 
         let config = build(
             cwd,
@@ -306,7 +294,7 @@ mod tests {
                 global_root.clone(),
                 ConfigSource::Global(global_path.clone()),
             )],
-        )?;
+        );
 
         assert_eq!(config.local_template_dir(), None);
         assert_eq!(
@@ -314,17 +302,11 @@ mod tests {
             Some(global_root.join("templates").as_path())
         );
         assert_eq!(config.output_dir(), Path::new("notes"));
-        Ok(())
     }
 
     #[test]
-    #[allow(
-        clippy::panic_in_result_fn,
-        reason = "tests use assertions plus ? for fallible temp-file setup"
-    )]
-    fn local_and_global_keep_dirs_separately_and_local_output_wins()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let temp = tempfile::tempdir()?;
+    fn local_and_global_keep_dirs_separately_and_local_output_wins() {
+        let temp = tempfile::tempdir().expect("create temp dir");
         let root = temp.path().join("project");
         let local_path = root.join(".traces/config.toml");
         let global_root = temp.path().join("config/traces");
@@ -332,11 +314,11 @@ mod tests {
         write_config(
             &global_path,
             "directory = \"templates\"\noutput_dir = \"ignored\"",
-        )?;
+        );
         write_config(
             &local_path,
             "directory = \".traces/templates\"\noutput_dir = \"notes\"",
-        )?;
+        );
 
         let config = build(
             root.clone(),
@@ -348,7 +330,7 @@ mod tests {
                 global_root.clone(),
                 ConfigSource::Global(global_path.clone()),
             )],
-        )?;
+        );
 
         assert_eq!(config.root(), root.as_path());
         assert_eq!(
@@ -360,17 +342,11 @@ mod tests {
             Some(global_root.join("templates").as_path())
         );
         assert_eq!(config.output_dir(), Path::new("notes"));
-        Ok(())
     }
 
     #[test]
-    #[allow(
-        clippy::panic_in_result_fn,
-        reason = "tests use assertions plus ? for fallible temp-file setup"
-    )]
-    fn merge_applies_global_then_local_regardless_of_candidate_order()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let temp = tempfile::tempdir()?;
+    fn merge_applies_global_then_local_regardless_of_candidate_order() {
+        let temp = tempfile::tempdir().expect("create temp dir");
         let root = temp.path().join("project");
         let local_path = root.join(".traces/config.toml");
         let global_root = temp.path().join("config/traces");
@@ -378,11 +354,11 @@ mod tests {
         write_config(
             &global_path,
             "directory = \"templates\"\noutput_dir = \"ignored\"",
-        )?;
+        );
         write_config(
             &local_path,
             "directory = \".traces/templates\"\noutput_dir = \"notes\"",
-        )?;
+        );
 
         let outcome = DiscoveryOutcome::new(
             root.clone(),
@@ -395,43 +371,35 @@ mod tests {
                 ConfigSource::Global(global_path.clone()),
             )],
         );
-        let config =
-            ConfigBuilder::new(&outcome).track().trust().merge()?.build();
+        let config = ConfigBuilder::new(&outcome)
+            .track()
+            .trust()
+            .merge()
+            .expect("merge config")
+            .build();
 
         assert_eq!(config.output_dir(), Path::new("notes"));
-        Ok(())
     }
 
     #[test]
-    #[allow(
-        clippy::panic_in_result_fn,
-        reason = "tests use assertions plus ? for fallible temp-file setup"
-    )]
-    fn no_real_configs_uses_cwd_as_root_and_output_dir()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let temp = tempfile::tempdir()?;
+    fn no_real_configs_uses_cwd_as_root_and_output_dir() {
+        let temp = tempfile::tempdir().expect("create temp dir");
         let cwd = temp.path().join("project");
 
-        let config = build(cwd.clone(), Vec::new(), Vec::new())?;
+        let config = build(cwd.clone(), Vec::new(), Vec::new());
 
         assert_eq!(config.root(), cwd.as_path());
         assert_eq!(config.local_template_dir(), None);
         assert_eq!(config.global_template_dir(), None);
         assert_eq!(config.output_dir(), cwd.as_path());
-        Ok(())
     }
 
     #[test]
-    #[allow(
-        clippy::panic_in_result_fn,
-        reason = "tests use assertions plus ? for fallible temp-file setup"
-    )]
-    fn invalid_toml_returns_load_error()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let temp = tempfile::tempdir()?;
+    fn invalid_toml_returns_load_error() {
+        let temp = tempfile::tempdir().expect("create temp dir");
         let root = temp.path().join("project");
         let path = root.join(".traces/config.toml");
-        write_config(&path, "broken =")?;
+        write_config(&path, "broken =");
 
         let outcome = DiscoveryOutcome::new(
             root.clone(),
@@ -443,13 +411,8 @@ mod tests {
         );
         let result = ConfigBuilder::new(&outcome).track().trust().merge();
 
-        let Err(error) = result else {
-            return Err("invalid TOML parsed successfully".into());
-        };
-
         assert!(
-            matches!(error, ConfigBuilderError::Load { path: error_path, .. } if error_path == path)
+            matches!(result, Err(ConfigBuilderError::Load { path: error_path, .. }) if error_path == path)
         );
-        Ok(())
     }
 }

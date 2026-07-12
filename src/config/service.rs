@@ -75,6 +75,8 @@ impl ConfigService {
 mod tests {
     use std::fs;
 
+    use pretty_assertions::assert_eq;
+
     use super::*;
 
     #[test]
@@ -86,22 +88,18 @@ mod tests {
     }
 
     #[test]
-    #[allow(
-        clippy::panic_in_result_fn,
-        reason = "tests use assertions plus ? for fallible temp-file setup"
-    )]
-    fn build_default_candidate_returns_default_config()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let temp = tempfile::tempdir()?;
+    fn build_default_candidate_returns_default_config() {
+        let temp = tempfile::tempdir().expect("create temp dir");
         let cwd = temp.path().join("project");
-        fs::create_dir_all(&cwd)?;
+        fs::create_dir_all(&cwd).expect("create cwd");
         let candidates =
             DiscoveryOutcome::new(cwd.clone(), Vec::new(), Vec::new());
 
-        let config = ConfigService::new().build(&candidates)?;
+        let config = ConfigService::new()
+            .build(&candidates)
+            .expect("build default config");
 
         assert_eq!(config.root(), cwd.as_path());
         assert_eq!(config.output_dir(), cwd.as_path());
-        Ok(())
     }
 }

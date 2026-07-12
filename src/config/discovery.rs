@@ -230,69 +230,53 @@ fn is_config_file(path: &Path) -> Result<bool, DiscoveryError> {
 mod tests {
     use std::fs;
 
+    use pretty_assertions::assert_eq;
+
     use super::*;
 
     #[test]
-    #[allow(
-        clippy::panic_in_result_fn,
-        reason = "tests use assertions plus ? for fallible temp-file setup"
-    )]
-    fn is_config_file_returns_false_for_missing_path()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let temp = tempfile::tempdir()?;
-        assert!(!is_config_file(&temp.path().join("missing.toml"))?);
-        Ok(())
+    fn is_config_file_returns_false_for_missing_path() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        assert!(
+            !is_config_file(&temp.path().join("missing.toml"))
+                .expect("check missing config file")
+        );
     }
 
     #[test]
-    #[allow(
-        clippy::panic_in_result_fn,
-        reason = "tests use assertions plus ? for fallible temp-file setup"
-    )]
-    fn init_to_local_collected_no_local_found_is_error()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let temp = tempfile::tempdir()?;
+    fn init_to_local_collected_no_local_found_is_error() {
+        let temp = tempfile::tempdir().expect("create temp dir");
         let err = DiscoveryProcessor::new(temp.path())
             .collect_local()
             .expect_err("expected NoLocalConfig error");
         assert!(matches!(err, DiscoveryError::NoLocalConfig { .. }));
-        Ok(())
     }
 
     #[test]
-    #[allow(
-        clippy::panic_in_result_fn,
-        reason = "tests use assertions plus ? for fallible temp-file setup"
-    )]
-    fn collect_local_finds_config_in_ancestor()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let temp = tempfile::tempdir()?;
+    fn collect_local_finds_config_in_ancestor() {
+        let temp = tempfile::tempdir().expect("create temp dir");
         let project = temp.path().join("project");
         let cwd = project.join("notes/daily");
-        fs::create_dir_all(&cwd)?;
+        fs::create_dir_all(&cwd).expect("create cwd");
         let config_path = project.join(".traces/config.toml");
-        fs::create_dir_all(config_path.parent().unwrap())?;
-        fs::write(&config_path, "")?;
+        let config_parent = config_path.parent().expect("config path parent");
+        fs::create_dir_all(config_parent).expect("create config parent");
+        fs::write(&config_path, "").expect("write config");
 
-        let proc = DiscoveryProcessor::new(&cwd).collect_local()?;
+        let proc = DiscoveryProcessor::new(&cwd)
+            .collect_local()
+            .expect("collect local config");
 
-        let [local] = proc.local.as_slice() else {
-            return Err("expected exactly one local config".into());
-        };
+        assert_eq!(proc.local.len(), 1);
+        let local = proc.local.first().expect("one local config");
         assert_eq!(local.root(), project);
         assert_eq!(local.source(), &ConfigSource::Local(config_path));
         assert!(proc.global.is_empty());
-        Ok(())
     }
 
     #[test]
-    #[allow(
-        clippy::panic_in_result_fn,
-        reason = "tests use assertions plus ? for fallible temp-file setup"
-    )]
-    fn finish_returns_empty_outcome() -> Result<(), Box<dyn std::error::Error>>
-    {
-        let temp = tempfile::tempdir()?;
+    fn finish_returns_empty_outcome() {
+        let temp = tempfile::tempdir().expect("create temp dir");
 
         // Direct struct construction here is intentional: this is an edge
         // case (empty outcome) unreachable through the public API since
@@ -308,36 +292,32 @@ mod tests {
         assert_eq!(discovered.cwd(), temp.path());
         assert!(discovered.local().is_empty());
         assert!(discovered.global().is_empty());
-        Ok(())
     }
 
     #[test]
-    #[allow(
-        clippy::panic_in_result_fn,
-        reason = "tests use assertions plus ? for fallible temp-file setup"
-    )]
-    fn finish_returns_cwd_when_local_config_found()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let temp = tempfile::tempdir()?;
+    fn finish_returns_cwd_when_local_config_found() {
+        let temp = tempfile::tempdir().expect("create temp dir");
         let project = temp.path().join("project");
         let cwd = project.join("notes/daily");
-        fs::create_dir_all(&cwd)?;
+        fs::create_dir_all(&cwd).expect("create cwd");
         let local_path = project.join(".traces/config.toml");
-        fs::create_dir_all(local_path.parent().unwrap())?;
-        fs::write(&local_path, "[templates]\n")?;
+        let local_parent = local_path.parent().expect("config path parent");
+        fs::create_dir_all(local_parent).expect("create config parent");
+        fs::write(&local_path, "[templates]\n").expect("write config");
 
-        let discovered = DiscoveryProcessor::new(&cwd)
-            .collect_local()?
-            .collect_global()?
+        let local_collected = DiscoveryProcessor::new(&cwd)
+            .collect_local()
+            .expect("collect local config");
+        let discovered = local_collected
+            .collect_global()
+            .expect("collect global config")
             .finish();
 
         assert_eq!(discovered.cwd(), cwd);
-        let [local] = discovered.local() else {
-            return Err("expected exactly one local config".into());
-        };
+        assert_eq!(discovered.local().len(), 1);
+        let local = discovered.local().first().expect("one local config");
         assert_eq!(local.root(), project);
         assert_eq!(local.source(), &ConfigSource::Local(local_path));
         assert!(discovered.global().is_empty());
-        Ok(())
     }
 }
