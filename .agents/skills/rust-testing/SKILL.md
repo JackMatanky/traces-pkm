@@ -4,10 +4,13 @@ description: >
   Comprehensive guide to testing in Rust: unit tests, integration tests,
   doctests, naming, assertions, table-driven cases, property-based testing,
   mocking, fixtures/RAII cleanup, async tests, lock-free/concurrency testing,
-  snapshot testing, and benchmarking. Use when writing, reviewing, or
-  planning tests for Rust code — #[test], #[cfg(test)], #[tokio::test],
-  mockall, proptest, rstest, insta, criterion, loom, should_panic, test
-  naming, test coverage, TDD, nextest. Invoke with /rust-testing.
+  snapshot testing, and benchmarking. Includes end-to-end workflows for
+  writing a test suite for existing code and for reviewing/refactoring an
+  existing test suite's coverage and style. Use when writing, reviewing,
+  auditing, or refactoring tests for Rust code — #[test], #[cfg(test)],
+  #[tokio::test], mockall, proptest, rstest, insta, criterion, loom,
+  should_panic, test naming, test coverage, TDD, nextest. Invoke with
+  /rust-testing.
 license: MIT
 metadata:
   version: "1.0.0"
@@ -27,7 +30,20 @@ Comprehensive guide to testing Rust code: what kind of test to write, what tools
 - Reviewing a PR's test coverage
 - Setting up a new crate's test suite from scratch
 
+## Workflows
+
+The two most common real tasks are end-to-end workflows, not single lookups — start here rather than in the decision tree below:
+
+| Task | Workflow |
+|---|---|
+| "Write tests for this function/module" | [`references/writing-a-test-suite.md`](references/writing-a-test-suite.md) — mechanically enumerates the case surface (every error variant, match arm, boundary, panic site) from the code itself, then maps each case to a test type and a name |
+| "Review/refactor this test suite" | [`references/reviewing-a-test-suite.md`](references/reviewing-a-test-suite.md) — rebuilds the same case surface from the source, diffs it against the existing tests to produce a concrete gap list, then audits naming/structure/assertions/anti-patterns on top |
+
+Both produce a checkable artifact (a coverage table, a gap list) — "I looked it over and it seems fine" is not a valid stopping point for either.
+
 ## Which Test Do I Need?
+
+Use this once you already know *what* case you're testing and just need to pick the mechanism (used by both workflows above at their "pick a test type" step):
 
 ```
 Testing pure logic / a single function / private internals?
@@ -99,6 +115,8 @@ See [`references/running-tests.md`](references/running-tests.md) for the full ne
 
 | File | Use when |
 |------|----------|
+| [`writing-a-test-suite.md`](references/writing-a-test-suite.md) | Writing tests for a function/module from scratch — mechanical case enumeration |
+| [`reviewing-a-test-suite.md`](references/reviewing-a-test-suite.md) | Auditing/refactoring an existing suite — coverage gap analysis + style audit |
 | [`unit-testing.md`](references/unit-testing.md) | Placing, structuring, and scoping `#[cfg(test)]` unit tests; suite planning; determinism |
 | [`test-naming.md`](references/test-naming.md) | Naming a test function or choosing a test module name |
 | [`assertions.md`](references/assertions.md) | Choosing `assert!`/`assert_eq!`/`matches!`, writing diagnostic messages, `pretty_assertions` |
