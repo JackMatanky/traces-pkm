@@ -1,18 +1,29 @@
+//! Terminal-backed [`DialogProvider`] — interactive prompts via `inquire`.
+
 use super::{DialogError, DialogProvider};
 
-/// The real [`DialogProvider`], backed by `inquire`.
+/// [`DialogProvider`] that prompts the user through the terminal.
 ///
-/// Before prompting it checks whether stdin is a terminal. In a non-TTY
-/// context (scripts, dry-run, CI) it returns the supplied default without ever
-/// invoking `inquire`, so templates and `init` render without hanging.
+/// Backed by [`inquire`](https://docs.rs/inquire). Falls back to defaults in
+/// non-TTY contexts (CI, piping, scripts, dry-run):
 ///
-/// TTY-ness is computed on demand, never cached, so stdin redirection can
-/// differ between calls (which tests rely on).
+/// | method                                         | with default        | without default   |
+/// | ---------------------------------------------- | ------------------- | ----------------- |
+/// | [`text`](DialogProvider::text)                 | returns the default | returns `""`      |
+/// | [`confirm`](DialogProvider::confirm)           | returns the default | returns `false`   |
+/// | [`select`](DialogProvider::select)             | returns index `0`   | returns index `0` |
+/// | [`multi_select`](DialogProvider::multi_select) | —                   | returns `[]`      |
+///
+/// ## Empty-item edge case
+///
+/// [`select`](DialogProvider::select) short-circuits **before** the TTY check
+/// when `items` is empty — it returns [`EmptySelectionInput`](DialogError::EmptySelectionInput)
+/// regardless of TTY status, because zero options can never yield a valid
+/// choice.
 #[derive(Copy, Clone, Debug, Default)]
 pub struct TerminalDialogProvider;
 
 impl TerminalDialogProvider {
-    /// Create a new terminal-backed dialog provider.
     #[inline]
     #[must_use]
     pub fn new() -> Self {
@@ -86,7 +97,7 @@ impl DialogProvider for TerminalDialogProvider {
     }
 }
 
-/// Whether the current process's stdin is an interactive terminal.
+/// Returns `true` when stdin is connected to an interactive terminal.
 #[inline]
 fn stdin_is_tty() -> bool {
     use is_terminal::IsTerminal as _;
