@@ -1,3 +1,14 @@
+//! Preset responses for the [`DialogProvider`] trait.
+//!
+//! [`PresetDialogProvider`] records answers ahead of time. Each
+//! [`DialogProvider`] method checks the internal queue and returns the next
+//! queued value.  When the queue is empty it falls back to the `default`
+//! parameter supplied at the call site (or a sensible hard-coded default:
+//! `""`, `false`, index `0`, or an empty [`Vec`]).
+//!
+//! Useful for unit tests and non-interactive / MCP mode where answers are
+//! supplied up front instead of typed at a terminal.
+
 use std::{
     collections::VecDeque,
     sync::{Mutex, PoisonError},
@@ -13,11 +24,25 @@ fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 
 /// A deterministic [`DialogProvider`] that replays preset responses.
 ///
-/// Preset answers with [`with_text`](Self::with_text) /
-/// [`with_confirm`](Self::with_confirm); each call pops the next queued
-/// response, or falls back to the `default` supplied at the call site once the
-/// queue is empty. Used both in tests and in non-interactive/MCP mode, where
-/// answers are supplied up front instead of typed.
+/// Queue answers with [`with_text`](Self::with_text) /
+/// [`with_confirm`](Self::with_confirm); each call pops the next value.  Once
+/// the queue is empty the provider falls back to the `default` supplied at
+/// the call site (or a sensible hard-coded default).
+///
+/// Useful in tests and non-interactive / MCP mode where answers are supplied
+/// up front instead of typed at a terminal.
+///
+/// # Examples
+///
+/// ```
+/// use traces_pkm::dialog::{DialogProvider, PresetDialogProvider};
+///
+/// let p = PresetDialogProvider::new()
+///     .with_text("claude")
+///     .with_confirm(true);
+/// assert_eq!(p.text("name", None).unwrap(), "claude");
+/// assert!(p.confirm("proceed?", None).unwrap());
+/// ```
 #[derive(Debug, Default)]
 pub struct PresetDialogProvider {
     texts: Mutex<VecDeque<String>>,
@@ -27,7 +52,10 @@ pub struct PresetDialogProvider {
 }
 
 impl PresetDialogProvider {
-    /// Create an empty fake that always falls back to call-site defaults.
+    /// Create a [`PresetDialogProvider`] with an empty response queue.
+    ///
+    /// Every [`DialogProvider`] call falls through to its `default` parameter
+    /// (or a sensible hard-coded default).
     #[inline]
     #[must_use]
     pub fn new() -> Self {
@@ -35,6 +63,19 @@ impl PresetDialogProvider {
     }
 
     /// Queue a response for the next [`DialogProvider::text`] call.
+    ///
+    /// Responses are consumed first-in-first-out.  Once the queue is empty,
+    /// [`text`](DialogProvider::text) falls back to the `default` parameter.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use traces_pkm::dialog::{DialogProvider, PresetDialogProvider};
+    ///
+    /// let p = PresetDialogProvider::new().with_text("alice").with_text("bob");
+    /// assert_eq!(p.text("name", None).unwrap(), "alice");
+    /// assert_eq!(p.text("name", None).unwrap(), "bob");
+    /// ```
     #[inline]
     #[must_use]
     pub fn with_text<S: Into<String>>(self, response: S) -> Self {
@@ -43,6 +84,16 @@ impl PresetDialogProvider {
     }
 
     /// Queue a response for the next [`DialogProvider::confirm`] call.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use traces_pkm::dialog::{DialogProvider, PresetDialogProvider};
+    ///
+    /// let p = PresetDialogProvider::new().with_confirm(true).with_confirm(false);
+    /// assert!(p.confirm("proceed?", None).unwrap());
+    /// assert!(!p.confirm("proceed?", None).unwrap());
+    /// ```
     #[inline]
     #[must_use]
     pub fn with_confirm(self, response: bool) -> Self {
@@ -51,6 +102,16 @@ impl PresetDialogProvider {
     }
 
     /// Queue a chosen index for the next [`DialogProvider::select`] call.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use traces_pkm::dialog::{DialogProvider, PresetDialogProvider};
+    ///
+    /// let items = vec!["a".to_owned(), "b".to_owned()];
+    /// let p = PresetDialogProvider::new().with_select(1);
+    /// assert_eq!(p.select("pick", &items).unwrap(), 1);
+    /// ```
     #[inline]
     #[must_use]
     pub fn with_select(self, response: usize) -> Self {
@@ -59,6 +120,16 @@ impl PresetDialogProvider {
     }
 
     /// Queue chosen indices for the next [`DialogProvider::multi_select`] call.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use traces_pkm::dialog::{DialogProvider, PresetDialogProvider};
+    ///
+    /// let items = vec!["a".to_owned(), "b".to_owned(), "c".to_owned()];
+    /// let p = PresetDialogProvider::new().with_multi_select([0, 2]);
+    /// assert_eq!(p.multi_select("pick", &items).unwrap(), vec![0, 2]);
+    /// ```
     #[inline]
     #[must_use]
     pub fn with_multi_select<I>(self, response: I) -> Self
