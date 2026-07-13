@@ -269,6 +269,35 @@ pub enum ConfigError {
     #[error(transparent)]
     #[diagnostic(transparent)]
     Tracking(#[from] StoreError),
+    /// `path` is not in the trust store. Expected and actionable: the user
+    /// (or agent) resolves this by running `traces trust`.
+    #[error("directory {path} is not trusted")]
+    #[diagnostic(
+        code(traces::config::untrusted),
+        help(
+            "run `traces trust {}` to trust this directory",
+            path.display()
+        )
+    )]
+    Untrusted {
+        /// The untrusted directory.
+        path: PathBuf,
+    },
+    /// The trust store could not be read or written while checking `path`.
+    /// Internal — distinct from [`Self::Untrusted`], which is the expected
+    /// "not yet trusted" outcome; this variant means the trust check itself
+    /// failed. Not `#[from]`: `StoreError` already has a `#[from]`
+    /// conversion via [`Self::Tracking`], and thiserror forbids two `#[from]`
+    /// impls for the same source type in one enum.
+    #[error("failed to check trust for {path}")]
+    #[diagnostic(code(traces::config::trust_io))]
+    TrustIo {
+        /// The directory whose trust check failed.
+        path: PathBuf,
+        /// Source store error.
+        #[source]
+        source: StoreError,
+    },
 }
 
 #[cfg(test)]
@@ -546,5 +575,37 @@ mod tests {
                 Err(ResolutionError::TemplateNotFound { .. })
             )),
         }
+    }
+
+    #[test]
+    fn untrusted_error_message_and_help_name_the_path_and_trust_command() {
+        use miette::Diagnostic as _;
+
+        let path = PathBuf::from("/some/project");
+        let error = ConfigError::Untrusted {
+            path: path.clone(),
+        };
+
+        assert_eq!(error.to_string(), "directory /some/project is not trusted");
+        let help = error.help().expect("untrusted error has help").to_string();
+        assert!(help.contains("traces trust"));
+        assert!(help.contains("/some/project"));
+    }
+
+    #[test]
+    fn trust_io_error_preserves_the_store_error_as_its_source() {
+        use std::error::Error as _;
+
+        let path = PathBuf::from("/some/project");
+        let source = StoreError::Canonicalize {
+            path: path.clone(),
+            source: std::io::Error::other("boom"),
+        };
+        let error = ConfigError::TrustIo {
+            path,
+            source,
+        };
+
+        assert!(error.source().is_some());
     }
 }

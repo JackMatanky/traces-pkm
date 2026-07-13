@@ -168,11 +168,12 @@ pub(super) static TRACKED_CONFIGS: LazyLock<StateDirRoot> =
 ///
 /// Resolves to `$TRACES_STATE_DIR/trusted-configs`.
 ///
-/// Reserved for issue 04. Whether it reuses [`ConfigFileStore`] or requires
-/// separate storage logic remains an issue-04 decision.
+/// Contains SHA-256-keyed symbolic links, or path-bearing files where
+/// symbolic links are unavailable, recording every directory
+/// [`ConfigTrust`] has marked as safe to load configs and instantiate
+/// templates from.
 ///
-/// [`ConfigFileStore`]: super::store::ConfigFileStore
-#[allow(dead_code, reason = "reserved for issue 04 (trust store)")]
+/// [`ConfigTrust`]: super::trust::ConfigTrust
 pub(super) static TRUSTED_CONFIGS: LazyLock<StateDirRoot> =
     LazyLock::new(|| StateDirRoot::new("trusted-configs"));
 

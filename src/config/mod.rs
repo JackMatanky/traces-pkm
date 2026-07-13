@@ -21,3 +21,4 @@ mod raw;
 mod service;
 mod store;
 mod tracker;
+mod trust;

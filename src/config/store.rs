@@ -125,6 +125,40 @@ impl ConfigFileStore {
         })
     }
 
+    /// Returns whether `target`'s canonical path has a live entry in this
+    /// store.
+    ///
+    /// Canonicalize-then-hash matches [`Self::record`] exactly, so the same
+    /// directory produces the same entry regardless of how `target` is
+    /// spelled (relative, `.`-bearing, etc.) — this is the seam trust
+    /// (issue 04) reuses instead of reimplementing hashing.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError::Canonicalize`] when `target` cannot be
+    /// canonicalized. Returns [`StoreError::Io`] when the entry's existence
+    /// cannot be determined (permissions, I/O failure) — distinct from the
+    /// entry simply not existing, which returns `Ok(false)`.
+    #[inline]
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "canonicalize-then-hash is the strictly-necessary path \
+                  resolution this lint carves out an exception for"
+    )]
+    pub(super) fn contains(&self, target: &Path) -> Result<bool, StoreError> {
+        let canonical = fs::canonicalize(target).map_err(|source| {
+            StoreError::Canonicalize {
+                path: target.to_path_buf(),
+                source,
+            }
+        })?;
+        let entry = self.root.join(hash_path(&canonical));
+        entry.try_exists().map_err(|source| StoreError::Io {
+            path: entry,
+            source,
+        })
+    }
+
     /// Lists the canonical paths of all live entries in this store.
     ///
     /// An entry is live when its target path can be read from the entry and
@@ -342,5 +376,51 @@ mod tests {
         let store = ConfigFileStore::at(root);
 
         assert!(matches!(store.record(&target), Err(StoreError::Io { .. })));
+    }
+
+    #[test]
+    fn contains_returns_false_for_a_target_not_yet_recorded() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let target = temp.path().join("config.toml");
+        fs::write(&target, "").expect("write config");
+        let store = ConfigFileStore::at(temp.path().join("store"));
+
+        assert!(!store.contains(&target).expect("check containment"));
+    }
+
+    #[test]
+    fn contains_returns_true_after_recording_the_target() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let target = temp.path().join("config.toml");
+        fs::write(&target, "").expect("write config");
+        let store = ConfigFileStore::at(temp.path().join("store"));
+        store.record(&target).expect("record target");
+
+        assert!(store.contains(&target).expect("check containment"));
+    }
+
+    #[test]
+    fn contains_reflects_canonical_path_regardless_of_relative_input() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let dir = temp.path().join("nested");
+        fs::create_dir_all(&dir).expect("create nested dir");
+        let target = dir.join("config.toml");
+        fs::write(&target, "").expect("write config");
+        let store = ConfigFileStore::at(temp.path().join("store"));
+        store.record(&target).expect("record target");
+
+        let relative = dir.join(".").join("config.toml");
+        assert!(store.contains(&relative).expect("check containment"));
+    }
+
+    #[test]
+    fn contains_of_a_nonexistent_target_errors_with_canonicalize() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let store = ConfigFileStore::at(temp.path().join("store"));
+
+        assert!(matches!(
+            store.contains(&temp.path().join("missing.toml")),
+            Err(StoreError::Canonicalize { .. })
+        ));
     }
 }
