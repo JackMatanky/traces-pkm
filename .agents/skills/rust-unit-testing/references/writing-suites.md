@@ -46,14 +46,14 @@ get_user(id: u64) -> Result<User, UserError>
 
 ## Step 3: Group Cases into Units of Work
 
-Cluster the cases from Step 2 by the function/behavior they belong to, and name each group using the canonical module names in [`naming.md`](naming.md) (`constructor`, `validation`, `lookup`, `parse`, etc.). This becomes your `#[cfg(test)] mod tests { mod <group> { ... } }` structure — see [`unit-suites.md`](unit-suites.md) for the shape.
+Cluster the cases from Step 2 by the function/behavior they belong to, and name each group using the canonical module names in [`naming.md`](naming.md) (`constructor`, `validation`, `lookup`, `parse`, etc.). This becomes your `#[cfg(test)] mod tests { mod <group> { ... } }` structure — see [`../SKILL.md`](../SKILL.md#unit-suite-basics) for the shape.
 
 ## Step 4: Pick a Test Type per Case
 
 For each case, decide what kind of test it is using the router's boundary guidance in [`../../rust-testing/references/boundaries.md`](../../rust-testing/references/boundaries.md):
 
 - Plain `#[test]` — the default for a single case with a fixed input/output.
-- Several cases differing only in input/output literals → collapse into one table-driven block using [`../../rust-testing/references/fixtures.md`](../../rust-testing/references/fixtures.md) instead of writing them out one by one.
+- Several cases differing only in input/output literals → collapse into one table-driven block using [`../../rust-testing/references/table-driven.md`](../../rust-testing/references/table-driven.md) instead of writing them out one by one.
 - A property that should hold across a *class* of inputs (roundtrip, idempotence, invariant) rather than fixed examples → [`proptest`](../../rust-testing/references/property-based.md), in addition to, not instead of, the concrete boundary cases from Step 2.
 - The case requires a DB/HTTP/filesystem dependency → extract a trait, inject a fake/mock — see [`../../rust-testing/references/mocks.md`](../../rust-testing/references/mocks.md).
 - The case involves `async fn` → [`../../rust-testing/references/async.md`](../../rust-testing/references/async.md).
@@ -62,20 +62,20 @@ For each case, decide what kind of test it is using the router's boundary guidan
 ## Step 5: Write Each Test
 
 - Name it with the formula in [`naming.md`](naming.md).
-- Structure it Arrange/Act/Assert per [`unit-suites.md`](unit-suites.md) — `unwrap`/`expect` only in Arrange.
+- Structure it Arrange/Act/Assert per [`../SKILL.md`](../SKILL.md#unit-suite-basics) — `unwrap`/`expect` only in Arrange.
 - Assert with `pretty_assertions::assert_eq!`/`matches!` per [`../../rust-testing/references/assertions.md`](../../rust-testing/references/assertions.md), with a message that states what was expected and why.
-- If the case needs setup that must clean up even on panic, use an RAII guard — [`../../rust-testing/references/fixtures.md`](../../rust-testing/references/fixtures.md).
+- If the case needs setup that must clean up even on panic, use an RAII guard — [`../../rust-testing/references/raii-cleanup.md`](../../rust-testing/references/raii-cleanup.md).
 
 ## Step 6: Verify
 
 - Every row from Step 2's table now has a test with a name you can point to. If any row is still unmapped, go back to Step 4 — don't ship a suite with a known, silently-dropped case.
 - Run `cargo nextest run` (and `cargo test --doc` if you touched doc examples) — see [`../../rust-testing/references/commands.md`](../../rust-testing/references/commands.md).
-- Re-read the suite once as a reviewer would — see [`reviewing-suites.md`](reviewing-suites.md) — before calling it done. Writing and reviewing are different mental modes; do both even when you're the only one who touched the file.
+- Re-read the suite once as a reviewer would — see [`review.md`](review.md) — before calling it done. Writing and reviewing are different mental modes; do both even when you're the only one who touched the file.
 
 **Completion criterion for the whole suite:** the Step 2 table has zero unmapped, non-`n/a` rows, every test name follows the naming formula, and `cargo nextest run` is green.
 
 ## See Also
 
-- [`reviewing-suites.md`](reviewing-suites.md) — the same case-enumeration method, applied to an existing suite to find gaps
-- [`unit-suites.md`](unit-suites.md) — suite shape and Arrange/Act/Assert detail
+- [`review.md`](review.md) — the same case-enumeration method, applied to an existing suite to find gaps
+- [`../SKILL.md`](../SKILL.md#unit-suite-basics) — suite shape and Arrange/Act/Assert detail
 - [`naming.md`](naming.md) — the naming formula and canonical module names

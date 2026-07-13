@@ -2,6 +2,8 @@
 
 > Use `insta` when correctness is visual or structural and a reviewable diff is clearer than a handwritten assertion.
 
+Snapshots make output changes deliberate: the approved `.snap` file is committed and reviewed with the code change.
+
 ## When to Use
 
 | Situation | Prefer |
@@ -10,6 +12,7 @@
 | Multi-line or structured output | `assert_debug_snapshot!` |
 | JSON/YAML serialization | `assert_json_snapshot!` / `assert_yaml_snapshot!` |
 | Rendered errors or CLI output | `assert_snapshot!` |
+| Compiler-error-style output | `assert_snapshot!` |
 
 Do not snapshot randomness, timestamps, UUIDs, or external-resource output unless unstable fields are redacted or faked.
 
@@ -48,3 +51,9 @@ assert_json_snapshot!(
 ```
 
 Keep snapshots small and explicitly named when the default test name is not clear.
+
+## Avoid
+
+- Snapshotting short scalar values; use `assert_eq!`.
+- Snapshotting unstable timestamps, UUIDs, random ordering, or external output without redactions/fakes.
+- Accepting `.snap.new` files without reading the diff.

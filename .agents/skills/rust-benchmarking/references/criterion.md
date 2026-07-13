@@ -10,6 +10,8 @@ A one-off `Instant::now()` timing is noisy: it's affected by CPU frequency scali
 
 Benchmark after you have a correctness-verified implementation and a specific reason to measure performance: a suspected hot path, a decision between two implementations, or tracking a regression. Don't benchmark speculatively; profile first to find out where time actually goes, then benchmark the specific thing you're optimizing.
 
+Benchmark representative inputs, not toy values that fit only the example. Keep setup outside the measured loop unless setup cost is the thing being measured.
+
 ## Setup
 
 ```toml
@@ -59,6 +61,8 @@ b.iter(|| fibonacci(black_box(20)));
 // Wrap the result too if it would otherwise be dropped and optimized away
 b.iter(|| black_box(fibonacci(black_box(20))));
 ```
+
+If benchmark output changes unexpectedly, first check whether the benchmark measures real work: result used, setup excluded, inputs representative, and no async runtime or I/O noise accidentally included.
 
 ## Comparing Implementations
 

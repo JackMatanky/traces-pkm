@@ -196,5 +196,5 @@ mod tests {
 
 ## See Also
 
-- [`unit-suites.md`](unit-suites.md) — where these named tests live and how they're structured
-- [`../../rust-testing/references/fixtures.md`](../../rust-testing/references/fixtures.md) — naming table-driven cases specifically
+- [`../SKILL.md`](../SKILL.md#unit-suite-basics) — where these named tests live and how they're structured
+- [`../../rust-testing/references/table-driven.md`](../../rust-testing/references/table-driven.md) — naming table-driven cases specifically

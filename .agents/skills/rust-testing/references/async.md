@@ -52,4 +52,4 @@ async fn channel_delivers_messages_in_order() {
 }
 ```
 
-Use `mocks.md` for async trait seams and `fixtures.md` for cleanup guards around async resources.
+Use `mocks.md` for async trait seams and `raii-cleanup.md` for cleanup guards around async resources.

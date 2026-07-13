@@ -15,7 +15,7 @@ Reach for `proptest` when you can state a property, such as:
 | Identity | `f(x, identity) == x` |
 | Invariant | `len(push(v, x)) == len(v) + 1` |
 
-Do not use it when the expected output is one fixed value, the input space is small and enumerable, or the problem is thread interleaving correctness; use `fixtures.md` table-driven cases or `concurrency.md` instead.
+Do not use it when the expected output is one fixed value, the input space is small and enumerable, or the problem is thread interleaving correctness; use `table-driven.md` cases or `concurrency.md` instead.
 
 ## Basic Usage
 
@@ -33,6 +33,30 @@ proptest! {
 ```
 
 Use `prop_assert!` and `prop_assert_eq!` inside `proptest!` blocks so failures can shrink instead of escaping as raw panics.
+
+## Strategies
+
+```rust
+proptest! {
+    #[test]
+    fn accepts_common_shapes(
+        x in 0..100i32,
+        email in "[a-z]+@[a-z]+\\.[a-z]{2,3}",
+        values in prop::collection::vec(any::<i32>(), 0..10),
+        maybe in prop::option::of(any::<i32>()),
+    ) {
+        // assert the property here
+    }
+}
+```
+
+Use custom strategies when valid domain values need construction rules:
+
+```rust
+fn user_strategy() -> impl Strategy<Value = User> {
+    ("[a-zA-Z]{1,20}", 0..120u8).prop_map(|(name, age)| User { name, age })
+}
+```
 
 ## Shrinking
 

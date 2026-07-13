@@ -43,11 +43,11 @@ For every test in the file, check:
 |---|---|
 | Name follows the formula, no `test_foo`/`it_works`, one behavior per test | [`naming.md`](naming.md) |
 | Module name is canonical (`validation`, `lookup`, etc.) if submodules are used | [`naming.md`](naming.md) |
-| Clear Arrange/Act/Assert; no `unwrap`/`expect` outside Arrange | [`unit-suites.md`](unit-suites.md) |
+| Clear Arrange/Act/Assert; no `unwrap`/`expect` outside Arrange | [`../SKILL.md`](../SKILL.md#unit-suite-basics) |
 | Equality assertions use `pretty_assertions`; enum checks use `matches!` | [`../../rust-testing/references/assertions.md`](../../rust-testing/references/assertions.md) |
 | No hidden assertions buried in a helper function | [`code-quality.md`](code-quality.md) |
-| No shared mutable state or uncontrolled time/randomness across tests | [`unit-suites.md`](unit-suites.md#determinism-and-speed) |
-| Setup that must clean up on panic uses RAII, not a manual teardown line | [`../../rust-testing/references/fixtures.md`](../../rust-testing/references/fixtures.md) |
+| No shared mutable state or uncontrolled time/randomness across tests | [`../SKILL.md`](../SKILL.md#unit-suite-basics) |
+| Setup that must clean up on panic uses RAII, not a manual teardown line | [`../../rust-testing/references/raii-cleanup.md`](../../rust-testing/references/raii-cleanup.md) |
 | `#[should_panic]` is only used for deliberate panics, not stand-in error handling | [`../../rust-testing/references/assertions.md`](../../rust-testing/references/assertions.md#panic-contracts) |
 | External dependencies (DB/HTTP/FS) are behind a trait/mock, not a real call | [`../../rust-testing/references/mocks.md`](../../rust-testing/references/mocks.md) |
 
@@ -63,7 +63,7 @@ List every `#[allow(...)]` and `#[expect(...)]` in unit suite code with file/lin
 
 These aren't bugs, but they're worth flagging as improvements:
 
-- **3+ near-duplicate tests differing only in a literal input/output** → collapse into one table-driven block using [`../../rust-testing/references/fixtures.md`](../../rust-testing/references/fixtures.md).
+- **3+ near-duplicate tests differing only in a literal input/output** → collapse into one table-driven block using [`../../rust-testing/references/table-driven.md`](../../rust-testing/references/table-driven.md).
 - **A hand-picked set of examples standing in for a general property** (roundtrip, idempotence) → add a [`proptest`](../../rust-testing/references/property-based.md) alongside the concrete boundary cases, don't replace them.
 - **A large `assert_eq!` against a whole struct/JSON blob** → [`../../rust-testing/references/snapshots.md`](../../rust-testing/references/snapshots.md) instead — more readable diffs, explicit review-on-change.
 - **A test that's really exercising two unrelated behaviors joined by `and`** → split into two named tests.

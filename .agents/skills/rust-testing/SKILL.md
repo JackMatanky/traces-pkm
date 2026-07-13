@@ -33,7 +33,8 @@ Use this skill to choose the smallest focused Rust testing workflow. Do not run 
 | `references/boundaries.md` | Choosing unit vs integration vs doctest vs property vs snapshot vs benchmark vs concurrency |
 | `references/commands.md` | Choosing cargo/nextest/doctest/clippy commands |
 | `references/assertions.md` | Assertions, `matches!`, panic-contract checks |
-| `references/fixtures.md` | Fixtures, cleanup, RAII, table-driven cases |
+| `references/raii-cleanup.md` | Panic-safe fixture cleanup and resource guards |
+| `references/table-driven.md` | Many named literal cases for one behavior |
 | `references/property-based.md` | Proptest properties, shrinking, generated input caveats |
 | `references/mocks.md` | Fakes, trait seams, mock expectations |
 | `references/snapshots.md` | Insta snapshots, redactions, review flow |

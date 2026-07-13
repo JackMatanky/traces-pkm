@@ -8,6 +8,8 @@ Put external dependencies behind traits so tests can inject fakes for databases,
 
 Do not mock pure deterministic functions. Do not mock the real dependency when the integration itself is what needs testing.
 
+Concrete dependencies make error paths, timeouts, and edge cases hard to cover without slow or flaky external systems.
+
 ```rust
 trait UserRepository {
     fn find_by_id(&self, id: u64) -> Result<Option<User>, DbError>;
@@ -19,6 +21,8 @@ struct UserService<R: UserRepository> {
 ```
 
 Use `Box<dyn Trait>` when generics would leak too far through the API.
+
+For async dependencies, the trait usually needs `Send + Sync`, and projects commonly use `async_trait` if native async traits are not enough for the chosen mock approach.
 
 ## Hand-Written Fakes
 
@@ -62,6 +66,8 @@ fn find_user_returns_name_from_repo() {
 
 Expectations are verified when the mock drops.
 
+Useful expectation tools: `.times(...)` for call counts, `.with(...)` or `.withf(...)` for argument predicates, `Sequence` for ordered calls, and `.returning(...)` for input-dependent values.
+
 ## Choice
 
 | Situation | Prefer |
@@ -70,3 +76,4 @@ Expectations are verified when the mock drops.
 | Call count or sequence matters | `mockall` |
 | Many trait methods, only some used per test | `mockall` |
 | One forced error path | Fake or `mockall`, whichever is shorter |
+| Async trait with expectations | `mockall` plus the project's async-trait pattern |
