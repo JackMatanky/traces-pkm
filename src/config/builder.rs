@@ -490,12 +490,12 @@ mod tests {
         let trust_store =
             tempfile::tempdir().expect("create temp trust-store dir");
         let trust = ConfigTrust::at(trust_store.path().to_path_buf());
+        let expected_dir = path.parent().expect("config path parent");
 
         let result = ConfigBuilder::new(&outcome)
             .track(&ConfigTracker::at(tracked.path().to_path_buf()))
             .trust(&trust);
 
-        let expected_dir = path.parent().expect("config path parent");
         assert!(matches!(
             result,
             Err(ConfigError::Untrusted { path: error_path }) if error_path == expected_dir

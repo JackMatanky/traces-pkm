@@ -82,6 +82,29 @@ impl ConfigFileStore {
         }
     }
 
+    /// Canonicalizes `target`. The single canonicalize-then-hash entry
+    /// point [`Self::record`] and [`Self::contains`] both build on, so the
+    /// two can never diverge on this step and silently split entries
+    /// between "written by record" and "looked up by contains" for the
+    /// same directory.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError::Canonicalize`] when `target` cannot be
+    /// canonicalized.
+    #[inline]
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "canonicalize-then-hash is the strictly-necessary path \
+                  resolution this lint carves out an exception for"
+    )]
+    fn canonicalize(target: &Path) -> Result<PathBuf, StoreError> {
+        fs::canonicalize(target).map_err(|source| StoreError::Canonicalize {
+            path: target.to_path_buf(),
+            source,
+        })
+    }
+
     /// Records `target`'s canonical path in this store.
     ///
     /// Idempotent: recording an already-stored path is a no-op.
@@ -91,18 +114,8 @@ impl ConfigFileStore {
     /// Returns [`StoreError`] when `target` cannot be canonicalized, the
     /// store root cannot be created, or the entry cannot be written.
     #[inline]
-    #[allow(
-        clippy::disallowed_methods,
-        reason = "canonicalize-then-hash is the strictly-necessary path \
-                  resolution this lint carves out an exception for"
-    )]
     pub(super) fn record(&self, target: &Path) -> Result<(), StoreError> {
-        let canonical = fs::canonicalize(target).map_err(|source| {
-            StoreError::Canonicalize {
-                path: target.to_path_buf(),
-                source,
-            }
-        })?;
+        let canonical = Self::canonicalize(target)?;
         let entry = self.root.join(hash_path(&canonical));
         if entry.exists() {
             return Ok(());
@@ -128,7 +141,7 @@ impl ConfigFileStore {
     /// Returns whether `target`'s canonical path has a live entry in this
     /// store.
     ///
-    /// Canonicalize-then-hash matches [`Self::record`] exactly, so the same
+    /// Shares [`Self::canonicalize`] with [`Self::record`], so the same
     /// directory produces the same entry regardless of how `target` is
     /// spelled (relative, `.`-bearing, etc.) — this is the seam trust
     /// (issue 04) reuses instead of reimplementing hashing.
@@ -140,18 +153,8 @@ impl ConfigFileStore {
     /// cannot be determined (permissions, I/O failure) — distinct from the
     /// entry simply not existing, which returns `Ok(false)`.
     #[inline]
-    #[allow(
-        clippy::disallowed_methods,
-        reason = "canonicalize-then-hash is the strictly-necessary path \
-                  resolution this lint carves out an exception for"
-    )]
     pub(super) fn contains(&self, target: &Path) -> Result<bool, StoreError> {
-        let canonical = fs::canonicalize(target).map_err(|source| {
-            StoreError::Canonicalize {
-                path: target.to_path_buf(),
-                source,
-            }
-        })?;
+        let canonical = Self::canonicalize(target)?;
         let entry = self.root.join(hash_path(&canonical));
         entry.try_exists().map_err(|source| StoreError::Io {
             path: entry,

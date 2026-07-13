@@ -275,11 +275,11 @@ mod tests {
             tracker: ConfigTracker::at(temp.path().join("tracked-store")),
             trust: ConfigTrust::at(temp.path().join("trust-store")),
         };
+        let expected_dir =
+            config_path.parent().expect("config path parent").to_path_buf();
 
         let result = service.build(&candidates);
 
-        let expected_dir =
-            config_path.parent().expect("config path parent").to_path_buf();
         assert!(matches!(
             result,
             Err(ConfigError::Untrusted { path }) if path == expected_dir
