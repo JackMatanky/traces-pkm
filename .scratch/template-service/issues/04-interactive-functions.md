@@ -30,10 +30,11 @@ The provider API is in flux (see [Design considerations](#design-considerations)
 
 Relevant skills: `m03-mutability`, `m02-resource`, `m04-zero-cost`, `m06-error-handling`.
 
-- **Sharing the provider into closures (m02/m03):** each interactive custom function closure needs to call the provider. Closures are `Fn` with shared access and must be `'static` for minijinja, so capture as **`Rc<dyn Provider>`** (single-threaded) or **`Arc<dyn Provider>`** (if Send+Sync needed) and clone into each closure. Prefer `Rc` over threading a borrow — lifetimes won't allow a plain `&dyn` into a `'static` closure.
+- **Sharing the provider into closures (m02/m03):** each interactive custom function closure needs to call the provider. The `Function` trait requires `Send + Sync + 'static` on all closures registered via `add_function`, so capture as **`Arc<dyn PromptProvider>`** and clone the `Arc` into each closure. `Rc` is not `Send` and will fail to compile. Lifetimes won't allow a plain `&dyn` into a `'static` closure, so `Arc` is the only option.
 - **Object safety pays off (m04):** this is exactly why PromptService issue 01 kept the trait object-safe — `Rc<dyn Provider>` / `Arc<dyn Provider>` only works if the trait is object-safe. If a method took generics, it would break here.
-- **Error propagation into minijinja (m06):** a prompt failure inside a function must surface as a minijinja `Error` (map the provider's error into `minijinja::Error` with `ErrorKind::InvalidOperation` or similar), so `render` returns `Err` cleanly rather than panicking. Never `unwrap` a prompt result inside a closure.
+- **Error propagation into minijinja (m06):** a prompt failure inside a function must surface as a minijinja `Error`, so `render` returns `Err` cleanly rather than panicking. Never `unwrap` a prompt result inside a closure. **To decide before implementation**: which `PromptError` variant maps to which `minijinja::ErrorKind` (e.g. does `Interrupted` become `InvalidOperation`? Should `EmptyOptions` be a distinct kind?). Document the chosen mapping at impl time.
 - **Argument arity:** `prompt_text` has a 1-arg and 2-arg form — minijinja supports optional trailing args; accept `Option<String>` for the default rather than registering two functions.
+- **Blocking render model in MCP mode:** Template rendering is synchronous — `prompt_text`, `select`, and `multi_select` block the calling thread. In MCP mode, `PresetPromptProvider` returns preset responses so no blocking occurs. However, if select/multi-select items are computed dynamically during rendering (e.g. `{% set items = get_list() %}` / `{{ select("pick", items) }}`), the agent supplies the preset index blind — it does not see the computed items. Presets are consumed in render order, so the index is a relative choice ("first", "second") resolved against the items array at call time. For MVP this is sufficient. Richer MCP interaction (agent previews items before choosing) would require a multi-pass render model and is deferred.
 
 ## Design considerations
 
@@ -45,20 +46,7 @@ The interface the prompt module exposes is being explored. Three options, simple
 | **B: Split traits + bundling struct** | 4 traits (`TextInputProvider`, `ConfirmProvider`, `SelectProvider`, `MultiSelectProvider`). `InteractiveBackend` struct holds `Arc<dyn T>` for each. TemplateService takes `InteractiveBackend`, each closure captures its own `Arc<dyn SubTrait>`. | Each closure narrow to exactly one method. Self-documenting per-capability traits. Module file structure clearer. | 4 `impl` blocks per concrete type. 4 `Arc` allocations per backend. Extra files. |
 | **C: Split traits with blanket supertrait** | Same sub-traits as B, plus `trait PromptProvider: TextInputProvider + ConfirmProvider + SelectProvider + MultiSelectProvider {}` with blanket impl. | Old consumers (`Arc<dyn PromptProvider>`) keep working. New closures can narrow per sub-trait. | Still need `InteractiveBackend` or similar to produce `Arc<dyn SubTrait>` from `Arc<dyn PromptProvider>` (trait upcasting is unstable). Practical outcome identical to B. |
 
-**Recommendation**: Option B with `InteractiveBackend` bundling struct. The module structure would be:
-
-```
-src/
-├── interact.rs          // module doc + traits + re-exports (2018 idiom, no mod.rs)
-└── interact/
-    ├── error.rs          // PromptError
-    ├── terminal.rs       // TerminalPromptProvider impls
-    └── preset.rs         // PresetPromptProvider impls
-```
-
-TemplateService receives one `InteractiveBackend` parameter and doesn't know about the split. Each closure captures `Arc<dyn TextInputProvider>` (or whichever) and calls a single method.
-
-**To decide at impl time**: naming of the sub-traits and bundling struct. The grill session converged on `TextInputProvider`, `ConfirmProvider`, `SelectProvider`, `MultiSelectProvider` for the sub-traits and `InteractiveBackend` for the bundling struct — but these are provisional.
+**Decision**: Option A (monolithic `PromptProvider` trait as already built in `src/prompt.rs`). The trait is object-safe, `Send + Sync`, and sufficient for MVP. Each closure captures `Arc<dyn PromptProvider>` and calls the single method it needs — the vtable overhead of carrying all four method entries is negligible for four methods on a trait invoked once per template call. Trait-splitting (Options B/C) remains a future option if profiling ever shows it matters, but is deferred.
 
 ## Blocked by
 
