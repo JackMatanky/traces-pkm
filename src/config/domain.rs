@@ -282,11 +282,14 @@ mod tests {
         local_dir: Option<PathBuf>,
         global_dir: Option<PathBuf>,
     ) -> Config {
-        Config::new(root.clone(), TemplateConfig {
-            local: local_dir,
-            global: global_dir,
-            output: root,
-        })
+        Config::new(
+            root.clone(),
+            TemplateConfig {
+                local: local_dir,
+                global: global_dir,
+                output: root,
+            },
+        )
     }
 
     fn write_file(dir: &Path, name: &str) -> PathBuf {
