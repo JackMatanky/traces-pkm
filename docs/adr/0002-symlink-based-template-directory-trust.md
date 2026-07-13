@@ -1,7 +1,7 @@
 ---
 number: 2
 title: Symlink-Based Template Directory Trust
-status: proposed
+status: accepted
 date: 2026-07-07
 ---
 

@@ -8,31 +8,46 @@ Status: ready-for-agent
 
 ## What to build
 
-The trust mechanism, following the mise `config/tracking.rs` pattern (see ADR 0002). A directory is trusted by creating a symlink (plain file on Windows) in the **trusted** store, named by the SHA-256 hash of the canonical directory path, pointing back at the directory. `ConfigService` exposes `is_trusted(dir)` and `trust(dir)`. An untrusted directory check yields a miette error that includes the path and suggests running `traces trust`.
+The trust mechanism, following the mise `config/tracking.rs` pattern (see ADR 0002, now accepted). A directory is trusted by creating a symlink (plain file on Windows) in the **trusted** store, named by the SHA-256 hash of the canonical directory path, pointing back at the directory.
 
-The trusted store lives at `~/.local/state/traces/trusted-configs/` (XDG **state** dir via `dirs::state_dir()`), a sibling of the tracking store from issue 03. **This is a change from the earlier DATA-dir location** — both stores now live under the state dir, matching mise's `TRUSTED_CONFIGS`/`TRACKED_CONFIGS` split. Reuse the shared hash-keyed-symlink component built in issue 03 (the trusted and tracked stores differ only by root directory and meaning); do not duplicate the symlink/hash/clean logic.
+The shared symlink-store component (`ConfigFileStore` in `src/config/store.rs`) already exists — it is instance-based, holds its root as a field, and exposes `record`, `list_all`, and `clean`. The trust store path (`dirs::TRUSTED_CONFIGS`) is already defined in `src/config/dirs.rs` (currently `#[allow(dead_code)]`). Build a thin **`ConfigTrust` adapter** (analogous to `ConfigTracker` in `tracker.rs`) that wraps `ConfigFileStore` at `dirs::TRUSTED_CONFIGS`. `ConfigService` gains `trust(dir)` and `is_trusted(dir)`. An untrusted directory check yields a miette error that includes the path and suggests running `traces trust`.
+
+The `Trusted` builder stage (`ConfigBuilder::trust()`, in `builder.rs`) is currently a no-op placeholder — issue 04 makes it real: `trust()` accepts `&ConfigTrust`, checks the parent directory of each candidate config file path via `ConfigTrust::is_trusted()`, and returns `Result<ConfigBuilder<Trusted>, ConfigError>`. An untrusted candidate directory fails the build with a miette error suggesting `traces trust`. This guards config loading at the source — if a config file lives in an untrusted directory, it's rejected before parsing.
 
 This is the programmatic trust API; the `traces trust` CLI is issue 05.
 
+## Current codebase state
+
+Relevant existing code at a glance:
+
+- **`ConfigFileStore`** (`src/config/store.rs`): shared component. `new(&dirs::StateDirRoot)` for production, `at(PathBuf)` for tests. Methods: `record(&self, target) -> Result`, `list_all(&self) -> Result<Vec<PathBuf>>`, `clean(&self) -> Result<usize>`. Cross-platform: `#[cfg(unix)]` symlink, `#[cfg(windows)]` plain file.
+- **`dirs::TRUSTED_CONFIGS`** (`src/config/dirs.rs`): `LazyLock<StateDirRoot>`, resolves to `$TRACES_STATE_DIR/trusted-configs`. Currently `#[allow(dead_code)]`.
+- **`ConfigTracker`** (`src/config/tracker.rs`): the pattern to follow. Wraps `ConfigFileStore`, has `new()` and `#[cfg(test)] at()`, non-`Result` `track()` that logs-and-swallows, `list_all()`, `clean()`.
+- **`ConfigBuilder::trust()`** (`src/config/builder.rs:103`): no-op `Tracked → Trusted` transition.
+- **`ConfigService`** (`src/config/service.rs`): has `tracker: ConfigTracker` field; expose a trust adapter the same way.
+- **`dirs` crate**: removed. Path resolution is self-contained in `dirs.rs`.
+- **ADR 0002**: accepted — trust store path (`trusted-configs` under state dir) is ratified.
+
 ## Acceptance criteria
 
-- [ ] `trust(dir)` creates the hashed symlink/file in the XDG **state** trusted store (via `dirs::state_dir()`)
+- [ ] `trust(dir)` creates the hashed symlink/file in `dirs::TRUSTED_CONFIGS` via `ConfigFileStore::record`
 - [ ] `is_trusted(dir)` returns true only when a valid trust entry exists for the canonical path
 - [ ] Untrusted rejection error includes the path and a `traces trust` suggestion (miette)
-- [ ] Canonicalization ensures the same directory hashes consistently regardless of relative path
-- [ ] Trust logic reuses the shared symlink-store component from issue 03 rather than reimplementing hashing/symlink/clean
-- [ ] Tests verify trust creation, positive/negative checks, and rejection error — using temp dirs and a temp trusted store
+- [ ] Canonicalization ensures the same directory hashes consistently regardless of relative path (handled by `ConfigFileStore::record` already — canonicalize-then-hash lives in the shared component)
+- [ ] Trust logic reuses `ConfigFileStore` rather than reimplementing hashing/symlink/clean
+- [ ] Tests verify trust creation, positive/negative checks, and rejection error — using temp dirs and `#[cfg(test)]` `ConfigFileStore::at`/`ConfigTrust::at`
 
 ## Rust guidance
 
 Relevant skills: `m11-ecosystem`, `m06-error-handling`, `m13-domain-error`, `m01-ownership`.
 
-- **Canonicalization first (m01):** hash the **canonicalized** path (`std::fs::canonicalize`), not the raw input, so `./x`, `x/`, and symlinked aliases all map to the same trust entry. Canonicalize before hashing in both `trust()` and `is_trusted()` — a mismatch here silently breaks trust checks. (This is the same canonicalize-then-hash rule as the tracking store; it lives in the shared component.)
-- **Hashing (m11):** use `sha2::Sha256` over the canonical path bytes, hex-encode for the filename. Follow ADR 0002's symlink scheme — **note ADR 0002 is still `proposed`; confirm it is accepted before this lands.**
-- **Cross-platform (m11):** symlink on Unix (`std::os::unix::fs::symlink`), plain file on Windows (`#[cfg(windows)]`). Gate with `cfg`, keep the public API identical. This lives in the shared component (issue 03), not duplicated here.
-- **Store path (m11):** resolve the state dir via `dirs::state_dir()` (fall back to `dirs::data_dir()` where a platform lacks a distinct state dir), not a hard-coded path. Make the store root injectable (parameter or field) so tests point at a temp dir instead of the real user store.
-- **Rejection error (m13):** the untrusted-directory error is **user-facing and actionable** — a `thiserror` variant rendered through miette with a `help` note suggesting `traces trust`. Include the offending path. Distinguish "not trusted" (expected, actionable) from "trust store I/O failed" (internal).
+- **Pattern-match `ConfigTracker`** (`src/config/tracker.rs:25-88`). Build a `ConfigTrust` with the same shape: a `store: ConfigFileStore` field, `new(&dirs::TRUSTED_CONFIGS)`, `#[cfg(test)] at(root: PathBuf)`, and domain methods.
+- **`trust(dir)` delegates to `self.store.record(dir)`** — `ConfigFileStore::record` already canonicalizes then hashes (SHA-256 hex filename). Record returns `Result<(), StoreError>`; unlike tracking (best-effort), trust decisions should propagate errors since a security gate that silently fails is worse than a crash.
+- **`is_trusted(dir)`** checks whether `dirs::TRUSTED_CONFIGS / hash(canonicalize(dir))` exists as a file. A simple `Path::exists` check is correct because `ConfigFileStore::record` created it as a symlink/file. No need to resolve the link target for the boolean check — only existence matters. Use `try_exists()` (`m01-ownership`) instead of `exists()` to distinguish "not found" from "I/O error" for the trust-error path.
+- **Rejection error (`m13`):** the untrusted-directory error is **user-facing and actionable** — add a `ConfigError::Untrusted { path: PathBuf }` variant rendered through miette with a `help` note suggesting `traces trust`. Distinguish "not trusted" (expected, actionable) from "trust store I/O failed" (internal — wrap `StoreError`).
+- **Enforcement in the builder:** `ConfigBuilder::trust()` takes `&ConfigTrust` and checks `candidate.path().parent()` for each config file. This is the programmatic gate — an untrusted config source directory blocks the build before `merge()` reads the file. The check iterates `self.local` then `self.global` so the error points at the first untrusted source.
+- **New module:** create `src/config/trust.rs` for `ConfigTrust` and its error types.
 
-## Blocked by
+## Unblocked by
 
-- `.scratch/config-service/issues/03-config-tracking-store.md` (shared symlink-store component)
+Issue 03 (`config-tracking-store.md`) is implemented on `feat/config-tracking-store` — `ConfigFileStore` and `dirs::TRUSTED_CONFIGS` are available. Start immediately.
