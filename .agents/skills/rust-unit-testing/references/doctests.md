@@ -8,7 +8,7 @@ Doctests are code blocks inside `///` doc comments that `cargo test` compiles an
 
 ## Bad
 
-```rust
+````rust
 /// Parses a number from a string.
 ///
 /// Example:
@@ -24,11 +24,11 @@ pub fn parse(s: &str) -> i32 {
 /// let sum = add(1, 2, 3); // wrong arity — would be caught if this actually ran
 /// ```
 pub fn add(a: i32, b: i32) -> i32 { a + b }
-```
+````
 
 ## Good
 
-```rust
+````rust
 /// Parses a number from a string.
 ///
 /// # Examples
@@ -54,13 +54,13 @@ pub fn parse(s: &str) -> i32 {
 /// assert_eq!(sum, 3);
 /// ```
 pub fn add(a: i32, b: i32) -> i32 { a + b }
-```
+````
 
 ## Hiding Setup Code
 
 Prefix a line with `# ` to keep it in the compiled example but hide it from rendered docs — use this for setup noise, not for the assertion the reader is supposed to see:
 
-```rust
+````rust
 /// Processes data from a file.
 ///
 /// # Examples
@@ -79,13 +79,13 @@ Prefix a line with `# ` to keep it in the compiled example but hide it from rend
 pub fn process_file(path: &Path) -> Result<String, Error> {
     std::fs::read_to_string(path).map_err(Error::from)
 }
-```
+````
 
 Use `?` in the example body, not `.unwrap()` — it's what a real caller would write, and the trailing `# Ok::<(), _>(())` line makes the implicit `fn main() -> Result<...>` wrapper doctests use type-check.
 
 ## Showing Error Handling
 
-```rust
+````rust
 /// Parses and validates an email address.
 ///
 /// # Examples
@@ -108,11 +108,11 @@ Use `?` in the example body, not `.unwrap()` — it's what a real caller would w
 /// assert!(Email::parse("not-an-email").is_err());
 /// ```
 pub fn parse(s: &str) -> Result<Email, EmailError> { /* ... */ }
-```
+````
 
 ## `no_run`, `ignore`, and `compile_fail`
 
-```rust
+````rust
 /// Starts the server.
 ///
 /// ```no_run
@@ -132,7 +132,7 @@ pub fn run(&self) { /* ... */ }
 /// let b = a.clone(); // error: Clone not implemented
 /// ```
 pub struct UniqueHandle { /* ... */ }
-```
+````
 
 `ignore` skips both compiling and running — reserve it for genuinely platform-specific or non-Rust snippets; prefer `no_run` whenever the code should at least compile-check.
 

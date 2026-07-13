@@ -20,15 +20,15 @@ Every file in `tests/` compiles as its own separate crate that depends on your l
 
 ```
 my_project/
-+-- Cargo.toml
-+-- src/
-|   +-- lib.rs
-|   +-- internal.rs
-+-- tests/
-    +-- integration_test.rs   # each file compiles as a separate test binary
-    +-- api_tests.rs
-    +-- common/
-        +-- mod.rs             # shared helpers, not itself a test file
+├── Cargo.toml
+├── src/
+│   ├── lib.rs
+│   └── internal.rs
+└── tests/
+    ├── integration_test.rs    # Each file compiles as a separate test binary
+    ├── api_tests.rs
+    └── common/                # Shared test utilities
+        └── mod.rs
 ```
 
 ## Bad
@@ -99,11 +99,12 @@ fn client_works_with_shared_config() {
 
 ```
 tests/
-+-- api/
-    +-- mod.rs      # mod auth; mod users; mod orders;
-    +-- auth.rs
-    +-- users.rs
-    +-- orders.rs
+├── Cargo.toml
+└── api/
+    ├── mod.rs      # mod auth; mod users; mod orders;
+    ├── auth.rs
+    ├── users.rs
+    └── orders.rs
 ```
 
 ```rust
