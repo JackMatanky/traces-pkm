@@ -20,10 +20,22 @@ use super::{DialogError, DialogProvider};
 /// when `items` is empty — it returns [`EmptySelectionInput`](DialogError::EmptySelectionInput)
 /// regardless of TTY status, because zero options can never yield a valid
 /// choice.
+///
+/// # Examples
+///
+/// ```
+/// use traces_pkm::dialog::{DialogProvider, TerminalDialogProvider};
+///
+/// let p = TerminalDialogProvider::new();
+/// // In non-TTY contexts all methods return their fallback defaults:
+/// let name = p.text("name", Some("carol")).unwrap();
+/// assert_eq!(name, "carol");
+/// ```
 #[derive(Copy, Clone, Debug, Default)]
 pub struct TerminalDialogProvider;
 
 impl TerminalDialogProvider {
+    /// Create a [`TerminalDialogProvider`] with default configuration.
     #[inline]
     #[must_use]
     pub fn new() -> Self {
