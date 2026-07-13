@@ -1,4 +1,4 @@
-# Unit Testing
+# Unit Suites
 
 > Test pure logic and local invariants next to the code that implements them.
 
@@ -124,10 +124,10 @@ For any non-trivial unit:
 
 1. Identify the unit(s) of work in the file — usually one per public function or one per meaningfully distinct behavior group.
 2. Enumerate the happy path, boundary conditions, and failure paths.
-3. Define invariants that must always hold (candidates for `proptest` — see [`property-based-testing.md`](property-based-testing.md)).
+3. Define invariants that must always hold (candidates for `proptest` — see [`../../rust-testing/references/property-based.md`](../../rust-testing/references/property-based.md)).
 4. Choose structure:
    - Simple file, 1–2 behaviors → flat tests are fine.
-   - Multi-unit file → submodules per unit of work (see [`test-naming.md`](test-naming.md)).
+   - Multi-unit file → submodules per unit of work (see [`naming.md`](naming.md)).
 5. Decide whether `rstest` (repeated cases) or `proptest` (generated inputs) adds value over hand-written tests. Neither is mandatory — plain tests win when there's no repeated shape.
 
 ## Recommended Suite Shape
@@ -169,7 +169,7 @@ mod tests {
 - Prefer small helper functions over builder abstractions unless the construction complexity is unavoidable.
 - Avoid sharing mutable fixture state across tests; each test builds its own.
 - Give helpers concrete names (`valid_schema`, `temp_vault`), not generic ones (`setup`, `helper`).
-- For setup/teardown that must run even if the test panics, use RAII — see [`fixtures-and-cleanup.md`](fixtures-and-cleanup.md).
+- For setup/teardown that must run even if the test panics, use RAII — see [`../../rust-testing/references/fixtures.md`](../../rust-testing/references/fixtures.md).
 
 ## Determinism and Speed
 
@@ -183,7 +183,7 @@ mod tests {
 - Verify domain invariants and validation failures first — these are where bugs hide, not the happy path.
 - Cover error variants and boundary values, not only the success case.
 - Add a regression test for every bugfix that changes behavior in this file.
-- Use integration/e2e tests for cross-boundary workflows (see [`integration-testing.md`](integration-testing.md)); don't stretch unit tests to cover system behavior — that's slow and gives worse failure locality.
+- Use integration/e2e tests for cross-boundary workflows (see [`../../rust-testing/references/boundaries.md`](../../rust-testing/references/boundaries.md)); don't stretch unit tests to cover system behavior — that's slow and gives worse failure locality.
 
 ## Anti-Patterns
 
@@ -193,12 +193,12 @@ mod tests {
 | Shared mutable state across tests | Build fresh fixtures per test |
 | Non-deterministic random/time behavior | Seed the RNG; pause/control the clock |
 | `unwrap`/`expect` in Act or Assert | Capture the `Result`, assert on it explicitly |
-| Test names that bundle multiple behaviors with `and` | Split into separate tests — see [`test-naming.md`](test-naming.md) |
+| Test names that bundle multiple behaviors with `and` | Split into separate tests — see [`naming.md`](naming.md) |
 | Assertion-only smoke tests that don't check domain behavior | Assert the actual invariant, not just "it didn't panic" |
 
 ## See Also
 
-- [`test-naming.md`](test-naming.md) — naming functions and organizing submodules
-- [`assertions.md`](assertions.md) — `assert!` vs `assert_eq!` vs `matches!`
-- [`integration-testing.md`](integration-testing.md) — testing the public API instead
-- [`table-driven-testing.md`](table-driven-testing.md) — many inputs, one behavior
+- [`naming.md`](naming.md) — naming functions and organizing submodules
+- [`../../rust-testing/references/assertions.md`](../../rust-testing/references/assertions.md) — `assert!` vs `assert_eq!` vs `matches!`
+- [`../../rust-testing/references/boundaries.md`](../../rust-testing/references/boundaries.md) — choosing unit vs integration boundaries
+- [`../../rust-testing/references/fixtures.md`](../../rust-testing/references/fixtures.md) — many inputs, one behavior

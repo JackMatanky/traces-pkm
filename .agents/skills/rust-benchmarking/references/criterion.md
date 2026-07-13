@@ -1,20 +1,20 @@
-# Benchmarking
+# Criterion
 
-> Use `criterion` for benchmarking — it provides warmup, multiple iterations, outlier detection, and statistical comparison between runs that a bare `Instant::now()` timer can't.
+> Use `criterion` for benchmarking. It provides warmup, multiple iterations, outlier detection, and statistical comparison between runs that a bare `Instant::now()` timer can't.
 
 ## Why It Matters
 
-A one-off `Instant::now()` timing is noisy: it's affected by CPU frequency scaling, cache state, and OS scheduling, and gives you no way to tell whether a change made things measurably faster or just got lucky once. `criterion` runs many iterations, applies statistical analysis, and can compare against a saved baseline — turning "feels faster" into a number with a confidence interval.
+A one-off `Instant::now()` timing is noisy: it's affected by CPU frequency scaling, cache state, and OS scheduling, and gives you no way to tell whether a change made things measurably faster or just got lucky once. `criterion` runs many iterations, applies statistical analysis, and can compare against a saved baseline, turning "feels faster" into a number with a confidence interval.
 
 ## When to Use
 
-Benchmark **after** you have a correctness-verified implementation and a specific reason to measure performance — a suspected hot path, a decision between two implementations, or tracking a regression. Don't benchmark speculatively; see `anti-premature-optimize` in `rust-skills` and `perf-profile-first` — profile first to find out where time actually goes, then benchmark the specific thing you're optimizing.
+Benchmark after you have a correctness-verified implementation and a specific reason to measure performance: a suspected hot path, a decision between two implementations, or tracking a regression. Don't benchmark speculatively; profile first to find out where time actually goes, then benchmark the specific thing you're optimizing.
 
 ## Setup
 
 ```toml
 [dev-dependencies]
-criterion = "0.5"
+criterion = "0.8"
 
 [[bench]]
 name = "my_benchmark"
@@ -44,6 +44,8 @@ criterion_main!(benches);
 ```
 
 ## `black_box` Is Not Optional
+
+Use `black_box` unless Criterion already black-boxes the input for the API being used. Exclude setup from measurement where possible.
 
 Without it, the compiler may see the result is unused and optimize the whole computation away, benchmarking nothing:
 
@@ -130,5 +132,5 @@ cargo bench -- --baseline main           # compare against a saved baseline
 
 ## See Also
 
-- [`concurrency-testing.md`](concurrency-testing.md) — verify concurrent code with `loom` before benchmarking it
-- `rust-skills` `perf-profile-first`, `anti-premature-optimize` — profile before you optimize or benchmark
+- `../../rust-testing/references/concurrency.md` - verify concurrent code with `loom` before benchmarking it.
+- `rust-skills` `perf-profile-first`, `anti-premature-optimize` - profile before you optimize or benchmark.

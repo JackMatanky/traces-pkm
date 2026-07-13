@@ -1,4 +1,4 @@
-# Test Naming
+# Unit Suite Naming
 
 > A test name is the first — and during a red run, often the only — line of documentation you read.
 
@@ -196,5 +196,5 @@ mod tests {
 
 ## See Also
 
-- [`unit-testing.md`](unit-testing.md) — where these named tests live and how they're structured
-- [`table-driven-testing.md`](table-driven-testing.md) — naming `rstest` cases specifically
+- [`unit-suites.md`](unit-suites.md) — where these named tests live and how they're structured
+- [`../../rust-testing/references/fixtures.md`](../../rust-testing/references/fixtures.md) — naming table-driven cases specifically
