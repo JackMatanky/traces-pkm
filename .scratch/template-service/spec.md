@@ -37,16 +37,16 @@ The `template`/`tmpl` CLI command (and the default `-i` dispatch) wraps this ser
 - **TemplateService** takes a reference to ConfigService (for template directory resolution) and owns a minijinja `Environment` pre-configured with all custom functions.
 - **Template resolution** delegates to ConfigService: exact path → local dir → global dir. Returns the template source as a string plus the directory it came from (for trust checking).
 - **Custom functions** are registered via minijinja's `Environment::add_function`. Each is a Rust closure. Built-in set for MVP:
-  - `prompt_text(label)`, `prompt_text(label, default)` — delegates to PromptProvider (see PromptService spec).
-  - `select(label, items)` — delegates to PromptProvider.
-  - `confirm(label)` — delegates to PromptProvider.
-  - `multi_select(label, items)` — delegates to PromptProvider.
+  - `prompt_text(label)`, `prompt_text(label, default)` — delegates to [`DialogProvider`](crate::dialog::DialogProvider).
+  - `select(label, items)` — delegates to [`DialogProvider`](crate::dialog::DialogProvider).
+  - `confirm(label)` — delegates to [`DialogProvider`](crate::dialog::DialogProvider).
+  - `multi_select(label, items)` — delegates to [`DialogProvider`](crate::dialog::DialogProvider).
   - `set_output(path)` — sets output path, overrides `-o` flag.
   - `include_file(path)` — reads a file from disk and returns its content.
   - `date(format)` — returns current date/time formatted with chrono.
   - `uuid()` — generates a UUID v4.
   - `snake_case(text)` — converts text to snake_case (utility matching the user's template).
-- **Interactive functions** delegate to `PromptProvider`, which handles TTY detection and fallback defaults internally. TemplateService does not know about TTY state.
+- **Interactive functions** delegate to [`DialogProvider`](crate::dialog::DialogProvider), which handles TTY detection and fallback defaults internally. TemplateService does not know about TTY state.
 - **Output path logic**: If `set_output()` was called during render, use that path. Else if `-o` was passed, use that. Else use `./<template-name>.md`. The `set_output()` result is captured via a shared `Cell` or `RefCell` that the function writes to and the service reads after render.
 - **File writing**: Uses `std::fs::write`. Checks for existing file before writing (unless `--force`). Error via miette if path exists, with `--force` suggestion.
 - **Dry-run**: Skips file existence check and write. Renders to stdout. Interactive functions return defaults.
@@ -75,7 +75,7 @@ The `template`/`tmpl` CLI command (and the default `-i` dispatch) wraps this ser
 
 ## Further Notes
 
-- TemplateService depends on PromptProvider (see PromptService spec) for all interactive functions, and on ConfigService for template directory resolution and trust checking. ConfigService and PromptService should be built before TemplateService.
+- TemplateService depends on [`DialogProvider`](crate::dialog::DialogProvider) for all interactive functions, and on ConfigService for template directory resolution and trust checking. ConfigService and the dialog module should be built before TemplateService.
 - Function names (e.g., `set_output(path)`) are provisional and may change as the API stabilizes.
 - The 1287-line reference template in `~/obsidian_vault/00_system/07_templates/42_00_action_item.md` exercises every feature described here and serves as the integration test target.
 - **Multi-pass rendering (future):** MiniJinja's `eval_to_state` + `render_captured` enable a first pass that discovers which interactive widgets are needed without prompting, followed by batch prompting, then a final render of the complete output. This would allow batching prompts (show all questions at once) and letting MCP agents supply all answers upfront. Not implemented in MVP — deferred until the single-pass blocking model proves insufficient.
