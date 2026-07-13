@@ -159,14 +159,11 @@ impl<'a> ConfigBuilder<'a, Trusted> {
             local: self.local,
             global: self.global,
             state: Merged {
-                config: Config::new(
-                    root,
-                    TemplateConfig {
-                        local: local_dir,
-                        global: global_dir,
-                        output,
-                    },
-                ),
+                config: Config::new(root, TemplateConfig {
+                    local: local_dir,
+                    global: global_dir,
+                    output,
+                }),
             },
         })
     }
@@ -285,14 +282,10 @@ mod tests {
             "directory = \"templates\"\noutput_dir = \"notes\"",
         );
 
-        let config = build(
-            cwd,
-            Vec::new(),
-            vec![CandidateConfigFile::new(
-                global_root.clone(),
-                ConfigSource::Global(global_path.clone()),
-            )],
-        );
+        let config = build(cwd, Vec::new(), vec![CandidateConfigFile::new(
+            global_root.clone(),
+            ConfigSource::Global(global_path.clone()),
+        )]);
 
         assert_eq!(config.local_template_dir(), None);
         assert_eq!(

@@ -4,14 +4,14 @@
 use std::path::{Path, PathBuf};
 
 use super::{
-    paths,
+    dirs,
     store::{ConfigFileStore, StoreError},
 };
 
 /// Records, lists, and cleans the tracked-config store.
 ///
 /// Thin adapter over [`ConfigFileStore`], fixing its root to the OS-correct
-/// tracked-configs location ([`paths::TRACKED_CONFIGS`]) and owning the
+/// tracked-configs location ([`dirs::TRACKED_CONFIGS`]) and owning the
 /// tracking-specific policy that the shared store itself doesn't know
 /// about: a write failure is bookkeeping, not a reason to fail config
 /// loading, so [`Self::track`] logs and swallows rather than returning a
@@ -29,7 +29,7 @@ impl ConfigTracker {
     #[must_use]
     pub(super) fn new() -> Self {
         Self {
-            store: ConfigFileStore::new(&paths::TRACKED_CONFIGS),
+            store: ConfigFileStore::new(&dirs::TRACKED_CONFIGS),
         }
     }
 
@@ -115,9 +115,8 @@ mod tests {
 
         tracker.track(&target);
 
-        assert_eq!(
-            tracker.list_all().expect("list tracked configs"),
-            vec![target.canonicalize().expect("canonicalize target")]
-        );
+        assert_eq!(tracker.list_all().expect("list tracked configs"), vec![
+            target.canonicalize().expect("canonicalize target")
+        ]);
     }
 }

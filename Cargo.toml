@@ -17,7 +17,6 @@ keywords = ["notes", "pkm", "templates"]
 categories = ["command-line-utilities", "development-tools"]
 
 [dependencies]
-dirs = "6.0.0"
 figment = { version = "0.10", features = ["toml"] }
 inquire = "0.9"
 is-terminal = "0.4"

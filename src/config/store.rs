@@ -15,13 +15,13 @@ use miette::Diagnostic;
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
-use super::paths;
+use super::dirs;
 
 /// Errors from [`ConfigFileStore`] operations.
 ///
-/// Public so callers outside `config::store` (e.g. [`super::domain::ConfigError`])
-/// can wrap it as a `#[source]`/`#[from]` without a private-type-in-public-API
-/// mismatch.
+/// Public so callers outside `config::store` (e.g.
+/// [`super::domain::ConfigError`]) can wrap it as a `#[source]`/`#[from]`
+/// without a private-type-in-public-API mismatch.
 #[derive(Debug, Diagnostic, Error)]
 pub enum StoreError {
     /// The recorded path could not be canonicalized.
@@ -60,13 +60,13 @@ pub(super) struct ConfigFileStore {
 impl ConfigFileStore {
     /// Creates the store at a known state-dir-rooted location.
     ///
-    /// Accepts only [`paths::StateDirRoot`], whose constructor is private to
+    /// Accepts only [`dirs::StateDirRoot`], whose constructor is private to
     /// [`paths`] — the only values a caller can pass are
-    /// [`paths::TRACKED_CONFIGS`] or [`paths::TRUSTED_CONFIGS`], so this
+    /// [`dirs::TRACKED_CONFIGS`] or [`dirs::TRUSTED_CONFIGS`], so this
     /// can't be pointed at an arbitrary or typo'd directory.
     #[inline]
     #[must_use]
-    pub(super) fn new(root: &paths::StateDirRoot) -> Self {
+    pub(super) fn new(root: &dirs::StateDirRoot) -> Self {
         Self {
             root: root.to_path_buf(),
         }
@@ -232,10 +232,9 @@ mod tests {
 
         store.record(&target).expect("record config");
 
-        assert_eq!(
-            store.list_all().expect("list configs"),
-            vec![target.canonicalize().expect("canonicalize target")]
-        );
+        assert_eq!(store.list_all().expect("list configs"), vec![
+            target.canonicalize().expect("canonicalize target")
+        ]);
     }
 
     #[test]
@@ -264,10 +263,9 @@ mod tests {
 
         store.record(&target).expect("record config");
 
-        assert_eq!(
-            store.list_all().expect("list configs"),
-            vec![target.canonicalize().expect("canonicalize target")]
-        );
+        assert_eq!(store.list_all().expect("list configs"), vec![
+            target.canonicalize().expect("canonicalize target")
+        ]);
     }
 
     #[test]
@@ -282,10 +280,9 @@ mod tests {
         store.record(&deleted).expect("record deleted config");
         fs::remove_file(&deleted).expect("remove deleted config");
 
-        assert_eq!(
-            store.list_all().expect("list configs"),
-            vec![kept.canonicalize().expect("canonicalize kept config")]
-        );
+        assert_eq!(store.list_all().expect("list configs"), vec![
+            kept.canonicalize().expect("canonicalize kept config")
+        ]);
     }
 
     #[test]
@@ -303,10 +300,9 @@ mod tests {
         let removed = store.clean().expect("clean store");
 
         assert_eq!(removed, 1);
-        assert_eq!(
-            store.list_all().expect("list configs"),
-            vec![kept.canonicalize().expect("canonicalize kept config")]
-        );
+        assert_eq!(store.list_all().expect("list configs"), vec![
+            kept.canonicalize().expect("canonicalize kept config")
+        ]);
     }
 
     #[test]

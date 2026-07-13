@@ -14,9 +14,9 @@ pub use service::ConfigService;
 
 mod builder;
 mod candidate;
+mod dirs;
 mod discovery;
 mod domain;
-mod paths;
 mod raw;
 mod service;
 mod store;

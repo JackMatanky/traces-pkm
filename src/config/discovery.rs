@@ -2,7 +2,8 @@
 //!
 //! Walks up the directory tree from a cwd path, collecting candidate
 //! config files before any reading or parsing occurs. Produces a
-//! [`DiscoveryOutcome`] token consumed by [`ConfigService::build`](super::ConfigService::build).
+//! [`DiscoveryOutcome`] token consumed by
+//! [`ConfigService::build`](super::ConfigService::build).
 
 use std::{
     marker::PhantomData,
@@ -12,7 +13,10 @@ use std::{
 use miette::Diagnostic;
 use thiserror::Error;
 
-use super::candidate::{CandidateConfigFile, ConfigSource};
+use super::{
+    candidate::{CandidateConfigFile, ConfigSource},
+    dirs,
+};
 
 const LOCAL_CONFIG_FILE: &str = ".traces/config.toml";
 const GLOBAL_CONFIG_FILE: &str = "traces/config.toml";
@@ -39,7 +43,8 @@ pub enum DiscoveryError {
     },
 }
 
-/// Opaque discovery result consumed by [`ConfigService::build`](super::ConfigService::build).
+/// Opaque discovery result consumed by
+/// [`ConfigService::build`](super::ConfigService::build).
 ///
 /// Carries the invocation cwd plus the local and global candidate files
 /// that were found on disk. Fields are private — callers pass this token
@@ -177,22 +182,21 @@ impl DiscoveryProcessor<LocalCollected> {
     pub(super) fn collect_global(
         self,
     ) -> Result<DiscoveryProcessor<GlobalCollected>, DiscoveryError> {
-        let global_config_path =
-            dirs::config_dir().map(|path| path.join(GLOBAL_CONFIG_FILE));
+        let global_config_path = dirs::CONFIG_HOME.join(GLOBAL_CONFIG_FILE);
         let Self {
             cwd,
             local,
             mut global,
             ..
         } = self;
-        if let Some(path) = global_config_path.as_deref()
-            && is_config_file(path)?
-        {
-            let root =
-                path.parent().unwrap_or_else(|| Path::new("")).to_path_buf();
+        if is_config_file(&global_config_path)? {
+            let root = global_config_path
+                .parent()
+                .unwrap_or_else(|| Path::new(""))
+                .to_path_buf();
             global.push(CandidateConfigFile::new(
                 root,
-                ConfigSource::Global(path.to_path_buf()),
+                ConfigSource::Global(global_config_path),
             ));
         }
         Ok(DiscoveryProcessor {
