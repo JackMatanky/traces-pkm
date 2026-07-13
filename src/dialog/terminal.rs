@@ -1,6 +1,6 @@
-use super::{PromptError, PromptProvider};
+use super::{DialogError, DialogProvider};
 
-/// The real [`PromptProvider`], backed by `inquire`.
+/// The real [`DialogProvider`], backed by `inquire`.
 ///
 /// Before prompting it checks whether stdin is a terminal. In a non-TTY
 /// context (scripts, dry-run, CI) it returns the supplied default without ever
@@ -9,10 +9,10 @@ use super::{PromptError, PromptProvider};
 /// TTY-ness is computed on demand, never cached, so stdin redirection can
 /// differ between calls (which tests rely on).
 #[derive(Copy, Clone, Debug, Default)]
-pub struct TerminalPromptProvider;
+pub struct TerminalDialogProvider;
 
-impl TerminalPromptProvider {
-    /// Create a new terminal-backed prompt provider.
+impl TerminalDialogProvider {
+    /// Create a new terminal-backed dialog provider.
     #[inline]
     #[must_use]
     pub fn new() -> Self {
@@ -20,13 +20,13 @@ impl TerminalPromptProvider {
     }
 }
 
-impl PromptProvider for TerminalPromptProvider {
+impl DialogProvider for TerminalDialogProvider {
     #[inline]
     fn text(
         &self,
         label: &str,
         default: Option<&str>,
-    ) -> Result<String, PromptError> {
+    ) -> Result<String, DialogError> {
         if !stdin_is_tty() {
             return Ok(default.unwrap_or_default().to_owned());
         }
@@ -42,7 +42,7 @@ impl PromptProvider for TerminalPromptProvider {
         &self,
         label: &str,
         default: Option<bool>,
-    ) -> Result<bool, PromptError> {
+    ) -> Result<bool, DialogError> {
         if !stdin_is_tty() {
             return Ok(default.unwrap_or(false));
         }
@@ -58,19 +58,14 @@ impl PromptProvider for TerminalPromptProvider {
         &self,
         label: &str,
         items: &[String],
-    ) -> Result<usize, PromptError> {
+    ) -> Result<usize, DialogError> {
         // A select over zero options can never yield a choice, in either mode.
         if items.is_empty() {
-            return Err(PromptError::EmptyOptions);
+            return Err(DialogError::EmptySelectionInput);
         }
         if !stdin_is_tty() {
-            // Non-TTY fallback: the first option (present, per the guard
-            // above).
             return Ok(0);
         }
-        // `raw_prompt` yields a `ListOption` carrying the index into the
-        // original list. inquire owns its option list, so the clone only
-        // happens on the TTY path.
         Ok(inquire::Select::new(label, items.to_vec()).raw_prompt()?.index)
     }
 
@@ -79,9 +74,8 @@ impl PromptProvider for TerminalPromptProvider {
         &self,
         label: &str,
         items: &[String],
-    ) -> Result<Vec<usize>, PromptError> {
+    ) -> Result<Vec<usize>, DialogError> {
         if !stdin_is_tty() {
-            // Non-TTY fallback: select nothing.
             return Ok(Vec::new());
         }
         Ok(inquire::MultiSelect::new(label, items.to_vec())
@@ -103,7 +97,6 @@ fn stdin_is_tty() -> bool {
 mod tests {
     use super::*;
 
-    /// Return `true` and print a visible notice when stdin is a real terminal.
     fn skip_if_tty(test: &str) -> bool {
         let is_tty = stdin_is_tty();
         if is_tty {
@@ -120,7 +113,7 @@ mod tests {
         if skip_if_tty("terminal_text_returns_default_when_not_a_tty") {
             return;
         }
-        let p = TerminalPromptProvider::new();
+        let p = TerminalDialogProvider::new();
         assert_eq!(p.text("name", Some("carol")).unwrap(), "carol");
     }
 
@@ -131,7 +124,7 @@ mod tests {
         ) {
             return;
         }
-        let p = TerminalPromptProvider::new();
+        let p = TerminalDialogProvider::new();
         assert_eq!(p.text("name", None).unwrap(), "");
     }
 
@@ -140,7 +133,7 @@ mod tests {
         if skip_if_tty("terminal_confirm_returns_default_when_not_a_tty") {
             return;
         }
-        let p = TerminalPromptProvider::new();
+        let p = TerminalDialogProvider::new();
         assert!(p.confirm("ok?", Some(true)).unwrap());
         assert!(!p.confirm("ok?", Some(false)).unwrap());
     }
@@ -152,7 +145,7 @@ mod tests {
         ) {
             return;
         }
-        let p = TerminalPromptProvider::new();
+        let p = TerminalDialogProvider::new();
         assert!(!p.confirm("ok?", None).unwrap());
     }
 
@@ -161,8 +154,8 @@ mod tests {
         if skip_if_tty("terminal_usable_as_dyn_when_not_a_tty") {
             return;
         }
-        let concrete = TerminalPromptProvider::new();
-        let p: &dyn PromptProvider = &concrete;
+        let concrete = TerminalDialogProvider::new();
+        let p: &dyn DialogProvider = &concrete;
         assert_eq!(p.text("l", Some("d")).unwrap(), "d");
         assert!(p.confirm("l", Some(true)).unwrap());
     }
@@ -173,20 +166,18 @@ mod tests {
             return;
         }
         let items = vec!["first".to_owned(), "second".to_owned()];
-        let p = TerminalPromptProvider::new();
+        let p = TerminalDialogProvider::new();
 
         assert_eq!(p.select("pick", &items).unwrap(), 0);
     }
 
     #[test]
     fn terminal_select_on_empty_items_errors() {
-        // The empty-list guard runs before the TTY check, so this holds
-        // regardless of whether stdin is a terminal — no skip needed.
-        let p = TerminalPromptProvider::new();
+        let p = TerminalDialogProvider::new();
 
         assert!(matches!(
             p.select("pick", &[]),
-            Err(PromptError::EmptyOptions)
+            Err(DialogError::EmptySelectionInput)
         ));
     }
 
@@ -196,7 +187,7 @@ mod tests {
             return;
         }
         let items = vec!["a".to_owned(), "b".to_owned()];
-        let p = TerminalPromptProvider::new();
+        let p = TerminalDialogProvider::new();
 
         assert!(p.multi_select("pick", &items).unwrap().is_empty());
     }

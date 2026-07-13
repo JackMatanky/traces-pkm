@@ -1,60 +1,62 @@
 //! Interactive-input seam.
 //!
-//! [`PromptProvider`] abstracts interactive user input behind an object-safe
-//! trait so consumers can hold a `&dyn PromptProvider` chosen at runtime
-//! (terminal vs. non-interactive). [`PresetPromptProvider`] is a deterministic
+//! [`DialogProvider`] abstracts interactive user input behind an object-safe
+//! trait so consumers can hold a `&dyn DialogProvider` chosen at runtime
+//! (terminal vs. non-interactive). [`PresetDialogProvider`] is a deterministic
 //! provider that returns pre-configured responses with zero I/O — used both in
 //! tests and in non-interactive/MCP mode.
 //!
 //! The trait requires `Send + Sync` so a provider can be captured into the
 //! `Send + Sync` custom-function closures `TemplateService` registers on its
-//! minijinja `Environment`. `PresetPromptProvider` therefore uses `Mutex`, not
+//! minijinja `Environment`. `PresetDialogProvider` therefore uses `Mutex`, not
 //! `RefCell`, for its interior mutability.
 
 mod error;
 mod preset;
 mod terminal;
 
-pub use error::PromptError;
-pub use preset::PresetPromptProvider;
-pub use terminal::TerminalPromptProvider;
+pub use error::DialogError;
+pub use preset::PresetDialogProvider;
+pub use terminal::TerminalDialogProvider;
 
 /// Interactive input, abstracted behind a seam.
 ///
-/// Object-safe: consumers hold a `&dyn PromptProvider`. Methods take `&self`
+/// Object-safe: consumers hold a `&dyn DialogProvider`. Methods take `&self`
 /// so a shared reference can be passed to multiple consumers. `Send + Sync`
-/// is required so an `Arc<dyn PromptProvider>` can be captured into the
+/// is required so an `Arc<dyn DialogProvider>` can be captured into the
 /// thread-safe closures `TemplateService` registers on its minijinja
 /// `Environment`.
-pub trait PromptProvider: Send + Sync {
+pub trait DialogProvider: Send + Sync {
     /// Prompt for freeform text, using `default` when the user provides none.
     ///
     /// # Errors
     ///
-    /// Returns [`PromptError`] if the prompt is interrupted
-    /// ([`Interrupted`](PromptError::Interrupted)), an I/O error occurs
-    /// ([`Io`](PromptError::Io)), or the backend fails for another reason
-    /// ([`Backend`](PromptError::Backend)).
+    /// Returns [`DialogError`] if the dialog is cancelled
+    /// ([`UserCancelled`](DialogError::UserCancelled)) or interrupted
+    /// ([`UserInterrupted`](DialogError::UserInterrupted)), an I/O error occurs
+    /// ([`Io`](DialogError::Io)), or the backend fails for another reason
+    /// ([`BackendFailure`](DialogError::BackendFailure)).
     fn text(
         &self,
         label: &str,
         default: Option<&str>,
-    ) -> Result<String, PromptError>;
+    ) -> Result<String, DialogError>;
 
     /// Prompt for a yes/no confirmation, using `default` when the user provides
     /// none.
     ///
     /// # Errors
     ///
-    /// Returns [`PromptError`] if the prompt is interrupted
-    /// ([`Interrupted`](PromptError::Interrupted)), an I/O error occurs
-    /// ([`Io`](PromptError::Io)), or the backend fails for another reason
-    /// ([`Backend`](PromptError::Backend)).
+    /// Returns [`DialogError`] if the dialog is cancelled
+    /// ([`UserCancelled`](DialogError::UserCancelled)) or interrupted
+    /// ([`UserInterrupted`](DialogError::UserInterrupted)), an I/O error occurs
+    /// ([`Io`](DialogError::Io)), or the backend fails for another reason
+    /// ([`BackendFailure`](DialogError::BackendFailure)).
     fn confirm(
         &self,
         label: &str,
         default: Option<bool>,
-    ) -> Result<bool, PromptError>;
+    ) -> Result<bool, DialogError>;
 
     /// Prompt the user to choose one item from `items`, returning its
     /// **index** into `items`.
@@ -72,16 +74,17 @@ pub trait PromptProvider: Send + Sync {
     ///
     /// # Errors
     ///
-    /// Returns [`EmptyOptions`](PromptError::EmptyOptions) when `items` is
-    /// empty (no index can be chosen). Otherwise returns [`PromptError`] if the
-    /// prompt is interrupted ([`Interrupted`](PromptError::Interrupted)), an
-    /// I/O error occurs ([`Io`](PromptError::Io)), or the backend fails for
-    /// another reason ([`Backend`](PromptError::Backend)).
+    /// Returns [`EmptySelectionInput`](DialogError::EmptySelectionInput) when `items` is
+    /// empty (no index can be chosen). Otherwise returns [`DialogError`] if the
+    /// dialog is cancelled ([`UserCancelled`](DialogError::UserCancelled)) or
+    /// interrupted ([`UserInterrupted`](DialogError::UserInterrupted)), an I/O error
+    /// occurs ([`Io`](DialogError::Io)), or the backend fails for another
+    /// reason ([`BackendFailure`](DialogError::BackendFailure)).
     fn select(
         &self,
         label: &str,
         items: &[String],
-    ) -> Result<usize, PromptError>;
+    ) -> Result<usize, DialogError>;
 
     /// Prompt the user to choose any number of items from `items`, returning
     /// their **indices** into `items`.
@@ -93,15 +96,16 @@ pub trait PromptProvider: Send + Sync {
     ///
     /// # Errors
     ///
-    /// Returns [`PromptError`] if the prompt is interrupted
-    /// ([`Interrupted`](PromptError::Interrupted)), an I/O error occurs
-    /// ([`Io`](PromptError::Io)), or the backend fails for another reason
-    /// ([`Backend`](PromptError::Backend)).
+    /// Returns [`DialogError`] if the dialog is cancelled
+    /// ([`UserCancelled`](DialogError::UserCancelled)) or interrupted
+    /// ([`UserInterrupted`](DialogError::UserInterrupted)), an I/O error occurs
+    /// ([`Io`](DialogError::Io)), or the backend fails for another reason
+    /// ([`BackendFailure`](DialogError::BackendFailure)).
     fn multi_select(
         &self,
         label: &str,
         items: &[String],
-    ) -> Result<Vec<usize>, PromptError>;
+    ) -> Result<Vec<usize>, DialogError>;
 }
 
 #[cfg(test)]
@@ -110,12 +114,9 @@ mod tests {
 
     #[test]
     fn provider_is_send_and_sync() {
-        // Guards the minijinja integration path: TemplateService captures the
-        // provider into `Send + Sync` custom-function closures. If this stops
-        // compiling, that consumer breaks.
         fn assert_send_sync<T: Send + Sync>() {}
-        assert_send_sync::<PresetPromptProvider>();
-        assert_send_sync::<TerminalPromptProvider>();
-        assert_send_sync::<std::sync::Arc<dyn PromptProvider>>();
+        assert_send_sync::<PresetDialogProvider>();
+        assert_send_sync::<TerminalDialogProvider>();
+        assert_send_sync::<std::sync::Arc<dyn DialogProvider>>();
     }
 }
