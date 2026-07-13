@@ -1,11 +1,11 @@
 ---
 number: 2
-title: Symlink-Based Template Directory Trust
-status: proposed
+title: Symlink-Based Config Trust and Tracking
+status: accepted
 date: 2026-07-07
 ---
 
-# Symlink-Based Template Directory Trust
+# Symlink-Based Config Trust and Tracking
 
 ## Context and Problem Statement
 
