@@ -6,11 +6,42 @@
 //! `dirs::config_dir()`), so a crate-internal module also named `dirs`
 //! would be a confusing near-shadow.
 
-use std::{path::PathBuf, sync::LazyLock};
+use std::{
+    ops::Deref,
+    path::{Path, PathBuf},
+    sync::LazyLock,
+};
+
+/// A path guaranteed to be one of this crate's known state-dir-rooted store
+/// locations.
+///
+/// The constructor is private to this module, so [`TRACKED_CONFIGS`] and
+/// [`TRUSTED_CONFIGS`] are the only two values that will ever exist.
+/// [`ConfigFileStore::new`](super::store::ConfigFileStore::new) accepts only
+/// this type (not a raw path or a name string), so a production caller
+/// cannot point a store at an arbitrary or typo'd directory — the only
+/// values it can ever pass through are the two below.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct StateDirRoot(PathBuf);
+
+impl StateDirRoot {
+    fn new(name: &str) -> Self {
+        Self(state_root().join(name))
+    }
+}
+
+impl Deref for StateDirRoot {
+    type Target = Path;
+
+    #[inline]
+    fn deref(&self) -> &Path {
+        &self.0
+    }
+}
 
 /// The config tracking store root, under the XDG state dir.
-pub(super) static TRACKED_CONFIGS: LazyLock<PathBuf> =
-    LazyLock::new(|| state_root().join("tracked-configs"));
+pub(super) static TRACKED_CONFIGS: LazyLock<StateDirRoot> =
+    LazyLock::new(|| StateDirRoot::new("tracked-configs"));
 
 /// The trust store root, under the XDG state dir.
 ///
@@ -23,8 +54,8 @@ pub(super) static TRACKED_CONFIGS: LazyLock<PathBuf> =
     reason = "consumed by the trust store (issue 04); this root constant is \
               requested by issue 03's key interfaces"
 )]
-pub(super) static TRUSTED_CONFIGS: LazyLock<PathBuf> =
-    LazyLock::new(|| state_root().join("trusted-configs"));
+pub(super) static TRUSTED_CONFIGS: LazyLock<StateDirRoot> =
+    LazyLock::new(|| StateDirRoot::new("trusted-configs"));
 
 /// Under test, redirect to the OS temp dir rather than the real state dir —
 /// otherwise every test exercising the `Tracked` builder stage would write

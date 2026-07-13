@@ -248,7 +248,7 @@ pub(super) struct TemplateConfig {
     pub(super) output: PathBuf,
 }
 
-use super::builder::ConfigBuilderError;
+use super::{builder::ConfigBuilderError, store::StoreError};
 
 /// Top-level config error wrapping phase-specific errors.
 #[derive(Debug, Diagnostic, Error)]
@@ -261,6 +261,14 @@ pub enum ConfigError {
     #[error(transparent)]
     #[diagnostic(transparent)]
     Resolution(#[from] ResolutionError),
+    /// An error reading or cleaning the tracking store. Never returned by
+    /// [`super::ConfigService::build`] itself (tracking failures during a
+    /// build are best-effort and only logged) — only by the explicit
+    /// [`super::ConfigService::list_tracked`] and
+    /// [`super::ConfigService::clean_tracked_store`] administrative calls.
+    #[error(transparent)]
+    #[diagnostic(transparent)]
+    Tracking(#[from] StoreError),
 }
 
 #[cfg(test)]

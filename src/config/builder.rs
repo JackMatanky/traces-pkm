@@ -72,22 +72,18 @@ impl<'a> ConfigBuilder<'a, Discovered> {
         }
     }
 
-    /// Attempts to record each candidate config path in the tracking store.
+    /// Records each candidate config path in the tracking store.
     ///
-    /// Best-effort: tracking is bookkeeping, not a precondition for loading
-    /// a config, so a store write failure is logged via `tracing::warn!` and
-    /// skipped rather than propagated. This method's no-`Result` signature is
-    /// the guarantee: there is no tracking error variant to propagate.
+    /// Delegates to `tracker`, which is best-effort by construction (see
+    /// [`ConfigTracker::track`]) — this stage never sees or handles a
+    /// tracking failure, it only sequences when tracking happens.
     #[inline]
-    pub(super) fn track(self) -> ConfigBuilder<'a, Tracked> {
+    pub(super) fn track(
+        self,
+        tracker: &ConfigTracker,
+    ) -> ConfigBuilder<'a, Tracked> {
         for candidate in self.local.iter().chain(self.global) {
-            if let Err(error) = ConfigTracker::track(candidate.path()) {
-                tracing::warn!(
-                    path = %candidate.path().display(),
-                    %error,
-                    "failed to record tracked config"
-                );
-            }
+            tracker.track(candidate.path());
         }
         ConfigBuilder {
             cwd: self.cwd,
@@ -217,8 +213,10 @@ mod tests {
         global: Vec<CandidateConfigFile>,
     ) -> Config {
         let outcome = DiscoveryOutcome::new(cwd, local, global);
+        let tracked =
+            tempfile::tempdir().expect("create temp tracked-store dir");
         ConfigBuilder::new(&outcome)
-            .track()
+            .track(&ConfigTracker::at(tracked.path().to_path_buf()))
             .trust()
             .merge()
             .expect("merge config")
@@ -371,8 +369,10 @@ mod tests {
                 ConfigSource::Global(global_path.clone()),
             )],
         );
+        let tracked =
+            tempfile::tempdir().expect("create temp tracked-store dir");
         let config = ConfigBuilder::new(&outcome)
-            .track()
+            .track(&ConfigTracker::at(tracked.path().to_path_buf()))
             .trust()
             .merge()
             .expect("merge config")
@@ -409,7 +409,12 @@ mod tests {
             )],
             Vec::new(),
         );
-        let result = ConfigBuilder::new(&outcome).track().trust().merge();
+        let tracked =
+            tempfile::tempdir().expect("create temp tracked-store dir");
+        let result = ConfigBuilder::new(&outcome)
+            .track(&ConfigTracker::at(tracked.path().to_path_buf()))
+            .trust()
+            .merge();
 
         assert!(
             matches!(result, Err(ConfigBuilderError::Load { path: error_path, .. }) if error_path == path)

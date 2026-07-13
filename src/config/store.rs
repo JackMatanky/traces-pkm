@@ -15,9 +15,15 @@ use miette::Diagnostic;
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
+use super::paths;
+
 /// Errors from [`ConfigFileStore`] operations.
+///
+/// Public so callers outside `config::store` (e.g. [`super::domain::ConfigError`])
+/// can wrap it as a `#[source]`/`#[from]` without a private-type-in-public-API
+/// mismatch.
 #[derive(Debug, Diagnostic, Error)]
-pub(super) enum StoreError {
+pub enum StoreError {
     /// The recorded path could not be canonicalized.
     #[error("failed to canonicalize path {path}")]
     #[diagnostic(code(traces::config::store::canonicalize))]
@@ -40,37 +46,69 @@ pub(super) enum StoreError {
     },
 }
 
-/// Records, lists, and cleans one hash-keyed config file store at a time.
-pub(super) struct ConfigFileStore;
+/// Records, lists, and cleans one hash-keyed config file store.
+///
+/// Holds the store root so callers don't have to keep threading it through
+/// every call. Root-agnostic on purpose: this is the seam trust (issue 04)
+/// reuses with its own root via [`ConfigFileStore::new`] — no
+/// tracked/trusted-specific behavior lives here.
+#[derive(Clone, Debug)]
+pub(super) struct ConfigFileStore {
+    root: PathBuf,
+}
 
 impl ConfigFileStore {
-    /// Records `target`'s canonical path under `root`.
+    /// Creates the store at a known state-dir-rooted location.
+    ///
+    /// Accepts only [`paths::StateDirRoot`], whose constructor is private to
+    /// [`paths`] — the only values a caller can pass are
+    /// [`paths::TRACKED_CONFIGS`] or [`paths::TRUSTED_CONFIGS`], so this
+    /// can't be pointed at an arbitrary or typo'd directory.
+    #[inline]
+    #[must_use]
+    pub(super) fn new(root: &paths::StateDirRoot) -> Self {
+        Self {
+            root: root.to_path_buf(),
+        }
+    }
+
+    /// Creates a store rooted at an explicit path. Test-only: production
+    /// callers always want a known location via [`Self::new`].
+    #[cfg(test)]
+    #[must_use]
+    pub(super) fn at(root: PathBuf) -> Self {
+        Self {
+            root,
+        }
+    }
+
+    /// Records `target`'s canonical path in this store.
     ///
     /// Idempotent: recording an already-stored path is a no-op.
     ///
     /// # Errors
     ///
-    /// Returns [`StoreError`] when `target` cannot be canonicalized, `root`
-    /// cannot be created, or the entry cannot be written.
+    /// Returns [`StoreError`] when `target` cannot be canonicalized, the
+    /// store root cannot be created, or the entry cannot be written.
     #[inline]
     #[allow(
         clippy::disallowed_methods,
         reason = "canonicalize-then-hash is the strictly-necessary path \
                   resolution this lint carves out an exception for"
     )]
-    pub(super) fn record(root: &Path, target: &Path) -> Result<(), StoreError> {
+    pub(super) fn record(&self, target: &Path) -> Result<(), StoreError> {
         let canonical = fs::canonicalize(target).map_err(|source| {
             StoreError::Canonicalize {
                 path: target.to_path_buf(),
                 source,
             }
         })?;
-        let entry = root.join(hash_path(&canonical));
+        let entry = self.root.join(hash_path(&canonical));
         if entry.exists() {
             return Ok(());
         }
-        fs::create_dir_all(root).map_err(|source| StoreError::Io {
-            path: root.to_path_buf(),
+        fs::create_dir_all(&self.root).map_err(|source| StoreError::Io {
+            path: self.root.clone(),
             source,
         })?;
         #[cfg(unix)]
@@ -87,23 +125,23 @@ impl ConfigFileStore {
         })
     }
 
-    /// Lists the canonical paths of all live entries under `root`.
+    /// Lists the canonical paths of all live entries in this store.
     ///
     /// An entry is live when its target path can be read from the entry and
     /// still exists on disk. Dangling or unreadable entries are silently
-    /// omitted. An absent or non-directory `root` is an empty list, not an
+    /// omitted. An absent or non-directory root is an empty list, not an
     /// error. Ordering follows the filesystem and is not stable.
     ///
     /// # Errors
     ///
-    /// Returns [`StoreError`] when `root` exists but cannot be read.
+    /// Returns [`StoreError`] when the store root exists but cannot be read.
     #[inline]
-    pub(super) fn list_all(root: &Path) -> Result<Vec<PathBuf>, StoreError> {
-        if !root.is_dir() {
+    pub(super) fn list_all(&self) -> Result<Vec<PathBuf>, StoreError> {
+        if !self.root.is_dir() {
             return Ok(Vec::new());
         }
         let mut targets = Vec::new();
-        for entry in read_dir_entries(root)? {
+        for entry in read_dir_entries(&self.root)? {
             #[cfg(unix)]
             let target = fs::read_link(&entry).ok();
             #[cfg(windows)]
@@ -118,21 +156,21 @@ impl ConfigFileStore {
         Ok(targets)
     }
 
-    /// Removes entries under `root` whose target path is unreadable or no
+    /// Removes entries in this store whose target path is unreadable or no
     /// longer exists. Returns the number of entries removed. An absent or
-    /// non-directory `root` removes nothing.
+    /// non-directory root removes nothing.
     ///
     /// # Errors
     ///
-    /// Returns [`StoreError`] when `root` exists but cannot be read, or a
-    /// stale entry cannot be removed.
+    /// Returns [`StoreError`] when the store root exists but cannot be read,
+    /// or a stale entry cannot be removed.
     #[inline]
-    pub(super) fn clean(root: &Path) -> Result<usize, StoreError> {
-        if !root.is_dir() {
+    pub(super) fn clean(&self) -> Result<usize, StoreError> {
+        if !self.root.is_dir() {
             return Ok(0);
         }
         let mut removed = 0_usize;
-        for entry in read_dir_entries(root)? {
+        for entry in read_dir_entries(&self.root)? {
             #[cfg(unix)]
             let target = fs::read_link(&entry).ok();
             #[cfg(windows)]
@@ -190,12 +228,12 @@ mod tests {
         let temp = tempfile::tempdir().expect("create temp dir");
         let target = temp.path().join("config.toml");
         fs::write(&target, "").expect("write config");
-        let root = temp.path().join("store");
+        let store = ConfigFileStore::at(temp.path().join("store"));
 
-        ConfigFileStore::record(&root, &target).expect("record config");
+        store.record(&target).expect("record config");
 
         assert_eq!(
-            ConfigFileStore::list_all(&root).expect("list configs"),
+            store.list_all().expect("list configs"),
             vec![target.canonicalize().expect("canonicalize target")]
         );
     }
@@ -205,15 +243,12 @@ mod tests {
         let temp = tempfile::tempdir().expect("create temp dir");
         let target = temp.path().join("config.toml");
         fs::write(&target, "").expect("write config");
-        let root = temp.path().join("store");
+        let store = ConfigFileStore::at(temp.path().join("store"));
 
-        ConfigFileStore::record(&root, &target).expect("record config");
-        ConfigFileStore::record(&root, &target).expect("record config");
+        store.record(&target).expect("record config");
+        store.record(&target).expect("record config");
 
-        assert_eq!(
-            ConfigFileStore::list_all(&root).expect("list configs").len(),
-            1
-        );
+        assert_eq!(store.list_all().expect("list configs").len(), 1);
     }
 
     #[test]
@@ -221,16 +256,16 @@ mod tests {
         let temp = tempfile::tempdir().expect("create temp dir");
         let target = temp.path().join("config.toml");
         fs::write(&target, "").expect("write config");
-        let root = temp.path().join("store");
+        let store = ConfigFileStore::at(temp.path().join("store"));
 
-        ConfigFileStore::record(&root, &target).expect("record config");
+        store.record(&target).expect("record config");
         fs::remove_file(&target).expect("remove config");
         fs::write(&target, "").expect("write config");
 
-        ConfigFileStore::record(&root, &target).expect("record config");
+        store.record(&target).expect("record config");
 
         assert_eq!(
-            ConfigFileStore::list_all(&root).expect("list configs"),
+            store.list_all().expect("list configs"),
             vec![target.canonicalize().expect("canonicalize target")]
         );
     }
@@ -242,14 +277,13 @@ mod tests {
         let deleted = temp.path().join("deleted.toml");
         fs::write(&kept, "").expect("write kept config");
         fs::write(&deleted, "").expect("write deleted config");
-        let root = temp.path().join("store");
-        ConfigFileStore::record(&root, &kept).expect("record kept config");
-        ConfigFileStore::record(&root, &deleted)
-            .expect("record deleted config");
+        let store = ConfigFileStore::at(temp.path().join("store"));
+        store.record(&kept).expect("record kept config");
+        store.record(&deleted).expect("record deleted config");
         fs::remove_file(&deleted).expect("remove deleted config");
 
         assert_eq!(
-            ConfigFileStore::list_all(&root).expect("list configs"),
+            store.list_all().expect("list configs"),
             vec![kept.canonicalize().expect("canonicalize kept config")]
         );
     }
@@ -261,17 +295,16 @@ mod tests {
         let deleted = temp.path().join("deleted.toml");
         fs::write(&kept, "").expect("write kept config");
         fs::write(&deleted, "").expect("write deleted config");
-        let root = temp.path().join("store");
-        ConfigFileStore::record(&root, &kept).expect("record kept config");
-        ConfigFileStore::record(&root, &deleted)
-            .expect("record deleted config");
+        let store = ConfigFileStore::at(temp.path().join("store"));
+        store.record(&kept).expect("record kept config");
+        store.record(&deleted).expect("record deleted config");
         fs::remove_file(&deleted).expect("remove deleted config");
 
-        let removed = ConfigFileStore::clean(&root).expect("clean store");
+        let removed = store.clean().expect("clean store");
 
         assert_eq!(removed, 1);
         assert_eq!(
-            ConfigFileStore::list_all(&root).expect("list configs"),
+            store.list_all().expect("list configs"),
             vec![kept.canonicalize().expect("canonicalize kept config")]
         );
     }
@@ -279,28 +312,26 @@ mod tests {
     #[test]
     fn list_all_on_a_store_with_no_entries_yet_is_empty() {
         let temp = tempfile::tempdir().expect("create temp dir");
-        let root = temp.path().join("store");
+        let store = ConfigFileStore::at(temp.path().join("store"));
 
-        assert!(
-            ConfigFileStore::list_all(&root).expect("list configs").is_empty()
-        );
+        assert!(store.list_all().expect("list configs").is_empty());
     }
 
     #[test]
     fn clean_on_a_store_with_no_entries_yet_removes_nothing() {
         let temp = tempfile::tempdir().expect("create temp dir");
-        let root = temp.path().join("store");
+        let store = ConfigFileStore::at(temp.path().join("store"));
 
-        assert_eq!(ConfigFileStore::clean(&root).expect("clean store"), 0);
+        assert_eq!(store.clean().expect("clean store"), 0);
     }
 
     #[test]
     fn record_of_a_nonexistent_target_errors() {
         let temp = tempfile::tempdir().expect("create temp dir");
-        let root = temp.path().join("store");
+        let store = ConfigFileStore::at(temp.path().join("store"));
 
         assert!(matches!(
-            ConfigFileStore::record(&root, &temp.path().join("missing.toml")),
+            store.record(&temp.path().join("missing.toml")),
             Err(StoreError::Canonicalize { .. })
         ));
     }
@@ -312,10 +343,8 @@ mod tests {
         fs::write(&target, "").expect("write config");
         let root = temp.path().join("store");
         fs::write(&root, "").expect("write store root file");
+        let store = ConfigFileStore::at(root);
 
-        assert!(matches!(
-            ConfigFileStore::record(&root, &target),
-            Err(StoreError::Io { .. })
-        ));
+        assert!(matches!(store.record(&target), Err(StoreError::Io { .. })));
     }
 }
