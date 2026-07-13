@@ -30,8 +30,8 @@ Relevant existing code at a glance:
 
 ## Acceptance criteria
 
-- [x] `trust(dir)` creates the hashed symlink/file in `dirs::TRUSTED_CONFIGS` via `ConfigFileStore::record`
-- [x] `is_trusted(dir)` returns true only when a valid trust entry exists for the canonical path
+- [x] `trust(dir)` creates the hashed symlink/file in `dirs::TRUSTED_CONFIGS` via `ConfigFileStore::record` _(superseded — see "Revision" below: `trust` now takes `root` and `config_file` separately)_
+- [x] `is_trusted(dir)` returns true only when a valid trust entry exists for the canonical path _(superseded — see "Revision": now returns a 3-state `TrustState`, not `bool`)_
 - [x] Untrusted rejection error includes the path and a `traces trust` suggestion (miette)
 - [x] Canonicalization ensures the same directory hashes consistently regardless of relative path (handled by `ConfigFileStore::record` already — canonicalize-then-hash lives in the shared component)
 - [x] Trust logic reuses `ConfigFileStore` rather than reimplementing hashing/symlink/clean
@@ -51,6 +51,38 @@ Relevant skills: `m11-ecosystem`, `m06-error-handling`, `m13-domain-error`, `m01
 ## Unblocked by
 
 Issue 03 (`config-tracking-store.md`) is implemented on `feat/config-tracking-store` — `ConfigFileStore` and `dirs::TRUSTED_CONFIGS` are available. Start immediately.
+
+## Revision: root()-anchored local trust, global auto-trust, content-hash staleness
+
+Design review after the first implementation pass (documented in Comments below) found three problems with checking `candidate.path().parent()` for every candidate, local and global alike:
+
+1. **Wrong anchor for local candidates.** `path().parent()` resolves to `.traces/`, an implementation detail of where discovery looks — not the project root a user would recognize as "the thing I'm trusting," and one that breaks the moment config-file location and project location can diverge (e.g. a future config-path override).
+2. **Over-broad grant for global candidates.** `path().parent()` (and `root()`, identically) resolves to the *entire* `~/.config/traces/` folder — a single, fixed, shared location. Trusting it once trusts everything ever placed there, well beyond the one config file the decision was actually about.
+3. **No re-verification on edit.** A pure path-hash trust entry, once created, never expires — an edit to an already-trusted config file (accidental, or malicious) is silently accepted forever.
+
+Research into mise's actual trust implementation (`config_file/mod.rs`) and direnv's `.envrc` trust found: mise's *default* (non-paranoid) mode is directory-level, anchored at the project root (`config_root()`, which collapses several possible config file locations within one project to a single trust decision) — not the config file's own path. mise's *paranoid* mode adds file-content-hash re-verification on top. mise **never** hash-gates its own global config at all — it's unconditionally auto-trusted, since only the user can write to their own `$HOME`. direnv, solving a different problem (a single standalone executable script, not a project), hashes path+content together at file granularity.
+
+**Revised design:**
+
+- **Local candidates:** trusted at `candidate.root()` (the project root — directory-level, matching mise's default and fixing problem 1), **plus** a BLAKE3 content hash of the config file itself as a companion record (matching mise's paranoid mode, addressing problem 3).
+- **Global candidates:** the trust check is skipped entirely — always considered trusted, matching mise's own global-config carve-out. This resolves problem 2 directly: there is no longer a directory-level trust *decision* for the global config folder to over-grant.
+- **New `src/hash.rs`** (top-level, not `src/config/hash.rs` — content hashing is a generic utility, not config-specific): `hash_file(path) -> Result<blake3::Hash, HashError>`. `HashError` is `thiserror`-only, no `miette::Diagnostic` — it's an internal detail always wrapped by a higher-level trust error before reaching any CLI-facing diagnostic.
+- **`ConfigFileStore` gains `entry_path(&self, target) -> Result<PathBuf, StoreError>`**, extracted from the canonicalize+hash logic `record`/`contains` already share, so `ConfigTrust` can derive a companion `<entry>.hash` path without reaching into `ConfigFileStore`'s internals.
+- **New `TrustState { Untrusted, Stale, Trusted }`** (in `domain.rs`, public — `ConfigService::is_trusted` returns it) replaces the boolean: `Stale` means the directory trust entry exists but the config file's content hash no longer matches what was recorded at trust time. A missing/corrupt companion hash file is treated as `Stale`, not silently `Trusted` — fail toward re-verification.
+- **New `TrustError`** (wraps `StoreError` and `HashError`, each its own `#[from]` — different source types, no ambiguity) replaces the ad-hoc `ConfigError::TrustIo { source: StoreError }` from the first pass.
+
+**Revised acceptance criteria:**
+
+- [ ] Local candidates are trusted at `root()` (the project root), not `.traces/` or the config file's own path
+- [ ] Global candidates skip the trust check entirely and always pass, with no trust-store interaction
+- [ ] `src/hash.rs` provides `hash_file` returning a `blake3::Hash`; `HashError` derives `thiserror::Error` only, not `miette::Diagnostic`
+- [ ] Trusting a local candidate records both the `root()` directory-trust entry and a companion BLAKE3 content hash of the config file
+- [ ] Checking a local candidate re-verifies the config file's current content against the stored hash; a mismatch (directory trusted, content changed) returns `TrustState::Stale`, distinct from `Untrusted`
+- [ ] `TrustState::Stale` surfaces as its own `ConfigError` variant with miette help text distinguishing "never trusted" from "trusted, but the file changed since"
+- [ ] A missing or corrupt companion hash file is treated as `Stale`, not `Trusted`
+- [ ] Tests cover: root()-anchored local trust, global candidates always passing without touching the trust store, trust → edit → recheck yielding `Stale`, and re-trust after an edit clearing staleness
+
+**Out of scope for this revision:** companion-`.hash` file cleanup (pruning orphans) — `ConfigTrust::list_all`/`clean` don't exist yet at all (already deferred to issue 05 in the first pass's Comments); when issue 05 adds them, the companion file needs the same treatment.
 
 ## Comments
 
