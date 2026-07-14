@@ -17,12 +17,12 @@ keywords = ["notes", "pkm", "templates"]
 categories = ["command-line-utilities", "development-tools"]
 
 [dependencies]
+blake3 = "1.8"
 figment = { version = "0.10", features = ["toml"] }
 inquire = "0.9"
 is-terminal = "0.4"
 miette = { version = "7.6.0", features = ["derive"] }
 serde = { version = "1.0.228", features = ["derive"] }
-sha2 = "0.10"
 thiserror = "2"
 tracing = "0.1"
 

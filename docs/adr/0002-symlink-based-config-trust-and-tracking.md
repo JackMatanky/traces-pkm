@@ -1,11 +1,11 @@
 ---
 number: 2
-title: Symlink-Based Template Directory Trust
+title: Symlink-Based Config Trust and Tracking
 status: accepted
 date: 2026-07-07
 ---
 
-# Symlink-Based Template Directory Trust
+# Symlink-Based Config Trust and Tracking
 
 ## Context and Problem Statement
 
@@ -89,3 +89,19 @@ The trust check is enforced in the template instantiation path: before a templat
 ## More Information
 
 Pattern follows mise's `src/config/tracking.rs` design. mise's `Tracker` operates over multiple hash-keyed symlink directories (`TRACKED_CONFIGS`, `TRACKED_STUBS`, `TRUSTED_CONFIGS`) via a shared `track_in`/`list_all_in`/`clean_in` core parameterised by the store root — traces mirrors this with one component that serves both the trusted and tracked stores, differing only by root. mise's `Config::get_tracked_config_files()` shows the cross-project consumer: it lists tracked configs and loads those outside the current hierarchy. Store roots resolve via `dirs::state_dir()`. The `traces trust` CLI subcommand wraps the trust store with interactive prompts (inquire) when run without arguments; tracking has no CLI of its own for MVP (it is written on config load and read by future cross-project commands).
+
+## Update (issue 04): trust anchor and re-verification, informed by mise and direnv
+
+Config-loading trust (an issue-04 use of this ADR's store, beyond the original template-directory framing above) was initially implemented checking each candidate config file's parent directory. Review found two problems: for a local project this parent is `.traces/`, an incidental discovery detail rather than the project a user would recognize as "the thing I'm trusting"; for the global config it's the entire, single, shared `~/.config/traces/` folder, so trusting it once over-grants to everything ever placed there.
+
+Researching mise's actual implementation (`config_file/mod.rs`) and direnv's `.envrc` trust resolved this:
+
+- **mise's default (non-paranoid) trust is directory-level, anchored at the project root** — `config_root()` collapses every config file a project might have (`.mise.toml`, `.mise/conf.d/*.toml`, task files) to one trust decision at the root, not at whichever file happens to be read. mise's **paranoid mode** adds file-content-hash re-verification on top of that same root-anchored entry, for callers wanting stronger guarantees.
+- **mise never hash-gates its own global config** — `~/.config/mise/config.toml` is unconditionally auto-trusted, on the reasoning that only the user can write to their own `$HOME`.
+- **direnv trusts at file granularity with a combined path+content hash** (`sha256(abs_path + file_content)`), because its unit of trust is a single standalone script, not a project with multiple related files.
+
+**Decision:** local config trust is anchored at the project root (`candidate.root()`, matching mise's default), with a companion BLAKE3 content hash of the config file itself for re-verification on edit (matching mise's paranoid mode, layered onto the same root-anchored entry rather than a second directory-trust decision). Global config trust is skipped entirely — always considered trusted, matching mise's own carve-out — which is what actually resolves the over-granting problem, not a switch to file-level hashing.
+
+Content-hash re-verification only has somewhere sensible to attach for a single named file (the config file); it does not extend to the template-directory trust this ADR originally describes (hashing a directory's content was already rejected above as the "Checksum-based" option, for the same cost-and-fragility reasons). Template-directory trust remains directory-only, unchanged, still owed to issue 05 / a future TemplateService.
+
+A pure path-hash entry, once created, never expires — an edit to an already-trusted config file was previously accepted forever. The content-hash companion closes that gap for local config specifically: a mismatch between the file's current hash and the one recorded at trust time is surfaced as a distinct "stale" result, not silently treated as still-trusted.

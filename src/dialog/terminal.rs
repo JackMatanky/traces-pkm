@@ -17,9 +17,9 @@ use super::{DialogError, DialogProvider};
 /// ## Empty-item edge case
 ///
 /// [`select`](DialogProvider::select) short-circuits **before** the TTY check
-/// when `items` is empty — it returns [`EmptySelectionInput`](DialogError::EmptySelectionInput)
-/// regardless of TTY status, because zero options can never yield a valid
-/// choice.
+/// when `items` is empty — it returns
+/// [`EmptySelectionInput`](DialogError::EmptySelectionInput) regardless of TTY
+/// status, because zero options can never yield a valid choice.
 ///
 /// # Examples
 ///

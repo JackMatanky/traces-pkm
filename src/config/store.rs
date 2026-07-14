@@ -1,50 +1,17 @@
 //! Hash-keyed config file store.
 //!
-//! Stores canonical paths as SHA-256-named entries under a caller-provided
+//! Stores canonical paths as BLAKE3-named entries under a caller-provided
 //! root: symlinks on Unix, plain files containing the path on Windows. This
 //! module owns the cross-platform storage mechanics; domain modules choose
 //! which root to use.
 
 use std::{
-    fmt::Write as _,
-    fs, io,
+    fs,
     path::{Path, PathBuf},
 };
 
-use miette::Diagnostic;
-use sha2::{Digest, Sha256};
-use thiserror::Error;
-
-use super::dirs;
-
-/// Errors from [`ConfigFileStore`] operations.
-///
-/// Public so callers outside `config::store` (e.g.
-/// [`super::domain::ConfigError`]) can wrap it as a `#[source]`/`#[from]`
-/// without a private-type-in-public-API mismatch.
-#[derive(Debug, Diagnostic, Error)]
-pub enum StoreError {
-    /// The recorded path could not be canonicalized.
-    #[error("failed to canonicalize path {path}")]
-    #[diagnostic(code(traces::config::store::canonicalize))]
-    Canonicalize {
-        /// Path that could not be canonicalized.
-        path: PathBuf,
-        /// Source I/O error.
-        #[source]
-        source: io::Error,
-    },
-    /// A store operation on `path` failed.
-    #[error("config file store operation failed for {path}")]
-    #[diagnostic(code(traces::config::store::io))]
-    Io {
-        /// Path the failing operation targeted (a directory or an entry).
-        path: PathBuf,
-        /// Source I/O error.
-        #[source]
-        source: io::Error,
-    },
-}
+use super::{dirs, error::StoreError};
+use crate::hash::hash_path_to_str;
 
 /// Records, lists, and cleans one hash-keyed config file store.
 ///
@@ -82,6 +49,52 @@ impl ConfigFileStore {
         }
     }
 
+    /// Canonicalizes `target`. The single canonicalize-then-hash entry
+    /// point [`Self::record`] and [`Self::contains`] both build on, so the
+    /// two can never diverge on this step and silently split entries
+    /// between "written by record" and "looked up by contains" for the
+    /// same directory.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError::Canonicalize`] when `target` cannot be
+    /// canonicalized.
+    #[inline]
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "canonicalize-then-hash is the strictly-necessary path \
+                  resolution this lint carves out an exception for"
+    )]
+    fn canonicalize(target: &Path) -> Result<PathBuf, StoreError> {
+        fs::canonicalize(target).map_err(|source| StoreError::Canonicalize {
+            path: target.to_path_buf(),
+            source,
+        })
+    }
+
+    /// Resolves `target` to the path its entry would live at (or does live
+    /// at) in this store: canonicalize, then hash. Touches the filesystem
+    /// only to canonicalize — it does not check whether the entry exists.
+    ///
+    /// Exposed (not just used internally by [`Self::record`]/
+    /// [`Self::contains`]) so callers needing a companion file colocated
+    /// with an entry — e.g. trust's (issue 04) content-hash-staleness
+    /// record — can derive that location without reaching into this
+    /// store's hashing internals.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError::Canonicalize`] when `target` cannot be
+    /// canonicalized.
+    #[inline]
+    pub(super) fn entry_path(
+        &self,
+        target: &Path,
+    ) -> Result<PathBuf, StoreError> {
+        let canonical = Self::canonicalize(target)?;
+        Ok(self.root.join(hash_path_to_str(&canonical)))
+    }
+
     /// Records `target`'s canonical path in this store.
     ///
     /// Idempotent: recording an already-stored path is a no-op.
@@ -91,19 +104,9 @@ impl ConfigFileStore {
     /// Returns [`StoreError`] when `target` cannot be canonicalized, the
     /// store root cannot be created, or the entry cannot be written.
     #[inline]
-    #[allow(
-        clippy::disallowed_methods,
-        reason = "canonicalize-then-hash is the strictly-necessary path \
-                  resolution this lint carves out an exception for"
-    )]
     pub(super) fn record(&self, target: &Path) -> Result<(), StoreError> {
-        let canonical = fs::canonicalize(target).map_err(|source| {
-            StoreError::Canonicalize {
-                path: target.to_path_buf(),
-                source,
-            }
-        })?;
-        let entry = self.root.join(hash_path(&canonical));
+        let canonical = Self::canonicalize(target)?;
+        let entry = self.root.join(hash_path_to_str(&canonical));
         if entry.exists() {
             return Ok(());
         }
@@ -120,6 +123,30 @@ impl ConfigFileStore {
         );
 
         write_entry.map_err(|source| StoreError::Io {
+            path: entry,
+            source,
+        })
+    }
+
+    /// Returns whether `target`'s canonical path has a live entry in this
+    /// store.
+    ///
+    /// Shares [`Self::canonicalize`] with [`Self::record`], so the same
+    /// directory produces the same entry regardless of how `target` is
+    /// spelled (relative, `.`-bearing, etc.) — this is the seam trust
+    /// (issue 04) reuses instead of reimplementing hashing.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError::Canonicalize`] when `target` cannot be
+    /// canonicalized. Returns [`StoreError::Io`] when the entry's existence
+    /// cannot be determined (permissions, I/O failure) — distinct from the
+    /// entry simply not existing, which returns `Ok(false)`.
+    #[inline]
+    pub(super) fn contains(&self, target: &Path) -> Result<bool, StoreError> {
+        let canonical = Self::canonicalize(target)?;
+        let entry = self.root.join(hash_path_to_str(&canonical));
+        entry.try_exists().map_err(|source| StoreError::Io {
             path: entry,
             source,
         })
@@ -206,15 +233,6 @@ fn read_dir_entries(root: &Path) -> Result<Vec<PathBuf>, StoreError> {
         .collect()
 }
 
-fn hash_path(path: &Path) -> String {
-    let digest = Sha256::digest(path.as_os_str().as_encoded_bytes());
-    let mut hex = String::with_capacity(64);
-    for byte in digest {
-        let _: Result<(), std::fmt::Error> = write!(hex, "{byte:02x}");
-    }
-    hex
-}
-
 #[cfg(test)]
 mod tests {
     use std::fs;
@@ -232,10 +250,9 @@ mod tests {
 
         store.record(&target).expect("record config");
 
-        assert_eq!(
-            store.list_all().expect("list configs"),
-            vec![target.canonicalize().expect("canonicalize target")]
-        );
+        assert_eq!(store.list_all().expect("list configs"), vec![
+            target.canonicalize().expect("canonicalize target")
+        ]);
     }
 
     #[test]
@@ -264,10 +281,9 @@ mod tests {
 
         store.record(&target).expect("record config");
 
-        assert_eq!(
-            store.list_all().expect("list configs"),
-            vec![target.canonicalize().expect("canonicalize target")]
-        );
+        assert_eq!(store.list_all().expect("list configs"), vec![
+            target.canonicalize().expect("canonicalize target")
+        ]);
     }
 
     #[test]
@@ -282,10 +298,9 @@ mod tests {
         store.record(&deleted).expect("record deleted config");
         fs::remove_file(&deleted).expect("remove deleted config");
 
-        assert_eq!(
-            store.list_all().expect("list configs"),
-            vec![kept.canonicalize().expect("canonicalize kept config")]
-        );
+        assert_eq!(store.list_all().expect("list configs"), vec![
+            kept.canonicalize().expect("canonicalize kept config")
+        ]);
     }
 
     #[test]
@@ -303,10 +318,9 @@ mod tests {
         let removed = store.clean().expect("clean store");
 
         assert_eq!(removed, 1);
-        assert_eq!(
-            store.list_all().expect("list configs"),
-            vec![kept.canonicalize().expect("canonicalize kept config")]
-        );
+        assert_eq!(store.list_all().expect("list configs"), vec![
+            kept.canonicalize().expect("canonicalize kept config")
+        ]);
     }
 
     #[test]
@@ -346,5 +360,75 @@ mod tests {
         let store = ConfigFileStore::at(root);
 
         assert!(matches!(store.record(&target), Err(StoreError::Io { .. })));
+    }
+
+    #[test]
+    fn entry_path_matches_where_record_actually_writes_the_entry() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let target = temp.path().join("config.toml");
+        fs::write(&target, "").expect("write config");
+        let store = ConfigFileStore::at(temp.path().join("store"));
+
+        let entry = store.entry_path(&target).expect("resolve entry path");
+        store.record(&target).expect("record target");
+
+        assert!(entry.exists());
+    }
+
+    #[test]
+    fn entry_path_of_a_nonexistent_target_errors() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let store = ConfigFileStore::at(temp.path().join("store"));
+
+        assert!(matches!(
+            store.entry_path(&temp.path().join("missing.toml")),
+            Err(StoreError::Canonicalize { .. })
+        ));
+    }
+
+    #[test]
+    fn contains_returns_false_for_a_target_not_yet_recorded() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let target = temp.path().join("config.toml");
+        fs::write(&target, "").expect("write config");
+        let store = ConfigFileStore::at(temp.path().join("store"));
+
+        assert!(!store.contains(&target).expect("check containment"));
+    }
+
+    #[test]
+    fn contains_returns_true_after_recording_the_target() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let target = temp.path().join("config.toml");
+        fs::write(&target, "").expect("write config");
+        let store = ConfigFileStore::at(temp.path().join("store"));
+        store.record(&target).expect("record target");
+
+        assert!(store.contains(&target).expect("check containment"));
+    }
+
+    #[test]
+    fn contains_reflects_canonical_path_regardless_of_relative_input() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let dir = temp.path().join("nested");
+        fs::create_dir_all(&dir).expect("create nested dir");
+        let target = dir.join("config.toml");
+        fs::write(&target, "").expect("write config");
+        let store = ConfigFileStore::at(temp.path().join("store"));
+        store.record(&target).expect("record target");
+
+        let relative = dir.join(".").join("config.toml");
+        assert!(store.contains(&relative).expect("check containment"));
+    }
+
+    #[test]
+    fn contains_of_a_nonexistent_target_errors_with_canonicalize() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let store = ConfigFileStore::at(temp.path().join("store"));
+
+        assert!(matches!(
+            store.contains(&temp.path().join("missing.toml")),
+            Err(StoreError::Canonicalize { .. })
+        ));
     }
 }

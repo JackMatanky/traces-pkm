@@ -10,38 +10,14 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use miette::Diagnostic;
-use thiserror::Error;
-
 use super::{
     candidate::{CandidateConfigFile, ConfigSource},
     dirs,
+    error::DiscoveryError,
 };
 
 const LOCAL_CONFIG_FILE: &str = ".traces/config.toml";
 const GLOBAL_CONFIG_FILE: &str = "traces/config.toml";
-
-/// Errors during config file discovery (file-walking, not read/parse).
-#[derive(Debug, Diagnostic, Error)]
-pub enum DiscoveryError {
-    /// Discovery could not access a path.
-    #[error("failed to access path {path} during discovery")]
-    #[diagnostic(code(traces::config::discovery::access))]
-    Access {
-        /// Path that could not be accessed.
-        path: PathBuf,
-        /// Source I/O error.
-        #[source]
-        source: std::io::Error,
-    },
-    /// No local `.traces/config.toml` was found in any ancestor directory.
-    #[error("no local config found from {cwd}")]
-    #[diagnostic(code(traces::config::discovery::no_local_config))]
-    NoLocalConfig {
-        /// The working directory from which discovery started.
-        cwd: PathBuf,
-    },
-}
 
 /// Opaque discovery result consumed by
 /// [`ConfigService::build`](super::ConfigService::build).

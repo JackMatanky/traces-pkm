@@ -1,12 +1,11 @@
-//! Domain types: resolved `Config`, `TemplateConfig`, and error types.
+//! Domain types: resolved `Config` and `TemplateConfig`.
 
 use std::{
     fs,
     path::{Component, Path, PathBuf},
 };
 
-use miette::Diagnostic;
-use thiserror::Error;
+use super::error::ResolutionError;
 
 /// A resolved template file with its source directory.
 ///
@@ -18,32 +17,6 @@ pub struct ResolvedTemplate {
     pub path: PathBuf,
     /// The template directory the file was resolved from.
     pub source_dir: PathBuf,
-}
-
-/// Errors that can occur during template resolution.
-#[derive(Debug, Diagnostic, Error)]
-pub enum ResolutionError {
-    /// Multiple files matched the template name in a single directory.
-    #[error("template name \"{name}\" matched multiple files")]
-    #[diagnostic(code(traces::config::ambiguous_template))]
-    AmbiguousTemplate {
-        /// The template name that was searched for.
-        name: PathBuf,
-        /// Candidate files that matched.
-        #[diagnostic(help)]
-        candidates: String,
-    },
-
-    /// Template was not found in any of the searched directories.
-    #[error("template \"{name}\" not found")]
-    #[diagnostic(code(traces::config::template_not_found))]
-    TemplateNotFound {
-        /// The template name that was searched for.
-        name: PathBuf,
-        /// Directories that were searched.
-        #[diagnostic(help)]
-        directories_searched: String,
-    },
 }
 
 /// Merged configuration ready for consumers.
@@ -248,29 +221,6 @@ pub(super) struct TemplateConfig {
     pub(super) output: PathBuf,
 }
 
-use super::{builder::ConfigBuilderError, store::StoreError};
-
-/// Top-level config error wrapping phase-specific errors.
-#[derive(Debug, Diagnostic, Error)]
-pub enum ConfigError {
-    /// An error during the config build pipeline.
-    #[error(transparent)]
-    #[diagnostic(transparent)]
-    Build(#[from] ConfigBuilderError),
-    /// An error during template resolution.
-    #[error(transparent)]
-    #[diagnostic(transparent)]
-    Resolution(#[from] ResolutionError),
-    /// An error reading or cleaning the tracking store. Never returned by
-    /// [`super::ConfigService::build`] itself (tracking failures during a
-    /// build are best-effort and only logged) — only by the explicit
-    /// [`super::ConfigService::list_tracked`] and
-    /// [`super::ConfigService::clean_tracked_store`] administrative calls.
-    #[error(transparent)]
-    #[diagnostic(transparent)]
-    Tracking(#[from] StoreError),
-}
-
 #[cfg(test)]
 mod tests {
     use pretty_assertions::assert_eq;
@@ -282,14 +232,11 @@ mod tests {
         local_dir: Option<PathBuf>,
         global_dir: Option<PathBuf>,
     ) -> Config {
-        Config::new(
-            root.clone(),
-            TemplateConfig {
-                local: local_dir,
-                global: global_dir,
-                output: root,
-            },
-        )
+        Config::new(root.clone(), TemplateConfig {
+            local: local_dir,
+            global: global_dir,
+            output: root,
+        })
     }
 
     fn write_file(dir: &Path, name: &str) -> PathBuf {

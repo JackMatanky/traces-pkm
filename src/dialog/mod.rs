@@ -2,9 +2,9 @@
 //!
 //! [`DialogProvider`] is an object-safe trait so consumers can hold a
 //! `&dyn DialogProvider` chosen at runtime. The default implementation
-//! ([`TerminalDialogProvider`]) delegates to `inquire` for real user interaction.
-//! [`PresetDialogProvider`] returns pre-configured responses with zero I/O —
-//! used in tests and non-interactive/MCP mode.
+//! ([`TerminalDialogProvider`]) delegates to `inquire` for real user
+//! interaction. [`PresetDialogProvider`] returns pre-configured responses with
+//! zero I/O — used in tests and non-interactive/MCP mode.
 //!
 //! # Selection by position
 //!

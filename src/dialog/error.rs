@@ -92,8 +92,9 @@ impl From<inquire::InquireError> for DialogError {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::error::Error as _;
+
+    use super::*;
 
     #[test]
     fn inquire_cancel_maps_to_user_cancelled() {

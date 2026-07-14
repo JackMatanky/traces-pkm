@@ -37,9 +37,7 @@ fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 /// ```
 /// use traces_pkm::dialog::{DialogProvider, PresetDialogProvider};
 ///
-/// let p = PresetDialogProvider::new()
-///     .with_text("claude")
-///     .with_confirm(true);
+/// let p = PresetDialogProvider::new().with_text("claude").with_confirm(true);
 /// assert_eq!(p.text("name", None).unwrap(), "claude");
 /// assert!(p.confirm("proceed?", None).unwrap());
 /// ```
