@@ -14,44 +14,30 @@
 use std::path::PathBuf;
 use std::{fs, path::Path};
 
-use thiserror::Error;
+#[cfg(test)]
+use super::error::StoreError;
+use super::{dirs, error::TrustError, store::ConfigFileStore};
+use crate::hash;
 
-use super::{
-    dirs,
-    domain::TrustState,
-    store::{ConfigFileStore, StoreError},
-};
-use crate::hash::{self, HashError};
-
-/// Errors from a [`ConfigTrust`] operation that couldn't be completed.
+/// Result of checking a local config candidate's trust.
 ///
-/// Distinct from [`TrustState::Untrusted`]/[`TrustState::Stale`], which are
-/// expected, actionable *outcomes* of a successful check, not failures —
-/// this type means the check (or the write) itself didn't complete.
-/// `thiserror`-only, no `miette::Diagnostic`: internal plumbing, always
-/// wrapped by [`super::domain::ConfigError::TrustIo`] before it reaches
-/// anything CLI-facing.
-///
-/// Public (not `pub(super)`) for the same reason as [`StoreError`]:
-/// [`super::domain::ConfigError::TrustIo`] carries it as a `#[source]`
-/// field, and a `pub` field can't have a private type.
-#[derive(Debug, Error)]
-pub enum TrustError {
-    /// The underlying path-hash trust store operation failed.
-    #[error(transparent)]
-    Store(#[from] StoreError),
-    /// Hashing the config file's current content failed.
-    #[error(transparent)]
-    Hash(#[from] HashError),
-    /// The content-hash companion record could not be written.
-    #[error("failed to write the content-hash record at {path}")]
-    CompanionWrite {
-        /// Companion file path.
-        path: std::path::PathBuf,
-        /// Source I/O error.
-        #[source]
-        source: std::io::Error,
-    },
+/// Distinguishes "never trusted" from "trusted, but the config file's
+/// content changed since" — a plain boolean can't tell these apart, and a
+/// pure path-hash trust entry never expires on its own, so [`Self::Stale`]
+/// is the signal that closes that gap. Global candidates never produce
+/// this (global trust is skipped entirely; see `super::builder`'s
+/// `ConfigBuilder::trust`).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TrustState {
+    /// No trust entry exists for this candidate's project root.
+    Untrusted,
+    /// A trust entry exists for the project root, but the config file's
+    /// current content hash doesn't match the one recorded at trust time
+    /// (or no content hash was ever recorded).
+    Stale,
+    /// A trust entry exists and the config file's content matches what was
+    /// recorded at trust time.
+    Trusted,
 }
 
 /// Records and checks the trusted-project-root store, plus a content-hash
@@ -174,6 +160,7 @@ mod tests {
     use std::fs;
 
     use super::*;
+    use crate::hash::HashError;
 
     #[test]
     fn is_trusted_returns_untrusted_for_an_unrecorded_root() {

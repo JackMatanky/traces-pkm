@@ -3,10 +3,7 @@
 
 use std::path::{Path, PathBuf};
 
-use super::{
-    dirs,
-    store::{ConfigFileStore, StoreError},
-};
+use super::{dirs, error::StoreError, store::ConfigFileStore};
 
 /// Records, lists, and cleans the tracked-config store.
 ///

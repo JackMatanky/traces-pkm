@@ -1,10 +1,11 @@
-//! Generic file-content hashing.
+//! Generic hashing: file *content* ([`hash_file`]) and path *strings*
+//! ([`hash_path_to_str`]), both BLAKE3-based.
 //!
-//! Not config-specific: this is a plain BLAKE3-over-file-bytes utility any
-//! module can reach for. [`HashError`] is deliberately `thiserror`-only, no
-//! `miette::Diagnostic` — a raw hashing I/O failure is never shown to a user
-//! or agent directly; callers wrap it in their own domain error before it
-//! reaches anything CLI-facing.
+//! Not config-specific: these are plain utilities any module can reach
+//! for. [`HashError`] is deliberately `thiserror`-only, no
+//! `miette::Diagnostic` — a raw hashing I/O failure is never shown to a
+//! user or agent directly; callers wrap it in their own domain error
+//! before it reaches anything CLI-facing.
 
 use std::{
     fs, io,
@@ -43,6 +44,17 @@ pub(crate) fn hash_file(path: &Path) -> Result<blake3::Hash, HashError> {
         source,
     })?;
     Ok(blake3::hash(&contents))
+}
+
+/// Hashes `path`'s bytes (not its contents) to a hex string, for use as a
+/// hash-keyed store filename (see `config::store::ConfigFileStore`).
+/// Distinct from [`hash_file`], which hashes a file's *content* — this
+/// hashes the *path string itself*, and never fails (there's no I/O).
+#[inline]
+#[must_use]
+pub(crate) fn hash_path_to_str(path: &Path) -> String {
+    let hash = blake3::hash(path.as_os_str().as_encoded_bytes());
+    hash.to_hex().to_string()
 }
 
 #[cfg(test)]
@@ -84,5 +96,32 @@ mod tests {
             hash_file(&temp.path().join("missing.txt")),
             Err(HashError::Read { .. })
         ));
+    }
+
+    #[test]
+    fn hash_path_to_str_is_deterministic_for_the_same_path() {
+        let path = Path::new("/some/project");
+
+        assert_eq!(hash_path_to_str(path), hash_path_to_str(path));
+    }
+
+    #[test]
+    fn hash_path_to_str_differs_for_different_paths() {
+        assert_ne!(
+            hash_path_to_str(Path::new("/some/project")),
+            hash_path_to_str(Path::new("/some/other-project"))
+        );
+    }
+
+    #[test]
+    fn hash_path_to_str_matches_the_blake3_hex_formula() {
+        let path = Path::new("/some/project");
+
+        assert_eq!(
+            hash_path_to_str(path),
+            blake3::hash(path.as_os_str().as_encoded_bytes())
+                .to_hex()
+                .to_string()
+        );
     }
 }

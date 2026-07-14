@@ -1,12 +1,11 @@
-//! Domain types: resolved `Config`, `TemplateConfig`, and error types.
+//! Domain types: resolved `Config` and `TemplateConfig`.
 
 use std::{
     fs,
     path::{Component, Path, PathBuf},
 };
 
-use miette::Diagnostic;
-use thiserror::Error;
+use super::error::ResolutionError;
 
 /// A resolved template file with its source directory.
 ///
@@ -18,32 +17,6 @@ pub struct ResolvedTemplate {
     pub path: PathBuf,
     /// The template directory the file was resolved from.
     pub source_dir: PathBuf,
-}
-
-/// Errors that can occur during template resolution.
-#[derive(Debug, Diagnostic, Error)]
-pub enum ResolutionError {
-    /// Multiple files matched the template name in a single directory.
-    #[error("template name \"{name}\" matched multiple files")]
-    #[diagnostic(code(traces::config::ambiguous_template))]
-    AmbiguousTemplate {
-        /// The template name that was searched for.
-        name: PathBuf,
-        /// Candidate files that matched.
-        #[diagnostic(help)]
-        candidates: String,
-    },
-
-    /// Template was not found in any of the searched directories.
-    #[error("template \"{name}\" not found")]
-    #[diagnostic(code(traces::config::template_not_found))]
-    TemplateNotFound {
-        /// The template name that was searched for.
-        name: PathBuf,
-        /// Directories that were searched.
-        #[diagnostic(help)]
-        directories_searched: String,
-    },
 }
 
 /// Merged configuration ready for consumers.
@@ -246,93 +219,6 @@ pub(super) struct TemplateConfig {
     pub(super) global: Option<PathBuf>,
     /// Configured `output_dir`, or the config root when absent.
     pub(super) output: PathBuf,
-}
-
-use super::{
-    builder::ConfigBuilderError, store::StoreError, trust::TrustError,
-};
-
-/// Result of checking a local config candidate's trust.
-///
-/// Distinguishes "never trusted" from "trusted, but the config file's
-/// content changed since" — a plain boolean can't tell these apart, and a
-/// pure path-hash trust entry never expires on its own, so [`Self::Stale`]
-/// is the signal that closes that gap. Global candidates never produce
-/// this (global trust is skipped entirely; see [`super::ConfigError`]'s
-/// callers).
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum TrustState {
-    /// No trust entry exists for this candidate's project root.
-    Untrusted,
-    /// A trust entry exists for the project root, but the config file's
-    /// current content hash doesn't match the one recorded at trust time
-    /// (or no content hash was ever recorded).
-    Stale,
-    /// A trust entry exists and the config file's content matches what was
-    /// recorded at trust time.
-    Trusted,
-}
-
-/// Top-level config error wrapping phase-specific errors.
-#[derive(Debug, Diagnostic, Error)]
-pub enum ConfigError {
-    /// An error during the config build pipeline.
-    #[error(transparent)]
-    #[diagnostic(transparent)]
-    Build(#[from] ConfigBuilderError),
-    /// An error during template resolution.
-    #[error(transparent)]
-    #[diagnostic(transparent)]
-    Resolution(#[from] ResolutionError),
-    /// An error reading or cleaning the tracking store. Never returned by
-    /// [`super::ConfigService::build`] itself (tracking failures during a
-    /// build are best-effort and only logged) — only by the explicit
-    /// [`super::ConfigService::list_tracked`] and
-    /// [`super::ConfigService::clean_tracked_store`] administrative calls.
-    #[error(transparent)]
-    #[diagnostic(transparent)]
-    Tracking(#[from] StoreError),
-    /// `path`'s project root is not in the trust store. Expected and
-    /// actionable: the user (or agent) resolves this by running
-    /// `traces trust`.
-    #[error("{path} is not trusted")]
-    #[diagnostic(
-        code(traces::config::untrusted),
-        help("run `traces trust {}` to trust it", path.display())
-    )]
-    Untrusted {
-        /// The untrusted project root.
-        path: PathBuf,
-    },
-    /// `path`'s project root was trusted, but the config file's content has
-    /// changed since. Expected and actionable, distinct from
-    /// [`Self::Untrusted`]: this directory was trusted once, but the
-    /// content that trust decision covered no longer matches.
-    #[error("{path} was trusted, but the config file has changed since")]
-    #[diagnostic(
-        code(traces::config::stale),
-        help(
-            "run `traces trust {}` again to confirm the new content",
-            path.display()
-        )
-    )]
-    Stale {
-        /// The project root whose trust is now stale.
-        path: PathBuf,
-    },
-    /// The trust check itself failed (store I/O or content hashing) while
-    /// checking `path`. Internal — distinct from [`Self::Untrusted`]/
-    /// [`Self::Stale`], which are expected, actionable outcomes; this means
-    /// the check couldn't be completed at all.
-    #[error("failed to check trust for {path}")]
-    #[diagnostic(code(traces::config::trust_io))]
-    TrustIo {
-        /// The path whose trust check failed.
-        path: PathBuf,
-        /// Source trust error.
-        #[source]
-        source: TrustError,
-    },
 }
 
 #[cfg(test)]
@@ -610,55 +496,5 @@ mod tests {
                 Err(ResolutionError::TemplateNotFound { .. })
             )),
         }
-    }
-
-    #[test]
-    fn untrusted_error_message_and_help_name_the_path_and_trust_command() {
-        use miette::Diagnostic as _;
-
-        let path = PathBuf::from("/some/project");
-        let error = ConfigError::Untrusted {
-            path: path.clone(),
-        };
-
-        assert_eq!(error.to_string(), "/some/project is not trusted");
-        let help = error.help().expect("untrusted error has help").to_string();
-        assert!(help.contains("traces trust"));
-        assert!(help.contains("/some/project"));
-    }
-
-    #[test]
-    fn stale_error_message_and_help_name_the_path_and_trust_command() {
-        use miette::Diagnostic as _;
-
-        let path = PathBuf::from("/some/project");
-        let error = ConfigError::Stale {
-            path: path.clone(),
-        };
-
-        assert_eq!(
-            error.to_string(),
-            "/some/project was trusted, but the config file has changed since"
-        );
-        let help = error.help().expect("stale error has help").to_string();
-        assert!(help.contains("traces trust"));
-        assert!(help.contains("/some/project"));
-    }
-
-    #[test]
-    fn trust_io_error_preserves_the_trust_error_as_its_source() {
-        use std::error::Error as _;
-
-        let path = PathBuf::from("/some/project");
-        let source = TrustError::Store(StoreError::Canonicalize {
-            path: path.clone(),
-            source: std::io::Error::other("boom"),
-        });
-        let error = ConfigError::TrustIo {
-            path,
-            source,
-        };
-
-        assert!(error.source().is_some());
     }
 }

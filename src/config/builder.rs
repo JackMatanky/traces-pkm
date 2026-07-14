@@ -10,32 +10,16 @@ use figment::{
     Figment,
     providers::{Format, Serialized, Toml},
 };
-use miette::Diagnostic;
-use thiserror::Error;
 
 use super::{
     candidate::CandidateConfigFile,
     discovery::DiscoveryOutcome,
-    domain::{Config, ConfigError, TemplateConfig, TrustState},
+    domain::{Config, TemplateConfig},
+    error::{ConfigBuilderError, ConfigError},
     raw::RawConfig,
     tracker::ConfigTracker,
-    trust::ConfigTrust,
+    trust::{ConfigTrust, TrustState},
 };
-
-/// Errors that can occur during config building (parsing, merging).
-#[derive(Debug, Diagnostic, Error)]
-pub enum ConfigBuilderError {
-    /// Config file loading failed.
-    #[error("failed to load config file {path}")]
-    #[diagnostic(code(traces::config::build::load))]
-    Load {
-        /// Config file path.
-        path: PathBuf,
-        /// Source figment error.
-        #[source]
-        source: Box<figment::Error>,
-    },
-}
 
 /// Discovery outcome has been handed to the builder.
 pub(super) struct Discovered;

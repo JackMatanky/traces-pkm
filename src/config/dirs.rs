@@ -156,7 +156,7 @@ static TRACES_STATE_DIR: LazyLock<PathBuf> = LazyLock::new(|| {
 ///
 /// Resolves to `$TRACES_STATE_DIR/tracked-configs`.
 ///
-/// Contains SHA-256-keyed symbolic links, or path-bearing files where symbolic
+/// Contains BLAKE3-keyed symbolic links, or path-bearing files where symbolic
 /// links are unavailable, recording every config file [`ConfigService`] has
 /// loaded.
 ///
@@ -168,7 +168,7 @@ pub(super) static TRACKED_CONFIGS: LazyLock<StateDirRoot> =
 ///
 /// Resolves to `$TRACES_STATE_DIR/trusted-configs`.
 ///
-/// Contains SHA-256-keyed symbolic links, or path-bearing files where
+/// Contains BLAKE3-keyed symbolic links, or path-bearing files where
 /// symbolic links are unavailable, recording every directory
 /// [`ConfigTrust`] has marked as safe to load configs and instantiate
 /// templates from.

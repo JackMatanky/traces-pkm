@@ -1,50 +1,17 @@
 //! Hash-keyed config file store.
 //!
-//! Stores canonical paths as SHA-256-named entries under a caller-provided
+//! Stores canonical paths as BLAKE3-named entries under a caller-provided
 //! root: symlinks on Unix, plain files containing the path on Windows. This
 //! module owns the cross-platform storage mechanics; domain modules choose
 //! which root to use.
 
 use std::{
-    fmt::Write as _,
-    fs, io,
+    fs,
     path::{Path, PathBuf},
 };
 
-use miette::Diagnostic;
-use sha2::{Digest, Sha256};
-use thiserror::Error;
-
-use super::dirs;
-
-/// Errors from [`ConfigFileStore`] operations.
-///
-/// Public so callers outside `config::store` (e.g.
-/// [`super::domain::ConfigError`]) can wrap it as a `#[source]`/`#[from]`
-/// without a private-type-in-public-API mismatch.
-#[derive(Debug, Diagnostic, Error)]
-pub enum StoreError {
-    /// The recorded path could not be canonicalized.
-    #[error("failed to canonicalize path {path}")]
-    #[diagnostic(code(traces::config::store::canonicalize))]
-    Canonicalize {
-        /// Path that could not be canonicalized.
-        path: PathBuf,
-        /// Source I/O error.
-        #[source]
-        source: io::Error,
-    },
-    /// A store operation on `path` failed.
-    #[error("config file store operation failed for {path}")]
-    #[diagnostic(code(traces::config::store::io))]
-    Io {
-        /// Path the failing operation targeted (a directory or an entry).
-        path: PathBuf,
-        /// Source I/O error.
-        #[source]
-        source: io::Error,
-    },
-}
+use super::{dirs, error::StoreError};
+use crate::hash::hash_path_to_str;
 
 /// Records, lists, and cleans one hash-keyed config file store.
 ///
@@ -125,7 +92,7 @@ impl ConfigFileStore {
         target: &Path,
     ) -> Result<PathBuf, StoreError> {
         let canonical = Self::canonicalize(target)?;
-        Ok(self.root.join(hash_path(&canonical)))
+        Ok(self.root.join(hash_path_to_str(&canonical)))
     }
 
     /// Records `target`'s canonical path in this store.
@@ -139,7 +106,7 @@ impl ConfigFileStore {
     #[inline]
     pub(super) fn record(&self, target: &Path) -> Result<(), StoreError> {
         let canonical = Self::canonicalize(target)?;
-        let entry = self.root.join(hash_path(&canonical));
+        let entry = self.root.join(hash_path_to_str(&canonical));
         if entry.exists() {
             return Ok(());
         }
@@ -178,7 +145,7 @@ impl ConfigFileStore {
     #[inline]
     pub(super) fn contains(&self, target: &Path) -> Result<bool, StoreError> {
         let canonical = Self::canonicalize(target)?;
-        let entry = self.root.join(hash_path(&canonical));
+        let entry = self.root.join(hash_path_to_str(&canonical));
         entry.try_exists().map_err(|source| StoreError::Io {
             path: entry,
             source,
@@ -264,15 +231,6 @@ fn read_dir_entries(root: &Path) -> Result<Vec<PathBuf>, StoreError> {
             })
         })
         .collect()
-}
-
-fn hash_path(path: &Path) -> String {
-    let digest = Sha256::digest(path.as_os_str().as_encoded_bytes());
-    let mut hex = String::with_capacity(64);
-    for byte in digest {
-        let _: Result<(), std::fmt::Error> = write!(hex, "{byte:02x}");
-    }
-    hex
 }
 
 #[cfg(test)]

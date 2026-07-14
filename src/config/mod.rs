@@ -7,18 +7,20 @@
 //! read-only config domain types. [`DiscoveryOutcome`] is the opaque token
 //! connecting `ConfigService::discover` to `ConfigService::build`.
 
-pub use builder::ConfigBuilderError;
-pub use discovery::{DiscoveryError, DiscoveryOutcome};
-pub use domain::{
-    Config, ConfigError, ResolutionError, ResolvedTemplate, TrustState,
+pub use discovery::DiscoveryOutcome;
+pub use domain::{Config, ResolvedTemplate};
+pub use error::{
+    ConfigBuilderError, ConfigError, DiscoveryError, ResolutionError,
 };
 pub use service::ConfigService;
+pub use trust::TrustState;
 
 mod builder;
 mod candidate;
 mod dirs;
 mod discovery;
 mod domain;
+mod error;
 mod raw;
 mod service;
 mod store;

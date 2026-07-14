@@ -6,10 +6,11 @@ use std::path::{Path, PathBuf};
 
 use super::{
     builder::{ConfigBuilder, Discovered},
-    discovery::{DiscoveryError, DiscoveryOutcome, DiscoveryProcessor},
-    domain::{Config, ConfigError, TrustState},
+    discovery::{DiscoveryOutcome, DiscoveryProcessor},
+    domain::Config,
+    error::{ConfigError, DiscoveryError},
     tracker::ConfigTracker,
-    trust::ConfigTrust,
+    trust::{ConfigTrust, TrustState},
 };
 
 /// Entry point for discovering and building configuration.
