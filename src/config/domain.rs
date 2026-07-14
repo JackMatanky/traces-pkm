@@ -248,7 +248,30 @@ pub(super) struct TemplateConfig {
     pub(super) output: PathBuf,
 }
 
-use super::{builder::ConfigBuilderError, store::StoreError};
+use super::{
+    builder::ConfigBuilderError, store::StoreError, trust::TrustError,
+};
+
+/// Result of checking a local config candidate's trust.
+///
+/// Distinguishes "never trusted" from "trusted, but the config file's
+/// content changed since" — a plain boolean can't tell these apart, and a
+/// pure path-hash trust entry never expires on its own, so [`Self::Stale`]
+/// is the signal that closes that gap. Global candidates never produce
+/// this (global trust is skipped entirely; see [`super::ConfigError`]'s
+/// callers).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TrustState {
+    /// No trust entry exists for this candidate's project root.
+    Untrusted,
+    /// A trust entry exists for the project root, but the config file's
+    /// current content hash doesn't match the one recorded at trust time
+    /// (or no content hash was ever recorded).
+    Stale,
+    /// A trust entry exists and the config file's content matches what was
+    /// recorded at trust time.
+    Trusted,
+}
 
 /// Top-level config error wrapping phase-specific errors.
 #[derive(Debug, Diagnostic, Error)]
@@ -269,34 +292,46 @@ pub enum ConfigError {
     #[error(transparent)]
     #[diagnostic(transparent)]
     Tracking(#[from] StoreError),
-    /// `path` is not in the trust store. Expected and actionable: the user
-    /// (or agent) resolves this by running `traces trust`.
-    #[error("directory {path} is not trusted")]
+    /// `path`'s project root is not in the trust store. Expected and
+    /// actionable: the user (or agent) resolves this by running
+    /// `traces trust`.
+    #[error("{path} is not trusted")]
     #[diagnostic(
         code(traces::config::untrusted),
+        help("run `traces trust {}` to trust it", path.display())
+    )]
+    Untrusted {
+        /// The untrusted project root.
+        path: PathBuf,
+    },
+    /// `path`'s project root was trusted, but the config file's content has
+    /// changed since. Expected and actionable, distinct from
+    /// [`Self::Untrusted`]: this directory was trusted once, but the
+    /// content that trust decision covered no longer matches.
+    #[error("{path} was trusted, but the config file has changed since")]
+    #[diagnostic(
+        code(traces::config::stale),
         help(
-            "run `traces trust {}` to trust this directory",
+            "run `traces trust {}` again to confirm the new content",
             path.display()
         )
     )]
-    Untrusted {
-        /// The untrusted directory.
+    Stale {
+        /// The project root whose trust is now stale.
         path: PathBuf,
     },
-    /// The trust store could not be read or written while checking `path`.
-    /// Internal — distinct from [`Self::Untrusted`], which is the expected
-    /// "not yet trusted" outcome; this variant means the trust check itself
-    /// failed. Not `#[from]`: `StoreError` already has a `#[from]`
-    /// conversion via [`Self::Tracking`], and thiserror forbids two `#[from]`
-    /// impls for the same source type in one enum.
+    /// The trust check itself failed (store I/O or content hashing) while
+    /// checking `path`. Internal — distinct from [`Self::Untrusted`]/
+    /// [`Self::Stale`], which are expected, actionable outcomes; this means
+    /// the check couldn't be completed at all.
     #[error("failed to check trust for {path}")]
     #[diagnostic(code(traces::config::trust_io))]
     TrustIo {
-        /// The directory whose trust check failed.
+        /// The path whose trust check failed.
         path: PathBuf,
-        /// Source store error.
+        /// Source trust error.
         #[source]
-        source: StoreError,
+        source: TrustError,
     },
 }
 
@@ -586,21 +621,39 @@ mod tests {
             path: path.clone(),
         };
 
-        assert_eq!(error.to_string(), "directory /some/project is not trusted");
+        assert_eq!(error.to_string(), "/some/project is not trusted");
         let help = error.help().expect("untrusted error has help").to_string();
         assert!(help.contains("traces trust"));
         assert!(help.contains("/some/project"));
     }
 
     #[test]
-    fn trust_io_error_preserves_the_store_error_as_its_source() {
+    fn stale_error_message_and_help_name_the_path_and_trust_command() {
+        use miette::Diagnostic as _;
+
+        let path = PathBuf::from("/some/project");
+        let error = ConfigError::Stale {
+            path: path.clone(),
+        };
+
+        assert_eq!(
+            error.to_string(),
+            "/some/project was trusted, but the config file has changed since"
+        );
+        let help = error.help().expect("stale error has help").to_string();
+        assert!(help.contains("traces trust"));
+        assert!(help.contains("/some/project"));
+    }
+
+    #[test]
+    fn trust_io_error_preserves_the_trust_error_as_its_source() {
         use std::error::Error as _;
 
         let path = PathBuf::from("/some/project");
-        let source = StoreError::Canonicalize {
+        let source = TrustError::Store(StoreError::Canonicalize {
             path: path.clone(),
             source: std::io::Error::other("boom"),
-        };
+        });
         let error = ConfigError::TrustIo {
             path,
             source,

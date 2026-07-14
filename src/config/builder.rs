@@ -16,7 +16,7 @@ use thiserror::Error;
 use super::{
     candidate::CandidateConfigFile,
     discovery::DiscoveryOutcome,
-    domain::{Config, ConfigError, TemplateConfig},
+    domain::{Config, ConfigError, TemplateConfig, TrustState},
     raw::RawConfig,
     tracker::ConfigTracker,
     trust::ConfigTrust,
@@ -41,8 +41,9 @@ pub enum ConfigBuilderError {
 pub(super) struct Discovered;
 /// Candidate paths have passed the best-effort tracking step.
 pub(super) struct Tracked;
-/// Every candidate config file's parent directory has been checked against
-/// the trust store.
+/// Every local candidate's project root has been checked against the
+/// trust store. Global candidates are unconditionally trusted (see
+/// [`ConfigTrust`]'s module docs for why).
 pub(super) struct Trusted;
 /// Config files have been read and merged into a `Config`.
 pub(super) struct Merged {
@@ -97,35 +98,43 @@ impl<'a> ConfigBuilder<'a, Discovered> {
 }
 
 impl<'a> ConfigBuilder<'a, Tracked> {
-    /// Checks each candidate config file's parent directory against the
-    /// trust store, local candidates first then global, so a rejection
-    /// error points at the first untrusted source in that order.
+    /// Checks each local candidate's project root (`candidate.root()`)
+    /// against the trust store, so a rejection error points at the first
+    /// untrusted local source. Global candidates are never checked —
+    /// global config trust is skipped entirely (see [`ConfigTrust`]'s
+    /// module docs for why).
     ///
-    /// This is the programmatic gate: an untrusted config source directory
+    /// This is the programmatic gate: an untrusted or stale local config
     /// blocks the build before [`Self::merge`] reads any file.
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigError::Untrusted`] when a candidate's parent
-    /// directory has no trust entry. Returns [`ConfigError::TrustIo`] when
-    /// the trust check itself fails (canonicalization or store I/O).
+    /// Returns [`ConfigError::Untrusted`] when a local candidate's project
+    /// root has no trust entry. Returns [`ConfigError::Stale`] when the
+    /// root is trusted but the config file's content has changed since.
+    /// Returns [`ConfigError::TrustIo`] when the trust check itself fails
+    /// (canonicalization, store I/O, or content hashing).
     #[inline]
     pub(super) fn trust(
         self,
         trust: &ConfigTrust,
     ) -> Result<ConfigBuilder<'a, Trusted>, ConfigError> {
-        for candidate in self.local.iter().chain(self.global) {
-            let dir = candidate.path().parent().unwrap_or(candidate.path());
-            match trust.is_trusted(dir) {
-                Ok(true) => {}
-                Ok(false) => {
+        for candidate in self.local {
+            match trust.is_trusted(candidate.root(), candidate.path()) {
+                Ok(TrustState::Trusted) => {}
+                Ok(TrustState::Untrusted) => {
                     return Err(ConfigError::Untrusted {
-                        path: dir.to_path_buf(),
+                        path: candidate.root().to_path_buf(),
+                    });
+                }
+                Ok(TrustState::Stale) => {
+                    return Err(ConfigError::Stale {
+                        path: candidate.root().to_path_buf(),
                     });
                 }
                 Err(source) => {
                     return Err(ConfigError::TrustIo {
-                        path: dir.to_path_buf(),
+                        path: candidate.root().to_path_buf(),
                         source,
                     });
                 }
@@ -234,15 +243,17 @@ mod tests {
         fs::write(path, contents).expect("write config");
     }
 
-    /// Trusts every candidate's parent directory in `trust`.
+    /// Trusts every local candidate's project root in `trust`. Global
+    /// candidates are never checked, so there's nothing to trust for them.
     ///
     /// Takes the store by reference rather than creating its own temp dir:
     /// a `TempDir` returned from this function would drop (and delete its
     /// directory) before the caller could use the resulting `ConfigTrust`.
     fn trust_all(outcome: &DiscoveryOutcome, trust: &ConfigTrust) {
-        for candidate in outcome.local().iter().chain(outcome.global()) {
-            let dir = candidate.path().parent().unwrap_or(candidate.path());
-            trust.trust(dir).expect("trust candidate directory");
+        for candidate in outcome.local() {
+            trust
+                .trust(candidate.root(), candidate.path())
+                .expect("trust candidate root");
         }
     }
 
@@ -472,15 +483,15 @@ mod tests {
     }
 
     #[test]
-    fn trust_rejects_the_first_untrusted_candidate_directory() {
+    fn trust_rejects_the_first_untrusted_local_candidate_root() {
         let temp = tempfile::tempdir().expect("create temp dir");
         let root = temp.path().join("project");
         let path = root.join(".traces/config.toml");
         write_config(&path, "directory = \".traces/templates\"");
         let outcome = DiscoveryOutcome::new(
-            root,
+            root.clone(),
             vec![CandidateConfigFile::new(
-                temp.path().to_path_buf(),
+                root.clone(),
                 ConfigSource::Local(path.clone()),
             )],
             Vec::new(),
@@ -490,7 +501,6 @@ mod tests {
         let trust_store =
             tempfile::tempdir().expect("create temp trust-store dir");
         let trust = ConfigTrust::at(trust_store.path().to_path_buf());
-        let expected_dir = path.parent().expect("config path parent");
 
         let result = ConfigBuilder::new(&outcome)
             .track(&ConfigTracker::at(tracked.path().to_path_buf()))
@@ -498,20 +508,20 @@ mod tests {
 
         assert!(matches!(
             result,
-            Err(ConfigError::Untrusted { path: error_path }) if error_path == expected_dir
+            Err(ConfigError::Untrusted { path: error_path }) if error_path == root
         ));
     }
 
     #[test]
-    fn trust_passes_once_the_candidate_directory_is_trusted() {
+    fn trust_passes_once_the_candidate_root_is_trusted() {
         let temp = tempfile::tempdir().expect("create temp dir");
         let root = temp.path().join("project");
         let path = root.join(".traces/config.toml");
         write_config(&path, "directory = \".traces/templates\"");
         let outcome = DiscoveryOutcome::new(
-            root,
+            root.clone(),
             vec![CandidateConfigFile::new(
-                temp.path().to_path_buf(),
+                root.clone(),
                 ConfigSource::Local(path.clone()),
             )],
             Vec::new(),
@@ -521,9 +531,35 @@ mod tests {
         let trust_store =
             tempfile::tempdir().expect("create temp trust-store dir");
         let trust = ConfigTrust::at(trust_store.path().to_path_buf());
-        trust
-            .trust(path.parent().expect("config path parent"))
-            .expect("trust config directory");
+        trust.trust(&root, &path).expect("trust candidate root");
+
+        let result = ConfigBuilder::new(&outcome)
+            .track(&ConfigTracker::at(tracked.path().to_path_buf()))
+            .trust(&trust);
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn global_candidates_are_never_checked_against_the_trust_store() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let global_root = temp.path().join("config/traces");
+        let global_path = global_root.join("config.toml");
+        write_config(&global_path, "directory = \"templates\"");
+        let outcome =
+            DiscoveryOutcome::new(temp.path().join("cwd"), Vec::new(), vec![
+                CandidateConfigFile::new(
+                    global_root,
+                    ConfigSource::Global(global_path),
+                ),
+            ]);
+        let tracked =
+            tempfile::tempdir().expect("create temp tracked-store dir");
+        let trust_store =
+            tempfile::tempdir().expect("create temp trust-store dir");
+        // Empty trust store: an untrusted global directory must still pass,
+        // since global candidates are never checked at all.
+        let trust = ConfigTrust::at(trust_store.path().to_path_buf());
 
         let result = ConfigBuilder::new(&outcome)
             .track(&ConfigTracker::at(tracked.path().to_path_buf()))

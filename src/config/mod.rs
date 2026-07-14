@@ -9,7 +9,9 @@
 
 pub use builder::ConfigBuilderError;
 pub use discovery::{DiscoveryError, DiscoveryOutcome};
-pub use domain::{Config, ConfigError, ResolutionError, ResolvedTemplate};
+pub use domain::{
+    Config, ConfigError, ResolutionError, ResolvedTemplate, TrustState,
+};
 pub use service::ConfigService;
 
 mod builder;

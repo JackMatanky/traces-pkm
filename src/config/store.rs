@@ -105,6 +105,29 @@ impl ConfigFileStore {
         })
     }
 
+    /// Resolves `target` to the path its entry would live at (or does live
+    /// at) in this store: canonicalize, then hash. Touches the filesystem
+    /// only to canonicalize — it does not check whether the entry exists.
+    ///
+    /// Exposed (not just used internally by [`Self::record`]/
+    /// [`Self::contains`]) so callers needing a companion file colocated
+    /// with an entry — e.g. trust's (issue 04) content-hash-staleness
+    /// record — can derive that location without reaching into this
+    /// store's hashing internals.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError::Canonicalize`] when `target` cannot be
+    /// canonicalized.
+    #[inline]
+    pub(super) fn entry_path(
+        &self,
+        target: &Path,
+    ) -> Result<PathBuf, StoreError> {
+        let canonical = Self::canonicalize(target)?;
+        Ok(self.root.join(hash_path(&canonical)))
+    }
+
     /// Records `target`'s canonical path in this store.
     ///
     /// Idempotent: recording an already-stored path is a no-op.
@@ -379,6 +402,30 @@ mod tests {
         let store = ConfigFileStore::at(root);
 
         assert!(matches!(store.record(&target), Err(StoreError::Io { .. })));
+    }
+
+    #[test]
+    fn entry_path_matches_where_record_actually_writes_the_entry() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let target = temp.path().join("config.toml");
+        fs::write(&target, "").expect("write config");
+        let store = ConfigFileStore::at(temp.path().join("store"));
+
+        let entry = store.entry_path(&target).expect("resolve entry path");
+        store.record(&target).expect("record target");
+
+        assert!(entry.exists());
+    }
+
+    #[test]
+    fn entry_path_of_a_nonexistent_target_errors() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let store = ConfigFileStore::at(temp.path().join("store"));
+
+        assert!(matches!(
+            store.entry_path(&temp.path().join("missing.toml")),
+            Err(StoreError::Canonicalize { .. })
+        ));
     }
 
     #[test]

@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use super::{
     builder::{ConfigBuilder, Discovered},
     discovery::{DiscoveryError, DiscoveryOutcome, DiscoveryProcessor},
-    domain::{Config, ConfigError},
+    domain::{Config, ConfigError, TrustState},
     tracker::ConfigTracker,
     trust::ConfigTrust,
 };
@@ -68,15 +68,18 @@ impl ConfigService {
     ///
     /// Candidate paths are recorded in the config tracking store before they
     /// are read. This is a best-effort side effect; a tracking store write
-    /// failure does not fail the build. Each candidate's parent directory is
-    /// then checked against the trust store before any file is parsed.
+    /// failure does not fail the build. Each local candidate's project root
+    /// is then checked against the trust store before any file is parsed;
+    /// global candidates are never checked (global config trust is skipped
+    /// entirely — see `super::trust::ConfigTrust`'s module docs for why).
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigError::Untrusted`] when a candidate's parent
-    /// directory is not trusted. Returns [`ConfigError::TrustIo`] when the
-    /// trust check itself fails. Returns an error when a candidate config
-    /// file cannot be read or parsed.
+    /// Returns [`ConfigError::Untrusted`] when a local candidate's project
+    /// root is not trusted. Returns [`ConfigError::Stale`] when the root is
+    /// trusted but the config file's content has changed since. Returns
+    /// [`ConfigError::TrustIo`] when the trust check itself fails. Returns
+    /// an error when a candidate config file cannot be read or parsed.
     #[inline]
     pub fn build(
         &self,
@@ -89,33 +92,51 @@ impl ConfigService {
             .build())
     }
 
-    /// Marks `dir`'s canonical path as trusted.
+    /// Marks `root`'s canonical path as trusted, and records
+    /// `config_file`'s current content hash as the baseline future checks
+    /// compare against.
     ///
-    /// Idempotent: trusting an already-trusted directory is a no-op.
+    /// Idempotent on the root entry: trusting an already-trusted root is a
+    /// no-op there; re-running this after `config_file` changes refreshes
+    /// the recorded content hash, clearing any staleness.
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigError::TrustIo`] when `dir` cannot be canonicalized
-    /// or the trust entry cannot be written.
+    /// Returns [`ConfigError::TrustIo`] when `root` cannot be canonicalized
+    /// or recorded, `config_file` cannot be hashed, or the content-hash
+    /// companion record cannot be written.
     #[inline]
-    pub fn trust(&self, dir: &Path) -> Result<(), ConfigError> {
-        self.trust.trust(dir).map_err(|source| ConfigError::TrustIo {
-            path: dir.to_path_buf(),
-            source,
+    pub fn trust(
+        &self,
+        root: &Path,
+        config_file: &Path,
+    ) -> Result<(), ConfigError> {
+        self.trust.trust(root, config_file).map_err(|source| {
+            ConfigError::TrustIo {
+                path: root.to_path_buf(),
+                source,
+            }
         })
     }
 
-    /// Returns whether `dir`'s canonical path has a trust entry.
+    /// Checks whether `root` is trusted and, if so, whether `config_file`'s
+    /// current content still matches what [`Self::trust`] last recorded.
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigError::TrustIo`] when `dir` cannot be canonicalized
-    /// or the trust entry's existence cannot be determined.
+    /// Returns [`ConfigError::TrustIo`] when the trust check itself fails
+    /// (store I/O, or hashing `config_file`'s current content).
     #[inline]
-    pub fn is_trusted(&self, dir: &Path) -> Result<bool, ConfigError> {
-        self.trust.is_trusted(dir).map_err(|source| ConfigError::TrustIo {
-            path: dir.to_path_buf(),
-            source,
+    pub fn is_trusted(
+        &self,
+        root: &Path,
+        config_file: &Path,
+    ) -> Result<TrustState, ConfigError> {
+        self.trust.is_trusted(root, config_file).map_err(|source| {
+            ConfigError::TrustIo {
+                path: root.to_path_buf(),
+                source,
+            }
         })
     }
 
@@ -201,24 +222,26 @@ mod tests {
         (cwd, config_path, candidates)
     }
 
-    /// Builds a service rooted at temp stores, with `config_path`'s parent
-    /// directory pre-trusted so `build` clears the trust gate.
-    fn trusted_service(temp: &Path, config_path: &Path) -> ConfigService {
+    /// Builds a service rooted at temp stores, with `cwd` (the candidate's
+    /// project root) pre-trusted so `build` clears the trust gate.
+    fn trusted_service(
+        temp: &Path,
+        cwd: &Path,
+        config_path: &Path,
+    ) -> ConfigService {
         let service = ConfigService {
             tracker: ConfigTracker::at(temp.join("tracked-store")),
             trust: ConfigTrust::at(temp.join("trust-store")),
         };
-        service
-            .trust(config_path.parent().expect("config path parent"))
-            .expect("trust config directory");
+        service.trust(cwd, config_path).expect("trust candidate root");
         service
     }
 
     #[test]
     fn build_records_the_candidate_and_list_tracked_reflects_it_idempotently() {
         let temp = tempfile::tempdir().expect("create temp dir");
-        let (_cwd, config_path, candidates) = local_candidates(temp.path());
-        let service = trusted_service(temp.path(), &config_path);
+        let (cwd, config_path, candidates) = local_candidates(temp.path());
+        let service = trusted_service(temp.path(), &cwd, &config_path);
 
         service.build(&candidates).expect("build config");
 
@@ -238,8 +261,8 @@ mod tests {
     #[test]
     fn clean_tracked_store_prunes_entries_whose_config_was_deleted() {
         let temp = tempfile::tempdir().expect("create temp dir");
-        let (_cwd, config_path, candidates) = local_candidates(temp.path());
-        let service = trusted_service(temp.path(), &config_path);
+        let (cwd, config_path, candidates) = local_candidates(temp.path());
+        let service = trusted_service(temp.path(), &cwd, &config_path);
         service.build(&candidates).expect("build config");
         fs::remove_file(&config_path).expect("remove config");
 
@@ -258,7 +281,7 @@ mod tests {
         let (cwd, config_path, candidates) = local_candidates(temp.path());
         fs::write(temp.path().join("tracked-store"), "")
             .expect("occupy tracked store with a file");
-        let service = trusted_service(temp.path(), &config_path);
+        let service = trusted_service(temp.path(), &cwd, &config_path);
 
         let config = service
             .build(&candidates)
@@ -268,38 +291,60 @@ mod tests {
     }
 
     #[test]
-    fn build_rejects_a_candidate_in_an_untrusted_directory() {
+    fn build_rejects_a_candidate_with_an_untrusted_root() {
         let temp = tempfile::tempdir().expect("create temp dir");
-        let (_cwd, config_path, candidates) = local_candidates(temp.path());
+        let (cwd, _config_path, candidates) = local_candidates(temp.path());
         let service = ConfigService {
             tracker: ConfigTracker::at(temp.path().join("tracked-store")),
             trust: ConfigTrust::at(temp.path().join("trust-store")),
         };
-        let expected_dir =
-            config_path.parent().expect("config path parent").to_path_buf();
 
         let result = service.build(&candidates);
 
         assert!(matches!(
             result,
-            Err(ConfigError::Untrusted { path }) if path == expected_dir
+            Err(ConfigError::Untrusted { path }) if path == cwd
         ));
     }
 
     #[test]
-    fn trust_then_is_trusted_returns_true() {
+    fn build_rejects_a_candidate_whose_root_is_trusted_but_stale() {
         let temp = tempfile::tempdir().expect("create temp dir");
-        let dir = temp.path().join("project");
-        fs::create_dir_all(&dir).expect("create project dir");
+        let (cwd, config_path, candidates) = local_candidates(temp.path());
+        let service = trusted_service(temp.path(), &cwd, &config_path);
+        fs::write(&config_path, "directory = \"changed\"")
+            .expect("edit config after trusting");
+
+        let result = service.build(&candidates);
+
+        assert!(matches!(
+            result,
+            Err(ConfigError::Stale { path }) if path == cwd
+        ));
+    }
+
+    #[test]
+    fn trust_then_is_trusted_returns_trusted() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let root = temp.path().join("project");
+        fs::create_dir_all(&root).expect("create project dir");
+        let config_file = root.join("config.toml");
+        fs::write(&config_file, "a = 1").expect("write config");
         let service = ConfigService {
             tracker: ConfigTracker::at(temp.path().join("tracked-store")),
             trust: ConfigTrust::at(temp.path().join("trust-store")),
         };
 
-        assert!(!service.is_trusted(&dir).expect("check trust"));
+        assert_eq!(
+            service.is_trusted(&root, &config_file).expect("check trust"),
+            TrustState::Untrusted
+        );
 
-        service.trust(&dir).expect("trust directory");
+        service.trust(&root, &config_file).expect("trust root");
 
-        assert!(service.is_trusted(&dir).expect("check trust"));
+        assert_eq!(
+            service.is_trusted(&root, &config_file).expect("check trust"),
+            TrustState::Trusted
+        );
     }
 }
