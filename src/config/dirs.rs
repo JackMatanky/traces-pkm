@@ -1,21 +1,13 @@
 //! Concrete directory paths for configuration and persistent state.
 //!
-//! Platform defaults:
-//!
-//! | Platform | [`CONFIG_HOME`] | State parent |
-//! |---|---|---|
-//! | Unix | `$XDG_CONFIG_HOME` or `$HOME/.config` | `$XDG_STATE_HOME` or `$HOME/.local/state` |
-//! | macOS | `$XDG_CONFIG_HOME` or `$HOME/Library/Application Support` | `$XDG_STATE_HOME` or `$HOME/Library/Application Support` |
-//! | Windows | `%APPDATA%` | `%LOCALAPPDATA%` |
-//!
 //! Application-specific paths:
 //!
-//! | Export | Resolved path | Purpose |
-//! |---|---|---|
-//! | [`CONFIG_HOME`] | Platform config parent directory | Global configuration parent |
-//! | [`TRACKED_CONFIGS`] | `$TRACES_STATE_DIR/tracked-configs` | Config-tracking store |
-//! | [`TRUSTED_CONFIGS`] | `$TRACES_STATE_DIR/trusted-configs` | Trust store |
-//! | [`StateDirRoot`] | — | Private-constructor path newtype |
+//! | Export              | Resolved path                       | Purpose                          |
+//! | ------------------- | ----------------------------------- | -------------------------------- |
+//! | [`CONFIG_HOME`]     | Platform config parent directory    | Global configuration parent      |
+//! | [`TRACKED_CONFIGS`] | `$TRACES_STATE_DIR/tracked-configs` | Config-tracking store            |
+//! | [`TRUSTED_CONFIGS`] | `$TRACES_STATE_DIR/trusted-configs` | Trust store                      |
+//! | [`StateDirRoot`]    | —                                   | Private-constructor path newtype |
 //!
 //! `TRACES_STATE_DIR` overrides the platform default on every supported
 //! operating system.
@@ -65,18 +57,17 @@ fn var_path(key: &str) -> Option<PathBuf> {
 
 /// The user's home directory.
 ///
-/// Resolution:
-///
-/// - Unix and macOS: `$HOME`, falls back to `/`
-/// - Windows: `%USERPROFILE%`, then `%HOMEDRIVE%%HOMEPATH%`, falls back to
-///   `C:\`
-#[cfg(not(test))]
-#[cfg(unix)]
+/// - Override: `$HOME`
+/// - Default: `/`
+#[cfg(all(not(test), unix))]
 static HOME: LazyLock<PathBuf> =
     LazyLock::new(|| var_path("HOME").unwrap_or_else(|| PathBuf::from("/")));
 
-#[cfg(not(test))]
-#[cfg(windows)]
+/// The user's home directory.
+///
+/// - Override: `%USERPROFILE%`  (then `%HOMEDRIVE%``%HOMEPATH%`)
+/// - Default: `C:\`
+#[cfg(all(not(test), windows))]
 static HOME: LazyLock<PathBuf> = LazyLock::new(|| {
     var_path("USERPROFILE")
         .or_else(|| {
@@ -95,22 +86,27 @@ static HOME: LazyLock<PathBuf> =
 
 /// The platform-native global configuration parent directory.
 ///
-/// - Unix: `$XDG_CONFIG_HOME`, defaulting to `$HOME/.config`
-/// - macOS: `$XDG_CONFIG_HOME` first, then `$HOME/Library/Application Support`
-/// - Windows: `%APPDATA%`, normally `C:\Users\<user>\AppData\Roaming`
+/// - Override: `$XDG_CONFIG_HOME`
+/// - Default: `$HOME/.config`
 #[cfg(all(unix, not(target_os = "macos")))]
 pub(super) static CONFIG_HOME: LazyLock<PathBuf> = LazyLock::new(|| {
     var_path("XDG_CONFIG_HOME").unwrap_or_else(|| HOME.join(".config"))
 });
 
-/// On macOS, XDG environment variables are respected before falling back to
-/// the platform-native `~/Library/Application Support`.
+/// The platform-native global configuration parent directory.
+///
+/// - Override: `$XDG_CONFIG_HOME`
+/// - Default: `~/Library/Application Support`
 #[cfg(target_os = "macos")]
 pub(super) static CONFIG_HOME: LazyLock<PathBuf> = LazyLock::new(|| {
     var_path("XDG_CONFIG_HOME")
         .unwrap_or_else(|| HOME.join("Library").join("Application Support"))
 });
 
+/// The platform-native global configuration parent directory.
+///
+/// - Override: `%APPDATA%`
+/// - Default: `C:\Users\<user>\AppData\Roaming`
 #[cfg(windows)]
 pub(super) static CONFIG_HOME: LazyLock<PathBuf> = LazyLock::new(|| {
     var_path("APPDATA").unwrap_or_else(|| HOME.join("AppData").join("Roaming"))
@@ -118,21 +114,28 @@ pub(super) static CONFIG_HOME: LazyLock<PathBuf> = LazyLock::new(|| {
 
 /// The platform-native persistent-state parent directory.
 ///
-/// - Unix: `$XDG_STATE_HOME`, defaulting to `$HOME/.local/state`
-/// - macOS: `$XDG_STATE_HOME` first, then `$HOME/Library/Application Support`
-/// - Windows: `%LOCALAPPDATA%`, normally `C:\Users\<user>\AppData\Local`
+/// - Override: `$XDG_STATE_HOME`
+/// - Default: `$HOME/.local/state`
 #[cfg(all(unix, not(target_os = "macos")))]
 static STATE_HOME: LazyLock<PathBuf> = LazyLock::new(|| {
     var_path("XDG_STATE_HOME")
         .unwrap_or_else(|| HOME.join(".local").join("state"))
 });
 
+/// The platform-native persistent-state parent directory.
+///
+/// - Override: `$XDG_STATE_HOME`
+/// - Default: `~/Library/Application Support`
 #[cfg(target_os = "macos")]
 static STATE_HOME: LazyLock<PathBuf> = LazyLock::new(|| {
     var_path("XDG_STATE_HOME")
         .unwrap_or_else(|| HOME.join("Library").join("Application Support"))
 });
 
+/// The platform-native persistent-state parent directory.
+///
+/// - Override: `%LOCALAPPDATA%`
+/// - Default: `C:\Users\<user>\AppData\Local`
 #[cfg(windows)]
 static STATE_HOME: LazyLock<PathBuf> = LazyLock::new(|| {
     var_path("LOCALAPPDATA")
@@ -141,13 +144,7 @@ static STATE_HOME: LazyLock<PathBuf> = LazyLock::new(|| {
 
 /// The application-specific persistent-state directory.
 ///
-/// `TRACES_STATE_DIR` overrides the default on every supported platform.
-///
-/// Defaults:
-///
-/// - Unix: `$XDG_STATE_HOME/traces`, normally `$HOME/.local/state/traces`
-/// - macOS: `$XDG_STATE_HOME/traces` or `~/Library/Application Support/traces`
-/// - Windows: `%LOCALAPPDATA%\traces`
+/// Override via `$TRACES_STATE_DIR`; defaults to [`STATE_HOME`]`/traces`.
 static TRACES_STATE_DIR: LazyLock<PathBuf> = LazyLock::new(|| {
     var_path("TRACES_STATE_DIR").unwrap_or_else(|| STATE_HOME.join(APP_NAME))
 });

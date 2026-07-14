@@ -97,7 +97,7 @@ impl ConfigTrust {
         config_file: &Path,
     ) -> Result<(), TrustError> {
         self.store.record(root)?;
-        let digest = hash::hash_file(config_file)?;
+        let digest = hash::hash_file_contents(config_file)?;
         let companion = companion_path(&self.store.entry_path(root)?);
         fs::write(&companion, digest.to_string()).map_err(|source| {
             TrustError::CompanionWrite {
@@ -135,7 +135,7 @@ impl ConfigTrust {
         let Ok(recorded) = fs::read_to_string(&companion) else {
             return Ok(TrustState::Stale);
         };
-        let current = hash::hash_file(config_file)?;
+        let current = hash::hash_file_contents(config_file)?;
         Ok(if recorded.trim() == current.to_string() {
             TrustState::Trusted
         } else {

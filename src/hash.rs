@@ -1,5 +1,5 @@
-//! Generic hashing: file *content* ([`hash_file`]) and path *strings*
-//! ([`hash_path_to_str`]), both BLAKE3-based.
+//! Generic hashing: file *content* ([`hash_file_contents`]) and path
+//! *strings* ([`hash_path_to_str`]), both BLAKE3-based.
 //!
 //! Not config-specific: these are plain utilities any module can reach
 //! for. [`HashError`] is deliberately `thiserror`-only, no
@@ -14,7 +14,7 @@ use std::{
 
 use thiserror::Error;
 
-/// Errors from [`hash_file`].
+/// Errors from [`hash_file_contents`].
 ///
 /// Public (not `pub(crate)`) because [`crate::config::trust::TrustError`]
 /// carries it as a `#[from]` source, and a `pub` field can't have a
@@ -38,7 +38,9 @@ pub enum HashError {
 ///
 /// Returns [`HashError::Read`] when `path` cannot be read.
 #[inline]
-pub(crate) fn hash_file(path: &Path) -> Result<blake3::Hash, HashError> {
+pub(crate) fn hash_file_contents(
+    path: &Path,
+) -> Result<blake3::Hash, HashError> {
     let contents = fs::read(path).map_err(|source| HashError::Read {
         path: path.to_path_buf(),
         source,
@@ -48,7 +50,7 @@ pub(crate) fn hash_file(path: &Path) -> Result<blake3::Hash, HashError> {
 
 /// Hashes `path`'s bytes (not its contents) to a hex string, for use as a
 /// hash-keyed store filename (see `config::store::ConfigFileStore`).
-/// Distinct from [`hash_file`], which hashes a file's *content* — this
+/// Distinct from [`hash_file_contents`], which hashes a file's *content* — this
 /// hashes the *path string itself*, and never fails (there's no I/O).
 #[inline]
 #[must_use]
@@ -64,36 +66,36 @@ mod tests {
     use super::*;
 
     #[test]
-    fn hash_file_is_deterministic_for_the_same_content() {
+    fn hash_file_contents_is_deterministic_for_the_same_content() {
         let temp = tempfile::tempdir().expect("create temp dir");
         let path = temp.path().join("file.txt");
         fs::write(&path, "hello").expect("write file");
 
-        let first = hash_file(&path).expect("hash file");
-        let second = hash_file(&path).expect("hash file again");
+        let first = hash_file_contents(&path).expect("hash file");
+        let second = hash_file_contents(&path).expect("hash file again");
 
         assert_eq!(first, second);
     }
 
     #[test]
-    fn hash_file_differs_when_content_changes() {
+    fn hash_file_contents_differs_when_content_changes() {
         let temp = tempfile::tempdir().expect("create temp dir");
         let path = temp.path().join("file.txt");
         fs::write(&path, "hello").expect("write file");
-        let original = hash_file(&path).expect("hash file");
+        let original = hash_file_contents(&path).expect("hash file");
 
         fs::write(&path, "goodbye").expect("rewrite file");
-        let updated = hash_file(&path).expect("hash updated file");
+        let updated = hash_file_contents(&path).expect("hash updated file");
 
         assert_ne!(original, updated);
     }
 
     #[test]
-    fn hash_file_of_a_missing_file_errors() {
+    fn hash_file_contents_of_a_missing_file_errors() {
         let temp = tempfile::tempdir().expect("create temp dir");
 
         assert!(matches!(
-            hash_file(&temp.path().join("missing.txt")),
+            hash_file_contents(&temp.path().join("missing.txt")),
             Err(HashError::Read { .. })
         ));
     }
