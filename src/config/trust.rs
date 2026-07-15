@@ -122,11 +122,20 @@ impl ConfigTrust {
     /// leave the caller believing something is trusted when it isn't
     /// recorded at all.
     ///
+    /// Tolerates a `config_file` that doesn't exist yet — trusting a
+    /// directory before `traces init` has created its config file (e.g.
+    /// a template directory, see ADR 0002's issue-05 amendment) is a
+    /// valid flow: the root is recorded, but no content-hash companion is
+    /// written. [`Self::is_trusted`] already treats a missing companion
+    /// as [`TrustState::Stale`], so this only defers re-verification to
+    /// the next [`Self::trust`] call once the file exists — it doesn't
+    /// weaken it.
+    ///
     /// # Errors
     ///
     /// Returns [`TrustError`] when `root` cannot be canonicalized or
-    /// recorded, `config_file` cannot be hashed, or the content-hash
-    /// companion record cannot be written.
+    /// recorded, `config_file` exists but cannot be hashed, or the
+    /// content-hash companion record cannot be written.
     #[inline]
     pub(super) fn trust(
         &self,
@@ -134,14 +143,75 @@ impl ConfigTrust {
         config_file: &Path,
     ) -> Result<(), TrustError> {
         self.store.record(root)?;
-        let digest = hash::hash_file_contents(config_file)?;
         let companion = companion_path(&self.store.entry_path(root)?);
+        let digest = match hash::hash_file_contents(config_file) {
+            Ok(digest) => digest,
+            Err(HashError::Read {
+                source,
+                ..
+            }) if source.kind() == io::ErrorKind::NotFound => {
+                return Ok(());
+            }
+            Err(error) => return Err(error.into()),
+        };
         fs::write(&companion, digest.to_string()).map_err(|source| {
             TrustError::CompanionWrite {
                 path: companion,
                 source,
             }
         })
+    }
+
+    /// Lists the canonical paths of all currently trusted roots.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the store directory exists but cannot
+    /// be read.
+    #[inline]
+    pub(super) fn list_all(&self) -> Result<Vec<PathBuf>, StoreError> {
+        self.store.list_all()
+    }
+
+    /// Removes dangling root entries (target directory deleted or moved),
+    /// plus each removed entry's content-hash companion, if one exists.
+    /// Returns the number of root entries removed — a companion isn't
+    /// counted separately, since it's a 1:1 accessory to its root entry,
+    /// not a user-visible unit.
+    ///
+    /// Cannot be a bare delegation to [`ConfigFileStore::clean`], which
+    /// has no concept of companions: uses
+    /// [`ConfigFileStore::clean_reporting`] instead, to learn which entries
+    /// were removed and derive their companion paths. A removed entry with
+    /// no companion (see [`Self::trust`]'s missing-`config_file` case) is
+    /// not an error — only a companion that exists but can't be removed
+    /// is, surfaced as [`StoreError::StoreIo`] (already generic over "a
+    /// directory or an entry", per its own doc — a companion is just
+    /// another entry-adjacent path, not a reason to add a
+    /// [`TrustError`]-specific variant).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the store directory exists but cannot
+    /// be read, a stale root entry cannot be removed, or an existing
+    /// companion cannot be removed.
+    #[inline]
+    pub(super) fn clean(&self) -> Result<usize, StoreError> {
+        let removed = self.store.clean_reporting()?;
+        for entry in &removed {
+            let companion = companion_path(entry);
+            match fs::remove_file(&companion) {
+                Ok(()) => {}
+                Err(source) if source.kind() == io::ErrorKind::NotFound => {}
+                Err(source) => {
+                    return Err(StoreError::StoreIo {
+                        path: companion,
+                        source,
+                    });
+                }
+            }
+        }
+        Ok(removed.len())
     }
 
     /// Checks whether `root` is trusted and, if so, whether
@@ -342,16 +412,154 @@ mod tests {
     }
 
     #[test]
-    fn trust_of_a_nonexistent_config_file_errors() {
+    fn trust_of_a_missing_config_file_records_the_root_without_a_companion() {
+        // `traces trust <path>` before `traces init` has created a config
+        // file is a valid flow (see ADR 0002's issue-05 amendment): the
+        // root is recorded, but there's no content to hash yet, so no
+        // companion is written.
         let temp = tempfile::tempdir().expect("create temp dir");
         let root = temp.path().join("project");
         fs::create_dir_all(&root).expect("create project dir");
+        let config_file = root.join("missing-config.toml");
+        let store = ConfigFileStore::at(temp.path().join("trust-store"));
         let trust = ConfigTrust::at(temp.path().join("trust-store"));
 
-        assert!(matches!(
-            trust.trust(&root, &root.join("missing-config.toml")),
-            Err(TrustError::Hash(HashError::Read { .. }))
-        ));
+        trust.trust(&root, &config_file).expect("trust root only");
+
+        assert!(store.contains(&root).expect("check root recorded"));
+        let companion =
+            companion_path(&store.entry_path(&root).expect("entry path"));
+        assert!(!companion.exists());
+    }
+
+    #[test]
+    fn is_trusted_is_stale_for_a_root_trusted_without_a_config_file_even_after_one_appears()
+     {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let root = temp.path().join("project");
+        fs::create_dir_all(&root).expect("create project dir");
+        let config_file = root.join("config.toml");
+        let trust = ConfigTrust::at(temp.path().join("trust-store"));
+        trust.trust(&root, &config_file).expect("trust root only");
+
+        fs::write(&config_file, "a = 1").expect("create config after trust");
+
+        assert_eq!(
+            trust.is_trusted(&root, &config_file).expect("check trust"),
+            TrustState::Stale
+        );
+    }
+
+    #[test]
+    fn re_trusting_after_the_config_file_appears_clears_staleness() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let root = temp.path().join("project");
+        fs::create_dir_all(&root).expect("create project dir");
+        let config_file = root.join("config.toml");
+        let trust = ConfigTrust::at(temp.path().join("trust-store"));
+        trust.trust(&root, &config_file).expect("trust root only");
+        fs::write(&config_file, "a = 1").expect("create config after trust");
+
+        trust.trust(&root, &config_file).expect("re-trust with config file");
+
+        assert_eq!(
+            trust.is_trusted(&root, &config_file).expect("check trust"),
+            TrustState::Trusted
+        );
+    }
+
+    #[test]
+    fn list_all_lists_trusted_roots() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let root = temp.path().join("project");
+        fs::create_dir_all(&root).expect("create project dir");
+        let config_file = root.join("config.toml");
+        fs::write(&config_file, "a = 1").expect("write config");
+        let trust = ConfigTrust::at(temp.path().join("trust-store"));
+        trust.trust(&root, &config_file).expect("trust root");
+
+        assert_eq!(trust.list_all().expect("list trusted roots"), vec![
+            root.canonicalize().expect("canonicalize root")
+        ]);
+    }
+
+    #[test]
+    fn list_all_on_an_empty_store_is_empty() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let trust = ConfigTrust::at(temp.path().join("trust-store"));
+
+        assert!(trust.list_all().expect("list trusted roots").is_empty());
+    }
+
+    #[test]
+    fn clean_removes_a_dangling_root_entry_and_its_companion() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let root = temp.path().join("project");
+        fs::create_dir_all(&root).expect("create project dir");
+        let config_file = root.join("config.toml");
+        fs::write(&config_file, "a = 1").expect("write config");
+        let trust_store_root = temp.path().join("trust-store");
+        let store = ConfigFileStore::at(trust_store_root.clone());
+        let trust = ConfigTrust::at(trust_store_root);
+        trust.trust(&root, &config_file).expect("trust root");
+        let companion =
+            companion_path(&store.entry_path(&root).expect("entry path"));
+        assert!(companion.exists(), "companion should exist before clean");
+        fs::remove_dir_all(&root).expect("delete project dir");
+
+        let removed = trust.clean().expect("clean trust store");
+
+        assert_eq!(removed, 1);
+        assert!(trust.list_all().expect("list trusted roots").is_empty());
+        assert!(
+            !companion.exists(),
+            "companion should be removed alongside its dangling root entry"
+        );
+    }
+
+    #[test]
+    fn clean_removes_a_dangling_root_entry_with_no_companion_without_erroring()
+    {
+        // Covers a root trusted before its config file ever existed (no
+        // companion was ever written), then the root itself disappears.
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let root = temp.path().join("project");
+        fs::create_dir_all(&root).expect("create project dir");
+        let config_file = root.join("config.toml");
+        let trust = ConfigTrust::at(temp.path().join("trust-store"));
+        trust.trust(&root, &config_file).expect("trust root only");
+        fs::remove_dir_all(&root).expect("delete project dir");
+
+        let removed = trust.clean().expect("clean trust store");
+
+        assert_eq!(removed, 1);
+    }
+
+    #[test]
+    fn clean_on_a_store_with_no_entries_yet_removes_nothing() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let trust = ConfigTrust::at(temp.path().join("trust-store"));
+
+        assert_eq!(trust.clean().expect("clean trust store"), 0);
+    }
+
+    #[test]
+    fn clean_leaves_a_live_trusted_root_and_its_companion_untouched() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let root = temp.path().join("project");
+        fs::create_dir_all(&root).expect("create project dir");
+        let config_file = root.join("config.toml");
+        fs::write(&config_file, "a = 1").expect("write config");
+        let trust = ConfigTrust::at(temp.path().join("trust-store"));
+        trust.trust(&root, &config_file).expect("trust root");
+
+        let removed = trust.clean().expect("clean trust store");
+
+        assert_eq!(removed, 0);
+        assert_eq!(
+            trust.is_trusted(&root, &config_file).expect("check trust"),
+            TrustState::Trusted
+        );
     }
 
     #[test]

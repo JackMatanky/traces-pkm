@@ -18,7 +18,12 @@ use super::{
     dirs,
 };
 
-const LOCAL_CONFIG_FILE: &str = ".traces/config.toml";
+/// The local project config file's path, relative to a project root.
+///
+/// `pub(crate)` (not private) so the CLI layer (`crate::cli::trust`) can
+/// derive the same path from a user-supplied root without duplicating this
+/// literal — re-exported at [`super::LOCAL_CONFIG_FILE`].
+pub(crate) const LOCAL_CONFIG_FILE: &str = ".traces/config.toml";
 const GLOBAL_CONFIG_FILE: &str = "traces/config.toml";
 
 /// Errors during config file discovery (file-walking, not read/parse).

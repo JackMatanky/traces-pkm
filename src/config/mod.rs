@@ -18,6 +18,7 @@
 //! outside `config`.
 
 pub use builder::ConfigBuilderError;
+pub(crate) use discovery::LOCAL_CONFIG_FILE;
 pub use discovery::{DiscoveryError, DiscoveryOutcome};
 pub use domain::{Config, ResolutionError, ResolvedTemplate};
 pub use service::ConfigService;

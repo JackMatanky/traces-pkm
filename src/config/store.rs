@@ -209,12 +209,7 @@ impl ConfigFileStore {
         }
         let mut targets = Vec::new();
         for entry in read_dir_entries(&self.root)? {
-            #[cfg(unix)]
-            let target = fs::read_link(&entry).ok();
-            #[cfg(windows)]
-            let target = fs::read_to_string(&entry).ok().map(PathBuf::from);
-
-            if let Some(target) = target
+            if let Some(target) = recorded_target(&entry)
                 && target.exists()
             {
                 targets.push(target);
@@ -233,28 +228,65 @@ impl ConfigFileStore {
     /// or a stale entry cannot be removed.
     #[inline]
     pub(super) fn clean(&self) -> Result<usize, StoreError> {
-        if !self.root.is_dir() {
-            return Ok(0);
-        }
-        let mut removed = 0_usize;
-        for entry in read_dir_entries(&self.root)? {
-            #[cfg(unix)]
-            let target = fs::read_link(&entry).ok();
-            #[cfg(windows)]
-            let target = fs::read_to_string(&entry).ok().map(PathBuf::from);
+        Ok(self.clean_reporting()?.len())
+    }
 
-            let live = target.is_some_and(|target| target.exists());
-            if live {
+    /// Removes entries in this store whose target path is unreadable or no
+    /// longer exists. Returns the full store-relative path of each entry
+    /// removed (not just the count) — the seam trust (issue 05) needs to
+    /// derive each removed entry's content-hash companion path from this,
+    /// the same way [`Self::entry_path`] lets it derive a live entry's
+    /// companion path. An absent or non-directory root removes nothing.
+    ///
+    /// A directory entry that isn't a symlink (or, on Windows, a
+    /// path-bearing file this store itself wrote) was never written by
+    /// [`Self::record`] — it isn't one of this store's entries at all, so
+    /// it's left untouched rather than treated as dangling. This matters
+    /// because a caller can colocate other files in the same root
+    /// directory as this store's entries (trust's `.hash` companions,
+    /// [`super::trust::ConfigTrust`]); only a *former* entry whose
+    /// recorded target no longer exists counts as dangling.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the store root exists but cannot be read,
+    /// or a stale entry cannot be removed.
+    #[inline]
+    pub(super) fn clean_reporting(&self) -> Result<Vec<PathBuf>, StoreError> {
+        if !self.root.is_dir() {
+            return Ok(Vec::new());
+        }
+        let mut removed = Vec::new();
+        for entry in read_dir_entries(&self.root)? {
+            let Some(target) = recorded_target(&entry) else {
+                continue;
+            };
+            if target.exists() {
                 continue;
             }
             fs::remove_file(&entry).map_err(|source| StoreError::StoreIo {
-                path: entry,
+                path: entry.clone(),
                 source,
             })?;
-            removed = removed.saturating_add(1);
+            removed.push(entry);
         }
         Ok(removed)
     }
+}
+
+/// Reads `entry`'s recorded target path, if `entry` was actually written by
+/// [`ConfigFileStore::record`] (a symlink on Unix, a path-bearing file on
+/// Windows). Returns `None` when `entry` isn't one of this store's own
+/// entries at all — including a caller-colocated file like trust's `.hash`
+/// companion — not just when it's a genuinely broken/dangling entry;
+/// [`ConfigFileStore::list_all`] and [`ConfigFileStore::clean_reporting`]
+/// share this so "is this even one of our entries" stays defined once.
+fn recorded_target(entry: &Path) -> Option<PathBuf> {
+    #[cfg(unix)]
+    let target = fs::read_link(entry);
+    #[cfg(windows)]
+    let target = fs::read_to_string(entry).map(PathBuf::from);
+    target.ok()
 }
 
 /// Reads the entry paths directly under `root`.
@@ -379,6 +411,37 @@ mod tests {
         let store = ConfigFileStore::at(temp.path().join("store"));
 
         assert_eq!(store.clean().expect("clean store"), 0);
+    }
+
+    #[test]
+    fn clean_leaves_a_non_symlink_file_in_the_store_root_untouched() {
+        // A caller can colocate other files alongside this store's entries
+        // in the same root directory (e.g. trust's `.hash` companions,
+        // config::trust::ConfigTrust) — clean must not treat "not one of
+        // our symlink entries" as "dangling, remove it".
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let store = ConfigFileStore::at(temp.path().join("store"));
+        fs::create_dir_all(store.root.clone()).expect("create store root");
+        let stray = store.root.join("not-a-store-entry");
+        fs::write(&stray, "not a symlink").expect("write stray file");
+
+        let removed = store.clean().expect("clean store");
+
+        assert_eq!(removed, 0);
+        assert!(stray.exists(), "stray non-entry file must survive clean");
+    }
+
+    #[test]
+    fn clean_reporting_returns_the_removed_entries_own_paths() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let deleted = temp.path().join("deleted.toml");
+        fs::write(&deleted, "").expect("write deleted config");
+        let store = ConfigFileStore::at(temp.path().join("store"));
+        let entry = store.entry_path(&deleted).expect("resolve entry path");
+        store.record(&deleted).expect("record deleted config");
+        fs::remove_file(&deleted).expect("remove deleted config");
+
+        assert_eq!(store.clean_reporting().expect("clean store"), vec![entry]);
     }
 
     #[test]

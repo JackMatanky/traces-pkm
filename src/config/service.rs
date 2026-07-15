@@ -45,6 +45,22 @@ impl ConfigService {
         }
     }
 
+    /// Creates a `ConfigService` backed by explicit tracked-config and
+    /// trust-store roots. Test-only: production callers always want the
+    /// OS-correct roots from [`Self::new`]. `pub(crate)` (not restricted
+    /// to this module) so the CLI layer's tests (`crate::cli::trust`) can
+    /// construct an isolated service without touching the real OS state
+    /// directories, mirroring [`ConfigTracker::at`]/[`ConfigTrust::at`].
+    #[cfg(test)]
+    #[must_use]
+    #[inline]
+    pub(crate) fn at(tracked_root: PathBuf, trusted_root: PathBuf) -> Self {
+        Self {
+            tracker: ConfigTracker::at(tracked_root),
+            trust: ConfigTrust::at(trusted_root),
+        }
+    }
+
     /// Discovers config files from `cwd`.
     ///
     /// Returns discovered config files plus the invocation cwd. The local
@@ -154,6 +170,31 @@ impl ConfigService {
     #[inline]
     pub fn clean_tracked_store(&self) -> Result<usize, StoreError> {
         self.tracker.clean()
+    }
+
+    /// Lists the canonical paths of all currently trusted roots.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the trust store exists but cannot be
+    /// read.
+    #[inline]
+    pub fn list_trusted(&self) -> Result<Vec<PathBuf>, StoreError> {
+        self.trust.list_all()
+    }
+
+    /// Removes dangling trust entries (target root deleted or moved),
+    /// including each removed entry's content-hash companion. Returns the
+    /// number of root entries removed.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the trust store exists but cannot be
+    /// read, a stale root entry cannot be removed, or an existing
+    /// content-hash companion cannot be removed.
+    #[inline]
+    pub fn clean_trusted_store(&self) -> Result<usize, StoreError> {
+        self.trust.clean()
     }
 }
 
@@ -339,5 +380,47 @@ mod tests {
             service.is_trusted(&root, &config_file).expect("check trust"),
             TrustState::Trusted
         );
+    }
+
+    #[test]
+    fn list_trusted_reflects_trusted_roots() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let root = temp.path().join("project");
+        fs::create_dir_all(&root).expect("create project dir");
+        let config_file = root.join("config.toml");
+        fs::write(&config_file, "a = 1").expect("write config");
+        let service = ConfigService::at(
+            temp.path().join("tracked-store"),
+            temp.path().join("trust-store"),
+        );
+
+        assert!(service.list_trusted().expect("list trusted").is_empty());
+
+        service.trust(&root, &config_file).expect("trust root");
+
+        assert_eq!(service.list_trusted().expect("list trusted"), vec![
+            root.canonicalize().expect("canonicalize root")
+        ]);
+    }
+
+    #[test]
+    fn clean_trusted_store_prunes_a_root_whose_directory_was_deleted() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let root = temp.path().join("project");
+        fs::create_dir_all(&root).expect("create project dir");
+        let config_file = root.join("config.toml");
+        fs::write(&config_file, "a = 1").expect("write config");
+        let service = ConfigService::at(
+            temp.path().join("tracked-store"),
+            temp.path().join("trust-store"),
+        );
+        service.trust(&root, &config_file).expect("trust root");
+        fs::remove_dir_all(&root).expect("delete project dir");
+
+        let removed =
+            service.clean_trusted_store().expect("clean trusted store");
+
+        assert_eq!(removed, 1);
+        assert!(service.list_trusted().expect("list trusted").is_empty());
     }
 }
