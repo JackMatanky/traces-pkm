@@ -5,12 +5,12 @@
 use std::path::{Path, PathBuf};
 
 use super::{
-    builder::{ConfigBuilder, Discovered},
-    discovery::{DiscoveryOutcome, DiscoveryProcessor},
+    builder::{ConfigBuilder, ConfigBuilderError, Discovered},
+    discovery::{DiscoveryError, DiscoveryOutcome, DiscoveryProcessor},
     domain::Config,
-    error::{ConfigError, DiscoveryError},
+    store::StoreError,
     tracker::ConfigTracker,
-    trust::{ConfigTrust, TrustState},
+    trust::{ConfigTrust, TrustError, TrustState},
 };
 
 /// Entry point for discovering and building configuration.
@@ -76,16 +76,18 @@ impl ConfigService {
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigError::Untrusted`] when a local candidate's project
-    /// root is not trusted. Returns [`ConfigError::Stale`] when the root is
-    /// trusted but the config file's content has changed since. Returns
-    /// [`ConfigError::TrustIo`] when the trust check itself fails. Returns
-    /// an error when a candidate config file cannot be read or parsed.
+    /// Returns [`ConfigBuilderError::RootNotTrusted`] when a local
+    /// candidate's project root is not trusted. Returns
+    /// [`ConfigBuilderError::StaleConfigContent`] when the root is trusted
+    /// but the config file's content has changed since. Returns
+    /// [`ConfigBuilderError::TrustCheckFailed`] when the trust check itself
+    /// fails. Returns [`ConfigBuilderError::ConfigParseFailed`] when a
+    /// candidate config file cannot be read or parsed.
     #[inline]
     pub fn build(
         &self,
         discovered: &DiscoveryOutcome,
-    ) -> Result<Config, ConfigError> {
+    ) -> Result<Config, ConfigBuilderError> {
         Ok(ConfigBuilder::<Discovered>::new(discovered)
             .track(&self.tracker)
             .trust(&self.trust)?
@@ -103,21 +105,16 @@ impl ConfigService {
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigError::TrustIo`] when `root` cannot be canonicalized
-    /// or recorded, `config_file` cannot be hashed, or the content-hash
+    /// Returns [`TrustError`] when `root` cannot be canonicalized or
+    /// recorded, `config_file` cannot be hashed, or the content-hash
     /// companion record cannot be written.
     #[inline]
     pub fn trust(
         &self,
         root: &Path,
         config_file: &Path,
-    ) -> Result<(), ConfigError> {
-        self.trust.trust(root, config_file).map_err(|source| {
-            ConfigError::TrustIo {
-                path: root.to_path_buf(),
-                source,
-            }
-        })
+    ) -> Result<(), TrustError> {
+        self.trust.trust(root, config_file)
     }
 
     /// Checks whether `root` is trusted and, if so, whether `config_file`'s
@@ -125,31 +122,26 @@ impl ConfigService {
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigError::TrustIo`] when the trust check itself fails
-    /// (store I/O, or hashing `config_file`'s current content).
+    /// Returns [`TrustError`] when the trust check itself fails (store
+    /// I/O, or hashing `config_file`'s current content).
     #[inline]
     pub fn is_trusted(
         &self,
         root: &Path,
         config_file: &Path,
-    ) -> Result<TrustState, ConfigError> {
-        self.trust.is_trusted(root, config_file).map_err(|source| {
-            ConfigError::TrustIo {
-                path: root.to_path_buf(),
-                source,
-            }
-        })
+    ) -> Result<TrustState, TrustError> {
+        self.trust.is_trusted(root, config_file)
     }
 
     /// Lists the canonical paths of all live tracked configs.
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigError::Tracking`] when the tracking store exists but
-    /// cannot be read.
+    /// Returns [`StoreError`] when the tracking store exists but cannot be
+    /// read.
     #[inline]
-    pub fn list_tracked(&self) -> Result<Vec<PathBuf>, ConfigError> {
-        Ok(self.tracker.list_all()?)
+    pub fn list_tracked(&self) -> Result<Vec<PathBuf>, StoreError> {
+        self.tracker.list_all()
     }
 
     /// Removes dangling tracked-config entries (target deleted or moved).
@@ -157,11 +149,11 @@ impl ConfigService {
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigError::Tracking`] when the tracking store exists but
-    /// cannot be read, or a stale entry cannot be removed.
+    /// Returns [`StoreError`] when the tracking store exists but cannot be
+    /// read, or a stale entry cannot be removed.
     #[inline]
-    pub fn clean_tracked_store(&self) -> Result<usize, ConfigError> {
-        Ok(self.tracker.clean()?)
+    pub fn clean_tracked_store(&self) -> Result<usize, StoreError> {
+        self.tracker.clean()
     }
 }
 
@@ -304,7 +296,7 @@ mod tests {
 
         assert!(matches!(
             result,
-            Err(ConfigError::Untrusted { path }) if path == cwd
+            Err(ConfigBuilderError::RootNotTrusted { root }) if root == cwd
         ));
     }
 
@@ -320,7 +312,7 @@ mod tests {
 
         assert!(matches!(
             result,
-            Err(ConfigError::Stale { path }) if path == cwd
+            Err(ConfigBuilderError::StaleConfigContent { root }) if root == cwd
         ));
     }
 

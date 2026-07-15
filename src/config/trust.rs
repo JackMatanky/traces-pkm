@@ -10,14 +10,51 @@
 //! directory. Unlike tracking, trust propagates errors instead of
 //! swallowing them (see [`ConfigTrust::trust`]'s doc for why).
 
-#[cfg(test)]
-use std::path::PathBuf;
-use std::{fs, path::Path};
+use std::{
+    fs, io,
+    path::{Path, PathBuf},
+};
 
-#[cfg(test)]
-use super::error::StoreError;
-use super::{dirs, error::TrustError, store::ConfigFileStore};
-use crate::hash;
+use thiserror::Error;
+
+use super::{
+    dirs,
+    store::{ConfigFileStore, StoreError},
+};
+use crate::hash::{self, HashError};
+
+/// Errors from a [`ConfigTrust`] operation that couldn't be completed.
+///
+/// Distinct from `TrustState::Untrusted`/`TrustState::Stale` (see
+/// [`TrustState`]), which are expected, actionable *outcomes* of a
+/// successful check, not failures — this type means the check (or the
+/// write) itself didn't complete. `thiserror`-only, no
+/// `miette::Diagnostic`: internal plumbing, always wrapped by
+/// [`super::builder::ConfigBuilderError::TrustCheckFailed`] before it
+/// reaches anything CLI-facing.
+///
+/// `pub` (not `pub(super)`) for the same reason as [`StoreError`]:
+/// [`super::builder::ConfigBuilderError::TrustCheckFailed`] carries it as
+/// a `#[source]` field, and [`super::service::ConfigService::trust`]/
+/// [`super::service::ConfigService::is_trusted`] return it directly.
+#[derive(Debug, Error)]
+pub enum TrustError {
+    /// The underlying path-hash trust store operation failed.
+    #[error(transparent)]
+    Store(#[from] StoreError),
+    /// Hashing the config file's current content failed.
+    #[error(transparent)]
+    Hash(#[from] HashError),
+    /// The content-hash companion record could not be written.
+    #[error("failed to write the content-hash record at {path}")]
+    CompanionWrite {
+        /// Companion file path.
+        path: PathBuf,
+        /// Source I/O error.
+        #[source]
+        source: io::Error,
+    },
+}
 
 /// Result of checking a local config candidate's trust.
 ///
@@ -160,7 +197,6 @@ mod tests {
     use std::fs;
 
     use super::*;
-    use crate::hash::HashError;
 
     #[test]
     fn is_trusted_returns_untrusted_for_an_unrecorded_root() {
@@ -332,7 +368,7 @@ mod tests {
 
         assert!(matches!(
             trust.trust(&root, &config_file),
-            Err(TrustError::Store(StoreError::Io { .. }))
+            Err(TrustError::Store(StoreError::StoreIo { .. }))
         ));
     }
 }

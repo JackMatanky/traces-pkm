@@ -10,16 +10,67 @@ use figment::{
     Figment,
     providers::{Format, Serialized, Toml},
 };
+use thiserror::Error;
 
 use super::{
     candidate::CandidateConfigFile,
     discovery::DiscoveryOutcome,
     domain::{Config, TemplateConfig},
-    error::{ConfigBuilderError, ConfigError},
     raw::RawConfig,
     tracker::ConfigTracker,
-    trust::{ConfigTrust, TrustState},
+    trust::{ConfigTrust, TrustError, TrustState},
 };
+
+/// Errors that can occur while building a [`Config`] from a
+/// [`DiscoveryOutcome`]: the trust gate ([`ConfigBuilder::trust`]) and the
+/// read/merge step ([`ConfigBuilder::merge`]).
+///
+/// `thiserror`-only, no `miette::Diagnostic` — this is library data, not
+/// CLI presentation. A future CLI layer wraps this type to add help text
+/// and error codes; the `config` module stays agnostic to how its errors
+/// are displayed.
+#[derive(Debug, Error)]
+pub enum ConfigBuilderError {
+    /// `root`'s project root is not in the trust store. Expected and
+    /// actionable: the caller (or agent) resolves this by trusting the
+    /// root through [`super::service::ConfigService::trust`].
+    #[error("{root} is not trusted")]
+    RootNotTrusted {
+        /// The untrusted project root.
+        root: PathBuf,
+    },
+    /// `root`'s project root was trusted, but the config file's content
+    /// has changed since. Expected and actionable, distinct from
+    /// [`Self::RootNotTrusted`]: this directory was trusted once, but the
+    /// content that trust decision covered no longer matches.
+    #[error("{root} was trusted, but the config file has changed since")]
+    StaleConfigContent {
+        /// The project root whose trust is now stale.
+        root: PathBuf,
+    },
+    /// The trust check itself failed (store I/O or content hashing) while
+    /// checking `root`. Internal — distinct from
+    /// [`Self::RootNotTrusted`]/[`Self::StaleConfigContent`], which are
+    /// expected, actionable outcomes; this means the check couldn't be
+    /// completed at all.
+    #[error("failed to check trust for {root}")]
+    TrustCheckFailed {
+        /// The project root whose trust check failed.
+        root: PathBuf,
+        /// Source trust error.
+        #[source]
+        source: TrustError,
+    },
+    /// A candidate config file could not be read or parsed.
+    #[error("failed to load config file {path}")]
+    ConfigParseFailed {
+        /// Config file path.
+        path: PathBuf,
+        /// Source figment error.
+        #[source]
+        source: Box<figment::Error>,
+    },
+}
 
 /// Discovery outcome has been handed to the builder.
 pub(super) struct Discovered;
@@ -93,32 +144,33 @@ impl<'a> ConfigBuilder<'a, Tracked> {
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigError::Untrusted`] when a local candidate's project
-    /// root has no trust entry. Returns [`ConfigError::Stale`] when the
-    /// root is trusted but the config file's content has changed since.
-    /// Returns [`ConfigError::TrustIo`] when the trust check itself fails
-    /// (canonicalization, store I/O, or content hashing).
+    /// Returns [`ConfigBuilderError::RootNotTrusted`] when a local
+    /// candidate's project root has no trust entry. Returns
+    /// [`ConfigBuilderError::StaleConfigContent`] when the root is trusted
+    /// but the config file's content has changed since. Returns
+    /// [`ConfigBuilderError::TrustCheckFailed`] when the trust check itself
+    /// fails (canonicalization, store I/O, or content hashing).
     #[inline]
     pub(super) fn trust(
         self,
         trust: &ConfigTrust,
-    ) -> Result<ConfigBuilder<'a, Trusted>, ConfigError> {
+    ) -> Result<ConfigBuilder<'a, Trusted>, ConfigBuilderError> {
         for candidate in self.local {
             match trust.is_trusted(candidate.root(), candidate.path()) {
                 Ok(TrustState::Trusted) => {}
                 Ok(TrustState::Untrusted) => {
-                    return Err(ConfigError::Untrusted {
-                        path: candidate.root().to_path_buf(),
+                    return Err(ConfigBuilderError::RootNotTrusted {
+                        root: candidate.root().to_path_buf(),
                     });
                 }
                 Ok(TrustState::Stale) => {
-                    return Err(ConfigError::Stale {
-                        path: candidate.root().to_path_buf(),
+                    return Err(ConfigBuilderError::StaleConfigContent {
+                        root: candidate.root().to_path_buf(),
                     });
                 }
                 Err(source) => {
-                    return Err(ConfigError::TrustIo {
-                        path: candidate.root().to_path_buf(),
+                    return Err(ConfigBuilderError::TrustCheckFailed {
+                        root: candidate.root().to_path_buf(),
                         source,
                     });
                 }
@@ -142,8 +194,8 @@ impl<'a> ConfigBuilder<'a, Trusted> {
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigBuilderError`] when a candidate config cannot be read or
-    /// parsed.
+    /// Returns [`ConfigBuilderError::ConfigParseFailed`] when a candidate
+    /// config cannot be read or parsed.
     #[inline]
     pub(super) fn merge(
         self,
@@ -196,7 +248,7 @@ impl<'a> ConfigBuilder<'a, Trusted> {
     ) -> Result<RawConfig, ConfigBuilderError> {
         let path = candidate.path();
         Figment::from(Toml::file_exact(path)).extract::<RawConfig>().map_err(
-            |source| ConfigBuilderError::Load {
+            |source| ConfigBuilderError::ConfigParseFailed {
                 path: path.to_path_buf(),
                 source: Box::new(source),
             },
@@ -435,7 +487,7 @@ mod tests {
     }
 
     #[test]
-    fn invalid_toml_returns_load_error() {
+    fn invalid_toml_returns_config_parse_failed_error() {
         let temp = tempfile::tempdir().expect("create temp dir");
         let root = temp.path().join("project");
         let path = root.join(".traces/config.toml");
@@ -461,9 +513,10 @@ mod tests {
             .expect("trust candidates")
             .merge();
 
-        assert!(
-            matches!(result, Err(ConfigBuilderError::Load { path: error_path, .. }) if error_path == path)
-        );
+        assert!(matches!(
+            result,
+            Err(ConfigBuilderError::ConfigParseFailed { path: error_path, .. }) if error_path == path
+        ));
     }
 
     #[test]
@@ -492,7 +545,7 @@ mod tests {
 
         assert!(matches!(
             result,
-            Err(ConfigError::Untrusted { path: error_path }) if error_path == root
+            Err(ConfigBuilderError::RootNotTrusted { root: error_root }) if error_root == root
         ));
     }
 
@@ -525,6 +578,38 @@ mod tests {
     }
 
     #[test]
+    fn trust_reports_trust_check_failed_when_root_cannot_be_canonicalized() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        // Root deliberately never created on disk: `is_trusted` tries to
+        // canonicalize it before checking trust state, so this fails the
+        // check itself rather than returning `RootNotTrusted`.
+        let missing_root = temp.path().join("missing-project");
+        let path = missing_root.join(".traces/config.toml");
+        let outcome = DiscoveryOutcome::new(
+            missing_root.clone(),
+            vec![CandidateConfigFile::new(
+                missing_root.clone(),
+                ConfigSource::Local(path),
+            )],
+            Vec::new(),
+        );
+        let tracked =
+            tempfile::tempdir().expect("create temp tracked-store dir");
+        let trust_store =
+            tempfile::tempdir().expect("create temp trust-store dir");
+        let trust = ConfigTrust::at(trust_store.path().to_path_buf());
+
+        let result = ConfigBuilder::new(&outcome)
+            .track(&ConfigTracker::at(tracked.path().to_path_buf()))
+            .trust(&trust);
+
+        assert!(matches!(
+            result,
+            Err(ConfigBuilderError::TrustCheckFailed { root, .. }) if root == missing_root
+        ));
+    }
+
+    #[test]
     fn global_candidates_are_never_checked_against_the_trust_store() {
         let temp = tempfile::tempdir().expect("create temp dir");
         let global_root = temp.path().join("config/traces");
@@ -550,5 +635,53 @@ mod tests {
             .trust(&trust);
 
         assert!(result.is_ok());
+    }
+
+    mod formatting {
+        use std::error::Error as _;
+
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+        use crate::config::store::StoreError;
+
+        #[test]
+        fn root_not_trusted_message_names_the_root() {
+            let root = PathBuf::from("/some/project");
+            let error = ConfigBuilderError::RootNotTrusted {
+                root: root.clone(),
+            };
+
+            assert_eq!(error.to_string(), "/some/project is not trusted");
+        }
+
+        #[test]
+        fn stale_config_content_message_names_the_root() {
+            let root = PathBuf::from("/some/project");
+            let error = ConfigBuilderError::StaleConfigContent {
+                root: root.clone(),
+            };
+
+            assert_eq!(
+                error.to_string(),
+                "/some/project was trusted, but the config file has changed \
+                 since"
+            );
+        }
+
+        #[test]
+        fn trust_check_failed_preserves_the_trust_error_as_its_source() {
+            let root = PathBuf::from("/some/project");
+            let source = TrustError::Store(StoreError::Canonicalize {
+                path: root.clone(),
+                source: std::io::Error::other("boom"),
+            });
+            let error = ConfigBuilderError::TrustCheckFailed {
+                root,
+                source,
+            };
+
+            assert!(error.source().is_some());
+        }
     }
 }

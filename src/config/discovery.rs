@@ -6,18 +6,45 @@
 //! [`ConfigService::build`](super::ConfigService::build).
 
 use std::{
+    io,
     marker::PhantomData,
     path::{Path, PathBuf},
 };
 
+use thiserror::Error;
+
 use super::{
     candidate::{CandidateConfigFile, ConfigSource},
     dirs,
-    error::DiscoveryError,
 };
 
 const LOCAL_CONFIG_FILE: &str = ".traces/config.toml";
 const GLOBAL_CONFIG_FILE: &str = "traces/config.toml";
+
+/// Errors during config file discovery (file-walking, not read/parse).
+///
+/// `thiserror`-only, no `miette::Diagnostic` — this is library data, not
+/// CLI presentation. A future CLI layer wraps this type to add help text
+/// (e.g. "run `traces init`") and error codes.
+#[derive(Debug, Error)]
+pub enum DiscoveryError {
+    /// No local `.traces/config.toml` was found in any ancestor
+    /// directory.
+    #[error("no local config found from {cwd}")]
+    LocalConfigAbsent {
+        /// The working directory from which discovery started.
+        cwd: PathBuf,
+    },
+    /// Discovery could not access a path.
+    #[error("failed to access path {path} during discovery")]
+    PathInaccessible {
+        /// Path that could not be accessed.
+        path: PathBuf,
+        /// Source I/O error.
+        #[source]
+        source: io::Error,
+    },
+}
 
 /// Opaque discovery result consumed by
 /// [`ConfigService::build`](super::ConfigService::build).
@@ -110,8 +137,9 @@ impl DiscoveryProcessor<Init> {
     ///
     /// # Errors
     ///
-    /// Returns [`DiscoveryError::Access`] when config file metadata cannot be
-    /// read.
+    /// Returns [`DiscoveryError::PathInaccessible`] when config file
+    /// metadata cannot be read. Returns [`DiscoveryError::LocalConfigAbsent`]
+    /// when no local config is found in any ancestor of `cwd`.
     #[inline]
     pub(super) fn collect_local(
         self,
@@ -133,7 +161,7 @@ impl DiscoveryProcessor<Init> {
             }
         }
         if local.is_empty() {
-            return Err(DiscoveryError::NoLocalConfig {
+            return Err(DiscoveryError::LocalConfigAbsent {
                 cwd,
             });
         }
@@ -152,8 +180,8 @@ impl DiscoveryProcessor<LocalCollected> {
     ///
     /// # Errors
     ///
-    /// Returns [`DiscoveryError::Access`] when config file metadata cannot be
-    /// read.
+    /// Returns [`DiscoveryError::PathInaccessible`] when config file
+    /// metadata cannot be read.
     #[inline]
     pub(super) fn collect_global(
         self,
@@ -196,10 +224,8 @@ impl DiscoveryProcessor<GlobalCollected> {
 fn is_config_file(path: &Path) -> Result<bool, DiscoveryError> {
     match path.metadata() {
         Ok(metadata) => Ok(metadata.is_file()),
-        Err(source) if source.kind() == std::io::ErrorKind::NotFound => {
-            Ok(false)
-        }
-        Err(source) => Err(DiscoveryError::Access {
+        Err(source) if source.kind() == io::ErrorKind::NotFound => Ok(false),
+        Err(source) => Err(DiscoveryError::PathInaccessible {
             path: path.to_path_buf(),
             source,
         }),
@@ -224,12 +250,29 @@ mod tests {
     }
 
     #[test]
+    fn is_config_file_returns_path_inaccessible_when_a_parent_is_not_a_directory()
+     {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        // A regular file where a directory is expected: `metadata()` on
+        // the full path fails with `NotADirectory`, not `NotFound`, so
+        // this exercises the `PathInaccessible` branch specifically.
+        let blocking_file = temp.path().join("blocking");
+        fs::write(&blocking_file, "").expect("write blocking file");
+        let unreachable_path = blocking_file.join("config.toml");
+
+        let err = is_config_file(&unreachable_path)
+            .expect_err("expected PathInaccessible error");
+
+        assert!(matches!(err, DiscoveryError::PathInaccessible { .. }));
+    }
+
+    #[test]
     fn init_to_local_collected_no_local_found_is_error() {
         let temp = tempfile::tempdir().expect("create temp dir");
         let err = DiscoveryProcessor::new(temp.path())
             .collect_local()
-            .expect_err("expected NoLocalConfig error");
-        assert!(matches!(err, DiscoveryError::NoLocalConfig { .. }));
+            .expect_err("expected LocalConfigAbsent error");
+        assert!(matches!(err, DiscoveryError::LocalConfigAbsent { .. }));
     }
 
     #[test]
@@ -260,7 +303,7 @@ mod tests {
 
         // Direct struct construction here is intentional: this is an edge
         // case (empty outcome) unreachable through the public API since
-        // collect_local() would produce NoLocalConfig on an empty tree.
+        // collect_local() would produce LocalConfigAbsent on an empty tree.
         let discovered = DiscoveryProcessor::<GlobalCollected> {
             cwd: temp.path().to_path_buf(),
             local: Vec::new(),

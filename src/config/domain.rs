@@ -5,7 +5,33 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
-use super::error::ResolutionError;
+use thiserror::Error;
+
+/// Errors that can occur during template resolution.
+///
+/// `thiserror`-only, no `miette::Diagnostic` — this is library data, not
+/// CLI presentation. A future CLI layer wraps this type to render the
+/// `candidates`/`directories` lists as diagnostic help text.
+#[derive(Debug, Error)]
+pub enum ResolutionError {
+    /// Multiple files matched the template name in a single directory.
+    #[error("template name \"{name}\" matched multiple files")]
+    AmbiguousTemplate {
+        /// The template name that was searched for.
+        name: PathBuf,
+        /// Candidate files that matched.
+        candidates: Vec<PathBuf>,
+    },
+
+    /// Template was not found in any of the searched directories.
+    #[error("template \"{name}\" not found")]
+    TemplateNotFound {
+        /// The template name that was searched for.
+        name: PathBuf,
+        /// Directories that were searched.
+        directories_searched: Vec<PathBuf>,
+    },
+}
 
 /// A resolved template file with its source directory.
 ///
@@ -141,27 +167,23 @@ fn one_match(
     if matches.len() > 1 {
         return Err(ResolutionError::AmbiguousTemplate {
             name: name.to_path_buf(),
-            candidates: matches
-                .iter()
-                .map(|path| path.display().to_string())
-                .collect::<Vec<_>>()
-                .join("\n"),
+            candidates: matches,
         });
     }
     Ok(matches.into_iter().next())
 }
 
-fn searched_directories(config: &Config) -> String {
+fn searched_directories(config: &Config) -> Vec<PathBuf> {
     let mut dirs = Vec::new();
     if let Some(local_dir) = config.local_template_dir() {
-        dirs.push(local_dir.display().to_string());
+        dirs.push(local_dir.to_path_buf());
     }
     if let Some(global_dir) = config.global_template_dir()
         && config.local_template_dir() != Some(global_dir)
     {
-        dirs.push(global_dir.display().to_string());
+        dirs.push(global_dir.to_path_buf());
     }
-    dirs.join("\n")
+    dirs
 }
 
 fn parent_dir(path: &Path) -> PathBuf {
@@ -404,7 +426,7 @@ mod tests {
                 candidates,
                 ..
             }) => {
-                assert_eq!(candidates.lines().count(), 2);
+                assert_eq!(candidates.len(), 2);
             }
             result => assert!(matches!(
                 result,
@@ -464,10 +486,10 @@ mod tests {
             Err(ResolutionError::TemplateNotFound {
                 directories_searched,
                 ..
-            }) => assert_eq!(
-                directories_searched,
-                format!("{}\n{}", local_dir.display(), global_dir.display())
-            ),
+            }) => assert_eq!(directories_searched, vec![
+                local_dir.clone(),
+                global_dir.clone()
+            ]),
             result => assert!(matches!(
                 result,
                 Err(ResolutionError::TemplateNotFound { .. })
@@ -490,7 +512,7 @@ mod tests {
             Err(ResolutionError::TemplateNotFound {
                 directories_searched,
                 ..
-            }) => assert_eq!(directories_searched, dir.display().to_string()),
+            }) => assert_eq!(directories_searched, vec![dir.clone()]),
             result => assert!(matches!(
                 result,
                 Err(ResolutionError::TemplateNotFound { .. })

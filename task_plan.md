@@ -23,10 +23,25 @@ Phase 2
 - [x] Present final analysis
 - **Status:** in_progress
 
-### Phase 3: Delivery
-- [ ] Ensure all planning files are up to date
-- [ ] Deliver final analysis to user
-- **Status:** pending
+### Phase 3: Implementation
+- [x] `store.rs` — strip `miette`, rename `Io` → `StoreIo`
+- [x] `trust.rs` — update `StoreError::Io` refs → `StoreError::StoreIo`
+- [x] `discovery.rs` — move `DiscoveryError` in, rename `NoLocalConfig`→`LocalConfigAbsent`, `Access`→`PathInaccessible`
+- [x] `domain.rs` — move `ResolutionError` in, change `candidates`/`directories_searched` from `String` to `Vec<PathBuf>`
+- [x] `builder.rs` — move `ConfigBuilderError` in (expand with trust-gate variants), update `trust()`/`merge()`/`read_raw()`
+- [x] `service.rs` — update signatures: `build()`→`ConfigBuilderError`, `trust()`/`is_trusted()`→`TrustError`, `list_tracked()`/`clean_tracked_store()`→`StoreError`
+- [x] `mod.rs` — update re-exports, remove `mod error;`
+- [x] Delete `error.rs` (fully absorbed into owning modules)
+- [x] Update all test assertions across touched files for renamed variants/types
+- [x] Remove unused `miette` dependency from `Cargo.toml`
+- [x] Run coverage-gap audit (rust-unit-testing review workflow) — found and closed 2 gaps: `ConfigBuilderError::TrustCheckFailed` and `DiscoveryError::PathInaccessible` were only unit-tested via direct struct construction, never through the real failing code path
+- [x] Run `cargo check`, `cargo clippy`, `cargo nextest run`, `cargo fmt` — all green (105 tests passing, up from 103)
+- **Status:** complete
+
+### Phase 4: Delivery
+- [x] Ensure all planning files are up to date
+- [x] Deliver summary to user
+- **Status:** complete
 
 ## Key Questions
 1. Should errors distinguish domain outcomes from infrastructure failures at the type level? → Yes, `RootNotTrusted`/`StaleConfigContent` (outcomes) vs `TrustCheckFailed`/`ConfigParseFailed` (actual failures)

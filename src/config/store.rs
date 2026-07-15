@@ -6,12 +6,50 @@
 //! which root to use.
 
 use std::{
-    fs,
+    fs, io,
     path::{Path, PathBuf},
 };
 
-use super::{dirs, error::StoreError};
+use thiserror::Error;
+
+use super::dirs;
 use crate::hash::hash_path_to_str;
+
+/// Errors from [`ConfigFileStore`] operations.
+///
+/// Internal plumbing: `thiserror`-only, no `miette::Diagnostic`. A raw
+/// store I/O failure is never shown to a user or agent directly — callers
+/// wrap it in a domain error (e.g. [`super::builder::ConfigBuilderError`])
+/// before it reaches anything CLI-facing.
+///
+/// `pub` (not `pub(super)`) because [`super::service::ConfigService`]'s
+/// public `list_tracked`/`clean_tracked_store` methods return this type
+/// directly, and callers outside `config::store` need to be able to
+/// observe it as a `#[source]`/return type without a
+/// private-type-in-public-API mismatch. The `store` module itself stays
+/// private, so this type is unreachable by name from outside `config` —
+/// only observable through the API surfaces that expose it.
+#[derive(Debug, Error)]
+pub enum StoreError {
+    /// The recorded path could not be canonicalized.
+    #[error("failed to canonicalize path {path}")]
+    Canonicalize {
+        /// Path that could not be canonicalized.
+        path: PathBuf,
+        /// Source I/O error.
+        #[source]
+        source: io::Error,
+    },
+    /// A store operation on `path` failed.
+    #[error("config file store operation failed for {path}")]
+    StoreIo {
+        /// Path the failing operation targeted (a directory or an entry).
+        path: PathBuf,
+        /// Source I/O error.
+        #[source]
+        source: io::Error,
+    },
+}
 
 /// Records, lists, and cleans one hash-keyed config file store.
 ///
@@ -110,9 +148,11 @@ impl ConfigFileStore {
         if entry.exists() {
             return Ok(());
         }
-        fs::create_dir_all(&self.root).map_err(|source| StoreError::Io {
-            path: self.root.clone(),
-            source,
+        fs::create_dir_all(&self.root).map_err(|source| {
+            StoreError::StoreIo {
+                path: self.root.clone(),
+                source,
+            }
         })?;
         #[cfg(unix)]
         let write_entry = std::os::unix::fs::symlink(&canonical, &entry);
@@ -122,7 +162,7 @@ impl ConfigFileStore {
             canonical.as_os_str().to_string_lossy().as_bytes(),
         );
 
-        write_entry.map_err(|source| StoreError::Io {
+        write_entry.map_err(|source| StoreError::StoreIo {
             path: entry,
             source,
         })
@@ -139,14 +179,14 @@ impl ConfigFileStore {
     /// # Errors
     ///
     /// Returns [`StoreError::Canonicalize`] when `target` cannot be
-    /// canonicalized. Returns [`StoreError::Io`] when the entry's existence
-    /// cannot be determined (permissions, I/O failure) — distinct from the
-    /// entry simply not existing, which returns `Ok(false)`.
+    /// canonicalized. Returns [`StoreError::StoreIo`] when the entry's
+    /// existence cannot be determined (permissions, I/O failure) — distinct
+    /// from the entry simply not existing, which returns `Ok(false)`.
     #[inline]
     pub(super) fn contains(&self, target: &Path) -> Result<bool, StoreError> {
         let canonical = Self::canonicalize(target)?;
         let entry = self.root.join(hash_path_to_str(&canonical));
-        entry.try_exists().map_err(|source| StoreError::Io {
+        entry.try_exists().map_err(|source| StoreError::StoreIo {
             path: entry,
             source,
         })
@@ -207,7 +247,7 @@ impl ConfigFileStore {
             if live {
                 continue;
             }
-            fs::remove_file(&entry).map_err(|source| StoreError::Io {
+            fs::remove_file(&entry).map_err(|source| StoreError::StoreIo {
                 path: entry,
                 source,
             })?;
@@ -220,14 +260,16 @@ impl ConfigFileStore {
 /// Reads the entry paths directly under `root`.
 fn read_dir_entries(root: &Path) -> Result<Vec<PathBuf>, StoreError> {
     fs::read_dir(root)
-        .map_err(|source| StoreError::Io {
+        .map_err(|source| StoreError::StoreIo {
             path: root.to_path_buf(),
             source,
         })?
         .map(|entry| {
-            entry.map(|entry| entry.path()).map_err(|source| StoreError::Io {
-                path: root.to_path_buf(),
-                source,
+            entry.map(|entry| entry.path()).map_err(|source| {
+                StoreError::StoreIo {
+                    path: root.to_path_buf(),
+                    source,
+                }
             })
         })
         .collect()
@@ -359,7 +401,10 @@ mod tests {
         fs::write(&root, "").expect("write store root file");
         let store = ConfigFileStore::at(root);
 
-        assert!(matches!(store.record(&target), Err(StoreError::Io { .. })));
+        assert!(matches!(
+            store.record(&target),
+            Err(StoreError::StoreIo { .. })
+        ));
     }
 
     #[test]
