@@ -1,6 +1,6 @@
 # Trust store: check + create + untrusted rejection
 
-Status: ready-for-agent
+Status: implemented
 
 ## Parent
 
