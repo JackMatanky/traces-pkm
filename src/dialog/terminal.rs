@@ -98,6 +98,9 @@ impl DialogProvider for TerminalDialogProvider {
         label: &str,
         items: &[String],
     ) -> Result<Vec<usize>, DialogError> {
+        if items.is_empty() {
+            return Ok(Vec::new());
+        }
         if !stdin_is_tty() {
             return Ok(Vec::new());
         }
@@ -131,87 +134,111 @@ mod tests {
         is_tty
     }
 
-    #[test]
-    fn terminal_text_returns_default_when_not_a_tty() {
-        if skip_if_tty("terminal_text_returns_default_when_not_a_tty") {
-            return;
+    use super::*;
+
+    mod text {
+        use super::*;
+
+        #[test]
+        fn returns_default_when_not_a_tty() {
+            if skip_if_tty("returns_default_when_not_a_tty") {
+                return;
+            }
+            let p = TerminalDialogProvider::new();
+            assert_eq!(p.text("name", Some("carol")).unwrap(), "carol");
         }
-        let p = TerminalDialogProvider::new();
-        assert_eq!(p.text("name", Some("carol")).unwrap(), "carol");
+
+        #[test]
+        fn returns_empty_when_not_a_tty_and_no_default() {
+            if skip_if_tty("returns_empty_when_not_a_tty_and_no_default") {
+                return;
+            }
+            let p = TerminalDialogProvider::new();
+            assert_eq!(p.text("name", None).unwrap(), "");
+        }
     }
 
-    #[test]
-    fn terminal_text_returns_empty_when_not_a_tty_and_no_default() {
-        if skip_if_tty(
-            "terminal_text_returns_empty_when_not_a_tty_and_no_default",
-        ) {
-            return;
+    mod confirm {
+        use super::*;
+
+        #[test]
+        fn returns_default_when_not_a_tty() {
+            if skip_if_tty("returns_default_when_not_a_tty") {
+                return;
+            }
+            let p = TerminalDialogProvider::new();
+            assert!(p.confirm("ok?", Some(true)).unwrap());
+            assert!(!p.confirm("ok?", Some(false)).unwrap());
         }
-        let p = TerminalDialogProvider::new();
-        assert_eq!(p.text("name", None).unwrap(), "");
+
+        #[test]
+        fn returns_false_when_not_a_tty_and_no_default() {
+            if skip_if_tty("returns_false_when_not_a_tty_and_no_default") {
+                return;
+            }
+            let p = TerminalDialogProvider::new();
+            assert!(!p.confirm("ok?", None).unwrap());
+        }
     }
 
-    #[test]
-    fn terminal_confirm_returns_default_when_not_a_tty() {
-        if skip_if_tty("terminal_confirm_returns_default_when_not_a_tty") {
-            return;
+    mod object_safety {
+        use super::*;
+
+        #[test]
+        fn is_usable_as_dyn_when_not_a_tty() {
+            if skip_if_tty("is_usable_as_dyn_when_not_a_tty") {
+                return;
+            }
+            let concrete = TerminalDialogProvider::new();
+            let p: &dyn DialogProvider = &concrete;
+            assert_eq!(p.text("l", Some("d")).unwrap(), "d");
+            assert!(p.confirm("l", Some(true)).unwrap());
         }
-        let p = TerminalDialogProvider::new();
-        assert!(p.confirm("ok?", Some(true)).unwrap());
-        assert!(!p.confirm("ok?", Some(false)).unwrap());
     }
 
-    #[test]
-    fn terminal_confirm_returns_false_when_not_a_tty_and_no_default() {
-        if skip_if_tty(
-            "terminal_confirm_returns_false_when_not_a_tty_and_no_default",
-        ) {
-            return;
+    mod select {
+        use super::*;
+
+        #[test]
+        fn returns_index_zero_when_not_a_tty() {
+            if skip_if_tty("returns_index_zero_when_not_a_tty") {
+                return;
+            }
+            let items = vec!["first".to_owned(), "second".to_owned()];
+            let p = TerminalDialogProvider::new();
+
+            assert_eq!(p.select("pick", &items).unwrap(), 0);
         }
-        let p = TerminalDialogProvider::new();
-        assert!(!p.confirm("ok?", None).unwrap());
+
+        #[test]
+        fn returns_error_when_items_are_empty() {
+            let p = TerminalDialogProvider::new();
+
+            assert!(matches!(
+                p.select("pick", &[]),
+                Err(DialogError::EmptySelectionInput)
+            ));
+        }
     }
 
-    #[test]
-    fn terminal_usable_as_dyn_when_not_a_tty() {
-        if skip_if_tty("terminal_usable_as_dyn_when_not_a_tty") {
-            return;
+    mod multi_select {
+        use super::*;
+
+        #[test]
+        fn returns_empty_when_items_are_empty() {
+            let p = TerminalDialogProvider::new();
+            assert!(p.multi_select("pick", &[]).unwrap().is_empty());
         }
-        let concrete = TerminalDialogProvider::new();
-        let p: &dyn DialogProvider = &concrete;
-        assert_eq!(p.text("l", Some("d")).unwrap(), "d");
-        assert!(p.confirm("l", Some(true)).unwrap());
-    }
 
-    #[test]
-    fn terminal_select_returns_index_zero_when_not_a_tty() {
-        if skip_if_tty("terminal_select_returns_index_zero_when_not_a_tty") {
-            return;
+        #[test]
+        fn returns_empty_when_not_a_tty() {
+            if skip_if_tty("returns_empty_when_not_a_tty") {
+                return;
+            }
+            let items = vec!["a".to_owned(), "b".to_owned()];
+            let p = TerminalDialogProvider::new();
+
+            assert!(p.multi_select("pick", &items).unwrap().is_empty());
         }
-        let items = vec!["first".to_owned(), "second".to_owned()];
-        let p = TerminalDialogProvider::new();
-
-        assert_eq!(p.select("pick", &items).unwrap(), 0);
-    }
-
-    #[test]
-    fn terminal_select_on_empty_items_errors() {
-        let p = TerminalDialogProvider::new();
-
-        assert!(matches!(
-            p.select("pick", &[]),
-            Err(DialogError::EmptySelectionInput)
-        ));
-    }
-
-    #[test]
-    fn terminal_multi_select_returns_empty_when_not_a_tty() {
-        if skip_if_tty("terminal_multi_select_returns_empty_when_not_a_tty") {
-            return;
-        }
-        let items = vec!["a".to_owned(), "b".to_owned()];
-        let p = TerminalDialogProvider::new();
-
-        assert!(p.multi_select("pick", &items).unwrap().is_empty());
     }
 }

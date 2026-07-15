@@ -96,71 +96,94 @@ mod tests {
 
     use super::*;
 
-    #[test]
-    fn inquire_cancel_maps_to_user_cancelled() {
-        let mapped =
-            DialogError::from(inquire::InquireError::OperationCanceled);
+    mod conversions {
+        use super::*;
 
-        assert!(matches!(mapped, DialogError::UserCancelled));
-        assert_eq!(mapped.to_string(), "dialog user cancelled the operation");
-    }
+        #[test]
+        fn maps_std_io_error_to_io_variant() {
+            let io = std::io::Error::other("std boom");
+            let mapped = DialogError::from(io);
 
-    #[test]
-    fn inquire_interrupt_maps_to_user_interrupted() {
-        let mapped =
-            DialogError::from(inquire::InquireError::OperationInterrupted);
+            assert!(matches!(mapped, DialogError::Io(_)));
+            assert_eq!(
+                mapped.to_string(),
+                "dialog I/O operation failed: std boom"
+            );
+        }
 
-        assert!(matches!(mapped, DialogError::UserInterrupted));
-        assert_eq!(mapped.to_string(), "dialog user interrupted the operation");
-    }
+        #[test]
+        fn maps_inquire_cancel_to_user_cancelled() {
+            let mapped =
+                DialogError::from(inquire::InquireError::OperationCanceled);
 
-    #[test]
-    fn inquire_not_tty_maps_to_not_interactive() {
-        let mapped = DialogError::from(inquire::InquireError::NotTTY);
+            assert!(matches!(mapped, DialogError::UserCancelled));
+            assert_eq!(
+                mapped.to_string(),
+                "dialog user cancelled the operation"
+            );
+        }
 
-        assert!(matches!(mapped, DialogError::NotInteractive));
-        assert_eq!(
-            mapped.to_string(),
-            "interactive dialog not available, stdin is not a terminal"
-        );
-    }
+        #[test]
+        fn maps_inquire_interrupt_to_user_interrupted() {
+            let mapped =
+                DialogError::from(inquire::InquireError::OperationInterrupted);
 
-    #[test]
-    fn inquire_invalid_configuration_maps_to_configuration() {
-        let mapped = DialogError::from(
-            inquire::InquireError::InvalidConfiguration("bad value".into()),
-        );
+            assert!(matches!(mapped, DialogError::UserInterrupted));
+            assert_eq!(
+                mapped.to_string(),
+                "dialog user interrupted the operation"
+            );
+        }
 
-        assert!(matches!(mapped, DialogError::InvalidConfiguration(_)));
-        assert_eq!(
-            mapped.to_string(),
-            "invalid dialog configuration: bad value"
-        );
-    }
+        #[test]
+        fn maps_inquire_not_tty_to_not_interactive() {
+            let mapped = DialogError::from(inquire::InquireError::NotTTY);
 
-    #[test]
-    fn inquire_io_preserves_source_chain() {
-        let io = std::io::Error::other("boom");
+            assert!(matches!(mapped, DialogError::NotInteractive));
+            assert_eq!(
+                mapped.to_string(),
+                "interactive dialog not available, stdin is not a terminal"
+            );
+        }
 
-        let mapped = DialogError::from(inquire::InquireError::IO(io));
+        #[test]
+        fn maps_inquire_invalid_configuration_to_configuration() {
+            let mapped = DialogError::from(
+                inquire::InquireError::InvalidConfiguration("bad value".into()),
+            );
 
-        assert!(matches!(mapped, DialogError::Io(_)));
-        assert!(mapped.to_string().contains("boom"));
-        let source = mapped.source().expect("Io should expose a source");
-        assert!(source.to_string().contains("boom"));
-    }
+            assert!(matches!(mapped, DialogError::InvalidConfiguration(_)));
+            assert_eq!(
+                mapped.to_string(),
+                "invalid dialog configuration: bad value"
+            );
+        }
 
-    #[test]
-    fn inquire_custom_preserves_source_chain() {
-        let inner: Box<dyn std::error::Error + Send + Sync> =
-            "validator failed".into();
+        #[test]
+        fn preserves_source_chain_for_inquire_io() {
+            let io = std::io::Error::other("boom");
 
-        let mapped = DialogError::from(inquire::InquireError::Custom(inner));
+            let mapped = DialogError::from(inquire::InquireError::IO(io));
 
-        assert!(matches!(mapped, DialogError::BackendFailure(_)));
-        assert!(mapped.to_string().contains("validator failed"));
-        let source =
-            mapped.source().expect("BackendFailure should expose a source");
-        assert_eq!(source.to_string(), "validator failed");
+            assert!(matches!(mapped, DialogError::Io(_)));
+            assert!(mapped.to_string().contains("boom"));
+            let source = mapped.source().expect("Io should expose a source");
+            assert!(source.to_string().contains("boom"));
+        }
+
+        #[test]
+        fn preserves_source_chain_for_inquire_custom() {
+            let inner: Box<dyn std::error::Error + Send + Sync> =
+                "validator failed".into();
+
+            let mapped =
+                DialogError::from(inquire::InquireError::Custom(inner));
+
+            assert!(matches!(mapped, DialogError::BackendFailure(_)));
+            assert!(mapped.to_string().contains("validator failed"));
+            let source =
+                mapped.source().expect("BackendFailure should expose a source");
+            assert_eq!(source.to_string(), "validator failed");
+        }
     }
 }

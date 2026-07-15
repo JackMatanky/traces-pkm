@@ -168,11 +168,11 @@ impl DialogProvider for PresetDialogProvider {
         _label: &str,
         items: &[String],
     ) -> Result<usize, DialogError> {
-        if let Some(queued) = lock(&self.selects).pop_front() {
-            return Ok(queued);
-        }
         if items.is_empty() {
             return Err(DialogError::EmptySelectionInput);
+        }
+        if let Some(queued) = lock(&self.selects).pop_front() {
+            return Ok(queued);
         }
         Ok(0)
     }
@@ -181,8 +181,11 @@ impl DialogProvider for PresetDialogProvider {
     fn multi_select(
         &self,
         _label: &str,
-        _items: &[String],
+        items: &[String],
     ) -> Result<Vec<usize>, DialogError> {
+        if items.is_empty() {
+            return Ok(Vec::new());
+        }
         Ok(lock(&self.multi_selects).pop_front().unwrap_or_default())
     }
 }
@@ -191,129 +194,175 @@ impl DialogProvider for PresetDialogProvider {
 mod tests {
     use super::*;
 
-    #[test]
-    fn text_returns_queued_responses_in_order() {
-        let p = PresetDialogProvider::new().with_text("alice").with_text("bob");
-        assert_eq!(p.text("name", None).unwrap(), "alice");
-        assert_eq!(p.text("name", None).unwrap(), "bob");
+    mod text {
+        use super::*;
+
+        #[test]
+        fn returns_queued_responses_in_order() {
+            let p =
+                PresetDialogProvider::new().with_text("alice").with_text("bob");
+            assert_eq!(p.text("name", None).unwrap(), "alice");
+            assert_eq!(p.text("name", None).unwrap(), "bob");
+        }
+
+        #[test]
+        fn consumes_queue_then_falls_back() {
+            let p = PresetDialogProvider::new().with_text("only");
+            assert_eq!(p.text("name", None).unwrap(), "only");
+            assert_eq!(p.text("name", Some("fallback")).unwrap(), "fallback");
+        }
+
+        #[test]
+        fn falls_back_to_default_when_queue_empty() {
+            let p = PresetDialogProvider::new();
+            assert_eq!(p.text("name", Some("carol")).unwrap(), "carol");
+        }
+
+        #[test]
+        fn falls_back_to_empty_when_no_default() {
+            let p = PresetDialogProvider::new();
+            assert_eq!(p.text("name", None).unwrap(), "");
+        }
     }
 
-    #[test]
-    fn text_consumes_queue_then_falls_back() {
-        let p = PresetDialogProvider::new().with_text("only");
-        assert_eq!(p.text("name", None).unwrap(), "only");
-        assert_eq!(p.text("name", Some("fallback")).unwrap(), "fallback");
+    mod confirm {
+        use super::*;
+
+        #[test]
+        fn returns_queued_responses_in_order() {
+            let p = PresetDialogProvider::new()
+                .with_confirm(true)
+                .with_confirm(false);
+            assert!(p.confirm("ok?", None).unwrap());
+            assert!(!p.confirm("ok?", None).unwrap());
+        }
+
+        #[test]
+        fn falls_back_to_default_when_queue_empty() {
+            let p = PresetDialogProvider::new();
+            assert!(p.confirm("ok?", Some(true)).unwrap());
+            assert!(!p.confirm("ok?", Some(false)).unwrap());
+        }
+
+        #[test]
+        fn falls_back_to_false_when_no_default() {
+            let p = PresetDialogProvider::new();
+            assert!(!p.confirm("ok?", None).unwrap());
+        }
     }
 
-    #[test]
-    fn text_falls_back_to_default_when_queue_empty() {
-        let p = PresetDialogProvider::new();
-        assert_eq!(p.text("name", Some("carol")).unwrap(), "carol");
+    mod object_safety {
+        use super::*;
+
+        #[test]
+        fn is_usable_as_dyn_dialog_provider() {
+            let concrete =
+                PresetDialogProvider::new().with_text("dyn").with_confirm(true);
+            let p: &dyn DialogProvider = &concrete;
+            assert_eq!(p.text("l", None).unwrap(), "dyn");
+            assert!(p.confirm("l", None).unwrap());
+        }
     }
 
-    #[test]
-    fn text_falls_back_to_empty_when_no_default() {
-        let p = PresetDialogProvider::new();
-        assert_eq!(p.text("name", None).unwrap(), "");
+    mod select {
+        use super::*;
+
+        #[test]
+        fn returns_queued_indices_in_order() {
+            let items = vec!["a".to_owned(), "b".to_owned(), "c".to_owned()];
+            let p = PresetDialogProvider::new().with_select(2).with_select(0);
+
+            assert_eq!(p.select("pick", &items).unwrap(), 2);
+            assert_eq!(p.select("pick", &items).unwrap(), 0);
+        }
+
+        #[test]
+        fn falls_back_to_index_zero_when_queue_empty() {
+            let items = vec!["first".to_owned(), "second".to_owned()];
+            let p = PresetDialogProvider::new();
+
+            assert_eq!(p.select("pick", &items).unwrap(), 0);
+        }
+
+        #[test]
+        fn returns_error_when_items_are_empty() {
+            let p = PresetDialogProvider::new();
+
+            assert!(matches!(
+                p.select("pick", &[]),
+                Err(DialogError::EmptySelectionInput)
+            ));
+        }
+
+        #[test]
+        fn returns_error_when_items_are_empty_and_preserves_queue() {
+            let p = PresetDialogProvider::new().with_select(42);
+
+            assert!(matches!(
+                p.select("pick", &[]),
+                Err(DialogError::EmptySelectionInput)
+            ));
+
+            assert_eq!(p.select("pick", &["a".to_owned()]).unwrap(), 42);
+        }
+
+        #[test]
+        fn recovers_the_object_by_position() {
+            let objects = [("US", 1), ("GB", 44), ("DE", 49)];
+            let labels: Vec<String> =
+                objects.iter().map(|&(label, _)| label.to_owned()).collect();
+            let p = PresetDialogProvider::new().with_select(2);
+
+            let idx = p.select("country", &labels).unwrap();
+
+            assert_eq!(objects.get(idx), Some(&("DE", 49)));
+        }
+
+        #[test]
+        fn disambiguates_duplicate_labels() {
+            let objects = [("dup", 1), ("unique", 2), ("dup", 3)];
+            let labels: Vec<String> =
+                objects.iter().map(|&(label, _)| label.to_owned()).collect();
+            let p = PresetDialogProvider::new().with_select(2);
+
+            let idx = p.select("pick", &labels).unwrap();
+
+            assert_eq!(objects.get(idx), Some(&("dup", 3)));
+        }
     }
 
-    #[test]
-    fn confirm_returns_queued_responses_in_order() {
-        let p =
-            PresetDialogProvider::new().with_confirm(true).with_confirm(false);
-        assert!(p.confirm("ok?", None).unwrap());
-        assert!(!p.confirm("ok?", None).unwrap());
-    }
+    mod multi_select {
+        use super::*;
 
-    #[test]
-    fn confirm_falls_back_to_default_when_queue_empty() {
-        let p = PresetDialogProvider::new();
-        assert!(p.confirm("ok?", Some(true)).unwrap());
-        assert!(!p.confirm("ok?", Some(false)).unwrap());
-    }
+        #[test]
+        fn returns_queued_indices_in_order() {
+            let items = vec!["a".to_owned(), "b".to_owned(), "c".to_owned()];
+            let p = PresetDialogProvider::new()
+                .with_multi_select([0, 2])
+                .with_multi_select([]);
 
-    #[test]
-    fn confirm_falls_back_to_false_when_no_default() {
-        let p = PresetDialogProvider::new();
-        assert!(!p.confirm("ok?", None).unwrap());
-    }
+            assert_eq!(p.multi_select("pick", &items).unwrap(), vec![0, 2]);
+            assert!(p.multi_select("pick", &items).unwrap().is_empty());
+        }
 
-    #[test]
-    fn usable_as_dyn_dialog_provider() {
-        let concrete =
-            PresetDialogProvider::new().with_text("dyn").with_confirm(true);
-        let p: &dyn DialogProvider = &concrete;
-        assert_eq!(p.text("l", None).unwrap(), "dyn");
-        assert!(p.confirm("l", None).unwrap());
-    }
+        #[test]
+        fn falls_back_to_empty_when_queue_empty() {
+            let items = vec!["a".to_owned(), "b".to_owned()];
+            let p = PresetDialogProvider::new();
 
-    #[test]
-    fn select_returns_queued_indices_in_order() {
-        let items = vec!["a".to_owned(), "b".to_owned(), "c".to_owned()];
-        let p = PresetDialogProvider::new().with_select(2).with_select(0);
+            assert!(p.multi_select("pick", &items).unwrap().is_empty());
+        }
 
-        assert_eq!(p.select("pick", &items).unwrap(), 2);
-        assert_eq!(p.select("pick", &items).unwrap(), 0);
-    }
+        #[test]
+        fn returns_empty_when_items_are_empty_and_preserves_queue() {
+            let p = PresetDialogProvider::new().with_multi_select([1, 2]);
 
-    #[test]
-    fn select_falls_back_to_index_zero_when_queue_empty() {
-        let items = vec!["first".to_owned(), "second".to_owned()];
-        let p = PresetDialogProvider::new();
+            assert!(p.multi_select("pick", &[]).unwrap().is_empty());
 
-        assert_eq!(p.select("pick", &items).unwrap(), 0);
-    }
-
-    #[test]
-    fn select_on_empty_items_errors() {
-        let p = PresetDialogProvider::new();
-
-        assert!(matches!(
-            p.select("pick", &[]),
-            Err(DialogError::EmptySelectionInput)
-        ));
-    }
-
-    #[test]
-    fn multi_select_returns_queued_indices_in_order() {
-        let items = vec!["a".to_owned(), "b".to_owned(), "c".to_owned()];
-        let p = PresetDialogProvider::new()
-            .with_multi_select([0, 2])
-            .with_multi_select([]);
-
-        assert_eq!(p.multi_select("pick", &items).unwrap(), vec![0, 2]);
-        assert!(p.multi_select("pick", &items).unwrap().is_empty());
-    }
-
-    #[test]
-    fn multi_select_falls_back_to_empty_when_queue_empty() {
-        let items = vec!["a".to_owned(), "b".to_owned()];
-        let p = PresetDialogProvider::new();
-
-        assert!(p.multi_select("pick", &items).unwrap().is_empty());
-    }
-
-    #[test]
-    fn select_recovers_the_object_by_position() {
-        let objects = [("US", 1), ("GB", 44), ("DE", 49)];
-        let labels: Vec<String> =
-            objects.iter().map(|&(label, _)| label.to_owned()).collect();
-        let p = PresetDialogProvider::new().with_select(2);
-
-        let idx = p.select("country", &labels).unwrap();
-
-        assert_eq!(objects.get(idx), Some(&("DE", 49)));
-    }
-
-    #[test]
-    fn select_disambiguates_duplicate_labels() {
-        let objects = [("dup", 1), ("unique", 2), ("dup", 3)];
-        let labels: Vec<String> =
-            objects.iter().map(|&(label, _)| label.to_owned()).collect();
-        let p = PresetDialogProvider::new().with_select(2);
-
-        let idx = p.select("pick", &labels).unwrap();
-
-        assert_eq!(objects.get(idx), Some(&("dup", 3)));
+            assert_eq!(
+                p.multi_select("pick", &["a".to_owned()]).unwrap(),
+                vec![1, 2]
+            );
+        }
     }
 }
