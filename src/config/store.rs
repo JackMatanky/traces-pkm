@@ -22,15 +22,16 @@ use crate::hash::hash_path_to_str;
 /// wrap it in a domain error (e.g. [`super::builder::ConfigBuilderError`])
 /// before it reaches anything CLI-facing.
 ///
-/// `pub` (not `pub(super)`) because [`super::service::ConfigService`]'s
-/// public `list_tracked`/`clean_tracked_store` methods return this type
-/// directly, and callers outside `config::store` need to be able to
-/// observe it as a `#[source]`/return type without a
+/// `pub(crate)` (not `pub(super)`) because [`super::service::ConfigService`]'s
+/// `list_tracked`/`clean_tracked_store` methods return this type directly,
+/// and callers outside `config::store` (i.e. `crate::cli`) need to be able
+/// to observe it as a `#[source]`/return type without a
 /// private-type-in-public-API mismatch. The `store` module itself stays
 /// private, so this type is unreachable by name from outside `config` —
-/// only observable through the API surfaces that expose it.
+/// only observable through the API surfaces that expose it. Not `pub`:
+/// nothing outside this crate needs it (see `config/mod.rs`'s doc).
 #[derive(Debug, Error)]
-pub enum StoreError {
+pub(crate) enum StoreError {
     /// The recorded path could not be canonicalized.
     #[error("failed to canonicalize path {path}")]
     Canonicalize {

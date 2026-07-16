@@ -13,7 +13,7 @@ use thiserror::Error;
 /// CLI presentation. A future CLI layer wraps this type to render the
 /// `candidates`/`directories` lists as diagnostic help text.
 #[derive(Debug, Error)]
-pub enum ResolutionError {
+pub(crate) enum ResolutionError {
     /// Multiple files matched the template name in a single directory.
     #[error("template name \"{name}\" matched multiple files")]
     AmbiguousTemplate {
@@ -38,16 +38,16 @@ pub enum ResolutionError {
 /// Carries both the path to the file and which template directory it came
 /// from, so consumers can inspect the origin without re-deriving it.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ResolvedTemplate {
+pub(crate) struct ResolvedTemplate {
     /// Absolute path to the resolved template file.
-    pub path: PathBuf,
+    pub(crate) path: PathBuf,
     /// The template directory the file was resolved from.
-    pub source_dir: PathBuf,
+    pub(crate) source_dir: PathBuf,
 }
 
 /// Merged configuration ready for consumers.
 #[derive(Clone, Debug)]
-pub struct Config {
+pub(crate) struct Config {
     /// Project root directory.
     root: PathBuf,
     /// Template directories and output path from merged config.
@@ -68,28 +68,28 @@ impl Config {
     /// The project root directory.
     #[inline]
     #[must_use]
-    pub fn root(&self) -> &Path {
+    pub(crate) fn root(&self) -> &Path {
         &self.root
     }
 
     /// The local template directory, if set.
     #[inline]
     #[must_use]
-    pub fn local_template_dir(&self) -> Option<&Path> {
+    pub(crate) fn local_template_dir(&self) -> Option<&Path> {
         self.templates.local.as_deref()
     }
 
     /// The global template directory, if set.
     #[inline]
     #[must_use]
-    pub fn global_template_dir(&self) -> Option<&Path> {
+    pub(crate) fn global_template_dir(&self) -> Option<&Path> {
         self.templates.global.as_deref()
     }
 
     /// The configured output path, or [`root`](Self::root) when not configured.
     #[inline]
     #[must_use]
-    pub fn output_dir(&self) -> &Path {
+    pub(crate) fn output_dir(&self) -> &Path {
         &self.templates.output
     }
 
@@ -107,7 +107,7 @@ impl Config {
     /// match the name within a single directory. Returns
     /// [`ResolutionError::TemplateNotFound`] when no match is found.
     #[inline]
-    pub fn resolve_template(
+    pub(crate) fn resolve_template(
         &self,
         name: &Path,
     ) -> Result<ResolvedTemplate, ResolutionError> {

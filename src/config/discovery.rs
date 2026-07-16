@@ -32,7 +32,7 @@ const GLOBAL_CONFIG_FILE: &str = "traces/config.toml";
 /// CLI presentation. A future CLI layer wraps this type to add help text
 /// (e.g. "run `traces init`") and error codes.
 #[derive(Debug, Error)]
-pub enum DiscoveryError {
+pub(crate) enum DiscoveryError {
     /// No local `.traces/config.toml` was found in any ancestor
     /// directory.
     #[error("no local config found from {cwd}")]
@@ -58,7 +58,7 @@ pub enum DiscoveryError {
 /// that were found on disk. Fields are private — callers pass this token
 /// through unchanged.
 #[derive(Clone, Debug)]
-pub struct DiscoveryOutcome {
+pub(crate) struct DiscoveryOutcome {
     cwd: PathBuf,
     local: Box<[CandidateConfigFile]>,
     global: Box<[CandidateConfigFile]>,

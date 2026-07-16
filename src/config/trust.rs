@@ -18,6 +18,7 @@ use std::{
 use thiserror::Error;
 
 use super::{
+    candidate::CandidateConfigFile,
     dirs,
     store::{ConfigFileStore, StoreError},
 };
@@ -33,12 +34,12 @@ use crate::hash::{self, HashError};
 /// [`super::builder::ConfigBuilderError::TrustCheckFailed`] before it
 /// reaches anything CLI-facing.
 ///
-/// `pub` (not `pub(super)`) for the same reason as [`StoreError`]:
+/// `pub(crate)` (not `pub(super)`) for the same reason as [`StoreError`]:
 /// [`super::builder::ConfigBuilderError::TrustCheckFailed`] carries it as
 /// a `#[source]` field, and [`super::service::ConfigService::trust`]/
 /// [`super::service::ConfigService::is_trusted`] return it directly.
 #[derive(Debug, Error)]
-pub enum TrustError {
+pub(crate) enum TrustError {
     /// The underlying path-hash trust store operation failed.
     #[error(transparent)]
     Store(#[from] StoreError),
@@ -65,7 +66,7 @@ pub enum TrustError {
 /// this (global trust is skipped entirely; see `super::builder`'s
 /// `ConfigBuilder::trust`).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum TrustState {
+pub(crate) enum TrustState {
     /// No trust entry exists for this candidate's project root.
     Untrusted,
     /// A trust entry exists for the project root, but the config file's
@@ -89,7 +90,7 @@ pub enum TrustState {
 /// [`Self::for_root`] to pick a variant — see ADR 0002's issue-05
 /// amendment.
 #[derive(Clone, Copy, Debug)]
-pub enum TrustTarget<'a> {
+pub(crate) enum TrustTarget<'a> {
     /// Trust `root` alone. No config file exists yet to content-hash
     /// (e.g. before `traces init` has created one) —
     /// [`ConfigTrust::trust`] records the root only, without a
@@ -120,7 +121,7 @@ impl<'a> TrustTarget<'a> {
     /// its own.
     #[inline]
     #[must_use]
-    pub fn for_root(root: &'a Path, config_file: &'a Path) -> Self {
+    pub(crate) fn for_root(root: &'a Path, config_file: &'a Path) -> Self {
         if config_file.try_exists().unwrap_or(false) {
             Self::ConfigFile {
                 root,
@@ -141,6 +142,22 @@ impl<'a> TrustTarget<'a> {
                 root,
                 ..
             } => root,
+        }
+    }
+}
+
+impl<'a> From<&'a CandidateConfigFile> for TrustTarget<'a> {
+    /// Always [`Self::ConfigFile`], never [`Self::Directory`]: a
+    /// [`CandidateConfigFile`] only exists because the discovery pipeline
+    /// (`super::discovery`) already found its config file on disk — unlike
+    /// [`Self::for_root`], there's no "does the config file exist yet"
+    /// question left to answer here, so this is an infallible `From`
+    /// rather than another decision-making constructor.
+    #[inline]
+    fn from(candidate: &'a CandidateConfigFile) -> Self {
+        Self::ConfigFile {
+            root: candidate.root(),
+            config_file: candidate.path(),
         }
     }
 }
@@ -347,6 +364,28 @@ mod tests {
         assert!(matches!(
             TrustTarget::for_root(&root, &config_file),
             TrustTarget::Directory(_)
+        ));
+    }
+
+    #[test]
+    fn trust_target_from_a_candidate_is_always_config_file() {
+        use super::super::candidate::ConfigSource;
+
+        let root = PathBuf::from("/some/project");
+        let config_file = root.join(".traces/config.toml");
+        let candidate = CandidateConfigFile::new(
+            root.clone(),
+            ConfigSource::Local(config_file.clone()),
+        );
+
+        let target = TrustTarget::from(&candidate);
+
+        assert!(matches!(
+            target,
+            TrustTarget::ConfigFile {
+                root: target_root,
+                config_file: target_config_file,
+            } if target_root == root && target_config_file == config_file
         ));
     }
 

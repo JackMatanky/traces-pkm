@@ -28,7 +28,7 @@ use super::{
 /// [`ConfigService::trust`]/[`ConfigService::is_trusted`] can administer it
 /// directly.
 #[derive(Clone, Debug)]
-pub struct ConfigService {
+pub(crate) struct ConfigService {
     tracker: ConfigTracker,
     trust: ConfigTrust,
 }
@@ -38,7 +38,7 @@ impl ConfigService {
     /// trust stores.
     #[must_use]
     #[inline]
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             tracker: ConfigTracker::new(),
             trust: ConfigTrust::new(),
@@ -63,15 +63,18 @@ impl ConfigService {
     /// Discovers config files from `cwd`.
     ///
     /// Returns discovered config files plus the invocation cwd. The local
-    /// project config is required; the global config is optional.
+    /// project config is required; the global config is optional. An
+    /// associated function, not a method: discovery is a pure filesystem
+    /// walk from `cwd` with no dependency on `ConfigService`'s own state
+    /// (the tracked-config/trust stores) — [`Self::build`] is where that
+    /// state actually gets used, on the resulting [`DiscoveryOutcome`].
     ///
     /// # Errors
     ///
     /// Returns an error when local config is absent or when a path cannot be
     /// accessed during discovery.
     #[inline]
-    pub fn discover(
-        &self,
+    pub(crate) fn discover(
         cwd: &Path,
     ) -> Result<DiscoveryOutcome, DiscoveryError> {
         DiscoveryProcessor::new(cwd)
@@ -99,7 +102,7 @@ impl ConfigService {
     /// fails. Returns [`ConfigBuilderError::ConfigParseFailed`] when a
     /// candidate config file cannot be read or parsed.
     #[inline]
-    pub fn build(
+    pub(crate) fn build(
         &self,
         discovered: &DiscoveryOutcome,
     ) -> Result<Config, ConfigBuilderError> {
@@ -124,7 +127,10 @@ impl ConfigService {
     /// recorded, [`TrustTarget::ConfigFile`]'s config file cannot be
     /// hashed, or the content-hash companion record cannot be written.
     #[inline]
-    pub fn trust(&self, target: TrustTarget<'_>) -> Result<(), TrustError> {
+    pub(crate) fn trust(
+        &self,
+        target: TrustTarget<'_>,
+    ) -> Result<(), TrustError> {
         self.trust.trust(target)
     }
 
@@ -136,7 +142,7 @@ impl ConfigService {
     /// Returns [`TrustError`] when the trust check itself fails (store
     /// I/O, or hashing `config_file`'s current content).
     #[inline]
-    pub fn is_trusted(
+    pub(crate) fn is_trusted(
         &self,
         root: &Path,
         config_file: &Path,
@@ -151,7 +157,7 @@ impl ConfigService {
     /// Returns [`StoreError`] when the tracking store exists but cannot be
     /// read.
     #[inline]
-    pub fn list_tracked(&self) -> Result<Vec<PathBuf>, StoreError> {
+    pub(crate) fn list_tracked(&self) -> Result<Vec<PathBuf>, StoreError> {
         self.tracker.list_all()
     }
 
@@ -163,7 +169,7 @@ impl ConfigService {
     /// Returns [`StoreError`] when the tracking store exists but cannot be
     /// read, or a stale entry cannot be removed.
     #[inline]
-    pub fn clean_tracked_store(&self) -> Result<usize, StoreError> {
+    pub(crate) fn clean_tracked_store(&self) -> Result<usize, StoreError> {
         self.tracker.clean()
     }
 
@@ -174,7 +180,7 @@ impl ConfigService {
     /// Returns [`StoreError`] when the trust store exists but cannot be
     /// read.
     #[inline]
-    pub fn list_trusted(&self) -> Result<Vec<PathBuf>, StoreError> {
+    pub(crate) fn list_trusted(&self) -> Result<Vec<PathBuf>, StoreError> {
         self.trust.list_all()
     }
 
@@ -188,7 +194,7 @@ impl ConfigService {
     /// read, a stale root entry cannot be removed, or an existing
     /// content-hash companion cannot be removed.
     #[inline]
-    pub fn clean_trusted_store(&self) -> Result<usize, StoreError> {
+    pub(crate) fn clean_trusted_store(&self) -> Result<usize, StoreError> {
         self.trust.clean()
     }
 }

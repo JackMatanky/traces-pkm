@@ -30,7 +30,7 @@ use super::{
 /// and error codes; the `config` module stays agnostic to how its errors
 /// are displayed.
 #[derive(Debug, Error)]
-pub enum ConfigBuilderError {
+pub(crate) enum ConfigBuilderError {
     /// `root`'s project root is not in the trust store. Expected and
     /// actionable: the caller (or agent) resolves this by trusting the
     /// root through [`super::service::ConfigService::trust`].
@@ -291,10 +291,7 @@ mod tests {
     fn trust_all(outcome: &DiscoveryOutcome, trust: &ConfigTrust) {
         for candidate in outcome.local() {
             trust
-                .trust(TrustTarget::ConfigFile {
-                    root: candidate.root(),
-                    config_file: candidate.path(),
-                })
+                .trust(TrustTarget::from(candidate))
                 .expect("trust candidate root");
         }
     }
