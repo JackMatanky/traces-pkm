@@ -9,22 +9,42 @@ use serde::{Deserialize, Serialize};
 /// Shared by both local and global config layers.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub(super) struct RawConfig {
+pub(crate) struct RawConfig {
+    #[serde(default)]
+    templates: RawTemplateConfig,
+}
+
+/// Raw `[templates]` table.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct RawTemplateConfig {
     directory: Option<PathBuf>,
     #[serde(default)]
     output_dir: Option<PathBuf>,
 }
 
 impl RawConfig {
+    /// Creates a raw config with both supported template settings present.
+    #[must_use]
+    #[inline]
+    pub(crate) fn new(directory: PathBuf, output_dir: PathBuf) -> Self {
+        Self {
+            templates: RawTemplateConfig {
+                directory: Some(directory),
+                output_dir: Some(output_dir),
+            },
+        }
+    }
+
     /// The template directory from this raw config, if set.
     #[must_use]
     pub(super) fn template_directory(&self) -> Option<&Path> {
-        self.directory.as_deref()
+        self.templates.directory.as_deref()
     }
 
     /// The output directory from this raw config, if set.
     #[must_use]
     pub(super) fn output_dir(&self) -> Option<&Path> {
-        self.output_dir.as_deref()
+        self.templates.output_dir.as_deref()
     }
 }

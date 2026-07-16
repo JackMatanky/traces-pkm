@@ -25,6 +25,7 @@ is-terminal = "0.4"
 miette = { version = "7.6.0", features = ["derive", "fancy"] }
 serde = { version = "1.0.228", features = ["derive"] }
 thiserror = "2"
+toml = "0.8.23"
 tracing = "0.1"
 
 [dev-dependencies]

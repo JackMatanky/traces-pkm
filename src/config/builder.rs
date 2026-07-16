@@ -325,7 +325,8 @@ mod tests {
         let path = root.join(".traces/config.toml");
         write_config(
             &path,
-            "directory = \".traces/templates\"\noutput_dir = \"notes\"",
+            "[templates]\ndirectory = \".traces/templates\"\noutput_dir = \
+             \"notes\"",
         );
 
         let config = build(
@@ -353,7 +354,7 @@ mod tests {
         let cwd = root.join("notes/daily");
         let path = root.join(".traces/config.toml");
         fs::create_dir_all(&cwd).expect("create cwd");
-        write_config(&path, "directory = \".traces/templates\"");
+        write_config(&path, "[templates]\ndirectory = \".traces/templates\"");
 
         let config = build(
             cwd.clone(),
@@ -376,7 +377,7 @@ mod tests {
         let global_path = global_root.join("config.toml");
         write_config(
             &global_path,
-            "directory = \"templates\"\noutput_dir = \"notes\"",
+            "[templates]\ndirectory = \"templates\"\noutput_dir = \"notes\"",
         );
 
         let config = build(cwd, Vec::new(), vec![CandidateConfigFile::new(
@@ -401,11 +402,12 @@ mod tests {
         let global_path = global_root.join("config.toml");
         write_config(
             &global_path,
-            "directory = \"templates\"\noutput_dir = \"ignored\"",
+            "[templates]\ndirectory = \"templates\"\noutput_dir = \"ignored\"",
         );
         write_config(
             &local_path,
-            "directory = \".traces/templates\"\noutput_dir = \"notes\"",
+            "[templates]\ndirectory = \".traces/templates\"\noutput_dir = \
+             \"notes\"",
         );
 
         let config = build(
@@ -441,11 +443,12 @@ mod tests {
         let global_path = global_root.join("config.toml");
         write_config(
             &global_path,
-            "directory = \"templates\"\noutput_dir = \"ignored\"",
+            "[templates]\ndirectory = \"templates\"\noutput_dir = \"ignored\"",
         );
         write_config(
             &local_path,
-            "directory = \".traces/templates\"\noutput_dir = \"notes\"",
+            "[templates]\ndirectory = \".traces/templates\"\noutput_dir = \
+             \"notes\"",
         );
 
         let outcome = DiscoveryOutcome::new(
@@ -527,7 +530,7 @@ mod tests {
         let temp = tempfile::tempdir().expect("create temp dir");
         let root = temp.path().join("project");
         let path = root.join(".traces/config.toml");
-        write_config(&path, "directory = \".traces/templates\"");
+        write_config(&path, "[templates]\ndirectory = \".traces/templates\"");
         let outcome = DiscoveryOutcome::new(
             root.clone(),
             vec![CandidateConfigFile::new(
@@ -557,7 +560,7 @@ mod tests {
         let temp = tempfile::tempdir().expect("create temp dir");
         let root = temp.path().join("project");
         let path = root.join(".traces/config.toml");
-        write_config(&path, "directory = \".traces/templates\"");
+        write_config(&path, "[templates]\ndirectory = \".traces/templates\"");
         let outcome = DiscoveryOutcome::new(
             root.clone(),
             vec![CandidateConfigFile::new(
@@ -622,7 +625,7 @@ mod tests {
         let temp = tempfile::tempdir().expect("create temp dir");
         let global_root = temp.path().join("config/traces");
         let global_path = global_root.join("config.toml");
-        write_config(&global_path, "directory = \"templates\"");
+        write_config(&global_path, "[templates]\ndirectory = \"templates\"");
         let outcome =
             DiscoveryOutcome::new(temp.path().join("cwd"), Vec::new(), vec![
                 CandidateConfigFile::new(

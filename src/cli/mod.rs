@@ -1,16 +1,15 @@
 //! Command-line interface: parses arguments and dispatches to command
-//! handlers. Each command module (e.g. [`trust`]) is a thin adapter over
-//! `config::ConfigService` — see its docs for the actual command logic.
-//! Error types from `config` stay `thiserror`-only and unnameable outside
-//! that module by design (see `config::mod`'s docs);
-//! [`error::ConfigTrustCliError`] is the first (and only) place that adds
+//! handlers. Each command module is a thin adapter over library services.
+//! Error types from those services stay `thiserror`-only and unnameable
+//! outside their modules by design; [`error`] is the first place that adds
 //! user-facing help text and error codes, via `miette::Diagnostic`.
 
 mod error;
+mod init;
 mod trust;
 
 use clap::{Parser, Subcommand};
-pub use error::ConfigTrustCliError;
+pub use error::{ConfigCliError, ConfigInitCliError, ConfigTrustCliError};
 
 /// The `traces` command-line tool.
 #[derive(Debug, Parser)]
@@ -27,6 +26,8 @@ struct Cli {
 /// Top-level `traces` subcommands.
 #[derive(Debug, Subcommand)]
 enum Commands {
+    /// Initialise local traces configuration
+    Init(init::InitArgs),
     /// Manage trusted project roots
     Trust(trust::TrustArgs),
 }
@@ -35,14 +36,29 @@ enum Commands {
 ///
 /// # Errors
 ///
-/// Returns [`ConfigTrustCliError`] when the selected command fails.
+/// Returns [`ConfigCliError`] when the selected command fails.
 #[inline]
-pub fn run() -> Result<(), ConfigTrustCliError> {
+pub fn run() -> Result<(), ConfigCliError> {
     let cli = Cli::parse();
     let service = crate::config::ConfigService::new();
+    let provider = crate::dialog::TerminalDialogProvider::new();
     match &cli.command {
-        Commands::Trust(args) => trust::run(args, &service),
+        Commands::Init(args) => init::run(args, &provider).map_err(Into::into),
+        Commands::Trust(args) => trust::run(args, &service).map_err(Into::into),
     }
+}
+
+/// Runs `traces init` with an injected dialog provider.
+///
+/// # Errors
+///
+/// Returns [`ConfigInitCliError`] when prompting, serialization, or filesystem
+/// scaffolding fails.
+#[inline]
+pub fn run_init(
+    provider: &dyn crate::dialog::DialogProvider,
+) -> Result<(), ConfigInitCliError> {
+    init::run(&init::InitArgs {}, provider)
 }
 
 #[cfg(test)]
@@ -61,5 +77,13 @@ mod tests {
             .expect("parse trust argv");
 
         assert!(matches!(cli.command, Commands::Trust(_)));
+    }
+
+    #[test]
+    fn init_argv_parses_to_the_init_subcommand() {
+        let cli =
+            Cli::try_parse_from(["traces", "init"]).expect("parse init argv");
+
+        assert!(matches!(cli.command, Commands::Init(_)));
     }
 }

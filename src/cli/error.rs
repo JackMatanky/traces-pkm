@@ -1,25 +1,38 @@
-//! CLI-facing error type for the `traces trust` command surface.
+//! CLI-facing error types.
 //!
-//! Wraps the underlying `config` errors with user-facing help text and
-//! error codes. Some of those errors (`StoreError`, `TrustError`) are
-//! deliberately unnameable outside `config` (see `config::mod`'s docs) —
-//! this module never needs their concrete type, only that they implement
-//! [`std::error::Error`], so their `#[source]` here is a type-erased
-//! [`Box`].
-//!
-//! `miette::Diagnostic`, unlike `config`'s errors: this is exactly the
-//! "future CLI layer" `config::mod`'s docs describe as the place that
-//! "wraps [...] to add help text and error codes" — CLI presentation is
-//! this module's whole job, not library data (mirrors this repo's prior
-//! `config::error::ConfigError`, before that error type was split apart
-//! and its CLI concerns deferred to a real CLI layer; see git history).
+//! Wraps command-specific failures with user-facing help text and error codes.
+//! Some underlying error types are deliberately unnameable outside their
+//! modules — this module only needs their [`std::error::Error`] behavior, so
+//! command errors type-erase sources behind [`Box`].
+#![allow(
+    unused_assignments,
+    reason = "miette's Diagnostic derive currently trips this rustc lint on \
+              #[source] fields"
+)]
 
 use std::{error::Error as StdError, path::PathBuf};
 
 use miette::Diagnostic;
 use thiserror::Error;
 
+#[derive(Debug, Diagnostic, Error)]
+pub enum ConfigCliError {
+    /// `traces trust` failed.
+    #[error(transparent)]
+    #[diagnostic(transparent)]
+    Trust(#[from] ConfigTrustCliError),
+    /// `traces init` failed.
+    #[error(transparent)]
+    #[diagnostic(transparent)]
+    Init(#[from] ConfigInitCliError),
+}
+
 /// Errors surfaced by the `traces trust` CLI surface.
+#[allow(
+    unused_assignments,
+    reason = "miette's Diagnostic derive currently trips this rustc lint on \
+              #[source] fields"
+)]
 #[derive(Debug, Diagnostic, Error)]
 pub enum ConfigTrustCliError {
     /// Trusting `root` failed (store I/O, or hashing its config file).
@@ -32,6 +45,11 @@ pub enum ConfigTrustCliError {
         /// The root that couldn't be trusted.
         root: PathBuf,
         /// Source trust error, type-erased (see module docs for why).
+        #[allow(
+            unused_assignments,
+            reason = "miette's Diagnostic derive currently trips this rustc \
+                      lint on #[source] fields"
+        )]
         #[source]
         source: Box<dyn StdError + Send + Sync + 'static>,
     },
@@ -43,6 +61,11 @@ pub enum ConfigTrustCliError {
     )]
     List {
         /// Source store error, type-erased (see module docs for why).
+        #[allow(
+            unused_assignments,
+            reason = "miette's Diagnostic derive currently trips this rustc \
+                      lint on #[source] fields"
+        )]
         #[source]
         source: Box<dyn StdError + Send + Sync + 'static>,
     },
@@ -54,6 +77,38 @@ pub enum ConfigTrustCliError {
     )]
     Clean {
         /// Source trust error, type-erased (see module docs for why).
+        #[allow(
+            unused_assignments,
+            reason = "miette's Diagnostic derive currently trips this rustc \
+                      lint on #[source] fields"
+        )]
+        #[source]
+        source: Box<dyn StdError + Send + Sync + 'static>,
+    },
+}
+
+/// Errors surfaced by the `traces init` CLI surface.
+#[allow(
+    unused_assignments,
+    reason = "miette's Diagnostic derive currently trips this rustc lint on \
+              #[source] fields"
+)]
+#[derive(Debug, Diagnostic, Error)]
+pub enum ConfigInitCliError {
+    /// Initialising `root` failed.
+    #[error("failed to initialise traces in {root}")]
+    #[diagnostic(code(traces::cli::init::failed), help("{help}"))]
+    InitFailed {
+        /// The root that couldn't be initialised.
+        root: PathBuf,
+        /// Actionable remediation for the specific failure mode.
+        help: &'static str,
+        /// Source init error, type-erased (see module docs for why).
+        #[allow(
+            unused_assignments,
+            reason = "miette's Diagnostic derive currently trips this rustc \
+                      lint on #[source] fields"
+        )]
         #[source]
         source: Box<dyn StdError + Send + Sync + 'static>,
     },
