@@ -22,6 +22,7 @@ clap = { version = "4", features = ["derive"] }
 figment = { version = "0.10", features = ["toml"] }
 inquire = "0.9"
 is-terminal = "0.4"
+miette = { version = "7.6.0", features = ["derive", "fancy"] }
 serde = { version = "1.0.228", features = ["derive"] }
 thiserror = "2"
 tracing = "0.1"

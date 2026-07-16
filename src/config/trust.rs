@@ -77,6 +77,78 @@ pub enum TrustState {
     Trusted,
 }
 
+/// What [`ConfigTrust::trust`] is being asked to trust: a bare workspace
+/// with no config file to content-hash yet, or a workspace together with
+/// its known config file.
+///
+/// Replaces two positional `&Path` parameters that were easy to pass in
+/// the wrong order, and that used to make [`ConfigTrust::trust`] infer
+/// "no config file yet" from a `NotFound` I/O error rather than have the
+/// caller state it. The CLI layer (`crate::cli::trust`), the only caller
+/// that doesn't already know from context which case applies, uses
+/// [`Self::for_root`] to pick a variant — see ADR 0002's issue-05
+/// amendment.
+#[derive(Clone, Copy, Debug)]
+pub enum TrustTarget<'a> {
+    /// Trust `root` alone. No config file exists yet to content-hash
+    /// (e.g. before `traces init` has created one) —
+    /// [`ConfigTrust::trust`] records the root only, without a
+    /// content-hash companion.
+    Directory(&'a Path),
+    /// Trust `root`, content-hashing `config_file`'s current content as
+    /// the companion re-verification baseline.
+    ConfigFile {
+        /// The workspace root to trust.
+        root: &'a Path,
+        /// The workspace's config file, hashed as the re-verification
+        /// baseline. Must exist — a missing file here is an error
+        /// ([`TrustError::Hash`]), not the "no config file yet" case
+        /// ([`Self::Directory`] handles that instead).
+        config_file: &'a Path,
+    },
+}
+
+impl<'a> TrustTarget<'a> {
+    /// Picks [`Self::ConfigFile`] when `config_file` currently exists,
+    /// [`Self::Directory`] otherwise.
+    ///
+    /// This is the one piece of trust *decision-making* the CLI layer
+    /// would otherwise have to make itself (see `crate::cli::trust`,
+    /// this constructor's only caller): whether a not-yet-existing
+    /// `config_file` means "trust the root only" is a fact about what
+    /// trust *means*, not something a thin CLI adapter should decide on
+    /// its own.
+    #[inline]
+    #[must_use]
+    pub fn for_root(root: &'a Path, config_file: &'a Path) -> Self {
+        if config_file.try_exists().unwrap_or(false) {
+            Self::ConfigFile {
+                root,
+                config_file,
+            }
+        } else {
+            Self::Directory(root)
+        }
+    }
+
+    /// The workspace root being trusted, regardless of variant.
+    #[inline]
+    #[must_use]
+    pub(super) fn root(self) -> &'a Path {
+        match self {
+            Self::Directory(root)
+            | Self::ConfigFile {
+                root,
+                ..
+            } => root,
+        }
+    }
+}
+
+/// The `.hash` companion file's suffix, appended to a trust entry's
+/// filename via [`ConfigFileStore::companion_path`].
+const COMPANION_SUFFIX: &str = ".hash";
+
 /// Records and checks the trusted-project-root store, plus a content-hash
 /// companion per entry.
 ///
@@ -109,12 +181,13 @@ impl ConfigTrust {
         }
     }
 
-    /// Marks `root`'s canonical path as trusted, and records
-    /// `config_file`'s current content hash as the baseline
-    /// [`TrustState::Stale`] re-verification compares against.
+    /// Marks `target`'s workspace root as trusted and, for
+    /// [`TrustTarget::ConfigFile`], records its config file's current
+    /// content hash as the baseline [`TrustState::Stale`] re-verification
+    /// compares against. [`TrustTarget::Directory`] records the root only.
     ///
     /// Idempotent on the root entry (recording an already-trusted root is
-    /// a no-op there); re-running this after `config_file` changes
+    /// a no-op there); re-running this after the config file changes
     /// refreshes the recorded content hash, clearing any prior staleness.
     /// Unlike [`super::tracker::ConfigTracker::track`], this propagates
     /// failures rather than logging and swallowing them: trust is a
@@ -122,38 +195,31 @@ impl ConfigTrust {
     /// leave the caller believing something is trusted when it isn't
     /// recorded at all.
     ///
-    /// Tolerates a `config_file` that doesn't exist yet — trusting a
-    /// directory before `traces init` has created its config file (e.g.
-    /// a template directory, see ADR 0002's issue-05 amendment) is a
-    /// valid flow: the root is recorded, but no content-hash companion is
-    /// written. [`Self::is_trusted`] already treats a missing companion
-    /// as [`TrustState::Stale`], so this only defers re-verification to
-    /// the next [`Self::trust`] call once the file exists — it doesn't
-    /// weaken it.
+    /// [`Self::is_trusted`] already treats a missing companion as
+    /// [`TrustState::Stale`], so trusting a bare [`TrustTarget::Directory`]
+    /// only defers re-verification to the next `trust` call once a config
+    /// file exists to trust with — it doesn't weaken anything.
     ///
     /// # Errors
     ///
-    /// Returns [`TrustError`] when `root` cannot be canonicalized or
-    /// recorded, `config_file` exists but cannot be hashed, or the
-    /// content-hash companion record cannot be written.
+    /// Returns [`TrustError`] when the root cannot be canonicalized or
+    /// recorded, [`TrustTarget::ConfigFile`]'s `config_file` cannot be
+    /// hashed, or the content-hash companion record cannot be written.
     #[inline]
     pub(super) fn trust(
         &self,
-        root: &Path,
-        config_file: &Path,
+        target: TrustTarget<'_>,
     ) -> Result<(), TrustError> {
-        self.store.record(root)?;
-        let companion = companion_path(&self.store.entry_path(root)?);
-        let digest = match hash::hash_file_contents(config_file) {
-            Ok(digest) => digest,
-            Err(HashError::Read {
-                source,
-                ..
-            }) if source.kind() == io::ErrorKind::NotFound => {
-                return Ok(());
-            }
-            Err(error) => return Err(error.into()),
+        self.store.record(target.root())?;
+        let TrustTarget::ConfigFile {
+            root,
+            config_file,
+        } = target
+        else {
+            return Ok(());
         };
+        let companion = companion_path(&self.store.entry_path(root)?);
+        let digest = hash::hash_file_contents(config_file)?;
         fs::write(&companion, digest.to_string()).map_err(|source| {
             TrustError::CompanionWrite {
                 path: companion,
@@ -179,16 +245,10 @@ impl ConfigTrust {
     /// counted separately, since it's a 1:1 accessory to its root entry,
     /// not a user-visible unit.
     ///
-    /// Cannot be a bare delegation to [`ConfigFileStore::clean`], which
-    /// has no concept of companions: uses
-    /// [`ConfigFileStore::clean_reporting`] instead, to learn which entries
-    /// were removed and derive their companion paths. A removed entry with
-    /// no companion (see [`Self::trust`]'s missing-`config_file` case) is
-    /// not an error — only a companion that exists but can't be removed
-    /// is, surfaced as [`StoreError::StoreIo`] (already generic over "a
-    /// directory or an entry", per its own doc — a companion is just
-    /// another entry-adjacent path, not a reason to add a
-    /// [`TrustError`]-specific variant).
+    /// Delegates entirely to [`ConfigFileStore::clean_with_companion`],
+    /// which owns both "regular cleaning" and "cleaning with a companion
+    /// suffix" as one parameterised mechanism — this method only supplies
+    /// which suffix means "companion" for trust specifically.
     ///
     /// # Errors
     ///
@@ -197,21 +257,7 @@ impl ConfigTrust {
     /// companion cannot be removed.
     #[inline]
     pub(super) fn clean(&self) -> Result<usize, StoreError> {
-        let removed = self.store.clean_reporting()?;
-        for entry in &removed {
-            let companion = companion_path(entry);
-            match fs::remove_file(&companion) {
-                Ok(()) => {}
-                Err(source) if source.kind() == io::ErrorKind::NotFound => {}
-                Err(source) => {
-                    return Err(StoreError::StoreIo {
-                        path: companion,
-                        source,
-                    });
-                }
-            }
-        }
-        Ok(removed.len())
+        self.store.clean_with_companion(COMPANION_SUFFIX)
     }
 
     /// Checks whether `root` is trusted and, if so, whether
@@ -251,15 +297,12 @@ impl ConfigTrust {
     }
 }
 
-/// The content-hash companion path for a trust `entry`: alongside it, with
-/// a `.hash` suffix appended (not [`Path::with_extension`], since `entry`
-/// is a bare hex filename with no existing extension to replace — either
-/// would work here, but appending makes that safe-either-way property
-/// explicit rather than relying on it).
-fn companion_path(entry: &Path) -> std::path::PathBuf {
-    let mut name = entry.as_os_str().to_owned();
-    name.push(".hash");
-    std::path::PathBuf::from(name)
+/// The content-hash companion path for a trust `entry`. Thin wrapper
+/// naming the concrete suffix over [`ConfigFileStore::companion_path`],
+/// which owns the actual path-building formula — shared with
+/// [`ConfigFileStore::clean_with_companion`] so the two can't drift apart.
+fn companion_path(entry: &Path) -> PathBuf {
+    ConfigFileStore::companion_path(entry, COMPANION_SUFFIX)
 }
 
 #[cfg(test)]
@@ -267,6 +310,45 @@ mod tests {
     use std::fs;
 
     use super::*;
+
+    /// Shorthand for the common case: trusting `root` together with an
+    /// existing `config_file`.
+    fn config_file_target<'a>(
+        root: &'a Path,
+        config_file: &'a Path,
+    ) -> TrustTarget<'a> {
+        TrustTarget::ConfigFile {
+            root,
+            config_file,
+        }
+    }
+
+    #[test]
+    fn for_root_picks_config_file_when_it_exists() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let root = temp.path().join("project");
+        fs::create_dir_all(&root).expect("create project dir");
+        let config_file = root.join("config.toml");
+        fs::write(&config_file, "a = 1").expect("write config");
+
+        assert!(matches!(
+            TrustTarget::for_root(&root, &config_file),
+            TrustTarget::ConfigFile { .. }
+        ));
+    }
+
+    #[test]
+    fn for_root_picks_directory_when_config_file_is_missing() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let root = temp.path().join("project");
+        fs::create_dir_all(&root).expect("create project dir");
+        let config_file = root.join("missing-config.toml");
+
+        assert!(matches!(
+            TrustTarget::for_root(&root, &config_file),
+            TrustTarget::Directory(_)
+        ));
+    }
 
     #[test]
     fn is_trusted_returns_untrusted_for_an_unrecorded_root() {
@@ -292,7 +374,9 @@ mod tests {
         fs::write(&config_file, "a = 1").expect("write config");
         let trust = ConfigTrust::at(temp.path().join("trust-store"));
 
-        trust.trust(&root, &config_file).expect("trust root");
+        trust
+            .trust(config_file_target(&root, &config_file))
+            .expect("trust root");
 
         assert_eq!(
             trust.is_trusted(&root, &config_file).expect("check trust"),
@@ -309,8 +393,12 @@ mod tests {
         fs::write(&config_file, "a = 1").expect("write config");
         let trust = ConfigTrust::at(temp.path().join("trust-store"));
 
-        trust.trust(&root, &config_file).expect("trust root");
-        trust.trust(&root, &config_file).expect("trust root again");
+        trust
+            .trust(config_file_target(&root, &config_file))
+            .expect("trust root");
+        trust
+            .trust(config_file_target(&root, &config_file))
+            .expect("trust root again");
 
         assert_eq!(
             trust.is_trusted(&root, &config_file).expect("check trust"),
@@ -326,7 +414,9 @@ mod tests {
         let config_file = root.join("config.toml");
         fs::write(&config_file, "a = 1").expect("write config");
         let trust = ConfigTrust::at(temp.path().join("trust-store"));
-        trust.trust(&root, &config_file).expect("trust root");
+        trust
+            .trust(config_file_target(&root, &config_file))
+            .expect("trust root");
 
         fs::write(&config_file, "a = 2").expect("edit config");
 
@@ -344,10 +434,14 @@ mod tests {
         let config_file = root.join("config.toml");
         fs::write(&config_file, "a = 1").expect("write config");
         let trust = ConfigTrust::at(temp.path().join("trust-store"));
-        trust.trust(&root, &config_file).expect("trust root");
+        trust
+            .trust(config_file_target(&root, &config_file))
+            .expect("trust root");
         fs::write(&config_file, "a = 2").expect("edit config");
 
-        trust.trust(&root, &config_file).expect("re-trust root");
+        trust
+            .trust(config_file_target(&root, &config_file))
+            .expect("re-trust root");
 
         assert_eq!(
             trust.is_trusted(&root, &config_file).expect("check trust"),
@@ -386,7 +480,9 @@ mod tests {
         let trust_store_root = temp.path().join("trust-store");
         let store = ConfigFileStore::at(trust_store_root.clone());
         let trust = ConfigTrust::at(trust_store_root);
-        trust.trust(&root, &config_file).expect("trust root");
+        trust
+            .trust(config_file_target(&root, &config_file))
+            .expect("trust root");
         let companion =
             companion_path(&store.entry_path(&root).expect("entry path"));
         fs::write(&companion, "not a valid blake3 hash")
@@ -405,14 +501,15 @@ mod tests {
         fs::write(&config_file, "a = 1").expect("write config");
         let trust = ConfigTrust::at(temp.path().join("trust-store"));
 
+        let missing_root = temp.path().join("missing-root");
         assert!(matches!(
-            trust.trust(&temp.path().join("missing-root"), &config_file),
+            trust.trust(config_file_target(&missing_root, &config_file)),
             Err(TrustError::Store(StoreError::Canonicalize { .. }))
         ));
     }
 
     #[test]
-    fn trust_of_a_missing_config_file_records_the_root_without_a_companion() {
+    fn trust_of_a_directory_records_the_root_without_a_companion() {
         // `traces trust <path>` before `traces init` has created a config
         // file is a valid flow (see ADR 0002's issue-05 amendment): the
         // root is recorded, but there's no content to hash yet, so no
@@ -420,11 +517,10 @@ mod tests {
         let temp = tempfile::tempdir().expect("create temp dir");
         let root = temp.path().join("project");
         fs::create_dir_all(&root).expect("create project dir");
-        let config_file = root.join("missing-config.toml");
         let store = ConfigFileStore::at(temp.path().join("trust-store"));
         let trust = ConfigTrust::at(temp.path().join("trust-store"));
 
-        trust.trust(&root, &config_file).expect("trust root only");
+        trust.trust(TrustTarget::Directory(&root)).expect("trust root only");
 
         assert!(store.contains(&root).expect("check root recorded"));
         let companion =
@@ -440,7 +536,7 @@ mod tests {
         fs::create_dir_all(&root).expect("create project dir");
         let config_file = root.join("config.toml");
         let trust = ConfigTrust::at(temp.path().join("trust-store"));
-        trust.trust(&root, &config_file).expect("trust root only");
+        trust.trust(TrustTarget::Directory(&root)).expect("trust root only");
 
         fs::write(&config_file, "a = 1").expect("create config after trust");
 
@@ -457,10 +553,12 @@ mod tests {
         fs::create_dir_all(&root).expect("create project dir");
         let config_file = root.join("config.toml");
         let trust = ConfigTrust::at(temp.path().join("trust-store"));
-        trust.trust(&root, &config_file).expect("trust root only");
+        trust.trust(TrustTarget::Directory(&root)).expect("trust root only");
         fs::write(&config_file, "a = 1").expect("create config after trust");
 
-        trust.trust(&root, &config_file).expect("re-trust with config file");
+        trust
+            .trust(config_file_target(&root, &config_file))
+            .expect("re-trust with config file");
 
         assert_eq!(
             trust.is_trusted(&root, &config_file).expect("check trust"),
@@ -476,7 +574,9 @@ mod tests {
         let config_file = root.join("config.toml");
         fs::write(&config_file, "a = 1").expect("write config");
         let trust = ConfigTrust::at(temp.path().join("trust-store"));
-        trust.trust(&root, &config_file).expect("trust root");
+        trust
+            .trust(config_file_target(&root, &config_file))
+            .expect("trust root");
 
         assert_eq!(trust.list_all().expect("list trusted roots"), vec![
             root.canonicalize().expect("canonicalize root")
@@ -501,7 +601,9 @@ mod tests {
         let trust_store_root = temp.path().join("trust-store");
         let store = ConfigFileStore::at(trust_store_root.clone());
         let trust = ConfigTrust::at(trust_store_root);
-        trust.trust(&root, &config_file).expect("trust root");
+        trust
+            .trust(config_file_target(&root, &config_file))
+            .expect("trust root");
         let companion =
             companion_path(&store.entry_path(&root).expect("entry path"));
         assert!(companion.exists(), "companion should exist before clean");
@@ -525,9 +627,8 @@ mod tests {
         let temp = tempfile::tempdir().expect("create temp dir");
         let root = temp.path().join("project");
         fs::create_dir_all(&root).expect("create project dir");
-        let config_file = root.join("config.toml");
         let trust = ConfigTrust::at(temp.path().join("trust-store"));
-        trust.trust(&root, &config_file).expect("trust root only");
+        trust.trust(TrustTarget::Directory(&root)).expect("trust root only");
         fs::remove_dir_all(&root).expect("delete project dir");
 
         let removed = trust.clean().expect("clean trust store");
@@ -551,7 +652,9 @@ mod tests {
         let config_file = root.join("config.toml");
         fs::write(&config_file, "a = 1").expect("write config");
         let trust = ConfigTrust::at(temp.path().join("trust-store"));
-        trust.trust(&root, &config_file).expect("trust root");
+        trust
+            .trust(config_file_target(&root, &config_file))
+            .expect("trust root");
 
         let removed = trust.clean().expect("clean trust store");
 
@@ -575,7 +678,7 @@ mod tests {
         let trust = ConfigTrust::at(trust_store_root);
 
         assert!(matches!(
-            trust.trust(&root, &config_file),
+            trust.trust(config_file_target(&root, &config_file)),
             Err(TrustError::Store(StoreError::StoreIo { .. }))
         ));
     }

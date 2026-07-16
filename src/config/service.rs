@@ -10,7 +10,7 @@ use super::{
     domain::Config,
     store::StoreError,
     tracker::ConfigTracker,
-    trust::{ConfigTrust, TrustError, TrustState},
+    trust::{ConfigTrust, TrustError, TrustState, TrustTarget},
 };
 
 /// Entry point for discovering and building configuration.
@@ -53,7 +53,6 @@ impl ConfigService {
     /// directories, mirroring [`ConfigTracker::at`]/[`ConfigTrust::at`].
     #[cfg(test)]
     #[must_use]
-    #[inline]
     pub(crate) fn at(tracked_root: PathBuf, trusted_root: PathBuf) -> Self {
         Self {
             tracker: ConfigTracker::at(tracked_root),
@@ -111,26 +110,22 @@ impl ConfigService {
             .build())
     }
 
-    /// Marks `root`'s canonical path as trusted, and records
-    /// `config_file`'s current content hash as the baseline future checks
-    /// compare against.
+    /// Marks `target`'s workspace root as trusted and, for
+    /// [`TrustTarget::ConfigFile`], records its config file's current
+    /// content hash as the baseline future checks compare against.
     ///
     /// Idempotent on the root entry: trusting an already-trusted root is a
-    /// no-op there; re-running this after `config_file` changes refreshes
-    /// the recorded content hash, clearing any staleness.
+    /// no-op there; re-running this after the config file changes
+    /// refreshes the recorded content hash, clearing any staleness.
     ///
     /// # Errors
     ///
-    /// Returns [`TrustError`] when `root` cannot be canonicalized or
-    /// recorded, `config_file` cannot be hashed, or the content-hash
-    /// companion record cannot be written.
+    /// Returns [`TrustError`] when the root cannot be canonicalized or
+    /// recorded, [`TrustTarget::ConfigFile`]'s config file cannot be
+    /// hashed, or the content-hash companion record cannot be written.
     #[inline]
-    pub fn trust(
-        &self,
-        root: &Path,
-        config_file: &Path,
-    ) -> Result<(), TrustError> {
-        self.trust.trust(root, config_file)
+    pub fn trust(&self, target: TrustTarget<'_>) -> Result<(), TrustError> {
+        self.trust.trust(target)
     }
 
     /// Checks whether `root` is trusted and, if so, whether `config_file`'s
@@ -267,7 +262,12 @@ mod tests {
             tracker: ConfigTracker::at(temp.join("tracked-store")),
             trust: ConfigTrust::at(temp.join("trust-store")),
         };
-        service.trust(cwd, config_path).expect("trust candidate root");
+        service
+            .trust(TrustTarget::ConfigFile {
+                root: cwd,
+                config_file: config_path,
+            })
+            .expect("trust candidate root");
         service
     }
 
@@ -374,7 +374,12 @@ mod tests {
             TrustState::Untrusted
         );
 
-        service.trust(&root, &config_file).expect("trust root");
+        service
+            .trust(TrustTarget::ConfigFile {
+                root: &root,
+                config_file: &config_file,
+            })
+            .expect("trust root");
 
         assert_eq!(
             service.is_trusted(&root, &config_file).expect("check trust"),
@@ -396,7 +401,12 @@ mod tests {
 
         assert!(service.list_trusted().expect("list trusted").is_empty());
 
-        service.trust(&root, &config_file).expect("trust root");
+        service
+            .trust(TrustTarget::ConfigFile {
+                root: &root,
+                config_file: &config_file,
+            })
+            .expect("trust root");
 
         assert_eq!(service.list_trusted().expect("list trusted"), vec![
             root.canonicalize().expect("canonicalize root")
@@ -414,7 +424,12 @@ mod tests {
             temp.path().join("tracked-store"),
             temp.path().join("trust-store"),
         );
-        service.trust(&root, &config_file).expect("trust root");
+        service
+            .trust(TrustTarget::ConfigFile {
+                root: &root,
+                config_file: &config_file,
+            })
+            .expect("trust root");
         fs::remove_dir_all(&root).expect("delete project dir");
 
         let removed =

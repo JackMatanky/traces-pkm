@@ -232,11 +232,77 @@ impl ConfigFileStore {
     }
 
     /// Removes entries in this store whose target path is unreadable or no
+    /// longer exists, the same way [`Self::clean`] does, plus — for each one
+    /// removed — a same-named companion file with `companion_suffix`
+    /// appended (see [`Self::companion_path`]), if one exists. Returns the
+    /// number of *root* entries removed; a companion isn't counted
+    /// separately, since it's a 1:1 accessory to its entry, not a
+    /// user-visible unit.
+    ///
+    /// This is the store's answer to "regular cleaning" vs "cleaning with
+    /// a companion hash": both are a property of *this store's entry
+    /// lifecycle*, not of whatever domain module uses a companion (trust's
+    /// content-hash record, [`super::trust::ConfigTrust`]) — so both live
+    /// here, parameterised by the suffix, rather than trust re-deriving
+    /// which entries were removed and reaching back into this store's
+    /// internals to clean up after itself.
+    ///
+    /// A removed entry with no companion is not an error — only a
+    /// companion that exists but can't be removed is.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the store root exists but cannot be read,
+    /// a stale entry cannot be removed, or an existing companion cannot be
+    /// removed.
+    #[inline]
+    pub(super) fn clean_with_companion(
+        &self,
+        companion_suffix: &str,
+    ) -> Result<usize, StoreError> {
+        let removed = self.clean_reporting()?;
+        for entry in &removed {
+            let companion = Self::companion_path(entry, companion_suffix);
+            match fs::remove_file(&companion) {
+                Ok(()) => {}
+                Err(source) if source.kind() == io::ErrorKind::NotFound => {}
+                Err(source) => {
+                    return Err(StoreError::StoreIo {
+                        path: companion,
+                        source,
+                    });
+                }
+            }
+        }
+        Ok(removed.len())
+    }
+
+    /// The companion-file path for `entry`: alongside it, with
+    /// `companion_suffix` appended to its filename (not
+    /// [`Path::with_extension`], since `entry` is a bare hex filename with
+    /// no existing extension to replace — either would work here, but
+    /// appending makes that safe-either-way property explicit rather than
+    /// relying on it). Pure path manipulation, no I/O — shared by
+    /// [`Self::clean_with_companion`] and by trust's own read/write of the
+    /// same companion path ([`super::trust::ConfigTrust`]), so the naming
+    /// formula can't drift between the two.
+    #[inline]
+    #[must_use]
+    pub(super) fn companion_path(
+        entry: &Path,
+        companion_suffix: &str,
+    ) -> PathBuf {
+        let mut name = entry.as_os_str().to_owned();
+        name.push(companion_suffix);
+        PathBuf::from(name)
+    }
+
+    /// Removes entries in this store whose target path is unreadable or no
     /// longer exists. Returns the full store-relative path of each entry
-    /// removed (not just the count) — the seam trust (issue 05) needs to
-    /// derive each removed entry's content-hash companion path from this,
-    /// the same way [`Self::entry_path`] lets it derive a live entry's
-    /// companion path. An absent or non-directory root removes nothing.
+    /// removed (not just the count) — [`Self::clean_with_companion`] needs
+    /// to derive each removed entry's companion path from this, the same
+    /// way [`Self::entry_path`] lets a live entry's companion path be
+    /// derived. An absent or non-directory root removes nothing.
     ///
     /// A directory entry that isn't a symlink (or, on Windows, a
     /// path-bearing file this store itself wrote) was never written by
@@ -251,8 +317,7 @@ impl ConfigFileStore {
     ///
     /// Returns [`StoreError`] when the store root exists but cannot be read,
     /// or a stale entry cannot be removed.
-    #[inline]
-    pub(super) fn clean_reporting(&self) -> Result<Vec<PathBuf>, StoreError> {
+    fn clean_reporting(&self) -> Result<Vec<PathBuf>, StoreError> {
         if !self.root.is_dir() {
             return Ok(Vec::new());
         }
@@ -432,16 +497,70 @@ mod tests {
     }
 
     #[test]
-    fn clean_reporting_returns_the_removed_entries_own_paths() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let deleted = temp.path().join("deleted.toml");
-        fs::write(&deleted, "").expect("write deleted config");
-        let store = ConfigFileStore::at(temp.path().join("store"));
-        let entry = store.entry_path(&deleted).expect("resolve entry path");
-        store.record(&deleted).expect("record deleted config");
-        fs::remove_file(&deleted).expect("remove deleted config");
+    fn companion_path_appends_the_suffix_to_the_entrys_filename() {
+        let entry = Path::new("/store/abc123");
 
-        assert_eq!(store.clean_reporting().expect("clean store"), vec![entry]);
+        assert_eq!(
+            ConfigFileStore::companion_path(entry, ".hash"),
+            Path::new("/store/abc123.hash")
+        );
+    }
+
+    #[test]
+    fn clean_with_companion_removes_a_dangling_entry_and_its_companion() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let target = temp.path().join("target");
+        fs::create_dir_all(&target).expect("create target dir");
+        let store = ConfigFileStore::at(temp.path().join("store"));
+        store.record(&target).expect("record target");
+        let entry = store.entry_path(&target).expect("resolve entry path");
+        let companion = ConfigFileStore::companion_path(&entry, ".hash");
+        fs::write(&companion, "hash").expect("write companion");
+        fs::remove_dir_all(&target).expect("delete target dir");
+
+        let removed = store.clean_with_companion(".hash").expect("clean");
+
+        assert_eq!(removed, 1);
+        assert!(!companion.exists(), "companion should be removed too");
+    }
+
+    #[test]
+    fn clean_with_companion_removes_a_dangling_entry_with_no_companion() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let target = temp.path().join("target");
+        fs::create_dir_all(&target).expect("create target dir");
+        let store = ConfigFileStore::at(temp.path().join("store"));
+        store.record(&target).expect("record target");
+        fs::remove_dir_all(&target).expect("delete target dir");
+
+        let removed = store.clean_with_companion(".hash").expect("clean");
+
+        assert_eq!(removed, 1);
+    }
+
+    #[test]
+    fn clean_with_companion_leaves_a_live_entrys_companion_untouched() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let target = temp.path().join("target");
+        fs::create_dir_all(&target).expect("create target dir");
+        let store = ConfigFileStore::at(temp.path().join("store"));
+        store.record(&target).expect("record target");
+        let entry = store.entry_path(&target).expect("resolve entry path");
+        let companion = ConfigFileStore::companion_path(&entry, ".hash");
+        fs::write(&companion, "hash").expect("write companion");
+
+        let removed = store.clean_with_companion(".hash").expect("clean");
+
+        assert_eq!(removed, 0);
+        assert!(companion.exists(), "live entry's companion must survive");
+    }
+
+    #[test]
+    fn clean_with_companion_on_a_store_with_no_entries_removes_nothing() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let store = ConfigFileStore::at(temp.path().join("store"));
+
+        assert_eq!(store.clean_with_companion(".hash").expect("clean"), 0);
     }
 
     #[test]

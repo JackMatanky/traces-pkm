@@ -9,8 +9,8 @@ use std::path::{Path, PathBuf};
 
 use clap::{Args, Subcommand};
 
-use super::error::CliError;
-use crate::config::{ConfigService, LOCAL_CONFIG_FILE};
+use super::error::ConfigTrustCliError;
+use crate::config::{ConfigService, LOCAL_CONFIG_FILE, TrustTarget};
 
 /// `traces trust [PATH]` / `traces trust list` / `traces trust clean`.
 ///
@@ -42,12 +42,12 @@ enum TrustAction {
 ///
 /// # Errors
 ///
-/// Returns [`CliError`] when the selected action fails.
+/// Returns [`ConfigTrustCliError`] when the selected action fails.
 #[inline]
 pub(super) fn run(
     args: &TrustArgs,
     service: &ConfigService,
-) -> Result<(), CliError> {
+) -> Result<(), ConfigTrustCliError> {
     match &args.action {
         Some(TrustAction::List) => list(service),
         Some(TrustAction::Clean) => clean(service),
@@ -58,13 +58,18 @@ pub(super) fn run(
 /// Trusts `path` (or the current directory when `None`).
 ///
 /// Derives `config_file` as `<path>/.traces/config.toml`. That file doesn't
-/// need to exist yet — trusting a directory before `traces init` has
-/// created its config file is a valid flow (see
-/// [`crate::config::ConfigService::trust`]'s docs).
-fn trust(path: Option<&Path>, service: &ConfigService) -> Result<(), CliError> {
+/// need to exist yet — [`TrustTarget::for_root`] decides whether this
+/// trusts the root alone or together with its config file; trusting a
+/// directory before `traces init` has created its config file is a valid
+/// flow (see [`TrustTarget`]'s docs).
+fn trust(
+    path: Option<&Path>,
+    service: &ConfigService,
+) -> Result<(), ConfigTrustCliError> {
     let root = path.map_or_else(|| PathBuf::from("."), Path::to_path_buf);
     let config_file = root.join(LOCAL_CONFIG_FILE);
-    service.trust(&root, &config_file).map_err(|source| CliError::Trust {
+    let target = TrustTarget::for_root(&root, &config_file);
+    service.trust(target).map_err(|source| ConfigTrustCliError::Trust {
         root: root.clone(),
         source: Box::new(source),
     })?;
@@ -78,10 +83,11 @@ fn trust(path: Option<&Path>, service: &ConfigService) -> Result<(), CliError> {
     reason = "trust list's output is data meant to be piped, not diagnostic \
               text — see the print_stderr precedent this mirrors"
 )]
-fn list(service: &ConfigService) -> Result<(), CliError> {
-    let roots = service.list_trusted().map_err(|source| CliError::List {
-        source: Box::new(source),
-    })?;
+fn list(service: &ConfigService) -> Result<(), ConfigTrustCliError> {
+    let roots =
+        service.list_trusted().map_err(|source| ConfigTrustCliError::List {
+            source: Box::new(source),
+        })?;
     for root in &roots {
         println!("{}", root.display());
     }
@@ -89,11 +95,12 @@ fn list(service: &ConfigService) -> Result<(), CliError> {
 }
 
 /// Removes dangling trust entries and reports how many were removed.
-fn clean(service: &ConfigService) -> Result<(), CliError> {
-    let removed =
-        service.clean_trusted_store().map_err(|source| CliError::Clean {
+fn clean(service: &ConfigService) -> Result<(), ConfigTrustCliError> {
+    let removed = service.clean_trusted_store().map_err(|source| {
+        ConfigTrustCliError::Clean {
             source: Box::new(source),
-        })?;
+        }
+    })?;
     let suffix = if removed == 1 {
         "y"
     } else {
@@ -130,6 +137,8 @@ mod tests {
     }
 
     mod parsing {
+        use pretty_assertions::assert_eq;
+
         use super::*;
 
         #[test]
@@ -173,6 +182,8 @@ mod tests {
     }
 
     mod handlers {
+        use pretty_assertions::assert_eq;
+
         use super::*;
 
         fn service(temp: &Path) -> ConfigService {

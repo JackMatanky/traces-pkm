@@ -271,7 +271,10 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use super::*;
-    use crate::config::candidate::{CandidateConfigFile, ConfigSource};
+    use crate::config::{
+        candidate::{CandidateConfigFile, ConfigSource},
+        trust::TrustTarget,
+    };
 
     fn write_config(path: &Path, contents: &str) {
         let parent = path.parent().expect("config path parent");
@@ -288,7 +291,10 @@ mod tests {
     fn trust_all(outcome: &DiscoveryOutcome, trust: &ConfigTrust) {
         for candidate in outcome.local() {
             trust
-                .trust(candidate.root(), candidate.path())
+                .trust(TrustTarget::ConfigFile {
+                    root: candidate.root(),
+                    config_file: candidate.path(),
+                })
                 .expect("trust candidate root");
         }
     }
@@ -568,7 +574,12 @@ mod tests {
         let trust_store =
             tempfile::tempdir().expect("create temp trust-store dir");
         let trust = ConfigTrust::at(trust_store.path().to_path_buf());
-        trust.trust(&root, &path).expect("trust candidate root");
+        trust
+            .trust(TrustTarget::ConfigFile {
+                root: &root,
+                config_file: &path,
+            })
+            .expect("trust candidate root");
 
         let result = ConfigBuilder::new(&outcome)
             .track(&ConfigTracker::at(tracked.path().to_path_buf()))

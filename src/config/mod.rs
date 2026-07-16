@@ -22,7 +22,7 @@ pub(crate) use discovery::LOCAL_CONFIG_FILE;
 pub use discovery::{DiscoveryError, DiscoveryOutcome};
 pub use domain::{Config, ResolutionError, ResolvedTemplate};
 pub use service::ConfigService;
-pub use trust::TrustState;
+pub use trust::{TrustState, TrustTarget};
 
 mod builder;
 mod candidate;
