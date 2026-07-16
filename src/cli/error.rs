@@ -4,13 +4,8 @@
 //! Some underlying error types are deliberately unnameable outside their
 //! modules — this module only needs their [`std::error::Error`] behavior, so
 //! command errors type-erase sources behind [`Box`].
-#![allow(
-    unused_assignments,
-    reason = "miette's Diagnostic derive currently trips this rustc lint on \
-              #[source] fields"
-)]
 
-use std::{error::Error as StdError, path::PathBuf};
+use std::{error::Error as StdError, fmt::Display, path::PathBuf};
 
 use miette::Diagnostic;
 use thiserror::Error;
@@ -28,90 +23,102 @@ pub enum ConfigCliError {
 }
 
 /// Errors surfaced by the `traces trust` CLI surface.
-#[allow(
-    unused_assignments,
-    reason = "miette's Diagnostic derive currently trips this rustc lint on \
-              #[source] fields"
-)]
-#[derive(Debug, Diagnostic, Error)]
+#[derive(Debug, Error)]
 pub enum ConfigTrustCliError {
     /// Trusting `root` failed (store I/O, or hashing its config file).
     #[error("failed to trust {root}")]
-    #[diagnostic(
-        code(traces::cli::trust::failed),
-        help("check that {} exists and is readable", root.display())
-    )]
     Trust {
         /// The root that couldn't be trusted.
         root: PathBuf,
         /// Source trust error, type-erased (see module docs for why).
-        #[allow(
-            unused_assignments,
-            reason = "miette's Diagnostic derive currently trips this rustc \
-                      lint on #[source] fields"
-        )]
         #[source]
         source: Box<dyn StdError + Send + Sync + 'static>,
     },
     /// Listing the trust store failed.
     #[error("failed to list trusted directories")]
-    #[diagnostic(
-        code(traces::cli::trust::list_failed),
-        help("check that the trust store is readable")
-    )]
     List {
         /// Source store error, type-erased (see module docs for why).
-        #[allow(
-            unused_assignments,
-            reason = "miette's Diagnostic derive currently trips this rustc \
-                      lint on #[source] fields"
-        )]
         #[source]
         source: Box<dyn StdError + Send + Sync + 'static>,
     },
     /// Cleaning the trust store failed.
     #[error("failed to clean the trust store")]
-    #[diagnostic(
-        code(traces::cli::trust::clean_failed),
-        help("check that the trust store is readable and writable")
-    )]
     Clean {
         /// Source trust error, type-erased (see module docs for why).
-        #[allow(
-            unused_assignments,
-            reason = "miette's Diagnostic derive currently trips this rustc \
-                      lint on #[source] fields"
-        )]
         #[source]
         source: Box<dyn StdError + Send + Sync + 'static>,
     },
 }
 
 /// Errors surfaced by the `traces init` CLI surface.
-#[allow(
-    unused_assignments,
-    reason = "miette's Diagnostic derive currently trips this rustc lint on \
-              #[source] fields"
-)]
-#[derive(Debug, Diagnostic, Error)]
+#[derive(Debug, Error)]
 pub enum ConfigInitCliError {
     /// Initialising `root` failed.
     #[error("failed to initialise traces in {root}")]
-    #[diagnostic(code(traces::cli::init::failed), help("{help}"))]
     InitFailed {
         /// The root that couldn't be initialised.
         root: PathBuf,
         /// Actionable remediation for the specific failure mode.
         help: &'static str,
         /// Source init error, type-erased (see module docs for why).
-        #[allow(
-            unused_assignments,
-            reason = "miette's Diagnostic derive currently trips this rustc \
-                      lint on #[source] fields"
-        )]
         #[source]
         source: Box<dyn StdError + Send + Sync + 'static>,
     },
+}
+
+impl Diagnostic for ConfigTrustCliError {
+    #[inline]
+    fn code<'a>(&'a self) -> Option<Box<dyn Display + 'a>> {
+        let code = match self {
+            Self::Trust {
+                ..
+            } => "traces::cli::trust::failed",
+            Self::List {
+                ..
+            } => "traces::cli::trust::list_failed",
+            Self::Clean {
+                ..
+            } => "traces::cli::trust::clean_failed",
+        };
+        Some(Box::new(code))
+    }
+
+    #[inline]
+    fn help<'a>(&'a self) -> Option<Box<dyn Display + 'a>> {
+        match self {
+            Self::Trust {
+                root,
+                ..
+            } => Some(Box::new(format!(
+                "check that {} exists and is readable",
+                root.display()
+            ))),
+            Self::List {
+                ..
+            } => Some(Box::new("check that the trust store is readable")),
+            Self::Clean {
+                ..
+            } => Some(Box::new(
+                "check that the trust store is readable and writable",
+            )),
+        }
+    }
+}
+
+impl Diagnostic for ConfigInitCliError {
+    #[inline]
+    fn code<'a>(&'a self) -> Option<Box<dyn Display + 'a>> {
+        Some(Box::new("traces::cli::init::failed"))
+    }
+
+    #[inline]
+    fn help<'a>(&'a self) -> Option<Box<dyn Display + 'a>> {
+        let Self::InitFailed {
+            help,
+            ..
+        } = self;
+        Some(Box::new(*help))
+    }
 }
 
 #[cfg(test)]
