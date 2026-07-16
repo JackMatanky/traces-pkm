@@ -44,3 +44,22 @@ pub fn run() -> Result<(), ConfigTrustCliError> {
         Commands::Trust(args) => trust::run(args, &service),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use clap::Parser as _;
+
+    use super::*;
+
+    /// Guards the `#[command(subcommand)]` wiring [`run`] depends on:
+    /// `trust::run`'s own tests exercise the trust logic once parsed, but
+    /// nothing else asserts that real `traces trust ...` argv actually
+    /// reaches the [`Commands::Trust`] variant through [`Cli`] at all.
+    #[test]
+    fn trust_argv_parses_to_the_trust_subcommand() {
+        let cli = Cli::try_parse_from(["traces", "trust", "some/path"])
+            .expect("parse trust argv");
+
+        assert!(matches!(cli.command, Commands::Trust(_)));
+    }
+}
