@@ -62,8 +62,8 @@ local security = new Mapping<String, Step> {
 
 local rust = new Mapping<String, Step> {
     ["cargo-fmt"] = (Builtins.cargo_fmt) {
-        check = "rustup run nightly cargo fmt --check --manifest-path {{workspace_indicator}}"
-        fix = "rustup run nightly cargo fmt --manifest-path {{workspace_indicator}}"
+        check = "cargo fmt --check --manifest-path {{workspace_indicator}}"
+        fix = "cargo fmt --manifest-path {{workspace_indicator}}"
     }
 
     ["cargo-clippy"] = Builtins.cargo_clippy

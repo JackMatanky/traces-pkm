@@ -5,10 +5,10 @@
 # -----------------------------------------------------------------------------
 
 [tools]
-rust = [
-  { version = "latest", profile = "default", components = "rust-src" },
-  { version = "nightly", components = "rustfmt" },
-]
+rust = { version = "nightly", profile = "default", components = [
+  "rust-src",
+  "rustfmt",
+] }
 hk = "latest"
 taplo = "latest"
 gitleaks = "latest"
@@ -58,7 +58,7 @@ run = "hk fix"
 
 [tasks.fmt]
 description = "Format all Rust code (nightly)"
-run = "rustup run nightly cargo fmt --all"
+run = "cargo fmt --all"
 
 [tasks.clippy]
 description = "Run clippy with deny warnings"
