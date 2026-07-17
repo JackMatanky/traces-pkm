@@ -8,7 +8,7 @@ Status: ready-for-agent
 
 ## What to build
 
-The end-to-end tracer bullet for rendering. `TemplateService` holds a reference to `ConfigService` and a minijinja `Environment`. Given a template name: ensure config has been loaded (trust is gated during `ConfigService::build()` — not a per-template concern), resolve the template against the local/global directories from `TemplateConfig` via `TemplateService::resolve()`, render the source with minijinja (`{{ }}`/`{% %}` working), and write the result to the default output path `./<template-name>.md`.
+The end-to-end tracer bullet for rendering. `TemplateService` holds a reference to `Config` and a minijinja `Environment`. Given a template name: ensure `Config` has been loaded by the CLI layer (trust already gated during `ConfigService::build()` — not a per-template concern), resolve the template against `Config`'s template directory accessors via `TemplateService::resolve()`, render the source with minijinja (`{{ }}`/`{% %}` working), and write the result to the default output path `./<template-name>.md`.
 
 Wire the CLI: `traces template -i <name>`, the `tmpl` alias, and the default `traces -i <name>` dispatch all route to this handler via clap derives.
 
