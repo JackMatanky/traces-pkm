@@ -10,7 +10,10 @@ use super::{
     domain::Config,
     store::StoreError,
     tracker::ConfigTracker,
-    trust::{ConfigTrust, TrustError, TrustState, TrustTarget},
+    trust::{
+        self, ConfigTrust, ResolvedTrustTarget, TrustError, TrustState,
+        TrustTarget, TrustTargetError,
+    },
 };
 
 /// Entry point for discovering and building configuration.
@@ -148,6 +151,34 @@ impl ConfigService {
         config_file: &Path,
     ) -> Result<TrustState, TrustError> {
         self.trust.is_trusted(root, config_file)
+    }
+
+    /// Resolves one or many user trust targets using config discovery
+    /// semantics.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TrustTargetError`] when no local config can be found or a path
+    /// cannot be inspected.
+    #[inline]
+    pub(crate) fn resolve_trust_targets(
+        cwd: &Path,
+        path: Option<&Path>,
+        all: bool,
+    ) -> Result<Vec<ResolvedTrustTarget>, TrustTargetError> {
+        trust::resolve_trust_targets(cwd, path, all)
+    }
+
+    /// Removes `root` from the trust store, including its content-hash
+    /// companion. Returns the number of root entries removed.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TrustError`] when `root` cannot be canonicalized or removal
+    /// fails.
+    #[inline]
+    pub(crate) fn untrust(&self, root: &Path) -> Result<usize, TrustError> {
+        self.trust.untrust(root)
     }
 
     /// Lists the canonical paths of all live tracked configs.

@@ -193,6 +193,46 @@ impl ConfigFileStore {
         })
     }
 
+    /// Removes `target`'s entry, plus a same-named companion file with
+    /// `companion_suffix` appended, if either exists. Returns `1` when the
+    /// primary entry existed and was removed, otherwise `0`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError::Canonicalize`] when `target` cannot be
+    /// canonicalized. Returns [`StoreError::StoreIo`] when either removal
+    /// fails for a reason other than the file already being absent.
+    #[inline]
+    pub(super) fn remove_with_companion(
+        &self,
+        target: &Path,
+        companion_suffix: &str,
+    ) -> Result<usize, StoreError> {
+        let entry = self.entry_path(target)?;
+        let removed = match fs::remove_file(&entry) {
+            Ok(()) => 1,
+            Err(source) if source.kind() == io::ErrorKind::NotFound => 0,
+            Err(source) => {
+                return Err(StoreError::StoreIo {
+                    path: entry,
+                    source,
+                });
+            }
+        };
+        let companion = Self::companion_path(&entry, companion_suffix);
+        match fs::remove_file(&companion) {
+            Ok(()) => {}
+            Err(source) if source.kind() == io::ErrorKind::NotFound => {}
+            Err(source) => {
+                return Err(StoreError::StoreIo {
+                    path: companion,
+                    source,
+                });
+            }
+        }
+        Ok(removed)
+    }
+
     /// Lists the canonical paths of all live entries in this store.
     ///
     /// An entry is live when its target path can be read from the entry and
@@ -562,6 +602,26 @@ mod tests {
         let store = ConfigFileStore::at(temp.path().join("store"));
 
         assert_eq!(store.clean_with_companion(".hash").expect("clean"), 0);
+    }
+
+    #[test]
+    fn remove_with_companion_removes_live_entry_and_companion() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let target = temp.path().join("target");
+        fs::create_dir_all(&target).expect("create target dir");
+        let store = ConfigFileStore::at(temp.path().join("store"));
+        store.record(&target).expect("record target");
+        let entry = store.entry_path(&target).expect("resolve entry path");
+        let companion = ConfigFileStore::companion_path(&entry, ".hash");
+        fs::write(&companion, "hash").expect("write companion");
+
+        let removed = store
+            .remove_with_companion(&target, ".hash")
+            .expect("remove target");
+
+        assert_eq!(removed, 1);
+        assert!(!entry.exists(), "entry should be removed");
+        assert!(!companion.exists(), "companion should be removed");
     }
 
     #[test]

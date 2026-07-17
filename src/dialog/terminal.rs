@@ -121,6 +121,7 @@ fn stdin_is_tty() -> bool {
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
 
     fn skip_if_tty(test: &str) -> bool {
@@ -134,9 +135,9 @@ mod tests {
         is_tty
     }
 
-    use super::*;
-
     mod text {
+        use pretty_assertions::assert_eq;
+
         use super::*;
 
         #[test]
@@ -182,6 +183,8 @@ mod tests {
     }
 
     mod object_safety {
+        use pretty_assertions::assert_eq;
+
         use super::*;
 
         #[test]
@@ -197,6 +200,8 @@ mod tests {
     }
 
     mod select {
+        use pretty_assertions::assert_eq;
+
         use super::*;
 
         #[test]

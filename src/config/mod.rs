@@ -36,7 +36,9 @@ pub(crate) use discovery::{
 pub(crate) use domain::{Config, ResolutionError, ResolvedTemplate};
 pub(crate) use raw::RawConfig;
 pub(crate) use service::ConfigService;
-pub(crate) use trust::{TrustState, TrustTarget};
+pub(crate) use trust::{
+    ResolvedTrustTarget, TrustError, TrustState, TrustTarget, TrustTargetError,
+};
 
 mod builder;
 mod candidate;

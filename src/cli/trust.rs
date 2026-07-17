@@ -1,18 +1,21 @@
-//! `traces trust` command: default action (`traces trust [PATH]`) plus
-//! `list`/`clean` nested subcommands.
+//! `traces trust` command: trust, untrust, show, list, and clean local config
+//! trust state.
 //!
-//! Thin adapter over [`ConfigService`]: this module only parses args,
-//! derives `config_file` from the given path, and formats output — trust
-//! decisions live in `config::trust::ConfigTrust` (see its docs).
+//! Thin adapter over [`ConfigService`]: this module only parses args, resolves
+//! the current directory, and formats output — trust decisions live in
+//! `config::trust::ConfigTrust` (see its docs).
 
-use std::path::{Path, PathBuf};
+use std::{
+    env,
+    path::{Path, PathBuf},
+};
 
-use clap::{Args, Subcommand};
+use clap::{ArgGroup, Args, Subcommand};
 
 use super::error::ConfigTrustCliError;
-use crate::config::{ConfigService, LOCAL_CONFIG_FILE, TrustTarget};
+use crate::config::{ConfigService, ResolvedTrustTarget};
 
-/// `traces trust [PATH]` / `traces trust list` / `traces trust clean`.
+/// `traces trust [PATH]` / `traces trust --show` / `traces trust --untrust`.
 ///
 /// `args_conflicts_with_subcommands` is what lets `list`/`clean` disambiguate
 /// from a positional `path`: clap tries to match the first free-standing
@@ -21,11 +24,28 @@ use crate::config::{ConfigService, LOCAL_CONFIG_FILE, TrustTarget};
 /// some/path` is a clap usage error, not "trust the path some/path while
 /// also listing").
 #[derive(Debug, Args)]
-#[command(args_conflicts_with_subcommands = true)]
+#[command(
+    args_conflicts_with_subcommands = true,
+    group(ArgGroup::new("mode").args(["show", "untrust"]).multiple(false))
+)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "clap flag structs model independent CLI switches directly"
+)]
 pub(super) struct TrustArgs {
     #[command(subcommand)]
     action: Option<TrustAction>,
-    /// Directory to trust (defaults to the current directory)
+    /// Show resolved config trust status instead of changing it
+    #[arg(long)]
+    show: bool,
+    /// Remove the resolved config from the trust store
+    #[arg(long)]
+    untrust: bool,
+    /// Apply trust, untrust, or show to descendant configs too
+    #[arg(long)]
+    all: bool,
+    /// Directory or .traces/config.toml to trust (defaults to the current
+    /// directory)
     path: Option<PathBuf>,
 }
 
@@ -38,7 +58,8 @@ enum TrustAction {
     Clean,
 }
 
-/// Dispatches `traces trust` to its default action or a nested subcommand.
+/// Dispatches `traces trust` to its default action, flag mode, or a nested
+/// subcommand.
 ///
 /// # Errors
 ///
@@ -51,29 +72,87 @@ pub(super) fn run(
     match &args.action {
         Some(TrustAction::List) => list(service),
         Some(TrustAction::Clean) => clean(service),
-        None => trust(args.path.as_deref(), service),
+        None if args.show => show(args, service),
+        None if args.untrust => untrust(args, service),
+        None => trust(args, service),
     }
 }
 
-/// Trusts `path` (or the current directory when `None`).
-///
-/// Derives `config_file` as `<path>/.traces/config.toml`. That file doesn't
-/// need to exist yet — [`TrustTarget::for_root`] decides whether this
-/// trusts the root alone or together with its config file; trusting a
-/// directory before `traces init` has created its config file is a valid
-/// flow (see [`TrustTarget`]'s docs).
+#[allow(
+    clippy::disallowed_methods,
+    reason = "CLI default target is the process current directory"
+)]
+fn current_dir() -> Result<PathBuf, ConfigTrustCliError> {
+    env::current_dir().map_err(|source| ConfigTrustCliError::TargetResolve {
+        path: PathBuf::from("."),
+        source: Box::new(source),
+    })
+}
+
+fn targets(
+    args: &TrustArgs,
+) -> Result<Vec<ResolvedTrustTarget>, ConfigTrustCliError> {
+    let cwd = current_dir()?;
+    ConfigService::resolve_trust_targets(&cwd, args.path.as_deref(), args.all)
+        .map_err(|source| ConfigTrustCliError::TargetResolve {
+            path: args.path.as_deref().unwrap_or(Path::new(".")).to_path_buf(),
+            source: Box::new(source),
+        })
+}
+
+/// Trusts the resolved config target or targets.
 fn trust(
-    path: Option<&Path>,
+    args: &TrustArgs,
     service: &ConfigService,
 ) -> Result<(), ConfigTrustCliError> {
-    let root = path.map_or_else(|| PathBuf::from("."), Path::to_path_buf);
-    let config_file = root.join(LOCAL_CONFIG_FILE);
-    let target = TrustTarget::for_root(&root, &config_file);
-    service.trust(target).map_err(|source| ConfigTrustCliError::Trust {
-        root: root.clone(),
-        source: Box::new(source),
-    })?;
-    eprintln!("trusted {}", root.display());
+    for target in targets(args)? {
+        service.trust(target.as_trust_target()).map_err(|source| {
+            ConfigTrustCliError::Trust {
+                root: target.root().to_path_buf(),
+                source: Box::new(source),
+            }
+        })?;
+        eprintln!("trusted {}", target.root().display());
+    }
+    Ok(())
+}
+
+/// Removes the resolved config target or targets from the trust store.
+fn untrust(
+    args: &TrustArgs,
+    service: &ConfigService,
+) -> Result<(), ConfigTrustCliError> {
+    for target in targets(args)? {
+        service.untrust(target.root()).map_err(|source| {
+            ConfigTrustCliError::Untrust {
+                root: target.root().to_path_buf(),
+                source: Box::new(source),
+            }
+        })?;
+        eprintln!("untrusted {}", target.root().display());
+    }
+    Ok(())
+}
+
+/// Prints the resolved config target statuses, one per line, to stdout.
+#[allow(
+    clippy::print_stdout,
+    reason = "trust --show's output is data meant to be piped, not diagnostic \
+              text — see the print_stderr precedent this mirrors"
+)]
+fn show(
+    args: &TrustArgs,
+    service: &ConfigService,
+) -> Result<(), ConfigTrustCliError> {
+    for target in targets(args)? {
+        let state = service
+            .is_trusted(target.root(), target.config_file())
+            .map_err(|source| ConfigTrustCliError::Show {
+                root: target.root().to_path_buf(),
+                source: Box::new(source),
+            })?;
+        println!("{}\t{}", target.config_file().display(), state.as_str());
+    }
     Ok(())
 }
 
@@ -174,6 +253,33 @@ mod tests {
         }
 
         #[test]
+        fn show_and_untrust_modes_parse() {
+            let show = parse(&["--show", "some/path"]);
+            let untrust = parse(&["--untrust", "some/path"]);
+
+            assert!(show.show);
+            assert_eq!(show.path, Some(PathBuf::from("some/path")));
+            assert!(untrust.untrust);
+            assert_eq!(untrust.path, Some(PathBuf::from("some/path")));
+        }
+
+        #[test]
+        fn all_mode_parse() {
+            let args = parse(&["--all", "some/path"]);
+
+            assert!(args.all);
+            assert_eq!(args.path, Some(PathBuf::from("some/path")));
+        }
+
+        #[test]
+        fn show_and_untrust_conflict() {
+            let result =
+                TestCli::try_parse_from(["test", "--show", "--untrust"]);
+
+            assert!(result.is_err());
+        }
+
+        #[test]
         fn combining_an_action_with_a_path_is_rejected() {
             let result = TestCli::try_parse_from(["test", "list", "some/path"]);
 
@@ -182,9 +288,32 @@ mod tests {
     }
 
     mod handlers {
+        use std::env;
+
         use pretty_assertions::assert_eq;
 
         use super::*;
+
+        struct CurrentDirGuard {
+            original: PathBuf,
+        }
+
+        impl CurrentDirGuard {
+            fn enter(path: &Path) -> Self {
+                let original = env::current_dir().expect("read current dir");
+                env::set_current_dir(path).expect("enter temp dir");
+                Self {
+                    original,
+                }
+            }
+        }
+
+        impl Drop for CurrentDirGuard {
+            fn drop(&mut self) {
+                env::set_current_dir(&self.original)
+                    .expect("restore current dir");
+            }
+        }
 
         fn service(temp: &Path) -> ConfigService {
             ConfigService::at(
@@ -193,74 +322,49 @@ mod tests {
             )
         }
 
-        #[test]
-        fn trust_with_no_path_trusts_the_current_directory() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            let service = service(temp.path());
+        fn trust_args(path: Option<PathBuf>) -> TrustArgs {
+            TrustArgs {
+                action: None,
+                show: false,
+                untrust: false,
+                all: false,
+                path,
+            }
+        }
 
-            run(
-                &TrustArgs {
-                    action: None,
-                    path: None,
-                },
-                &service,
-            )
-            .expect("trust cwd");
+        fn action_args(action: TrustAction) -> TrustArgs {
+            TrustArgs {
+                action: Some(action),
+                show: false,
+                untrust: false,
+                all: false,
+                path: None,
+            }
+        }
 
-            assert_eq!(service.list_trusted().expect("list trusted").len(), 1);
+        fn create_config(root: &Path) -> PathBuf {
+            let config_file = root.join(".traces/config.toml");
+            fs::create_dir_all(config_file.parent().expect("config parent"))
+                .expect("create config parent");
+            fs::write(&config_file, "").expect("write config file");
+            config_file
         }
 
         #[test]
-        fn trust_a_path_before_its_config_file_exists_does_not_error() {
+        fn trust_with_no_path_trusts_the_discovered_project_root() {
             let temp = tempfile::tempdir().expect("create temp dir");
             let root = temp.path().join("project");
-            fs::create_dir_all(&root).expect("create project dir");
+            let cwd = root.join("notes/daily");
+            fs::create_dir_all(&cwd).expect("create nested cwd");
+            let config_file = create_config(&root);
             let service = service(temp.path());
+            let _guard = CurrentDirGuard::enter(&cwd);
 
-            run(
-                &TrustArgs {
-                    action: None,
-                    path: Some(root.clone()),
-                },
-                &service,
-            )
-            .expect("trust root before config exists");
+            run(&trust_args(None), &service).expect("trust cwd");
 
             assert_eq!(service.list_trusted().expect("list trusted"), vec![
                 root.canonicalize().expect("canonicalize root")
             ]);
-        }
-
-        #[test]
-        fn trusting_again_after_the_config_file_appears_clears_staleness() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            let root = temp.path().join("project");
-            fs::create_dir_all(&root).expect("create project dir");
-            let service = service(temp.path());
-            run(
-                &TrustArgs {
-                    action: None,
-                    path: Some(root.clone()),
-                },
-                &service,
-            )
-            .expect("trust root before config exists");
-            let config_file = root.join(LOCAL_CONFIG_FILE);
-            fs::create_dir_all(
-                config_file.parent().expect("config file parent"),
-            )
-            .expect("create .traces dir");
-            fs::write(&config_file, "").expect("write config file");
-
-            run(
-                &TrustArgs {
-                    action: None,
-                    path: Some(root.clone()),
-                },
-                &service,
-            )
-            .expect("re-trust root once config exists");
-
             assert_eq!(
                 service.is_trusted(&root, &config_file).expect("check trust"),
                 crate::config::TrustState::Trusted
@@ -268,18 +372,93 @@ mod tests {
         }
 
         #[test]
+        fn trust_accepts_a_config_file_path() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let root = temp.path().join("project");
+            fs::create_dir_all(&root).expect("create project dir");
+            let config_file = create_config(&root);
+            let service = service(temp.path());
+
+            run(&trust_args(Some(config_file.to_path_buf())), &service)
+                .expect("trust config file");
+
+            assert_eq!(service.list_trusted().expect("list trusted"), vec![
+                root.canonicalize().expect("canonicalize root")
+            ]);
+        }
+
+        #[test]
+        fn trust_missing_config_returns_target_resolve_error() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let root = temp.path().join("project");
+            fs::create_dir_all(&root).expect("create project dir");
+            let service = service(temp.path());
+
+            let error = run(&trust_args(Some(root)), &service)
+                .expect_err("missing config fails trust");
+
+            assert!(matches!(error, ConfigTrustCliError::TargetResolve { .. }));
+        }
+
+        #[test]
+        fn show_checks_status_without_changing_trust_store() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let root = temp.path().join("project");
+            fs::create_dir_all(&root).expect("create project dir");
+            create_config(&root);
+            let service = service(temp.path());
+            let mut args = trust_args(Some(root));
+            args.show = true;
+
+            run(&args, &service).expect("show trust status");
+
+            assert!(service.list_trusted().expect("list trusted").is_empty());
+        }
+
+        #[test]
+        fn untrust_removes_the_resolved_root_and_companion() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let root = temp.path().join("project");
+            fs::create_dir_all(&root).expect("create project dir");
+            let config_file = create_config(&root);
+            let service = service(temp.path());
+            run(&trust_args(Some(root.to_path_buf())), &service)
+                .expect("trust root");
+            let mut args = trust_args(Some(root.to_path_buf()));
+            args.untrust = true;
+
+            run(&args, &service).expect("untrust root");
+
+            assert_eq!(
+                service.is_trusted(&root, &config_file).expect("check trust"),
+                crate::config::TrustState::Untrusted
+            );
+        }
+
+        #[test]
+        fn all_mode_trusts_descendant_configs() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let parent = temp.path().join("parent");
+            let child = parent.join("child");
+            fs::create_dir_all(&child).expect("create child dir");
+            create_config(&parent);
+            create_config(&child);
+            let service = service(temp.path());
+            let mut args = trust_args(Some(parent));
+            args.all = true;
+
+            run(&args, &service).expect("trust all configs");
+
+            assert_eq!(service.list_trusted().expect("list trusted").len(), 2);
+        }
+
+        #[test]
         fn list_succeeds_against_an_empty_trust_store() {
             let temp = tempfile::tempdir().expect("create temp dir");
             let service = service(temp.path());
 
-            run(
-                &TrustArgs {
-                    action: Some(TrustAction::List),
-                    path: None,
-                },
-                &service,
-            )
-            .expect("list empty trust store");
+            run(&action_args(TrustAction::List), &service)
+                .expect("list empty trust store");
         }
 
         #[test]
@@ -287,31 +466,14 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             let root = temp.path().join("project");
             fs::create_dir_all(&root).expect("create project dir");
-            let config_file = root.join(LOCAL_CONFIG_FILE);
-            fs::create_dir_all(
-                config_file.parent().expect("config file parent"),
-            )
-            .expect("create .traces dir");
-            fs::write(&config_file, "").expect("write config file");
+            create_config(&root);
             let service = service(temp.path());
-            run(
-                &TrustArgs {
-                    action: None,
-                    path: Some(root.clone()),
-                },
-                &service,
-            )
-            .expect("trust root");
+            run(&trust_args(Some(root.to_path_buf())), &service)
+                .expect("trust root");
             fs::remove_dir_all(&root).expect("delete project dir");
 
-            run(
-                &TrustArgs {
-                    action: Some(TrustAction::Clean),
-                    path: None,
-                },
-                &service,
-            )
-            .expect("clean trust store");
+            run(&action_args(TrustAction::Clean), &service)
+                .expect("clean trust store");
 
             assert!(service.list_trusted().expect("list trusted").is_empty());
         }
@@ -321,14 +483,8 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             let service = service(temp.path());
 
-            run(
-                &TrustArgs {
-                    action: Some(TrustAction::Clean),
-                    path: None,
-                },
-                &service,
-            )
-            .expect("clean empty trust store");
+            run(&action_args(TrustAction::Clean), &service)
+                .expect("clean empty trust store");
         }
     }
 }

@@ -25,10 +25,37 @@ pub enum ConfigCliError {
 /// Errors surfaced by the `traces trust` CLI surface.
 #[derive(Debug, Error)]
 pub enum ConfigTrustCliError {
+    /// Resolving a user-provided trust target failed.
+    #[error("failed to resolve trust target {path}")]
+    TargetResolve {
+        /// The path that could not be resolved.
+        path: PathBuf,
+        /// Source resolver error, type-erased (see module docs for why).
+        #[source]
+        source: Box<dyn StdError + Send + Sync + 'static>,
+    },
     /// Trusting `root` failed (store I/O, or hashing its config file).
     #[error("failed to trust {root}")]
     Trust {
         /// The root that couldn't be trusted.
+        root: PathBuf,
+        /// Source trust error, type-erased (see module docs for why).
+        #[source]
+        source: Box<dyn StdError + Send + Sync + 'static>,
+    },
+    /// Removing trust for `root` failed.
+    #[error("failed to untrust {root}")]
+    Untrust {
+        /// The root whose trust entry could not be removed.
+        root: PathBuf,
+        /// Source trust error, type-erased (see module docs for why).
+        #[source]
+        source: Box<dyn StdError + Send + Sync + 'static>,
+    },
+    /// Reading trust status for `root` failed.
+    #[error("failed to show trust status for {root}")]
+    Show {
+        /// The root whose trust status could not be read.
         root: PathBuf,
         /// Source trust error, type-erased (see module docs for why).
         #[source]
@@ -70,9 +97,18 @@ impl Diagnostic for ConfigTrustCliError {
     #[inline]
     fn code<'a>(&'a self) -> Option<Box<dyn Display + 'a>> {
         let code = match self {
+            Self::TargetResolve {
+                ..
+            } => "traces::cli::trust::target_resolve_failed",
             Self::Trust {
                 ..
             } => "traces::cli::trust::failed",
+            Self::Untrust {
+                ..
+            } => "traces::cli::trust::untrust_failed",
+            Self::Show {
+                ..
+            } => "traces::cli::trust::show_failed",
             Self::List {
                 ..
             } => "traces::cli::trust::list_failed",
@@ -86,11 +122,31 @@ impl Diagnostic for ConfigTrustCliError {
     #[inline]
     fn help<'a>(&'a self) -> Option<Box<dyn Display + 'a>> {
         match self {
+            Self::TargetResolve {
+                ..
+            } => Some(Box::new(
+                "pass a project directory or .traces/config.toml; run `traces \
+                 init` first if no local config exists",
+            )),
             Self::Trust {
                 root,
                 ..
             } => Some(Box::new(format!(
                 "check that {} exists and is readable",
+                root.display()
+            ))),
+            Self::Untrust {
+                root,
+                ..
+            } => Some(Box::new(format!(
+                "check that {} exists and the trust store is writable",
+                root.display()
+            ))),
+            Self::Show {
+                root,
+                ..
+            } => Some(Box::new(format!(
+                "check that {} exists and the trust store is readable",
                 root.display()
             ))),
             Self::List {

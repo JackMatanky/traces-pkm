@@ -20,6 +20,7 @@ use thiserror::Error;
 use super::{
     candidate::CandidateConfigFile,
     dirs,
+    discovery::LOCAL_CONFIG_FILE,
     store::{ConfigFileStore, StoreError},
 };
 use crate::hash::{self, HashError};
@@ -76,6 +77,88 @@ pub(crate) enum TrustState {
     /// A trust entry exists and the config file's content matches what was
     /// recorded at trust time.
     Trusted,
+}
+
+impl TrustState {
+    /// Stable lowercase label used by CLI status output.
+    #[inline]
+    #[must_use]
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Untrusted => "untrusted",
+            Self::Stale => "stale",
+            Self::Trusted => "trusted",
+        }
+    }
+}
+
+/// A local config file resolved to the root whose trust entry protects it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ResolvedTrustTarget {
+    root: PathBuf,
+    config_file: PathBuf,
+}
+
+impl ResolvedTrustTarget {
+    /// Creates a resolved trust target.
+    #[inline]
+    #[must_use]
+    fn new(root: PathBuf, config_file: PathBuf) -> Self {
+        Self {
+            root,
+            config_file,
+        }
+    }
+
+    /// The project root to trust.
+    #[inline]
+    #[must_use]
+    pub(crate) fn root(&self) -> &Path {
+        &self.root
+    }
+
+    /// The local config file whose content is hash-checked.
+    #[inline]
+    #[must_use]
+    pub(crate) fn config_file(&self) -> &Path {
+        &self.config_file
+    }
+
+    /// Borrow this resolved target as the lower-level trust operation input.
+    #[inline]
+    #[must_use]
+    pub(crate) fn as_trust_target(&self) -> TrustTarget<'_> {
+        TrustTarget::ConfigFile {
+            root: &self.root,
+            config_file: &self.config_file,
+        }
+    }
+}
+
+/// Errors while resolving a user-provided trust target into a local config.
+#[derive(Debug, Error)]
+pub(crate) enum TrustTargetError {
+    /// No local `.traces/config.toml` was found from the starting directory.
+    #[error("no local config found from {cwd}")]
+    NoLocalConfig {
+        /// Directory searched from.
+        cwd: PathBuf,
+    },
+    /// A file was provided, but it was not `.traces/config.toml`.
+    #[error("unsupported trust file input {path}")]
+    FileInputUnsupported {
+        /// Unsupported file path.
+        path: PathBuf,
+    },
+    /// The target path could not be inspected.
+    #[error("failed to access trust target {path}")]
+    PathInaccessible {
+        /// Path that could not be inspected.
+        path: PathBuf,
+        /// Source I/O error.
+        #[source]
+        source: io::Error,
+    },
 }
 
 /// What [`ConfigTrust::trust`] is being asked to trust: a bare workspace
@@ -162,6 +245,203 @@ impl<'a> From<&'a CandidateConfigFile> for TrustTarget<'a> {
     }
 }
 
+/// Resolves one trust target from `cwd` and an optional user-provided path.
+///
+/// # Errors
+///
+/// Returns [`TrustTargetError`] when no local config can be found or the input
+/// path cannot be inspected as a directory or `.traces/config.toml` file.
+#[inline]
+pub(crate) fn resolve_trust_target(
+    cwd: &Path,
+    path: Option<&Path>,
+) -> Result<ResolvedTrustTarget, TrustTargetError> {
+    let start = resolve_start(cwd, path);
+    resolve_one(&start)
+}
+
+/// Resolves one or many trust targets from `cwd` and an optional path.
+///
+/// When `all` is `false`, this is equivalent to [`resolve_trust_target`].
+/// When `all` is `true`, it includes the nearest ancestor config plus every
+/// descendant `.traces/config.toml` under the starting directory.
+///
+/// # Errors
+///
+/// Returns [`TrustTargetError`] when the starting path cannot be inspected, no
+/// local config is found, or a descendant directory cannot be read.
+#[inline]
+pub(crate) fn resolve_trust_targets(
+    cwd: &Path,
+    path: Option<&Path>,
+    all: bool,
+) -> Result<Vec<ResolvedTrustTarget>, TrustTargetError> {
+    let start = resolve_start(cwd, path);
+    if !all {
+        return resolve_one(&start).map(|target| vec![target]);
+    }
+
+    let metadata = metadata(&start)?;
+    if metadata.is_file() {
+        let target = resolve_config_file(&start)?;
+        let root = target.root().to_path_buf();
+        let mut targets = Vec::new();
+        push_target(target, &mut targets);
+        collect_descendant_targets(&root, &mut targets)?;
+        targets.sort_by(|left, right| left.root.cmp(&right.root));
+        return Ok(targets);
+    }
+    if !metadata.is_dir() {
+        return Err(TrustTargetError::FileInputUnsupported {
+            path: start,
+        });
+    }
+
+    let target = resolve_directory(&start)?;
+    let root = target.root().to_path_buf();
+    let mut targets = Vec::new();
+    push_target(target, &mut targets);
+    collect_descendant_targets(&root, &mut targets)?;
+    targets.sort_by(|left, right| left.root.cmp(&right.root));
+    Ok(targets)
+}
+
+fn resolve_start(cwd: &Path, path: Option<&Path>) -> PathBuf {
+    match path {
+        Some(path) if path.is_absolute() => path.to_path_buf(),
+        Some(path) => cwd.join(path),
+        None => cwd.to_path_buf(),
+    }
+}
+
+fn resolve_one(path: &Path) -> Result<ResolvedTrustTarget, TrustTargetError> {
+    let metadata = metadata(path)?;
+    if metadata.is_file() {
+        return resolve_config_file(path);
+    }
+    if metadata.is_dir() {
+        return resolve_directory(path);
+    }
+    Err(TrustTargetError::FileInputUnsupported {
+        path: path.to_path_buf(),
+    })
+}
+
+fn resolve_directory(
+    dir: &Path,
+) -> Result<ResolvedTrustTarget, TrustTargetError> {
+    for ancestor in dir.ancestors() {
+        let config_file = ancestor.join(LOCAL_CONFIG_FILE);
+        if is_config_file(&config_file)? {
+            return Ok(ResolvedTrustTarget::new(
+                ancestor.to_path_buf(),
+                config_file,
+            ));
+        }
+    }
+    Err(TrustTargetError::NoLocalConfig {
+        cwd: dir.to_path_buf(),
+    })
+}
+
+fn resolve_config_file(
+    path: &Path,
+) -> Result<ResolvedTrustTarget, TrustTargetError> {
+    if !is_supported_config_file(path) {
+        return Err(TrustTargetError::FileInputUnsupported {
+            path: path.to_path_buf(),
+        });
+    }
+    let Some(traces_dir) = path.parent() else {
+        return Err(TrustTargetError::FileInputUnsupported {
+            path: path.to_path_buf(),
+        });
+    };
+    let Some(root) = traces_dir.parent() else {
+        return Err(TrustTargetError::FileInputUnsupported {
+            path: path.to_path_buf(),
+        });
+    };
+    Ok(ResolvedTrustTarget::new(root.to_path_buf(), path.to_path_buf()))
+}
+
+fn is_supported_config_file(path: &Path) -> bool {
+    path.file_name().is_some_and(|name| name == "config.toml")
+        && path
+            .parent()
+            .and_then(Path::file_name)
+            .is_some_and(|name| name == ".traces")
+}
+
+fn is_config_file(path: &Path) -> Result<bool, TrustTargetError> {
+    match path.metadata() {
+        Ok(metadata) => Ok(metadata.is_file()),
+        Err(source) if source.kind() == io::ErrorKind::NotFound => Ok(false),
+        Err(source) => Err(TrustTargetError::PathInaccessible {
+            path: path.to_path_buf(),
+            source,
+        }),
+    }
+}
+
+fn metadata(path: &Path) -> Result<fs::Metadata, TrustTargetError> {
+    path.metadata().map_err(|source| TrustTargetError::PathInaccessible {
+        path: path.to_path_buf(),
+        source,
+    })
+}
+
+fn collect_descendant_targets(
+    dir: &Path,
+    targets: &mut Vec<ResolvedTrustTarget>,
+) -> Result<(), TrustTargetError> {
+    let config_file = dir.join(LOCAL_CONFIG_FILE);
+    if is_config_file(&config_file)? {
+        push_target(
+            ResolvedTrustTarget::new(dir.to_path_buf(), config_file),
+            targets,
+        );
+    }
+
+    for entry in fs::read_dir(dir).map_err(|source| {
+        TrustTargetError::PathInaccessible {
+            path: dir.to_path_buf(),
+            source,
+        }
+    })? {
+        let entry =
+            entry.map_err(|source| TrustTargetError::PathInaccessible {
+                path: dir.to_path_buf(),
+                source,
+            })?;
+        let file_type = entry.file_type().map_err(|source| {
+            TrustTargetError::PathInaccessible {
+                path: entry.path(),
+                source,
+            }
+        })?;
+        let path = entry.path();
+        if !file_type.is_dir() {
+            continue;
+        }
+        collect_descendant_targets(&path, targets)?;
+    }
+    Ok(())
+}
+
+fn push_target(
+    target: ResolvedTrustTarget,
+    targets: &mut Vec<ResolvedTrustTarget>,
+) {
+    if !has_target(targets, &target.root) {
+        targets.push(target);
+    }
+}
+
+fn has_target(targets: &[ResolvedTrustTarget], root: &Path) -> bool {
+    targets.iter().any(|target| target.root == root)
+}
+
 /// The `.hash` companion file's suffix, appended to a trust entry's
 /// filename via [`ConfigFileStore::companion_path`].
 const COMPANION_SUFFIX: &str = ".hash";
@@ -245,6 +525,20 @@ impl ConfigTrust {
         })
     }
 
+    /// Removes `root`'s trust entry and its content-hash companion if present.
+    /// Returns the number of root entries removed.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TrustError`] when `root` cannot be canonicalized or a store
+    /// removal fails.
+    #[inline]
+    pub(super) fn untrust(&self, root: &Path) -> Result<usize, TrustError> {
+        self.store
+            .remove_with_companion(root, COMPANION_SUFFIX)
+            .map_err(Into::into)
+    }
+
     /// Lists the canonical paths of all currently trusted roots.
     ///
     /// # Errors
@@ -326,6 +620,8 @@ fn companion_path(entry: &Path) -> PathBuf {
 mod tests {
     use std::fs;
 
+    use pretty_assertions::assert_eq;
+
     use super::*;
 
     /// Shorthand for the common case: trusting `root` together with an
@@ -368,14 +664,160 @@ mod tests {
     }
 
     #[test]
+    fn resolve_trust_target_from_nested_cwd_returns_project_root() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let root = temp.path().join("project");
+        let cwd = root.join("notes/daily");
+        fs::create_dir_all(&cwd).expect("create nested cwd");
+        let config_file = root.join(LOCAL_CONFIG_FILE);
+        fs::create_dir_all(config_file.parent().expect("config parent"))
+            .expect("create config parent");
+        fs::write(&config_file, "").expect("write config");
+
+        let target =
+            resolve_trust_target(&cwd, None).expect("resolve nested cwd");
+
+        assert_eq!(target.root(), root);
+        assert_eq!(target.config_file(), config_file);
+    }
+
+    #[test]
+    fn resolve_trust_target_from_config_file_returns_project_root() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let root = temp.path().join("project");
+        let config_file = root.join(LOCAL_CONFIG_FILE);
+        fs::create_dir_all(config_file.parent().expect("config parent"))
+            .expect("create config parent");
+        fs::write(&config_file, "").expect("write config");
+
+        let target = resolve_trust_target(temp.path(), Some(&config_file))
+            .expect("resolve config file path");
+
+        assert_eq!(target.root(), root);
+        assert_eq!(target.config_file(), config_file);
+    }
+
+    #[test]
+    fn resolve_trust_target_rejects_directory_without_config() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let root = temp.path().join("project");
+        fs::create_dir_all(&root).expect("create project dir");
+
+        let error = resolve_trust_target(temp.path(), Some(&root))
+            .expect_err("missing config fails");
+
+        assert!(matches!(error, TrustTargetError::NoLocalConfig { .. }));
+    }
+
+    #[test]
+    fn resolve_trust_targets_all_includes_descendant_configs() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let parent = temp.path().join("parent");
+        let child = parent.join("child");
+        fs::create_dir_all(&child).expect("create child");
+        let parent_config = parent.join(LOCAL_CONFIG_FILE);
+        let child_config = child.join(LOCAL_CONFIG_FILE);
+        fs::create_dir_all(parent_config.parent().expect("parent config dir"))
+            .expect("create parent config dir");
+        fs::create_dir_all(child_config.parent().expect("child config dir"))
+            .expect("create child config dir");
+        fs::write(&parent_config, "").expect("write parent config");
+        fs::write(&child_config, "").expect("write child config");
+
+        let targets = resolve_trust_targets(temp.path(), Some(&parent), true)
+            .expect("resolve all configs");
+
+        assert_eq!(targets.len(), 2);
+        assert!(targets.iter().any(|target| target.root() == parent));
+        assert!(targets.iter().any(|target| target.root() == child));
+    }
+
+    #[test]
+    fn resolve_trust_targets_all_includes_hidden_and_build_descendants() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let parent = temp.path().join("parent");
+        let hidden = parent.join(".archive/child");
+        let build = parent.join("build/child");
+        let parent_config = parent.join(LOCAL_CONFIG_FILE);
+        let hidden_config = hidden.join(LOCAL_CONFIG_FILE);
+        let build_config = build.join(LOCAL_CONFIG_FILE);
+        fs::create_dir_all(parent_config.parent().expect("parent config dir"))
+            .expect("create parent config dir");
+        fs::create_dir_all(hidden_config.parent().expect("hidden config dir"))
+            .expect("create hidden config dir");
+        fs::create_dir_all(build_config.parent().expect("build config dir"))
+            .expect("create build config dir");
+        fs::write(&parent_config, "").expect("write parent config");
+        fs::write(&hidden_config, "").expect("write hidden config");
+        fs::write(&build_config, "").expect("write build config");
+
+        let targets = resolve_trust_targets(temp.path(), Some(&parent), true)
+            .expect("resolve all configs");
+
+        assert_eq!(targets.len(), 3);
+        assert!(targets.iter().any(|target| target.root() == parent));
+        assert!(targets.iter().any(|target| target.root() == hidden));
+        assert!(targets.iter().any(|target| target.root() == build));
+    }
+
+    #[test]
+    fn resolve_trust_targets_all_from_nested_dir_scans_project_root() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let parent = temp.path().join("parent");
+        let nested = parent.join("notes/daily");
+        let child = parent.join("child");
+        fs::create_dir_all(&nested).expect("create nested dir");
+        fs::create_dir_all(&child).expect("create child");
+        let parent_config = parent.join(LOCAL_CONFIG_FILE);
+        let child_config = child.join(LOCAL_CONFIG_FILE);
+        fs::create_dir_all(parent_config.parent().expect("parent config dir"))
+            .expect("create parent config dir");
+        fs::create_dir_all(child_config.parent().expect("child config dir"))
+            .expect("create child config dir");
+        fs::write(&parent_config, "").expect("write parent config");
+        fs::write(&child_config, "").expect("write child config");
+
+        let targets = resolve_trust_targets(&nested, None, true)
+            .expect("resolve all configs from nested cwd");
+
+        assert_eq!(targets.len(), 2);
+        assert!(targets.iter().any(|target| target.root() == parent));
+        assert!(targets.iter().any(|target| target.root() == child));
+    }
+
+    #[test]
+    fn resolve_trust_targets_all_from_config_file_includes_descendants() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let parent = temp.path().join("parent");
+        let child = parent.join("child");
+        fs::create_dir_all(&child).expect("create child");
+        let parent_config = parent.join(LOCAL_CONFIG_FILE);
+        let child_config = child.join(LOCAL_CONFIG_FILE);
+        fs::create_dir_all(parent_config.parent().expect("parent config dir"))
+            .expect("create parent config dir");
+        fs::create_dir_all(child_config.parent().expect("child config dir"))
+            .expect("create child config dir");
+        fs::write(&parent_config, "").expect("write parent config");
+        fs::write(&child_config, "").expect("write child config");
+
+        let targets =
+            resolve_trust_targets(temp.path(), Some(&parent_config), true)
+                .expect("resolve all configs from config path");
+
+        assert_eq!(targets.len(), 2);
+        assert!(targets.iter().any(|target| target.root() == parent));
+        assert!(targets.iter().any(|target| target.root() == child));
+    }
+
+    #[test]
     fn trust_target_from_a_candidate_is_always_config_file() {
         use super::super::candidate::ConfigSource;
 
         let root = PathBuf::from("/some/project");
         let config_file = root.join(".traces/config.toml");
         let candidate = CandidateConfigFile::new(
-            root.clone(),
-            ConfigSource::Local(config_file.clone()),
+            root.to_path_buf(),
+            ConfigSource::Local(config_file.to_path_buf()),
         );
 
         let target = TrustTarget::from(&candidate);
