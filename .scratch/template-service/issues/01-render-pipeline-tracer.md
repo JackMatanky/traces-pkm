@@ -8,7 +8,7 @@ Status: ready-for-agent
 
 ## What to build
 
-The end-to-end tracer bullet for rendering. `TemplateService` holds a reference to `ConfigService` and a minijinja `Environment`. Given a template name: ensure config has been loaded (discovered and built — trust is gated during `ConfigService::build()` and is not a per-template concern), resolve the template via `Config::resolve_template()`, render the source with minijinja (`{{ }}`/`{% %}` working), and write the result to the default output path `./<template-name>.md`.
+The end-to-end tracer bullet for rendering. `TemplateService` holds a reference to `ConfigService` and a minijinja `Environment`. Given a template name: ensure config has been loaded (trust is gated during `ConfigService::build()` — not a per-template concern), resolve the template against the local/global directories from `TemplateConfig` via `TemplateService::resolve()`, render the source with minijinja (`{{ }}`/`{% %}` working), and write the result to the default output path `./<template-name>.md`.
 
 Wire the CLI: `traces template -i <name>`, the `tmpl` alias, and the default `traces -i <name>` dispatch all route to this handler via clap derives.
 
@@ -29,7 +29,7 @@ Custom functions, output-path control, dry-run, and includes are separate slices
 Relevant skills: `domain-cli`, `m11-ecosystem`, `m06-error-handling`, `m01-ownership`.
 
 - **CLI dispatch (domain-cli):** `tmpl` is a clap alias (`#[command(alias = "tmpl")]`); the default `traces -i <name>` dispatch is trickier — model it as an optional subcommand plus top-level `-i`, and route "no subcommand but `-i` present" to the template handler. Verify clap's derive resolves this without ambiguity against `init`/`trust`; a small `#[command(args_conflicts_with_subcommands = true)]` or a manual post-parse fallthrough may be needed.
-- **minijinja ownership (m11/m01):** build one `Environment` and register everything on it. Template source resolved by ConfigService is loaded as an owned `String`; borrow it into `Environment::render_str` or add it as a named template. Keep the `Environment` owned by `TemplateService`.
+- **minijinja ownership (m11/m01):** build one `Environment` and register everything on it. TemplateService owns resolution and reads the template file as an owned `String`; borrow it into `Environment::render_str` or add it as a named template. Keep the `Environment` owned by `TemplateService`.
 - **Trust is a config-level gate (m06):** trust is verified during `ConfigService::build()`, not per-template. TemplateService ensures config has been successfully loaded — that is the trust check. An untrusted workspace fails at config load time with `RootNotTrusted`/`StaleConfigContent` before TemplateService ever runs. Propagate ConfigService errors up as miette diagnostics; don't `unwrap`.
 - **Default output path:** `./<template-name>.md` is derived from the resolved template's stem, computed at write time — not stored during render (that's issue tmpl-02's concern).
 - **Config boundary cleanup:** Reviewed `src/config/`. Keep discovery/build/parsing plumbing in config (`candidate.rs`, `discovery.rs`, `raw.rs`, `builder.rs`, `service.rs`). Move only template lookup behavior out of `domain.rs`; do not move config-file discovery, config-source tracking, or raw TOML parsing into template-service.
