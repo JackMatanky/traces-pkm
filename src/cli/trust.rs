@@ -340,10 +340,9 @@ mod tests {
 
             trust_args(None).run(&service).expect("trust cwd");
 
-            assert_eq!(
-                service.list_trusted().expect("list trusted"),
-                vec![root.canonicalize().expect("canonicalize root")]
-            );
+            assert_eq!(service.list_trusted().expect("list trusted"), vec![
+                root.canonicalize().expect("canonicalize root")
+            ]);
             assert_eq!(
                 service.is_trusted(&root, &config_file).expect("check trust"),
                 crate::config::TrustState::Trusted
@@ -362,10 +361,9 @@ mod tests {
                 .run(&service)
                 .expect("trust config file");
 
-            assert_eq!(
-                service.list_trusted().expect("list trusted"),
-                vec![root.canonicalize().expect("canonicalize root")]
-            );
+            assert_eq!(service.list_trusted().expect("list trusted"), vec![
+                root.canonicalize().expect("canonicalize root")
+            ]);
         }
 
         #[test]

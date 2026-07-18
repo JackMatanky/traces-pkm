@@ -445,10 +445,9 @@ mod tests {
             })
             .expect("trust root");
 
-        assert_eq!(
-            service.list_trusted().expect("list trusted"),
-            vec![root.canonicalize().expect("canonicalize root")]
-        );
+        assert_eq!(service.list_trusted().expect("list trusted"), vec![
+            root.canonicalize().expect("canonicalize root")
+        ]);
     }
 
     #[test]

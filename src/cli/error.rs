@@ -20,6 +20,20 @@ pub enum ConfigCliError {
     #[error(transparent)]
     #[diagnostic(transparent)]
     Init(#[from] ConfigInitCliError),
+    /// `traces template`/`tmpl`/default `-i` dispatch failed.
+    #[error(transparent)]
+    #[diagnostic(transparent)]
+    Template(#[from] TemplateCliError),
+    /// Neither a subcommand nor `-i`/`--input` was given.
+    #[error("no template name given; pass -i <name> or run a subcommand")]
+    #[diagnostic(
+        code(traces::cli::no_command),
+        help(
+            "run `traces template -i <name>` (or its `tmpl`/`-i` shorthand), \
+             `traces init`, or `traces trust`"
+        )
+    )]
+    NoCommand,
 }
 
 /// Errors surfaced by the `traces trust` CLI surface.
@@ -88,6 +102,42 @@ pub enum ConfigInitCliError {
         /// Actionable remediation for the specific failure mode.
         help: &'static str,
         /// Source init error, type-erased (see module docs for why).
+        #[source]
+        source: Box<dyn StdError + Send + Sync + 'static>,
+    },
+}
+
+/// Errors surfaced by the `traces template`/`tmpl`/default `-i` CLI
+/// surface.
+///
+/// Thin adapter over [`crate::config::ConfigService`] (config discovery and
+/// build, including the trust gate) and `crate::template::TemplateService`
+/// (resolve, render, write) — see `crate::cli::template`'s module docs.
+#[derive(Debug, Error)]
+pub enum TemplateCliError {
+    /// Discovering configuration from `cwd` failed.
+    #[error("failed to locate configuration in {cwd}")]
+    ConfigDiscovery {
+        /// The directory config discovery started from.
+        cwd: PathBuf,
+        /// Source discovery error, type-erased (see module docs for why).
+        #[source]
+        source: Box<dyn StdError + Send + Sync + 'static>,
+    },
+    /// Building configuration from discovered candidates failed, including
+    /// an untrusted or stale project root.
+    #[error("failed to load configuration")]
+    ConfigBuild {
+        /// Source build error, type-erased (see module docs for why).
+        #[source]
+        source: Box<dyn StdError + Send + Sync + 'static>,
+    },
+    /// Resolving, rendering, or writing `name` failed.
+    #[error("failed to instantiate template {name}")]
+    Instantiate {
+        /// The template name that failed to instantiate.
+        name: PathBuf,
+        /// Source template error, type-erased (see module docs for why).
         #[source]
         source: Box<dyn StdError + Send + Sync + 'static>,
     },
@@ -177,6 +227,49 @@ impl Diagnostic for ConfigInitCliError {
     }
 }
 
+impl Diagnostic for TemplateCliError {
+    #[inline]
+    fn code<'a>(&'a self) -> Option<Box<dyn Display + 'a>> {
+        let code = match self {
+            Self::ConfigDiscovery {
+                ..
+            } => "traces::cli::template::config_discovery_failed",
+            Self::ConfigBuild {
+                ..
+            } => "traces::cli::template::config_build_failed",
+            Self::Instantiate {
+                ..
+            } => "traces::cli::template::instantiate_failed",
+        };
+        Some(Box::new(code))
+    }
+
+    #[inline]
+    fn help<'a>(&'a self) -> Option<Box<dyn Display + 'a>> {
+        match self {
+            Self::ConfigDiscovery {
+                cwd,
+                ..
+            } => Some(Box::new(format!(
+                "run `traces init` to scaffold local configuration, or check \
+                 that {} is readable",
+                cwd.display()
+            ))),
+            Self::ConfigBuild {
+                ..
+            } => Some(Box::new(
+                "run `traces trust` to trust this project root, then try again",
+            )),
+            Self::Instantiate {
+                ..
+            } => Some(Box::new(
+                "check that the template exists in a configured template \
+                 directory and that its minijinja syntax is valid",
+            )),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::{error::Error as _, io};
@@ -244,6 +337,43 @@ mod tests {
                 "check that the trust store is readable and writable"
                     .to_owned()
             )
+        );
+        assert!(error.source().is_some());
+    }
+
+    #[test]
+    fn template_config_build_error_has_a_code_and_trust_help() {
+        let error = TemplateCliError::ConfigBuild {
+            source: boxed_source(),
+        };
+
+        assert_eq!(error.to_string(), "failed to load configuration");
+        assert_eq!(
+            error.code().map(|code| code.to_string()),
+            Some("traces::cli::template::config_build_failed".to_owned())
+        );
+        assert_eq!(
+            error.help().map(|help| help.to_string()),
+            Some(
+                "run `traces trust` to trust this project root, then try again"
+                    .to_owned()
+            )
+        );
+        assert!(error.source().is_some());
+    }
+
+    #[test]
+    fn template_instantiate_error_names_the_template_with_a_code_and_help() {
+        let name = PathBuf::from("daily");
+        let error = TemplateCliError::Instantiate {
+            name: name.clone(),
+            source: boxed_source(),
+        };
+
+        assert_eq!(error.to_string(), "failed to instantiate template daily");
+        assert_eq!(
+            error.code().map(|code| code.to_string()),
+            Some("traces::cli::template::instantiate_failed".to_owned())
         );
         assert!(error.source().is_some());
     }

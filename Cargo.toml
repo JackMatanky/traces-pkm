@@ -23,6 +23,7 @@ figment = { version = "0.10", features = ["toml"] }
 inquire = "0.9"
 is-terminal = "0.4"
 miette = { version = "7.6.0", features = ["derive", "fancy"] }
+minijinja = "2.21.0"
 serde = { version = "1.0.228", features = ["derive"] }
 thiserror = "2"
 toml = "1.1"

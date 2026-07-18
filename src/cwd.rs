@@ -42,6 +42,16 @@ impl AsRef<Path> for Cwd {
     }
 }
 
+/// Serializes every [`CwdGuard`]-mediated test: the process current
+/// working directory is global process state, so two tests changing it
+/// concurrently (the default under `cargo test`'s thread-parallel runner —
+/// `cargo nextest run`, this project's designated test command, isolates
+/// each test in its own process instead and is unaffected) race, and a
+/// dropped `tempfile::TempDir` can yank the directory out from under a
+/// thread still sitting inside it. Held for a `CwdGuard`'s whole lifetime.
+#[cfg(test)]
+static CWD_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// Scoped RAII guard that enters a directory and restores the original on
 /// drop.
 ///
@@ -50,11 +60,13 @@ impl AsRef<Path> for Cwd {
 #[cfg(test)]
 pub(crate) struct CwdGuard {
     original: PathBuf,
+    _lock: std::sync::MutexGuard<'static, ()>,
 }
 
 #[cfg(test)]
 impl CwdGuard {
-    /// Saves the current directory and enters `dir`.
+    /// Saves the current directory and enters `dir`, holding
+    /// [`CWD_TEST_LOCK`] until dropped.
     ///
     /// # Panics
     ///
@@ -63,10 +75,14 @@ impl CwdGuard {
     #[inline]
     #[must_use]
     pub(crate) fn enter(dir: &Path) -> Self {
+        let lock = CWD_TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let original = Cwd::new().expect("read current dir").0;
         env::set_current_dir(dir).expect("enter test directory");
         Self {
             original,
+            _lock: lock,
         }
     }
 }
@@ -83,28 +99,38 @@ impl Drop for CwdGuard {
 mod tests {
     use super::*;
 
+    /// Reads cwd under [`CWD_TEST_LOCK`] too: an un-serialized read can
+    /// observe another thread's `CwdGuard`-entered directory disappearing
+    /// mid-read once that guard drops and its backing `TempDir` is removed.
+    fn locked_cwd() -> Cwd {
+        let _lock = CWD_TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        Cwd::new().expect("read cwd")
+    }
+
     #[test]
     fn new_returns_a_non_empty_path() {
-        let cwd = Cwd::new().expect("read cwd");
+        let cwd = locked_cwd();
         assert!(!cwd.as_ref().as_os_str().is_empty());
     }
 
     #[test]
     fn into_inner_returns_the_same_path() {
-        let cwd = Cwd::new().expect("read cwd");
+        let cwd = locked_cwd();
         let path = cwd.as_ref().to_path_buf();
         assert_eq!(cwd.into_inner(), path);
     }
 
     #[test]
     fn guard_enters_and_restores_on_drop() {
-        let original = Cwd::new().expect("read original");
+        let original = locked_cwd();
         let temp = tempfile::tempdir().expect("create temp dir");
         {
             let _guard = CwdGuard::enter(temp.path());
             assert_eq!(
                 Cwd::new().expect("read inside guard").into_inner(),
-                temp.path().canonicalize().unwrap()
+                temp.path().canonicalize().expect("canonicalize temp dir")
             );
         }
         assert_eq!(

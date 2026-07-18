@@ -23,8 +23,7 @@ use super::{
     discovery::LOCAL_CONFIG_FILE,
     store::{ConfigFileStore, StoreError},
 };
-use crate::Blake3FileHash;
-use crate::hash::HashError;
+use crate::{Blake3FileHash, hash::HashError};
 
 /// Errors from a [`ConfigTrust`] operation that couldn't be completed.
 ///
@@ -1060,10 +1059,9 @@ mod tests {
             .trust(config_file_target(&root, &config_file))
             .expect("trust root");
 
-        assert_eq!(
-            trust.list_all().expect("list trusted roots"),
-            vec![root.canonicalize().expect("canonicalize root")]
-        );
+        assert_eq!(trust.list_all().expect("list trusted roots"), vec![
+            root.canonicalize().expect("canonicalize root")
+        ]);
     }
 
     #[test]
