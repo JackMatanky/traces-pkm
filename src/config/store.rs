@@ -13,7 +13,7 @@ use std::{
 use thiserror::Error;
 
 use super::dirs;
-use crate::hash::hash_path_to_str;
+use crate::hash::Blake3PathHash;
 
 /// Errors from [`ConfigFileStore`] operations.
 ///
@@ -131,7 +131,7 @@ impl ConfigFileStore {
         target: &Path,
     ) -> Result<PathBuf, StoreError> {
         let canonical = Self::canonicalize(target)?;
-        Ok(self.root.join(hash_path_to_str(&canonical)))
+        Ok(self.root.join(Blake3PathHash::new(&canonical)))
     }
 
     /// Records `target`'s canonical path in this store.
@@ -145,7 +145,7 @@ impl ConfigFileStore {
     #[inline]
     pub(super) fn record(&self, target: &Path) -> Result<(), StoreError> {
         let canonical = Self::canonicalize(target)?;
-        let entry = self.root.join(hash_path_to_str(&canonical));
+        let entry = self.root.join(Blake3PathHash::new(&canonical));
         if entry.exists() {
             return Ok(());
         }
@@ -186,7 +186,7 @@ impl ConfigFileStore {
     #[inline]
     pub(super) fn contains(&self, target: &Path) -> Result<bool, StoreError> {
         let canonical = Self::canonicalize(target)?;
-        let entry = self.root.join(hash_path_to_str(&canonical));
+        let entry = self.root.join(Blake3PathHash::new(&canonical));
         entry.try_exists().map_err(|source| StoreError::StoreIo {
             path: entry,
             source,
@@ -430,9 +430,10 @@ mod tests {
 
         store.record(&target).expect("record config");
 
-        assert_eq!(store.list_all().expect("list configs"), vec![
-            target.canonicalize().expect("canonicalize target")
-        ]);
+        assert_eq!(
+            store.list_all().expect("list configs"),
+            vec![target.canonicalize().expect("canonicalize target")]
+        );
     }
 
     #[test]
@@ -461,9 +462,10 @@ mod tests {
 
         store.record(&target).expect("record config");
 
-        assert_eq!(store.list_all().expect("list configs"), vec![
-            target.canonicalize().expect("canonicalize target")
-        ]);
+        assert_eq!(
+            store.list_all().expect("list configs"),
+            vec![target.canonicalize().expect("canonicalize target")]
+        );
     }
 
     #[test]
@@ -478,9 +480,10 @@ mod tests {
         store.record(&deleted).expect("record deleted config");
         fs::remove_file(&deleted).expect("remove deleted config");
 
-        assert_eq!(store.list_all().expect("list configs"), vec![
-            kept.canonicalize().expect("canonicalize kept config")
-        ]);
+        assert_eq!(
+            store.list_all().expect("list configs"),
+            vec![kept.canonicalize().expect("canonicalize kept config")]
+        );
     }
 
     #[test]
@@ -498,9 +501,10 @@ mod tests {
         let removed = store.clean().expect("clean store");
 
         assert_eq!(removed, 1);
-        assert_eq!(store.list_all().expect("list configs"), vec![
-            kept.canonicalize().expect("canonicalize kept config")
-        ]);
+        assert_eq!(
+            store.list_all().expect("list configs"),
+            vec![kept.canonicalize().expect("canonicalize kept config")]
+        );
     }
 
     #[test]

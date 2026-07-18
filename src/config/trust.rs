@@ -23,7 +23,7 @@ use super::{
     discovery::LOCAL_CONFIG_FILE,
     store::{ConfigFileStore, StoreError},
 };
-use crate::hash::{self, HashError};
+use crate::hash::{Blake3FileHash, HashError};
 
 /// Errors from a [`ConfigTrust`] operation that couldn't be completed.
 ///
@@ -516,7 +516,7 @@ impl ConfigTrust {
             return Ok(());
         };
         let companion = companion_path(&self.store.entry_path(root)?);
-        let digest = hash::hash_file_contents(config_file)?;
+        let digest = Blake3FileHash::new(config_file)?;
         fs::write(&companion, digest.to_string()).map_err(|source| {
             TrustError::CompanionWrite {
                 path: companion,
@@ -599,7 +599,7 @@ impl ConfigTrust {
         let Ok(recorded) = fs::read_to_string(&companion) else {
             return Ok(TrustState::Stale);
         };
-        let current = hash::hash_file_contents(config_file)?;
+        let current = Blake3FileHash::new(config_file)?;
         Ok(if recorded.trim() == current.to_string() {
             TrustState::Trusted
         } else {
@@ -1059,9 +1059,10 @@ mod tests {
             .trust(config_file_target(&root, &config_file))
             .expect("trust root");
 
-        assert_eq!(trust.list_all().expect("list trusted roots"), vec![
-            root.canonicalize().expect("canonicalize root")
-        ]);
+        assert_eq!(
+            trust.list_all().expect("list trusted roots"),
+            vec![root.canonicalize().expect("canonicalize root")]
+        );
     }
 
     #[test]

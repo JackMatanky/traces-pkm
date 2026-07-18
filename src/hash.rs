@@ -1,5 +1,5 @@
-//! Generic hashing: file *content* ([`hash_file_contents`]) and path
-//! *strings* ([`hash_path_to_str`]), both BLAKE3-based.
+//! BLAKE3-based hashing: file content hashing ([`Blake3FileHash`]) and path
+//! string hashing ([`Blake3PathHash`]).
 //!
 //! Not config-specific: these are plain utilities any module can reach
 //! for. [`HashError`] is deliberately `thiserror`-only, no
@@ -8,13 +8,14 @@
 //! before it reaches anything CLI-facing.
 
 use std::{
+    fmt::{self, Display, Formatter},
     fs, io,
     path::{Path, PathBuf},
 };
 
 use thiserror::Error;
 
-/// Errors from [`hash_file_contents`].
+/// Errors from [`Blake3FileHash::new`].
 ///
 /// Public (not `pub(crate)`) because [`crate::config::trust::TrustError`]
 /// carries it as a `#[from]` source, and a `pub` field can't have a
@@ -32,37 +33,61 @@ pub enum HashError {
     },
 }
 
-/// Computes the BLAKE3 hash of `path`'s current contents.
+/// The BLAKE3 hash of a file's *contents*.
 ///
-/// # Errors
-///
-/// Returns [`HashError::Read`] when `path` cannot be read.
-#[inline]
-pub(crate) fn hash_file_contents(
-    path: &Path,
-) -> Result<blake3::Hash, HashError> {
-    let contents = fs::read(path).map_err(|source| HashError::Read {
-        path: path.to_path_buf(),
-        source,
-    })?;
-    Ok(blake3::hash(&contents))
+/// Distinct from [`Blake3PathHash`], which hashes the *path string*.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub(crate) struct Blake3FileHash(blake3::Hash);
+
+impl Blake3FileHash {
+    /// Computes the BLAKE3 hash of `path`'s current contents.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HashError::Read`] when `path` cannot be read.
+    #[inline]
+    pub(crate) fn new(path: &Path) -> Result<Self, HashError> {
+        let contents = fs::read(path).map_err(|source| HashError::Read {
+            path: path.to_path_buf(),
+            source,
+        })?;
+        Ok(Self(blake3::hash(&contents)))
+    }
 }
 
-/// Hashes `path`'s bytes (not its contents) to a hex string, for use as a
-/// hash-keyed store filename (see `config::store::ConfigFileStore`).
-/// Distinct from [`hash_file_contents`], which hashes a file's *content* — this
-/// hashes the *path string itself*, and never fails (there's no I/O).
-#[inline]
-#[must_use]
-pub(crate) fn hash_path_to_str(path: &Path) -> String {
-    let hash = blake3::hash(path.as_os_str().as_encoded_bytes());
-    hash.to_hex().to_string()
+impl Display for Blake3FileHash {
+    #[inline]
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+/// The BLAKE3 hex hash of a *path string* (not its contents).
+///
+/// Used as a hash-keyed store filename (see
+/// [`crate::config::store::ConfigFileStore`]). Infallible — there's no I/O.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct Blake3PathHash(String);
+
+impl Blake3PathHash {
+    /// Hashes `path`'s bytes to a hex string.
+    #[inline]
+    #[must_use]
+    pub(crate) fn new(path: &Path) -> Self {
+        let hash = blake3::hash(path.as_os_str().as_encoded_bytes());
+        Self(hash.to_hex().to_string())
+    }
+}
+
+impl AsRef<Path> for Blake3PathHash {
+    #[inline]
+    fn as_ref(&self) -> &Path {
+        Path::new(&self.0)
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
-
     use super::*;
 
     #[test]
@@ -71,8 +96,8 @@ mod tests {
         let path = temp.path().join("file.txt");
         fs::write(&path, "hello").expect("write file");
 
-        let first = hash_file_contents(&path).expect("hash file");
-        let second = hash_file_contents(&path).expect("hash file again");
+        let first = Blake3FileHash::new(&path).expect("hash file");
+        let second = Blake3FileHash::new(&path).expect("hash file again");
 
         assert_eq!(first, second);
     }
@@ -82,10 +107,10 @@ mod tests {
         let temp = tempfile::tempdir().expect("create temp dir");
         let path = temp.path().join("file.txt");
         fs::write(&path, "hello").expect("write file");
-        let original = hash_file_contents(&path).expect("hash file");
+        let original = Blake3FileHash::new(&path).expect("hash file");
 
         fs::write(&path, "goodbye").expect("rewrite file");
-        let updated = hash_file_contents(&path).expect("hash updated file");
+        let updated = Blake3FileHash::new(&path).expect("hash updated file");
 
         assert_ne!(original, updated);
     }
@@ -95,7 +120,7 @@ mod tests {
         let temp = tempfile::tempdir().expect("create temp dir");
 
         assert!(matches!(
-            hash_file_contents(&temp.path().join("missing.txt")),
+            Blake3FileHash::new(&temp.path().join("missing.txt")),
             Err(HashError::Read { .. })
         ));
     }
@@ -104,14 +129,14 @@ mod tests {
     fn hash_path_to_str_is_deterministic_for_the_same_path() {
         let path = Path::new("/some/project");
 
-        assert_eq!(hash_path_to_str(path), hash_path_to_str(path));
+        assert_eq!(Blake3PathHash::new(path), Blake3PathHash::new(path),);
     }
 
     #[test]
     fn hash_path_to_str_differs_for_different_paths() {
         assert_ne!(
-            hash_path_to_str(Path::new("/some/project")),
-            hash_path_to_str(Path::new("/some/other-project"))
+            Blake3PathHash::new(Path::new("/some/project")),
+            Blake3PathHash::new(Path::new("/some/other-project")),
         );
     }
 
@@ -120,10 +145,12 @@ mod tests {
         let path = Path::new("/some/project");
 
         assert_eq!(
-            hash_path_to_str(path),
-            blake3::hash(path.as_os_str().as_encoded_bytes())
-                .to_hex()
-                .to_string()
+            Blake3PathHash::new(path),
+            Blake3PathHash(
+                blake3::hash(path.as_os_str().as_encoded_bytes())
+                    .to_hex()
+                    .to_string()
+            ),
         );
     }
 }
