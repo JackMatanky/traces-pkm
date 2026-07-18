@@ -13,7 +13,7 @@ use std::{
 use thiserror::Error;
 
 use super::dirs;
-use crate::hash::Blake3PathHash;
+use crate::Blake3PathHash;
 
 /// Errors from [`ConfigFileStore`] operations.
 ///

@@ -23,7 +23,8 @@ use super::{
     discovery::LOCAL_CONFIG_FILE,
     store::{ConfigFileStore, StoreError},
 };
-use crate::hash::{Blake3FileHash, HashError};
+use crate::Blake3FileHash;
+use crate::hash::HashError;
 
 /// Errors from a [`ConfigTrust`] operation that couldn't be completed.
 ///
