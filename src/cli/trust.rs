@@ -11,8 +11,8 @@ use clap::{ArgGroup, Args, Subcommand};
 
 use super::error::ConfigTrustCliError;
 use crate::{
+    Cwd,
     config::{ConfigService, ResolvedTrustTarget},
-    cwd::Cwd,
 };
 
 /// `traces trust [PATH]` / `traces trust --show` / `traces trust --untrust`.
@@ -293,7 +293,7 @@ mod tests {
         use pretty_assertions::assert_eq;
 
         use super::*;
-        use crate::cwd::CwdGuard;
+        use crate::CwdGuard;
 
         fn service(temp: &Path) -> ConfigService {
             ConfigService::at(
