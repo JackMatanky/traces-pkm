@@ -182,12 +182,10 @@ fn clean(service: &ConfigService) -> Result<(), ConfigTrustCliError> {
             source: Box::new(source),
         }
     })?;
-    let suffix = if removed == 1 {
-        "y"
-    } else {
-        "ies"
-    };
-    eprintln!("removed {removed} stale trust entr{suffix}");
+    match removed {
+        1 => eprintln!("removed 1 stale trust entry"),
+        n => eprintln!("removed {n} stale trust entries"),
+    }
     Ok(())
 }
 
