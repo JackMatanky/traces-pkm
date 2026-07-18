@@ -60,15 +60,28 @@ pub fn run() -> Result<(), ConfigCliError> {
     let cli = Cli::parse();
     let service = crate::config::ConfigService::new();
     let provider = crate::dialog::TerminalDialogProvider::new();
+    dispatch(cli, &service, &provider)
+}
+
+/// Routes a parsed [`Cli`] to its command handler.
+///
+/// Split out of [`run`] so tests can drive real argv parsing
+/// (`Cli::try_parse_from`) through to a real handler call against an
+/// isolated [`crate::config::ConfigService`], without touching the
+/// process's real OS-correct trust/tracked-config stores the way
+/// [`run`]'s `ConfigService::new()` would.
+fn dispatch(
+    cli: Cli,
+    service: &crate::config::ConfigService,
+    provider: &dyn crate::dialog::DialogProvider,
+) -> Result<(), ConfigCliError> {
     match cli.command {
-        Some(Commands::Init(args)) => args.run(&provider).map_err(Into::into),
-        Some(Commands::Trust(args)) => args.run(&service).map_err(Into::into),
-        Some(Commands::Template(args)) => {
-            args.run(&service).map_err(Into::into)
-        }
+        Some(Commands::Init(args)) => args.run(provider).map_err(Into::into),
+        Some(Commands::Trust(args)) => args.run(service).map_err(Into::into),
+        Some(Commands::Template(args)) => args.run(service).map_err(Into::into),
         None => match cli.input {
             Some(name) => template::TemplateArgs::new(name)
-                .run(&service)
+                .run(service)
                 .map_err(Into::into),
             None => Err(ConfigCliError::NoCommand),
         },
@@ -138,5 +151,88 @@ mod tests {
         let result = Cli::try_parse_from(["traces", "init", "-i", "daily"]);
 
         assert!(result.is_err());
+    }
+
+    mod dispatch_end_to_end {
+        use std::{fs, path::Path};
+
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+        use crate::{
+            CwdGuard,
+            config::{ConfigService, TrustTarget},
+            dialog::PresetDialogProvider,
+        };
+
+        /// Parses `argv` and drives it through [`dispatch`] against an
+        /// isolated, trusted project, writing (and returning the contents
+        /// of) `daily.md`.
+        ///
+        /// Exercises the exact same path a real `traces` invocation takes
+        /// — real argv parsing through to a real handler call — without
+        /// touching the process's real OS-correct trust/tracked-config
+        /// stores, proving all three invocation forms produce identical
+        /// output by construction (same [`dispatch`] call, same args) and
+        /// by observation (the file each writes matches).
+        fn dispatch_argv_and_read_output(argv: &[&str], root: &Path) -> String {
+            let cli = Cli::try_parse_from(argv).expect("parse argv");
+            let service = ConfigService::at(
+                root.join("tracked-store"),
+                root.join("trust-store"),
+            );
+            let project = root.join("project");
+            fs::create_dir_all(project.join(".traces"))
+                .expect("create .traces dir");
+            fs::create_dir_all(project.join("templates"))
+                .expect("create templates dir");
+            fs::write(
+                project.join(".traces/config.toml"),
+                "[templates]\ndirectory = \"templates\"\n",
+            )
+            .expect("write config file");
+            fs::write(
+                project.join("templates/daily.md"),
+                "{% for n in [1, 2, 3] %}{{ n }}{% endfor %}",
+            )
+            .expect("write template");
+            service
+                .trust(TrustTarget::ConfigFile {
+                    root: &project,
+                    config_file: &project.join(".traces/config.toml"),
+                })
+                .expect("trust project root");
+            let _guard = CwdGuard::enter(&project);
+
+            dispatch(cli, &service, &PresetDialogProvider::new())
+                .expect("dispatch succeeds");
+
+            fs::read_to_string(project.join("daily.md"))
+                .expect("read written output")
+        }
+
+        #[test]
+        fn all_three_invocation_forms_produce_identical_output() {
+            let form_a = tempfile::tempdir().expect("create temp dir");
+            let form_b = tempfile::tempdir().expect("create temp dir");
+            let form_c = tempfile::tempdir().expect("create temp dir");
+
+            let via_template = dispatch_argv_and_read_output(
+                &["traces", "template", "-i", "daily"],
+                form_a.path(),
+            );
+            let via_tmpl = dispatch_argv_and_read_output(
+                &["traces", "tmpl", "-i", "daily"],
+                form_b.path(),
+            );
+            let via_default = dispatch_argv_and_read_output(
+                &["traces", "-i", "daily"],
+                form_c.path(),
+            );
+
+            assert_eq!(via_template, "123");
+            assert_eq!(via_tmpl, via_template);
+            assert_eq!(via_default, via_template);
+        }
     }
 }
