@@ -1,6 +1,10 @@
 # `traces init` CLI (interactive scaffold via DialogProvider)
 
-Status: ready-for-agent
+Status: implemented
+
+**Date**: 2026-07-18
+**Implemented in**: `d3bf2b5` (plus preceding commits on `agent/init-cli`)
+**Agent session**: see `findings.md` for full session log
 
 ## Parent
 
@@ -12,11 +16,11 @@ The `traces init` command. Using a `&dyn DialogProvider`, interactively ask for 
 
 ## Acceptance criteria
 
-- [ ] `traces init` prompts for `directory` and `output_dir` via `DialogProvider` (with defaults)
-- [ ] Writes a valid `.traces/config.toml` with the collected `[templates]` values
-- [ ] Creates an empty `.traces/templates/` directory
-- [ ] Runs non-interactively using DialogProvider defaults (usable in scripts/CI)
-- [ ] Integration test (with `PresetDialogProvider`) verifies the created files and config contents in a temp dir
+- [x] `traces init` prompts for `directory` and `output_dir` via `DialogProvider` (with defaults)
+- [x] Writes a valid `.traces/config.toml` with the collected `[templates]` values
+- [x] Creates an empty `.traces/templates/` directory
+- [x] Runs non-interactively using DialogProvider defaults (usable in scripts/CI)
+- [x] Integration test (with `PresetDialogProvider`) verifies the created files and config contents in a temp dir
 
 ## Agent brief
 
@@ -69,6 +73,78 @@ Relevant skills: `domain-cli`, `m04-zero-cost`, `m06-error-handling`, `m11-ecosy
 - **Serialize, don't string-build (m11):** write `config.toml` by serializing `RawConfig` with `toml::to_string` (serde) — keeps it in lockstep with the parse side from issue 01. `RawConfig` already derives `Serialize` in `src/config/raw.rs`.
 - **Idempotency / safety (m06):** decide behavior when `.traces/` already exists — refuse with an actionable miette error rather than clobbering an existing config. Directory creation uses `std::fs::create_dir_all`; propagate I/O errors with `?`, don't `unwrap`.
 - **Defaults flow through the provider:** supply sensible defaults to `text()` (e.g. templates dir, output dir) so the non‑interactive path still yields a valid config.
+
+## Implementation notes
+
+### Scope creep (but good)
+
+The original brief targeted only `init`, but the implementation naturally widened to keep the CLI module internally consistent:
+
+- **`trust.rs` refactored** from free `fn run(args, &service)` to `impl TrustArgs` with `fn run(self, &service)` — mirrors the `impl Init` pattern.
+- **`cwd.rs` added** — `Cwd(PathBuf)` newtype centralises `env::current_dir()` (banned by `clippy.toml`). `CwdGuard` RAII guard replaces duplicated `CurrentDirGuard` in test code.
+- **`run_init` bridge removed** — the forwarding function in `cli/mod.rs` was a temporary bridge. Replaced by making `init::Init` and its `run()` method `pub`, so the integration test calls `Init.run(&provider)` directly.
+
+### Deviations from the agent brief
+
+| Brief said | What happened | Why |
+|------------|---------------|-----|
+| `InitArgs` | `Init` | Unit struct needs no `*Args` suffix; `trust.rs` retained `TrustArgs` because it carries fields/subcommands. |
+| `run(provider)` as free fn | `impl Init { pub fn run(self, provider) }` | Uniform with `impl TrustArgs { pub(super) fn run(self, service) }`. |
+| `failed_with_help` helper | Inlined at single call site | Two-layer cake was shallow; single `failed()` helper used everywhere. |
+| Integration test via `cli::run_init` | `Init.run(&provider)` directly | `run_init` was deleted once `Init` was public. |
+
+### Code organisation
+
+```
+src/cli/
+  mod.rs      — Cli parser, dispatch, clap-wiring unit tests
+  init.rs     — Init struct, collect_config / scaffold_directory / write_config_file helpers, unit tests
+  trust.rs    — TrustArgs struct + subcommands, handler methods, unit tests
+  error.rs    — ConfigCliError / ConfigInitCliError / ConfigTrustCliError with miette
+src/cwd.rs    — Cwd newtype + CwdGuard (pub(crate), tests use CwdGuard)
+tests/
+  init_cli.rs — integration test with PresetDialogProvider (CwdGuard duplicated with lint allows)
+```
+
+### Key design decisions
+
+1. **`impl Init` with private helpers** — `run()` assembles three private helpers (`collect_config`, `scaffold_directory`, `write_config_file`). Each is unit-testable in isolation. No public API surface beyond `Init::run()`.
+2. **`AsRef<Path>` over `as_path()`** — `Cwd` implements `AsRef<Path>` so it flows into any `impl AsRef<Path>` parameter without explicit `.as_path()` calls.
+3. **`pub(crate)` visibility** — `Cwd`, `CwdGuard`, `ConfigService` are `pub(crate)`. This prevents integration tests from constructing them, which is fine — trust handler logic is tested via unit tests with `ConfigService::at()`.
+4. **No `tests/trust_cli.rs`** — ruled out because `ConfigService` is `pub(crate)`; integration tests can't construct one. Trust coverage lives in unit tests.
+5. **`allow-expect-in-tests` in clippy.toml** applies only to `#[cfg(test)]` blocks, not integration test files (separate crate). Integration test's `CwdGuard` carries explicit `#[allow(clippy::disallowed_methods, clippy::expect_used)]`.
+
+### Test inventory
+
+| Test | File | What it covers |
+|------|------|----------------|
+| `scaffold_directory_creates_traces_and_templates` | `init.rs` | Creates `.traces/` and `.traces/templates/` |
+| `scaffold_directory_refuses_existing_traces_dir` | `init.rs` | `AlreadyExists` error when `.traces/` present |
+| `write_config_file_produces_valid_toml` | `init.rs` | Custom paths serialise to correct TOML |
+| `write_config_file_preserves_default_values` | `init.rs` | Default paths serialise to correct TOML |
+| `init_scaffolds_preset_defaults_...` | `tests/init_cli.rs` | Full integration: preset dirs, defaults, idempotency |
+| `init_argv_parses_to_the_init_subcommand` | `mod.rs` | Clap wiring |
+| `trust_argv_parses_to_the_trust_subcommand` | `mod.rs` | Clap wiring |
+| 16 trust handler/parsing tests | `trust.rs` | Parsing, trust/untrust/show/list/clean |
+
+### File manifest
+
+| File | Lines | Purpose |
+|------|-------|---------|
+| `src/cli/init.rs` | 237 | `Init` struct, helpers, unit tests |
+| `src/cli/mod.rs` | 89 | Parser, dispatch (was 63 lines before `run_init` removed) |
+| `src/cli/trust.rs` | 506 | `TrustArgs` struct + handlers + extensive tests |
+| `src/cli/error.rs` | 250 | Error types with miette diagnostic codes |
+| `src/cwd.rs` | 115 | `Cwd` newtype, `CwdGuard`, tests |
+| `tests/init_cli.rs` | 95 | Integration test |
+| `clippy.toml` | 102 | Lint config (1 removed field, dedented) |
+
+### Running the tests
+
+```sh
+cargo test           # 165 lib + 1 integration + 10 doctests = all pass
+cargo clippy --all-targets  # clean (only pre-existing pedantic warnings)
+```
 
 ## Blocked by
 
