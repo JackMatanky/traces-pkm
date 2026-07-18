@@ -5,7 +5,7 @@
 //! user-facing help text and error codes, via `miette::Diagnostic`.
 
 mod error;
-mod init;
+pub mod init;
 mod trust;
 
 use clap::{Parser, Subcommand};
@@ -27,7 +27,7 @@ struct Cli {
 #[derive(Debug, Subcommand)]
 enum Commands {
     /// Initialise local traces configuration
-    Init(init::InitArgs),
+    Init(init::Init),
     /// Manage trusted project roots
     Trust(trust::TrustArgs),
 }
@@ -42,23 +42,10 @@ pub fn run() -> Result<(), ConfigCliError> {
     let cli = Cli::parse();
     let service = crate::config::ConfigService::new();
     let provider = crate::dialog::TerminalDialogProvider::new();
-    match &cli.command {
-        Commands::Init(args) => init::run(args, &provider).map_err(Into::into),
-        Commands::Trust(args) => trust::run(args, &service).map_err(Into::into),
+    match cli.command {
+        Commands::Init(args) => args.run(&provider).map_err(Into::into),
+        Commands::Trust(args) => args.run(&service).map_err(Into::into),
     }
-}
-
-/// Runs `traces init` with an injected dialog provider.
-///
-/// # Errors
-///
-/// Returns [`ConfigInitCliError`] when prompting, serialization, or filesystem
-/// scaffolding fails.
-#[inline]
-pub fn run_init(
-    provider: &dyn crate::dialog::DialogProvider,
-) -> Result<(), ConfigInitCliError> {
-    init::run(&init::InitArgs {}, provider)
 }
 
 #[cfg(test)]

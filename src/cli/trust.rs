@@ -5,15 +5,15 @@
 //! the current directory, and formats output — trust decisions live in
 //! `config::trust::ConfigTrust` (see its docs).
 
-use std::{
-    env,
-    path::{Path, PathBuf},
-};
+use std::path::{Path, PathBuf};
 
 use clap::{ArgGroup, Args, Subcommand};
 
 use super::error::ConfigTrustCliError;
-use crate::config::{ConfigService, ResolvedTrustTarget};
+use crate::{
+    config::{ConfigService, ResolvedTrustTarget},
+    cwd::Cwd,
+};
 
 /// `traces trust [PATH]` / `traces trust --show` / `traces trust --untrust`.
 ///
@@ -58,102 +58,104 @@ enum TrustAction {
     Clean,
 }
 
-/// Dispatches `traces trust` to its default action, flag mode, or a nested
-/// subcommand.
-///
-/// # Errors
-///
-/// Returns [`ConfigTrustCliError`] when the selected action fails.
-#[inline]
-pub(super) fn run(
-    args: &TrustArgs,
-    service: &ConfigService,
-) -> Result<(), ConfigTrustCliError> {
-    match &args.action {
-        Some(TrustAction::List) => list(service),
-        Some(TrustAction::Clean) => clean(service),
-        None if args.show => show(args, service),
-        None if args.untrust => untrust(args, service),
-        None => trust(args, service),
+impl TrustArgs {
+    /// Dispatches `traces trust` to its default action, flag mode, or a
+    /// nested subcommand.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConfigTrustCliError`] when the selected action fails.
+    #[inline]
+    pub(super) fn run(
+        self,
+        service: &ConfigService,
+    ) -> Result<(), ConfigTrustCliError> {
+        match self.action {
+            Some(TrustAction::List) => list(service),
+            Some(TrustAction::Clean) => clean(service),
+            None if self.show => self.show(service),
+            None if self.untrust => self.untrust(service),
+            None => self.trust(service),
+        }
     }
-}
 
-#[allow(
-    clippy::disallowed_methods,
-    reason = "CLI default target is the process current directory"
-)]
-fn current_dir() -> Result<PathBuf, ConfigTrustCliError> {
-    env::current_dir().map_err(|source| ConfigTrustCliError::TargetResolve {
-        path: PathBuf::from("."),
-        source: Box::new(source),
-    })
-}
+    /// Trusts the resolved config target or targets.
+    fn trust(
+        &self,
+        service: &ConfigService,
+    ) -> Result<(), ConfigTrustCliError> {
+        for target in self.targets()? {
+            service.trust(target.as_trust_target()).map_err(|source| {
+                ConfigTrustCliError::Trust {
+                    root: target.root().to_path_buf(),
+                    source: Box::new(source),
+                }
+            })?;
+            eprintln!("trusted {}", target.root().display());
+        }
+        Ok(())
+    }
 
-fn targets(
-    args: &TrustArgs,
-) -> Result<Vec<ResolvedTrustTarget>, ConfigTrustCliError> {
-    let cwd = current_dir()?;
-    ConfigService::resolve_trust_targets(&cwd, args.path.as_deref(), args.all)
+    /// Removes the resolved config target or targets from the trust store.
+    fn untrust(
+        &self,
+        service: &ConfigService,
+    ) -> Result<(), ConfigTrustCliError> {
+        for target in self.targets()? {
+            service.untrust(target.root()).map_err(|source| {
+                ConfigTrustCliError::Untrust {
+                    root: target.root().to_path_buf(),
+                    source: Box::new(source),
+                }
+            })?;
+            eprintln!("untrusted {}", target.root().display());
+        }
+        Ok(())
+    }
+
+    /// Prints the resolved config target statuses, one per line, to stdout.
+    #[allow(
+        clippy::print_stdout,
+        reason = "trust --show's output is data meant to be piped, not \
+                  diagnostic text — see the print_stderr precedent this \
+                  mirrors"
+    )]
+    fn show(&self, service: &ConfigService) -> Result<(), ConfigTrustCliError> {
+        for target in self.targets()? {
+            let state = service
+                .is_trusted(target.root(), target.config_file())
+                .map_err(|source| ConfigTrustCliError::Show {
+                    root: target.root().to_path_buf(),
+                    source: Box::new(source),
+                })?;
+            println!("{}\t{}", target.config_file().display(), state.as_str());
+        }
+        Ok(())
+    }
+
+    /// Resolve one or many trust targets from the current directory and
+    /// optional user-provided path.
+    fn targets(&self) -> Result<Vec<ResolvedTrustTarget>, ConfigTrustCliError> {
+        let cwd = current_dir()?;
+        ConfigService::resolve_trust_targets(
+            &cwd,
+            self.path.as_deref(),
+            self.all,
+        )
         .map_err(|source| ConfigTrustCliError::TargetResolve {
-            path: args.path.as_deref().unwrap_or(Path::new(".")).to_path_buf(),
+            path: self.path.as_deref().unwrap_or(Path::new(".")).to_path_buf(),
             source: Box::new(source),
         })
+    }
 }
 
-/// Trusts the resolved config target or targets.
-fn trust(
-    args: &TrustArgs,
-    service: &ConfigService,
-) -> Result<(), ConfigTrustCliError> {
-    for target in targets(args)? {
-        service.trust(target.as_trust_target()).map_err(|source| {
-            ConfigTrustCliError::Trust {
-                root: target.root().to_path_buf(),
-                source: Box::new(source),
-            }
-        })?;
-        eprintln!("trusted {}", target.root().display());
-    }
-    Ok(())
-}
-
-/// Removes the resolved config target or targets from the trust store.
-fn untrust(
-    args: &TrustArgs,
-    service: &ConfigService,
-) -> Result<(), ConfigTrustCliError> {
-    for target in targets(args)? {
-        service.untrust(target.root()).map_err(|source| {
-            ConfigTrustCliError::Untrust {
-                root: target.root().to_path_buf(),
-                source: Box::new(source),
-            }
-        })?;
-        eprintln!("untrusted {}", target.root().display());
-    }
-    Ok(())
-}
-
-/// Prints the resolved config target statuses, one per line, to stdout.
-#[allow(
-    clippy::print_stdout,
-    reason = "trust --show's output is data meant to be piped, not diagnostic \
-              text — see the print_stderr precedent this mirrors"
-)]
-fn show(
-    args: &TrustArgs,
-    service: &ConfigService,
-) -> Result<(), ConfigTrustCliError> {
-    for target in targets(args)? {
-        let state = service
-            .is_trusted(target.root(), target.config_file())
-            .map_err(|source| ConfigTrustCliError::Show {
-                root: target.root().to_path_buf(),
-                source: Box::new(source),
-            })?;
-        println!("{}\t{}", target.config_file().display(), state.as_str());
-    }
-    Ok(())
+fn current_dir() -> Result<PathBuf, ConfigTrustCliError> {
+    Cwd::new().map(Cwd::into_inner).map_err(|source| {
+        ConfigTrustCliError::TargetResolve {
+            path: PathBuf::from("."),
+            source: Box::new(source),
+        }
+    })
 }
 
 /// Prints every currently trusted directory, one per line, to stdout.
@@ -288,32 +290,10 @@ mod tests {
     }
 
     mod handlers {
-        use std::env;
-
         use pretty_assertions::assert_eq;
 
         use super::*;
-
-        struct CurrentDirGuard {
-            original: PathBuf,
-        }
-
-        impl CurrentDirGuard {
-            fn enter(path: &Path) -> Self {
-                let original = env::current_dir().expect("read current dir");
-                env::set_current_dir(path).expect("enter temp dir");
-                Self {
-                    original,
-                }
-            }
-        }
-
-        impl Drop for CurrentDirGuard {
-            fn drop(&mut self) {
-                env::set_current_dir(&self.original)
-                    .expect("restore current dir");
-            }
-        }
+        use crate::cwd::CwdGuard;
 
         fn service(temp: &Path) -> ConfigService {
             ConfigService::at(
@@ -358,9 +338,9 @@ mod tests {
             fs::create_dir_all(&cwd).expect("create nested cwd");
             let config_file = create_config(&root);
             let service = service(temp.path());
-            let _guard = CurrentDirGuard::enter(&cwd);
+            let _guard = CwdGuard::enter(&cwd);
 
-            run(&trust_args(None), &service).expect("trust cwd");
+            trust_args(None).run(&service).expect("trust cwd");
 
             assert_eq!(service.list_trusted().expect("list trusted"), vec![
                 root.canonicalize().expect("canonicalize root")
@@ -379,7 +359,8 @@ mod tests {
             let config_file = create_config(&root);
             let service = service(temp.path());
 
-            run(&trust_args(Some(config_file.to_path_buf())), &service)
+            trust_args(Some(config_file.to_path_buf()))
+                .run(&service)
                 .expect("trust config file");
 
             assert_eq!(service.list_trusted().expect("list trusted"), vec![
@@ -394,7 +375,8 @@ mod tests {
             fs::create_dir_all(&root).expect("create project dir");
             let service = service(temp.path());
 
-            let error = run(&trust_args(Some(root)), &service)
+            let error = trust_args(Some(root))
+                .run(&service)
                 .expect_err("missing config fails trust");
 
             assert!(matches!(error, ConfigTrustCliError::TargetResolve { .. }));
@@ -410,7 +392,7 @@ mod tests {
             let mut args = trust_args(Some(root));
             args.show = true;
 
-            run(&args, &service).expect("show trust status");
+            args.run(&service).expect("show trust status");
 
             assert!(service.list_trusted().expect("list trusted").is_empty());
         }
@@ -422,12 +404,13 @@ mod tests {
             fs::create_dir_all(&root).expect("create project dir");
             let config_file = create_config(&root);
             let service = service(temp.path());
-            run(&trust_args(Some(root.to_path_buf())), &service)
+            trust_args(Some(root.to_path_buf()))
+                .run(&service)
                 .expect("trust root");
             let mut args = trust_args(Some(root.to_path_buf()));
             args.untrust = true;
 
-            run(&args, &service).expect("untrust root");
+            args.run(&service).expect("untrust root");
 
             assert_eq!(
                 service.is_trusted(&root, &config_file).expect("check trust"),
@@ -447,7 +430,7 @@ mod tests {
             let mut args = trust_args(Some(parent));
             args.all = true;
 
-            run(&args, &service).expect("trust all configs");
+            args.run(&service).expect("trust all configs");
 
             assert_eq!(service.list_trusted().expect("list trusted").len(), 2);
         }
@@ -457,7 +440,8 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             let service = service(temp.path());
 
-            run(&action_args(TrustAction::List), &service)
+            action_args(TrustAction::List)
+                .run(&service)
                 .expect("list empty trust store");
         }
 
@@ -468,11 +452,13 @@ mod tests {
             fs::create_dir_all(&root).expect("create project dir");
             create_config(&root);
             let service = service(temp.path());
-            run(&trust_args(Some(root.to_path_buf())), &service)
+            trust_args(Some(root.to_path_buf()))
+                .run(&service)
                 .expect("trust root");
             fs::remove_dir_all(&root).expect("delete project dir");
 
-            run(&action_args(TrustAction::Clean), &service)
+            action_args(TrustAction::Clean)
+                .run(&service)
                 .expect("clean trust store");
 
             assert!(service.list_trusted().expect("list trusted").is_empty());
@@ -483,7 +469,8 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             let service = service(temp.path());
 
-            run(&action_args(TrustAction::Clean), &service)
+            action_args(TrustAction::Clean)
+                .run(&service)
                 .expect("clean empty trust store");
         }
     }

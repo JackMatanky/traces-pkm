@@ -22,81 +22,196 @@ const GENERIC_INIT_HELP: &str =
 const EXISTING_TRACES_HELP: &str = "remove the existing .traces directory or \
                                     run init from a different directory";
 
-/// `traces init` has no flags yet.
+/// `traces init` — scaffold local configuration and templates.
+///
+/// No flags yet — options are collected interactively via `DialogProvider`.
 #[derive(Debug, Args)]
-pub(super) struct InitArgs {}
+pub struct Init;
 
-/// Dispatches `traces init` using the current directory as the project root.
-///
-/// # Errors
-///
-/// Returns [`ConfigInitCliError`] when prompting, serialization, or filesystem
-/// scaffolding fails.
-#[inline]
-pub(super) fn run(
-    _args: &InitArgs,
-    provider: &dyn DialogProvider,
-) -> Result<(), ConfigInitCliError> {
-    run_in(Path::new("."), provider)
-}
-
-fn run_in(
-    root: &Path,
-    provider: &dyn DialogProvider,
-) -> Result<(), ConfigInitCliError> {
-    let root = root.to_path_buf();
-    let directory = provider
-        .text("Template directory", Some(DEFAULT_TEMPLATE_DIRECTORY))
-        .map_err(|source| failed(&root, source))?;
-    let output_dir = provider
-        .text("Output directory", Some(DEFAULT_OUTPUT_DIRECTORY))
-        .map_err(|source| failed(&root, source))?;
-
-    let traces_dir = root.join(TRACES_DIR);
-    if traces_dir.exists() {
-        return Err(failed_with_help(
-            &root,
-            io::Error::new(
-                io::ErrorKind::AlreadyExists,
-                format!("{} already exists", traces_dir.display()),
-            ),
-            EXISTING_TRACES_HELP,
-        ));
+impl Init {
+    /// Dispatches `traces init` using the current directory as the project
+    /// root.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConfigInitCliError`] when prompting, serialization, or
+    /// filesystem scaffolding fails.
+    #[inline]
+    #[allow(
+        clippy::unused_self,
+        reason = "unit struct today; will carry flags in a future iteration"
+    )]
+    pub fn run(
+        self,
+        provider: &dyn DialogProvider,
+    ) -> Result<(), ConfigInitCliError> {
+        let (directory, output_dir) = Self::collect_config(provider)?;
+        Self::scaffold_directory(Path::new("."))?;
+        Self::write_config_file(Path::new("."), &directory, &output_dir)?;
+        eprintln!("initialised traces in .");
+        Ok(())
     }
 
-    fs::create_dir(&traces_dir).map_err(|source| failed(&root, source))?;
-    fs::create_dir(root.join(DEFAULT_TEMPLATE_DIRECTORY))
-        .map_err(|source| failed(&root, source))?;
+    /// Collect template configuration from the user interactively.
+    fn collect_config(
+        provider: &dyn DialogProvider,
+    ) -> Result<(PathBuf, PathBuf), ConfigInitCliError> {
+        let directory = provider
+            .text("Template directory", Some(DEFAULT_TEMPLATE_DIRECTORY))
+            .map_err(|source| failed(Path::new("."), source))?;
+        let output_dir = provider
+            .text("Output directory", Some(DEFAULT_OUTPUT_DIRECTORY))
+            .map_err(|source| failed(Path::new("."), source))?;
+        Ok((PathBuf::from(directory), PathBuf::from(output_dir)))
+    }
 
-    let config =
-        RawConfig::new(PathBuf::from(directory), PathBuf::from(output_dir));
-    let contents =
-        toml::to_string(&config).map_err(|source| failed(&root, source))?;
-    fs::write(root.join(LOCAL_CONFIG_FILE), contents)
-        .map_err(|source| failed(&root, source))?;
+    /// Scaffold `.traces/` and `.traces/templates/`.
+    ///
+    /// Refuses to run when `.traces/` already exists.
+    fn scaffold_directory(root: &Path) -> Result<(), ConfigInitCliError> {
+        let traces_dir = root.join(TRACES_DIR);
+        if traces_dir.exists() {
+            return Err(ConfigInitCliError::InitFailed {
+                root: root.to_path_buf(),
+                help: EXISTING_TRACES_HELP,
+                source: Box::new(io::Error::new(
+                    io::ErrorKind::AlreadyExists,
+                    format!("{} already exists", traces_dir.display()),
+                )),
+            });
+        }
+        fs::create_dir(&traces_dir).map_err(|source| failed(root, source))?;
+        fs::create_dir(root.join(DEFAULT_TEMPLATE_DIRECTORY))
+            .map_err(|source| failed(root, source))?;
+        Ok(())
+    }
 
-    eprintln!("initialised traces in {}", root.display());
-    Ok(())
+    /// Serialise the `[templates]` config and write `.traces/config.toml`.
+    fn write_config_file(
+        root: &Path,
+        directory: &Path,
+        output_dir: &Path,
+    ) -> Result<(), ConfigInitCliError> {
+        let config =
+            RawConfig::new(directory.to_path_buf(), output_dir.to_path_buf());
+        let contents =
+            toml::to_string(&config).map_err(|source| failed(root, source))?;
+        fs::write(root.join(LOCAL_CONFIG_FILE), contents)
+            .map_err(|source| failed(root, source))?;
+        Ok(())
+    }
 }
 
 fn failed<E>(root: &Path, source: E) -> ConfigInitCliError
 where
     E: StdError + Send + Sync + 'static,
 {
-    failed_with_help(root, source, GENERIC_INIT_HELP)
-}
-
-fn failed_with_help<E>(
-    root: &Path,
-    source: E,
-    help: &'static str,
-) -> ConfigInitCliError
-where
-    E: StdError + Send + Sync + 'static,
-{
     ConfigInitCliError::InitFailed {
         root: root.to_path_buf(),
-        help,
+        help: GENERIC_INIT_HELP,
         source: Box::new(source),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io;
+
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn scaffold_directory_creates_traces_and_templates() {
+        let root = tempfile::tempdir().expect("create temp dir");
+        let traces = root.path().join(".traces");
+
+        Init::scaffold_directory(root.path()).expect("scaffold");
+
+        assert!(traces.is_dir());
+        assert!(traces.join("templates").is_dir());
+    }
+
+    #[test]
+    fn scaffold_directory_refuses_existing_traces_dir() {
+        let root = tempfile::tempdir().expect("create temp dir");
+        let traces = root.path().join(".traces");
+        fs::create_dir(&traces).expect("create .traces dir");
+
+        let err = Init::scaffold_directory(root.path())
+            .expect_err("existing .traces should fail");
+
+        let ConfigInitCliError::InitFailed {
+            source,
+            ..
+        } = &err;
+        let io_err = source.downcast_ref::<io::Error>().expect("io error");
+        assert_eq!(io_err.kind(), io::ErrorKind::AlreadyExists);
+    }
+
+    fn scaffold(root: &Path) {
+        Init::scaffold_directory(root).expect("scaffold");
+    }
+
+    #[test]
+    fn write_config_file_produces_valid_toml() {
+        let root = tempfile::tempdir().expect("create temp dir");
+        scaffold(root.path());
+
+        Init::write_config_file(
+            root.path(),
+            Path::new("custom/templates"),
+            Path::new("notes"),
+        )
+        .expect("write config");
+
+        let config_path = root.path().join(".traces/config.toml");
+        assert!(config_path.is_file(), "config file exists");
+
+        let contents = fs::read_to_string(&config_path).expect("read config");
+        let value: toml::Value = toml::from_str(&contents).expect("parse toml");
+        let templates = value
+            .get("templates")
+            .and_then(toml::Value::as_table)
+            .expect("templates table");
+
+        assert_eq!(
+            templates.get("directory").and_then(toml::Value::as_str),
+            Some("custom/templates")
+        );
+        assert_eq!(
+            templates.get("output_dir").and_then(toml::Value::as_str),
+            Some("notes")
+        );
+    }
+
+    #[test]
+    fn write_config_file_preserves_default_values() {
+        let root = tempfile::tempdir().expect("create temp dir");
+        scaffold(root.path());
+
+        Init::write_config_file(
+            root.path(),
+            Path::new(DEFAULT_TEMPLATE_DIRECTORY),
+            Path::new(DEFAULT_OUTPUT_DIRECTORY),
+        )
+        .expect("write config with defaults");
+
+        let config_path = root.path().join(".traces/config.toml");
+        let contents = fs::read_to_string(&config_path).expect("read config");
+        let value: toml::Value = toml::from_str(&contents).expect("parse toml");
+        let templates = value
+            .get("templates")
+            .and_then(toml::Value::as_table)
+            .expect("templates table");
+
+        assert_eq!(
+            templates.get("directory").and_then(toml::Value::as_str),
+            Some(DEFAULT_TEMPLATE_DIRECTORY)
+        );
+        assert_eq!(
+            templates.get("output_dir").and_then(toml::Value::as_str),
+            Some(DEFAULT_OUTPUT_DIRECTORY)
+        );
     }
 }

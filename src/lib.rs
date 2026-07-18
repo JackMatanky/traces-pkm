@@ -1,6 +1,7 @@
 //! Traces: template-driven personal knowledge management.
 
 pub mod cli;
+pub(crate) mod cwd;
 // `dialog` stays `pub`: its doctests (`traces_pkm::dialog::...`) compile as
 // external crates, so they need real crate-external reachability, not just
 // `cli`/`main.rs`'s crate-internal access.

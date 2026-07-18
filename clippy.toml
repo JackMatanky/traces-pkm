@@ -35,7 +35,16 @@ large-error-threshold = 128
 
 # Project Metadata
 msrv = "1.92"
-doc-valid-idents = ["Traces", "Obsidian", "Redb", "rkyv", "CLI", "JSON", "TOML", "YAML"]
+doc-valid-idents = [
+  "Traces",
+  "Obsidian",
+  "Redb",
+  "rkyv",
+  "CLI",
+  "JSON",
+  "TOML",
+  "YAML"
+]
 disallowed-names = ["foo", "bar", "baz", "quux", "tmp"]
 
 # Source Ordering
@@ -51,25 +60,25 @@ source-item-ordering = ["module", "trait"]
 # Match rust-analyzer’s “modules first, then imports, then items” at a coarse level.
 # (Clippy can’t enforce blank-line grouping or std/external/crate import buckets.)
 module-item-order-groupings = [
-    ["modules", ["extern_crate", "mod", "foreign_mod"]],
-    ["use", ["use"]],
+  ["modules", ["extern_crate", "mod", "foreign_mod"]],
+  ["use", ["use"]],
+  [
+    "items",
     [
-        "items",
-        [
-            "macro",
-            "global_asm",
-            "static",
-            "const",
-            "ty_alias",
-            "enum",
-            "struct",
-            "union",
-            "trait",
-            "trait_alias",
-            "impl",
-            "fn",
-        ],
+      "macro",
+      "global_asm",
+      "static",
+      "const",
+      "ty_alias",
+      "enum",
+      "struct",
+      "union",
+      "trait",
+      "trait_alias",
+      "impl",
+      "fn",
     ],
+  ],
 ]
 
 # Enforce grouping order only (keeps “reader-first” ordering within each group).
@@ -78,19 +87,16 @@ module-items-ordered-within-groupings = "none"
 # Make trait contents predictable and easy to scan.
 trait-assoc-item-kinds-order = ["const", "type", "fn"]
 
-# Canonical prefers inherent impls colocated; this makes split impls noisier.
-inherent-impl-lint-scope = "file"
-
 # Test Restrictions (unwrap/expect allowed in tests for simplicity)
 allow-unwrap-in-tests = true
 allow-expect-in-tests = true
 
 # Disallowed Methods (Prevent common anti-patterns and unsafe shortcuts)
 disallowed-methods = [
-    { path = "std::process::exit", reason = "Use miette and return Result from main. Abrupt exit skips cleanup/Drop." },
-    { path = "std::mem::forget", reason = "Potential memory leak. Use ManuallyDrop or ensure correct RAII management." },
-    { path = "std::env::current_dir", reason = "Global state and potential for race conditions. Prefer explicit path management." },
-    { path = "std::fs::canonicalize", reason = "Expensive I/O operation. Use only when strictly necessary for path resolution." },
-    { path = "std::thread::sleep", reason = "Blocks the current thread. In async code, use tokio::time::sleep." },
-    { path = "std::panic::catch_unwind", reason = "Prefer Result-based error handling. Catching panics is non-idiomatic for control flow." }
+  { path = "std::process::exit", reason = "Use miette and return Result from main. Abrupt exit skips cleanup/Drop." },
+  { path = "std::mem::forget", reason = "Potential memory leak. Use ManuallyDrop or ensure correct RAII management." },
+  { path = "std::env::current_dir", reason = "Global state and potential for race conditions. Prefer explicit path management." },
+  { path = "std::fs::canonicalize", reason = "Expensive I/O operation. Use only when strictly necessary for path resolution." },
+  { path = "std::thread::sleep", reason = "Blocks the current thread. In async code, use tokio::time::sleep." },
+  { path = "std::panic::catch_unwind", reason = "Prefer Result-based error handling. Catching panics is non-idiomatic for control flow." }
 ]
