@@ -21,3 +21,5 @@ pub(crate) mod cwd;
 mod config;
 pub mod dialog;
 mod hash;
+
+pub(crate) use hash::{Blake3FileHash, Blake3PathHash};
