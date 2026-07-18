@@ -254,11 +254,14 @@ mod tests {
         local_dir: Option<PathBuf>,
         global_dir: Option<PathBuf>,
     ) -> Config {
-        Config::new(root.clone(), TemplateConfig {
-            local: local_dir,
-            global: global_dir,
-            output: root,
-        })
+        Config::new(
+            root.clone(),
+            TemplateConfig {
+                local: local_dir,
+                global: global_dir,
+                output: root,
+            },
+        )
     }
 
     fn write_file(dir: &Path, name: &str) -> PathBuf {
@@ -486,10 +489,10 @@ mod tests {
             Err(ResolutionError::TemplateNotFound {
                 directories_searched,
                 ..
-            }) => assert_eq!(directories_searched, vec![
-                local_dir.clone(),
-                global_dir.clone()
-            ]),
+            }) => assert_eq!(
+                directories_searched,
+                vec![local_dir.clone(), global_dir.clone()]
+            ),
             result => assert!(matches!(
                 result,
                 Err(ResolutionError::TemplateNotFound { .. })

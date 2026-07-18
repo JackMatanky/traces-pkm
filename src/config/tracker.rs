@@ -115,8 +115,9 @@ mod tests {
 
         tracker.track(&target);
 
-        assert_eq!(tracker.list_all().expect("list tracked configs"), vec![
-            target.canonicalize().expect("canonicalize target")
-        ]);
+        assert_eq!(
+            tracker.list_all().expect("list tracked configs"),
+            vec![target.canonicalize().expect("canonicalize target")]
+        );
     }
 }
