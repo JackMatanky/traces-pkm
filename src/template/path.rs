@@ -35,17 +35,18 @@
 //! (unproven) state accidentally accepts a later (already-proven) one
 //! instead, because nothing forced the author to say which they meant.
 //!
-//! [`TemplatePath::<Validated>::find`] takes a [`MatchStrategy`] because
-//! [`super::loader::TemplateLoader`] has exactly one orchestrating entry
-//! point ([`super::loader::TemplateLoader::find`]) for turning a raw
+//! [`TemplatePath::<Validated>::find`] takes a [`MatchPrecedence`] policy
+//! because [`super::loader::TemplateLoader`] has exactly one orchestrating
+//! entry point ([`super::loader::TemplateLoader::find`]) for turning a raw
 //! name into a [`TemplatePath<Found>`], used both for top-level `-i
-//! <name>` resolution (stem-matching fallback makes sense for a
-//! user-typed name) and `{% include %}`/`{% extends %}` loading (an
-//! include name is a literal reference, not a shorthand — no fallback).
-//! An earlier version had two separate `TemplateLoader` methods for
-//! this instead of one parameterized by strategy, and a second, separate
-//! place computing "which directories were searched" for the
-//! not-found-because-the-name-itself-was-unsafe case, duplicating what
+//! <name>` resolution (an exact match should still take precedence, but a
+//! stem match is an acceptable fallback for a user-typed name) and
+//! `{% include %}`/`{% extends %}` loading (an include name is a literal
+//! reference, not a shorthand — only an exact match is acceptable, no
+//! fallback). An earlier version had two separate `TemplateLoader` methods
+//! for this instead of one parameterized by precedence policy, and a
+//! second, separate place computing "which directories were searched" for
+//! the not-found-because-the-name-itself-was-unsafe case, duplicating what
 //! this method's own search loop already accumulates.
 //!
 //! [`TemplatePathError`] is *one* error type covering this whole
@@ -184,16 +185,16 @@ pub(crate) enum TemplatePathError {
     },
 }
 
-/// How [`TemplatePath::<Validated>::find`] matches a candidate against a
-/// directory's contents.
+/// Which match rules [`TemplatePath::<Validated>::find`] considers when
+/// searching a directory for a candidate, and in what precedence order.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum MatchStrategy {
+pub(super) enum MatchPrecedence {
     /// Only a literal, exact match — no fallback. An include name is a
     /// reference, not a user-typed shorthand: never matches by stem.
-    Exact,
-    /// An exact match, falling back to a stem match when no exact match
-    /// exists in a directory. What a user-typed `-i daily` needs: `daily`
-    /// should still find `daily.md`.
+    ExactOnly,
+    /// An exact match takes precedence; a stem match is considered only
+    /// when no exact match exists in a directory. What a user-typed `-i
+    /// daily` needs: `daily` should still find `daily.md`.
     ExactThenStem,
 }
 
@@ -253,24 +254,25 @@ impl TemplatePath<Validated> {
     }
 
     /// Searches `local` then `global` for this candidate (deduped when
-    /// they're the same directory), per `strategy`: an exact match
-    /// always tried first, then (for [`MatchStrategy::ExactThenStem`])
-    /// a stem match — tried one directory at a time (a directory
-    /// exhausted before the next is even considered), so `local` always
-    /// wins over `global` regardless of which match strategy found it.
+    /// they're the same directory), per `precedence`: an exact match
+    /// always takes precedence, tried first; a stem match is considered
+    /// next only under [`MatchPrecedence::ExactThenStem`] — tried one
+    /// directory at a time (a directory exhausted before the next is even
+    /// considered), so `local` always wins over `global` regardless of
+    /// which rule matched it.
     ///
     /// # Errors
     ///
     /// Returns [`TemplatePathError::AmbiguousTemplate`] when multiple
     /// files match this candidate's stem within a single directory
-    /// (only possible under [`MatchStrategy::ExactThenStem`]). Returns
+    /// (only possible under [`MatchPrecedence::ExactThenStem`]). Returns
     /// [`TemplatePathError::TemplateNotFound`] when no match is found
     /// in either directory.
     pub(super) fn find(
         self,
         local: Option<&Path>,
         global: Option<&Path>,
-        strategy: MatchStrategy,
+        precedence: MatchPrecedence,
     ) -> Result<TemplatePath<Found>, TemplatePathError> {
         let stem = self.stem();
         let global = global.filter(|dir| Some(*dir) != local);
@@ -294,7 +296,7 @@ impl TemplatePath<Validated> {
                 });
             }
 
-            if strategy == MatchStrategy::Exact {
+            if precedence == MatchPrecedence::ExactOnly {
                 continue;
             }
 
@@ -462,7 +464,7 @@ mod tests {
             let file = write_file(temp.path(), "daily.md");
 
             let found = validated("daily.md")
-                .find(Some(temp.path()), None, MatchStrategy::ExactThenStem)
+                .find(Some(temp.path()), None, MatchPrecedence::ExactThenStem)
                 .expect("find succeeds");
 
             assert_eq!(found.absolute(), file);
@@ -474,14 +476,14 @@ mod tests {
             let file = write_file(temp.path(), "daily.md");
 
             let found = validated("daily")
-                .find(Some(temp.path()), None, MatchStrategy::ExactThenStem)
+                .find(Some(temp.path()), None, MatchPrecedence::ExactThenStem)
                 .expect("find succeeds");
 
             assert_eq!(found.absolute(), file);
         }
 
         #[test]
-        fn exact_strategy_does_not_stem_match() {
+        fn exact_only_precedence_does_not_stem_match() {
             let temp = tempfile::tempdir().expect("create temp dir");
             write_file(temp.path(), "daily.md");
 
@@ -489,7 +491,7 @@ mod tests {
                 validated("daily").find(
                     Some(temp.path()),
                     None,
-                    MatchStrategy::Exact
+                    MatchPrecedence::ExactOnly
                 ),
                 Err(TemplatePathError::TemplateNotFound { .. })
             ));
@@ -506,7 +508,7 @@ mod tests {
             match validated("daily").find(
                 Some(temp.path()),
                 None,
-                MatchStrategy::ExactThenStem,
+                MatchPrecedence::ExactThenStem,
             ) {
                 Err(TemplatePathError::AmbiguousTemplate {
                     candidates,
@@ -526,7 +528,7 @@ mod tests {
             let file = write_file(temp.path(), "daily.md");
 
             let found = validated("daily")
-                .find(Some(temp.path()), None, MatchStrategy::ExactThenStem)
+                .find(Some(temp.path()), None, MatchPrecedence::ExactThenStem)
                 .expect("find succeeds");
 
             assert_eq!(found.absolute(), file);
@@ -548,7 +550,7 @@ mod tests {
                 .find(
                     Some(&local_dir),
                     Some(&global_dir),
-                    MatchStrategy::ExactThenStem,
+                    MatchPrecedence::ExactThenStem,
                 )
                 .expect("find succeeds");
 
@@ -567,7 +569,7 @@ mod tests {
                 .find(
                     Some(&local_dir),
                     Some(&global_dir),
-                    MatchStrategy::ExactThenStem,
+                    MatchPrecedence::ExactThenStem,
                 )
                 .expect("find succeeds");
 
@@ -585,7 +587,7 @@ mod tests {
             match validated("missing").find(
                 Some(&local_dir),
                 Some(&global_dir),
-                MatchStrategy::ExactThenStem,
+                MatchPrecedence::ExactThenStem,
             ) {
                 Err(TemplatePathError::TemplateNotFound {
                     directories_searched,
@@ -608,7 +610,7 @@ mod tests {
             match validated("missing").find(
                 Some(temp.path()),
                 Some(temp.path()),
-                MatchStrategy::ExactThenStem,
+                MatchPrecedence::ExactThenStem,
             ) {
                 Err(TemplatePathError::TemplateNotFound {
                     directories_searched,
