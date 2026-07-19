@@ -341,6 +341,7 @@ mod tests {
             temp.path().to_path_buf(),
             Some(local_dir.clone()),
             None,
+            temp.path().to_path_buf(),
         );
 
         let loader = TemplateLoader::for_config(&config);
@@ -353,8 +354,12 @@ mod tests {
         let temp = tempfile::tempdir().expect("create temp dir");
         let local_dir = temp.path().join("local-templates");
         let file = write_file(&local_dir, "daily.md");
-        let config =
-            Config::for_test(temp.path().to_path_buf(), Some(local_dir), None);
+        let config = Config::for_test(
+            temp.path().to_path_buf(),
+            Some(local_dir),
+            None,
+            temp.path().to_path_buf(),
+        );
         let loader = TemplateLoader::for_config(&config);
 
         let found =
@@ -374,6 +379,7 @@ mod tests {
             temp.path().to_path_buf(),
             Some(local_dir),
             Some(global_dir),
+            temp.path().to_path_buf(),
         );
         let loader = TemplateLoader::for_config(&config);
 

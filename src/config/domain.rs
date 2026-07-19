@@ -65,35 +65,27 @@ impl Config {
     }
 
     /// Test-only constructor that builds a `Config` directly, bypassing
-    /// discovery and the builder pipeline.
+    /// discovery, trust-gating, and the builder pipeline.
     ///
-    /// Lets `crate::template::resolve`'s tests exercise resolution logic
+    /// Lets `crate::template`'s tests exercise resolution/rendering logic
     /// against arbitrary directory layouts without standing up a full
     /// [`super::builder::ConfigBuilder`] pipeline, mirroring
     /// [`super::service::ConfigService::at`]'s test-only role for its own
     /// module.
+    ///
+    /// TODO(remove): this exists only because `template::`'s tests need
+    /// arbitrary `Config` values without a real TOML fixture per test —
+    /// every `template::` unit test currently uses this instead of the
+    /// real pipeline; `cli::template`'s tests are the only ones that
+    /// exercise `ConfigService::discover`/`build` directly (see
+    /// `cli::template::tests::create_config` for the TOML-fixture
+    /// pattern to mirror). To remove: rewrite `template::`'s tests to
+    /// build real TOML fixtures and go through
+    /// `ConfigService::at(...).discover(...).build(...)`, then delete
+    /// this constructor and its `#[cfg(test)]` gate.
     #[cfg(test)]
     #[must_use]
     pub(crate) fn for_test(
-        root: PathBuf,
-        local: Option<PathBuf>,
-        global: Option<PathBuf>,
-    ) -> Self {
-        Self {
-            templates: TemplateConfig::new(local, global, root.clone()),
-            root,
-        }
-    }
-
-    /// Test-only constructor identical to [`Self::for_test`], but taking
-    /// an explicit `output` directory instead of defaulting it to `root`.
-    ///
-    /// Lets `crate::template::service`'s tests exercise the configured
-    /// `output_dir` behaviour distinctly from the "unconfigured, falls
-    /// back to root" case [`Self::for_test`] models.
-    #[cfg(test)]
-    #[must_use]
-    pub(crate) fn for_test_with_output(
         root: PathBuf,
         local: Option<PathBuf>,
         global: Option<PathBuf>,

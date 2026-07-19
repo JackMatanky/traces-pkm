@@ -173,8 +173,12 @@ mod tests {
         let temp = tempfile::tempdir().expect("create temp dir");
         let local_dir = temp.path().join("templates");
         let file = write_file(&local_dir, "daily.md", "content");
-        let config =
-            Config::for_test(temp.path().to_path_buf(), Some(local_dir), None);
+        let config = Config::for_test(
+            temp.path().to_path_buf(),
+            Some(local_dir),
+            None,
+            temp.path().to_path_buf(),
+        );
         let service = TemplateService::new(&config);
 
         let resolved =
@@ -193,8 +197,12 @@ mod tests {
             "{% for item in [\"a\", \"b\"] %}{{ item | upper }}{% endfor %}{% \
              if 1 == 1 %}-ok{% else %}-no{% endif %}",
         );
-        let config =
-            Config::for_test(temp.path().to_path_buf(), Some(local_dir), None);
+        let config = Config::for_test(
+            temp.path().to_path_buf(),
+            Some(local_dir),
+            None,
+            temp.path().to_path_buf(),
+        );
         let service = TemplateService::new(&config);
 
         let output_path =
@@ -212,7 +220,7 @@ mod tests {
         let root = temp.path().join("project");
         let local_dir = root.join("templates");
         write_file(&local_dir, "daily.md", "hello");
-        let config = Config::for_test_with_output(
+        let config = Config::for_test(
             root.clone(),
             Some(local_dir),
             None,
@@ -235,8 +243,12 @@ mod tests {
         let temp = tempfile::tempdir().expect("create temp dir");
         let local_dir = temp.path().join("templates");
         write_file(&local_dir, "nested/report.md", "hello");
-        let config =
-            Config::for_test(temp.path().to_path_buf(), Some(local_dir), None);
+        let config = Config::for_test(
+            temp.path().to_path_buf(),
+            Some(local_dir),
+            None,
+            temp.path().to_path_buf(),
+        );
         let service = TemplateService::new(&config);
 
         let output_path = service
@@ -249,7 +261,12 @@ mod tests {
     #[test]
     fn instantiate_propagates_resolution_errors() {
         let temp = tempfile::tempdir().expect("create temp dir");
-        let config = Config::for_test(temp.path().to_path_buf(), None, None);
+        let config = Config::for_test(
+            temp.path().to_path_buf(),
+            None,
+            None,
+            temp.path().to_path_buf(),
+        );
         let service = TemplateService::new(&config);
 
         let error = service
@@ -264,8 +281,12 @@ mod tests {
         let temp = tempfile::tempdir().expect("create temp dir");
         let local_dir = temp.path().join("templates");
         write_file(&local_dir, "broken.md", "{% if %}");
-        let config =
-            Config::for_test(temp.path().to_path_buf(), Some(local_dir), None);
+        let config = Config::for_test(
+            temp.path().to_path_buf(),
+            Some(local_dir),
+            None,
+            temp.path().to_path_buf(),
+        );
         let service = TemplateService::new(&config);
 
         let error = service
@@ -281,8 +302,12 @@ mod tests {
         let local_dir = temp.path().join("templates");
         write_file(&local_dir, "partial.md", "included");
         write_file(&local_dir, "daily.md", "{% include \"partial.md\" %}!");
-        let config =
-            Config::for_test(temp.path().to_path_buf(), Some(local_dir), None);
+        let config = Config::for_test(
+            temp.path().to_path_buf(),
+            Some(local_dir),
+            None,
+            temp.path().to_path_buf(),
+        );
         let service = TemplateService::new(&config);
 
         let output_path =

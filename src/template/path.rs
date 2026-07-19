@@ -284,8 +284,6 @@ fn matching_files_in_dir(dir: &Path, stem: &OsStr) -> Vec<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    use pretty_assertions::assert_eq;
-
     use super::*;
 
     fn candidate(name: &str) -> TemplatePath<Unresolved> {
