@@ -7,6 +7,20 @@
 //! engine's `Environment` the same instance every `instantiate` call
 //! reuses. This render pipeline tracer (issue tmpl-01) renders with an
 //! empty template context.
+//!
+//! [`Self::new`] is the sole constructor: it builds its own
+//! [`TemplateLoader`]/[`TemplateEngine`] from `config` rather than
+//! accepting them as parameters. `TemplateEngine`/`TemplateLoader` stay
+//! `pub(super)` — nothing outside `template::` names them (see this
+//! module's parent docs) — so there is exactly one place, `config`, for
+//! a caller to influence how rendering happens. An earlier version of
+//! this module also had `with_engine`, letting a caller inject an
+//! already-built engine; it had no caller outside this file's own
+//! `#[cfg(test)] mod tests`, which — being a child module of `service` —
+//! already has direct access to `TemplateService`'s private fields.
+//! `with_engine` granted tests no capability Rust's own privacy rules
+//! didn't already give them, so it added a public-looking seam with
+//! nothing behind it.
 
 use std::{
     fs,
@@ -14,9 +28,10 @@ use std::{
 };
 
 use super::{
-    engine::{self, TemplateEngine},
+    engine::TemplateEngine,
     error::TemplateError,
-    resolve::{self, ResolutionError, ResolvedTemplatePath},
+    loader::{TemplateLoader, TemplatePath},
+    resolve::{self, ResolutionError},
 };
 use crate::config::Config;
 
@@ -33,26 +48,8 @@ impl<'a> TemplateService<'a> {
     #[inline]
     #[must_use]
     pub(crate) fn new(config: &'a Config) -> Self {
-        let engine = TemplateEngine::new().with_loader(engine::build_loader(
-            config.local_template_dir().map(Path::to_path_buf),
-            config.global_template_dir().map(Path::to_path_buf),
-        ));
-        Self::with_engine(config, engine)
-    }
-
-    /// Creates a service from an explicit `engine`, bypassing
-    /// [`Self::new`]'s directory-derived loader wiring.
-    ///
-    /// The seam [`Self::new`] is built on: lets a caller (tests, or a
-    /// future dry-run/no-includes mode) supply a bare
-    /// [`TemplateEngine::new`] or one with a custom loader, without
-    /// needing `config`'s directories to back it.
-    #[inline]
-    #[must_use]
-    pub(super) fn with_engine(
-        config: &'a Config,
-        engine: TemplateEngine,
-    ) -> Self {
+        let engine = TemplateEngine::new()
+            .with_loader(TemplateLoader::for_config(config));
         Self {
             config,
             engine,
@@ -70,7 +67,7 @@ impl<'a> TemplateService<'a> {
     pub(super) fn resolve(
         &self,
         name: &Path,
-    ) -> Result<ResolvedTemplatePath, ResolutionError> {
+    ) -> Result<TemplatePath, ResolutionError> {
         resolve::resolve_template(self.config, name)
     }
 
@@ -96,18 +93,18 @@ impl<'a> TemplateService<'a> {
                 name: name.to_path_buf(),
                 source,
             })?;
-        let resolved_path = resolved.absolute();
+        let resolved_path = resolved.as_ref();
         let template_source =
-            fs::read_to_string(&resolved_path).map_err(|source| {
+            fs::read_to_string(resolved_path).map_err(|source| {
                 TemplateError::Read {
-                    path: resolved_path.clone(),
+                    path: resolved_path.to_path_buf(),
                     source,
                 }
             })?;
         let rendered =
             self.engine.render(&template_source).map_err(|source| {
                 TemplateError::Render {
-                    path: resolved_path.clone(),
+                    path: resolved_path.to_path_buf(),
                     source,
                 }
             })?;
@@ -130,7 +127,7 @@ impl<'a> TemplateService<'a> {
     }
 
     /// Default output path: [`Config::output_dir`] joined with the
-    /// resolved template's bare name — not the `-i` argument, so a
+    /// resolved template's bare stem — not the `-i` argument, so a
     /// resolved `templates/daily` or `templates/daily.md` both write
     /// `<output_dir>/daily.md`. A relative `output_dir` (a literal
     /// `output_dir = "…"` from a config file) is resolved against
@@ -139,14 +136,14 @@ impl<'a> TemplateService<'a> {
     ///
     /// Computed at write time, not stored during render — issue tmpl-02's
     /// `-o`/`set_output()` handling overrides this.
-    fn default_output_path(&self, resolved: &ResolvedTemplatePath) -> PathBuf {
+    fn default_output_path(&self, resolved: &TemplatePath) -> PathBuf {
         let output_dir = self.config.output_dir();
         let base = if output_dir.is_absolute() {
             output_dir.to_path_buf()
         } else {
             self.config.root().join(output_dir)
         };
-        base.join(resolved.name()).with_extension("md")
+        base.join(resolved.stem()).with_extension("md")
     }
 }
 
@@ -176,7 +173,7 @@ mod tests {
         let resolved =
             service.resolve(Path::new("daily")).expect("resolve template");
 
-        assert_eq!(resolved.absolute(), file);
+        assert_eq!(resolved.as_ref(), file.as_path());
     }
 
     #[test]
@@ -288,22 +285,5 @@ mod tests {
             fs::read_to_string(&output_path).expect("read written output"),
             "included!"
         );
-    }
-
-    #[test]
-    fn with_engine_allows_injecting_a_bare_engine_without_a_loader() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let local_dir = temp.path().join("templates");
-        write_file(&local_dir, "daily.md", "{% include \"missing.md\" %}");
-        let config =
-            Config::for_test(temp.path().to_path_buf(), Some(local_dir), None);
-        let service =
-            TemplateService::with_engine(&config, TemplateEngine::new());
-
-        let error = service
-            .instantiate(Path::new("daily"))
-            .expect_err("include fails without a loader attached");
-
-        assert!(matches!(error, TemplateError::Render { .. }));
     }
 }

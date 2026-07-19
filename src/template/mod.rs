@@ -1,23 +1,29 @@
 //! Template resolution, rendering, and writing.
 //!
-//! [`resolve`] matches a template name against a [`crate::config::Config`]'s
-//! template directories — moved out of `crate::config::domain` in issue
-//! tmpl-01: `Config` only knows about parsed directories, not how to search
-//! them for a name. Never resolves outside those directories: an absolute
-//! or `..`-relative `-i` argument is always a miss, not an exact-path
-//! shortcut (see `resolve::TemplateSource`'s docs). [`path`] holds
-//! [`TemplateInputPath`](path::TemplateInputPath)/
-//! [`TemplateName`](path::TemplateName) — a candidate identifier's shape,
-//! validated once at construction rather than re-checked with a runtime
-//! bool at every call site, before it's tied to any directory.
-//! [`resolve::ResolvedTemplatePath`] is the later-stage type: a validated
-//! identifier paired with the specific [`resolve::TemplateSource`]
-//! directory it resolved from. [`engine`] wraps minijinja's `Environment`
-//! — construction, `{% include %}`/`{% extends %}` loader wiring, and
-//! rendering — behind a small interface, so [`service`] depends on "render
-//! this source" rather than on minijinja's API directly (see its module
-//! docs for the dot-prefix loader bug it also works around). [`service`]
-//! drives the resolve -> render -> write pipeline via [`TemplateService`].
+//! [`input`] holds [`TemplateInputPath`](input::TemplateInputPath) — a
+//! candidate identifier's shape, validated once at construction rather
+//! than re-checked with a runtime bool at every call site, before it's
+//! tied to any directory. [`loader`] holds
+//! [`TemplateLoader`](loader::TemplateLoader) — the single place that
+//! knows which directories hold templates and how to search them,
+//! shared by top-level `-i` resolution and `{% include %}`/`{% extends
+//! %}` loading — and [`TemplatePath`](loader::TemplatePath), the
+//! later-stage type naming a file [`TemplateLoader`](loader::TemplateLoader)
+//! actually found. [`resolve`] is the policy layer built on `loader`:
+//! it validates a raw name into a
+//! [`TemplateInputPath`](input::TemplateInputPath) and turns an
+//! ambiguous [`TemplateLoader::find`](loader::TemplateLoader::find) into
+//! [`ResolutionError`](resolve::ResolutionError) — moved out of
+//! `crate::config::domain` in issue tmpl-01, since `Config` only knows
+//! about parsed directories, not how to search them for a name. Never
+//! resolves outside those directories: an absolute or `..`-relative `-i`
+//! argument is always a miss, not an exact-path shortcut (see
+//! [`resolve`]'s docs). [`engine`] wraps minijinja's `Environment` —
+//! construction and rendering — behind a small interface, so [`service`]
+//! depends on "render this source" rather than on minijinja's API
+//! directly; loader wiring itself is [`loader::TemplateLoader`]'s job,
+//! not `engine`'s. [`service`] drives the resolve -> render -> write
+//! pipeline via [`TemplateService`].
 //!
 //! `pub(crate)`, not `pub`: consumed only by `crate::cli::template`, a
 //! sibling module in the same crate. Every other type here stays
@@ -30,7 +36,8 @@
 
 mod engine;
 mod error;
-mod path;
+mod input;
+mod loader;
 mod resolve;
 mod service;
 

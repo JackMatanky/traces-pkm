@@ -1,25 +1,28 @@
-//! [`TemplateInputPath`] and [`TemplateName`]: newtypes for a template
-//! identifier *before* it's tied to a specific directory.
+//! [`TemplateInputPath`]: a template identifier's shape, validated
+//! *before* it's tied to a specific directory.
 //!
-//! [`super::resolve`] needs to join a template directory with a user- or
+//! [`super::loader`] needs to join a template directory with a user- or
 //! filesystem-supplied relative path without ever escaping that
 //! directory. Before [`TemplateInputPath`] existed, that safety was a
-//! runtime bool check (`is_safe_template_relative_path`) callers had to
-//! remember to call; [`TemplateInputPath::try_from`] makes the unsafe
-//! state unconstructible instead — every function that takes a
-//! `&TemplateInputPath` gets the guarantee for free.
+//! runtime bool check callers had to remember to invoke;
+//! [`TemplateInputPath::try_from`] makes the unsafe state unconstructible
+//! instead — every function that takes a `&TemplateInputPath` gets the
+//! guarantee for free.
 //!
-//! `TemplateInputPath` is deliberately *not* tied to a template
-//! directory — it validates the shape of a candidate identifier (the raw
-//! `-i <name>` argument, or a filename found while scanning a directory),
-//! nothing more. Once resolution actually finds a match in a specific
-//! directory, [`super::resolve::ResolvedTemplatePath`] pairs that same
-//! validated identifier with the [`super::resolve::TemplateSource`] it was
-//! found in — a different, later-stage type, because "safe relative path" and
-//! "path relative to *this* template directory" are different facts with
-//! different lifecycles.
+//! Deliberately not tied to a template directory — it validates the
+//! shape of a candidate identifier (the raw `-i <name>` argument, or a
+//! filename found while scanning a directory), nothing more. Once
+//! [`super::loader::TemplateLoader`] actually finds a match in a
+//! directory, [`super::loader::TemplatePath`] is the distinct,
+//! later-stage type that names the file's real, absolute location —
+//! "safe relative shape" and "found on disk under a configured
+//! directory" are different facts with different lifecycles, established
+//! by different code (pure validation here vs. filesystem search there).
 
-use std::path::{Component, Path, PathBuf};
+use std::{
+    ffi::OsStr,
+    path::{Component, Path, PathBuf},
+};
 
 use thiserror::Error;
 
@@ -48,11 +51,10 @@ pub(super) enum TemplateInputPathError {
 /// module's docs for why that's a distinct, later concern.
 ///
 /// May still include a file extension and nested directory segments
-/// (`"folder/daily.md"` is a valid `TemplateInputPath`) — see
-/// [`TemplateName`] for the stricter "bare name" case. Implements
-/// [`AsRef<Path>`] so it can be passed anywhere a path is expected
-/// (`Path::join`, `fs::read_to_string`, …) without an extra accessor
-/// call.
+/// (`"folder/daily.md"` is a valid `TemplateInputPath`) — [`Self::stem`]
+/// strips both for the "bare name" case. Implements [`AsRef<Path>`] so it
+/// can be passed anywhere a path is expected (`Path::join`,
+/// `fs::read_to_string`, …) without an extra accessor call.
 ///
 /// Deliberately has no directory-aware constructor: whether a
 /// `TemplateInputPath` names a real file is a question about a specific
@@ -73,15 +75,23 @@ impl TryFrom<&Path> for TemplateInputPath {
     /// Returns [`TemplateInputPathError::Absolute`] when `path` is
     /// absolute. Returns [`TemplateInputPathError::UnsafeComponent`] when
     /// `path` contains a `..` or other component that isn't a plain name
-    /// or `.`.
+    /// or `.`, or when `path` has no `Normal` component at all (e.g. an
+    /// empty path, or a bare `.`) — in either case there's no safe file
+    /// name to join onto a directory.
     fn try_from(path: &Path) -> Result<Self, Self::Error> {
         if path.is_absolute() {
             return Err(TemplateInputPathError::Absolute(path.to_path_buf()));
         }
-        let is_safe = path.components().all(|component| {
-            matches!(component, Component::Normal(_) | Component::CurDir)
+        let mut has_normal_component = false;
+        let is_safe = path.components().all(|component| match component {
+            Component::Normal(_) => {
+                has_normal_component = true;
+                true
+            }
+            Component::CurDir => true,
+            _ => false,
         });
-        if !is_safe {
+        if !is_safe || !has_normal_component {
             return Err(TemplateInputPathError::UnsafeComponent(
                 path.to_path_buf(),
             ));
@@ -97,41 +107,29 @@ impl TemplateInputPath {
     pub(super) fn exists_in(&self, dir: &Path) -> bool {
         dir.join(&self.0).is_file()
     }
+
+    /// This path's bare stem: no directory segments, no extension, e.g.
+    /// `"folder/daily.md"` -> `"daily"`.
+    ///
+    /// Used for stem-matching within a single directory
+    /// ([`super::loader::TemplateLoader`]) and for deriving the default
+    /// output filename ([`super::service::TemplateService`]) — a plain
+    /// [`OsStr`] borrow rather than a further newtype, since neither use
+    /// needs anything beyond what [`Path::file_stem`] already guarantees.
+    ///
+    /// [`Path::file_stem`] returns `None` only for a path with no final
+    /// `Normal` component; [`Self::try_from`] rejects any
+    /// `TemplateInputPath` without one, so this always has a stem in
+    /// practice — the fallback below exists only so the type stays
+    /// panic-free rather than leaning on that invariant at runtime.
+    #[inline]
+    #[must_use]
+    pub(super) fn stem(&self) -> &OsStr {
+        self.0.file_stem().unwrap_or_else(|| self.0.as_os_str())
+    }
 }
 
 impl AsRef<Path> for TemplateInputPath {
-    fn as_ref(&self) -> &Path {
-        &self.0
-    }
-}
-
-/// A template's bare name: a single path segment with no file
-/// extension, e.g. `"daily"` from a resolved `"daily.md"`.
-///
-/// Used for stem-matching within a single directory and for deriving the
-/// default output filename — never carries directory segments, since
-/// both of those are single-directory, leaf-name concepts. Only
-/// constructible from a [`TemplateInputPath`] (never a bare,
-/// unvalidated [`Path`]): a template's name is only ever meaningful
-/// relative to the template directory it was resolved from. Implements
-/// [`AsRef<Path>`] for the same reason as [`TemplateInputPath`].
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) struct TemplateName(PathBuf);
-
-impl From<&TemplateInputPath> for TemplateName {
-    /// Drops `input_path`'s directory segments and extension, e.g.
-    /// `"folder/daily.md"` -> `"daily"`.
-    ///
-    /// Infallible: [`Path::file_stem`] returns `None` only for paths with
-    /// no final component (`.`, `..`, root, or empty); a
-    /// [`TemplateInputPath`] is always relative with at least one
-    /// `Normal` component, so it always has one.
-    fn from(input_path: &TemplateInputPath) -> Self {
-        Self(input_path.0.file_stem().map_or_else(PathBuf::new, PathBuf::from))
-    }
-}
-
-impl AsRef<Path> for TemplateName {
     fn as_ref(&self) -> &Path {
         &self.0
     }
@@ -185,6 +183,22 @@ mod tests {
     }
 
     #[test]
+    fn try_from_rejects_an_empty_path() {
+        let error = TemplateInputPath::try_from(Path::new(""))
+            .expect_err("empty path has no safe file name");
+
+        assert!(matches!(error, TemplateInputPathError::UnsafeComponent(_)));
+    }
+
+    #[test]
+    fn try_from_rejects_a_bare_current_dir() {
+        let error = TemplateInputPath::try_from(Path::new("."))
+            .expect_err("bare current-dir has no safe file name");
+
+        assert!(matches!(error, TemplateInputPathError::UnsafeComponent(_)));
+    }
+
+    #[test]
     fn exists_in_is_true_for_an_existing_file() {
         let temp = tempfile::tempdir().expect("create temp dir");
         std::fs::write(temp.path().join("daily.md"), "content")
@@ -215,25 +229,19 @@ mod tests {
     }
 
     #[test]
-    fn template_name_drops_directory_segments_and_extension() {
+    fn stem_drops_directory_segments_and_extension() {
         let input_path =
             TemplateInputPath::try_from(Path::new("folder/report.md"))
                 .expect("valid template path");
 
-        assert_eq!(
-            TemplateName::from(&input_path).as_ref(),
-            Path::new("report")
-        );
+        assert_eq!(input_path.stem(), OsStr::new("report"));
     }
 
     #[test]
-    fn template_name_of_an_extensionless_path_is_unchanged() {
+    fn stem_of_an_extensionless_path_is_unchanged() {
         let input_path = TemplateInputPath::try_from(Path::new("daily"))
             .expect("valid path");
 
-        assert_eq!(
-            TemplateName::from(&input_path).as_ref(),
-            Path::new("daily")
-        );
+        assert_eq!(input_path.stem(), OsStr::new("daily"));
     }
 }

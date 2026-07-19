@@ -3,35 +3,18 @@
 //! so [`super::service::TemplateService`] depends on "render this
 //! source" rather than on minijinja's `Environment`/loader API directly.
 //!
-//! [`build_loader`] is hand-rolled, not `minijinja::path_loader`:
-//! `path_loader`'s internal `safe_join` rejects any dot-prefixed segment
-//! in the *requested template name* (see `minijinja` 2.21.0's
-//! `src/loader.rs`) — e.g. `{% include ".draft.md" %}` or
-//! `{% include "sub/.draft.md" %}` fail to load even though the file
-//! exists. Verified empirically: the template *directory* itself starting
-//! with `.` (this project's own default, `.traces/templates`) is
-//! unaffected — only the name passed to `{% include %}` is checked, and
-//! `path_loader(".traces/templates")` loads `daily.md` from it just fine.
-//! This loader reuses [`TemplateInputPath`]'s relative/no-traversal
-//! validation instead of `safe_join`, so dot-prefixed template names
-//! resolve correctly while staying just as safe against `..` escapes and
-//! absolute paths.
+//! `{% include %}`/`{% extends %}` resolution itself lives in
+//! [`super::loader::TemplateLoader`], not here — this module only wires
+//! a [`TemplateLoader`] into minijinja's loader callback.
 
-use std::{fs, io, path::PathBuf};
+use minijinja::{Environment, Error};
 
-use minijinja::{Environment, Error, ErrorKind};
-
-use super::path::TemplateInputPath;
+use super::loader::TemplateLoader;
 
 /// Renders minijinja template sources.
 ///
 /// `new()` builds a bare engine with no loader — `{% include %}`/
 /// `{% extends %}` fail until [`Self::with_loader`] attaches one.
-/// Separating the two lets a caller build an engine without wiring
-/// [`build_loader`] to real template directories at all (a test double,
-/// or a future "includes disabled" mode), matching
-/// [`super::service::TemplateService::with_engine`]'s equivalent seam one
-/// level up.
 pub(super) struct TemplateEngine {
     env: Environment<'static>,
 }
@@ -51,11 +34,8 @@ impl TemplateEngine {
     /// [`Self::new`].
     #[inline]
     #[must_use]
-    pub(super) fn with_loader<F>(mut self, loader: F) -> Self
-    where
-        F: Fn(&str) -> Result<Option<String>, Error> + Send + Sync + 'static,
-    {
-        self.env.set_loader(loader);
+    pub(super) fn with_loader(mut self, loader: TemplateLoader) -> Self {
+        self.env.set_loader(move |name| loader.load(name));
         self
     }
 
@@ -73,42 +53,11 @@ impl TemplateEngine {
     }
 }
 
-/// Builds a minijinja loader that searches `local_dir` then `global_dir`
-/// — mirroring [`super::resolve::resolve_template`]'s directory priority
-/// — for `{% include %}`/`{% extends %}`.
-pub(super) fn build_loader(
-    local_dir: Option<PathBuf>,
-    global_dir: Option<PathBuf>,
-) -> impl Fn(&str) -> Result<Option<String>, Error> + Send + Sync + 'static {
-    move |name| {
-        let Ok(input_path) =
-            TemplateInputPath::try_from(std::path::Path::new(name))
-        else {
-            return Ok(None);
-        };
-        for dir in
-            [local_dir.as_ref(), global_dir.as_ref()].into_iter().flatten()
-        {
-            match fs::read_to_string(dir.join(&input_path)) {
-                Ok(source) => return Ok(Some(source)),
-                Err(err) if err.kind() == io::ErrorKind::NotFound => {}
-                Err(err) => {
-                    return Err(Error::new(
-                        ErrorKind::InvalidOperation,
-                        "could not read template",
-                    )
-                    .with_source(err));
-                }
-            }
-        }
-        Ok(None)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::fs;
 
+    use minijinja::ErrorKind;
     use pretty_assertions::assert_eq;
 
     use super::*;
@@ -140,8 +89,10 @@ mod tests {
         let temp = tempfile::tempdir().expect("create temp dir");
         fs::write(temp.path().join("partial.md"), "included")
             .expect("write partial");
-        let engine = TemplateEngine::new()
-            .with_loader(build_loader(Some(temp.path().to_path_buf()), None));
+        let engine = TemplateEngine::new().with_loader(TemplateLoader::new(
+            Some(temp.path().to_path_buf()),
+            None,
+        ));
 
         let rendered = engine
             .render("{% include \"partial.md\" %}!")
@@ -156,8 +107,8 @@ mod tests {
         let dir = temp.path().join(".traces/templates");
         fs::create_dir_all(&dir).expect("create dotted template dir");
         fs::write(dir.join("daily.md"), "hello").expect("write template");
-        let engine =
-            TemplateEngine::new().with_loader(build_loader(Some(dir), None));
+        let engine = TemplateEngine::new()
+            .with_loader(TemplateLoader::new(Some(dir), None));
 
         let rendered =
             engine.render("{% include \"daily.md\" %}").expect("render");
@@ -170,8 +121,10 @@ mod tests {
         let temp = tempfile::tempdir().expect("create temp dir");
         fs::write(temp.path().join(".draft.md"), "secret")
             .expect("write template");
-        let engine = TemplateEngine::new()
-            .with_loader(build_loader(Some(temp.path().to_path_buf()), None));
+        let engine = TemplateEngine::new().with_loader(TemplateLoader::new(
+            Some(temp.path().to_path_buf()),
+            None,
+        ));
 
         let rendered = engine
             .render("{% include \".draft.md\" %}")
@@ -189,8 +142,10 @@ mod tests {
         fs::create_dir_all(&global_dir).expect("create global dir");
         fs::write(global_dir.join("shared.md"), "from global")
             .expect("write template");
-        let engine = TemplateEngine::new()
-            .with_loader(build_loader(Some(local_dir), Some(global_dir)));
+        let engine = TemplateEngine::new().with_loader(TemplateLoader::new(
+            Some(local_dir),
+            Some(global_dir),
+        ));
 
         let rendered = engine
             .render("{% include \"shared.md\" %}")
@@ -202,12 +157,31 @@ mod tests {
     #[test]
     fn render_reports_a_missing_include_as_a_minijinja_error() {
         let temp = tempfile::tempdir().expect("create temp dir");
-        let engine = TemplateEngine::new()
-            .with_loader(build_loader(Some(temp.path().to_path_buf()), None));
+        let engine = TemplateEngine::new().with_loader(TemplateLoader::new(
+            Some(temp.path().to_path_buf()),
+            None,
+        ));
 
         let error = engine
             .render("{% include \"missing.md\" %}")
             .expect_err("missing include fails to render");
+
+        assert_eq!(error.kind(), ErrorKind::TemplateNotFound);
+    }
+
+    #[test]
+    fn render_never_stem_matches_an_include() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        fs::write(temp.path().join("daily.md"), "hello")
+            .expect("write template");
+        let engine = TemplateEngine::new().with_loader(TemplateLoader::new(
+            Some(temp.path().to_path_buf()),
+            None,
+        ));
+
+        let error = engine
+            .render("{% include \"daily\" %}")
+            .expect_err("extension-less include name is not stem-matched");
 
         assert_eq!(error.kind(), ErrorKind::TemplateNotFound);
     }
