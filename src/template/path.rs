@@ -35,6 +35,19 @@
 //! (unproven) state accidentally accepts a later (already-proven) one
 //! instead, because nothing forced the author to say which they meant.
 //!
+//! [`TemplatePath::<Validated>::find`] takes a [`MatchStrategy`] because
+//! [`super::loader::TemplateLoader`] has exactly one orchestrating entry
+//! point ([`super::loader::TemplateLoader::find`]) for turning a raw
+//! name into a [`TemplatePath<Found>`], used both for top-level `-i
+//! <name>` resolution (stem-matching fallback makes sense for a
+//! user-typed name) and `{% include %}`/`{% extends %}` loading (an
+//! include name is a literal reference, not a shorthand — no fallback).
+//! An earlier version had two separate `TemplateLoader` methods for
+//! this instead of one parameterized by strategy, and a second, separate
+//! place computing "which directories were searched" for the
+//! not-found-because-the-name-itself-was-unsafe case, duplicating what
+//! this method's own search loop already accumulates.
+//!
 //! [`TemplatePathError`] is *one* error type covering this whole
 //! lifecycle — `Absolute`/`UnsafeComponent` from validation,
 //! `AmbiguousTemplate`/`TemplateNotFound` from the search — not split by
@@ -47,19 +60,12 @@
 //! are "things that can go wrong locating/reading a file").
 //!
 //! This file holds the *type* — what a template path is, at each stage
-//! of its life, and every way producing one can fail.
-//! [`super::loader::TemplateLoader`] (a sibling file) holds the
-//! *mechanism*. Unlike an earlier version of this design,
-//! [`TemplatePath::<Validated>::find`] doesn't take `TemplateLoader` at
-//! all — just the two directory paths it actually needs
-//! (`local`/`global`, mirroring `TemplateLoader`'s own fields exactly).
-//! This file has no dependency on `loader.rs` whatsoever: not the
-//! concrete `TemplateLoader` type, and not an intermediary decoupling
-//! type either (an earlier version introduced one purely to avoid a
-//! dependency on `TemplateLoader`, which cost more than the dependency
-//! it avoided). Taking the minimum two `Option<&Path>` parameters
-//! instead means `TemplateLoader::directories()` never needs to be
-//! visible outside `loader.rs` at all.
+//! of its life, and every way producing one can fail — with no
+//! dependency on `loader.rs` at all: [`TemplatePath::<Validated>::find`]
+//! takes the two directory paths it needs directly
+//! (`local`/`global`, mirroring `TemplateLoader`'s own fields exactly),
+//! never the concrete `TemplateLoader` type or an intermediary
+//! decoupling type.
 
 use std::{
     ffi::OsStr,
@@ -116,6 +122,19 @@ impl<State> TemplatePath<State> {
     }
 }
 
+impl<State> AsRef<Path> for TemplatePath<State> {
+    /// The stored path field — relative in every state
+    /// [`TemplatePath`] currently has, including [`Found`]. Distinct
+    /// from [`TemplatePath::<Found>::absolute`], which *computes* an
+    /// owned, joined absolute location rather than borrowing something
+    /// already stored — `AsRef<Path>`'s signature (`&self -> &Path`)
+    /// can only do the latter, so it always means "the stored field,"
+    /// uniformly, never "whichever path is most useful for this state."
+    fn as_ref(&self) -> &Path {
+        &self.path
+    }
+}
+
 /// Errors producing a [`TemplatePath`] — from validating one out of a
 /// raw name ([`Self::Absolute`], [`Self::UnsafeComponent`]) through
 /// finding it on disk ([`Self::AmbiguousTemplate`],
@@ -163,6 +182,19 @@ pub(crate) enum TemplatePathError {
         /// Directories that were searched.
         directories_searched: Vec<PathBuf>,
     },
+}
+
+/// How [`TemplatePath::<Validated>::find`] matches a candidate against a
+/// directory's contents.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum MatchStrategy {
+    /// Only a literal, exact match — no fallback. An include name is a
+    /// reference, not a user-typed shorthand: never matches by stem.
+    Exact,
+    /// An exact match, falling back to a stem match when no exact match
+    /// exists in a directory. What a user-typed `-i daily` needs: `daily`
+    /// should still find `daily.md`.
+    ExactThenStem,
 }
 
 impl TemplatePath<Raw> {
@@ -221,22 +253,24 @@ impl TemplatePath<Validated> {
     }
 
     /// Searches `local` then `global` for this candidate (deduped when
-    /// they're the same directory): an exact match, then a stem match,
-    /// tried one directory at a time (a directory exhausted — exact,
-    /// then stem — before the next is even considered) — so a name
-    /// without an extension still finds `name.md`, but `local` always
+    /// they're the same directory), per `strategy`: an exact match
+    /// always tried first, then (for [`MatchStrategy::ExactThenStem`])
+    /// a stem match — tried one directory at a time (a directory
+    /// exhausted before the next is even considered), so `local` always
     /// wins over `global` regardless of which match strategy found it.
     ///
     /// # Errors
     ///
     /// Returns [`TemplatePathError::AmbiguousTemplate`] when multiple
-    /// files match this candidate's stem within a single directory.
-    /// Returns [`TemplatePathError::TemplateNotFound`] when no match is
-    /// found in either directory.
+    /// files match this candidate's stem within a single directory
+    /// (only possible under [`MatchStrategy::ExactThenStem`]). Returns
+    /// [`TemplatePathError::TemplateNotFound`] when no match is found
+    /// in either directory.
     pub(super) fn find(
         self,
         local: Option<&Path>,
         global: Option<&Path>,
+        strategy: MatchStrategy,
     ) -> Result<TemplatePath<Found>, TemplatePathError> {
         let stem = self.stem();
         let global = global.filter(|dir| Some(*dir) != local);
@@ -258,6 +292,10 @@ impl TemplatePath<Validated> {
                         source: dir,
                     },
                 });
+            }
+
+            if strategy == MatchStrategy::Exact {
+                continue;
             }
 
             let Ok(entries) = fs::read_dir(dir.path()) else {
@@ -298,12 +336,6 @@ impl TemplatePath<Validated> {
             name: self.path,
             directories_searched,
         })
-    }
-}
-
-impl AsRef<Path> for TemplatePath<Validated> {
-    fn as_ref(&self) -> &Path {
-        &self.path
     }
 }
 
@@ -430,7 +462,7 @@ mod tests {
             let file = write_file(temp.path(), "daily.md");
 
             let found = validated("daily.md")
-                .find(Some(temp.path()), None)
+                .find(Some(temp.path()), None, MatchStrategy::ExactThenStem)
                 .expect("find succeeds");
 
             assert_eq!(found.absolute(), file);
@@ -442,10 +474,25 @@ mod tests {
             let file = write_file(temp.path(), "daily.md");
 
             let found = validated("daily")
-                .find(Some(temp.path()), None)
+                .find(Some(temp.path()), None, MatchStrategy::ExactThenStem)
                 .expect("find succeeds");
 
             assert_eq!(found.absolute(), file);
+        }
+
+        #[test]
+        fn exact_strategy_does_not_stem_match() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_file(temp.path(), "daily.md");
+
+            assert!(matches!(
+                validated("daily").find(
+                    Some(temp.path()),
+                    None,
+                    MatchStrategy::Exact
+                ),
+                Err(TemplatePathError::TemplateNotFound { .. })
+            ));
         }
 
         #[test]
@@ -456,12 +503,19 @@ mod tests {
             fs::write(temp.path().join("daily.txt"), "content")
                 .expect("write template");
 
-            match validated("daily").find(Some(temp.path()), None) {
+            match validated("daily").find(
+                Some(temp.path()),
+                None,
+                MatchStrategy::ExactThenStem,
+            ) {
                 Err(TemplatePathError::AmbiguousTemplate {
                     candidates,
                     ..
                 }) => assert_eq!(candidates.len(), 2),
-                result => panic!("expected AmbiguousTemplate, got {result:?}"),
+                result => assert!(matches!(
+                    result,
+                    Err(TemplatePathError::AmbiguousTemplate { .. })
+                )),
             }
         }
 
@@ -472,7 +526,7 @@ mod tests {
             let file = write_file(temp.path(), "daily.md");
 
             let found = validated("daily")
-                .find(Some(temp.path()), None)
+                .find(Some(temp.path()), None, MatchStrategy::ExactThenStem)
                 .expect("find succeeds");
 
             assert_eq!(found.absolute(), file);
@@ -491,7 +545,11 @@ mod tests {
             write_file(&global_dir, "daily");
 
             let found = validated("daily")
-                .find(Some(&local_dir), Some(&global_dir))
+                .find(
+                    Some(&local_dir),
+                    Some(&global_dir),
+                    MatchStrategy::ExactThenStem,
+                )
                 .expect("find succeeds");
 
             assert_eq!(found.absolute(), local_file);
@@ -506,7 +564,11 @@ mod tests {
             let file = write_file(&global_dir, "daily.md");
 
             let found = validated("daily")
-                .find(Some(&local_dir), Some(&global_dir))
+                .find(
+                    Some(&local_dir),
+                    Some(&global_dir),
+                    MatchStrategy::ExactThenStem,
+                )
                 .expect("find succeeds");
 
             assert_eq!(found.absolute(), file);
@@ -520,15 +582,21 @@ mod tests {
             fs::create_dir_all(&local_dir).expect("create local dir");
             fs::create_dir_all(&global_dir).expect("create global dir");
 
-            match validated("missing").find(Some(&local_dir), Some(&global_dir))
-            {
+            match validated("missing").find(
+                Some(&local_dir),
+                Some(&global_dir),
+                MatchStrategy::ExactThenStem,
+            ) {
                 Err(TemplatePathError::TemplateNotFound {
                     directories_searched,
                     ..
                 }) => assert_eq!(directories_searched, vec![
                     local_dir, global_dir
                 ]),
-                result => panic!("expected TemplateNotFound, got {result:?}"),
+                result => assert!(matches!(
+                    result,
+                    Err(TemplatePathError::TemplateNotFound { .. })
+                )),
             }
         }
 
@@ -537,14 +605,19 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::create_dir_all(temp.path()).expect("temp dir exists");
 
-            match validated("missing")
-                .find(Some(temp.path()), Some(temp.path()))
-            {
+            match validated("missing").find(
+                Some(temp.path()),
+                Some(temp.path()),
+                MatchStrategy::ExactThenStem,
+            ) {
                 Err(TemplatePathError::TemplateNotFound {
                     directories_searched,
                     ..
                 }) => assert_eq!(directories_searched, vec![temp.path()]),
-                result => panic!("expected TemplateNotFound, got {result:?}"),
+                result => assert!(matches!(
+                    result,
+                    Err(TemplatePathError::TemplateNotFound { .. })
+                )),
             }
         }
     }

@@ -18,8 +18,8 @@ use std::path::{Path, PathBuf};
 /// argument read any file the process could see, which is exactly the
 /// untrusted-content attack this type rules out by construction:
 /// [`super::path::TemplatePath::<super::path::Found>`] can only be
-/// produced by [`super::loader::TemplateLoader::find`]/`find_exact`,
-/// both of which build a `TemplateSourceDir` straight from
+/// produced by [`super::loader::TemplateLoader::find`], which builds a
+/// `TemplateSourceDir` straight from
 /// [`super::loader::TemplateLoader`]'s own `local`/`global` fields —
 /// never from anywhere else.
 #[derive(Clone, Debug, Eq, PartialEq)]

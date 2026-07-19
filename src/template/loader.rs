@@ -7,21 +7,36 @@
 //! directory" is true by construction this way, rather than needing a
 //! runtime invariant nobody enforces.
 //!
-//! [`Self::find`] and [`Self::find_exact`] are this type's two
-//! orchestrating entry points, deliberately consistent with each other:
-//! both take the *raw* `-i <name>`/include name and handle their own
-//! validation internally, rather than requiring a caller to pre-validate
-//! (an earlier version had `find_exact` take an
-//! already-`TemplatePath<Validated>` candidate, which pushed validation onto
-//! its one caller, [`Self::load`], duplicating the exact
-//! `TemplatePath::<Raw>::new(name).validate()` step [`Self::find`] already
-//! does). They differ only in match strategy: [`Self::find`]'s stem-matching
-//! fallback makes sense for a user-typed `-i daily`; an include name should be
-//! exact, not fuzzy — see [`Self::find_exact`]'s docs. [`Self::directories`]
-//! (the shared local-then-global, deduped walk both build on) stays fully
-//! private — nothing outside this file calls it, unlike an earlier version
-//! where [`super::path::TemplatePath::<super::path::Validated>::find`] took a
-//! `&TemplateLoader` and needed it exposed.
+//! [`Self::find`] is this type's *one* orchestrating entry point for
+//! producing a [`TemplatePath<Found>`]: it takes the raw `-i
+//! <name>`/include name, validates it, and hands the search off to
+//! [`TemplatePath::<Validated>::find`], parameterized by
+//! [`super::path::MatchStrategy`]. An earlier version had two separate
+//! methods here (`find` and `find_exact`) that each independently
+//! validated the raw name — this collapses them: [`Self::load`] (the
+//! `{% include %}`/`{% extends %}` case, which wants
+//! [`super::path::MatchStrategy::Exact`] — an include name is a literal
+//! reference, not a user-typed shorthand) and
+//! [`super::service::TemplateService::resolve`] (the top-level `-i
+//! <name>` case, which wants
+//! [`super::path::MatchStrategy::ExactThenStem`]) both go through this
+//! same method now, differing only in which strategy they pass.
+//!
+//! `name` is validated before any directory is searched — absolute
+//! paths and `..` traversal are never resolved, deliberately: this
+//! crate never renders a file the user hasn't placed under a configured
+//! template directory. A `name` that fails validation collapses into
+//! the same [`TemplatePathError::TemplateNotFound`] an ordinary miss
+//! produces: reporting "that path is unsafe" separately from "no such
+//! template" would let a caller distinguish a traversal attempt from a
+//! typo, an oracle this crate has no reason to offer. That collapse is
+//! why [`Self::find`] computes its own `directories_searched` list
+//! inline rather than delegating to
+//! [`TemplatePath::<Validated>::find`]'s own accumulation — validation
+//! failure never produces a [`TemplatePath<Validated>`] to call that
+//! method on in the first place. Inline, not a separate method: with at
+//! most one local and one global directory, ever, the list is two
+//! `Option`s flattened, not worth a named helper.
 //!
 //! [`Self::load`] is minijinja's loader glue, but it never calls
 //! `minijinja::path_loader` —
@@ -33,8 +48,9 @@
 //! internal `safe_join` rejects any dot-prefixed segment in the
 //! *requested template name* (see `minijinja` 2.21.0's `src/loader.rs`)
 //! — e.g. `{% include ".draft.md" %}` fails to load even though the file
-//! exists. [`Self::find_exact`] instead does its own [`TemplatePath`]
-//! validation plus a plain [`Path::join`] — an ordinary path join has no
+//! exists. [`Self::find`] instead does its own [`TemplatePath`]
+//! validation plus a plain [`Path::join`] (inside
+//! [`TemplatePath::<Found>::absolute`]) — an ordinary path join has no
 //! special treatment of `.` in *any* segment, directory or leaf, so both
 //! a dot-prefixed template directory (this project's own default,
 //! `.traces/templates`) and a dot-prefixed include name just work;
@@ -49,7 +65,7 @@ use std::{
 
 use minijinja::{Error, ErrorKind};
 
-use super::path::{Found, Raw, TemplatePath, TemplatePathError};
+use super::path::{Found, MatchStrategy, Raw, TemplatePath, TemplatePathError};
 use crate::config::Config;
 
 /// Searches configured template directories, local first then global,
@@ -85,85 +101,57 @@ impl TemplateLoader {
         }
     }
 
-    /// Every directory this loader searches, in priority order, deduped
-    /// when local and global are the same directory — for
-    /// [`TemplatePathError::TemplateNotFound`]'s diagnostic list on the
-    /// "the raw name itself was unsafe" path, where
-    /// [`super::path::TemplatePath::<Validated>::find`] never runs to
-    /// produce its own list.
-    fn directories_searched(&self) -> Vec<PathBuf> {
-        let global = self
-            .global
-            .as_deref()
-            .filter(|dir| Some(*dir) != self.local.as_deref());
-        self.local
-            .iter()
-            .map(PathBuf::as_path)
-            .chain(global)
-            .map(Path::to_path_buf)
-            .collect()
-    }
-
-    /// Resolves a raw `-i <name>` argument to a [`TemplatePath<Found>`]
-    /// — validates `name`, then hands the search off to
-    /// [`TemplatePath::<Validated>::find`].
-    ///
-    /// `name` is validated before any directory is searched — absolute
-    /// paths and `..` traversal are never resolved, deliberately: this
-    /// crate never renders a file the user hasn't placed under a
-    /// configured template directory. A `name` that fails validation
-    /// collapses into the same [`TemplatePathError::TemplateNotFound`]
-    /// an ordinary miss produces: reporting "that path is unsafe"
-    /// separately from "no such template" would let a caller distinguish
-    /// a traversal attempt from a typo, an oracle this crate has no
-    /// reason to offer.
+    /// Resolves a raw `-i <name>`/include name to a
+    /// [`TemplatePath<Found>`] — validates `name`, then hands the
+    /// search off to [`TemplatePath::<Validated>::find`] with the given
+    /// `strategy`. This loader's one orchestrating entry point: the
+    /// full raw-name-to-located-file typestate progression
+    /// ([`Raw`] -> [`super::path::Validated`] -> [`Found`]), in one
+    /// place.
     ///
     /// # Errors
     ///
     /// Returns [`TemplatePathError::AmbiguousTemplate`] when multiple
-    /// files match `name`'s stem within a single directory. Returns
+    /// files match `name`'s stem within a single directory (only
+    /// possible under [`MatchStrategy::ExactThenStem`]). Returns
     /// [`TemplatePathError::TemplateNotFound`] when `name` is unsafe or
     /// no match is found in any searched directory.
     pub(super) fn find(
         &self,
         name: &Path,
+        strategy: MatchStrategy,
     ) -> Result<TemplatePath<Found>, TemplatePathError> {
-        let Ok(validated) = TemplatePath::<Raw>::new(name).validate() else {
-            return Err(TemplatePathError::TemplateNotFound {
+        TemplatePath::<Raw>::new(name)
+            .validate()
+            .map_err(|_| TemplatePathError::TemplateNotFound {
                 name: name.to_path_buf(),
-                directories_searched: self.directories_searched(),
-            });
-        };
-        validated.find(self.local.as_deref(), self.global.as_deref())
+                directories_searched: [
+                    self.local.as_deref(),
+                    self.global.as_deref(),
+                ]
+                .into_iter()
+                .flatten()
+                .map(Path::to_path_buf)
+                .collect(),
+            })?
+            .find(self.local.as_deref(), self.global.as_deref(), strategy)
     }
 
-    /// Resolves `name` to an absolute path via an exact match only — no
-    /// stem-matching fallback, unlike [`Self::find`] — an include name
-    /// is a literal reference, not a user-typed shorthand. Validates
-    /// `name` internally; failing validation (traversal, absolute)
-    /// behaves the same as a missing include: `None`, not an error —
+    /// Reads `name` from the first directory it exists in via an exact
+    /// match only — the minijinja loader glue for
+    /// `{% include %}`/`{% extends %}`. Any failure to resolve `name`
+    /// (unsafe input, no match) reports as `None`, not an error —
     /// matching [`Self::find`]'s anti-oracle stance on unsafe input.
-    fn find_exact(&self, name: &Path) -> Option<PathBuf> {
-        let candidate = TemplatePath::<Raw>::new(name).validate().ok()?;
-        [self.local.as_deref(), self.global.as_deref()]
-            .into_iter()
-            .flatten()
-            .find(|dir| candidate.exists_in(dir))
-            .map(|dir| dir.join(&candidate))
-    }
-
-    /// Reads `name` from the first directory it exists in — the
-    /// minijinja loader glue for `{% include %}`/`{% extends %}`.
     ///
     /// # Errors
     ///
     /// Returns a [`minijinja::Error`] when a matched file exists but
     /// can't be read.
     pub(super) fn load(&self, name: &str) -> Result<Option<String>, Error> {
-        let Some(path) = self.find_exact(Path::new(name)) else {
+        let Ok(found) = self.find(Path::new(name), MatchStrategy::Exact) else {
             return Ok(None);
         };
-        match fs::read_to_string(&path) {
+        match fs::read_to_string(found.absolute()) {
             Ok(source) => Ok(Some(source)),
             Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(None),
             Err(err) => Err(Error::new(
@@ -200,42 +188,14 @@ mod tests {
     }
 
     #[test]
-    fn find_exact_matches_a_literal_name() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let file = write_file(temp.path(), "daily.md");
-        let loader = TemplateLoader::new(Some(temp.path().to_path_buf()), None);
-
-        let found =
-            loader.find_exact(Path::new("daily.md")).expect("find exact match");
-
-        assert_eq!(found, file);
-    }
-
-    #[test]
-    fn find_exact_does_not_stem_match() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        write_file(temp.path(), "daily.md");
-        let loader = TemplateLoader::new(Some(temp.path().to_path_buf()), None);
-
-        assert!(loader.find_exact(Path::new("daily")).is_none());
-    }
-
-    #[test]
-    fn find_exact_returns_none_for_an_unsafe_name_instead_of_erroring() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        write_file(temp.path(), "secret.md");
-        let loader = TemplateLoader::new(Some(temp.path().to_path_buf()), None);
-
-        assert!(loader.find_exact(Path::new("../secret.md")).is_none());
-    }
-
-    #[test]
     fn find_delegates_to_the_validated_candidates_own_find() {
         let temp = tempfile::tempdir().expect("create temp dir");
         let file = write_file(temp.path(), "daily.md");
         let loader = TemplateLoader::new(Some(temp.path().to_path_buf()), None);
 
-        let found = loader.find(Path::new("daily")).expect("find succeeds");
+        let found = loader
+            .find(Path::new("daily"), MatchStrategy::ExactThenStem)
+            .expect("find succeeds");
 
         assert_eq!(found.absolute(), file);
     }
@@ -253,7 +213,7 @@ mod tests {
         // directories, so an absolute path to a real file must still
         // miss — not be treated as "found by exact path".
         assert!(matches!(
-            loader.find(&outside_file),
+            loader.find(&outside_file, MatchStrategy::ExactThenStem),
             Err(TemplatePathError::TemplateNotFound { .. })
         ));
     }
@@ -267,7 +227,8 @@ mod tests {
         let loader = TemplateLoader::new(Some(local_dir), None);
 
         assert!(matches!(
-            loader.find(Path::new("../secret.md")),
+            loader
+                .find(Path::new("../secret.md"), MatchStrategy::ExactThenStem),
             Err(TemplatePathError::TemplateNotFound { .. })
         ));
     }
@@ -278,7 +239,7 @@ mod tests {
         let loader = TemplateLoader::new(Some(temp.path().to_path_buf()), None);
 
         assert!(matches!(
-            loader.find(Path::new("")),
+            loader.find(Path::new(""), MatchStrategy::ExactThenStem),
             Err(TemplatePathError::TemplateNotFound { .. })
         ));
     }
@@ -290,13 +251,41 @@ mod tests {
         fs::create_dir_all(&dir).expect("create templates dir");
         let loader = TemplateLoader::new(Some(dir.clone()), Some(dir.clone()));
 
-        match loader.find(Path::new("missing")) {
+        match loader.find(Path::new("missing"), MatchStrategy::ExactThenStem) {
             Err(TemplatePathError::TemplateNotFound {
                 directories_searched,
                 ..
             }) => assert_eq!(directories_searched, vec![dir]),
-            result => panic!("expected TemplateNotFound, got {result:?}"),
+            result => assert!(matches!(
+                result,
+                Err(TemplatePathError::TemplateNotFound { .. })
+            )),
         }
+    }
+
+    #[test]
+    fn find_exact_matches_a_literal_name() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let file = write_file(temp.path(), "daily.md");
+        let loader = TemplateLoader::new(Some(temp.path().to_path_buf()), None);
+
+        let found = loader
+            .find(Path::new("daily.md"), MatchStrategy::Exact)
+            .expect("find exact match");
+
+        assert_eq!(found.absolute(), file);
+    }
+
+    #[test]
+    fn find_exact_does_not_stem_match() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        write_file(temp.path(), "daily.md");
+        let loader = TemplateLoader::new(Some(temp.path().to_path_buf()), None);
+
+        assert!(matches!(
+            loader.find(Path::new("daily"), MatchStrategy::Exact),
+            Err(TemplatePathError::TemplateNotFound { .. })
+        ));
     }
 
     #[test]
@@ -355,7 +344,9 @@ mod tests {
         );
         let loader = TemplateLoader::from(&config);
 
-        let found = loader.find(Path::new("daily")).expect("find succeeds");
+        let found = loader
+            .find(Path::new("daily"), MatchStrategy::ExactThenStem)
+            .expect("find succeeds");
 
         assert_eq!(found.absolute(), file);
     }
@@ -375,7 +366,9 @@ mod tests {
         );
         let loader = TemplateLoader::from(&config);
 
-        let found = loader.find(Path::new("daily")).expect("find succeeds");
+        let found = loader
+            .find(Path::new("daily"), MatchStrategy::ExactThenStem)
+            .expect("find succeeds");
 
         assert_eq!(found.absolute(), local_file);
     }
