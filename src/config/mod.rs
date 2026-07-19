@@ -4,9 +4,8 @@
 //! directory. Build records discovered candidates as best-effort tracking,
 //! then merges the user's global config before local `.traces/config.toml` so
 //! local values win. Provides the crate-internal [`ConfigService`] entry
-//! point plus read-only config domain types. [`DiscoveryOutcome`] is the
-//! opaque token connecting `ConfigService::discover` to
-//! `ConfigService::build`.
+//! point plus read-only config domain types. [`DiscoveryOutcome`] is the opaque
+//! token parsed into the selected config-builder input.
 //!
 //! `pub(crate)`, not `pub`: this module is private in `lib.rs` (only `cli`,
 //! a sibling module in the same crate, consumes it — nothing outside this
@@ -27,24 +26,31 @@
 //! module's private `store`/`trust` submodules) are only observable
 //! through the `#[source]` chain of the three re-exported types above and
 //! [`ConfigService`]'s admin methods — they cannot be named directly from
-//! outside `config`.
+//! outside `config`. [`ConfigFile`] is re-exported only so the CLI can consume
+//! resolved local config targets without a duplicate trust-target type.
 
-pub(crate) use builder::ConfigBuilderError;
-pub(crate) use discovery::{
-    DiscoveryError, DiscoveryOutcome, LOCAL_CONFIG_FILE,
-};
-pub(crate) use domain::{Config, ResolutionError, ResolvedTemplate};
+#![cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "config loading is implemented before the render command \
+                  consumes it"
+    )
+)]
+
+pub(crate) use discovery::LOCAL_CONFIG_FILE;
+pub(crate) use file::{ConfigFile, Discovered as DiscoveredConfigFile};
 pub(crate) use raw::RawConfig;
 pub(crate) use service::ConfigService;
-pub(crate) use trust::{
-    ResolvedTrustTarget, TrustError, TrustState, TrustTarget, TrustTargetError,
-};
+#[cfg(test)]
+pub(crate) use trust::TrustState;
+pub(crate) use trust::TrustTarget;
 
 mod builder;
-mod candidate;
 mod dirs;
 mod discovery;
 mod domain;
+mod file;
 mod raw;
 mod service;
 mod store;

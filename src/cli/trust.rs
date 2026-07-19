@@ -12,7 +12,7 @@ use clap::{ArgGroup, Args, Subcommand};
 use super::error::ConfigTrustCliError;
 use crate::{
     Cwd,
-    config::{ConfigService, ResolvedTrustTarget},
+    config::{ConfigFile, ConfigService, DiscoveredConfigFile, TrustTarget},
 };
 
 /// `traces trust [PATH]` / `traces trust --show` / `traces trust --untrust`.
@@ -85,7 +85,7 @@ impl TrustArgs {
         service: &ConfigService,
     ) -> Result<(), ConfigTrustCliError> {
         for target in self.targets()? {
-            service.trust(target.as_trust_target()).map_err(|source| {
+            service.trust_config_file(&target).map_err(|source| {
                 ConfigTrustCliError::Trust {
                     root: target.root().to_path_buf(),
                     source: Box::new(source),
@@ -123,19 +123,22 @@ impl TrustArgs {
     fn show(&self, service: &ConfigService) -> Result<(), ConfigTrustCliError> {
         for target in self.targets()? {
             let state = service
-                .is_trusted(target.root(), target.config_file())
+                .is_trusted(TrustTarget::File(target.path()))
                 .map_err(|source| ConfigTrustCliError::Show {
                     root: target.root().to_path_buf(),
                     source: Box::new(source),
                 })?;
-            println!("{}\t{}", target.config_file().display(), state.as_str());
+            println!("{}\t{}", target.path().display(), state.as_str());
         }
         Ok(())
     }
 
     /// Resolve one or many trust targets from the current directory and
     /// optional user-provided path.
-    fn targets(&self) -> Result<Vec<ResolvedTrustTarget>, ConfigTrustCliError> {
+    fn targets(
+        &self,
+    ) -> Result<Vec<ConfigFile<DiscoveredConfigFile>>, ConfigTrustCliError>
+    {
         let cwd = current_dir()?;
         ConfigService::resolve_trust_targets(
             &cwd,
@@ -344,7 +347,9 @@ mod tests {
                 root.canonicalize().expect("canonicalize root")
             ]);
             assert_eq!(
-                service.is_trusted(&root, &config_file).expect("check trust"),
+                service
+                    .is_trusted(TrustTarget::File(&config_file))
+                    .expect("check trust"),
                 crate::config::TrustState::Trusted
             );
         }
@@ -411,7 +416,9 @@ mod tests {
             args.run(&service).expect("untrust root");
 
             assert_eq!(
-                service.is_trusted(&root, &config_file).expect("check trust"),
+                service
+                    .is_trusted(TrustTarget::File(&config_file))
+                    .expect("check trust"),
                 crate::config::TrustState::Untrusted
             );
         }

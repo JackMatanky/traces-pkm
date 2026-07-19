@@ -2,11 +2,10 @@
 //!
 //! Walks up the directory tree from a cwd path, collecting candidate
 //! config files before any reading or parsing occurs. Produces a
-//! [`DiscoveryOutcome`] token consumed by
-//! [`ConfigService::build`](super::ConfigService::build).
+//! [`DiscoveryOutcome`] token consumed by the config builder pipeline.
 
 use std::{
-    io,
+    fs, io,
     marker::PhantomData,
     path::{Path, PathBuf},
 };
@@ -14,8 +13,8 @@ use std::{
 use thiserror::Error;
 
 use super::{
-    candidate::{CandidateConfigFile, ConfigSource},
     dirs,
+    file::{ConfigFile, ConfigFileError, Discovered},
 };
 
 /// The local project config file's path, relative to a project root.
@@ -25,6 +24,92 @@ use super::{
 /// literal — re-exported at [`super::LOCAL_CONFIG_FILE`].
 pub(crate) const LOCAL_CONFIG_FILE: &str = ".traces/config.toml";
 const GLOBAL_CONFIG_FILE: &str = "traces/config.toml";
+
+/// Discovery operation to run.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum DiscoveryType {
+    /// Find the nearest local config and optional global config.
+    Full,
+    /// Find only the nearest local config.
+    NearestLocal,
+    /// Find the nearest local config plus descendant local configs.
+    LocalSubtree,
+}
+
+/// Filesystem anchor for a discovery operation.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum DiscoveryAnchor {
+    /// Directory-rooted discovery.
+    Directory(PathBuf),
+    /// File-rooted discovery.
+    File(PathBuf),
+}
+
+/// Input to [`DiscoveryEngine::process`].
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct DiscoveryContext {
+    kind: DiscoveryType,
+    anchor: DiscoveryAnchor,
+}
+
+impl DiscoveryAnchor {
+    /// The path carried by this filesystem anchor.
+    #[inline]
+    #[must_use]
+    pub(super) fn path(&self) -> &Path {
+        match self {
+            Self::Directory(path) | Self::File(path) => path,
+        }
+    }
+}
+
+impl DiscoveryContext {
+    /// Creates a discovery context after validating kind/anchor combinations.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DiscoveryContextError::UnsupportedFileAnchor`] when full
+    /// discovery is given a file anchor. Full loading is always cwd/directory
+    /// rooted; focused local discovery may be rooted at either a directory or
+    /// a concrete local config file.
+    #[inline]
+    pub(crate) fn new(
+        kind: DiscoveryType,
+        anchor: DiscoveryAnchor,
+    ) -> Result<Self, DiscoveryContextError> {
+        if matches!(kind, DiscoveryType::Full)
+            && let DiscoveryAnchor::File(path) = &anchor
+        {
+            return Err(DiscoveryContextError::UnsupportedFileAnchor {
+                kind,
+                path: path.clone(),
+            });
+        }
+        Ok(Self {
+            kind,
+            anchor,
+        })
+    }
+
+    /// Consumes the context into its validated parts.
+    #[inline]
+    pub(super) fn into_parts(self) -> (DiscoveryType, DiscoveryAnchor) {
+        (self.kind, self.anchor)
+    }
+}
+
+/// Errors constructing a discovery context.
+#[derive(Debug, Error)]
+pub(crate) enum DiscoveryContextError {
+    /// This discovery kind does not support file-rooted discovery.
+    #[error("{kind:?} discovery cannot be anchored at file {path}")]
+    UnsupportedFileAnchor {
+        /// Discovery kind.
+        kind: DiscoveryType,
+        /// Unsupported file anchor path.
+        path: PathBuf,
+    },
+}
 
 /// Errors during config file discovery (file-walking, not read/parse).
 ///
@@ -49,56 +134,248 @@ pub(crate) enum DiscoveryError {
         #[source]
         source: io::Error,
     },
+    /// A discovered config file path/source combination was invalid.
+    #[error(transparent)]
+    ConfigFile(#[from] ConfigFileError),
+    /// Discovery context construction failed.
+    #[error(transparent)]
+    Context(#[from] DiscoveryContextError),
 }
 
-/// Opaque discovery result consumed by
-/// [`ConfigService::build`](super::ConfigService::build).
+/// Opaque discovery result consumed by the config builder pipeline.
 ///
-/// Carries the invocation cwd plus the local and global candidate files
-/// that were found on disk. Fields are private — callers pass this token
-/// through unchanged.
+/// Carries the discovery kind, the original filesystem anchor, and config
+/// files found on disk. Fields are private — callers pass this token through
+/// unchanged or parse it into a validated downstream input.
 #[derive(Clone, Debug)]
 pub(crate) struct DiscoveryOutcome {
-    cwd: PathBuf,
-    local: Box<[CandidateConfigFile]>,
-    global: Box<[CandidateConfigFile]>,
+    kind: DiscoveryType,
+    anchor: DiscoveryAnchor,
+    local: Box<[ConfigFile<Discovered>]>,
+    global: Box<[ConfigFile<Discovered>]>,
 }
 
+type OutcomeParts = (
+    DiscoveryType,
+    DiscoveryAnchor,
+    Box<[ConfigFile<Discovered>]>,
+    Box<[ConfigFile<Discovered>]>,
+);
+
 impl DiscoveryOutcome {
-    /// Creates a new outcome from the results of a discovery walk.
+    /// Creates a full-discovery outcome from a directory anchor.
     #[inline]
     #[must_use]
     pub(super) fn new(
-        cwd: PathBuf,
-        local: Vec<CandidateConfigFile>,
-        global: Vec<CandidateConfigFile>,
+        anchor: DiscoveryAnchor,
+        local: Vec<ConfigFile<Discovered>>,
+        global: Vec<ConfigFile<Discovered>>,
+    ) -> Self {
+        Self::with_kind(DiscoveryType::Full, anchor, local, global)
+    }
+
+    /// Creates an outcome from the results of a discovery operation.
+    #[inline]
+    #[must_use]
+    pub(super) fn with_kind(
+        kind: DiscoveryType,
+        anchor: DiscoveryAnchor,
+        local: Vec<ConfigFile<Discovered>>,
+        global: Vec<ConfigFile<Discovered>>,
     ) -> Self {
         Self {
-            cwd,
+            kind,
+            anchor,
             local: local.into_boxed_slice(),
             global: global.into_boxed_slice(),
         }
     }
 
-    /// The working directory used during discovery.
+    /// The discovery operation that produced this outcome.
     #[inline]
     #[must_use]
-    pub(super) fn cwd(&self) -> &Path {
-        &self.cwd
+    pub(crate) fn kind(&self) -> DiscoveryType {
+        self.kind
+    }
+
+    /// The filesystem anchor used for discovery.
+    #[inline]
+    #[must_use]
+    pub(crate) fn anchor(&self) -> &DiscoveryAnchor {
+        &self.anchor
     }
 
     /// Local config candidates found during discovery (empty if none).
     #[inline]
     #[must_use]
-    pub(super) fn local(&self) -> &[CandidateConfigFile] {
+    pub(super) fn local(&self) -> &[ConfigFile<Discovered>] {
         &self.local
     }
 
     /// Global config candidates found during discovery (empty if none).
     #[inline]
     #[must_use]
-    pub(super) fn global(&self) -> &[CandidateConfigFile] {
+    pub(super) fn global(&self) -> &[ConfigFile<Discovered>] {
         &self.global
+    }
+
+    /// Consumes the outcome into its private fields for builder input parsing.
+    #[inline]
+    pub(super) fn into_parts(self) -> OutcomeParts {
+        (self.kind, self.anchor, self.local, self.global)
+    }
+}
+
+/// Stateless discovery orchestrator.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct DiscoveryEngine;
+
+impl DiscoveryEngine {
+    /// Runs the discovery operation described by `context`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DiscoveryError`] when required local config is absent or when
+    /// discovery cannot inspect a filesystem path.
+    #[inline]
+    #[expect(
+        clippy::unused_self,
+        reason = "ZST keeps the orchestrator seam open for future discovery \
+                  policy"
+    )]
+    pub(crate) fn process(
+        self,
+        context: DiscoveryContext,
+    ) -> Result<DiscoveryOutcome, DiscoveryError> {
+        let (kind, anchor) = context.into_parts();
+        match kind {
+            DiscoveryType::Full => Self::full(anchor),
+            DiscoveryType::NearestLocal => Self::nearest_local(anchor),
+            DiscoveryType::LocalSubtree => Self::local_subtree(anchor),
+        }
+    }
+
+    fn full(
+        anchor: DiscoveryAnchor,
+    ) -> Result<DiscoveryOutcome, DiscoveryError> {
+        let cwd = match anchor {
+            DiscoveryAnchor::Directory(cwd) => cwd,
+            DiscoveryAnchor::File(path) => {
+                return Err(DiscoveryContextError::UnsupportedFileAnchor {
+                    kind: DiscoveryType::Full,
+                    path,
+                }
+                .into());
+            }
+        };
+        DiscoveryProcessor::new(&cwd)
+            .collect_local()?
+            .collect_global()
+            .map(DiscoveryProcessor::finish)
+    }
+
+    fn nearest_local(
+        anchor: DiscoveryAnchor,
+    ) -> Result<DiscoveryOutcome, DiscoveryError> {
+        let local = Self::local_from_anchor(&anchor)?;
+        Ok(DiscoveryOutcome::with_kind(
+            DiscoveryType::NearestLocal,
+            anchor,
+            vec![local],
+            Vec::new(),
+        ))
+    }
+
+    fn local_subtree(
+        anchor: DiscoveryAnchor,
+    ) -> Result<DiscoveryOutcome, DiscoveryError> {
+        let nearest = Self::local_from_anchor(&anchor)?;
+        let root = nearest.root().to_path_buf();
+        let mut local = vec![nearest];
+        Self::collect_descendant_configs(&root, &mut local)?;
+        local.sort_by(|left, right| left.root().cmp(right.root()));
+        local.dedup_by(|left, right| left.root() == right.root());
+        Ok(DiscoveryOutcome::with_kind(
+            DiscoveryType::LocalSubtree,
+            anchor,
+            local,
+            Vec::new(),
+        ))
+    }
+
+    fn local_from_anchor(
+        anchor: &DiscoveryAnchor,
+    ) -> Result<ConfigFile<Discovered>, DiscoveryError> {
+        match anchor {
+            DiscoveryAnchor::File(path) => {
+                ConfigFile::<Discovered>::local(path.clone())
+                    .map_err(Into::into)
+            }
+            DiscoveryAnchor::Directory(dir) => {
+                Self::nearest_local_from_dir(dir)
+            }
+        }
+    }
+
+    fn nearest_local_from_dir(
+        cwd: &Path,
+    ) -> Result<ConfigFile<Discovered>, DiscoveryError> {
+        for ancestor in cwd.ancestors() {
+            let path = ancestor.join(LOCAL_CONFIG_FILE);
+            if Self::is_config_file(&path)? {
+                return ConfigFile::<Discovered>::local(path)
+                    .map_err(Into::into);
+            }
+        }
+        Err(DiscoveryError::LocalConfigAbsent {
+            cwd: cwd.to_path_buf(),
+        })
+    }
+
+    fn collect_descendant_configs(
+        dir: &Path,
+        configs: &mut Vec<ConfigFile<Discovered>>,
+    ) -> Result<(), DiscoveryError> {
+        let config_file = dir.join(LOCAL_CONFIG_FILE);
+        if Self::is_config_file(&config_file)? {
+            configs.push(ConfigFile::<Discovered>::local(config_file)?);
+        }
+
+        for entry in fs::read_dir(dir).map_err(|source| {
+            DiscoveryError::PathInaccessible {
+                path: dir.to_path_buf(),
+                source,
+            }
+        })? {
+            let entry =
+                entry.map_err(|source| DiscoveryError::PathInaccessible {
+                    path: dir.to_path_buf(),
+                    source,
+                })?;
+            let file_type = entry.file_type().map_err(|source| {
+                DiscoveryError::PathInaccessible {
+                    path: entry.path(),
+                    source,
+                }
+            })?;
+            if file_type.is_dir() {
+                Self::collect_descendant_configs(&entry.path(), configs)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn is_config_file(path: &Path) -> Result<bool, DiscoveryError> {
+        match path.metadata() {
+            Ok(metadata) => Ok(metadata.is_file()),
+            Err(source) if source.kind() == io::ErrorKind::NotFound => {
+                Ok(false)
+            }
+            Err(source) => Err(DiscoveryError::PathInaccessible {
+                path: path.to_path_buf(),
+                source,
+            }),
+        }
     }
 }
 
@@ -121,8 +398,8 @@ pub(super) struct GlobalCollected;
 #[derive(Debug)]
 pub(super) struct DiscoveryProcessor<State> {
     cwd: PathBuf,
-    local: Vec<CandidateConfigFile>,
-    global: Vec<CandidateConfigFile>,
+    local: Vec<ConfigFile<Discovered>>,
+    global: Vec<ConfigFile<Discovered>>,
     _state: PhantomData<State>,
 }
 
@@ -157,11 +434,8 @@ impl DiscoveryProcessor<Init> {
         } = self;
         for ancestor in cwd.ancestors() {
             let path = ancestor.join(LOCAL_CONFIG_FILE);
-            if is_config_file(&path)? {
-                local.push(CandidateConfigFile::new(
-                    ancestor.to_path_buf(),
-                    ConfigSource::Local(path),
-                ));
+            if DiscoveryEngine::is_config_file(&path)? {
+                local.push(ConfigFile::<Discovered>::local(path)?);
                 break;
             }
         }
@@ -198,15 +472,8 @@ impl DiscoveryProcessor<LocalCollected> {
             mut global,
             ..
         } = self;
-        if is_config_file(&global_config_path)? {
-            let root = global_config_path
-                .parent()
-                .unwrap_or_else(|| Path::new(""))
-                .to_path_buf();
-            global.push(CandidateConfigFile::new(
-                root,
-                ConfigSource::Global(global_config_path),
-            ));
+        if DiscoveryEngine::is_config_file(&global_config_path)? {
+            global.push(ConfigFile::<Discovered>::global(global_config_path)?);
         }
         Ok(DiscoveryProcessor {
             cwd,
@@ -222,18 +489,11 @@ impl DiscoveryProcessor<GlobalCollected> {
     #[inline]
     #[must_use]
     pub(super) fn finish(self) -> DiscoveryOutcome {
-        DiscoveryOutcome::new(self.cwd, self.local, self.global)
-    }
-}
-
-fn is_config_file(path: &Path) -> Result<bool, DiscoveryError> {
-    match path.metadata() {
-        Ok(metadata) => Ok(metadata.is_file()),
-        Err(source) if source.kind() == io::ErrorKind::NotFound => Ok(false),
-        Err(source) => Err(DiscoveryError::PathInaccessible {
-            path: path.to_path_buf(),
-            source,
-        }),
+        DiscoveryOutcome::new(
+            DiscoveryAnchor::Directory(self.cwd),
+            self.local,
+            self.global,
+        )
     }
 }
 
@@ -244,12 +504,13 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use super::*;
+    use crate::config::file::ConfigSource;
 
     #[test]
     fn is_config_file_returns_false_for_missing_path() {
         let temp = tempfile::tempdir().expect("create temp dir");
         assert!(
-            !is_config_file(&temp.path().join("missing.toml"))
+            !DiscoveryEngine::is_config_file(&temp.path().join("missing.toml"))
                 .expect("check missing config file")
         );
     }
@@ -265,7 +526,7 @@ mod tests {
         fs::write(&blocking_file, "").expect("write blocking file");
         let unreachable_path = blocking_file.join("config.toml");
 
-        let err = is_config_file(&unreachable_path)
+        let err = DiscoveryEngine::is_config_file(&unreachable_path)
             .expect_err("expected PathInaccessible error");
 
         assert!(matches!(err, DiscoveryError::PathInaccessible { .. }));
@@ -317,7 +578,6 @@ mod tests {
         }
         .finish();
 
-        assert_eq!(discovered.cwd(), temp.path());
         assert!(discovered.local().is_empty());
         assert!(discovered.global().is_empty());
     }
@@ -341,11 +601,91 @@ mod tests {
             .expect("collect global config")
             .finish();
 
-        assert_eq!(discovered.cwd(), cwd);
         assert_eq!(discovered.local().len(), 1);
         let local = discovered.local().first().expect("one local config");
         assert_eq!(local.root(), project);
         assert_eq!(local.source(), &ConfigSource::Local(local_path));
+        assert!(discovered.global().is_empty());
+    }
+
+    #[test]
+    fn full_discovery_rejects_file_anchor_at_context_construction() {
+        let path = PathBuf::from("/project/.traces/config.toml");
+
+        let error = DiscoveryContext::new(
+            DiscoveryType::Full,
+            DiscoveryAnchor::File(path.clone()),
+        )
+        .expect_err("full discovery cannot use a file anchor");
+
+        assert!(matches!(
+            error,
+            DiscoveryContextError::UnsupportedFileAnchor {
+                kind: DiscoveryType::Full,
+                path: error_path
+            } if error_path == path
+        ));
+    }
+
+    #[test]
+    fn full_discovery_process_returns_kind_anchor_and_nearest_local() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let project = temp.path().join("project");
+        let cwd = project.join("notes/daily");
+        fs::create_dir_all(&cwd).expect("create cwd");
+        let config_path = project.join(".traces/config.toml");
+        fs::create_dir_all(config_path.parent().expect("config path parent"))
+            .expect("create config parent");
+        fs::write(&config_path, "[templates]\n").expect("write config");
+
+        let discovered = DiscoveryEngine::default()
+            .process(
+                DiscoveryContext::new(
+                    DiscoveryType::Full,
+                    DiscoveryAnchor::Directory(cwd.clone()),
+                )
+                .expect("valid full context"),
+            )
+            .expect("process full discovery");
+
+        assert_eq!(discovered.kind(), DiscoveryType::Full);
+        assert_eq!(discovered.anchor(), &DiscoveryAnchor::Directory(cwd));
+        assert_eq!(discovered.local().len(), 1);
+        assert_eq!(discovered.local()[0].root(), project);
+    }
+
+    #[test]
+    fn local_subtree_discovers_nearest_and_descendant_configs() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let parent = temp.path().join("parent");
+        let child = parent.join("child");
+        fs::create_dir_all(&child).expect("create child dir");
+        let parent_config = parent.join(".traces/config.toml");
+        let child_config = child.join(".traces/config.toml");
+        fs::create_dir_all(
+            parent_config.parent().expect("parent config parent"),
+        )
+        .expect("create parent config parent");
+        fs::create_dir_all(child_config.parent().expect("child config parent"))
+            .expect("create child config parent");
+        fs::write(&parent_config, "[templates]\n")
+            .expect("write parent config");
+        fs::write(&child_config, "[templates]\n").expect("write child config");
+
+        let discovered = DiscoveryEngine::default()
+            .process(
+                DiscoveryContext::new(
+                    DiscoveryType::LocalSubtree,
+                    DiscoveryAnchor::Directory(parent.clone()),
+                )
+                .expect("valid subtree context"),
+            )
+            .expect("process local subtree discovery");
+
+        assert_eq!(discovered.kind(), DiscoveryType::LocalSubtree);
+        assert_eq!(discovered.local().len(), 2);
+        assert_eq!(discovered.local()[0].root(), parent);
+        assert_eq!(discovered.local()[1].root(), child);
         assert!(discovered.global().is_empty());
     }
 }

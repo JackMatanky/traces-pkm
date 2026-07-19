@@ -23,6 +23,103 @@
   - User settled follow-up decisions: use `try_into_global_parsed()`, keep `TrustTarget`, keep unified `DiscoveryOutcome`, keep `ConfigBuilderInput`, keep ZST `DiscoveryEngine`, rename discovery kind to `LocalSubtree`, and keep local absence in `DiscoveryError` rather than `ConfigBuilderInputError`.
 
 
+### Config Typestate Implementation
+- **Status:** complete
+- Worktree: `/Users/jack/Documents/41_personal/traces-pkm/.worktrees/config-typestate`
+- Actions taken:
+  - Added `src/config/file.rs` with `ConfigFile<State>` lifecycle markers and source-specific local/global constructors.
+  - Completed the lifecycle transitions through `From`/`TryFrom`: discovered locals become tracked through `TrackConfigFile` plus `ConfigTracker`, tracked locals become trusted through `TrustConfigFile` plus `ConfigTrust`, trusted locals parse into `Parsed`, and discovered globals parse directly while local discovered configs are rejected.
+  - Migrated discovery to `DiscoveryContext::new`, `DiscoveryType::{Full, NearestLocal, LocalSubtree}`, `DiscoveryAnchor`, ZST `DiscoveryEngine`, and unified `DiscoveryOutcome`.
+  - Replaced `CandidateConfigFile` with `ConfigFile<Discovered>` and removed `src/config/candidate.rs`.
+  - Removed `DiscoveryOutcome.cwd`; `DiscoveryAnchor` now carries the post-discovery location context.
+  - Added `ConfigBuilderInput`, made it the initial `ConfigBuilder` state, and made its `TryFrom<DiscoveryOutcome>` enforce nearest-local load precedence.
+  - Collapsed builder states to aggregate construction: `ConfigBuilderInput -> LocalStored -> Merged`.
+  - Added `ConfigService::load(cwd)` and made discovery/build helpers private.
+  - Reworked trust target routing so CLI path resolution returns discovered local `ConfigFile` values through `ConfigService::resolve_trust_targets`.
+  - Removed `ResolvedTrustTarget` and obsolete trust-specific resolver/error code.
+  - Moved discovery path helper behavior onto `DiscoveryAnchor::path()` and moved discovery helper functions into `DiscoveryEngine`.
+  - Removed the generic `ConfigFile<State>::parse()` method and the lifecycle `transition()` helper; only explicit conversion impls can change lifecycle state.
+  - Changed trust status checks so `ConfigTrust::is_trusted` and `ConfigService::is_trusted` accept `TrustTarget` as the only target input.
+- Verification:
+  - `cargo test config::`: 87 passed.
+  - `MISE_EXPERIMENTAL=1 mise run fmt`: passed.
+  - `MISE_EXPERIMENTAL=1 mise run test`: 157 passed.
+  - `MISE_EXPERIMENTAL=1 mise run clippy`: passed.
+  - `MISE_EXPERIMENTAL=1 mise run ci`: passed; `cargo deny` emitted existing duplicate/unmatched-license warnings but did not fail.
+  - `gitnexus detect_changes(scope=all, worktree=.worktrees/config-typestate)`: low risk, 9 changed files, no indexed symbol/process impact.
+- Errors encountered:
+  - `Blake3FileHash::new` was called with `PathBuf` instead of `&Path`; fixed by borrowing the path.
+  - Several tests wrote `.traces/config.toml` before creating the parent directory; fixed test setup.
+  - Old trust resolver tests kept exercising deleted resolver functions; moved routing coverage to discovery/service tests and retained pure trust-store tests.
+  - `mise run ci` initially failed on clippy dead-code and style lints because config loading is implemented before a render command consumes it; fixed style lints, removed obsolete resolver code, and added targeted `expect` attributes for intentionally pre-wired config loading seams.
+  - `cargo test` was invoked with multiple test filters in one command; Cargo accepts only one test-name filter. Re-ran the focused regression as `cargo test config::`.
+  - `mise run clippy` initially failed after the correction pass because the non-rendered config loading seam again triggered dead-code lints and helper methods had clippy style issues. Fixed with a `cfg_attr(not(test), expect(dead_code))` module attribute, associated helper functions inside `DiscoveryEngine`, and a borrowed `DiscoveryAnchor` in builder input selection.
+  - GitNexus impact lookup could not find the newly added `ConfigFile`, `TrustTarget`, or `ConfigTrust` symbols in the stale/small index; used grep/LSP fallback for callsite mapping, then ran `detect_changes`.
+  - Rust-analyzer failed to initialize for symbol references in this worktree (`LSP reader stopped; client torn down`); grep callsite mapping covered the API change.
+  - `mise run fmt` failed once after a large edit because `impl ConfigFile<Discovered>` was left unclosed; inserted the missing brace and reran fmt successfully.
+  - Tuple/phantom cleanup initially left duplicate braces/expect calls during a surgical edit; removed the duplicates, reran `mise run fmt`, and focused tests passed.
+
+### Tuple and PhantomData Follow-up
+- **Status:** complete
+- Actions taken:
+  - Replaced `TrackConfigFile` and `TrustConfigFile` wrapper structs with tuple conversion inputs.
+  - Removed `ConfigFile<State>::_state: PhantomData<State>`; the concrete `state: State` field already carries the type parameter.
+  - Updated builder and tests to call `ConfigFile::<Tracked>::from((file, &tracker))` and `ConfigFile::<Trusted>::try_from((file, &trust))`.
+- Verification:
+  - `cargo test config::`: 87 passed.
+  - `MISE_EXPERIMENTAL=1 mise run fmt`: passed.
+  - `MISE_EXPERIMENTAL=1 mise run test && MISE_EXPERIMENTAL=1 mise run clippy && MISE_EXPERIMENTAL=1 mise run ci`: passed.
+  - GitNexus `detect_changes(scope=all, worktree=.worktrees/config-typestate)`: low risk, 9 changed files, no indexed symbol/process impact.
+
+### Builder Input Selection Follow-up
+- **Status:** complete
+- Actions taken:
+  - Moved nearest-local selection logic into `ConfigBuilderInput::try_from(DiscoveryOutcome)`.
+  - Removed the standalone `select_nearest_local` helper and its now-unused `DiscoveryAnchor` import.
+- Verification:
+  - `cargo test config::`: 87 passed.
+  - `MISE_EXPERIMENTAL=1 mise run fmt`: passed.
+  - `MISE_EXPERIMENTAL=1 mise run clippy`: passed after removing the unused `DiscoveryAnchor` import.
+  - GitNexus `detect_changes(scope=all, worktree=.worktrees/config-typestate)`: low risk, 9 changed files, no indexed symbol/process impact.
+
+### Config File Error Hierarchy Follow-up
+- **Status:** complete
+- Actions taken:
+  - Made `ConfigFileError` the primary error type for config-file lifecycle transitions.
+  - Changed parse and trust transition `TryFrom` impls to return `ConfigFileError`.
+  - Kept `ConfigFileParseError` and `ConfigFileTrustError` as nested source-detail errors.
+  - Simplified `ConfigBuilderError` to `Input` plus transparent `ConfigFile`.
+  - Updated builder/service/file tests to match nested `ConfigFileError` variants.
+- Errors encountered:
+  - `mise://tasks` resource was unavailable; continued with known mise tasks.
+  - LSP and GitNexus symbol lookups could not resolve the new/stale config error symbols; grep/read fallback mapped callsites.
+  - First focused test compile exposed recursive error types through `ConfigFileError -> ConfigFileTrustError -> TrustError -> ConfigFileError`; boxed the nested `TrustError` source to break the cycle.
+  - Full check initially failed on unused `PathBuf` and `TrustError` imports after removing builder trust variants; removed both imports.
+- Verification:
+  - `cargo test config::`: 87 passed.
+  - `MISE_EXPERIMENTAL=1 mise run fmt`: passed.
+  - `MISE_EXPERIMENTAL=1 mise run clippy`: passed.
+  - `MISE_EXPERIMENTAL=1 mise run ci`: passed with existing non-failing `cargo deny` duplicate/unmatched-license warnings.
+  - GitNexus `detect_changes(scope=all, worktree=.worktrees/config-typestate)`: low risk, 9 changed files, no indexed symbol/process impact.
+
+### ConfigBuilderInput Precedence Encoding Follow-up
+- **Status:** complete
+- Actions taken:
+  - Restored the selected local field name to `local`.
+  - Added `ConfigBuilderInput` docs that state the full-load precedence policy: selected local config plus optional global config merged before local.
+  - Replaced fallback-to-deepest-local behavior with `FullDiscoveryWithoutAnchorLocal { anchor }`.
+  - Added a regression test for full discovery output whose locals do not contain the anchor.
+- Errors encountered:
+  - Initial `nearest_local` field rename did not match the requested terminology; restored `local`.
+  - `mise run clippy` rejected `ok_or_else` for an eager error value; switched to `ok_or`.
+- Verification:
+  - `cargo test config::`: 88 passed.
+  - `MISE_EXPERIMENTAL=1 mise run fmt`: passed.
+  - `MISE_EXPERIMENTAL=1 mise run clippy`: passed.
+  - `MISE_EXPERIMENTAL=1 mise run ci`: passed with existing non-failing `cargo deny` duplicate/unmatched-license warnings.
+  - GitNexus `detect_changes(scope=all, worktree=.worktrees/config-typestate)`: low risk, 9 changed files, no indexed symbol/process impact.
+
+
 
 
 
