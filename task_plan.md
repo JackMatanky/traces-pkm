@@ -1,11 +1,10 @@
 # Task Plan: Config Typestate Design Grilling
 
 ## Goal
-Stress-test and refine the proposed config architecture without implementing changes: `ConfigFile<State>` for single-file lifecycle invariants, `ConfigBuilder<State>` for building the final domain `Config`, and a `ConfigLocator` module for config path lookup.
+Stress-test and refine the config discovery/loading/trust architecture without implementing Rust source changes: `ConfigFile<State>` for single-file lifecycle invariants, `DiscoveryEngine`/`DiscoveryContext` inside `src/config/discovery.rs` for config lookup, `ConfigBuilderInput` for load precedence, and `ConfigBuilder<State>` only for aggregate final `Config` construction.
 
 ## Current Phase
-Phase 2: Clarify Type Responsibilities — External Config-Builder Research
-
+Planning artifact review complete — next step is to grill implementation-readiness holes one at a time before coding.
 ## Phases
 
 ### Phase 1: Establish Shared Design Questions
@@ -49,13 +48,21 @@ Phase 2: Clarify Type Responsibilities — External Config-Builder Research
 - [x] Identify implementation order for a later task, without implementing now.
 - **Status:** complete
 
-## Key Questions
-1. What exact single-file lifecycle states should `ConfigFile<State>` encode?
-2. Should `ConfigFile<State>` encode tracking/trust states when global configs skip those stages?
-6. Should global config files bypass tracking/trust states and parse directly from `Located`?
-3. Should parsing produce `ConfigFile<Parsed>` carrying `RawConfig`, or should parsing remain inside `ConfigBuilder`?
-4. Does `ConfigBuilder<State>` own a collection of typed config files, or does it remain a pipeline wrapper around `DiscoveryOutcome`?
-5. Is `ConfigLocator` a deep module with config-specific semantics, or a shallow wrapper over filesystem walks?
+### Phase 6: Planning Artifact Consistency Review
+- [x] Run planning-with-files session catchup.
+- [x] Review `task_plan.md`, `findings.md`, and `progress.md` for stale decisions.
+- [x] Compare accepted design against current source shape.
+- [x] Record implementation-readiness holes before any Rust source changes.
+- **Status:** complete
+
+## Implementation-Readiness Decisions
+1. Global configs use a fallible consuming transition named `try_into_global_parsed()`.
+2. `TrustTarget` shape is settled as `File(&Path)`, `Directory(&Path)`, and `ConfigFile(&ConfigFile<Tracked>)`.
+3. Unified `DiscoveryOutcome` is settled.
+4. `ConfigBuilderInput { local: ConfigFile<Discovered>, global: Option<ConfigFile<Discovered>> }` is settled.
+5. ZST `DiscoveryEngine` is settled.
+6. Discovery type `LocalSubtree` is settled.
+7. Error policy is settled: `LocalConfigAbsent` belongs in `DiscoveryError`; `ConfigBuilderInputError` only needs wrong-kind/invariant variants such as `WrongDiscoveryKindForBuild`.
 
 ## Decisions Made
 | Decision | Rationale |
@@ -82,7 +89,7 @@ Phase 2: Clarify Type Responsibilities — External Config-Builder Research
 | Use private-field `DiscoveryContext` with smart constructors | User prefers the struct form over an enum because it can add context fields later, such as environment variables, while constructors preserve invariants like `Full` requiring a directory/cwd anchor. |
 | Revisit `TrustTarget` so file targets do not redundantly carry root | User pointed back to Mise's `src/cli/trust.rs`, where trust resolves a config file to a trust root instead of storing both root and file in the target. |
 | Design `TrustTarget` with directory, file, and tracked-config variants | User proposed `TrustTarget::{Directory(&Path), File(&Path), ConfigFile(&ConfigFile<Tracked>)}` so CLI path input and config-loading trust checks share one trust target vocabulary without duplicating root/file fields. |
-| Use discovery kinds `Full`, `NearestLocal`, and `AllLocalDescendents` | User chose these names for the discovery context kind enum. |
+| Use discovery kinds `Full`, `NearestLocal`, and `LocalSubtree` | User initially chose `AllLocalDescendents`, then renamed it to `LocalSubtree` before implementation. |
 | Keep absence in `DiscoveryError`, not `ConfigFileError` | User agreed missing search results are discovery operation outcomes, not errors about a specific config-file path. |
 | Have `DiscoveryError` wrap `ConfigFileError` | User agreed discovery should not duplicate file/path validation variants; specific config-file construction failures bubble through discovery. |
 | Rethink trust routes instead of adding trust-target resolution errors | User observed nested discovery/config-file errors inside a trust-target-resolution error suggests the component boundary is wrong; discovery components should probably make a separate resolution layer unnecessary. |
@@ -90,7 +97,7 @@ Phase 2: Clarify Type Responsibilities — External Config-Builder Research
 | Keep nearest-local absence in discovery but consider optional search APIs | User agreed absence belongs to discovery, but noted `nearest_local` should not always error because init may use absence to create a new local config. |
 | Let `ConfigService::load(cwd)` call discovery processing directly | User noted load can simply call a `process()` method that runs `DiscoveryProcessor`; this keeps full discovery hidden behind discovery components rather than decomposing load into nearest-local calls. |
 | Use `DiscoveryContext` as discovery method input | User challenged passing raw anchors to focused discovery methods; context should be the input shape for each discovery operation. |
-| Use unified `DiscoveryOutcome` for all discovery kinds | User observed `DiscoveryOutcome` can represent `Full`, `NearestLocal`, and `AllLocalDescendents` by varying local/global cardinality, avoiding a separate `DiscoveryOutput` enum. |
+| Use unified `DiscoveryOutcome` for all discovery kinds | User observed `DiscoveryOutcome` can represent `Full`, `NearestLocal`, and `LocalSubtree` by varying local/global cardinality, avoiding a separate `DiscoveryOutput` enum. |
 | Store discovery kind and anchor in `DiscoveryOutcome`, not full context | User decided only `DiscoveryType`, `DiscoveryAnchor`, local files, and global files remain relevant after discovery; `DiscoveryContext` may expose `into_parts()`/`into_parts_ref()`. |
 | Define explicit precedence for multiple local configs in full discovery | User noted full discovery can theoretically find more than one local config, so merge precedence must be clear. |
 | Full load selects nearest local plus optional global | User decided full config loading should not merge every discovered local config; it should use only the nearest local config, with optional global config. |

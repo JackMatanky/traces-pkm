@@ -1,5 +1,32 @@
 # Progress Log
 
+## Session: 2026-07-19
+
+### Planning Artifact Review
+- **Status:** complete
+- Actions taken:
+  - Ran planning-with-files session catchup for `/Users/jack/Documents/41_personal/traces-pkm`; no unsynced context was reported.
+  - Read `task_plan.md`, `findings.md`, and `progress.md`.
+  - Read design guidance: `planning-with-files`, `codebase-design`, `ponytail`, `m05-type-driven`, `m06-error-handling`, and Rust rules for parse-don't-validate, typestate, and enum states.
+  - Began comparing the artifacts against current config/trust source summaries.
+- Initial review findings:
+  - `task_plan.md` still says the goal includes a `ConfigLocator` module, but later decisions reject a separate locator and keep discovery in `src/config/discovery.rs`.
+  - `task_plan.md` current phase is stale: it says Phase 2 research, while every phase is marked complete and `progress.md` says final design recorded.
+  - `progress.md` keeps Phase 2 as `in_progress` even though the same section records completed final design and implementation order.
+  - Current source still matches the handoff's pre-refactor state: `CandidateConfigFile`, `DiscoveryProcessor`, two-step `ConfigService::discover/build`, and trust-target resolution remain present.
+  - Spawned three read-only review scouts for artifact consistency, source alignment, and design holes.
+  - Recorded artifact repairs in `task_plan.md` and `findings.md`.
+  - Confirmed the implementation plan needed an ordering repair: introduce `ConfigFile<State>` alongside `CandidateConfigFile`, migrate consumers, then delete the old candidate type.
+  - Confirmed unresolved design holes before follow-up grilling: global parse transition naming, trust target routing, unified `DiscoveryOutcome` cardinality, builder input stage, ZST `DiscoveryEngine`, local ordering, wrong-kind errors, and discovery kind naming.
+  - Answered follow-up questions and recorded settled decisions: `try_into_global_parsed()`, decided `TrustTarget` and `ConfigBuilderInput` shapes, unified `DiscoveryOutcome`, ZST `DiscoveryEngine`, `LocalSubtree`, and `ConfigBuilderInputError` only for wrong-kind/invariant variants.
+  - Recorded recommended defaults in `findings.md`.
+  - User settled follow-up decisions: use `try_into_global_parsed()`, keep `TrustTarget`, keep unified `DiscoveryOutcome`, keep `ConfigBuilderInput`, keep ZST `DiscoveryEngine`, rename discovery kind to `LocalSubtree`, and keep local absence in `DiscoveryError` rather than `ConfigBuilderInputError`.
+
+
+
+
+
+
 ## Session: 2026-07-17
 
 ### Phase 1: Establish Shared Design Questions
@@ -17,7 +44,7 @@
   - `progress.md` created and updated.
 
 ### Phase 2: Clarify Type Responsibilities
-- **Status:** in_progress
+- **Status:** complete
 - **Started:** 2026-07-17
 - Actions taken:
   - Preparing next grilling question: which lifecycle states should exist for one config file.
@@ -39,7 +66,7 @@
   - Resolved discovery-context representation: use private fields plus smart constructors, not an enum of cases, so future fields such as environment can be added without reshaping all variants.
   - Reopened trust-target shape: file trust targets likely should not store root redundantly if root can be derived from the config file/trust-root algorithm.
   - Resolved trust-target shape: `TrustTarget` should support directory input, file input, and tracked config-file input: `Directory(&Path)`, `File(&Path)`, and `ConfigFile(&ConfigFile<Tracked>)`.
-  - Resolved discovery kind names: `Full`, `NearestLocal`, and `AllLocalDescendents`.
+  - Resolved discovery kind names: `Full`, `NearestLocal`, and later-renamed `LocalSubtree`.
   - Resolved error ownership decision: absence belongs to `DiscoveryError`, not `ConfigFileError`.
   - Resolved file/discovery error layering: `DiscoveryError` wraps `ConfigFileError` instead of duplicating file/path validation variants.
   - Rejected separate trust-target-resolution error/component as likely wrong; next step is to map all trust routes and use discovery components directly.
