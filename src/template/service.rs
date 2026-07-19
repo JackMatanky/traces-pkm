@@ -36,7 +36,7 @@ use super::{
     engine::TemplateEngine,
     error::TemplateError,
     loader::TemplateLoader,
-    path::{Found, MatchPrecedence, TemplatePath, TemplatePathError},
+    path::{Found, TemplatePath, TemplatePathError},
 };
 use crate::config::Config;
 
@@ -75,7 +75,7 @@ impl<'a> TemplateService<'a> {
         &self,
         name: &Path,
     ) -> Result<TemplatePath<Found>, TemplatePathError> {
-        self.loader.find(name, MatchPrecedence::ExactThenStem)
+        self.loader.find(name)
     }
 
     /// Resolves `name`, renders it with an empty template context, and
