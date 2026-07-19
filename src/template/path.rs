@@ -2,77 +2,122 @@
 //! raw `-i <name>` argument to a file found on disk, as one type family
 //! threaded through a typestate transition.
 //!
-//! Two states: [`Unresolved`] (a candidate identifier, validated safe to
-//! join onto any template directory, but not yet tied to one — the raw
-//! `-i <name>` argument, or a filename found while scanning a directory)
-//! and [`Resolved`] (an absolute path a [`super::loader::TemplateLoader`]
-//! actually found under a configured template directory).
-//! [`TemplatePath::try_from`] (pure, no I/O) produces the first;
-//! [`TemplatePath::<Unresolved>::resolve`] (I/O, directory-dependent)
-//! consumes it and produces the second. No constructor exists for
-//! [`Resolved`] anywhere else — deliberately: a public one would let
-//! unrelated code manufacture a "resolved" path that was never actually
-//! searched for, reopening the arbitrary-file-read hole this crate
-//! closed by construction.
+//! Follows the same shape as a textbook typestate
+//! (`Connection<Disconnected>` -> `Connection<Connected> { socket }` ->
+//! `Connection<Authenticated> { socket, session }`): the data that
+//! varies per stage lives *inside* the state type, not as extra fields
+//! bolted onto the outer generic struct. Here, the path itself doesn't
+//! change *shape* across states — only what's been proven about it
+//! does — so it lives once, on [`TemplatePath`] itself; each state type
+//! holds only whatever *extra* fact that stage alone establishes.
+//!
+//! - [`Raw`]: nothing proven yet — the argument as given.
+//! - [`Validated`]: proven to be a safe, directory-relative identifier — pure,
+//!   no I/O; [`TemplatePath::<Raw>::validate`] produces it. No extra data
+//!   beyond the path itself, so it's a bare unit marker.
+//! - [`Found`]: proven to exist under a specific
+//!   [`super::source_dir::TemplateSourceDir`] —
+//!   [`TemplatePath::<Validated>::find`] (I/O, directory-dependent) produces
+//!   it, and it's the *only* state that carries that extra fact, because
+//!   deriving [`TemplatePath::<Found>::absolute`] is the one thing this state
+//!   alone needs to do that no earlier state has any use for. No constructor
+//!   for `Found` exists anywhere else — deliberately: a public one would let
+//!   unrelated code manufacture a "found" path that was never actually searched
+//!   for, reopening the arbitrary-file-read hole this crate closed by
+//!   construction.
+//!
+//! `State` has no default: every signature that names `TemplatePath`,
+//! inside this file or crossing into `loader.rs`/`service.rs`, spells
+//! out which state it means. A default would silently resolve every
+//! unannotated `TemplatePath` to one particular state, defeating the
+//! reason for choosing typestate in the first place — the compiler
+//! catching a future mistake where code that should require an earlier
+//! (unproven) state accidentally accepts a later (already-proven) one
+//! instead, because nothing forced the author to say which they meant.
 //!
 //! [`TemplatePathError`] is *one* error type covering this whole
-//! lifecycle — `Absolute`/`UnsafeComponent` from construction,
-//! `AmbiguousTemplate`/`TemplateNotFound` from resolution — not two
-//! types split by which method's call stack happens to produce them.
-//! All four describe the same thing: reasons a name failed to become a
-//! valid, located `TemplatePath`. That's a domain concept ("what can go
-//! wrong with this template path"), not an implementation detail of
-//! which type's method raised it — matching `err-custom-type`'s own
+//! lifecycle — `Absolute`/`UnsafeComponent` from validation,
+//! `AmbiguousTemplate`/`TemplateNotFound` from the search — not split by
+//! which state's transition method happens to produce them. All four
+//! describe the same thing: reasons a name failed to become a valid,
+//! located `TemplatePath`. That's a domain concept ("what can go wrong
+//! with this template path"), matching `err-custom-type`'s own
 //! `FileError` example (`NotFound`/`PermissionDenied` grouped on one
-//! error even though a real implementation raises them from different
-//! call sites, because both are "things that can go wrong
-//! locating/reading a file"). An earlier version of this module *did*
-//! split them (`TemplatePathError` for construction, a separately-named
-//! `TemplateResolveError` for resolution) on the theory that only a
-//! type's own literal constructor should populate its error — but
-//! `TemplateNotFound`/`AmbiguousTemplate` are still fundamentally facts
-//! *about a template path* ("this name doesn't resolve to anything",
-//! "this name is ambiguous"), not facts about `TemplateLoader` as a
-//! mechanism. Splitting them didn't clarify anything; it scattered one
-//! cohesive domain concept across two type names for no caller's
-//! benefit.
+//! error despite originating from different call sites, because both
+//! are "things that can go wrong locating/reading a file").
 //!
 //! This file holds the *type* — what a template path is, at each stage
 //! of its life, and every way producing one can fail.
 //! [`super::loader::TemplateLoader`] (a sibling file) holds the
 //! *mechanism* — which directories exist to search and how to read from
-//! them — because that's a `Config`-derived, filesystem-facing concern
-//! [`TemplatePath`] itself has no business owning;
-//! [`TemplatePath::<Unresolved>::resolve`] borrows a `&TemplateLoader` rather
-//! than embedding one.
+//! them; [`TemplatePath::<Validated>::find`] takes a `&TemplateLoader`
+//! directly rather than through an intermediary decoupling type — an
+//! earlier version of this design introduced one purely to avoid this
+//! file depending on `loader.rs`'s concrete type, but that "circular"
+//! sibling-module dependency was never a real problem Rust has any
+//! trouble with; the extra type cost more than the dependency it was
+//! avoiding.
 
 use std::{
     ffi::OsStr,
     fs,
-    marker::PhantomData,
     path::{Component, Path, PathBuf},
 };
 
 use thiserror::Error;
 
-use super::loader::TemplateLoader;
+use super::{loader::TemplateLoader, source_dir::TemplateSourceDir};
 
-/// [`TemplatePath`]'s state before it has been searched for on disk: a
-/// candidate identifier, validated safe to join onto any template
-/// directory, but not yet tied to one.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum Unresolved {}
+/// [`TemplatePath`]'s state before anything has been checked about it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct Raw;
+
+/// [`TemplatePath`]'s state once validated: a safe, directory-relative
+/// identifier, not yet tied to a specific directory.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct Validated;
 
 /// [`TemplatePath`]'s state once a [`TemplateLoader`] has actually found
-/// it under a configured template directory: an absolute, on-disk path.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum Resolved {}
+/// it — the only state that also records which [`TemplateSourceDir`] it
+/// came from, since that's the one extra fact this state alone needs.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct Found {
+    source: TemplateSourceDir,
+}
 
-/// Errors producing a [`TemplatePath`] — from constructing one out of a
+/// A template identifier, tagged with which stage of its lifecycle it's
+/// in — see this module's docs for the full rationale.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct TemplatePath<State> {
+    path: PathBuf,
+    state: State,
+}
+
+impl<State> TemplatePath<State> {
+    /// This path's bare stem: no directory segments, no extension, e.g.
+    /// `"folder/daily.md"` -> `"daily"`. Meaningful, and computed
+    /// identically, in every state — a filename's stem doesn't depend on
+    /// what's been proven about the path yet.
+    ///
+    /// # Panics
+    ///
+    /// Never in practice: [`Path::file_stem`] returns `None` only for a
+    /// path with no final `Normal` component;
+    /// [`TemplatePath::<Raw>::validate`] rejects any path without one.
+    /// The fallback exists only so this stays panic-free rather than
+    /// leaning on that invariant at runtime.
+    #[inline]
+    #[must_use]
+    pub(super) fn stem(&self) -> &OsStr {
+        self.path.file_stem().unwrap_or_else(|| self.path.as_os_str())
+    }
+}
+
+/// Errors producing a [`TemplatePath`] — from validating one out of a
 /// raw name ([`Self::Absolute`], [`Self::UnsafeComponent`]) through
-/// resolving it against a [`TemplateLoader`]'s directories
-/// ([`Self::AmbiguousTemplate`], [`Self::TemplateNotFound`]). See this
-/// module's docs for why these four live in one type.
+/// finding it on disk ([`Self::AmbiguousTemplate`],
+/// [`Self::TemplateNotFound`]). See this module's docs for why these four live
+/// in one type.
 ///
 /// `thiserror`-only, no `miette::Diagnostic` — `crate::cli::error` is
 /// where user-facing help text and error codes get added, matching
@@ -81,7 +126,7 @@ pub(super) enum Resolved {}
 /// diagnostic help text.
 ///
 /// Notably absent: a distinct oracle for "the input was unsafe" vs. "no
-/// such template". [`TemplateLoader::resolve`] deliberately reports both
+/// such template". [`TemplateLoader::find`] deliberately reports both
 /// the same way — [`Self::TemplateNotFound`] (see its docs) — so a
 /// caller (or a future error-rendering layer) can't distinguish a
 /// traversal attempt from a typo.
@@ -104,7 +149,7 @@ pub(crate) enum TemplatePathError {
     AmbiguousTemplate {
         /// The template name that was searched for.
         name: PathBuf,
-        /// Candidate files that matched.
+        /// Candidate files that matched, as absolute paths.
         candidates: Vec<PathBuf>,
     },
     /// Template was not found in any of the searched directories.
@@ -117,92 +162,36 @@ pub(crate) enum TemplatePathError {
     },
 }
 
-/// A template identifier, tagged with which stage of its lifecycle it's
-/// in — see this module's docs for the full rationale.
-///
-/// `State` defaults to [`Resolved`] since that's what every consumer
-/// outside this module ever names ([`super::service::TemplateService`]
-/// only ever holds a resolved `TemplatePath`).
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) struct TemplatePath<State = Resolved> {
-    inner: PathBuf,
-    _state: PhantomData<State>,
-}
-
-impl<State> TemplatePath<State> {
-    /// This path's bare stem: no directory segments, no extension, e.g.
-    /// `"folder/daily.md"` -> `"daily"`. Meaningful — and computed
-    /// identically — in either state, since a filename's stem doesn't
-    /// depend on whether the path has been resolved to an absolute
-    /// location yet.
-    ///
-    /// [`Path::file_stem`] returns `None` only for a path with no final
-    /// `Normal` component; [`TemplatePath::try_from`] rejects any
-    /// [`Unresolved`] `TemplatePath` without one, and a [`Resolved`]
-    /// `TemplatePath` is always an absolute path to a file a
-    /// [`TemplateLoader`] found, so this always has a stem in practice —
-    /// the fallback below exists only so the type stays panic-free
-    /// rather than leaning on that invariant at runtime.
+impl TemplatePath<Raw> {
+    /// Captures `raw` as-is — nothing checked yet.
     #[inline]
     #[must_use]
-    pub(super) fn stem(&self) -> &OsStr {
-        self.inner.file_stem().unwrap_or_else(|| self.inner.as_os_str())
-    }
-}
-
-impl<State> AsRef<Path> for TemplatePath<State> {
-    fn as_ref(&self) -> &Path {
-        &self.inner
-    }
-}
-
-impl TemplatePath<Resolved> {
-    /// Wraps `path` as resolved — the *only* way to construct a
-    /// [`Resolved`] `TemplatePath` anywhere in this crate.
-    ///
-    /// `pub(super)`, not `pub`: restricted to `template::`'s own
-    /// trusted code, and even within that, only
-    /// [`TemplatePath::<Unresolved>::resolve`] (this file) and
-    /// [`super::loader::TemplateLoader::find_exact`] (a sibling file)
-    /// call it — both only after confirming `path` was actually found
-    /// under a configured directory via
-    /// [`TemplatePath::<Unresolved>::exists_in`] or a directory scan.
-    /// No `TryFrom`/`From` impl exists for this type — deliberately:
-    /// unlike [`TemplatePath::<Unresolved>::try_from`] (a syntactic
-    /// check, no I/O needed), a `Resolved` `TemplatePath` encodes a
-    /// fact only an actual filesystem search can establish. A
-    /// wider-visibility constructor would let unrelated code
-    /// manufacture a "resolved" path that was never searched for,
-    /// reopening the arbitrary-file-read hole this crate closed by
-    /// construction.
-    pub(super) fn from_found(path: PathBuf) -> Self {
+    pub(super) fn new(raw: &Path) -> Self {
         Self {
-            inner: path,
-            _state: PhantomData,
+            path: raw.to_path_buf(),
+            state: Raw,
         }
     }
-}
 
-impl TryFrom<&Path> for TemplatePath<Unresolved> {
-    type Error = TemplatePathError;
-
-    /// Validates `path` as a safe, directory-relative template
+    /// Validates this candidate as a safe, directory-relative template
     /// identifier — pure, no I/O; whether it names a real file is a
-    /// question about a specific directory, answered by [`Self::resolve`]/
-    /// [`TemplateLoader::find_exact`], not baked into construction.
+    /// question for [`TemplatePath::<Validated>::find`], not baked into
+    /// validation.
     ///
     /// # Errors
     ///
-    /// Returns [`TemplatePathError::Absolute`] when `path` is absolute.
-    /// Returns [`TemplatePathError::UnsafeComponent`] when `path`
+    /// Returns [`TemplatePathError::Absolute`] when the path is
+    /// absolute. Returns [`TemplatePathError::UnsafeComponent`] when it
     /// contains a `..` or other component that isn't a plain name or
     /// `.`, or has no `Normal` component at all.
-    fn try_from(path: &Path) -> Result<Self, Self::Error> {
-        if path.is_absolute() {
-            return Err(TemplatePathError::Absolute(path.to_path_buf()));
+    pub(super) fn validate(
+        self,
+    ) -> Result<TemplatePath<Validated>, TemplatePathError> {
+        if self.path.is_absolute() {
+            return Err(TemplatePathError::Absolute(self.path));
         }
         let mut has_normal_component = false;
-        let is_safe = path.components().all(|component| match component {
+        let is_safe = self.path.components().all(|component| match component {
             Component::Normal(_) => {
                 has_normal_component = true;
                 true
@@ -211,83 +200,118 @@ impl TryFrom<&Path> for TemplatePath<Unresolved> {
             _ => false,
         });
         if !is_safe || !has_normal_component {
-            return Err(TemplatePathError::UnsafeComponent(path.to_path_buf()));
+            return Err(TemplatePathError::UnsafeComponent(self.path));
         }
-        Ok(Self {
-            inner: path.to_path_buf(),
-            _state: PhantomData,
+        Ok(TemplatePath {
+            path: self.path,
+            state: Validated,
         })
     }
 }
 
-impl TemplatePath<Unresolved> {
+impl TemplatePath<Validated> {
     /// Whether this candidate names an existing file within `dir`.
     #[inline]
     #[must_use]
     pub(super) fn exists_in(&self, dir: &Path) -> bool {
-        dir.join(&self.inner).is_file()
+        dir.join(&self.path).is_file()
     }
 
-    /// Resolves this candidate against `loader`: an exact match, then a
-    /// stem match, tried one directory at a time (local exhausted —
-    /// exact, then stem — before global is even considered) — so a name
-    /// without an extension still finds `name.md`, but local always wins
-    /// over global regardless of which match strategy found it.
+    /// Searches `loader`'s directories for this candidate: an exact
+    /// match, then a stem match, tried one directory at a time (a
+    /// directory exhausted — exact, then stem — before the next is even
+    /// considered) — so a name without an extension still finds
+    /// `name.md`, but an earlier directory always wins over a later one
+    /// regardless of which match strategy found it.
     ///
     /// # Errors
     ///
     /// Returns [`TemplatePathError::AmbiguousTemplate`] when multiple
     /// files match this candidate's stem within a single directory.
     /// Returns [`TemplatePathError::TemplateNotFound`] when no match is
-    /// found in any directory `loader` searches.
-    pub(super) fn resolve(
+    /// found in any of `loader`'s directories.
+    pub(super) fn find(
         self,
         loader: &TemplateLoader,
-    ) -> Result<TemplatePath<Resolved>, TemplatePathError> {
+    ) -> Result<TemplatePath<Found>, TemplatePathError> {
+        let stem = self.stem();
+
         for dir in loader.directories() {
-            if self.exists_in(dir) {
-                return Ok(TemplatePath::from_found(dir.join(&self.inner)));
+            if self.exists_in(dir.path()) {
+                return Ok(TemplatePath {
+                    path: self.path.clone(),
+                    state: Found {
+                        source: dir,
+                    },
+                });
             }
-            match matching_files_in_dir(dir, self.stem()).as_slice() {
+
+            let Ok(entries) = fs::read_dir(dir.path()) else {
+                continue;
+            };
+            let matches: Vec<PathBuf> = entries
+                .filter_map(Result::ok)
+                .filter(|entry| {
+                    entry.file_type().is_ok_and(|kind| kind.is_file())
+                })
+                .filter(|entry| entry.path().file_stem() == Some(stem))
+                .map(|entry| PathBuf::from(entry.file_name()))
+                .collect();
+
+            match matches.as_slice() {
                 [] => {}
-                [path] => {
-                    return Ok(TemplatePath::from_found(path.clone()));
+                [name] => {
+                    return Ok(TemplatePath {
+                        path: name.clone(),
+                        state: Found {
+                            source: dir,
+                        },
+                    });
                 }
                 multiple => {
                     return Err(TemplatePathError::AmbiguousTemplate {
-                        name: self.inner.clone(),
-                        candidates: multiple.to_vec(),
+                        name: self.path.clone(),
+                        candidates: multiple
+                            .iter()
+                            .map(|name| dir.path().join(name))
+                            .collect(),
                     });
                 }
             }
         }
+
         Err(TemplatePathError::TemplateNotFound {
-            name: self.inner,
+            name: self.path,
             directories_searched: loader.directories_searched(),
         })
     }
 }
 
-/// Files in `dir` whose stem matches `stem`, as full paths.
-fn matching_files_in_dir(dir: &Path, stem: &OsStr) -> Vec<PathBuf> {
-    let Ok(entries) = fs::read_dir(dir) else {
-        return Vec::new();
-    };
+impl AsRef<Path> for TemplatePath<Validated> {
+    fn as_ref(&self) -> &Path {
+        &self.path
+    }
+}
 
-    entries
-        .filter_map(Result::ok)
-        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_file()))
-        .filter(|entry| entry.path().file_stem() == Some(stem))
-        .map(|entry| entry.path())
-        .collect()
+impl TemplatePath<Found> {
+    /// The absolute path to this template file — derived from the
+    /// [`TemplateSourceDir`] it was found under and its relative
+    /// identifier, not stored redundantly.
+    #[inline]
+    #[must_use]
+    pub(super) fn absolute(&self) -> PathBuf {
+        self.state.source.path().join(&self.path)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn candidate(name: &str) -> TemplatePath<Unresolved> {
-        TemplatePath::try_from(Path::new(name)).expect("valid candidate")
+    fn validated(name: &str) -> TemplatePath<Validated> {
+        TemplatePath::<Raw>::new(Path::new(name))
+            .validate()
+            .expect("valid candidate")
     }
 
     fn write_file(dir: &Path, name: &str) -> PathBuf {
@@ -298,65 +322,66 @@ mod tests {
         path
     }
 
-    mod construction {
+    mod validation {
         use pretty_assertions::assert_eq;
 
         use super::*;
 
         #[test]
-        fn try_from_accepts_a_plain_relative_name() {
-            let path = candidate("daily.md");
+        fn accepts_a_plain_relative_name() {
+            let path = validated("daily.md");
 
             assert_eq!(path.as_ref(), Path::new("daily.md"));
         }
 
         #[test]
-        fn try_from_accepts_a_nested_relative_path() {
-            let path = candidate("folder/daily.md");
+        fn accepts_a_nested_relative_path() {
+            let path = validated("folder/daily.md");
 
             assert_eq!(path.as_ref(), Path::new("folder/daily.md"));
         }
 
         #[test]
-        fn try_from_rejects_an_absolute_path() {
-            let error =
-                TemplatePath::<Unresolved>::try_from(Path::new("/etc/passwd"))
-                    .expect_err("absolute path is rejected");
+        fn rejects_an_absolute_path() {
+            let error = TemplatePath::<Raw>::new(Path::new("/etc/passwd"))
+                .validate()
+                .expect_err("absolute path is rejected");
 
             assert!(matches!(error, TemplatePathError::Absolute(_)));
         }
 
         #[test]
-        fn try_from_rejects_parent_traversal() {
-            let error = TemplatePath::<Unresolved>::try_from(Path::new(
-                "../outside.md",
-            ))
-            .expect_err("parent traversal is rejected");
+        fn rejects_parent_traversal() {
+            let error = TemplatePath::<Raw>::new(Path::new("../outside.md"))
+                .validate()
+                .expect_err("parent traversal is rejected");
 
             assert!(matches!(error, TemplatePathError::UnsafeComponent(_)));
         }
 
         #[test]
-        fn try_from_rejects_nested_parent_traversal() {
-            let error = TemplatePath::<Unresolved>::try_from(Path::new(
-                "folder/../../outside.md",
-            ))
-            .expect_err("nested parent traversal is rejected");
+        fn rejects_nested_parent_traversal() {
+            let error =
+                TemplatePath::<Raw>::new(Path::new("folder/../../outside.md"))
+                    .validate()
+                    .expect_err("nested parent traversal is rejected");
 
             assert!(matches!(error, TemplatePathError::UnsafeComponent(_)));
         }
 
         #[test]
-        fn try_from_rejects_an_empty_path() {
-            let error = TemplatePath::<Unresolved>::try_from(Path::new(""))
+        fn rejects_an_empty_path() {
+            let error = TemplatePath::<Raw>::new(Path::new(""))
+                .validate()
                 .expect_err("empty path has no safe file name");
 
             assert!(matches!(error, TemplatePathError::UnsafeComponent(_)));
         }
 
         #[test]
-        fn try_from_rejects_a_bare_current_dir() {
-            let error = TemplatePath::<Unresolved>::try_from(Path::new("."))
+        fn rejects_a_bare_current_dir() {
+            let error = TemplatePath::<Raw>::new(Path::new("."))
+                .validate()
                 .expect_err("bare current-dir has no safe file name");
 
             assert!(matches!(error, TemplatePathError::UnsafeComponent(_)));
@@ -365,18 +390,18 @@ mod tests {
         #[test]
         fn stem_drops_directory_segments_and_extension() {
             assert_eq!(
-                candidate("folder/report.md").stem(),
+                validated("folder/report.md").stem(),
                 OsStr::new("report")
             );
         }
 
         #[test]
         fn stem_of_an_extensionless_path_is_unchanged() {
-            assert_eq!(candidate("daily").stem(), OsStr::new("daily"));
+            assert_eq!(validated("daily").stem(), OsStr::new("daily"));
         }
     }
 
-    mod resolve {
+    mod find {
         use pretty_assertions::assert_eq;
 
         use super::*;
@@ -388,11 +413,10 @@ mod tests {
             let loader =
                 TemplateLoader::new(Some(temp.path().to_path_buf()), None);
 
-            let found = candidate("daily.md")
-                .resolve(&loader)
-                .expect("resolve succeeds");
+            let found =
+                validated("daily.md").find(&loader).expect("find succeeds");
 
-            assert_eq!(found.as_ref(), file.as_path());
+            assert_eq!(found.absolute(), file);
         }
 
         #[test]
@@ -403,9 +427,9 @@ mod tests {
                 TemplateLoader::new(Some(temp.path().to_path_buf()), None);
 
             let found =
-                candidate("daily").resolve(&loader).expect("resolve succeeds");
+                validated("daily").find(&loader).expect("find succeeds");
 
-            assert_eq!(found.as_ref(), file.as_path());
+            assert_eq!(found.absolute(), file);
         }
 
         #[test]
@@ -418,7 +442,7 @@ mod tests {
             let loader =
                 TemplateLoader::new(Some(temp.path().to_path_buf()), None);
 
-            match candidate("daily").resolve(&loader) {
+            match validated("daily").find(&loader) {
                 Err(TemplatePathError::AmbiguousTemplate {
                     candidates,
                     ..
@@ -436,9 +460,9 @@ mod tests {
                 TemplateLoader::new(Some(temp.path().to_path_buf()), None);
 
             let found =
-                candidate("daily").resolve(&loader).expect("resolve succeeds");
+                validated("daily").find(&loader).expect("find succeeds");
 
-            assert_eq!(found.as_ref(), file.as_path());
+            assert_eq!(found.absolute(), file);
         }
 
         #[test]
@@ -455,9 +479,9 @@ mod tests {
             let loader = TemplateLoader::new(Some(local_dir), Some(global_dir));
 
             let found =
-                candidate("daily").resolve(&loader).expect("resolve succeeds");
+                validated("daily").find(&loader).expect("find succeeds");
 
-            assert_eq!(found.as_ref(), local_file.as_path());
+            assert_eq!(found.absolute(), local_file);
         }
 
         #[test]
@@ -470,9 +494,9 @@ mod tests {
             let loader = TemplateLoader::new(Some(local_dir), Some(global_dir));
 
             let found =
-                candidate("daily").resolve(&loader).expect("resolve succeeds");
+                validated("daily").find(&loader).expect("find succeeds");
 
-            assert_eq!(found.as_ref(), file.as_path());
+            assert_eq!(found.absolute(), file);
         }
 
         #[test]
@@ -487,7 +511,7 @@ mod tests {
                 Some(global_dir.clone()),
             );
 
-            match candidate("missing").resolve(&loader) {
+            match validated("missing").find(&loader) {
                 Err(TemplatePathError::TemplateNotFound {
                     directories_searched,
                     ..

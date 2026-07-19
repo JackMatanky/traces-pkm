@@ -1,12 +1,21 @@
-//! [`TemplateLoader`]: the directory-search mechanism [`super::path::TemplatePath`]'s
-//! typestate transition runs against — which directories hold templates,
-//! and how to read from them.
+//! [`TemplateLoader`]: the directory-search mechanism
+//! [`super::path::TemplatePath`]'s typestate transitions run against —
+//! which directories hold templates, and how to read from them.
 //!
-//! Shared by top-level `-i <name>` resolution ([`TemplateLoader::resolve`])
+//! `local`/`global` are plain `Option<PathBuf>` fields, not a
+//! collection: "at most one local directory, at most one global
+//! directory" is true by construction this way, rather than needing a
+//! runtime invariant nobody enforces (an earlier version of this module
+//! stored `Vec<TemplateSourceDir>`, which structurally permitted
+//! multiple `Local` entries — exactly the kind of unenforced invariant
+//! this crate's newtypes exist to rule out, reproduced by the very
+//! module meant to demonstrate the lesson).
+//!
+//! Shared by top-level `-i <name>` resolution ([`TemplateLoader::find`])
 //! and [`super::engine::TemplateEngine`]'s `{% include %}`/`{% extends %}`
 //! loading ([`TemplateLoader::load`]), so the local-then-global directory
-//! priority is defined exactly once. The two callers still want
-//! different match strategies ([`TemplateLoader::resolve`]'s
+//! priority ([`Self::directories`]) is defined exactly once. The two
+//! callers still want different match strategies ([`TemplateLoader::find`]'s
 //! stem-matching fallback makes sense for a user-typed `-i daily`; an
 //! include name should be exact, not fuzzy — see
 //! [`TemplateLoader::find_exact`]), so this type exposes both rather
@@ -38,24 +47,27 @@ use std::{
 
 use minijinja::{Error, ErrorKind};
 
-use super::path::{Resolved, TemplatePath, TemplatePathError, Unresolved};
+use super::{
+    path::{Found, Raw, TemplatePath, TemplatePathError, Validated},
+    source_dir::TemplateSourceDir,
+};
 use crate::config::Config;
 
 /// Searches configured template directories, local first then global,
 /// for a template by name.
 ///
-/// [`Self::for_config`] is this type's production constructor — always
+/// [`From<&Config>`] is this type's production constructor — always
 /// derived straight from [`Config::local_template_dir`]/
 /// [`Config::global_template_dir`], never from anywhere else, so a
 /// `TemplateLoader` can't search a directory other than what `config`
-/// itself reports. [`Self::new`] is the pure, `Config`-agnostic
-/// constructor `for_config` is built on; tests use it directly to avoid
-/// needing a full `Config` just to exercise directory-search mechanics.
+/// itself reports. [`Self::new`] is the lower-level, `Config`-agnostic
+/// constructor `From<&Config>` is built on; tests use it directly to
+/// avoid needing a full [`Config`].
 ///
 /// `Clone`: cheap (two `Option<PathBuf>`) — [`super::service::TemplateService`]
 /// builds one loader and shares it, one clone wired into
 /// [`super::engine::TemplateEngine`] for `{% include %}`, the original
-/// kept for [`Self::resolve`], rather than deriving the same directories
+/// kept for [`Self::find`], rather than deriving the same directories
 /// from [`Config`] twice.
 #[derive(Clone, Debug)]
 pub(super) struct TemplateLoader {
@@ -74,33 +86,33 @@ impl TemplateLoader {
         }
     }
 
-    /// Builds a loader from `config`'s template directories.
-    #[inline]
-    #[must_use]
-    pub(super) fn for_config(config: &Config) -> Self {
-        Self::new(
-            config.local_template_dir().map(Path::to_path_buf),
-            config.global_template_dir().map(Path::to_path_buf),
-        )
-    }
-
     /// The directories this loader searches, in priority order, deduped
     /// when local and global are the same directory. `pub(super)`, not
-    /// private: [`super::path::TemplatePath::<Unresolved>::resolve`] (a
-    /// sibling module) drives its own search loop over these.
-    pub(super) fn directories(&self) -> impl Iterator<Item = &Path> {
+    /// private: [`super::path::TemplatePath::<Validated>::find`] (a
+    /// sibling module) drives its own search loop over these — the one
+    /// deliberate cost of `path.rs`/`loader.rs` depending on each other
+    /// directly instead of through an intermediary (see `path.rs`'s
+    /// module docs).
+    pub(super) fn directories(
+        &self,
+    ) -> impl Iterator<Item = TemplateSourceDir> + '_ {
         let global = self
             .global
             .as_deref()
-            .filter(|dir| Some(*dir) != self.local.as_deref());
-        self.local.as_deref().into_iter().chain(global)
+            .filter(|dir| Some(*dir) != self.local.as_deref())
+            .map(|dir| TemplateSourceDir::Global(dir.to_path_buf()));
+        self.local
+            .as_deref()
+            .map(|dir| TemplateSourceDir::Local(dir.to_path_buf()))
+            .into_iter()
+            .chain(global)
     }
 
     /// Every directory this loader searches, for
     /// [`TemplatePathError::TemplateNotFound`]'s diagnostic list.
     #[must_use]
     pub(super) fn directories_searched(&self) -> Vec<PathBuf> {
-        self.directories().map(Path::to_path_buf).collect()
+        self.directories().map(|dir| dir.path().to_path_buf()).collect()
     }
 
     /// Exact match only: does `candidate` name a real file directly
@@ -111,17 +123,16 @@ impl TemplateLoader {
     #[must_use]
     pub(super) fn find_exact(
         &self,
-        candidate: &TemplatePath<Unresolved>,
-    ) -> Option<TemplatePath<Resolved>> {
+        candidate: &TemplatePath<Validated>,
+    ) -> Option<PathBuf> {
         self.directories()
-            .find(|dir| candidate.exists_in(dir))
-            .map(|dir| TemplatePath::from_found(dir.join(candidate)))
+            .find(|dir| candidate.exists_in(dir.path()))
+            .map(|dir| dir.path().join(candidate))
     }
 
-    /// Resolves a raw `-i <name>` argument to a
-    /// [`TemplatePath<Resolved>`] — validates `name` into a
-    /// [`TemplatePath<Unresolved>`], then hands the search off to
-    /// [`TemplatePath::<Unresolved>::resolve`].
+    /// Resolves a raw `-i <name>` argument to a [`TemplatePath<Found>`]
+    /// — validates `name`, then hands the search off to
+    /// [`TemplatePath::<Validated>::find`].
     ///
     /// `name` is validated before any directory is searched — absolute
     /// paths and `..` traversal are never resolved, deliberately: this
@@ -139,17 +150,17 @@ impl TemplateLoader {
     /// files match `name`'s stem within a single directory. Returns
     /// [`TemplatePathError::TemplateNotFound`] when `name` is unsafe or
     /// no match is found in any searched directory.
-    pub(super) fn resolve(
+    pub(super) fn find(
         &self,
         name: &Path,
-    ) -> Result<TemplatePath<Resolved>, TemplatePathError> {
-        let Ok(candidate) = TemplatePath::<Unresolved>::try_from(name) else {
+    ) -> Result<TemplatePath<Found>, TemplatePathError> {
+        let Ok(validated) = TemplatePath::<Raw>::new(name).validate() else {
             return Err(TemplatePathError::TemplateNotFound {
                 name: name.to_path_buf(),
                 directories_searched: self.directories_searched(),
             });
         };
-        candidate.resolve(self)
+        validated.find(self)
     }
 
     /// Reads `name` from the first directory it exists in — the
@@ -157,22 +168,22 @@ impl TemplateLoader {
     ///
     /// `name` failing [`TemplatePath`] validation (traversal, absolute)
     /// behaves the same as a missing include: `Ok(None)`, not an error —
-    /// matching [`Self::resolve`]'s anti-oracle stance on unsafe input.
+    /// matching [`Self::find`]'s anti-oracle stance on unsafe input.
     ///
     /// # Errors
     ///
     /// Returns a [`minijinja::Error`] when a matched file exists but
     /// can't be read.
     pub(super) fn load(&self, name: &str) -> Result<Option<String>, Error> {
-        let Ok(candidate) =
-            TemplatePath::<Unresolved>::try_from(Path::new(name))
+        let Ok(validated) =
+            TemplatePath::<Raw>::new(Path::new(name)).validate()
         else {
             return Ok(None);
         };
-        let Some(path) = self.find_exact(&candidate) else {
+        let Some(path) = self.find_exact(&validated) else {
             return Ok(None);
         };
-        match fs::read_to_string(path.as_ref()) {
+        match fs::read_to_string(&path) {
             Ok(source) => Ok(Some(source)),
             Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(None),
             Err(err) => Err(Error::new(
@@ -181,6 +192,16 @@ impl TemplateLoader {
             )
             .with_source(err)),
         }
+    }
+}
+
+impl From<&Config> for TemplateLoader {
+    /// Builds a loader from `config`'s template directories.
+    fn from(config: &Config) -> Self {
+        Self::new(
+            config.local_template_dir().map(Path::to_path_buf),
+            config.global_template_dir().map(Path::to_path_buf),
+        )
     }
 }
 
@@ -198,8 +219,10 @@ mod tests {
         path
     }
 
-    fn candidate(name: &str) -> TemplatePath<Unresolved> {
-        TemplatePath::try_from(Path::new(name)).expect("valid candidate")
+    fn validated(name: &str) -> TemplatePath<Validated> {
+        TemplatePath::<Raw>::new(Path::new(name))
+            .validate()
+            .expect("valid candidate")
     }
 
     #[test]
@@ -209,10 +232,10 @@ mod tests {
         let loader = TemplateLoader::new(Some(temp.path().to_path_buf()), None);
 
         let found = loader
-            .find_exact(&candidate("daily.md"))
+            .find_exact(&validated("daily.md"))
             .expect("find exact match");
 
-        assert_eq!(found.as_ref(), file.as_path());
+        assert_eq!(found, file);
     }
 
     #[test]
@@ -221,23 +244,22 @@ mod tests {
         write_file(temp.path(), "daily.md");
         let loader = TemplateLoader::new(Some(temp.path().to_path_buf()), None);
 
-        assert!(loader.find_exact(&candidate("daily")).is_none());
+        assert!(loader.find_exact(&validated("daily")).is_none());
     }
 
     #[test]
-    fn resolve_delegates_to_the_candidates_own_resolve() {
+    fn find_delegates_to_the_validated_candidates_own_find() {
         let temp = tempfile::tempdir().expect("create temp dir");
         let file = write_file(temp.path(), "daily.md");
         let loader = TemplateLoader::new(Some(temp.path().to_path_buf()), None);
 
-        let found =
-            loader.resolve(Path::new("daily")).expect("resolve succeeds");
+        let found = loader.find(Path::new("daily")).expect("find succeeds");
 
-        assert_eq!(found.as_ref(), file.as_path());
+        assert_eq!(found.absolute(), file);
     }
 
     #[test]
-    fn resolve_rejects_an_absolute_path_even_when_the_file_exists() {
+    fn find_rejects_an_absolute_path_even_when_the_file_exists() {
         let temp = tempfile::tempdir().expect("create temp dir");
         // A file that exists on disk, outside any template directory.
         let outside_file = write_file(temp.path(), "secret.md");
@@ -249,13 +271,13 @@ mod tests {
         // directories, so an absolute path to a real file must still
         // miss — not be treated as "found by exact path".
         assert!(matches!(
-            loader.resolve(&outside_file),
+            loader.find(&outside_file),
             Err(TemplatePathError::TemplateNotFound { .. })
         ));
     }
 
     #[test]
-    fn resolve_rejects_parent_traversal_even_when_the_file_exists() {
+    fn find_rejects_parent_traversal_even_when_the_file_exists() {
         let temp = tempfile::tempdir().expect("create temp dir");
         write_file(temp.path(), "secret.md");
         let local_dir = temp.path().join("templates");
@@ -263,18 +285,18 @@ mod tests {
         let loader = TemplateLoader::new(Some(local_dir), None);
 
         assert!(matches!(
-            loader.resolve(Path::new("../secret.md")),
+            loader.find(Path::new("../secret.md")),
             Err(TemplatePathError::TemplateNotFound { .. })
         ));
     }
 
     #[test]
-    fn resolve_rejects_an_empty_name() {
+    fn find_rejects_an_empty_name() {
         let temp = tempfile::tempdir().expect("create temp dir");
         let loader = TemplateLoader::new(Some(temp.path().to_path_buf()), None);
 
         assert!(matches!(
-            loader.resolve(Path::new("")),
+            loader.find(Path::new("")),
             Err(TemplatePathError::TemplateNotFound { .. })
         ));
     }
@@ -333,7 +355,7 @@ mod tests {
     }
 
     #[test]
-    fn for_config_derives_directories_from_config() {
+    fn from_config_derives_directories_from_config() {
         let temp = tempfile::tempdir().expect("create temp dir");
         let local_dir = temp.path().join("local-templates");
         write_file(&local_dir, "daily.md");
@@ -344,13 +366,13 @@ mod tests {
             temp.path().to_path_buf(),
         );
 
-        let loader = TemplateLoader::for_config(&config);
+        let loader = TemplateLoader::from(&config);
 
         assert_eq!(loader.directories_searched(), vec![local_dir]);
     }
 
     #[test]
-    fn resolve_via_config_finds_a_local_template() {
+    fn find_via_config_finds_a_local_template() {
         let temp = tempfile::tempdir().expect("create temp dir");
         let local_dir = temp.path().join("local-templates");
         let file = write_file(&local_dir, "daily.md");
@@ -360,16 +382,15 @@ mod tests {
             None,
             temp.path().to_path_buf(),
         );
-        let loader = TemplateLoader::for_config(&config);
+        let loader = TemplateLoader::from(&config);
 
-        let found =
-            loader.resolve(Path::new("daily")).expect("resolve succeeds");
+        let found = loader.find(Path::new("daily")).expect("find succeeds");
 
-        assert_eq!(found.as_ref(), file.as_path());
+        assert_eq!(found.absolute(), file);
     }
 
     #[test]
-    fn resolve_via_config_prefers_local_over_global() {
+    fn find_via_config_prefers_local_over_global() {
         let temp = tempfile::tempdir().expect("create temp dir");
         let local_dir = temp.path().join("local-templates");
         let local_file = write_file(&local_dir, "daily");
@@ -381,11 +402,10 @@ mod tests {
             Some(global_dir),
             temp.path().to_path_buf(),
         );
-        let loader = TemplateLoader::for_config(&config);
+        let loader = TemplateLoader::from(&config);
 
-        let found =
-            loader.resolve(Path::new("daily")).expect("resolve succeeds");
+        let found = loader.find(Path::new("daily")).expect("find succeeds");
 
-        assert_eq!(found.as_ref(), local_file.as_path());
+        assert_eq!(found.absolute(), local_file);
     }
 }

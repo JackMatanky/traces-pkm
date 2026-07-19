@@ -2,23 +2,29 @@
 //!
 //! [`path`] holds the whole `-i <name>` -> on-disk-file lifecycle as one
 //! typestate type family, [`TemplatePath<State>`](path::TemplatePath) —
-//! [`Unresolved`](path::Unresolved) (a candidate identifier, validated
-//! safe to join onto any template directory, not yet tied to one)
-//! transitioning to [`Resolved`](path::Resolved) (an absolute path
-//! [`loader::TemplateLoader`] actually found) — plus
+//! [`Raw`](path::Raw) (the argument as given) transitioning to
+//! [`Validated`](path::Validated) (a safe, directory-relative
+//! identifier) transitioning to [`Found`](path::Found) (a specific
+//! [`TemplateSourceDir`](source_dir::TemplateSourceDir)
+//! [`loader::TemplateLoader`] actually found it under — the one state
+//! that carries that extra fact, since it's the one state that needs it
+//! to derive an absolute path) — plus
 //! [`TemplatePathError`](path::TemplatePathError), one error type
 //! covering every way that lifecycle can fail, from bad input shape
 //! through an unresolvable or ambiguous name (see `path`'s module docs
-//! for why these live together rather than split by which type's method
-//! happens to raise them). [`loader`] holds
+//! for why these live together rather than split by which state's
+//! transition raises them). [`source_dir`] holds
+//! [`TemplateSourceDir`](source_dir::TemplateSourceDir) on its own,
+//! dependency-free, so both `path` and `loader` import it from a neutral
+//! third place rather than through each other. [`loader`] holds
 //! [`TemplateLoader`](loader::TemplateLoader) — the directory-search
-//! mechanism [`path`]'s typestate transition runs against: which
+//! mechanism [`path`]'s typestate transitions run against: which
 //! directories hold templates and how to read from them, shared by
 //! top-level `-i` resolution and `{% include %}`/`{% extends %}`
 //! loading so the local-then-global directory priority is defined
 //! exactly once. Never resolves outside those directories: an absolute
 //! or `..`-relative `-i` argument is always a miss, not an exact-path
-//! shortcut (see [`loader::TemplateLoader::resolve`]'s docs). [`engine`]
+//! shortcut (see [`loader::TemplateLoader::find`]'s docs). [`engine`]
 //! wraps minijinja's `Environment` — construction and rendering — behind
 //! a small interface, so [`service`] depends on "render this source"
 //! rather than on minijinja's API directly; loader wiring itself is
@@ -39,5 +45,6 @@ mod error;
 mod loader;
 mod path;
 mod service;
+mod source_dir;
 
 pub(crate) use service::TemplateService;

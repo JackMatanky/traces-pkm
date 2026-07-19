@@ -36,7 +36,7 @@ use super::{
     engine::TemplateEngine,
     error::TemplateError,
     loader::TemplateLoader,
-    path::{TemplatePath, TemplatePathError},
+    path::{Found, TemplatePath, TemplatePathError},
 };
 use crate::config::Config;
 
@@ -54,7 +54,7 @@ impl<'a> TemplateService<'a> {
     #[inline]
     #[must_use]
     pub(crate) fn new(config: &'a Config) -> Self {
-        let loader = TemplateLoader::for_config(config);
+        let loader = TemplateLoader::from(config);
         let engine = TemplateEngine::new().with_loader(loader.clone());
         Self {
             config,
@@ -74,8 +74,8 @@ impl<'a> TemplateService<'a> {
     pub(super) fn resolve(
         &self,
         name: &Path,
-    ) -> Result<TemplatePath, TemplatePathError> {
-        self.loader.resolve(name)
+    ) -> Result<TemplatePath<Found>, TemplatePathError> {
+        self.loader.find(name)
     }
 
     /// Resolves `name`, renders it with an empty template context, and
@@ -100,18 +100,18 @@ impl<'a> TemplateService<'a> {
                 name: name.to_path_buf(),
                 source,
             })?;
-        let resolved_path = resolved.as_ref();
+        let resolved_path = resolved.absolute();
         let template_source =
-            fs::read_to_string(resolved_path).map_err(|source| {
+            fs::read_to_string(&resolved_path).map_err(|source| {
                 TemplateError::Read {
-                    path: resolved_path.to_path_buf(),
+                    path: resolved_path.clone(),
                     source,
                 }
             })?;
         let rendered =
             self.engine.render(&template_source).map_err(|source| {
                 TemplateError::Render {
-                    path: resolved_path.to_path_buf(),
+                    path: resolved_path.clone(),
                     source,
                 }
             })?;
@@ -143,7 +143,7 @@ impl<'a> TemplateService<'a> {
     ///
     /// Computed at write time, not stored during render — issue tmpl-02's
     /// `-o`/`set_output()` handling overrides this.
-    fn default_output_path(&self, resolved: &TemplatePath) -> PathBuf {
+    fn default_output_path(&self, resolved: &TemplatePath<Found>) -> PathBuf {
         let output_dir = self.config.output_dir();
         let base = if output_dir.is_absolute() {
             output_dir.to_path_buf()
@@ -184,7 +184,7 @@ mod tests {
         let resolved =
             service.resolve(Path::new("daily")).expect("resolve template");
 
-        assert_eq!(resolved.as_ref(), file.as_path());
+        assert_eq!(resolved.absolute(), file);
     }
 
     #[test]
