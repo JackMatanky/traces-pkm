@@ -1,8 +1,8 @@
 # Findings & Decisions
 
 ## Requirements
-- User wants design grilling only; do not implement changes.
 - Track this session in persistent planning files: `task_plan.md`, `findings.md`, and `progress.md`.
+- Implement the accepted config typestate refactor in `.worktrees/config-typestate` after design grilling settled the open questions.
 - Explore two separate typestate patterns:
   - `ConfigFile<State>`: lifecycle/invariants for a single config file.
   - `ConfigBuilder<State>`: aggregate builder that consumes all discovered config files and produces final domain `Config`.
@@ -10,10 +10,10 @@
 - Keep config lookup/discovery responsibility inside `src/config/discovery.rs`; the earlier `ConfigLocator` idea was rejected as a separate module.
 
 ## Research Findings
-- `ConfigSource` currently distinguishes `Local(PathBuf)` and `Global(PathBuf)` in `src/config/candidate.rs`.
-- `CandidateConfigFile` currently stores `root: PathBuf` plus `source: ConfigSource`; the raw constructor can create inconsistent root/source combinations.
-- `DiscoveryProcessor<Init>::collect_local()` currently performs an ancestor walk looking for `.traces/config.toml`.
-- The trust-target resolver in the implemented worktree also performs ancestor and descendant config lookup; this duplicates discovery/locator responsibilities.
+- Implemented state: `src/config/file.rs` owns `ConfigFile<State>`, `ConfigSource`, and source-specific `local`/`global` constructors.
+- Implemented state: `src/config/discovery.rs` owns `DiscoveryContext`, `DiscoveryType`, `DiscoveryAnchor`, ZST `DiscoveryEngine`, `DiscoveryOutcome`, and full/nearest-local/local-subtree discovery.
+- Implemented state: `src/config/builder.rs` consumes `ConfigBuilderInput` and builds through aggregate states `Discovered -> LocalStored -> Merged`.
+- Implemented state: `src/config/service.rs` exposes `load(cwd)` and routes trust-target discovery through discovery, while `src/config/trust.rs` keeps trust-store recording/checking only.
 - Rust typestate guidance applies when invalid transitions should become compile errors; enum-state guidance applies when a value is one of mutually exclusive runtime states.
 - New research question resolved: `ConfigBuilder<State>` is useful only if it remains a deep aggregate merge/build module after `ConfigFile<State>` and discovery own per-file lifecycle and lookup behavior.
 - Required external primary-source research: `github.com/jdx/mise/blob/main/src/config/mod.rs` and other Rust projects with multi-level config handling.
@@ -159,6 +159,33 @@
 8. Rework trust routes to use `DiscoveryEngine` and `ConfigFile` lifecycle values; remove trust-specific target resolution once discovery covers the routes.
 9. Update CLI error wrappers and config module exports.
 10. Update focused tests, then run project checks through mise tasks.
+
+## Implementation Results — 2026-07-19
+- Worktree: `/Users/jack/Documents/41_personal/traces-pkm/.worktrees/config-typestate`.
+- `CandidateConfigFile` and `src/config/candidate.rs` were removed after all discovery/builder/trust consumers migrated to `ConfigFile<Discovered>`.
+- Correction pass completed the file lifecycle through conversions: discovered locals become tracked through `From<(ConfigFile<Discovered>, &ConfigTracker)>`, tracked locals become trusted through `TryFrom<(ConfigFile<Tracked>, &ConfigTrust)>`, trusted locals parse through `TryFrom<ConfigFile<Trusted>>`, and discovered globals parse through `TryFrom<ConfigFile<Discovered>>`.
+- `ConfigBuilder<ConfigBuilderInput>` now uses the validated builder input itself as the initial builder state, then transitions to `LocalStored -> Merged`.
+- `DiscoveryContext::new(kind, anchor)` validates kind/anchor combinations; full discovery rejects file anchors before `DiscoveryEngine::process()`.
+- `DiscoveryOutcome` now stores `kind`, `anchor`, `local`, and `global`; the redundant `cwd` field/accessor was removed.
+- `ConfigBuilderInput::try_from(DiscoveryOutcome)` now contains the full-load nearest-local precedence policy inline before `ConfigBuilder::new`; there is no separate `select_nearest_local` helper.
+- `ConfigBuilderInput` keeps the selected local field named `local`; precedence is encoded by `TryFrom<DiscoveryOutcome>` accepting only full discovery, requiring local candidates, choosing the discovered local config with the deepest root containing the discovery anchor, and storing optional `global` separately so merge can apply global before local.
+- The generic `ConfigFile<State>::parse()` and lifecycle `transition()` helper were removed; state-specific `From`/`TryFrom` conversions share only a private `read_raw_config(path)` helper.
+- `ConfigTrust::is_trusted` and `ConfigService::is_trusted` now take `TrustTarget` as their sole target input, eliminating root/config-file positional parameter ambiguity.
+- `ResolvedTrustTarget` was removed; CLI trust target resolution now returns discovered local `ConfigFile` values directly.
+- `DiscoveryAnchor::path()` replaced the standalone `anchor_path()` helper, and discovery helper routines live inside the `DiscoveryEngine` impl.
+- `ConfigService::load(cwd)` performs full discovery, parses `ConfigBuilderInput`, stores/trust-checks the selected local config, merges optional global config first, and builds final `Config`.
+- `ConfigTrust` still supports `TrustTarget::Directory` for bare-root trust-store behavior, but production path resolution now reaches trust through discovered local config files.
+- A `cfg_attr(not(test), expect(dead_code))` documents that config loading is implemented before a render command consumes it; clippy is otherwise clean.
+- `ConfigFile<State>` now stores only the concrete `state: State`; the earlier `state` plus `_state: PhantomData<State>` duplicated type information and was removed.
+- `ConfigFileError` is now the primary error type for `ConfigFile<State>` lifecycle transitions. It embeds `ConfigFileParseError` and `ConfigFileTrustError`; `ConfigFileParseError` no longer embeds `ConfigFileError`, and `ConfigBuilderError` now wraps config-file failures through a single transparent `ConfigFile` variant.
+- Verification passed:
+  - `cargo test config::`: 87 passed.
+  - `MISE_EXPERIMENTAL=1 mise run fmt`: passed.
+  - `MISE_EXPERIMENTAL=1 mise run test`: 157 passed.
+  - `MISE_EXPERIMENTAL=1 mise run clippy`: passed.
+  - `MISE_EXPERIMENTAL=1 mise run ci`: passed with non-failing existing `cargo deny` duplicate/unmatched-license warnings.
+  - GitNexus `detect_changes(scope=all, worktree=.worktrees/config-typestate)`: low risk, 9 changed files, no indexed symbol/process impact.
+
 
 ## Issues Encountered
 | Issue | Resolution |

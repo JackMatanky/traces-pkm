@@ -1,10 +1,10 @@
 # Task Plan: Config Typestate Design Grilling
 
 ## Goal
-Stress-test and refine the config discovery/loading/trust architecture without implementing Rust source changes: `ConfigFile<State>` for single-file lifecycle invariants, `DiscoveryEngine`/`DiscoveryContext` inside `src/config/discovery.rs` for config lookup, `ConfigBuilderInput` for load precedence, and `ConfigBuilder<State>` only for aggregate final `Config` construction.
+Implement the accepted config discovery/loading/trust typestate refactor in an isolated worktree: `ConfigFile<State>` for single-file lifecycle invariants, `DiscoveryEngine`/`DiscoveryContext` inside `src/config/discovery.rs`, `ConfigBuilderInput` for load precedence, and `ConfigBuilder<State>` for aggregate final `Config` construction.
 
 ## Current Phase
-Planning artifact review complete — next step is to grill implementation-readiness holes one at a time before coding.
+ConfigBuilderInput precedence encoding cleanup complete in `.worktrees/config-typestate`; the field remains `local`, docs and error variants now describe the full-load precedence policy, the fallback selection path was replaced with an explicit invariant error, and verification passed via formatter, focused tests, clippy/CI, and GitNexus change detection.
 ## Phases
 
 ### Phase 1: Establish Shared Design Questions
@@ -55,8 +55,19 @@ Planning artifact review complete — next step is to grill implementation-readi
 - [x] Record implementation-readiness holes before any Rust source changes.
 - **Status:** complete
 
+### Phase 7: Implement Config Typestate Refactor
+- [x] Create `.worktrees/config-typestate` implementation worktree.
+- [x] Add `ConfigFile<State>` lifecycle type and remove `CandidateConfigFile`.
+- [x] Implement `DiscoveryContext`, `DiscoveryType`, `DiscoveryAnchor`, `DiscoveryEngine`, and unified `DiscoveryOutcome`.
+- [x] Add `ConfigBuilderInput` and load selection policy.
+- [x] Collapse `ConfigBuilder` to `ConfigBuilderInput -> LocalStored -> Merged`.
+- [x] Add `ConfigService::load(cwd)` and route trust target discovery through `DiscoveryEngine`.
+- [x] Apply correction pass: complete `Parsed` lifecycle, remove generic `ConfigFile<State>::parse()`, replace lifecycle helper methods with `From`/`TryFrom` conversions over tuple inputs, make tracked conversion record through `ConfigTracker`, make `is_trusted` consume `TrustTarget`, remove `ResolvedTrustTarget`, validate discovery context combinations, remove outcome `cwd`, move helper logic into `DiscoveryEngine`, enforce nearest-local builder input selection, and remove redundant `ConfigFile<State>` phantom state storage.
+- [x] Run `cargo test config::`, `mise run fmt`, `mise run test`, `mise run clippy`, `mise run ci`, and GitNexus change detection.
+- **Status:** complete
+
 ## Implementation-Readiness Decisions
-1. Global configs use a fallible consuming transition named `try_into_global_parsed()`.
+1. Global configs parse through `TryFrom<ConfigFile<Discovered>> for ConfigFile<Parsed>`; local discovered configs fail that conversion until tracked and trusted.
 2. `TrustTarget` shape is settled as `File(&Path)`, `Directory(&Path)`, and `ConfigFile(&ConfigFile<Tracked>)`.
 3. Unified `DiscoveryOutcome` is settled.
 4. `ConfigBuilderInput { local: ConfigFile<Discovered>, global: Option<ConfigFile<Discovered>> }` is settled.
@@ -68,7 +79,7 @@ Planning artifact review complete — next step is to grill implementation-readi
 | Decision | Rationale |
 |----------|-----------|
 | Use planning files for this design grilling session | User explicitly requested persistent planning files for session tracking. |
-| Do not implement code changes during this session | User explicitly said to consider/respond and now to track grilling, not edit implementation. |
+| Implement in isolated worktree after design decisions settled | User moved from design grilling into implementation; code changes live under `.worktrees/config-typestate`. |
 | Treat `ConfigFile<State>` and `ConfigBuilder<State>` as separate proposed typestate patterns | User clarified they are intentionally distinct: single-file lifecycle vs aggregate domain config construction. |
 | Make `ConfigFile<State>` lifecycle-oriented, not source-oriented | User agreed state should model per-file lifecycle; `ConfigSource` conditions some methods inside those states. |
 | Collapse builder tracking/trust into one aggregate state | User observed `ConfigBuilder` no longer needs separate `Tracked`; it can delegate local file `Tracked` and `Trusted` transitions internally to `ConfigFile<State>`. |
@@ -115,7 +126,12 @@ Planning artifact review complete — next step is to grill implementation-readi
 | Error | Attempt | Resolution |
 |-------|---------|------------|
 | RustConfigPatterns subagent failed with empty Cloud Code Assist response | 1 | Mutate approach: replace one broad multi-project task with narrower per-project research agents. |
-
+| `mise://tasks` resource unavailable in harness | 1 | Used already-known `mise run` project tasks and recorded the lookup failure. |
+| GitNexus/LSP could not resolve new config error symbols | 1 | Used grep/read fallback for callsite mapping; GitNexus final `detect_changes` still reported low risk. |
+| Initial error-hierarchy refactor produced recursive error types and stale tests | 1 | Boxed nested `TrustError` source inside `ConfigFileTrustError`, updated nested matches, and reran focused tests. |
+| Full check failed on unused `PathBuf`/`TrustError` imports after builder simplification | 1 | Removed the imports, reran formatter, clippy, and CI successfully. |
+| Renaming `ConfigBuilderInput.local` to `nearest_local` made the type less aligned with requested terminology | 1 | Restored `local`, moved the precedence description into docs, variable names, and explicit invariant errors. |
+| Clippy rejected `ok_or_else` for an eager error value | 1 | Switched to `ok_or` and reran clippy/CI successfully. |
 ## Notes
 - Worktree containing the prior implementation commit: `/Users/jack/Documents/41_personal/traces-pkm-init-cli`.
 - Current planning files are in project root: `/Users/jack/Documents/41_personal/traces-pkm`.
