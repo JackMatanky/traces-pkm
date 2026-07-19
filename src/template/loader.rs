@@ -7,27 +7,16 @@
 //! directory" is true by construction this way, rather than needing a
 //! runtime invariant nobody enforces.
 //!
-//! [`Self::find`] and [`Self::find_exact`] are this type's two
-//! orchestrating entry points for producing a [`TemplatePath<Found>`]:
-//! [`Self::find`] for [`super::service::TemplateService::resolve`] (the
-//! top-level `-i <name>` case, where a stem match is an acceptable
-//! fallback for a user-typed name), [`Self::find_exact`] for
-//! [`Self::load`] (the `{% include %}`/`{% extends %}` case, where an
-//! include name is a literal reference — no fallback). They're two
-//! separate methods, not one method taking a match-precedence flag:
-//! which rule wins is fixed per call site, not runtime-selected, and
-//! [`super::path::TemplatePath::<super::path::Validated>::find`]/
-//! [`super::path::TemplatePath::<super::path::Validated>::find_exact`]
-//! (see that module's docs) each express their own precedence directly,
-//! as code, rather than branching on a value this type would otherwise
-//! have to thread through. What *is* shared between them — because it's
-//! genuinely identical either way — is [`Self::validated`], the raw
-//! `-i <name>`/include name validation step: an earlier version had
-//! `find`/`find_exact` each independently call
-//! [`TemplatePath::<Raw>::validate`] and independently build their own
-//! `directories_searched` list for the "the name itself was unsafe"
-//! case; both duplications are gone now that both methods delegate to
-//! this one private helper first.
+//! [`Self::find`] is this type's *one* orchestrating entry point for
+//! producing a [`TemplatePath<Found>`]: it validates the raw name, then
+//! hands the search off to
+//! [`super::path::TemplatePath::<super::path::Validated>::find`], which
+//! has exactly one fixed precedence order (see that method's docs).
+//! Used both by [`super::service::TemplateService::resolve`] (top-level
+//! `-i <name>` resolution) and [`Self::load`]
+//! (`{% include %}`/`{% extends %}` loading) — the same method, the same
+//! precedence, for both: there's no separate "exact-only" search for
+//! includes.
 //!
 //! `name` is validated before any directory is searched — absolute
 //! paths and `..` traversal are never resolved, deliberately: this
@@ -48,7 +37,7 @@
 //! internal `safe_join` rejects any dot-prefixed segment in the
 //! *requested template name* (see `minijinja` 2.21.0's `src/loader.rs`)
 //! — e.g. `{% include ".draft.md" %}` fails to load even though the file
-//! exists. [`Self::find_exact`] instead does its own [`TemplatePath`]
+//! exists. [`Self::find`] instead does its own [`TemplatePath`]
 //! validation plus a plain [`Path::join`] (inside
 //! [`TemplatePath::<Found>::absolute`]) — an ordinary path join has no
 //! special treatment of `.` in *any* segment, directory or leaf, so both
@@ -65,7 +54,7 @@ use std::{
 
 use minijinja::{Error, ErrorKind};
 
-use super::path::{Found, Raw, TemplatePath, TemplatePathError, Validated};
+use super::path::{Found, Raw, TemplatePath, TemplatePathError};
 use crate::config::Config;
 
 /// Searches configured template directories, local first then global,
@@ -101,33 +90,9 @@ impl TemplateLoader {
         }
     }
 
-    /// Validates a raw `-i <name>`/include name, shared by [`Self::find`]
-    /// and [`Self::find_exact`] so neither independently re-implements
-    /// this step or its own "name itself was unsafe"
-    /// `directories_searched` list.
-    fn validated(
-        &self,
-        name: &Path,
-    ) -> Result<TemplatePath<Validated>, TemplatePathError> {
-        TemplatePath::<Raw>::new(name).validate().map_err(|_| {
-            TemplatePathError::TemplateNotFound {
-                name: name.to_path_buf(),
-                directories_searched: [
-                    self.local.as_deref(),
-                    self.global.as_deref(),
-                ]
-                .into_iter()
-                .flatten()
-                .map(Path::to_path_buf)
-                .collect(),
-            }
-        })
-    }
-
-    /// Resolves a raw `-i <name>` argument to a [`TemplatePath<Found>`]
-    /// — validates `name`, then hands the search off to
-    /// [`TemplatePath::<Validated>::find`] (exact match, falling back to
-    /// a stem match).
+    /// Resolves a raw `-i <name>`/include name to a
+    /// [`TemplatePath<Found>`] — validates `name`, then hands the
+    /// search off to [`TemplatePath::<Validated>::find`].
     ///
     /// # Errors
     ///
@@ -139,40 +104,35 @@ impl TemplateLoader {
         &self,
         name: &Path,
     ) -> Result<TemplatePath<Found>, TemplatePathError> {
-        self.validated(name)?
+        TemplatePath::<Raw>::new(name)
+            .validate()
+            .map_err(|_| TemplatePathError::TemplateNotFound {
+                name: name.to_path_buf(),
+                directories_searched: [
+                    self.local.as_deref(),
+                    self.global.as_deref(),
+                ]
+                .into_iter()
+                .flatten()
+                .map(Path::to_path_buf)
+                .collect(),
+            })?
             .find(self.local.as_deref(), self.global.as_deref())
     }
 
-    /// Resolves a raw include name to a [`TemplatePath<Found>`] —
-    /// validates `name`, then hands the search off to
-    /// [`TemplatePath::<Validated>::find_exact`] (a literal, exact match
-    /// only — no stem-matching fallback).
-    ///
-    /// # Errors
-    ///
-    /// Returns [`TemplatePathError::TemplateNotFound`] when `name` is
-    /// unsafe or no exact match is found in any searched directory.
-    pub(super) fn find_exact(
-        &self,
-        name: &Path,
-    ) -> Result<TemplatePath<Found>, TemplatePathError> {
-        self.validated(name)?
-            .find_exact(self.local.as_deref(), self.global.as_deref())
-    }
-
     /// Reads `name` from the first directory it exists in via
-    /// [`Self::find_exact`] — the minijinja loader glue for
+    /// [`Self::find`] — the minijinja loader glue for
     /// `{% include %}`/`{% extends %}`. Any failure to resolve `name`
-    /// (unsafe input, no match) reports as `None`, not an error —
-    /// matching [`Self::find_exact`]'s anti-oracle stance on unsafe
-    /// input.
+    /// (unsafe input, ambiguous match, no match) reports as `None`, not
+    /// an error — matching [`Self::find`]'s anti-oracle stance on
+    /// unsafe input.
     ///
     /// # Errors
     ///
     /// Returns a [`minijinja::Error`] when a matched file exists but
     /// can't be read.
     pub(super) fn load(&self, name: &str) -> Result<Option<String>, Error> {
-        let Ok(found) = self.find_exact(Path::new(name)) else {
+        let Ok(found) = self.find(Path::new(name)) else {
             return Ok(None);
         };
         match fs::read_to_string(found.absolute()) {
@@ -218,6 +178,18 @@ mod tests {
         let loader = TemplateLoader::new(Some(temp.path().to_path_buf()), None);
 
         let found = loader.find(Path::new("daily")).expect("find succeeds");
+
+        assert_eq!(found.absolute(), file);
+    }
+
+    #[test]
+    fn find_matches_a_literal_name() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let file = write_file(temp.path(), "daily.md");
+        let loader = TemplateLoader::new(Some(temp.path().to_path_buf()), None);
+
+        let found =
+            loader.find(Path::new("daily.md")).expect("find exact match");
 
         assert_eq!(found.absolute(), file);
     }
@@ -285,44 +257,6 @@ mod tests {
     }
 
     #[test]
-    fn find_exact_matches_a_literal_name() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let file = write_file(temp.path(), "daily.md");
-        let loader = TemplateLoader::new(Some(temp.path().to_path_buf()), None);
-
-        let found =
-            loader.find_exact(Path::new("daily.md")).expect("find exact match");
-
-        assert_eq!(found.absolute(), file);
-    }
-
-    #[test]
-    fn find_exact_does_not_stem_match() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        write_file(temp.path(), "daily.md");
-        let loader = TemplateLoader::new(Some(temp.path().to_path_buf()), None);
-
-        assert!(matches!(
-            loader.find_exact(Path::new("daily")),
-            Err(TemplatePathError::TemplateNotFound { .. })
-        ));
-    }
-
-    #[test]
-    fn find_exact_rejects_an_unsafe_name() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        write_file(temp.path(), "secret.md");
-        let local_dir = temp.path().join("templates");
-        fs::create_dir_all(&local_dir).expect("create local templates");
-        let loader = TemplateLoader::new(Some(local_dir), None);
-
-        assert!(matches!(
-            loader.find_exact(Path::new("../secret.md")),
-            Err(TemplatePathError::TemplateNotFound { .. })
-        ));
-    }
-
-    #[test]
     fn load_resolves_a_dot_prefixed_include_name() {
         let temp = tempfile::tempdir().expect("create temp dir");
         fs::write(temp.path().join(".draft.md"), "secret")
@@ -355,14 +289,14 @@ mod tests {
     }
 
     #[test]
-    fn load_never_stem_matches() {
+    fn load_falls_back_to_a_stem_match() {
         let temp = tempfile::tempdir().expect("create temp dir");
         write_file(temp.path(), "daily.md");
         let loader = TemplateLoader::new(Some(temp.path().to_path_buf()), None);
 
         let source = loader.load("daily").expect("load succeeds");
 
-        assert_eq!(source, None);
+        assert_eq!(source, Some("content".to_owned()));
     }
 
     #[test]

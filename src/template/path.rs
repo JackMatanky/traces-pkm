@@ -17,15 +17,14 @@
 //!   beyond the path itself, so it's a bare unit marker.
 //! - [`Found`]: proven to exist under a specific
 //!   [`super::source_dir::TemplateSourceDir`] —
-//!   [`TemplatePath::<Validated>::find`]/
-//!   [`TemplatePath::<Validated>::find_exact`] (I/O, directory-dependent)
-//!   produce it, and it's the *only* state that carries that extra fact,
-//!   because deriving [`TemplatePath::<Found>::absolute`] is the one thing this
-//!   state alone needs to do that no earlier state has any use for. No
-//!   constructor for `Found` exists anywhere else — deliberately: a public one
-//!   would let unrelated code manufacture a "found" path that was never
-//!   actually searched for, reopening the arbitrary-file-read hole this crate
-//!   closed by construction.
+//!   [`TemplatePath::<Validated>::find`] (I/O, directory-dependent) produces
+//!   it, and it's the *only* state that carries that extra fact, because
+//!   deriving [`TemplatePath::<Found>::absolute`] is the one thing this state
+//!   alone needs to do that no earlier state has any use for. No constructor
+//!   for `Found` exists anywhere else — deliberately: a public one would let
+//!   unrelated code manufacture a "found" path that was never actually searched
+//!   for, reopening the arbitrary-file-read hole this crate closed by
+//!   construction.
 //!
 //! `State` has no default: every signature that names `TemplatePath`,
 //! inside this file or crossing into `loader.rs`/`service.rs`, spells
@@ -36,24 +35,13 @@
 //! (unproven) state accidentally accepts a later (already-proven) one
 //! instead, because nothing forced the author to say which they meant.
 //!
-//! [`TemplatePath::<Validated>::find`] and
-//! [`TemplatePath::<Validated>::find_exact`] are two separate methods, not
-//! one method parameterized by a match-precedence value: which rule an
-//! exact match takes precedence *over* — a stem-matching fallback, or
-//! nothing — is fixed, never runtime-selected, and each method's own body
-//! is where that precedence lives, as the literal order its code runs in
-//! (exact check, *then* — only for [`Self::find`] — a stem-matching
-//! fallback), not as a flag some shared function branches on. Both share
-//! only what's actually identical between them: which directories to
-//! search, in what dedup/priority order ([`Self::directories`]).
-//! [`super::loader::TemplateLoader`] has one method calling each: `find`
-//! for top-level `-i <name>` resolution (a stem match is an acceptable
-//! fallback for a user-typed name), `find_exact` for
-//! `{% include %}`/`{% extends %}` loading (an include name is a literal
-//! reference, not a shorthand — no fallback). Both go through
-//! [`super::loader::TemplateLoader`]'s own private, shared validation step
-//! first, so the raw-name-validation logic itself isn't duplicated between
-//! them even though the search that follows it is two separate methods.
+//! [`TemplatePath::<Validated>::find`] is the *only* search method —
+//! shared, unmodified, by both callers:
+//! [`super::loader::TemplateLoader::find`] uses it for both top-level
+//! `-i <name>` resolution and `{% include %}`/`{% extends %}` loading.
+//! One method, one fixed precedence order (see its own docs) — not a
+//! parameter, not a per-caller variant: every candidate is searched the
+//! same way regardless of who's asking.
 //!
 //! [`TemplatePathError`] is *one* error type covering this whole
 //! lifecycle — `Absolute`/`UnsafeComponent` from validation,
@@ -68,11 +56,11 @@
 //!
 //! This file holds the *type* — what a template path is, at each stage
 //! of its life, and every way producing one can fail — with no
-//! dependency on `loader.rs` at all: [`TemplatePath::<Validated>::find`]/
-//! [`TemplatePath::<Validated>::find_exact`] take the two directory paths
-//! they need directly (`local`/`global`, mirroring `TemplateLoader`'s own
-//! fields exactly), never the concrete `TemplateLoader` type or an
-//! intermediary decoupling type.
+//! dependency on `loader.rs` at all: [`TemplatePath::<Validated>::find`]
+//! takes the two directory paths it needs directly
+//! (`local`/`global`, mirroring `TemplateLoader`'s own fields exactly),
+//! never the concrete `TemplateLoader` type or an intermediary
+//! decoupling type.
 
 use std::{
     ffi::OsStr,
@@ -247,9 +235,7 @@ impl TemplatePath<Validated> {
     }
 
     /// Every directory to search, local then global, deduped when
-    /// they're the same directory. Shared by [`Self::find`] and
-    /// [`Self::find_exact`] — which directories to visit is the same
-    /// question regardless of which match rules run within each one.
+    /// they're the same directory.
     fn directories(
         local: Option<&Path>,
         global: Option<&Path>,
@@ -263,50 +249,19 @@ impl TemplatePath<Validated> {
             )
     }
 
-    /// Searches `local` then `global` for a literal, exact match only —
-    /// no stem-matching fallback. An include name is a reference, not a
-    /// user-typed shorthand: precedence here is simply that only the
-    /// exact rule ever runs, expressed by this method never reaching a
-    /// stem search at all.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`TemplatePathError::TemplateNotFound`] when no exact
-    /// match is found in either directory.
-    pub(super) fn find_exact(
-        self,
-        local: Option<&Path>,
-        global: Option<&Path>,
-    ) -> Result<TemplatePath<Found>, TemplatePathError> {
-        let mut directories_searched = Vec::new();
-        for dir in Self::directories(local, global) {
-            directories_searched.push(dir.path().to_path_buf());
-
-            if self.exists_in(dir.path()) {
-                return Ok(TemplatePath {
-                    path: self.path.clone(),
-                    state: Found {
-                        source: dir,
-                    },
-                });
-            }
-        }
-
-        Err(TemplatePathError::TemplateNotFound {
-            name: self.path,
-            directories_searched,
-        })
-    }
-
-    /// Searches `local` then `global` for this candidate: an exact
-    /// match, and — only once that's ruled out for the directory being
-    /// searched — a stem match, tried one directory at a time (a
-    /// directory exhausted, both rules, before the next is even
-    /// considered), so `local` always wins over `global` regardless of
-    /// which rule matched it. Precedence is this method's own code
-    /// order, not a parameter: the stem-matching branch below only ever
-    /// runs after [`Self::exists_in`] has already returned `false` for
-    /// the current directory.
+    /// Searches for this candidate in a fixed precedence order: a local
+    /// exact relative path, a local relative path without extension (a
+    /// stem match), a global exact relative path, a global relative path
+    /// without extension — tried one directory at a time (a directory
+    /// exhausted, both rules, before the next is even considered), so
+    /// `local` always wins over `global` regardless of which rule
+    /// matched it. This precedence is this method's own code order, not
+    /// a parameter: the stem-matching branch below only ever runs after
+    /// [`Self::exists_in`] has already returned `false` for the current
+    /// directory. This is the only search method — used both for
+    /// top-level `-i <name>` resolution and for
+    /// `{% include %}`/`{% extends %}` loading; there is exactly one
+    /// precedence order, not a different one per caller.
     ///
     /// # Errors
     ///
@@ -483,108 +438,6 @@ mod tests {
         #[test]
         fn stem_of_an_extensionless_path_is_unchanged() {
             assert_eq!(validated("daily").stem(), OsStr::new("daily"));
-        }
-    }
-
-    mod find_exact {
-        use pretty_assertions::assert_eq;
-
-        use super::*;
-
-        #[test]
-        fn matches_a_literal_name() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            let file = write_file(temp.path(), "daily.md");
-
-            let found = validated("daily.md")
-                .find_exact(Some(temp.path()), None)
-                .expect("find succeeds");
-
-            assert_eq!(found.absolute(), file);
-        }
-
-        #[test]
-        fn does_not_stem_match() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            write_file(temp.path(), "daily.md");
-
-            assert!(matches!(
-                validated("daily").find_exact(Some(temp.path()), None),
-                Err(TemplatePathError::TemplateNotFound { .. })
-            ));
-        }
-
-        #[test]
-        fn prefers_local_over_global() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            let local_dir = temp.path().join("local");
-            let global_dir = temp.path().join("global");
-            let local_file = write_file(&local_dir, "daily.md");
-            write_file(&global_dir, "daily.md");
-
-            let found = validated("daily.md")
-                .find_exact(Some(&local_dir), Some(&global_dir))
-                .expect("find succeeds");
-
-            assert_eq!(found.absolute(), local_file);
-        }
-
-        #[test]
-        fn falls_through_to_global_when_local_has_no_match() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            let local_dir = temp.path().join("local");
-            let global_dir = temp.path().join("global");
-            fs::create_dir_all(&local_dir).expect("create local dir");
-            let file = write_file(&global_dir, "daily.md");
-
-            let found = validated("daily.md")
-                .find_exact(Some(&local_dir), Some(&global_dir))
-                .expect("find succeeds");
-
-            assert_eq!(found.absolute(), file);
-        }
-
-        #[test]
-        fn not_found_reports_every_searched_directory() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            let local_dir = temp.path().join("local");
-            let global_dir = temp.path().join("global");
-            fs::create_dir_all(&local_dir).expect("create local dir");
-            fs::create_dir_all(&global_dir).expect("create global dir");
-
-            match validated("missing.md")
-                .find_exact(Some(&local_dir), Some(&global_dir))
-            {
-                Err(TemplatePathError::TemplateNotFound {
-                    directories_searched,
-                    ..
-                }) => assert_eq!(directories_searched, vec![
-                    local_dir, global_dir
-                ]),
-                result => assert!(matches!(
-                    result,
-                    Err(TemplatePathError::TemplateNotFound { .. })
-                )),
-            }
-        }
-
-        #[test]
-        fn dedups_when_local_and_global_are_identical() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            fs::create_dir_all(temp.path()).expect("temp dir exists");
-
-            match validated("missing.md")
-                .find_exact(Some(temp.path()), Some(temp.path()))
-            {
-                Err(TemplatePathError::TemplateNotFound {
-                    directories_searched,
-                    ..
-                }) => assert_eq!(directories_searched, vec![temp.path()]),
-                result => assert!(matches!(
-                    result,
-                    Err(TemplatePathError::TemplateNotFound { .. })
-                )),
-            }
         }
     }
 

@@ -170,7 +170,10 @@ mod tests {
     }
 
     #[test]
-    fn render_never_stem_matches_an_include() {
+    fn render_stem_matches_an_include() {
+        // The unified find() precedence (exact, then stem, local then
+        // global) applies to includes too now — there's no separate
+        // exact-only search for `{% include %}`.
         let temp = tempfile::tempdir().expect("create temp dir");
         fs::write(temp.path().join("daily.md"), "hello")
             .expect("write template");
@@ -179,10 +182,10 @@ mod tests {
             None,
         ));
 
-        let error = engine
+        let rendered = engine
             .render("{% include \"daily\" %}")
-            .expect_err("extension-less include name is not stem-matched");
+            .expect("extension-less include name is stem-matched");
 
-        assert_eq!(error.kind(), ErrorKind::TemplateNotFound);
+        assert_eq!(rendered, "hello");
     }
 }
