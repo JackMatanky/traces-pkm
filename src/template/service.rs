@@ -35,7 +35,7 @@ use std::{
 use super::{
     engine::TemplateEngine,
     error::TemplateError,
-    loader::{TemplateLoader, TemplatePath, TemplatePathError},
+    loader::{TemplateLoader, TemplatePath, TemplateResolveError},
 };
 use crate::config::Config;
 
@@ -66,14 +66,14 @@ impl<'a> TemplateService<'a> {
     ///
     /// # Errors
     ///
-    /// Returns [`TemplatePathError::AmbiguousTemplate`] when multiple
+    /// Returns [`TemplateResolveError::AmbiguousTemplate`] when multiple
     /// files match `name` within a single directory. Returns
-    /// [`TemplatePathError::TemplateNotFound`] when no match is found.
+    /// [`TemplateResolveError::TemplateNotFound`] when no match is found.
     #[inline]
     pub(super) fn resolve(
         &self,
         name: &Path,
-    ) -> Result<TemplatePath, TemplatePathError> {
+    ) -> Result<TemplatePath, TemplateResolveError> {
         self.loader.resolve(name)
     }
 

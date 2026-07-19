@@ -8,7 +8,7 @@ use std::{io, path::PathBuf};
 
 use thiserror::Error;
 
-use super::loader::TemplatePathError;
+use super::loader::TemplateResolveError;
 
 /// Errors from [`super::TemplateService::instantiate`].
 #[derive(Debug, Error)]
@@ -21,7 +21,7 @@ pub(crate) enum TemplateError {
         name: PathBuf,
         /// Source resolution error.
         #[source]
-        source: TemplatePathError,
+        source: TemplateResolveError,
     },
 
     /// Reading the resolved template file failed.

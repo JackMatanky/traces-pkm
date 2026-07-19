@@ -1,16 +1,15 @@
 //! Template resolution, rendering, and writing.
 //!
-//! [`input`] holds [`TemplateInputPath`](input::TemplateInputPath) — a
-//! candidate identifier's shape, validated once at construction rather
-//! than re-checked with a runtime bool at every call site, before it's
-//! tied to any directory. [`loader`] holds
-//! [`TemplateLoader`](loader::TemplateLoader) — the single place that
-//! knows which directories hold templates, how to search them, and how
-//! to turn a raw `-i <name>` argument into a
-//! [`TemplatePath`](loader::TemplatePath), the resolved (absolute,
-//! on-disk) counterpart to
-//! [`TemplateInputPath`](input::TemplateInputPath) — shared by top-level
-//! `-i` resolution and `{% include %}`/`{% extends %}` loading, so the
+//! [`loader`] holds the whole `-i <name>` -> on-disk-file lifecycle as
+//! one typestate type family,
+//! [`TemplatePath<State>`](loader::TemplatePath) —
+//! [`Unresolved`](loader::Unresolved) (a candidate identifier, validated safe
+//! to join onto any template directory, not yet tied to one) transitioning to
+//! [`Resolved`](loader::Resolved) (an absolute path
+//! [`TemplateLoader`](loader::TemplateLoader) actually found) — plus
+//! [`TemplateLoader`](loader::TemplateLoader), the directory-search
+//! engine that transition runs against, shared by top-level `-i`
+//! resolution and `{% include %}`/`{% extends %}` loading so the
 //! local-then-global directory priority is defined exactly once. Never
 //! resolves outside those directories: an absolute or `..`-relative `-i`
 //! argument is always a miss, not an exact-path shortcut (see
@@ -32,7 +31,6 @@
 
 mod engine;
 mod error;
-mod input;
 mod loader;
 mod service;
 
