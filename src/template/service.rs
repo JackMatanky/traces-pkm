@@ -2,12 +2,11 @@
 //! [`TemplateEngine`], and writes the result to disk.
 //!
 //! Holds a reference to [`Config`] (for resolution and the default output
-//! directory) and owns a [`TemplateEngine`], built once in
-//! [`TemplateService::new`] — later issues register custom functions
-//! (`prompt_text`/`select`/`set_output`, `m11-ecosystem`) on the engine's
-//! `Environment` the same instance every `instantiate` call reuses. This
-//! render pipeline tracer (issue tmpl-01) renders with an empty template
-//! context.
+//! directory) and a [`TemplateEngine`] — later issues register custom
+//! functions (`prompt_text`/`select`/`set_output`, `m11-ecosystem`) on the
+//! engine's `Environment` the same instance every `instantiate` call
+//! reuses. This render pipeline tracer (issue tmpl-01) renders with an
+//! empty template context.
 
 use std::{
     fs,
@@ -15,9 +14,9 @@ use std::{
 };
 
 use super::{
-    engine::TemplateEngine,
+    engine::{self, TemplateEngine},
     error::TemplateError,
-    resolve::{self, ResolutionError, ResolvedTemplate},
+    resolve::{self, ResolutionError, TemplatePath},
 };
 use crate::config::Config;
 
@@ -34,10 +33,26 @@ impl<'a> TemplateService<'a> {
     #[inline]
     #[must_use]
     pub(crate) fn new(config: &'a Config) -> Self {
-        let engine = TemplateEngine::new(
+        let engine = TemplateEngine::new().with_loader(engine::build_loader(
             config.local_template_dir().map(Path::to_path_buf),
             config.global_template_dir().map(Path::to_path_buf),
-        );
+        ));
+        Self::with_engine(config, engine)
+    }
+
+    /// Creates a service from an explicit `engine`, bypassing
+    /// [`Self::new`]'s directory-derived loader wiring.
+    ///
+    /// The seam [`Self::new`] is built on: lets a caller (tests, or a
+    /// future dry-run/no-includes mode) supply a bare
+    /// [`TemplateEngine::new`] or one with a custom loader, without
+    /// needing `config`'s directories to back it.
+    #[inline]
+    #[must_use]
+    pub(super) fn with_engine(
+        config: &'a Config,
+        engine: TemplateEngine,
+    ) -> Self {
         Self {
             config,
             engine,
@@ -55,7 +70,7 @@ impl<'a> TemplateService<'a> {
     pub(super) fn resolve(
         &self,
         name: &Path,
-    ) -> Result<ResolvedTemplate, ResolutionError> {
+    ) -> Result<TemplatePath, ResolutionError> {
         resolve::resolve_template(self.config, name)
     }
 
@@ -81,17 +96,18 @@ impl<'a> TemplateService<'a> {
                 name: name.to_path_buf(),
                 source,
             })?;
+        let resolved_path = resolved.absolute();
         let template_source =
-            fs::read_to_string(&resolved.path).map_err(|source| {
+            fs::read_to_string(&resolved_path).map_err(|source| {
                 TemplateError::Read {
-                    path: resolved.path.clone(),
+                    path: resolved_path.clone(),
                     source,
                 }
             })?;
         let rendered =
             self.engine.render(&template_source).map_err(|source| {
                 TemplateError::Render {
-                    path: resolved.path.clone(),
+                    path: resolved_path.clone(),
                     source,
                 }
             })?;
@@ -123,14 +139,14 @@ impl<'a> TemplateService<'a> {
     ///
     /// Computed at write time, not stored during render — issue tmpl-02's
     /// `-o`/`set_output()` handling overrides this.
-    fn default_output_path(&self, resolved: &ResolvedTemplate) -> PathBuf {
+    fn default_output_path(&self, resolved: &TemplatePath) -> PathBuf {
         let output_dir = self.config.output_dir();
         let base = if output_dir.is_absolute() {
             output_dir.to_path_buf()
         } else {
             self.config.root().join(output_dir)
         };
-        base.join(&resolved.name).with_extension("md")
+        base.join(resolved.name()).with_extension("md")
     }
 }
 
@@ -160,7 +176,7 @@ mod tests {
         let resolved =
             service.resolve(Path::new("daily")).expect("resolve template");
 
-        assert_eq!(resolved.path, file);
+        assert_eq!(resolved.absolute(), file);
     }
 
     #[test]
@@ -272,5 +288,22 @@ mod tests {
             fs::read_to_string(&output_path).expect("read written output"),
             "included!"
         );
+    }
+
+    #[test]
+    fn with_engine_allows_injecting_a_bare_engine_without_a_loader() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let local_dir = temp.path().join("templates");
+        write_file(&local_dir, "daily.md", "{% include \"missing.md\" %}");
+        let config =
+            Config::for_test(temp.path().to_path_buf(), Some(local_dir), None);
+        let service =
+            TemplateService::with_engine(&config, TemplateEngine::new());
+
+        let error = service
+            .instantiate(Path::new("daily"))
+            .expect_err("include fails without a loader attached");
+
+        assert!(matches!(error, TemplateError::Render { .. }));
     }
 }

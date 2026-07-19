@@ -3,12 +3,17 @@
 //! [`resolve`] matches a template name against a [`crate::config::Config`]'s
 //! template directories — moved out of `crate::config::domain` in issue
 //! tmpl-01: `Config` only knows about parsed directories, not how to search
-//! them for a name. [`path`] holds the [`TemplatePath`](path::TemplatePath)/
-//! [`TemplateName`](path::TemplateName) newtypes both [`resolve`] and
-//! [`engine`] build on, so a directory-relative template identifier is
+//! them for a name. Never resolves outside those directories: an absolute
+//! or `..`-relative `-i` argument is always a miss, not an exact-path
+//! shortcut (see `resolve::TemplateSource`'s docs). [`path`] holds
+//! [`TemplateInputPath`](path::TemplateInputPath)/
+//! [`TemplateName`](path::TemplateName) — a candidate identifier's shape,
 //! validated once at construction rather than re-checked with a runtime
-//! bool at every call site. [`engine`] wraps minijinja's `Environment` —
-//! construction, `{% include %}`/`{% extends %}` loader wiring, and
+//! bool at every call site, before it's tied to any directory.
+//! [`resolve::TemplatePath`] is the later-stage type: a validated
+//! identifier paired with the specific [`resolve::TemplateSource`]
+//! directory it resolved from. [`engine`] wraps minijinja's `Environment`
+//! — construction, `{% include %}`/`{% extends %}` loader wiring, and
 //! rendering — behind a small interface, so [`service`] depends on "render
 //! this source" rather than on minijinja's API directly (see its module
 //! docs for the dot-prefix loader bug it also works around). [`service`]
