@@ -46,6 +46,20 @@
   - Resolved trust routing direction: trust should route through `ConfigFile` and discovery components, not a trust-specific resolution layer.
   - Captured optional-search concern: nearest-local discovery may need both optional and required APIs because init can treat absence as useful information.
   - Refined load route: `ConfigService::load(cwd)` should call a discovery `process()` method that runs `DiscoveryProcessor` for `Full` discovery, instead of manually composing nearest-local calls.
+  - Refined discovery API: discovery methods should take `DiscoveryContext`, and all discovery kinds can return `DiscoveryOutcome` instead of a separate output enum.
+  - Resolved outcome shape: store `kind: DiscoveryType` and `anchor: DiscoveryAnchor`, not the full `DiscoveryContext`; consider `DiscoveryContext::into_parts()`/`into_parts_ref()`.
+  - Opened precedence decision: full discovery may find multiple local configs and needs a clear merge order.
+  - Opened policy question: full load may need an effective-config selection step so `ConfigBuilder` receives only the chosen local/global files instead of all discovered files.
+  - Resolved full-load selection policy: use nearest local plus optional global, not every discovered local config.
+  - Captured naming concern: avoid `EffectiveConfigFiles`; consider a clearer name or a direct `DiscoveryOutcome` method.
+  - Refined selected load-file type: use `ConfigBuilderInput` or `ConfigBuilderContext`, with preference leaning toward an input type that codifies precedence.
+  - Captured parse-don't-validate enforcement: implement `TryFrom<DiscoveryOutcome>` so `ConfigBuilder` accepts only a validated builder input.
+  - Resolved selected input naming: commit to `ConfigBuilderInput`; `ConfigBuilder::new` accepts only that type.
+  - Resolved discovery engine storage for now: use a ZST `DiscoveryEngine` owned by `ConfigService`; revisit later whether it should hold `DiscoveryContext`.
+  - Resolved context ownership: do not make `DiscoveryEngine` hold `DiscoveryContext` yet; context remains a per-call input.
+  - Resolved discovery method seam: `DiscoveryEngine::process(ctx)` is the main public-ish method; kind-specific helpers stay private.
+  - Resolved implementation ordering: user accepted the ten-step implementation sequence from `ConfigFile<Discovered>` through tests.
+  - Recorded final design direction, rejected alternatives, and implementation order in `findings.md`.
 - Files created/modified:
   - `task_plan.md`
   - `findings.md`
@@ -66,10 +80,10 @@
 ## 5-Question Reboot Check
 | Question | Answer |
 |----------|--------|
-| Where am I? | Phase 3: Clarify Error Model. |
-| Where am I going? | Decide the discovery engine `process()` return shape, then finish error model. |
+| Where am I? | Final design recorded. |
+| Where am I going? | Design grilling is complete; implementation can be started in a later task using the recorded order. |
 | What's the goal? | Stress-test the proposed config typestate architecture without implementing changes. |
-| What have I learned? | `ConfigService::load(cwd)` should delegate full discovery to a discovery `process()` method that owns `DiscoveryProcessor`. |
-| What have I done? | Created planning files, completed external research, recorded sixteen accepted decisions, and narrowed discovery API shape around `process()`. |
+| What have I learned? | The final design centers on `ConfigFile<Discovered>`, `DiscoveryEngine::process(ctx)`, `DiscoveryOutcome`, `ConfigBuilderInput`, and `ConfigService::load(cwd)`. |
+| What have I done? | Created planning files, completed external research, recorded final design direction, rejected alternatives, and accepted implementation order. |
 
 ---

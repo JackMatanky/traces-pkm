@@ -61,6 +61,53 @@
 | Route trust through discovery and config-file lifecycles, not trust resolution | User agreed the design is better when trust uses `ConfigFile` and discovery components directly, with no trust-specific resolution layer. |
 | Keep nearest-local absence in discovery but consider optional search APIs | User agreed absence belongs to discovery, but noted `nearest_local` should not always error because init may use absence to create a new local config. |
 | Let `ConfigService::load(cwd)` call discovery processing directly | User noted load can simply call a `process()` method that runs `DiscoveryProcessor`; this keeps full discovery hidden behind discovery components rather than decomposing load into nearest-local calls. |
+| Use `DiscoveryContext` as discovery method input | User challenged passing raw anchors to focused discovery methods; context should be the input shape for each discovery operation. |
+| Use unified `DiscoveryOutcome` for all discovery kinds | User observed `DiscoveryOutcome` can represent `Full`, `NearestLocal`, and `AllLocalDescendents` by varying local/global cardinality, avoiding a separate `DiscoveryOutput` enum. |
+| Store discovery kind and anchor in `DiscoveryOutcome`, not full context | User decided only `DiscoveryType`, `DiscoveryAnchor`, local files, and global files remain relevant after discovery; `DiscoveryContext` may expose `into_parts()`/`into_parts_ref()`. |
+| Define explicit precedence for multiple local configs in full discovery | User noted full discovery can theoretically find more than one local config, so merge precedence must be clear. |
+| Resolve select-effective versus merge-all policy | User decided full config loading should pass only nearest local plus optional global to the builder, not all discovered local configs. |
+| Avoid the name `EffectiveConfigFiles` | User wants a better name, or possibly just a method on `DiscoveryOutcome`, for selecting the files used by config loading. |
+| Name selected load files `ConfigBuilderInput` | User prefers `ConfigBuilderInput` or `ConfigBuilderContext`; the selected type should codify precedence policy before construction reaches `ConfigBuilder`. |
+| Use `TryFrom<DiscoveryOutcome>` to parse discovery into builder input | User referenced `api-parse-dont-validate`; conversion should produce a validated type so `ConfigBuilder` cannot be constructed from invalid or unselected discovery data. |
+| Commit to `ConfigBuilderInput` and builder-only construction | User agreed `ConfigBuilder::new` should accept only `ConfigBuilderInput`, so discovery selection/precedence is parsed before the builder boundary. |
+| Make `DiscoveryEngine` a ZST owned by `ConfigService` for now | User agreed with the ZST collaborator shape, while noting context ownership may need reevaluation later. |
+| Revisit whether `DiscoveryEngine` should hold `DiscoveryContext` | User flagged a possible future design where the engine owns context rather than accepting it per call. |
+| Do not make `DiscoveryEngine` hold `DiscoveryContext` yet | User decided context remains per-call input for now; any context-owning discovery run can be considered later if needed. |
+| Make `DiscoveryEngine::process(ctx)` the main discovery method | User agreed `process(ctx)` is the public-ish discovery seam, with kind-specific helper methods kept private. |
+
+## Accepted Final Design Direction
+- `ConfigFile<Discovered>` replaces `CandidateConfigFile`; source-specific constructors derive root from path and prevent root/source mismatch.
+- `ConfigFile` lifecycle is per-file: discovered, tracked, trusted, parsed; global configs can bypass local tracking/trust transitions.
+- `DiscoveryEngine` is a ZST collaborator owned by `ConfigService` for now. It receives `DiscoveryContext` per call and exposes `process(ctx)` as the main discovery method.
+- `DiscoveryContext` has private fields and smart constructors. It uses `DiscoveryType::{Full, NearestLocal, AllLocalDescendents}` and `DiscoveryAnchor::{Directory, File}`.
+- `DiscoveryOutcome` stores `kind`, `anchor`, `local: Box<[ConfigFile<Discovered>]>`, and `global: Box<[ConfigFile<Discovered>]>`.
+- Full config loading selects nearest local plus optional global; it does not merge every discovered local config.
+- `ConfigBuilderInput` is parsed from `DiscoveryOutcome` with `TryFrom`, codifying selection/precedence before reaching the builder.
+- `ConfigBuilder::new` accepts only `ConfigBuilderInput`.
+- `ConfigService::load(cwd)` is the normal load entry point; `discover()` and `build()` become private implementation details.
+- Trust routes use discovery plus config-file lifecycle directly; no separate trust-target-resolution component.
+
+## Rejected Alternatives
+- `CandidateConfigFile` as a separate candidate type: redundant once `ConfigFile<Discovered>` owns path/source/root invariants.
+- Scope-only `ConfigFile<Local>`/`ConfigFile<Global>` typestate: `ConfigSource` already models source; lifecycle states carry stronger invariants.
+- Builder-level `Tracked` and `Parsed` states: per-file lifecycle and `ConfigBuilderInput` make these unnecessary.
+- Merging all discovered local configs during full load: rejected in favor of nearest-local plus optional global.
+- `EffectiveConfigFiles`: rejected as vague; use `ConfigBuilderInput`.
+- `TrustTargetResolutionError`/resolution component: rejected as a bad boundary that would only wrap discovery/config-file errors.
+- General `DiscoveryOutput` enum: unnecessary because `DiscoveryOutcome` can represent all discovery kinds through cardinality.
+- `DiscoveryEngine` holding context now: deferred; context stays a per-call input.
+
+## Implementation Order
+1. Introduce `ConfigFile<Discovered>` and remove `CandidateConfigFile`.
+2. Add `DiscoveryContext`, `DiscoveryType`, and `DiscoveryAnchor`.
+3. Add `DiscoveryEngine::process(ctx)` returning `DiscoveryOutcome`.
+4. Change `DiscoveryOutcome` to store `ConfigFile<Discovered>`.
+5. Add `ConfigBuilderInput` and `TryFrom<DiscoveryOutcome>`.
+6. Change `ConfigBuilder::new` to accept `ConfigBuilderInput` only.
+7. Add `ConfigService::load(cwd)` and make `discover()`/`build()` private.
+8. Rework trust routes to use `DiscoveryEngine` and `ConfigFile<Tracked>`.
+9. Update errors and CLI wrappers.
+10. Update tests.
 
 ## Issues Encountered
 | Issue | Resolution |

@@ -33,20 +33,21 @@ Phase 2: Clarify Type Responsibilities — External Config-Builder Research
 - [x] Evaluate `ConfigFileError` with `PathInaccessible`, `UnsupportedLocalConfigFile`, and `UnsupportedGlobalConfigFile`.
 - [x] Decide whether absence belongs in `DiscoveryError`, `ConfigLookupError`, or a locator-level error.
 - [x] Rethink trust routes to remove a separate trust-target resolution component.
-- [ ] Decide optional versus required nearest-local discovery APIs for init/trust/load.
-- **Status:** in_progress
+- [x] Decide optional versus required nearest-local discovery APIs for init/trust/load.
+- [x] Decide whether `DiscoveryOutcome` stores raw anchor or full `DiscoveryContext`.
+- **Status:** complete
 
-### Phase 4: Clarify Locator Module
-- [ ] Define the `ConfigLocator` interface.
-- [ ] Decide whether `ConfigLocator` should be a ZST type, stateful type, or plain module functions.
-- [ ] Decide how ascending and descending walks are tested in isolation.
-- **Status:** pending
+### Phase 4: Clarify Discovery Engine
+- [x] Define the `DiscoveryEngine` interface inside `src/config/discovery.rs`.
+- [x] Decide whether `DiscoveryEngine` should be a ZST type, stateful type, or plain module functions.
+- [x] Define local config precedence when full discovery finds multiple locals.
+- **Status:** complete
 
 ### Phase 5: Record Final Design Direction
-- [ ] Summarize accepted decisions.
-- [ ] List rejected alternatives and reasons.
-- [ ] Identify implementation order for a later task, without implementing now.
-- **Status:** pending
+- [x] Summarize accepted decisions.
+- [x] List rejected alternatives and reasons.
+- [x] Identify implementation order for a later task, without implementing now.
+- **Status:** complete
 
 ## Key Questions
 1. What exact single-file lifecycle states should `ConfigFile<State>` encode?
@@ -88,8 +89,24 @@ Phase 2: Clarify Type Responsibilities — External Config-Builder Research
 | Route trust through discovery and config-file lifecycles, not trust resolution | User agreed the design is better when trust uses `ConfigFile` and discovery components directly, with no trust-specific resolution layer. |
 | Keep nearest-local absence in discovery but consider optional search APIs | User agreed absence belongs to discovery, but noted `nearest_local` should not always error because init may use absence to create a new local config. |
 | Let `ConfigService::load(cwd)` call discovery processing directly | User noted load can simply call a `process()` method that runs `DiscoveryProcessor`; this keeps full discovery hidden behind discovery components rather than decomposing load into nearest-local calls. |
+| Use `DiscoveryContext` as discovery method input | User challenged passing raw anchors to focused discovery methods; context should be the input shape for each discovery operation. |
+| Use unified `DiscoveryOutcome` for all discovery kinds | User observed `DiscoveryOutcome` can represent `Full`, `NearestLocal`, and `AllLocalDescendents` by varying local/global cardinality, avoiding a separate `DiscoveryOutput` enum. |
+| Store discovery kind and anchor in `DiscoveryOutcome`, not full context | User decided only `DiscoveryType`, `DiscoveryAnchor`, local files, and global files remain relevant after discovery; `DiscoveryContext` may expose `into_parts()`/`into_parts_ref()`. |
+| Define explicit precedence for multiple local configs in full discovery | User noted full discovery can theoretically find more than one local config, so merge precedence must be clear. |
+| Full load selects nearest local plus optional global | User decided full config loading should not merge every discovered local config; it should use only the nearest local config, with optional global config. |
+| Avoid the name `EffectiveConfigFiles` | User wants a better name, or possibly just a method on `DiscoveryOutcome`, for selecting the files used by config loading. |
+| Name selected load files `ConfigBuilderInput` | User prefers `ConfigBuilderInput` or `ConfigBuilderContext`; the selected type should codify precedence policy before construction reaches `ConfigBuilder`. |
+| Use `TryFrom<DiscoveryOutcome>` to parse discovery into builder input | User referenced `api-parse-dont-validate`; conversion should produce a validated type so `ConfigBuilder` cannot be constructed from invalid or unselected discovery data. |
+| Commit to `ConfigBuilderInput` and builder-only construction | User agreed `ConfigBuilder::new` should accept only `ConfigBuilderInput`, so discovery selection/precedence is parsed before the builder boundary. |
+| Make `DiscoveryEngine` a ZST owned by `ConfigService` for now | User agreed with the ZST collaborator shape, while noting context ownership may need reevaluation later. |
+| Revisit whether `DiscoveryEngine` should hold `DiscoveryContext` | User flagged a possible future design where the engine owns context rather than accepting it per call. |
+| Do not make `DiscoveryEngine` hold `DiscoveryContext` yet | User decided context remains per-call input for now; any context-owning discovery run can be considered later if needed. |
+| Make `DiscoveryEngine::process(ctx)` the main discovery method | User agreed `process(ctx)` is the public-ish discovery seam, with kind-specific helper methods kept private. |
+| Accept staged implementation order | User agreed the proposed ten-step implementation order is good. |
 
 ## Errors Encountered
+| Error | Attempt | Resolution |
+|-------|---------|------------|
 | RustConfigPatterns subagent failed with empty Cloud Code Assist response | 1 | Mutate approach: replace one broad multi-project task with narrower per-project research agents. |
 
 ## Notes
