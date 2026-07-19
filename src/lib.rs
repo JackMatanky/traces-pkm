@@ -8,7 +8,6 @@ mod config;
 // `cli`/`main.rs`'s crate-internal access.
 pub mod dialog;
 mod hash;
-mod template;
 pub(crate) use cwd::Cwd;
 
 #[cfg(test)]

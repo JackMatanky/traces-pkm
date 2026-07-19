@@ -3,7 +3,7 @@
 Status: implemented
 
 **Date**: 2026-07-18
-**Implemented in**: `d3bf2b5` (plus preceding commits on `agent/init-cli`)
+**Implemented in**: `d3bf2b5` (plus preceding commits on `agent/init-cli`) – `fecefe7` (merged into `main`, branch deleted)
 **Agent session**: see `findings.md` for full session log
 
 ## Parent
@@ -131,12 +131,12 @@ tests/
 
 | File | Lines | Purpose |
 |------|-------|---------|
-| `src/cli/init.rs` | 237 | `Init` struct, helpers, unit tests |
-| `src/cli/mod.rs` | 89 | Parser, dispatch (was 63 lines before `run_init` removed) |
-| `src/cli/trust.rs` | 506 | `TrustArgs` struct + handlers + extensive tests |
+| `src/cli/init.rs` | 217 | `Init` struct, helpers, unit tests |
+| `src/cli/mod.rs` | 76 | Parser, dispatch |
+| `src/cli/trust.rs` | 477 | `TrustArgs` struct + handlers + extensive tests |
 | `src/cli/error.rs` | 250 | Error types with miette diagnostic codes |
 | `src/cwd.rs` | 115 | `Cwd` newtype, `CwdGuard`, tests |
-| `tests/init_cli.rs` | 95 | Integration test |
+| `tests/init_cli.rs` | 110 | Integration test |
 | `clippy.toml` | 102 | Lint config (1 removed field, dedented) |
 
 ### Running the tests
