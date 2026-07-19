@@ -1,41 +1,12 @@
-//! [`TemplatePath<State>`]: a template identifier's whole lifecycle,
-//! from raw `-i <name>` argument to a file found on disk, as one type
-//! family threaded through a typestate transition — plus
-//! [`TemplateLoader`], the directory-search engine that transition runs
-//! against.
+//! [`TemplateLoader`]: the directory-search mechanism [`super::path::TemplatePath`]'s
+//! typestate transition runs against — which directories hold templates,
+//! and how to read from them.
 //!
-//! Two states: [`Unresolved`] (a candidate identifier, validated safe to
-//! join onto any template directory, but not yet tied to one — the raw
-//! `-i <name>` argument, or a filename found while scanning a directory)
-//! and [`Resolved`] (an absolute path a [`TemplateLoader`] actually found
-//! under a configured template directory). [`TemplatePath::try_from`]
-//! (pure, no I/O) produces the first; [`TemplatePath::<Unresolved>::resolve`]
-//! (I/O, directory-dependent) consumes it and produces the second. No
-//! constructor exists for [`Resolved`] anywhere else — deliberately: a
-//! public one would let unrelated code manufacture a "resolved" path
-//! that was never actually searched for, reopening the
-//! arbitrary-file-read hole this crate closed by construction.
-//!
-//! This is why the two error types below are named the way they are, not
-//! bundled into one: [`TemplatePathError`] is genuinely `TemplatePath`'s
-//! own construction error (the *only* thing that can produce it is
-//! [`TemplatePath::try_from`]) — it has no "not found" or "ambiguous"
-//! variant because *constructing* a `TemplatePath` can't fail that way,
-//! only *resolving* an already-constructed one can. [`TemplateResolveError`]
-//! belongs to that different operation instead — [`TemplateLoader::resolve`]'s
-//! error, not `TemplatePath`'s. An earlier version of this module had one
-//! flat `TemplatePathError` covering both search failures, named after
-//! the *value* (`TemplatePath`) when the failures it described actually
-//! belonged to the *operation* (resolving/loading) a different type
-//! performs on that value — conflating the two made the error read as
-//! "what can go wrong constructing a `TemplatePath`" when it was really
-//! "what can go wrong asking a `TemplateLoader` to find one".
-//!
-//! [`TemplateLoader`] is shared by top-level `-i <name>` resolution
-//! ([`TemplateLoader::resolve`]) and [`super::engine::TemplateEngine`]'s
-//! `{% include %}`/`{% extends %}` loading ([`TemplateLoader::load`]), so
-//! the local-then-global directory priority is defined exactly once. The
-//! two callers still want different match strategies (`resolve`'s
+//! Shared by top-level `-i <name>` resolution ([`TemplateLoader::resolve`])
+//! and [`super::engine::TemplateEngine`]'s `{% include %}`/`{% extends %}`
+//! loading ([`TemplateLoader::load`]), so the local-then-global directory
+//! priority is defined exactly once. The two callers still want
+//! different match strategies ([`TemplateLoader::resolve`]'s
 //! stem-matching fallback makes sense for a user-typed `-i daily`; an
 //! include name should be exact, not fuzzy — see
 //! [`TemplateLoader::find_exact`]), so this type exposes both rather
@@ -44,228 +15,31 @@
 //! [`TemplateLoader::load`] is minijinja's loader glue, but it never
 //! calls `minijinja::path_loader` —
 //! [`super::engine::TemplateEngine::with_loader`] wires it in via
-//! `Environment::set_loader`, minijinja's low-level API that accepts *any*
-//! `Fn(&str) -> Result<Option<String>, Error>`; `path_loader` is just
-//! minijinja's own convenience implementation of that same signature, and we
-//! never call it. That matters because `path_loader`'s internal `safe_join`
-//! rejects any dot-prefixed segment in the *requested template name* (see
-//! `minijinja` 2.21.0's `src/loader.rs`) — e.g. `{% include ".draft.md" %}`
-//! fails to load even though the file exists. `TemplateLoader::load` instead
-//! does its own [`TemplatePath`] validation plus a plain [`Path::join`] — an
-//! ordinary path join has no special treatment of `.` in *any* segment,
-//! directory or leaf, so both a dot-prefixed template directory (this project's
-//! own default, `.traces/templates`) and a dot-prefixed include name
-//! just work; neither was ever a `Path::join` limitation, only
-//! `path_loader`'s own stricter validation, which this module doesn't
-//! inherit because it doesn't call it.
+//! `Environment::set_loader`, minijinja's low-level API that accepts
+//! *any* `Fn(&str) -> Result<Option<String>, Error>`; `path_loader` is
+//! just minijinja's own convenience implementation of that same
+//! signature, and we never call it. That matters because `path_loader`'s
+//! internal `safe_join` rejects any dot-prefixed segment in the
+//! *requested template name* (see `minijinja` 2.21.0's `src/loader.rs`)
+//! — e.g. `{% include ".draft.md" %}` fails to load even though the file
+//! exists. `TemplateLoader::load` instead does its own [`TemplatePath`]
+//! validation plus a plain [`Path::join`] — an ordinary path join has no
+//! special treatment of `.` in *any* segment, directory or leaf, so both
+//! a dot-prefixed template directory (this project's own default,
+//! `.traces/templates`) and a dot-prefixed include name just work;
+//! neither was ever a `Path::join` limitation, only `path_loader`'s own
+//! stricter validation, which this module doesn't inherit because it
+//! doesn't call it.
 
 use std::{
-    ffi::OsStr,
     fs, io,
-    marker::PhantomData,
-    path::{Component, Path, PathBuf},
+    path::{Path, PathBuf},
 };
 
 use minijinja::{Error, ErrorKind};
-use thiserror::Error as ThisError;
 
+use super::path::{Resolved, TemplatePath, TemplatePathError, Unresolved};
 use crate::config::Config;
-
-/// [`TemplatePath`]'s state before it has been searched for on disk: a
-/// candidate identifier, validated safe to join onto any template
-/// directory, but not yet tied to one.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum Unresolved {}
-
-/// [`TemplatePath`]'s state once a [`TemplateLoader`] has actually found
-/// it under a configured template directory: an absolute, on-disk path.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum Resolved {}
-
-/// A template identifier, tagged with which stage of its lifecycle it's
-/// in — see this module's docs for the full rationale.
-///
-/// `State` defaults to [`Resolved`] since that's what every consumer
-/// outside this module ever names ([`super::service::TemplateService`]
-/// only ever holds a resolved `TemplatePath`).
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) struct TemplatePath<State = Resolved> {
-    inner: PathBuf,
-    _state: PhantomData<State>,
-}
-
-impl<State> TemplatePath<State> {
-    /// This path's bare stem: no directory segments, no extension, e.g.
-    /// `"folder/daily.md"` -> `"daily"`. Meaningful — and computed
-    /// identically — in either state, since a filename's stem doesn't
-    /// depend on whether the path has been resolved to an absolute
-    /// location yet.
-    ///
-    /// [`Path::file_stem`] returns `None` only for a path with no final
-    /// `Normal` component; [`TemplatePath::try_from`] rejects any
-    /// [`Unresolved`] `TemplatePath` without one, and a [`Resolved`]
-    /// `TemplatePath` is always an absolute path to a file a
-    /// [`TemplateLoader`] found, so this always has a stem in practice —
-    /// the fallback below exists only so the type stays panic-free
-    /// rather than leaning on that invariant at runtime.
-    #[inline]
-    #[must_use]
-    pub(super) fn stem(&self) -> &OsStr {
-        self.inner.file_stem().unwrap_or_else(|| self.inner.as_os_str())
-    }
-}
-
-impl<State> AsRef<Path> for TemplatePath<State> {
-    fn as_ref(&self) -> &Path {
-        &self.inner
-    }
-}
-
-/// Errors constructing a [`TemplatePath<Unresolved>`].
-///
-/// `thiserror`-only, no `miette::Diagnostic` — matches this module's
-/// convention (see `crate::config::mod`'s docs for why). `pub(super)`,
-/// not `pub(crate)`: unlike [`TemplateResolveError`], nothing outside
-/// this module ever needs to name this — see [`TemplateLoader::resolve`]'s
-/// docs for why a caller-visible "unsafe input" error doesn't exist.
-#[derive(Debug, ThisError)]
-pub(super) enum TemplatePathError {
-    /// The path is absolute; template paths must be relative to a
-    /// template directory.
-    #[error("template path {0} must be relative, not absolute")]
-    Absolute(PathBuf),
-    /// The path contains a component other than a plain name or `.`
-    /// (most notably `..`), which could escape the template directory
-    /// it's joined onto — or has no `Normal` component at all (e.g. an
-    /// empty path, or a bare `.`), leaving no safe file name to join.
-    #[error(
-        "template path {0} must not contain '..' or other unsafe components"
-    )]
-    UnsafeComponent(PathBuf),
-}
-
-impl TryFrom<&Path> for TemplatePath<Unresolved> {
-    type Error = TemplatePathError;
-
-    /// Validates `path` as a safe, directory-relative template
-    /// identifier — pure, no I/O; whether it names a real file is a
-    /// question about a specific directory, answered by
-    /// [`Self::resolve`]/[`TemplateLoader::find_exact`], not baked into
-    /// construction.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`TemplatePathError::Absolute`] when `path` is absolute.
-    /// Returns [`TemplatePathError::UnsafeComponent`] when `path`
-    /// contains a `..` or other component that isn't a plain name or
-    /// `.`, or has no `Normal` component at all.
-    fn try_from(path: &Path) -> Result<Self, Self::Error> {
-        if path.is_absolute() {
-            return Err(TemplatePathError::Absolute(path.to_path_buf()));
-        }
-        let mut has_normal_component = false;
-        let is_safe = path.components().all(|component| match component {
-            Component::Normal(_) => {
-                has_normal_component = true;
-                true
-            }
-            Component::CurDir => true,
-            _ => false,
-        });
-        if !is_safe || !has_normal_component {
-            return Err(TemplatePathError::UnsafeComponent(path.to_path_buf()));
-        }
-        Ok(Self {
-            inner: path.to_path_buf(),
-            _state: PhantomData,
-        })
-    }
-}
-
-impl TemplatePath<Unresolved> {
-    /// Whether this candidate names an existing file within `dir`.
-    #[inline]
-    #[must_use]
-    fn exists_in(&self, dir: &Path) -> bool {
-        dir.join(&self.inner).is_file()
-    }
-
-    /// Resolves this candidate against `loader`: an exact match, then a
-    /// stem match, tried one directory at a time (local exhausted —
-    /// exact, then stem — before global is even considered) — so a name
-    /// without an extension still finds `name.md`, but local always wins
-    /// over global regardless of which match strategy found it.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`TemplateResolveError::AmbiguousTemplate`] when multiple
-    /// files match this candidate's stem within a single directory.
-    /// Returns [`TemplateResolveError::TemplateNotFound`] when no match
-    /// is found in any directory `loader` searches.
-    fn resolve(
-        self,
-        loader: &TemplateLoader,
-    ) -> Result<TemplatePath<Resolved>, TemplateResolveError> {
-        for dir in loader.directories() {
-            if self.exists_in(dir) {
-                return Ok(TemplatePath {
-                    inner: dir.join(&self.inner),
-                    _state: PhantomData,
-                });
-            }
-            match matching_files_in_dir(dir, self.stem()).as_slice() {
-                [] => {}
-                [path] => {
-                    return Ok(TemplatePath {
-                        inner: path.clone(),
-                        _state: PhantomData,
-                    });
-                }
-                multiple => {
-                    return Err(TemplateResolveError::AmbiguousTemplate {
-                        name: self.inner.clone(),
-                        candidates: multiple.to_vec(),
-                    });
-                }
-            }
-        }
-        Err(loader.not_found(&self.inner))
-    }
-}
-
-/// Errors resolving a [`TemplatePath<Unresolved>`] to a
-/// [`TemplatePath<Resolved>`] — [`TemplateLoader::resolve`]'s error, not
-/// `TemplatePath`'s own (see this module's docs for the distinction).
-///
-/// `crate::cli::error::TemplateCliError` wraps this type to render the
-/// `candidates`/`directories` lists as diagnostic help text.
-///
-/// Notably absent: a variant for "the input path was unsafe" —
-/// [`TemplateLoader::resolve`] deliberately reports that the same way as
-/// an ordinary miss (see its docs). A distinct variant here would let a
-/// caller (or a future error-rendering layer) treat a traversal attempt
-/// differently from "no such template", which is exactly the oracle this
-/// design closes.
-#[derive(Debug, ThisError)]
-pub(crate) enum TemplateResolveError {
-    /// Multiple files matched the template name in a single directory.
-    #[error("template name \"{name}\" matched multiple files")]
-    AmbiguousTemplate {
-        /// The template name that was searched for.
-        name: PathBuf,
-        /// Candidate files that matched.
-        candidates: Vec<PathBuf>,
-    },
-
-    /// Template was not found in any of the searched directories.
-    #[error("template \"{name}\" not found")]
-    TemplateNotFound {
-        /// The template name that was searched for.
-        name: PathBuf,
-        /// Directories that were searched.
-        directories_searched: Vec<PathBuf>,
-    },
-}
 
 /// Searches configured template directories, local first then global,
 /// for a template by name.
@@ -311,8 +85,10 @@ impl TemplateLoader {
     }
 
     /// The directories this loader searches, in priority order, deduped
-    /// when local and global are the same directory.
-    fn directories(&self) -> impl Iterator<Item = &Path> {
+    /// when local and global are the same directory. `pub(super)`, not
+    /// private: [`super::path::TemplatePath::<Unresolved>::resolve`] (a
+    /// sibling module) drives its own search loop over these.
+    pub(super) fn directories(&self) -> impl Iterator<Item = &Path> {
         let global = self
             .global
             .as_deref()
@@ -321,17 +97,10 @@ impl TemplateLoader {
     }
 
     /// Every directory this loader searches, for
-    /// [`TemplateResolveError::TemplateNotFound`]'s diagnostic list.
+    /// [`TemplatePathError::TemplateNotFound`]'s diagnostic list.
     #[must_use]
     pub(super) fn directories_searched(&self) -> Vec<PathBuf> {
         self.directories().map(Path::to_path_buf).collect()
-    }
-
-    fn not_found(&self, name: &Path) -> TemplateResolveError {
-        TemplateResolveError::TemplateNotFound {
-            name: name.to_path_buf(),
-            directories_searched: self.directories_searched(),
-        }
     }
 
     /// Exact match only: does `candidate` name a real file directly
@@ -344,12 +113,9 @@ impl TemplateLoader {
         &self,
         candidate: &TemplatePath<Unresolved>,
     ) -> Option<TemplatePath<Resolved>> {
-        self.directories().find(|dir| candidate.exists_in(dir)).map(|dir| {
-            TemplatePath {
-                inner: dir.join(candidate),
-                _state: PhantomData,
-            }
-        })
+        self.directories()
+            .find(|dir| candidate.exists_in(dir))
+            .map(|dir| TemplatePath::from_found(dir.join(candidate)))
     }
 
     /// Resolves a raw `-i <name>` argument to a
@@ -361,25 +127,27 @@ impl TemplateLoader {
     /// paths and `..` traversal are never resolved, deliberately: this
     /// crate never renders a file the user hasn't placed under a
     /// configured template directory. A `name` that fails validation
-    /// collapses into the same [`TemplateResolveError::TemplateNotFound`]
-    /// an ordinary miss produces, rather than surfacing
-    /// [`TemplatePathError`] directly: reporting "that path is unsafe"
+    /// collapses into the same [`TemplatePathError::TemplateNotFound`]
+    /// an ordinary miss produces: reporting "that path is unsafe"
     /// separately from "no such template" would let a caller distinguish
     /// a traversal attempt from a typo, an oracle this crate has no
     /// reason to offer.
     ///
     /// # Errors
     ///
-    /// Returns [`TemplateResolveError::AmbiguousTemplate`] when multiple
+    /// Returns [`TemplatePathError::AmbiguousTemplate`] when multiple
     /// files match `name`'s stem within a single directory. Returns
-    /// [`TemplateResolveError::TemplateNotFound`] when `name` is unsafe
-    /// or no match is found in any searched directory.
+    /// [`TemplatePathError::TemplateNotFound`] when `name` is unsafe or
+    /// no match is found in any searched directory.
     pub(super) fn resolve(
         &self,
         name: &Path,
-    ) -> Result<TemplatePath<Resolved>, TemplateResolveError> {
+    ) -> Result<TemplatePath<Resolved>, TemplatePathError> {
         let Ok(candidate) = TemplatePath::<Unresolved>::try_from(name) else {
-            return Err(self.not_found(name));
+            return Err(TemplatePathError::TemplateNotFound {
+                name: name.to_path_buf(),
+                directories_searched: self.directories_searched(),
+            });
         };
         candidate.resolve(self)
     }
@@ -416,20 +184,6 @@ impl TemplateLoader {
     }
 }
 
-/// Files in `dir` whose stem matches `stem`, as full paths.
-fn matching_files_in_dir(dir: &Path, stem: &OsStr) -> Vec<PathBuf> {
-    let Ok(entries) = fs::read_dir(dir) else {
-        return Vec::new();
-    };
-
-    entries
-        .filter_map(Result::ok)
-        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_file()))
-        .filter(|entry| entry.path().file_stem() == Some(stem))
-        .map(|entry| entry.path())
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use pretty_assertions::assert_eq;
@@ -448,384 +202,184 @@ mod tests {
         TemplatePath::try_from(Path::new(name)).expect("valid candidate")
     }
 
-    mod construction {
-        use pretty_assertions::assert_eq;
+    #[test]
+    fn find_exact_matches_a_literal_name() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let file = write_file(temp.path(), "daily.md");
+        let loader = TemplateLoader::new(Some(temp.path().to_path_buf()), None);
 
-        use super::*;
+        let found = loader
+            .find_exact(&candidate("daily.md"))
+            .expect("find exact match");
 
-        #[test]
-        fn try_from_accepts_a_plain_relative_name() {
-            let path = candidate("daily.md");
-
-            assert_eq!(path.as_ref(), Path::new("daily.md"));
-        }
-
-        #[test]
-        fn try_from_accepts_a_nested_relative_path() {
-            let path = candidate("folder/daily.md");
-
-            assert_eq!(path.as_ref(), Path::new("folder/daily.md"));
-        }
-
-        #[test]
-        fn try_from_rejects_an_absolute_path() {
-            let error =
-                TemplatePath::<Unresolved>::try_from(Path::new("/etc/passwd"))
-                    .expect_err("absolute path is rejected");
-
-            assert!(matches!(error, TemplatePathError::Absolute(_)));
-        }
-
-        #[test]
-        fn try_from_rejects_parent_traversal() {
-            let error = TemplatePath::<Unresolved>::try_from(Path::new(
-                "../outside.md",
-            ))
-            .expect_err("parent traversal is rejected");
-
-            assert!(matches!(error, TemplatePathError::UnsafeComponent(_)));
-        }
-
-        #[test]
-        fn try_from_rejects_nested_parent_traversal() {
-            let error = TemplatePath::<Unresolved>::try_from(Path::new(
-                "folder/../../outside.md",
-            ))
-            .expect_err("nested parent traversal is rejected");
-
-            assert!(matches!(error, TemplatePathError::UnsafeComponent(_)));
-        }
-
-        #[test]
-        fn try_from_rejects_an_empty_path() {
-            let error = TemplatePath::<Unresolved>::try_from(Path::new(""))
-                .expect_err("empty path has no safe file name");
-
-            assert!(matches!(error, TemplatePathError::UnsafeComponent(_)));
-        }
-
-        #[test]
-        fn try_from_rejects_a_bare_current_dir() {
-            let error = TemplatePath::<Unresolved>::try_from(Path::new("."))
-                .expect_err("bare current-dir has no safe file name");
-
-            assert!(matches!(error, TemplatePathError::UnsafeComponent(_)));
-        }
-
-        #[test]
-        fn stem_drops_directory_segments_and_extension() {
-            assert_eq!(
-                candidate("folder/report.md").stem(),
-                OsStr::new("report")
-            );
-        }
-
-        #[test]
-        fn stem_of_an_extensionless_path_is_unchanged() {
-            assert_eq!(candidate("daily").stem(), OsStr::new("daily"));
-        }
+        assert_eq!(found.as_ref(), file.as_path());
     }
 
-    mod loader {
-        use pretty_assertions::assert_eq;
+    #[test]
+    fn find_exact_does_not_stem_match() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        write_file(temp.path(), "daily.md");
+        let loader = TemplateLoader::new(Some(temp.path().to_path_buf()), None);
 
-        use super::*;
+        assert!(loader.find_exact(&candidate("daily")).is_none());
+    }
 
-        #[test]
-        fn find_exact_matches_a_literal_name() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            let file = write_file(temp.path(), "daily.md");
-            let loader =
-                TemplateLoader::new(Some(temp.path().to_path_buf()), None);
+    #[test]
+    fn resolve_delegates_to_the_candidates_own_resolve() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let file = write_file(temp.path(), "daily.md");
+        let loader = TemplateLoader::new(Some(temp.path().to_path_buf()), None);
 
-            let found = loader
-                .find_exact(&candidate("daily.md"))
-                .expect("find exact match");
+        let found =
+            loader.resolve(Path::new("daily")).expect("resolve succeeds");
 
-            assert_eq!(found.as_ref(), file.as_path());
-        }
+        assert_eq!(found.as_ref(), file.as_path());
+    }
 
-        #[test]
-        fn find_exact_does_not_stem_match() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            write_file(temp.path(), "daily.md");
-            let loader =
-                TemplateLoader::new(Some(temp.path().to_path_buf()), None);
+    #[test]
+    fn resolve_rejects_an_absolute_path_even_when_the_file_exists() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        // A file that exists on disk, outside any template directory.
+        let outside_file = write_file(temp.path(), "secret.md");
+        let local_dir = temp.path().join("templates");
+        fs::create_dir_all(&local_dir).expect("create local templates");
+        let loader = TemplateLoader::new(Some(local_dir), None);
 
-            assert!(loader.find_exact(&candidate("daily")).is_none());
-        }
+        // Resolution never reads outside the configured template
+        // directories, so an absolute path to a real file must still
+        // miss — not be treated as "found by exact path".
+        assert!(matches!(
+            loader.resolve(&outside_file),
+            Err(TemplatePathError::TemplateNotFound { .. })
+        ));
+    }
 
-        #[test]
-        fn resolve_matches_an_exact_name() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            let file = write_file(temp.path(), "daily.md");
-            let loader =
-                TemplateLoader::new(Some(temp.path().to_path_buf()), None);
+    #[test]
+    fn resolve_rejects_parent_traversal_even_when_the_file_exists() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        write_file(temp.path(), "secret.md");
+        let local_dir = temp.path().join("templates");
+        fs::create_dir_all(&local_dir).expect("create local templates");
+        let loader = TemplateLoader::new(Some(local_dir), None);
 
-            let found = loader
-                .resolve(Path::new("daily.md"))
-                .expect("resolve succeeds");
+        assert!(matches!(
+            loader.resolve(Path::new("../secret.md")),
+            Err(TemplatePathError::TemplateNotFound { .. })
+        ));
+    }
 
-            assert_eq!(found.as_ref(), file.as_path());
-        }
+    #[test]
+    fn resolve_rejects_an_empty_name() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let loader = TemplateLoader::new(Some(temp.path().to_path_buf()), None);
 
-        #[test]
-        fn resolve_falls_back_to_stem_match() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            let file = write_file(temp.path(), "daily.md");
-            let loader =
-                TemplateLoader::new(Some(temp.path().to_path_buf()), None);
+        assert!(matches!(
+            loader.resolve(Path::new("")),
+            Err(TemplatePathError::TemplateNotFound { .. })
+        ));
+    }
 
-            let found =
-                loader.resolve(Path::new("daily")).expect("resolve succeeds");
+    #[test]
+    fn directories_dedup_when_local_and_global_are_identical() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let dir = temp.path().join("templates");
+        fs::create_dir_all(&dir).expect("create templates dir");
+        let loader = TemplateLoader::new(Some(dir.clone()), Some(dir.clone()));
 
-            assert_eq!(found.as_ref(), file.as_path());
-        }
+        assert_eq!(loader.directories_searched(), vec![dir]);
+    }
 
-        #[test]
-        fn resolve_reports_every_candidate_on_ambiguous_stem_match() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            fs::write(temp.path().join("daily.md"), "content")
-                .expect("write template");
-            fs::write(temp.path().join("daily.txt"), "content")
-                .expect("write template");
-            let loader =
-                TemplateLoader::new(Some(temp.path().to_path_buf()), None);
+    #[test]
+    fn load_resolves_a_dot_prefixed_include_name() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        fs::write(temp.path().join(".draft.md"), "secret")
+            .expect("write template");
+        let loader = TemplateLoader::new(Some(temp.path().to_path_buf()), None);
 
-            match loader.resolve(Path::new("daily")) {
-                Err(TemplateResolveError::AmbiguousTemplate {
-                    candidates,
-                    ..
-                }) => assert_eq!(candidates.len(), 2),
-                result => panic!("expected AmbiguousTemplate, got {result:?}"),
-            }
-        }
+        let source = loader.load(".draft.md").expect("load succeeds");
 
-        #[test]
-        fn resolve_ignores_directories_when_stem_matching() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            fs::create_dir(temp.path().join("daily")).expect("create dir");
-            let file = write_file(temp.path(), "daily.md");
-            let loader =
-                TemplateLoader::new(Some(temp.path().to_path_buf()), None);
+        assert_eq!(source, Some("secret".to_owned()));
+    }
 
-            let found =
-                loader.resolve(Path::new("daily")).expect("resolve succeeds");
+    #[test]
+    fn load_returns_none_for_a_missing_include() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let loader = TemplateLoader::new(Some(temp.path().to_path_buf()), None);
 
-            assert_eq!(found.as_ref(), file.as_path());
-        }
+        let source = loader.load("missing.md").expect("load succeeds");
 
-        #[test]
-        fn resolve_prefers_local_over_global_even_via_stem_match() {
-            // A stem match in local must win over an *exact* match in
-            // global — local is exhausted (exact, then stem) before
-            // global is even considered, not "best match across both
-            // directories".
-            let temp = tempfile::tempdir().expect("create temp dir");
-            let local_dir = temp.path().join("local");
-            let global_dir = temp.path().join("global");
-            let local_file = write_file(&local_dir, "daily.md");
-            write_file(&global_dir, "daily");
-            let loader = TemplateLoader::new(Some(local_dir), Some(global_dir));
+        assert_eq!(source, None);
+    }
 
-            let found =
-                loader.resolve(Path::new("daily")).expect("resolve succeeds");
+    #[test]
+    fn load_returns_none_for_an_unsafe_name_instead_of_erroring() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let loader = TemplateLoader::new(Some(temp.path().to_path_buf()), None);
 
-            assert_eq!(found.as_ref(), local_file.as_path());
-        }
+        let source = loader.load("../outside.md").expect("load succeeds");
 
-        #[test]
-        fn resolve_falls_through_to_global_when_local_has_no_match() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            let local_dir = temp.path().join("local");
-            let global_dir = temp.path().join("global");
-            fs::create_dir_all(&local_dir).expect("create local dir");
-            let file = write_file(&global_dir, "daily.md");
-            let loader = TemplateLoader::new(Some(local_dir), Some(global_dir));
+        assert_eq!(source, None);
+    }
 
-            let found =
-                loader.resolve(Path::new("daily")).expect("resolve succeeds");
+    #[test]
+    fn load_never_stem_matches() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        write_file(temp.path(), "daily.md");
+        let loader = TemplateLoader::new(Some(temp.path().to_path_buf()), None);
 
-            assert_eq!(found.as_ref(), file.as_path());
-        }
+        let source = loader.load("daily").expect("load succeeds");
 
-        #[test]
-        fn resolve_rejects_an_absolute_path_even_when_the_file_exists() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            // A file that exists on disk, outside any template directory.
-            let outside_file = write_file(temp.path(), "secret.md");
-            let local_dir = temp.path().join("templates");
-            fs::create_dir_all(&local_dir).expect("create local templates");
-            let loader = TemplateLoader::new(Some(local_dir), None);
+        assert_eq!(source, None);
+    }
 
-            // Resolution never reads outside the configured template
-            // directories, so an absolute path to a real file must still
-            // miss — not be treated as "found by exact path".
-            assert!(matches!(
-                loader.resolve(&outside_file),
-                Err(TemplateResolveError::TemplateNotFound { .. })
-            ));
-        }
+    #[test]
+    fn for_config_derives_directories_from_config() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let local_dir = temp.path().join("local-templates");
+        write_file(&local_dir, "daily.md");
+        let config = Config::for_test(
+            temp.path().to_path_buf(),
+            Some(local_dir.clone()),
+            None,
+        );
 
-        #[test]
-        fn resolve_rejects_parent_traversal_even_when_the_file_exists() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            write_file(temp.path(), "secret.md");
-            let local_dir = temp.path().join("templates");
-            fs::create_dir_all(&local_dir).expect("create local templates");
-            let loader = TemplateLoader::new(Some(local_dir), None);
+        let loader = TemplateLoader::for_config(&config);
 
-            assert!(matches!(
-                loader.resolve(Path::new("../secret.md")),
-                Err(TemplateResolveError::TemplateNotFound { .. })
-            ));
-        }
+        assert_eq!(loader.directories_searched(), vec![local_dir]);
+    }
 
-        #[test]
-        fn resolve_rejects_an_empty_name() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            let loader =
-                TemplateLoader::new(Some(temp.path().to_path_buf()), None);
+    #[test]
+    fn resolve_via_config_finds_a_local_template() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let local_dir = temp.path().join("local-templates");
+        let file = write_file(&local_dir, "daily.md");
+        let config =
+            Config::for_test(temp.path().to_path_buf(), Some(local_dir), None);
+        let loader = TemplateLoader::for_config(&config);
 
-            assert!(matches!(
-                loader.resolve(Path::new("")),
-                Err(TemplateResolveError::TemplateNotFound { .. })
-            ));
-        }
+        let found =
+            loader.resolve(Path::new("daily")).expect("resolve succeeds");
 
-        #[test]
-        fn resolve_not_found_reports_every_searched_directory() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            let local_dir = temp.path().join("local");
-            let global_dir = temp.path().join("global");
-            fs::create_dir_all(&local_dir).expect("create local dir");
-            fs::create_dir_all(&global_dir).expect("create global dir");
-            let loader = TemplateLoader::new(
-                Some(local_dir.clone()),
-                Some(global_dir.clone()),
-            );
+        assert_eq!(found.as_ref(), file.as_path());
+    }
 
-            match loader.resolve(Path::new("missing")) {
-                Err(TemplateResolveError::TemplateNotFound {
-                    directories_searched,
-                    ..
-                }) => assert_eq!(directories_searched, vec![
-                    local_dir, global_dir
-                ]),
-                result => panic!("expected TemplateNotFound, got {result:?}"),
-            }
-        }
+    #[test]
+    fn resolve_via_config_prefers_local_over_global() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let local_dir = temp.path().join("local-templates");
+        let local_file = write_file(&local_dir, "daily");
+        let global_dir = temp.path().join("global-templates");
+        write_file(&global_dir, "daily");
+        let config = Config::for_test(
+            temp.path().to_path_buf(),
+            Some(local_dir),
+            Some(global_dir),
+        );
+        let loader = TemplateLoader::for_config(&config);
 
-        #[test]
-        fn directories_dedup_when_local_and_global_are_identical() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            let dir = temp.path().join("templates");
-            fs::create_dir_all(&dir).expect("create templates dir");
-            let loader =
-                TemplateLoader::new(Some(dir.clone()), Some(dir.clone()));
+        let found =
+            loader.resolve(Path::new("daily")).expect("resolve succeeds");
 
-            assert_eq!(loader.directories_searched(), vec![dir]);
-        }
-
-        #[test]
-        fn load_resolves_a_dot_prefixed_include_name() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            fs::write(temp.path().join(".draft.md"), "secret")
-                .expect("write template");
-            let loader =
-                TemplateLoader::new(Some(temp.path().to_path_buf()), None);
-
-            let source = loader.load(".draft.md").expect("load succeeds");
-
-            assert_eq!(source, Some("secret".to_owned()));
-        }
-
-        #[test]
-        fn load_returns_none_for_a_missing_include() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            let loader =
-                TemplateLoader::new(Some(temp.path().to_path_buf()), None);
-
-            let source = loader.load("missing.md").expect("load succeeds");
-
-            assert_eq!(source, None);
-        }
-
-        #[test]
-        fn load_returns_none_for_an_unsafe_name_instead_of_erroring() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            let loader =
-                TemplateLoader::new(Some(temp.path().to_path_buf()), None);
-
-            let source = loader.load("../outside.md").expect("load succeeds");
-
-            assert_eq!(source, None);
-        }
-
-        #[test]
-        fn load_never_stem_matches() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            write_file(temp.path(), "daily.md");
-            let loader =
-                TemplateLoader::new(Some(temp.path().to_path_buf()), None);
-
-            let source = loader.load("daily").expect("load succeeds");
-
-            assert_eq!(source, None);
-        }
-
-        #[test]
-        fn for_config_derives_directories_from_config() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            let local_dir = temp.path().join("local-templates");
-            write_file(&local_dir, "daily.md");
-            let config = Config::for_test(
-                temp.path().to_path_buf(),
-                Some(local_dir.clone()),
-                None,
-            );
-
-            let loader = TemplateLoader::for_config(&config);
-
-            assert_eq!(loader.directories_searched(), vec![local_dir]);
-        }
-
-        #[test]
-        fn resolve_via_config_finds_a_local_template() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            let local_dir = temp.path().join("local-templates");
-            let file = write_file(&local_dir, "daily.md");
-            let config = Config::for_test(
-                temp.path().to_path_buf(),
-                Some(local_dir),
-                None,
-            );
-            let loader = TemplateLoader::for_config(&config);
-
-            let found =
-                loader.resolve(Path::new("daily")).expect("resolve succeeds");
-
-            assert_eq!(found.as_ref(), file.as_path());
-        }
-
-        #[test]
-        fn resolve_via_config_prefers_local_over_global() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            let local_dir = temp.path().join("local-templates");
-            let local_file = write_file(&local_dir, "daily");
-            let global_dir = temp.path().join("global-templates");
-            write_file(&global_dir, "daily");
-            let config = Config::for_test(
-                temp.path().to_path_buf(),
-                Some(local_dir),
-                Some(global_dir),
-            );
-            let loader = TemplateLoader::for_config(&config);
-
-            let found =
-                loader.resolve(Path::new("daily")).expect("resolve succeeds");
-
-            assert_eq!(found.as_ref(), local_file.as_path());
-        }
+        assert_eq!(found.as_ref(), local_file.as_path());
     }
 }
