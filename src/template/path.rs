@@ -138,9 +138,7 @@ impl<State> AsRef<Path> for TemplatePath<State> {
 ///
 /// `thiserror`-only, no `miette::Diagnostic` — `crate::cli::error` is
 /// where user-facing help text and error codes get added, matching
-/// `crate::config`'s convention. `crate::cli::error::TemplateCliError`
-/// wraps this type to render the `candidates`/`directories` lists as
-/// diagnostic help text.
+/// `crate::config`'s convention.
 ///
 /// Notably absent: a distinct oracle for "the input was unsafe" vs. "no
 /// such template". [`super::loader::TemplateLoader::find`] deliberately
@@ -162,21 +160,18 @@ pub(crate) enum TemplatePathError {
     )]
     UnsafeComponent(PathBuf),
     /// Multiple files matched the template name in a single directory.
-    #[error("template name \"{name}\" matched multiple files")]
-    AmbiguousTemplate {
-        /// The template name that was searched for.
-        name: PathBuf,
-        /// Candidate files that matched, as absolute paths.
-        candidates: Vec<PathBuf>,
-    },
-    /// Template was not found in any of the searched directories.
-    #[error("template \"{name}\" not found")]
-    TemplateNotFound {
-        /// The template name that was searched for.
-        name: PathBuf,
-        /// Directories that were searched.
-        directories_searched: Vec<PathBuf>,
-    },
+    /// No `candidates` field: never rendered anywhere (`Display` above
+    /// doesn't interpolate it, and neither does
+    /// `crate::cli::error::TemplateCliError`'s generic help text) — an
+    /// earlier version carried the list purely to satisfy its own unit
+    /// tests, not any real consumer.
+    #[error("template name \"{0}\" matched multiple files")]
+    AmbiguousTemplate(PathBuf),
+    /// Template was not found in any of the searched directories. No
+    /// `directories_searched` field, for the same reason
+    /// [`Self::AmbiguousTemplate`] has no `candidates`.
+    #[error("template \"{0}\" not found")]
+    TemplateNotFound(PathBuf),
 }
 
 impl TemplatePath<Raw> {
@@ -275,10 +270,7 @@ impl TemplatePath<Validated> {
         global: Option<&Path>,
     ) -> Result<TemplatePath<Found>, TemplatePathError> {
         let stem = self.stem();
-        let mut directories_searched = Vec::new();
         for dir in Self::directories(local, global) {
-            directories_searched.push(dir.path().to_path_buf());
-
             if self.exists_in(dir.path()) {
                 return Ok(TemplatePath {
                     path: self.path.clone(),
@@ -310,22 +302,15 @@ impl TemplatePath<Validated> {
                         },
                     });
                 }
-                multiple => {
-                    return Err(TemplatePathError::AmbiguousTemplate {
-                        name: self.path.clone(),
-                        candidates: multiple
-                            .iter()
-                            .map(|name| dir.path().join(name))
-                            .collect(),
-                    });
+                _ => {
+                    return Err(TemplatePathError::AmbiguousTemplate(
+                        self.path.clone(),
+                    ));
                 }
             }
         }
 
-        Err(TemplatePathError::TemplateNotFound {
-            name: self.path,
-            directories_searched,
-        })
+        Err(TemplatePathError::TemplateNotFound(self.path))
     }
 }
 
@@ -471,23 +456,17 @@ mod tests {
         }
 
         #[test]
-        fn reports_every_candidate_on_an_ambiguous_stem_match() {
+        fn rejects_an_ambiguous_stem_match() {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("daily.md"), "content")
                 .expect("write template");
             fs::write(temp.path().join("daily.txt"), "content")
                 .expect("write template");
 
-            match validated("daily").find(Some(temp.path()), None) {
-                Err(TemplatePathError::AmbiguousTemplate {
-                    candidates,
-                    ..
-                }) => assert_eq!(candidates.len(), 2),
-                result => assert!(matches!(
-                    result,
-                    Err(TemplatePathError::AmbiguousTemplate { .. })
-                )),
-            }
+            assert!(matches!(
+                validated("daily").find(Some(temp.path()), None),
+                Err(TemplatePathError::AmbiguousTemplate(_))
+            ));
         }
 
         #[test]
@@ -538,45 +517,42 @@ mod tests {
         }
 
         #[test]
-        fn not_found_reports_every_searched_directory() {
+        fn returns_not_found_when_no_match_exists_anywhere() {
             let temp = tempfile::tempdir().expect("create temp dir");
             let local_dir = temp.path().join("local");
             let global_dir = temp.path().join("global");
             fs::create_dir_all(&local_dir).expect("create local dir");
             fs::create_dir_all(&global_dir).expect("create global dir");
 
-            match validated("missing").find(Some(&local_dir), Some(&global_dir))
-            {
-                Err(TemplatePathError::TemplateNotFound {
-                    directories_searched,
-                    ..
-                }) => assert_eq!(directories_searched, vec![
-                    local_dir, global_dir
-                ]),
-                result => assert!(matches!(
-                    result,
-                    Err(TemplatePathError::TemplateNotFound { .. })
-                )),
-            }
+            assert!(matches!(
+                validated("missing").find(Some(&local_dir), Some(&global_dir)),
+                Err(TemplatePathError::TemplateNotFound(_))
+            ));
         }
 
         #[test]
-        fn dedups_when_local_and_global_are_identical() {
+        fn still_finds_a_match_when_local_and_global_are_identical() {
             let temp = tempfile::tempdir().expect("create temp dir");
-            fs::create_dir_all(temp.path()).expect("temp dir exists");
+            let file = write_file(temp.path(), "daily.md");
 
-            match validated("missing")
+            let found = validated("daily.md")
                 .find(Some(temp.path()), Some(temp.path()))
-            {
-                Err(TemplatePathError::TemplateNotFound {
-                    directories_searched,
-                    ..
-                }) => assert_eq!(directories_searched, vec![temp.path()]),
-                result => assert!(matches!(
-                    result,
-                    Err(TemplatePathError::TemplateNotFound { .. })
-                )),
-            }
+                .expect("find succeeds");
+
+            assert_eq!(found.absolute(), file);
+        }
+
+        #[test]
+        fn directories_dedups_when_local_and_global_are_identical() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+
+            let searched: Vec<_> = TemplatePath::<Validated>::directories(
+                Some(temp.path()),
+                Some(temp.path()),
+            )
+            .collect();
+
+            assert_eq!(searched.len(), 1);
         }
     }
 }

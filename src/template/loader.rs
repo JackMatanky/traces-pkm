@@ -106,16 +106,8 @@ impl TemplateLoader {
     ) -> Result<TemplatePath<Found>, TemplatePathError> {
         TemplatePath::<Raw>::new(name)
             .validate()
-            .map_err(|_| TemplatePathError::TemplateNotFound {
-                name: name.to_path_buf(),
-                directories_searched: [
-                    self.local.as_deref(),
-                    self.global.as_deref(),
-                ]
-                .into_iter()
-                .flatten()
-                .map(Path::to_path_buf)
-                .collect(),
+            .map_err(|_| {
+                TemplatePathError::TemplateNotFound(name.to_path_buf())
             })?
             .find(self.local.as_deref(), self.global.as_deref())
     }
@@ -208,7 +200,7 @@ mod tests {
         // miss — not be treated as "found by exact path".
         assert!(matches!(
             loader.find(&outside_file),
-            Err(TemplatePathError::TemplateNotFound { .. })
+            Err(TemplatePathError::TemplateNotFound(_))
         ));
     }
 
@@ -222,7 +214,7 @@ mod tests {
 
         assert!(matches!(
             loader.find(Path::new("../secret.md")),
-            Err(TemplatePathError::TemplateNotFound { .. })
+            Err(TemplatePathError::TemplateNotFound(_))
         ));
     }
 
@@ -233,27 +225,21 @@ mod tests {
 
         assert!(matches!(
             loader.find(Path::new("")),
-            Err(TemplatePathError::TemplateNotFound { .. })
+            Err(TemplatePathError::TemplateNotFound(_))
         ));
     }
 
     #[test]
-    fn find_not_found_dedups_when_local_and_global_are_identical() {
+    fn find_still_works_when_local_and_global_are_identical() {
         let temp = tempfile::tempdir().expect("create temp dir");
         let dir = temp.path().join("templates");
         fs::create_dir_all(&dir).expect("create templates dir");
-        let loader = TemplateLoader::new(Some(dir.clone()), Some(dir.clone()));
+        let loader = TemplateLoader::new(Some(dir.clone()), Some(dir));
 
-        match loader.find(Path::new("missing")) {
-            Err(TemplatePathError::TemplateNotFound {
-                directories_searched,
-                ..
-            }) => assert_eq!(directories_searched, vec![dir]),
-            result => assert!(matches!(
-                result,
-                Err(TemplatePathError::TemplateNotFound { .. })
-            )),
-        }
+        assert!(matches!(
+            loader.find(Path::new("missing")),
+            Err(TemplatePathError::TemplateNotFound(_))
+        ));
     }
 
     #[test]
