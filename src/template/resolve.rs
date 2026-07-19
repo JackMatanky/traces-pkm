@@ -42,12 +42,18 @@ pub(crate) enum ResolutionError {
 }
 
 /// Which template directory a [`ResolvedTemplate`] was found in.
+///
+/// Only [`Self::Local`]/[`Self::Global`] — resolution never reads outside
+/// the configured template directories. An earlier version of this module
+/// also resolved `name` as an arbitrary filesystem path (absolute, or
+/// relative to [`Config::root`]); that let a `-i` argument read any file
+/// the process could see, which is exactly the untrusted-content attack
+/// this type now rules out by construction. Template rendering will one
+/// day run custom functions (`m11-ecosystem`'s `prompt_text`/`select`/…);
+/// only ever rendering files that live under a directory the user
+/// explicitly configured as a template source keeps that surface closed.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) enum TemplateSource {
-    /// Resolved via an exact filesystem path (absolute, or relative to
-    /// [`Config::root`]), not from a template directory search. Carries
-    /// the resolved file's own parent directory.
-    Exact(PathBuf),
     /// Resolved via the local template directory.
     Local(PathBuf),
     /// Resolved via the global template directory.
@@ -65,7 +71,7 @@ impl TemplateSource {
     )]
     pub(super) fn dir(&self) -> &Path {
         match self {
-            Self::Exact(dir) | Self::Local(dir) | Self::Global(dir) => dir,
+            Self::Local(dir) | Self::Global(dir) => dir,
         }
     }
 }
@@ -86,130 +92,108 @@ pub(super) struct ResolvedTemplate {
     pub(super) name: TemplateName,
 }
 
-/// Resolve a template name against `config` in priority order.
+/// Resolve a template name against `config`'s template directories: local
+/// first, then global.
 ///
-/// Resolution follows: exact filesystem path -> local template directory ->
-/// global template directory. First match wins. Directory lookup first
-/// tries `name` directly, then matches files by stem in that directory. A
-/// `name` that isn't safely directory-relative (absolute, or containing
-/// `..`) can still match the exact-path step but is silently skipped for
-/// directory lookup — that's a [`ResolutionError::TemplateNotFound`], not a
+/// `name` is validated as a safe, directory-relative [`TemplatePath`]
+/// before any directory is searched — absolute paths and `..` traversal
+/// are never resolved, deliberately: this crate never renders a file the
+/// user hasn't placed under a configured template directory. A `name`
+/// that fails validation is a [`ResolutionError::TemplateNotFound`], not a
 /// distinct error, so traversal attempts aren't distinguished from an
-/// ordinary miss. Multiple stem matches at the same priority level produce
-/// an ambiguous template error.
+/// ordinary miss. Each directory first tries `name` directly
+/// ([`TemplatePath::exists_in`]), then matches files by stem; multiple
+/// stem matches in one directory produce an ambiguous-template error.
 ///
 /// # Errors
 ///
 /// Returns [`ResolutionError::AmbiguousTemplate`] when multiple files
 /// match the name within a single directory. Returns
-/// [`ResolutionError::TemplateNotFound`] when no match is found.
+/// [`ResolutionError::TemplateNotFound`] when `name` is unsafe or no
+/// match is found.
 pub(super) fn resolve_template(
     config: &Config,
     name: &Path,
 ) -> Result<ResolvedTemplate, ResolutionError> {
-    if let Some(path) = resolve_exact_path(name, config.root()) {
-        return Ok(ResolvedTemplate {
-            name: TemplateName::from(path.as_path()),
-            source: TemplateSource::Exact(parent_dir(&path)),
-            path,
-        });
-    }
-
-    // A `name` that isn't safely directory-relative (absolute, `..`, …)
-    // can't be searched for below; that's not an error here, it just
-    // means the exact-path step above was `name`'s only chance to match.
-    if let Ok(template_path) = TemplatePath::try_from(name) {
-        if let Some(local_dir) = config.local_template_dir()
-            && let Some(found) = search_directory(
-                local_dir,
-                &template_path,
-                TemplateSource::Local,
-            )?
-        {
-            return Ok(found);
-        }
-
-        if let Some(global_dir) = config.global_template_dir()
-            && config.local_template_dir() != Some(global_dir)
-            && let Some(found) = search_directory(
-                global_dir,
-                &template_path,
-                TemplateSource::Global,
-            )?
-        {
-            return Ok(found);
-        }
-    }
-
-    Err(ResolutionError::TemplateNotFound {
-        name: name.to_path_buf(),
-        directories_searched: searched_directories(config),
-    })
-}
-
-/// Searches one template directory for `template_path`, first as a direct
-/// join, then by stem match. `source` builds the [`TemplateSource`] variant
-/// (`TemplateSource::Local`/`TemplateSource::Global`) for a match found in
-/// `dir`.
-fn search_directory(
-    dir: &Path,
-    template_path: &TemplatePath,
-    source: fn(PathBuf) -> TemplateSource,
-) -> Result<Option<ResolvedTemplate>, ResolutionError> {
-    if TemplatePath::try_from((dir, template_path.as_ref())).is_ok() {
-        return Ok(Some(ResolvedTemplate {
-            path: dir.join(template_path.as_ref()),
-            name: TemplateName::from(template_path),
-            source: source(dir.to_path_buf()),
-        }));
-    }
-
-    let name = TemplateName::from(template_path);
-    Ok(one_match(dir, &name)?.map(|path| ResolvedTemplate {
-        path,
-        name,
-        source: source(dir.to_path_buf()),
-    }))
-}
-
-fn one_match(
-    dir: &Path,
-    name: &TemplateName,
-) -> Result<Option<PathBuf>, ResolutionError> {
-    let matches = matching_files_in_dir(dir, name);
-    if matches.len() > 1 {
-        return Err(ResolutionError::AmbiguousTemplate {
-            name: name.as_ref().to_path_buf(),
-            candidates: matches,
-        });
-    }
-    Ok(matches.into_iter().next())
-}
-
-fn searched_directories(config: &Config) -> Vec<PathBuf> {
-    let mut dirs = Vec::new();
-    if let Some(local_dir) = config.local_template_dir() {
-        dirs.push(local_dir.to_path_buf());
-    }
-    if let Some(global_dir) = config.global_template_dir()
-        && config.local_template_dir() != Some(global_dir)
-    {
-        dirs.push(global_dir.to_path_buf());
-    }
-    dirs
-}
-
-fn parent_dir(path: &Path) -> PathBuf {
-    path.parent().map_or_else(PathBuf::new, Path::to_path_buf)
-}
-
-fn resolve_exact_path(name: &Path, root: &Path) -> Option<PathBuf> {
-    let path = if name.is_absolute() {
-        name.to_path_buf()
-    } else {
-        root.join(name)
+    let Ok(template_path) = TemplatePath::try_from(name) else {
+        return Err(not_found(config, name));
     };
-    path.is_file().then_some(path)
+
+    for target in search_targets(config) {
+        if let Some(found) = target.find(&template_path)? {
+            return Ok(found);
+        }
+    }
+
+    Err(not_found(config, name))
+}
+
+fn not_found(config: &Config, name: &Path) -> ResolutionError {
+    ResolutionError::TemplateNotFound {
+        name: name.to_path_buf(),
+        directories_searched: search_targets(config)
+            .map(|target| target.dir.to_path_buf())
+            .collect(),
+    }
+}
+
+/// One directory to search, tagged with the [`TemplateSource`] variant a
+/// match in it should produce.
+struct SearchTarget<'a> {
+    dir: &'a Path,
+    source: fn(PathBuf) -> TemplateSource,
+}
+
+impl SearchTarget<'_> {
+    /// Searches this directory for `template_path`: first a direct join
+    /// via [`TemplatePath::exists_in`], then a stem match against every
+    /// file in the directory.
+    fn find(
+        &self,
+        template_path: &TemplatePath,
+    ) -> Result<Option<ResolvedTemplate>, ResolutionError> {
+        if template_path.exists_in(self.dir) {
+            return Ok(Some(self.resolved(
+                self.dir.join(template_path),
+                TemplateName::from(template_path),
+            )));
+        }
+
+        let name = TemplateName::from(template_path);
+        match matching_files_in_dir(self.dir, &name).as_slice() {
+            [] => Ok(None),
+            [single] => Ok(Some(self.resolved(single.clone(), name))),
+            multiple => Err(ResolutionError::AmbiguousTemplate {
+                name: name.as_ref().to_path_buf(),
+                candidates: multiple.to_vec(),
+            }),
+        }
+    }
+
+    fn resolved(&self, path: PathBuf, name: TemplateName) -> ResolvedTemplate {
+        ResolvedTemplate {
+            path,
+            name,
+            source: (self.source)(self.dir.to_path_buf()),
+        }
+    }
+}
+
+/// The directories [`resolve_template`] searches, in priority order —
+/// local then global, deduped when they're the same directory.
+fn search_targets(config: &Config) -> impl Iterator<Item = SearchTarget<'_>> {
+    let local = config.local_template_dir();
+    let global = config.global_template_dir().filter(|dir| Some(*dir) != local);
+    local
+        .map(|dir| SearchTarget {
+            dir,
+            source: TemplateSource::Local,
+        })
+        .into_iter()
+        .chain(global.map(|dir| SearchTarget {
+            dir,
+            source: TemplateSource::Global,
+        }))
 }
 
 fn matching_files_in_dir(dir: &Path, name: &TemplateName) -> Vec<PathBuf> {
@@ -246,49 +230,6 @@ mod tests {
         fs::create_dir_all(parent).expect("create template parent");
         fs::write(&path, "content").expect("write template");
         path
-    }
-
-    #[test]
-    fn exact_absolute_path_resolves_directly() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let file = write_file(temp.path(), "my-template.md");
-        let config = config_with_dirs(temp.path().to_path_buf(), None, None);
-
-        let resolved =
-            resolve_template(&config, &file).expect("resolve template");
-
-        assert_eq!(resolved.path, file);
-        assert_eq!(resolved.source.dir(), temp.path());
-        assert!(matches!(resolved.source, TemplateSource::Exact(_)));
-        assert_eq!(resolved.name.as_ref(), Path::new("my-template"));
-    }
-
-    #[test]
-    fn exact_relative_path_resolves_from_root() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let file = write_file(temp.path(), "daily.md");
-        let config = config_with_dirs(temp.path().to_path_buf(), None, None);
-
-        let resolved = resolve_template(&config, Path::new("daily.md"))
-            .expect("resolve template");
-
-        assert_eq!(resolved.path, file);
-        assert_eq!(resolved.source.dir(), temp.path());
-    }
-
-    #[test]
-    fn exact_path_takes_priority_over_local_directory() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let exact_file = write_file(temp.path(), "report.md");
-        let local_dir = temp.path().join("local-templates");
-        write_file(&local_dir, "report.md");
-        let config =
-            config_with_dirs(temp.path().to_path_buf(), Some(local_dir), None);
-
-        let resolved =
-            resolve_template(&config, &exact_file).expect("resolve template");
-
-        assert_eq!(resolved.path, exact_file);
     }
 
     #[test]
@@ -442,6 +383,40 @@ mod tests {
 
         assert!(matches!(
             resolve_template(&config, Path::new("../outside.md")),
+            Err(ResolutionError::TemplateNotFound { .. })
+        ));
+    }
+
+    #[test]
+    fn absolute_paths_never_resolve_even_when_the_file_exists() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        // A file that exists on disk, outside any template directory.
+        let outside_file = write_file(temp.path(), "secret.md");
+        let local_dir = temp.path().join("templates");
+        fs::create_dir_all(&local_dir).expect("create local templates");
+        let config =
+            config_with_dirs(temp.path().to_path_buf(), Some(local_dir), None);
+
+        // Resolution never reads outside the configured template
+        // directories, so an absolute path to a real file must still miss
+        // — not be treated as "found by exact path".
+        assert!(matches!(
+            resolve_template(&config, &outside_file),
+            Err(ResolutionError::TemplateNotFound { .. })
+        ));
+    }
+
+    #[test]
+    fn root_relative_paths_never_resolve_even_when_the_file_exists() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        write_file(temp.path(), "secret.md");
+        let local_dir = temp.path().join("templates");
+        fs::create_dir_all(&local_dir).expect("create local templates");
+        let config =
+            config_with_dirs(temp.path().to_path_buf(), Some(local_dir), None);
+
+        assert!(matches!(
+            resolve_template(&config, Path::new("secret.md")),
             Err(ResolutionError::TemplateNotFound { .. })
         ));
     }
