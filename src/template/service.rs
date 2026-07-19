@@ -1,10 +1,15 @@
 //! [`TemplateService`]: resolves a template name, renders it via
 //! [`TemplateEngine`], and writes the result to disk.
 //!
-//! Holds a reference to [`Config`] (for resolution and the default output
-//! directory) and a [`TemplateEngine`] — later issues register custom
-//! functions (`prompt_text`/`select`/`set_output`, `m11-ecosystem`) on the
-//! engine's `Environment` the same instance every `instantiate` call
+//! Holds a reference to [`Config`] (for the default output directory), a
+//! [`TemplateLoader`] (for top-level `-i` resolution), and a
+//! [`TemplateEngine`] whose `{% include %}` loader is a clone of that
+//! same [`TemplateLoader`] — one loader built from `config`, shared
+//! rather than derived twice, so there is exactly one place a template
+//! directory's search order is computed. `TemplateLoader` is cheap to
+//! clone (two `Option<PathBuf>`); later issues register custom
+//! functions (`prompt_text`/`select`/`set_output`, `m11-ecosystem`) on
+//! the engine's `Environment` the same instance every `instantiate` call
 //! reuses. This render pipeline tracer (issue tmpl-01) renders with an
 //! empty template context.
 //!
@@ -30,14 +35,14 @@ use std::{
 use super::{
     engine::TemplateEngine,
     error::TemplateError,
-    loader::{TemplateLoader, TemplatePath},
-    resolve::{self, ResolutionError},
+    loader::{TemplateLoader, TemplatePath, TemplatePathError},
 };
 use crate::config::Config;
 
 /// Resolves, renders, and writes templates for one [`Config`].
 pub(crate) struct TemplateService<'a> {
     config: &'a Config,
+    loader: TemplateLoader,
     engine: TemplateEngine,
 }
 
@@ -48,10 +53,11 @@ impl<'a> TemplateService<'a> {
     #[inline]
     #[must_use]
     pub(crate) fn new(config: &'a Config) -> Self {
-        let engine = TemplateEngine::new()
-            .with_loader(TemplateLoader::for_config(config));
+        let loader = TemplateLoader::for_config(config);
+        let engine = TemplateEngine::new().with_loader(loader.clone());
         Self {
             config,
+            loader,
             engine,
         }
     }
@@ -60,15 +66,15 @@ impl<'a> TemplateService<'a> {
     ///
     /// # Errors
     ///
-    /// Returns [`ResolutionError::AmbiguousTemplate`] when multiple files
-    /// match `name` within a single directory. Returns
-    /// [`ResolutionError::TemplateNotFound`] when no match is found.
+    /// Returns [`TemplatePathError::AmbiguousTemplate`] when multiple
+    /// files match `name` within a single directory. Returns
+    /// [`TemplatePathError::TemplateNotFound`] when no match is found.
     #[inline]
     pub(super) fn resolve(
         &self,
         name: &Path,
-    ) -> Result<TemplatePath, ResolutionError> {
-        resolve::resolve_template(self.config, name)
+    ) -> Result<TemplatePath, TemplatePathError> {
+        self.loader.resolve(name)
     }
 
     /// Resolves `name`, renders it with an empty template context, and
