@@ -13,9 +13,9 @@
 //! directory — it validates the shape of a candidate identifier (the raw
 //! `-i <name>` argument, or a filename found while scanning a directory),
 //! nothing more. Once resolution actually finds a match in a specific
-//! directory, [`super::resolve::TemplatePath`] pairs that same validated
-//! identifier with the [`super::resolve::TemplateSource`] it was found
-//! in — a different, later-stage type, because "safe relative path" and
+//! directory, [`super::resolve::ResolvedTemplatePath`] pairs that same
+//! validated identifier with the [`super::resolve::TemplateSource`] it was
+//! found in — a different, later-stage type, because "safe relative path" and
 //! "path relative to *this* template directory" are different facts with
 //! different lifecycles.
 

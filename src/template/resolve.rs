@@ -4,6 +4,15 @@
 //! parses and holds directories, it does not know how to search them for a
 //! name. [`super::service::TemplateService::resolve`] is the sole
 //! crate-wide entry point onto [`resolve_template`].
+//!
+//! [`TemplateSource`]/[`ResolvedTemplatePath`] live here, not in
+//! [`super::path`]: both require [`Config`] and directory-search
+//! knowledge to construct, whereas everything in `path` validates an
+//! identifier's *shape* with zero awareness that a template directory
+//! exists at all. That boundary is deliberate, not incidental — `path`
+//! stays testable and reasoned-about with plain [`std::path::Path`]
+//! values, and every type down here that touches the filesystem or
+//! [`Config`] stays out of it.
 
 use std::{
     fs,
@@ -20,6 +29,13 @@ use crate::config::Config;
 /// `thiserror`-only, no `miette::Diagnostic` — this is library data, not
 /// CLI presentation. `crate::cli::error::TemplateCliError` wraps this type
 /// to render the `candidates`/`directories` lists as diagnostic help text.
+///
+/// Notably absent: a variant for "the input path was unsafe" —
+/// [`resolve_template`] deliberately reports that the same way as an
+/// ordinary miss (see its docs). A distinct variant here would let a
+/// caller (or a future error-rendering layer) treat a traversal attempt
+/// differently from "no such template", which is exactly the oracle this
+/// design closes.
 #[derive(Debug, Error)]
 pub(crate) enum ResolutionError {
     /// Multiple files matched the template name in a single directory.
@@ -60,6 +76,13 @@ pub(crate) enum ResolutionError {
 /// `TemplateSource` can't name a directory other than what `config`
 /// itself reports. `resolve.rs`'s own tests assert this equality
 /// directly rather than trusting it by convention alone.
+///
+/// Owns the search for a match within its own directory
+/// ([`Self::find`]) rather than exposing the directory for a free
+/// function to search — a directory and "how to search it" are the same
+/// fact, so there's no reason to split them across two types the way an
+/// earlier version of this module (`SearchTarget`, holding a
+/// `fn(PathBuf) -> TemplateSource` alongside a borrowed `dir`) did.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) enum TemplateSource {
     /// Resolved via the local template directory.
@@ -76,6 +99,38 @@ impl TemplateSource {
             Self::Local(dir) | Self::Global(dir) => dir,
         }
     }
+
+    /// Searches this source's directory for `input_path`: first a direct
+    /// join via [`TemplateInputPath::exists_in`], then a stem match
+    /// against every file in the directory.
+    fn find(
+        &self,
+        input_path: &TemplateInputPath,
+    ) -> Result<Option<ResolvedTemplatePath>, ResolutionError> {
+        if input_path.exists_in(self.dir()) {
+            return Ok(Some(self.resolved(input_path.clone())));
+        }
+
+        let name = TemplateName::from(input_path);
+        match matching_files_in_dir(self.dir(), &name).as_slice() {
+            [] => Ok(None),
+            [(relative, _path)] => Ok(Some(self.resolved(relative.clone()))),
+            multiple => Err(ResolutionError::AmbiguousTemplate {
+                name: name.as_ref().to_path_buf(),
+                candidates: multiple
+                    .iter()
+                    .map(|(_, path)| path.clone())
+                    .collect(),
+            }),
+        }
+    }
+
+    fn resolved(&self, relative: TemplateInputPath) -> ResolvedTemplatePath {
+        ResolvedTemplatePath {
+            source: self.clone(),
+            relative,
+        }
+    }
 }
 
 /// A template's resolved location: which [`TemplateSource`] it came from,
@@ -85,13 +140,21 @@ impl TemplateSource {
 /// ([`Self::name`]) are both derived from this pairing on demand, never
 /// stored separately — there is exactly one fact (`source` + `relative`)
 /// for either to drift out of sync with.
+///
+/// Named `ResolvedTemplatePath`, not `TemplatePath`: this crate has two
+/// different "a path naming a template" concepts —
+/// [`TemplateInputPath`] (validated-safe, directory-agnostic, exists
+/// *before* resolution) and this one (directory-bound, exists only
+/// *after* resolution succeeds). Giving them visibly different names
+/// keeps a reader from having to track which lifecycle stage a
+/// `TemplatePath` would mean in a given file.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) struct TemplatePath {
+pub(super) struct ResolvedTemplatePath {
     source: TemplateSource,
     relative: TemplateInputPath,
 }
 
-impl TemplatePath {
+impl ResolvedTemplatePath {
     /// The absolute path to the resolved template file.
     #[must_use]
     pub(super) fn absolute(&self) -> PathBuf {
@@ -112,9 +175,12 @@ impl TemplatePath {
 /// before any directory is searched — absolute paths and `..` traversal
 /// are never resolved, deliberately: this crate never renders a file the
 /// user hasn't placed under a configured template directory. A `name`
-/// that fails validation is a [`ResolutionError::TemplateNotFound`], not a
-/// distinct error, so traversal attempts aren't distinguished from an
-/// ordinary miss. Each directory first tries `name` directly
+/// that fails validation collapses into the same
+/// [`ResolutionError::TemplateNotFound`] an ordinary miss produces,
+/// rather than a distinct error: reporting "that path is unsafe"
+/// separately from "no such template" would let a caller distinguish a
+/// traversal attempt from a typo, an oracle this crate has no reason to
+/// offer. Each directory first tries `name` directly
 /// ([`TemplateInputPath::exists_in`]), then matches files by stem;
 /// multiple stem matches in one directory produce an ambiguous-template
 /// error.
@@ -128,13 +194,13 @@ impl TemplatePath {
 pub(super) fn resolve_template(
     config: &Config,
     name: &Path,
-) -> Result<TemplatePath, ResolutionError> {
+) -> Result<ResolvedTemplatePath, ResolutionError> {
     let Ok(input_path) = TemplateInputPath::try_from(name) else {
         return Err(not_found(config, name));
     };
 
-    for target in search_targets(config) {
-        if let Some(found) = target.find(&input_path)? {
+    for source in search_targets(config) {
+        if let Some(found) = source.find(&input_path)? {
             return Ok(found);
         }
     }
@@ -146,67 +212,22 @@ fn not_found(config: &Config, name: &Path) -> ResolutionError {
     ResolutionError::TemplateNotFound {
         name: name.to_path_buf(),
         directories_searched: search_targets(config)
-            .map(|target| target.dir.to_path_buf())
+            .map(|source| source.dir().to_path_buf())
             .collect(),
     }
 }
 
-/// One directory to search, tagged with the [`TemplateSource`] variant a
-/// match in it should produce.
-struct SearchTarget<'a> {
-    dir: &'a Path,
-    source: fn(PathBuf) -> TemplateSource,
-}
-
-impl SearchTarget<'_> {
-    /// Searches this directory for `input_path`: first a direct join via
-    /// [`TemplateInputPath::exists_in`], then a stem match against every
-    /// file in the directory.
-    fn find(
-        &self,
-        input_path: &TemplateInputPath,
-    ) -> Result<Option<TemplatePath>, ResolutionError> {
-        if input_path.exists_in(self.dir) {
-            return Ok(Some(self.resolved(input_path.clone())));
-        }
-
-        let name = TemplateName::from(input_path);
-        match matching_files_in_dir(self.dir, &name).as_slice() {
-            [] => Ok(None),
-            [(relative, _path)] => Ok(Some(self.resolved(relative.clone()))),
-            multiple => Err(ResolutionError::AmbiguousTemplate {
-                name: name.as_ref().to_path_buf(),
-                candidates: multiple
-                    .iter()
-                    .map(|(_, path)| path.clone())
-                    .collect(),
-            }),
-        }
-    }
-
-    fn resolved(&self, relative: TemplateInputPath) -> TemplatePath {
-        TemplatePath {
-            source: (self.source)(self.dir.to_path_buf()),
-            relative,
-        }
-    }
-}
-
-/// The directories [`resolve_template`] searches, in priority order —
-/// local then global, deduped when they're the same directory.
-fn search_targets(config: &Config) -> impl Iterator<Item = SearchTarget<'_>> {
+/// The [`TemplateSource`]s [`resolve_template`] searches, in priority
+/// order — local then global, deduped when they're the same directory.
+fn search_targets(
+    config: &Config,
+) -> impl Iterator<Item = TemplateSource> + '_ {
     let local = config.local_template_dir();
     let global = config.global_template_dir().filter(|dir| Some(*dir) != local);
     local
-        .map(|dir| SearchTarget {
-            dir,
-            source: TemplateSource::Local,
-        })
+        .map(|dir| TemplateSource::Local(dir.to_path_buf()))
         .into_iter()
-        .chain(global.map(|dir| SearchTarget {
-            dir,
-            source: TemplateSource::Global,
-        }))
+        .chain(global.map(|dir| TemplateSource::Global(dir.to_path_buf())))
 }
 
 /// Files in `dir` whose stem matches `name`, paired with each file's bare

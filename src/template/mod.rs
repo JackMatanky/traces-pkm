@@ -10,7 +10,7 @@
 //! [`TemplateName`](path::TemplateName) — a candidate identifier's shape,
 //! validated once at construction rather than re-checked with a runtime
 //! bool at every call site, before it's tied to any directory.
-//! [`resolve::TemplatePath`] is the later-stage type: a validated
+//! [`resolve::ResolvedTemplatePath`] is the later-stage type: a validated
 //! identifier paired with the specific [`resolve::TemplateSource`]
 //! directory it resolved from. [`engine`] wraps minijinja's `Environment`
 //! — construction, `{% include %}`/`{% extends %}` loader wiring, and

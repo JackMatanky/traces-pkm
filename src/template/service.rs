@@ -16,7 +16,7 @@ use std::{
 use super::{
     engine::{self, TemplateEngine},
     error::TemplateError,
-    resolve::{self, ResolutionError, TemplatePath},
+    resolve::{self, ResolutionError, ResolvedTemplatePath},
 };
 use crate::config::Config;
 
@@ -70,7 +70,7 @@ impl<'a> TemplateService<'a> {
     pub(super) fn resolve(
         &self,
         name: &Path,
-    ) -> Result<TemplatePath, ResolutionError> {
+    ) -> Result<ResolvedTemplatePath, ResolutionError> {
         resolve::resolve_template(self.config, name)
     }
 
@@ -139,7 +139,7 @@ impl<'a> TemplateService<'a> {
     ///
     /// Computed at write time, not stored during render — issue tmpl-02's
     /// `-o`/`set_output()` handling overrides this.
-    fn default_output_path(&self, resolved: &TemplatePath) -> PathBuf {
+    fn default_output_path(&self, resolved: &ResolvedTemplatePath) -> PathBuf {
         let output_dir = self.config.output_dir();
         let base = if output_dir.is_absolute() {
             output_dir.to_path_buf()
