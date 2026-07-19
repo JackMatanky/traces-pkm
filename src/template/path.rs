@@ -1,13 +1,13 @@
 //! Newtypes for template identifiers: [`TemplatePath`] and [`TemplateName`].
 //!
-//! Resolution (`super::resolve`) and the include loader (`super::loader`)
+//! Resolution (`super::resolve`) and the include loader (`super::engine`)
 //! both need to join a template directory with a user- or
 //! filesystem-supplied relative path without ever escaping that
 //! directory. Before these types existed, that safety was a runtime bool
 //! check (`is_safe_template_relative_path`) callers had to remember to
-//! call; [`TemplatePath::new`] makes the unsafe state unconstructible
-//! instead — every function that takes a `&TemplatePath` gets the
-//! guarantee for free.
+//! call; [`TemplatePath`]'s `TryFrom` impls make the unsafe state
+//! unconstructible instead — every function that takes a `&TemplatePath`
+//! gets the guarantee for free.
 
 use std::path::{Component, Path, PathBuf};
 
@@ -18,7 +18,7 @@ use thiserror::Error;
 /// `thiserror`-only, no `miette::Diagnostic` — matches this module's
 /// convention (see `crate::config::mod`'s docs for why).
 #[derive(Debug, Error)]
-pub(crate) enum TemplatePathError {
+pub(super) enum TemplatePathError {
     /// The path is absolute; template paths must be relative to a
     /// template directory.
     #[error("template path {0} must be relative, not absolute")]
@@ -30,6 +30,9 @@ pub(crate) enum TemplatePathError {
         "template path {0} must not contain '..' or other unsafe components"
     )]
     UnsafeComponent(PathBuf),
+    /// The path is safe but names no file in the given directory.
+    #[error("{0} does not exist in {1}")]
+    NotFound(PathBuf, PathBuf),
 }
 
 /// A template identifier that is safe to join onto any template
@@ -37,11 +40,15 @@ pub(crate) enum TemplatePathError {
 ///
 /// May still include a file extension and nested directory segments
 /// (`"folder/daily.md"` is a valid `TemplatePath`) — see [`TemplateName`]
-/// for the stricter "bare name" case.
+/// for the stricter "bare name" case. Implements [`AsRef<Path>`] so it
+/// can be passed anywhere a path is expected (`Path::join`,
+/// `fs::read_to_string`, …) without an extra accessor call.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct TemplatePath(PathBuf);
+pub(super) struct TemplatePath(PathBuf);
 
-impl TemplatePath {
+impl TryFrom<&Path> for TemplatePath {
+    type Error = TemplatePathError;
+
     /// Validates `path` as a safe, directory-relative template path.
     ///
     /// # Errors
@@ -49,10 +56,7 @@ impl TemplatePath {
     /// Returns [`TemplatePathError::Absolute`] when `path` is absolute.
     /// Returns [`TemplatePathError::UnsafeComponent`] when `path` contains
     /// a `..` or other component that isn't a plain name or `.`.
-    pub(super) fn new(
-        path: impl AsRef<Path>,
-    ) -> Result<Self, TemplatePathError> {
-        let path = path.as_ref();
+    fn try_from(path: &Path) -> Result<Self, Self::Error> {
         if path.is_absolute() {
             return Err(TemplatePathError::Absolute(path.to_path_buf()));
         }
@@ -64,19 +68,36 @@ impl TemplatePath {
         }
         Ok(Self(path.to_path_buf()))
     }
+}
 
-    /// The wrapped relative path.
-    #[must_use]
-    pub(super) fn as_path(&self) -> &Path {
-        &self.0
+impl TryFrom<(&Path, &Path)> for TemplatePath {
+    type Error = TemplatePathError;
+
+    /// Validates `name` (the second element) exactly as
+    /// [`TryFrom<&Path>`](TemplatePath), then additionally checks it
+    /// names an existing file within `dir` (the first element).
+    ///
+    /// # Errors
+    ///
+    /// Returns the same errors as [`TryFrom<&Path>`](TemplatePath) when
+    /// `name` itself is unsafe. Returns
+    /// [`TemplatePathError::NotFound`] when `name` is safe but
+    /// `dir.join(name)` isn't an existing file.
+    fn try_from((dir, name): (&Path, &Path)) -> Result<Self, Self::Error> {
+        let template_path = Self::try_from(name)?;
+        if !dir.join(&template_path.0).is_file() {
+            return Err(TemplatePathError::NotFound(
+                template_path.0,
+                dir.to_path_buf(),
+            ));
+        }
+        Ok(template_path)
     }
+}
 
-    /// The final component's stem as a [`TemplateName`] — directory
-    /// segments and the extension are both dropped, e.g.
-    /// `"folder/daily.md"` -> `"daily"`.
-    #[must_use]
-    pub(super) fn name(&self) -> TemplateName {
-        TemplateName::from_stem(&self.0)
+impl AsRef<Path> for TemplatePath {
+    fn as_ref(&self) -> &Path {
+        &self.0
     }
 }
 
@@ -85,11 +106,12 @@ impl TemplatePath {
 ///
 /// Used for stem-matching within a single directory and for deriving the
 /// default output filename — never carries directory segments, since
-/// both of those are single-directory, leaf-name concepts.
+/// both of those are single-directory, leaf-name concepts. Implements
+/// [`AsRef<Path>`] for the same reason as [`TemplatePath`].
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct TemplateName(PathBuf);
 
-impl TemplateName {
+impl From<&Path> for TemplateName {
     /// Derives a name from any path's final component, dropping
     /// directory segments and the extension.
     ///
@@ -97,14 +119,21 @@ impl TemplateName {
     /// no final component (`.`, `..`, root, or empty); template paths
     /// this is called on always come from a resolved file, which always
     /// has one.
-    #[must_use]
-    pub(super) fn from_stem(path: &Path) -> Self {
+    fn from(path: &Path) -> Self {
         Self(path.file_stem().map_or_else(PathBuf::new, PathBuf::from))
     }
+}
 
-    /// The wrapped bare name.
-    #[must_use]
-    pub(super) fn as_path(&self) -> &Path {
+impl From<&TemplatePath> for TemplateName {
+    /// Drops `template_path`'s directory segments and extension, e.g.
+    /// `"folder/daily.md"` -> `"daily"`.
+    fn from(template_path: &TemplatePath) -> Self {
+        Self::from(template_path.0.as_path())
+    }
+}
+
+impl AsRef<Path> for TemplateName {
+    fn as_ref(&self) -> &Path {
         &self.0
     }
 }
@@ -116,65 +145,98 @@ mod tests {
     use super::*;
 
     #[test]
-    fn new_accepts_a_plain_relative_name() {
-        let path = TemplatePath::new("daily.md").expect("valid template path");
+    fn try_from_accepts_a_plain_relative_name() {
+        let path = TemplatePath::try_from(Path::new("daily.md"))
+            .expect("valid template path");
 
-        assert_eq!(path.as_path(), Path::new("daily.md"));
+        assert_eq!(path.as_ref(), Path::new("daily.md"));
     }
 
     #[test]
-    fn new_accepts_a_nested_relative_path() {
-        let path =
-            TemplatePath::new("folder/daily.md").expect("valid template path");
+    fn try_from_accepts_a_nested_relative_path() {
+        let path = TemplatePath::try_from(Path::new("folder/daily.md"))
+            .expect("valid template path");
 
-        assert_eq!(path.as_path(), Path::new("folder/daily.md"));
+        assert_eq!(path.as_ref(), Path::new("folder/daily.md"));
     }
 
     #[test]
-    fn new_rejects_an_absolute_path() {
-        let error = TemplatePath::new("/etc/passwd")
+    fn try_from_rejects_an_absolute_path() {
+        let error = TemplatePath::try_from(Path::new("/etc/passwd"))
             .expect_err("absolute path is rejected");
 
         assert!(matches!(error, TemplatePathError::Absolute(_)));
     }
 
     #[test]
-    fn new_rejects_parent_traversal() {
-        let error = TemplatePath::new("../outside.md")
+    fn try_from_rejects_parent_traversal() {
+        let error = TemplatePath::try_from(Path::new("../outside.md"))
             .expect_err("parent traversal is rejected");
 
         assert!(matches!(error, TemplatePathError::UnsafeComponent(_)));
     }
 
     #[test]
-    fn new_rejects_nested_parent_traversal() {
-        let error = TemplatePath::new("folder/../../outside.md")
-            .expect_err("nested parent traversal is rejected");
+    fn try_from_rejects_nested_parent_traversal() {
+        let error =
+            TemplatePath::try_from(Path::new("folder/../../outside.md"))
+                .expect_err("nested parent traversal is rejected");
 
         assert!(matches!(error, TemplatePathError::UnsafeComponent(_)));
     }
 
     #[test]
-    fn name_drops_directory_segments_and_extension() {
-        let path =
-            TemplatePath::new("folder/daily.md").expect("valid template path");
+    fn dir_and_name_try_from_succeeds_for_an_existing_file() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        std::fs::write(temp.path().join("daily.md"), "content")
+            .expect("write template");
 
-        assert_eq!(path.name().as_path(), Path::new("daily"));
+        let path = TemplatePath::try_from((temp.path(), Path::new("daily.md")))
+            .expect("existing file resolves");
+
+        assert_eq!(path.as_ref(), Path::new("daily.md"));
     }
 
     #[test]
-    fn name_of_an_extensionless_path_is_unchanged() {
-        let path = TemplatePath::new("daily").expect("valid template path");
+    fn dir_and_name_try_from_fails_for_a_missing_file() {
+        let temp = tempfile::tempdir().expect("create temp dir");
 
-        assert_eq!(path.name().as_path(), Path::new("daily"));
+        let error =
+            TemplatePath::try_from((temp.path(), Path::new("missing.md")))
+                .expect_err("missing file is rejected");
+
+        assert!(matches!(error, TemplatePathError::NotFound(..)));
     }
 
     #[test]
-    fn from_stem_derives_the_bare_name_from_any_path() {
-        let name = TemplateName::from_stem(Path::new(
+    fn dir_and_name_try_from_still_rejects_unsafe_names() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+
+        let error =
+            TemplatePath::try_from((temp.path(), Path::new("../outside.md")))
+                .expect_err("unsafe name is rejected before the fs check");
+
+        assert!(matches!(error, TemplatePathError::UnsafeComponent(_)));
+    }
+
+    #[test]
+    fn template_name_from_drops_directory_segments_and_extension() {
+        let name = TemplateName::from(Path::new(
             "/abs/local-templates/folder/report.md",
         ));
 
-        assert_eq!(name.as_path(), Path::new("report"));
+        assert_eq!(name.as_ref(), Path::new("report"));
+    }
+
+    #[test]
+    fn template_name_from_template_path_matches_from_path() {
+        let template_path =
+            TemplatePath::try_from(Path::new("folder/daily.md"))
+                .expect("valid template path");
+
+        assert_eq!(
+            TemplateName::from(&template_path).as_ref(),
+            Path::new("daily")
+        );
     }
 }

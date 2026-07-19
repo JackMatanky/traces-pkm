@@ -1,24 +1,22 @@
-//! [`TemplateService`]: resolves a template name, renders it with
-//! minijinja, and writes the result to disk.
+//! [`TemplateService`]: resolves a template name, renders it via
+//! [`TemplateEngine`], and writes the result to disk.
 //!
 //! Holds a reference to [`Config`] (for resolution and the default output
-//! directory) and owns a minijinja `Environment`, built once in
-//! [`TemplateService::new`] with [`super::loader`] wired for
-//! `{% include %}`/`{% extends %}` — later issues register custom
-//! functions (`prompt_text`/`select`/`set_output`, `m11-ecosystem`) on the
-//! same instance every `instantiate` call reuses. This render pipeline
-//! tracer (issue tmpl-01) renders with an empty template context.
+//! directory) and owns a [`TemplateEngine`], built once in
+//! [`TemplateService::new`] — later issues register custom functions
+//! (`prompt_text`/`select`/`set_output`, `m11-ecosystem`) on the engine's
+//! `Environment` the same instance every `instantiate` call reuses. This
+//! render pipeline tracer (issue tmpl-01) renders with an empty template
+//! context.
 
 use std::{
     fs,
     path::{Path, PathBuf},
 };
 
-use minijinja::Environment;
-
 use super::{
+    engine::TemplateEngine,
     error::TemplateError,
-    loader,
     resolve::{self, ResolutionError, ResolvedTemplate},
 };
 use crate::config::Config;
@@ -26,24 +24,23 @@ use crate::config::Config;
 /// Resolves, renders, and writes templates for one [`Config`].
 pub(crate) struct TemplateService<'a> {
     config: &'a Config,
-    env: Environment<'static>,
+    engine: TemplateEngine,
 }
 
 impl<'a> TemplateService<'a> {
-    /// Creates a service backed by `config`'s template directories, with a
-    /// minijinja `Environment` whose loader searches those same
-    /// directories for `{% include %}`/`{% extends %}`.
+    /// Creates a service backed by `config`'s template directories, with
+    /// a [`TemplateEngine`] whose loader searches those same directories
+    /// for `{% include %}`/`{% extends %}`.
     #[inline]
     #[must_use]
     pub(crate) fn new(config: &'a Config) -> Self {
-        let mut env = Environment::new();
-        env.set_loader(loader::build(
+        let engine = TemplateEngine::new(
             config.local_template_dir().map(Path::to_path_buf),
             config.global_template_dir().map(Path::to_path_buf),
-        ));
+        );
         Self {
             config,
-            env,
+            engine,
         }
     }
 
@@ -55,7 +52,7 @@ impl<'a> TemplateService<'a> {
     /// match `name` within a single directory. Returns
     /// [`ResolutionError::TemplateNotFound`] when no match is found.
     #[inline]
-    pub(crate) fn resolve(
+    pub(super) fn resolve(
         &self,
         name: &Path,
     ) -> Result<ResolvedTemplate, ResolutionError> {
@@ -91,14 +88,14 @@ impl<'a> TemplateService<'a> {
                     source,
                 }
             })?;
-        let rendered = self
-            .env
-            .render_str(&template_source, minijinja::context!())
-            .map_err(|source| TemplateError::Render {
-                path: resolved.path.clone(),
-                source,
+        let rendered =
+            self.engine.render(&template_source).map_err(|source| {
+                TemplateError::Render {
+                    path: resolved.path.clone(),
+                    source,
+                }
             })?;
-        let output_path = default_output_path(self.config, &resolved);
+        let output_path = self.default_output_path(&resolved);
         if let Some(parent) = output_path.parent() {
             fs::create_dir_all(parent).map_err(|source| {
                 TemplateError::Write {
@@ -115,28 +112,26 @@ impl<'a> TemplateService<'a> {
         })?;
         Ok(output_path)
     }
-}
 
-/// Default output path: [`Config::output_dir`] joined with the resolved
-/// template's bare name — not the `-i` argument, so a resolved
-/// `templates/daily` or `templates/daily.md` both write
-/// `<output_dir>/daily.md`. A relative `output_dir` (a literal `output_dir =
-/// "…"` from a config file) is resolved against [`Config::root`]; an absolute
-/// one (the unconfigured fallback) is used as-is.
-///
-/// Computed at write time, not stored during render — issue tmpl-02's
-/// `-o`/`set_output()` handling overrides this.
-fn default_output_path(
-    config: &Config,
-    resolved: &ResolvedTemplate,
-) -> PathBuf {
-    let output_dir = config.output_dir();
-    let base = if output_dir.is_absolute() {
-        output_dir.to_path_buf()
-    } else {
-        config.root().join(output_dir)
-    };
-    base.join(resolved.name.as_path()).with_extension("md")
+    /// Default output path: [`Config::output_dir`] joined with the
+    /// resolved template's bare name — not the `-i` argument, so a
+    /// resolved `templates/daily` or `templates/daily.md` both write
+    /// `<output_dir>/daily.md`. A relative `output_dir` (a literal
+    /// `output_dir = "…"` from a config file) is resolved against
+    /// [`Config::root`]; an absolute one (the unconfigured fallback) is
+    /// used as-is.
+    ///
+    /// Computed at write time, not stored during render — issue tmpl-02's
+    /// `-o`/`set_output()` handling overrides this.
+    fn default_output_path(&self, resolved: &ResolvedTemplate) -> PathBuf {
+        let output_dir = self.config.output_dir();
+        let base = if output_dir.is_absolute() {
+            output_dir.to_path_buf()
+        } else {
+            self.config.root().join(output_dir)
+        };
+        base.join(&resolved.name).with_extension("md")
+    }
 }
 
 #[cfg(test)]
