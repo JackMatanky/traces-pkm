@@ -24,7 +24,7 @@ use super::{DialogError, DialogProvider};
 /// # Examples
 ///
 /// ```
-/// use traces_pkm::dialog::{DialogProvider, TerminalDialogProvider};
+/// use traces_pkm::{DialogProvider, TerminalDialogProvider};
 ///
 /// let p = TerminalDialogProvider::new();
 /// // In non-TTY contexts all methods return their fallback defaults:

@@ -41,7 +41,7 @@ enum Commands {
 pub fn run() -> Result<(), ConfigCliError> {
     let cli = Cli::parse();
     let service = crate::config::ConfigService::new();
-    let provider = crate::dialog::TerminalDialogProvider::new();
+    let provider = crate::TerminalDialogProvider::new();
     match cli.command {
         Commands::Init(args) => args.run(&provider).map_err(Into::into),
         Commands::Trust(args) => args.run(&service).map_err(Into::into),

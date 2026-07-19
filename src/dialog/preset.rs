@@ -35,7 +35,7 @@ fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 /// # Examples
 ///
 /// ```
-/// use traces_pkm::dialog::{DialogProvider, PresetDialogProvider};
+/// use traces_pkm::{DialogProvider, PresetDialogProvider};
 ///
 /// let p = PresetDialogProvider::new().with_text("claude").with_confirm(true);
 /// assert_eq!(p.text("name", None).unwrap(), "claude");
@@ -68,7 +68,7 @@ impl PresetDialogProvider {
     /// # Examples
     ///
     /// ```
-    /// use traces_pkm::dialog::{DialogProvider, PresetDialogProvider};
+    /// use traces_pkm::{DialogProvider, PresetDialogProvider};
     ///
     /// let p = PresetDialogProvider::new().with_text("alice").with_text("bob");
     /// assert_eq!(p.text("name", None).unwrap(), "alice");
@@ -86,7 +86,7 @@ impl PresetDialogProvider {
     /// # Examples
     ///
     /// ```
-    /// use traces_pkm::dialog::{DialogProvider, PresetDialogProvider};
+    /// use traces_pkm::{DialogProvider, PresetDialogProvider};
     ///
     /// let p = PresetDialogProvider::new().with_confirm(true).with_confirm(false);
     /// assert!(p.confirm("proceed?", None).unwrap());
@@ -104,7 +104,7 @@ impl PresetDialogProvider {
     /// # Examples
     ///
     /// ```
-    /// use traces_pkm::dialog::{DialogProvider, PresetDialogProvider};
+    /// use traces_pkm::{DialogProvider, PresetDialogProvider};
     ///
     /// let items = vec!["a".to_owned(), "b".to_owned()];
     /// let p = PresetDialogProvider::new().with_select(1);
@@ -122,7 +122,7 @@ impl PresetDialogProvider {
     /// # Examples
     ///
     /// ```
-    /// use traces_pkm::dialog::{DialogProvider, PresetDialogProvider};
+    /// use traces_pkm::{DialogProvider, PresetDialogProvider};
     ///
     /// let items = vec!["a".to_owned(), "b".to_owned(), "c".to_owned()];
     /// let p = PresetDialogProvider::new().with_multi_select([0, 2]);

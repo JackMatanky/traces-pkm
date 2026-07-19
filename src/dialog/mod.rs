@@ -17,18 +17,6 @@
 //! of strings it indexes back into that array; for an array of objects it
 //! maps each to a label, calls `select`, and recovers the chosen object by
 //! the same index.
-//!
-//! # Module contents
-//!
-//! | Submodule  | Public re-export           |
-//! | ---------- | -------------------------- |
-//! | `error`    | [`DialogError`]            |
-//! | `terminal` | [`TerminalDialogProvider`] |
-//! | `preset`   | [`PresetDialogProvider`]   |
-//!
-//! All public types are re-exported at this level so consumers write
-//! `traces_pkm::dialog::DialogProvider` without knowing the submodule layout.
-
 mod error;
 mod preset;
 mod terminal;
@@ -55,11 +43,11 @@ pub trait DialogProvider: Send + Sync {
     /// # Examples
     ///
     /// ```
-    /// use traces_pkm::dialog::{DialogProvider, PresetDialogProvider};
+    /// use traces_pkm::{DialogProvider, PresetDialogProvider};
     ///
     /// let p = PresetDialogProvider::new().with_text("claude");
     /// assert_eq!(p.text("name", None)?, "claude");
-    /// # Ok::<_, traces_pkm::dialog::DialogError>(())
+    /// # Ok::<_, traces_pkm::DialogError>(())
     /// ```
     ///
     /// # Errors
@@ -80,11 +68,11 @@ pub trait DialogProvider: Send + Sync {
     /// # Examples
     ///
     /// ```
-    /// use traces_pkm::dialog::{DialogProvider, PresetDialogProvider};
+    /// use traces_pkm::{DialogProvider, PresetDialogProvider};
     ///
     /// let p = PresetDialogProvider::new().with_confirm(true);
     /// assert!(p.confirm("proceed?", None)?);
-    /// # Ok::<_, traces_pkm::dialog::DialogError>(())
+    /// # Ok::<_, traces_pkm::DialogError>(())
     /// ```
     ///
     /// # Errors
@@ -106,12 +94,12 @@ pub trait DialogProvider: Send + Sync {
     /// # Examples
     ///
     /// ```
-    /// use traces_pkm::dialog::{DialogProvider, PresetDialogProvider};
+    /// use traces_pkm::{DialogProvider, PresetDialogProvider};
     ///
     /// let items = vec!["alpha".into(), "beta".into(), "gamma".into()];
     /// let p = PresetDialogProvider::new().with_select(1);
     /// assert_eq!(p.select("pick", &items)?, 1);
-    /// # Ok::<_, traces_pkm::dialog::DialogError>(())
+    /// # Ok::<_, traces_pkm::DialogError>(())
     /// ```
     ///
     /// # Errors
@@ -132,12 +120,12 @@ pub trait DialogProvider: Send + Sync {
     /// # Examples
     ///
     /// ```
-    /// use traces_pkm::dialog::{DialogProvider, PresetDialogProvider};
+    /// use traces_pkm::{DialogProvider, PresetDialogProvider};
     ///
     /// let items = vec!["x".into(), "y".into(), "z".into()];
     /// let p = PresetDialogProvider::new().with_multi_select([0, 2]);
     /// assert_eq!(p.multi_select("pick", &items)?, vec![0, 2]);
-    /// # Ok::<_, traces_pkm::dialog::DialogError>(())
+    /// # Ok::<_, traces_pkm::DialogError>(())
     /// ```
     ///
     /// # Errors
