@@ -234,11 +234,10 @@ impl<'a> ConfigBuilder<'a, Trusted> {
             local: self.local,
             global: self.global,
             state: Merged {
-                config: Config::new(root, TemplateConfig {
-                    local: local_dir,
-                    global: global_dir,
-                    output,
-                }),
+                config: Config::new(
+                    root,
+                    TemplateConfig::new(local_dir, global_dir, output),
+                ),
             },
         })
     }

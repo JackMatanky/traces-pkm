@@ -7,11 +7,12 @@
 
 use std::{
     fs,
-    path::{Component, Path, PathBuf},
+    path::{Path, PathBuf},
 };
 
 use thiserror::Error;
 
+use super::path::{TemplateName, TemplatePath};
 use crate::config::Config;
 
 /// Errors that can occur during template resolution.
@@ -43,22 +44,30 @@ pub(crate) enum ResolutionError {
 /// A resolved template file with its source directory.
 ///
 /// Carries both the path to the file and which template directory it came
-/// from, so consumers can inspect the origin without re-deriving it.
+/// from, so consumers can inspect the origin without re-deriving it, plus
+/// the bare [`TemplateName`] `crate::template::service` derives the
+/// default output filename from.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct ResolvedTemplate {
     /// Absolute path to the resolved template file.
     pub(crate) path: PathBuf,
     /// The template directory the file was resolved from.
     pub(crate) source_dir: PathBuf,
+    /// The resolved file's bare name (no directory, no extension).
+    pub(super) name: TemplateName,
 }
 
 /// Resolve a template name against `config` in priority order.
 ///
 /// Resolution follows: exact filesystem path -> local template directory ->
 /// global template directory. First match wins. Directory lookup first
-/// tries `name` directly, then matches files by stem in that directory.
-/// Multiple stem matches at the same priority level produce an ambiguous
-/// template error.
+/// tries `name` directly, then matches files by stem in that directory. A
+/// `name` that isn't safely directory-relative (absolute, or containing
+/// `..`) can still match the exact-path step but is silently skipped for
+/// directory lookup — that's a [`ResolutionError::TemplateNotFound`], not a
+/// distinct error, so traversal attempts aren't distinguished from an
+/// ordinary miss. Multiple stem matches at the same priority level produce
+/// an ambiguous template error.
 ///
 /// # Errors
 ///
@@ -70,44 +79,21 @@ pub(super) fn resolve_template(
     name: &Path,
 ) -> Result<ResolvedTemplate, ResolutionError> {
     if let Some(path) = resolve_exact_path(name, config.root()) {
+        let template_name = TemplateName::from_stem(&path);
         return Ok(ResolvedTemplate {
             source_dir: parent_dir(&path),
             path,
+            name: template_name,
         });
     }
 
-    if let Some(local_dir) = config.local_template_dir() {
-        if let Some(direct) = direct_template_path(local_dir, name) {
-            return Ok(ResolvedTemplate {
-                source_dir: local_dir.to_path_buf(),
-                path: direct,
-            });
-        }
-
-        if let Some(path) = one_match(local_dir, name)? {
-            return Ok(ResolvedTemplate {
-                source_dir: local_dir.to_path_buf(),
-                path,
-            });
-        }
-    }
-
-    if let Some(global_dir) = config.global_template_dir()
-        && config.local_template_dir() != Some(global_dir)
+    // A `name` that isn't safely directory-relative (absolute, `..`, …)
+    // can't be searched for below; that's not an error here, it just
+    // means the exact-path step above was `name`'s only chance to match.
+    if let Ok(template_path) = TemplatePath::new(name)
+        && let Some(found) = search_directories(config, &template_path)?
     {
-        if let Some(direct) = direct_template_path(global_dir, name) {
-            return Ok(ResolvedTemplate {
-                source_dir: global_dir.to_path_buf(),
-                path: direct,
-            });
-        }
-
-        if let Some(path) = one_match(global_dir, name)? {
-            return Ok(ResolvedTemplate {
-                source_dir: global_dir.to_path_buf(),
-                path,
-            });
-        }
+        return Ok(found);
     }
 
     Err(ResolutionError::TemplateNotFound {
@@ -116,14 +102,62 @@ pub(super) fn resolve_template(
     })
 }
 
+/// Searches the local then global template directory for `template_path`,
+/// first as a direct join, then by stem match.
+fn search_directories(
+    config: &Config,
+    template_path: &TemplatePath,
+) -> Result<Option<ResolvedTemplate>, ResolutionError> {
+    if let Some(local_dir) = config.local_template_dir()
+        && let Some(found) = search_directory(local_dir, template_path)?
+    {
+        return Ok(Some(found));
+    }
+
+    if let Some(global_dir) = config.global_template_dir()
+        && config.local_template_dir() != Some(global_dir)
+        && let Some(found) = search_directory(global_dir, template_path)?
+    {
+        return Ok(Some(found));
+    }
+
+    Ok(None)
+}
+
+/// Searches one template directory for `template_path`, first as a direct
+/// join, then by stem match against [`TemplatePath::name`].
+fn search_directory(
+    dir: &Path,
+    template_path: &TemplatePath,
+) -> Result<Option<ResolvedTemplate>, ResolutionError> {
+    if let Some(path) = direct_template_path(dir, template_path) {
+        return Ok(Some(ResolvedTemplate {
+            source_dir: dir.to_path_buf(),
+            path,
+            name: template_path.name(),
+        }));
+    }
+
+    let name = template_path.name();
+    one_match(dir, &name)?
+        .map(|path| {
+            Ok(ResolvedTemplate {
+                source_dir: dir.to_path_buf(),
+                path,
+                name,
+            })
+        })
+        .transpose()
+}
+
 fn one_match(
     dir: &Path,
-    name: &Path,
+    name: &TemplateName,
 ) -> Result<Option<PathBuf>, ResolutionError> {
     let matches = matching_files_in_dir(dir, name);
     if matches.len() > 1 {
         return Err(ResolutionError::AmbiguousTemplate {
-            name: name.to_path_buf(),
+            name: name.as_path().to_path_buf(),
             candidates: matches,
         });
     }
@@ -156,23 +190,15 @@ fn resolve_exact_path(name: &Path, root: &Path) -> Option<PathBuf> {
     path.is_file().then_some(path)
 }
 
-fn direct_template_path(dir: &Path, name: &Path) -> Option<PathBuf> {
-    if !is_safe_template_relative_path(name) {
-        return None;
-    }
-
-    let path = dir.join(name);
+fn direct_template_path(
+    dir: &Path,
+    template_path: &TemplatePath,
+) -> Option<PathBuf> {
+    let path = dir.join(template_path.as_path());
     path.is_file().then_some(path)
 }
 
-fn is_safe_template_relative_path(path: &Path) -> bool {
-    !path.is_absolute()
-        && path.components().all(|component| {
-            matches!(component, Component::Normal(_) | Component::CurDir)
-        })
-}
-
-fn matching_files_in_dir(dir: &Path, name: &Path) -> Vec<PathBuf> {
+fn matching_files_in_dir(dir: &Path, name: &TemplateName) -> Vec<PathBuf> {
     let Ok(entries) = fs::read_dir(dir) else {
         return Vec::new();
     };
@@ -182,7 +208,7 @@ fn matching_files_in_dir(dir: &Path, name: &Path) -> Vec<PathBuf> {
         .filter_map(|entry| {
             entry.file_type().ok()?.is_file().then(|| entry.path())
         })
-        .filter(|path| path.file_stem() == Some(name.as_os_str()))
+        .filter(|path| path.file_stem() == Some(name.as_path().as_os_str()))
         .collect()
 }
 
@@ -219,6 +245,7 @@ mod tests {
 
         assert_eq!(resolved.path, file);
         assert_eq!(resolved.source_dir, temp.path());
+        assert_eq!(resolved.name.as_path(), Path::new("my-template"));
     }
 
     #[test]
@@ -265,6 +292,7 @@ mod tests {
 
         assert_eq!(resolved.path, file);
         assert_eq!(resolved.source_dir, local_dir);
+        assert_eq!(resolved.name.as_path(), Path::new("daily"));
     }
 
     #[test]
@@ -283,6 +311,7 @@ mod tests {
 
         assert_eq!(resolved.path, file);
         assert_eq!(resolved.source_dir, local_dir);
+        assert_eq!(resolved.name.as_path(), Path::new("daily"));
     }
 
     #[test]
@@ -301,6 +330,7 @@ mod tests {
 
         assert_eq!(resolved.path, file);
         assert_eq!(resolved.source_dir, local_dir);
+        assert_eq!(resolved.name.as_path(), Path::new("daily"));
     }
 
     #[test]

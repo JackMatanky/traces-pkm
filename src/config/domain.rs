@@ -39,28 +39,29 @@ impl Config {
     #[inline]
     #[must_use]
     pub(crate) fn local_template_dir(&self) -> Option<&Path> {
-        self.templates.local.as_deref()
+        self.templates.local()
     }
 
     /// The global template directory, if set.
     #[inline]
     #[must_use]
     pub(crate) fn global_template_dir(&self) -> Option<&Path> {
-        self.templates.global.as_deref()
+        self.templates.global()
     }
 
-    /// The configured output path, or [`root`](Self::root) when not
+    /// The configured output directory, or [`root`](Self::root) when not
     /// configured.
     ///
-    /// Not read by the render pipeline tracer (issue tmpl-01): its default
-    /// output path is always `./<template-stem>.md`, computed by
-    /// `crate::template::service` from the resolved template itself, not
-    /// from this setting. Issue tmpl-02's `-o`/`set_output()` handling is
-    /// the intended consumer.
+    /// May be relative (a literal `output_dir = "…"` from a config file is
+    /// preserved unresolved — see [`super::builder::ConfigBuilder::merge`]'s
+    /// docs) or absolute (the [`root`](Self::root) fallback). Consumers
+    /// that need an absolute path — `crate::template::service`'s default
+    /// output path, currently the only consumer — resolve a relative
+    /// result against [`root`](Self::root) themselves.
     #[inline]
     #[must_use]
     pub(crate) fn output_dir(&self) -> &Path {
-        &self.templates.output
+        self.templates.output()
     }
 
     /// Test-only constructor that builds a `Config` directly, bypassing
@@ -79,11 +80,27 @@ impl Config {
         global: Option<PathBuf>,
     ) -> Self {
         Self {
-            templates: TemplateConfig {
-                local,
-                global,
-                output: root.clone(),
-            },
+            templates: TemplateConfig::new(local, global, root.clone()),
+            root,
+        }
+    }
+
+    /// Test-only constructor identical to [`Self::for_test`], but taking
+    /// an explicit `output` directory instead of defaulting it to `root`.
+    ///
+    /// Lets `crate::template::service`'s tests exercise the configured
+    /// `output_dir` behaviour distinctly from the "unconfigured, falls
+    /// back to root" case [`Self::for_test`] models.
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) fn for_test_with_output(
+        root: PathBuf,
+        local: Option<PathBuf>,
+        global: Option<PathBuf>,
+        output: PathBuf,
+    ) -> Self {
+        Self {
+            templates: TemplateConfig::new(local, global, output),
             root,
         }
     }
@@ -93,12 +110,54 @@ impl Config {
 ///
 /// Keeps local and global directories separately. Resolution (try local
 /// first, fall back to global) lives in `crate::template::resolve`.
+/// Fields are private with accessors — [`super::builder::ConfigBuilder`]
+/// builds this through [`Self::new`] rather than a struct literal, so
+/// this type alone owns what "unset" and "relative vs. resolved" mean for
+/// each field.
 #[derive(Clone, Debug)]
 pub(super) struct TemplateConfig {
     /// Local project template directory (from `.traces/config.toml`).
-    pub(super) local: Option<PathBuf>,
+    local: Option<PathBuf>,
     /// Global template directory (from `~/.config/traces/config.toml`).
-    pub(super) global: Option<PathBuf>,
+    global: Option<PathBuf>,
     /// Configured `output_dir`, or the config root when absent.
-    pub(super) output: PathBuf,
+    output: PathBuf,
+}
+
+impl TemplateConfig {
+    /// Creates a `TemplateConfig` from builder-owned parts.
+    #[inline]
+    #[must_use]
+    pub(super) fn new(
+        local: Option<PathBuf>,
+        global: Option<PathBuf>,
+        output: PathBuf,
+    ) -> Self {
+        Self {
+            local,
+            global,
+            output,
+        }
+    }
+
+    /// The local project template directory, if set.
+    #[inline]
+    #[must_use]
+    pub(super) fn local(&self) -> Option<&Path> {
+        self.local.as_deref()
+    }
+
+    /// The global template directory, if set.
+    #[inline]
+    #[must_use]
+    pub(super) fn global(&self) -> Option<&Path> {
+        self.global.as_deref()
+    }
+
+    /// The configured output directory, or the config root when absent.
+    #[inline]
+    #[must_use]
+    pub(super) fn output(&self) -> &Path {
+        &self.output
+    }
 }
