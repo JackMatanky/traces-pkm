@@ -43,27 +43,23 @@ impl TemplateSourceDir {
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
-
     use pretty_assertions::assert_eq;
 
     use super::TemplateSourceDir;
 
     #[test]
     fn path_returns_the_local_directory() {
-        let dir = TemplateSourceDir::Local(
-            Path::new("/project/templates").to_path_buf(),
-        );
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let dir = TemplateSourceDir::Local(temp.path().to_path_buf());
 
-        assert_eq!(dir.path(), Path::new("/project/templates"));
+        assert_eq!(dir.path(), temp.path());
     }
 
     #[test]
     fn path_returns_the_global_directory() {
-        let dir = TemplateSourceDir::Global(
-            Path::new("/home/user/templates").to_path_buf(),
-        );
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let dir = TemplateSourceDir::Global(temp.path().to_path_buf());
 
-        assert_eq!(dir.path(), Path::new("/home/user/templates"));
+        assert_eq!(dir.path(), temp.path());
     }
 }
