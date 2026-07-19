@@ -60,6 +60,7 @@
 | Rethink trust routes instead of adding trust-target resolution errors | User observed nested discovery/config-file errors inside a trust-target-resolution error suggests the component boundary is wrong; discovery components should probably make a separate resolution layer unnecessary. |
 | Route trust through discovery and config-file lifecycles, not trust resolution | User agreed the design is better when trust uses `ConfigFile` and discovery components directly, with no trust-specific resolution layer. |
 | Keep nearest-local absence in discovery but consider optional search APIs | User agreed absence belongs to discovery, but noted `nearest_local` should not always error because init may use absence to create a new local config. |
+| Let `ConfigService::load(cwd)` call discovery processing directly | User noted load can simply call a `process()` method that runs `DiscoveryProcessor`; this keeps full discovery hidden behind discovery components rather than decomposing load into nearest-local calls. |
 
 ## Issues Encountered
 | Issue | Resolution |

@@ -45,6 +45,7 @@
   - Rejected separate trust-target-resolution error/component as likely wrong; next step is to map all trust routes and use discovery components directly.
   - Resolved trust routing direction: trust should route through `ConfigFile` and discovery components, not a trust-specific resolution layer.
   - Captured optional-search concern: nearest-local discovery may need both optional and required APIs because init can treat absence as useful information.
+  - Refined load route: `ConfigService::load(cwd)` should call a discovery `process()` method that runs `DiscoveryProcessor` for `Full` discovery, instead of manually composing nearest-local calls.
 - Files created/modified:
   - `task_plan.md`
   - `findings.md`
@@ -66,9 +67,9 @@
 | Question | Answer |
 |----------|--------|
 | Where am I? | Phase 3: Clarify Error Model. |
-| Where am I going? | Decide optional versus required nearest-local discovery APIs for init, trust, and load. |
+| Where am I going? | Decide the discovery engine `process()` return shape, then finish error model. |
 | What's the goal? | Stress-test the proposed config typestate architecture without implementing changes. |
-| What have I learned? | Trust routing should use discovery plus config-file lifecycles directly; nearest-local absence may be an optional outcome for init. |
-| What have I done? | Created planning files, completed external research, recorded fifteen accepted decisions, and narrowed the remaining error question to optional versus required discovery. |
+| What have I learned? | `ConfigService::load(cwd)` should delegate full discovery to a discovery `process()` method that owns `DiscoveryProcessor`. |
+| What have I done? | Created planning files, completed external research, recorded sixteen accepted decisions, and narrowed discovery API shape around `process()`. |
 
 ---
