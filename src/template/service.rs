@@ -1,32 +1,17 @@
 //! [`TemplateService`]: resolves a template name, renders it via
 //! [`TemplateEngine`], and writes the result to disk.
 //!
-//! Holds a reference to [`Config`] (for the default output directory), a
-//! [`TemplateLoader`] (for top-level `-i` resolution), and a
+//! Holds a [`Config`] reference, a [`TemplateLoader`], and a
 //! [`TemplateEngine`] whose `{% include %}` loader is a clone of that
-//! same [`TemplateLoader`] — one loader built from `config`, shared
-//! rather than derived twice, so there is exactly one place a template
-//! directory's search order is computed. `TemplateLoader` is cheap to
-//! clone (two `Option<PathBuf>`); later issues register custom
-//! functions (`prompt_text`/`select`/`set_output`, `m11-ecosystem`) on
-//! the engine's [`Environment`](minijinja::Environment) the same instance
-//! every [`TemplateService::render_to_file`] call
-//! reuses. This render pipeline tracer (issue tmpl-01) renders with an
-//! empty template context.
+//! same `TemplateLoader` — one loader built from `config`, shared,
+//! rather than derived twice, so the search order is computed in
+//! exactly one place. This render pipeline tracer (issue tmpl-01)
+//! renders with an empty template context.
 //!
 //! [`TemplateService::new`] is the sole constructor: it builds its own
-//! [`TemplateLoader`]/[`TemplateEngine`] from `config` rather than
-//! accepting them as parameters. `TemplateEngine`/`TemplateLoader` stay
-//! `pub(super)` — nothing outside `template::` names them (see this
-//! module's parent docs) — so there is exactly one place, `config`, for
-//! a caller to influence how rendering happens. An earlier version of
-//! this module also had `with_engine`, letting a caller inject an
-//! already-built engine; it had no caller outside this file's own
-//! `#[cfg(test)] mod tests`, which — being a child module of `service` —
-//! already has direct access to `TemplateService`'s private fields.
-//! `with_engine` granted tests no capability Rust's own privacy rules
-//! didn't already give them, so it added a public-looking seam with
-//! nothing behind it.
+//! `TemplateLoader`/`TemplateEngine` from `config`. Both stay
+//! `pub(super)` — nothing outside `template::` names them — so `config`
+//! is the only place a caller can influence how rendering happens.
 
 use std::{
     fs,
@@ -69,8 +54,10 @@ impl<'a> TemplateService<'a> {
     /// # Errors
     ///
     /// Returns [`TemplatePathError::AmbiguousTemplate`] when multiple
-    /// files match `name` within a single directory. Returns
-    /// [`TemplatePathError::TemplateNotFound`] when no match is found.
+    /// files match `name` within a single directory.
+    ///
+    /// Returns [`TemplatePathError::TemplateNotFound`] when no match is
+    /// found.
     #[inline]
     pub(super) fn resolve(
         &self,
@@ -80,17 +67,16 @@ impl<'a> TemplateService<'a> {
     }
 
     /// Resolves `name`, renders it with an empty template context, and
-    /// writes the result to the default output path — [`Config::output_dir`]
-    /// joined with the resolved template's stem, creating that directory
-    /// if it doesn't exist yet. Returns the path written.
+    /// writes the result to the default output path
+    /// ([`Self::default_output_path`]), creating the output directory
+    /// if it doesn't exist. Returns the path written.
     ///
     /// # Errors
     ///
     /// Returns [`TemplateError::Resolve`] when resolution fails,
-    /// [`TemplateError::Read`] when the resolved template file cannot be
-    /// read, [`TemplateError::Render`] when the minijinja source is
-    /// invalid, and [`TemplateError::Write`] when the output directory
-    /// cannot be created or the output path cannot be written.
+    /// [`TemplateError::Read`] when the template can't be read,
+    /// [`TemplateError::Render`] when the minijinja source is invalid,
+    /// or [`TemplateError::Write`] when the output can't be written.
     #[inline]
     pub(crate) fn render_to_file(
         &self,
@@ -130,20 +116,16 @@ impl<'a> TemplateService<'a> {
         Ok(output_path)
     }
 
-    /// Default output path: [`Config::output_dir`] joined with the
-    /// resolved template's own relative identity — directory kept,
-    /// extension stripped ([`TemplatePath::name`]) — not the raw `-i`
-    /// argument, so a resolved `notes/daily` or `notes/daily.md` both
-    /// write `<output_dir>/notes/daily.md`: this only normalizes the
-    /// with/without-extension input forms to the same output, it
-    /// doesn't flatten the resolved template's own subdirectory away
-    /// (two different directories' same-named templates would
-    /// otherwise silently overwrite each other's output). A relative
-    /// `output_dir` (a literal `output_dir = "…"` from a config file)
-    /// is resolved against [`Config::root`]; an absolute one (the
-    /// unconfigured fallback) is used as-is.
+    /// Default output path: [`Config::output_dir`] (resolved against
+    /// [`Config::root`] if relative) joined with the resolved
+    /// template's own relative identity ([`TemplatePath::name`]), not
+    /// the raw `-i` argument — so `notes/daily`/`notes/daily.md` both
+    /// write `<output_dir>/notes/daily.md`, without flattening the
+    /// resolved subdirectory away (which would let two different
+    /// directories' same-named templates silently overwrite each
+    /// other's output).
     ///
-    /// Computed at write time, not stored during render — issue tmpl-02's
+    /// Computed at write time, not stored — issue tmpl-02's
     /// `-o`/`set_output()` handling overrides this.
     fn default_output_path(&self, resolved: &TemplatePath<Found>) -> PathBuf {
         let output_dir = self.config.output_dir();

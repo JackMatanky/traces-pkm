@@ -1,69 +1,40 @@
-//! [`TemplatePath<State>`]: a template identifier's whole lifecycle, from
-//! raw `-i <name>` argument to a file found on disk, as one type family
-//! threaded through a typestate transition.
+//! [`TemplatePath<State>`]: a template identifier's lifecycle from a raw
+//! `-i <name>` argument to a file found on disk — one type per proven
+//! fact, not one type with optional fields.
 //!
-//! Follows the same shape as a textbook typestate
-//! (`Connection<Disconnected>` -> `Connection<Connected> { socket }` ->
-//! `Connection<Authenticated> { socket, session }`): the data that
-//! varies per stage lives *inside* the state type, not as extra fields
-//! bolted onto the outer generic struct. Here, the path itself doesn't
-//! change *shape* across states — only what's been proven about it
-//! does — so it lives once, on [`TemplatePath`] itself; each state type
-//! holds only whatever *extra* fact that stage alone establishes.
+//! # States
 //!
-//! - [`Raw`]: nothing proven yet — the argument as given.
-//! - [`Validated`]: proven to be a safe, directory-relative identifier — pure,
-//!   no I/O; [`TemplatePath::<Raw>::validate`] produces it. No extra data
-//!   beyond the path itself, so it's a bare unit marker.
+//! - [`Raw`]: the argument as given, nothing proven.
+//! - [`Validated`]: a safe, directory-relative identifier. Pure, no I/O.
+//!   Produced by [`TemplatePath::<Raw>::validate`].
 //! - [`Found`]: proven to exist under a specific
-//!   [`super::source_dir::TemplateSourceDir`] —
-//!   [`TemplatePath::<Validated>::find`] (I/O, directory-dependent) produces
-//!   it, and it's the *only* state that carries that extra fact, because
-//!   deriving [`TemplatePath::<Found>::absolute`] is the one thing this state
-//!   alone needs to do that no earlier state has any use for. No constructor
-//!   for `Found` exists anywhere else — deliberately: a public one would let
-//!   unrelated code manufacture a "found" path that was never actually searched
-//!   for, reopening the arbitrary-file-read hole this crate closed by
-//!   construction.
+//!   [`super::source_dir::TemplateSourceDir`], which only this state
+//!   stores. Produced only by [`TemplatePath::<Validated>::find`] — no
+//!   other constructor exists, so nothing can fabricate a "found" path
+//!   that was never actually searched for.
 //!
-//! `State` has no default: every signature that names `TemplatePath`,
-//! inside this file or crossing into `loader.rs`/`service.rs`, spells
-//! out which state it means. A default would silently resolve every
-//! unannotated `TemplatePath` to one particular state, defeating the
-//! reason for choosing typestate in the first place — the compiler
-//! catching a future mistake where code that should require an earlier
-//! (unproven) state accidentally accepts a later (already-proven) one
-//! instead, because nothing forced the author to say which they meant.
+//! `State` has no default: every signature spells out which state it
+//! means, so the compiler catches code that accepts an unproven
+//! `TemplatePath` where a proven one is required.
 //!
-//! [`TemplatePath::<Validated>::find`] is the *only* search method —
-//! shared, unmodified, by both callers:
-//! [`super::loader::TemplateLoader::find`] uses it for both top-level
-//! `-i <name>` resolution and `{% include %}`/`{% extends %}` loading.
-//! One method, one fixed precedence order (see its own docs) — not a
-//! parameter, not a per-caller variant: every candidate is searched the
-//! same way regardless of who's asking.
+//! # One search, one precedence
 //!
-//! [`TemplatePathError`] is *one* error type covering this whole
-//! lifecycle — [`TemplatePathError::Absolute`]/
-//! [`TemplatePathError::UnsafeComponent`] from validation,
-//! [`TemplatePathError::AmbiguousTemplate`]/
-//! [`TemplatePathError::TemplateNotFound`] from the search — not split by
-//! which state's transition method happens to produce them. All four
-//! describe the same thing: reasons a name failed to become a valid,
-//! located `TemplatePath`. That's a domain concept ("what can go wrong
-//! with this template path"), matching `err-custom-type`'s own
-//! `FileError` example (`NotFound`/`PermissionDenied` grouped on one
-//! error despite originating from different call sites, because both
-//! are "things that can go wrong locating/reading a file").
+//! [`TemplatePath::<Validated>::find`] is the only search method.
+//! [`super::loader::TemplateLoader::find`] calls it for both top-level
+//! `-i <name>` resolution and `{% include %}`/`{% extends %}` loading —
+//! same method, same fixed precedence, every time.
 //!
-//! This file holds the *type* — what a template path is, at each stage
-//! of its life, and every way producing one can fail — with no
-//! dependency on `loader.rs` at all: [`TemplatePath::<Validated>::find`]
-//! takes the two directory paths it needs directly
-//! (`local`/`global`, mirroring [`super::loader::TemplateLoader`]'s own
-//! fields exactly),
-//! never the concrete `TemplateLoader` type or an intermediary
-//! decoupling type.
+//! # One error type
+//!
+//! [`TemplatePathError`] covers the whole lifecycle in one type:
+//! validation failures ([`TemplatePathError::Absolute`],
+//! [`TemplatePathError::UnsafeComponent`]) and search failures
+//! ([`TemplatePathError::AmbiguousTemplate`],
+//! [`TemplatePathError::TemplateNotFound`]).
+//!
+//! This file has no dependency on `loader.rs`:
+//! [`TemplatePath::<Validated>::find`] takes `local`/`global` directory
+//! paths directly, never the concrete `TemplateLoader` type.
 
 use std::{
     fs,
@@ -100,29 +71,23 @@ pub(super) struct TemplatePath<State> {
 }
 
 impl<State> TemplatePath<State> {
-    /// This candidate's identity with its extension removed, directory
-    /// segments kept, e.g. `"folder/daily.md"` -> `"folder/daily"`,
-    /// `"daily.md"` -> `"daily"`. Unlike [`Path::file_stem`] (which
-    /// only ever answers for the final path component), this keeps
-    /// any directory the candidate named — needed wherever the
-    /// candidate's own relative identity, not just its bare filename,
-    /// is the answer, e.g. [`super::service::TemplateService`]'s
-    /// default output path, which mirrors a resolved template's own
-    /// subdirectory rather than flattening it away. Allocates: a
-    /// directory-preserving, extension-stripped path isn't a
-    /// contiguous slice of `self.path`'s bytes, so it can't be
-    /// borrowed the way [`Self::has_extension`] can.
+    /// This candidate's identity with the extension stripped, directory
+    /// segments kept: `"folder/daily.md"` -> `"folder/daily"`.
+    ///
+    /// Unlike [`Path::file_stem`], which drops the directory too.
+    /// Allocates (unlike [`Self::has_extension`]) since the result isn't
+    /// a slice of `self.path`.
     #[inline]
     #[must_use]
     pub(super) fn name(&self) -> PathBuf {
         self.path.with_extension("")
     }
 
-    /// Whether this candidate was given with an extension, e.g.
-    /// `"daily.md"` -> `true`, `"daily"` -> `false`. Gates
-    /// [`TemplatePath::<Validated>::find_name_in`]: a candidate that
-    /// already names an extension is asking for that exact file, not
-    /// an invitation to match a *different* extension by name alone.
+    /// Whether this candidate names an extension:
+    /// `"daily.md"` -> `true`, `"daily"` -> `false`.
+    ///
+    /// Gates [`TemplatePath::<Validated>::find_name_in`] — an explicit
+    /// extension means "this exact file," not "match by name."
     #[inline]
     #[must_use]
     pub(super) fn has_extension(&self) -> bool {
@@ -131,61 +96,51 @@ impl<State> TemplatePath<State> {
 }
 
 impl<State> AsRef<Path> for TemplatePath<State> {
-    /// The stored path field — relative in every state
-    /// [`TemplatePath`] currently has, including [`Found`]. Distinct
-    /// from [`TemplatePath::<Found>::absolute`], which *computes* an
-    /// owned, joined absolute location rather than borrowing something
-    /// already stored — `AsRef<Path>`'s signature (`&self -> &Path`)
-    /// can only do the latter, so it always means "the stored field,"
-    /// uniformly, never "whichever path is most useful for this state."
+    /// The stored path — relative in every state, including [`Found`].
+    ///
+    /// Distinct from [`TemplatePath::<Found>::absolute`], which computes
+    /// an owned, absolute path instead of borrowing the stored one.
     fn as_ref(&self) -> &Path {
         &self.path
     }
 }
 
-/// Errors producing a [`TemplatePath`] — from validating one out of a
-/// raw name ([`Self::Absolute`], [`Self::UnsafeComponent`]) through
-/// finding it on disk ([`Self::AmbiguousTemplate`],
-/// [`Self::TemplateNotFound`]). See this module's docs for why these four live
-/// in one type.
+/// Errors producing a [`TemplatePath`]: validation failures
+/// ([`Self::Absolute`], [`Self::UnsafeComponent`]) and search failures
+/// ([`Self::AmbiguousTemplate`], [`Self::TemplateNotFound`]) in one
+/// type. See this module's docs for why.
 ///
-/// `thiserror`-only, no `miette::Diagnostic` — `crate::cli::error` is
-/// where user-facing help text and error codes get added, matching
-/// `crate::config`'s convention.
+/// `thiserror`-only, no `miette::Diagnostic` — `crate::cli::error` adds
+/// user-facing help text and error codes, matching `crate::config`.
 ///
-/// Notably absent: a distinct oracle for "the input was unsafe" vs. "no
-/// such template". [`super::loader::TemplateLoader::find`] deliberately
-/// reports both the same way — [`Self::TemplateNotFound`] (see its
-/// docs) — so a caller (or a future error-rendering layer) can't
-/// distinguish a traversal attempt from a typo.
+/// No variant distinguishes "unsafe input" from "no such template":
+/// [`super::loader::TemplateLoader::find`] reports both as
+/// [`Self::TemplateNotFound`], so callers can't tell a traversal attempt
+/// from a typo.
 #[derive(Debug, Error)]
 pub(crate) enum TemplatePathError {
     /// The path is absolute; template paths must be relative to a
     /// template directory.
     #[error("template path {0} must be relative, not absolute")]
     Absolute(PathBuf),
-    /// The path names no safe file within a directory: it either
-    /// contains a component that could escape the directory it's
-    /// joined onto (most notably `..`), or has no
-    /// [`Component::Normal`] component at all (e.g. an empty path, or a
-    /// bare `.`), leaving nothing to
-    /// join. One variant for both, deliberately — see this module's
-    /// anti-oracle note: nothing downstream
-    /// ([`super::loader::TemplateLoader::find`])
-    /// distinguishes *why* validation failed, only that it did.
+    /// No safe file within a directory: a component could escape it
+    /// (most notably `..`), or there's no [`Component::Normal`]
+    /// component at all (empty path, bare `.`).
+    ///
+    /// One variant for both — nothing downstream distinguishes *why*
+    /// validation failed, only that it did.
     #[error("template path {0} is not a valid template identifier")]
     UnsafeComponent(PathBuf),
-    /// Multiple files matched the template name in a single directory.
-    /// No `candidates` field: never rendered anywhere
-    /// ([`Display`](std::fmt::Display) above
-    /// doesn't interpolate it, and neither does
-    /// `crate::cli::error::TemplateCliError`'s generic help text) — an
-    /// earlier version carried the list purely to satisfy its own unit
-    /// tests, not any real consumer.
+    /// Multiple files matched the template name in one directory.
+    ///
+    /// No `candidates` field: nothing renders it (this variant's own
+    /// [`Display`](std::fmt::Display), and
+    /// `crate::cli::error::TemplateCliError`'s help text, both skip it).
     #[error("template name \"{0}\" matched multiple files")]
     AmbiguousTemplate(PathBuf),
-    /// Template was not found in any of the searched directories. No
-    /// `directories_searched` field, for the same reason
+    /// Not found in any searched directory.
+    ///
+    /// No `directories_searched` field, for the same reason
     /// [`Self::AmbiguousTemplate`] has no `candidates`.
     #[error("template \"{0}\" not found")]
     TemplateNotFound(PathBuf),
@@ -202,17 +157,16 @@ impl TemplatePath<Raw> {
         }
     }
 
-    /// Validates this candidate as a safe, directory-relative template
-    /// identifier — pure, no I/O; whether it names a real file is a
-    /// question for [`TemplatePath::<Validated>::find`], not baked into
-    /// validation.
+    /// Validates this candidate as a safe, directory-relative
+    /// identifier. Pure, no I/O.
     ///
     /// # Errors
     ///
-    /// Returns [`TemplatePathError::Absolute`] when the path is
-    /// absolute. Returns [`TemplatePathError::UnsafeComponent`] when it
-    /// contains a `..` or other component that isn't a plain name or
-    /// `.`, or has no [`Component::Normal`] component at all.
+    /// Returns [`TemplatePathError::Absolute`] for an absolute path.
+    ///
+    /// Returns [`TemplatePathError::UnsafeComponent`] for a `..` or any
+    /// component that isn't a plain name or `.`, or a path with no
+    /// [`Component::Normal`] component at all.
     pub(super) fn validate(
         self,
     ) -> Result<TemplatePath<Validated>, TemplatePathError> {
@@ -254,22 +208,17 @@ impl TemplatePath<Validated> {
             )
     }
 
-    /// Exact relative-path match within `dir`: does `dir.join(&self.path)`
-    /// name a file? The first of [`Self::find`]'s two rules per
-    /// directory.
+    /// Exact match: does `dir.join(&self.path)` name a file? The first
+    /// of [`Self::find`]'s two rules per directory.
     #[inline]
     #[must_use]
     fn find_path_in(&self, dir: &Path) -> Option<PathBuf> {
         dir.join(&self.path).is_file().then(|| self.path.clone())
     }
 
-    /// Name match within `dir`: only attempted when this candidate has
-    /// no extension of its own ([`Self::has_extension`]) — a candidate
-    /// that already names one (`"daily.md"`) means exactly that file,
-    /// not "anything named `daily`". Searches the *same subdirectory*
-    /// `self.path` names (e.g. `"notes/daily"` searches `dir/notes`,
-    /// never `dir`'s own top level), by every file's bare name, and
-    /// rejoins the matched leaf back onto that subdirectory. The
+    /// Name match within the subdirectory `self.path` names (e.g.
+    /// `"notes/daily"` searches `dir/notes`). Only attempted when this
+    /// candidate has no extension ([`Self::has_extension`]) — the
     /// second of [`Self::find`]'s two rules per directory.
     ///
     /// # Errors
@@ -313,27 +262,21 @@ impl TemplatePath<Validated> {
         }
     }
 
-    /// Searches for this candidate in a fixed precedence order: a
-    /// local exact relative path ([`Self::find_path_in`]), a local
-    /// name match without extension ([`Self::find_name_in`]), a global
-    /// exact relative path, a global name match without extension —
-    /// tried one directory at a time (a directory exhausted, both
-    /// rules, before the next is even considered), so `local` always
-    /// wins over `global` regardless of which rule matched it. This
-    /// precedence is this method's own code order, not a parameter:
-    /// [`Self::find_name_in`] only ever runs after
-    /// [`Self::find_path_in`] has already returned `None` for the
-    /// current directory. This is the only search method — used both
-    /// for top-level `-i <name>` resolution and for
-    /// `{% include %}`/`{% extends %}` loading; there is exactly one
-    /// precedence order, not a different one per caller.
+    /// Searches local then global (see [`Self::directories`]), trying
+    /// [`Self::find_path_in`] before [`Self::find_name_in`] within each
+    /// directory before moving to the next — so `local` always wins
+    /// regardless of which rule matched.
+    ///
+    /// The only search method: used for both top-level `-i <name>`
+    /// resolution and `{% include %}`/`{% extends %}` loading.
     ///
     /// # Errors
     ///
     /// Returns [`TemplatePathError::AmbiguousTemplate`] when multiple
-    /// files match this candidate's name within a single directory.
-    /// Returns [`TemplatePathError::TemplateNotFound`] when no match
-    /// is found in either directory.
+    /// files match within a single directory.
+    ///
+    /// Returns [`TemplatePathError::TemplateNotFound`] when no match is
+    /// found in either directory.
     pub(super) fn find(
         self,
         local: Option<&Path>,
@@ -363,9 +306,8 @@ impl TemplatePath<Validated> {
 }
 
 impl TemplatePath<Found> {
-    /// The absolute path to this template file — derived from the
-    /// [`TemplateSourceDir`] it was found under and its relative
-    /// identifier, not stored redundantly.
+    /// The absolute path: [`TemplateSourceDir`] joined with the
+    /// relative identifier, not stored redundantly.
     #[inline]
     #[must_use]
     pub(super) fn absolute(&self) -> PathBuf {

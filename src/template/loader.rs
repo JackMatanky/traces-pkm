@@ -3,50 +3,33 @@
 //! which directories hold templates, and how to read from them.
 //!
 //! `local`/`global` are plain `Option<PathBuf>` fields, not a
-//! collection: "at most one local directory, at most one global
-//! directory" is true by construction this way, rather than needing a
-//! runtime invariant nobody enforces.
+//! collection: "at most one local directory, at most one global" is
+//! true by construction, not by an unenforced runtime invariant.
 //!
-//! [`TemplateLoader::find`] is this type's *one* orchestrating entry point
-//! for producing a [`TemplatePath<Found>`]: it validates the raw name,
-//! then hands the search off to
-//! [`super::path::TemplatePath::<super::path::Validated>::find`], which
-//! has exactly one fixed precedence order (see that method's docs).
-//! Used both by [`super::service::TemplateService::resolve`] (top-level
-//! `-i <name>` resolution) and [`TemplateLoader::load`]
-//! (`{% include %}`/`{% extends %}` loading) — the same method, the same
-//! precedence, for both: there's no separate "exact-only" search for
-//! includes.
+//! [`TemplateLoader::find`] is the one orchestrating entry point:
+//! validates the raw name, then hands the search off to
+//! [`super::path::TemplatePath::<super::path::Validated>::find`] (one
+//! fixed precedence, see that method's docs). Used both by
+//! [`super::service::TemplateService::resolve`] for top-level
+//! `-i <name>` resolution and by [`TemplateLoader::load`] for
+//! `{% include %}`/`{% extends %}` — same method, same precedence.
 //!
-//! `name` is validated before any directory is searched — absolute
-//! paths and `..` traversal are never resolved, deliberately: this
-//! crate never renders a file the user hasn't placed under a configured
-//! template directory. A `name` that fails validation collapses into
-//! the same [`TemplatePathError::TemplateNotFound`] an ordinary miss
-//! produces: reporting "that path is unsafe" separately from "no such
-//! template" would let a caller distinguish a traversal attempt from a
-//! typo, an oracle this crate has no reason to offer.
+//! A `name` that fails validation (absolute, `..` traversal) collapses
+//! into the same [`TemplatePathError::TemplateNotFound`] an ordinary
+//! miss produces — reporting "unsafe" separately from "not found" would
+//! let a caller distinguish a traversal attempt from a typo.
 //!
-//! [`TemplateLoader::load`] is minijinja's loader glue, but it never calls
-//! [`minijinja::path_loader`] —
-//! [`super::engine::TemplateEngine::with_loader`] wires it in via
-//! [`Environment::set_loader`](minijinja::Environment::set_loader),
-//! minijinja's low-level API that accepts
-//! *any* `Fn(&str) -> Result<Option<String>, Error>`; `path_loader` is
-//! just minijinja's own convenience implementation of that same
-//! signature, and we never call it. That matters because `path_loader`'s
-//! internal `safe_join` rejects any dot-prefixed segment in the
-//! *requested template name* (see `minijinja` 2.21.0's `src/loader.rs`)
-//! — e.g. `{% include ".draft.md" %}` fails to load even though the file
-//! exists. [`TemplateLoader::find`] instead does its own [`TemplatePath`]
-//! validation plus a plain [`Path::join`] (inside
-//! [`TemplatePath::<Found>::absolute`]) — an ordinary path join has no
-//! special treatment of `.` in *any* segment, directory or leaf, so both
-//! a dot-prefixed template directory (this project's own default,
-//! `.traces/templates`) and a dot-prefixed include name just work;
-//! neither was ever a `Path::join` limitation, only `path_loader`'s own
-//! stricter validation, which this module doesn't inherit because it
-//! doesn't call it.
+//! # Why not `minijinja::path_loader`
+//!
+//! [`TemplateLoader::load`] wires into minijinja via
+//! [`Environment::set_loader`](minijinja::Environment::set_loader)
+//! directly, never [`minijinja::path_loader`] — its `safe_join` rejects
+//! any dot-prefixed segment in the requested name, so
+//! `{% include ".draft.md" %}` would fail to load even when the file
+//! exists. [`TemplateLoader::find`]'s own validation plus a plain
+//! [`Path::join`] has no such restriction, so both a dot-prefixed
+//! template directory (this project's own default, `.traces/templates`)
+//! and a dot-prefixed include name just work.
 
 use std::{
     fs, io,
@@ -61,19 +44,16 @@ use crate::config::Config;
 /// Searches configured template directories, local first then global,
 /// for a template by name.
 ///
-/// [`From<&Config>`] is this type's production constructor — always
-/// derived straight from [`Config::local_template_dir`]/
-/// [`Config::global_template_dir`], never from anywhere else, so a
-/// `TemplateLoader` can't search a directory other than what `config`
-/// itself reports. [`Self::new`] is the lower-level, `Config`-agnostic
-/// constructor `From<&Config>` is built on; tests use it directly to
-/// avoid needing a full [`Config`].
+/// [`From<&Config>`] is the production constructor, always derived from
+/// [`Config::local_template_dir`]/[`Config::global_template_dir`].
+/// [`Self::new`] is the lower-level, `Config`-agnostic constructor it's
+/// built on; tests use it directly to avoid needing a full [`Config`].
 ///
-/// `Clone`: cheap (two `Option<PathBuf>`) — [`super::service::TemplateService`]
-/// builds one loader and shares it, one clone wired into
-/// [`super::engine::TemplateEngine`] for `{% include %}`, the original
-/// kept for [`Self::find`], rather than deriving the same directories
-/// from [`Config`] twice.
+/// `Clone` is cheap (two `Option<PathBuf>`):
+/// [`super::service::TemplateService`] builds one loader and shares it
+/// — one clone wired into [`super::engine::TemplateEngine`] for
+/// `{% include %}`, the original kept for [`Self::find`] — rather than
+/// deriving the same directories from [`Config`] twice.
 #[derive(Clone, Debug)]
 pub(super) struct TemplateLoader {
     local: Option<PathBuf>,
@@ -92,15 +72,15 @@ impl TemplateLoader {
     }
 
     /// Resolves a raw `-i <name>`/include name to a
-    /// [`TemplatePath<Found>`] — validates `name`, then hands the
-    /// search off to [`TemplatePath::<Validated>::find`].
+    /// [`TemplatePath<Found>`].
     ///
     /// # Errors
     ///
     /// Returns [`TemplatePathError::AmbiguousTemplate`] when multiple
-    /// files match `name`'s stem within a single directory. Returns
-    /// [`TemplatePathError::TemplateNotFound`] when `name` is unsafe or
-    /// no match is found in any searched directory.
+    /// files match `name`'s stem within a single directory.
+    ///
+    /// Returns [`TemplatePathError::TemplateNotFound`] when `name` is
+    /// unsafe or no match is found in any searched directory.
     pub(super) fn find(
         &self,
         name: &Path,
@@ -113,12 +93,12 @@ impl TemplateLoader {
             .find(self.local.as_deref(), self.global.as_deref())
     }
 
-    /// Reads `name` from the first directory it exists in via
-    /// [`Self::find`] — the minijinja loader glue for
-    /// `{% include %}`/`{% extends %}`. Any failure to resolve `name`
-    /// (unsafe input, ambiguous match, no match) reports as `None`, not
-    /// an error — matching [`Self::find`]'s anti-oracle stance on
-    /// unsafe input.
+    /// Reads `name` via [`Self::find`] — the minijinja loader glue for
+    /// `{% include %}`/`{% extends %}`.
+    ///
+    /// Any failure to resolve `name` (unsafe input, ambiguous match, no
+    /// match) reports as `None`, not an error, matching [`Self::find`]'s
+    /// stance on unsafe input.
     ///
     /// # Errors
     ///

@@ -13,11 +13,10 @@ use super::path::TemplatePathError;
 /// Errors from [`super::TemplateService::render_to_file`].
 #[derive(Debug, Error)]
 pub(crate) enum TemplateError {
-    /// Resolving a template name against the configured template
-    /// directories failed. Transparent: [`TemplatePathError`]'s own
-    /// [`Display`](std::fmt::Display) already names the template and what
-    /// went wrong, so
-    /// this variant adds no field of its own to duplicate it.
+    /// Resolving a template name failed. Transparent:
+    /// [`TemplatePathError`]'s own [`Display`](std::fmt::Display)
+    /// already names the template and what went wrong, so this variant
+    /// adds no field of its own.
     #[error(transparent)]
     Resolve(#[from] TemplatePathError),
 

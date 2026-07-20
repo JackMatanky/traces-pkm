@@ -1,9 +1,9 @@
-//! [`TemplateEngine`]: encapsulates the minijinja [`Environment`] — its
-//! construction, loader wiring, and rendering — behind a small interface,
-//! so [`super::service::TemplateService`] depends on "render this
-//! source" rather than on minijinja's `Environment`/loader API directly.
+//! [`TemplateEngine`]: wraps a minijinja [`Environment`] — construction,
+//! loader wiring, rendering — behind a small interface, so
+//! [`super::service::TemplateService`] depends on "render this source"
+//! rather than minijinja's API directly.
 //!
-//! `{% include %}`/`{% extends %}` resolution itself lives in
+//! `{% include %}`/`{% extends %}` resolution lives in
 //! [`super::loader::TemplateLoader`], not here — this module only wires
 //! a [`TemplateLoader`] into minijinja's loader callback.
 
@@ -44,9 +44,9 @@ impl TemplateEngine {
     /// # Errors
     ///
     /// Returns a [`minijinja::Error`] when `source`'s syntax is invalid,
-    /// or when an `{% include %}`/`{% extends %}` it references fails to
-    /// load (including when no loader was attached via
-    /// [`Self::with_loader`]) or itself fails to render.
+    /// or an `{% include %}`/`{% extends %}` it references fails to load
+    /// (not calling [`Self::with_loader`] counts as a failed load) or
+    /// render.
     #[inline]
     pub(super) fn render(&self, source: &str) -> Result<String, Error> {
         self.env.render_str(source, minijinja::context!())

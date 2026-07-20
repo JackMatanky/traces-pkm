@@ -12,16 +12,14 @@ use std::path::{Path, PathBuf};
 /// directory's actual (always absolute) path.
 ///
 /// Only [`Self::Local`]/[`Self::Global`] — resolution never reads
-/// outside the configured template directories. An earlier version of
-/// this crate also resolved a name as an arbitrary filesystem path
-/// (absolute, or relative to the project root); that let a `-i`
-/// argument read any file the process could see, which is exactly the
-/// untrusted-content attack this type rules out by construction:
-/// [`super::path::TemplatePath::<super::path::Found>`] can only be
+/// outside the configured template directories. An earlier version
+/// resolved names as arbitrary filesystem paths, letting `-i` read any
+/// file the process could see; this type rules that out by
+/// construction, since
+/// [`super::path::TemplatePath::<super::path::Found>`] is only ever
 /// produced by [`super::loader::TemplateLoader::find`], which builds a
-/// `TemplateSourceDir` straight from
-/// [`super::loader::TemplateLoader`]'s own `local`/`global` fields —
-/// never from anywhere else.
+/// `TemplateSourceDir` from [`super::loader::TemplateLoader`]'s own
+/// `local`/`global` fields.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) enum TemplateSourceDir {
     /// The local (project-level) template directory.
