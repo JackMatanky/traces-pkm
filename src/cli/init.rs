@@ -10,7 +10,7 @@ use clap::Args;
 
 use super::error::ConfigInitCliError;
 use crate::{
-    DialogProvider,
+    Cwd, DialogProvider,
     config::{LOCAL_CONFIG_FILE, RawConfig, RawTemplateConfig},
 };
 
@@ -45,23 +45,27 @@ impl Init {
         self,
         provider: &dyn DialogProvider,
     ) -> Result<(), ConfigInitCliError> {
-        let (directory, output_dir) = Self::collect_config(provider)?;
-        Self::scaffold_directory(Path::new("."))?;
-        Self::write_config_file(Path::new("."), &directory, &output_dir)?;
-        eprintln!("initialised traces in .");
+        let root =
+            Cwd::new().map_err(|source| failed(Path::new("."), source))?;
+        let (directory, output_dir) =
+            Self::collect_config(root.as_ref(), provider)?;
+        Self::scaffold_directory(root.as_ref())?;
+        Self::write_config_file(root.as_ref(), &directory, &output_dir)?;
+        eprintln!("initialised traces in {}", root.as_ref().display());
         Ok(())
     }
 
     /// Collect template configuration from the user interactively.
     fn collect_config(
+        root: &Path,
         provider: &dyn DialogProvider,
     ) -> Result<(PathBuf, PathBuf), ConfigInitCliError> {
         let directory = provider
             .text("Template directory", Some(DEFAULT_TEMPLATE_DIRECTORY))
-            .map_err(|source| failed(Path::new("."), source))?;
+            .map_err(|source| failed(root, source))?;
         let output_dir = provider
             .text("Output directory", Some(DEFAULT_OUTPUT_DIRECTORY))
-            .map_err(|source| failed(Path::new("."), source))?;
+            .map_err(|source| failed(root, source))?;
         Ok((PathBuf::from(directory), PathBuf::from(output_dir)))
     }
 
