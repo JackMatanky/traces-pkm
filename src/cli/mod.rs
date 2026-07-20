@@ -36,56 +36,80 @@ struct Cli {
     input: Option<PathBuf>,
 }
 
+impl Cli {
+    /// Parse [`Cli`] from [`std::env::args`] and run the selected command.
+    ///
+    /// Accepts pre-constructed [`ConfigService`] and [`DialogProvider`] so
+    /// that tests can drive real argv through to a real handler call with
+    /// isolated stores, without touching the process's OS-correct
+    /// trust/tracked-config paths.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConfigCliError`] when the selected command fails, or
+    /// [`ConfigCliError::NoCommand`] when neither a subcommand nor
+    /// `-i`/`--input` was given.
+    fn run(
+        self,
+        service: &crate::config::ConfigService,
+        provider: &dyn crate::DialogProvider,
+    ) -> Result<(), ConfigCliError> {
+        match self.command {
+            Some(cmd) => cmd.run(service, provider),
+            None => match self.input {
+                Some(name) => template::Template::new(name)
+                    .run(service)
+                    .map_err(Into::into),
+                None => Err(ConfigCliError::NoCommand),
+            },
+        }
+    }
+}
+
 /// Top-level `traces` subcommands.
 #[derive(Debug, Subcommand)]
 enum Commands {
     /// Initialise local traces configuration
     Init(init::Init),
     /// Manage trusted project roots
-    Trust(trust::TrustArgs),
+    Trust(trust::Trust),
     /// Render a template and write it to disk
     #[command(alias = "tmpl")]
-    Template(template::TemplateArgs),
+    Template(template::Template),
 }
 
-/// Parses process arguments and runs the selected command.
+impl Commands {
+    /// Route a parsed subcommand to its handler.
+    ///
+    /// Each `Commands` variant wraps a struct that owns the command-specific
+    /// args and implements its own `run()`; this method selects the right one
+    /// and normalises the error type.  A new subcommand adds one arm here and
+    /// one variant in the enum — no other dispatch site needs updating.
+    fn run(
+        self,
+        service: &crate::config::ConfigService,
+        provider: &dyn crate::DialogProvider,
+    ) -> Result<(), ConfigCliError> {
+        match self {
+            Self::Init(args) => args.run(provider).map_err(Into::into),
+            Self::Trust(args) => args.run(service).map_err(Into::into),
+            Self::Template(args) => args.run(service).map_err(Into::into),
+        }
+    }
+}
+
+/// Entry point: parse process arguments, wire up real service
+/// implementations, and run the selected command.
 ///
 /// # Errors
 ///
-/// Returns [`ConfigCliError`] when the selected command fails, or
-/// [`ConfigCliError::NoCommand`] when neither a subcommand nor `-i`/
-/// `--input` was given.
+/// Returns [`ConfigCliError`] when the command fails or no command was given.
 #[inline]
 pub fn run() -> Result<(), ConfigCliError> {
-    let cli = Cli::parse();
-    let service = crate::config::ConfigService::new();
-    let provider = crate::TerminalDialogProvider::new();
-    dispatch(cli, &service, &provider)
-}
-
-/// Routes a parsed [`Cli`] to its command handler.
-///
-/// Split out of [`run`] so tests can drive real argv parsing
-/// (`Cli::try_parse_from`) through to a real handler call against an
-/// isolated [`crate::config::ConfigService`], without touching the
-/// process's real OS-correct trust/tracked-config stores the way
-/// [`run`]'s `ConfigService::new()` would.
-fn dispatch(
-    cli: Cli,
-    service: &crate::config::ConfigService,
-    provider: &dyn crate::DialogProvider,
-) -> Result<(), ConfigCliError> {
-    match cli.command {
-        Some(Commands::Init(args)) => args.run(provider).map_err(Into::into),
-        Some(Commands::Trust(args)) => args.run(service).map_err(Into::into),
-        Some(Commands::Template(args)) => args.run(service).map_err(Into::into),
-        None => match cli.input {
-            Some(name) => template::TemplateArgs::new(name)
-                .run(service)
-                .map_err(Into::into),
-            None => Err(ConfigCliError::NoCommand),
-        },
-    }
+    Cli::parse().run(
+        &crate::config::ConfigService::new(),
+        &crate::TerminalDialogProvider::new(),
+    )
 }
 
 #[cfg(test)]
@@ -165,7 +189,7 @@ mod tests {
             dialog::PresetDialogProvider,
         };
 
-        /// Parses `argv` and drives it through [`dispatch`] against an
+        /// Parses `argv` and drives it through [`Cli::run`] against an
         /// isolated, trusted project, writing (and returning the contents
         /// of) `daily.md`.
         ///
@@ -173,7 +197,7 @@ mod tests {
         /// — real argv parsing through to a real handler call — without
         /// touching the process's real OS-correct trust/tracked-config
         /// stores, proving all three invocation forms produce identical
-        /// output by construction (same [`dispatch`] call, same args) and
+        /// output by construction (same [`Cli::run`] call, same args) and
         /// by observation (the file each writes matches).
         fn dispatch_argv_and_read_output(argv: &[&str], root: &Path) -> String {
             let cli = Cli::try_parse_from(argv).expect("parse argv");
@@ -205,8 +229,8 @@ mod tests {
                 .expect("trust project root");
             let _guard = CwdGuard::enter(&project);
 
-            dispatch(cli, &service, &PresetDialogProvider::new())
-                .expect("dispatch succeeds");
+            cli.run(&service, &PresetDialogProvider::new())
+                .expect("run succeeds");
 
             fs::read_to_string(project.join("daily.md"))
                 .expect("read written output")

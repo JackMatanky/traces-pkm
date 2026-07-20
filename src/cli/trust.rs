@@ -5,8 +5,6 @@
 //! formats output — target resolution and trust decisions live in config
 //! discovery/state.
 
-#[cfg(test)]
-use std::path::Path;
 use std::path::PathBuf;
 
 use clap::{ArgGroup, Args, Subcommand};
@@ -34,7 +32,7 @@ use crate::{
     clippy::struct_excessive_bools,
     reason = "clap flag structs model independent CLI switches directly"
 )]
-pub(super) struct TrustArgs {
+pub(super) struct Trust {
     #[command(subcommand)]
     action: Option<TrustAction>,
     /// Show resolved config trust status instead of changing it
@@ -60,7 +58,7 @@ enum TrustAction {
     Clean,
 }
 
-impl TrustArgs {
+impl Trust {
     /// Dispatches `traces trust` to its default action, flag mode, or a
     /// nested subcommand.
     ///
@@ -73,12 +71,45 @@ impl TrustArgs {
         service: &ConfigService,
     ) -> Result<(), ConfigTrustCliError> {
         match self.action {
-            Some(TrustAction::List) => list(service),
-            Some(TrustAction::Clean) => clean(service),
+            Some(TrustAction::List) => Self::list(service),
+            Some(TrustAction::Clean) => Self::clean(service),
             None if self.show => self.show(service),
             None if self.untrust => self.untrust(service),
             None => self.trust(service),
         }
+    }
+
+    /// Prints every currently trusted directory, one per line, to stdout.
+    #[allow(
+        clippy::print_stdout,
+        reason = "trust list's output is data meant to be piped, not \
+                  diagnostic text — see the print_stderr precedent this \
+                  mirrors"
+    )]
+    fn list(service: &ConfigService) -> Result<(), ConfigTrustCliError> {
+        let roots = service.list_trusted().map_err(|source| {
+            ConfigTrustCliError::List {
+                source: Box::new(source),
+            }
+        })?;
+        for root in &roots {
+            println!("{}", root.display());
+        }
+        Ok(())
+    }
+
+    /// Removes dangling trust entries and reports how many were removed.
+    fn clean(service: &ConfigService) -> Result<(), ConfigTrustCliError> {
+        let removed = service.clean_trusted_store().map_err(|source| {
+            ConfigTrustCliError::Clean {
+                source: Box::new(source),
+            }
+        })?;
+        match removed {
+            1 => eprintln!("removed 1 stale trust entry"),
+            n => eprintln!("removed {n} stale trust entries"),
+        }
+        Ok(())
     }
 
     /// Trusts the resolved config target or targets.
@@ -176,56 +207,25 @@ impl TrustArgs {
     }
 }
 
-/// Prints every currently trusted directory, one per line, to stdout.
-#[allow(
-    clippy::print_stdout,
-    reason = "trust list's output is data meant to be piped, not diagnostic \
-              text — see the print_stderr precedent this mirrors"
-)]
-fn list(service: &ConfigService) -> Result<(), ConfigTrustCliError> {
-    let roots =
-        service.list_trusted().map_err(|source| ConfigTrustCliError::List {
-            source: Box::new(source),
-        })?;
-    for root in &roots {
-        println!("{}", root.display());
-    }
-    Ok(())
-}
-
-/// Removes dangling trust entries and reports how many were removed.
-fn clean(service: &ConfigService) -> Result<(), ConfigTrustCliError> {
-    let removed = service.clean_trusted_store().map_err(|source| {
-        ConfigTrustCliError::Clean {
-            source: Box::new(source),
-        }
-    })?;
-    match removed {
-        1 => eprintln!("removed 1 stale trust entry"),
-        n => eprintln!("removed {n} stale trust entries"),
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
-    use std::fs;
+    use std::{fs, path::Path};
 
     use clap::Parser;
 
     use super::*;
 
-    /// Wraps [`TrustArgs`] in a minimal top-level parser so its
+    /// Wraps [`Trust`] in a minimal top-level parser so its
     /// `args_conflicts_with_subcommands` disambiguation can be exercised
     /// with [`Parser::try_parse_from`] — [`clap::Args`] types don't parse
     /// standalone.
     #[derive(Debug, Parser)]
     struct TestCli {
         #[command(flatten)]
-        trust: TrustArgs,
+        trust: Trust,
     }
 
-    fn parse(args: &[&str]) -> TrustArgs {
+    fn parse(args: &[&str]) -> Trust {
         TestCli::try_parse_from(
             std::iter::once("test").chain(args.iter().copied()),
         )
@@ -318,8 +318,8 @@ mod tests {
             )
         }
 
-        fn trust_args(path: Option<PathBuf>) -> TrustArgs {
-            TrustArgs {
+        fn trust_args(path: Option<PathBuf>) -> Trust {
+            Trust {
                 action: None,
                 show: false,
                 untrust: false,
@@ -328,8 +328,8 @@ mod tests {
             }
         }
 
-        fn action_args(action: TrustAction) -> TrustArgs {
-            TrustArgs {
+        fn action_args(action: TrustAction) -> Trust {
+            Trust {
                 action: Some(action),
                 show: false,
                 untrust: false,

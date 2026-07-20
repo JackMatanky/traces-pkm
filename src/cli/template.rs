@@ -21,13 +21,13 @@ use crate::{
 /// `traces template -i <name>` (aliased `tmpl`), and the default
 /// `traces -i <name>` dispatch.
 #[derive(Debug, Args)]
-pub(super) struct TemplateArgs {
+pub(super) struct Template {
     /// Template name or path to instantiate.
     #[arg(short = 'i', long = "input", value_name = "NAME")]
     pub(super) name: PathBuf,
 }
 
-impl TemplateArgs {
+impl Template {
     /// Builds args directly, for the default `traces -i <name>` dispatch
     /// that bypasses subcommand parsing.
     #[inline]
@@ -140,7 +140,7 @@ mod tests {
         trust_config(&service, &config_file);
         let _guard = CwdGuard::enter(&root);
 
-        TemplateArgs::new(PathBuf::from("daily"))
+        Template::new(PathBuf::from("daily"))
             .run(&service)
             .expect("run template command");
 
@@ -160,7 +160,7 @@ mod tests {
         let service = service(temp.path());
         let _guard = CwdGuard::enter(&root);
 
-        let error = TemplateArgs::new(PathBuf::from("daily"))
+        let error = Template::new(PathBuf::from("daily"))
             .run(&service)
             .expect_err("untrusted root fails");
 
@@ -179,7 +179,7 @@ mod tests {
         trust_config(&service, &config_file);
         let _guard = CwdGuard::enter(&root);
 
-        let error = TemplateArgs::new(PathBuf::from("missing"))
+        let error = Template::new(PathBuf::from("missing"))
             .run(&service)
             .expect_err("missing template fails");
 
