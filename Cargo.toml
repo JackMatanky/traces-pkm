@@ -31,6 +31,7 @@ tracing = "0.1"
 
 [dev-dependencies]
 pretty_assertions = "1.4.1"
+rstest = "0.24"
 tempfile = "3.27.0"
 
 [lints.clippy]

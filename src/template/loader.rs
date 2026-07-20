@@ -151,8 +151,6 @@ impl From<&Config> for TemplateLoader {
 
 #[cfg(test)]
 mod tests {
-    use pretty_assertions::assert_eq;
-
     use super::*;
 
     fn write_file(dir: &Path, name: &str) -> PathBuf {
@@ -163,163 +161,209 @@ mod tests {
         path
     }
 
-    #[test]
-    fn find_delegates_to_the_validated_candidates_own_find() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let file = write_file(temp.path(), "daily.md");
-        let loader = TemplateLoader::new(Some(temp.path().to_path_buf()), None);
+    mod find {
+        use pretty_assertions::assert_eq;
 
-        let found = loader.find(Path::new("daily")).expect("find succeeds");
+        use super::*;
 
-        assert_eq!(found.absolute(), file);
+        #[test]
+        fn delegates_to_the_validated_candidates_own_find() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let file = write_file(temp.path(), "daily.md");
+            let loader =
+                TemplateLoader::new(Some(temp.path().to_path_buf()), None);
+
+            let found = loader.find(Path::new("daily")).expect("find succeeds");
+
+            assert_eq!(found.absolute(), file);
+        }
+
+        #[test]
+        fn matches_a_literal_name() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let file = write_file(temp.path(), "daily.md");
+            let loader =
+                TemplateLoader::new(Some(temp.path().to_path_buf()), None);
+
+            let found =
+                loader.find(Path::new("daily.md")).expect("find exact match");
+
+            assert_eq!(found.absolute(), file);
+        }
+
+        #[test]
+        fn rejects_an_absolute_path_even_when_the_file_exists() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            // A file that exists on disk, outside any template directory.
+            let outside_file = write_file(temp.path(), "secret.md");
+            let local_dir = temp.path().join("templates");
+            fs::create_dir_all(&local_dir).expect("create local templates");
+            let loader = TemplateLoader::new(Some(local_dir), None);
+
+            // Resolution never reads outside the configured template
+            // directories, so an absolute path to a real file must still
+            // miss — not be treated as "found by exact path".
+            assert!(matches!(
+                loader.find(&outside_file),
+                Err(TemplatePathError::TemplateNotFound(_))
+            ));
+        }
+
+        #[test]
+        fn rejects_parent_traversal_even_when_the_file_exists() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_file(temp.path(), "secret.md");
+            let local_dir = temp.path().join("templates");
+            fs::create_dir_all(&local_dir).expect("create local templates");
+            let loader = TemplateLoader::new(Some(local_dir), None);
+
+            assert!(matches!(
+                loader.find(Path::new("../secret.md")),
+                Err(TemplatePathError::TemplateNotFound(_))
+            ));
+        }
+
+        #[test]
+        fn rejects_an_empty_name() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let loader =
+                TemplateLoader::new(Some(temp.path().to_path_buf()), None);
+
+            assert!(matches!(
+                loader.find(Path::new("")),
+                Err(TemplatePathError::TemplateNotFound(_))
+            ));
+        }
+
+        #[test]
+        fn still_works_when_local_and_global_are_identical() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let dir = temp.path().join("templates");
+            fs::create_dir_all(&dir).expect("create templates dir");
+            let loader = TemplateLoader::new(Some(dir.clone()), Some(dir));
+
+            assert!(matches!(
+                loader.find(Path::new("missing")),
+                Err(TemplatePathError::TemplateNotFound(_))
+            ));
+        }
     }
 
-    #[test]
-    fn find_matches_a_literal_name() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let file = write_file(temp.path(), "daily.md");
-        let loader = TemplateLoader::new(Some(temp.path().to_path_buf()), None);
+    mod load {
+        use pretty_assertions::assert_eq;
 
-        let found =
-            loader.find(Path::new("daily.md")).expect("find exact match");
+        use super::*;
 
-        assert_eq!(found.absolute(), file);
+        #[test]
+        fn resolves_a_dot_prefixed_include_name() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join(".draft.md"), "secret")
+                .expect("write template");
+            let loader =
+                TemplateLoader::new(Some(temp.path().to_path_buf()), None);
+
+            let source = loader.load(".draft.md").expect("load succeeds");
+
+            assert_eq!(source, Some("secret".to_owned()));
+        }
+
+        #[test]
+        fn returns_none_for_a_missing_include() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let loader =
+                TemplateLoader::new(Some(temp.path().to_path_buf()), None);
+
+            let source = loader.load("missing.md").expect("load succeeds");
+
+            assert_eq!(source, None);
+        }
+
+        #[test]
+        fn returns_none_for_an_unsafe_name_instead_of_erroring() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let loader =
+                TemplateLoader::new(Some(temp.path().to_path_buf()), None);
+
+            let source = loader.load("../outside.md").expect("load succeeds");
+
+            assert_eq!(source, None);
+        }
+
+        #[test]
+        fn falls_back_to_a_stem_match() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_file(temp.path(), "daily.md");
+            let loader =
+                TemplateLoader::new(Some(temp.path().to_path_buf()), None);
+
+            let source = loader.load("daily").expect("load succeeds");
+
+            assert_eq!(source, Some("content".to_owned()));
+        }
     }
 
-    #[test]
-    fn find_rejects_an_absolute_path_even_when_the_file_exists() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        // A file that exists on disk, outside any template directory.
-        let outside_file = write_file(temp.path(), "secret.md");
-        let local_dir = temp.path().join("templates");
-        fs::create_dir_all(&local_dir).expect("create local templates");
-        let loader = TemplateLoader::new(Some(local_dir), None);
+    mod conversions {
+        use pretty_assertions::assert_eq;
 
-        // Resolution never reads outside the configured template
-        // directories, so an absolute path to a real file must still
-        // miss — not be treated as "found by exact path".
-        assert!(matches!(
-            loader.find(&outside_file),
-            Err(TemplatePathError::TemplateNotFound(_))
-        ));
-    }
+        use super::*;
 
-    #[test]
-    fn find_rejects_parent_traversal_even_when_the_file_exists() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        write_file(temp.path(), "secret.md");
-        let local_dir = temp.path().join("templates");
-        fs::create_dir_all(&local_dir).expect("create local templates");
-        let loader = TemplateLoader::new(Some(local_dir), None);
+        #[test]
+        fn finds_a_local_template() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let local_dir = temp.path().join("local-templates");
+            let file = write_file(&local_dir, "daily.md");
+            let config = Config::for_test(
+                temp.path().to_path_buf(),
+                Some(local_dir),
+                None,
+                temp.path().to_path_buf(),
+            );
+            let loader = TemplateLoader::from(&config);
 
-        assert!(matches!(
-            loader.find(Path::new("../secret.md")),
-            Err(TemplatePathError::TemplateNotFound(_))
-        ));
-    }
+            let found = loader.find(Path::new("daily")).expect("find succeeds");
 
-    #[test]
-    fn find_rejects_an_empty_name() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let loader = TemplateLoader::new(Some(temp.path().to_path_buf()), None);
+            assert_eq!(found.absolute(), file);
+        }
 
-        assert!(matches!(
-            loader.find(Path::new("")),
-            Err(TemplatePathError::TemplateNotFound(_))
-        ));
-    }
+        #[test]
+        fn finds_a_global_template_when_local_is_absent() {
+            // A project with no local template directory configured at
+            // all — not merely an empty one — must still resolve
+            // against the global directory.
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let global_dir = temp.path().join("global-templates");
+            let file = write_file(&global_dir, "daily.md");
+            let config = Config::for_test(
+                temp.path().to_path_buf(),
+                None,
+                Some(global_dir),
+                temp.path().to_path_buf(),
+            );
+            let loader = TemplateLoader::from(&config);
 
-    #[test]
-    fn find_still_works_when_local_and_global_are_identical() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let dir = temp.path().join("templates");
-        fs::create_dir_all(&dir).expect("create templates dir");
-        let loader = TemplateLoader::new(Some(dir.clone()), Some(dir));
+            let found = loader.find(Path::new("daily")).expect("find succeeds");
 
-        assert!(matches!(
-            loader.find(Path::new("missing")),
-            Err(TemplatePathError::TemplateNotFound(_))
-        ));
-    }
+            assert_eq!(found.absolute(), file);
+        }
 
-    #[test]
-    fn load_resolves_a_dot_prefixed_include_name() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        fs::write(temp.path().join(".draft.md"), "secret")
-            .expect("write template");
-        let loader = TemplateLoader::new(Some(temp.path().to_path_buf()), None);
+        #[test]
+        fn prefers_local_over_global() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let local_dir = temp.path().join("local-templates");
+            let local_file = write_file(&local_dir, "daily");
+            let global_dir = temp.path().join("global-templates");
+            write_file(&global_dir, "daily");
+            let config = Config::for_test(
+                temp.path().to_path_buf(),
+                Some(local_dir),
+                Some(global_dir),
+                temp.path().to_path_buf(),
+            );
+            let loader = TemplateLoader::from(&config);
 
-        let source = loader.load(".draft.md").expect("load succeeds");
+            let found = loader.find(Path::new("daily")).expect("find succeeds");
 
-        assert_eq!(source, Some("secret".to_owned()));
-    }
-
-    #[test]
-    fn load_returns_none_for_a_missing_include() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let loader = TemplateLoader::new(Some(temp.path().to_path_buf()), None);
-
-        let source = loader.load("missing.md").expect("load succeeds");
-
-        assert_eq!(source, None);
-    }
-
-    #[test]
-    fn load_returns_none_for_an_unsafe_name_instead_of_erroring() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let loader = TemplateLoader::new(Some(temp.path().to_path_buf()), None);
-
-        let source = loader.load("../outside.md").expect("load succeeds");
-
-        assert_eq!(source, None);
-    }
-
-    #[test]
-    fn load_falls_back_to_a_stem_match() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        write_file(temp.path(), "daily.md");
-        let loader = TemplateLoader::new(Some(temp.path().to_path_buf()), None);
-
-        let source = loader.load("daily").expect("load succeeds");
-
-        assert_eq!(source, Some("content".to_owned()));
-    }
-
-    #[test]
-    fn from_config_finds_a_local_template() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let local_dir = temp.path().join("local-templates");
-        let file = write_file(&local_dir, "daily.md");
-        let config = Config::for_test(
-            temp.path().to_path_buf(),
-            Some(local_dir),
-            None,
-            temp.path().to_path_buf(),
-        );
-        let loader = TemplateLoader::from(&config);
-
-        let found = loader.find(Path::new("daily")).expect("find succeeds");
-
-        assert_eq!(found.absolute(), file);
-    }
-
-    #[test]
-    fn from_config_prefers_local_over_global() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let local_dir = temp.path().join("local-templates");
-        let local_file = write_file(&local_dir, "daily");
-        let global_dir = temp.path().join("global-templates");
-        write_file(&global_dir, "daily");
-        let config = Config::for_test(
-            temp.path().to_path_buf(),
-            Some(local_dir),
-            Some(global_dir),
-            temp.path().to_path_buf(),
-        );
-        let loader = TemplateLoader::from(&config);
-
-        let found = loader.find(Path::new("daily")).expect("find succeeds");
-
-        assert_eq!(found.absolute(), local_file);
+            assert_eq!(found.absolute(), local_file);
+        }
     }
 }

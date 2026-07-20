@@ -387,6 +387,7 @@ mod tests {
 
     mod validation {
         use pretty_assertions::assert_eq;
+        use rstest::rstest;
 
         use super::*;
 
@@ -405,6 +406,19 @@ mod tests {
         }
 
         #[test]
+        fn accepts_a_path_with_a_leading_current_dir_segment() {
+            // "./daily.md" splits into [CurDir, Normal("daily.md")]: a
+            // leading CurDir component doesn't itself count toward
+            // `has_normal_component`, but doesn't disqualify the path
+            // either — the trailing Normal component still does. This
+            // is the exact case `has_normal_component` exists to allow
+            // (vs. a bare "." with no Normal component at all).
+            let path = validated("./daily.md");
+
+            assert_eq!(path.as_ref(), Path::new("./daily.md"));
+        }
+
+        #[test]
         fn rejects_an_absolute_path() {
             // A syntactically absolute path is rejected before any I/O
             // happens — validate() never reads the filesystem, so this
@@ -417,45 +431,27 @@ mod tests {
             assert!(matches!(error, TemplatePathError::Absolute(_)));
         }
 
-        #[test]
-        fn rejects_parent_traversal() {
-            let error = TemplatePath::<Raw>::new(Path::new("../outside.md"))
+        #[rstest]
+        #[case::parent_traversal("../outside.md")]
+        #[case::nested_parent_traversal("folder/../../outside.md")]
+        #[case::empty_path("")]
+        #[case::bare_current_dir(".")]
+        fn rejects_unsafe_components(#[case] input: &str) {
+            let error = TemplatePath::<Raw>::new(Path::new(input))
                 .validate()
-                .expect_err("parent traversal is rejected");
+                .expect_err("unsafe component is rejected");
 
             assert!(matches!(error, TemplatePathError::UnsafeComponent(_)));
         }
+    }
+
+    mod name {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
 
         #[test]
-        fn rejects_nested_parent_traversal() {
-            let error =
-                TemplatePath::<Raw>::new(Path::new("folder/../../outside.md"))
-                    .validate()
-                    .expect_err("nested parent traversal is rejected");
-
-            assert!(matches!(error, TemplatePathError::UnsafeComponent(_)));
-        }
-
-        #[test]
-        fn rejects_an_empty_path() {
-            let error = TemplatePath::<Raw>::new(Path::new(""))
-                .validate()
-                .expect_err("empty path has no safe file name");
-
-            assert!(matches!(error, TemplatePathError::UnsafeComponent(_)));
-        }
-
-        #[test]
-        fn rejects_a_bare_current_dir() {
-            let error = TemplatePath::<Raw>::new(Path::new("."))
-                .validate()
-                .expect_err("bare current-dir has no safe file name");
-
-            assert!(matches!(error, TemplatePathError::UnsafeComponent(_)));
-        }
-
-        #[test]
-        fn name_strips_only_the_extension_keeping_directory_segments() {
+        fn strips_only_the_extension_keeping_directory_segments() {
             assert_eq!(
                 validated("folder/report.md").name(),
                 Path::new("folder/report")
@@ -463,23 +459,40 @@ mod tests {
         }
 
         #[test]
-        fn name_of_an_extensionless_path_is_unchanged() {
+        fn strips_the_extension_from_a_flat_path_with_no_directory() {
+            assert_eq!(validated("daily.md").name(), Path::new("daily"));
+        }
+
+        #[test]
+        fn is_unchanged_for_an_extensionless_path() {
             assert_eq!(validated("daily").name(), Path::new("daily"));
         }
 
         #[test]
-        fn name_of_a_dot_prefixed_file_keeps_the_leading_dot() {
+        fn keeps_the_leading_dot_of_a_dot_prefixed_file() {
             assert_eq!(validated(".draft.md").name(), Path::new(".draft"));
         }
+    }
+
+    mod has_extension {
+        use super::*;
 
         #[test]
-        fn has_extension_is_true_when_a_dot_extension_is_present() {
+        fn is_true_when_a_dot_extension_is_present() {
             assert!(validated("daily.md").has_extension());
         }
 
         #[test]
-        fn has_extension_is_false_for_a_bare_name() {
+        fn is_false_for_a_bare_name() {
             assert!(!validated("daily").has_extension());
+        }
+
+        #[test]
+        fn is_false_for_a_dot_prefixed_file_without_a_real_extension() {
+            // ".draft" is a dotfile, not an extension: Path::extension()
+            // treats a lone leading dot as part of the file stem, the
+            // same convention `name()` relies on to keep it intact.
+            assert!(!validated(".draft").has_extension());
         }
     }
 
@@ -513,7 +526,7 @@ mod tests {
         }
 
         #[test]
-        fn stem_match_searches_the_candidates_own_subdirectory() {
+        fn searches_the_candidates_own_subdirectory_for_a_stem_match() {
             // "notes/daily" must resolve notes/daily.md, not a
             // same-stemmed file sitting at dir's top level — the
             // subdirectory the candidate named is part of the match,
@@ -530,7 +543,21 @@ mod tests {
         }
 
         #[test]
-        fn stem_match_is_skipped_when_the_candidate_has_an_extension() {
+        fn misses_when_the_named_subdirectory_does_not_exist() {
+            // "notes/daily" but "notes/" itself was never created —
+            // distinct from an existing-but-empty subdirectory: this
+            // exercises `fs::read_dir`'s own failure, not an empty
+            // successful listing.
+            let temp = tempfile::tempdir().expect("create temp dir");
+
+            assert!(matches!(
+                validated("notes/daily").find(Some(temp.path()), None),
+                Err(TemplatePathError::TemplateNotFound(_))
+            ));
+        }
+
+        #[test]
+        fn skips_stem_matching_when_the_candidate_has_an_extension() {
             // "daily.md" names an exact file; a miss on that exact
             // file must not silently fall back to matching a
             // different extension by name alone.
@@ -605,6 +632,26 @@ mod tests {
         }
 
         #[test]
+        fn matches_an_exact_name_in_the_global_directory() {
+            // Distinct from a global *stem* match: this candidate
+            // already names its extension, so only `find_path_in`
+            // (tier 3 — global exact) can produce it, never
+            // `find_name_in` (tier 4 — global stem, which
+            // short-circuits on `has_extension`).
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let local_dir = temp.path().join("local");
+            let global_dir = temp.path().join("global");
+            fs::create_dir_all(&local_dir).expect("create local dir");
+            let file = write_file(&global_dir, "daily.md");
+
+            let found = validated("daily.md")
+                .find(Some(&local_dir), Some(&global_dir))
+                .expect("find succeeds");
+
+            assert_eq!(found.absolute(), file);
+        }
+
+        #[test]
         fn returns_not_found_when_no_match_exists_anywhere() {
             let temp = tempfile::tempdir().expect("create temp dir");
             let local_dir = temp.path().join("local");
@@ -631,7 +678,7 @@ mod tests {
         }
 
         #[test]
-        fn directories_dedups_when_local_and_global_are_identical() {
+        fn dedups_directories_when_local_and_global_are_identical() {
             let temp = tempfile::tempdir().expect("create temp dir");
 
             let searched: Vec<_> = TemplatePath::<Validated>::directories(

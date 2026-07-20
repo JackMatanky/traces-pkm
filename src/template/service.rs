@@ -157,8 +157,6 @@ impl<'a> TemplateService<'a> {
 
 #[cfg(test)]
 mod tests {
-    use pretty_assertions::assert_eq;
-
     use super::*;
 
     fn write_file(dir: &Path, name: &str, content: &str) -> PathBuf {
@@ -169,186 +167,247 @@ mod tests {
         path
     }
 
-    #[test]
-    fn resolve_delegates_to_template_resolution() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let local_dir = temp.path().join("templates");
-        let file = write_file(&local_dir, "daily.md", "content");
-        let config = Config::for_test(
-            temp.path().to_path_buf(),
-            Some(local_dir),
-            None,
-            temp.path().to_path_buf(),
-        );
-        let service = TemplateService::new(&config);
+    mod resolve {
+        use pretty_assertions::assert_eq;
 
-        let resolved =
-            service.resolve(Path::new("daily")).expect("resolve template");
+        use super::*;
 
-        assert_eq!(resolved.absolute(), file);
+        #[test]
+        fn delegates_to_template_resolution() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let local_dir = temp.path().join("templates");
+            let file = write_file(&local_dir, "daily.md", "content");
+            let config = Config::for_test(
+                temp.path().to_path_buf(),
+                Some(local_dir),
+                None,
+                temp.path().to_path_buf(),
+            );
+            let service = TemplateService::new(&config);
+
+            let resolved =
+                service.resolve(Path::new("daily")).expect("resolve template");
+
+            assert_eq!(resolved.absolute(), file);
+        }
     }
 
-    #[test]
-    fn render_to_file_renders_minijinja_syntax_and_writes_default_path() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let local_dir = temp.path().join("templates");
-        write_file(
-            &local_dir,
-            "daily.md",
-            "{% for item in [\"a\", \"b\"] %}{{ item | upper }}{% endfor %}{% \
-             if 1 == 1 %}-ok{% else %}-no{% endif %}",
-        );
-        let config = Config::for_test(
-            temp.path().to_path_buf(),
-            Some(local_dir),
-            None,
-            temp.path().to_path_buf(),
-        );
-        let service = TemplateService::new(&config);
+    mod render_to_file {
+        use pretty_assertions::assert_eq;
 
-        let output_path =
-            service.render_to_file(Path::new("daily")).expect("render_to_file");
+        use super::*;
 
-        assert_eq!(output_path, temp.path().join("daily.md"));
-        let contents =
-            fs::read_to_string(&output_path).expect("read written output");
-        assert_eq!(contents, "AB-ok");
-    }
+        #[test]
+        fn renders_minijinja_syntax() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let local_dir = temp.path().join("templates");
+            write_file(
+                &local_dir,
+                "daily.md",
+                "{% for item in [\"a\", \"b\"] %}{{ item | upper }}{% endfor \
+                 %}{% if 1 == 1 %}-ok{% else %}-no{% endif %}",
+            );
+            let config = Config::for_test(
+                temp.path().to_path_buf(),
+                Some(local_dir),
+                None,
+                temp.path().to_path_buf(),
+            );
+            let service = TemplateService::new(&config);
 
-    #[test]
-    fn render_to_file_writes_under_the_configured_output_directory() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let root = temp.path().join("project");
-        let local_dir = root.join("templates");
-        write_file(&local_dir, "daily.md", "hello");
-        let config = Config::for_test(
-            root.clone(),
-            Some(local_dir),
-            None,
-            PathBuf::from("notes"),
-        );
-        let service = TemplateService::new(&config);
+            let output_path = service
+                .render_to_file(Path::new("daily"))
+                .expect("render_to_file");
 
-        let output_path =
-            service.render_to_file(Path::new("daily")).expect("render_to_file");
+            let contents =
+                fs::read_to_string(&output_path).expect("read written output");
+            assert_eq!(contents, "AB-ok");
+        }
 
-        assert_eq!(output_path, root.join("notes/daily.md"));
-        assert_eq!(
-            fs::read_to_string(&output_path).expect("read written output"),
-            "hello"
-        );
-    }
+        #[test]
+        fn writes_under_the_configured_output_directory() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let root = temp.path().join("project");
+            let local_dir = root.join("templates");
+            write_file(&local_dir, "daily.md", "hello");
+            let config = Config::for_test(
+                root.clone(),
+                Some(local_dir),
+                None,
+                PathBuf::from("notes"),
+            );
+            let service = TemplateService::new(&config);
 
-    #[test]
-    fn render_to_file_output_path_preserves_the_resolved_templates_directory() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let local_dir = temp.path().join("templates");
-        write_file(&local_dir, "nested/report.md", "hello");
-        let config = Config::for_test(
-            temp.path().to_path_buf(),
-            Some(local_dir),
-            None,
-            temp.path().to_path_buf(),
-        );
-        let service = TemplateService::new(&config);
+            let output_path = service
+                .render_to_file(Path::new("daily"))
+                .expect("render_to_file");
 
-        let output_path = service
-            .render_to_file(Path::new("nested/report.md"))
-            .expect("render_to_file");
+            assert_eq!(output_path, root.join("notes/daily.md"));
+        }
 
-        assert_eq!(output_path, temp.path().join("nested/report.md"));
-    }
+        #[test]
+        fn output_path_preserves_the_resolved_templates_directory() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let local_dir = temp.path().join("templates");
+            write_file(&local_dir, "nested/report.md", "hello");
+            let config = Config::for_test(
+                temp.path().to_path_buf(),
+                Some(local_dir),
+                None,
+                temp.path().to_path_buf(),
+            );
+            let service = TemplateService::new(&config);
 
-    #[test]
-    fn render_to_file_normalizes_extension_input_but_keeps_directory() {
-        // "notes/daily" and "notes/daily.md" must resolve to the exact
-        // same output — the with/without-extension forms are
-        // normalized to one output, but the subdirectory itself is
-        // never flattened away (see `default_output_path`'s docs).
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let local_dir = temp.path().join("templates");
-        write_file(&local_dir, "notes/daily.md", "hello");
-        let config = Config::for_test(
-            temp.path().to_path_buf(),
-            Some(local_dir),
-            None,
-            temp.path().to_path_buf(),
-        );
-        let service = TemplateService::new(&config);
-        let expected = temp.path().join("notes/daily.md");
+            let output_path = service
+                .render_to_file(Path::new("nested/report.md"))
+                .expect("render_to_file");
 
-        assert_eq!(
-            service
-                .render_to_file(Path::new("notes/daily"))
-                .expect("render_to_file"),
-            expected
-        );
-        assert_eq!(
-            service
-                .render_to_file(Path::new("notes/daily.md"))
-                .expect("render_to_file"),
-            expected
-        );
-    }
+            assert_eq!(output_path, temp.path().join("nested/report.md"));
+        }
 
-    #[test]
-    fn render_to_file_propagates_resolution_errors() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let config = Config::for_test(
-            temp.path().to_path_buf(),
-            None,
-            None,
-            temp.path().to_path_buf(),
-        );
-        let service = TemplateService::new(&config);
+        #[test]
+        fn normalizes_extension_input_but_keeps_directory() {
+            // "notes/daily" and "notes/daily.md" must resolve to the exact
+            // same output — the with/without-extension forms are
+            // normalized to one output, but the subdirectory itself is
+            // never flattened away (see `default_output_path`'s docs).
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let local_dir = temp.path().join("templates");
+            write_file(&local_dir, "notes/daily.md", "hello");
+            let config = Config::for_test(
+                temp.path().to_path_buf(),
+                Some(local_dir),
+                None,
+                temp.path().to_path_buf(),
+            );
+            let service = TemplateService::new(&config);
+            let expected = temp.path().join("notes/daily.md");
 
-        let error = service
-            .render_to_file(Path::new("missing"))
-            .expect_err("missing template fails");
+            assert_eq!(
+                service
+                    .render_to_file(Path::new("notes/daily"))
+                    .expect("render_to_file"),
+                expected
+            );
+            assert_eq!(
+                service
+                    .render_to_file(Path::new("notes/daily.md"))
+                    .expect("render_to_file"),
+                expected
+            );
+        }
 
-        assert!(matches!(error, TemplateError::Resolve(_)));
-    }
+        #[test]
+        fn propagates_resolution_errors() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let config = Config::for_test(
+                temp.path().to_path_buf(),
+                None,
+                None,
+                temp.path().to_path_buf(),
+            );
+            let service = TemplateService::new(&config);
 
-    #[test]
-    fn render_to_file_propagates_render_errors_for_invalid_syntax() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let local_dir = temp.path().join("templates");
-        write_file(&local_dir, "broken.md", "{% if %}");
-        let config = Config::for_test(
-            temp.path().to_path_buf(),
-            Some(local_dir),
-            None,
-            temp.path().to_path_buf(),
-        );
-        let service = TemplateService::new(&config);
+            let error = service
+                .render_to_file(Path::new("missing"))
+                .expect_err("missing template fails");
 
-        let error = service
-            .render_to_file(Path::new("broken"))
-            .expect_err("invalid syntax fails to render");
+            assert!(matches!(error, TemplateError::Resolve(_)));
+        }
 
-        assert!(matches!(error, TemplateError::Render { .. }));
-    }
+        #[cfg(unix)]
+        #[test]
+        fn propagates_read_errors_when_the_resolved_file_is_unreadable() {
+            use std::os::unix::fs::PermissionsExt as _;
 
-    #[test]
-    fn render_to_file_resolves_include_against_the_template_directory() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let local_dir = temp.path().join("templates");
-        write_file(&local_dir, "partial.md", "included");
-        write_file(&local_dir, "daily.md", "{% include \"partial.md\" %}!");
-        let config = Config::for_test(
-            temp.path().to_path_buf(),
-            Some(local_dir),
-            None,
-            temp.path().to_path_buf(),
-        );
-        let service = TemplateService::new(&config);
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let local_dir = temp.path().join("templates");
+            let file = write_file(&local_dir, "daily.md", "hello");
+            fs::set_permissions(&file, fs::Permissions::from_mode(0o000))
+                .expect("revoke read permission");
+            let config = Config::for_test(
+                temp.path().to_path_buf(),
+                Some(local_dir),
+                None,
+                temp.path().to_path_buf(),
+            );
+            let service = TemplateService::new(&config);
 
-        let output_path =
-            service.render_to_file(Path::new("daily")).expect("render_to_file");
+            let error = service
+                .render_to_file(Path::new("daily"))
+                .expect_err("unreadable template file fails");
 
-        assert_eq!(
-            fs::read_to_string(&output_path).expect("read written output"),
-            "included!"
-        );
+            assert!(matches!(error, TemplateError::Read { .. }));
+        }
+
+        #[test]
+        fn propagates_render_errors_for_invalid_syntax() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let local_dir = temp.path().join("templates");
+            write_file(&local_dir, "broken.md", "{% if %}");
+            let config = Config::for_test(
+                temp.path().to_path_buf(),
+                Some(local_dir),
+                None,
+                temp.path().to_path_buf(),
+            );
+            let service = TemplateService::new(&config);
+
+            let error = service
+                .render_to_file(Path::new("broken"))
+                .expect_err("invalid syntax fails to render");
+
+            assert!(matches!(error, TemplateError::Render { .. }));
+        }
+
+        #[test]
+        fn propagates_write_errors_when_the_output_directory_cannot_be_created()
+        {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let local_dir = temp.path().join("templates");
+            write_file(&local_dir, "daily.md", "hello");
+            // A plain file sitting where the output directory needs to
+            // be created: `fs::create_dir_all` deterministically fails
+            // when a path component already exists as a non-directory.
+            fs::write(temp.path().join("notes"), "not a directory")
+                .expect("write blocking file");
+            let config = Config::for_test(
+                temp.path().to_path_buf(),
+                Some(local_dir),
+                None,
+                PathBuf::from("notes/output"),
+            );
+            let service = TemplateService::new(&config);
+
+            let error = service
+                .render_to_file(Path::new("daily"))
+                .expect_err("output directory cannot be created");
+
+            assert!(matches!(error, TemplateError::Write { .. }));
+        }
+
+        #[test]
+        fn resolves_include_against_the_template_directory() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let local_dir = temp.path().join("templates");
+            write_file(&local_dir, "partial.md", "included");
+            write_file(&local_dir, "daily.md", "{% include \"partial.md\" %}!");
+            let config = Config::for_test(
+                temp.path().to_path_buf(),
+                Some(local_dir),
+                None,
+                temp.path().to_path_buf(),
+            );
+            let service = TemplateService::new(&config);
+
+            let output_path = service
+                .render_to_file(Path::new("daily"))
+                .expect("render_to_file");
+
+            assert_eq!(
+                fs::read_to_string(&output_path).expect("read written output"),
+                "included!"
+            );
+        }
     }
 }
