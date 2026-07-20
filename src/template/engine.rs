@@ -19,23 +19,29 @@ use super::{
 
 /// Renders minijinja template sources and resolves template names.
 ///
-/// Owns a [`TemplateLoader`] shared between top-level resolution and
-/// `{% include %}`/`{% extends %}` loading — the search directories and
-/// their precedence (local then global) are computed exactly once.
+/// Owns a [`TemplateLoader`] shared between resolution and rendering —
+/// the search directories and their precedence (local then global) are
+/// computed exactly once.
 pub(super) struct TemplateEngine {
     env: Environment<'static>,
     loader: TemplateLoader,
 }
 
 impl TemplateEngine {
-    /// Creates an engine with `loader` wired for `{% include %}`/
-    /// `{% extends %}`.
+    /// Creates an engine with `loader` as its template source.
+    ///
+    /// The loader is used both for [`Self::resolve`] (top-level
+    /// `-i <name>` lookup) and as minijinja's internal loader (for
+    /// `{% include %}`/`{% extends %}`) — one set of directories, one
+    /// search precedence.
     #[inline]
     #[must_use]
     pub(super) fn new(loader: TemplateLoader) -> Self {
         let mut env = Environment::new();
-        let loader_for_include = loader.clone();
-        env.set_loader(move |name| loader_for_include.load(name));
+        env.set_loader({
+            let loader = loader.clone();
+            move |name| loader.load(name)
+        });
         Self {
             env,
             loader,
