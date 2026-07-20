@@ -1,6 +1,6 @@
 # Render pipeline tracer: resolve -> render -> write, with CLI dispatch
 
-Status: ready-for-agent
+Status: implemented
 
 ## Parent
 
@@ -16,13 +16,13 @@ Custom functions, output-path control, dry-run, and includes are separate slices
 
 ## Acceptance criteria
 
-- [ ] `traces template -i <name>` renders a resolved template and writes `./<name>.md`
-- [ ] `traces tmpl -i <name>` and `traces -i <name>` route to the same handler and produce identical results
-- [ ] minijinja syntax (conditionals, loops, filters) renders correctly
-- [ ] Integration tests cover all three invocation forms — using temp dirs and string templates
-- [ ] Template resolution types and logic currently under `src/config/domain.rs` are moved to the template-service boundary: `ResolvedTemplate`, `ResolutionError`, `Config::resolve_template`, and its helper functions (`one_match`, `searched_directories`, `parent_dir`, `resolve_exact_path`, `direct_template_path`, `is_safe_template_relative_path`, `matching_files_in_dir`)
-- [ ] Config keeps only config loading and resolved settings ownership: `TemplateConfig`, `Config::templates`, `local_template_dir`, `global_template_dir`, and `output_dir` remain usable by template-service without config owning template lookup behavior
-- [ ] Template-directory parsing remains wired from config files: `RawConfig::directory`, `RawConfig::template_directory`, and `ConfigBuilder::merge` continue to populate `TemplateConfig.local_dir` / `global_dir` for template-service to consume
+- [x] `traces template -i <name>` renders a resolved template and writes `./<name>.md`
+- [x] `traces tmpl -i <name>` and `traces -i <name>` route to the same handler and produce identical results
+- [x] minijinja syntax (conditionals, loops, filters) renders correctly
+- [x] Dispatch tests cover all three invocation forms end-to-end (argv parsing through render/write), using temp dirs and string templates
+- [x] Template resolution types and logic currently under `src/config/domain.rs` are moved to the template-service boundary: `ResolvedTemplate`, `ResolutionError`, `Config::resolve_template`, and its helper functions (`one_match`, `searched_directories`, `parent_dir`, `resolve_exact_path`, `direct_template_path`, `is_safe_template_relative_path`, `matching_files_in_dir`)
+- [x] Config keeps only config loading and resolved settings ownership: `TemplateConfig`, `Config::templates`, `local_template_dir`, `global_template_dir`, and `output_dir` remain usable by template-service without config owning template lookup behavior
+- [x] Template-directory parsing remains wired from config files: `RawConfig::directory`, `RawConfig::template_directory`, and `ConfigBuilder::merge` continue to populate `TemplateConfig.local_dir` / `global_dir` for template-service to consume
 
 ## Rust guidance
 
@@ -43,13 +43,17 @@ Relevant skills: `domain-cli`, `m11-ecosystem`, `m06-error-handling`, `m01-owner
 
 Delivered in `.worktrees/render-pipeline-tracer` (branch not yet merged to
 `main`), across the commit chain from `83c853f` (initial tracer) through
-`755d8a8` (latest cleanup) — see `git log --oneline 241d12d..755d8a8 --
-src/template src/cli/template.rs src/cli/error.rs` for the full sequence.
-210/210 tests passing; `cargo check`/`clippy --workspace -- -D warnings`
-(the project's `mise clippy` task)/`fmt`/`nextest`/`doc --no-deps`/`deny
-check` all clean (two pre-existing, unrelated warnings only: an
-intra-doc-link warning in `cli/mod.rs` and a duplicate `winnow` advisory
-entry, both present before this work started).
+`13e1e3e` (latest doc cleanup) — see `git log --oneline 241d12d..13e1e3e --
+src/template src/cli/template.rs src/cli/error.rs src/cli/mod.rs` for the
+full sequence (24 commits). 223/223 lib tests, 1/1 `tests/init_cli.rs`
+integration test, 10/10 doctests passing; `cargo check`/
+`clippy --workspace -- -D warnings` (the project's `mise clippy` task)/
+`fmt`/`nextest`/`doc --no-deps`/`deny check` all clean (two pre-existing,
+unrelated issues only, both present before this work started and confirmed
+unchanged since: a `rustdoc::private_intra_doc_links` error in
+`cli/mod.rs:4` — `[`error`]` linking to the private `cli::error` module —
+and a duplicate `winnow` advisory entry from `rstest_macros`' own
+`toml_edit` dependency).
 
 ### Module layout (`src/template/`)
 
@@ -147,3 +151,80 @@ this work: `Config`'s two test-only constructors (`for_test`,
 `for_test_with_output`) were merged into one `for_test` taking an
 explicit `output` parameter, since both were introduced for this
 ticket's own tests and the split was unjustified duplication.
+
+### Doc-comment pass (`b79d94b`, `30ef3c9`, `13e1e3e`)
+
+Every module-level (`//!`) and item-level (`///`) doc comment in
+`src/template/` was reviewed and rewritten against the `rust-skills` `doc-`
+rules and general length/readability discipline. Two constraints narrowed
+scope, both verified rather than assumed:
+
+- `# Examples` doctests are infeasible for every item in this module —
+  confirmed empirically (a throwaway doctest against a `pub(super)` item
+  fails `cargo test --doc` with `E0603: module 'template' is private`,
+  since `mod template;` in `lib.rs` is a plain private `mod`, and doctests
+  compile as an external crate that can't name anything under it). None
+  added; adding one would be dead code that can't compile.
+- `# Panics`/`# Safety` don't apply anywhere in the module — grepped for
+  `unwrap`/`expect`/`panic!`/`assert!`/`unsafe` outside `#[cfg(test)]` and
+  found zero hits.
+
+Fixed 5 previously-broken intra-doc links (`[Self::find]`/`[Self::load]`/
+`[Self::new]` used inside *module-level* `//!` docs, where `Self` has no
+meaning) and converted ~20 bare code-span mentions of real items to proper
+`[`Item`]` links, verified via
+`RUSTDOCFLAGS="-D warnings" cargo doc --document-private-items`.
+
+Cut doc-comment length by roughly a third across the module (some single
+comments went from 15-21 lines to 4-9) by removing: illustrative analogies
+redundant with a concrete example immediately below them, prose
+re-narrating what an already-well-named function/loop already shows in
+code, development history explaining why a removed feature (`with_engine`)
+*isn't* present (git blame answers that, not an ongoing doc comment), and
+forward references to unlanded future-issue work (`tmpl-02`'s
+`-o`/`set_output()`) baked into current-state documentation. `service.rs`
+needed a second pass after an initial one left it still restating the
+struct's own fields and duplicating facts already stated on
+`render_to_file` itself.
+
+### Test placement: unit tests, not `tests/` (resolved)
+
+The original wording of acceptance criterion 4 ("integration tests") was
+revisited and reworded above — the underlying coverage was never missing,
+only its expected location was ambiguous. Kept as unit tests, deliberately,
+for three reasons:
+
+1. **Not the majority pattern.** Only `init` uses `pub` visibility plus a
+   `tests/init_cli.rs` file. Both `trust` (`pub(super) struct TrustArgs`)
+   and `template` (`pub(super) struct TemplateArgs`) are private, with
+   their own logic tested in-crate — `template` already matches the more
+   common shape, not the exception.
+2. **Even `init`'s own integration test doesn't parse argv.**
+   `tests/init_cli.rs` calls `Init.run()` directly, bypassing
+   `Cli::try_parse_from` entirely; argv-to-subcommand routing is verified
+   separately, as a parse-only unit test in `cli/mod.rs`. This project has
+   never conflated "does argv route correctly" with "does the command's
+   own logic work" into one `tests/` file — `template`'s coverage already
+   keeps that same split (`template_argv_parses_to_the_template_subcommand`/
+   `tmpl_alias_parses_to_the_template_subcommand`/
+   `bare_input_flag_defaults_to_no_subcommand_dispatch` for routing;
+   `dispatch_end_to_end::all_three_invocation_forms_produce_identical_output`
+   plus `cli/template.rs`'s own `run_*` tests for execution) — it's
+   actually *stronger* than `init`'s, since the dispatch test proves
+   routing and execution together in one pass, through the same private
+   `dispatch()` fn a real `main()` call goes through.
+3. **No subprocess-testing convention exists to justify a stricter
+   reading.** No `assert_cmd` (or equivalent) dependency exists in this
+   crate; nothing here spawns the compiled binary and checks it from the
+   outside. Adopting that meaning of "integration test" would be a new
+   testing paradigm for the whole codebase, not a one-line fix to this
+   ticket, and moving `dispatch_end_to_end` to `tests/` as-is would
+   require exposing `TemplateArgs`/`dispatch()` as `pub` purely to satisfy
+   a file-location preference, for a binary crate with no external
+   consumers of that surface.
+
+All acceptance criteria and the Rust-guidance callouts (CLI dispatch,
+minijinja ownership, trust-as-config-gate, default output path, config
+boundary cleanup) are verified satisfied against the current code as of
+`13e1e3e` — see the acceptance-criteria checkboxes above and the
+implementation notes for the evidence. This ticket is complete.
