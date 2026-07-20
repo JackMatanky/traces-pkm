@@ -15,11 +15,10 @@ use std::{
 
 use thiserror::Error;
 
-/// Errors from [`Blake3FileHash::new`].
+/// Errors from hashing file contents.
 ///
-/// Public (not `pub(crate)`) because [`crate::config::trust::TrustError`]
-/// carries it as a `#[from]` source, and a `pub` field can't have a
-/// private type — same reasoning as `config::store::StoreError`.
+/// Public (not `pub(crate)`) because config-facing error types carry it as a
+/// `#[from]` source, and a `pub` field can't have a private type.
 #[derive(Debug, Error)]
 pub enum HashError {
     /// The file's contents could not be read.
@@ -35,7 +34,7 @@ pub enum HashError {
 
 /// The BLAKE3 hash of a file's *contents*.
 ///
-/// Distinct from [`Blake3PathHash`], which hashes the *path string*.
+/// Distinct from [`Blake3PathHash`], which hashes a path string.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(crate) struct Blake3FileHash(blake3::Hash);
 
@@ -62,10 +61,11 @@ impl Display for Blake3FileHash {
     }
 }
 
-/// The BLAKE3 hex hash of a *path string* (not its contents).
+/// The BLAKE3 hex hash of a path string (not its contents).
 ///
 /// Used as a hash-keyed store filename (see
-/// [`crate::config::store::ConfigFileStore`]). Infallible — there's no I/O.
+/// [`crate::file_store::FileStateStore`]). Callers that need canonical keys
+/// must canonicalize before constructing this value.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct Blake3PathHash(String);
 
@@ -77,17 +77,19 @@ impl Blake3PathHash {
         let hash = blake3::hash(path.as_os_str().as_encoded_bytes());
         Self(hash.to_hex().to_string())
     }
-}
 
-impl AsRef<Path> for Blake3PathHash {
+    /// The hash string to use as a store entry filename.
     #[inline]
-    fn as_ref(&self) -> &Path {
-        Path::new(&self.0)
+    #[must_use]
+    pub(crate) fn as_str(&self) -> &str {
+        &self.0
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use pretty_assertions::{assert_eq, assert_ne};
+
     use super::*;
 
     #[test]
@@ -126,23 +128,23 @@ mod tests {
     }
 
     #[test]
-    fn hash_path_to_str_is_deterministic_for_the_same_path() {
-        let path = Path::new("/some/project");
+    fn hash_path_is_deterministic_for_the_same_path_string() {
+        let path = Path::new("/project/.traces/config.toml");
 
-        assert_eq!(Blake3PathHash::new(path), Blake3PathHash::new(path),);
+        assert_eq!(Blake3PathHash::new(path), Blake3PathHash::new(path));
     }
 
     #[test]
-    fn hash_path_to_str_differs_for_different_paths() {
+    fn hash_path_differs_for_different_path_strings() {
         assert_ne!(
-            Blake3PathHash::new(Path::new("/some/project")),
-            Blake3PathHash::new(Path::new("/some/other-project")),
+            Blake3PathHash::new(Path::new("/project/first")),
+            Blake3PathHash::new(Path::new("/project/second")),
         );
     }
 
     #[test]
-    fn hash_path_to_str_matches_the_blake3_hex_formula() {
-        let path = Path::new("/some/project");
+    fn hash_path_matches_the_blake3_hex_formula_for_path_bytes() {
+        let path = Path::new("/project/.traces/config.toml");
 
         assert_eq!(
             Blake3PathHash::new(path),

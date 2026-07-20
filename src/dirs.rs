@@ -12,7 +12,7 @@
 //! `TRACES_STATE_DIR` overrides the platform default on every supported
 //! operating system.
 //!
-//! [`ConfigFileStore::new`]: super::store::ConfigFileStore::new
+//! [`FileStateStore::new`]: crate::FileStateStore::new
 
 use std::{
     ffi::OsString,
@@ -25,16 +25,21 @@ const APP_NAME: &str = "traces";
 
 /// State-directory-rooted store path.
 ///
-/// The private constructor ensures that only paths defined by this module can
-/// reach [`ConfigFileStore::new`].
+/// Represents a path under the application state directory.
 ///
-/// [`ConfigFileStore::new`]: super::store::ConfigFileStore::new
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) struct StateDirRoot(PathBuf);
+/// [`FileStateStore::new`]: crate::FileStateStore::new
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct StateDirRoot(PathBuf);
 
 impl StateDirRoot {
     fn new(name: &str) -> Self {
         Self(TRACES_STATE_DIR.join(name))
+    }
+
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn from_path(path: PathBuf) -> Self {
+        Self(path)
     }
 }
 
@@ -47,12 +52,11 @@ impl Deref for StateDirRoot {
     }
 }
 
-fn non_empty_var(key: &str) -> Option<OsString> {
-    std::env::var_os(key).filter(|value| !value.is_empty())
-}
-
-fn var_path(key: &str) -> Option<PathBuf> {
-    non_empty_var(key).map(PathBuf::from)
+impl AsRef<Path> for StateDirRoot {
+    #[inline]
+    fn as_ref(&self) -> &Path {
+        &self.0
+    }
 }
 
 /// The user's home directory.
@@ -89,7 +93,7 @@ static HOME: LazyLock<PathBuf> =
 /// - Override: `$XDG_CONFIG_HOME`
 /// - Default: `$HOME/.config`
 #[cfg(all(unix, not(target_os = "macos")))]
-pub(super) static CONFIG_HOME: LazyLock<PathBuf> = LazyLock::new(|| {
+pub(crate) static CONFIG_HOME: LazyLock<PathBuf> = LazyLock::new(|| {
     var_path("XDG_CONFIG_HOME").unwrap_or_else(|| HOME.join(".config"))
 });
 
@@ -98,7 +102,7 @@ pub(super) static CONFIG_HOME: LazyLock<PathBuf> = LazyLock::new(|| {
 /// - Override: `$XDG_CONFIG_HOME`
 /// - Default: `~/Library/Application Support`
 #[cfg(target_os = "macos")]
-pub(super) static CONFIG_HOME: LazyLock<PathBuf> = LazyLock::new(|| {
+pub(crate) static CONFIG_HOME: LazyLock<PathBuf> = LazyLock::new(|| {
     var_path("XDG_CONFIG_HOME")
         .unwrap_or_else(|| HOME.join("Library").join("Application Support"))
 });
@@ -108,7 +112,7 @@ pub(super) static CONFIG_HOME: LazyLock<PathBuf> = LazyLock::new(|| {
 /// - Override: `%APPDATA%`
 /// - Default: `C:\Users\<user>\AppData\Roaming`
 #[cfg(windows)]
-pub(super) static CONFIG_HOME: LazyLock<PathBuf> = LazyLock::new(|| {
+pub(crate) static CONFIG_HOME: LazyLock<PathBuf> = LazyLock::new(|| {
     var_path("APPDATA").unwrap_or_else(|| HOME.join("AppData").join("Roaming"))
 });
 
@@ -157,22 +161,30 @@ static TRACES_STATE_DIR: LazyLock<PathBuf> = LazyLock::new(|| {
 /// links are unavailable, recording every config file [`ConfigService`] has
 /// loaded.
 ///
-/// [`ConfigService`]: super::service::ConfigService
-pub(super) static TRACKED_CONFIGS: LazyLock<StateDirRoot> =
+/// [`ConfigService`]: crate::config::ConfigService
+pub(crate) static TRACKED_CONFIGS: LazyLock<StateDirRoot> =
     LazyLock::new(|| StateDirRoot::new("tracked-configs"));
 
 /// The trust store directory.
 ///
 /// Resolves to `$TRACES_STATE_DIR/trusted-configs`.
 ///
-/// Contains BLAKE3-keyed symbolic links, or path-bearing files where
-/// symbolic links are unavailable, recording every directory
-/// [`ConfigTrust`] has marked as safe to load configs and instantiate
+/// Contains BLAKE3-keyed symbolic links, or path-bearing files where symbolic
+/// links are unavailable, recording every workspace
+/// [`ConfigStateStore`] has marked as safe to load configs and instantiate
 /// templates from.
 ///
-/// [`ConfigTrust`]: super::trust::ConfigTrust
-pub(super) static TRUSTED_CONFIGS: LazyLock<StateDirRoot> =
+/// [`ConfigStateStore`]: crate::config::store::ConfigStateStore
+pub(crate) static TRUSTED_CONFIGS: LazyLock<StateDirRoot> =
     LazyLock::new(|| StateDirRoot::new("trusted-configs"));
+
+fn non_empty_var(key: &str) -> Option<OsString> {
+    std::env::var_os(key).filter(|value| !value.is_empty())
+}
+
+fn var_path(key: &str) -> Option<PathBuf> {
+    non_empty_var(key).map(PathBuf::from)
+}
 
 #[cfg(test)]
 mod tests {

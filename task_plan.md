@@ -4,7 +4,7 @@
 Implement the accepted config discovery/loading/trust typestate refactor in an isolated worktree: `ConfigFile<State>` for single-file lifecycle invariants, `DiscoveryEngine`/`DiscoveryContext` inside `src/config/discovery.rs`, `ConfigBuilderInput` for load precedence, and `ConfigBuilder<State>` for aggregate final `Config` construction.
 
 ## Current Phase
-ConfigBuilderInput precedence encoding cleanup complete in `.worktrees/config-typestate`; the field remains `local`, docs and error variants now describe the full-load precedence policy, the fallback selection path was replaced with an explicit invariant error, and verification passed via formatter, focused tests, clippy/CI, and GitNexus change detection.
+Trust state-store refactor plus follow-up corrections complete in `.worktrees/config-typestate`; focused tests, formatter, clippy, CI, and GitNexus change detection passed.
 ## Phases
 
 ### Phase 1: Establish Shared Design Questions
@@ -58,12 +58,37 @@ ConfigBuilderInput precedence encoding cleanup complete in `.worktrees/config-ty
 ### Phase 7: Implement Config Typestate Refactor
 - [x] Create `.worktrees/config-typestate` implementation worktree.
 - [x] Add `ConfigFile<State>` lifecycle type and remove `CandidateConfigFile`.
-- [x] Implement `DiscoveryContext`, `DiscoveryType`, `DiscoveryAnchor`, `DiscoveryEngine`, and unified `DiscoveryOutcome`.
+- [x] Implement `DiscoveryContext`, `DiscoveryScope`, `DiscoveryAnchor`, `DiscoveryEngine`, and unified `DiscoveryOutcome`.
 - [x] Add `ConfigBuilderInput` and load selection policy.
-- [x] Collapse `ConfigBuilder` to `ConfigBuilderInput -> LocalStored -> Merged`.
+- [x] Collapse `ConfigBuilder` to `Discovered -> LocalStored -> Merged`, with `ConfigBuilderInput` as the validated constructor input.
 - [x] Add `ConfigService::load(cwd)` and route trust target discovery through `DiscoveryEngine`.
 - [x] Apply correction pass: complete `Parsed` lifecycle, remove generic `ConfigFile<State>::parse()`, replace lifecycle helper methods with `From`/`TryFrom` conversions over tuple inputs, make tracked conversion record through `ConfigTracker`, make `is_trusted` consume `TrustTarget`, remove `ResolvedTrustTarget`, validate discovery context combinations, remove outcome `cwd`, move helper logic into `DiscoveryEngine`, enforce nearest-local builder input selection, and remove redundant `ConfigFile<State>` phantom state storage.
 - [x] Run `cargo test config::`, `mise run fmt`, `mise run test`, `mise run clippy`, `mise run ci`, and GitNexus change detection.
+- **Status:** complete
+
+### Phase 8: Config File Organization Follow-up
+- [x] Review ordering discipline reference.
+- [x] Map current `src/config/` file/module ordering.
+- [x] Apply agreed reorganization except `domain.rs` and `mod.rs`.
+- [x] Run formatter, focused tests, clippy/CI, and GitNexus change detection.
+- **Status:** complete
+
+### Phase 9: User Correction Follow-up
+- [x] Move config-file error enums below the `ConfigFile<State>` lifecycle impls.
+- [x] Add builder `Discovered` aggregate state and make `impl ConfigBuilder<Discovered>` own `new`/`store_locals`.
+- [x] Move trust target resolution from `ConfigService` into discovery and update CLI callsites.
+- [x] Defer `config/discovery/` submodule split until discovery has a second cohesive file.
+- [x] Run formatter, focused tests, clippy/CI, and GitNexus change detection.
+- **Status:** complete
+
+### Phase 10: Trust State Store Refactor
+- [x] Move generic path-state storage to `src/file_store.rs`.
+- [x] Move canonicalization into `Blake3PathHash`.
+- [x] Add `ConfigStateStore` and trust subject/status types.
+- [x] Route trust resolution through discovery using one path and `DiscoveryScope`.
+- [x] Update service, builder, config-file lifecycle, and CLI trust flow.
+- [x] Delete obsolete config store/tracker/trust modules.
+- [x] Run final project checks and change detection.
 - **Status:** complete
 
 ## Implementation-Readiness Decisions
@@ -109,7 +134,7 @@ ConfigBuilderInput precedence encoding cleanup complete in `.worktrees/config-ty
 | Let `ConfigService::load(cwd)` call discovery processing directly | User noted load can simply call a `process()` method that runs `DiscoveryProcessor`; this keeps full discovery hidden behind discovery components rather than decomposing load into nearest-local calls. |
 | Use `DiscoveryContext` as discovery method input | User challenged passing raw anchors to focused discovery methods; context should be the input shape for each discovery operation. |
 | Use unified `DiscoveryOutcome` for all discovery kinds | User observed `DiscoveryOutcome` can represent `Full`, `NearestLocal`, and `LocalSubtree` by varying local/global cardinality, avoiding a separate `DiscoveryOutput` enum. |
-| Store discovery kind and anchor in `DiscoveryOutcome`, not full context | User decided only `DiscoveryType`, `DiscoveryAnchor`, local files, and global files remain relevant after discovery; `DiscoveryContext` may expose `into_parts()`/`into_parts_ref()`. |
+| Store discovery kind and anchor in `DiscoveryOutcome`, not full context | User decided only `DiscoveryScope`, `DiscoveryAnchor`, local files, and global files remain relevant after discovery; `DiscoveryContext` may expose `into_parts()`/`into_parts_ref()`. |
 | Define explicit precedence for multiple local configs in full discovery | User noted full discovery can theoretically find more than one local config, so merge precedence must be clear. |
 | Full load selects nearest local plus optional global | User decided full config loading should not merge every discovered local config; it should use only the nearest local config, with optional global config. |
 | Avoid the name `EffectiveConfigFiles` | User wants a better name, or possibly just a method on `DiscoveryOutcome`, for selecting the files used by config loading. |
@@ -121,6 +146,8 @@ ConfigBuilderInput precedence encoding cleanup complete in `.worktrees/config-ty
 | Do not make `DiscoveryEngine` hold `DiscoveryContext` yet | User decided context remains per-call input for now; any context-owning discovery run can be considered later if needed. |
 | Make `DiscoveryEngine::process(ctx)` the main discovery method | User agreed `process(ctx)` is the public-ish discovery seam, with kind-specific helper methods kept private. |
 | Accept staged implementation order | User agreed the proposed ten-step implementation order is good. |
+| Defer `config/discovery/` submodule split for now | Discovery is large enough to consider a directory module, but splitting just to split would add churn. Moving trust-target resolution into discovery creates a candidate extraction point; do the directory split when a second cohesive file naturally falls out. |
+| Keep trust interpretation as borrowed operation input | User preferred `TrustInput`/`TrustRequest` over `TrustTargetType`; the final design uses borrowed `TrustInput` values and a visitor so CLI resolution no longer returns owned target data. |
 
 ## Errors Encountered
 | Error | Attempt | Resolution |
@@ -132,6 +159,10 @@ ConfigBuilderInput precedence encoding cleanup complete in `.worktrees/config-ty
 | Full check failed on unused `PathBuf`/`TrustError` imports after builder simplification | 1 | Removed the imports, reran formatter, clippy, and CI successfully. |
 | Renaming `ConfigBuilderInput.local` to `nearest_local` made the type less aligned with requested terminology | 1 | Restored `local`, moved the precedence description into docs, variable names, and explicit invariant errors. |
 | Clippy rejected `ok_or_else` for an eager error value | 1 | Switched to `ok_or` and reran clippy/CI successfully. |
+| `cargo test config:: cli::trust::` is invalid because Cargo accepts one test filter | 1 | Reran as `cargo test config:: && cargo test cli::trust::`. |
+| Moving `start` into `DiscoveryAnchor::File(start)` broke directory fallback ownership | 1 | Cloned the `PathBuf` into the anchor, then removed the owned fallback type entirely with borrowed `visit_trust_inputs`. |
+| Clippy rejected production-unused trust operation re-exports/imports | 1 | Removed the resolved target export and re-exported only the borrowed `TrustInput`/visitor surface needed by CLI. |
+| GitNexus impact and LSP could not resolve `TrustTarget`/`resolve_trust_targets` during the final rename | 1 | Used grep/read callsite inspection, then verified with focused tests, clippy/CI, and GitNexus change detection. |
 ## Notes
 - Worktree containing the prior implementation commit: `/Users/jack/Documents/41_personal/traces-pkm-init-cli`.
 - Current planning files are in project root: `/Users/jack/Documents/41_personal/traces-pkm`.

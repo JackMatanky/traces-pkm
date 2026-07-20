@@ -1,7 +1,7 @@
 //! Config builder using figment for merging selected config files.
 //!
 //! Per-file lifecycle is owned by [`ConfigFile`]. This builder owns only the
-//! aggregate load path: selected discovered files -> stored/trusted local file
+//! aggregate load path: validated discovered files -> stored/trusted local file
 //! -> merged [`Config`].
 
 use std::path::{Path, PathBuf};
@@ -10,14 +10,13 @@ use figment::{Figment, providers::Serialized};
 use thiserror::Error;
 
 use super::{
-    discovery::{DiscoveryOutcome, DiscoveryType},
+    discovery::{DiscoveryOutcome, DiscoveryScope},
     domain::{Config, TemplateConfig},
     file::{
         ConfigFile, ConfigFileError, Discovered as FileDiscovered, Parsed,
         Tracked, Trusted,
     },
-    tracker::ConfigTracker,
-    trust::ConfigTrust,
+    store::ConfigStateStore,
 };
 
 /// Errors that can occur while building a [`Config`].
@@ -40,7 +39,7 @@ pub(crate) enum ConfigBuilderInputError {
     )]
     WrongDiscoveryKindForBuild {
         /// Actual discovery kind.
-        actual: DiscoveryType,
+        actual: DiscoveryScope,
     },
     /// Full discovery found no local config candidates.
     #[error("full discovery output did not contain a local config")]
@@ -74,7 +73,7 @@ impl TryFrom<DiscoveryOutcome> for ConfigBuilderInput {
     fn try_from(outcome: DiscoveryOutcome) -> Result<Self, Self::Error> {
         let (kind, anchor, discovered_locals, discovered_globals) =
             outcome.into_parts();
-        if kind != DiscoveryType::Full {
+        if kind != DiscoveryScope::Full {
             return Err(ConfigBuilderInputError::WrongDiscoveryKindForBuild {
                 actual: kind,
             });
@@ -103,6 +102,16 @@ impl TryFrom<DiscoveryOutcome> for ConfigBuilderInput {
     }
 }
 
+/// Aggregate config builder.
+pub(super) struct ConfigBuilder<State> {
+    state: State,
+}
+
+/// Discovery output has been validated into selected load input.
+pub(super) struct Discovered {
+    input: ConfigBuilderInput,
+}
+
 /// Local config has been tracked and checked against trust.
 pub(super) struct LocalStored {
     local: ConfigFile<Trusted>,
@@ -114,18 +123,15 @@ pub(super) struct Merged {
     config: Config,
 }
 
-/// Aggregate config builder.
-pub(super) struct ConfigBuilder<State> {
-    state: State,
-}
-
-impl ConfigBuilder<ConfigBuilderInput> {
+impl ConfigBuilder<Discovered> {
     /// Initializes the builder from validated load input.
     #[inline]
     #[must_use]
     pub(super) fn new(input: ConfigBuilderInput) -> Self {
         Self {
-            state: input,
+            state: Discovered {
+                input,
+            },
         }
     }
 
@@ -138,17 +144,16 @@ impl ConfigBuilder<ConfigBuilderInput> {
     #[inline]
     pub(super) fn store_locals(
         self,
-        tracker: &ConfigTracker,
-        trust: &ConfigTrust,
+        state: &ConfigStateStore,
     ) -> Result<ConfigBuilder<LocalStored>, ConfigBuilderError> {
         let tracked_local =
-            ConfigFile::<Tracked>::from((self.state.local, tracker));
+            ConfigFile::<Tracked>::from((self.state.input.local, state));
         let trusted_local =
-            ConfigFile::<Trusted>::try_from((tracked_local, trust))?;
+            ConfigFile::<Trusted>::try_from((tracked_local, state))?;
         Ok(ConfigBuilder {
             state: LocalStored {
                 local: trusted_local,
-                global: self.state.global,
+                global: self.state.input.global,
             },
         })
     }
@@ -220,43 +225,8 @@ mod tests {
     use crate::config::{
         discovery::{DiscoveryAnchor, DiscoveryOutcome},
         file::ConfigFileTrustError,
-        trust::TrustTarget,
+        store::TrustSubject,
     };
-
-    fn write_config(path: &Path, contents: &str) {
-        let parent = path.parent().expect("config path parent");
-        fs::create_dir_all(parent).expect("create config parent");
-        fs::write(path, contents).expect("write config");
-    }
-
-    fn discovered_local(root: &Path) -> ConfigFile<FileDiscovered> {
-        ConfigFile::<FileDiscovered>::local(root.join(".traces/config.toml"))
-            .expect("valid local config")
-    }
-
-    fn discovered_global(root: &Path) -> ConfigFile<FileDiscovered> {
-        ConfigFile::<FileDiscovered>::global(root.join("config.toml"))
-            .expect("valid global config")
-    }
-
-    fn trust_local(local: &ConfigFile<FileDiscovered>, trust: &ConfigTrust) {
-        trust
-            .trust(TrustTarget::File(local.path()))
-            .expect("trust local config");
-    }
-
-    fn build(
-        input: ConfigBuilderInput,
-        trust: &ConfigTrust,
-        tracker: &ConfigTracker,
-    ) -> Config {
-        ConfigBuilder::new(input)
-            .store_locals(tracker, trust)
-            .expect("store locals")
-            .merge()
-            .expect("merge config")
-            .build()
-    }
 
     #[test]
     fn builder_input_rejects_non_full_discovery_output() {
@@ -269,7 +239,7 @@ mod tests {
 ",
         );
         let outcome = DiscoveryOutcome::with_kind(
-            DiscoveryType::NearestLocal,
+            DiscoveryScope::NearestLocal,
             crate::config::discovery::DiscoveryAnchor::Directory(root.clone()),
             vec![discovered_local(&root)],
             Vec::new(),
@@ -281,7 +251,7 @@ mod tests {
         assert!(matches!(
             error,
             ConfigBuilderInputError::WrongDiscoveryKindForBuild {
-                actual: DiscoveryType::NearestLocal
+                actual: DiscoveryScope::NearestLocal
             }
         ));
     }
@@ -302,7 +272,7 @@ mod tests {
 ",
         );
         let outcome = DiscoveryOutcome::with_kind(
-            DiscoveryType::Full,
+            DiscoveryScope::Full,
             DiscoveryAnchor::Directory(child.join("notes")),
             vec![discovered_local(&parent), discovered_local(&child)],
             Vec::new(),
@@ -325,7 +295,7 @@ mod tests {
 ",
         );
         let outcome = DiscoveryOutcome::with_kind(
-            DiscoveryType::Full,
+            DiscoveryScope::Full,
             DiscoveryAnchor::Directory(anchor.clone()),
             vec![discovered_local(&project)],
             Vec::new(),
@@ -361,16 +331,18 @@ mod tests {
         let global = discovered_global(&global_root);
         let trust_store = tempfile::tempdir().expect("create trust store");
         let tracked_store = tempfile::tempdir().expect("create tracked store");
-        let trust = ConfigTrust::at(trust_store.path().to_path_buf());
-        trust_local(&local, &trust);
+        let state = ConfigStateStore::at(
+            tracked_store.path().to_path_buf(),
+            trust_store.path().to_path_buf(),
+        );
+        trust_local(&local, &state);
 
         let config = build(
             ConfigBuilderInput {
                 local,
                 global: Some(global),
             },
-            &trust,
-            &ConfigTracker::at(tracked_store.path().to_path_buf()),
+            &state,
         );
 
         assert_eq!(config.root(), root.as_path());
@@ -398,16 +370,16 @@ mod tests {
         let local = discovered_local(&root);
         let trust_store = tempfile::tempdir().expect("create trust store");
         let tracked_store = tempfile::tempdir().expect("create tracked store");
-        let trust = ConfigTrust::at(trust_store.path().to_path_buf());
+        let state = ConfigStateStore::at(
+            tracked_store.path().to_path_buf(),
+            trust_store.path().to_path_buf(),
+        );
 
         let result = ConfigBuilder::new(ConfigBuilderInput {
             local,
             global: None,
         })
-        .store_locals(
-            &ConfigTracker::at(tracked_store.path().to_path_buf()),
-            &trust,
-        );
+        .store_locals(&state);
 
         assert!(matches!(
             result,
@@ -415,5 +387,39 @@ mod tests {
                 ConfigFileTrustError::RootNotTrusted { root: error_root }
             ))) if error_root == root
         ));
+    }
+
+    fn write_config(path: &Path, contents: &str) {
+        let parent = path.parent().expect("config path parent");
+        fs::create_dir_all(parent).expect("create config parent");
+        fs::write(path, contents).expect("write config");
+    }
+
+    fn discovered_local(root: &Path) -> ConfigFile<FileDiscovered> {
+        ConfigFile::<FileDiscovered>::local(root.join(".traces/config.toml"))
+            .expect("valid local config")
+    }
+
+    fn discovered_global(root: &Path) -> ConfigFile<FileDiscovered> {
+        ConfigFile::<FileDiscovered>::global(root.join("config.toml"))
+            .expect("valid global config")
+    }
+
+    fn trust_local(
+        local: &ConfigFile<FileDiscovered>,
+        state: &ConfigStateStore,
+    ) {
+        state
+            .grant_trust(&TrustSubject::discovered(local))
+            .expect("trust local config");
+    }
+
+    fn build(input: ConfigBuilderInput, state: &ConfigStateStore) -> Config {
+        ConfigBuilder::new(input)
+            .store_locals(state)
+            .expect("store locals")
+            .merge()
+            .expect("merge config")
+            .build()
     }
 }

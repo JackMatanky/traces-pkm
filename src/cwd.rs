@@ -4,6 +4,15 @@
 //! This module is the single place in the crate that calls it, so the ban
 //! is enforced everywhere else.
 
+#![cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "cwd wrapper is currently only exercised by tests; render \
+                  entry points will use it as the sole current-dir adapter"
+    )
+)]
+
 use std::{
     env, io,
     path::{Path, PathBuf},

@@ -1,6 +1,6 @@
 //! Service-owned config loading: full discovery selects files, then the builder
-//! records, trust-checks, parses, and merges them. Tracking is best-effort
-//! bookkeeping (see [`super::tracker`]).
+//! records, trust-checks, parses, and merges them. Tracking and trust
+//! administration live in [`super::store::ConfigStateStore`].
 
 use std::path::{Path, PathBuf};
 
@@ -10,13 +10,13 @@ use super::{
     builder::{ConfigBuilder, ConfigBuilderError, ConfigBuilderInput},
     discovery::{
         DiscoveryAnchor, DiscoveryContext, DiscoveryEngine, DiscoveryError,
-        DiscoveryOutcome, DiscoveryType,
+        DiscoveryOutcome, DiscoveryScope,
     },
     domain::Config,
-    file::{ConfigFile, Discovered as FileDiscovered},
-    store::StoreError,
-    tracker::ConfigTracker,
-    trust::{ConfigTrust, TrustError, TrustState, TrustTarget},
+    store::{
+        ConfigStateError, ConfigStateStore, ConfigTrustStatus, TrustSubject,
+        TrustSubjects, WorkspaceTrustStatus,
+    },
 };
 
 /// Errors from the full config loading pipeline.
@@ -35,14 +35,12 @@ pub(crate) enum ConfigLoadError {
 /// Coordinator that hides discovery-before-build sequencing behind the normal
 /// [`ConfigService::load`] entry point. Filesystem discovery stays separate
 /// from tracking, trust, parse, and merge internals, but callers no longer need
-/// to orchestrate those phases themselves. Holds the tracked-config store so
-/// the build pipeline can record local configs and admin methods can list/clean
-/// the same store. Also holds the trust store so the build pipeline can gate
-/// untrusted local configs and admin methods can manage trust directly.
+/// to orchestrate those phases themselves. Holds the state store so the build
+/// pipeline and trust-admin methods share the same tracked-config and trusted
+/// workspace records.
 #[derive(Clone, Debug)]
 pub(crate) struct ConfigService {
-    tracker: ConfigTracker,
-    trust: ConfigTrust,
+    state: ConfigStateStore,
 }
 
 impl ConfigService {
@@ -52,8 +50,7 @@ impl ConfigService {
     #[inline]
     pub(crate) fn new() -> Self {
         Self {
-            tracker: ConfigTracker::new(),
-            trust: ConfigTrust::new(),
+            state: ConfigStateStore::new(),
         }
     }
 
@@ -62,13 +59,12 @@ impl ConfigService {
     /// OS-correct roots from [`Self::new`]. `pub(crate)` (not restricted
     /// to this module) so the CLI layer's tests (`crate::cli::trust`) can
     /// construct an isolated service without touching the real OS state
-    /// directories, mirroring [`ConfigTracker::at`]/[`ConfigTrust::at`].
+    /// directories, mirroring [`ConfigStateStore::at`].
     #[cfg(test)]
     #[must_use]
     pub(crate) fn at(tracked_root: PathBuf, trusted_root: PathBuf) -> Self {
         Self {
-            tracker: ConfigTracker::at(tracked_root),
-            trust: ConfigTrust::at(trusted_root),
+            state: ConfigStateStore::at(tracked_root, trusted_root),
         }
     }
 
@@ -101,7 +97,7 @@ impl ConfigService {
     #[inline]
     fn discover(cwd: &Path) -> Result<DiscoveryOutcome, DiscoveryError> {
         let context = DiscoveryContext::new(
-            DiscoveryType::Full,
+            DiscoveryScope::Full,
             DiscoveryAnchor::Directory(cwd.to_path_buf()),
         )?;
         DiscoveryEngine.process(context)
@@ -113,8 +109,7 @@ impl ConfigService {
     /// are read. This is a best-effort side effect; a tracking store write
     /// failure does not fail the build. Each local candidate's project root
     /// is then checked against the trust store before any file is parsed;
-    /// global candidates are never checked (global config trust is skipped
-    /// entirely — see `super::trust::ConfigTrust`'s module docs for why).
+    /// global candidates are never checked.
     ///
     /// # Errors
     ///
@@ -127,112 +122,96 @@ impl ConfigService {
     ) -> Result<Config, ConfigBuilderError> {
         let input = ConfigBuilderInput::try_from(discovered)?;
         Ok(ConfigBuilder::new(input)
-            .store_locals(&self.tracker, &self.trust)?
+            .store_locals(&self.state)?
             .merge()?
             .build())
     }
 
-    /// Marks `target`'s workspace root as trusted and, for
-    /// [`TrustTarget::ConfigFile`], records its config file's current
-    /// content hash as the baseline future checks compare against.
-    ///
-    /// Idempotent on the root entry: trusting an already-trusted root is a
-    /// no-op there; re-running this after the config file changes
-    /// refreshes the recorded content hash, clearing any staleness.
+    /// Resolves trust subjects from one user-supplied filesystem path.
     ///
     /// # Errors
     ///
-    /// Returns [`TrustError`] when the root cannot be canonicalized or
-    /// recorded, [`TrustTarget::ConfigFile`]'s config file cannot be
-    /// hashed, or the content-hash companion record cannot be written.
+    /// Returns [`DiscoveryError`] when discovery cannot inspect the path or the
+    /// requested traversal scope cannot be resolved.
+    #[inline]
+    #[expect(
+        clippy::unused_self,
+        reason = "service owns the discovery seam even though trust-subject \
+                  discovery has no state dependency today"
+    )]
+    pub(crate) fn trust_subjects(
+        &self,
+        path: &Path,
+        scope: DiscoveryScope,
+    ) -> Result<TrustSubjects, DiscoveryError> {
+        DiscoveryEngine.trust_subjects(path, scope)
+    }
+
+    /// Grants trust for a workspace root, and for config subjects also records
+    /// the config file's current content hash.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConfigStateError`] when trust cannot be recorded or a config
+    /// file cannot be hashed.
     #[inline]
     pub(crate) fn trust(
         &self,
-        target: TrustTarget<'_>,
-    ) -> Result<(), TrustError> {
-        self.trust.trust(target)
+        subject: &TrustSubject,
+    ) -> Result<(), ConfigStateError> {
+        self.state.grant_trust(subject)
     }
 
-    /// Marks a discovered local config file's project root as trusted and
-    /// records its current content hash.
+    /// Returns the trust status for `subject`.
     ///
     /// # Errors
     ///
-    /// Returns [`TrustError`] when the root cannot be canonicalized or
-    /// recorded, or the config file cannot be hashed.
+    /// Returns [`ConfigStateError`] when the status check cannot complete.
     #[inline]
-    pub(crate) fn trust_config_file(
+    pub(crate) fn trust_status(
         &self,
-        file: &ConfigFile<FileDiscovered>,
-    ) -> Result<(), TrustError> {
-        self.trust.trust(TrustTarget::File(file.path()))
-    }
-
-    /// Checks whether `target` is trusted and, for config-file targets, whether
-    /// the current content still matches what [`Self::trust`] last recorded.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`TrustError`] when the trust check itself fails (store
-    /// I/O, target validation, or hashing config-file content).
-    #[inline]
-    pub(crate) fn is_trusted(
-        &self,
-        target: TrustTarget<'_>,
-    ) -> Result<TrustState, TrustError> {
-        self.trust.is_trusted(target)
-    }
-
-    /// Resolves one or many user trust targets using config discovery
-    /// semantics.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`DiscoveryError`] when no local config can be found or a path
-    /// cannot be inspected.
-    #[inline]
-    pub(crate) fn resolve_trust_targets(
-        cwd: &Path,
-        path: Option<&Path>,
-        all: bool,
-    ) -> Result<Vec<ConfigFile<FileDiscovered>>, DiscoveryError> {
-        let start = resolve_start(cwd, path);
-        let kind = if all {
-            DiscoveryType::LocalSubtree
+        subject: &TrustSubject,
+    ) -> Result<&'static str, ConfigStateError> {
+        if subject.config_file().is_some() {
+            match self.state.config_trust_status(subject)? {
+                ConfigTrustStatus::Trusted => Ok("trusted"),
+                ConfigTrustStatus::Untrusted => Ok("untrusted"),
+                ConfigTrustStatus::MissingBaseline
+                | ConfigTrustStatus::Stale => Ok("stale"),
+            }
         } else {
-            DiscoveryType::NearestLocal
-        };
-        let anchor = if start.is_file() {
-            DiscoveryAnchor::File(start)
-        } else {
-            DiscoveryAnchor::Directory(start)
-        };
-        let context = DiscoveryContext::new(kind, anchor)?;
-        let outcome = DiscoveryEngine.process(context)?;
-        Ok(outcome.local().to_vec())
+            match self.state.workspace_trust_status(subject)? {
+                WorkspaceTrustStatus::Trusted => Ok("trusted"),
+                WorkspaceTrustStatus::Untrusted => Ok("untrusted"),
+            }
+        }
     }
 
-    /// Removes `root` from the trust store, including its content-hash
+    /// Removes trust for `subject`'s workspace root, including any content-hash
     /// companion. Returns the number of root entries removed.
     ///
     /// # Errors
     ///
-    /// Returns [`TrustError`] when `root` cannot be canonicalized or removal
-    /// fails.
+    /// Returns [`ConfigStateError`] when the trust entry cannot be removed.
     #[inline]
-    pub(crate) fn untrust(&self, root: &Path) -> Result<usize, TrustError> {
-        self.trust.untrust(root)
+    pub(crate) fn untrust(
+        &self,
+        subject: &TrustSubject,
+    ) -> Result<usize, ConfigStateError> {
+        self.state.revoke_trust(subject)
     }
 
     /// Lists the canonical paths of all live tracked configs.
     ///
     /// # Errors
     ///
-    /// Returns [`StoreError`] when the tracking store exists but cannot be
-    /// read.
+    /// Returns [`ConfigStateError`] when the tracking store exists but cannot
+    /// be read.
     #[inline]
-    pub(crate) fn list_tracked(&self) -> Result<Vec<PathBuf>, StoreError> {
-        self.tracker.list_all()
+    pub(crate) fn list_tracked(
+        &self,
+    ) -> Result<Vec<PathBuf>, ConfigStateError> {
+        self.state.list_tracked_configs()
     }
 
     /// Removes dangling tracked-config entries (target deleted or moved).
@@ -240,22 +219,26 @@ impl ConfigService {
     ///
     /// # Errors
     ///
-    /// Returns [`StoreError`] when the tracking store exists but cannot be
-    /// read, or a stale entry cannot be removed.
+    /// Returns [`ConfigStateError`] when the tracking store exists but cannot
+    /// be read, or a stale entry cannot be removed.
     #[inline]
-    pub(crate) fn clean_tracked_store(&self) -> Result<usize, StoreError> {
-        self.tracker.clean()
+    pub(crate) fn clean_tracked_store(
+        &self,
+    ) -> Result<usize, ConfigStateError> {
+        self.state.clean_tracked_configs()
     }
 
     /// Lists the canonical paths of all currently trusted roots.
     ///
     /// # Errors
     ///
-    /// Returns [`StoreError`] when the trust store exists but cannot be
+    /// Returns [`ConfigStateError`] when the trust store exists but cannot be
     /// read.
     #[inline]
-    pub(crate) fn list_trusted(&self) -> Result<Vec<PathBuf>, StoreError> {
-        self.trust.list_all()
+    pub(crate) fn list_trusted(
+        &self,
+    ) -> Result<Vec<PathBuf>, ConfigStateError> {
+        self.state.list_trusted_workspaces()
     }
 
     /// Removes dangling trust entries (target root deleted or moved),
@@ -264,20 +247,14 @@ impl ConfigService {
     ///
     /// # Errors
     ///
-    /// Returns [`StoreError`] when the trust store exists but cannot be
-    /// read, a stale root entry cannot be removed, or an existing
-    /// content-hash companion cannot be removed.
+    /// Returns [`ConfigStateError`] when the trust store exists but cannot be
+    /// read, a stale root entry cannot be removed, or an existing content-hash
+    /// companion cannot be removed.
     #[inline]
-    pub(crate) fn clean_trusted_store(&self) -> Result<usize, StoreError> {
-        self.trust.clean()
-    }
-}
-
-fn resolve_start(cwd: &Path, path: Option<&Path>) -> PathBuf {
-    match path {
-        Some(path) if path.is_absolute() => path.to_path_buf(),
-        Some(path) => cwd.join(path),
-        None => cwd.to_path_buf(),
+    pub(crate) fn clean_trusted_store(
+        &self,
+    ) -> Result<usize, ConfigStateError> {
+        self.state.clean_trusted_workspaces()
     }
 }
 
@@ -295,7 +272,9 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use super::*;
-    use crate::config::file::{ConfigFileError, ConfigFileTrustError};
+    use crate::config::file::{
+        ConfigFile, ConfigFileError, ConfigFileTrustError, Discovered,
+    };
 
     #[test]
     fn new_is_stateless() {
@@ -303,41 +282,6 @@ mod tests {
             format!("{:?}", ConfigService::new()),
             format!("{:?}", ConfigService::new())
         );
-    }
-
-    fn local_candidates(temp: &Path) -> (PathBuf, PathBuf, DiscoveryOutcome) {
-        let cwd = temp.join("project");
-        let config_path = cwd.join(".traces/config.toml");
-        fs::create_dir_all(config_path.parent().expect("config path parent"))
-            .expect("create config parent");
-        fs::write(&config_path, "").expect("write config");
-        let local = crate::config::file::ConfigFile::<
-            crate::config::file::Discovered,
-        >::local(config_path.clone())
-        .expect("valid local config");
-        let candidates = DiscoveryOutcome::new(
-            DiscoveryAnchor::Directory(cwd.clone()),
-            vec![local],
-            Vec::new(),
-        );
-        (cwd, config_path, candidates)
-    }
-
-    /// Builds a service rooted at temp stores, with `cwd` (the candidate's
-    /// project root) pre-trusted so `build` clears the trust gate.
-    fn trusted_service(
-        temp: &Path,
-        _cwd: &Path,
-        config_path: &Path,
-    ) -> ConfigService {
-        let service = ConfigService {
-            tracker: ConfigTracker::at(temp.join("tracked-store")),
-            trust: ConfigTrust::at(temp.join("trust-store")),
-        };
-        service
-            .trust(TrustTarget::File(config_path))
-            .expect("trust candidate root");
-        service
     }
 
     #[test]
@@ -423,10 +367,10 @@ mod tests {
     fn build_rejects_a_candidate_with_an_untrusted_root() {
         let temp = tempfile::tempdir().expect("create temp dir");
         let (cwd, _config_path, candidates) = local_candidates(temp.path());
-        let service = ConfigService {
-            tracker: ConfigTracker::at(temp.path().join("tracked-store")),
-            trust: ConfigTrust::at(temp.path().join("trust-store")),
-        };
+        let service = ConfigService::at(
+            temp.path().join("tracked-store"),
+            temp.path().join("trust-store"),
+        );
 
         let result = service.build(candidates);
 
@@ -465,25 +409,26 @@ mod tests {
         fs::create_dir_all(config_file.parent().expect("config parent"))
             .expect("create config parent");
         fs::write(&config_file, "a = 1").expect("write config");
-        let service = ConfigService {
-            tracker: ConfigTracker::at(temp.path().join("tracked-store")),
-            trust: ConfigTrust::at(temp.path().join("trust-store")),
-        };
+        let service = ConfigService::at(
+            temp.path().join("tracked-store"),
+            temp.path().join("trust-store"),
+        );
+        let config = discovered_config(&config_file);
 
         assert_eq!(
             service
-                .is_trusted(TrustTarget::File(&config_file))
+                .trust_status(&TrustSubject::discovered(&config))
                 .expect("check trust"),
-            TrustState::Untrusted
+            "untrusted"
         );
 
-        service.trust(TrustTarget::File(&config_file)).expect("trust root");
+        service.trust(&TrustSubject::discovered(&config)).expect("trust root");
 
         assert_eq!(
             service
-                .is_trusted(TrustTarget::File(&config_file))
+                .trust_status(&TrustSubject::discovered(&config))
                 .expect("check trust"),
-            TrustState::Trusted
+            "trusted"
         );
     }
 
@@ -494,21 +439,20 @@ mod tests {
         let config_file = root.join(".traces/config.toml");
         fs::create_dir_all(config_file.parent().expect("config parent"))
             .expect("create config parent");
-        fs::create_dir_all(config_file.parent().expect("config parent"))
-            .expect("create config parent");
         fs::write(&config_file, "a = 1").expect("write config");
         let service = ConfigService::at(
             temp.path().join("tracked-store"),
             temp.path().join("trust-store"),
         );
 
-        service.trust(TrustTarget::File(&config_file)).expect("trust file");
+        let config = discovered_config(&config_file);
+        service.trust(&TrustSubject::discovered(&config)).expect("trust file");
 
         assert_eq!(
             service
-                .is_trusted(TrustTarget::File(&config_file))
+                .trust_status(&TrustSubject::discovered(&config))
                 .expect("check trust"),
-            TrustState::Trusted
+            "trusted"
         );
     }
     #[test]
@@ -527,7 +471,8 @@ mod tests {
 
         assert!(service.list_trusted().expect("list trusted").is_empty());
 
-        service.trust(TrustTarget::File(&config_file)).expect("trust root");
+        let config = discovered_config(&config_file);
+        service.trust(&TrustSubject::discovered(&config)).expect("trust root");
 
         assert_eq!(service.list_trusted().expect("list trusted"), vec![
             root.canonicalize().expect("canonicalize root")
@@ -547,7 +492,8 @@ mod tests {
             temp.path().join("tracked-store"),
             temp.path().join("trust-store"),
         );
-        service.trust(TrustTarget::File(&config_file)).expect("trust root");
+        let config = discovered_config(&config_file);
+        service.trust(&TrustSubject::discovered(&config)).expect("trust root");
         fs::remove_dir_all(&root).expect("delete project dir");
 
         let removed =
@@ -555,5 +501,44 @@ mod tests {
 
         assert_eq!(removed, 1);
         assert!(service.list_trusted().expect("list trusted").is_empty());
+    }
+
+    fn local_candidates(temp: &Path) -> (PathBuf, PathBuf, DiscoveryOutcome) {
+        let cwd = temp.join("project");
+        let config_path = cwd.join(".traces/config.toml");
+        fs::create_dir_all(config_path.parent().expect("config path parent"))
+            .expect("create config parent");
+        fs::write(&config_path, "").expect("write config");
+        let local = ConfigFile::<Discovered>::local(config_path.clone())
+            .expect("valid local config");
+        let candidates = DiscoveryOutcome::new(
+            DiscoveryAnchor::Directory(cwd.clone()),
+            vec![local],
+            Vec::new(),
+        );
+        (cwd, config_path, candidates)
+    }
+
+    fn discovered_config(config_path: &Path) -> ConfigFile<Discovered> {
+        ConfigFile::<Discovered>::local(config_path.to_path_buf())
+            .expect("valid local config")
+    }
+
+    /// Builds a service rooted at temp stores, with `cwd` (the candidate's
+    /// project root) pre-trusted so `build` clears the trust gate.
+    fn trusted_service(
+        temp: &Path,
+        _cwd: &Path,
+        config_path: &Path,
+    ) -> ConfigService {
+        let service = ConfigService::at(
+            temp.join("tracked-store"),
+            temp.join("trust-store"),
+        );
+        let config = discovered_config(config_path);
+        service
+            .trust(&TrustSubject::discovered(&config))
+            .expect("trust candidate root");
+        service
     }
 }

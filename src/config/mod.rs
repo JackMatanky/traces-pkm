@@ -21,13 +21,10 @@
 //! that presentation belongs (see `cli::error::ConfigTrustCliError` for the
 //! pattern): a future CLI command wraps [`ConfigBuilderError`],
 //! [`DiscoveryError`], and [`ResolutionError`] the same way once `init`/
-//! `render` land. Infrastructure errors
-//! ([`crate::hash::HashError`], and `StoreError`/`TrustError` from this
-//! module's private `store`/`trust` submodules) are only observable
-//! through the `#[source]` chain of the three re-exported types above and
-//! [`ConfigService`]'s admin methods — they cannot be named directly from
-//! outside `config`. [`ConfigFile`] is re-exported only so the CLI can consume
-//! resolved local config targets without a duplicate trust-target type.
+//! `render` land. Infrastructure errors ([`crate::hash::HashError`] and
+//! [`crate::FileStateStoreError`]) are only observable through the
+//! `#[source]` chain of the re-exported domain errors and [`ConfigService`]'s
+//! admin methods.
 
 #![cfg_attr(
     not(test),
@@ -38,21 +35,15 @@
     )
 )]
 
-pub(crate) use discovery::LOCAL_CONFIG_FILE;
-pub(crate) use file::{ConfigFile, Discovered as DiscoveredConfigFile};
+pub(crate) use discovery::{DiscoveryScope, LOCAL_CONFIG_FILE};
 pub(crate) use raw::RawConfig;
 pub(crate) use service::ConfigService;
-#[cfg(test)]
-pub(crate) use trust::TrustState;
-pub(crate) use trust::TrustTarget;
+pub(crate) use store::TrustSubject;
 
 mod builder;
-mod dirs;
 mod discovery;
 mod domain;
 mod file;
 mod raw;
 mod service;
 mod store;
-mod tracker;
-mod trust;
