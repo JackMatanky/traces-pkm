@@ -9,11 +9,12 @@
 //! directory's search order is computed. `TemplateLoader` is cheap to
 //! clone (two `Option<PathBuf>`); later issues register custom
 //! functions (`prompt_text`/`select`/`set_output`, `m11-ecosystem`) on
-//! the engine's `Environment` the same instance every `render_to_file` call
+//! the engine's [`Environment`](minijinja::Environment) the same instance
+//! every [`TemplateService::render_to_file`] call
 //! reuses. This render pipeline tracer (issue tmpl-01) renders with an
 //! empty template context.
 //!
-//! [`Self::new`] is the sole constructor: it builds its own
+//! [`TemplateService::new`] is the sole constructor: it builds its own
 //! [`TemplateLoader`]/[`TemplateEngine`] from `config` rather than
 //! accepting them as parameters. `TemplateEngine`/`TemplateLoader` stay
 //! `pub(super)` — nothing outside `template::` names them (see this

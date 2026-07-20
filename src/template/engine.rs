@@ -1,4 +1,4 @@
-//! [`TemplateEngine`]: encapsulates the minijinja `Environment` — its
+//! [`TemplateEngine`]: encapsulates the minijinja [`Environment`] — its
 //! construction, loader wiring, and rendering — behind a small interface,
 //! so [`super::service::TemplateService`] depends on "render this
 //! source" rather than on minijinja's `Environment`/loader API directly.

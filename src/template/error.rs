@@ -14,8 +14,9 @@ use super::path::TemplatePathError;
 #[derive(Debug, Error)]
 pub(crate) enum TemplateError {
     /// Resolving a template name against the configured template
-    /// directories failed. Transparent: `TemplatePathError`'s own
-    /// `Display` already names the template and what went wrong, so
+    /// directories failed. Transparent: [`TemplatePathError`]'s own
+    /// [`Display`](std::fmt::Display) already names the template and what
+    /// went wrong, so
     /// this variant adds no field of its own to duplicate it.
     #[error(transparent)]
     Resolve(#[from] TemplatePathError),

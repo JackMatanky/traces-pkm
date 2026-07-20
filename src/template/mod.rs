@@ -25,7 +25,8 @@
 //! exactly once. Never resolves outside those directories: an absolute
 //! or `..`-relative `-i` argument is always a miss, not an exact-path
 //! shortcut (see [`loader::TemplateLoader::find`]'s docs). [`engine`]
-//! wraps minijinja's `Environment` — construction and rendering — behind
+//! wraps minijinja's [`Environment`](minijinja::Environment) — construction
+//! and rendering — behind
 //! a small interface, so [`service`] depends on "render this source"
 //! rather than on minijinja's API directly; loader wiring itself is
 //! [`loader::TemplateLoader`]'s job, not `engine`'s. [`service`] drives

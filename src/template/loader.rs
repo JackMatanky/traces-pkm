@@ -7,13 +7,13 @@
 //! directory" is true by construction this way, rather than needing a
 //! runtime invariant nobody enforces.
 //!
-//! [`Self::find`] is this type's *one* orchestrating entry point for
-//! producing a [`TemplatePath<Found>`]: it validates the raw name, then
-//! hands the search off to
+//! [`TemplateLoader::find`] is this type's *one* orchestrating entry point
+//! for producing a [`TemplatePath<Found>`]: it validates the raw name,
+//! then hands the search off to
 //! [`super::path::TemplatePath::<super::path::Validated>::find`], which
 //! has exactly one fixed precedence order (see that method's docs).
 //! Used both by [`super::service::TemplateService::resolve`] (top-level
-//! `-i <name>` resolution) and [`Self::load`]
+//! `-i <name>` resolution) and [`TemplateLoader::load`]
 //! (`{% include %}`/`{% extends %}` loading) — the same method, the same
 //! precedence, for both: there's no separate "exact-only" search for
 //! includes.
@@ -27,17 +27,18 @@
 //! template" would let a caller distinguish a traversal attempt from a
 //! typo, an oracle this crate has no reason to offer.
 //!
-//! [`Self::load`] is minijinja's loader glue, but it never calls
-//! `minijinja::path_loader` —
+//! [`TemplateLoader::load`] is minijinja's loader glue, but it never calls
+//! [`minijinja::path_loader`] —
 //! [`super::engine::TemplateEngine::with_loader`] wires it in via
-//! `Environment::set_loader`, minijinja's low-level API that accepts
+//! [`Environment::set_loader`](minijinja::Environment::set_loader),
+//! minijinja's low-level API that accepts
 //! *any* `Fn(&str) -> Result<Option<String>, Error>`; `path_loader` is
 //! just minijinja's own convenience implementation of that same
 //! signature, and we never call it. That matters because `path_loader`'s
 //! internal `safe_join` rejects any dot-prefixed segment in the
 //! *requested template name* (see `minijinja` 2.21.0's `src/loader.rs`)
 //! — e.g. `{% include ".draft.md" %}` fails to load even though the file
-//! exists. [`Self::find`] instead does its own [`TemplatePath`]
+//! exists. [`TemplateLoader::find`] instead does its own [`TemplatePath`]
 //! validation plus a plain [`Path::join`] (inside
 //! [`TemplatePath::<Found>::absolute`]) — an ordinary path join has no
 //! special treatment of `.` in *any* segment, directory or leaf, so both

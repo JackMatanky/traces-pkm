@@ -44,8 +44,10 @@
 //! same way regardless of who's asking.
 //!
 //! [`TemplatePathError`] is *one* error type covering this whole
-//! lifecycle — `Absolute`/`UnsafeComponent` from validation,
-//! `AmbiguousTemplate`/`TemplateNotFound` from the search — not split by
+//! lifecycle — [`TemplatePathError::Absolute`]/
+//! [`TemplatePathError::UnsafeComponent`] from validation,
+//! [`TemplatePathError::AmbiguousTemplate`]/
+//! [`TemplatePathError::TemplateNotFound`] from the search — not split by
 //! which state's transition method happens to produce them. All four
 //! describe the same thing: reasons a name failed to become a valid,
 //! located `TemplatePath`. That's a domain concept ("what can go wrong
@@ -58,7 +60,8 @@
 //! of its life, and every way producing one can fail — with no
 //! dependency on `loader.rs` at all: [`TemplatePath::<Validated>::find`]
 //! takes the two directory paths it needs directly
-//! (`local`/`global`, mirroring `TemplateLoader`'s own fields exactly),
+//! (`local`/`global`, mirroring [`super::loader::TemplateLoader`]'s own
+//! fields exactly),
 //! never the concrete `TemplateLoader` type or an intermediary
 //! decoupling type.
 
@@ -163,15 +166,18 @@ pub(crate) enum TemplatePathError {
     Absolute(PathBuf),
     /// The path names no safe file within a directory: it either
     /// contains a component that could escape the directory it's
-    /// joined onto (most notably `..`), or has no `Normal` component
-    /// at all (e.g. an empty path, or a bare `.`), leaving nothing to
+    /// joined onto (most notably `..`), or has no
+    /// [`Component::Normal`] component at all (e.g. an empty path, or a
+    /// bare `.`), leaving nothing to
     /// join. One variant for both, deliberately — see this module's
-    /// anti-oracle note: nothing downstream (`TemplateLoader::find`)
+    /// anti-oracle note: nothing downstream
+    /// ([`super::loader::TemplateLoader::find`])
     /// distinguishes *why* validation failed, only that it did.
     #[error("template path {0} is not a valid template identifier")]
     UnsafeComponent(PathBuf),
     /// Multiple files matched the template name in a single directory.
-    /// No `candidates` field: never rendered anywhere (`Display` above
+    /// No `candidates` field: never rendered anywhere
+    /// ([`Display`](std::fmt::Display) above
     /// doesn't interpolate it, and neither does
     /// `crate::cli::error::TemplateCliError`'s generic help text) — an
     /// earlier version carried the list purely to satisfy its own unit
@@ -206,7 +212,7 @@ impl TemplatePath<Raw> {
     /// Returns [`TemplatePathError::Absolute`] when the path is
     /// absolute. Returns [`TemplatePathError::UnsafeComponent`] when it
     /// contains a `..` or other component that isn't a plain name or
-    /// `.`, or has no `Normal` component at all.
+    /// `.`, or has no [`Component::Normal`] component at all.
     pub(super) fn validate(
         self,
     ) -> Result<TemplatePath<Validated>, TemplatePathError> {
