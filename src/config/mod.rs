@@ -43,7 +43,7 @@ pub(crate) use discovery::{DiscoveryScope, LOCAL_CONFIG_FILE};
 pub(crate) use domain::Config;
 #[cfg(test)]
 pub(crate) use file::{ConfigFile, Discovered};
-pub(crate) use raw::RawConfig;
+pub(crate) use raw::{RawConfig, RawTemplateConfig};
 pub(crate) use service::{ConfigLoadError, ConfigService};
 pub(crate) use store::TrustSubject;
 

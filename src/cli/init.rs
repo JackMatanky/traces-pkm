@@ -11,7 +11,7 @@ use clap::Args;
 use super::error::ConfigInitCliError;
 use crate::{
     DialogProvider,
-    config::{LOCAL_CONFIG_FILE, RawConfig},
+    config::{LOCAL_CONFIG_FILE, RawConfig, RawTemplateConfig},
 };
 
 const TRACES_DIR: &str = ".traces";
@@ -92,8 +92,12 @@ impl Init {
         directory: &Path,
         output_dir: &Path,
     ) -> Result<(), ConfigInitCliError> {
-        let config =
-            RawConfig::new(directory.to_path_buf(), output_dir.to_path_buf());
+        let config = RawConfig {
+            templates: RawTemplateConfig {
+                directory: Some(directory.to_path_buf()),
+                output_dir: Some(output_dir.to_path_buf()),
+            },
+        };
         let contents =
             toml::to_string(&config).map_err(|source| failed(root, source))?;
         fs::write(root.join(LOCAL_CONFIG_FILE), contents)

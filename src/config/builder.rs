@@ -4,7 +4,7 @@
 //! aggregate load path: validated discovered files -> stored/trusted local file
 //! -> merged [`Config`].
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use figment::{Figment, providers::Serialized};
 use thiserror::Error;
@@ -147,7 +147,7 @@ impl ConfigBuilder<Discovered> {
         state: &ConfigStateStore,
     ) -> Result<ConfigBuilder<LocalStored>, ConfigBuilderError> {
         let tracked_local =
-            ConfigFile::<Tracked>::from((self.state.input.local, state));
+            ConfigFile::<Tracked>::try_from((self.state.input.local, state))?;
         let trusted_local =
             ConfigFile::<Trusted>::try_from((tracked_local, state))?;
         Ok(ConfigBuilder {
@@ -176,31 +176,30 @@ impl ConfigBuilder<LocalStored> {
 
         if let Some(global) = self.state.global {
             let parsed = ConfigFile::<Parsed>::try_from(global)?;
-            global_dir = parsed
-                .raw()
-                .template_directory()
-                .map(|dir| parsed.root().join(dir));
+            global_dir = parsed.resolved_template_dir();
             figment = figment.merge(Serialized::defaults(parsed.raw()));
         }
 
         let parsed_local = ConfigFile::<Parsed>::try_from(self.state.local)?;
-        let local_dir =
-            parsed_local.raw().template_directory().map(|dir| root.join(dir));
+        let local_dir = parsed_local.resolved_template_dir();
         figment = figment.merge(Serialized::defaults(parsed_local.raw()));
 
         let output = figment
             .extract::<super::raw::RawConfig>()
             .ok()
-            .and_then(|extracted| extracted.output_dir().map(Path::to_path_buf))
+            .and_then(|extracted| extracted.templates.output_dir)
             .unwrap_or_else(|| root.clone());
 
         Ok(ConfigBuilder {
             state: Merged {
-                config: Config::new(root, TemplateConfig {
-                    local: local_dir,
-                    global: global_dir,
-                    output,
-                }),
+                config: Config::new(
+                    root,
+                    TemplateConfig {
+                        local: local_dir,
+                        global: global_dir,
+                        output,
+                    },
+                ),
             },
         })
     }

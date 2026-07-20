@@ -139,17 +139,26 @@ impl ConfigFile<Discovered> {
     }
 }
 
-impl From<(ConfigFile<Discovered>, &ConfigStateStore)> for ConfigFile<Tracked> {
+impl TryFrom<(ConfigFile<Discovered>, &ConfigStateStore)>
+    for ConfigFile<Tracked>
+{
+    type Error = ConfigFileError;
+
     #[inline]
-    fn from(
+    fn try_from(
         (file, state): (ConfigFile<Discovered>, &ConfigStateStore),
-    ) -> Self {
+    ) -> Result<Self, Self::Error> {
+        if !matches!(file.source, ConfigSource::Local(_)) {
+            return Err(ConfigFileError::GlobalConfigCannotBeTracked {
+                path: file.path().to_path_buf(),
+            });
+        }
         state.track_seen_config(&file);
-        Self {
+        Ok(Self {
             root: file.root,
             source: file.source,
             state: Tracked,
-        }
+        })
     }
 }
 
@@ -194,6 +203,11 @@ impl TryFrom<ConfigFile<Trusted>> for ConfigFile<Parsed> {
 
     #[inline]
     fn try_from(file: ConfigFile<Trusted>) -> Result<Self, Self::Error> {
+        debug_assert!(
+            matches!(file.source, ConfigSource::Local(_)),
+            "only local configs reach the Trusted state (the tracking/trust \
+             pipeline rejects global sources)"
+        );
         let raw = read_raw_config(file.path())?;
         Ok(Self {
             root: file.root,
@@ -233,6 +247,22 @@ impl ConfigFile<Parsed> {
     pub(super) fn raw(&self) -> &RawConfig {
         &self.state.raw
     }
+
+    /// The template directory resolved against this config file's root.
+    ///
+    /// For a local config the root is the project root; for a global config
+    /// the root is the global config directory (`~/.config/traces`). Absent
+    /// means no template directory was configured in this layer.
+    #[inline]
+    #[must_use]
+    pub(super) fn resolved_template_dir(&self) -> Option<PathBuf> {
+        self.state
+            .raw
+            .templates
+            .directory
+            .as_ref()
+            .map(|dir| self.root.join(dir))
+    }
 }
 
 fn read_raw_config(path: &Path) -> Result<RawConfig, ConfigFileParseError> {
@@ -257,6 +287,12 @@ pub(crate) enum ConfigFileError {
     #[error("unsupported global config file {path}")]
     UnsupportedGlobalConfigFile {
         /// Unsupported path.
+        path: PathBuf,
+    },
+    /// Global config files cannot enter the tracking and trust lifecycle.
+    #[error("global config file {path} does not need tracking or trust")]
+    GlobalConfigCannotBeTracked {
+        /// Global config path.
         path: PathBuf,
     },
     /// Local config files must be tracked and trusted before parsing.
@@ -402,7 +438,8 @@ output_dir = \"notes\"",
             temp.path().join("tracked-store"),
             temp.path().join("trust-store"),
         );
-        let tracked = ConfigFile::<Tracked>::from((discovered, &state));
+        let tracked = ConfigFile::<Tracked>::try_from((discovered, &state))
+            .expect("track local config");
         state
             .grant_trust(&TrustSubject::tracked(&tracked))
             .expect("trust config");
@@ -412,7 +449,10 @@ output_dir = \"notes\"",
             .expect("parse trusted config");
 
         assert_eq!(config.root(), root.as_path());
-        assert_eq!(config.raw().output_dir(), Some(Path::new("notes")));
+        assert_eq!(
+            config.raw().templates.output_dir.as_deref(),
+            Some(Path::new("notes"))
+        );
     }
 
     #[test]
@@ -434,7 +474,7 @@ directory = \"templates\"",
             .expect("parse global config");
 
         assert_eq!(
-            config.raw().template_directory(),
+            config.raw().templates.directory.as_deref(),
             Some(Path::new("templates"))
         );
     }
