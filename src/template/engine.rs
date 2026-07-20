@@ -1,12 +1,7 @@
-//! [`TemplateEngine`]: wraps a minijinja [`Environment`] — construction,
-//! loader wiring, rendering — behind a small interface, so
-//! [`super::service::TemplateService`] depends on "render this source"
-//! rather than minijinja's API directly.
-//!
-//! The engine owns its [`TemplateLoader`] and exposes both [`Self::resolve`]
-//! (for top-level `-i <name>` resolution) and [`Self::render`] (for
-//! compiling and rendering the source), keeping the loader in one place
-//! rather than split between engine and service.
+//! [`TemplateEngine`]: minijinja construction and rendering behind one
+//! small interface, so [`super::service::TemplateService`] depends on
+//! "resolve this name" and "render this source" rather than on
+//! minijinja's [`Environment`] directly.
 
 use std::path::Path;
 
@@ -17,23 +12,18 @@ use super::{
     path::{Found, TemplatePath, TemplatePathError},
 };
 
-/// Renders minijinja template sources and resolves template names.
-///
-/// Owns a [`TemplateLoader`] shared between resolution and rendering —
-/// the search directories and their precedence (local then global) are
-/// computed exactly once.
+/// Resolves template names and renders their source, backed by one
+/// shared [`TemplateLoader`] — the search directories are computed
+/// once and reused for `-i` resolution and for `{% include %}`/
+/// `{% extends %}` loading alike.
 pub(super) struct TemplateEngine {
     env: Environment<'static>,
     loader: TemplateLoader,
 }
 
 impl TemplateEngine {
-    /// Creates an engine with `loader` as its template source.
-    ///
-    /// The loader is used both for [`Self::resolve`] (top-level
-    /// `-i <name>` lookup) and as minijinja's internal loader (for
-    /// `{% include %}`/`{% extends %}`) — one set of directories, one
-    /// search precedence.
+    /// Builds an engine backed by `loader`, cloning it once into
+    /// minijinja's [`set_loader`](Environment::set_loader) callback.
     #[inline]
     #[must_use]
     pub(super) fn new(loader: TemplateLoader) -> Self {
@@ -48,15 +38,16 @@ impl TemplateEngine {
         }
     }
 
-    /// Resolves `name` against the configured template directories.
+    /// Resolves `name` to a file that actually exists, searching the
+    /// configured directories local-then-global.
     ///
     /// # Errors
     ///
-    /// Returns [`TemplatePathError::AmbiguousTemplate`] when multiple
-    /// files match `name` within a single directory.
+    /// Returns [`TemplatePathError::AmbiguousTemplate`] when `name`
+    /// matches more than one file within a single directory.
     ///
-    /// Returns [`TemplatePathError::TemplateNotFound`] when no match is
-    /// found.
+    /// Returns [`TemplatePathError::TemplateNotFound`] when no
+    /// directory has a match.
     #[inline]
     pub(super) fn resolve(
         &self,
@@ -65,13 +56,13 @@ impl TemplateEngine {
         self.loader.find(name)
     }
 
-    /// Renders `source` with an empty template context.
+    /// Compiles and renders `source` with an empty template context.
     ///
     /// # Errors
     ///
-    /// Returns a [`minijinja::Error`] when `source`'s syntax is invalid,
-    /// or an `{% include %}`/`{% extends %}` it references fails to load
-    /// or render.
+    /// Returns a [`minijinja::Error`] when `source` fails to parse, or
+    /// when an `{% include %}`/`{% extends %}` it references fails to
+    /// load or render in turn.
     #[inline]
     pub(super) fn render(&self, source: &str) -> Result<String, Error> {
         self.env.render_str(source, minijinja::context!())

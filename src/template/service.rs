@@ -1,9 +1,5 @@
-//! [`TemplateService`]: resolves a template name, renders it via
-//! [`TemplateEngine`], and writes the result to disk.
-//!
-//! [`TemplateService::new`] builds one [`TemplateLoader`] and hands it to
-//! [`TemplateEngine`], which owns it for both `{% include %}` and
-//! top-level resolution — no second copy of the search directories.
+//! [`TemplateService`]: the resolve -> render -> write pipeline for one
+//! [`Config`], driven through [`TemplateEngine`].
 
 use std::{
     fs,
@@ -18,16 +14,14 @@ use super::{
 };
 use crate::config::Config;
 
-/// Resolves, renders, and writes templates for one [`Config`].
+/// Turns a `-i <name>` argument into a written note for one [`Config`].
 pub(crate) struct TemplateService<'a> {
     config: &'a Config,
     engine: TemplateEngine,
 }
 
 impl<'a> TemplateService<'a> {
-    /// Creates a service backed by `config`'s template directories, with
-    /// a [`TemplateEngine`] that owns the loader (shared between `resolve`
-    /// and `{% include %}`/`{% extends %}`).
+    /// Builds a service for `config`, backed by a [`TemplateEngine`].
     #[inline]
     #[must_use]
     pub(crate) fn new(config: &'a Config) -> Self {
@@ -39,17 +33,18 @@ impl<'a> TemplateService<'a> {
         }
     }
 
-    /// Resolves `name` against the configured template directories.
+    /// Resolves `name` against `config`'s template directories.
     ///
-    /// Delegates to [`TemplateEngine::resolve`], which owns the loader.
+    /// Delegates straight to [`TemplateEngine::resolve`], which owns
+    /// the loader.
     ///
     /// # Errors
     ///
-    /// Returns [`TemplatePathError::AmbiguousTemplate`] when multiple
-    /// files match `name` within a single directory.
+    /// Returns [`TemplatePathError::AmbiguousTemplate`] when `name`
+    /// matches more than one file within a single directory.
     ///
-    /// Returns [`TemplatePathError::TemplateNotFound`] when no match is
-    /// found.
+    /// Returns [`TemplatePathError::TemplateNotFound`] when no
+    /// directory has a match.
     #[inline]
     pub(super) fn resolve(
         &self,
@@ -58,18 +53,18 @@ impl<'a> TemplateService<'a> {
         self.engine.resolve(name)
     }
 
-    /// Resolves `name`, renders it (empty template context), and writes
-    /// to the default output path ([`Self::default_output_path`]),
-    /// creating the output directory if needed. Returns the path
+    /// Resolves `name`, renders it with an empty template context, and
+    /// writes the result to [`Self::default_output_path`], creating
+    /// the output directory if it doesn't exist yet. Returns the path
     /// written.
     ///
     /// # Errors
     ///
     /// | Error | When |
     /// |---|---|
-    /// | [`TemplateError::Resolve`] | resolution fails |
-    /// | [`TemplateError::Read`] | the template can't be read |
-    /// | [`TemplateError::Render`] | the minijinja source is invalid |
+    /// | [`TemplateError::Resolve`] | `name` doesn't resolve to a file |
+    /// | [`TemplateError::Read`] | the resolved template can't be read |
+    /// | [`TemplateError::Render`] | the template's source is invalid |
     /// | [`TemplateError::Write`] | the output can't be written |
     #[inline]
     pub(crate) fn render_to_file(
@@ -111,10 +106,9 @@ impl<'a> TemplateService<'a> {
     }
 
     /// [`Config::output_dir`] joined with the resolved template's own
-    /// relative identity ([`TemplatePath::name`]) — the resolved
-    /// template's own directory, not the raw `-i` argument, so two
-    /// directories' same-named templates never collide on one output
-    /// path.
+    /// relative identity ([`TemplatePath::name`]) rather than the raw
+    /// `-i` argument — so two directories' same-named templates land
+    /// at different output paths instead of colliding.
     fn default_output_path(&self, resolved: &TemplatePath<Found>) -> PathBuf {
         let output_dir = self.config.output_dir();
         let base = if output_dir.is_absolute() {

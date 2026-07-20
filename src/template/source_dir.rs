@@ -1,35 +1,37 @@
-//! [`TemplateSourceDir`]: which configured template directory a
-//! [`super::path::TemplatePath<super::path::Found>`] came from.
+//! [`TemplateSourceDir`]: records which configured directory a
+//! [`super::path::TemplatePath<super::path::Found>`] was actually
+//! found in.
 //!
 //! Deliberately dependency-free — no reference to [`super::path`],
-//! [`super::loader`], or [`crate::config::Config`] — so both `path.rs`
-//! and `loader.rs` import this type *from* a neutral third file rather
-//! than *through* each other.
+//! [`super::loader`], or [`crate::config::Config`] — so `path.rs` and
+//! `loader.rs` both import this type from a neutral third place instead
+//! of from each other.
 
 use std::path::{Path, PathBuf};
 
-/// Which template directory a template was found in, carrying that
+/// Which template directory a match came from, carrying that
 /// directory's actual (always absolute) path.
 ///
-/// Only [`Self::Local`]/[`Self::Global`] — resolution never reads
-/// outside the configured template directories. An earlier version
-/// resolved names as arbitrary filesystem paths, letting `-i` read any
-/// file the process could see; this type rules that out by
+/// Only [`Self::Local`] and [`Self::Global`] exist — resolution can
+/// never read outside the configured directories. An earlier version
+/// resolved names as arbitrary filesystem paths, so `-i` could read
+/// any file the process had access to; this type rules that out by
 /// construction, since
 /// [`super::path::TemplatePath::<super::path::Found>`] is only ever
-/// produced by [`super::loader::TemplateLoader::find`], which builds a
-/// `TemplateSourceDir` from [`super::loader::TemplateLoader`]'s own
-/// `local`/`global` fields.
+/// produced by [`super::loader::TemplateLoader::find`], which builds
+/// its `TemplateSourceDir` from
+/// [`super::loader::TemplateLoader`]'s own `local`/`global` fields —
+/// nowhere else.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) enum TemplateSourceDir {
-    /// The local (project-level) template directory.
+    /// A match from the local, project-level template directory.
     Local(PathBuf),
-    /// The global (user-level) template directory.
+    /// A match from the global, user-level template directory.
     Global(PathBuf),
 }
 
 impl TemplateSourceDir {
-    /// This directory's absolute path.
+    /// This directory's absolute filesystem path.
     #[inline]
     #[must_use]
     pub(super) fn path(&self) -> &Path {
