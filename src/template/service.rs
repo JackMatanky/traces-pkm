@@ -1,17 +1,10 @@
 //! [`TemplateService`]: resolves a template name, renders it via
 //! [`TemplateEngine`], and writes the result to disk.
 //!
-//! Holds a [`Config`] reference, a [`TemplateLoader`], and a
-//! [`TemplateEngine`] whose `{% include %}` loader is a clone of that
-//! same `TemplateLoader` — one loader built from `config`, shared,
-//! rather than derived twice, so the search order is computed in
-//! exactly one place. This render pipeline tracer (issue tmpl-01)
-//! renders with an empty template context.
-//!
-//! [`TemplateService::new`] is the sole constructor: it builds its own
-//! `TemplateLoader`/`TemplateEngine` from `config`. Both stay
-//! `pub(super)` — nothing outside `template::` names them — so `config`
-//! is the only place a caller can influence how rendering happens.
+//! [`TemplateService::new`] builds one [`TemplateLoader`] and shares it:
+//! the original resolves top-level `-i` names, a clone is wired into
+//! [`TemplateEngine`] for `{% include %}` — so both search the same
+//! directories in the same order, computed once.
 
 use std::{
     fs,
@@ -66,17 +59,19 @@ impl<'a> TemplateService<'a> {
         self.loader.find(name)
     }
 
-    /// Resolves `name`, renders it with an empty template context, and
-    /// writes the result to the default output path
-    /// ([`Self::default_output_path`]), creating the output directory
-    /// if it doesn't exist. Returns the path written.
+    /// Resolves `name`, renders it (empty template context), and writes
+    /// to the default output path ([`Self::default_output_path`]),
+    /// creating the output directory if needed. Returns the path
+    /// written.
     ///
     /// # Errors
     ///
-    /// Returns [`TemplateError::Resolve`] when resolution fails,
-    /// [`TemplateError::Read`] when the template can't be read,
-    /// [`TemplateError::Render`] when the minijinja source is invalid,
-    /// or [`TemplateError::Write`] when the output can't be written.
+    /// | Error | When |
+    /// |---|---|
+    /// | [`TemplateError::Resolve`] | resolution fails |
+    /// | [`TemplateError::Read`] | the template can't be read |
+    /// | [`TemplateError::Render`] | the minijinja source is invalid |
+    /// | [`TemplateError::Write`] | the output can't be written |
     #[inline]
     pub(crate) fn render_to_file(
         &self,
@@ -116,17 +111,11 @@ impl<'a> TemplateService<'a> {
         Ok(output_path)
     }
 
-    /// Default output path: [`Config::output_dir`] (resolved against
-    /// [`Config::root`] if relative) joined with the resolved
-    /// template's own relative identity ([`TemplatePath::name`]), not
-    /// the raw `-i` argument — so `notes/daily`/`notes/daily.md` both
-    /// write `<output_dir>/notes/daily.md`, without flattening the
-    /// resolved subdirectory away (which would let two different
-    /// directories' same-named templates silently overwrite each
-    /// other's output).
-    ///
-    /// Computed at write time, not stored — issue tmpl-02's
-    /// `-o`/`set_output()` handling overrides this.
+    /// [`Config::output_dir`] joined with the resolved template's own
+    /// relative identity ([`TemplatePath::name`]) — the resolved
+    /// template's own directory, not the raw `-i` argument, so two
+    /// directories' same-named templates never collide on one output
+    /// path.
     fn default_output_path(&self, resolved: &TemplatePath<Found>) -> PathBuf {
         let output_dir = self.config.output_dir();
         let base = if output_dir.is_absolute() {
