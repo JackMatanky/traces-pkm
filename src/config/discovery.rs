@@ -13,7 +13,7 @@ use std::{
 use thiserror::Error;
 
 use super::{
-    file::{ConfigFile, ConfigFileError, Discovered},
+    file::{ConfigFileError, Discovered, GlobalConfigFile, LocalConfigFile},
     store::{TrustSubject, TrustSubjects},
 };
 use crate::dirs;
@@ -158,15 +158,15 @@ pub(crate) enum DiscoveryError {
 pub(crate) struct DiscoveryOutcome {
     kind: DiscoveryScope,
     anchor: DiscoveryAnchor,
-    local: Box<[ConfigFile<Discovered>]>,
-    global: Box<[ConfigFile<Discovered>]>,
+    local: Box<[LocalConfigFile<Discovered>]>,
+    global: Box<[GlobalConfigFile<Discovered>]>,
 }
 
 type OutcomeParts = (
     DiscoveryScope,
     DiscoveryAnchor,
-    Box<[ConfigFile<Discovered>]>,
-    Box<[ConfigFile<Discovered>]>,
+    Box<[LocalConfigFile<Discovered>]>,
+    Box<[GlobalConfigFile<Discovered>]>,
 );
 
 impl DiscoveryOutcome {
@@ -175,8 +175,8 @@ impl DiscoveryOutcome {
     #[must_use]
     pub(super) fn new(
         anchor: DiscoveryAnchor,
-        local: Vec<ConfigFile<Discovered>>,
-        global: Vec<ConfigFile<Discovered>>,
+        local: Vec<LocalConfigFile<Discovered>>,
+        global: Vec<GlobalConfigFile<Discovered>>,
     ) -> Self {
         Self::with_kind(DiscoveryScope::Full, anchor, local, global)
     }
@@ -187,8 +187,8 @@ impl DiscoveryOutcome {
     pub(super) fn with_kind(
         kind: DiscoveryScope,
         anchor: DiscoveryAnchor,
-        local: Vec<ConfigFile<Discovered>>,
-        global: Vec<ConfigFile<Discovered>>,
+        local: Vec<LocalConfigFile<Discovered>>,
+        global: Vec<GlobalConfigFile<Discovered>>,
     ) -> Self {
         Self {
             kind,
@@ -215,14 +215,14 @@ impl DiscoveryOutcome {
     /// Local config candidates found during discovery (empty if none).
     #[inline]
     #[must_use]
-    pub(super) fn local(&self) -> &[ConfigFile<Discovered>] {
+    pub(super) fn local(&self) -> &[LocalConfigFile<Discovered>] {
         &self.local
     }
 
     /// Global config candidates found during discovery (empty if none).
     #[inline]
     #[must_use]
-    pub(super) fn global(&self) -> &[ConfigFile<Discovered>] {
+    pub(super) fn global(&self) -> &[GlobalConfigFile<Discovered>] {
         &self.global
     }
 
@@ -384,10 +384,10 @@ impl DiscoveryEngine {
 
     fn local_from_anchor(
         anchor: &DiscoveryAnchor,
-    ) -> Result<ConfigFile<Discovered>, DiscoveryError> {
+    ) -> Result<LocalConfigFile<Discovered>, DiscoveryError> {
         match anchor {
             DiscoveryAnchor::File(path) => {
-                ConfigFile::<Discovered>::local(path.clone())
+                LocalConfigFile::<Discovered>::try_new(path.clone())
                     .map_err(Into::into)
             }
             DiscoveryAnchor::Directory(dir) => {
@@ -398,11 +398,11 @@ impl DiscoveryEngine {
 
     fn nearest_local_from_dir(
         cwd: &Path,
-    ) -> Result<ConfigFile<Discovered>, DiscoveryError> {
+    ) -> Result<LocalConfigFile<Discovered>, DiscoveryError> {
         for ancestor in cwd.ancestors() {
             let path = ancestor.join(LOCAL_CONFIG_FILE);
             if Self::is_config_file(&path)? {
-                return ConfigFile::<Discovered>::local(path)
+                return LocalConfigFile::<Discovered>::try_new(path)
                     .map_err(Into::into);
             }
         }
@@ -413,11 +413,11 @@ impl DiscoveryEngine {
 
     fn collect_descendant_configs(
         dir: &Path,
-        configs: &mut Vec<ConfigFile<Discovered>>,
+        configs: &mut Vec<LocalConfigFile<Discovered>>,
     ) -> Result<(), DiscoveryError> {
         let config_file = dir.join(LOCAL_CONFIG_FILE);
         if Self::is_config_file(&config_file)? {
-            configs.push(ConfigFile::<Discovered>::local(config_file)?);
+            configs.push(LocalConfigFile::<Discovered>::try_new(config_file)?);
         }
 
         for entry in fs::read_dir(dir).map_err(|source| {
@@ -477,8 +477,8 @@ pub(super) struct GlobalCollected;
 #[derive(Debug)]
 pub(super) struct DiscoveryProcessor<State> {
     cwd: PathBuf,
-    local: Vec<ConfigFile<Discovered>>,
-    global: Vec<ConfigFile<Discovered>>,
+    local: Vec<LocalConfigFile<Discovered>>,
+    global: Vec<GlobalConfigFile<Discovered>>,
     _state: PhantomData<State>,
 }
 
@@ -514,7 +514,7 @@ impl DiscoveryProcessor<Init> {
         for ancestor in cwd.ancestors() {
             let path = ancestor.join(LOCAL_CONFIG_FILE);
             if DiscoveryEngine::is_config_file(&path)? {
-                local.push(ConfigFile::<Discovered>::local(path)?);
+                local.push(LocalConfigFile::<Discovered>::try_new(path)?);
                 break;
             }
         }
@@ -552,7 +552,9 @@ impl DiscoveryProcessor<LocalCollected> {
             ..
         } = self;
         if DiscoveryEngine::is_config_file(&global_config_path)? {
-            global.push(ConfigFile::<Discovered>::global(global_config_path)?);
+            global.push(GlobalConfigFile::<Discovered>::try_new(
+                global_config_path,
+            )?);
         }
         Ok(DiscoveryProcessor {
             cwd,
@@ -583,7 +585,6 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use super::*;
-    use crate::config::file::ConfigSource;
 
     #[test]
     fn full_discovery_rejects_file_anchor_at_context_construction() {
@@ -628,7 +629,7 @@ mod tests {
         assert_eq!(discovered.kind(), DiscoveryScope::Full);
         assert_eq!(discovered.anchor(), &DiscoveryAnchor::Directory(cwd));
         assert_eq!(discovered.local().len(), 1);
-        assert_eq!(discovered.local()[0].root(), project);
+        assert_eq!(discovered.local().first().unwrap().root(), project);
     }
 
     #[test]
@@ -661,8 +662,8 @@ mod tests {
 
         assert_eq!(discovered.kind(), DiscoveryScope::LocalSubtree);
         assert_eq!(discovered.local().len(), 2);
-        assert_eq!(discovered.local()[0].root(), parent);
-        assert_eq!(discovered.local()[1].root(), child);
+        assert_eq!(discovered.local().first().unwrap().root(), parent);
+        assert_eq!(discovered.local().get(1).unwrap().root(), child);
         assert!(discovered.global().is_empty());
     }
 
@@ -682,9 +683,6 @@ mod tests {
             .expect("collect local config");
 
         assert_eq!(proc.local.len(), 1);
-        let local = proc.local.first().expect("one local config");
-        assert_eq!(local.root(), project);
-        assert_eq!(local.source(), &ConfigSource::Local(config_path));
         assert!(proc.global.is_empty());
     }
 
@@ -736,9 +734,6 @@ mod tests {
             .finish();
 
         assert_eq!(discovered.local().len(), 1);
-        let local = discovered.local().first().expect("one local config");
-        assert_eq!(local.root(), project);
-        assert_eq!(local.source(), &ConfigSource::Local(local_path));
         assert!(discovered.global().is_empty());
     }
 

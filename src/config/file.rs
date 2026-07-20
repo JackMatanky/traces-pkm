@@ -15,14 +15,13 @@ use super::{
     },
 };
 
-/// Origin of a discovered config file.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) enum ConfigSource {
-    /// Discovered at a local `.traces/config.toml`.
-    Local(PathBuf),
-    /// Discovered at the user's global config file.
-    Global(PathBuf),
-}
+/// Source marker for a local project config file.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub(crate) struct IsLocal;
+
+/// Source marker for a global user config file.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub(crate) struct IsGlobal;
 
 /// A config file discovered on disk, before tracking or trust checks.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -42,15 +41,22 @@ pub(super) struct Parsed {
     raw: RawConfig,
 }
 
-/// Config file with lifecycle state encoded in its type.
+/// A local project config file.
+pub(crate) type LocalConfigFile<State> = ConfigFile<IsLocal, State>;
+
+/// A global user config file.
+pub(crate) type GlobalConfigFile<State> = ConfigFile<IsGlobal, State>;
+
+/// Config file with lifecycle state and source encoded in its type.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct ConfigFile<State> {
+pub(crate) struct ConfigFile<Source, State> {
     root: PathBuf,
-    source: ConfigSource,
+    path: PathBuf,
     state: State,
+    _marker: std::marker::PhantomData<Source>,
 }
 
-impl<State> ConfigFile<State> {
+impl<Source, State> ConfigFile<Source, State> {
     /// The config root.
     #[inline]
     #[must_use]
@@ -62,29 +68,20 @@ impl<State> ConfigFile<State> {
     #[inline]
     #[must_use]
     pub(crate) fn path(&self) -> &Path {
-        match &self.source {
-            ConfigSource::Local(path) | ConfigSource::Global(path) => path,
-        }
+        &self.path
     }
 
-    /// The config source.
-    #[inline]
-    #[must_use]
-    #[cfg(test)]
-    pub(super) fn source(&self) -> &ConfigSource {
-        &self.source
-    }
-
-    fn new(root: PathBuf, source: ConfigSource, state: State) -> Self {
+    fn new(root: PathBuf, path: PathBuf, state: State) -> Self {
         Self {
             root,
-            source,
+            path,
             state,
+            _marker: std::marker::PhantomData,
         }
     }
 }
 
-impl ConfigFile<Discovered> {
+impl LocalConfigFile<Discovered> {
     /// Creates a discovered local config file from `.traces/config.toml`.
     ///
     /// # Errors
@@ -92,7 +89,7 @@ impl ConfigFile<Discovered> {
     /// Returns [`ConfigFileError::UnsupportedLocalConfigFile`] when `path` is
     /// not shaped like a local `.traces/config.toml` path.
     #[inline]
-    pub(crate) fn local(path: PathBuf) -> Result<Self, ConfigFileError> {
+    pub(crate) fn try_new(path: PathBuf) -> Result<Self, ConfigFileError> {
         let Some(traces_dir) = path.parent() else {
             return Err(ConfigFileError::UnsupportedLocalConfigFile {
                 path,
@@ -110,9 +107,11 @@ impl ConfigFile<Discovered> {
                 path,
             });
         };
-        Ok(Self::new(root.to_path_buf(), ConfigSource::Local(path), Discovered))
+        Ok(Self::new(root.to_path_buf(), path, Discovered))
     }
+}
 
+impl GlobalConfigFile<Discovered> {
     /// Creates a discovered global config file from a `config.toml` path.
     ///
     /// # Errors
@@ -120,7 +119,7 @@ impl ConfigFile<Discovered> {
     /// Returns [`ConfigFileError::UnsupportedGlobalConfigFile`] when `path` has
     /// no parent directory or is not named `config.toml`.
     #[inline]
-    pub(super) fn global(path: PathBuf) -> Result<Self, ConfigFileError> {
+    pub(super) fn try_new(path: PathBuf) -> Result<Self, ConfigFileError> {
         if path.file_name() != Some("config.toml".as_ref()) {
             return Err(ConfigFileError::UnsupportedGlobalConfigFile {
                 path,
@@ -131,51 +130,46 @@ impl ConfigFile<Discovered> {
                 path,
             });
         };
-        Ok(Self::new(
-            root.to_path_buf(),
-            ConfigSource::Global(path),
-            Discovered,
-        ))
+        Ok(Self::new(root.to_path_buf(), path, Discovered))
     }
 }
 
-impl TryFrom<(ConfigFile<Discovered>, &ConfigStateStore)>
-    for ConfigFile<Tracked>
+impl TryFrom<(LocalConfigFile<Discovered>, &ConfigStateStore)>
+    for LocalConfigFile<Tracked>
 {
     type Error = ConfigFileError;
 
     #[inline]
     fn try_from(
-        (file, state): (ConfigFile<Discovered>, &ConfigStateStore),
+        (file, state): (LocalConfigFile<Discovered>, &ConfigStateStore),
     ) -> Result<Self, Self::Error> {
-        if !matches!(file.source, ConfigSource::Local(_)) {
-            return Err(ConfigFileError::GlobalConfigCannotBeTracked {
-                path: file.path().to_path_buf(),
-            });
-        }
         state.track_seen_config(&file);
         Ok(Self {
             root: file.root,
-            source: file.source,
+            path: file.path,
             state: Tracked,
+            _marker: std::marker::PhantomData,
         })
     }
 }
 
-impl TryFrom<(ConfigFile<Tracked>, &ConfigStateStore)> for ConfigFile<Trusted> {
+impl TryFrom<(LocalConfigFile<Tracked>, &ConfigStateStore)>
+    for LocalConfigFile<Trusted>
+{
     type Error = ConfigFileError;
 
     #[inline]
     fn try_from(
-        (file, state): (ConfigFile<Tracked>, &ConfigStateStore),
+        (file, state): (LocalConfigFile<Tracked>, &ConfigStateStore),
     ) -> Result<Self, Self::Error> {
         let root = file.root().to_path_buf();
         let subject = TrustSubject::tracked(&file);
         match state.config_trust_status(&subject) {
             Ok(ConfigTrustStatus::Trusted) => Ok(Self {
                 root: file.root,
-                source: file.source,
+                path: file.path,
                 state: Trusted,
+                _marker: std::marker::PhantomData,
             }),
             Ok(ConfigTrustStatus::Untrusted) => {
                 Err(ConfigFileTrustError::RootNotTrusted {
@@ -197,50 +191,43 @@ impl TryFrom<(ConfigFile<Tracked>, &ConfigStateStore)> for ConfigFile<Trusted> {
         }
     }
 }
-
-impl TryFrom<ConfigFile<Trusted>> for ConfigFile<Parsed> {
+impl TryFrom<LocalConfigFile<Trusted>> for LocalConfigFile<Parsed> {
     type Error = ConfigFileError;
 
     #[inline]
-    fn try_from(file: ConfigFile<Trusted>) -> Result<Self, Self::Error> {
-        debug_assert!(
-            matches!(file.source, ConfigSource::Local(_)),
-            "only local configs reach the Trusted state (the tracking/trust \
-             pipeline rejects global sources)"
-        );
+    fn try_from(file: LocalConfigFile<Trusted>) -> Result<Self, Self::Error> {
         let raw = read_raw_config(file.path())?;
         Ok(Self {
             root: file.root,
-            source: file.source,
+            path: file.path,
             state: Parsed {
                 raw,
             },
+            _marker: std::marker::PhantomData,
         })
     }
 }
 
-impl TryFrom<ConfigFile<Discovered>> for ConfigFile<Parsed> {
+impl TryFrom<GlobalConfigFile<Discovered>> for GlobalConfigFile<Parsed> {
     type Error = ConfigFileError;
 
     #[inline]
-    fn try_from(file: ConfigFile<Discovered>) -> Result<Self, Self::Error> {
-        if matches!(file.source, ConfigSource::Local(_)) {
-            return Err(ConfigFileError::LocalConfigRequiresTrust {
-                path: file.path().to_path_buf(),
-            });
-        }
+    fn try_from(
+        file: GlobalConfigFile<Discovered>,
+    ) -> Result<Self, Self::Error> {
         let raw = read_raw_config(file.path())?;
         Ok(Self {
             root: file.root,
-            source: file.source,
+            path: file.path,
             state: Parsed {
                 raw,
             },
+            _marker: std::marker::PhantomData,
         })
     }
 }
 
-impl ConfigFile<Parsed> {
+impl<Source> ConfigFile<Source, Parsed> {
     /// Parsed raw config data.
     #[inline]
     #[must_use]
@@ -287,18 +274,6 @@ pub(crate) enum ConfigFileError {
     #[error("unsupported global config file {path}")]
     UnsupportedGlobalConfigFile {
         /// Unsupported path.
-        path: PathBuf,
-    },
-    /// Global config files cannot enter the tracking and trust lifecycle.
-    #[error("global config file {path} does not need tracking or trust")]
-    GlobalConfigCannotBeTracked {
-        /// Global config path.
-        path: PathBuf,
-    },
-    /// Local config files must be tracked and trusted before parsing.
-    #[error("local config file {path} cannot bypass tracking and trust")]
-    LocalConfigRequiresTrust {
-        /// Local config path.
         path: PathBuf,
     },
     /// Config file parsing failed.
@@ -361,19 +336,18 @@ mod tests {
         let root = PathBuf::from("/project");
         let path = root.join(".traces/config.toml");
 
-        let config = ConfigFile::<Discovered>::local(path.clone())
+        let config = LocalConfigFile::<Discovered>::try_new(path.clone())
             .expect("valid local config path");
 
         assert_eq!(config.root(), root.as_path());
         assert_eq!(config.path(), path.as_path());
-        assert!(matches!(config.source(), ConfigSource::Local(_)));
     }
 
     #[test]
     fn local_constructor_rejects_non_traces_config_path() {
         let path = Path::new("/project/config.toml");
 
-        let error = ConfigFile::<Discovered>::local(path.to_path_buf())
+        let error = LocalConfigFile::<Discovered>::try_new(path.to_path_buf())
             .expect_err("invalid local config path");
 
         assert!(matches!(
@@ -387,36 +361,11 @@ mod tests {
         let root = PathBuf::from("/config/traces");
         let path = root.join("config.toml");
 
-        let config = ConfigFile::<Discovered>::global(path.clone())
+        let config = GlobalConfigFile::<Discovered>::try_new(path.clone())
             .expect("valid global config path");
 
         assert_eq!(config.root(), root.as_path());
         assert_eq!(config.path(), path.as_path());
-        assert!(matches!(config.source(), ConfigSource::Global(_)));
-    }
-
-    #[test]
-    fn local_config_cannot_bypass_trust_when_parsing() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let path = temp.path().join("project/.traces/config.toml");
-        std::fs::create_dir_all(path.parent().expect("config parent"))
-            .expect("create config parent");
-        std::fs::write(
-            &path,
-            "[templates]
-",
-        )
-        .expect("write config");
-        let config =
-            ConfigFile::<Discovered>::local(path).expect("local config");
-
-        let error = ConfigFile::<Parsed>::try_from(config)
-            .expect_err("local config cannot bypass trust");
-
-        assert!(matches!(
-            error,
-            ConfigFileError::LocalConfigRequiresTrust { .. }
-        ));
     }
 
     #[test]
@@ -433,19 +382,20 @@ output_dir = \"notes\"",
         )
         .expect("write config");
         let discovered =
-            ConfigFile::<Discovered>::local(path).expect("local config");
+            LocalConfigFile::<Discovered>::try_new(path).expect("local config");
         let state = ConfigStateStore::at(
             temp.path().join("tracked-store"),
             temp.path().join("trust-store"),
         );
-        let tracked = ConfigFile::<Tracked>::try_from((discovered, &state))
-            .expect("track local config");
+        let tracked =
+            LocalConfigFile::<Tracked>::try_from((discovered, &state))
+                .expect("track local config");
         state
             .grant_trust(&TrustSubject::tracked(&tracked))
             .expect("trust config");
-        let trusted = ConfigFile::<Trusted>::try_from((tracked, &state))
+        let trusted = LocalConfigFile::<Trusted>::try_from((tracked, &state))
             .expect("trusted config");
-        let config = ConfigFile::<Parsed>::try_from(trusted)
+        let config = LocalConfigFile::<Parsed>::try_from(trusted)
             .expect("parse trusted config");
 
         assert_eq!(config.root(), root.as_path());
@@ -468,9 +418,9 @@ directory = \"templates\"",
         )
         .expect("write config");
 
-        let discovered =
-            ConfigFile::<Discovered>::global(path).expect("global config");
-        let config = ConfigFile::<Parsed>::try_from(discovered)
+        let discovered = GlobalConfigFile::<Discovered>::try_new(path)
+            .expect("global config");
+        let config = GlobalConfigFile::<Parsed>::try_from(discovered)
             .expect("parse global config");
 
         assert_eq!(

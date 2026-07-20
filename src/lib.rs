@@ -4,11 +4,11 @@ mod config;
 mod cwd;
 mod dialog;
 mod dirs;
+mod file_store;
 mod hash;
 mod template;
 
 pub mod cli;
-pub(crate) mod file_store;
 
 pub(crate) use cwd::Cwd;
 #[cfg(test)]

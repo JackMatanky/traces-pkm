@@ -13,8 +13,8 @@ use super::{
     discovery::{DiscoveryOutcome, DiscoveryScope},
     domain::{Config, TemplateConfig},
     file::{
-        ConfigFile, ConfigFileError, Discovered as FileDiscovered, Parsed,
-        Tracked, Trusted,
+        ConfigFileError, Discovered as FileDiscovered, GlobalConfigFile,
+        LocalConfigFile, Parsed, Tracked, Trusted,
     },
     store::ConfigStateStore,
 };
@@ -61,9 +61,9 @@ pub(crate) enum ConfigBuilderInputError {
 #[derive(Debug)]
 pub(super) struct ConfigBuilderInput {
     /// Selected local config; this is merged after `global`.
-    local: ConfigFile<FileDiscovered>,
+    local: LocalConfigFile<FileDiscovered>,
     /// Optional global config; this is merged before `local`.
-    global: Option<ConfigFile<FileDiscovered>>,
+    global: Option<GlobalConfigFile<FileDiscovered>>,
 }
 
 impl TryFrom<DiscoveryOutcome> for ConfigBuilderInput {
@@ -114,8 +114,8 @@ pub(super) struct Discovered {
 
 /// Local config has been tracked and checked against trust.
 pub(super) struct LocalStored {
-    local: ConfigFile<Trusted>,
-    global: Option<ConfigFile<FileDiscovered>>,
+    local: LocalConfigFile<Trusted>,
+    global: Option<GlobalConfigFile<FileDiscovered>>,
 }
 
 /// Config files have been read and merged into a [`Config`].
@@ -146,10 +146,12 @@ impl ConfigBuilder<Discovered> {
         self,
         state: &ConfigStateStore,
     ) -> Result<ConfigBuilder<LocalStored>, ConfigBuilderError> {
-        let tracked_local =
-            ConfigFile::<Tracked>::try_from((self.state.input.local, state))?;
+        let tracked_local = LocalConfigFile::<Tracked>::try_from((
+            self.state.input.local,
+            state,
+        ))?;
         let trusted_local =
-            ConfigFile::<Trusted>::try_from((tracked_local, state))?;
+            LocalConfigFile::<Trusted>::try_from((tracked_local, state))?;
         Ok(ConfigBuilder {
             state: LocalStored {
                 local: trusted_local,
@@ -175,12 +177,13 @@ impl ConfigBuilder<LocalStored> {
         let mut global_dir = None;
 
         if let Some(global) = self.state.global {
-            let parsed = ConfigFile::<Parsed>::try_from(global)?;
+            let parsed = GlobalConfigFile::<Parsed>::try_from(global)?;
             global_dir = parsed.resolved_template_dir();
             figment = figment.merge(Serialized::defaults(parsed.raw()));
         }
 
-        let parsed_local = ConfigFile::<Parsed>::try_from(self.state.local)?;
+        let parsed_local =
+            LocalConfigFile::<Parsed>::try_from(self.state.local)?;
         let local_dir = parsed_local.resolved_template_dir();
         figment = figment.merge(Serialized::defaults(parsed_local.raw()));
 
@@ -391,18 +394,20 @@ mod tests {
         fs::write(path, contents).expect("write config");
     }
 
-    fn discovered_local(root: &Path) -> ConfigFile<FileDiscovered> {
-        ConfigFile::<FileDiscovered>::local(root.join(".traces/config.toml"))
-            .expect("valid local config")
+    fn discovered_local(root: &Path) -> LocalConfigFile<FileDiscovered> {
+        LocalConfigFile::<FileDiscovered>::try_new(
+            root.join(".traces/config.toml"),
+        )
+        .expect("valid local config")
     }
 
-    fn discovered_global(root: &Path) -> ConfigFile<FileDiscovered> {
-        ConfigFile::<FileDiscovered>::global(root.join("config.toml"))
+    fn discovered_global(root: &Path) -> GlobalConfigFile<FileDiscovered> {
+        GlobalConfigFile::<FileDiscovered>::try_new(root.join("config.toml"))
             .expect("valid global config")
     }
 
     fn trust_local(
-        local: &ConfigFile<FileDiscovered>,
+        local: &LocalConfigFile<FileDiscovered>,
         state: &ConfigStateStore,
     ) {
         state

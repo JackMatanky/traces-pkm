@@ -377,7 +377,7 @@ mod tests {
             let config_file = create_config(&root);
             let service = service(temp.path());
 
-            trust_args(Some(config_file.to_path_buf()))
+            trust_args(Some(config_file.clone()))
                 .run(&service)
                 .expect("trust config file");
 
@@ -393,7 +393,7 @@ mod tests {
             fs::create_dir_all(&root).expect("create project dir");
             let service = service(temp.path());
 
-            trust_args(Some(root.to_path_buf()))
+            trust_args(Some(root.clone()))
                 .run(&service)
                 .expect("trust directory");
 
@@ -430,10 +430,8 @@ mod tests {
             fs::create_dir_all(&root).expect("create project dir");
             create_config(&root);
             let service = service(temp.path());
-            trust_args(Some(root.to_path_buf()))
-                .run(&service)
-                .expect("trust root");
-            let mut args = trust_args(Some(root.to_path_buf()));
+            trust_args(Some(root.clone())).run(&service).expect("trust root");
+            let mut args = trust_args(Some(root.clone()));
             args.untrust = true;
 
             args.run(&service).expect("untrust root");
@@ -480,9 +478,7 @@ mod tests {
             fs::create_dir_all(&root).expect("create project dir");
             create_config(&root);
             let service = service(temp.path());
-            trust_args(Some(root.to_path_buf()))
-                .run(&service)
-                .expect("trust root");
+            trust_args(Some(root.clone())).run(&service).expect("trust root");
             fs::remove_dir_all(&root).expect("delete project dir");
 
             action_args(TrustAction::Clean)

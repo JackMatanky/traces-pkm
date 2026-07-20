@@ -269,11 +269,10 @@ impl Default for ConfigService {
 mod tests {
     use std::fs;
 
-    use pretty_assertions::assert_eq;
-
     use super::*;
     use crate::config::file::{
-        ConfigFile, ConfigFileError, ConfigFileTrustError, Discovered,
+        ConfigFileError, ConfigFileTrustError, Discovered, 
+        LocalConfigFile,
     };
 
     #[test]
@@ -509,7 +508,7 @@ mod tests {
         fs::create_dir_all(config_path.parent().expect("config path parent"))
             .expect("create config parent");
         fs::write(&config_path, "").expect("write config");
-        let local = ConfigFile::<Discovered>::local(config_path.clone())
+        let local = LocalConfigFile::<Discovered>::try_new(config_path.clone())
             .expect("valid local config");
         let candidates = DiscoveryOutcome::new(
             DiscoveryAnchor::Directory(cwd.clone()),
@@ -519,8 +518,8 @@ mod tests {
         (cwd, config_path, candidates)
     }
 
-    fn discovered_config(config_path: &Path) -> ConfigFile<Discovered> {
-        ConfigFile::<Discovered>::local(config_path.to_path_buf())
+    fn discovered_config(config_path: &Path) -> LocalConfigFile<Discovered> {
+        LocalConfigFile::<Discovered>::try_new(config_path.to_path_buf())
             .expect("valid local config")
     }
 

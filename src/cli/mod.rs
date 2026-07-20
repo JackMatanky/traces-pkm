@@ -146,7 +146,7 @@ mod tests {
 
         assert!(matches!(
             &cli.command,
-            Some(Commands::Template(args)) if args.name == PathBuf::from("daily")
+            Some(Commands::Template(args)) if args.name.to_str() == Some("daily")
         ));
     }
 
@@ -157,7 +157,7 @@ mod tests {
 
         assert!(matches!(
             &cli.command,
-            Some(Commands::Template(args)) if args.name == PathBuf::from("daily")
+            Some(Commands::Template(args)) if args.name.to_str() == Some("daily")
         ));
     }
 
@@ -185,7 +185,9 @@ mod tests {
         use super::*;
         use crate::{
             CwdGuard,
-            config::{ConfigFile, ConfigService, Discovered, TrustSubject},
+            config::{
+                ConfigService, TrustSubject,
+            },
             dialog::PresetDialogProvider,
         };
 
@@ -220,8 +222,10 @@ mod tests {
                 "{% for n in [1, 2, 3] %}{{ n }}{% endfor %}",
             )
             .expect("write template");
-            let config = ConfigFile::<Discovered>::local(
-                project.join(".traces/config.toml"),
+            let config = crate::config::LocalConfigFile::<
+                crate::config::Discovered,
+            >::try_new(
+                project.join(".traces/config.toml")
             )
             .expect("valid local config");
             service

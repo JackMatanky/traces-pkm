@@ -64,7 +64,7 @@ impl Display for Blake3FileHash {
 /// The BLAKE3 hex hash of a path string (not its contents).
 ///
 /// Used as a hash-keyed store filename (see
-/// [`crate::file_store::FileStateStore`]). Callers that need canonical keys
+/// [`crate::FileStateStore`]). Callers that need canonical keys
 /// must canonicalize before constructing this value.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct Blake3PathHash(String);

@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use thiserror::Error;
 
-use super::file::{ConfigFile, Discovered, Tracked};
+use super::file::{Discovered, LocalConfigFile, Tracked};
 use crate::{
     Blake3FileHash, FileStateStore, FileStateStoreError, FileStoreCleanMode,
     dirs, hash::HashError,
@@ -76,7 +76,7 @@ impl TrustSubject {
     /// Trust a discovered local config and bind it to its current content hash.
     #[inline]
     #[must_use]
-    pub(crate) fn discovered(file: &ConfigFile<Discovered>) -> Self {
+    pub(crate) fn discovered(file: &LocalConfigFile<Discovered>) -> Self {
         Self {
             kind: TrustSubjectKind::Config,
             path: file.path().to_path_buf(),
@@ -86,7 +86,7 @@ impl TrustSubject {
     /// Trust a tracked local config and bind it to its current content hash.
     #[inline]
     #[must_use]
-    pub(crate) fn tracked(file: &ConfigFile<Tracked>) -> Self {
+    pub(crate) fn tracked(file: &LocalConfigFile<Tracked>) -> Self {
         Self {
             kind: TrustSubjectKind::Config,
             path: file.path().to_path_buf(),
@@ -183,7 +183,10 @@ impl ConfigStateStore {
     /// Best-effort: tracking is bookkeeping, so write failures warn and do not
     /// fail config loading.
     #[inline]
-    pub(crate) fn track_seen_config(&self, config: &ConfigFile<Discovered>) {
+    pub(crate) fn track_seen_config(
+        &self,
+        config: &LocalConfigFile<Discovered>,
+    ) {
         if let Err(error) = self.tracked.record(config.path()) {
             tracing::warn!(
                 path = %config.path().display(),
@@ -350,7 +353,7 @@ mod tests {
             .expect("create config parent");
         fs::write(&path, "[templates]\noutput_dir = \"notes\"")
             .expect("write config");
-        let file = ConfigFile::<Discovered>::local(path.clone())
+        let file = LocalConfigFile::<Discovered>::try_new(path.clone())
             .expect("local config");
         let state = ConfigStateStore::at(
             temp.path().join("tracked"),
