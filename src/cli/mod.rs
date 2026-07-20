@@ -161,7 +161,7 @@ mod tests {
         use super::*;
         use crate::{
             CwdGuard,
-            config::{ConfigService, TrustTarget},
+            config::{ConfigFile, ConfigService, Discovered, TrustSubject},
             dialog::PresetDialogProvider,
         };
 
@@ -196,11 +196,12 @@ mod tests {
                 "{% for n in [1, 2, 3] %}{{ n }}{% endfor %}",
             )
             .expect("write template");
+            let config = ConfigFile::<Discovered>::local(
+                project.join(".traces/config.toml"),
+            )
+            .expect("valid local config");
             service
-                .trust(TrustTarget::ConfigFile {
-                    root: &project,
-                    config_file: &project.join(".traces/config.toml"),
-                })
+                .trust(&TrustSubject::discovered(&config))
                 .expect("trust project root");
             let _guard = CwdGuard::enter(&project);
 

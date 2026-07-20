@@ -11,7 +11,7 @@
 
 ## Research Findings
 - Implemented state: `src/config/file.rs` owns `ConfigFile<State>`, `ConfigSource`, and source-specific `local`/`global` constructors.
-- Implemented state: `src/config/discovery.rs` owns `DiscoveryContext`, `DiscoveryType`, `DiscoveryAnchor`, ZST `DiscoveryEngine`, `DiscoveryOutcome`, and full/nearest-local/local-subtree discovery.
+- Implemented state: `src/config/discovery.rs` owns `DiscoveryContext`, `DiscoveryScope`, `DiscoveryAnchor`, ZST `DiscoveryEngine`, `DiscoveryOutcome`, and full/nearest-local/local-subtree discovery.
 - Implemented state: `src/config/builder.rs` consumes `ConfigBuilderInput` and builds through aggregate states `Discovered -> LocalStored -> Merged`.
 - Implemented state: `src/config/service.rs` exposes `load(cwd)` and routes trust-target discovery through discovery, while `src/config/trust.rs` keeps trust-store recording/checking only.
 - Rust typestate guidance applies when invalid transitions should become compile errors; enum-state guidance applies when a value is one of mutually exclusive runtime states.
@@ -63,7 +63,7 @@
 | Let `ConfigService::load(cwd)` call discovery processing directly | User noted load can simply call a `process()` method that runs `DiscoveryProcessor`; this keeps full discovery hidden behind discovery components rather than decomposing load into nearest-local calls. |
 | Use `DiscoveryContext` as discovery method input | User challenged passing raw anchors to focused discovery methods; context should be the input shape for each discovery operation. |
 | Use unified `DiscoveryOutcome` for all discovery kinds | User observed `DiscoveryOutcome` can represent `Full`, `NearestLocal`, and `LocalSubtree` by varying local/global cardinality, avoiding a separate `DiscoveryOutput` enum. |
-| Store discovery kind and anchor in `DiscoveryOutcome`, not full context | User decided only `DiscoveryType`, `DiscoveryAnchor`, local files, and global files remain relevant after discovery; `DiscoveryContext` may expose `into_parts()`/`into_parts_ref()`. |
+| Store discovery kind and anchor in `DiscoveryOutcome`, not full context | User decided only `DiscoveryScope`, `DiscoveryAnchor`, local files, and global files remain relevant after discovery; `DiscoveryContext` may expose `into_parts()`/`into_parts_ref()`. |
 | Define explicit precedence for multiple local configs in full discovery | User noted full discovery can theoretically find more than one local config, so merge precedence must be clear. |
 | Resolve select-effective versus merge-all policy | User decided full config loading should pass only nearest local plus optional global to the builder, not all discovered local configs. |
 | Avoid the name `EffectiveConfigFiles` | User wants a better name, or possibly just a method on `DiscoveryOutcome`, for selecting the files used by config loading. |
@@ -79,7 +79,7 @@
 - `ConfigFile<Discovered>` replaces `CandidateConfigFile`; source-specific constructors derive root from path and prevent root/source mismatch.
 - `ConfigFile` lifecycle is per-file: discovered, tracked, trusted, parsed; global configs can bypass local tracking/trust transitions.
 - `DiscoveryEngine` is a ZST collaborator owned by `ConfigService` for now. It receives `DiscoveryContext` per call and exposes `process(ctx)` as the main discovery method.
-- `DiscoveryContext` has private fields and smart constructors. It uses `DiscoveryType::{Full, NearestLocal, LocalSubtree}` and `DiscoveryAnchor::{Directory, File}`.
+- `DiscoveryContext` has private fields and smart constructors. It uses `DiscoveryScope::{Full, NearestLocal, LocalSubtree}` and `DiscoveryAnchor::{Directory, File}`.
 - `DiscoveryOutcome` stores `kind`, `anchor`, `local: Box<[ConfigFile<Discovered>]>`, and `global: Box<[ConfigFile<Discovered>]>`.
 - Full config loading selects nearest local plus optional global; it does not merge every discovered local config.
 - `ConfigBuilderInput` is parsed from `DiscoveryOutcome` with `TryFrom`, codifying selection/precedence before reaching the builder.
@@ -136,7 +136,7 @@
 4. Builder input: keep the decided owned shape `ConfigBuilderInput { local: ConfigFile<Discovered>, global: Option<ConfigFile<Discovered>> }`; do not add `DiscoveryAnchor` unless a real builder use appears.
 5. Discovery engine: keep the ZST `DiscoveryEngine` as the discovery orchestration module object; do not add a trait or extra abstraction.
 6. Discovery kind name: use `LocalSubtree`.
-7. Builder input errors: keep `LocalConfigAbsent` in `DiscoveryError`; use `ConfigBuilderInputError` only for wrong-kind or impossible-output invariants, preferably named `WrongDiscoveryKindForBuild { actual: DiscoveryType }` rather than generic `UnsupportedDiscoveryKind`.
+7. Builder input errors: keep `LocalConfigAbsent` in `DiscoveryError`; use `ConfigBuilderInputError` only for wrong-kind or impossible-output invariants, preferably named `WrongDiscoveryKindForBuild { actual: DiscoveryScope }` rather than generic `UnsupportedDiscoveryKind`.
 
 ## Rejected Alternatives
 - `CandidateConfigFile` as a separate candidate type: redundant once `ConfigFile<Discovered>` owns path/source/root invariants.
@@ -150,7 +150,7 @@
 
 ## Implementation Order
 1. Introduce `ConfigFile<State>` lifecycle markers and source-specific validating constructors while keeping `CandidateConfigFile` temporarily.
-2. Add `DiscoveryContext`, `DiscoveryType`, `DiscoveryAnchor`, `ConfigFileError`, and updated `DiscoveryError` variants.
+2. Add `DiscoveryContext`, `DiscoveryScope`, `DiscoveryAnchor`, `ConfigFileError`, and updated `DiscoveryError` variants.
 3. Add `DiscoveryEngine::process(ctx)` returning `DiscoveryOutcome`, with private helpers for `Full`, `NearestLocal`, and `LocalSubtree`.
 4. Migrate `DiscoveryOutcome` to store `ConfigFile<Discovered>` and remove `CandidateConfigFile` only after all consumers are migrated.
 5. Add `ConfigBuilderInput` and `TryFrom<DiscoveryOutcome>`, including the nearest-local-plus-optional-global precedence policy.
@@ -164,7 +164,7 @@
 - Worktree: `/Users/jack/Documents/41_personal/traces-pkm/.worktrees/config-typestate`.
 - `CandidateConfigFile` and `src/config/candidate.rs` were removed after all discovery/builder/trust consumers migrated to `ConfigFile<Discovered>`.
 - Correction pass completed the file lifecycle through conversions: discovered locals become tracked through `From<(ConfigFile<Discovered>, &ConfigTracker)>`, tracked locals become trusted through `TryFrom<(ConfigFile<Tracked>, &ConfigTrust)>`, trusted locals parse through `TryFrom<ConfigFile<Trusted>>`, and discovered globals parse through `TryFrom<ConfigFile<Discovered>>`.
-- `ConfigBuilder<ConfigBuilderInput>` now uses the validated builder input itself as the initial builder state, then transitions to `LocalStored -> Merged`.
+- `ConfigBuilder<Discovered>` now owns the initial aggregate state; `ConfigBuilderInput` remains the validated constructor input parsed from full discovery output.
 - `DiscoveryContext::new(kind, anchor)` validates kind/anchor combinations; full discovery rejects file anchors before `DiscoveryEngine::process()`.
 - `DiscoveryOutcome` now stores `kind`, `anchor`, `local`, and `global`; the redundant `cwd` field/accessor was removed.
 - `ConfigBuilderInput::try_from(DiscoveryOutcome)` now contains the full-load nearest-local precedence policy inline before `ConfigBuilder::new`; there is no separate `select_nearest_local` helper.
@@ -185,6 +185,40 @@
   - `MISE_EXPERIMENTAL=1 mise run clippy`: passed.
   - `MISE_EXPERIMENTAL=1 mise run ci`: passed with non-failing existing `cargo deny` duplicate/unmatched-license warnings.
   - GitNexus `detect_changes(scope=all, worktree=.worktrees/config-typestate)`: low risk, 9 changed files, no indexed symbol/process impact.
+
+## Config Organization Follow-up — 2026-07-19
+- Applied the organization pass requested after reviewing `rust_best_practices_canonical/08_ordering_discipline.md`.
+- Intentionally skipped `src/config/domain.rs` and `src/config/mod.rs` per user instruction.
+- Reordered `src/config/file.rs` so the reader sees `ConfigSource`, lifecycle marker states, `ConfigFile<State>`, state-agnostic accessors, state-specific constructors/conversions, parse helper, lifecycle errors, then tests; this keeps the core type adjacent to its impl blocks.
+- Reordered `src/config/builder.rs` so aggregate states live before the `ConfigBuilder` impls and the selected-local precedence docs stay on `ConfigBuilderInput`.
+- Reordered `src/config/raw.rs`, `dirs.rs`, `store.rs`, `tracker.rs`, `trust.rs`, `service.rs`, and discovery tests for top-down API-tour readability without changing behavior.
+- Verified:
+  - `MISE_EXPERIMENTAL=1 mise run fmt`: passed.
+  - `cargo test config::`: 88 passed.
+  - `MISE_EXPERIMENTAL=1 mise run clippy`: passed.
+  - `MISE_EXPERIMENTAL=1 mise run ci`: 158 passed with existing non-failing `cargo deny` duplicate/unmatched-license warnings.
+  - GitNexus `detect_changes(scope=all, worktree=.worktrees/config-typestate)`: low risk, 9 changed files, no indexed symbol/process impact.
+
+## User Correction Follow-up — 2026-07-19
+- Accepted the critique that config-file error enums should not separate `ConfigFile<State>` from its core impl blocks; moved the error enums below the lifecycle impls and private parse helper.
+- Replaced the accidental `impl ConfigBuilder<ConfigBuilderInput>` shape with `impl ConfigBuilder<Discovered>`; `ConfigBuilderInput` is now only the parsed/validated constructor input.
+- Corrected trust routing after user pointed out `TrustInput::Directory` must be reachable from `traces trust PATH` when no `.traces/config.toml` exists.
+- Removed `ResolvedTrustTarget`/`ResolvedTrustInput`; owned intermediate target data was unnecessary once resolution stopped returning a `Vec`.
+- Renamed the trust operation enum from `TrustTarget` to `TrustInput`, rejecting `TrustTargetType` because the enum carries borrowed data rather than merely classifying a target kind.
+- Replaced `resolve_trust_targets(...) -> Vec<_>` with `visit_trust_inputs(...)`, which borrows the bare directory or discovered config files only while invoking the CLI visitor.
+- Removed the duplicate trust-target resolver from `ConfigService`; `ConfigService` now only exposes store-backed trust operations.
+- Deferred `src/config/discovery.rs` -> `src/config/discovery/`. The file is large enough to consider, but a directory split now would be churn without a second cohesive discovery file.
+- Errors encountered:
+  - `cargo test config:: cli::trust::` is invalid because Cargo accepts one test filter; reran as `cargo test config:: && cargo test cli::trust::`.
+  - Moving `start` into `DiscoveryAnchor::File(start)` produced E0382 when the no-config fallback needed the original path; cloned the small `PathBuf` into the anchor.
+  - GitNexus impact and LSP could not resolve the renamed trust symbols; used grep/read callsite inspection and final GitNexus `detect_changes`.
+- Verified:
+  - `MISE_EXPERIMENTAL=1 mise run fmt`: passed.
+  - `cargo test config::`: 88 passed.
+  - `cargo test cli::trust::`: 17 passed.
+  - `MISE_EXPERIMENTAL=1 mise run clippy`: passed.
+  - `MISE_EXPERIMENTAL=1 mise run ci`: 158 passed, with existing non-failing `cargo deny` duplicate/unmatched-license warnings.
+  - GitNexus `detect_changes(scope=all, worktree=.worktrees/config-typestate)`: low risk, 14 changed files, no indexed symbol/process impact.
 
 
 ## Issues Encountered
@@ -207,3 +241,11 @@
 
 ## Visual/Browser Findings
 - None.
+
+
+## Trust State Store Refactor Findings
+- `FileStateStore` is now the crate-level mechanical store for hash-keyed path state; config-specific tracking/trust meaning moved to `ConfigStateStore`.
+- `Blake3PathHash::new` canonicalizes paths and returns `HashError::Canonicalize` for missing/inaccessible paths, so store callers no longer own canonicalization policy.
+- `TrustSubject` is a constructor-only borrowed view over a workspace root plus optional config file. Discovery produces subjects; state-store methods consume them.
+- Trust traversal reuses `DiscoveryScope::{NearestLocal, LocalSubtree}`; `Full` remains load-only and is rejected for trust target resolution.
+- I/O-bearing lifecycle conversions remain: discovered-to-tracked records best-effort tracking through `ConfigStateStore`, and tracked-to-trusted verifies trust through `ConfigStateStore`.

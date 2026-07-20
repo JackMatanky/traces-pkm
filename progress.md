@@ -29,13 +29,13 @@
 - Actions taken:
   - Added `src/config/file.rs` with `ConfigFile<State>` lifecycle markers and source-specific local/global constructors.
   - Completed the lifecycle transitions through `From`/`TryFrom`: discovered locals become tracked through `TrackConfigFile` plus `ConfigTracker`, tracked locals become trusted through `TrustConfigFile` plus `ConfigTrust`, trusted locals parse into `Parsed`, and discovered globals parse directly while local discovered configs are rejected.
-  - Migrated discovery to `DiscoveryContext::new`, `DiscoveryType::{Full, NearestLocal, LocalSubtree}`, `DiscoveryAnchor`, ZST `DiscoveryEngine`, and unified `DiscoveryOutcome`.
+  - Migrated discovery to `DiscoveryContext::new`, `DiscoveryScope::{Full, NearestLocal, LocalSubtree}`, `DiscoveryAnchor`, ZST `DiscoveryEngine`, and unified `DiscoveryOutcome`.
   - Replaced `CandidateConfigFile` with `ConfigFile<Discovered>` and removed `src/config/candidate.rs`.
   - Removed `DiscoveryOutcome.cwd`; `DiscoveryAnchor` now carries the post-discovery location context.
-  - Added `ConfigBuilderInput`, made it the initial `ConfigBuilder` state, and made its `TryFrom<DiscoveryOutcome>` enforce nearest-local load precedence.
-  - Collapsed builder states to aggregate construction: `ConfigBuilderInput -> LocalStored -> Merged`.
+  - Added `ConfigBuilderInput`, parsed it from `DiscoveryOutcome`, and used it as the constructor input for `ConfigBuilder<Discovered>`.
+  - Collapsed builder states to aggregate construction: `Discovered -> LocalStored -> Merged`.
   - Added `ConfigService::load(cwd)` and made discovery/build helpers private.
-  - Reworked trust target routing so CLI path resolution returns discovered local `ConfigFile` values through `ConfigService::resolve_trust_targets`.
+  - Reworked trust target routing so CLI path resolution returns discovered local `ConfigFile` values through discovery helpers.
   - Removed `ResolvedTrustTarget` and obsolete trust-specific resolver/error code.
   - Moved discovery path helper behavior onto `DiscoveryAnchor::path()` and moved discovery helper functions into `DiscoveryEngine`.
   - Removed the generic `ConfigFile<State>::parse()` method and the lifecycle `transition()` helper; only explicit conversion impls can change lifecycle state.
@@ -119,6 +119,40 @@
   - `MISE_EXPERIMENTAL=1 mise run ci`: passed with existing non-failing `cargo deny` duplicate/unmatched-license warnings.
   - GitNexus `detect_changes(scope=all, worktree=.worktrees/config-typestate)`: low risk, 9 changed files, no indexed symbol/process impact.
 
+### Config Organization Follow-up
+- **Status:** complete
+- Actions taken:
+  - Left `src/config/domain.rs` and `src/config/mod.rs` unchanged per user instruction.
+  - Reordered public-ish declarations, marker states, impl blocks, helpers, and tests across `raw.rs`, `dirs.rs`, `store.rs`, `tracker.rs`, `trust.rs`, `file.rs`, `builder.rs`, `discovery.rs`, and `service.rs`.
+  - Kept behavior unchanged; edits were structural/readability-oriented.
+- Verification:
+  - `MISE_EXPERIMENTAL=1 mise run fmt`: passed.
+  - `cargo test config::`: 88 passed.
+  - `MISE_EXPERIMENTAL=1 mise run clippy`: passed.
+  - `MISE_EXPERIMENTAL=1 mise run ci`: passed; 158 tests passed, with existing non-failing `cargo deny` duplicate/unmatched-license warnings.
+  - GitNexus `detect_changes(scope=all, worktree=.worktrees/config-typestate)`: low risk, 9 changed files, no indexed symbol/process impact.
+
+### User Correction Follow-up
+- **Status:** complete
+- Actions taken:
+  - Moved `ConfigFileError`, `ConfigFileParseError`, and `ConfigFileTrustError` below the `ConfigFile<State>` impl/conversion blocks so they no longer separate the type from its core interface.
+  - Added the builder aggregate `Discovered` state and changed the initial impl to `impl ConfigBuilder<Discovered>`.
+  - Added a regression for `traces trust PATH` where `PATH` is a directory with no `.traces/config.toml`; the red test reproduced the collapse into `LocalConfigAbsent`.
+  - Replaced `ResolvedTrustTarget`/`ResolvedTrustInput` with borrowed `TrustInput` values visited synchronously by `visit_trust_inputs`.
+  - Renamed `TrustTarget` to `TrustInput`; `TrustTargetType` was rejected because the enum is data-bearing operation input, not a pure kind tag.
+  - Removed trust-target resolution from `ConfigService`; `cli::trust` now borrows each resolved input and immediately calls store-backed service operations.
+- Errors encountered:
+  - `cargo test config:: cli::trust::` is invalid because Cargo accepts one test filter; reran as `cargo test config:: && cargo test cli::trust::`.
+  - E0382 after moving `start` into a file anchor; cloned the small `PathBuf` into `DiscoveryAnchor::File`.
+  - GitNexus impact and LSP could not resolve `TrustTarget`/`resolve_trust_targets`; used grep/read callsite inspection and final GitNexus `detect_changes`.
+- Verification:
+  - `MISE_EXPERIMENTAL=1 mise run fmt`: passed.
+  - `cargo test config::`: 88 passed.
+  - `cargo test cli::trust::`: 17 passed.
+  - `MISE_EXPERIMENTAL=1 mise run clippy`: passed.
+  - `MISE_EXPERIMENTAL=1 mise run ci`: 158 passed, with existing non-failing `cargo deny` duplicate/unmatched-license warnings.
+  - GitNexus `detect_changes(scope=all, worktree=.worktrees/config-typestate)`: low risk, 14 changed files, no indexed symbol/process impact.
+
 
 
 
@@ -171,7 +205,7 @@
   - Captured optional-search concern: nearest-local discovery may need both optional and required APIs because init can treat absence as useful information.
   - Refined load route: `ConfigService::load(cwd)` should call a discovery `process()` method that runs `DiscoveryProcessor` for `Full` discovery, instead of manually composing nearest-local calls.
   - Refined discovery API: discovery methods should take `DiscoveryContext`, and all discovery kinds can return `DiscoveryOutcome` instead of a separate output enum.
-  - Resolved outcome shape: store `kind: DiscoveryType` and `anchor: DiscoveryAnchor`, not the full `DiscoveryContext`; consider `DiscoveryContext::into_parts()`/`into_parts_ref()`.
+  - Resolved outcome shape: store `kind: DiscoveryScope` and `anchor: DiscoveryAnchor`, not the full `DiscoveryContext`; consider `DiscoveryContext::into_parts()`/`into_parts_ref()`.
   - Opened precedence decision: full discovery may find multiple local configs and needs a clear merge order.
   - Opened policy question: full load may need an effective-config selection step so `ConfigBuilder` receives only the chosen local/global files instead of all discovered files.
   - Resolved full-load selection policy: use nearest local plus optional global, not every discovered local config.
@@ -211,3 +245,62 @@
 | What have I done? | Created planning files, completed external research, recorded final design direction, rejected alternatives, and accepted implementation order. |
 
 ---
+
+### Trust State Store Refactor
+- **Status:** implementation complete; verification in progress
+- Worktree only: `/Users/jack/Documents/41_personal/traces-pkm/.worktrees/config-typestate`
+- Actions taken:
+  - Added `src/file_store.rs` as the crate-level `FileStateStore` and moved hash-keyed symlink/path-file mechanics out of `config/store.rs`.
+  - Moved path canonicalization into `FileStateStore::entry_for`, leaving `Blake3PathHash` as a pure path-byte hash.
+  - Added `ConfigStateStore`, `TrustSubject`, `DiscoveryScope`, workspace/config trust status types, and config-state errors in `src/config/store.rs`.
+  - Routed trust resolution through `DiscoveryEngine::trust_subjects(path, scope)` using a single path, not cwd/path pairs.
+  - Updated `ConfigService`, `ConfigBuilder`, `ConfigFile` transitions, and `traces trust` CLI to use the unified state store.
+  - Deleted obsolete `src/config/store.rs`, `src/config/tracker.rs`, and `src/config/trust.rs`.
+- Focused verification so far:
+  - `cargo test config::`: passed.
+  - `cargo test cli::trust::`: passed.
+  - `cargo test hash::`: passed.
+  - `MISE_EXPERIMENTAL=1 mise run fmt`: passed.
+
+- Final verification:
+  - `MISE_EXPERIMENTAL=1 mise run fmt`: passed after reconciliation.
+  - `cargo test config::`: 47 passed.
+  - `cargo test cli::trust::`: 17 passed.
+  - `cargo test hash::`: 7 passed.
+  - `MISE_EXPERIMENTAL=1 mise run clippy`: passed with `-D warnings`.
+  - `MISE_EXPERIMENTAL=1 mise run ci`: passed; 139 tests passed, with existing non-failing `cargo deny` duplicate/unmatched-license warnings.
+  - GitNexus `detect_changes(scope=all, worktree=.worktrees/config-typestate)`: low risk, 14 changed files, no changed indexed symbols, no affected processes.
+- Reconciliation notes:
+  - Removed obsolete `config/store.rs`, `config/tracker.rs`, and `config/trust.rs` from module graph and filesystem.
+  - Kept I/O-bearing lifecycle conversions using `ConfigStateStore`.
+  - Added clippy `unused_self` expectations only for intentional service/ZST seams.
+
+### Follow-up Corrections
+- Renamed `src/file_state_store.rs` to `src/file_store.rs`.
+- Renamed `src/config/state.rs` to `src/config/store.rs`.
+- Moved state directory roots to crate-level `src/dirs.rs`; `FileStateStore` now stores a `StateDirRoot`.
+- Moved path canonicalization out of `Blake3PathHash`; `FileStateStore::entry_for` now canonicalizes once and carries the lint `#[expect]`.
+- `traces trust` default target now reads `Cwd` instead of passing `.`.
+- Renamed `DiscoveryType` to `DiscoveryScope` and removed separate `TrustScope`; trust uses `NearestLocal`/`LocalSubtree`, while `Full` is rejected for trust target resolution.
+- Simplified `TrustSubject` to one owned path plus root/config kind; root is derived for config subjects.
+- Replaced callback-based trust traversal with `TrustSubjects`, an `IntoIterator` wrapper returned by discovery/service.
+- Verification after corrections so far: focused `config::`, `cli::trust::`, `file_store::`, and `hash::` tests passed; `mise run fmt`, `mise run clippy`, and `mise run ci` passed.
+
+- Final correction verification:
+  - GitNexus `detect_changes(scope=all, worktree=.worktrees/config-typestate)`: low risk, 14 changed indexed files, no changed indexed symbols, no affected processes.
+  - Working tree status after renames: 17 unstaged tracked changes and 2 untracked new files (`src/dirs.rs`, `src/file_store.rs`).
+
+### File Store Deepening Refactor
+- Made `Blake3PathHash` pure: it hashes the supplied path bytes, returns no `Result`, exposes `as_str()`, and no longer implements `AsRef<Path>`.
+- Moved canonicalization into private `FileStateStore::entry_for`, which returns a private `StoreEntry { canonical_target, path }` and canonicalizes exactly once per operation.
+- Removed caller-facing path helpers (`entry_path`, `companion_path_for`, companion path methods); companion path construction is now private file-store implementation.
+- Deepened companion operations: config store now uses `write_companion`, `read_companion`, `remove_with_companions`, and `clean_with_companions` instead of assembling entry paths.
+- Moved path canonicalization errors from `HashError` to `FileStateStoreError::Canonicalize`; `HashError` is now file-content hashing only.
+
+- Follow-up cleanup for file-store shape:
+  - Replaced `FileStateStore::entry_for()` with `StoreEntry: TryFrom<&Path>`; `StoreEntry` now owns canonical target + hash, and projects into a store root with `path_in()`.
+  - Inlined one-use removal helpers (`remove_optional_file`, `remove_required_file`) and removed the duplicate optional companion helper; removal/error mapping now lives at the operation that needs it.
+
+- CleanMode follow-up:
+  - Added `FileStoreCleanMode` to make companion cleanup an explicit `FileStateStore::clean(...)` policy.
+  - Removed `clean_with_companions()` and updated config store/tests to use `EntriesOnly` or `WithCompanions`.

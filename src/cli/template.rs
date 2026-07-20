@@ -12,7 +12,11 @@ use std::path::PathBuf;
 use clap::Args;
 
 use super::error::TemplateCliError;
-use crate::{Cwd, config::ConfigService, template::TemplateService};
+use crate::{
+    Cwd,
+    config::{ConfigLoadError, ConfigService},
+    template::TemplateService,
+};
 
 /// `traces template -i <name>` (aliased `tmpl`), and the default
 /// `traces -i <name>` dispatch.
@@ -52,16 +56,16 @@ impl TemplateArgs {
         service: &ConfigService,
     ) -> Result<(), TemplateCliError> {
         let cwd = current_dir()?;
-        let discovered = ConfigService::discover(&cwd).map_err(|source| {
-            TemplateCliError::ConfigDiscovery {
-                cwd: cwd.clone(),
-                source: Box::new(source),
+        let config = service.load(&cwd).map_err(|source| match source {
+            ConfigLoadError::Discovery(_) => {
+                TemplateCliError::ConfigDiscovery {
+                    cwd: cwd.clone(),
+                    source: Box::new(source),
+                }
             }
-        })?;
-        let config = service.build(&discovered).map_err(|source| {
-            TemplateCliError::ConfigBuild {
+            ConfigLoadError::Build(_) => TemplateCliError::ConfigBuild {
                 source: Box::new(source),
-            }
+            },
         })?;
         let output_path = TemplateService::new(&config)
             .render_to_file(&self.name)
@@ -90,10 +94,21 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use super::*;
-    use crate::CwdGuard;
+    use crate::{
+        CwdGuard,
+        config::{ConfigFile, Discovered, TrustSubject},
+    };
 
     fn service(temp: &Path) -> ConfigService {
         ConfigService::at(temp.join("tracked-store"), temp.join("trust-store"))
+    }
+
+    fn trust_config(service: &ConfigService, config_path: &Path) {
+        let config = ConfigFile::<Discovered>::local(config_path.to_path_buf())
+            .expect("valid local config");
+        service
+            .trust(&TrustSubject::discovered(&config))
+            .expect("trust project config");
     }
 
     fn create_config(root: &Path, directory: &str) -> PathBuf {
@@ -122,12 +137,7 @@ mod tests {
         )
         .expect("write template");
         let service = service(temp.path());
-        service
-            .trust(crate::config::TrustTarget::ConfigFile {
-                root: &root,
-                config_file: &config_file,
-            })
-            .expect("trust project root");
+        trust_config(&service, &config_file);
         let _guard = CwdGuard::enter(&root);
 
         TemplateArgs::new(PathBuf::from("daily"))
@@ -166,12 +176,7 @@ mod tests {
         fs::create_dir_all(root.join("templates"))
             .expect("create templates dir");
         let service = service(temp.path());
-        service
-            .trust(crate::config::TrustTarget::ConfigFile {
-                root: &root,
-                config_file: &config_file,
-            })
-            .expect("trust project root");
+        trust_config(&service, &config_file);
         let _guard = CwdGuard::enter(&root);
 
         let error = TemplateArgs::new(PathBuf::from("missing"))

@@ -4,9 +4,8 @@
 //! directory. Build records discovered candidates as best-effort tracking,
 //! then merges the user's global config before local `.traces/config.toml` so
 //! local values win. Provides the crate-internal [`ConfigService`] entry
-//! point plus read-only config domain types. [`DiscoveryOutcome`] is the
-//! opaque token connecting `ConfigService::discover` to
-//! `ConfigService::build`.
+//! point plus read-only config domain types. [`DiscoveryOutcome`] is the opaque
+//! token parsed into the selected config-builder input.
 //!
 //! Template resolution against the directories this module parses —
 //! [`crate::template::resolve`] — lives in `crate::template`, not here: this
@@ -26,30 +25,32 @@
 //! that presentation belongs (see `cli::error::ConfigTrustCliError` for the
 //! pattern): `cli::error::TemplateCliError` wraps [`ConfigBuilderError`] and
 //! [`DiscoveryError`] the same way for the `traces template`/`tmpl`/default
-//! `-i` command. Infrastructure errors ([`crate::hash::HashError`], and
-//! `StoreError`/`TrustError` from this module's private `store`/`trust`
-//! submodules) are only observable through the `#[source]` chain of the two
-//! re-exported types above and [`ConfigService`]'s admin methods — they
-//! cannot be named directly from outside `config`.
+//! `-i` command. Infrastructure errors ([`crate::hash::HashError`] and
+//! [`crate::FileStateStoreError`]) are only observable through the
+//! `#[source]` chain of the re-exported domain errors and [`ConfigService`]'s
+//! admin methods.
 
-pub(crate) use builder::ConfigBuilderError;
-pub(crate) use discovery::{
-    DiscoveryError, DiscoveryOutcome, LOCAL_CONFIG_FILE,
-};
+#![cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "config loading is implemented before the render command \
+                  consumes it"
+    )
+)]
+
+pub(crate) use discovery::{DiscoveryScope, LOCAL_CONFIG_FILE};
 pub(crate) use domain::Config;
+#[cfg(test)]
+pub(crate) use file::{ConfigFile, Discovered};
 pub(crate) use raw::RawConfig;
-pub(crate) use service::ConfigService;
-pub(crate) use trust::{
-    ResolvedTrustTarget, TrustError, TrustState, TrustTarget, TrustTargetError,
-};
+pub(crate) use service::{ConfigLoadError, ConfigService};
+pub(crate) use store::TrustSubject;
 
 mod builder;
-mod candidate;
-mod dirs;
 mod discovery;
 mod domain;
+mod file;
 mod raw;
 mod service;
 mod store;
-mod tracker;
-mod trust;

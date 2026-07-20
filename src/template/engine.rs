@@ -73,8 +73,6 @@ impl TemplateEngine {
 mod tests {
     use std::fs;
 
-    use minijinja::ErrorKind;
-
     use super::*;
 
     fn loader_from_dir(path: &Path) -> TemplateLoader {

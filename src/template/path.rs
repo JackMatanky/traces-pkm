@@ -8,11 +8,11 @@
 //! - [`Raw`]: exactly the argument as given — nothing checked yet.
 //! - [`Validated`]: a safe, directory-relative identifier, produced by
 //!   [`TemplatePath::<Raw>::validate`]. Pure — no filesystem access.
-//! - [`Found`]: proven to exist, and the only state that also records
-//!   which [`super::source_dir::TemplateSourceDir`] it came from. The
-//!   sole constructor is [`TemplatePath::<Validated>::find`], so a
-//!   `TemplatePath<Found>` can never exist without having actually
-//!   been searched for.
+//! - [`Found`]: proven to exist, and the only state that also records which
+//!   [`super::source_dir::TemplateSourceDir`] it came from. The sole
+//!   constructor is [`TemplatePath::<Validated>::find`], so a
+//!   `TemplatePath<Found>` can never exist without having actually been
+//!   searched for.
 //!
 //! `State` carries no default: every function signature says which
 //! state it needs, so passing an unproven `TemplatePath` where a found

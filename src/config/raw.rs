@@ -14,15 +14,6 @@ pub(crate) struct RawConfig {
     templates: RawTemplateConfig,
 }
 
-/// Raw `[templates]` table.
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-struct RawTemplateConfig {
-    directory: Option<PathBuf>,
-    #[serde(default)]
-    output_dir: Option<PathBuf>,
-}
-
 impl RawConfig {
     /// Creates a raw config with both supported template settings present.
     #[must_use]
@@ -47,4 +38,13 @@ impl RawConfig {
     pub(super) fn output_dir(&self) -> Option<&Path> {
         self.templates.output_dir.as_deref()
     }
+}
+
+/// Raw `[templates]` table.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct RawTemplateConfig {
+    directory: Option<PathBuf>,
+    #[serde(default)]
+    output_dir: Option<PathBuf>,
 }
