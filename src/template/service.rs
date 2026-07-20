@@ -1,10 +1,9 @@
 //! [`TemplateService`]: resolves a template name, renders it via
 //! [`TemplateEngine`], and writes the result to disk.
 //!
-//! [`TemplateService::new`] builds one [`TemplateLoader`] and shares it:
-//! the original resolves top-level `-i` names, a clone is wired into
-//! [`TemplateEngine`] for `{% include %}` — so both search the same
-//! directories in the same order, computed once.
+//! [`TemplateService::new`] builds one [`TemplateLoader`] and hands it to
+//! [`TemplateEngine`], which owns it for both `{% include %}` and
+//! top-level resolution — no second copy of the search directories.
 
 use std::{
     fs,
@@ -22,27 +21,27 @@ use crate::config::Config;
 /// Resolves, renders, and writes templates for one [`Config`].
 pub(crate) struct TemplateService<'a> {
     config: &'a Config,
-    loader: TemplateLoader,
     engine: TemplateEngine,
 }
 
 impl<'a> TemplateService<'a> {
     /// Creates a service backed by `config`'s template directories, with
-    /// a [`TemplateEngine`] whose loader searches those same directories
-    /// for `{% include %}`/`{% extends %}`.
+    /// a [`TemplateEngine`] that owns the loader (shared between `resolve`
+    /// and `{% include %}`/`{% extends %}`).
     #[inline]
     #[must_use]
     pub(crate) fn new(config: &'a Config) -> Self {
         let loader = TemplateLoader::from(config);
-        let engine = TemplateEngine::new().with_loader(loader.clone());
+        let engine = TemplateEngine::new(loader);
         Self {
             config,
-            loader,
             engine,
         }
     }
 
-    /// Resolves `name` against [`Config`]'s template directories.
+    /// Resolves `name` against the configured template directories.
+    ///
+    /// Delegates to [`TemplateEngine::resolve`], which owns the loader.
     ///
     /// # Errors
     ///
@@ -56,7 +55,7 @@ impl<'a> TemplateService<'a> {
         &self,
         name: &Path,
     ) -> Result<TemplatePath<Found>, TemplatePathError> {
-        self.loader.find(name)
+        self.engine.resolve(name)
     }
 
     /// Resolves `name`, renders it (empty template context), and writes

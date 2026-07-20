@@ -8,7 +8,7 @@ Status: implemented
 
 ## What to build
 
-The end-to-end tracer bullet for rendering. `TemplateService` holds a reference to `Config` and a minijinja `Environment`. Given a template name: ensure `Config` has been loaded by the CLI layer (trust already gated during `ConfigService::build()` — not a per-template concern), resolve the template against `Config`'s template directory accessors via `TemplateService::resolve()`, render the source with minijinja (`{{ }}`/`{% %}` working), and write the result to the default output path `./<template-name>.md`.
+The end-to-end tracer bullet for rendering. `TemplateService` holds a reference to `Config` and a `TemplateEngine` (which owns the minijinja `Environment` plus the `TemplateLoader`). Given a template name: ensure `Config` has been loaded by the CLI layer (trust already gated during `ConfigService::build()` — not a per-template concern), resolve the template via `TemplateEngine::resolve()`, render the source with minijinja (`{{ }}`/`{% %}` working), and write the result to the default output path `Config::output_dir() / <name>.md`.
 
 Wire the CLI: `traces template -i <name>`, the `tmpl` alias, and the default `traces -i <name>` dispatch all route to this handler via clap derives.
 
@@ -29,7 +29,7 @@ Custom functions, output-path control, dry-run, and includes are separate slices
 Relevant skills: `domain-cli`, `m11-ecosystem`, `m06-error-handling`, `m01-ownership`.
 
 - **CLI dispatch (domain-cli):** `tmpl` is a clap alias (`#[command(alias = "tmpl")]`); the default `traces -i <name>` dispatch is trickier — model it as an optional subcommand plus top-level `-i`, and route "no subcommand but `-i` present" to the template handler. Verify clap's derive resolves this without ambiguity against `init`/`trust`; a small `#[command(args_conflicts_with_subcommands = true)]` or a manual post-parse fallthrough may be needed.
-- **minijinja ownership (m11/m01):** build one `Environment` and register everything on it. TemplateService owns resolution and reads the template file as an owned `String`; borrow it into `Environment::render_str` or add it as a named template. Keep the `Environment` owned by `TemplateService`.
+- **minijinja ownership (m11/m01):** the `Environment` lives inside `TemplateEngine`, which the service owns. The engine also owns the `TemplateLoader` — built once, cloned once for minijinja's `set_loader` callback, original kept for `resolve()`. TemplateService delegates both resolve and render to the engine, holding no separate loader reference.
 - **Trust is a config-level gate (m06):** trust is verified during `ConfigService::build()`, not per-template. TemplateService ensures config has been successfully loaded — that is the trust check. An untrusted workspace fails at config load time with `RootNotTrusted`/`StaleConfigContent` before TemplateService ever runs. Propagate ConfigService errors up as miette diagnostics; don't `unwrap`.
 - **Default output path:** `./<template-name>.md` is derived from the resolved template's stem, computed at write time — not stored during render (that's issue tmpl-02's concern).
 - **Config boundary cleanup:** Reviewed `src/config/`. Keep discovery/build/parsing plumbing in config (`candidate.rs`, `discovery.rs`, `raw.rs`, `builder.rs`, `service.rs`). Move only template lookup behavior out of `domain.rs`; do not move config-file discovery, config-source tracking, or raw TOML parsing into template-service.
@@ -77,26 +77,31 @@ and a duplicate `winnow` advisory entry from `rstest_macros`' own
   dependency-free tag for which configured directory a template was found
   under, imported by both `path.rs` and `loader.rs` from a neutral third
   place rather than through each other.
-- **`engine.rs`** — `TemplateEngine`: wraps a minijinja `Environment`.
-  Its `{% include %}`/`{% extends %}` loader is hand-rolled, not
+- **`engine.rs`** — `TemplateEngine`: wraps a minijinja `Environment`
+  **and owns the `TemplateLoader`**. `TemplateEngine::new(loader)` takes
+  the loader at construction (no separate `with_loader` step), cloning it
+  once for minijinja's `set_loader` callback and keeping the original for
+  `resolve()`. Exposes both `render()` (via `render_str`) and `resolve()`
+  (via the loader), so the service never holds its own loader reference.
+  The `{% include %}`/`{% extends %}` loader is hand-rolled, not
   `minijinja::path_loader` — `path_loader`'s `safe_join` rejects any
   dot-prefixed segment in the *requested template name* (verified against
   minijinja 2.21.0's `src/loader.rs`), which would break
-  `{% include ".draft.md" %}` even though the file exists. The
-  hand-rolled loader reuses `TemplatePath`'s validation instead, so
-  dot-prefixed include names resolve correctly while staying equally safe
-  against `..`/absolute paths. A dot-prefixed template *directory*
+  `{% include ".draft.md" %}` even though the file exists. The hand-rolled
+  loader reuses `TemplatePath`'s validation instead, so dot-prefixed
+  include names resolve correctly while staying equally safe against
+  `..`/absolute paths. A dot-prefixed template *directory*
   (`.traces/templates`, this project's own default) was never affected
   either way — only the per-call template name was.
 - **`service.rs`** — `TemplateService`: drives resolve -> render -> write.
-  `TemplateService::new` is the sole constructor, building its own
-  `TemplateLoader`/`TemplateEngine` from `Config` (one loader built once,
-  cloned into the engine for includes, so the local-then-global search
-  order is computed in exactly one place). Default output path is
-  `Config::output_dir()` joined with the *resolved* template's bare stem
-  (not the raw `-i` argument — `templates/daily` and `templates/daily.md`
-  both write `<output_dir>/daily.md`), resolved against `Config::root()`
-  when `output_dir` is relative.
+  `TemplateService::new` is the sole constructor, building a
+  `TemplateLoader` from `Config` and handing it to
+  `TemplateEngine::new()`. The service holds **no separate loader** — it
+  delegates both `resolve()` and `render()` to the engine. Default output
+  path is `Config::output_dir()` joined with the *resolved* template's
+  bare stem (not the raw `-i` argument — `templates/daily` and
+  `templates/daily.md` both write `<output_dir>/daily.md`), resolved
+  against `Config::root()` when `output_dir` is relative.
 - **`error.rs`** — `TemplateError`: the resolve/read/render/write pipeline
   error, wrapping `TemplatePathError` (resolve) and raw `io`/`minijinja`
   errors for the later stages.
