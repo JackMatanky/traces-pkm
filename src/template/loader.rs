@@ -50,10 +50,10 @@ use crate::config::Config;
 /// built on; tests use it directly to avoid needing a full [`Config`].
 ///
 /// `Clone` is cheap (two `Option<PathBuf>`):
-/// [`super::service::TemplateService`] builds one loader and shares it
-/// — one clone wired into [`super::engine::TemplateEngine`] for
-/// `{% include %}`, the original kept for [`Self::find`] — rather than
-/// deriving the same directories from [`Config`] twice.
+/// [`super::engine::TemplateEngine`] builds from a single loader,
+/// clones it once for minijinja's internal `set_loader` callback,
+/// and keeps the original for [`Self::find`] — rather than deriving
+/// the same directories from [`Config`] twice.
 #[derive(Clone, Debug)]
 pub(super) struct TemplateLoader {
     local: Option<PathBuf>,
