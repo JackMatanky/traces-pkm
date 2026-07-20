@@ -10,19 +10,15 @@ use thiserror::Error;
 
 use super::path::TemplatePathError;
 
-/// Errors from [`super::TemplateService::instantiate`].
+/// Errors from [`super::TemplateService::render_to_file`].
 #[derive(Debug, Error)]
 pub(crate) enum TemplateError {
-    /// Resolving `name` against the configured template directories
-    /// failed.
-    #[error("failed to resolve template {name}")]
-    Resolve {
-        /// The template name that was searched for.
-        name: PathBuf,
-        /// Source resolution error.
-        #[source]
-        source: TemplatePathError,
-    },
+    /// Resolving a template name against the configured template
+    /// directories failed. Transparent: `TemplatePathError`'s own
+    /// `Display` already names the template and what went wrong, so
+    /// this variant adds no field of its own to duplicate it.
+    #[error(transparent)]
+    Resolve(#[from] TemplatePathError),
 
     /// Reading the resolved template file failed.
     #[error("failed to read template file {path}")]

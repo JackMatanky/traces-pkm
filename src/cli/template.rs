@@ -64,7 +64,7 @@ impl TemplateArgs {
             }
         })?;
         let output_path = TemplateService::new(&config)
-            .instantiate(&self.name)
+            .render_to_file(&self.name)
             .map_err(|source| TemplateCliError::Instantiate {
                 name: self.name.clone(),
                 source: Box::new(source),

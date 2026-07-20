@@ -36,7 +36,7 @@
 //! `pub(super)` at most — nothing outside this module names them: CLI
 //! errors ([`crate::cli::error::TemplateCliError`]) type-erase behind
 //! `Box<dyn StdError>` (matching `crate::cli::error`'s convention for
-//! `crate::config`'s own error types), so [`TemplateService::instantiate`]'s
+//! `crate::config`'s own error types), so [`TemplateService::render_to_file`]'s
 //! `Result<PathBuf, TemplateError>` is the only thing that crosses this
 //! module's boundary.
 

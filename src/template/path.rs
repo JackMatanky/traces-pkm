@@ -63,7 +63,6 @@
 //! decoupling type.
 
 use std::{
-    ffi::OsStr,
     fs,
     path::{Component, Path, PathBuf},
 };
@@ -98,22 +97,33 @@ pub(super) struct TemplatePath<State> {
 }
 
 impl<State> TemplatePath<State> {
-    /// This path's bare stem: no directory segments, no extension, e.g.
-    /// `"folder/daily.md"` -> `"daily"`. Meaningful, and computed
-    /// identically, in every state — a filename's stem doesn't depend on
-    /// what's been proven about the path yet.
-    ///
-    /// # Panics
-    ///
-    /// Never in practice: [`Path::file_stem`] returns `None` only for a
-    /// path with no final `Normal` component;
-    /// [`TemplatePath::<Raw>::validate`] rejects any path without one.
-    /// The fallback exists only so this stays panic-free rather than
-    /// leaning on that invariant at runtime.
+    /// This candidate's identity with its extension removed, directory
+    /// segments kept, e.g. `"folder/daily.md"` -> `"folder/daily"`,
+    /// `"daily.md"` -> `"daily"`. Unlike [`Path::file_stem`] (which
+    /// only ever answers for the final path component), this keeps
+    /// any directory the candidate named — needed wherever the
+    /// candidate's own relative identity, not just its bare filename,
+    /// is the answer, e.g. [`super::service::TemplateService`]'s
+    /// default output path, which mirrors a resolved template's own
+    /// subdirectory rather than flattening it away. Allocates: a
+    /// directory-preserving, extension-stripped path isn't a
+    /// contiguous slice of `self.path`'s bytes, so it can't be
+    /// borrowed the way [`Self::has_extension`] can.
     #[inline]
     #[must_use]
-    pub(super) fn stem(&self) -> &OsStr {
-        self.path.file_stem().unwrap_or_else(|| self.path.as_os_str())
+    pub(super) fn name(&self) -> PathBuf {
+        self.path.with_extension("")
+    }
+
+    /// Whether this candidate was given with an extension, e.g.
+    /// `"daily.md"` -> `true`, `"daily"` -> `false`. Gates
+    /// [`TemplatePath::<Validated>::find_name_in`]: a candidate that
+    /// already names an extension is asking for that exact file, not
+    /// an invitation to match a *different* extension by name alone.
+    #[inline]
+    #[must_use]
+    pub(super) fn has_extension(&self) -> bool {
+        self.path.extension().is_some()
     }
 }
 
@@ -151,13 +161,14 @@ pub(crate) enum TemplatePathError {
     /// template directory.
     #[error("template path {0} must be relative, not absolute")]
     Absolute(PathBuf),
-    /// The path contains a component other than a plain name or `.`
-    /// (most notably `..`), which could escape the template directory
-    /// it's joined onto — or has no `Normal` component at all (e.g. an
-    /// empty path, or a bare `.`), leaving no safe file name to join.
-    #[error(
-        "template path {0} must not contain '..' or other unsafe components"
-    )]
+    /// The path names no safe file within a directory: it either
+    /// contains a component that could escape the directory it's
+    /// joined onto (most notably `..`), or has no `Normal` component
+    /// at all (e.g. an empty path, or a bare `.`), leaving nothing to
+    /// join. One variant for both, deliberately — see this module's
+    /// anti-oracle note: nothing downstream (`TemplateLoader::find`)
+    /// distinguishes *why* validation failed, only that it did.
+    #[error("template path {0} is not a valid template identifier")]
     UnsafeComponent(PathBuf),
     /// Multiple files matched the template name in a single directory.
     /// No `candidates` field: never rendered anywhere (`Display` above
@@ -222,13 +233,6 @@ impl TemplatePath<Raw> {
 }
 
 impl TemplatePath<Validated> {
-    /// Whether this candidate names an existing file within `dir`.
-    #[inline]
-    #[must_use]
-    pub(super) fn exists_in(&self, dir: &Path) -> bool {
-        dir.join(&self.path).is_file()
-    }
-
     /// Every directory to search, local then global, deduped when
     /// they're the same directory.
     fn directories(
@@ -244,69 +248,107 @@ impl TemplatePath<Validated> {
             )
     }
 
-    /// Searches for this candidate in a fixed precedence order: a local
-    /// exact relative path, a local relative path without extension (a
-    /// stem match), a global exact relative path, a global relative path
-    /// without extension — tried one directory at a time (a directory
-    /// exhausted, both rules, before the next is even considered), so
-    /// `local` always wins over `global` regardless of which rule
-    /// matched it. This precedence is this method's own code order, not
-    /// a parameter: the stem-matching branch below only ever runs after
-    /// [`Self::exists_in`] has already returned `false` for the current
-    /// directory. This is the only search method — used both for
-    /// top-level `-i <name>` resolution and for
+    /// Exact relative-path match within `dir`: does `dir.join(&self.path)`
+    /// name a file? The first of [`Self::find`]'s two rules per
+    /// directory.
+    #[inline]
+    #[must_use]
+    fn find_path_in(&self, dir: &Path) -> Option<PathBuf> {
+        dir.join(&self.path).is_file().then(|| self.path.clone())
+    }
+
+    /// Name match within `dir`: only attempted when this candidate has
+    /// no extension of its own ([`Self::has_extension`]) — a candidate
+    /// that already names one (`"daily.md"`) means exactly that file,
+    /// not "anything named `daily`". Searches the *same subdirectory*
+    /// `self.path` names (e.g. `"notes/daily"` searches `dir/notes`,
+    /// never `dir`'s own top level), by every file's bare name, and
+    /// rejoins the matched leaf back onto that subdirectory. The
+    /// second of [`Self::find`]'s two rules per directory.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TemplatePathError::AmbiguousTemplate`] when more than
+    /// one file in the subdirectory shares this candidate's name.
+    fn find_name_in(
+        &self,
+        dir: &Path,
+    ) -> Result<Option<PathBuf>, TemplatePathError> {
+        if self.has_extension() {
+            return Ok(None);
+        }
+        let subdir = self.path.parent().filter(|p| !p.as_os_str().is_empty());
+        let search_dir =
+            subdir.map_or_else(|| dir.to_path_buf(), |parent| dir.join(parent));
+        let Ok(entries) = fs::read_dir(&search_dir) else {
+            return Ok(None);
+        };
+        // A bare, directory-agnostic stem — not `Self::name`, which now
+        // keeps `self.path`'s own directory segments. Entries here are
+        // already scoped to `search_dir` (this candidate's own
+        // subdirectory), so only their bare file name is comparable.
+        let key =
+            self.path.file_stem().unwrap_or_else(|| self.path.as_os_str());
+        let hits: Vec<PathBuf> = entries
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_file()))
+            .filter(|entry| entry.path().file_stem() == Some(key))
+            .map(|entry| {
+                subdir.map_or_else(
+                    || PathBuf::from(entry.file_name()),
+                    |parent| parent.join(entry.file_name()),
+                )
+            })
+            .collect();
+        match hits.as_slice() {
+            [] => Ok(None),
+            [hit] => Ok(Some(hit.clone())),
+            _ => Err(TemplatePathError::AmbiguousTemplate(self.path.clone())),
+        }
+    }
+
+    /// Searches for this candidate in a fixed precedence order: a
+    /// local exact relative path ([`Self::find_path_in`]), a local
+    /// name match without extension ([`Self::find_name_in`]), a global
+    /// exact relative path, a global name match without extension —
+    /// tried one directory at a time (a directory exhausted, both
+    /// rules, before the next is even considered), so `local` always
+    /// wins over `global` regardless of which rule matched it. This
+    /// precedence is this method's own code order, not a parameter:
+    /// [`Self::find_name_in`] only ever runs after
+    /// [`Self::find_path_in`] has already returned `None` for the
+    /// current directory. This is the only search method — used both
+    /// for top-level `-i <name>` resolution and for
     /// `{% include %}`/`{% extends %}` loading; there is exactly one
     /// precedence order, not a different one per caller.
     ///
     /// # Errors
     ///
     /// Returns [`TemplatePathError::AmbiguousTemplate`] when multiple
-    /// files match this candidate's stem within a single directory.
-    /// Returns [`TemplatePathError::TemplateNotFound`] when no match is
-    /// found in either directory.
+    /// files match this candidate's name within a single directory.
+    /// Returns [`TemplatePathError::TemplateNotFound`] when no match
+    /// is found in either directory.
     pub(super) fn find(
         self,
         local: Option<&Path>,
         global: Option<&Path>,
     ) -> Result<TemplatePath<Found>, TemplatePathError> {
-        let stem = self.stem();
         for dir in Self::directories(local, global) {
-            if self.exists_in(dir.path()) {
+            if let Some(path) = self.find_path_in(dir.path()) {
                 return Ok(TemplatePath {
-                    path: self.path.clone(),
+                    path,
                     state: Found {
                         source: dir,
                     },
                 });
             }
-
-            let Ok(entries) = fs::read_dir(dir.path()) else {
-                continue;
-            };
-            let matches: Vec<PathBuf> = entries
-                .filter_map(Result::ok)
-                .filter(|entry| {
-                    entry.file_type().is_ok_and(|kind| kind.is_file())
-                })
-                .filter(|entry| entry.path().file_stem() == Some(stem))
-                .map(|entry| PathBuf::from(entry.file_name()))
-                .collect();
-
-            match matches.as_slice() {
-                [] => {}
-                [name] => {
-                    return Ok(TemplatePath {
-                        path: name.clone(),
-                        state: Found {
-                            source: dir,
-                        },
-                    });
-                }
-                _ => {
-                    return Err(TemplatePathError::AmbiguousTemplate(
-                        self.path.clone(),
-                    ));
-                }
+            if let Some(path) = self.find_name_in(dir.path())? {
+                return Ok(TemplatePath {
+                    path,
+                    state: Found {
+                        source: dir,
+                    },
+                });
             }
         }
 
@@ -413,16 +455,31 @@ mod tests {
         }
 
         #[test]
-        fn stem_drops_directory_segments_and_extension() {
+        fn name_strips_only_the_extension_keeping_directory_segments() {
             assert_eq!(
-                validated("folder/report.md").stem(),
-                OsStr::new("report")
+                validated("folder/report.md").name(),
+                Path::new("folder/report")
             );
         }
 
         #[test]
-        fn stem_of_an_extensionless_path_is_unchanged() {
-            assert_eq!(validated("daily").stem(), OsStr::new("daily"));
+        fn name_of_an_extensionless_path_is_unchanged() {
+            assert_eq!(validated("daily").name(), Path::new("daily"));
+        }
+
+        #[test]
+        fn name_of_a_dot_prefixed_file_keeps_the_leading_dot() {
+            assert_eq!(validated(".draft.md").name(), Path::new(".draft"));
+        }
+
+        #[test]
+        fn has_extension_is_true_when_a_dot_extension_is_present() {
+            assert!(validated("daily.md").has_extension());
+        }
+
+        #[test]
+        fn has_extension_is_false_for_a_bare_name() {
+            assert!(!validated("daily").has_extension());
         }
     }
 
@@ -453,6 +510,37 @@ mod tests {
                 .expect("find succeeds");
 
             assert_eq!(found.absolute(), file);
+        }
+
+        #[test]
+        fn stem_match_searches_the_candidates_own_subdirectory() {
+            // "notes/daily" must resolve notes/daily.md, not a
+            // same-stemmed file sitting at dir's top level — the
+            // subdirectory the candidate named is part of the match,
+            // not discarded in favor of a flat, dir-wide name search.
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_file(temp.path(), "daily.txt");
+            let file = write_file(temp.path(), "notes/daily.md");
+
+            let found = validated("notes/daily")
+                .find(Some(temp.path()), None)
+                .expect("find succeeds");
+
+            assert_eq!(found.absolute(), file);
+        }
+
+        #[test]
+        fn stem_match_is_skipped_when_the_candidate_has_an_extension() {
+            // "daily.md" names an exact file; a miss on that exact
+            // file must not silently fall back to matching a
+            // different extension by name alone.
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_file(temp.path(), "daily.txt");
+
+            assert!(matches!(
+                validated("daily.md").find(Some(temp.path()), None),
+                Err(TemplatePathError::TemplateNotFound(_))
+            ));
         }
 
         #[test]

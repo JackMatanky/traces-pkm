@@ -9,7 +9,7 @@
 //! directory's search order is computed. `TemplateLoader` is cheap to
 //! clone (two `Option<PathBuf>`); later issues register custom
 //! functions (`prompt_text`/`select`/`set_output`, `m11-ecosystem`) on
-//! the engine's `Environment` the same instance every `instantiate` call
+//! the engine's `Environment` the same instance every `render_to_file` call
 //! reuses. This render pipeline tracer (issue tmpl-01) renders with an
 //! empty template context.
 //!
@@ -91,15 +91,11 @@ impl<'a> TemplateService<'a> {
     /// invalid, and [`TemplateError::Write`] when the output directory
     /// cannot be created or the output path cannot be written.
     #[inline]
-    pub(crate) fn instantiate(
+    pub(crate) fn render_to_file(
         &self,
         name: &Path,
     ) -> Result<PathBuf, TemplateError> {
-        let resolved =
-            self.resolve(name).map_err(|source| TemplateError::Resolve {
-                name: name.to_path_buf(),
-                source,
-            })?;
+        let resolved = self.resolve(name)?;
         let resolved_path = resolved.absolute();
         let template_source =
             fs::read_to_string(&resolved_path).map_err(|source| {
@@ -134,12 +130,17 @@ impl<'a> TemplateService<'a> {
     }
 
     /// Default output path: [`Config::output_dir`] joined with the
-    /// resolved template's bare stem — not the `-i` argument, so a
-    /// resolved `templates/daily` or `templates/daily.md` both write
-    /// `<output_dir>/daily.md`. A relative `output_dir` (a literal
-    /// `output_dir = "…"` from a config file) is resolved against
-    /// [`Config::root`]; an absolute one (the unconfigured fallback) is
-    /// used as-is.
+    /// resolved template's own relative identity — directory kept,
+    /// extension stripped ([`TemplatePath::name`]) — not the raw `-i`
+    /// argument, so a resolved `notes/daily` or `notes/daily.md` both
+    /// write `<output_dir>/notes/daily.md`: this only normalizes the
+    /// with/without-extension input forms to the same output, it
+    /// doesn't flatten the resolved template's own subdirectory away
+    /// (two different directories' same-named templates would
+    /// otherwise silently overwrite each other's output). A relative
+    /// `output_dir` (a literal `output_dir = "…"` from a config file)
+    /// is resolved against [`Config::root`]; an absolute one (the
+    /// unconfigured fallback) is used as-is.
     ///
     /// Computed at write time, not stored during render — issue tmpl-02's
     /// `-o`/`set_output()` handling overrides this.
@@ -150,7 +151,7 @@ impl<'a> TemplateService<'a> {
         } else {
             self.config.root().join(output_dir)
         };
-        base.join(resolved.stem()).with_extension("md")
+        base.join(resolved.name()).with_extension("md")
     }
 }
 
@@ -188,7 +189,7 @@ mod tests {
     }
 
     #[test]
-    fn instantiate_renders_minijinja_syntax_and_writes_default_path() {
+    fn render_to_file_renders_minijinja_syntax_and_writes_default_path() {
         let temp = tempfile::tempdir().expect("create temp dir");
         let local_dir = temp.path().join("templates");
         write_file(
@@ -206,7 +207,7 @@ mod tests {
         let service = TemplateService::new(&config);
 
         let output_path =
-            service.instantiate(Path::new("daily")).expect("instantiate");
+            service.render_to_file(Path::new("daily")).expect("render_to_file");
 
         assert_eq!(output_path, temp.path().join("daily.md"));
         let contents =
@@ -215,7 +216,7 @@ mod tests {
     }
 
     #[test]
-    fn instantiate_writes_under_the_configured_output_directory() {
+    fn render_to_file_writes_under_the_configured_output_directory() {
         let temp = tempfile::tempdir().expect("create temp dir");
         let root = temp.path().join("project");
         let local_dir = root.join("templates");
@@ -229,7 +230,7 @@ mod tests {
         let service = TemplateService::new(&config);
 
         let output_path =
-            service.instantiate(Path::new("daily")).expect("instantiate");
+            service.render_to_file(Path::new("daily")).expect("render_to_file");
 
         assert_eq!(output_path, root.join("notes/daily.md"));
         assert_eq!(
@@ -239,7 +240,7 @@ mod tests {
     }
 
     #[test]
-    fn instantiate_derives_output_name_from_resolved_stem_not_input_name() {
+    fn render_to_file_output_path_preserves_the_resolved_templates_directory() {
         let temp = tempfile::tempdir().expect("create temp dir");
         let local_dir = temp.path().join("templates");
         write_file(&local_dir, "nested/report.md", "hello");
@@ -252,14 +253,46 @@ mod tests {
         let service = TemplateService::new(&config);
 
         let output_path = service
-            .instantiate(Path::new("nested/report.md"))
-            .expect("instantiate");
+            .render_to_file(Path::new("nested/report.md"))
+            .expect("render_to_file");
 
-        assert_eq!(output_path, temp.path().join("report.md"));
+        assert_eq!(output_path, temp.path().join("nested/report.md"));
     }
 
     #[test]
-    fn instantiate_propagates_resolution_errors() {
+    fn render_to_file_normalizes_extension_input_but_keeps_directory() {
+        // "notes/daily" and "notes/daily.md" must resolve to the exact
+        // same output — the with/without-extension forms are
+        // normalized to one output, but the subdirectory itself is
+        // never flattened away (see `default_output_path`'s docs).
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let local_dir = temp.path().join("templates");
+        write_file(&local_dir, "notes/daily.md", "hello");
+        let config = Config::for_test(
+            temp.path().to_path_buf(),
+            Some(local_dir),
+            None,
+            temp.path().to_path_buf(),
+        );
+        let service = TemplateService::new(&config);
+        let expected = temp.path().join("notes/daily.md");
+
+        assert_eq!(
+            service
+                .render_to_file(Path::new("notes/daily"))
+                .expect("render_to_file"),
+            expected
+        );
+        assert_eq!(
+            service
+                .render_to_file(Path::new("notes/daily.md"))
+                .expect("render_to_file"),
+            expected
+        );
+    }
+
+    #[test]
+    fn render_to_file_propagates_resolution_errors() {
         let temp = tempfile::tempdir().expect("create temp dir");
         let config = Config::for_test(
             temp.path().to_path_buf(),
@@ -270,14 +303,14 @@ mod tests {
         let service = TemplateService::new(&config);
 
         let error = service
-            .instantiate(Path::new("missing"))
+            .render_to_file(Path::new("missing"))
             .expect_err("missing template fails");
 
-        assert!(matches!(error, TemplateError::Resolve { .. }));
+        assert!(matches!(error, TemplateError::Resolve(_)));
     }
 
     #[test]
-    fn instantiate_propagates_render_errors_for_invalid_syntax() {
+    fn render_to_file_propagates_render_errors_for_invalid_syntax() {
         let temp = tempfile::tempdir().expect("create temp dir");
         let local_dir = temp.path().join("templates");
         write_file(&local_dir, "broken.md", "{% if %}");
@@ -290,14 +323,14 @@ mod tests {
         let service = TemplateService::new(&config);
 
         let error = service
-            .instantiate(Path::new("broken"))
+            .render_to_file(Path::new("broken"))
             .expect_err("invalid syntax fails to render");
 
         assert!(matches!(error, TemplateError::Render { .. }));
     }
 
     #[test]
-    fn instantiate_resolves_include_against_the_template_directory() {
+    fn render_to_file_resolves_include_against_the_template_directory() {
         let temp = tempfile::tempdir().expect("create temp dir");
         let local_dir = temp.path().join("templates");
         write_file(&local_dir, "partial.md", "included");
@@ -311,7 +344,7 @@ mod tests {
         let service = TemplateService::new(&config);
 
         let output_path =
-            service.instantiate(Path::new("daily")).expect("instantiate");
+            service.render_to_file(Path::new("daily")).expect("render_to_file");
 
         assert_eq!(
             fs::read_to_string(&output_path).expect("read written output"),
