@@ -1,5 +1,129 @@
 # Progress Log
 
+## Session: 2026-07-19
+
+### Planning Artifact Review
+- **Status:** complete
+- Actions taken:
+  - Ran planning-with-files session catchup for `/Users/jack/Documents/41_personal/traces-pkm`; no unsynced context was reported.
+  - Read `task_plan.md`, `findings.md`, and `progress.md`.
+  - Read design guidance: `planning-with-files`, `codebase-design`, `ponytail`, `m05-type-driven`, `m06-error-handling`, and Rust rules for parse-don't-validate, typestate, and enum states.
+  - Began comparing the artifacts against current config/trust source summaries.
+- Initial review findings:
+  - `task_plan.md` still says the goal includes a `ConfigLocator` module, but later decisions reject a separate locator and keep discovery in `src/config/discovery.rs`.
+  - `task_plan.md` current phase is stale: it says Phase 2 research, while every phase is marked complete and `progress.md` says final design recorded.
+  - `progress.md` keeps Phase 2 as `in_progress` even though the same section records completed final design and implementation order.
+  - Current source still matches the handoff's pre-refactor state: `CandidateConfigFile`, `DiscoveryProcessor`, two-step `ConfigService::discover/build`, and trust-target resolution remain present.
+  - Spawned three read-only review scouts for artifact consistency, source alignment, and design holes.
+  - Recorded artifact repairs in `task_plan.md` and `findings.md`.
+  - Confirmed the implementation plan needed an ordering repair: introduce `ConfigFile<State>` alongside `CandidateConfigFile`, migrate consumers, then delete the old candidate type.
+  - Confirmed unresolved design holes before follow-up grilling: global parse transition naming, trust target routing, unified `DiscoveryOutcome` cardinality, builder input stage, ZST `DiscoveryEngine`, local ordering, wrong-kind errors, and discovery kind naming.
+  - Answered follow-up questions and recorded settled decisions: `try_into_global_parsed()`, decided `TrustTarget` and `ConfigBuilderInput` shapes, unified `DiscoveryOutcome`, ZST `DiscoveryEngine`, `LocalSubtree`, and `ConfigBuilderInputError` only for wrong-kind/invariant variants.
+  - Recorded recommended defaults in `findings.md`.
+  - User settled follow-up decisions: use `try_into_global_parsed()`, keep `TrustTarget`, keep unified `DiscoveryOutcome`, keep `ConfigBuilderInput`, keep ZST `DiscoveryEngine`, rename discovery kind to `LocalSubtree`, and keep local absence in `DiscoveryError` rather than `ConfigBuilderInputError`.
+
+
+### Config Typestate Implementation
+- **Status:** complete
+- Worktree: `/Users/jack/Documents/41_personal/traces-pkm/.worktrees/config-typestate`
+- Actions taken:
+  - Added `src/config/file.rs` with `ConfigFile<State>` lifecycle markers and source-specific local/global constructors.
+  - Completed the lifecycle transitions through `From`/`TryFrom`: discovered locals become tracked through `TrackConfigFile` plus `ConfigTracker`, tracked locals become trusted through `TrustConfigFile` plus `ConfigTrust`, trusted locals parse into `Parsed`, and discovered globals parse directly while local discovered configs are rejected.
+  - Migrated discovery to `DiscoveryContext::new`, `DiscoveryType::{Full, NearestLocal, LocalSubtree}`, `DiscoveryAnchor`, ZST `DiscoveryEngine`, and unified `DiscoveryOutcome`.
+  - Replaced `CandidateConfigFile` with `ConfigFile<Discovered>` and removed `src/config/candidate.rs`.
+  - Removed `DiscoveryOutcome.cwd`; `DiscoveryAnchor` now carries the post-discovery location context.
+  - Added `ConfigBuilderInput`, made it the initial `ConfigBuilder` state, and made its `TryFrom<DiscoveryOutcome>` enforce nearest-local load precedence.
+  - Collapsed builder states to aggregate construction: `ConfigBuilderInput -> LocalStored -> Merged`.
+  - Added `ConfigService::load(cwd)` and made discovery/build helpers private.
+  - Reworked trust target routing so CLI path resolution returns discovered local `ConfigFile` values through `ConfigService::resolve_trust_targets`.
+  - Removed `ResolvedTrustTarget` and obsolete trust-specific resolver/error code.
+  - Moved discovery path helper behavior onto `DiscoveryAnchor::path()` and moved discovery helper functions into `DiscoveryEngine`.
+  - Removed the generic `ConfigFile<State>::parse()` method and the lifecycle `transition()` helper; only explicit conversion impls can change lifecycle state.
+  - Changed trust status checks so `ConfigTrust::is_trusted` and `ConfigService::is_trusted` accept `TrustTarget` as the only target input.
+- Verification:
+  - `cargo test config::`: 87 passed.
+  - `MISE_EXPERIMENTAL=1 mise run fmt`: passed.
+  - `MISE_EXPERIMENTAL=1 mise run test`: 157 passed.
+  - `MISE_EXPERIMENTAL=1 mise run clippy`: passed.
+  - `MISE_EXPERIMENTAL=1 mise run ci`: passed; `cargo deny` emitted existing duplicate/unmatched-license warnings but did not fail.
+  - `gitnexus detect_changes(scope=all, worktree=.worktrees/config-typestate)`: low risk, 9 changed files, no indexed symbol/process impact.
+- Errors encountered:
+  - `Blake3FileHash::new` was called with `PathBuf` instead of `&Path`; fixed by borrowing the path.
+  - Several tests wrote `.traces/config.toml` before creating the parent directory; fixed test setup.
+  - Old trust resolver tests kept exercising deleted resolver functions; moved routing coverage to discovery/service tests and retained pure trust-store tests.
+  - `mise run ci` initially failed on clippy dead-code and style lints because config loading is implemented before a render command consumes it; fixed style lints, removed obsolete resolver code, and added targeted `expect` attributes for intentionally pre-wired config loading seams.
+  - `cargo test` was invoked with multiple test filters in one command; Cargo accepts only one test-name filter. Re-ran the focused regression as `cargo test config::`.
+  - `mise run clippy` initially failed after the correction pass because the non-rendered config loading seam again triggered dead-code lints and helper methods had clippy style issues. Fixed with a `cfg_attr(not(test), expect(dead_code))` module attribute, associated helper functions inside `DiscoveryEngine`, and a borrowed `DiscoveryAnchor` in builder input selection.
+  - GitNexus impact lookup could not find the newly added `ConfigFile`, `TrustTarget`, or `ConfigTrust` symbols in the stale/small index; used grep/LSP fallback for callsite mapping, then ran `detect_changes`.
+  - Rust-analyzer failed to initialize for symbol references in this worktree (`LSP reader stopped; client torn down`); grep callsite mapping covered the API change.
+  - `mise run fmt` failed once after a large edit because `impl ConfigFile<Discovered>` was left unclosed; inserted the missing brace and reran fmt successfully.
+  - Tuple/phantom cleanup initially left duplicate braces/expect calls during a surgical edit; removed the duplicates, reran `mise run fmt`, and focused tests passed.
+
+### Tuple and PhantomData Follow-up
+- **Status:** complete
+- Actions taken:
+  - Replaced `TrackConfigFile` and `TrustConfigFile` wrapper structs with tuple conversion inputs.
+  - Removed `ConfigFile<State>::_state: PhantomData<State>`; the concrete `state: State` field already carries the type parameter.
+  - Updated builder and tests to call `ConfigFile::<Tracked>::from((file, &tracker))` and `ConfigFile::<Trusted>::try_from((file, &trust))`.
+- Verification:
+  - `cargo test config::`: 87 passed.
+  - `MISE_EXPERIMENTAL=1 mise run fmt`: passed.
+  - `MISE_EXPERIMENTAL=1 mise run test && MISE_EXPERIMENTAL=1 mise run clippy && MISE_EXPERIMENTAL=1 mise run ci`: passed.
+  - GitNexus `detect_changes(scope=all, worktree=.worktrees/config-typestate)`: low risk, 9 changed files, no indexed symbol/process impact.
+
+### Builder Input Selection Follow-up
+- **Status:** complete
+- Actions taken:
+  - Moved nearest-local selection logic into `ConfigBuilderInput::try_from(DiscoveryOutcome)`.
+  - Removed the standalone `select_nearest_local` helper and its now-unused `DiscoveryAnchor` import.
+- Verification:
+  - `cargo test config::`: 87 passed.
+  - `MISE_EXPERIMENTAL=1 mise run fmt`: passed.
+  - `MISE_EXPERIMENTAL=1 mise run clippy`: passed after removing the unused `DiscoveryAnchor` import.
+  - GitNexus `detect_changes(scope=all, worktree=.worktrees/config-typestate)`: low risk, 9 changed files, no indexed symbol/process impact.
+
+### Config File Error Hierarchy Follow-up
+- **Status:** complete
+- Actions taken:
+  - Made `ConfigFileError` the primary error type for config-file lifecycle transitions.
+  - Changed parse and trust transition `TryFrom` impls to return `ConfigFileError`.
+  - Kept `ConfigFileParseError` and `ConfigFileTrustError` as nested source-detail errors.
+  - Simplified `ConfigBuilderError` to `Input` plus transparent `ConfigFile`.
+  - Updated builder/service/file tests to match nested `ConfigFileError` variants.
+- Errors encountered:
+  - `mise://tasks` resource was unavailable; continued with known mise tasks.
+  - LSP and GitNexus symbol lookups could not resolve the new/stale config error symbols; grep/read fallback mapped callsites.
+  - First focused test compile exposed recursive error types through `ConfigFileError -> ConfigFileTrustError -> TrustError -> ConfigFileError`; boxed the nested `TrustError` source to break the cycle.
+  - Full check initially failed on unused `PathBuf` and `TrustError` imports after removing builder trust variants; removed both imports.
+- Verification:
+  - `cargo test config::`: 87 passed.
+  - `MISE_EXPERIMENTAL=1 mise run fmt`: passed.
+  - `MISE_EXPERIMENTAL=1 mise run clippy`: passed.
+  - `MISE_EXPERIMENTAL=1 mise run ci`: passed with existing non-failing `cargo deny` duplicate/unmatched-license warnings.
+  - GitNexus `detect_changes(scope=all, worktree=.worktrees/config-typestate)`: low risk, 9 changed files, no indexed symbol/process impact.
+
+### ConfigBuilderInput Precedence Encoding Follow-up
+- **Status:** complete
+- Actions taken:
+  - Restored the selected local field name to `local`.
+  - Added `ConfigBuilderInput` docs that state the full-load precedence policy: selected local config plus optional global config merged before local.
+  - Replaced fallback-to-deepest-local behavior with `FullDiscoveryWithoutAnchorLocal { anchor }`.
+  - Added a regression test for full discovery output whose locals do not contain the anchor.
+- Errors encountered:
+  - Initial `nearest_local` field rename did not match the requested terminology; restored `local`.
+  - `mise run clippy` rejected `ok_or_else` for an eager error value; switched to `ok_or`.
+- Verification:
+  - `cargo test config::`: 88 passed.
+  - `MISE_EXPERIMENTAL=1 mise run fmt`: passed.
+  - `MISE_EXPERIMENTAL=1 mise run clippy`: passed.
+  - `MISE_EXPERIMENTAL=1 mise run ci`: passed with existing non-failing `cargo deny` duplicate/unmatched-license warnings.
+  - GitNexus `detect_changes(scope=all, worktree=.worktrees/config-typestate)`: low risk, 9 changed files, no indexed symbol/process impact.
+
+
+
+
+
+
 ## Session: 2026-07-17
 
 ### Phase 1: Establish Shared Design Questions
@@ -17,7 +141,7 @@
   - `progress.md` created and updated.
 
 ### Phase 2: Clarify Type Responsibilities
-- **Status:** in_progress
+- **Status:** complete
 - **Started:** 2026-07-17
 - Actions taken:
   - Preparing next grilling question: which lifecycle states should exist for one config file.
@@ -39,12 +163,27 @@
   - Resolved discovery-context representation: use private fields plus smart constructors, not an enum of cases, so future fields such as environment can be added without reshaping all variants.
   - Reopened trust-target shape: file trust targets likely should not store root redundantly if root can be derived from the config file/trust-root algorithm.
   - Resolved trust-target shape: `TrustTarget` should support directory input, file input, and tracked config-file input: `Directory(&Path)`, `File(&Path)`, and `ConfigFile(&ConfigFile<Tracked>)`.
-  - Resolved discovery kind names: `Full`, `NearestLocal`, and `AllLocalDescendents`.
+  - Resolved discovery kind names: `Full`, `NearestLocal`, and later-renamed `LocalSubtree`.
   - Resolved error ownership decision: absence belongs to `DiscoveryError`, not `ConfigFileError`.
   - Resolved file/discovery error layering: `DiscoveryError` wraps `ConfigFileError` instead of duplicating file/path validation variants.
   - Rejected separate trust-target-resolution error/component as likely wrong; next step is to map all trust routes and use discovery components directly.
   - Resolved trust routing direction: trust should route through `ConfigFile` and discovery components, not a trust-specific resolution layer.
   - Captured optional-search concern: nearest-local discovery may need both optional and required APIs because init can treat absence as useful information.
+  - Refined load route: `ConfigService::load(cwd)` should call a discovery `process()` method that runs `DiscoveryProcessor` for `Full` discovery, instead of manually composing nearest-local calls.
+  - Refined discovery API: discovery methods should take `DiscoveryContext`, and all discovery kinds can return `DiscoveryOutcome` instead of a separate output enum.
+  - Resolved outcome shape: store `kind: DiscoveryType` and `anchor: DiscoveryAnchor`, not the full `DiscoveryContext`; consider `DiscoveryContext::into_parts()`/`into_parts_ref()`.
+  - Opened precedence decision: full discovery may find multiple local configs and needs a clear merge order.
+  - Opened policy question: full load may need an effective-config selection step so `ConfigBuilder` receives only the chosen local/global files instead of all discovered files.
+  - Resolved full-load selection policy: use nearest local plus optional global, not every discovered local config.
+  - Captured naming concern: avoid `EffectiveConfigFiles`; consider a clearer name or a direct `DiscoveryOutcome` method.
+  - Refined selected load-file type: use `ConfigBuilderInput` or `ConfigBuilderContext`, with preference leaning toward an input type that codifies precedence.
+  - Captured parse-don't-validate enforcement: implement `TryFrom<DiscoveryOutcome>` so `ConfigBuilder` accepts only a validated builder input.
+  - Resolved selected input naming: commit to `ConfigBuilderInput`; `ConfigBuilder::new` accepts only that type.
+  - Resolved discovery engine storage for now: use a ZST `DiscoveryEngine` owned by `ConfigService`; revisit later whether it should hold `DiscoveryContext`.
+  - Resolved context ownership: do not make `DiscoveryEngine` hold `DiscoveryContext` yet; context remains a per-call input.
+  - Resolved discovery method seam: `DiscoveryEngine::process(ctx)` is the main public-ish method; kind-specific helpers stay private.
+  - Resolved implementation ordering: user accepted the ten-step implementation sequence from `ConfigFile<Discovered>` through tests.
+  - Recorded final design direction, rejected alternatives, and implementation order in `findings.md`.
 - Files created/modified:
   - `task_plan.md`
   - `findings.md`
@@ -65,10 +204,10 @@
 ## 5-Question Reboot Check
 | Question | Answer |
 |----------|--------|
-| Where am I? | Phase 3: Clarify Error Model. |
-| Where am I going? | Decide optional versus required nearest-local discovery APIs for init, trust, and load. |
+| Where am I? | Final design recorded. |
+| Where am I going? | Design grilling is complete; implementation can be started in a later task using the recorded order. |
 | What's the goal? | Stress-test the proposed config typestate architecture without implementing changes. |
-| What have I learned? | Trust routing should use discovery plus config-file lifecycles directly; nearest-local absence may be an optional outcome for init. |
-| What have I done? | Created planning files, completed external research, recorded fifteen accepted decisions, and narrowed the remaining error question to optional versus required discovery. |
+| What have I learned? | The final design centers on `ConfigFile<Discovered>`, `DiscoveryEngine::process(ctx)`, `DiscoveryOutcome`, `ConfigBuilderInput`, and `ConfigService::load(cwd)`. |
+| What have I done? | Created planning files, completed external research, recorded final design direction, rejected alternatives, and accepted implementation order. |
 
 ---

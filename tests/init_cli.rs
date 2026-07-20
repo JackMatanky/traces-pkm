@@ -2,8 +2,8 @@ use std::{env, fs, io, path::Path};
 
 use pretty_assertions::assert_eq;
 use traces_pkm::{
+    PresetDialogProvider,
     cli::{ConfigInitCliError, init::Init},
-    dialog::PresetDialogProvider,
 };
 
 #[allow(

@@ -10,8 +10,8 @@ use clap::Args;
 
 use super::error::ConfigInitCliError;
 use crate::{
+    DialogProvider,
     config::{LOCAL_CONFIG_FILE, RawConfig},
-    dialog::DialogProvider,
 };
 
 const TRACES_DIR: &str = ".traces";

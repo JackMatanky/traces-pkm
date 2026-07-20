@@ -379,10 +379,14 @@ mod tests {
             "[templates]\ndirectory = \"templates\"\noutput_dir = \"notes\"",
         );
 
-        let config = build(cwd, Vec::new(), vec![CandidateConfigFile::new(
-            global_root.clone(),
-            ConfigSource::Global(global_path.clone()),
-        )]);
+        let config = build(
+            cwd,
+            Vec::new(),
+            vec![CandidateConfigFile::new(
+                global_root.clone(),
+                ConfigSource::Global(global_path.clone()),
+            )],
+        );
 
         assert_eq!(config.local_template_dir(), None);
         assert_eq!(
@@ -625,13 +629,14 @@ mod tests {
         let global_root = temp.path().join("config/traces");
         let global_path = global_root.join("config.toml");
         write_config(&global_path, "[templates]\ndirectory = \"templates\"");
-        let outcome =
-            DiscoveryOutcome::new(temp.path().join("cwd"), Vec::new(), vec![
-                CandidateConfigFile::new(
-                    global_root,
-                    ConfigSource::Global(global_path),
-                ),
-            ]);
+        let outcome = DiscoveryOutcome::new(
+            temp.path().join("cwd"),
+            Vec::new(),
+            vec![CandidateConfigFile::new(
+                global_root,
+                ConfigSource::Global(global_path),
+            )],
+        );
         let tracked =
             tempfile::tempdir().expect("create temp tracked-store dir");
         let trust_store =

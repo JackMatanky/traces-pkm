@@ -59,7 +59,7 @@ enum Commands {
 pub fn run() -> Result<(), ConfigCliError> {
     let cli = Cli::parse();
     let service = crate::config::ConfigService::new();
-    let provider = crate::dialog::TerminalDialogProvider::new();
+    let provider = crate::TerminalDialogProvider::new();
     dispatch(cli, &service, &provider)
 }
 
@@ -73,7 +73,7 @@ pub fn run() -> Result<(), ConfigCliError> {
 fn dispatch(
     cli: Cli,
     service: &crate::config::ConfigService,
-    provider: &dyn crate::dialog::DialogProvider,
+    provider: &dyn crate::DialogProvider,
 ) -> Result<(), ConfigCliError> {
     match cli.command {
         Some(Commands::Init(args)) => args.run(provider).map_err(Into::into),

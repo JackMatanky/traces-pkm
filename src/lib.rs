@@ -2,9 +2,6 @@
 
 pub mod cli;
 mod cwd;
-// `dialog` stays `pub`: its doctests (`traces_pkm::dialog::...`) compile as
-// external crates, so they need real crate-external reachability, not just
-// `cli`/`main.rs`'s crate-internal access.
 // `config`'s tracked-config-store admin surface (`ConfigService::list_tracked`/
 // `clean_tracked_store`, and the `store`/`tracker` internals they delegate
 // to) has no CLI consumer yet — no `traces config list`/`clean` command
@@ -26,10 +23,12 @@ mod cwd;
               that names them directly — warns when no longer needed"
 )]
 mod config;
-pub mod dialog;
+mod dialog;
+pub use dialog::{
+    DialogError, DialogProvider, PresetDialogProvider, TerminalDialogProvider,
+};
 mod hash;
 mod template;
-
 pub(crate) use cwd::Cwd;
 #[cfg(test)]
 pub(crate) use cwd::CwdGuard;
