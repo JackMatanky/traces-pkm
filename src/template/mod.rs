@@ -18,25 +18,35 @@
 //!   local-before-global precedence never drifts. Never escapes the configured
 //!   directories: an absolute path or a `..` segment is always a miss, never a
 //!   traversal.
+//! - [`file_ops`][]: [`FileOps`](file_ops::FileOps), the `file` namespace
+//!   object a template calls as `file.write_to(path)` to declare its own output
+//!   path — registered as a minijinja global by [`engine`].
 //! - [`engine`]: wraps minijinja's [`Environment`](minijinja::Environment) so
 //!   [`service`] depends on "render this source" rather than on minijinja's
 //!   API.
+//! - [`target_path`][]:
+//!   [`TemplateTargetPath`](target_path::TemplateTargetPath), the one way an
+//!   output destination gets built — confines `file.write_to()`, `-o`, and the
+//!   config default alike to [`Config::root`](crate::config::Config::root),
+//!   rejecting `..` and absolute candidates before they ever reach a write.
 //! - [`service`]: [`TemplateService`], which chains resolve, render, and write
 //!   into the one call `crate::cli::template` makes.
 //!
 //! `pub(crate)`, not `pub`: only `crate::cli::template` calls in here.
-//! Everything below `service` is `pub(super)` at most and never crosses
-//! the CLI boundary directly — [`crate::cli::error::TemplateCliError`]
-//! type-erases it behind `Box<dyn StdError>`, so
-//! [`TemplateService::render_to_file`]'s own
-//! `Result<PathBuf, TemplateError>` is the only signature this module
-//! exposes outward.
+//! Everything below `service` is `pub(super)` at most; [`TemplateError`] is
+//! the one exception, re-exported so [`crate::cli::error::TemplateCliError`]
+//! can downcast its boxed source and special-case
+//! [`TemplateError::OutputFileAlreadyExists`] into its own diagnostic code
+//! and help text.
 
 mod engine;
 mod error;
+mod file_ops;
 mod loader;
 mod path;
 mod service;
 mod source_dir;
+mod target_path;
 
+pub(crate) use error::TemplateError;
 pub(crate) use service::TemplateService;

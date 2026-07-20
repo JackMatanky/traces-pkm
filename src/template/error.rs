@@ -32,6 +32,22 @@ pub(crate) enum TemplateError {
         source: io::Error,
     },
 
+    /// The output path already exists and `force` was not passed.
+    #[error("output file already exists at {path}")]
+    OutputFileAlreadyExists {
+        /// The path that would have been overwritten.
+        path: PathBuf,
+    },
+
+    /// `path` — from `file.write_to()`, `-o`, or (should config ever
+    /// allow it) the computed default — is absolute or contains a `..`
+    /// component, so it would write outside the project root.
+    #[error("output path {path} escapes the project root")]
+    OutputPathEscapesRoot {
+        /// The rejected candidate, exactly as given.
+        path: PathBuf,
+    },
+
     /// The template's source failed to render.
     #[error("failed to render template {path}")]
     Render {

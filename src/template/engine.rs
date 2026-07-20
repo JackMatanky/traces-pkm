@@ -3,14 +3,25 @@
 //! "resolve this name" and "render this source" rather than on
 //! minijinja's [`Environment`] directly.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-use minijinja::{Environment, Error};
+use minijinja::{Environment, Error, value::Value};
 
 use super::{
+    file_ops::{FileOps, WRITE_TO_KEY},
     loader::TemplateLoader,
     path::{Found, TemplatePath, TemplatePathError},
 };
+
+/// A render's output, plus whatever `file.write_to()` captured during
+/// that render (if the template called it).
+#[derive(Debug)]
+pub(super) struct RenderOutput {
+    /// The rendered template content.
+    pub(super) content: String,
+    /// The path `file.write_to()` set, if the template called it.
+    pub(super) write_to: Option<PathBuf>,
+}
 
 /// Resolves template names and renders their source, backed by one
 /// shared [`TemplateLoader`] — the search directories are computed
@@ -23,7 +34,9 @@ pub(super) struct TemplateEngine {
 
 impl TemplateEngine {
     /// Builds an engine backed by `loader`, cloning it once into
-    /// minijinja's [`set_loader`](Environment::set_loader) callback.
+    /// minijinja's [`set_loader`](Environment::set_loader) callback, and
+    /// registers the `file` namespace object templates call as
+    /// `file.write_to(path)`.
     #[inline]
     #[must_use]
     pub(super) fn new(loader: TemplateLoader) -> Self {
@@ -32,6 +45,7 @@ impl TemplateEngine {
             let loader = loader.clone();
             move |name| loader.load(name)
         });
+        env.add_global("file", Value::from_object(FileOps));
         Self {
             env,
             loader,
@@ -56,7 +70,12 @@ impl TemplateEngine {
         self.loader.find(name)
     }
 
-    /// Compiles and renders `source` with an empty template context.
+    /// Compiles and renders `source` with an empty template context,
+    /// then reads back whatever `file.write_to()` stashed during render
+    /// (if anything). Scoped to this one render — including everything
+    /// reached via `{% include %}`, since minijinja threads one `State`
+    /// through the whole render tree — so there's nothing to reset
+    /// between calls.
     ///
     /// # Errors
     ///
@@ -64,8 +83,19 @@ impl TemplateEngine {
     /// when an `{% include %}`/`{% extends %}` it references fails to
     /// load or render in turn.
     #[inline]
-    pub(super) fn render(&self, source: &str) -> Result<String, Error> {
-        self.env.render_str(source, minijinja::context!())
+    pub(super) fn render(&self, source: &str) -> Result<RenderOutput, Error> {
+        let captured = self
+            .env
+            .template_from_str(source)?
+            .render_captured(minijinja::context!())?;
+        let write_to = captured
+            .state()
+            .get_temp(WRITE_TO_KEY)
+            .and_then(|value| value.as_str().map(PathBuf::from));
+        Ok(RenderOutput {
+            content: captured.into_output(),
+            write_to,
+        })
     }
 }
 
@@ -93,7 +123,7 @@ mod tests {
                 .render("{% for n in [1, 2] %}{{ n }}{% endfor %}")
                 .expect("render succeeds");
 
-            assert_eq!(rendered, "12");
+            assert_eq!(rendered.content, "12");
         }
 
         #[test]
@@ -107,7 +137,7 @@ mod tests {
                 .render("{% include \"partial.md\" %}!")
                 .expect("render succeeds");
 
-            assert_eq!(rendered, "included!");
+            assert_eq!(rendered.content, "included!");
         }
 
         #[test]
@@ -121,7 +151,7 @@ mod tests {
             let rendered =
                 engine.render("{% include \"daily.md\" %}").expect("render");
 
-            assert_eq!(rendered, "hello");
+            assert_eq!(rendered.content, "hello");
         }
 
         #[test]
@@ -135,7 +165,7 @@ mod tests {
                 .render("{% include \".draft.md\" %}")
                 .expect("render succeeds");
 
-            assert_eq!(rendered, "secret");
+            assert_eq!(rendered.content, "secret");
         }
 
         #[test]
@@ -156,7 +186,7 @@ mod tests {
                 .render("{% include \"shared.md\" %}")
                 .expect("render succeeds");
 
-            assert_eq!(rendered, "from global");
+            assert_eq!(rendered.content, "from global");
         }
 
         #[test]
@@ -170,7 +200,7 @@ mod tests {
                 .render("{% include \"daily\" %}")
                 .expect("extension-less include name is stem-matched");
 
-            assert_eq!(rendered, "hello");
+            assert_eq!(rendered.content, "hello");
         }
     }
 
@@ -190,6 +220,64 @@ mod tests {
                 engine.resolve(Path::new("daily")).expect("resolve succeeds");
 
             assert_eq!(found.absolute(), file);
+        }
+    }
+
+    mod write_to {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn is_none_when_the_template_never_calls_it() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let engine = TemplateEngine::new(loader_from_dir(temp.path()));
+
+            let rendered =
+                engine.render("no output path here").expect("render succeeds");
+
+            assert_eq!(rendered.write_to, None);
+        }
+
+        #[test]
+        fn captures_a_write_to_call() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let engine = TemplateEngine::new(loader_from_dir(temp.path()));
+
+            let rendered = engine
+                .render("{{ file.write_to(\"notes/daily.md\") }}")
+                .expect("render succeeds");
+
+            assert_eq!(
+                rendered.write_to,
+                Some(PathBuf::from("notes/daily.md"))
+            );
+        }
+
+        #[test]
+        fn does_not_leak_between_renders() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let engine = TemplateEngine::new(loader_from_dir(temp.path()));
+            engine
+                .render("{{ file.write_to(\"first.md\") }}")
+                .expect("render succeeds");
+
+            let rendered =
+                engine.render("no write_to here").expect("render succeeds");
+
+            assert_eq!(rendered.write_to, None);
+        }
+
+        #[test]
+        fn calling_an_unknown_file_method_fails() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let engine = TemplateEngine::new(loader_from_dir(temp.path()));
+
+            let error = engine
+                .render("{{ file.move_to(\"x.md\") }}")
+                .expect_err("unknown method fails");
+
+            assert_eq!(error.kind(), minijinja::ErrorKind::UnknownMethod);
         }
     }
 }

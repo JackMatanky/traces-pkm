@@ -76,9 +76,13 @@ _Avoid_: allow, approve, authorize
 
 ### Template Output Path
 
-#### set_output(path)
-A custom function callable from within a template to declare the note's output path. If called, it overrides the CLI's `-o` flag. If not called, falls back to `-o` or default naming. Mirror's Obsidian Templater's `tp.file.move()` pattern.
-_Avoid_: move_to, set_destination
+#### file.write_to(path)
+A method on the `file` namespace object, callable from within a template to
+declare the note's output path. If called, it overrides the CLI's `-o` flag.
+If not called, falls back to `-o` or default naming. Mirrors Obsidian
+Templater's `tp.file.move()` pattern. `path` is confined to the project
+root — an absolute path or a `..` segment is rejected, never written.
+_Avoid_: set_output, move_to, set_destination
 
 ### CLI Flags
 
@@ -86,7 +90,7 @@ _Avoid_: move_to, set_destination
 Specifies the template name or path to instantiate.
 
 #### --output / -o
-Specifies the output path for the resulting note. Overridden if the template calls `set_output()`.
+Specifies the output path for the resulting note. Overridden if the template calls `file.write_to()`. Confined to the project root — an absolute path or a `..` segment is rejected, matching `file.write_to()`.
 
 #### --dry-run / -n
 Renders the template to stdout without writing to disk.
