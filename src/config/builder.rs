@@ -192,14 +192,11 @@ impl ConfigBuilder<LocalStored> {
 
         Ok(ConfigBuilder {
             state: Merged {
-                config: Config::new(
-                    root,
-                    TemplateConfig {
-                        local: local_dir,
-                        global: global_dir,
-                        output,
-                    },
-                ),
+                config: Config::new(root, TemplateConfig {
+                    local: local_dir,
+                    global: global_dir,
+                    output,
+                }),
             },
         })
     }
