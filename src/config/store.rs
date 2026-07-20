@@ -15,8 +15,8 @@ const COMPANION_SUFFIX: &str = ".hash";
 /// Stores seen config files and trusted workspace roots.
 #[derive(Clone, Debug)]
 pub(crate) struct ConfigStateStore {
-    tracked_configs: FileStateStore,
-    trusted_workspaces: FileStateStore,
+    tracked: FileStateStore,
+    trusted: FileStateStore,
 }
 
 /// Subject of a trust operation.
@@ -162,12 +162,8 @@ impl ConfigStateStore {
     #[must_use]
     pub(crate) fn new() -> Self {
         Self {
-            tracked_configs: FileStateStore::new(
-                (*dirs::TRACKED_CONFIGS).clone(),
-            ),
-            trusted_workspaces: FileStateStore::new(
-                (*dirs::TRUSTED_CONFIGS).clone(),
-            ),
+            tracked: FileStateStore::new((*dirs::TRACKED_CONFIGS).clone()),
+            trusted: FileStateStore::new((*dirs::TRUSTED_CONFIGS).clone()),
         }
     }
 
@@ -177,8 +173,8 @@ impl ConfigStateStore {
     #[must_use]
     pub(crate) fn at(tracked_root: PathBuf, trusted_root: PathBuf) -> Self {
         Self {
-            tracked_configs: FileStateStore::at(tracked_root),
-            trusted_workspaces: FileStateStore::at(trusted_root),
+            tracked: FileStateStore::at(tracked_root),
+            trusted: FileStateStore::at(trusted_root),
         }
     }
 
@@ -188,7 +184,7 @@ impl ConfigStateStore {
     /// fail config loading.
     #[inline]
     pub(crate) fn track_seen_config(&self, config: &ConfigFile<Discovered>) {
-        if let Err(error) = self.tracked_configs.record(config.path()) {
+        if let Err(error) = self.tracked.record(config.path()) {
             tracing::warn!(
                 path = %config.path().display(),
                 error = %error,
@@ -208,12 +204,12 @@ impl ConfigStateStore {
         &self,
         subject: &TrustSubject,
     ) -> Result<(), ConfigStateError> {
-        self.trusted_workspaces.record(subject.root_path())?;
+        self.trusted.record(subject.root_path())?;
         let Some(config_file) = subject.config_file() else {
             return Ok(());
         };
         let digest = Blake3FileHash::new(config_file)?;
-        self.trusted_workspaces.write_companion(
+        self.trusted.write_companion(
             subject.root_path(),
             COMPANION_SUFFIX,
             digest.to_string(),
@@ -231,7 +227,7 @@ impl ConfigStateStore {
         &self,
         subject: &TrustSubject,
     ) -> Result<WorkspaceTrustStatus, ConfigStateError> {
-        if self.trusted_workspaces.contains(subject.root_path())? {
+        if self.trusted.contains(subject.root_path())? {
             Ok(WorkspaceTrustStatus::Trusted)
         } else {
             Ok(WorkspaceTrustStatus::Untrusted)
@@ -249,14 +245,14 @@ impl ConfigStateStore {
         &self,
         subject: &TrustSubject,
     ) -> Result<ConfigTrustStatus, ConfigStateError> {
-        if !self.trusted_workspaces.contains(subject.root_path())? {
+        if !self.trusted.contains(subject.root_path())? {
             return Ok(ConfigTrustStatus::Untrusted);
         }
         let Some(config_file) = subject.config_file() else {
             return Ok(ConfigTrustStatus::Trusted);
         };
         let Some(recorded) = self
-            .trusted_workspaces
+            .trusted
             .read_companion(subject.root_path(), COMPANION_SUFFIX)?
         else {
             return Ok(ConfigTrustStatus::MissingBaseline);
@@ -279,7 +275,7 @@ impl ConfigStateStore {
         &self,
         subject: &TrustSubject,
     ) -> Result<usize, ConfigStateError> {
-        self.trusted_workspaces
+        self.trusted
             .remove_with_companions(subject.root_path(), &[COMPANION_SUFFIX])
             .map_err(Into::into)
     }
@@ -294,7 +290,7 @@ impl ConfigStateStore {
     pub(crate) fn list_tracked_configs(
         &self,
     ) -> Result<Vec<PathBuf>, ConfigStateError> {
-        self.tracked_configs.list_all().map_err(Into::into)
+        self.tracked.list_all().map_err(Into::into)
     }
 
     /// Removes stale tracked config entries.
@@ -306,9 +302,7 @@ impl ConfigStateStore {
     pub(crate) fn clean_tracked_configs(
         &self,
     ) -> Result<usize, ConfigStateError> {
-        self.tracked_configs
-            .clean(FileStoreCleanMode::EntriesOnly)
-            .map_err(Into::into)
+        self.tracked.clean(FileStoreCleanMode::EntriesOnly).map_err(Into::into)
     }
 
     /// Lists trusted workspace roots.
@@ -320,7 +314,7 @@ impl ConfigStateStore {
     pub(crate) fn list_trusted_workspaces(
         &self,
     ) -> Result<Vec<PathBuf>, ConfigStateError> {
-        self.trusted_workspaces.list_all().map_err(Into::into)
+        self.trusted.list_all().map_err(Into::into)
     }
 
     /// Removes stale trusted-workspace entries and orphaned config-hash
@@ -333,7 +327,7 @@ impl ConfigStateStore {
     pub(crate) fn clean_trusted_workspaces(
         &self,
     ) -> Result<usize, ConfigStateError> {
-        self.trusted_workspaces
+        self.trusted
             .clean(FileStoreCleanMode::WithCompanions(&[COMPANION_SUFFIX]))
             .map_err(Into::into)
     }
