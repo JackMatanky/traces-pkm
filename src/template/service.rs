@@ -6,16 +6,13 @@
 //! output path, commit it to disk) — each step is its own method or
 //! collaborator call, named for the one thing it does.
 
-use std::{
-    fs,
-    path::{Path, PathBuf},
-};
+use std::path::{Path, PathBuf};
 
 use super::{
     engine::{RenderOutput, TemplateEngine},
     error::TemplateError,
     loader::TemplateLoader,
-    path::{Found, TemplatePath, TemplatePathError},
+    path::{Found, TemplatePath},
     writer::{TemplateTargetPath, TemplateWriter, WriteMode},
 };
 use crate::config::Config;
@@ -52,26 +49,6 @@ impl<'a> TemplateService<'a> {
         }
     }
 
-    /// Resolves `name` against `config`'s template directories.
-    ///
-    /// Delegates straight to [`TemplateEngine::resolve`], which owns
-    /// the loader.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`TemplatePathError::AmbiguousTemplate`] when `name`
-    /// matches more than one file within a single directory.
-    ///
-    /// Returns [`TemplatePathError::TemplateNotFound`] when no
-    /// directory has a match.
-    #[inline]
-    pub(super) fn resolve(
-        &self,
-        name: &Path,
-    ) -> Result<TemplatePath<Found>, TemplatePathError> {
-        self.engine.resolve(name)
-    }
-
     /// Resolves `name`, renders it, and writes the result to disk.
     /// Returns the path written.
     ///
@@ -102,9 +79,9 @@ impl<'a> TemplateService<'a> {
         output: Option<&Path>,
         force: bool,
     ) -> Result<PathBuf, TemplateError> {
-        let resolved = self.resolve(name)?;
+        let resolved = self.engine.resolve(name)?;
         let resolved_path = resolved.absolute();
-        let template_source = Self::read_template(&resolved_path)?;
+        let template_source = Self::read_template(&resolved)?;
         let rendered =
             self.render_template(&template_source, &resolved_path)?;
         let target = self.writer.choose(output, rendered.write_to, || {
@@ -120,9 +97,11 @@ impl<'a> TemplateService<'a> {
 
     /// Reads the resolved template's source from disk, mapping I/O
     /// failure to [`TemplateError::Read`].
-    fn read_template(path: &Path) -> Result<String, TemplateError> {
-        fs::read_to_string(path).map_err(|source| TemplateError::Read {
-            path: path.to_path_buf(),
+    fn read_template(
+        resolved: &TemplatePath<Found>,
+    ) -> Result<String, TemplateError> {
+        resolved.read().map_err(|source| TemplateError::Read {
+            path: resolved.absolute(),
             source,
         })
     }
@@ -161,6 +140,8 @@ impl<'a> TemplateService<'a> {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
     use super::*;
 
     fn write_file(dir: &Path, name: &str, content: &str) -> PathBuf {
@@ -170,32 +151,6 @@ mod tests {
         fs::write(&path, content).expect("write template");
         path
     }
-
-    mod resolve {
-        use pretty_assertions::assert_eq;
-
-        use super::*;
-
-        #[test]
-        fn delegates_to_template_resolution() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            let local_dir = temp.path().join("templates");
-            let file = write_file(&local_dir, "daily.md", "content");
-            let config = Config::for_test(
-                temp.path().to_path_buf(),
-                Some(local_dir),
-                None,
-                temp.path().to_path_buf(),
-            );
-            let service = TemplateService::new(&config);
-
-            let resolved =
-                service.resolve(Path::new("daily")).expect("resolve template");
-
-            assert_eq!(resolved.absolute(), file);
-        }
-    }
-
     mod render_to_file {
         use pretty_assertions::assert_eq;
 

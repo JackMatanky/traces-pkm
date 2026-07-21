@@ -33,7 +33,7 @@
 //! dot-prefixed include name both just work.
 
 use std::{
-    fs, io,
+    io,
     path::{Path, PathBuf},
 };
 
@@ -113,7 +113,7 @@ impl TemplateLoader {
         let Ok(found) = self.find(Path::new(name)) else {
             return Ok(None);
         };
-        match fs::read_to_string(found.absolute()) {
+        match found.read() {
             Ok(source) => Ok(Some(source)),
             Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(None),
             Err(err) => Err(Error::new(
@@ -138,6 +138,8 @@ impl From<&Config> for TemplateLoader {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
     use super::*;
 
     fn write_file(dir: &Path, name: &str) -> PathBuf {
