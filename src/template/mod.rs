@@ -26,24 +26,31 @@
 //!   API.
 //! - [`writer`][]: [`TemplateTargetPath`](writer::TemplateTargetPath), a
 //!   proven-safe output destination, and
-//!   [`TemplateWriter`](writer::TemplateWriter), which picks one by precedence
-//!   (`file.write_to()`, `-o`, and the config default alike confined to
-//!   [`Config::root`](crate::config::Config::root), rejecting `..` and absolute
-//!   candidates before they ever reach a write) and writes rendered content to
-//!   it.
+//!   [`TemplateWriter`](writer::TemplateWriter), whose one entry point,
+//!   [`TemplateWriter::write`](writer::TemplateWriter::write), applies a
+//!   [`WriteMode`](writer::WriteMode) to rendered content: picks a target by
+//!   precedence (`file.write_to()`, `-o`, and the config default alike confined
+//!   to [`Config::root`](crate::config::Config::root), rejecting `..` and
+//!   absolute candidates before they ever reach a write) and writes to it, or —
+//!   for [`WriteMode::DryRun`](writer::WriteMode::DryRun) — returns the content
+//!   untouched, never picking a target at all.
 //! - [`service`]: [`TemplateService`], which chains resolve, render, and write
 //!   into the one call `crate::cli::template` makes.
 //!
 //! `pub(crate)`, not `pub`: only `crate::cli::template` calls in here.
-//! Everything below `service` is `pub(super)` at most, with two
+//! Everything below `service` is `pub(super)` at most, with three
 //! exceptions re-exported below: [`TemplateError`], so
 //! [`crate::cli::error::TemplateCliError`] can downcast its boxed source
 //! and special-case [`TemplateError::OutputFileAlreadyExists`] into its
-//! own diagnostic code and help text; and [`writer::WriteMode`], so
+//! own diagnostic code and help text; [`writer::WriteMode`], so
 //! `crate::cli::template` can build the one mode value `--force` and
 //! `--dry-run` (mutually exclusive in effect) collapse into, instead of
 //! passing both flags into [`service::TemplateService::render_to_file`]
-//! as independent `bool`s.
+//! as independent `bool`s; and [`writer::WriteOutcome`], the result
+//! [`writer::TemplateWriter::write`] returns and
+//! [`service::TemplateService::render_to_file`] passes straight through —
+//! defined beside [`writer::TemplateWriter::write`], the one place a
+//! [`writer::WriteMode`] gets applied, rather than in `service`.
 
 mod engine;
 mod error;
@@ -55,5 +62,5 @@ mod source_dir;
 mod writer;
 
 pub(crate) use error::TemplateError;
-pub(crate) use service::{TemplateService, WriteOutcome};
-pub(crate) use writer::WriteMode;
+pub(crate) use service::TemplateService;
+pub(crate) use writer::{WriteMode, WriteOutcome};

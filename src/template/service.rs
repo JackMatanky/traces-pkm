@@ -2,34 +2,20 @@
 //! [`Config`], driven through [`TemplateEngine`] and
 //! [`TemplateWriter`]. [`TemplateService::render_to_file`] is the
 //! single public entry point; it reads as a short top-to-bottom
-//! sequence of small private steps (resolve, read, render, choose an
-//! output path, commit it to disk) — each step is its own method or
-//! collaborator call, named for the one thing it does.
+//! sequence of small private steps (resolve, read, render), then
+//! delegates the whole write-or-preview decision to
+//! [`TemplateWriter::write`].
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use super::{
     engine::{RenderOutput, TemplateEngine},
     error::TemplateError,
     loader::TemplateLoader,
     path::{Found, TemplatePath},
-    writer::{TemplateTargetPath, TemplateWriter, WriteMode},
+    writer::{TemplateTargetPath, TemplateWriter, WriteMode, WriteOutcome},
 };
 use crate::config::Config;
-
-/// What [`TemplateService::render_to_file`] did with the rendered
-/// template: wrote it to disk, or — in dry-run mode — rendered it
-/// without writing anything. Printing a dry-run's content to stdout is
-/// the CLI adapter's job (`crate::cli::template`), not this service's —
-/// this only carries the content back.
-#[derive(Debug, Eq, PartialEq)]
-pub(crate) enum WriteOutcome {
-    /// Written to disk at this path.
-    Written(PathBuf),
-    /// `--dry-run`: the rendered content, for the caller to print —
-    /// nothing written to disk.
-    Previewed(String),
-}
 
 /// Entry point for resolving, rendering, and writing one template.
 ///
@@ -63,24 +49,16 @@ impl<'a> TemplateService<'a> {
         }
     }
 
-    /// Resolves `name` and renders it, then either writes the result to
-    /// disk or — in dry-run mode — returns the rendered content instead
-    /// (see [`WriteOutcome`]; printing it is the caller's job).
-    ///
-    /// `mode` is checked first: for [`WriteMode::DryRun`],
-    /// [`Self::render_template`]'s output is returned as
-    /// [`WriteOutcome::Previewed`] without ever computing an output
-    /// path, so a dry-run's `-o`/`file.write_to()` value is never
-    /// confined or even looked at, and the existence/overwrite guard
-    /// never runs. Otherwise the output path is chosen by precedence: an
-    /// explicit `output` (`-o`) wins, then a `file.write_to()` call
-    /// inside the template, then [`Self::default_output_path`] — all via
-    /// [`TemplateWriter::choose`]. A `file.write_to()`/`output` candidate
-    /// is confined to [`Config::root`]; it can't name a path outside the
-    /// project. The default is derived from already-trusted config (see
-    /// [`Self::default_output_path`]'s docs) and never goes through that
-    /// check. [`TemplateWriter::commit`] creates the output directory if
-    /// it doesn't exist yet.
+    /// Resolves `name` and renders it, then hands the result to
+    /// [`TemplateWriter::write`], which either writes it to disk or —
+    /// for [`WriteMode::DryRun`] — returns it untouched (see
+    /// [`WriteOutcome`]; printing it is the caller's job). The output
+    /// path itself is chosen by precedence — an explicit `output`
+    /// (`-o`) wins, then a `file.write_to()` call inside the template,
+    /// then [`Self::default_output_path`] — entirely inside
+    /// [`TemplateWriter::write`]; this method only supplies the pieces
+    /// (`output`, `rendered.write_to`, `rendered.content`, `mode`, and
+    /// the default-path closure).
     ///
     /// # Errors
     ///
@@ -104,17 +82,9 @@ impl<'a> TemplateService<'a> {
         let template_source = Self::read_template(&resolved)?;
         let rendered =
             self.render_template(&template_source, &resolved_path)?;
-        match mode {
-            WriteMode::DryRun => Ok(WriteOutcome::Previewed(rendered.content)),
-            WriteMode::CreateNew | WriteMode::Overwrite => {
-                let target =
-                    self.writer.choose(output, rendered.write_to, || {
-                        self.default_output_path(&resolved)
-                    })?;
-                TemplateWriter::commit(&target, &rendered.content, mode)?;
-                Ok(WriteOutcome::Written(target.into_path_buf()))
-            }
-        }
+        self.writer.write(output, rendered, mode, || {
+            self.default_output_path(&resolved)
+        })
     }
 
     /// Reads the resolved template's source from disk, mapping I/O
@@ -162,7 +132,7 @@ impl<'a> TemplateService<'a> {
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
+    use std::{fs, path::PathBuf};
 
     use super::*;
 
