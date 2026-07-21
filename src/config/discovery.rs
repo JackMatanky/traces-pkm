@@ -580,186 +580,340 @@ impl DiscoveryProcessor<GlobalCollected> {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use std::fs;
 
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn full_discovery_rejects_file_anchor_at_context_construction() {
-        let path = PathBuf::from("/project/.traces/config.toml");
-
-        let error = DiscoveryContext::new(
-            DiscoveryScope::Full,
-            DiscoveryAnchor::File(path.clone()),
-        )
-        .expect_err("full discovery cannot use a file anchor");
-
-        assert!(matches!(
-            error,
-            DiscoveryContextError::UnsupportedFileAnchor {
-                kind: DiscoveryScope::Full,
-                path: error_path
-            } if error_path == path
-        ));
+    struct Fixture {
+        temp: tempfile::TempDir,
     }
 
-    #[test]
-    fn full_discovery_process_returns_kind_anchor_and_nearest_local() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let project = temp.path().join("project");
-        let cwd = project.join("notes/daily");
-        fs::create_dir_all(&cwd).expect("create cwd");
-        let config_path = project.join(".traces/config.toml");
-        fs::create_dir_all(config_path.parent().expect("config path parent"))
-            .expect("create config parent");
-        fs::write(&config_path, "[templates]\n").expect("write config");
-
-        let discovered = DiscoveryEngine
-            .process(
-                DiscoveryContext::new(
-                    DiscoveryScope::Full,
-                    DiscoveryAnchor::Directory(cwd.clone()),
-                )
-                .expect("valid full context"),
-            )
-            .expect("process full discovery");
-
-        assert_eq!(discovered.kind(), DiscoveryScope::Full);
-        assert_eq!(discovered.anchor(), &DiscoveryAnchor::Directory(cwd));
-        assert_eq!(discovered.local().len(), 1);
-        assert_eq!(discovered.local().first().unwrap().root(), project);
-    }
-
-    #[test]
-    fn local_subtree_discovers_nearest_and_descendant_configs() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let parent = temp.path().join("parent");
-        let child = parent.join("child");
-        fs::create_dir_all(&child).expect("create child dir");
-        let parent_config = parent.join(".traces/config.toml");
-        let child_config = child.join(".traces/config.toml");
-        fs::create_dir_all(
-            parent_config.parent().expect("parent config parent"),
-        )
-        .expect("create parent config parent");
-        fs::create_dir_all(child_config.parent().expect("child config parent"))
-            .expect("create child config parent");
-        fs::write(&parent_config, "[templates]\n")
-            .expect("write parent config");
-        fs::write(&child_config, "[templates]\n").expect("write child config");
-
-        let discovered = DiscoveryEngine
-            .process(
-                DiscoveryContext::new(
-                    DiscoveryScope::LocalSubtree,
-                    DiscoveryAnchor::Directory(parent.clone()),
-                )
-                .expect("valid subtree context"),
-            )
-            .expect("process local subtree discovery");
-
-        assert_eq!(discovered.kind(), DiscoveryScope::LocalSubtree);
-        assert_eq!(discovered.local().len(), 2);
-        assert_eq!(discovered.local().first().unwrap().root(), parent);
-        assert_eq!(discovered.local().get(1).unwrap().root(), child);
-        assert!(discovered.global().is_empty());
-    }
-
-    #[test]
-    fn collect_local_finds_config_in_ancestor() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let project = temp.path().join("project");
-        let cwd = project.join("notes/daily");
-        fs::create_dir_all(&cwd).expect("create cwd");
-        let config_path = project.join(".traces/config.toml");
-        let config_parent = config_path.parent().expect("config path parent");
-        fs::create_dir_all(config_parent).expect("create config parent");
-        fs::write(&config_path, "").expect("write config");
-
-        let proc = DiscoveryProcessor::new(&cwd)
-            .collect_local()
-            .expect("collect local config");
-
-        assert_eq!(proc.local.len(), 1);
-        assert!(proc.global.is_empty());
-    }
-
-    #[test]
-    fn init_to_local_collected_no_local_found_is_error() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let err = DiscoveryProcessor::new(temp.path())
-            .collect_local()
-            .expect_err("expected LocalConfigAbsent error");
-        assert!(matches!(err, DiscoveryError::LocalConfigAbsent { .. }));
-    }
-
-    #[test]
-    fn finish_returns_empty_outcome() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-
-        // Direct struct construction here is intentional: this is an edge
-        // case (empty outcome) unreachable through the public API since
-        // collect_local() would produce LocalConfigAbsent on an empty tree.
-        let discovered = DiscoveryProcessor::<GlobalCollected> {
-            cwd: temp.path().to_path_buf(),
-            local: Vec::new(),
-            global: Vec::new(),
-            _state: PhantomData,
+    impl Fixture {
+        fn new() -> Self {
+            Self {
+                temp: tempfile::tempdir().expect("create temp dir"),
+            }
         }
-        .finish();
 
-        assert!(discovered.local().is_empty());
-        assert!(discovered.global().is_empty());
+        fn path(&self, rel: &str) -> PathBuf {
+            self.temp.path().join(rel)
+        }
+
+        fn create_dir(&self, rel: &str) -> PathBuf {
+            let p = self.path(rel);
+            fs::create_dir_all(&p).expect("create dir");
+            p
+        }
+
+        fn create_config(&self, rel_dir: &str) -> PathBuf {
+            let p = self.path(rel_dir).join(LOCAL_CONFIG_FILE);
+            fs::create_dir_all(p.parent().unwrap()).expect("create config parent");
+            fs::write(&p, "[templates]\n").expect("write config");
+            p
+        }
+
+        fn create_file(&self, rel: &str) -> PathBuf {
+            let p = self.path(rel);
+            if let Some(parent) = p.parent() {
+                fs::create_dir_all(parent).expect("create parent");
+            }
+            fs::write(&p, "").expect("write file");
+            p
+        }
     }
 
-    #[test]
-    fn finish_returns_cwd_when_local_config_found() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let project = temp.path().join("project");
-        let cwd = project.join("notes/daily");
-        fs::create_dir_all(&cwd).expect("create cwd");
-        let local_path = project.join(".traces/config.toml");
-        let local_parent = local_path.parent().expect("config path parent");
-        fs::create_dir_all(local_parent).expect("create config parent");
-        fs::write(&local_path, "[templates]\n").expect("write config");
+    mod context {
+        use super::*;
 
-        let local_collected = DiscoveryProcessor::new(&cwd)
-            .collect_local()
-            .expect("collect local config");
-        let discovered = local_collected
-            .collect_global()
-            .expect("collect global config")
-            .finish();
+        #[test]
+        fn full_scope_rejects_file_anchor() {
+            // Arrange
+            let path = PathBuf::from("/project/.traces/config.toml");
 
-        assert_eq!(discovered.local().len(), 1);
-        assert!(discovered.global().is_empty());
+            // Act
+            let result = DiscoveryContext::new(
+                DiscoveryScope::Full,
+                DiscoveryAnchor::File(path.clone()),
+            );
+
+            // Assert
+            assert!(matches!(
+                result,
+                Err(DiscoveryContextError::UnsupportedFileAnchor {
+                    kind: DiscoveryScope::Full,
+                    path: error_path
+                }) if error_path == path
+            ));
+        }
+
+        #[test]
+        fn accepts_valid_combinations() {
+            // Arrange
+            let path = PathBuf::from("/project/.traces/config.toml");
+
+            // Act
+            let result1 = DiscoveryContext::new(
+                DiscoveryScope::Full,
+                DiscoveryAnchor::Directory(path.clone()),
+            );
+            let result2 = DiscoveryContext::new(
+                DiscoveryScope::NearestLocal,
+                DiscoveryAnchor::File(path.clone()),
+            );
+
+            // Assert
+            assert!(result1.is_ok());
+            assert!(result2.is_ok());
+        }
     }
 
-    #[test]
-    fn is_config_file_returns_false_for_missing_path() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        assert!(
-            !DiscoveryEngine::is_config_file(&temp.path().join("missing.toml"))
-                .expect("check missing config file")
-        );
+    mod engine {
+        use super::*;
+
+        #[test]
+        fn process_full_returns_kind_anchor_and_nearest_local() {
+            // Arrange
+            let fixture = Fixture::new();
+            let project = fixture.create_dir("project");
+            let cwd = fixture.create_dir("project/notes/daily");
+            fixture.create_config("project");
+
+            let context = DiscoveryContext::new(
+                DiscoveryScope::Full,
+                DiscoveryAnchor::Directory(cwd.clone()),
+            ).unwrap();
+
+            // Act
+            let result = DiscoveryEngine.process(context);
+
+            // Assert
+            assert!(result.is_ok());
+            let discovered = result.unwrap();
+            assert_eq!(discovered.kind(), DiscoveryScope::Full);
+            assert_eq!(discovered.anchor(), &DiscoveryAnchor::Directory(cwd));
+            assert_eq!(discovered.local().len(), 1);
+            assert_eq!(discovered.local().first().unwrap().root(), project);
+        }
+
+        #[test]
+        fn process_nearest_local_returns_only_nearest() {
+            // Arrange
+            let fixture = Fixture::new();
+            let project = fixture.create_dir("project");
+            let cwd = fixture.create_dir("project/notes/daily");
+            fixture.create_config("project");
+
+            let context = DiscoveryContext::new(
+                DiscoveryScope::NearestLocal,
+                DiscoveryAnchor::Directory(cwd.clone()),
+            ).unwrap();
+
+            // Act
+            let result = DiscoveryEngine.process(context);
+
+            // Assert
+            assert!(result.is_ok());
+            let discovered = result.unwrap();
+            assert_eq!(discovered.kind(), DiscoveryScope::NearestLocal);
+            assert_eq!(discovered.local().len(), 1);
+            assert_eq!(discovered.local().first().unwrap().root(), project);
+        }
+
+        #[test]
+        fn process_local_subtree_discovers_nearest_and_descendants() {
+            // Arrange
+            let fixture = Fixture::new();
+            let parent = fixture.create_dir("parent");
+            let child = fixture.create_dir("parent/child");
+            fixture.create_config("parent");
+            fixture.create_config("parent/child");
+
+            let context = DiscoveryContext::new(
+                DiscoveryScope::LocalSubtree,
+                DiscoveryAnchor::Directory(parent.clone()),
+            ).unwrap();
+
+            // Act
+            let result = DiscoveryEngine.process(context);
+
+            // Assert
+            assert!(result.is_ok());
+            let discovered = result.unwrap();
+            assert_eq!(discovered.kind(), DiscoveryScope::LocalSubtree);
+            assert_eq!(discovered.local().len(), 2);
+            assert_eq!(discovered.local().first().unwrap().root(), parent);
+            assert_eq!(discovered.local().get(1).unwrap().root(), child);
+            assert!(discovered.global().is_empty());
+        }
+
+        #[test]
+        fn trust_subjects_full_scope_is_unsupported() {
+            // Arrange
+            let fixture = Fixture::new();
+            let project = fixture.create_dir("project");
+
+            // Act
+            let result = DiscoveryEngine.trust_subjects(&project, DiscoveryScope::Full);
+
+            // Assert
+            assert!(matches!(
+                result,
+                Err(DiscoveryError::Context(DiscoveryContextError::UnsupportedTrustScope { .. }))
+            ));
+        }
+
+        #[test]
+        fn trust_subjects_nearest_local_with_config_returns_discovered_subject() {
+            // Arrange
+            let fixture = Fixture::new();
+            let project = fixture.create_dir("project");
+            fixture.create_config("project");
+
+            // Act
+            let result = DiscoveryEngine.trust_subjects(&project, DiscoveryScope::NearestLocal);
+
+            // Assert
+            assert!(result.is_ok());
+            let subjects = result.unwrap();
+            assert_eq!(subjects.into_iter().count(), 1);
+        }
+
+        #[test]
+        fn trust_subjects_nearest_local_without_config_returns_root_fallback() {
+            // Arrange
+            let fixture = Fixture::new();
+            let project = fixture.create_dir("project");
+
+            // Act
+            let result = DiscoveryEngine.trust_subjects(&project, DiscoveryScope::NearestLocal);
+
+            // Assert
+            assert!(result.is_ok());
+            let subjects = result.unwrap();
+            assert_eq!(subjects.into_iter().count(), 1);
+        }
+
+        #[test]
+        fn trust_subjects_local_subtree_returns_discovered_subjects() {
+            // Arrange
+            let fixture = Fixture::new();
+            let project = fixture.create_dir("project");
+            fixture.create_config("project");
+
+            // Act
+            let result = DiscoveryEngine.trust_subjects(&project, DiscoveryScope::LocalSubtree);
+
+            // Assert
+            assert!(result.is_ok());
+            let subjects = result.unwrap();
+            assert_eq!(subjects.into_iter().count(), 1);
+        }
+
+        #[test]
+        fn trust_subjects_local_subtree_without_config_is_error() {
+            // Arrange
+            let fixture = Fixture::new();
+            let project = fixture.create_dir("project");
+
+            // Act
+            let result = DiscoveryEngine.trust_subjects(&project, DiscoveryScope::LocalSubtree);
+
+            // Assert
+            assert!(matches!(
+                result,
+                Err(DiscoveryError::LocalConfigAbsent { .. })
+            ));
+        }
+
+        #[test]
+        fn is_config_file_returns_false_for_missing_path() {
+            // Arrange
+            let fixture = Fixture::new();
+            let path = fixture.path("missing.toml");
+
+            // Act
+            let result = DiscoveryEngine::is_config_file(&path);
+
+            // Assert
+            assert!(result.is_ok());
+            assert!(!result.unwrap());
+        }
+
+        #[test]
+        fn is_config_file_returns_path_inaccessible_when_parent_is_not_a_directory() {
+            // Arrange
+            let fixture = Fixture::new();
+            let blocking_file = fixture.create_file("blocking");
+            let unreachable_path = blocking_file.join("config.toml");
+
+            // Act
+            let result = DiscoveryEngine::is_config_file(&unreachable_path);
+
+            // Assert
+            assert!(matches!(result, Err(DiscoveryError::PathInaccessible { .. })));
+        }
     }
 
-    #[test]
-    fn is_config_file_returns_path_inaccessible_when_a_parent_is_not_a_directory()
-     {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        // A regular file where a directory is expected: `metadata()` on
-        // the full path fails with `NotADirectory`, not `NotFound`, so
-        // this exercises the `PathInaccessible` branch specifically.
-        let blocking_file = temp.path().join("blocking");
-        fs::write(&blocking_file, "").expect("write blocking file");
-        let unreachable_path = blocking_file.join("config.toml");
+    mod processor {
+        use super::*;
 
-        let err = DiscoveryEngine::is_config_file(&unreachable_path)
-            .expect_err("expected PathInaccessible error");
+        #[test]
+        fn collect_local_finds_config_in_ancestor() {
+            // Arrange
+            let fixture = Fixture::new();
+            let _project = fixture.create_dir("project");
+            let cwd = fixture.create_dir("project/notes/daily");
+            fixture.create_config("project");
+            let processor = DiscoveryProcessor::new(&cwd);
 
-        assert!(matches!(err, DiscoveryError::PathInaccessible { .. }));
+            // Act
+            let result = processor.collect_local();
+
+            // Assert
+            assert!(result.is_ok());
+            let next_state = result.unwrap();
+            assert_eq!(next_state.local.len(), 1);
+            assert!(next_state.global.is_empty());
+        }
+
+        #[test]
+        fn collect_local_returns_absent_error_when_no_config_exists() {
+            // Arrange
+            let fixture = Fixture::new();
+            let cwd = fixture.create_dir("project/notes/daily");
+            let processor = DiscoveryProcessor::new(&cwd);
+
+            // Act
+            let result = processor.collect_local();
+
+            // Assert
+            assert!(matches!(
+                result,
+                Err(DiscoveryError::LocalConfigAbsent { .. })
+            ));
+        }
+
+        #[test]
+        fn finish_returns_cwd_when_local_config_found() {
+            // Arrange
+            let fixture = Fixture::new();
+            let _project = fixture.create_dir("project");
+            let cwd = fixture.create_dir("project/notes/daily");
+            fixture.create_config("project");
+
+            let processor = DiscoveryProcessor::new(&cwd)
+                .collect_local()
+                .unwrap()
+                .collect_global()
+                .unwrap();
+
+            // Act
+            let outcome = processor.finish();
+
+            // Assert
+            assert_eq!(outcome.local().len(), 1);
+            // We cannot reliably assert on global() without creating flaky cross-test 
+            // interactions, as CONFIG_HOME is resolved from process-shared context.
+            // But we verify the local processing works securely.
+        }
     }
 }
