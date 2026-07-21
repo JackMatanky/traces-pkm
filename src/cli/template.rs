@@ -25,6 +25,13 @@ pub(super) struct Template {
     /// Template name or path to instantiate.
     #[arg(short = 'i', long = "input", value_name = "NAME")]
     pub(super) name: PathBuf,
+    /// Output path — overrides any `file.write_to()` call inside the
+    /// template; falls back to `write_to`, then the config-derived default.
+    #[arg(short = 'o', long, value_name = "PATH")]
+    pub(super) output: Option<PathBuf>,
+    /// Overwrite the output path if it already exists.
+    #[arg(short = 'f', long)]
+    pub(super) force: bool,
 }
 
 impl Template {
@@ -35,6 +42,8 @@ impl Template {
     pub(super) fn new(name: PathBuf) -> Self {
         Self {
             name,
+            output: None,
+            force: false,
         }
     }
 
@@ -68,7 +77,7 @@ impl Template {
             },
         })?;
         let output_path = TemplateService::new(&config)
-            .render_to_file(&self.name)
+            .render_to_file(&self.name, self.output.as_deref(), self.force)
             .map_err(|source| TemplateCliError::Instantiate {
                 name: self.name.clone(),
                 source: Box::new(source),
@@ -183,6 +192,113 @@ mod tests {
         let error = Template::new(PathBuf::from("missing"))
             .run(&service)
             .expect_err("missing template fails");
+
+        assert!(matches!(error, TemplateCliError::Instantiate { .. }));
+    }
+
+    #[test]
+    fn run_writes_to_the_output_flag_path() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let root = temp.path().join("project");
+        fs::create_dir_all(&root).expect("create project dir");
+        let config_file = create_config(&root, "templates");
+        let templates_dir = root.join("templates");
+        fs::create_dir_all(&templates_dir).expect("create templates dir");
+        fs::write(templates_dir.join("daily.md"), "hello")
+            .expect("write template");
+        let service = service(temp.path());
+        trust_config(&service, &config_file);
+        let _guard = CwdGuard::enter(&root);
+
+        Template {
+            name: PathBuf::from("daily"),
+            output: Some(PathBuf::from("elsewhere.md")),
+            force: false,
+        }
+        .run(&service)
+        .expect("run template command");
+
+        let written =
+            fs::read_to_string(root.join("elsewhere.md")).expect("read output");
+        assert_eq!(written, "hello");
+    }
+
+    #[test]
+    fn run_fails_when_output_already_exists_without_force() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let root = temp.path().join("project");
+        fs::create_dir_all(&root).expect("create project dir");
+        let config_file = create_config(&root, "templates");
+        let templates_dir = root.join("templates");
+        fs::create_dir_all(&templates_dir).expect("create templates dir");
+        fs::write(templates_dir.join("daily.md"), "new")
+            .expect("write template");
+        fs::write(root.join("daily.md"), "old").expect("seed existing output");
+        let service = service(temp.path());
+        trust_config(&service, &config_file);
+        let _guard = CwdGuard::enter(&root);
+
+        let error = Template::new(PathBuf::from("daily"))
+            .run(&service)
+            .expect_err("existing output without force fails");
+
+        assert!(matches!(error, TemplateCliError::Instantiate { .. }));
+        assert_eq!(
+            fs::read_to_string(root.join("daily.md")).expect("read output"),
+            "old"
+        );
+    }
+
+    #[test]
+    fn run_overwrites_existing_output_with_force() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let root = temp.path().join("project");
+        fs::create_dir_all(&root).expect("create project dir");
+        let config_file = create_config(&root, "templates");
+        let templates_dir = root.join("templates");
+        fs::create_dir_all(&templates_dir).expect("create templates dir");
+        fs::write(templates_dir.join("daily.md"), "new")
+            .expect("write template");
+        fs::write(root.join("daily.md"), "old").expect("seed existing output");
+        let service = service(temp.path());
+        trust_config(&service, &config_file);
+        let _guard = CwdGuard::enter(&root);
+
+        Template {
+            name: PathBuf::from("daily"),
+            output: None,
+            force: true,
+        }
+        .run(&service)
+        .expect("force overwrites");
+
+        assert_eq!(
+            fs::read_to_string(root.join("daily.md")).expect("read output"),
+            "new"
+        );
+    }
+
+    #[test]
+    fn run_fails_when_the_output_flag_escapes_the_project_root() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let root = temp.path().join("project");
+        fs::create_dir_all(&root).expect("create project dir");
+        let config_file = create_config(&root, "templates");
+        let templates_dir = root.join("templates");
+        fs::create_dir_all(&templates_dir).expect("create templates dir");
+        fs::write(templates_dir.join("daily.md"), "hello")
+            .expect("write template");
+        let service = service(temp.path());
+        trust_config(&service, &config_file);
+        let _guard = CwdGuard::enter(&root);
+
+        let error = Template {
+            name: PathBuf::from("daily"),
+            output: Some(PathBuf::from("../../escape.md")),
+            force: false,
+        }
+        .run(&service)
+        .expect_err("escaping -o path fails");
 
         assert!(matches!(error, TemplateCliError::Instantiate { .. }));
     }

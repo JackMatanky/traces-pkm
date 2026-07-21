@@ -39,7 +39,7 @@
 //! dependency runs one way only.
 
 use std::{
-    fs,
+    fs, io,
     path::{Component, Path, PathBuf},
 };
 
@@ -309,6 +309,11 @@ impl TemplatePath<Validated> {
     }
 }
 
+/// The extension every rendered note gets by default, absent an
+/// explicit `-o`/`file.write_to()` override — matches this project's
+/// domain definition of a "Note" (see `CONTEXT.md`): a markdown file.
+const DEFAULT_EXTENSION: &str = "md";
+
 impl TemplatePath<Found> {
     /// Builds the absolute path on demand: [`TemplateSourceDir`]
     /// joined with the relative identifier, never cached redundantly.
@@ -316,6 +321,30 @@ impl TemplatePath<Found> {
     #[must_use]
     pub(super) fn absolute(&self) -> PathBuf {
         self.state.source.path().join(&self.path)
+    }
+
+    /// The filename a rendered note gets absent an explicit
+    /// `-o`/`file.write_to()` override: [`Self::name`] — this
+    /// candidate's identity, directory segments kept — with its
+    /// extension forced to [`DEFAULT_EXTENSION`], regardless of
+    /// whatever extension the resolved template file itself has.
+    #[inline]
+    #[must_use]
+    pub(super) fn default_output_filename(&self) -> PathBuf {
+        self.name().with_extension(DEFAULT_EXTENSION)
+    }
+
+    /// Reads this resolved template's source from disk — the one
+    /// place [`super::loader::TemplateLoader::load`] and
+    /// [`super::service::TemplateService`]'s top-level read both get
+    /// a found template's bytes, so they can never disagree about
+    /// how. Returns the raw [`io::Result`], not a project error type:
+    /// the two callers map failure to different error types (a soft
+    /// `None` for a missing include vs. a hard
+    /// [`TemplateError::Read`](super::error::TemplateError::Read) for
+    /// the top-level render), so shaping the error is left to them.
+    pub(super) fn read(&self) -> io::Result<String> {
+        fs::read_to_string(self.absolute())
     }
 }
 
@@ -640,6 +669,80 @@ mod tests {
             .collect();
 
             assert_eq!(searched.len(), 1);
+        }
+    }
+
+    mod default_output_filename {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        fn found(dir: &Path, name: &str) -> TemplatePath<Found> {
+            write_file(dir, name);
+            TemplatePath::<Raw>::new(Path::new(name))
+                .validate()
+                .expect("valid candidate")
+                .find(Some(dir), None)
+                .expect("find succeeds")
+        }
+
+        #[test]
+        fn keeps_the_directory_and_the_default_extension() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let resolved = found(temp.path(), "folder/report.md");
+
+            assert_eq!(
+                resolved.default_output_filename(),
+                Path::new("folder/report.md")
+            );
+        }
+
+        #[test]
+        fn forces_the_default_extension_over_the_source_files_own() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let resolved = found(temp.path(), "daily.txt");
+
+            assert_eq!(
+                resolved.default_output_filename(),
+                Path::new("daily.md")
+            );
+        }
+    }
+
+    mod read {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        fn found(dir: &Path, name: &str) -> TemplatePath<Found> {
+            write_file(dir, name);
+            TemplatePath::<Raw>::new(Path::new(name))
+                .validate()
+                .expect("valid candidate")
+                .find(Some(dir), None)
+                .expect("find succeeds")
+        }
+
+        #[test]
+        fn reads_the_resolved_templates_content() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let resolved = found(temp.path(), "daily.md");
+            fs::write(resolved.absolute(), "hello world")
+                .expect("overwrite fixture content");
+
+            assert_eq!(resolved.read().expect("read succeeds"), "hello world");
+        }
+
+        #[test]
+        fn propagates_the_io_error_when_the_file_is_removed_after_resolution() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let resolved = found(temp.path(), "daily.md");
+            fs::remove_file(resolved.absolute()).expect("remove fixture");
+
+            let error =
+                resolved.read().expect_err("removed file fails to read");
+
+            assert_eq!(error.kind(), io::ErrorKind::NotFound);
         }
     }
 }

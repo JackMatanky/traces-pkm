@@ -40,6 +40,10 @@ Relevant skills: `domain-cli`, `m05-type-driven`, `m06-error-handling`.
 - **Skip the guard, not the render (m06):** dry-run bypasses the existence check and the write entirely — no `--force` interaction. Ensure no partial file is created.
 - **CLI flag:** `-n` / `--dry-run` on `Template`. Converted to `WriteMode::DryRun` at the call to `render_to_file` alongside `WriteMode::from_force`.
 
+## Note (issue 02 landed first)
+
+`TemplateService::render_to_file` now has the signature `(&self, name: &Path, output: Option<&Path>, force: bool) -> Result<PathBuf, TemplateError>` (`src/template/service.rs`), with the overwrite guard as a single `if output_path.exists() && !force` check right after the output path is resolved (precedence: `file.write_to()` > `output` > `default_output_path`), before `fs::create_dir_all`/`fs::write`. Dry-run should branch before that guard — skip straight from "rendered" to "print to stdout", never computing/checking `output_path` at all — rather than passing a dry-run flag through the guard itself.
+
 ## Blocked by
 
 - `.scratch/template-service/issues/02-output-path-control.md` (provides `WriteMode`)

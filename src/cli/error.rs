@@ -3,15 +3,22 @@
 //! Wraps command-specific failures with user-facing help text and error codes.
 //! Some underlying error types are deliberately unnameable outside their
 //! modules — this module only needs their [`std::error::Error`] behavior, so
-//! command errors type-erase sources behind [`Box`].
+//! command errors type-erase sources behind [`Box`]. [`TemplateCliError`] is
+//! the one exception: it downcasts its boxed source back to
+//! [`crate::template::TemplateError`] to special-case
+//! [`TemplateError::OutputFileAlreadyExists`](crate::template::TemplateError::OutputFileAlreadyExists)
+//! and [`TemplateError::OutputPathEscapesRoot`](crate::template::TemplateError::OutputPathEscapesRoot)
+//! into their own diagnostic codes and help text.
 
 use std::{error::Error as StdError, fmt::Display, path::PathBuf};
 
 use miette::Diagnostic;
 use thiserror::Error;
 
+use crate::template::TemplateError;
+
 #[derive(Debug, Diagnostic, Error)]
-pub enum ConfigCliError {
+pub enum CliError {
     /// `traces trust` failed.
     #[error(transparent)]
     #[diagnostic(transparent)]
@@ -227,6 +234,28 @@ impl Diagnostic for ConfigInitCliError {
     }
 }
 
+/// `true` when `source` is a boxed [`TemplateError::OutputFileAlreadyExists`].
+#[inline]
+fn is_output_already_exists_error(
+    source: &(dyn StdError + Send + Sync + 'static),
+) -> bool {
+    matches!(
+        source.downcast_ref::<TemplateError>(),
+        Some(TemplateError::OutputFileAlreadyExists { .. })
+    )
+}
+
+/// `true` when `source` is a boxed [`TemplateError::OutputPathEscapesRoot`].
+#[inline]
+fn is_output_escapes_root_error(
+    source: &(dyn StdError + Send + Sync + 'static),
+) -> bool {
+    matches!(
+        source.downcast_ref::<TemplateError>(),
+        Some(TemplateError::OutputPathEscapesRoot { .. })
+    )
+}
+
 impl Diagnostic for TemplateCliError {
     #[inline]
     fn code<'a>(&'a self) -> Option<Box<dyn Display + 'a>> {
@@ -237,6 +266,18 @@ impl Diagnostic for TemplateCliError {
             Self::ConfigBuild {
                 ..
             } => "traces::cli::template::config_build_failed",
+            Self::Instantiate {
+                source,
+                ..
+            } if is_output_already_exists_error(source.as_ref()) => {
+                "traces::cli::template::output_exists"
+            }
+            Self::Instantiate {
+                source,
+                ..
+            } if is_output_escapes_root_error(source.as_ref()) => {
+                "traces::cli::template::output_escapes_root"
+            }
             Self::Instantiate {
                 ..
             } => "traces::cli::template::instantiate_failed",
@@ -260,6 +301,21 @@ impl Diagnostic for TemplateCliError {
             } => Some(Box::new(
                 "run `traces trust` to trust this project root, then try again",
             )),
+            Self::Instantiate {
+                source,
+                ..
+            } if is_output_already_exists_error(source.as_ref()) => {
+                Some(Box::new("pass --force to overwrite"))
+            }
+            Self::Instantiate {
+                source,
+                ..
+            } if is_output_escapes_root_error(source.as_ref()) => {
+                Some(Box::new(
+                    "pass a path within the project — absolute paths and \
+                     \"..\" segments are not allowed",
+                ))
+            }
             Self::Instantiate {
                 ..
             } => Some(Box::new(
@@ -376,5 +432,51 @@ mod tests {
             Some("traces::cli::template::instantiate_failed".to_owned())
         );
         assert!(error.source().is_some());
+    }
+
+    #[test]
+    fn template_instantiate_error_special_cases_output_file_already_exists() {
+        let name = PathBuf::from("daily");
+        let path = PathBuf::from("/project/daily.md");
+        let error = TemplateCliError::Instantiate {
+            name,
+            source: Box::new(TemplateError::OutputFileAlreadyExists {
+                path,
+            }),
+        };
+
+        assert_eq!(
+            error.code().map(|code| code.to_string()),
+            Some("traces::cli::template::output_exists".to_owned())
+        );
+        assert_eq!(
+            error.help().map(|help| help.to_string()),
+            Some("pass --force to overwrite".to_owned())
+        );
+    }
+
+    #[test]
+    fn template_instantiate_error_special_cases_output_path_escapes_root() {
+        let name = PathBuf::from("daily");
+        let path = PathBuf::from("/etc/passwd");
+        let error = TemplateCliError::Instantiate {
+            name,
+            source: Box::new(TemplateError::OutputPathEscapesRoot {
+                path,
+            }),
+        };
+
+        assert_eq!(
+            error.code().map(|code| code.to_string()),
+            Some("traces::cli::template::output_escapes_root".to_owned())
+        );
+        assert_eq!(
+            error.help().map(|help| help.to_string()),
+            Some(
+                "pass a path within the project — absolute paths and \"..\" \
+                 segments are not allowed"
+                    .to_owned()
+            )
+        );
     }
 }
