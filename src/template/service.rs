@@ -1,13 +1,13 @@
 //! [`TemplateService`]: the resolve -> render -> write pipeline for one
-//! [`Config`], driven through [`TemplateEngine`].
-//! [`TemplateService::render_to_file`] is the single public entry point; it
-//! reads as a short top-to-bottom sequence of small private steps (resolve,
-//! read, render, choose an output path, ensure the parent directory, write)
-//! — each step is its own method below, named for the one thing it does.
+//! [`Config`], driven through [`TemplateEngine`] and
+//! [`TemplateWriter`]. [`TemplateService::render_to_file`] is the
+//! single public entry point; it reads as a short top-to-bottom
+//! sequence of small private steps (resolve, read, render, choose an
+//! output path, commit it to disk) — each step is its own method or
+//! collaborator call, named for the one thing it does.
 
 use std::{
     fs,
-    io::{self, Write as _},
     path::{Path, PathBuf},
 };
 
@@ -16,90 +16,39 @@ use super::{
     error::TemplateError,
     loader::TemplateLoader,
     path::{Found, TemplatePath, TemplatePathError},
-    target_path::TemplateTargetPath,
+    writer::{TemplateTargetPath, TemplateWriter, WriteMode},
 };
 use crate::config::Config;
-
-/// How [`WriteMode::create_file`] should treat a target that already
-/// exists — the domain meaning behind `--force`, spelled out as a type
-/// instead of a bare `bool` at the call site.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum WriteMode {
-    /// Fail with [`TemplateError::OutputFileAlreadyExists`] if the
-    /// target already exists. The default, safe mode.
-    CreateNew,
-    /// Truncate and overwrite the target unconditionally — the
-    /// `--force` mode.
-    Overwrite,
-}
-
-impl WriteMode {
-    /// Converts the CLI/API's `force` flag into the mode
-    /// [`Self::create_file`] branches on.
-    #[inline]
-    #[must_use]
-    fn from_force(force: bool) -> Self {
-        if force {
-            Self::Overwrite
-        } else {
-            Self::CreateNew
-        }
-    }
-
-    /// Creates `path` per this mode: [`Self::CreateNew`] uses
-    /// [`fs::File::create_new`] (`O_CREAT | O_EXCL`), which fails
-    /// atomically with [`io::ErrorKind::AlreadyExists`] if `path`
-    /// already exists — no separate `exists()` check first, since that
-    /// would leave a race between the check and this write.
-    /// [`Self::Overwrite`] uses [`fs::File::create`], truncating
-    /// unconditionally. Maps `AlreadyExists` under [`Self::CreateNew`]
-    /// to [`TemplateError::OutputFileAlreadyExists`]; any other I/O
-    /// failure to [`TemplateError::Write`].
-    fn create_file(self, path: &Path) -> Result<fs::File, TemplateError> {
-        let file = match self {
-            Self::Overwrite => fs::File::create(path),
-            Self::CreateNew => fs::File::create_new(path),
-        };
-        file.map_err(|source| {
-            if self == Self::CreateNew
-                && source.kind() == io::ErrorKind::AlreadyExists
-            {
-                TemplateError::OutputFileAlreadyExists {
-                    path: path.to_path_buf(),
-                }
-            } else {
-                TemplateError::Write {
-                    path: path.to_path_buf(),
-                    source,
-                }
-            }
-        })
-    }
-}
 
 /// Entry point for resolving, rendering, and writing one template.
 ///
 /// Coordinator that hides [`TemplateService::render_to_file`]'s
 /// resolve -> render -> write sequencing, including output-path
-/// precedence (an explicit `-o` override over `file.write_to()` over the
-/// config default) and the overwrite guard. Holds a borrowed
-/// [`Config`] and the [`TemplateEngine`] built from it, so every step
-/// reads from the same, already-trusted configuration.
+/// precedence (an explicit `-o` override over `file.write_to()` over
+/// the config default) and the overwrite guard — both delegated to
+/// [`TemplateWriter`]. Holds a borrowed [`Config`], the
+/// [`TemplateEngine`] built from it, and a [`TemplateWriter`] confined
+/// to [`Config::root`], so every step reads from the same,
+/// already-trusted configuration.
 pub(crate) struct TemplateService<'a> {
     config: &'a Config,
     engine: TemplateEngine,
+    writer: TemplateWriter<'a>,
 }
 
 impl<'a> TemplateService<'a> {
-    /// Builds a service for `config`, backed by a [`TemplateEngine`].
+    /// Builds a service for `config`, backed by a [`TemplateEngine`]
+    /// and a [`TemplateWriter`] confined to [`Config::root`].
     #[inline]
     #[must_use]
     pub(crate) fn new(config: &'a Config) -> Self {
         let loader = TemplateLoader::from(config);
         let engine = TemplateEngine::new(loader);
+        let writer = TemplateWriter::new(config.root());
         Self {
             config,
             engine,
+            writer,
         }
     }
 
@@ -128,13 +77,13 @@ impl<'a> TemplateService<'a> {
     ///
     /// The output path is chosen by precedence: an explicit `output`
     /// (`-o`) wins, then a `file.write_to()` call inside the template,
-    /// then [`Self::default_output_path`]. A `file.write_to()`/`output`
-    /// candidate is confined to [`Config::root`] via
-    /// [`TemplateTargetPath::confine`] — it can't name a path outside
-    /// the project. The default is derived from already-trusted config
-    /// (see [`Self::default_output_path`]'s docs) and never goes
-    /// through that check. Creates the output directory if it doesn't
-    /// exist yet.
+    /// then [`Self::default_output_path`] — all via
+    /// [`TemplateWriter::choose`]. A `file.write_to()`/`output`
+    /// candidate is confined to [`Config::root`]; it can't name a path
+    /// outside the project. The default is derived from already-trusted
+    /// config (see [`Self::default_output_path`]'s docs) and never goes
+    /// through that check. [`TemplateWriter::commit`] creates the
+    /// output directory if it doesn't exist yet.
     ///
     /// # Errors
     ///
@@ -158,15 +107,15 @@ impl<'a> TemplateService<'a> {
         let template_source = Self::read_template(&resolved_path)?;
         let rendered =
             self.render_template(&template_source, &resolved_path)?;
-        let output_path =
-            self.choose_output_path(&resolved, output, rendered.write_to)?;
-        Self::ensure_parent_dir(output_path.as_path())?;
-        Self::write_output(
-            output_path.as_path(),
+        let target = self.writer.choose(output, rendered.write_to, || {
+            self.default_output_path(&resolved)
+        })?;
+        TemplateWriter::commit(
+            &target,
             &rendered.content,
             WriteMode::from_force(force),
         )?;
-        Ok(output_path.into_path_buf())
+        Ok(target.into_path_buf())
     }
 
     /// Reads the resolved template's source from disk, mapping I/O
@@ -191,68 +140,22 @@ impl<'a> TemplateService<'a> {
         })
     }
 
-    /// Picks the output target by precedence — `output` (`-o`) over
-    /// `write_to` (from `file.write_to()`) over
-    /// [`Self::default_output_path`]. If either `output` or `write_to`
-    /// gave a candidate, it's confined to [`Config::root`] via
-    /// [`TemplateTargetPath::confine`]; falling through to the default
-    /// (neither given) skips that check entirely — see its own docs.
-    fn choose_output_path(
-        &self,
-        resolved: &TemplatePath<Found>,
-        output: Option<&Path>,
-        write_to: Option<PathBuf>,
-    ) -> Result<TemplateTargetPath, TemplateError> {
-        match output.map(Path::to_path_buf).or(write_to) {
-            Some(candidate) => {
-                TemplateTargetPath::confine(self.config.root(), &candidate)
-            }
-            None => Ok(self.default_output_path(resolved)),
-        }
-    }
-
     /// [`Config::output_dir`] joined with the resolved template's own
-    /// relative identity ([`TemplatePath::name`]) rather than the raw
-    /// `-i` argument — so two directories' same-named templates land
-    /// at different output paths instead of colliding. Uses
-    /// [`TemplateTargetPath::trusted`], not [`TemplateTargetPath::confine`]
-    /// — `output_dir` is a trusted config value (see `target_path`'s
-    /// module docs), not a runtime `-o`/`file.write_to()` candidate.
+    /// default output filename
+    /// ([`TemplatePath::default_output_filename`]) rather than the raw
+    /// `-i` argument — so two directories' same-named templates land at
+    /// different output paths instead of colliding. Uses
+    /// [`TemplateTargetPath::trusted`], not
+    /// [`TemplateTargetPath::confine`] — `output_dir` is a trusted
+    /// config value (see `writer`'s module docs), not a runtime
+    /// `-o`/`file.write_to()` candidate.
     fn default_output_path(
         &self,
         resolved: &TemplatePath<Found>,
     ) -> TemplateTargetPath {
         let candidate =
-            self.config.output_dir().join(resolved.name()).with_extension("md");
+            self.config.output_dir().join(resolved.default_output_filename());
         TemplateTargetPath::trusted(self.config.root(), candidate)
-    }
-
-    /// Creates `path`'s parent directory tree if it doesn't exist yet,
-    /// mapping I/O failure to [`TemplateError::Write`].
-    fn ensure_parent_dir(path: &Path) -> Result<(), TemplateError> {
-        let Some(parent) = path.parent() else {
-            return Ok(());
-        };
-        fs::create_dir_all(parent).map_err(|source| TemplateError::Write {
-            path: path.to_path_buf(),
-            source,
-        })
-    }
-
-    /// Writes `content` to `path`, creating the file per `mode` via
-    /// [`WriteMode::create_file`].
-    fn write_output(
-        path: &Path,
-        content: &str,
-        mode: WriteMode,
-    ) -> Result<(), TemplateError> {
-        let mut file = mode.create_file(path)?;
-        file.write_all(content.as_bytes()).map_err(|source| {
-            TemplateError::Write {
-                path: path.to_path_buf(),
-                source,
-            }
-        })
     }
 }
 
@@ -266,81 +169,6 @@ mod tests {
         fs::create_dir_all(parent).expect("create template parent");
         fs::write(&path, content).expect("write template");
         path
-    }
-
-    mod write_mode {
-        use pretty_assertions::assert_eq;
-
-        use super::*;
-
-        #[test]
-        fn from_force_false_is_create_new() {
-            assert_eq!(WriteMode::from_force(false), WriteMode::CreateNew);
-        }
-
-        #[test]
-        fn from_force_true_is_overwrite() {
-            assert_eq!(WriteMode::from_force(true), WriteMode::Overwrite);
-        }
-
-        #[test]
-        fn create_file_creates_a_new_file_when_absent() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            let path = temp.path().join("note.md");
-
-            WriteMode::CreateNew.create_file(&path).expect("creates new file");
-
-            assert!(path.exists());
-        }
-
-        #[test]
-        fn create_file_fails_when_the_target_already_exists() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            let path = temp.path().join("note.md");
-            fs::write(&path, "old").expect("seed existing file");
-
-            let error = WriteMode::CreateNew
-                .create_file(&path)
-                .expect_err("existing target fails under CreateNew");
-
-            assert!(matches!(
-                error,
-                TemplateError::OutputFileAlreadyExists { path: p } if p == path
-            ));
-            assert_eq!(fs::read_to_string(&path).expect("read"), "old");
-        }
-
-        #[test]
-        fn create_file_truncates_an_existing_target_when_overwriting() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            let path = temp.path().join("note.md");
-            fs::write(&path, "old").expect("seed existing file");
-
-            WriteMode::Overwrite
-                .create_file(&path)
-                .expect("existing target succeeds under Overwrite");
-
-            assert_eq!(fs::read_to_string(&path).expect("read"), "");
-        }
-
-        #[cfg(unix)]
-        #[test]
-        fn create_file_propagates_permission_errors_as_write_errors() {
-            use std::os::unix::fs::PermissionsExt as _;
-
-            let temp = tempfile::tempdir().expect("create temp dir");
-            let dir = temp.path().join("readonly");
-            fs::create_dir(&dir).expect("create readonly dir");
-            fs::set_permissions(&dir, fs::Permissions::from_mode(0o500))
-                .expect("revoke write permission");
-            let path = dir.join("note.md");
-
-            let error = WriteMode::CreateNew
-                .create_file(&path)
-                .expect_err("permission denied fails");
-
-            assert!(matches!(error, TemplateError::Write { .. }));
-        }
     }
 
     mod resolve {
@@ -788,35 +616,6 @@ mod tests {
                 fs::read_to_string(&existing).expect("read"),
                 "new content"
             );
-        }
-    }
-
-    mod write_output {
-        use pretty_assertions::assert_eq;
-
-        use super::*;
-
-        #[test]
-        fn writes_content_to_a_newly_created_file() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            let path = temp.path().join("note.md");
-
-            TemplateService::write_output(&path, "hello", WriteMode::CreateNew)
-                .expect("creates new file");
-
-            assert_eq!(fs::read_to_string(&path).expect("read"), "hello");
-        }
-
-        #[test]
-        fn overwrites_content_when_forced() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            let path = temp.path().join("note.md");
-            fs::write(&path, "old").expect("seed existing file");
-
-            TemplateService::write_output(&path, "new", WriteMode::Overwrite)
-                .expect("force overwrites");
-
-            assert_eq!(fs::read_to_string(&path).expect("read"), "new");
         }
     }
 }

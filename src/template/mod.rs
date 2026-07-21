@@ -24,11 +24,13 @@
 //! - [`engine`]: wraps minijinja's [`Environment`](minijinja::Environment) so
 //!   [`service`] depends on "render this source" rather than on minijinja's
 //!   API.
-//! - [`target_path`][]:
-//!   [`TemplateTargetPath`](target_path::TemplateTargetPath), the one way an
-//!   output destination gets built — confines `file.write_to()`, `-o`, and the
-//!   config default alike to [`Config::root`](crate::config::Config::root),
-//!   rejecting `..` and absolute candidates before they ever reach a write.
+//! - [`writer`][]: [`TemplateTargetPath`](writer::TemplateTargetPath), a
+//!   proven-safe output destination, and
+//!   [`TemplateWriter`](writer::TemplateWriter), which picks one by precedence
+//!   (`file.write_to()`, `-o`, and the config default alike confined to
+//!   [`Config::root`](crate::config::Config::root), rejecting `..` and absolute
+//!   candidates before they ever reach a write) and writes rendered content to
+//!   it.
 //! - [`service`]: [`TemplateService`], which chains resolve, render, and write
 //!   into the one call `crate::cli::template` makes.
 //!
@@ -46,7 +48,7 @@ mod loader;
 mod path;
 mod service;
 mod source_dir;
-mod target_path;
+mod writer;
 
 pub(crate) use error::TemplateError;
 pub(crate) use service::TemplateService;

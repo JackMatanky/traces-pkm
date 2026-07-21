@@ -309,6 +309,11 @@ impl TemplatePath<Validated> {
     }
 }
 
+/// The extension every rendered note gets by default, absent an
+/// explicit `-o`/`file.write_to()` override — matches this project's
+/// domain definition of a "Note" (see `CONTEXT.md`): a markdown file.
+const DEFAULT_EXTENSION: &str = "md";
+
 impl TemplatePath<Found> {
     /// Builds the absolute path on demand: [`TemplateSourceDir`]
     /// joined with the relative identifier, never cached redundantly.
@@ -316,6 +321,17 @@ impl TemplatePath<Found> {
     #[must_use]
     pub(super) fn absolute(&self) -> PathBuf {
         self.state.source.path().join(&self.path)
+    }
+
+    /// The filename a rendered note gets absent an explicit
+    /// `-o`/`file.write_to()` override: [`Self::name`] — this
+    /// candidate's identity, directory segments kept — with its
+    /// extension forced to [`DEFAULT_EXTENSION`], regardless of
+    /// whatever extension the resolved template file itself has.
+    #[inline]
+    #[must_use]
+    pub(super) fn default_output_filename(&self) -> PathBuf {
+        self.name().with_extension(DEFAULT_EXTENSION)
     }
 }
 
@@ -640,6 +656,43 @@ mod tests {
             .collect();
 
             assert_eq!(searched.len(), 1);
+        }
+    }
+
+    mod default_output_filename {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        fn found(dir: &Path, name: &str) -> TemplatePath<Found> {
+            write_file(dir, name);
+            TemplatePath::<Raw>::new(Path::new(name))
+                .validate()
+                .expect("valid candidate")
+                .find(Some(dir), None)
+                .expect("find succeeds")
+        }
+
+        #[test]
+        fn keeps_the_directory_and_the_default_extension() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let resolved = found(temp.path(), "folder/report.md");
+
+            assert_eq!(
+                resolved.default_output_filename(),
+                Path::new("folder/report.md")
+            );
+        }
+
+        #[test]
+        fn forces_the_default_extension_over_the_source_files_own() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let resolved = found(temp.path(), "daily.txt");
+
+            assert_eq!(
+                resolved.default_output_filename(),
+                Path::new("daily.md")
+            );
         }
     }
 }
