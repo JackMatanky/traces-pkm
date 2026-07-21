@@ -18,7 +18,7 @@ use thiserror::Error;
 use crate::template::TemplateError;
 
 #[derive(Debug, Diagnostic, Error)]
-pub enum ConfigCliError {
+pub enum CliError {
     /// `traces trust` failed.
     #[error(transparent)]
     #[diagnostic(transparent)]

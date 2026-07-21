@@ -81,7 +81,7 @@ impl WriteMode {
 ///
 /// Coordinator that hides [`TemplateService::render_to_file`]'s
 /// resolve -> render -> write sequencing, including output-path
-/// precedence (`file.write_to()` over an explicit override over the
+/// precedence (an explicit `-o` override over `file.write_to()` over the
 /// config default) and the overwrite guard. Holds a borrowed
 /// [`Config`] and the [`TemplateEngine`] built from it, so every step
 /// reads from the same, already-trusted configuration.
@@ -126,9 +126,9 @@ impl<'a> TemplateService<'a> {
     /// Resolves `name`, renders it, and writes the result to disk.
     /// Returns the path written.
     ///
-    /// The output path is chosen by precedence: a `file.write_to()` call
-    /// inside the template wins, then `output`, then
-    /// [`Self::default_output_path`]. A `file.write_to()`/`output`
+    /// The output path is chosen by precedence: an explicit `output`
+    /// (`-o`) wins, then a `file.write_to()` call inside the template,
+    /// then [`Self::default_output_path`]. A `file.write_to()`/`output`
     /// candidate is confined to [`Config::root`] via
     /// [`TemplateTargetPath::confine`] — it can't name a path outside
     /// the project. The default is derived from already-trusted config
@@ -191,9 +191,9 @@ impl<'a> TemplateService<'a> {
         })
     }
 
-    /// Picks the output target by precedence — `write_to` (from
-    /// `file.write_to()`) over `output` (`-o`) over
-    /// [`Self::default_output_path`]. If either `write_to` or `output`
+    /// Picks the output target by precedence — `output` (`-o`) over
+    /// `write_to` (from `file.write_to()`) over
+    /// [`Self::default_output_path`]. If either `output` or `write_to`
     /// gave a candidate, it's confined to [`Config::root`] via
     /// [`TemplateTargetPath::confine`]; falling through to the default
     /// (neither given) skips that check entirely — see its own docs.
@@ -203,7 +203,7 @@ impl<'a> TemplateService<'a> {
         output: Option<&Path>,
         write_to: Option<PathBuf>,
     ) -> Result<TemplateTargetPath, TemplateError> {
-        match write_to.or_else(|| output.map(Path::to_path_buf)) {
+        match output.map(Path::to_path_buf).or(write_to) {
             Some(candidate) => {
                 TemplateTargetPath::confine(self.config.root(), &candidate)
             }
@@ -687,7 +687,7 @@ mod tests {
         }
 
         #[test]
-        fn write_to_overrides_the_output_flag() {
+        fn output_flag_overrides_write_to() {
             let temp = tempfile::tempdir().expect("create temp dir");
             let local_dir = temp.path().join("templates");
             write_file(
@@ -702,13 +702,13 @@ mod tests {
                 temp.path().to_path_buf(),
             );
             let service = TemplateService::new(&config);
-            let cli_override = temp.path().join("from-cli.md");
+            let cli_override = Path::new("from-cli.md");
 
             let output_path = service
-                .render_to_file(Path::new("daily"), Some(&cli_override), false)
+                .render_to_file(Path::new("daily"), Some(cli_override), false)
                 .expect("render_to_file");
 
-            assert_eq!(output_path, temp.path().join("from-template.md"));
+            assert_eq!(output_path, temp.path().join("from-cli.md"));
         }
 
         #[test]

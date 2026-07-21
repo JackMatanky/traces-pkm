@@ -25,8 +25,8 @@ pub(super) struct Template {
     /// Template name or path to instantiate.
     #[arg(short = 'i', long = "input", value_name = "NAME")]
     pub(super) name: PathBuf,
-    /// Output path — overridden by `file.write_to()` inside the template
-    /// itself; falls back to the config-derived default when omitted.
+    /// Output path — overrides any `file.write_to()` call inside the
+    /// template; falls back to `write_to`, then the config-derived default.
     #[arg(short = 'o', long, value_name = "PATH")]
     pub(super) output: Option<PathBuf>,
     /// Overwrite the output path if it already exists.

@@ -12,7 +12,7 @@ mod trust;
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
-pub use error::{ConfigCliError, ConfigInitCliError, ConfigTrustCliError};
+pub use error::{CliError, ConfigInitCliError, ConfigTrustCliError};
 
 /// The `traces` command-line tool.
 ///
@@ -46,21 +46,21 @@ impl Cli {
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigCliError`] when the selected command fails, or
-    /// [`ConfigCliError::NoCommand`] when neither a subcommand nor
+    /// Returns [`CliError`] when the selected command fails, or
+    /// [`CliError::NoCommand`] when neither a subcommand nor
     /// `-i`/`--input` was given.
     fn run(
         self,
         service: &crate::config::ConfigService,
         provider: &dyn crate::DialogProvider,
-    ) -> Result<(), ConfigCliError> {
+    ) -> Result<(), CliError> {
         match self.command {
             Some(cmd) => cmd.run(service, provider),
             None => match self.input {
                 Some(name) => template::Template::new(name)
                     .run(service)
                     .map_err(Into::into),
-                None => Err(ConfigCliError::NoCommand),
+                None => Err(CliError::NoCommand),
             },
         }
     }
@@ -89,7 +89,7 @@ impl Commands {
         self,
         service: &crate::config::ConfigService,
         provider: &dyn crate::DialogProvider,
-    ) -> Result<(), ConfigCliError> {
+    ) -> Result<(), CliError> {
         match self {
             Self::Init(args) => args.run(provider).map_err(Into::into),
             Self::Trust(args) => args.run(service).map_err(Into::into),
@@ -103,9 +103,9 @@ impl Commands {
 ///
 /// # Errors
 ///
-/// Returns [`ConfigCliError`] when the command fails or no command was given.
+/// Returns [`CliError`] when the command fails or no command was given.
 #[inline]
-pub fn run() -> Result<(), ConfigCliError> {
+pub fn run() -> Result<(), CliError> {
     Cli::parse().run(
         &crate::config::ConfigService::new(),
         &crate::TerminalDialogProvider::new(),
