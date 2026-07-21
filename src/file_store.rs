@@ -953,7 +953,7 @@ mod tests {
             let result = fixture.store.read_companion(&target, ".hash");
 
             // Assert
-            assert_eq!(result.unwrap(), Some("content".to_string()));
+            assert_eq!(result.unwrap(), Some("content".to_owned()));
         }
 
         #[test]

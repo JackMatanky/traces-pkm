@@ -275,15 +275,13 @@ mod tests {
     use super::*;
     use crate::config::{
         discovery::DiscoveryAnchor,
-        file::{
-            ConfigFileError, ConfigFileTrustError, Discovered, LocalConfigFile,
-        },
+        file::{Discovered, LocalConfigFile},
     };
 
     struct Fixture {
         temp: tempfile::TempDir,
         tracked_root: PathBuf,
-        trusted_root: PathBuf,
+        _trusted_root: PathBuf,
         service: ConfigService,
     }
 
@@ -297,7 +295,7 @@ mod tests {
             Self {
                 temp,
                 tracked_root,
-                trusted_root,
+                _trusted_root: trusted_root,
                 service,
             }
         }
@@ -308,7 +306,7 @@ mod tests {
             path
         }
 
-        fn create_config(&self, root: &Path, contents: &str) -> PathBuf {
+        fn create_config(root: &Path, contents: &str) -> PathBuf {
             let config_path = root.join(".traces/config.toml");
             fs::create_dir_all(config_path.parent().unwrap())
                 .expect("create config parent");
@@ -317,7 +315,6 @@ mod tests {
         }
 
         fn discovered_config(
-            &self,
             config_path: &Path,
         ) -> LocalConfigFile<Discovered> {
             LocalConfigFile::<Discovered>::try_new(config_path.to_path_buf())
@@ -325,7 +322,7 @@ mod tests {
         }
 
         fn trust_config(&self, config_path: &Path) {
-            let config = self.discovered_config(config_path);
+            let config = Fixture::discovered_config(config_path);
             self.service
                 .trust(&TrustRequest::from(&config))
                 .expect("trust candidate root");
@@ -359,9 +356,7 @@ mod tests {
             let service = ConfigService::at(tracked.clone(), trusted.clone());
 
             // Assert
-            assert!(
-                format!("{:?}", service).contains(tracked.to_str().unwrap())
-            );
+            assert!(format!("{service:?}").contains(tracked.to_str().unwrap()));
         }
     }
 
@@ -396,7 +391,7 @@ mod tests {
             let cwd = root.join("notes/daily");
             fs::create_dir_all(&cwd).unwrap();
 
-            let config_path = fixture.create_config(
+            let config_path = Fixture::create_config(
                 &root,
                 "[templates]\ndirectory = \".traces/templates\"\noutput_dir = \
                  \"notes\"",
@@ -423,8 +418,8 @@ mod tests {
             fixture: &Fixture,
         ) -> (PathBuf, PathBuf, DiscoveryOutcome) {
             let cwd = fixture.target_dir("project");
-            let config_path = fixture.create_config(&cwd, "");
-            let local = fixture.discovered_config(&config_path);
+            let config_path = Fixture::create_config(&cwd, "");
+            let local = Fixture::discovered_config(&config_path);
             let candidates = DiscoveryOutcome::new(
                 DiscoveryAnchor::Directory(cwd.clone()),
                 vec![local],
@@ -489,7 +484,7 @@ mod tests {
         fn rejects_untrusted_root() {
             // Arrange
             let fixture = Fixture::new();
-            let (cwd, _config_path, candidates) = local_candidates(&fixture);
+            let (_cwd, _config_path, candidates) = local_candidates(&fixture);
             // Do NOT trust the root
 
             // Act
@@ -509,7 +504,7 @@ mod tests {
         fn rejects_trusted_but_stale_root() {
             // Arrange
             let fixture = Fixture::new();
-            let (cwd, config_path, candidates) = local_candidates(&fixture);
+            let (_cwd, config_path, candidates) = local_candidates(&fixture);
             fixture.trust_config(&config_path);
 
             // Edit config after trusting to make it stale
@@ -539,7 +534,7 @@ mod tests {
             // Arrange
             let fixture = Fixture::new();
             let cwd = fixture.target_dir("project");
-            fixture.create_config(&cwd, "");
+            Fixture::create_config(&cwd, "");
 
             // Act
             let result = fixture
@@ -581,8 +576,8 @@ mod tests {
             // Arrange
             let fixture = Fixture::new();
             let root = fixture.target_dir("project");
-            let config_path = fixture.create_config(&root, "a = 1");
-            let config = fixture.discovered_config(&config_path);
+            let config_path = Fixture::create_config(&root, "a = 1");
+            let config = Fixture::discovered_config(&config_path);
             let subject = TrustRequest::from(&config);
 
             // Act
@@ -622,8 +617,8 @@ mod tests {
             // Arrange
             let fixture = Fixture::new();
             let root = fixture.target_dir("project");
-            let config_path = fixture.create_config(&root, "a = 1");
-            let config = fixture.discovered_config(&config_path);
+            let config_path = Fixture::create_config(&root, "a = 1");
+            let config = Fixture::discovered_config(&config_path);
             let subject = TrustRequest::from(&config);
 
             // Act
@@ -639,8 +634,8 @@ mod tests {
             // Arrange
             let fixture = Fixture::new();
             let root = fixture.target_dir("project");
-            let config_path = fixture.create_config(&root, "a = 1");
-            let config = fixture.discovered_config(&config_path);
+            let config_path = Fixture::create_config(&root, "a = 1");
+            let config = Fixture::discovered_config(&config_path);
             let subject = TrustRequest::from(&config);
 
             fixture.service.trust(&subject).unwrap();
@@ -719,8 +714,8 @@ mod tests {
             // Arrange
             let fixture = Fixture::new();
             let cwd = fixture.target_dir("project");
-            let config_path = fixture.create_config(&cwd, "");
-            let local = fixture.discovered_config(&config_path);
+            let config_path = Fixture::create_config(&cwd, "");
+            let local = Fixture::discovered_config(&config_path);
             let candidates = DiscoveryOutcome::new(
                 DiscoveryAnchor::Directory(cwd.clone()),
                 vec![local],
@@ -750,8 +745,8 @@ mod tests {
             // Arrange
             let fixture = Fixture::new();
             let cwd = fixture.target_dir("project");
-            let config_path = fixture.create_config(&cwd, "");
-            let local = fixture.discovered_config(&config_path);
+            let config_path = Fixture::create_config(&cwd, "");
+            let local = Fixture::discovered_config(&config_path);
             let candidates = DiscoveryOutcome::new(
                 DiscoveryAnchor::Directory(cwd.clone()),
                 vec![local],
@@ -776,8 +771,8 @@ mod tests {
             // Arrange
             let fixture = Fixture::new();
             let cwd = fixture.target_dir("project");
-            let config_path = fixture.create_config(&cwd, "");
-            let local = fixture.discovered_config(&config_path);
+            let config_path = Fixture::create_config(&cwd, "");
+            let local = Fixture::discovered_config(&config_path);
             let candidates = DiscoveryOutcome::new(
                 DiscoveryAnchor::Directory(cwd.clone()),
                 vec![local],
@@ -819,7 +814,7 @@ mod tests {
             // Arrange
             let fixture = Fixture::new();
             let root = fixture.target_dir("project");
-            let config_path = fixture.create_config(&root, "a = 1");
+            let config_path = Fixture::create_config(&root, "a = 1");
             fixture.trust_config(&config_path);
 
             // Act
@@ -841,7 +836,7 @@ mod tests {
             // Arrange
             let fixture = Fixture::new();
             let root = fixture.target_dir("project");
-            let config_path = fixture.create_config(&root, "a = 1");
+            let config_path = Fixture::create_config(&root, "a = 1");
             fixture.trust_config(&config_path);
             fs::remove_dir_all(&root).unwrap();
 
@@ -859,7 +854,7 @@ mod tests {
             // Arrange
             let fixture = Fixture::new();
             let root = fixture.target_dir("project");
-            let config_path = fixture.create_config(&root, "a = 1");
+            let config_path = Fixture::create_config(&root, "a = 1");
             fixture.trust_config(&config_path);
 
             // Act

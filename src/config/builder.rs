@@ -240,9 +240,8 @@ mod tests {
     use super::*;
     use crate::config::{
         discovery::{DiscoveryAnchor, DiscoveryOutcome},
-        file::ConfigFileTrustError,
         store::ConfigStateStore,
-        trust::{ConfigTrustStatus, TrustRequest},
+        trust::TrustRequest,
     };
 
     struct Fixture {

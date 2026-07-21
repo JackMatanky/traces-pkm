@@ -155,7 +155,7 @@ mod tests {
             let hash = Blake3FileHash::new(&path).expect("hash file");
 
             // Act
-            let display_string = format!("{}", hash);
+            let display_string = format!("{hash}");
 
             // Assert
             assert_eq!(display_string.len(), 64);

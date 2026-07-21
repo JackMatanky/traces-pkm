@@ -14,6 +14,56 @@ use super::{
     trust::{ConfigTrustStatus, TrustRequest},
 };
 
+/// Errors constructing or transitioning config-file lifecycle values.
+#[derive(Debug, Error)]
+pub(crate) enum ConfigFileError {
+    /// The path is not a local `.traces/config.toml` file.
+    #[error("unsupported local config file {path}")]
+    UnsupportedLocalConfigFile {
+        /// Unsupported path.
+        path: PathBuf,
+    },
+    /// The path is not a supported global `config.toml` file.
+    #[error("unsupported global config file {path}")]
+    UnsupportedGlobalConfigFile {
+        /// Unsupported path.
+        path: PathBuf,
+    },
+    /// Config file parsing failed.
+    #[error(transparent)]
+    Parse(#[from] ConfigFileParseError),
+    /// Config file trust checking failed.
+    #[error(transparent)]
+    Trust(#[from] ConfigFileTrustError),
+}
+
+/// Errors parsing a config file into raw config data.
+#[derive(Debug, Error)]
+pub(crate) enum ConfigFileParseError {
+    /// The config file could not be read or parsed.
+    #[error("failed to load config file {path}")]
+    Read {
+        /// Config file path.
+        path: PathBuf,
+        /// Source figment error.
+        #[source]
+        source: Box<figment::Error>,
+    },
+}
+
+/// Errors checking whether a tracked config file can become trusted.
+#[derive(Debug, Error)]
+pub(crate) enum ConfigFileTrustError {
+    /// The trust check itself failed.
+    #[error("failed to check trust for {root}")]
+    TrustCheckFailed {
+        /// The project root whose trust check failed.
+        root: PathBuf,
+        /// Source trust error.
+        source: Box<ConfigStateError>,
+    },
+}
+
 /// Source marker for a local project config file.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(crate) struct IsLocal;
@@ -159,18 +209,6 @@ impl GlobalConfigFile<Discovered> {
     }
 }
 
-impl From<(LocalConfigFile<Discovered>, &ConfigStateStore)>
-    for LocalConfigFile<Tracked>
-{
-    #[inline]
-    fn from(
-        (file, state): (LocalConfigFile<Discovered>, &ConfigStateStore),
-    ) -> Self {
-        state.track_seen_config(&file);
-        file.transition_to(Tracked)
-    }
-}
-
 /// The outcome of checking a tracked config file's trust status.
 pub(crate) enum TrustOutcome {
     /// The file is trusted and ready to be parsed.
@@ -212,32 +250,23 @@ impl LocalConfigFile<Tracked> {
     /// Used after interactively prompting the user and calling
     /// `store.grant_trust(...)`.
     #[must_use]
+    #[expect(dead_code, reason = "part of config lifecycle API")]
     pub(crate) fn force_trust(self) -> LocalConfigFile<Trusted> {
         self.transition_to(Trusted)
     }
 }
-impl TryFrom<LocalConfigFile<Trusted>> for LocalConfigFile<Parsed> {
-    type Error = ConfigFileError;
 
+impl From<(LocalConfigFile<Discovered>, &ConfigStateStore)>
+    for LocalConfigFile<Tracked>
+{
     #[inline]
-    fn try_from(file: LocalConfigFile<Trusted>) -> Result<Self, Self::Error> {
-        let parsed = Parsed::read(file.path())?;
-        Ok(file.transition_to(parsed))
+    fn from(
+        (file, state): (LocalConfigFile<Discovered>, &ConfigStateStore),
+    ) -> Self {
+        state.track_seen_config(&file);
+        file.transition_to(Tracked)
     }
 }
-
-impl TryFrom<GlobalConfigFile<Discovered>> for GlobalConfigFile<Parsed> {
-    type Error = ConfigFileError;
-
-    #[inline]
-    fn try_from(
-        file: GlobalConfigFile<Discovered>,
-    ) -> Result<Self, Self::Error> {
-        let parsed = Parsed::read(file.path())?;
-        Ok(file.transition_to(parsed))
-    }
-}
-
 impl<Source> ConfigFile<Source, Parsed> {
     /// Parsed raw config data.
     #[inline]
@@ -263,56 +292,27 @@ impl<Source> ConfigFile<Source, Parsed> {
     }
 }
 
-/// Errors constructing or transitioning config-file lifecycle values.
-#[derive(Debug, Error)]
-pub(crate) enum ConfigFileError {
-    /// The path is not a local `.traces/config.toml` file.
-    #[error("unsupported local config file {path}")]
-    UnsupportedLocalConfigFile {
-        /// Unsupported path.
-        path: PathBuf,
-    },
-    /// The path is not a supported global `config.toml` file.
-    #[error("unsupported global config file {path}")]
-    UnsupportedGlobalConfigFile {
-        /// Unsupported path.
-        path: PathBuf,
-    },
-    /// Config file parsing failed.
-    #[error(transparent)]
-    Parse(#[from] ConfigFileParseError),
-    /// Config file trust checking failed.
-    #[error(transparent)]
-    Trust(#[from] ConfigFileTrustError),
+impl TryFrom<LocalConfigFile<Trusted>> for LocalConfigFile<Parsed> {
+    type Error = ConfigFileError;
+
+    #[inline]
+    fn try_from(file: LocalConfigFile<Trusted>) -> Result<Self, Self::Error> {
+        let parsed = Parsed::read(file.path())?;
+        Ok(file.transition_to(parsed))
+    }
 }
 
-/// Errors parsing a config file into raw config data.
-#[derive(Debug, Error)]
-pub(crate) enum ConfigFileParseError {
-    /// The config file could not be read or parsed.
-    #[error("failed to load config file {path}")]
-    Read {
-        /// Config file path.
-        path: PathBuf,
-        /// Source figment error.
-        #[source]
-        source: Box<figment::Error>,
-    },
-}
+impl TryFrom<GlobalConfigFile<Discovered>> for GlobalConfigFile<Parsed> {
+    type Error = ConfigFileError;
 
-/// Errors checking whether a tracked config file can become trusted.
-#[derive(Debug, Error)]
-pub(crate) enum ConfigFileTrustError {
-    /// The trust check itself failed.
-    #[error("failed to check trust for {root}")]
-    TrustCheckFailed {
-        /// The project root whose trust check failed.
-        root: PathBuf,
-        /// Source trust error.
-        source: Box<ConfigStateError>,
-    },
+    #[inline]
+    fn try_from(
+        file: GlobalConfigFile<Discovered>,
+    ) -> Result<Self, Self::Error> {
+        let parsed = Parsed::read(file.path())?;
+        Ok(file.transition_to(parsed))
+    }
 }
-
 #[cfg(test)]
 mod tests {
     use std::path::{Path, PathBuf};
@@ -432,6 +432,7 @@ mod tests {
             let _ = LocalConfigFile::<Tracked>::from((file, &state));
 
             // Assert
+            #[expect(clippy::disallowed_methods, reason = "tests use std fs")]
             let canonical_path = std::fs::canonicalize(&config_path).unwrap();
             let expected_marker = temp.path().join("tracked").join(
                 crate::hash::Blake3PathHash::new(&canonical_path).as_str(),

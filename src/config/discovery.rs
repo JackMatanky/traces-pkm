@@ -26,42 +26,61 @@ use crate::dirs;
 pub(crate) const LOCAL_CONFIG_FILE: &str = ".traces/config.toml";
 const GLOBAL_CONFIG_FILE: &str = "traces/config.toml";
 
+/// Errors during config file discovery (file-walking, not read/parse).
+///
+/// `thiserror`-only, no `miette::Diagnostic` — this is library data, not
+/// CLI presentation. A future CLI layer wraps this type to add help text
+/// (e.g. "run `traces init`") and error codes.
+#[derive(Debug, Error)]
+pub(crate) enum DiscoveryError {
+    /// No local `.traces/config.toml` was found in any ancestor
+    /// directory.
+    #[error("no local config found from {cwd}")]
+    LocalConfigAbsent {
+        /// The working directory from which discovery started.
+        cwd: PathBuf,
+    },
+    /// Discovery could not access a path.
+    #[error("failed to access path {path} during discovery")]
+    PathInaccessible {
+        /// Path that could not be accessed.
+        path: PathBuf,
+        /// Source I/O error.
+        #[source]
+        source: io::Error,
+    },
+    /// A discovered config file path/source combination was invalid.
+    #[error(transparent)]
+    ConfigFile(#[from] ConfigFileError),
+    /// Discovery context construction failed.
+    #[error(transparent)]
+    Context(#[from] DiscoveryContextError),
+}
+
+/// Errors constructing a discovery context.
+#[derive(Debug, Error)]
+pub(crate) enum DiscoveryContextError {
+    /// This discovery kind does not support file-rooted discovery.
+    #[error("{kind:?} discovery cannot be anchored at file {path}")]
+    UnsupportedFileAnchor {
+        /// Discovery kind.
+        kind: DiscoveryScope,
+        /// Unsupported file anchor path.
+        path: PathBuf,
+    },
+    /// Full loading is not a trust-administration traversal scope.
+    #[error("{scope:?} discovery cannot be used for trust request resolution")]
+    UnsupportedTrustScope {
+        /// Unsupported discovery scope.
+        scope: DiscoveryScope,
+    },
+}
+
 /// Input to [`DiscoveryEngine::process`].
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct DiscoveryContext {
     kind: DiscoveryScope,
     anchor: DiscoveryAnchor,
-}
-
-/// Discovery operation to run.
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub(crate) enum DiscoveryScope {
-    /// Find the nearest local config and optional global config.
-    Full,
-    /// Find only the nearest local config.
-    NearestLocal,
-    /// Find the nearest local config plus descendant local configs.
-    LocalSubtree,
-}
-
-/// Filesystem anchor for a discovery operation.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) enum DiscoveryAnchor {
-    /// Directory-rooted discovery.
-    Directory(PathBuf),
-    /// File-rooted discovery.
-    File(PathBuf),
-}
-
-impl DiscoveryAnchor {
-    /// The path carried by this filesystem anchor.
-    #[inline]
-    #[must_use]
-    pub(super) fn path(&self) -> &Path {
-        match self {
-            Self::Directory(path) | Self::File(path) => path,
-        }
-    }
 }
 
 impl DiscoveryContext {
@@ -99,55 +118,43 @@ impl DiscoveryContext {
     }
 }
 
-/// Errors constructing a discovery context.
-#[derive(Debug, Error)]
-pub(crate) enum DiscoveryContextError {
-    /// This discovery kind does not support file-rooted discovery.
-    #[error("{kind:?} discovery cannot be anchored at file {path}")]
-    UnsupportedFileAnchor {
-        /// Discovery kind.
-        kind: DiscoveryScope,
-        /// Unsupported file anchor path.
-        path: PathBuf,
-    },
-    /// Full loading is not a trust-administration traversal scope.
-    #[error("{scope:?} discovery cannot be used for trust request resolution")]
-    UnsupportedTrustScope {
-        /// Unsupported discovery scope.
-        scope: DiscoveryScope,
-    },
+/// Discovery operation to run.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub(crate) enum DiscoveryScope {
+    /// Find the nearest local config and optional global config.
+    Full,
+    /// Find only the nearest local config.
+    NearestLocal,
+    /// Find the nearest local config plus descendant local configs.
+    LocalSubtree,
 }
 
-/// Errors during config file discovery (file-walking, not read/parse).
-///
-/// `thiserror`-only, no `miette::Diagnostic` — this is library data, not
-/// CLI presentation. A future CLI layer wraps this type to add help text
-/// (e.g. "run `traces init`") and error codes.
-#[derive(Debug, Error)]
-pub(crate) enum DiscoveryError {
-    /// No local `.traces/config.toml` was found in any ancestor
-    /// directory.
-    #[error("no local config found from {cwd}")]
-    LocalConfigAbsent {
-        /// The working directory from which discovery started.
-        cwd: PathBuf,
-    },
-    /// Discovery could not access a path.
-    #[error("failed to access path {path} during discovery")]
-    PathInaccessible {
-        /// Path that could not be accessed.
-        path: PathBuf,
-        /// Source I/O error.
-        #[source]
-        source: io::Error,
-    },
-    /// A discovered config file path/source combination was invalid.
-    #[error(transparent)]
-    ConfigFile(#[from] ConfigFileError),
-    /// Discovery context construction failed.
-    #[error(transparent)]
-    Context(#[from] DiscoveryContextError),
+/// Filesystem anchor for a discovery operation.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum DiscoveryAnchor {
+    /// Directory-rooted discovery.
+    Directory(PathBuf),
+    /// File-rooted discovery.
+    File(PathBuf),
 }
+
+impl DiscoveryAnchor {
+    /// The path carried by this filesystem anchor.
+    #[inline]
+    #[must_use]
+    pub(super) fn path(&self) -> &Path {
+        match self {
+            Self::Directory(path) | Self::File(path) => path,
+        }
+    }
+}
+
+type OutcomeParts = (
+    DiscoveryScope,
+    DiscoveryAnchor,
+    Box<[LocalConfigFile<Discovered>]>,
+    Box<[GlobalConfigFile<Discovered>]>,
+);
 
 /// Opaque discovery result consumed by the config builder pipeline.
 ///
@@ -161,13 +168,6 @@ pub(crate) struct DiscoveryOutcome {
     local: Box<[LocalConfigFile<Discovered>]>,
     global: Box<[GlobalConfigFile<Discovered>]>,
 }
-
-type OutcomeParts = (
-    DiscoveryScope,
-    DiscoveryAnchor,
-    Box<[LocalConfigFile<Discovered>]>,
-    Box<[GlobalConfigFile<Discovered>]>,
-);
 
 impl DiscoveryOutcome {
     /// Creates a full-discovery outcome from a directory anchor.
