@@ -13,9 +13,9 @@ use super::{
         DiscoveryOutcome, DiscoveryScope,
     },
     domain::Config,
-    store::{
-        ConfigStateError, ConfigStateStore, ConfigTrustStatus, TrustSubject,
-        TrustSubjects, WorkspaceTrustStatus,
+    store::{ConfigStateError, ConfigStateStore},
+    trust::{
+        ConfigTrustStatus, TrustRequest, TrustRequests, WorkspaceTrustStatus,
     },
 };
 
@@ -139,12 +139,12 @@ impl ConfigService {
         reason = "service owns the discovery seam even though trust-subject \
                   discovery has no state dependency today"
     )]
-    pub(crate) fn trust_subjects(
+    pub(crate) fn trust_requests(
         &self,
         path: &Path,
         scope: DiscoveryScope,
-    ) -> Result<TrustSubjects, DiscoveryError> {
-        DiscoveryEngine.trust_subjects(path, scope)
+    ) -> Result<TrustRequests, DiscoveryError> {
+        DiscoveryEngine.trust_requests(path, scope)
     }
 
     /// Grants trust for a workspace root, and for config subjects also records
@@ -157,7 +157,7 @@ impl ConfigService {
     #[inline]
     pub(crate) fn trust(
         &self,
-        subject: &TrustSubject,
+        subject: &TrustRequest,
     ) -> Result<(), ConfigStateError> {
         self.state.grant_trust(subject)
     }
@@ -170,7 +170,7 @@ impl ConfigService {
     #[inline]
     pub(crate) fn trust_status(
         &self,
-        subject: &TrustSubject,
+        subject: &TrustRequest,
     ) -> Result<&'static str, ConfigStateError> {
         if subject.config_file().is_some() {
             match self.state.config_trust_status(subject)? {
@@ -196,7 +196,7 @@ impl ConfigService {
     #[inline]
     pub(crate) fn untrust(
         &self,
-        subject: &TrustSubject,
+        subject: &TrustRequest,
     ) -> Result<usize, ConfigStateError> {
         self.state.revoke_trust(subject)
     }
@@ -327,7 +327,7 @@ mod tests {
         fn trust_config(&self, config_path: &Path) {
             let config = self.discovered_config(config_path);
             self.service
-                .trust(&TrustSubject::discovered(&config))
+                .trust(&TrustRequest::from(&config))
                 .expect("trust candidate root");
         }
     }
@@ -498,9 +498,10 @@ mod tests {
             // Assert
             assert!(matches!(
                 result,
-                Err(ConfigBuilderError::ConfigFile(ConfigFileError::Trust(
-                    ConfigFileTrustError::RootNotTrusted { root }
-                ))) if root == cwd
+                Err(ConfigBuilderError::Untrusted {
+                    status: ConfigTrustStatus::Untrusted,
+                    ..
+                })
             ));
         }
 
@@ -520,14 +521,15 @@ mod tests {
             // Assert
             assert!(matches!(
                 result,
-                Err(ConfigBuilderError::ConfigFile(ConfigFileError::Trust(
-                    ConfigFileTrustError::StaleConfigContent { root }
-                ))) if root == cwd
+                Err(ConfigBuilderError::Untrusted {
+                    status: ConfigTrustStatus::Stale,
+                    ..
+                })
             ));
         }
     }
 
-    mod trust_subjects {
+    mod trust_requests {
         use pretty_assertions::assert_eq;
 
         use super::*;
@@ -542,7 +544,7 @@ mod tests {
             // Act
             let result = fixture
                 .service
-                .trust_subjects(&cwd, DiscoveryScope::NearestLocal);
+                .trust_requests(&cwd, DiscoveryScope::NearestLocal);
 
             // Assert
             assert!(result.is_ok());
@@ -561,7 +563,7 @@ mod tests {
             // Arrange
             let fixture = Fixture::new();
             let root = fixture.target_dir("project");
-            let subject = TrustSubject::root(&root);
+            let subject = TrustRequest::from(root.as_path());
 
             // Act
             let result = fixture.service.trust(&subject);
@@ -581,7 +583,7 @@ mod tests {
             let root = fixture.target_dir("project");
             let config_path = fixture.create_config(&root, "a = 1");
             let config = fixture.discovered_config(&config_path);
-            let subject = TrustSubject::discovered(&config);
+            let subject = TrustRequest::from(&config);
 
             // Act
             let result = fixture.service.trust(&subject);
@@ -605,7 +607,7 @@ mod tests {
             // Arrange
             let fixture = Fixture::new();
             let root = fixture.target_dir("project");
-            let subject = TrustSubject::root(&root);
+            let subject = TrustRequest::from(root.as_path());
 
             // Act
             let result = fixture.service.trust_status(&subject);
@@ -622,7 +624,7 @@ mod tests {
             let root = fixture.target_dir("project");
             let config_path = fixture.create_config(&root, "a = 1");
             let config = fixture.discovered_config(&config_path);
-            let subject = TrustSubject::discovered(&config);
+            let subject = TrustRequest::from(&config);
 
             // Act
             let result = fixture.service.trust_status(&subject);
@@ -639,7 +641,7 @@ mod tests {
             let root = fixture.target_dir("project");
             let config_path = fixture.create_config(&root, "a = 1");
             let config = fixture.discovered_config(&config_path);
-            let subject = TrustSubject::discovered(&config);
+            let subject = TrustRequest::from(&config);
 
             fixture.service.trust(&subject).unwrap();
             fs::write(&config_path, "a = 2").unwrap();
@@ -663,7 +665,7 @@ mod tests {
             // Arrange
             let fixture = Fixture::new();
             let root = fixture.target_dir("project");
-            let subject = TrustSubject::root(&root);
+            let subject = TrustRequest::from(root.as_path());
             fixture.service.trust(&subject).unwrap();
 
             // Act
@@ -683,7 +685,7 @@ mod tests {
             // Arrange
             let fixture = Fixture::new();
             let root = fixture.target_dir("project");
-            let subject = TrustSubject::root(&root);
+            let subject = TrustRequest::from(root.as_path());
 
             // Act
             let result = fixture.service.untrust(&subject);

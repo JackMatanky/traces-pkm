@@ -10,9 +10,8 @@ use thiserror::Error;
 
 use super::{
     raw::RawConfig,
-    store::{
-        ConfigStateError, ConfigStateStore, ConfigTrustStatus, TrustSubject,
-    },
+    store::{ConfigStateError, ConfigStateStore},
+    trust::{ConfigTrustStatus, TrustRequest},
 };
 
 /// Source marker for a local project config file.
@@ -33,7 +32,7 @@ pub(crate) struct Tracked;
 
 /// A local config file whose root passed the trust gate.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub(super) struct Trusted;
+pub(crate) struct Trusted;
 
 /// A config file parsed into raw config data.
 #[derive(Clone, Debug)]
@@ -160,51 +159,61 @@ impl GlobalConfigFile<Discovered> {
     }
 }
 
-impl TryFrom<(LocalConfigFile<Discovered>, &ConfigStateStore)>
+impl From<(LocalConfigFile<Discovered>, &ConfigStateStore)>
     for LocalConfigFile<Tracked>
 {
-    type Error = ConfigFileError;
-
     #[inline]
-    fn try_from(
+    fn from(
         (file, state): (LocalConfigFile<Discovered>, &ConfigStateStore),
-    ) -> Result<Self, Self::Error> {
+    ) -> Self {
         state.track_seen_config(&file);
-        Ok(file.transition_to(Tracked))
+        file.transition_to(Tracked)
     }
 }
 
-impl TryFrom<(LocalConfigFile<Tracked>, &ConfigStateStore)>
-    for LocalConfigFile<Trusted>
-{
-    type Error = ConfigFileError;
+/// The outcome of checking a tracked config file's trust status.
+pub(crate) enum TrustOutcome {
+    /// The file is trusted and ready to be parsed.
+    Trusted(LocalConfigFile<Trusted>),
+    /// The file is untrusted, missing its baseline hash, or stale.
+    Halted(LocalConfigFile<Tracked>, ConfigTrustStatus),
+}
 
-    #[inline]
-    fn try_from(
-        (file, state): (LocalConfigFile<Tracked>, &ConfigStateStore),
-    ) -> Result<Self, Self::Error> {
-        let root = file.root().to_path_buf();
-        let subject = TrustSubject::tracked(&file);
+impl LocalConfigFile<Tracked> {
+    /// Verifies the trust status of this tracked config file.
+    ///
+    /// Returns `TrustOutcome::Trusted` if the file is fully trusted. Returns
+    /// `TrustOutcome::Halted` if trust is absent or stale, allowing the caller
+    /// to prompt the user.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConfigFileTrustError`] if the underlying state store fails.
+    pub(crate) fn verify_trust(
+        self,
+        state: &ConfigStateStore,
+    ) -> Result<TrustOutcome, ConfigFileTrustError> {
+        let root = self.root().to_path_buf();
+        let subject = TrustRequest::from(&self);
         match state.config_trust_status(&subject) {
-            Ok(ConfigTrustStatus::Trusted) => Ok(file.transition_to(Trusted)),
-            Ok(ConfigTrustStatus::Untrusted) => {
-                Err(ConfigFileTrustError::RootNotTrusted {
-                    root,
-                }
-                .into())
+            Ok(ConfigTrustStatus::Trusted) => {
+                Ok(TrustOutcome::Trusted(self.transition_to(Trusted)))
             }
-            Ok(
-                ConfigTrustStatus::MissingBaseline | ConfigTrustStatus::Stale,
-            ) => Err(ConfigFileTrustError::StaleConfigContent {
-                root,
-            }
-            .into()),
+            Ok(status) => Ok(TrustOutcome::Halted(self, status)),
             Err(source) => Err(ConfigFileTrustError::TrustCheckFailed {
                 root,
                 source: Box::new(source),
-            }
-            .into()),
+            }),
         }
+    }
+
+    /// Unconditionally transitions a halted file to trusted.
+    ///
+    /// Used after interactively prompting the user and calling
+    /// `store.grant_trust(...)`.
+    #[must_use]
+    pub(crate) fn force_trust(self) -> LocalConfigFile<Trusted> {
+        self.transition_to(Trusted)
     }
 }
 impl TryFrom<LocalConfigFile<Trusted>> for LocalConfigFile<Parsed> {
@@ -294,18 +303,6 @@ pub(crate) enum ConfigFileParseError {
 /// Errors checking whether a tracked config file can become trusted.
 #[derive(Debug, Error)]
 pub(crate) enum ConfigFileTrustError {
-    /// The config file's project root is not in the trust store.
-    #[error("{root} is not trusted")]
-    RootNotTrusted {
-        /// The untrusted project root.
-        root: PathBuf,
-    },
-    /// The project root is trusted, but the config file content changed.
-    #[error("{root} was trusted, but the config file has changed since")]
-    StaleConfigContent {
-        /// The stale project root.
-        root: PathBuf,
-    },
     /// The trust check itself failed.
     #[error("failed to check trust for {root}")]
     TrustCheckFailed {
@@ -405,8 +402,7 @@ mod tests {
             ))
             .unwrap();
 
-            let tracked =
-                LocalConfigFile::<Tracked>::try_from((file, &state)).unwrap();
+            let tracked = LocalConfigFile::<Tracked>::from((file, &state));
 
             assert_eq!(
                 tracked.path(),
@@ -433,8 +429,7 @@ mod tests {
                     .unwrap();
 
             // Act
-            let _ =
-                LocalConfigFile::<Tracked>::try_from((file, &state)).unwrap();
+            let _ = LocalConfigFile::<Tracked>::from((file, &state));
 
             // Assert
             let canonical_path = std::fs::canonicalize(&config_path).unwrap();
@@ -463,13 +458,11 @@ mod tests {
                 temp.path().join("trust"),
             );
             let file = LocalConfigFile::<Discovered>::try_new(path).unwrap();
-            let tracked =
-                LocalConfigFile::<Tracked>::try_from((file, &state)).unwrap();
-            state.grant_trust(&TrustSubject::tracked(&tracked)).unwrap();
+            let tracked = LocalConfigFile::<Tracked>::from((file, &state));
+            state.grant_trust(&TrustRequest::from(&tracked)).unwrap();
 
-            let result =
-                LocalConfigFile::<Trusted>::try_from((tracked, &state));
-            assert!(result.is_ok());
+            let result = tracked.verify_trust(&state);
+            assert!(matches!(result, Ok(TrustOutcome::Trusted(_))));
         }
 
         #[test]
@@ -486,16 +479,12 @@ mod tests {
             );
 
             let file = LocalConfigFile::<Discovered>::try_new(path).unwrap();
-            let tracked =
-                LocalConfigFile::<Tracked>::try_from((file, &state)).unwrap();
+            let tracked = LocalConfigFile::<Tracked>::from((file, &state));
 
-            let result =
-                LocalConfigFile::<Trusted>::try_from((tracked, &state));
+            let result = tracked.verify_trust(&state);
             assert!(matches!(
                 result,
-                Err(ConfigFileError::Trust(
-                    ConfigFileTrustError::RootNotTrusted { .. }
-                ))
+                Ok(TrustOutcome::Halted(_, ConfigTrustStatus::Untrusted))
             ));
         }
 
@@ -512,20 +501,16 @@ mod tests {
                 temp.path().join("trust"),
             );
             let file = LocalConfigFile::<Discovered>::try_new(path).unwrap();
-            let tracked =
-                LocalConfigFile::<Tracked>::try_from((file, &state)).unwrap();
+            let tracked = LocalConfigFile::<Tracked>::from((file, &state));
 
             // Grant trust to the WORKSPACE, which creates no baseline config
             // hash.
-            state.grant_trust(&TrustSubject::root(root.as_path())).unwrap();
+            state.grant_trust(&TrustRequest::from(root.as_path())).unwrap();
 
-            let result =
-                LocalConfigFile::<Trusted>::try_from((tracked, &state));
+            let result = tracked.verify_trust(&state);
             assert!(matches!(
                 result,
-                Err(ConfigFileError::Trust(
-                    ConfigFileTrustError::StaleConfigContent { .. }
-                ))
+                Ok(TrustOutcome::Halted(_, ConfigTrustStatus::MissingBaseline))
             ));
         }
 
@@ -543,21 +528,17 @@ mod tests {
             );
             let file =
                 LocalConfigFile::<Discovered>::try_new(path.clone()).unwrap();
-            let tracked =
-                LocalConfigFile::<Tracked>::try_from((file, &state)).unwrap();
+            let tracked = LocalConfigFile::<Tracked>::from((file, &state));
 
-            state.grant_trust(&TrustSubject::tracked(&tracked)).unwrap();
+            state.grant_trust(&TrustRequest::from(&tracked)).unwrap();
 
             // Modify file after trust
             std::fs::write(&path, "new").unwrap();
 
-            let result =
-                LocalConfigFile::<Trusted>::try_from((tracked, &state));
+            let result = tracked.verify_trust(&state);
             assert!(matches!(
                 result,
-                Err(ConfigFileError::Trust(
-                    ConfigFileTrustError::StaleConfigContent { .. }
-                ))
+                Ok(TrustOutcome::Halted(_, ConfigTrustStatus::Stale))
             ));
         }
 
@@ -575,24 +556,20 @@ mod tests {
             );
             let file =
                 LocalConfigFile::<Discovered>::try_new(path.clone()).unwrap();
-            let tracked =
-                LocalConfigFile::<Tracked>::try_from((file, &state)).unwrap();
+            let tracked = LocalConfigFile::<Tracked>::from((file, &state));
 
             // Grant trust so the companion file exists.
-            state.grant_trust(&TrustSubject::tracked(&tracked)).unwrap();
+            state.grant_trust(&TrustRequest::from(&tracked)).unwrap();
 
             // Delete the config file so hashing it fails with an I/O error.
             std::fs::remove_file(&path).unwrap();
 
             // Checking trust will now try to hash the deleted config file,
             // causing an I/O error.
-            let result =
-                LocalConfigFile::<Trusted>::try_from((tracked, &state));
+            let result = tracked.verify_trust(&state);
             assert!(matches!(
                 result,
-                Err(ConfigFileError::Trust(
-                    ConfigFileTrustError::TrustCheckFailed { .. }
-                ))
+                Err(ConfigFileTrustError::TrustCheckFailed { .. })
             ));
         }
     }

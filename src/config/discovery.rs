@@ -14,7 +14,7 @@ use thiserror::Error;
 
 use super::{
     file::{ConfigFileError, Discovered, GlobalConfigFile, LocalConfigFile},
-    store::{TrustSubject, TrustSubjects},
+    trust::{TrustRequest, TrustRequests},
 };
 use crate::dirs;
 
@@ -111,7 +111,7 @@ pub(crate) enum DiscoveryContextError {
         path: PathBuf,
     },
     /// Full loading is not a trust-administration traversal scope.
-    #[error("{scope:?} discovery cannot be used for trust target resolution")]
+    #[error("{scope:?} discovery cannot be used for trust request resolution")]
     UnsupportedTrustScope {
         /// Unsupported discovery scope.
         scope: DiscoveryScope,
@@ -262,12 +262,12 @@ impl DiscoveryEngine {
         }
     }
 
-    /// Resolves trust subjects from one user-supplied filesystem path.
+    /// Resolves trust requests from one user-supplied filesystem path.
     ///
     /// File paths resolve to that local config. Directory paths resolve to the
-    /// nearest local config, or to a root-only subject when no local config is
-    /// present and only the nearest subject was requested. Subtree discovery
-    /// yields discovered config subjects only.
+    /// nearest local config, or to a root-only request when no local config is
+    /// present and only the nearest request was requested. Subtree discovery
+    /// yields discovered config requests only.
     ///
     /// # Errors
     ///
@@ -280,11 +280,11 @@ impl DiscoveryEngine {
         reason = "ZST discovery seam mirrors `process` and keeps caller style \
                   consistent"
     )]
-    pub(crate) fn trust_subjects(
+    pub(crate) fn trust_requests(
         self,
         path: &Path,
         scope: DiscoveryScope,
-    ) -> Result<TrustSubjects, DiscoveryError> {
+    ) -> Result<TrustRequests, DiscoveryError> {
         let start = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
         let anchor = Self::trust_anchor(&start);
         let allow_root_fallback = match scope {
@@ -298,26 +298,25 @@ impl DiscoveryEngine {
             }
         };
 
-        match Self::discovered_subjects(scope, anchor) {
-            Ok(subjects) => Ok(subjects),
+        match Self::discovered_requests(scope, anchor) {
+            Ok(requests) => Ok(requests),
             Err(DiscoveryError::LocalConfigAbsent {
                 ..
             }) if allow_root_fallback => {
-                Ok(TrustSubjects::single(TrustSubject::root(&start)))
+                Ok(TrustRequests::single(TrustRequest::from(start.as_path())))
             }
             Err(error) => Err(error),
         }
     }
 
-    fn discovered_subjects(
+    fn discovered_requests(
         scope: DiscoveryScope,
         anchor: DiscoveryAnchor,
-    ) -> Result<TrustSubjects, DiscoveryError> {
+    ) -> Result<TrustRequests, DiscoveryError> {
         let context = DiscoveryContext::new(scope, anchor)?;
         let outcome = DiscoveryEngine.process(context)?;
-        let subjects =
-            outcome.local().iter().map(TrustSubject::discovered).collect();
-        Ok(TrustSubjects::new(subjects))
+        let requests = outcome.local().iter().map(TrustRequest::from).collect();
+        Ok(TrustRequests::new(requests))
     }
 
     fn trust_anchor(path: &Path) -> DiscoveryAnchor {
@@ -754,14 +753,14 @@ mod tests {
         }
 
         #[test]
-        fn trust_subjects_full_scope_is_unsupported() {
+        fn trust_requests_full_scope_is_unsupported() {
             // Arrange
             let fixture = Fixture::new();
             let project = fixture.create_dir("project");
 
             // Act
             let result =
-                DiscoveryEngine.trust_subjects(&project, DiscoveryScope::Full);
+                DiscoveryEngine.trust_requests(&project, DiscoveryScope::Full);
 
             // Assert
             assert!(matches!(
@@ -773,7 +772,7 @@ mod tests {
         }
 
         #[test]
-        fn trust_subjects_nearest_local_with_config_returns_discovered_subject()
+        fn trust_requests_nearest_local_with_config_returns_discovered_request()
         {
             // Arrange
             let fixture = Fixture::new();
@@ -782,32 +781,32 @@ mod tests {
 
             // Act
             let result = DiscoveryEngine
-                .trust_subjects(&project, DiscoveryScope::NearestLocal);
+                .trust_requests(&project, DiscoveryScope::NearestLocal);
 
             // Assert
             assert!(result.is_ok());
-            let subjects = result.unwrap();
-            assert_eq!(subjects.into_iter().count(), 1);
+            let requests = result.unwrap();
+            assert_eq!(requests.into_iter().count(), 1);
         }
 
         #[test]
-        fn trust_subjects_nearest_local_without_config_returns_root_fallback() {
+        fn trust_requests_nearest_local_without_config_returns_root_fallback() {
             // Arrange
             let fixture = Fixture::new();
             let project = fixture.create_dir("project");
 
             // Act
             let result = DiscoveryEngine
-                .trust_subjects(&project, DiscoveryScope::NearestLocal);
+                .trust_requests(&project, DiscoveryScope::NearestLocal);
 
             // Assert
             assert!(result.is_ok());
-            let subjects = result.unwrap();
-            assert_eq!(subjects.into_iter().count(), 1);
+            let requests = result.unwrap();
+            assert_eq!(requests.into_iter().count(), 1);
         }
 
         #[test]
-        fn trust_subjects_local_subtree_returns_discovered_subjects() {
+        fn trust_requests_local_subtree_returns_discovered_requests() {
             // Arrange
             let fixture = Fixture::new();
             let project = fixture.create_dir("project");
@@ -815,23 +814,23 @@ mod tests {
 
             // Act
             let result = DiscoveryEngine
-                .trust_subjects(&project, DiscoveryScope::LocalSubtree);
+                .trust_requests(&project, DiscoveryScope::LocalSubtree);
 
             // Assert
             assert!(result.is_ok());
-            let subjects = result.unwrap();
-            assert_eq!(subjects.into_iter().count(), 1);
+            let requests = result.unwrap();
+            assert_eq!(requests.into_iter().count(), 1);
         }
 
         #[test]
-        fn trust_subjects_local_subtree_without_config_is_error() {
+        fn trust_requests_local_subtree_without_config_is_error() {
             // Arrange
             let fixture = Fixture::new();
             let project = fixture.create_dir("project");
 
             // Act
             let result = DiscoveryEngine
-                .trust_subjects(&project, DiscoveryScope::LocalSubtree);
+                .trust_requests(&project, DiscoveryScope::LocalSubtree);
 
             // Assert
             assert!(matches!(

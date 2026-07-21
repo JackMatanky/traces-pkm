@@ -12,7 +12,7 @@ use clap::{ArgGroup, Args, Subcommand};
 use super::error::ConfigTrustCliError;
 use crate::{
     Cwd,
-    config::{ConfigService, DiscoveryScope, TrustSubject},
+    config::{ConfigService, DiscoveryScope, TrustRequest},
 };
 
 /// `traces trust [PATH]` / `traces trust --show` / `traces trust --untrust`.
@@ -87,7 +87,7 @@ impl Trust {
                   mirrors"
     )]
     fn list(service: &ConfigService) -> Result<(), ConfigTrustCliError> {
-        let roots = service.list_trusted().map_err(|source| {
+        let roots: Vec<PathBuf> = service.list_trusted().map_err(|source| {
             ConfigTrustCliError::List {
                 source: Box::new(source),
             }
@@ -117,7 +117,7 @@ impl Trust {
         &self,
         service: &ConfigService,
     ) -> Result<(), ConfigTrustCliError> {
-        self.for_each_subject(service, |subject| {
+        self.for_each_subject(service, |subject: TrustRequest| {
             let root = subject.root_path().to_path_buf();
             if let Err(source) = service.trust(&subject) {
                 return Err(ConfigTrustCliError::Trust {
@@ -135,7 +135,7 @@ impl Trust {
         &self,
         service: &ConfigService,
     ) -> Result<(), ConfigTrustCliError> {
-        self.for_each_subject(service, |subject| {
+        self.for_each_subject(service, |subject: TrustRequest| {
             let root = subject.root_path().to_path_buf();
             if let Err(source) = service.untrust(&subject) {
                 return Err(ConfigTrustCliError::Untrust {
@@ -156,9 +156,12 @@ impl Trust {
                   mirrors"
     )]
     fn show(&self, service: &ConfigService) -> Result<(), ConfigTrustCliError> {
-        self.for_each_subject(service, |subject| {
+        self.for_each_subject(service, |subject: TrustRequest| {
             let root = subject.root_path().to_path_buf();
-            let path = subject.path().to_path_buf();
+            let path = subject
+                .config_file()
+                .unwrap_or(subject.root_path())
+                .to_path_buf();
             let state = service.trust_status(&subject).map_err(|source| {
                 ConfigTrustCliError::Show {
                     root,
@@ -174,7 +177,7 @@ impl Trust {
     fn for_each_subject(
         &self,
         service: &ConfigService,
-        mut visit: impl FnMut(TrustSubject) -> Result<(), ConfigTrustCliError>,
+        mut visit: impl FnMut(TrustRequest) -> Result<(), ConfigTrustCliError>,
     ) -> Result<(), ConfigTrustCliError> {
         let cwd;
         let path = if let Some(path) = self.path.as_deref() {
@@ -194,7 +197,7 @@ impl Trust {
             DiscoveryScope::NearestLocal
         };
         let subjects =
-            service.trust_subjects(path, scope).map_err(|source| {
+            service.trust_requests(path, scope).map_err(|source| {
                 ConfigTrustCliError::TargetResolve {
                     path: path.to_path_buf(),
                     source: Box::new(source),
@@ -363,7 +366,7 @@ mod tests {
             ]);
             assert_eq!(
                 service
-                    .trust_status(&TrustSubject::root(&root))
+                    .trust_status(&TrustRequest::from(root.as_path()))
                     .expect("check trust"),
                 "trusted"
             );
@@ -402,7 +405,7 @@ mod tests {
             ]);
             assert_eq!(
                 service
-                    .trust_status(&TrustSubject::root(&root))
+                    .trust_status(&TrustRequest::from(root.as_path()))
                     .expect("check trust"),
                 "trusted"
             );
@@ -438,7 +441,7 @@ mod tests {
 
             assert_eq!(
                 service
-                    .trust_status(&TrustSubject::root(&root))
+                    .trust_status(&TrustRequest::from(root.as_path()))
                     .expect("check trust"),
                 "untrusted"
             );

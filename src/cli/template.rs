@@ -96,7 +96,7 @@ mod tests {
     use super::*;
     use crate::{
         CwdGuard,
-        config::{Discovered, LocalConfigFile, TrustSubject},
+        config::{Discovered, LocalConfigFile, TrustRequest},
     };
 
     fn service(temp: &Path) -> ConfigService {
@@ -108,7 +108,7 @@ mod tests {
             LocalConfigFile::<Discovered>::try_new(config_path.to_path_buf())
                 .expect("valid local config");
         service
-            .trust(&TrustSubject::discovered(&config))
+            .trust(&TrustRequest::from(&config))
             .expect("trust project config");
     }
 

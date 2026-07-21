@@ -45,7 +45,7 @@ pub(crate) use domain::Config;
 pub(crate) use file::{Discovered, LocalConfigFile};
 pub(crate) use raw::{RawConfig, RawTemplateConfig};
 pub(crate) use service::{ConfigLoadError, ConfigService};
-pub(crate) use store::TrustSubject;
+pub(crate) use trust::TrustRequest;
 
 mod builder;
 mod discovery;
@@ -54,3 +54,4 @@ mod file;
 mod raw;
 mod service;
 mod store;
+mod trust;

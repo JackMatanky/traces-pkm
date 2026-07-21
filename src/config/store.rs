@@ -1,10 +1,13 @@
 //! Unified config tracking and trust state.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use thiserror::Error;
 
-use super::file::{Discovered, LocalConfigFile, Tracked};
+use super::{
+    file::{Discovered, LocalConfigFile},
+    trust::{ConfigTrustStatus, TrustRequest, WorkspaceTrustStatus},
+};
 use crate::{
     Blake3FileHash, FileStateStore, FileStateStoreError, FileStoreCleanMode,
     dirs, hash::HashError,
@@ -12,137 +15,10 @@ use crate::{
 
 const COMPANION_SUFFIX: &str = ".hash";
 
-/// Stores seen config files and trusted workspace roots.
 #[derive(Clone, Debug)]
 pub(crate) struct ConfigStateStore {
     tracked: FileStateStore,
     trusted: FileStateStore,
-}
-
-/// Subject of a trust operation.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct TrustSubject {
-    kind: TrustSubjectKind,
-    path: PathBuf,
-}
-
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-enum TrustSubjectKind {
-    Root,
-    Config,
-}
-
-/// Trust subjects resolved from a discovery operation.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct TrustSubjects(Box<[TrustSubject]>);
-
-impl TrustSubjects {
-    /// Creates trust subjects from discovered configs.
-    #[inline]
-    #[must_use]
-    pub(crate) fn new(subjects: Vec<TrustSubject>) -> Self {
-        Self(subjects.into_boxed_slice())
-    }
-
-    /// Creates a single trust subject.
-    #[inline]
-    #[must_use]
-    pub(crate) fn single(subject: TrustSubject) -> Self {
-        Self(Box::new([subject]))
-    }
-}
-
-impl IntoIterator for TrustSubjects {
-    type IntoIter = std::vec::IntoIter<TrustSubject>;
-    type Item = TrustSubject;
-
-    #[inline]
-    fn into_iter(self) -> Self::IntoIter {
-        self.0.into_vec().into_iter()
-    }
-}
-
-impl TrustSubject {
-    /// Trust a workspace root without binding trust to a config-file hash.
-    #[inline]
-    #[must_use]
-    pub(crate) fn root(root: &Path) -> Self {
-        Self {
-            kind: TrustSubjectKind::Root,
-            path: root.to_path_buf(),
-        }
-    }
-
-    /// Trust a discovered local config and bind it to its current content hash.
-    #[inline]
-    #[must_use]
-    pub(crate) fn discovered(file: &LocalConfigFile<Discovered>) -> Self {
-        Self {
-            kind: TrustSubjectKind::Config,
-            path: file.path().to_path_buf(),
-        }
-    }
-
-    /// Trust a tracked local config and bind it to its current content hash.
-    #[inline]
-    #[must_use]
-    pub(crate) fn tracked(file: &LocalConfigFile<Tracked>) -> Self {
-        Self {
-            kind: TrustSubjectKind::Config,
-            path: file.path().to_path_buf(),
-        }
-    }
-
-    /// The workspace root this subject refers to.
-    #[inline]
-    #[must_use]
-    pub(crate) fn root_path(&self) -> &Path {
-        match self.kind {
-            TrustSubjectKind::Root => &self.path,
-            TrustSubjectKind::Config => {
-                self.path.parent().and_then(Path::parent).unwrap_or(&self.path)
-            }
-        }
-    }
-
-    /// The config file if present, otherwise the workspace root.
-    #[inline]
-    #[must_use]
-    pub(crate) fn path(&self) -> &Path {
-        &self.path
-    }
-
-    /// The config file path, when this subject carries one.
-    #[inline]
-    #[must_use]
-    pub(crate) fn config_file(&self) -> Option<&Path> {
-        match self.kind {
-            TrustSubjectKind::Root => None,
-            TrustSubjectKind::Config => Some(&self.path),
-        }
-    }
-}
-
-/// Trust state for a workspace root.
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub(crate) enum WorkspaceTrustStatus {
-    /// The workspace root is trusted.
-    Trusted,
-    /// The workspace root is not trusted.
-    Untrusted,
-}
-
-/// Trust state for a config file inside a workspace.
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub(crate) enum ConfigTrustStatus {
-    /// The workspace is trusted and the config hash still matches.
-    Trusted,
-    /// The workspace root is not trusted.
-    Untrusted,
-    /// The workspace is trusted, but no config hash is recorded.
-    MissingBaseline,
-    /// The workspace is trusted, but the config hash no longer matches.
-    Stale,
 }
 
 /// Errors from config tracking or trust-state operations.
@@ -198,14 +74,12 @@ impl ConfigStateStore {
 
     /// Grants trust for a workspace, optionally recording a config hash.
     ///
-    /// # Errors
-    ///
     /// Returns [`ConfigStateError`] when trust cannot be recorded or the config
     /// file cannot be hashed.
     #[inline]
     pub(crate) fn grant_trust(
         &self,
-        subject: &TrustSubject,
+        subject: &TrustRequest,
     ) -> Result<(), ConfigStateError> {
         self.trusted.record(subject.root_path())?;
         let Some(config_file) = subject.config_file() else {
@@ -223,12 +97,10 @@ impl ConfigStateStore {
     /// Returns the workspace-root trust status.
     ///
     /// # Errors
-    ///
-    /// Returns [`ConfigStateError`] when the trust store cannot be queried.
     #[inline]
     pub(crate) fn workspace_trust_status(
         &self,
-        subject: &TrustSubject,
+        subject: &TrustRequest,
     ) -> Result<WorkspaceTrustStatus, ConfigStateError> {
         if self.trusted.contains(subject.root_path())? {
             Ok(WorkspaceTrustStatus::Trusted)
@@ -240,13 +112,10 @@ impl ConfigStateStore {
     /// Returns the config-file trust status.
     ///
     /// # Errors
-    ///
-    /// Returns [`ConfigStateError`] when the trust store cannot be queried or
-    /// the config file cannot be hashed.
     #[inline]
     pub(crate) fn config_trust_status(
         &self,
-        subject: &TrustSubject,
+        subject: &TrustRequest,
     ) -> Result<ConfigTrustStatus, ConfigStateError> {
         if !self.trusted.contains(subject.root_path())? {
             return Ok(ConfigTrustStatus::Untrusted);
@@ -276,7 +145,7 @@ impl ConfigStateStore {
     #[inline]
     pub(crate) fn revoke_trust(
         &self,
-        subject: &TrustSubject,
+        subject: &TrustRequest,
     ) -> Result<usize, ConfigStateError> {
         self.trusted
             .remove_with_companions(subject.root_path(), &[COMPANION_SUFFIX])
@@ -359,7 +228,7 @@ mod tests {
             temp.path().join("tracked"),
             temp.path().join("trusted"),
         );
-        let subject = TrustSubject::discovered(&file);
+        let subject = TrustRequest::from(&file);
 
         state.grant_trust(&subject).expect("grant trust");
         assert_eq!(
@@ -385,7 +254,7 @@ mod tests {
             temp.path().join("tracked"),
             temp.path().join("trusted"),
         );
-        let subject = TrustSubject::root(&root);
+        let subject = TrustRequest::from(root.as_path());
 
         assert_eq!(
             state.workspace_trust_status(&subject).expect("check untrusted"),

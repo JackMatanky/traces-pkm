@@ -185,7 +185,7 @@ mod tests {
         use super::*;
         use crate::{
             CwdGuard,
-            config::{ConfigService, TrustSubject},
+            config::{ConfigService, TrustRequest},
             dialog::PresetDialogProvider,
         };
 
@@ -227,7 +227,7 @@ mod tests {
             )
             .expect("valid local config");
             service
-                .trust(&TrustSubject::discovered(&config))
+                .trust(&TrustRequest::from(&config))
                 .expect("trust project root");
             let _guard = CwdGuard::enter(&project);
 

@@ -28,6 +28,14 @@ pub(crate) enum ConfigBuilderError {
     /// Config file lifecycle validation failed.
     #[error(transparent)]
     ConfigFile(#[from] ConfigFileError),
+    /// Config file trust validation halted, requiring user action.
+    #[error("config file is untrusted: {status:?}")]
+    Untrusted {
+        /// The halted config file.
+        file: super::file::LocalConfigFile<super::file::Tracked>,
+        /// The trust status that caused the halt.
+        status: crate::config::trust::ConfigTrustStatus,
+    },
 }
 
 /// Errors while parsing discovery output into builder input.
@@ -146,12 +154,20 @@ impl ConfigBuilder<Discovered> {
         self,
         state: &ConfigStateStore,
     ) -> Result<ConfigBuilder<LocalStored>, ConfigBuilderError> {
-        let tracked_local = LocalConfigFile::<Tracked>::try_from((
-            self.state.input.local,
-            state,
-        ))?;
-        let trusted_local =
-            LocalConfigFile::<Trusted>::try_from((tracked_local, state))?;
+        let tracked_local =
+            LocalConfigFile::<Tracked>::from((self.state.input.local, state));
+        let trusted_local = match tracked_local
+            .verify_trust(state)
+            .map_err(ConfigFileError::Trust)?
+        {
+            super::file::TrustOutcome::Trusted(trusted) => trusted,
+            super::file::TrustOutcome::Halted(file, status) => {
+                return Err(ConfigBuilderError::Untrusted {
+                    file,
+                    status,
+                });
+            }
+        };
         Ok(ConfigBuilder {
             state: LocalStored {
                 local: trusted_local,
@@ -225,7 +241,8 @@ mod tests {
     use crate::config::{
         discovery::{DiscoveryAnchor, DiscoveryOutcome},
         file::ConfigFileTrustError,
-        store::{ConfigStateStore, TrustSubject},
+        store::ConfigStateStore,
+        trust::{ConfigTrustStatus, TrustRequest},
     };
 
     struct Fixture {
@@ -290,7 +307,7 @@ mod tests {
 
         fn trust(&self, local: &LocalConfigFile<FileDiscovered>) {
             self.state()
-                .grant_trust(&TrustSubject::discovered(local))
+                .grant_trust(&TrustRequest::from(local))
                 .expect("trust local");
         }
     }
@@ -426,9 +443,10 @@ mod tests {
 
             assert!(matches!(
                 result,
-                Err(ConfigBuilderError::ConfigFile(ConfigFileError::Trust(
-                    ConfigFileTrustError::RootNotTrusted { root: error_root }
-                ))) if error_root == local.root()
+                Err(ConfigBuilderError::Untrusted {
+                    status: crate::config::trust::ConfigTrustStatus::Untrusted,
+                    ..
+                })
             ));
         }
     }
