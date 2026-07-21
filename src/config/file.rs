@@ -335,22 +335,20 @@ mod tests {
             assert_eq!(config.path(), path.as_path());
         }
 
-        #[test]
-        fn rejects_invalid_paths() {
-            let cases = vec![
-                "/project/config.toml",        // parent is not .traces
-                "/project/.traces/other.toml", // file is not config.toml
-                "config.toml",                 // no parent
-            ];
-            for path in cases {
-                let error =
-                    LocalConfigFile::<Discovered>::try_new(PathBuf::from(path))
-                        .expect_err(&format!("expected rejection for {path}"));
-                assert!(matches!(
-                    error,
-                    ConfigFileError::UnsupportedLocalConfigFile { .. }
-                ));
-            }
+        use rstest::rstest;
+
+        #[rstest]
+        #[case("/project/config.toml")] // parent is not .traces
+        #[case("/project/.traces/other.toml")] // file is not config.toml
+        #[case("config.toml")] // no parent
+        fn rejects_invalid_paths(#[case] path: &str) {
+            let error =
+                LocalConfigFile::<Discovered>::try_new(PathBuf::from(path))
+                    .expect_err(&format!("expected rejection for {path}"));
+            assert!(matches!(
+                error,
+                ConfigFileError::UnsupportedLocalConfigFile { .. }
+            ));
         }
     }
 
@@ -369,20 +367,18 @@ mod tests {
             assert_eq!(config.path(), path.as_path());
         }
 
-        #[test]
-        fn rejects_invalid_paths() {
-            let cases = vec![
-                "/config/traces/settings.toml", // file is not config.toml
-            ];
-            for path in cases {
-                let error =
-                    GlobalConfigFile::<Discovered>::try_new(PathBuf::from(path))
-                        .expect_err(&format!("expected rejection for {path}"));
-                assert!(matches!(
-                    error,
-                    ConfigFileError::UnsupportedGlobalConfigFile { .. }
-                ));
-            }
+        use rstest::rstest;
+
+        #[rstest]
+        #[case("/config/traces/settings.toml")] // file is not config.toml
+        fn rejects_invalid_paths(#[case] path: &str) {
+            let error =
+                GlobalConfigFile::<Discovered>::try_new(PathBuf::from(path))
+                    .expect_err(&format!("expected rejection for {path}"));
+            assert!(matches!(
+                error,
+                ConfigFileError::UnsupportedGlobalConfigFile { .. }
+            ));
         }
     }
 
