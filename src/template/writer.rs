@@ -171,19 +171,19 @@ pub(crate) enum WriteMode {
 impl WriteMode {
     /// Converts the CLI's `--dry-run` and `--force` flags into the one
     /// mode that drives the rest of the pipeline. `dry_run` wins: when
-    /// set, `force` is never consulted, since the two flags don't
-    /// combine into a fourth state — there's nothing to force in
-    /// dry-run mode. The precedence rule lives here, not at the CLI
-    /// call site, so the two flags' meaning stays defined in one place.
+    /// set, `force` is never consulted — that's
+    /// [`CommitPolicy::from_flag`]'s concern, not this one's, since
+    /// the two flags don't combine into a fourth state — there's
+    /// nothing to force in dry-run mode. The precedence rule lives
+    /// here, not at the CLI call site, so the two flags' meaning stays
+    /// defined in one place.
     #[inline]
     #[must_use]
     pub(crate) fn from_flags(dry_run: bool, force: bool) -> Self {
         if dry_run {
             Self::DryRun
-        } else if force {
-            Self::Commit(CommitPolicy::Overwrite)
         } else {
-            Self::Commit(CommitPolicy::CreateNew)
+            Self::Commit(CommitPolicy::from_flag(force))
         }
     }
 }
@@ -209,6 +209,21 @@ pub(crate) enum CommitPolicy {
 }
 
 impl CommitPolicy {
+    /// Converts the CLI's `--force` flag into a commit policy:
+    /// [`Self::Overwrite`] when set, [`Self::CreateNew`] otherwise.
+    /// [`WriteMode::from_flags`]'s only caller — `--dry-run` is
+    /// resolved there first, since it isn't a question this type
+    /// answers.
+    #[inline]
+    #[must_use]
+    fn from_flag(force: bool) -> Self {
+        if force {
+            Self::Overwrite
+        } else {
+            Self::CreateNew
+        }
+    }
+
     /// Creates `path` per this policy: [`Self::CreateNew`] uses
     /// [`fs::File::create_new`] (`O_CREAT | O_EXCL`), which fails
     /// atomically with [`io::ErrorKind::AlreadyExists`] if `path`
@@ -457,6 +472,16 @@ mod tests {
         use pretty_assertions::assert_eq;
 
         use super::*;
+
+        #[test]
+        fn from_flag_force_true_is_overwrite() {
+            assert_eq!(CommitPolicy::from_flag(true), CommitPolicy::Overwrite);
+        }
+
+        #[test]
+        fn from_flag_force_false_is_create_new() {
+            assert_eq!(CommitPolicy::from_flag(false), CommitPolicy::CreateNew);
+        }
 
         #[test]
         fn create_file_creates_a_new_file_when_absent() {
