@@ -269,6 +269,8 @@ impl Default for ConfigService {
 mod tests {
     use std::fs;
 
+    use pretty_assertions::{assert_eq, assert_ne};
+
     use super::*;
     use crate::config::file::{
         ConfigFileError, ConfigFileTrustError, Discovered, LocalConfigFile,

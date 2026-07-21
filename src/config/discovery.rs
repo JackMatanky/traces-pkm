@@ -582,6 +582,8 @@ impl DiscoveryProcessor<GlobalCollected> {
 mod tests {
     use std::fs;
 
+    use pretty_assertions::{assert_eq, assert_ne};
+
     use super::*;
 
     struct Fixture {
@@ -624,6 +626,8 @@ mod tests {
     }
 
     mod context {
+        use pretty_assertions::{assert_eq, assert_ne};
+
         use super::*;
 
         #[test]
@@ -669,6 +673,8 @@ mod tests {
     }
 
     mod engine {
+        use pretty_assertions::{assert_eq, assert_ne};
+
         use super::*;
 
         #[test]
@@ -871,6 +877,8 @@ mod tests {
     }
 
     mod processor {
+        use pretty_assertions::{assert_eq, assert_ne};
+
         use super::*;
 
         #[test]

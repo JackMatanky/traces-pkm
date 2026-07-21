@@ -221,6 +221,8 @@ mod tests {
         path::{Path, PathBuf},
     };
 
+    use pretty_assertions::{assert_eq, assert_ne};
+
     use super::*;
     use crate::config::{
         discovery::{DiscoveryAnchor, DiscoveryOutcome},
@@ -296,6 +298,8 @@ mod tests {
     }
 
     mod input {
+        use pretty_assertions::{assert_eq, assert_ne};
+
         use super::*;
 
         #[test]
@@ -407,6 +411,8 @@ mod tests {
     }
 
     mod store {
+        use pretty_assertions::{assert_eq, assert_ne};
+
         use super::*;
 
         #[test]
@@ -431,6 +437,8 @@ mod tests {
     }
 
     mod merge {
+        use pretty_assertions::{assert_eq, assert_ne};
+
         use super::*;
 
         fn build_ready(

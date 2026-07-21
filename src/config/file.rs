@@ -320,9 +320,13 @@ pub(crate) enum ConfigFileTrustError {
 mod tests {
     use std::path::{Path, PathBuf};
 
+    use pretty_assertions::{assert_eq, assert_ne};
+
     use super::*;
 
     mod local_constructor {
+        use pretty_assertions::{assert_eq, assert_ne};
+
         use super::*;
 
         #[test]
@@ -355,6 +359,8 @@ mod tests {
     }
 
     mod global_constructor {
+        use pretty_assertions::{assert_eq, assert_ne};
+
         use super::*;
 
         #[test]
@@ -385,6 +391,8 @@ mod tests {
     }
 
     mod tracking_transitions {
+        use pretty_assertions::{assert_eq, assert_ne};
+
         use super::*;
 
         #[test]
@@ -441,6 +449,8 @@ mod tests {
     }
 
     mod trust_transitions {
+        use pretty_assertions::{assert_eq, assert_ne};
+
         use super::*;
 
         #[test]
@@ -591,6 +601,8 @@ mod tests {
     }
 
     mod parsing {
+        use pretty_assertions::{assert_eq, assert_ne};
+
         use super::*;
 
         #[test]
@@ -630,6 +642,8 @@ mod tests {
     }
 
     mod template_dir {
+        use pretty_assertions::{assert_eq, assert_ne};
+
         use super::*;
 
         #[test]
