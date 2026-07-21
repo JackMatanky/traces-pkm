@@ -185,9 +185,7 @@ mod tests {
         use super::*;
         use crate::{
             CwdGuard,
-            config::{
-                ConfigService, TrustSubject,
-            },
+            config::{ConfigService, TrustSubject},
             dialog::PresetDialogProvider,
         };
 

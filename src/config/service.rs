@@ -271,8 +271,7 @@ mod tests {
 
     use super::*;
     use crate::config::file::{
-        ConfigFileError, ConfigFileTrustError, Discovered, 
-        LocalConfigFile,
+        ConfigFileError, ConfigFileTrustError, Discovered, LocalConfigFile,
     };
 
     #[test]

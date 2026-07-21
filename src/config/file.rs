@@ -79,6 +79,19 @@ impl<Source, State> ConfigFile<Source, State> {
             _marker: std::marker::PhantomData,
         }
     }
+
+    /// Transitions the config file into a new lifecycle state.
+    fn transition_to<NextState>(
+        self,
+        next_state: NextState,
+    ) -> ConfigFile<Source, NextState> {
+        ConfigFile {
+            root: self.root,
+            path: self.path,
+            state: next_state,
+            _marker: std::marker::PhantomData,
+        }
+    }
 }
 
 impl LocalConfigFile<Discovered> {
@@ -144,12 +157,7 @@ impl TryFrom<(LocalConfigFile<Discovered>, &ConfigStateStore)>
         (file, state): (LocalConfigFile<Discovered>, &ConfigStateStore),
     ) -> Result<Self, Self::Error> {
         state.track_seen_config(&file);
-        Ok(Self {
-            root: file.root,
-            path: file.path,
-            state: Tracked,
-            _marker: std::marker::PhantomData,
-        })
+        Ok(file.transition_to(Tracked))
     }
 }
 
@@ -165,12 +173,7 @@ impl TryFrom<(LocalConfigFile<Tracked>, &ConfigStateStore)>
         let root = file.root().to_path_buf();
         let subject = TrustSubject::tracked(&file);
         match state.config_trust_status(&subject) {
-            Ok(ConfigTrustStatus::Trusted) => Ok(Self {
-                root: file.root,
-                path: file.path,
-                state: Trusted,
-                _marker: std::marker::PhantomData,
-            }),
+            Ok(ConfigTrustStatus::Trusted) => Ok(file.transition_to(Trusted)),
             Ok(ConfigTrustStatus::Untrusted) => {
                 Err(ConfigFileTrustError::RootNotTrusted {
                     root,
@@ -197,14 +200,9 @@ impl TryFrom<LocalConfigFile<Trusted>> for LocalConfigFile<Parsed> {
     #[inline]
     fn try_from(file: LocalConfigFile<Trusted>) -> Result<Self, Self::Error> {
         let raw = read_raw_config(file.path())?;
-        Ok(Self {
-            root: file.root,
-            path: file.path,
-            state: Parsed {
-                raw,
-            },
-            _marker: std::marker::PhantomData,
-        })
+        Ok(file.transition_to(Parsed {
+            raw,
+        }))
     }
 }
 
@@ -216,14 +214,9 @@ impl TryFrom<GlobalConfigFile<Discovered>> for GlobalConfigFile<Parsed> {
         file: GlobalConfigFile<Discovered>,
     ) -> Result<Self, Self::Error> {
         let raw = read_raw_config(file.path())?;
-        Ok(Self {
-            root: file.root,
-            path: file.path,
-            state: Parsed {
-                raw,
-            },
-            _marker: std::marker::PhantomData,
-        })
+        Ok(file.transition_to(Parsed {
+            raw,
+        }))
     }
 }
 
