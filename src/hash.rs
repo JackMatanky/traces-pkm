@@ -88,71 +88,142 @@ impl Blake3PathHash {
 
 #[cfg(test)]
 mod tests {
-    use pretty_assertions::{assert_eq, assert_ne};
-
     use super::*;
 
-    #[test]
-    fn hash_file_contents_is_deterministic_for_the_same_content() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let path = temp.path().join("file.txt");
-        fs::write(&path, "hello").expect("write file");
+    mod file_hash {
+        use pretty_assertions::{assert_eq, assert_ne};
+        use std::fs;
 
-        let first = Blake3FileHash::new(&path).expect("hash file");
-        let second = Blake3FileHash::new(&path).expect("hash file again");
+        use super::*;
 
-        assert_eq!(first, second);
+        #[test]
+        fn deterministic_for_same_content() {
+            // Arrange
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let path = temp.path().join("file.txt");
+            fs::write(&path, "hello").expect("write file");
+
+            // Act
+            let first = Blake3FileHash::new(&path);
+            let second = Blake3FileHash::new(&path);
+
+            // Assert
+            assert!(first.is_ok());
+            assert!(second.is_ok());
+            assert_eq!(first.unwrap(), second.unwrap());
+        }
+
+        #[test]
+        fn differs_when_content_changes() {
+            // Arrange
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let path1 = temp.path().join("file1.txt");
+            let path2 = temp.path().join("file2.txt");
+            fs::write(&path1, "hello").expect("write file 1");
+            fs::write(&path2, "goodbye").expect("write file 2");
+
+            // Act
+            let first = Blake3FileHash::new(&path1);
+            let second = Blake3FileHash::new(&path2);
+
+            // Assert
+            assert!(first.is_ok());
+            assert!(second.is_ok());
+            assert_ne!(first.unwrap(), second.unwrap());
+        }
+
+        #[test]
+        fn error_when_file_is_missing() {
+            // Arrange
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let path = temp.path().join("missing.txt");
+
+            // Act
+            let result = Blake3FileHash::new(&path);
+
+            // Assert
+            assert!(matches!(result, Err(HashError::Read { .. })));
+        }
+
+        #[test]
+        fn implements_display_formatting() {
+            // Arrange
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let path = temp.path().join("file.txt");
+            fs::write(&path, "hello").expect("write file");
+            let hash = Blake3FileHash::new(&path).expect("hash file");
+
+            // Act
+            let display_string = format!("{}", hash);
+
+            // Assert
+            assert_eq!(display_string.len(), 64);
+            let expected_raw_hash = blake3::hash(b"hello").to_hex().to_string();
+            assert_eq!(display_string, expected_raw_hash);
+        }
     }
 
-    #[test]
-    fn hash_file_contents_differs_when_content_changes() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let path = temp.path().join("file.txt");
-        fs::write(&path, "hello").expect("write file");
-        let original = Blake3FileHash::new(&path).expect("hash file");
+    mod path_hash {
+        use pretty_assertions::{assert_eq, assert_ne};
 
-        fs::write(&path, "goodbye").expect("rewrite file");
-        let updated = Blake3FileHash::new(&path).expect("hash updated file");
+        use super::*;
 
-        assert_ne!(original, updated);
-    }
+        #[test]
+        fn deterministic_for_same_path_string() {
+            // Arrange
+            let path = Path::new("/project/.traces/config.toml");
 
-    #[test]
-    fn hash_file_contents_of_a_missing_file_errors() {
-        let temp = tempfile::tempdir().expect("create temp dir");
+            // Act
+            let first = Blake3PathHash::new(path);
+            let second = Blake3PathHash::new(path);
 
-        assert!(matches!(
-            Blake3FileHash::new(&temp.path().join("missing.txt")),
-            Err(HashError::Read { .. })
-        ));
-    }
+            // Assert
+            assert_eq!(first, second);
+        }
 
-    #[test]
-    fn hash_path_is_deterministic_for_the_same_path_string() {
-        let path = Path::new("/project/.traces/config.toml");
+        #[test]
+        fn differs_for_different_path_strings() {
+            // Arrange
+            let first_path = Path::new("/project/first");
+            let second_path = Path::new("/project/second");
 
-        assert_eq!(Blake3PathHash::new(path), Blake3PathHash::new(path));
-    }
+            // Act
+            let first = Blake3PathHash::new(first_path);
+            let second = Blake3PathHash::new(second_path);
 
-    #[test]
-    fn hash_path_differs_for_different_path_strings() {
-        assert_ne!(
-            Blake3PathHash::new(Path::new("/project/first")),
-            Blake3PathHash::new(Path::new("/project/second")),
-        );
-    }
+            // Assert
+            assert_ne!(first, second);
+        }
 
-    #[test]
-    fn hash_path_matches_the_blake3_hex_formula_for_path_bytes() {
-        let path = Path::new("/project/.traces/config.toml");
+        #[test]
+        fn matches_blake3_hex_formula_for_path_bytes() {
+            // Arrange
+            let path = Path::new("/project/.traces/config.toml");
 
-        assert_eq!(
-            Blake3PathHash::new(path),
-            Blake3PathHash(
-                blake3::hash(path.as_os_str().as_encoded_bytes())
-                    .to_hex()
-                    .to_string()
-            ),
-        );
+            // Act
+            let hash = Blake3PathHash::new(path);
+
+            // Assert
+            let expected_hex = blake3::hash(path.as_os_str().as_encoded_bytes())
+                .to_hex()
+                .to_string();
+            assert_eq!(hash, Blake3PathHash(expected_hex));
+        }
+
+        #[test]
+        fn exposes_as_str_for_inner_hash() {
+            // Arrange
+            let path = Path::new("/project/.traces/config.toml");
+            let hash = Blake3PathHash::new(path);
+
+            // Act
+            let hash_str = hash.as_str();
+
+            // Assert
+            let expected_hex = blake3::hash(path.as_os_str().as_encoded_bytes())
+                .to_hex()
+                .to_string();
+            assert_eq!(hash_str, expected_hex);
+        }
     }
 }
