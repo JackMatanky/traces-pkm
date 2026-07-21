@@ -24,22 +24,45 @@
 //! - [`engine`]: wraps minijinja's [`Environment`](minijinja::Environment) so
 //!   [`service`] depends on "render this source" rather than on minijinja's
 //!   API.
-//! - [`writer`][]: [`TemplateTargetPath`](writer::TemplateTargetPath), a
-//!   proven-safe output destination, and
-//!   [`TemplateWriter`](writer::TemplateWriter), which picks one by precedence
-//!   (`file.write_to()`, `-o`, and the config default alike confined to
+//! - [`writer`][]: [`TemplateWriteTarget`](writer::TemplateWriteTarget), which
+//!   gathers a render's output-destination candidates (`-o`, `file.write_to()`)
+//!   and resolves them to a real path by precedence, and
+//!   [`TemplateWriter`](writer::TemplateWriter), whose one entry point,
+//!   [`TemplateWriter::write`](writer::TemplateWriter::write), applies a
+//!   [`WriteMode`](writer::WriteMode) to rendered content: for
+//!   [`WriteMode::DryRun`](writer::WriteMode::DryRun), returns the content
+//!   untouched, never resolving a target at all; for
+//!   [`WriteMode::Commit`](writer::WriteMode::Commit), resolves a target —
+//!   `file.write_to()`/`-o` confined to
 //!   [`Config::root`](crate::config::Config::root), rejecting `..` and absolute
-//!   candidates before they ever reach a write) and writes rendered content to
-//!   it.
+//!   candidates before they ever reach a write, falling back to the trusted
+//!   config default — and writes to it under the carried
+//!   [`CommitPolicy`](writer::CommitPolicy) (fail if the target exists, or
+//!   overwrite unconditionally).
 //! - [`service`]: [`TemplateService`], which chains resolve, render, and write
 //!   into the one call `crate::cli::template` makes.
 //!
 //! `pub(crate)`, not `pub`: only `crate::cli::template` calls in here.
-//! Everything below `service` is `pub(super)` at most; [`TemplateError`] is
-//! the one exception, re-exported so [`crate::cli::error::TemplateCliError`]
-//! can downcast its boxed source and special-case
-//! [`TemplateError::OutputFileAlreadyExists`] into its own diagnostic code
-//! and help text.
+//! Everything below `service` is `pub(super)` at most, with three
+//! exceptions re-exported below: [`TemplateError`], so
+//! [`crate::cli::error::TemplateCliError`] can downcast its boxed source
+//! and special-case [`TemplateError::OutputFileAlreadyExists`] into its
+//! own diagnostic code and help text; [`writer::WriteMode`], so
+//! `crate::cli::template` can build the one mode value `--force` and
+//! `--dry-run` (mutually exclusive in effect) collapse into, instead of
+//! passing both flags into [`service::TemplateService::render_to_file`]
+//! as independent `bool`s; and [`writer::WriteOutcome`], the result
+//! [`writer::TemplateWriter::write`] returns and
+//! [`service::TemplateService::render_to_file`] passes straight through —
+//! defined beside [`writer::TemplateWriter::write`], the one place a
+//! [`writer::WriteMode`] gets applied, rather than in `service`.
+//! ([`writer::CommitPolicy`] — [`writer::WriteMode::Commit`]'s payload
+//! — and [`path::TemplatePathError`] — [`TemplateError::Resolve`]'s
+//! payload — are separately declared `pub(crate)` too, for the same
+//! reason: a `pub(crate)` enum can't carry a less-visible variant
+//! payload. Neither is re-exported here and both stay unreachable
+//! outside `template` in practice: `writer` and `path` are both
+//! private `mod`s.)
 
 mod engine;
 mod error;
@@ -52,3 +75,4 @@ mod writer;
 
 pub(crate) use error::TemplateError;
 pub(crate) use service::TemplateService;
+pub(crate) use writer::{WriteMode, WriteOutcome};

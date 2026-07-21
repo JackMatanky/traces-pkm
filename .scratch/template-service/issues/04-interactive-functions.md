@@ -69,3 +69,11 @@ The interface the prompt module exposes is being explored. Three options, simple
 
 - `.scratch/template-service/issues/01-render-pipeline-tracer.md`
 - `.scratch/dialog/issues/03-select-and-multi-select.md`
+
+## Comments
+
+- **From issue 03 (dry-run) implementation** (`.worktrees/dry-run`, branch `agent/dry-run`): issue 03's AC4 ("interactive functions return defaults during dry-run, no hang, no TTY required") is blocked on this issue and was left honestly unimplemented — `TemplateEngine`/`TemplateService` don't wire in any `DialogProvider` today (only the `file` namespace is registered, in `src/template/engine.rs`).
+
+  When this issue lands, its design needs to say what provider `TemplateService` uses for a real render vs. a `WriteMode::DryRun` one. The current draft above (line 18) only says *"In tests and MCP mode a `PresetDialogProvider` supplies deterministic responses"* — it doesn't mention dry-run. That gap matters concretely: `TerminalDialogProvider`'s existing non-TTY fallback (`src/dialog/terminal.rs`) only kicks in when stdin genuinely isn't a TTY, so it will **not** force defaults when `--dry-run` runs from an actual interactive terminal — which is exactly what issue 03 requires ("dry-run must not depend on a terminal").
+
+  Two ways to close it: (a) `TemplateService::new` constructs the engine with a `PresetDialogProvider`-equivalent whenever `mode` is `WriteMode::DryRun`, mirroring how `WriteMode` already drives `TemplateWriter::write` (`src/template/writer.rs`); or (b) thread an explicit provider-selection parameter through similarly. Worth adding as an explicit acceptance criterion here — "dry-run selects a defaults-only provider regardless of TTY state" — rather than assuming the non-TTY fallback alone covers it.
