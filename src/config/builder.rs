@@ -383,7 +383,7 @@ mod tests {
         }
 
         #[test]
-        fn selects_first_global_and_discards_rest() {
+        fn selects_first_discovered_global() {
             let fixture = Fixture::new();
             let local = fixture.local("project");
             let global1 = fixture.global("global1");
@@ -396,9 +396,11 @@ mod tests {
                 vec![global1.clone(), global2],
             );
 
-            let input = ConfigBuilderInput::try_from(outcome)
-                .expect("select builder input");
+            // Act
+            let result = ConfigBuilderInput::try_from(outcome);
 
+            // Assert
+            let input = result.expect("select builder input");
             let global = input.global.expect("expected global");
             assert_eq!(global.path(), global1.path());
         }
@@ -447,7 +449,7 @@ mod tests {
         }
 
         #[test]
-        fn merges_local_only_when_global_missing() {
+        fn extracts_local_output_dir() {
             let fixture = Fixture::new();
             let local_path = fixture.write_config(
                 "project/.traces/config.toml",
@@ -457,14 +459,37 @@ mod tests {
                 LocalConfigFile::<FileDiscovered>::try_new(local_path).unwrap();
 
             let builder = build_ready(&fixture, local, None);
-            let config = builder.merge().expect("merge").build();
+            
+            // Act
+            let result = builder.merge();
 
+            // Assert
+            let config = result.expect("merge").build();
             assert_eq!(config.output_dir(), Path::new("local_out"));
+        }
+
+        #[test]
+        fn leaves_global_template_dir_empty_when_missing() {
+            let fixture = Fixture::new();
+            let local_path = fixture.write_config(
+                "project/.traces/config.toml",
+                "[templates]\noutput_dir = \"local_out\"",
+            );
+            let local =
+                LocalConfigFile::<FileDiscovered>::try_new(local_path).unwrap();
+
+            let builder = build_ready(&fixture, local, None);
+            
+            // Act
+            let result = builder.merge();
+
+            // Assert
+            let config = result.expect("merge").build();
             assert_eq!(config.global_template_dir(), None);
         }
 
         #[test]
-        fn preserves_distinct_template_dirs() {
+        fn extracts_local_template_dir() {
             let fixture = Fixture::new();
             let local_path = fixture.write_config(
                 "project/.traces/config.toml",
@@ -483,12 +508,44 @@ mod tests {
 
             let builder =
                 build_ready(&fixture, local.clone(), Some(global.clone()));
-            let config = builder.merge().expect("merge").build();
+            
+            // Act
+            let result = builder.merge();
 
+            // Assert
+            let config = result.expect("merge").build();
             assert_eq!(
                 config.local_template_dir(),
                 Some(local.root().join(".traces/templates").as_path())
             );
+        }
+
+        #[test]
+        fn extracts_global_template_dir() {
+            let fixture = Fixture::new();
+            let local_path = fixture.write_config(
+                "project/.traces/config.toml",
+                "[templates]\ndirectory = \".traces/templates\"",
+            );
+            let global_path = fixture.write_config(
+                "global/config.toml",
+                "[templates]\ndirectory = \"global_tmpl\"",
+            );
+
+            let local =
+                LocalConfigFile::<FileDiscovered>::try_new(local_path).unwrap();
+            let global =
+                GlobalConfigFile::<FileDiscovered>::try_new(global_path)
+                    .unwrap();
+
+            let builder =
+                build_ready(&fixture, local.clone(), Some(global.clone()));
+            
+            // Act
+            let result = builder.merge();
+
+            // Assert
+            let config = result.expect("merge").build();
             assert_eq!(
                 config.global_template_dir(),
                 Some(global.root().join("global_tmpl").as_path())
@@ -514,8 +571,12 @@ mod tests {
                     .unwrap();
 
             let builder = build_ready(&fixture, local, Some(global));
-            let config = builder.merge().expect("merge").build();
+            
+            // Act
+            let result = builder.merge();
 
+            // Assert
+            let config = result.expect("merge").build();
             assert_eq!(config.output_dir(), Path::new("local_out"));
         }
 
@@ -528,8 +589,12 @@ mod tests {
                 LocalConfigFile::<FileDiscovered>::try_new(local_path).unwrap();
 
             let builder = build_ready(&fixture, local.clone(), None);
-            let config = builder.merge().expect("merge").build();
+            
+            // Act
+            let result = builder.merge();
 
+            // Assert
+            let config = result.expect("merge").build();
             assert_eq!(config.output_dir(), local.root());
         }
 
@@ -548,6 +613,8 @@ mod tests {
                     .unwrap();
 
             let builder = build_ready(&fixture, local, Some(global));
+            
+            // Act
             let result = builder.merge();
 
             assert!(matches!(
@@ -567,6 +634,8 @@ mod tests {
                 LocalConfigFile::<FileDiscovered>::try_new(local_path).unwrap();
 
             let builder = build_ready(&fixture, local, None);
+            
+            // Act
             let result = builder.merge();
 
             assert!(matches!(
