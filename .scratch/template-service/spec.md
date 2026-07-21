@@ -39,7 +39,7 @@ The `template`/`tmpl` CLI command (and the default `-i` dispatch) wraps this ser
 - **Namespaced custom functions** are registered via minijinja's `add_global` with `Value::from_object`. Each namespace is a struct implementing `Object`, with methods dispatched via the trait's default `call_method` (looks up `method` as a key via `get_value` and calls the returned value). Built-in namespaces for MVP:
 
   **`file`**
-  - `.write_to(path)` — sets output path, overrides `-o` flag.
+  - `.write_to(path)` — sets output path; overridden by `-o` if passed (see user story 8).
   - `.include(path)` — reads a file from disk and returns its content.
 
   **`ui`** — delegates to [`DialogProvider`](crate::dialog::DialogProvider):
@@ -56,7 +56,7 @@ The `template`/`tmpl` CLI command (and the default `-i` dispatch) wraps this ser
 
 - `uuid()` — standalone function (no namespace) generating a UUID v4.
 - **Interactive functions** delegate to [`DialogProvider`](crate::dialog::DialogProvider), which handles TTY detection and fallback defaults internally. TemplateService does not know about TTY state.
-- **Output path logic**: If `file.write_to()` was called during render, use that path. Else if `-o` was passed, use that. Else use `./<template-name>.md`. The `file.write_to()` result is captured via a shared `Cell` or `RefCell` that the function writes to and the service reads after render.
+- **Output path logic**: If `-o` was passed, use that. Else if `file.write_to()` was called during render, use that path. Else use `./<template-name>.md`. The `file.write_to()` result is captured via a shared `Cell` or `RefCell` that the function writes to and the service reads after render.
 - **File writing**: Uses `std::fs::write`. Checks for existing file before writing (unless `--force`). Error via miette if path exists, with `--force` suggestion.
 - **Dry-run**: Skips file existence check and write. Renders to stdout. Interactive functions return defaults.
 - **Include resolution**: `{% include %}` uses minijinja's built-in file loader configured with both local and global template directories. `file.include()` is a separate custom function that reads by absolute path.
