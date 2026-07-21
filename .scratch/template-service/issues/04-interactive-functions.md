@@ -36,6 +36,23 @@ Relevant skills: `m03-mutability`, `m02-resource`, `m04-zero-cost`, `m06-error-h
 - **Argument arity:** `ui.text_input` has a 1-arg and 2-arg form — accept `Option<String>` for the default.
 - **Blocking render model in MCP mode:** unchanged — synchronous render, `PresetDialogProvider` avoids blocking.
 
+## Items parameter handling (select / multi_select)
+
+`items` accepts `Value` (not `Vec<String>`) so templates can pass either:
+
+```jinja
+{{ ui.select("pick", ["a", "b", "c"]) }}
+{{ ui.select("pick", [{label: "US", value: 1}, {label: "GB", value: 44}]) }}
+```
+
+The closure:
+1. Calls `items.try_iter()` to iterate, propagating errors via `minijinja::Error`.
+2. For each item, looks up a `"label"` key via `item.get_item(&"label".into())` — if present and a string, that's the display label; otherwise falls back to `item.to_string()`.
+3. Collects labels into `Vec<String>`, calls `provider.select(label, &labels)`.
+4. Returns the original `Value` at the returned index (or `Vec<Value>` for `multi_select` — minijinja converts to a seq automatically).
+
+Straightforward `Value::from_function` closures; no `Object` override needed.
+
 ## Design considerations
 
 The interface the prompt module exposes is being explored. Three options, simplest first:
