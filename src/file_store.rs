@@ -413,6 +413,8 @@ fn read_dir_entries(root: &Path) -> Result<Vec<PathBuf>, FileStateStoreError> {
 mod tests {
     use std::fs;
 
+    
+
     use super::*;
 
     struct Fixture {
@@ -447,6 +449,8 @@ mod tests {
     }
 
     mod entry {
+        use pretty_assertions::assert_eq;
+
         use super::*;
 
         #[test]
@@ -479,6 +483,8 @@ mod tests {
     }
 
     mod record {
+        
+
         use super::*;
 
         #[test]
@@ -541,6 +547,8 @@ mod tests {
     }
 
     mod contains {
+        use pretty_assertions::assert_eq;
+
         use super::*;
 
         #[test]
@@ -603,6 +611,8 @@ mod tests {
     }
 
     mod list_all {
+        use pretty_assertions::assert_eq;
+
         use super::*;
 
         #[test]
@@ -672,6 +682,8 @@ mod tests {
     }
 
     mod clean {
+        use pretty_assertions::assert_eq;
+
         use super::*;
 
         #[test]
@@ -802,6 +814,8 @@ mod tests {
     }
 
     mod remove {
+        use pretty_assertions::assert_eq;
+
         use super::*;
 
         #[test]
@@ -887,6 +901,8 @@ mod tests {
     }
 
     mod companions {
+        use pretty_assertions::assert_eq;
+
         use super::*;
 
         #[test]

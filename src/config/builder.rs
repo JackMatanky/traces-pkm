@@ -221,7 +221,7 @@ mod tests {
         path::{Path, PathBuf},
     };
 
-    use pretty_assertions::{assert_eq, assert_ne};
+    
 
     use super::*;
     use crate::config::{
@@ -298,7 +298,7 @@ mod tests {
     }
 
     mod input {
-        use pretty_assertions::{assert_eq, assert_ne};
+        use pretty_assertions::assert_eq;
 
         use super::*;
 
@@ -411,7 +411,7 @@ mod tests {
     }
 
     mod store {
-        use pretty_assertions::{assert_eq, assert_ne};
+        
 
         use super::*;
 
@@ -437,7 +437,7 @@ mod tests {
     }
 
     mod merge {
-        use pretty_assertions::{assert_eq, assert_ne};
+        use pretty_assertions::assert_eq;
 
         use super::*;
 
