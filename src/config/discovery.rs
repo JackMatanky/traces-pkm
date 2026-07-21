@@ -582,8 +582,6 @@ impl DiscoveryProcessor<GlobalCollected> {
 mod tests {
     use std::fs;
 
-    
-
     use super::*;
 
     struct Fixture {
@@ -626,7 +624,6 @@ mod tests {
     }
 
     mod context {
-        
 
         use super::*;
 

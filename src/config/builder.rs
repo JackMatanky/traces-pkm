@@ -221,8 +221,6 @@ mod tests {
         path::{Path, PathBuf},
     };
 
-    
-
     use super::*;
     use crate::config::{
         discovery::{DiscoveryAnchor, DiscoveryOutcome},
@@ -411,7 +409,6 @@ mod tests {
     }
 
     mod store {
-        
 
         use super::*;
 

@@ -413,8 +413,6 @@ fn read_dir_entries(root: &Path) -> Result<Vec<PathBuf>, FileStateStoreError> {
 mod tests {
     use std::fs;
 
-    
-
     use super::*;
 
     struct Fixture {
@@ -483,7 +481,6 @@ mod tests {
     }
 
     mod record {
-        
 
         use super::*;
 

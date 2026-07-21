@@ -320,8 +320,6 @@ pub(crate) enum ConfigFileTrustError {
 mod tests {
     use std::path::{Path, PathBuf};
 
-    
-
     use super::*;
 
     mod local_constructor {
@@ -449,7 +447,6 @@ mod tests {
     }
 
     mod trust_transitions {
-        
 
         use super::*;
 
