@@ -1,5 +1,6 @@
 //! `traces template`/`tmpl` command, and the default `traces -i <name>`
-//! dispatch: renders a resolved template and writes it to disk.
+//! dispatch: renders a resolved template and writes it to disk, or — in
+//! dry-run mode — prints it to stdout.
 //!
 //! Thin adapter over [`ConfigService`] (config discovery and build, which
 //! gates untrusted project roots — see its module docs) and
@@ -15,7 +16,7 @@ use super::error::TemplateCliError;
 use crate::{
     Cwd,
     config::{ConfigLoadError, ConfigService},
-    template::TemplateService,
+    template::{RenderOutcome, TemplateService},
 };
 
 /// `traces template -i <name>` (aliased `tmpl`), and the default
@@ -32,6 +33,10 @@ pub(super) struct Template {
     /// Overwrite the output path if it already exists.
     #[arg(short = 'f', long)]
     pub(super) force: bool,
+    /// Render to stdout and write nothing to disk. Skips the existence
+    /// check and ignores `-o`/`file.write_to()` entirely.
+    #[arg(short = 'n', long)]
+    pub(super) dry_run: bool,
 }
 
 impl Template {
@@ -44,11 +49,14 @@ impl Template {
             name,
             output: None,
             force: false,
+            dry_run: false,
         }
     }
 
-    /// Loads config for the current directory, then resolves, renders, and
-    /// writes [`Self::name`] to the default output path.
+    /// Loads config for the current directory, then resolves and renders
+    /// [`Self::name`], writing it to the default output path — or, in
+    /// dry-run mode, printing it to stdout instead (see
+    /// [`crate::template::TemplateService::render_to_file`]).
     ///
     /// # Errors
     ///
@@ -60,6 +68,12 @@ impl Template {
     /// docs). Returns [`TemplateCliError::Instantiate`] when the
     /// resolve/render/write pipeline fails.
     #[inline]
+    #[allow(
+        clippy::print_stdout,
+        reason = "dry-run output is data meant to be piped, not diagnostic \
+                  text — mirrors the trust list/show precedent in \
+                  crate::cli::trust"
+    )]
     pub(super) fn run(
         self,
         service: &ConfigService,
@@ -76,13 +90,23 @@ impl Template {
                 source: Box::new(source),
             },
         })?;
-        let output_path = TemplateService::new(&config)
-            .render_to_file(&self.name, self.output.as_deref(), self.force)
+        let outcome = TemplateService::new(&config)
+            .render_to_file(
+                &self.name,
+                self.output.as_deref(),
+                self.force,
+                self.dry_run,
+            )
             .map_err(|source| TemplateCliError::Instantiate {
                 name: self.name.clone(),
                 source: Box::new(source),
             })?;
-        eprintln!("wrote {}", output_path.display());
+        match outcome {
+            RenderOutcome::Written(path) => {
+                eprintln!("wrote {}", path.display());
+            }
+            RenderOutcome::Rendered(content) => print!("{content}"),
+        }
         Ok(())
     }
 }
@@ -214,6 +238,7 @@ mod tests {
             name: PathBuf::from("daily"),
             output: Some(PathBuf::from("elsewhere.md")),
             force: false,
+            dry_run: false,
         }
         .run(&service)
         .expect("run template command");
@@ -268,6 +293,7 @@ mod tests {
             name: PathBuf::from("daily"),
             output: None,
             force: true,
+            dry_run: false,
         }
         .run(&service)
         .expect("force overwrites");
@@ -296,10 +322,68 @@ mod tests {
             name: PathBuf::from("daily"),
             output: Some(PathBuf::from("../../escape.md")),
             force: false,
+            dry_run: false,
         }
         .run(&service)
         .expect_err("escaping -o path fails");
 
         assert!(matches!(error, TemplateCliError::Instantiate { .. }));
+    }
+
+    #[test]
+    fn run_dry_run_writes_nothing_even_when_output_already_exists() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let root = temp.path().join("project");
+        fs::create_dir_all(&root).expect("create project dir");
+        let config_file = create_config(&root, "templates");
+        let templates_dir = root.join("templates");
+        fs::create_dir_all(&templates_dir).expect("create templates dir");
+        fs::write(templates_dir.join("daily.md"), "new")
+            .expect("write template");
+        fs::write(root.join("daily.md"), "old").expect("seed existing output");
+        let service = service(temp.path());
+        trust_config(&service, &config_file);
+        let _guard = CwdGuard::enter(&root);
+
+        Template {
+            name: PathBuf::from("daily"),
+            output: None,
+            force: false,
+            dry_run: true,
+        }
+        .run(&service)
+        .expect("dry run succeeds even though the output already exists");
+
+        assert_eq!(
+            fs::read_to_string(root.join("daily.md")).expect("read output"),
+            "old"
+        );
+    }
+
+    #[test]
+    fn run_dry_run_ignores_an_output_flag_that_would_escape_the_project_root() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let root = temp.path().join("project");
+        fs::create_dir_all(&root).expect("create project dir");
+        let config_file = create_config(&root, "templates");
+        let templates_dir = root.join("templates");
+        fs::create_dir_all(&templates_dir).expect("create templates dir");
+        fs::write(templates_dir.join("daily.md"), "hello")
+            .expect("write template");
+        let service = service(temp.path());
+        trust_config(&service, &config_file);
+        let _guard = CwdGuard::enter(&root);
+
+        Template {
+            name: PathBuf::from("daily"),
+            output: Some(PathBuf::from("../../escape.md")),
+            force: false,
+            dry_run: true,
+        }
+        .run(&service)
+        .expect("dry run never confines an output path, so it never fails");
+
+        assert!(!root.join("../escape.md").exists());
+        assert!(!root.join("daily.md").exists());
     }
 }

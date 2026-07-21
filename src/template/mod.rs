@@ -51,4 +51,4 @@ mod source_dir;
 mod writer;
 
 pub(crate) use error::TemplateError;
-pub(crate) use service::TemplateService;
+pub(crate) use service::{RenderOutcome, TemplateService};

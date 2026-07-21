@@ -25,6 +25,11 @@
 //! [`WriteMode`]. Deliberately separate from [`TemplateTargetPath`]:
 //! a target path is an inert value, like [`Path`]/[`PathBuf`] — it
 //! never performs I/O or makes the precedence decision itself.
+//! [`WriteMode::DryRun`] is the exception to all of the above: dry-run
+//! never reaches [`TemplateWriter::choose`] or [`TemplateWriter::commit`]
+//! at all — [`super::service::TemplateService::render_to_file`] checks
+//! for it before computing a target path, so a dry-run's `-o`/
+//! `file.write_to()` value is never confined or even looked at.
 
 use std::{
     fs,
@@ -96,9 +101,9 @@ impl TemplateTargetPath {
     }
 }
 
-/// How [`TemplateWriter::commit`] should treat a target that already
-/// exists — the domain meaning behind `--force`, spelled out as a type
-/// instead of a bare `bool` at the call site.
+/// How [`TemplateWriter::commit`] should treat a target — the domain
+/// meaning behind `--force`/`--dry-run`, spelled out as a type instead
+/// of bare `bool`s at the call site.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum WriteMode {
     /// Fail with [`TemplateError::OutputFileAlreadyExists`] if the
@@ -107,11 +112,23 @@ pub(super) enum WriteMode {
     /// Truncate and overwrite the target unconditionally — the
     /// `--force` mode.
     Overwrite,
+    /// Render only — the `--dry-run` mode. [`Self::create_file`]
+    /// returns `Ok(None)` without touching the filesystem.
+    /// [`super::service::TemplateService::render_to_file`] checks for
+    /// this variant before ever computing an output path, so
+    /// [`TemplateWriter::commit`] never actually receives it in
+    /// practice; the arm below exists so [`Self::create_file`] stays a
+    /// total function over every [`WriteMode`], not a partial one that
+    /// happens to compile.
+    DryRun,
 }
 
 impl WriteMode {
     /// Converts the CLI/API's `force` flag into the mode
-    /// [`Self::create_file`] branches on.
+    /// [`Self::create_file`] branches on. Never returns [`Self::DryRun`]
+    /// — that variant is selected directly from `--dry-run`, not derived
+    /// from `force` (see
+    /// [`TemplateService::render_to_file`](super::service::TemplateService::render_to_file)).
     #[inline]
     #[must_use]
     pub(super) fn from_force(force: bool) -> Self {
@@ -128,15 +145,20 @@ impl WriteMode {
     /// already exists — no separate `exists()` check first, since that
     /// would leave a race between the check and this write.
     /// [`Self::Overwrite`] uses [`fs::File::create`], truncating
-    /// unconditionally. Maps `AlreadyExists` under [`Self::CreateNew`]
-    /// to [`TemplateError::OutputFileAlreadyExists`]; any other I/O
-    /// failure to [`TemplateError::Write`].
-    fn create_file(self, path: &Path) -> Result<fs::File, TemplateError> {
+    /// unconditionally. [`Self::DryRun`] never touches the filesystem
+    /// and returns `Ok(None)`. Maps `AlreadyExists` under
+    /// [`Self::CreateNew`] to [`TemplateError::OutputFileAlreadyExists`];
+    /// any other I/O failure to [`TemplateError::Write`].
+    fn create_file(
+        self,
+        path: &Path,
+    ) -> Result<Option<fs::File>, TemplateError> {
         let file = match self {
+            Self::DryRun => return Ok(None),
             Self::Overwrite => fs::File::create(path),
             Self::CreateNew => fs::File::create_new(path),
         };
-        file.map_err(|source| {
+        file.map(Some).map_err(|source| {
             if self == Self::CreateNew
                 && source.kind() == io::ErrorKind::AlreadyExists
             {
@@ -203,7 +225,11 @@ impl<'a> TemplateWriter<'a> {
 
     /// Writes `content` to `target`, creating its parent directory
     /// tree first if it doesn't exist, then creating the file per
-    /// `mode` ([`WriteMode::create_file`]).
+    /// `mode` ([`WriteMode::create_file`]). [`WriteMode::DryRun`]
+    /// creates no file, so `content` is discarded unwritten — in
+    /// practice this never happens, since
+    /// [`super::service::TemplateService::render_to_file`] branches to
+    /// stdout before ever building a [`TemplateTargetPath`] to commit.
     ///
     /// # Errors
     ///
@@ -225,7 +251,9 @@ impl<'a> TemplateWriter<'a> {
                 }
             })?;
         }
-        let mut file = mode.create_file(path)?;
+        let Some(mut file) = mode.create_file(path)? else {
+            return Ok(());
+        };
         file.write_all(content.as_bytes()).map_err(|source| {
             TemplateError::Write {
                 path: path.to_path_buf(),
@@ -318,6 +346,20 @@ mod tests {
         }
 
         #[test]
+        fn create_file_dry_run_returns_none_without_touching_the_filesystem() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let path = temp.path().join("nested/note.md");
+
+            let file = WriteMode::DryRun
+                .create_file(&path)
+                .expect("dry run never fails");
+
+            assert!(file.is_none());
+            assert!(!path.exists());
+            assert!(!path.parent().expect("path has a parent").exists());
+        }
+
+        #[test]
         fn create_file_creates_a_new_file_when_absent() {
             let temp = tempfile::tempdir().expect("create temp dir");
             let path = temp.path().join("note.md");
@@ -392,6 +434,18 @@ mod tests {
                 .expect("creates new file");
 
             assert_eq!(fs::read_to_string(&path).expect("read"), "hello");
+        }
+
+        #[test]
+        fn dry_run_writes_nothing() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let path = temp.path().join("note.md");
+            let target = TemplateTargetPath::trusted(temp.path(), path.clone());
+
+            TemplateWriter::commit(&target, "hello", WriteMode::DryRun)
+                .expect("dry run commit succeeds");
+
+            assert!(!path.exists());
         }
 
         #[test]

@@ -17,6 +17,19 @@ use super::{
 };
 use crate::config::Config;
 
+/// What [`TemplateService::render_to_file`] did with the rendered
+/// template: wrote it to disk, or — in dry-run mode — rendered it
+/// without writing anything. Printing a dry-run's content to stdout is
+/// the CLI adapter's job (`crate::cli::template`), not this service's —
+/// this only carries the content back.
+#[derive(Debug, Eq, PartialEq)]
+pub(crate) enum RenderOutcome {
+    /// Written to disk at this path.
+    Written(PathBuf),
+    /// `--dry-run`: the rendered content, nothing written.
+    Rendered(String),
+}
+
 /// Entry point for resolving, rendering, and writing one template.
 ///
 /// Coordinator that hides [`TemplateService::render_to_file`]'s
@@ -49,18 +62,24 @@ impl<'a> TemplateService<'a> {
         }
     }
 
-    /// Resolves `name`, renders it, and writes the result to disk.
-    /// Returns the path written.
+    /// Resolves `name` and renders it, then either writes the result to
+    /// disk or — in dry-run mode — returns the rendered content instead
+    /// (see [`RenderOutcome`]; printing it is the caller's job).
     ///
-    /// The output path is chosen by precedence: an explicit `output`
-    /// (`-o`) wins, then a `file.write_to()` call inside the template,
-    /// then [`Self::default_output_path`] — all via
-    /// [`TemplateWriter::choose`]. A `file.write_to()`/`output`
-    /// candidate is confined to [`Config::root`]; it can't name a path
-    /// outside the project. The default is derived from already-trusted
-    /// config (see [`Self::default_output_path`]'s docs) and never goes
-    /// through that check. [`TemplateWriter::commit`] creates the
-    /// output directory if it doesn't exist yet.
+    /// `dry_run` is checked first: when set, [`Self::render_template`]'s
+    /// output is returned as [`RenderOutcome::Rendered`] without ever
+    /// computing an output path, so a dry-run's `-o`/`file.write_to()`
+    /// value is never confined or even looked at, and the
+    /// existence/overwrite guard never runs. Otherwise the output path
+    /// is chosen by precedence: an explicit `output` (`-o`) wins, then a
+    /// `file.write_to()` call inside the template, then
+    /// [`Self::default_output_path`] — all via [`TemplateWriter::choose`].
+    /// A `file.write_to()`/`output` candidate is confined to
+    /// [`Config::root`]; it can't name a path outside the project. The
+    /// default is derived from already-trusted config (see
+    /// [`Self::default_output_path`]'s docs) and never goes through that
+    /// check. [`TemplateWriter::commit`] creates the output directory if
+    /// it doesn't exist yet.
     ///
     /// # Errors
     ///
@@ -69,8 +88,8 @@ impl<'a> TemplateService<'a> {
     /// | [`TemplateError::Resolve`] | `name` doesn't resolve to a file |
     /// | [`TemplateError::Read`] | the resolved template can't be read |
     /// | [`TemplateError::Render`] | the template's source is invalid |
-    /// | [`TemplateError::OutputPathEscapesRoot`] | `file.write_to()` or `-o` names an absolute or `..`-containing path |
-    /// | [`TemplateError::OutputFileAlreadyExists`] | the output path exists and `force` is `false` — checked atomically by [`fs::File::create_new`], not a separate `exists()` call, so there's no race between the check and the write |
+    /// | [`TemplateError::OutputPathEscapesRoot`] | `file.write_to()` or `-o` names an absolute or `..`-containing path — never returned when `dry_run` is `true` |
+    /// | [`TemplateError::OutputFileAlreadyExists`] | the output path exists and `force` is `false` — checked atomically by [`fs::File::create_new`], not a separate `exists()` call, so there's no race between the check and the write; never returned when `dry_run` is `true` |
     /// | [`TemplateError::Write`] | the output, or its parent directory, can't be written |
     #[inline]
     pub(crate) fn render_to_file(
@@ -78,21 +97,29 @@ impl<'a> TemplateService<'a> {
         name: &Path,
         output: Option<&Path>,
         force: bool,
-    ) -> Result<PathBuf, TemplateError> {
+        dry_run: bool,
+    ) -> Result<RenderOutcome, TemplateError> {
         let resolved = self.engine.resolve(name)?;
         let resolved_path = resolved.absolute();
         let template_source = Self::read_template(&resolved)?;
         let rendered =
             self.render_template(&template_source, &resolved_path)?;
-        let target = self.writer.choose(output, rendered.write_to, || {
-            self.default_output_path(&resolved)
-        })?;
-        TemplateWriter::commit(
-            &target,
-            &rendered.content,
-            WriteMode::from_force(force),
-        )?;
-        Ok(target.into_path_buf())
+        let mode = if dry_run {
+            WriteMode::DryRun
+        } else {
+            WriteMode::from_force(force)
+        };
+        match mode {
+            WriteMode::DryRun => Ok(RenderOutcome::Rendered(rendered.content)),
+            WriteMode::CreateNew | WriteMode::Overwrite => {
+                let target =
+                    self.writer.choose(output, rendered.write_to, || {
+                        self.default_output_path(&resolved)
+                    })?;
+                TemplateWriter::commit(&target, &rendered.content, mode)?;
+                Ok(RenderOutcome::Written(target.into_path_buf()))
+            }
+        }
     }
 
     /// Reads the resolved template's source from disk, mapping I/O
@@ -151,6 +178,17 @@ mod tests {
         fs::write(&path, content).expect("write template");
         path
     }
+    /// Extracts the written path from a [`RenderOutcome::Written`] —
+    /// `.expect()`s when `render_to_file` unexpectedly returned
+    /// [`RenderOutcome::Rendered`] (never true for `dry_run: false`).
+    fn written_path(outcome: RenderOutcome) -> PathBuf {
+        let written = match outcome {
+            RenderOutcome::Written(path) => Some(path),
+            RenderOutcome::Rendered(_) => None,
+        };
+        written.expect("render_to_file with dry_run: false always writes")
+    }
+
     mod render_to_file {
         use pretty_assertions::assert_eq;
 
@@ -174,12 +212,12 @@ mod tests {
             );
             let service = TemplateService::new(&config);
 
-            let output_path = service
-                .render_to_file(Path::new("daily"), None, false)
+            let outcome = service
+                .render_to_file(Path::new("daily"), None, false, false)
                 .expect("render_to_file");
 
-            let contents =
-                fs::read_to_string(&output_path).expect("read written output");
+            let contents = fs::read_to_string(written_path(outcome))
+                .expect("read written output");
             assert_eq!(contents, "AB-ok");
         }
 
@@ -197,11 +235,14 @@ mod tests {
             );
             let service = TemplateService::new(&config);
 
-            let output_path = service
-                .render_to_file(Path::new("daily"), None, false)
+            let outcome = service
+                .render_to_file(Path::new("daily"), None, false, false)
                 .expect("render_to_file");
 
-            assert_eq!(output_path, root.join("notes/daily.md"));
+            assert_eq!(
+                outcome,
+                RenderOutcome::Written(root.join("notes/daily.md"))
+            );
         }
 
         #[test]
@@ -217,11 +258,19 @@ mod tests {
             );
             let service = TemplateService::new(&config);
 
-            let output_path = service
-                .render_to_file(Path::new("nested/report.md"), None, false)
+            let outcome = service
+                .render_to_file(
+                    Path::new("nested/report.md"),
+                    None,
+                    false,
+                    false,
+                )
                 .expect("render_to_file");
 
-            assert_eq!(output_path, temp.path().join("nested/report.md"));
+            assert_eq!(
+                outcome,
+                RenderOutcome::Written(temp.path().join("nested/report.md"))
+            );
         }
 
         #[test]
@@ -240,17 +289,28 @@ mod tests {
                 temp.path().to_path_buf(),
             );
             let service = TemplateService::new(&config);
-            let expected = temp.path().join("notes/daily.md");
+            let expected =
+                RenderOutcome::Written(temp.path().join("notes/daily.md"));
 
             assert_eq!(
                 service
-                    .render_to_file(Path::new("notes/daily"), None, false)
+                    .render_to_file(
+                        Path::new("notes/daily"),
+                        None,
+                        false,
+                        false
+                    )
                     .expect("render_to_file"),
                 expected
             );
             assert_eq!(
                 service
-                    .render_to_file(Path::new("notes/daily.md"), None, true)
+                    .render_to_file(
+                        Path::new("notes/daily.md"),
+                        None,
+                        true,
+                        false
+                    )
                     .expect("render_to_file"),
                 expected
             );
@@ -268,7 +328,7 @@ mod tests {
             let service = TemplateService::new(&config);
 
             let error = service
-                .render_to_file(Path::new("missing"), None, false)
+                .render_to_file(Path::new("missing"), None, false, false)
                 .expect_err("missing template fails");
 
             assert!(matches!(error, TemplateError::Resolve(_)));
@@ -293,7 +353,7 @@ mod tests {
             let service = TemplateService::new(&config);
 
             let error = service
-                .render_to_file(Path::new("daily"), None, false)
+                .render_to_file(Path::new("daily"), None, false, false)
                 .expect_err("unreadable template file fails");
 
             assert!(matches!(error, TemplateError::Read { .. }));
@@ -313,7 +373,7 @@ mod tests {
             let service = TemplateService::new(&config);
 
             let error = service
-                .render_to_file(Path::new("broken"), None, false)
+                .render_to_file(Path::new("broken"), None, false, false)
                 .expect_err("invalid syntax fails to render");
 
             assert!(matches!(error, TemplateError::Render { .. }));
@@ -339,7 +399,7 @@ mod tests {
             let service = TemplateService::new(&config);
 
             let error = service
-                .render_to_file(Path::new("daily"), None, false)
+                .render_to_file(Path::new("daily"), None, false, false)
                 .expect_err("output directory cannot be created");
 
             assert!(matches!(error, TemplateError::Write { .. }));
@@ -359,12 +419,13 @@ mod tests {
             );
             let service = TemplateService::new(&config);
 
-            let output_path = service
-                .render_to_file(Path::new("daily"), None, false)
+            let outcome = service
+                .render_to_file(Path::new("daily"), None, false, false)
                 .expect("render_to_file");
 
             assert_eq!(
-                fs::read_to_string(&output_path).expect("read written output"),
+                fs::read_to_string(written_path(outcome))
+                    .expect("read written output"),
                 "included!"
             );
         }
@@ -383,10 +444,16 @@ mod tests {
             let service = TemplateService::new(&config);
             let override_path = Path::new("elsewhere.md");
 
-            let output_path = service
-                .render_to_file(Path::new("daily"), Some(override_path), false)
+            let outcome = service
+                .render_to_file(
+                    Path::new("daily"),
+                    Some(override_path),
+                    false,
+                    false,
+                )
                 .expect("render_to_file");
 
+            let output_path = written_path(outcome);
             assert_eq!(output_path, temp.path().join("elsewhere.md"));
             assert_eq!(
                 fs::read_to_string(&output_path).expect("read"),
@@ -409,7 +476,12 @@ mod tests {
             let outside = temp.path().join("outside.md");
 
             let error = service
-                .render_to_file(Path::new("daily"), Some(&outside), false)
+                .render_to_file(
+                    Path::new("daily"),
+                    Some(&outside),
+                    false,
+                    false,
+                )
                 .expect_err("absolute -o is rejected");
 
             assert!(matches!(
@@ -433,7 +505,12 @@ mod tests {
             let traversal = Path::new("../escape.md");
 
             let error = service
-                .render_to_file(Path::new("daily"), Some(traversal), false)
+                .render_to_file(
+                    Path::new("daily"),
+                    Some(traversal),
+                    false,
+                    false,
+                )
                 .expect_err("parent traversal -o is rejected");
 
             assert!(matches!(
@@ -460,7 +537,7 @@ mod tests {
             let service = TemplateService::new(&config);
 
             let error = service
-                .render_to_file(Path::new("daily"), None, false)
+                .render_to_file(Path::new("daily"), None, false, false)
                 .expect_err("parent traversal write_to is rejected");
 
             assert!(matches!(
@@ -487,11 +564,19 @@ mod tests {
             let service = TemplateService::new(&config);
             let cli_override = Path::new("from-cli.md");
 
-            let output_path = service
-                .render_to_file(Path::new("daily"), Some(cli_override), false)
+            let outcome = service
+                .render_to_file(
+                    Path::new("daily"),
+                    Some(cli_override),
+                    false,
+                    false,
+                )
                 .expect("render_to_file");
 
-            assert_eq!(output_path, temp.path().join("from-cli.md"));
+            assert_eq!(
+                outcome,
+                RenderOutcome::Written(temp.path().join("from-cli.md"))
+            );
         }
 
         #[test]
@@ -511,11 +596,14 @@ mod tests {
             );
             let service = TemplateService::new(&config);
 
-            let output_path = service
-                .render_to_file(Path::new("daily"), None, false)
+            let outcome = service
+                .render_to_file(Path::new("daily"), None, false, false)
                 .expect("render_to_file");
 
-            assert_eq!(output_path, temp.path().join("from-template.md"));
+            assert_eq!(
+                outcome,
+                RenderOutcome::Written(temp.path().join("from-template.md"))
+            );
         }
 
         #[test]
@@ -534,7 +622,7 @@ mod tests {
             let service = TemplateService::new(&config);
 
             let error = service
-                .render_to_file(Path::new("daily"), None, false)
+                .render_to_file(Path::new("daily"), None, false, false)
                 .expect_err("existing output without force fails");
 
             assert!(matches!(
@@ -562,15 +650,67 @@ mod tests {
             fs::write(&existing, "old content").expect("seed existing output");
             let service = TemplateService::new(&config);
 
-            let output_path = service
-                .render_to_file(Path::new("daily"), None, true)
+            let outcome = service
+                .render_to_file(Path::new("daily"), None, true, false)
                 .expect("force overwrites");
 
-            assert_eq!(output_path, existing);
+            assert_eq!(outcome, RenderOutcome::Written(existing.clone()));
             assert_eq!(
                 fs::read_to_string(&existing).expect("read"),
                 "new content"
             );
+        }
+
+        #[test]
+        fn dry_run_renders_without_writing_or_checking_existence() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let local_dir = temp.path().join("templates");
+            write_file(&local_dir, "daily.md", "{{ 1 + 1 }}");
+            let config = Config::for_test(
+                temp.path().to_path_buf(),
+                Some(local_dir),
+                None,
+                temp.path().to_path_buf(),
+            );
+            let default_output = temp.path().join("daily.md");
+            fs::write(&default_output, "old content")
+                .expect("seed existing output");
+            let service = TemplateService::new(&config);
+
+            let outcome = service
+                .render_to_file(Path::new("daily"), None, false, true)
+                .expect("dry run never checks existence, so it never fails");
+
+            assert_eq!(outcome, RenderOutcome::Rendered("2".to_owned()));
+            assert_eq!(
+                fs::read_to_string(&default_output).expect("read"),
+                "old content"
+            );
+        }
+
+        #[test]
+        fn dry_run_never_computes_or_confines_an_output_path() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let local_dir = temp.path().join("templates");
+            write_file(&local_dir, "daily.md", "hello");
+            let config = Config::for_test(
+                temp.path().to_path_buf(),
+                Some(local_dir),
+                None,
+                temp.path().to_path_buf(),
+            );
+            let service = TemplateService::new(&config);
+            let escaping = Path::new("../../escape.md");
+
+            let outcome = service
+                .render_to_file(Path::new("daily"), Some(escaping), false, true)
+                .expect(
+                    "dry run never confines -o, so an escaping path never \
+                     fails",
+                );
+
+            assert_eq!(outcome, RenderOutcome::Rendered("hello".to_owned()));
+            assert!(!temp.path().join("../escape.md").exists());
         }
     }
 }
