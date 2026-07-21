@@ -23,11 +23,12 @@ use crate::config::Config;
 /// the CLI adapter's job (`crate::cli::template`), not this service's —
 /// this only carries the content back.
 #[derive(Debug, Eq, PartialEq)]
-pub(crate) enum RenderOutcome {
+pub(crate) enum WriteOutcome {
     /// Written to disk at this path.
     Written(PathBuf),
-    /// `--dry-run`: the rendered content, nothing written.
-    Rendered(String),
+    /// `--dry-run`: the rendered content, for the caller to print —
+    /// nothing written to disk.
+    Previewed(String),
 }
 
 /// Entry point for resolving, rendering, and writing one template.
@@ -64,10 +65,10 @@ impl<'a> TemplateService<'a> {
 
     /// Resolves `name` and renders it, then either writes the result to
     /// disk or — in dry-run mode — returns the rendered content instead
-    /// (see [`RenderOutcome`]; printing it is the caller's job).
+    /// (see [`WriteOutcome`]; printing it is the caller's job).
     ///
     /// `dry_run` is checked first: when set, [`Self::render_template`]'s
-    /// output is returned as [`RenderOutcome::Rendered`] without ever
+    /// output is returned as [`WriteOutcome::Previewed`] without ever
     /// computing an output path, so a dry-run's `-o`/`file.write_to()`
     /// value is never confined or even looked at, and the
     /// existence/overwrite guard never runs. Otherwise the output path
@@ -98,7 +99,7 @@ impl<'a> TemplateService<'a> {
         output: Option<&Path>,
         force: bool,
         dry_run: bool,
-    ) -> Result<RenderOutcome, TemplateError> {
+    ) -> Result<WriteOutcome, TemplateError> {
         let resolved = self.engine.resolve(name)?;
         let resolved_path = resolved.absolute();
         let template_source = Self::read_template(&resolved)?;
@@ -110,14 +111,14 @@ impl<'a> TemplateService<'a> {
             WriteMode::from_force(force)
         };
         match mode {
-            WriteMode::DryRun => Ok(RenderOutcome::Rendered(rendered.content)),
+            WriteMode::DryRun => Ok(WriteOutcome::Previewed(rendered.content)),
             WriteMode::CreateNew | WriteMode::Overwrite => {
                 let target =
                     self.writer.choose(output, rendered.write_to, || {
                         self.default_output_path(&resolved)
                     })?;
                 TemplateWriter::commit(&target, &rendered.content, mode)?;
-                Ok(RenderOutcome::Written(target.into_path_buf()))
+                Ok(WriteOutcome::Written(target.into_path_buf()))
             }
         }
     }
@@ -178,13 +179,13 @@ mod tests {
         fs::write(&path, content).expect("write template");
         path
     }
-    /// Extracts the written path from a [`RenderOutcome::Written`] —
+    /// Extracts the written path from a [`WriteOutcome::Written`] —
     /// `.expect()`s when `render_to_file` unexpectedly returned
-    /// [`RenderOutcome::Rendered`] (never true for `dry_run: false`).
-    fn written_path(outcome: RenderOutcome) -> PathBuf {
+    /// [`WriteOutcome::Previewed`] (never true for `dry_run: false`).
+    fn written_path(outcome: WriteOutcome) -> PathBuf {
         let written = match outcome {
-            RenderOutcome::Written(path) => Some(path),
-            RenderOutcome::Rendered(_) => None,
+            WriteOutcome::Written(path) => Some(path),
+            WriteOutcome::Previewed(_) => None,
         };
         written.expect("render_to_file with dry_run: false always writes")
     }
@@ -241,7 +242,7 @@ mod tests {
 
             assert_eq!(
                 outcome,
-                RenderOutcome::Written(root.join("notes/daily.md"))
+                WriteOutcome::Written(root.join("notes/daily.md"))
             );
         }
 
@@ -269,7 +270,7 @@ mod tests {
 
             assert_eq!(
                 outcome,
-                RenderOutcome::Written(temp.path().join("nested/report.md"))
+                WriteOutcome::Written(temp.path().join("nested/report.md"))
             );
         }
 
@@ -290,7 +291,7 @@ mod tests {
             );
             let service = TemplateService::new(&config);
             let expected =
-                RenderOutcome::Written(temp.path().join("notes/daily.md"));
+                WriteOutcome::Written(temp.path().join("notes/daily.md"));
 
             assert_eq!(
                 service
@@ -575,7 +576,7 @@ mod tests {
 
             assert_eq!(
                 outcome,
-                RenderOutcome::Written(temp.path().join("from-cli.md"))
+                WriteOutcome::Written(temp.path().join("from-cli.md"))
             );
         }
 
@@ -602,7 +603,7 @@ mod tests {
 
             assert_eq!(
                 outcome,
-                RenderOutcome::Written(temp.path().join("from-template.md"))
+                WriteOutcome::Written(temp.path().join("from-template.md"))
             );
         }
 
@@ -654,7 +655,7 @@ mod tests {
                 .render_to_file(Path::new("daily"), None, true, false)
                 .expect("force overwrites");
 
-            assert_eq!(outcome, RenderOutcome::Written(existing.clone()));
+            assert_eq!(outcome, WriteOutcome::Written(existing.clone()));
             assert_eq!(
                 fs::read_to_string(&existing).expect("read"),
                 "new content"
@@ -681,7 +682,7 @@ mod tests {
                 .render_to_file(Path::new("daily"), None, false, true)
                 .expect("dry run never checks existence, so it never fails");
 
-            assert_eq!(outcome, RenderOutcome::Rendered("2".to_owned()));
+            assert_eq!(outcome, WriteOutcome::Previewed("2".to_owned()));
             assert_eq!(
                 fs::read_to_string(&default_output).expect("read"),
                 "old content"
@@ -709,7 +710,7 @@ mod tests {
                      fails",
                 );
 
-            assert_eq!(outcome, RenderOutcome::Rendered("hello".to_owned()));
+            assert_eq!(outcome, WriteOutcome::Previewed("hello".to_owned()));
             assert!(!temp.path().join("../escape.md").exists());
         }
     }

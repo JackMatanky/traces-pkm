@@ -16,7 +16,7 @@ use super::error::TemplateCliError;
 use crate::{
     Cwd,
     config::{ConfigLoadError, ConfigService},
-    template::{RenderOutcome, TemplateService},
+    template::{TemplateService, WriteOutcome},
 };
 
 /// `traces template -i <name>` (aliased `tmpl`), and the default
@@ -102,10 +102,10 @@ impl Template {
                 source: Box::new(source),
             })?;
         match outcome {
-            RenderOutcome::Written(path) => {
+            WriteOutcome::Written(path) => {
                 eprintln!("wrote {}", path.display());
             }
-            RenderOutcome::Rendered(content) => print!("{content}"),
+            WriteOutcome::Previewed(content) => print!("{content}"),
         }
         Ok(())
     }
