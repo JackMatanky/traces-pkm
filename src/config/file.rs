@@ -386,7 +386,7 @@ mod tests {
         use super::*;
 
         #[test]
-        fn transitions_to_tracked_and_notifies_store() {
+        fn transitions_to_tracked_state() {
             let temp = tempfile::tempdir().expect("temp");
             let state = ConfigStateStore::at(
                 temp.path().join("tracked"),
@@ -401,6 +401,34 @@ mod tests {
                 LocalConfigFile::<Tracked>::try_from((file, &state)).unwrap();
             
             assert_eq!(tracked.path(), Path::new("/project/.traces/config.toml"));
+        }
+
+        #[test]
+        fn records_seen_config_in_store() {
+            let temp = tempfile::tempdir().expect("temp");
+            let state = ConfigStateStore::at(
+                temp.path().join("tracked"),
+                temp.path().join("trust"),
+            );
+            
+            // Create a real file so canonicalization succeeds
+            let project_dir = temp.path().join("project");
+            let config_path = project_dir.join(".traces/config.toml");
+            std::fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+            std::fs::write(&config_path, "").unwrap();
+            
+            let file = LocalConfigFile::<Discovered>::try_new(config_path.clone()).unwrap();
+            
+            // Act
+            let _ = LocalConfigFile::<Tracked>::try_from((file, &state)).unwrap();
+            
+            // Assert
+            let canonical_path = std::fs::canonicalize(&config_path).unwrap();
+            let expected_marker = temp.path()
+                .join("tracked")
+                .join(crate::hash::Blake3PathHash::new(&canonical_path).as_str());
+                
+            assert!(expected_marker.exists());
         }
     }
 
