@@ -318,105 +318,314 @@ pub(crate) enum ConfigFileTrustError {
 mod tests {
     use std::path::{Path, PathBuf};
 
-    use pretty_assertions::assert_eq;
-
     use super::*;
 
-    #[test]
-    fn local_constructor_derives_root_from_traces_config_path() {
-        let root = PathBuf::from("/project");
-        let path = root.join(".traces/config.toml");
+    mod local_constructor {
+        use super::*;
 
-        let config = LocalConfigFile::<Discovered>::try_new(path.clone())
-            .expect("valid local config path");
+        #[test]
+        fn derives_root_from_traces_config_path() {
+            let root = PathBuf::from("/project");
+            let path = root.join(".traces/config.toml");
 
-        assert_eq!(config.root(), root.as_path());
-        assert_eq!(config.path(), path.as_path());
+            let config = LocalConfigFile::<Discovered>::try_new(path.clone())
+                .expect("valid local config path");
+
+            assert_eq!(config.root(), root.as_path());
+            assert_eq!(config.path(), path.as_path());
+        }
+
+        #[test]
+        fn rejects_invalid_paths() {
+            let cases = vec![
+                "/project/config.toml",        // parent is not .traces
+                "/project/.traces/other.toml", // file is not config.toml
+                "config.toml",                 // no parent
+            ];
+            for path in cases {
+                let error =
+                    LocalConfigFile::<Discovered>::try_new(PathBuf::from(path))
+                        .expect_err(&format!("expected rejection for {path}"));
+                assert!(matches!(
+                    error,
+                    ConfigFileError::UnsupportedLocalConfigFile { .. }
+                ));
+            }
+        }
     }
 
-    #[test]
-    fn local_constructor_rejects_non_traces_config_path() {
-        let path = Path::new("/project/config.toml");
+    mod global_constructor {
+        use super::*;
 
-        let error = LocalConfigFile::<Discovered>::try_new(path.to_path_buf())
-            .expect_err("invalid local config path");
+        #[test]
+        fn derives_root_from_parent_directory() {
+            let root = PathBuf::from("/config/traces");
+            let path = root.join("config.toml");
 
-        assert!(matches!(
-            error,
-            ConfigFileError::UnsupportedLocalConfigFile { .. }
-        ));
+            let config = GlobalConfigFile::<Discovered>::try_new(path.clone())
+                .expect("valid global config path");
+
+            assert_eq!(config.root(), root.as_path());
+            assert_eq!(config.path(), path.as_path());
+        }
+
+        #[test]
+        fn rejects_invalid_paths() {
+            let cases = vec![
+                "/config/traces/settings.toml", // file is not config.toml
+            ];
+            for path in cases {
+                let error =
+                    GlobalConfigFile::<Discovered>::try_new(PathBuf::from(path))
+                        .expect_err(&format!("expected rejection for {path}"));
+                assert!(matches!(
+                    error,
+                    ConfigFileError::UnsupportedGlobalConfigFile { .. }
+                ));
+            }
+        }
     }
 
-    #[test]
-    fn global_constructor_derives_root_from_parent_directory() {
-        let root = PathBuf::from("/config/traces");
-        let path = root.join("config.toml");
+    mod tracking_transitions {
+        use super::*;
 
-        let config = GlobalConfigFile::<Discovered>::try_new(path.clone())
-            .expect("valid global config path");
-
-        assert_eq!(config.root(), root.as_path());
-        assert_eq!(config.path(), path.as_path());
+        #[test]
+        fn transitions_to_tracked_and_notifies_store() {
+            let temp = tempfile::tempdir().expect("temp");
+            let state = ConfigStateStore::at(
+                temp.path().join("tracked"),
+                temp.path().join("trust"),
+            );
+            let file = LocalConfigFile::<Discovered>::try_new(PathBuf::from(
+                "/project/.traces/config.toml",
+            ))
+            .unwrap();
+            
+            let tracked =
+                LocalConfigFile::<Tracked>::try_from((file, &state)).unwrap();
+            
+            assert_eq!(tracked.path(), Path::new("/project/.traces/config.toml"));
+        }
     }
 
-    #[test]
-    fn trusted_local_config_parses_into_raw_config() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let root = temp.path().join("project");
-        let path = root.join(".traces/config.toml");
-        std::fs::create_dir_all(path.parent().expect("config parent"))
-            .expect("create config parent");
-        std::fs::write(
-            &path,
-            "[templates]
-output_dir = \"notes\"",
-        )
-        .expect("write config");
-        let discovered =
-            LocalConfigFile::<Discovered>::try_new(path).expect("local config");
-        let state = ConfigStateStore::at(
-            temp.path().join("tracked-store"),
-            temp.path().join("trust-store"),
-        );
-        let tracked =
-            LocalConfigFile::<Tracked>::try_from((discovered, &state))
-                .expect("track local config");
-        state
-            .grant_trust(&TrustSubject::tracked(&tracked))
-            .expect("trust config");
-        let trusted = LocalConfigFile::<Trusted>::try_from((tracked, &state))
-            .expect("trusted config");
-        let config = LocalConfigFile::<Parsed>::try_from(trusted)
-            .expect("parse trusted config");
+    mod trust_transitions {
+        use super::*;
 
-        assert_eq!(config.root(), root.as_path());
-        assert_eq!(
-            config.raw().templates.output_dir.as_deref(),
-            Some(Path::new("notes"))
-        );
+        #[test]
+        fn transitions_to_trusted_when_store_says_trusted() {
+            let temp = tempfile::tempdir().unwrap();
+            let root = temp.path().join("project");
+            let path = root.join(".traces/config.toml");
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, "").unwrap();
+
+            let state = ConfigStateStore::at(
+                temp.path().join("tracked"),
+                temp.path().join("trust"),
+            );
+            let file = LocalConfigFile::<Discovered>::try_new(path).unwrap();
+            let tracked =
+                LocalConfigFile::<Tracked>::try_from((file, &state)).unwrap();
+            state.grant_trust(&TrustSubject::tracked(&tracked)).unwrap();
+
+            let result = LocalConfigFile::<Trusted>::try_from((tracked, &state));
+            assert!(result.is_ok());
+        }
+
+        #[test]
+        fn returns_root_not_trusted_when_store_says_untrusted() {
+            let temp = tempfile::tempdir().unwrap();
+            let root = temp.path().join("project");
+            let path = root.join(".traces/config.toml");
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, "").unwrap();
+
+            let state = ConfigStateStore::at(
+                temp.path().join("tracked"),
+                temp.path().join("trust"),
+            );
+
+            let file = LocalConfigFile::<Discovered>::try_new(path).unwrap();
+            let tracked =
+                LocalConfigFile::<Tracked>::try_from((file, &state)).unwrap();
+
+            let result = LocalConfigFile::<Trusted>::try_from((tracked, &state));
+            assert!(matches!(
+                result,
+                Err(ConfigFileError::Trust(
+                    ConfigFileTrustError::RootNotTrusted { .. }
+                ))
+            ));
+        }
+
+        #[test]
+        fn returns_stale_config_content_when_baseline_missing() {
+            let temp = tempfile::tempdir().unwrap();
+            let root = temp.path().join("project");
+            let path = root.join(".traces/config.toml");
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, "").unwrap();
+
+            let state = ConfigStateStore::at(
+                temp.path().join("tracked"),
+                temp.path().join("trust"),
+            );
+            let file = LocalConfigFile::<Discovered>::try_new(path).unwrap();
+            let tracked =
+                LocalConfigFile::<Tracked>::try_from((file, &state)).unwrap();
+
+            // Grant trust to the WORKSPACE, which creates no baseline config hash.
+            state
+                .grant_trust(&TrustSubject::root(root.as_path()))
+                .unwrap();
+
+            let result = LocalConfigFile::<Trusted>::try_from((tracked, &state));
+            assert!(matches!(
+                result,
+                Err(ConfigFileError::Trust(
+                    ConfigFileTrustError::StaleConfigContent { .. }
+                ))
+            ));
+        }
+
+        #[test]
+        fn returns_stale_config_content_when_hash_mismatches() {
+            let temp = tempfile::tempdir().unwrap();
+            let root = temp.path().join("project");
+            let path = root.join(".traces/config.toml");
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, "old").unwrap();
+
+            let state = ConfigStateStore::at(
+                temp.path().join("tracked"),
+                temp.path().join("trust"),
+            );
+            let file =
+                LocalConfigFile::<Discovered>::try_new(path.clone()).unwrap();
+            let tracked =
+                LocalConfigFile::<Tracked>::try_from((file, &state)).unwrap();
+
+            state.grant_trust(&TrustSubject::tracked(&tracked)).unwrap();
+
+            // Modify file after trust
+            std::fs::write(&path, "new").unwrap();
+
+            let result = LocalConfigFile::<Trusted>::try_from((tracked, &state));
+            assert!(matches!(
+                result,
+                Err(ConfigFileError::Trust(
+                    ConfigFileTrustError::StaleConfigContent { .. }
+                ))
+            ));
+        }
+
+        #[test]
+        fn returns_trust_check_failed_on_io_error() {
+            let temp = tempfile::tempdir().unwrap();
+            let root = temp.path().join("project");
+            let path = root.join(".traces/config.toml");
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, "").unwrap();
+
+            let state = ConfigStateStore::at(
+                temp.path().join("tracked"),
+                temp.path().join("trust"),
+            );
+            let file = LocalConfigFile::<Discovered>::try_new(path.clone()).unwrap();
+            let tracked =
+                LocalConfigFile::<Tracked>::try_from((file, &state)).unwrap();
+
+            // Grant trust so the companion file exists.
+            state.grant_trust(&TrustSubject::tracked(&tracked)).unwrap();
+
+            // Delete the config file so hashing it fails with an I/O error.
+            std::fs::remove_file(&path).unwrap();
+
+            // Checking trust will now try to hash the deleted config file, causing an I/O error.
+            let result = LocalConfigFile::<Trusted>::try_from((tracked, &state));
+            assert!(matches!(
+                result,
+                Err(ConfigFileError::Trust(
+                    ConfigFileTrustError::TrustCheckFailed { .. }
+                ))
+            ));
+        }
     }
 
-    #[test]
-    fn discovered_global_config_parses_directly() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let root = temp.path().join("config/traces");
-        let path = root.join("config.toml");
-        std::fs::create_dir_all(&root).expect("create config root");
-        std::fs::write(
-            &path,
-            "[templates]
-directory = \"templates\"",
-        )
-        .expect("write config");
+    mod parsing {
+        use super::*;
 
-        let discovered = GlobalConfigFile::<Discovered>::try_new(path)
-            .expect("global config");
-        let config = GlobalConfigFile::<Parsed>::try_from(discovered)
-            .expect("parse global config");
+        #[test]
+        fn reads_valid_toml_into_raw_config() {
+            let temp = tempfile::tempdir().unwrap();
+            let path = temp.path().join("config.toml");
+            std::fs::write(&path, "[templates]\noutput_dir = \"out\"").unwrap();
 
-        assert_eq!(
-            config.raw().templates.directory.as_deref(),
-            Some(Path::new("templates"))
-        );
+            let parsed = Parsed::read(&path).unwrap();
+            
+            assert_eq!(
+                parsed.raw.templates.output_dir.as_deref(),
+                Some(Path::new("out"))
+            );
+        }
+
+        #[test]
+        fn returns_read_error_on_invalid_toml() {
+            let temp = tempfile::tempdir().unwrap();
+            let path = temp.path().join("config.toml");
+            std::fs::write(&path, "[templates\nbad = ").unwrap();
+
+            let result = Parsed::read(&path);
+            
+            assert!(matches!(
+                result,
+                Err(ConfigFileParseError::Read { .. })
+            ));
+        }
+
+        #[test]
+        fn returns_read_error_on_missing_file() {
+            let temp = tempfile::tempdir().unwrap();
+            let path = temp.path().join("missing.toml");
+
+            let result = Parsed::read(&path);
+            
+            assert!(matches!(
+                result,
+                Err(ConfigFileParseError::Read { .. })
+            ));
+        }
+    }
+
+    mod template_dir {
+        use super::*;
+
+        #[test]
+        fn returns_joined_path_when_configured() {
+            let temp = tempfile::tempdir().unwrap();
+            let root = temp.path().join("project");
+            let path = root.join(".traces/config.toml");
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, "[templates]\ndirectory = \"tmpl\"").unwrap();
+
+            let parsed = Parsed::read(&path).unwrap();
+            let file = LocalConfigFile::<Parsed>::new(root.clone(), path, parsed);
+
+            assert_eq!(file.resolved_template_dir(), Some(root.join("tmpl")));
+        }
+
+        #[test]
+        fn returns_none_when_omitted() {
+            let temp = tempfile::tempdir().unwrap();
+            let root = temp.path().join("project");
+            let path = root.join(".traces/config.toml");
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, "").unwrap(); // empty config
+
+            let parsed = Parsed::read(&path).unwrap();
+            let file = LocalConfigFile::<Parsed>::new(root.clone(), path, parsed);
+
+            assert_eq!(file.resolved_template_dir(), None);
+        }
     }
 }
