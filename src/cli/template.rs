@@ -8,13 +8,13 @@
 //! only parses args, loads config for the current directory, and reports
 //! the written path.
 
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::Arc};
 
 use clap::Args;
 
 use super::error::TemplateCliError;
 use crate::{
-    Cwd,
+    Cwd, DialogProvider, PresetDialogProvider,
     config::{ConfigLoadError, ConfigService},
     template::{TemplateService, WriteMode, WriteOutcome},
 };
@@ -30,11 +30,29 @@ pub(super) struct Template {
     /// template; falls back to `write_to`, then the config-derived default.
     #[arg(short = 'o', long, value_name = "PATH")]
     pub(super) output: Option<PathBuf>,
+    #[command(flatten)]
+    pub(super) write: WriteFlags,
+    /// Never prompt — every `ui.*` call returns its default (or an
+    /// empty/false/first-item response when it has none), regardless of
+    /// whether stdin is a terminal. For scripted or CI use; independent
+    /// of `--dry-run`.
+    #[arg(long = "no-input")]
+    pub(super) no_input: bool,
+}
+
+/// `-f`/`--force` and `-n`/`--dry-run` — paired because both feed
+/// [`WriteMode::from_flags`], and grouping them keeps [`Template`] at
+/// one bool field (`no_input`) instead of three, per this crate's
+/// `max-struct-bools = 2` (`clippy.toml`).
+#[derive(Debug, Args)]
+pub(super) struct WriteFlags {
     /// Overwrite the output path if it already exists.
     #[arg(short = 'f', long)]
     pub(super) force: bool,
     /// Render to stdout and write nothing to disk. Skips the existence
-    /// check and ignores `-o`/`file.write_to()` entirely.
+    /// check and ignores `-o`/`file.write_to()` entirely. Independent of
+    /// `--no-input`: a template with `ui.*` calls still prompts during a
+    /// dry run (in a real terminal) unless `--no-input` is also passed.
     #[arg(short = 'n', long)]
     pub(super) dry_run: bool,
 }
@@ -48,8 +66,11 @@ impl Template {
         Self {
             name,
             output: None,
-            force: false,
-            dry_run: false,
+            write: WriteFlags {
+                force: false,
+                dry_run: false,
+            },
+            no_input: false,
         }
     }
 
@@ -57,6 +78,11 @@ impl Template {
     /// [`Self::name`], writing it to the default output path — or, in
     /// dry-run mode, printing it to stdout instead (see
     /// [`crate::template::TemplateService::render_to_file`]).
+    /// `provider` is the interactive provider a `ui.*` call delegates to
+    /// when [`Self::no_input`] is unset; when it's set, every render uses
+    /// a defaults-only provider instead, regardless of `provider`'s own
+    /// TTY detection — see [`crate::template::TemplateService::new`]'s
+    /// docs for why that choice is made here, not inside the service.
     ///
     /// # Errors
     ///
@@ -77,6 +103,7 @@ impl Template {
     pub(super) fn run(
         self,
         service: &ConfigService,
+        provider: &Arc<dyn DialogProvider>,
     ) -> Result<(), TemplateCliError> {
         let cwd = current_dir()?;
         let config = service.load(&cwd).map_err(|source| match source {
@@ -90,8 +117,13 @@ impl Template {
                 source: Box::new(source),
             },
         })?;
-        let mode = WriteMode::from_flags(self.dry_run, self.force);
-        let outcome = TemplateService::new(&config)
+        let mode = WriteMode::from_flags(self.write.dry_run, self.write.force);
+        let effective_provider: Arc<dyn DialogProvider> = if self.no_input {
+            Arc::new(PresetDialogProvider::new())
+        } else {
+            Arc::clone(provider)
+        };
+        let outcome = TemplateService::new(&config, effective_provider)
             .render_to_file(&self.name, self.output.as_deref(), mode)
             .map_err(|source| TemplateCliError::Instantiate {
                 name: self.name.clone(),
@@ -130,6 +162,12 @@ mod tests {
 
     fn service(temp: &Path) -> ConfigService {
         ConfigService::at(temp.join("tracked-store"), temp.join("trust-store"))
+    }
+
+    /// A cheap, deterministic provider for tests that never exercise
+    /// `ui.*` — `Template::run` requires one regardless.
+    fn preset_provider() -> Arc<dyn DialogProvider> {
+        Arc::new(crate::PresetDialogProvider::new())
     }
 
     fn trust_config(service: &ConfigService, config_path: &Path) {
@@ -171,7 +209,7 @@ mod tests {
         let _guard = CwdGuard::enter(&root);
 
         Template::new(PathBuf::from("daily"))
-            .run(&service)
+            .run(&service, &preset_provider())
             .expect("run template command");
 
         let written =
@@ -191,7 +229,7 @@ mod tests {
         let _guard = CwdGuard::enter(&root);
 
         let error = Template::new(PathBuf::from("daily"))
-            .run(&service)
+            .run(&service, &preset_provider())
             .expect_err("untrusted root fails");
 
         assert!(matches!(error, TemplateCliError::ConfigBuild { .. }));
@@ -210,7 +248,7 @@ mod tests {
         let _guard = CwdGuard::enter(&root);
 
         let error = Template::new(PathBuf::from("missing"))
-            .run(&service)
+            .run(&service, &preset_provider())
             .expect_err("missing template fails");
 
         assert!(matches!(error, TemplateCliError::Instantiate { .. }));
@@ -233,10 +271,13 @@ mod tests {
         Template {
             name: PathBuf::from("daily"),
             output: Some(PathBuf::from("elsewhere.md")),
-            force: false,
-            dry_run: false,
+            write: WriteFlags {
+                force: false,
+                dry_run: false,
+            },
+            no_input: false,
         }
-        .run(&service)
+        .run(&service, &preset_provider())
         .expect("run template command");
 
         let written =
@@ -260,7 +301,7 @@ mod tests {
         let _guard = CwdGuard::enter(&root);
 
         let error = Template::new(PathBuf::from("daily"))
-            .run(&service)
+            .run(&service, &preset_provider())
             .expect_err("existing output without force fails");
 
         assert!(matches!(error, TemplateCliError::Instantiate { .. }));
@@ -288,10 +329,13 @@ mod tests {
         Template {
             name: PathBuf::from("daily"),
             output: None,
-            force: true,
-            dry_run: false,
+            write: WriteFlags {
+                force: true,
+                dry_run: false,
+            },
+            no_input: false,
         }
-        .run(&service)
+        .run(&service, &preset_provider())
         .expect("force overwrites");
 
         assert_eq!(
@@ -317,10 +361,13 @@ mod tests {
         let error = Template {
             name: PathBuf::from("daily"),
             output: Some(PathBuf::from("../../escape.md")),
-            force: false,
-            dry_run: false,
+            write: WriteFlags {
+                force: false,
+                dry_run: false,
+            },
+            no_input: false,
         }
-        .run(&service)
+        .run(&service, &preset_provider())
         .expect_err("escaping -o path fails");
 
         assert!(matches!(error, TemplateCliError::Instantiate { .. }));
@@ -344,10 +391,13 @@ mod tests {
         Template {
             name: PathBuf::from("daily"),
             output: None,
-            force: false,
-            dry_run: true,
+            write: WriteFlags {
+                force: false,
+                dry_run: true,
+            },
+            no_input: false,
         }
-        .run(&service)
+        .run(&service, &preset_provider())
         .expect("dry run succeeds even though the output already exists");
 
         assert_eq!(
@@ -373,13 +423,84 @@ mod tests {
         Template {
             name: PathBuf::from("daily"),
             output: Some(PathBuf::from("../../escape.md")),
-            force: false,
-            dry_run: true,
+            write: WriteFlags {
+                force: false,
+                dry_run: true,
+            },
+            no_input: false,
         }
-        .run(&service)
+        .run(&service, &preset_provider())
         .expect("dry run never confines an output path, so it never fails");
 
         assert!(!root.join("../escape.md").exists());
         assert!(!root.join("daily.md").exists());
+    }
+
+    #[test]
+    fn run_uses_the_injected_providers_queued_answer_by_default() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let root = temp.path().join("project");
+        fs::create_dir_all(&root).expect("create project dir");
+        let config_file = create_config(&root, "templates");
+        let templates_dir = root.join("templates");
+        fs::create_dir_all(&templates_dir).expect("create templates dir");
+        fs::write(
+            templates_dir.join("daily.md"),
+            "{{ ui.text_input(\"name\", \"anon\") }}",
+        )
+        .expect("write template");
+        let service = service(temp.path());
+        trust_config(&service, &config_file);
+        let _guard = CwdGuard::enter(&root);
+        let provider: Arc<dyn DialogProvider> =
+            Arc::new(crate::PresetDialogProvider::new().with_text("claude"));
+
+        Template::new(PathBuf::from("daily"))
+            .run(&service, &provider)
+            .expect("run template command");
+
+        assert_eq!(
+            fs::read_to_string(root.join("daily.md")).expect("read output"),
+            "claude"
+        );
+    }
+
+    #[test]
+    fn run_no_input_ignores_the_injected_provider_and_uses_defaults() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let root = temp.path().join("project");
+        fs::create_dir_all(&root).expect("create project dir");
+        let config_file = create_config(&root, "templates");
+        let templates_dir = root.join("templates");
+        fs::create_dir_all(&templates_dir).expect("create templates dir");
+        fs::write(
+            templates_dir.join("daily.md"),
+            "{{ ui.text_input(\"name\", \"anon\") }}",
+        )
+        .expect("write template");
+        let service = service(temp.path());
+        trust_config(&service, &config_file);
+        let _guard = CwdGuard::enter(&root);
+        // A provider whose queued answer must never be consulted once
+        // `--no-input` is set.
+        let provider: Arc<dyn DialogProvider> =
+            Arc::new(crate::PresetDialogProvider::new().with_text("claude"));
+
+        Template {
+            name: PathBuf::from("daily"),
+            output: None,
+            write: WriteFlags {
+                force: false,
+                dry_run: false,
+            },
+            no_input: true,
+        }
+        .run(&service, &provider)
+        .expect("run template command");
+
+        assert_eq!(
+            fs::read_to_string(root.join("daily.md")).expect("read output"),
+            "anon"
+        );
     }
 }

@@ -21,6 +21,11 @@
 //! - [`file_ops`][]: [`FileOps`](file_ops::FileOps), the `file` namespace
 //!   object a template calls as `file.write_to(path)` to declare its own output
 //!   path — registered as a minijinja global by [`engine`].
+//! - [`ui_ops`][]: [`UiOps`](ui_ops::UiOps), the `ui` namespace object a
+//!   template calls as `ui.text_input(...)`/`ui.select(...)`/
+//!   `ui.confirm(...)`/`ui.multi_select(...)` to gather interactive input, each
+//!   delegating to the `Arc<dyn DialogProvider>` [`engine`] built it with —
+//!   also registered as a minijinja global by [`engine`].
 //! - [`engine`]: wraps minijinja's [`Environment`](minijinja::Environment) so
 //!   [`service`] depends on "render this source" rather than on minijinja's
 //!   API.
@@ -71,6 +76,7 @@ mod loader;
 mod path;
 mod service;
 mod source_dir;
+mod ui_ops;
 mod writer;
 
 pub(crate) use error::TemplateError;

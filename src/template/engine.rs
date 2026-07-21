@@ -3,7 +3,10 @@
 //! "resolve this name" and "render this source" rather than on
 //! minijinja's [`Environment`] directly.
 
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use minijinja::{Environment, Error, value::Value};
 
@@ -11,7 +14,9 @@ use super::{
     file_ops::{FileOps, WRITE_TO_KEY},
     loader::TemplateLoader,
     path::{Found, TemplatePath, TemplatePathError},
+    ui_ops::UiOps,
 };
+use crate::DialogProvider;
 
 /// A render's output, plus whatever `file.write_to()` captured during
 /// that render (if the template called it).
@@ -35,17 +40,24 @@ pub(super) struct TemplateEngine {
 impl TemplateEngine {
     /// Builds an engine backed by `loader`, cloning it once into
     /// minijinja's [`set_loader`](Environment::set_loader) callback, and
-    /// registers the `file` namespace object templates call as
-    /// `file.write_to(path)`.
+    /// registers two namespace globals templates call into: `file`, as
+    /// `file.write_to(path)`; and `ui`, as `ui.text_input(...)` /
+    /// `ui.select(...)` / `ui.confirm(...)` / `ui.multi_select(...)`,
+    /// each delegating to `provider` — see [`UiOps`]'s module docs for
+    /// which concrete provider that is.
     #[inline]
     #[must_use]
-    pub(super) fn new(loader: TemplateLoader) -> Self {
+    pub(super) fn new(
+        loader: TemplateLoader,
+        provider: Arc<dyn DialogProvider>,
+    ) -> Self {
         let mut env = Environment::new();
         env.set_loader({
             let loader = loader.clone();
             move |name| loader.load(name)
         });
         env.add_global("file", Value::from_object(FileOps));
+        env.add_global("ui", Value::from_object(UiOps::new(provider)));
         Self {
             env,
             loader,
@@ -109,6 +121,12 @@ mod tests {
         TemplateLoader::new(Some(path.to_path_buf()), None)
     }
 
+    /// A cheap, deterministic provider for tests that never exercise
+    /// `ui.*` — `TemplateEngine::new` requires one regardless.
+    fn preset_provider() -> Arc<dyn DialogProvider> {
+        Arc::new(crate::PresetDialogProvider::new())
+    }
+
     mod render {
         use pretty_assertions::assert_eq;
 
@@ -117,7 +135,10 @@ mod tests {
         #[test]
         fn evaluates_minijinja_syntax() {
             let temp = tempfile::tempdir().expect("create temp dir");
-            let engine = TemplateEngine::new(loader_from_dir(temp.path()));
+            let engine = TemplateEngine::new(
+                loader_from_dir(temp.path()),
+                preset_provider(),
+            );
 
             let rendered = engine
                 .render("{% for n in [1, 2] %}{{ n }}{% endfor %}")
@@ -131,7 +152,10 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("partial.md"), "included")
                 .expect("write partial");
-            let engine = TemplateEngine::new(loader_from_dir(temp.path()));
+            let engine = TemplateEngine::new(
+                loader_from_dir(temp.path()),
+                preset_provider(),
+            );
 
             let rendered = engine
                 .render("{% include \"partial.md\" %}!")
@@ -146,7 +170,8 @@ mod tests {
             let dir = temp.path().join(".traces/templates");
             fs::create_dir_all(&dir).expect("create dotted template dir");
             fs::write(dir.join("daily.md"), "hello").expect("write template");
-            let engine = TemplateEngine::new(loader_from_dir(&dir));
+            let engine =
+                TemplateEngine::new(loader_from_dir(&dir), preset_provider());
 
             let rendered =
                 engine.render("{% include \"daily.md\" %}").expect("render");
@@ -159,7 +184,10 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join(".draft.md"), "secret")
                 .expect("write template");
-            let engine = TemplateEngine::new(loader_from_dir(temp.path()));
+            let engine = TemplateEngine::new(
+                loader_from_dir(temp.path()),
+                preset_provider(),
+            );
 
             let rendered = engine
                 .render("{% include \".draft.md\" %}")
@@ -177,10 +205,10 @@ mod tests {
             fs::create_dir_all(&global_dir).expect("create global dir");
             fs::write(global_dir.join("shared.md"), "from global")
                 .expect("write template");
-            let engine = TemplateEngine::new(TemplateLoader::new(
-                Some(local_dir),
-                Some(global_dir),
-            ));
+            let engine = TemplateEngine::new(
+                TemplateLoader::new(Some(local_dir), Some(global_dir)),
+                preset_provider(),
+            );
 
             let rendered = engine
                 .render("{% include \"shared.md\" %}")
@@ -194,7 +222,10 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("daily.md"), "hello")
                 .expect("write template");
-            let engine = TemplateEngine::new(loader_from_dir(temp.path()));
+            let engine = TemplateEngine::new(
+                loader_from_dir(temp.path()),
+                preset_provider(),
+            );
 
             let rendered = engine
                 .render("{% include \"daily\" %}")
@@ -214,7 +245,10 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             let file = temp.path().join("daily.md");
             fs::write(&file, "content").expect("write template");
-            let engine = TemplateEngine::new(loader_from_dir(temp.path()));
+            let engine = TemplateEngine::new(
+                loader_from_dir(temp.path()),
+                preset_provider(),
+            );
 
             let found =
                 engine.resolve(Path::new("daily")).expect("resolve succeeds");
@@ -231,7 +265,10 @@ mod tests {
         #[test]
         fn is_none_when_the_template_never_calls_it() {
             let temp = tempfile::tempdir().expect("create temp dir");
-            let engine = TemplateEngine::new(loader_from_dir(temp.path()));
+            let engine = TemplateEngine::new(
+                loader_from_dir(temp.path()),
+                preset_provider(),
+            );
 
             let rendered =
                 engine.render("no output path here").expect("render succeeds");
@@ -242,7 +279,10 @@ mod tests {
         #[test]
         fn captures_a_write_to_call() {
             let temp = tempfile::tempdir().expect("create temp dir");
-            let engine = TemplateEngine::new(loader_from_dir(temp.path()));
+            let engine = TemplateEngine::new(
+                loader_from_dir(temp.path()),
+                preset_provider(),
+            );
 
             let rendered = engine
                 .render("{{ file.write_to(\"notes/daily.md\") }}")
@@ -257,7 +297,10 @@ mod tests {
         #[test]
         fn does_not_leak_between_renders() {
             let temp = tempfile::tempdir().expect("create temp dir");
-            let engine = TemplateEngine::new(loader_from_dir(temp.path()));
+            let engine = TemplateEngine::new(
+                loader_from_dir(temp.path()),
+                preset_provider(),
+            );
             engine
                 .render("{{ file.write_to(\"first.md\") }}")
                 .expect("render succeeds");
@@ -271,7 +314,10 @@ mod tests {
         #[test]
         fn calling_an_unknown_file_method_fails() {
             let temp = tempfile::tempdir().expect("create temp dir");
-            let engine = TemplateEngine::new(loader_from_dir(temp.path()));
+            let engine = TemplateEngine::new(
+                loader_from_dir(temp.path()),
+                preset_provider(),
+            );
 
             let error = engine
                 .render("{{ file.move_to(\"x.md\") }}")

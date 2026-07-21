@@ -6,7 +6,10 @@
 //! delegates the whole write-or-preview decision to
 //! [`TemplateWriter::write`].
 
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use super::{
     engine::{RenderOutput, TemplateEngine},
@@ -15,7 +18,7 @@ use super::{
     path::{Found, TemplatePath},
     writer::{TemplateWriteTarget, TemplateWriter, WriteMode, WriteOutcome},
 };
-use crate::config::Config;
+use crate::{DialogProvider, config::Config};
 
 /// Entry point for resolving, rendering, and writing one template.
 ///
@@ -35,12 +38,35 @@ pub(crate) struct TemplateService<'a> {
 
 impl<'a> TemplateService<'a> {
     /// Builds a service for `config`, backed by a [`TemplateEngine`]
-    /// and a [`TemplateWriter`] confined to [`Config::root`].
+    /// and a [`TemplateWriter`] confined to [`Config::root`]. `provider`
+    /// is the interactive provider every `ui.*` call in every render —
+    /// `WriteMode::DryRun` included — delegates to unconditionally.
+    ///
+    /// This is deliberate, not an oversight: `WriteMode` decides
+    /// whether a render's output gets written, never whether its
+    /// `ui.*` calls prompt. `--dry-run` alone still previews with real
+    /// answers when run from a real terminal — otherwise dry-run
+    /// couldn't preview a template whose output branches on a
+    /// selection. What decides *whether to prompt at all* is choosing
+    /// which `provider` to pass in here: `crate::cli::template::Template`
+    /// passes a defaults-only
+    /// [`PresetDialogProvider`](crate::PresetDialogProvider)
+    /// when `--no-input` is set (see `cli_guide.md`'s Interactivity
+    /// section: "If `--no-input` is passed, don't prompt or do
+    /// anything interactive"), and its normal, injected provider
+    /// otherwise — a [`TerminalDialogProvider`](crate::TerminalDialogProvider)
+    /// falls back to defaults on its own the moment stdin isn't a TTY
+    /// (CI, piping, scripts), so `--no-input` only needs to cover the
+    /// remaining case: a real terminal that should still not be
+    /// prompted (e.g. a scripted `--dry-run` check run interactively).
     #[inline]
     #[must_use]
-    pub(crate) fn new(config: &'a Config) -> Self {
+    pub(crate) fn new(
+        config: &'a Config,
+        provider: Arc<dyn DialogProvider>,
+    ) -> Self {
         let loader = TemplateLoader::from(config);
-        let engine = TemplateEngine::new(loader);
+        let engine = TemplateEngine::new(loader, provider);
         let writer = TemplateWriter::new(config.root());
         Self {
             config,
@@ -67,7 +93,7 @@ impl<'a> TemplateService<'a> {
     /// |---|---|
     /// | [`TemplateError::Resolve`] | `name` doesn't resolve to a file |
     /// | [`TemplateError::Read`] | the resolved template can't be read |
-    /// | [`TemplateError::Render`] | the template's source is invalid |
+    /// | [`TemplateError::Render`] | the template's source is invalid, or a `ui.*`/`file.*` call inside it fails |
     /// | [`TemplateError::OutputPathEscapesRoot`] | `file.write_to()` or `-o` names an absolute or `..`-containing path — never returned for [`WriteMode::DryRun`] |
     /// | [`TemplateError::OutputFileAlreadyExists`] | the output path exists and `mode` is [`WriteMode::Commit`] with [`CommitPolicy::CreateNew`] — checked atomically by [`fs::File::create_new`], not a separate `exists()` call, so there's no race between the check and the write; never returned for [`WriteMode::DryRun`] |
     /// | [`TemplateError::Write`] | the output, or its parent directory, can't be written |
@@ -136,6 +162,7 @@ mod tests {
     use std::{fs, path::PathBuf};
 
     use super::{super::writer::CommitPolicy, *};
+    use crate::PresetDialogProvider;
 
     fn write_file(dir: &Path, name: &str, content: &str) -> PathBuf {
         let path = dir.join(name);
@@ -144,6 +171,13 @@ mod tests {
         fs::write(&path, content).expect("write template");
         path
     }
+
+    /// A cheap, deterministic provider for tests that never exercise
+    /// `ui.*` — `TemplateService::new` requires one regardless.
+    fn preset_provider() -> Arc<dyn DialogProvider> {
+        Arc::new(PresetDialogProvider::new())
+    }
+
     /// Extracts the written path from a [`WriteOutcome::Written`] —
     /// `.expect()`s when `render_to_file` unexpectedly returned
     /// [`WriteOutcome::Previewed`] (never true for `dry_run: false`).
@@ -176,7 +210,7 @@ mod tests {
                 None,
                 temp.path().to_path_buf(),
             );
-            let service = TemplateService::new(&config);
+            let service = TemplateService::new(&config, preset_provider());
 
             let outcome = service
                 .render_to_file(
@@ -203,7 +237,7 @@ mod tests {
                 None,
                 PathBuf::from("notes"),
             );
-            let service = TemplateService::new(&config);
+            let service = TemplateService::new(&config, preset_provider());
 
             let outcome = service
                 .render_to_file(
@@ -230,7 +264,7 @@ mod tests {
                 None,
                 temp.path().to_path_buf(),
             );
-            let service = TemplateService::new(&config);
+            let service = TemplateService::new(&config, preset_provider());
 
             let outcome = service
                 .render_to_file(
@@ -261,7 +295,7 @@ mod tests {
                 None,
                 temp.path().to_path_buf(),
             );
-            let service = TemplateService::new(&config);
+            let service = TemplateService::new(&config, preset_provider());
             let expected =
                 WriteOutcome::Written(temp.path().join("notes/daily.md"));
 
@@ -296,7 +330,7 @@ mod tests {
                 None,
                 temp.path().to_path_buf(),
             );
-            let service = TemplateService::new(&config);
+            let service = TemplateService::new(&config, preset_provider());
 
             let error = service
                 .render_to_file(
@@ -325,7 +359,7 @@ mod tests {
                 None,
                 temp.path().to_path_buf(),
             );
-            let service = TemplateService::new(&config);
+            let service = TemplateService::new(&config, preset_provider());
 
             let error = service
                 .render_to_file(
@@ -349,7 +383,7 @@ mod tests {
                 None,
                 temp.path().to_path_buf(),
             );
-            let service = TemplateService::new(&config);
+            let service = TemplateService::new(&config, preset_provider());
 
             let error = service
                 .render_to_file(
@@ -379,7 +413,7 @@ mod tests {
                 None,
                 PathBuf::from("notes/output"),
             );
-            let service = TemplateService::new(&config);
+            let service = TemplateService::new(&config, preset_provider());
 
             let error = service
                 .render_to_file(
@@ -404,7 +438,7 @@ mod tests {
                 None,
                 temp.path().to_path_buf(),
             );
-            let service = TemplateService::new(&config);
+            let service = TemplateService::new(&config, preset_provider());
 
             let outcome = service
                 .render_to_file(
@@ -432,7 +466,7 @@ mod tests {
                 None,
                 temp.path().to_path_buf(),
             );
-            let service = TemplateService::new(&config);
+            let service = TemplateService::new(&config, preset_provider());
             let override_path = Path::new("elsewhere.md");
 
             let outcome = service
@@ -462,7 +496,7 @@ mod tests {
                 None,
                 temp.path().to_path_buf(),
             );
-            let service = TemplateService::new(&config);
+            let service = TemplateService::new(&config, preset_provider());
             let outside = temp.path().join("outside.md");
 
             let error = service
@@ -490,7 +524,7 @@ mod tests {
                 None,
                 temp.path().to_path_buf(),
             );
-            let service = TemplateService::new(&config);
+            let service = TemplateService::new(&config, preset_provider());
             let traversal = Path::new("../escape.md");
 
             let error = service
@@ -522,7 +556,7 @@ mod tests {
                 None,
                 temp.path().to_path_buf(),
             );
-            let service = TemplateService::new(&config);
+            let service = TemplateService::new(&config, preset_provider());
 
             let error = service
                 .render_to_file(
@@ -553,7 +587,7 @@ mod tests {
                 None,
                 temp.path().to_path_buf(),
             );
-            let service = TemplateService::new(&config);
+            let service = TemplateService::new(&config, preset_provider());
             let cli_override = Path::new("from-cli.md");
 
             let outcome = service
@@ -585,7 +619,7 @@ mod tests {
                 None,
                 temp.path().to_path_buf(),
             );
-            let service = TemplateService::new(&config);
+            let service = TemplateService::new(&config, preset_provider());
 
             let outcome = service
                 .render_to_file(
@@ -614,7 +648,7 @@ mod tests {
             );
             let existing = temp.path().join("daily.md");
             fs::write(&existing, "old content").expect("seed existing output");
-            let service = TemplateService::new(&config);
+            let service = TemplateService::new(&config, preset_provider());
 
             let error = service
                 .render_to_file(
@@ -647,7 +681,7 @@ mod tests {
             );
             let existing = temp.path().join("daily.md");
             fs::write(&existing, "old content").expect("seed existing output");
-            let service = TemplateService::new(&config);
+            let service = TemplateService::new(&config, preset_provider());
 
             let outcome = service
                 .render_to_file(
@@ -678,7 +712,7 @@ mod tests {
             let default_output = temp.path().join("daily.md");
             fs::write(&default_output, "old content")
                 .expect("seed existing output");
-            let service = TemplateService::new(&config);
+            let service = TemplateService::new(&config, preset_provider());
 
             let outcome = service
                 .render_to_file(Path::new("daily"), None, WriteMode::DryRun)
@@ -702,7 +736,7 @@ mod tests {
                 None,
                 temp.path().to_path_buf(),
             );
-            let service = TemplateService::new(&config);
+            let service = TemplateService::new(&config, preset_provider());
             let escaping = Path::new("../../escape.md");
 
             let outcome = service
@@ -718,6 +752,168 @@ mod tests {
 
             assert_eq!(outcome, WriteOutcome::Previewed("hello".to_owned()));
             assert!(!temp.path().join("../escape.md").exists());
+        }
+
+        #[test]
+        fn ui_functions_render_and_delegate_to_the_provider() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let local_dir = temp.path().join("templates");
+            write_file(
+                &local_dir,
+                "daily.md",
+                "{{ ui.text_input(\"name\", \"anon\") }}|{{ \
+                 ui.confirm(\"proceed?\") }}|{{ ui.select(\"pick\", [\"a\", \
+                 \"b\", \"c\"]) }}|{{ ui.multi_select(\"pick\", [\"x\", \
+                 \"y\", \"z\"]) | join(\",\") }}",
+            );
+            let config = Config::for_test(
+                temp.path().to_path_buf(),
+                Some(local_dir),
+                None,
+                temp.path().to_path_buf(),
+            );
+            let provider = Arc::new(
+                PresetDialogProvider::new()
+                    .with_text("claude")
+                    .with_confirm(true)
+                    .with_select(1)
+                    .with_multi_select([0, 2]),
+            );
+            let service = TemplateService::new(&config, provider);
+
+            let outcome = service
+                .render_to_file(
+                    Path::new("daily"),
+                    None,
+                    WriteMode::Commit(CommitPolicy::CreateNew),
+                )
+                .expect("render_to_file");
+
+            assert_eq!(
+                fs::read_to_string(written_path(outcome))
+                    .expect("read written output"),
+                "claude|true|b|x,z"
+            );
+        }
+
+        #[test]
+        fn ui_select_and_multi_select_render_keyed_items_and_fall_back_to_to_string()
+         {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let local_dir = temp.path().join("templates");
+            write_file(
+                &local_dir,
+                "daily.md",
+                "{{ ui.select(\"country\", [{\"label\": \"US\", \"value\": \
+                 1}, {\"label\": \"GB\", \"value\": 44}]).value }}|{{ \
+                 ui.multi_select(\"country\", [{\"label\": \"US\", \"value\": \
+                 1}, {\"label\": \"GB\", \"value\": 44}]) | \
+                 map(attribute=\"value\") | join(\",\") }}|{{ \
+                 ui.select(\"pick\", [10, 20, 30]) }}",
+            );
+            let config = Config::for_test(
+                temp.path().to_path_buf(),
+                Some(local_dir),
+                None,
+                temp.path().to_path_buf(),
+            );
+            let provider = Arc::new(
+                PresetDialogProvider::new()
+                    .with_select(1)
+                    .with_multi_select([0, 1])
+                    .with_select(2),
+            );
+            let service = TemplateService::new(&config, provider);
+
+            let outcome = service
+                .render_to_file(
+                    Path::new("daily"),
+                    None,
+                    WriteMode::Commit(CommitPolicy::CreateNew),
+                )
+                .expect("render_to_file");
+
+            assert_eq!(
+                fs::read_to_string(written_path(outcome))
+                    .expect("read written output"),
+                "44|1,44|30"
+            );
+        }
+
+        #[test]
+        fn ui_select_and_multi_select_honor_a_custom_attribute() {
+            // `default`'s exact fallback content is unit-tested directly
+            // against `label_items` (see `ui_ops.rs`) — nothing about it
+            // is observable through a render, since it only affects the
+            // label text passed to the provider, not the recovered item.
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let local_dir = temp.path().join("templates");
+            write_file(
+                &local_dir,
+                "daily.md",
+                "{{ ui.select(\"country\", [{\"name\": \"US\"}, {\"name\": \
+                 \"GB\"}], attribute=\"name\").name }}|{{ \
+                 ui.multi_select(\"country\", [{\"name\": \"US\"}, {\"name\": \
+                 \"GB\"}], attribute=\"name\") | map(attribute=\"name\") | \
+                 join(\",\") }}",
+            );
+            let config = Config::for_test(
+                temp.path().to_path_buf(),
+                Some(local_dir),
+                None,
+                temp.path().to_path_buf(),
+            );
+            let provider = Arc::new(
+                PresetDialogProvider::new()
+                    .with_select(1)
+                    .with_multi_select([0, 1]),
+            );
+            let service = TemplateService::new(&config, provider);
+
+            let outcome = service
+                .render_to_file(
+                    Path::new("daily"),
+                    None,
+                    WriteMode::Commit(CommitPolicy::CreateNew),
+                )
+                .expect("render_to_file");
+
+            assert_eq!(
+                fs::read_to_string(written_path(outcome))
+                    .expect("read written output"),
+                "GB|US,GB"
+            );
+        }
+
+        #[test]
+        fn dry_run_still_uses_the_injected_provider_for_ui_calls() {
+            // `WriteMode` decides whether the render gets written, never
+            // whether its `ui.*` calls prompt — see `TemplateService::new`'s
+            // docs. Proves the reverse of what a naive "dry-run means no
+            // interaction" reading would suggest: a `PresetDialogProvider`
+            // with real queued answers still supplies them during a dry
+            // run, so `--dry-run` can preview a template whose output
+            // branches on a selection. Whether to skip prompting entirely
+            // is `--no-input`'s job (`crate::cli::template`), decided
+            // before a provider ever reaches here.
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let local_dir = temp.path().join("templates");
+            write_file(&local_dir, "daily.md", "{{ ui.text_input(\"name\") }}");
+            let config = Config::for_test(
+                temp.path().to_path_buf(),
+                Some(local_dir),
+                None,
+                temp.path().to_path_buf(),
+            );
+            let provider =
+                Arc::new(PresetDialogProvider::new().with_text("claude"));
+            let service = TemplateService::new(&config, provider);
+
+            let outcome = service
+                .render_to_file(Path::new("daily"), None, WriteMode::DryRun)
+                .expect("render_to_file");
+
+            assert_eq!(outcome, WriteOutcome::Previewed("claude".to_owned()));
         }
     }
 }

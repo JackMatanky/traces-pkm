@@ -9,7 +9,7 @@ pub mod init;
 mod template;
 mod trust;
 
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::Arc};
 
 use clap::{Parser, Subcommand};
 pub use error::{CliError, ConfigInitCliError, ConfigTrustCliError};
@@ -42,7 +42,11 @@ impl Cli {
     /// Accepts pre-constructed [`ConfigService`] and [`DialogProvider`] so
     /// that tests can drive real argv through to a real handler call with
     /// isolated stores, without touching the process's OS-correct
-    /// trust/tracked-config paths.
+    /// trust/tracked-config paths. `provider` is `Arc`, not `&dyn`, because
+    /// [`template::Template::run`] needs to clone it into a
+    /// [`TemplateService`](crate::template::TemplateService), which in turn
+    /// captures it into `'static` minijinja closures — a borrow can't
+    /// satisfy that, an owned, cheaply-cloned handle can.
     ///
     /// # Errors
     ///
@@ -52,13 +56,13 @@ impl Cli {
     fn run(
         self,
         service: &crate::config::ConfigService,
-        provider: &dyn crate::DialogProvider,
+        provider: &Arc<dyn crate::DialogProvider>,
     ) -> Result<(), CliError> {
         match self.command {
             Some(cmd) => cmd.run(service, provider),
             None => match self.input {
                 Some(name) => template::Template::new(name)
-                    .run(service)
+                    .run(service, provider)
                     .map_err(Into::into),
                 None => Err(CliError::NoCommand),
             },
@@ -88,12 +92,14 @@ impl Commands {
     fn run(
         self,
         service: &crate::config::ConfigService,
-        provider: &dyn crate::DialogProvider,
+        provider: &Arc<dyn crate::DialogProvider>,
     ) -> Result<(), CliError> {
         match self {
-            Self::Init(args) => args.run(provider).map_err(Into::into),
+            Self::Init(args) => args.run(provider.as_ref()).map_err(Into::into),
             Self::Trust(args) => args.run(service).map_err(Into::into),
-            Self::Template(args) => args.run(service).map_err(Into::into),
+            Self::Template(args) => {
+                args.run(service, provider).map_err(Into::into)
+            }
         }
     }
 }
@@ -106,10 +112,9 @@ impl Commands {
 /// Returns [`CliError`] when the command fails or no command was given.
 #[inline]
 pub fn run() -> Result<(), CliError> {
-    Cli::parse().run(
-        &crate::config::ConfigService::new(),
-        &crate::TerminalDialogProvider::new(),
-    )
+    let provider: Arc<dyn crate::DialogProvider> =
+        Arc::new(crate::TerminalDialogProvider::new());
+    Cli::parse().run(&crate::config::ConfigService::new(), &provider)
 }
 
 #[cfg(test)]
@@ -231,8 +236,9 @@ mod tests {
                 .expect("trust project root");
             let _guard = CwdGuard::enter(&project);
 
-            cli.run(&service, &PresetDialogProvider::new())
-                .expect("run succeeds");
+            let provider: Arc<dyn crate::DialogProvider> =
+                Arc::new(PresetDialogProvider::new());
+            cli.run(&service, &provider).expect("run succeeds");
 
             fs::read_to_string(project.join("daily.md"))
                 .expect("read written output")
