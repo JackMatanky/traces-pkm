@@ -267,278 +267,606 @@ impl Default for ConfigService {
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
-
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-    use crate::config::file::{
-        ConfigFileError, ConfigFileTrustError, Discovered, LocalConfigFile,
+    use std::{
+        fs,
+        path::{Path, PathBuf},
     };
 
-    #[test]
-    fn new_is_stateless() {
-        assert_eq!(
-            format!("{:?}", ConfigService::new()),
-            format!("{:?}", ConfigService::new())
-        );
+    use super::*;
+    use crate::config::{
+        discovery::DiscoveryAnchor,
+        file::{
+            ConfigFileError, ConfigFileTrustError, Discovered, LocalConfigFile,
+        },
+    };
+
+    struct Fixture {
+        temp: tempfile::TempDir,
+        tracked_root: PathBuf,
+        trusted_root: PathBuf,
+        service: ConfigService,
     }
 
-    #[test]
-    fn load_discovers_trusted_local_config_and_records_it() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let root = temp.path().join("project");
-        let cwd = root.join("notes/daily");
-        let config_path = root.join(".traces/config.toml");
-        fs::create_dir_all(config_path.parent().expect("config path parent"))
-            .expect("create config parent");
-        fs::create_dir_all(&cwd).expect("create cwd");
-        fs::write(
-            &config_path,
-            "[templates]\ndirectory = \".traces/templates\"\noutput_dir = \
-             \"notes\"",
-        )
-        .expect("write config");
-        let service = trusted_service(temp.path(), &root, &config_path);
+    impl Fixture {
+        fn new() -> Self {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let tracked_root = temp.path().join("tracked-store");
+            let trusted_root = temp.path().join("trust-store");
+            let service =
+                ConfigService::at(tracked_root.clone(), trusted_root.clone());
+            Self {
+                temp,
+                tracked_root,
+                trusted_root,
+                service,
+            }
+        }
 
-        let config = service.load(&cwd).expect("load config");
+        fn target_dir(&self, name: &str) -> PathBuf {
+            let path = self.temp.path().join(name);
+            fs::create_dir_all(&path).expect("create target dir");
+            path
+        }
 
-        assert_eq!(config.root(), root.as_path());
-        assert_eq!(config.output_dir(), Path::new("notes"));
-        assert_eq!(
-            service.list_tracked().expect("list tracked configs"),
-            vec![config_path.canonicalize().expect("canonicalize config")]
-        );
-    }
-    #[test]
-    fn build_records_the_candidate_and_list_tracked_reflects_it_idempotently() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let (cwd, config_path, candidates) = local_candidates(temp.path());
-        let service = trusted_service(temp.path(), &cwd, &config_path);
+        fn create_config(&self, root: &Path, contents: &str) -> PathBuf {
+            let config_path = root.join(".traces/config.toml");
+            fs::create_dir_all(config_path.parent().unwrap())
+                .expect("create config parent");
+            fs::write(&config_path, contents).expect("write config");
+            config_path
+        }
 
-        service.build(candidates.clone()).expect("build config");
+        fn discovered_config(
+            &self,
+            config_path: &Path,
+        ) -> LocalConfigFile<Discovered> {
+            LocalConfigFile::<Discovered>::try_new(config_path.to_path_buf())
+                .expect("valid local config")
+        }
 
-        assert_eq!(
-            service.list_tracked().expect("list tracked configs"),
-            vec![config_path.canonicalize().expect("canonicalize config")]
-        );
-
-        // Idempotent through the full pipeline, not just at the store layer.
-        service.build(candidates).expect("build config again");
-        assert_eq!(
-            service.list_tracked().expect("list tracked configs").len(),
-            1
-        );
+        fn trust_config(&self, config_path: &Path) {
+            let config = self.discovered_config(config_path);
+            self.service
+                .trust(&TrustSubject::discovered(&config))
+                .expect("trust candidate root");
+        }
     }
 
-    #[test]
-    fn clean_tracked_store_prunes_entries_whose_config_was_deleted() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let (cwd, config_path, candidates) = local_candidates(temp.path());
-        let service = trusted_service(temp.path(), &cwd, &config_path);
-        service.build(candidates).expect("build config");
-        fs::remove_file(&config_path).expect("remove config");
+    mod constructor {
+        use pretty_assertions::assert_eq;
 
-        let removed =
-            service.clean_tracked_store().expect("clean tracked store");
+        use super::*;
 
-        assert_eq!(removed, 1);
-        assert!(
-            service.list_tracked().expect("list tracked configs").is_empty()
-        );
+        #[test]
+        fn new_creates_os_backed_stores() {
+            // Arrange & Act
+            let service1 = ConfigService::new();
+            let service2 = ConfigService::new();
+
+            // Assert
+            // Just verifying it doesn't panic and constructs identically
+            assert_eq!(format!("{:?}", service1), format!("{:?}", service2));
+        }
+
+        #[test]
+        fn at_creates_custom_rooted_stores() {
+            // Arrange
+            let temp = tempfile::tempdir().unwrap();
+            let tracked = temp.path().join("tracked");
+            let trusted = temp.path().join("trusted");
+
+            // Act
+            let service = ConfigService::at(tracked.clone(), trusted.clone());
+
+            // Assert
+            assert!(
+                format!("{:?}", service).contains(tracked.to_str().unwrap())
+            );
+        }
     }
 
-    #[test]
-    fn build_succeeds_even_when_the_tracking_store_write_fails() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let (cwd, config_path, candidates) = local_candidates(temp.path());
-        fs::write(temp.path().join("tracked-store"), "")
-            .expect("occupy tracked store with a file");
-        let service = trusted_service(temp.path(), &cwd, &config_path);
+    mod load {
+        use pretty_assertions::assert_eq;
 
-        let config = service
-            .build(candidates)
-            .expect("build must succeed despite a tracking write failure");
+        use super::*;
 
-        assert_eq!(config.root(), cwd.as_path());
+        #[test]
+        fn returns_discovery_error_when_no_config_found() {
+            // Arrange
+            let fixture = Fixture::new();
+            let cwd = fixture.target_dir("project/notes/daily");
+
+            // Act
+            let result = fixture.service.load(&cwd);
+
+            // Assert
+            assert!(matches!(
+                result,
+                Err(ConfigLoadError::Discovery(
+                    DiscoveryError::LocalConfigAbsent { .. }
+                ))
+            ));
+        }
+
+        #[test]
+        fn discovers_and_builds_trusted_local_config() {
+            // Arrange
+            let fixture = Fixture::new();
+            let root = fixture.target_dir("project");
+            let cwd = root.join("notes/daily");
+            fs::create_dir_all(&cwd).unwrap();
+
+            let config_path = fixture.create_config(
+                &root,
+                "[templates]\ndirectory = \".traces/templates\"\noutput_dir = \
+                 \"notes\"",
+            );
+            fixture.trust_config(&config_path);
+
+            // Act
+            let result = fixture.service.load(&cwd);
+
+            // Assert
+            assert!(result.is_ok());
+            let config = result.unwrap();
+            assert_eq!(config.root(), root.as_path());
+            assert_eq!(config.output_dir(), Path::new("notes"));
+        }
     }
 
-    #[test]
-    fn build_rejects_a_candidate_with_an_untrusted_root() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let (cwd, _config_path, candidates) = local_candidates(temp.path());
-        let service = ConfigService::at(
-            temp.path().join("tracked-store"),
-            temp.path().join("trust-store"),
-        );
+    mod build {
+        use pretty_assertions::assert_eq;
 
-        let result = service.build(candidates);
+        use super::*;
 
-        assert!(matches!(
-            result,
-            Err(ConfigBuilderError::ConfigFile(ConfigFileError::Trust(
-                ConfigFileTrustError::RootNotTrusted { root }
-            ))) if root == cwd
-        ));
+        fn local_candidates(
+            fixture: &Fixture,
+        ) -> (PathBuf, PathBuf, DiscoveryOutcome) {
+            let cwd = fixture.target_dir("project");
+            let config_path = fixture.create_config(&cwd, "");
+            let local = fixture.discovered_config(&config_path);
+            let candidates = DiscoveryOutcome::new(
+                DiscoveryAnchor::Directory(cwd.clone()),
+                vec![local],
+                Vec::new(),
+            );
+            (cwd, config_path, candidates)
+        }
+
+        #[test]
+        fn records_candidate_in_tracking_store() {
+            // Arrange
+            let fixture = Fixture::new();
+            let (_cwd, config_path, candidates) = local_candidates(&fixture);
+            fixture.trust_config(&config_path);
+
+            // Act
+            let result = fixture.service.build(candidates);
+
+            // Assert
+            assert!(result.is_ok());
+            let tracked = fixture.service.list_tracked().unwrap();
+            assert_eq!(tracked, vec![config_path.canonicalize().unwrap()]);
+        }
+
+        #[test]
+        fn tracking_record_is_idempotent() {
+            // Arrange
+            let fixture = Fixture::new();
+            let (_cwd, config_path, candidates) = local_candidates(&fixture);
+            fixture.trust_config(&config_path);
+            fixture.service.build(candidates.clone()).unwrap();
+
+            // Act
+            let result = fixture.service.build(candidates);
+
+            // Assert
+            assert!(result.is_ok());
+            let tracked = fixture.service.list_tracked().unwrap();
+            assert_eq!(tracked.len(), 1);
+        }
+
+        #[test]
+        fn succeeds_even_when_tracking_store_write_fails() {
+            // Arrange
+            let fixture = Fixture::new();
+            let (cwd, config_path, candidates) = local_candidates(&fixture);
+            fixture.trust_config(&config_path);
+
+            // Occupy the tracked-store path with a file so directory creation
+            // fails
+            fs::write(&fixture.tracked_root, "").unwrap();
+
+            // Act
+            let result = fixture.service.build(candidates);
+
+            // Assert
+            assert!(result.is_ok());
+            assert_eq!(result.unwrap().root(), cwd.as_path());
+        }
+
+        #[test]
+        fn rejects_untrusted_root() {
+            // Arrange
+            let fixture = Fixture::new();
+            let (cwd, _config_path, candidates) = local_candidates(&fixture);
+            // Do NOT trust the root
+
+            // Act
+            let result = fixture.service.build(candidates);
+
+            // Assert
+            assert!(matches!(
+                result,
+                Err(ConfigBuilderError::ConfigFile(ConfigFileError::Trust(
+                    ConfigFileTrustError::RootNotTrusted { root }
+                ))) if root == cwd
+            ));
+        }
+
+        #[test]
+        fn rejects_trusted_but_stale_root() {
+            // Arrange
+            let fixture = Fixture::new();
+            let (cwd, config_path, candidates) = local_candidates(&fixture);
+            fixture.trust_config(&config_path);
+
+            // Edit config after trusting to make it stale
+            fs::write(&config_path, "directory = \"changed\"").unwrap();
+
+            // Act
+            let result = fixture.service.build(candidates);
+
+            // Assert
+            assert!(matches!(
+                result,
+                Err(ConfigBuilderError::ConfigFile(ConfigFileError::Trust(
+                    ConfigFileTrustError::StaleConfigContent { root }
+                ))) if root == cwd
+            ));
+        }
     }
 
-    #[test]
-    fn build_rejects_a_candidate_whose_root_is_trusted_but_stale() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let (cwd, config_path, candidates) = local_candidates(temp.path());
-        let service = trusted_service(temp.path(), &cwd, &config_path);
-        fs::write(&config_path, "directory = \"changed\"")
-            .expect("edit config after trusting");
+    mod trust_subjects {
+        use pretty_assertions::assert_eq;
 
-        let result = service.build(candidates);
+        use super::*;
 
-        assert!(matches!(
-            result,
-            Err(ConfigBuilderError::ConfigFile(ConfigFileError::Trust(
-                ConfigFileTrustError::StaleConfigContent { root }
-            ))) if root == cwd
-        ));
+        #[test]
+        fn delegates_to_discovery_engine() {
+            // Arrange
+            let fixture = Fixture::new();
+            let cwd = fixture.target_dir("project");
+            fixture.create_config(&cwd, "");
+
+            // Act
+            let result = fixture
+                .service
+                .trust_subjects(&cwd, DiscoveryScope::NearestLocal);
+
+            // Assert
+            assert!(result.is_ok());
+            let subjects = result.unwrap();
+            assert_eq!(subjects.into_iter().count(), 1);
+        }
     }
 
-    #[test]
-    fn trust_then_is_trusted_returns_trusted() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let root = temp.path().join("project");
-        fs::create_dir_all(&root).expect("create project dir");
-        let config_file = root.join(".traces/config.toml");
-        fs::create_dir_all(config_file.parent().expect("config parent"))
-            .expect("create config parent");
-        fs::write(&config_file, "a = 1").expect("write config");
-        let service = ConfigService::at(
-            temp.path().join("tracked-store"),
-            temp.path().join("trust-store"),
-        );
-        let config = discovered_config(&config_file);
+    mod trust {
+        use pretty_assertions::assert_eq;
 
-        assert_eq!(
-            service
-                .trust_status(&TrustSubject::discovered(&config))
-                .expect("check trust"),
-            "untrusted"
-        );
+        use super::*;
 
-        service.trust(&TrustSubject::discovered(&config)).expect("trust root");
+        #[test]
+        fn records_workspace_trust() {
+            // Arrange
+            let fixture = Fixture::new();
+            let root = fixture.target_dir("project");
+            let subject = TrustSubject::root(&root);
 
-        assert_eq!(
-            service
-                .trust_status(&TrustSubject::discovered(&config))
-                .expect("check trust"),
-            "trusted"
-        );
+            // Act
+            let result = fixture.service.trust(&subject);
+
+            // Assert
+            assert!(result.is_ok());
+            assert_eq!(
+                fixture.service.trust_status(&subject).unwrap(),
+                "trusted"
+            );
+        }
+
+        #[test]
+        fn records_config_trust_and_hashes_content() {
+            // Arrange
+            let fixture = Fixture::new();
+            let root = fixture.target_dir("project");
+            let config_path = fixture.create_config(&root, "a = 1");
+            let config = fixture.discovered_config(&config_path);
+            let subject = TrustSubject::discovered(&config);
+
+            // Act
+            let result = fixture.service.trust(&subject);
+
+            // Assert
+            assert!(result.is_ok());
+            assert_eq!(
+                fixture.service.trust_status(&subject).unwrap(),
+                "trusted"
+            );
+        }
     }
 
-    #[test]
-    fn trust_file_target_derives_local_root_and_hashes_config() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let root = temp.path().join("project");
-        let config_file = root.join(".traces/config.toml");
-        fs::create_dir_all(config_file.parent().expect("config parent"))
-            .expect("create config parent");
-        fs::write(&config_file, "a = 1").expect("write config");
-        let service = ConfigService::at(
-            temp.path().join("tracked-store"),
-            temp.path().join("trust-store"),
-        );
+    mod trust_status {
+        use pretty_assertions::assert_eq;
 
-        let config = discovered_config(&config_file);
-        service.trust(&TrustSubject::discovered(&config)).expect("trust file");
+        use super::*;
 
-        assert_eq!(
-            service
-                .trust_status(&TrustSubject::discovered(&config))
-                .expect("check trust"),
-            "trusted"
-        );
-    }
-    #[test]
-    fn list_trusted_reflects_trusted_roots() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let root = temp.path().join("project");
-        fs::create_dir_all(&root).expect("create project dir");
-        let config_file = root.join(".traces/config.toml");
-        fs::create_dir_all(config_file.parent().expect("config parent"))
-            .expect("create config parent");
-        fs::write(&config_file, "a = 1").expect("write config");
-        let service = ConfigService::at(
-            temp.path().join("tracked-store"),
-            temp.path().join("trust-store"),
-        );
+        #[test]
+        fn returns_untrusted_for_unknown_workspace() {
+            // Arrange
+            let fixture = Fixture::new();
+            let root = fixture.target_dir("project");
+            let subject = TrustSubject::root(&root);
 
-        assert!(service.list_trusted().expect("list trusted").is_empty());
+            // Act
+            let result = fixture.service.trust_status(&subject);
 
-        let config = discovered_config(&config_file);
-        service.trust(&TrustSubject::discovered(&config)).expect("trust root");
+            // Assert
+            assert!(result.is_ok());
+            assert_eq!(result.unwrap(), "untrusted");
+        }
 
-        assert_eq!(service.list_trusted().expect("list trusted"), vec![
-            root.canonicalize().expect("canonicalize root")
-        ]);
-    }
+        #[test]
+        fn returns_untrusted_for_unknown_config() {
+            // Arrange
+            let fixture = Fixture::new();
+            let root = fixture.target_dir("project");
+            let config_path = fixture.create_config(&root, "a = 1");
+            let config = fixture.discovered_config(&config_path);
+            let subject = TrustSubject::discovered(&config);
 
-    #[test]
-    fn clean_trusted_store_prunes_a_root_whose_directory_was_deleted() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let root = temp.path().join("project");
-        fs::create_dir_all(&root).expect("create project dir");
-        let config_file = root.join(".traces/config.toml");
-        fs::create_dir_all(config_file.parent().expect("config parent"))
-            .expect("create config parent");
-        fs::write(&config_file, "a = 1").expect("write config");
-        let service = ConfigService::at(
-            temp.path().join("tracked-store"),
-            temp.path().join("trust-store"),
-        );
-        let config = discovered_config(&config_file);
-        service.trust(&TrustSubject::discovered(&config)).expect("trust root");
-        fs::remove_dir_all(&root).expect("delete project dir");
+            // Act
+            let result = fixture.service.trust_status(&subject);
 
-        let removed =
-            service.clean_trusted_store().expect("clean trusted store");
+            // Assert
+            assert!(result.is_ok());
+            assert_eq!(result.unwrap(), "untrusted");
+        }
 
-        assert_eq!(removed, 1);
-        assert!(service.list_trusted().expect("list trusted").is_empty());
+        #[test]
+        fn returns_stale_when_config_content_changes() {
+            // Arrange
+            let fixture = Fixture::new();
+            let root = fixture.target_dir("project");
+            let config_path = fixture.create_config(&root, "a = 1");
+            let config = fixture.discovered_config(&config_path);
+            let subject = TrustSubject::discovered(&config);
+
+            fixture.service.trust(&subject).unwrap();
+            fs::write(&config_path, "a = 2").unwrap();
+
+            // Act
+            let result = fixture.service.trust_status(&subject);
+
+            // Assert
+            assert!(result.is_ok());
+            assert_eq!(result.unwrap(), "stale");
+        }
     }
 
-    fn local_candidates(temp: &Path) -> (PathBuf, PathBuf, DiscoveryOutcome) {
-        let cwd = temp.join("project");
-        let config_path = cwd.join(".traces/config.toml");
-        fs::create_dir_all(config_path.parent().expect("config path parent"))
-            .expect("create config parent");
-        fs::write(&config_path, "").expect("write config");
-        let local = LocalConfigFile::<Discovered>::try_new(config_path.clone())
-            .expect("valid local config");
-        let candidates = DiscoveryOutcome::new(
-            DiscoveryAnchor::Directory(cwd.clone()),
-            vec![local],
-            Vec::new(),
-        );
-        (cwd, config_path, candidates)
+    mod untrust {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn removes_trust_from_subject() {
+            // Arrange
+            let fixture = Fixture::new();
+            let root = fixture.target_dir("project");
+            let subject = TrustSubject::root(&root);
+            fixture.service.trust(&subject).unwrap();
+
+            // Act
+            let result = fixture.service.untrust(&subject);
+
+            // Assert
+            assert!(result.is_ok());
+            assert_eq!(result.unwrap(), 1); // 1 entry removed
+            assert_eq!(
+                fixture.service.trust_status(&subject).unwrap(),
+                "untrusted"
+            );
+        }
+
+        #[test]
+        fn returns_zero_when_already_untrusted() {
+            // Arrange
+            let fixture = Fixture::new();
+            let root = fixture.target_dir("project");
+            let subject = TrustSubject::root(&root);
+
+            // Act
+            let result = fixture.service.untrust(&subject);
+
+            // Assert
+            assert!(result.is_ok());
+            assert_eq!(result.unwrap(), 0);
+        }
     }
 
-    fn discovered_config(config_path: &Path) -> LocalConfigFile<Discovered> {
-        LocalConfigFile::<Discovered>::try_new(config_path.to_path_buf())
-            .expect("valid local config")
+    mod list_tracked {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn returns_empty_when_no_tracked_configs() {
+            // Arrange
+            let fixture = Fixture::new();
+
+            // Act
+            let result = fixture.service.list_tracked();
+
+            // Assert
+            assert!(result.is_ok());
+            assert!(result.unwrap().is_empty());
+        }
+
+        #[test]
+        fn returns_recorded_configs() {
+            // Arrange
+            let fixture = Fixture::new();
+            let cwd = fixture.target_dir("project");
+            let config_path = fixture.create_config(&cwd, "");
+            let local = fixture.discovered_config(&config_path);
+            let candidates = DiscoveryOutcome::new(
+                DiscoveryAnchor::Directory(cwd.clone()),
+                vec![local],
+                Vec::new(),
+            );
+            fixture.trust_config(&config_path);
+            fixture.service.build(candidates).unwrap();
+
+            // Act
+            let result = fixture.service.list_tracked();
+
+            // Assert
+            assert!(result.is_ok());
+            assert_eq!(result.unwrap(), vec![
+                config_path.canonicalize().unwrap()
+            ]);
+        }
     }
 
-    /// Builds a service rooted at temp stores, with `cwd` (the candidate's
-    /// project root) pre-trusted so `build` clears the trust gate.
-    fn trusted_service(
-        temp: &Path,
-        _cwd: &Path,
-        config_path: &Path,
-    ) -> ConfigService {
-        let service = ConfigService::at(
-            temp.join("tracked-store"),
-            temp.join("trust-store"),
-        );
-        let config = discovered_config(config_path);
-        service
-            .trust(&TrustSubject::discovered(&config))
-            .expect("trust candidate root");
-        service
+    mod clean_tracked_store {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn prunes_entries_whose_config_was_deleted() {
+            // Arrange
+            let fixture = Fixture::new();
+            let cwd = fixture.target_dir("project");
+            let config_path = fixture.create_config(&cwd, "");
+            let local = fixture.discovered_config(&config_path);
+            let candidates = DiscoveryOutcome::new(
+                DiscoveryAnchor::Directory(cwd.clone()),
+                vec![local],
+                Vec::new(),
+            );
+            fixture.trust_config(&config_path);
+            fixture.service.build(candidates).unwrap();
+
+            fs::remove_file(&config_path).unwrap();
+
+            // Act
+            let result = fixture.service.clean_tracked_store();
+
+            // Assert
+            assert!(result.is_ok());
+            assert_eq!(result.unwrap(), 1);
+            assert!(fixture.service.list_tracked().unwrap().is_empty());
+        }
+
+        #[test]
+        fn leaves_live_entries_untouched() {
+            // Arrange
+            let fixture = Fixture::new();
+            let cwd = fixture.target_dir("project");
+            let config_path = fixture.create_config(&cwd, "");
+            let local = fixture.discovered_config(&config_path);
+            let candidates = DiscoveryOutcome::new(
+                DiscoveryAnchor::Directory(cwd.clone()),
+                vec![local],
+                Vec::new(),
+            );
+            fixture.trust_config(&config_path);
+            fixture.service.build(candidates).unwrap();
+
+            // Act
+            let result = fixture.service.clean_tracked_store();
+
+            // Assert
+            assert!(result.is_ok());
+            assert_eq!(result.unwrap(), 0);
+            assert_eq!(fixture.service.list_tracked().unwrap().len(), 1);
+        }
+    }
+
+    mod list_trusted {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn returns_empty_when_no_trusted_roots() {
+            // Arrange
+            let fixture = Fixture::new();
+
+            // Act
+            let result = fixture.service.list_trusted();
+
+            // Assert
+            assert!(result.is_ok());
+            assert!(result.unwrap().is_empty());
+        }
+
+        #[test]
+        fn returns_trusted_roots() {
+            // Arrange
+            let fixture = Fixture::new();
+            let root = fixture.target_dir("project");
+            let config_path = fixture.create_config(&root, "a = 1");
+            fixture.trust_config(&config_path);
+
+            // Act
+            let result = fixture.service.list_trusted();
+
+            // Assert
+            assert!(result.is_ok());
+            assert_eq!(result.unwrap(), vec![root.canonicalize().unwrap()]);
+        }
+    }
+
+    mod clean_trusted_store {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn prunes_root_whose_directory_was_deleted() {
+            // Arrange
+            let fixture = Fixture::new();
+            let root = fixture.target_dir("project");
+            let config_path = fixture.create_config(&root, "a = 1");
+            fixture.trust_config(&config_path);
+            fs::remove_dir_all(&root).unwrap();
+
+            // Act
+            let result = fixture.service.clean_trusted_store();
+
+            // Assert
+            assert!(result.is_ok());
+            assert_eq!(result.unwrap(), 1);
+            assert!(fixture.service.list_trusted().unwrap().is_empty());
+        }
+
+        #[test]
+        fn leaves_live_roots_untouched() {
+            // Arrange
+            let fixture = Fixture::new();
+            let root = fixture.target_dir("project");
+            let config_path = fixture.create_config(&root, "a = 1");
+            fixture.trust_config(&config_path);
+
+            // Act
+            let result = fixture.service.clean_trusted_store();
+
+            // Assert
+            assert!(result.is_ok());
+            assert_eq!(result.unwrap(), 0);
+            assert_eq!(fixture.service.list_trusted().unwrap().len(), 1);
+        }
     }
 }
