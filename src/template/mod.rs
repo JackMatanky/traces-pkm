@@ -29,13 +29,16 @@
 //!   and resolves them to a real path by precedence, and
 //!   [`TemplateWriter`](writer::TemplateWriter), whose one entry point,
 //!   [`TemplateWriter::write`](writer::TemplateWriter::write), applies a
-//!   [`WriteMode`](writer::WriteMode) to rendered content: resolves a target —
+//!   [`WriteMode`](writer::WriteMode) to rendered content: for
+//!   [`WriteMode::DryRun`](writer::WriteMode::DryRun), returns the content
+//!   untouched, never resolving a target at all; for
+//!   [`WriteMode::Commit`](writer::WriteMode::Commit), resolves a target —
 //!   `file.write_to()`/`-o` confined to
 //!   [`Config::root`](crate::config::Config::root), rejecting `..` and absolute
 //!   candidates before they ever reach a write, falling back to the trusted
-//!   config default — and writes to it, or — for
-//!   [`WriteMode::DryRun`](writer::WriteMode::DryRun) — returns the content
-//!   untouched, never resolving a target at all.
+//!   config default — and writes to it under the carried
+//!   [`CommitPolicy`](writer::CommitPolicy) (fail if the target exists, or
+//!   overwrite unconditionally).
 //! - [`service`]: [`TemplateService`], which chains resolve, render, and write
 //!   into the one call `crate::cli::template` makes.
 //!
@@ -53,6 +56,11 @@
 //! [`service::TemplateService::render_to_file`] passes straight through —
 //! defined beside [`writer::TemplateWriter::write`], the one place a
 //! [`writer::WriteMode`] gets applied, rather than in `service`.
+//! ([`writer::CommitPolicy`] — [`writer::WriteMode::Commit`]'s payload
+//! — is separately declared `pub(crate)` too, since a `pub(crate)`
+//! enum can't carry a less-visible variant payload, but it isn't
+//! re-exported here and stays unreachable outside `template` in
+//! practice: `writer` itself is a private `mod`.)
 
 mod engine;
 mod error;

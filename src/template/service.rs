@@ -69,7 +69,7 @@ impl<'a> TemplateService<'a> {
     /// | [`TemplateError::Read`] | the resolved template can't be read |
     /// | [`TemplateError::Render`] | the template's source is invalid |
     /// | [`TemplateError::OutputPathEscapesRoot`] | `file.write_to()` or `-o` names an absolute or `..`-containing path — never returned for [`WriteMode::DryRun`] |
-    /// | [`TemplateError::OutputFileAlreadyExists`] | the output path exists and `mode` is [`WriteMode::CreateNew`] — checked atomically by [`fs::File::create_new`], not a separate `exists()` call, so there's no race between the check and the write; never returned for [`WriteMode::DryRun`] |
+    /// | [`TemplateError::OutputFileAlreadyExists`] | the output path exists and `mode` is [`WriteMode::Commit`] with [`CommitPolicy::CreateNew`] — checked atomically by [`fs::File::create_new`], not a separate `exists()` call, so there's no race between the check and the write; never returned for [`WriteMode::DryRun`] |
     /// | [`TemplateError::Write`] | the output, or its parent directory, can't be written |
     #[inline]
     pub(crate) fn render_to_file(
@@ -135,7 +135,7 @@ impl<'a> TemplateService<'a> {
 mod tests {
     use std::{fs, path::PathBuf};
 
-    use super::*;
+    use super::{super::writer::CommitPolicy, *};
 
     fn write_file(dir: &Path, name: &str, content: &str) -> PathBuf {
         let path = dir.join(name);
@@ -179,7 +179,11 @@ mod tests {
             let service = TemplateService::new(&config);
 
             let outcome = service
-                .render_to_file(Path::new("daily"), None, WriteMode::CreateNew)
+                .render_to_file(
+                    Path::new("daily"),
+                    None,
+                    WriteMode::Commit(CommitPolicy::CreateNew),
+                )
                 .expect("render_to_file");
 
             let contents = fs::read_to_string(written_path(outcome))
@@ -202,7 +206,11 @@ mod tests {
             let service = TemplateService::new(&config);
 
             let outcome = service
-                .render_to_file(Path::new("daily"), None, WriteMode::CreateNew)
+                .render_to_file(
+                    Path::new("daily"),
+                    None,
+                    WriteMode::Commit(CommitPolicy::CreateNew),
+                )
                 .expect("render_to_file");
 
             assert_eq!(
@@ -228,7 +236,7 @@ mod tests {
                 .render_to_file(
                     Path::new("nested/report.md"),
                     None,
-                    WriteMode::CreateNew,
+                    WriteMode::Commit(CommitPolicy::CreateNew),
                 )
                 .expect("render_to_file");
 
@@ -262,7 +270,7 @@ mod tests {
                     .render_to_file(
                         Path::new("notes/daily"),
                         None,
-                        WriteMode::CreateNew
+                        WriteMode::Commit(CommitPolicy::CreateNew)
                     )
                     .expect("render_to_file"),
                 expected
@@ -272,7 +280,7 @@ mod tests {
                     .render_to_file(
                         Path::new("notes/daily.md"),
                         None,
-                        WriteMode::Overwrite
+                        WriteMode::Commit(CommitPolicy::Overwrite)
                     )
                     .expect("render_to_file"),
                 expected
@@ -294,7 +302,7 @@ mod tests {
                 .render_to_file(
                     Path::new("missing"),
                     None,
-                    WriteMode::CreateNew,
+                    WriteMode::Commit(CommitPolicy::CreateNew),
                 )
                 .expect_err("missing template fails");
 
@@ -320,7 +328,11 @@ mod tests {
             let service = TemplateService::new(&config);
 
             let error = service
-                .render_to_file(Path::new("daily"), None, WriteMode::CreateNew)
+                .render_to_file(
+                    Path::new("daily"),
+                    None,
+                    WriteMode::Commit(CommitPolicy::CreateNew),
+                )
                 .expect_err("unreadable template file fails");
 
             assert!(matches!(error, TemplateError::Read { .. }));
@@ -340,7 +352,11 @@ mod tests {
             let service = TemplateService::new(&config);
 
             let error = service
-                .render_to_file(Path::new("broken"), None, WriteMode::CreateNew)
+                .render_to_file(
+                    Path::new("broken"),
+                    None,
+                    WriteMode::Commit(CommitPolicy::CreateNew),
+                )
                 .expect_err("invalid syntax fails to render");
 
             assert!(matches!(error, TemplateError::Render { .. }));
@@ -366,7 +382,11 @@ mod tests {
             let service = TemplateService::new(&config);
 
             let error = service
-                .render_to_file(Path::new("daily"), None, WriteMode::CreateNew)
+                .render_to_file(
+                    Path::new("daily"),
+                    None,
+                    WriteMode::Commit(CommitPolicy::CreateNew),
+                )
                 .expect_err("output directory cannot be created");
 
             assert!(matches!(error, TemplateError::Write { .. }));
@@ -387,7 +407,11 @@ mod tests {
             let service = TemplateService::new(&config);
 
             let outcome = service
-                .render_to_file(Path::new("daily"), None, WriteMode::CreateNew)
+                .render_to_file(
+                    Path::new("daily"),
+                    None,
+                    WriteMode::Commit(CommitPolicy::CreateNew),
+                )
                 .expect("render_to_file");
 
             assert_eq!(
@@ -415,7 +439,7 @@ mod tests {
                 .render_to_file(
                     Path::new("daily"),
                     Some(override_path),
-                    WriteMode::CreateNew,
+                    WriteMode::Commit(CommitPolicy::CreateNew),
                 )
                 .expect("render_to_file");
 
@@ -445,7 +469,7 @@ mod tests {
                 .render_to_file(
                     Path::new("daily"),
                     Some(&outside),
-                    WriteMode::CreateNew,
+                    WriteMode::Commit(CommitPolicy::CreateNew),
                 )
                 .expect_err("absolute -o is rejected");
 
@@ -473,7 +497,7 @@ mod tests {
                 .render_to_file(
                     Path::new("daily"),
                     Some(traversal),
-                    WriteMode::CreateNew,
+                    WriteMode::Commit(CommitPolicy::CreateNew),
                 )
                 .expect_err("parent traversal -o is rejected");
 
@@ -501,7 +525,11 @@ mod tests {
             let service = TemplateService::new(&config);
 
             let error = service
-                .render_to_file(Path::new("daily"), None, WriteMode::CreateNew)
+                .render_to_file(
+                    Path::new("daily"),
+                    None,
+                    WriteMode::Commit(CommitPolicy::CreateNew),
+                )
                 .expect_err("parent traversal write_to is rejected");
 
             assert!(matches!(
@@ -532,7 +560,7 @@ mod tests {
                 .render_to_file(
                     Path::new("daily"),
                     Some(cli_override),
-                    WriteMode::CreateNew,
+                    WriteMode::Commit(CommitPolicy::CreateNew),
                 )
                 .expect("render_to_file");
 
@@ -560,7 +588,11 @@ mod tests {
             let service = TemplateService::new(&config);
 
             let outcome = service
-                .render_to_file(Path::new("daily"), None, WriteMode::CreateNew)
+                .render_to_file(
+                    Path::new("daily"),
+                    None,
+                    WriteMode::Commit(CommitPolicy::CreateNew),
+                )
                 .expect("render_to_file");
 
             assert_eq!(
@@ -585,7 +617,11 @@ mod tests {
             let service = TemplateService::new(&config);
 
             let error = service
-                .render_to_file(Path::new("daily"), None, WriteMode::CreateNew)
+                .render_to_file(
+                    Path::new("daily"),
+                    None,
+                    WriteMode::Commit(CommitPolicy::CreateNew),
+                )
                 .expect_err("existing output without force fails");
 
             assert!(matches!(
@@ -614,7 +650,11 @@ mod tests {
             let service = TemplateService::new(&config);
 
             let outcome = service
-                .render_to_file(Path::new("daily"), None, WriteMode::Overwrite)
+                .render_to_file(
+                    Path::new("daily"),
+                    None,
+                    WriteMode::Commit(CommitPolicy::Overwrite),
+                )
                 .expect("force overwrites");
 
             assert_eq!(outcome, WriteOutcome::Written(existing.clone()));
