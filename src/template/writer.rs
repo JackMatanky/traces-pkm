@@ -1,3 +1,16 @@
+//! [`TemplateWriter`]: the collaborator that applies one [`WriteMode`]
+//! to rendered content — [`TemplateWriter::write`] is the one entry
+//! point, and the only thing [`super::service::TemplateService`] calls
+//! on this module: for [`WriteMode::DryRun`] it hands `content`
+//! straight back as [`WriteOutcome::Previewed`] without building a
+//! [`TemplateWriteTarget`] at all; for
+//! [`WriteMode::CreateNew`]/[`WriteMode::Overwrite`] it resolves a
+//! [`TemplateWriteTarget`] to a real path and writes to it, returning
+//! [`WriteOutcome::Written`]. Deliberately a separate collaborator from
+//! [`TemplateWriteTarget`]: candidate-gathering and precedence are a
+//! pure decision over values, with no I/O of their own — `write` is
+//! the only thing in this module that touches the filesystem.
+//!
 //! [`TemplateWriteTarget`]: gathers a render's output-destination
 //! candidates — the `-o` flag (`requested`) and whatever
 //! `file.write_to()` captured (`declared`) — and, on
@@ -19,18 +32,6 @@
 //! though it resolves outside it. The only reliable check is rejecting
 //! `..` (and absolute paths) in `candidate`'s own components before
 //! joining, which is what [`TemplateWriteTarget::confine`] does.
-//!
-//! [`TemplateWriter`]: the collaborator that applies one [`WriteMode`]
-//! to rendered content — [`TemplateWriter::write`] is the one entry
-//! point: for [`WriteMode::DryRun`] it hands `content` straight back as
-//! [`WriteOutcome::Previewed`] without building a
-//! [`TemplateWriteTarget`] at all; for
-//! [`WriteMode::CreateNew`]/[`WriteMode::Overwrite`] it resolves a
-//! [`TemplateWriteTarget`] to a real path and writes to it, returning
-//! [`WriteOutcome::Written`]. Deliberately a separate collaborator from
-//! [`TemplateWriteTarget`]: candidate-gathering and precedence are a
-//! pure decision over values, with no I/O of their own — `write` is
-//! the only thing in this module that touches the filesystem.
 
 use std::{
     fs,
@@ -39,6 +40,199 @@ use std::{
 };
 
 use super::{engine::RenderOutput, error::TemplateError};
+
+/// The collaborator that applies one [`WriteMode`] to rendered content:
+/// [`Self::write`] is the one entry point, and the only thing
+/// [`super::service::TemplateService::render_to_file`] calls on it.
+/// Holds `root` — [`Config::root`](crate::config::Config::root) — since
+/// that's all target selection needs; the config-derived default itself
+/// is computed by the caller and handed in as a closure (see
+/// [`Self::write`]).
+pub(super) struct TemplateWriter<'a> {
+    root: &'a Path,
+}
+
+impl<'a> TemplateWriter<'a> {
+    /// Builds a writer confined to `root`.
+    #[inline]
+    #[must_use]
+    pub(super) fn new(root: &'a Path) -> Self {
+        Self {
+            root,
+        }
+    }
+
+    /// Applies `mode` to `rendered`: for [`WriteMode::DryRun`], returns
+    /// [`RenderOutput::content`] as [`WriteOutcome::Previewed`] without
+    /// building a [`TemplateWriteTarget`] or touching the filesystem at
+    /// all — `output`, `rendered.write_to`, and `default` are never
+    /// looked at, so a dry-run's `-o`/`file.write_to()` value is never
+    /// confined. Otherwise gathers a [`TemplateWriteTarget`], resolves
+    /// it to a real path ([`TemplateWriteTarget::target_path`]), and
+    /// writes the content to it ([`Self::commit`]), returning
+    /// [`WriteOutcome::Written`]. Takes `rendered: RenderOutput` rather
+    /// than separate `content`/`write_to` params — the two always
+    /// travel together (one render's product) and bundling them keeps
+    /// this under `too-many-arguments-threshold`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TemplateError::OutputPathEscapesRoot`] when `output` or
+    /// `rendered.write_to` names a path outside `root` — never for
+    /// [`WriteMode::DryRun`]. Returns [`TemplateError::Write`] if the
+    /// output, or its parent directory, can't be written. Returns
+    /// [`TemplateError::OutputFileAlreadyExists`] if the target already
+    /// exists and `mode` is [`WriteMode::CreateNew`].
+    pub(super) fn write(
+        &self,
+        output: Option<&Path>,
+        rendered: RenderOutput,
+        mode: WriteMode,
+        default: impl FnOnce() -> PathBuf,
+    ) -> Result<WriteOutcome, TemplateError> {
+        if mode == WriteMode::DryRun {
+            return Ok(WriteOutcome::Previewed(rendered.content));
+        }
+        let path = TemplateWriteTarget::new()
+            .with_requested(output)
+            .with_declared(rendered.write_to)
+            .target_path(self.root, default)?;
+        Self::commit(&path, &rendered.content, mode)?;
+        Ok(WriteOutcome::Written(path))
+    }
+
+    /// Writes `content` to `path`, creating its parent directory tree
+    /// first if it doesn't exist, then creating the file per `mode`
+    /// ([`WriteMode::create_file`]). Only ever called by [`Self::write`]
+    /// for [`WriteMode::CreateNew`]/[`WriteMode::Overwrite`] —
+    /// [`WriteMode::DryRun`] never reaches here.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TemplateError::Write`] if the parent directory or the
+    /// file itself can't be created or written, or
+    /// [`TemplateError::OutputFileAlreadyExists`] if `path` already
+    /// exists and `mode` is [`WriteMode::CreateNew`].
+    fn commit(
+        path: &Path,
+        content: &str,
+        mode: WriteMode,
+    ) -> Result<(), TemplateError> {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).map_err(|source| {
+                TemplateError::Write {
+                    path: path.to_path_buf(),
+                    source,
+                }
+            })?;
+        }
+        let Some(mut file) = mode.create_file(path)? else {
+            return Ok(());
+        };
+        file.write_all(content.as_bytes()).map_err(|source| {
+            TemplateError::Write {
+                path: path.to_path_buf(),
+                source,
+            }
+        })
+    }
+}
+
+/// How [`TemplateWriter::commit`] should treat a target — the domain
+/// meaning behind `--force`/`--dry-run`, spelled out as a type instead
+/// of bare `bool`s at the call site. `pub(crate)`, unlike everything
+/// else in this module: `--force` and `--dry-run` are mutually
+/// exclusive in effect (dry-run has no on-disk write to force), so
+/// [`TemplateService::render_to_file`](super::service::TemplateService::render_to_file)
+/// takes one `WriteMode` instead of two independent `bool`s — which
+/// means the CLI, where those flags are parsed, needs to build one.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub(crate) enum WriteMode {
+    /// Fail with [`TemplateError::OutputFileAlreadyExists`] if the
+    /// target already exists. The default, safe mode.
+    CreateNew,
+    /// Truncate and overwrite the target unconditionally — the
+    /// `--force` mode.
+    Overwrite,
+    /// Render only — the `--dry-run` mode. [`Self::create_file`]
+    /// returns `Ok(None)` without touching the filesystem.
+    /// [`super::service::TemplateService::render_to_file`] checks for
+    /// this variant before ever computing an output path, so
+    /// [`TemplateWriter::commit`] never actually receives it in
+    /// practice; the arm below exists so [`Self::create_file`] stays a
+    /// total function over every [`WriteMode`], not a partial one that
+    /// happens to compile.
+    DryRun,
+}
+
+impl WriteMode {
+    /// Converts the CLI's `--dry-run` and `--force` flags into the one
+    /// mode that drives the rest of the pipeline. `dry_run` wins: when
+    /// set, `force` is never consulted, since the two flags don't
+    /// combine into a fourth state — there's nothing to force in
+    /// dry-run mode. The precedence rule lives here, not at the CLI
+    /// call site, so the two flags' meaning stays defined in one place.
+    #[inline]
+    #[must_use]
+    pub(crate) fn from_flags(dry_run: bool, force: bool) -> Self {
+        if dry_run {
+            Self::DryRun
+        } else if force {
+            Self::Overwrite
+        } else {
+            Self::CreateNew
+        }
+    }
+
+    /// Creates `path` per this mode: [`Self::CreateNew`] uses
+    /// [`fs::File::create_new`] (`O_CREAT | O_EXCL`), which fails
+    /// atomically with [`io::ErrorKind::AlreadyExists`] if `path`
+    /// already exists — no separate `exists()` check first, since that
+    /// would leave a race between the check and this write.
+    /// [`Self::Overwrite`] uses [`fs::File::create`], truncating
+    /// unconditionally. [`Self::DryRun`] never touches the filesystem
+    /// and returns `Ok(None)`. Maps `AlreadyExists` under
+    /// [`Self::CreateNew`] to [`TemplateError::OutputFileAlreadyExists`];
+    /// any other I/O failure to [`TemplateError::Write`].
+    fn create_file(
+        self,
+        path: &Path,
+    ) -> Result<Option<fs::File>, TemplateError> {
+        let file = match self {
+            Self::DryRun => return Ok(None),
+            Self::Overwrite => fs::File::create(path),
+            Self::CreateNew => fs::File::create_new(path),
+        };
+        file.map(Some).map_err(|source| {
+            if self == Self::CreateNew
+                && source.kind() == io::ErrorKind::AlreadyExists
+            {
+                TemplateError::OutputFileAlreadyExists {
+                    path: path.to_path_buf(),
+                }
+            } else {
+                TemplateError::Write {
+                    path: path.to_path_buf(),
+                    source,
+                }
+            }
+        })
+    }
+}
+
+/// What [`TemplateWriter::write`] did with `content`: wrote it to disk,
+/// or — for [`WriteMode::DryRun`] — handed it straight back unwritten.
+/// Printing a dry-run's content to stdout is the CLI adapter's job
+/// (`crate::cli::template`), not this collaborator's — this only
+/// carries the content back.
+#[derive(Debug, Eq, PartialEq)]
+pub(crate) enum WriteOutcome {
+    /// Written to disk at this path.
+    Written(PathBuf),
+    /// [`WriteMode::DryRun`]: the content, for the caller to print —
+    /// nothing written to disk.
+    Previewed(String),
+}
 
 /// Where a render's output goes. Gathers the `-o` candidate
 /// (`requested`) and whatever `file.write_to()` captured (`declared`),
@@ -140,199 +334,6 @@ impl<'a> TemplateWriteTarget<'a> {
         } else {
             root.join(candidate)
         }
-    }
-}
-
-/// How [`TemplateWriter::commit`] should treat a target — the domain
-/// meaning behind `--force`/`--dry-run`, spelled out as a type instead
-/// of bare `bool`s at the call site. `pub(crate)`, unlike everything
-/// else in this module: `--force` and `--dry-run` are mutually
-/// exclusive in effect (dry-run has no on-disk write to force), so
-/// [`TemplateService::render_to_file`](super::service::TemplateService::render_to_file)
-/// takes one `WriteMode` instead of two independent `bool`s — which
-/// means the CLI, where those flags are parsed, needs to build one.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum WriteMode {
-    /// Fail with [`TemplateError::OutputFileAlreadyExists`] if the
-    /// target already exists. The default, safe mode.
-    CreateNew,
-    /// Truncate and overwrite the target unconditionally — the
-    /// `--force` mode.
-    Overwrite,
-    /// Render only — the `--dry-run` mode. [`Self::create_file`]
-    /// returns `Ok(None)` without touching the filesystem.
-    /// [`super::service::TemplateService::render_to_file`] checks for
-    /// this variant before ever computing an output path, so
-    /// [`TemplateWriter::commit`] never actually receives it in
-    /// practice; the arm below exists so [`Self::create_file`] stays a
-    /// total function over every [`WriteMode`], not a partial one that
-    /// happens to compile.
-    DryRun,
-}
-
-impl WriteMode {
-    /// Converts the CLI's `--dry-run` and `--force` flags into the one
-    /// mode that drives the rest of the pipeline. `dry_run` wins: when
-    /// set, `force` is never consulted, since the two flags don't
-    /// combine into a fourth state — there's nothing to force in
-    /// dry-run mode. The precedence rule lives here, not at the CLI
-    /// call site, so the two flags' meaning stays defined in one place.
-    #[inline]
-    #[must_use]
-    pub(crate) fn from_flags(dry_run: bool, force: bool) -> Self {
-        if dry_run {
-            Self::DryRun
-        } else if force {
-            Self::Overwrite
-        } else {
-            Self::CreateNew
-        }
-    }
-
-    /// Creates `path` per this mode: [`Self::CreateNew`] uses
-    /// [`fs::File::create_new`] (`O_CREAT | O_EXCL`), which fails
-    /// atomically with [`io::ErrorKind::AlreadyExists`] if `path`
-    /// already exists — no separate `exists()` check first, since that
-    /// would leave a race between the check and this write.
-    /// [`Self::Overwrite`] uses [`fs::File::create`], truncating
-    /// unconditionally. [`Self::DryRun`] never touches the filesystem
-    /// and returns `Ok(None)`. Maps `AlreadyExists` under
-    /// [`Self::CreateNew`] to [`TemplateError::OutputFileAlreadyExists`];
-    /// any other I/O failure to [`TemplateError::Write`].
-    fn create_file(
-        self,
-        path: &Path,
-    ) -> Result<Option<fs::File>, TemplateError> {
-        let file = match self {
-            Self::DryRun => return Ok(None),
-            Self::Overwrite => fs::File::create(path),
-            Self::CreateNew => fs::File::create_new(path),
-        };
-        file.map(Some).map_err(|source| {
-            if self == Self::CreateNew
-                && source.kind() == io::ErrorKind::AlreadyExists
-            {
-                TemplateError::OutputFileAlreadyExists {
-                    path: path.to_path_buf(),
-                }
-            } else {
-                TemplateError::Write {
-                    path: path.to_path_buf(),
-                    source,
-                }
-            }
-        })
-    }
-}
-
-/// What [`TemplateWriter::write`] did with `content`: wrote it to disk,
-/// or — for [`WriteMode::DryRun`] — handed it straight back unwritten.
-/// Printing a dry-run's content to stdout is the CLI adapter's job
-/// (`crate::cli::template`), not this collaborator's — this only
-/// carries the content back.
-#[derive(Debug, Eq, PartialEq)]
-pub(crate) enum WriteOutcome {
-    /// Written to disk at this path.
-    Written(PathBuf),
-    /// [`WriteMode::DryRun`]: the content, for the caller to print —
-    /// nothing written to disk.
-    Previewed(String),
-}
-
-/// The collaborator that applies one [`WriteMode`] to rendered content:
-/// [`Self::write`] is the one entry point, and the only thing
-/// [`super::service::TemplateService::render_to_file`] calls on it.
-/// Holds `root` — [`Config::root`](crate::config::Config::root) — since
-/// that's all target selection needs; the config-derived default itself
-/// is computed by the caller and handed in as a closure (see
-/// [`Self::write`]).
-pub(super) struct TemplateWriter<'a> {
-    root: &'a Path,
-}
-
-impl<'a> TemplateWriter<'a> {
-    /// Builds a writer confined to `root`.
-    #[inline]
-    #[must_use]
-    pub(super) fn new(root: &'a Path) -> Self {
-        Self {
-            root,
-        }
-    }
-
-    /// Applies `mode` to `rendered`: for [`WriteMode::DryRun`], returns
-    /// [`RenderOutput::content`] as [`WriteOutcome::Previewed`] without
-    /// building a [`TemplateWriteTarget`] or touching the filesystem at
-    /// all — `output`, `rendered.write_to`, and `default` are never
-    /// looked at, so a dry-run's `-o`/`file.write_to()` value is never
-    /// confined. Otherwise gathers a [`TemplateWriteTarget`], resolves
-    /// it to a real path ([`TemplateWriteTarget::target_path`]), and
-    /// writes the content to it ([`Self::commit`]), returning
-    /// [`WriteOutcome::Written`]. Takes `rendered: RenderOutput` rather
-    /// than separate `content`/`write_to` params — the two always
-    /// travel together (one render's product) and bundling them keeps
-    /// this under `too-many-arguments-threshold`.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`TemplateError::OutputPathEscapesRoot`] when `output` or
-    /// `rendered.write_to` names a path outside `root` — never for
-    /// [`WriteMode::DryRun`]. Returns [`TemplateError::Write`] if the
-    /// output, or its parent directory, can't be written. Returns
-    /// [`TemplateError::OutputFileAlreadyExists`] if the target already
-    /// exists and `mode` is [`WriteMode::CreateNew`].
-    pub(super) fn write(
-        &self,
-        output: Option<&Path>,
-        rendered: RenderOutput,
-        mode: WriteMode,
-        default: impl FnOnce() -> PathBuf,
-    ) -> Result<WriteOutcome, TemplateError> {
-        if mode == WriteMode::DryRun {
-            return Ok(WriteOutcome::Previewed(rendered.content));
-        }
-        let path = TemplateWriteTarget::new()
-            .with_requested(output)
-            .with_declared(rendered.write_to)
-            .target_path(self.root, default)?;
-        Self::commit(&path, &rendered.content, mode)?;
-        Ok(WriteOutcome::Written(path))
-    }
-
-    /// Writes `content` to `path`, creating its parent directory tree
-    /// first if it doesn't exist, then creating the file per `mode`
-    /// ([`WriteMode::create_file`]). Only ever called by [`Self::write`]
-    /// for [`WriteMode::CreateNew`]/[`WriteMode::Overwrite`] —
-    /// [`WriteMode::DryRun`] never reaches here.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`TemplateError::Write`] if the parent directory or the
-    /// file itself can't be created or written, or
-    /// [`TemplateError::OutputFileAlreadyExists`] if `path` already
-    /// exists and `mode` is [`WriteMode::CreateNew`].
-    fn commit(
-        path: &Path,
-        content: &str,
-        mode: WriteMode,
-    ) -> Result<(), TemplateError> {
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).map_err(|source| {
-                TemplateError::Write {
-                    path: path.to_path_buf(),
-                    source,
-                }
-            })?;
-        }
-        let Some(mut file) = mode.create_file(path)? else {
-            return Ok(());
-        };
-        file.write_all(content.as_bytes()).map_err(|source| {
-            TemplateError::Write {
-                path: path.to_path_buf(),
-                source,
-            }
-        })
     }
 }
 
