@@ -49,7 +49,9 @@ impl Parsed {
                 path: path.to_path_buf(),
                 source: Box::new(source),
             })?;
-        Ok(Self { raw })
+        Ok(Self {
+            raw,
+        })
     }
 }
 /// A local project config file.
@@ -396,11 +398,14 @@ mod tests {
                 "/project/.traces/config.toml",
             ))
             .unwrap();
-            
+
             let tracked =
                 LocalConfigFile::<Tracked>::try_from((file, &state)).unwrap();
-            
-            assert_eq!(tracked.path(), Path::new("/project/.traces/config.toml"));
+
+            assert_eq!(
+                tracked.path(),
+                Path::new("/project/.traces/config.toml")
+            );
         }
 
         #[test]
@@ -410,24 +415,27 @@ mod tests {
                 temp.path().join("tracked"),
                 temp.path().join("trust"),
             );
-            
+
             // Create a real file so canonicalization succeeds
             let project_dir = temp.path().join("project");
             let config_path = project_dir.join(".traces/config.toml");
             std::fs::create_dir_all(config_path.parent().unwrap()).unwrap();
             std::fs::write(&config_path, "").unwrap();
-            
-            let file = LocalConfigFile::<Discovered>::try_new(config_path.clone()).unwrap();
-            
+
+            let file =
+                LocalConfigFile::<Discovered>::try_new(config_path.clone())
+                    .unwrap();
+
             // Act
-            let _ = LocalConfigFile::<Tracked>::try_from((file, &state)).unwrap();
-            
+            let _ =
+                LocalConfigFile::<Tracked>::try_from((file, &state)).unwrap();
+
             // Assert
             let canonical_path = std::fs::canonicalize(&config_path).unwrap();
-            let expected_marker = temp.path()
-                .join("tracked")
-                .join(crate::hash::Blake3PathHash::new(&canonical_path).as_str());
-                
+            let expected_marker = temp.path().join("tracked").join(
+                crate::hash::Blake3PathHash::new(&canonical_path).as_str(),
+            );
+
             assert!(expected_marker.exists());
         }
     }
@@ -452,7 +460,8 @@ mod tests {
                 LocalConfigFile::<Tracked>::try_from((file, &state)).unwrap();
             state.grant_trust(&TrustSubject::tracked(&tracked)).unwrap();
 
-            let result = LocalConfigFile::<Trusted>::try_from((tracked, &state));
+            let result =
+                LocalConfigFile::<Trusted>::try_from((tracked, &state));
             assert!(result.is_ok());
         }
 
@@ -473,7 +482,8 @@ mod tests {
             let tracked =
                 LocalConfigFile::<Tracked>::try_from((file, &state)).unwrap();
 
-            let result = LocalConfigFile::<Trusted>::try_from((tracked, &state));
+            let result =
+                LocalConfigFile::<Trusted>::try_from((tracked, &state));
             assert!(matches!(
                 result,
                 Err(ConfigFileError::Trust(
@@ -498,12 +508,12 @@ mod tests {
             let tracked =
                 LocalConfigFile::<Tracked>::try_from((file, &state)).unwrap();
 
-            // Grant trust to the WORKSPACE, which creates no baseline config hash.
-            state
-                .grant_trust(&TrustSubject::root(root.as_path()))
-                .unwrap();
+            // Grant trust to the WORKSPACE, which creates no baseline config
+            // hash.
+            state.grant_trust(&TrustSubject::root(root.as_path())).unwrap();
 
-            let result = LocalConfigFile::<Trusted>::try_from((tracked, &state));
+            let result =
+                LocalConfigFile::<Trusted>::try_from((tracked, &state));
             assert!(matches!(
                 result,
                 Err(ConfigFileError::Trust(
@@ -534,7 +544,8 @@ mod tests {
             // Modify file after trust
             std::fs::write(&path, "new").unwrap();
 
-            let result = LocalConfigFile::<Trusted>::try_from((tracked, &state));
+            let result =
+                LocalConfigFile::<Trusted>::try_from((tracked, &state));
             assert!(matches!(
                 result,
                 Err(ConfigFileError::Trust(
@@ -555,7 +566,8 @@ mod tests {
                 temp.path().join("tracked"),
                 temp.path().join("trust"),
             );
-            let file = LocalConfigFile::<Discovered>::try_new(path.clone()).unwrap();
+            let file =
+                LocalConfigFile::<Discovered>::try_new(path.clone()).unwrap();
             let tracked =
                 LocalConfigFile::<Tracked>::try_from((file, &state)).unwrap();
 
@@ -565,8 +577,10 @@ mod tests {
             // Delete the config file so hashing it fails with an I/O error.
             std::fs::remove_file(&path).unwrap();
 
-            // Checking trust will now try to hash the deleted config file, causing an I/O error.
-            let result = LocalConfigFile::<Trusted>::try_from((tracked, &state));
+            // Checking trust will now try to hash the deleted config file,
+            // causing an I/O error.
+            let result =
+                LocalConfigFile::<Trusted>::try_from((tracked, &state));
             assert!(matches!(
                 result,
                 Err(ConfigFileError::Trust(
@@ -586,7 +600,7 @@ mod tests {
             std::fs::write(&path, "[templates]\noutput_dir = \"out\"").unwrap();
 
             let parsed = Parsed::read(&path).unwrap();
-            
+
             assert_eq!(
                 parsed.raw.templates.output_dir.as_deref(),
                 Some(Path::new("out"))
@@ -600,11 +614,8 @@ mod tests {
             std::fs::write(&path, "[templates\nbad = ").unwrap();
 
             let result = Parsed::read(&path);
-            
-            assert!(matches!(
-                result,
-                Err(ConfigFileParseError::Read { .. })
-            ));
+
+            assert!(matches!(result, Err(ConfigFileParseError::Read { .. })));
         }
 
         #[test]
@@ -613,11 +624,8 @@ mod tests {
             let path = temp.path().join("missing.toml");
 
             let result = Parsed::read(&path);
-            
-            assert!(matches!(
-                result,
-                Err(ConfigFileParseError::Read { .. })
-            ));
+
+            assert!(matches!(result, Err(ConfigFileParseError::Read { .. })));
         }
     }
 
@@ -633,7 +641,8 @@ mod tests {
             std::fs::write(&path, "[templates]\ndirectory = \"tmpl\"").unwrap();
 
             let parsed = Parsed::read(&path).unwrap();
-            let file = LocalConfigFile::<Parsed>::new(root.clone(), path, parsed);
+            let file =
+                LocalConfigFile::<Parsed>::new(root.clone(), path, parsed);
 
             assert_eq!(file.resolved_template_dir(), Some(root.join("tmpl")));
         }
@@ -647,7 +656,8 @@ mod tests {
             std::fs::write(&path, "").unwrap(); // empty config
 
             let parsed = Parsed::read(&path).unwrap();
-            let file = LocalConfigFile::<Parsed>::new(root.clone(), path, parsed);
+            let file =
+                LocalConfigFile::<Parsed>::new(root.clone(), path, parsed);
 
             assert_eq!(file.resolved_template_dir(), None);
         }

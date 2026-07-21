@@ -216,8 +216,11 @@ impl ConfigBuilder<Merged> {
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, path::{Path, PathBuf}};
-    
+    use std::{
+        fs,
+        path::{Path, PathBuf},
+    };
+
     use super::*;
     use crate::config::{
         discovery::{DiscoveryAnchor, DiscoveryOutcome},
@@ -236,7 +239,8 @@ mod tests {
             Self {
                 temp: tempfile::tempdir().expect("create temp dir"),
                 trust_store: tempfile::tempdir().expect("create trust store"),
-                tracked_store: tempfile::tempdir().expect("create tracked store"),
+                tracked_store: tempfile::tempdir()
+                    .expect("create tracked store"),
             }
         }
 
@@ -259,22 +263,35 @@ mod tests {
             let root = self.temp.path().join(root_subpath);
             let path = root.join(".traces/config.toml");
             if !path.exists() {
-                self.write_config(&format!("{root_subpath}/.traces/config.toml"), "[templates]");
+                self.write_config(
+                    &format!("{root_subpath}/.traces/config.toml"),
+                    "[templates]",
+                );
             }
-            LocalConfigFile::<FileDiscovered>::try_new(path).expect("valid local config")
+            LocalConfigFile::<FileDiscovered>::try_new(path)
+                .expect("valid local config")
         }
 
-        fn global(&self, root_subpath: &str) -> GlobalConfigFile<FileDiscovered> {
+        fn global(
+            &self,
+            root_subpath: &str,
+        ) -> GlobalConfigFile<FileDiscovered> {
             let root = self.temp.path().join(root_subpath);
             let path = root.join("config.toml");
             if !path.exists() {
-                self.write_config(&format!("{root_subpath}/config.toml"), "[templates]");
+                self.write_config(
+                    &format!("{root_subpath}/config.toml"),
+                    "[templates]",
+                );
             }
-            GlobalConfigFile::<FileDiscovered>::try_new(path).expect("valid global config")
+            GlobalConfigFile::<FileDiscovered>::try_new(path)
+                .expect("valid global config")
         }
 
         fn trust(&self, local: &LocalConfigFile<FileDiscovered>) {
-            self.state().grant_trust(&TrustSubject::discovered(local)).expect("trust local");
+            self.state()
+                .grant_trust(&TrustSubject::discovered(local))
+                .expect("trust local");
         }
     }
 
@@ -292,7 +309,8 @@ mod tests {
                 Vec::new(),
             );
 
-            let error = ConfigBuilderInput::try_from(outcome).expect_err("wrong kind");
+            let error =
+                ConfigBuilderInput::try_from(outcome).expect_err("wrong kind");
 
             assert!(matches!(
                 error,
@@ -313,9 +331,13 @@ mod tests {
                 Vec::new(),
             );
 
-            let error = ConfigBuilderInput::try_from(outcome).expect_err("missing locals");
+            let error = ConfigBuilderInput::try_from(outcome)
+                .expect_err("missing locals");
 
-            assert!(matches!(error, ConfigBuilderInputError::FullDiscoveryWithoutLocal));
+            assert!(matches!(
+                error,
+                ConfigBuilderInputError::FullDiscoveryWithoutLocal
+            ));
         }
 
         #[test]
@@ -330,7 +352,8 @@ mod tests {
                 Vec::new(),
             );
 
-            let error = ConfigBuilderInput::try_from(outcome).expect_err("missing anchor local");
+            let error = ConfigBuilderInput::try_from(outcome)
+                .expect_err("missing anchor local");
 
             assert!(matches!(
                 error,
@@ -345,7 +368,7 @@ mod tests {
             let parent = fixture.local("parent");
             let child = fixture.local("parent/child");
             let anchor = fixture.temp.path().join("parent/child/notes");
-            
+
             let outcome = DiscoveryOutcome::with_kind(
                 DiscoveryScope::Full,
                 DiscoveryAnchor::Directory(anchor),
@@ -353,7 +376,8 @@ mod tests {
                 Vec::new(),
             );
 
-            let input = ConfigBuilderInput::try_from(outcome).expect("select builder input");
+            let input = ConfigBuilderInput::try_from(outcome)
+                .expect("select builder input");
 
             assert_eq!(input.local.root(), child.root());
         }
@@ -364,7 +388,7 @@ mod tests {
             let local = fixture.local("project");
             let global1 = fixture.global("global1");
             let global2 = fixture.global("global2");
-            
+
             let outcome = DiscoveryOutcome::with_kind(
                 DiscoveryScope::Full,
                 DiscoveryAnchor::Directory(local.root().to_path_buf()),
@@ -372,7 +396,8 @@ mod tests {
                 vec![global1.clone(), global2],
             );
 
-            let input = ConfigBuilderInput::try_from(outcome).expect("select builder input");
+            let input = ConfigBuilderInput::try_from(outcome)
+                .expect("select builder input");
 
             let global = input.global.expect("expected global");
             assert_eq!(global.path(), global1.path());
@@ -388,7 +413,10 @@ mod tests {
             let local = fixture.local("project");
             let state = fixture.state();
 
-            let builder = ConfigBuilder::new(ConfigBuilderInput { local: local.clone(), global: None });
+            let builder = ConfigBuilder::new(ConfigBuilderInput {
+                local: local.clone(),
+                global: None,
+            });
             let result = builder.store_locals(&state);
 
             assert!(matches!(
@@ -403,23 +431,34 @@ mod tests {
     mod merge {
         use super::*;
 
-        fn build_ready(fixture: &Fixture, local: LocalConfigFile<FileDiscovered>, global: Option<GlobalConfigFile<FileDiscovered>>) -> ConfigBuilder<LocalStored> {
+        fn build_ready(
+            fixture: &Fixture,
+            local: LocalConfigFile<FileDiscovered>,
+            global: Option<GlobalConfigFile<FileDiscovered>>,
+        ) -> ConfigBuilder<LocalStored> {
             fixture.trust(&local);
             let state = fixture.state();
-            ConfigBuilder::new(ConfigBuilderInput { local, global })
-                .store_locals(&state)
-                .expect("store_locals")
+            ConfigBuilder::new(ConfigBuilderInput {
+                local,
+                global,
+            })
+            .store_locals(&state)
+            .expect("store_locals")
         }
 
         #[test]
         fn merges_local_only_when_global_missing() {
             let fixture = Fixture::new();
-            let local_path = fixture.write_config("project/.traces/config.toml", "[templates]\noutput_dir = \"local_out\"");
-            let local = LocalConfigFile::<FileDiscovered>::try_new(local_path).unwrap();
-            
+            let local_path = fixture.write_config(
+                "project/.traces/config.toml",
+                "[templates]\noutput_dir = \"local_out\"",
+            );
+            let local =
+                LocalConfigFile::<FileDiscovered>::try_new(local_path).unwrap();
+
             let builder = build_ready(&fixture, local, None);
             let config = builder.merge().expect("merge").build();
-            
+
             assert_eq!(config.output_dir(), Path::new("local_out"));
             assert_eq!(config.global_template_dir(), None);
         }
@@ -427,71 +466,115 @@ mod tests {
         #[test]
         fn preserves_distinct_template_dirs() {
             let fixture = Fixture::new();
-            let local_path = fixture.write_config("project/.traces/config.toml", "[templates]\ndirectory = \".traces/templates\"");
-            let global_path = fixture.write_config("global/config.toml", "[templates]\ndirectory = \"global_tmpl\"");
-            
-            let local = LocalConfigFile::<FileDiscovered>::try_new(local_path).unwrap();
-            let global = GlobalConfigFile::<FileDiscovered>::try_new(global_path).unwrap();
-            
-            let builder = build_ready(&fixture, local.clone(), Some(global.clone()));
+            let local_path = fixture.write_config(
+                "project/.traces/config.toml",
+                "[templates]\ndirectory = \".traces/templates\"",
+            );
+            let global_path = fixture.write_config(
+                "global/config.toml",
+                "[templates]\ndirectory = \"global_tmpl\"",
+            );
+
+            let local =
+                LocalConfigFile::<FileDiscovered>::try_new(local_path).unwrap();
+            let global =
+                GlobalConfigFile::<FileDiscovered>::try_new(global_path)
+                    .unwrap();
+
+            let builder =
+                build_ready(&fixture, local.clone(), Some(global.clone()));
             let config = builder.merge().expect("merge").build();
-            
-            assert_eq!(config.local_template_dir(), Some(local.root().join(".traces/templates").as_path()));
-            assert_eq!(config.global_template_dir(), Some(global.root().join("global_tmpl").as_path()));
+
+            assert_eq!(
+                config.local_template_dir(),
+                Some(local.root().join(".traces/templates").as_path())
+            );
+            assert_eq!(
+                config.global_template_dir(),
+                Some(global.root().join("global_tmpl").as_path())
+            );
         }
 
         #[test]
         fn prioritizes_local_output_dir() {
             let fixture = Fixture::new();
-            let local_path = fixture.write_config("project/.traces/config.toml", "[templates]\noutput_dir = \"local_out\"");
-            let global_path = fixture.write_config("global/config.toml", "[templates]\noutput_dir = \"global_out\"");
-            
-            let local = LocalConfigFile::<FileDiscovered>::try_new(local_path).unwrap();
-            let global = GlobalConfigFile::<FileDiscovered>::try_new(global_path).unwrap();
-            
+            let local_path = fixture.write_config(
+                "project/.traces/config.toml",
+                "[templates]\noutput_dir = \"local_out\"",
+            );
+            let global_path = fixture.write_config(
+                "global/config.toml",
+                "[templates]\noutput_dir = \"global_out\"",
+            );
+
+            let local =
+                LocalConfigFile::<FileDiscovered>::try_new(local_path).unwrap();
+            let global =
+                GlobalConfigFile::<FileDiscovered>::try_new(global_path)
+                    .unwrap();
+
             let builder = build_ready(&fixture, local, Some(global));
             let config = builder.merge().expect("merge").build();
-            
+
             assert_eq!(config.output_dir(), Path::new("local_out"));
         }
 
         #[test]
         fn uses_local_root_when_output_dir_missing() {
             let fixture = Fixture::new();
-            let local_path = fixture.write_config("project/.traces/config.toml", "[templates]");
-            let local = LocalConfigFile::<FileDiscovered>::try_new(local_path).unwrap();
-            
+            let local_path = fixture
+                .write_config("project/.traces/config.toml", "[templates]");
+            let local =
+                LocalConfigFile::<FileDiscovered>::try_new(local_path).unwrap();
+
             let builder = build_ready(&fixture, local.clone(), None);
             let config = builder.merge().expect("merge").build();
-            
+
             assert_eq!(config.output_dir(), local.root());
         }
 
         #[test]
         fn returns_error_when_global_parsing_fails() {
             let fixture = Fixture::new();
-            let local_path = fixture.write_config("project/.traces/config.toml", "[templates]");
-            let global_path = fixture.write_config("global/config.toml", "[[[BAD TOML");
-            
-            let local = LocalConfigFile::<FileDiscovered>::try_new(local_path).unwrap();
-            let global = GlobalConfigFile::<FileDiscovered>::try_new(global_path).unwrap();
-            
+            let local_path = fixture
+                .write_config("project/.traces/config.toml", "[templates]");
+            let global_path =
+                fixture.write_config("global/config.toml", "[[[BAD TOML");
+
+            let local =
+                LocalConfigFile::<FileDiscovered>::try_new(local_path).unwrap();
+            let global =
+                GlobalConfigFile::<FileDiscovered>::try_new(global_path)
+                    .unwrap();
+
             let builder = build_ready(&fixture, local, Some(global));
             let result = builder.merge();
-            
-            assert!(matches!(result, Err(ConfigBuilderError::ConfigFile(ConfigFileError::Parse { .. }))));
+
+            assert!(matches!(
+                result,
+                Err(ConfigBuilderError::ConfigFile(
+                    ConfigFileError::Parse { .. }
+                ))
+            ));
         }
 
         #[test]
         fn returns_error_when_local_parsing_fails() {
             let fixture = Fixture::new();
-            let local_path = fixture.write_config("project/.traces/config.toml", "[[[BAD TOML");
-            let local = LocalConfigFile::<FileDiscovered>::try_new(local_path).unwrap();
-            
+            let local_path = fixture
+                .write_config("project/.traces/config.toml", "[[[BAD TOML");
+            let local =
+                LocalConfigFile::<FileDiscovered>::try_new(local_path).unwrap();
+
             let builder = build_ready(&fixture, local, None);
             let result = builder.merge();
-            
-            assert!(matches!(result, Err(ConfigBuilderError::ConfigFile(ConfigFileError::Parse { .. }))));
+
+            assert!(matches!(
+                result,
+                Err(ConfigBuilderError::ConfigFile(
+                    ConfigFileError::Parse { .. }
+                ))
+            ));
         }
     }
 }
