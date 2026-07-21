@@ -51,7 +51,7 @@ This project uses **mise** for tool versioning and task management. Use the Mise
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **traces-pkm** (1149 symbols, 2171 relationships, 100 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **traces-pkm** (1409 symbols, 3066 relationships, 123 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 
