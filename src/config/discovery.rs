@@ -580,8 +580,9 @@ impl DiscoveryProcessor<GlobalCollected> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::fs;
+
+    use super::*;
 
     struct Fixture {
         temp: tempfile::TempDir,
@@ -606,7 +607,8 @@ mod tests {
 
         fn create_config(&self, rel_dir: &str) -> PathBuf {
             let p = self.path(rel_dir).join(LOCAL_CONFIG_FILE);
-            fs::create_dir_all(p.parent().unwrap()).expect("create config parent");
+            fs::create_dir_all(p.parent().unwrap())
+                .expect("create config parent");
             fs::write(&p, "[templates]\n").expect("write config");
             p
         }
@@ -680,7 +682,8 @@ mod tests {
             let context = DiscoveryContext::new(
                 DiscoveryScope::Full,
                 DiscoveryAnchor::Directory(cwd.clone()),
-            ).unwrap();
+            )
+            .unwrap();
 
             // Act
             let result = DiscoveryEngine.process(context);
@@ -705,7 +708,8 @@ mod tests {
             let context = DiscoveryContext::new(
                 DiscoveryScope::NearestLocal,
                 DiscoveryAnchor::Directory(cwd.clone()),
-            ).unwrap();
+            )
+            .unwrap();
 
             // Act
             let result = DiscoveryEngine.process(context);
@@ -730,7 +734,8 @@ mod tests {
             let context = DiscoveryContext::new(
                 DiscoveryScope::LocalSubtree,
                 DiscoveryAnchor::Directory(parent.clone()),
-            ).unwrap();
+            )
+            .unwrap();
 
             // Act
             let result = DiscoveryEngine.process(context);
@@ -752,24 +757,29 @@ mod tests {
             let project = fixture.create_dir("project");
 
             // Act
-            let result = DiscoveryEngine.trust_subjects(&project, DiscoveryScope::Full);
+            let result =
+                DiscoveryEngine.trust_subjects(&project, DiscoveryScope::Full);
 
             // Assert
             assert!(matches!(
                 result,
-                Err(DiscoveryError::Context(DiscoveryContextError::UnsupportedTrustScope { .. }))
+                Err(DiscoveryError::Context(
+                    DiscoveryContextError::UnsupportedTrustScope { .. }
+                ))
             ));
         }
 
         #[test]
-        fn trust_subjects_nearest_local_with_config_returns_discovered_subject() {
+        fn trust_subjects_nearest_local_with_config_returns_discovered_subject()
+        {
             // Arrange
             let fixture = Fixture::new();
             let project = fixture.create_dir("project");
             fixture.create_config("project");
 
             // Act
-            let result = DiscoveryEngine.trust_subjects(&project, DiscoveryScope::NearestLocal);
+            let result = DiscoveryEngine
+                .trust_subjects(&project, DiscoveryScope::NearestLocal);
 
             // Assert
             assert!(result.is_ok());
@@ -784,7 +794,8 @@ mod tests {
             let project = fixture.create_dir("project");
 
             // Act
-            let result = DiscoveryEngine.trust_subjects(&project, DiscoveryScope::NearestLocal);
+            let result = DiscoveryEngine
+                .trust_subjects(&project, DiscoveryScope::NearestLocal);
 
             // Assert
             assert!(result.is_ok());
@@ -800,7 +811,8 @@ mod tests {
             fixture.create_config("project");
 
             // Act
-            let result = DiscoveryEngine.trust_subjects(&project, DiscoveryScope::LocalSubtree);
+            let result = DiscoveryEngine
+                .trust_subjects(&project, DiscoveryScope::LocalSubtree);
 
             // Assert
             assert!(result.is_ok());
@@ -815,7 +827,8 @@ mod tests {
             let project = fixture.create_dir("project");
 
             // Act
-            let result = DiscoveryEngine.trust_subjects(&project, DiscoveryScope::LocalSubtree);
+            let result = DiscoveryEngine
+                .trust_subjects(&project, DiscoveryScope::LocalSubtree);
 
             // Assert
             assert!(matches!(
@@ -839,7 +852,8 @@ mod tests {
         }
 
         #[test]
-        fn is_config_file_returns_path_inaccessible_when_parent_is_not_a_directory() {
+        fn is_config_file_returns_path_inaccessible_when_parent_is_not_a_directory()
+         {
             // Arrange
             let fixture = Fixture::new();
             let blocking_file = fixture.create_file("blocking");
@@ -849,7 +863,10 @@ mod tests {
             let result = DiscoveryEngine::is_config_file(&unreachable_path);
 
             // Assert
-            assert!(matches!(result, Err(DiscoveryError::PathInaccessible { .. })));
+            assert!(matches!(
+                result,
+                Err(DiscoveryError::PathInaccessible { .. })
+            ));
         }
     }
 
@@ -911,9 +928,10 @@ mod tests {
 
             // Assert
             assert_eq!(outcome.local().len(), 1);
-            // We cannot reliably assert on global() without creating flaky cross-test 
-            // interactions, as CONFIG_HOME is resolved from process-shared context.
-            // But we verify the local processing works securely.
+            // We cannot reliably assert on global() without creating flaky
+            // cross-test interactions, as CONFIG_HOME is resolved
+            // from process-shared context. But we verify the local
+            // processing works securely.
         }
     }
 }

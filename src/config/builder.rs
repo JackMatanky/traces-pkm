@@ -459,7 +459,7 @@ mod tests {
                 LocalConfigFile::<FileDiscovered>::try_new(local_path).unwrap();
 
             let builder = build_ready(&fixture, local, None);
-            
+
             // Act
             let result = builder.merge();
 
@@ -479,7 +479,7 @@ mod tests {
                 LocalConfigFile::<FileDiscovered>::try_new(local_path).unwrap();
 
             let builder = build_ready(&fixture, local, None);
-            
+
             // Act
             let result = builder.merge();
 
@@ -508,7 +508,7 @@ mod tests {
 
             let builder =
                 build_ready(&fixture, local.clone(), Some(global.clone()));
-            
+
             // Act
             let result = builder.merge();
 
@@ -540,7 +540,7 @@ mod tests {
 
             let builder =
                 build_ready(&fixture, local.clone(), Some(global.clone()));
-            
+
             // Act
             let result = builder.merge();
 
@@ -571,7 +571,7 @@ mod tests {
                     .unwrap();
 
             let builder = build_ready(&fixture, local, Some(global));
-            
+
             // Act
             let result = builder.merge();
 
@@ -589,7 +589,7 @@ mod tests {
                 LocalConfigFile::<FileDiscovered>::try_new(local_path).unwrap();
 
             let builder = build_ready(&fixture, local.clone(), None);
-            
+
             // Act
             let result = builder.merge();
 
@@ -613,7 +613,7 @@ mod tests {
                     .unwrap();
 
             let builder = build_ready(&fixture, local, Some(global));
-            
+
             // Act
             let result = builder.merge();
 
@@ -634,7 +634,7 @@ mod tests {
                 LocalConfigFile::<FileDiscovered>::try_new(local_path).unwrap();
 
             let builder = build_ready(&fixture, local, None);
-            
+
             // Act
             let result = builder.merge();
 

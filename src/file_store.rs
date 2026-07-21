@@ -412,6 +412,7 @@ fn read_dir_entries(root: &Path) -> Result<Vec<PathBuf>, FileStateStoreError> {
 #[cfg(test)]
 mod tests {
     use std::fs;
+
     use super::*;
 
     struct Fixture {
@@ -423,7 +424,10 @@ mod tests {
         fn new() -> Self {
             let temp = tempfile::tempdir().expect("create temp dir");
             let store = FileStateStore::at(temp.path().join("store"));
-            Self { temp, store }
+            Self {
+                temp,
+                store,
+            }
         }
 
         fn target(&self, name: &str) -> PathBuf {
@@ -467,7 +471,10 @@ mod tests {
             let result = StoreEntry::try_from(missing.as_path());
 
             // Assert
-            assert!(matches!(result, Err(FileStateStoreError::Canonicalize { .. })));
+            assert!(matches!(
+                result,
+                Err(FileStateStoreError::Canonicalize { .. })
+            ));
         }
     }
 
@@ -512,7 +519,10 @@ mod tests {
             let result = fixture.store.record(&missing);
 
             // Assert
-            assert!(matches!(result, Err(FileStateStoreError::Canonicalize { .. })));
+            assert!(matches!(
+                result,
+                Err(FileStateStoreError::Canonicalize { .. })
+            ));
         }
 
         #[test]
@@ -585,7 +595,10 @@ mod tests {
             let result = fixture.store.contains(&missing);
 
             // Assert
-            assert!(matches!(result, Err(FileStateStoreError::Canonicalize { .. })));
+            assert!(matches!(
+                result,
+                Err(FileStateStoreError::Canonicalize { .. })
+            ));
         }
     }
 
@@ -746,12 +759,18 @@ mod tests {
             let fixture = Fixture::new();
             let deleted = fixture.target("deleted");
             fixture.store.record(&deleted).expect("record deleted");
-            fixture.store.write_companion(&deleted, ".hash", "content").expect("write companion");
-            let companion = companion_path(&fixture.entry_path_for(&deleted), ".hash");
+            fixture
+                .store
+                .write_companion(&deleted, ".hash", "content")
+                .expect("write companion");
+            let companion =
+                companion_path(&fixture.entry_path_for(&deleted), ".hash");
             fs::remove_file(&deleted).expect("delete target");
 
             // Act
-            let result = fixture.store.clean(FileStoreCleanMode::WithCompanions(&[".hash"]));
+            let result = fixture
+                .store
+                .clean(FileStoreCleanMode::WithCompanions(&[".hash"]));
 
             // Assert
             assert!(result.is_ok());
@@ -764,11 +783,17 @@ mod tests {
             let fixture = Fixture::new();
             let kept = fixture.target("kept");
             fixture.store.record(&kept).expect("record kept");
-            fixture.store.write_companion(&kept, ".hash", "content").expect("write companion");
-            let companion = companion_path(&fixture.entry_path_for(&kept), ".hash");
+            fixture
+                .store
+                .write_companion(&kept, ".hash", "content")
+                .expect("write companion");
+            let companion =
+                companion_path(&fixture.entry_path_for(&kept), ".hash");
 
             // Act
-            let result = fixture.store.clean(FileStoreCleanMode::WithCompanions(&[".hash"]));
+            let result = fixture
+                .store
+                .clean(FileStoreCleanMode::WithCompanions(&[".hash"]));
 
             // Assert
             assert!(result.is_ok());
@@ -786,7 +811,8 @@ mod tests {
             let target = fixture.target("target");
 
             // Act
-            let result = fixture.store.remove_with_companions(&target, &[".hash"]);
+            let result =
+                fixture.store.remove_with_companions(&target, &[".hash"]);
 
             // Assert
             assert_eq!(result.unwrap(), 0);
@@ -800,7 +826,8 @@ mod tests {
             fixture.store.record(&target).expect("record");
 
             // Act
-            let result = fixture.store.remove_with_companions(&target, &[".hash"]);
+            let result =
+                fixture.store.remove_with_companions(&target, &[".hash"]);
 
             // Assert
             assert_eq!(result.unwrap(), 1);
@@ -827,11 +854,16 @@ mod tests {
             let fixture = Fixture::new();
             let target = fixture.target("target");
             fixture.store.record(&target).expect("record");
-            fixture.store.write_companion(&target, ".hash", "content").expect("write");
-            let companion = companion_path(&fixture.entry_path_for(&target), ".hash");
+            fixture
+                .store
+                .write_companion(&target, ".hash", "content")
+                .expect("write");
+            let companion =
+                companion_path(&fixture.entry_path_for(&target), ".hash");
 
             // Act
-            let result = fixture.store.remove_with_companions(&target, &[".hash"]);
+            let result =
+                fixture.store.remove_with_companions(&target, &[".hash"]);
 
             // Assert
             assert!(result.is_ok());
@@ -846,7 +878,8 @@ mod tests {
             fixture.store.record(&target).expect("record");
 
             // Act
-            let result = fixture.store.remove_with_companions(&target, &[".hash"]);
+            let result =
+                fixture.store.remove_with_companions(&target, &[".hash"]);
 
             // Assert
             assert_eq!(result.unwrap(), 1);
@@ -864,11 +897,13 @@ mod tests {
             fixture.store.record(&target).expect("record");
 
             // Act
-            let result = fixture.store.write_companion(&target, ".hash", "content");
+            let result =
+                fixture.store.write_companion(&target, ".hash", "content");
 
             // Assert
             assert!(result.is_ok());
-            let companion = companion_path(&fixture.entry_path_for(&target), ".hash");
+            let companion =
+                companion_path(&fixture.entry_path_for(&target), ".hash");
             assert_eq!(fs::read_to_string(companion).unwrap(), "content");
         }
 
@@ -880,7 +915,8 @@ mod tests {
             // Do not record, so store.root does not exist
 
             // Act
-            let result = fixture.store.write_companion(&target, ".hash", "content");
+            let result =
+                fixture.store.write_companion(&target, ".hash", "content");
 
             // Assert
             assert!(matches!(
@@ -895,7 +931,10 @@ mod tests {
             let fixture = Fixture::new();
             let target = fixture.target("target");
             fixture.store.record(&target).expect("record");
-            fixture.store.write_companion(&target, ".hash", "content").expect("write");
+            fixture
+                .store
+                .write_companion(&target, ".hash", "content")
+                .expect("write");
 
             // Act
             let result = fixture.store.read_companion(&target, ".hash");

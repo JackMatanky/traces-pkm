@@ -91,8 +91,9 @@ mod tests {
     use super::*;
 
     mod file_hash {
-        use pretty_assertions::{assert_eq, assert_ne};
         use std::fs;
+
+        use pretty_assertions::{assert_eq, assert_ne};
 
         use super::*;
 
@@ -204,9 +205,10 @@ mod tests {
             let hash = Blake3PathHash::new(path);
 
             // Assert
-            let expected_hex = blake3::hash(path.as_os_str().as_encoded_bytes())
-                .to_hex()
-                .to_string();
+            let expected_hex =
+                blake3::hash(path.as_os_str().as_encoded_bytes())
+                    .to_hex()
+                    .to_string();
             assert_eq!(hash, Blake3PathHash(expected_hex));
         }
 
@@ -220,9 +222,10 @@ mod tests {
             let hash_str = hash.as_str();
 
             // Assert
-            let expected_hex = blake3::hash(path.as_os_str().as_encoded_bytes())
-                .to_hex()
-                .to_string();
+            let expected_hex =
+                blake3::hash(path.as_os_str().as_encoded_bytes())
+                    .to_hex()
+                    .to_string();
             assert_eq!(hash_str, expected_hex);
         }
     }
