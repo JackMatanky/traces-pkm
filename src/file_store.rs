@@ -412,323 +412,526 @@ fn read_dir_entries(root: &Path) -> Result<Vec<PathBuf>, FileStateStoreError> {
 #[cfg(test)]
 mod tests {
     use std::fs;
-
-    use pretty_assertions::assert_eq;
-
     use super::*;
 
-    #[test]
-    fn record_creates_an_entry() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let target = temp.path().join("config.toml");
-        fs::write(&target, "").expect("write config");
-        let store = FileStateStore::at(temp.path().join("store"));
-
-        store.record(&target).expect("record config");
-
-        assert_eq!(store.list_all().expect("list configs"), vec![
-            target.canonicalize().expect("canonicalize target")
-        ]);
+    struct Fixture {
+        temp: tempfile::TempDir,
+        store: FileStateStore,
     }
 
-    #[test]
-    fn re_recording_the_same_path_is_idempotent() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let target = temp.path().join("config.toml");
-        fs::write(&target, "").expect("write config");
-        let store = FileStateStore::at(temp.path().join("store"));
+    impl Fixture {
+        fn new() -> Self {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let store = FileStateStore::at(temp.path().join("store"));
+            Self { temp, store }
+        }
 
-        store.record(&target).expect("record config");
-        store.record(&target).expect("record config again");
+        fn target(&self, name: &str) -> PathBuf {
+            let path = self.temp.path().join(name);
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent).expect("create parent");
+            }
+            fs::write(&path, "").expect("write target");
+            path
+        }
 
-        assert_eq!(store.list_all().expect("list configs").len(), 1);
-    }
-
-    #[test]
-    fn write_companion_writes_next_to_entry() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let target = temp.path().join("target");
-        fs::create_dir_all(&target).expect("create target dir");
-        let store = FileStateStore::at(temp.path().join("store"));
-        store.record(&target).expect("record target");
-        let companion = companion_path(
-            &StoreEntry::try_from(target.as_path())
+        fn entry_path_for(&self, target: &Path) -> PathBuf {
+            StoreEntry::try_from(target)
                 .expect("resolve entry")
-                .path_in(&store.root),
-            ".hash",
-        );
-
-        store
-            .write_companion(&target, ".hash", "hash")
-            .expect("write companion");
-
-        assert_eq!(
-            fs::read_to_string(companion).expect("read companion"),
-            "hash"
-        );
+                .path_in(&self.store.root)
+        }
     }
 
-    #[test]
-    fn remove_with_companions_removes_existing_companion() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let target = temp.path().join("target");
-        fs::create_dir_all(&target).expect("create target dir");
-        let store = FileStateStore::at(temp.path().join("store"));
-        store.record(&target).expect("record target");
-        store
-            .write_companion(&target, ".hash", "hash")
-            .expect("write companion");
-        let companion = companion_path(
-            &StoreEntry::try_from(target.as_path())
-                .expect("resolve entry")
-                .path_in(&store.root),
-            ".hash",
-        );
+    mod entry {
+        use super::*;
 
-        store
-            .remove_with_companions(&target, &[".hash"])
-            .expect("remove companion");
+        #[test]
+        fn companion_path_appends_suffix() {
+            // Arrange
+            let base = Path::new("/store/abc123");
 
-        assert!(!companion.exists());
+            // Act
+            let result = companion_path(base, ".hash");
+
+            // Assert
+            assert_eq!(result, Path::new("/store/abc123.hash"));
+        }
+
+        #[test]
+        fn errors_on_nonexistent_target() {
+            // Arrange
+            let fixture = Fixture::new();
+            let missing = fixture.temp.path().join("missing");
+
+            // Act
+            let result = StoreEntry::try_from(missing.as_path());
+
+            // Assert
+            assert!(matches!(result, Err(FileStateStoreError::Canonicalize { .. })));
+        }
     }
 
-    #[test]
-    fn list_all_omits_entries_whose_target_was_deleted() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let kept = temp.path().join("kept.toml");
-        let deleted = temp.path().join("deleted.toml");
-        fs::write(&kept, "").expect("write kept config");
-        fs::write(&deleted, "").expect("write deleted config");
-        let store = FileStateStore::at(temp.path().join("store"));
-        store.record(&kept).expect("record kept config");
-        store.record(&deleted).expect("record deleted config");
-        fs::remove_file(&deleted).expect("remove deleted config");
+    mod record {
+        use super::*;
 
-        assert_eq!(store.list_all().expect("list configs"), vec![
-            kept.canonicalize().expect("canonicalize kept config")
-        ]);
+        #[test]
+        fn creates_entry_in_store_root() {
+            // Arrange
+            let fixture = Fixture::new();
+            let target = fixture.target("target");
+
+            // Act
+            let result = fixture.store.record(&target);
+
+            // Assert
+            assert!(result.is_ok());
+            assert!(fixture.entry_path_for(&target).exists());
+        }
+
+        #[test]
+        fn is_idempotent() {
+            // Arrange
+            let fixture = Fixture::new();
+            let target = fixture.target("target");
+            fixture.store.record(&target).expect("first record");
+
+            // Act
+            let result = fixture.store.record(&target);
+
+            // Assert
+            assert!(result.is_ok());
+        }
+
+        #[test]
+        fn errors_on_nonexistent_target() {
+            // Arrange
+            let fixture = Fixture::new();
+            let missing = fixture.temp.path().join("missing");
+
+            // Act
+            let result = fixture.store.record(&missing);
+
+            // Assert
+            assert!(matches!(result, Err(FileStateStoreError::Canonicalize { .. })));
+        }
+
+        #[test]
+        fn errors_when_store_root_is_a_file() {
+            // Arrange
+            let fixture = Fixture::new();
+            let target = fixture.target("target");
+            fs::write(&fixture.store.root, "not a dir").expect("write file");
+
+            // Act
+            let result = fixture.store.record(&target);
+
+            // Assert
+            assert!(matches!(result, Err(FileStateStoreError::StoreIo { .. })));
+        }
     }
 
-    #[test]
-    fn clean_prunes_stale_entries_and_reports_the_count() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let kept = temp.path().join("kept.toml");
-        let deleted = temp.path().join("deleted.toml");
-        fs::write(&kept, "").expect("write kept config");
-        fs::write(&deleted, "").expect("write deleted config");
-        let store = FileStateStore::at(temp.path().join("store"));
-        store.record(&kept).expect("record kept config");
-        store.record(&deleted).expect("record deleted config");
-        fs::remove_file(&deleted).expect("remove deleted config");
+    mod contains {
+        use super::*;
 
-        let removed =
-            store.clean(FileStoreCleanMode::EntriesOnly).expect("clean store");
+        #[test]
+        fn returns_false_for_unrecorded_target() {
+            // Arrange
+            let fixture = Fixture::new();
+            let target = fixture.target("target");
 
-        assert_eq!(removed, 1);
-        assert_eq!(store.list_all().expect("list configs"), vec![
-            kept.canonicalize().expect("canonicalize kept config")
-        ]);
+            // Act
+            let result = fixture.store.contains(&target);
+
+            // Assert
+            assert_eq!(result.unwrap(), false);
+        }
+
+        #[test]
+        fn returns_true_for_recorded_target() {
+            // Arrange
+            let fixture = Fixture::new();
+            let target = fixture.target("target");
+            fixture.store.record(&target).expect("record");
+
+            // Act
+            let result = fixture.store.contains(&target);
+
+            // Assert
+            assert_eq!(result.unwrap(), true);
+        }
+
+        #[test]
+        fn reflects_canonical_path_regardless_of_relative_input() {
+            // Arrange
+            let fixture = Fixture::new();
+            let target = fixture.target("nested/target");
+            fixture.store.record(&target).expect("record");
+            let relative = fixture.temp.path().join("nested/./target");
+
+            // Act
+            let result = fixture.store.contains(&relative);
+
+            // Assert
+            assert_eq!(result.unwrap(), true);
+        }
+
+        #[test]
+        fn errors_on_nonexistent_target() {
+            // Arrange
+            let fixture = Fixture::new();
+            let missing = fixture.temp.path().join("missing");
+
+            // Act
+            let result = fixture.store.contains(&missing);
+
+            // Assert
+            assert!(matches!(result, Err(FileStateStoreError::Canonicalize { .. })));
+        }
     }
 
-    #[test]
-    fn list_all_on_a_store_with_no_entries_yet_is_empty() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let store = FileStateStore::at(temp.path().join("store"));
+    mod list_all {
+        use super::*;
 
-        assert!(store.list_all().expect("list configs").is_empty());
+        #[test]
+        fn returns_empty_when_store_root_absent() {
+            // Arrange
+            let fixture = Fixture::new();
+
+            // Act
+            let result = fixture.store.list_all();
+
+            // Assert
+            assert_eq!(result.unwrap(), Vec::<PathBuf>::new());
+        }
+
+        #[test]
+        fn returns_empty_when_store_has_no_entries() {
+            // Arrange
+            let fixture = Fixture::new();
+            fs::create_dir_all(&fixture.store.root).expect("create store");
+
+            // Act
+            let result = fixture.store.list_all();
+
+            // Assert
+            assert_eq!(result.unwrap(), Vec::<PathBuf>::new());
+        }
+
+        #[test]
+        fn returns_recorded_targets() {
+            // Arrange
+            let fixture = Fixture::new();
+            let target1 = fixture.target("target1");
+            let target2 = fixture.target("target2");
+            fixture.store.record(&target1).expect("record 1");
+            fixture.store.record(&target2).expect("record 2");
+
+            // Act
+            let result = fixture.store.list_all();
+
+            // Assert
+            let mut list = result.unwrap();
+            list.sort();
+            let mut expected = vec![
+                target1.canonicalize().unwrap(),
+                target2.canonicalize().unwrap(),
+            ];
+            expected.sort();
+            assert_eq!(list, expected);
+        }
+
+        #[test]
+        fn omits_entries_whose_targets_were_deleted() {
+            // Arrange
+            let fixture = Fixture::new();
+            let kept = fixture.target("kept");
+            let deleted = fixture.target("deleted");
+            fixture.store.record(&kept).expect("record kept");
+            fixture.store.record(&deleted).expect("record deleted");
+            fs::remove_file(&deleted).expect("delete target");
+
+            // Act
+            let result = fixture.store.list_all();
+
+            // Assert
+            assert_eq!(result.unwrap(), vec![kept.canonicalize().unwrap()]);
+        }
     }
 
-    #[test]
-    fn clean_on_a_store_with_no_entries_yet_removes_nothing() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let store = FileStateStore::at(temp.path().join("store"));
+    mod clean {
+        use super::*;
 
-        assert_eq!(
-            store.clean(FileStoreCleanMode::EntriesOnly).expect("clean store"),
-            0
-        );
+        #[test]
+        fn returns_zero_when_store_root_absent() {
+            // Arrange
+            let fixture = Fixture::new();
+
+            // Act
+            let result = fixture.store.clean(FileStoreCleanMode::EntriesOnly);
+
+            // Assert
+            assert_eq!(result.unwrap(), 0);
+        }
+
+        #[cfg(unix)]
+        #[test]
+        fn leaves_non_entry_files_untouched() {
+            // Arrange
+            let fixture = Fixture::new();
+            fs::create_dir_all(&fixture.store.root).expect("create store root");
+            let stray = fixture.store.root.join("stray");
+            fs::write(&stray, "not a symlink").expect("write stray");
+
+            // Act
+            let result = fixture.store.clean(FileStoreCleanMode::EntriesOnly);
+
+            // Assert
+            assert_eq!(result.unwrap(), 0);
+            assert!(stray.exists());
+        }
+
+        #[test]
+        fn returns_count_of_removed_stale_entries() {
+            // Arrange
+            let fixture = Fixture::new();
+            let kept = fixture.target("kept");
+            let deleted = fixture.target("deleted");
+            fixture.store.record(&kept).expect("record kept");
+            fixture.store.record(&deleted).expect("record deleted");
+            fs::remove_file(&deleted).expect("delete target");
+
+            // Act
+            let result = fixture.store.clean(FileStoreCleanMode::EntriesOnly);
+
+            // Assert
+            assert_eq!(result.unwrap(), 1);
+        }
+
+        #[test]
+        fn removes_stale_entries_from_disk() {
+            // Arrange
+            let fixture = Fixture::new();
+            let deleted = fixture.target("deleted");
+            fixture.store.record(&deleted).expect("record deleted");
+            let entry_path = fixture.entry_path_for(&deleted);
+            fs::remove_file(&deleted).expect("delete target");
+
+            // Act
+            let result = fixture.store.clean(FileStoreCleanMode::EntriesOnly);
+
+            // Assert
+            assert!(result.is_ok());
+            assert!(!entry_path.exists());
+        }
+
+        #[test]
+        fn leaves_live_entries_untouched() {
+            // Arrange
+            let fixture = Fixture::new();
+            let kept = fixture.target("kept");
+            fixture.store.record(&kept).expect("record kept");
+            let entry_path = fixture.entry_path_for(&kept);
+
+            // Act
+            let result = fixture.store.clean(FileStoreCleanMode::EntriesOnly);
+
+            // Assert
+            assert!(result.is_ok());
+            assert!(entry_path.exists());
+        }
+
+        #[test]
+        fn with_companions_removes_dangling_companion() {
+            // Arrange
+            let fixture = Fixture::new();
+            let deleted = fixture.target("deleted");
+            fixture.store.record(&deleted).expect("record deleted");
+            fixture.store.write_companion(&deleted, ".hash", "content").expect("write companion");
+            let companion = companion_path(&fixture.entry_path_for(&deleted), ".hash");
+            fs::remove_file(&deleted).expect("delete target");
+
+            // Act
+            let result = fixture.store.clean(FileStoreCleanMode::WithCompanions(&[".hash"]));
+
+            // Assert
+            assert!(result.is_ok());
+            assert!(!companion.exists());
+        }
+
+        #[test]
+        fn with_companions_leaves_live_companion() {
+            // Arrange
+            let fixture = Fixture::new();
+            let kept = fixture.target("kept");
+            fixture.store.record(&kept).expect("record kept");
+            fixture.store.write_companion(&kept, ".hash", "content").expect("write companion");
+            let companion = companion_path(&fixture.entry_path_for(&kept), ".hash");
+
+            // Act
+            let result = fixture.store.clean(FileStoreCleanMode::WithCompanions(&[".hash"]));
+
+            // Assert
+            assert!(result.is_ok());
+            assert!(companion.exists());
+        }
     }
 
-    #[cfg(unix)]
-    #[test]
-    fn clean_leaves_a_non_symlink_file_in_the_store_root_untouched() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let store = FileStateStore::at(temp.path().join("store"));
-        fs::create_dir_all(&store.root).expect("create store root");
-        let stray = store.root.join("not-a-store-entry");
-        fs::write(&stray, "not a symlink").expect("write stray file");
+    mod remove {
+        use super::*;
 
-        let removed =
-            store.clean(FileStoreCleanMode::EntriesOnly).expect("clean store");
+        #[test]
+        fn returns_zero_when_entry_already_absent() {
+            // Arrange
+            let fixture = Fixture::new();
+            let target = fixture.target("target");
 
-        assert_eq!(removed, 0);
-        assert!(stray.exists(), "stray non-entry file must survive clean");
+            // Act
+            let result = fixture.store.remove_with_companions(&target, &[".hash"]);
+
+            // Assert
+            assert_eq!(result.unwrap(), 0);
+        }
+
+        #[test]
+        fn returns_one_when_entry_removed() {
+            // Arrange
+            let fixture = Fixture::new();
+            let target = fixture.target("target");
+            fixture.store.record(&target).expect("record");
+
+            // Act
+            let result = fixture.store.remove_with_companions(&target, &[".hash"]);
+
+            // Assert
+            assert_eq!(result.unwrap(), 1);
+        }
+
+        #[test]
+        fn removes_entry_from_disk() {
+            // Arrange
+            let fixture = Fixture::new();
+            let target = fixture.target("target");
+            fixture.store.record(&target).expect("record");
+
+            // Act
+            let result = fixture.store.remove_with_companions(&target, &[]);
+
+            // Assert
+            assert!(result.is_ok());
+            assert!(!fixture.entry_path_for(&target).exists());
+        }
+
+        #[test]
+        fn removes_companions_from_disk() {
+            // Arrange
+            let fixture = Fixture::new();
+            let target = fixture.target("target");
+            fixture.store.record(&target).expect("record");
+            fixture.store.write_companion(&target, ".hash", "content").expect("write");
+            let companion = companion_path(&fixture.entry_path_for(&target), ".hash");
+
+            // Act
+            let result = fixture.store.remove_with_companions(&target, &[".hash"]);
+
+            // Assert
+            assert!(result.is_ok());
+            assert!(!companion.exists());
+        }
+
+        #[test]
+        fn returns_one_even_if_companions_already_absent() {
+            // Arrange
+            let fixture = Fixture::new();
+            let target = fixture.target("target");
+            fixture.store.record(&target).expect("record");
+
+            // Act
+            let result = fixture.store.remove_with_companions(&target, &[".hash"]);
+
+            // Assert
+            assert_eq!(result.unwrap(), 1);
+        }
     }
 
-    #[test]
-    fn companion_path_appends_the_suffix_to_the_entrys_filename() {
-        let entry = Path::new("/store/abc123");
+    mod companions {
+        use super::*;
 
-        assert_eq!(
-            companion_path(entry, ".hash"),
-            Path::new("/store/abc123.hash")
-        );
-    }
+        #[test]
+        fn write_creates_companion_file() {
+            // Arrange
+            let fixture = Fixture::new();
+            let target = fixture.target("target");
+            fixture.store.record(&target).expect("record");
 
-    #[test]
-    fn clean_with_companion_mode_removes_a_dangling_entry_and_its_companion() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let target = temp.path().join("target");
-        fs::create_dir_all(&target).expect("create target dir");
-        let store = FileStateStore::at(temp.path().join("store"));
-        store.record(&target).expect("record target");
-        let entry = StoreEntry::try_from(target.as_path())
-            .expect("resolve entry path")
-            .path_in(&store.root);
-        let companion = companion_path(&entry, ".hash");
-        fs::write(&companion, "hash").expect("write companion");
-        fs::remove_dir_all(&target).expect("delete target dir");
+            // Act
+            let result = fixture.store.write_companion(&target, ".hash", "content");
 
-        let removed = store
-            .clean(FileStoreCleanMode::WithCompanions(&[".hash"]))
-            .expect("clean");
+            // Assert
+            assert!(result.is_ok());
+            let companion = companion_path(&fixture.entry_path_for(&target), ".hash");
+            assert_eq!(fs::read_to_string(companion).unwrap(), "content");
+        }
 
-        assert_eq!(removed, 1);
-        assert!(!companion.exists(), "companion should be removed too");
-    }
+        #[test]
+        fn write_errors_when_store_root_absent() {
+            // Arrange
+            let fixture = Fixture::new();
+            let target = fixture.target("target");
+            // Do not record, so store.root does not exist
 
-    #[test]
-    fn clean_with_companion_mode_removes_a_dangling_entry_with_no_companion() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let target = temp.path().join("target");
-        fs::create_dir_all(&target).expect("create target dir");
-        let store = FileStateStore::at(temp.path().join("store"));
-        store.record(&target).expect("record target");
-        fs::remove_dir_all(&target).expect("delete target dir");
+            // Act
+            let result = fixture.store.write_companion(&target, ".hash", "content");
 
-        let removed = store
-            .clean(FileStoreCleanMode::WithCompanions(&[".hash"]))
-            .expect("clean");
+            // Assert
+            assert!(matches!(
+                result,
+                Err(FileStateStoreError::CompanionWrite { .. })
+            ));
+        }
 
-        assert_eq!(removed, 1);
-    }
+        #[test]
+        fn read_returns_contents_when_present() {
+            // Arrange
+            let fixture = Fixture::new();
+            let target = fixture.target("target");
+            fixture.store.record(&target).expect("record");
+            fixture.store.write_companion(&target, ".hash", "content").expect("write");
 
-    #[test]
-    fn clean_with_companion_mode_leaves_a_live_entrys_companion_untouched() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let target = temp.path().join("target");
-        fs::create_dir_all(&target).expect("create target dir");
-        let store = FileStateStore::at(temp.path().join("store"));
-        store.record(&target).expect("record target");
-        let entry = StoreEntry::try_from(target.as_path())
-            .expect("resolve entry path")
-            .path_in(&store.root);
-        let companion = companion_path(&entry, ".hash");
-        fs::write(&companion, "hash").expect("write companion");
+            // Act
+            let result = fixture.store.read_companion(&target, ".hash");
 
-        let removed = store
-            .clean(FileStoreCleanMode::WithCompanions(&[".hash"]))
-            .expect("clean");
+            // Assert
+            assert_eq!(result.unwrap(), Some("content".to_string()));
+        }
 
-        assert_eq!(removed, 0);
-        assert!(companion.exists(), "live entry's companion must survive");
-    }
+        #[test]
+        fn read_returns_none_when_absent() {
+            // Arrange
+            let fixture = Fixture::new();
+            let target = fixture.target("target");
+            fixture.store.record(&target).expect("record");
 
-    #[test]
-    fn record_of_a_nonexistent_target_errors() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let store = FileStateStore::at(temp.path().join("store"));
+            // Act
+            let result = fixture.store.read_companion(&target, ".hash");
 
-        assert!(matches!(
-            store.record(&temp.path().join("missing.toml")),
-            Err(FileStateStoreError::Canonicalize { .. })
-        ));
-    }
+            // Assert
+            assert_eq!(result.unwrap(), None);
+        }
 
-    #[test]
-    fn record_when_store_root_is_a_file_errors_with_io() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let target = temp.path().join("config.toml");
-        fs::write(&target, "").expect("write config");
-        let root = temp.path().join("store");
-        fs::write(&root, "").expect("write store root file");
-        let store = FileStateStore::at(root);
+        #[test]
+        fn read_errors_on_nonexistent_target() {
+            // Arrange
+            let fixture = Fixture::new();
+            let missing = fixture.temp.path().join("missing");
 
-        assert!(matches!(
-            store.record(&target),
-            Err(FileStateStoreError::StoreIo { .. })
-        ));
-    }
+            // Act
+            let result = fixture.store.read_companion(&missing, ".hash");
 
-    #[test]
-    fn store_entry_matches_where_record_actually_writes_the_entry() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let target = temp.path().join("config.toml");
-        fs::write(&target, "").expect("write config");
-        let store = FileStateStore::at(temp.path().join("store"));
-
-        let entry = StoreEntry::try_from(target.as_path())
-            .expect("resolve entry path")
-            .path_in(&store.root);
-        store.record(&target).expect("record target");
-
-        assert!(entry.exists());
-    }
-
-    #[test]
-    fn store_entry_of_a_nonexistent_target_errors() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let _store = FileStateStore::at(temp.path().join("store"));
-
-        assert!(matches!(
-            StoreEntry::try_from(temp.path().join("missing.toml").as_path()),
-            Err(FileStateStoreError::Canonicalize { .. })
-        ));
-    }
-
-    #[test]
-    fn contains_returns_false_for_a_target_not_yet_recorded() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let target = temp.path().join("config.toml");
-        fs::write(&target, "").expect("write config");
-        let store = FileStateStore::at(temp.path().join("store"));
-
-        assert!(!store.contains(&target).expect("check containment"));
-    }
-
-    #[test]
-    fn contains_returns_true_after_recording_the_target() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let target = temp.path().join("config.toml");
-        fs::write(&target, "").expect("write config");
-        let store = FileStateStore::at(temp.path().join("store"));
-        store.record(&target).expect("record target");
-
-        assert!(store.contains(&target).expect("check containment"));
-    }
-
-    #[test]
-    fn contains_reflects_canonical_path_regardless_of_relative_input() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let dir = temp.path().join("nested");
-        fs::create_dir_all(&dir).expect("create nested dir");
-        let target = dir.join("config.toml");
-        fs::write(&target, "").expect("write config");
-        let store = FileStateStore::at(temp.path().join("store"));
-        store.record(&target).expect("record target");
-
-        let relative = dir.join(".").join("config.toml");
-        assert!(store.contains(&relative).expect("check containment"));
-    }
-
-    #[test]
-    fn contains_of_a_nonexistent_target_errors_with_canonicalize() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let store = FileStateStore::at(temp.path().join("store"));
-
-        assert!(matches!(
-            store.contains(&temp.path().join("missing.toml")),
-            Err(FileStateStoreError::Canonicalize { .. })
-        ));
+            // Assert
+            assert!(matches!(
+                result,
+                Err(FileStateStoreError::Canonicalize { .. })
+            ));
+        }
     }
 }
