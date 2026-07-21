@@ -41,6 +41,17 @@ pub(super) struct Parsed {
     raw: RawConfig,
 }
 
+impl Parsed {
+    fn read(path: &Path) -> Result<Self, ConfigFileParseError> {
+        let raw = Figment::from(Toml::file_exact(path))
+            .extract::<RawConfig>()
+            .map_err(|source| ConfigFileParseError::Read {
+                path: path.to_path_buf(),
+                source: Box::new(source),
+            })?;
+        Ok(Self { raw })
+    }
+}
 /// A local project config file.
 pub(crate) type LocalConfigFile<State> = ConfigFile<IsLocal, State>;
 
@@ -199,10 +210,8 @@ impl TryFrom<LocalConfigFile<Trusted>> for LocalConfigFile<Parsed> {
 
     #[inline]
     fn try_from(file: LocalConfigFile<Trusted>) -> Result<Self, Self::Error> {
-        let raw = read_raw_config(file.path())?;
-        Ok(file.transition_to(Parsed {
-            raw,
-        }))
+        let parsed = Parsed::read(file.path())?;
+        Ok(file.transition_to(parsed))
     }
 }
 
@@ -213,10 +222,8 @@ impl TryFrom<GlobalConfigFile<Discovered>> for GlobalConfigFile<Parsed> {
     fn try_from(
         file: GlobalConfigFile<Discovered>,
     ) -> Result<Self, Self::Error> {
-        let raw = read_raw_config(file.path())?;
-        Ok(file.transition_to(Parsed {
-            raw,
-        }))
+        let parsed = Parsed::read(file.path())?;
+        Ok(file.transition_to(parsed))
     }
 }
 
@@ -243,15 +250,6 @@ impl<Source> ConfigFile<Source, Parsed> {
             .as_ref()
             .map(|dir| self.root.join(dir))
     }
-}
-
-fn read_raw_config(path: &Path) -> Result<RawConfig, ConfigFileParseError> {
-    Figment::from(Toml::file_exact(path)).extract::<RawConfig>().map_err(
-        |source| ConfigFileParseError::Read {
-            path: path.to_path_buf(),
-            source: Box::new(source),
-        },
-    )
 }
 
 /// Errors constructing or transitioning config-file lifecycle values.
