@@ -6,14 +6,14 @@
 //! delegates the whole write-or-preview decision to
 //! [`TemplateWriter::write`].
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use super::{
     engine::{RenderOutput, TemplateEngine},
     error::TemplateError,
     loader::TemplateLoader,
     path::{Found, TemplatePath},
-    writer::{TemplateTargetPath, TemplateWriter, WriteMode, WriteOutcome},
+    writer::{TemplateWriteTarget, TemplateWriter, WriteMode, WriteOutcome},
 };
 use crate::config::Config;
 
@@ -116,17 +116,14 @@ impl<'a> TemplateService<'a> {
     /// ([`TemplatePath::default_output_filename`]) rather than the raw
     /// `-i` argument — so two directories' same-named templates land at
     /// different output paths instead of colliding. Uses
-    /// [`TemplateTargetPath::trusted`], not
-    /// [`TemplateTargetPath::confine`] — `output_dir` is a trusted
+    /// [`TemplateWriteTarget::trusted`], not
+    /// [`TemplateWriteTarget::confine`] — `output_dir` is a trusted
     /// config value (see `writer`'s module docs), not a runtime
     /// `-o`/`file.write_to()` candidate.
-    fn default_output_path(
-        &self,
-        resolved: &TemplatePath<Found>,
-    ) -> TemplateTargetPath {
+    fn default_output_path(&self, resolved: &TemplatePath<Found>) -> PathBuf {
         let candidate =
             self.config.output_dir().join(resolved.default_output_filename());
-        TemplateTargetPath::trusted(self.config.root(), candidate)
+        TemplateWriteTarget::trusted(self.config.root(), candidate)
     }
 }
 

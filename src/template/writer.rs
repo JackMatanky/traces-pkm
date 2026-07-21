@@ -1,33 +1,36 @@
-//! [`TemplateTargetPath`]: a render's output destination — a
-//! proven-safe value, nothing more. `-o` and `file.write_to()` —
-//! runtime values the CLI argument or the template itself supplies —
-//! flow through [`TemplateTargetPath::confine`], which proves they
-//! stay within [`Config::root`](crate::config::Config::root) before
-//! anything is written. [`Config::output_dir`] is different: it's a
-//! value the project's own (already trust-gated) config chose, and —
-//! like the rest of this codebase's handling of `output_dir` — is
-//! allowed to be absolute and point anywhere the config author
-//! configured, so it goes through [`TemplateTargetPath::trusted`]
-//! instead, unchecked.
+//! [`TemplateWriteTarget`]: gathers a render's output-destination
+//! candidates — the `-o` flag (`requested`) and whatever
+//! `file.write_to()` captured (`declared`) — and, on
+//! [`TemplateWriteTarget::target_path`], applies the precedence policy:
+//! `requested` over `declared` over a caller-supplied default.
+//! `requested`/`declared` are runtime values the CLI argument or the
+//! template itself supplies, so [`TemplateWriteTarget::confine`] proves
+//! they stay within [`Config::root`](crate::config::Config::root)
+//! before anything is written. [`Config::output_dir`] is different:
+//! it's a value the project's own (already trust-gated) config chose,
+//! and — like the rest of this codebase's handling of `output_dir` —
+//! is allowed to be absolute and point anywhere the config author
+//! configured, so a caller builds its default candidate through
+//! [`TemplateWriteTarget::trusted`] instead, unchecked.
 //!
 //! `root.join(candidate)` alone does **not** confine anything:
 //! `Path::starts_with` compares components lexically, so
 //! `root.join("../../../tmp/evil.md")` still "starts with" `root` even
 //! though it resolves outside it. The only reliable check is rejecting
 //! `..` (and absolute paths) in `candidate`'s own components before
-//! joining, which is what [`TemplateTargetPath::confine`] does.
+//! joining, which is what [`TemplateWriteTarget::confine`] does.
 //!
 //! [`TemplateWriter`]: the collaborator that applies one [`WriteMode`]
 //! to rendered content — [`TemplateWriter::write`] is the one entry
 //! point: for [`WriteMode::DryRun`] it hands `content` straight back as
-//! [`WriteOutcome::Previewed`] without picking a target at all; for
-//! [`WriteMode::CreateNew`]/[`WriteMode::Overwrite`] it picks a target
-//! by output-path precedence (`-o` > `file.write_to()` > a
-//! caller-supplied default) and writes to it, returning
-//! [`WriteOutcome::Written`]. Deliberately separate from
-//! [`TemplateTargetPath`]: a target path is an inert value, like
-//! [`Path`]/[`PathBuf`] — it never performs I/O or makes the precedence
-//! decision itself.
+//! [`WriteOutcome::Previewed`] without building a
+//! [`TemplateWriteTarget`] at all; for
+//! [`WriteMode::CreateNew`]/[`WriteMode::Overwrite`] it resolves a
+//! [`TemplateWriteTarget`] to a real path and writes to it, returning
+//! [`WriteOutcome::Written`]. Deliberately a separate collaborator from
+//! [`TemplateWriteTarget`]: candidate-gathering and precedence are a
+//! pure decision over values, with no I/O of their own — `write` is
+//! the only thing in this module that touches the filesystem.
 
 use std::{
     fs,
@@ -37,25 +40,80 @@ use std::{
 
 use super::{engine::RenderOutput, error::TemplateError};
 
-/// A render's output destination — [`TemplateWriter::commit`] only
-/// ever writes to a path built through [`TemplateTargetPath::confine`]
-/// or [`TemplateTargetPath::trusted`].
-#[derive(Debug)]
-pub(super) struct TemplateTargetPath(PathBuf);
+/// Where a render's output goes. Gathers the `-o` candidate
+/// (`requested`) and whatever `file.write_to()` captured (`declared`),
+/// then [`Self::target_path`] applies the precedence policy —
+/// `requested` over `declared` over a caller-supplied default — the
+/// moment a real path is needed. `requested`/`declared` are runtime
+/// values, confined to `root` via [`Self::confine`]; the default is
+/// built by the caller from an already trust-gated
+/// [`Config`](crate::config::Config) value and passes through
+/// [`Self::trusted`] unchecked instead (see module docs).
+#[derive(Debug, Default)]
+pub(super) struct TemplateWriteTarget<'a> {
+    requested: Option<&'a Path>,
+    declared: Option<PathBuf>,
+}
 
-impl TemplateTargetPath {
-    /// Confines `candidate` — a runtime `-o`/`file.write_to()` value —
-    /// to `root`: rejects an absolute path or any component other than
-    /// a plain name or `.`, then joins what's left onto `root`.
+impl<'a> TemplateWriteTarget<'a> {
+    /// Starts with neither candidate set.
+    #[inline]
+    #[must_use]
+    pub(super) fn new() -> Self {
+        Self::default()
+    }
+
+    /// Sets the `-o` candidate.
+    #[inline]
+    #[must_use]
+    pub(super) fn with_requested(
+        mut self,
+        requested: Option<&'a Path>,
+    ) -> Self {
+        self.requested = requested;
+        self
+    }
+
+    /// Sets the `file.write_to()` candidate.
+    #[inline]
+    #[must_use]
+    pub(super) fn with_declared(mut self, declared: Option<PathBuf>) -> Self {
+        self.declared = declared;
+        self
+    }
+
+    /// Resolves the real output path: `requested` over `declared` over
+    /// a lazily-computed `default` — `default` runs only when neither
+    /// candidate is set, so callers never pay for computing a
+    /// [`Config`](crate::config::Config)-derived default filename when
+    /// `-o`/`file.write_to()` already answered the question.
     ///
     /// # Errors
     ///
-    /// Returns [`TemplateError::OutputPathEscapesRoot`] when `candidate`
-    /// is absolute or contains a `..` (or other unsafe) component.
-    pub(super) fn confine(
+    /// Returns [`TemplateError::OutputPathEscapesRoot`] when
+    /// `requested` or `declared` names a path outside `root`.
+    pub(super) fn target_path(
+        &self,
+        root: &Path,
+        default: impl FnOnce() -> PathBuf,
+    ) -> Result<PathBuf, TemplateError> {
+        match self
+            .requested
+            .map(Path::to_path_buf)
+            .or_else(|| self.declared.clone())
+        {
+            Some(candidate) => Self::confine(root, &candidate),
+            None => Ok(default()),
+        }
+    }
+
+    /// Confines `candidate` — a runtime `-o`/`file.write_to()` value —
+    /// to `root`: rejects an absolute path or any component other than
+    /// a plain name or `.`, then joins what's left onto `root`.
+    fn confine(
         root: &Path,
         candidate: &Path,
-    ) -> Result<Self, TemplateError> {
+    ) -> Result<PathBuf, TemplateError> {
         let is_safe = !candidate.is_absolute()
             && candidate.components().all(|component| {
                 matches!(component, Component::Normal(_) | Component::CurDir)
@@ -65,37 +123,23 @@ impl TemplateTargetPath {
                 path: candidate.to_path_buf(),
             });
         }
-        Ok(Self(root.join(candidate)))
+        Ok(root.join(candidate))
     }
 
-    /// Builds a target path from `candidate` without validating it —
-    /// for [`Config::output_dir`](crate::config::Config::output_dir)
-    /// only, a value the project's own trusted config chose and which
-    /// may legitimately be absolute (see the module docs). Joins onto
+    /// Builds a default candidate path without validating it — for
+    /// [`Config::output_dir`](crate::config::Config::output_dir) only,
+    /// a value the project's own trusted config chose and which may
+    /// legitimately be absolute (see the module docs). Joins onto
     /// `root` when relative, exactly like [`Self::confine`], but never
     /// rejects.
     #[inline]
     #[must_use]
-    pub(super) fn trusted(root: &Path, candidate: PathBuf) -> Self {
+    pub(super) fn trusted(root: &Path, candidate: PathBuf) -> PathBuf {
         if candidate.is_absolute() {
-            Self(candidate)
+            candidate
         } else {
-            Self(root.join(candidate))
+            root.join(candidate)
         }
-    }
-
-    /// Borrows the confined path.
-    #[inline]
-    #[must_use]
-    pub(super) fn as_path(&self) -> &Path {
-        &self.0
-    }
-
-    /// Unwraps the confined path.
-    #[inline]
-    #[must_use]
-    pub(super) fn into_path_buf(self) -> PathBuf {
-        self.0
     }
 }
 
@@ -218,16 +262,16 @@ impl<'a> TemplateWriter<'a> {
 
     /// Applies `mode` to `rendered`: for [`WriteMode::DryRun`], returns
     /// [`RenderOutput::content`] as [`WriteOutcome::Previewed`] without
-    /// picking a target or touching the filesystem at all — `output`,
-    /// `rendered.write_to`, and `default` are never looked at, so a
-    /// dry-run's `-o`/
-    /// `file.write_to()` value is never confined. Otherwise picks a
-    /// target by precedence ([`Self::choose`]) and writes the content
-    /// to it ([`Self::commit`]), returning [`WriteOutcome::Written`].
-    /// Takes `rendered: RenderOutput` rather than separate `content`/
-    /// `write_to` params — the two always travel together (one render's
-    /// product) and bundling them keeps this under
-    /// `too-many-arguments-threshold`.
+    /// building a [`TemplateWriteTarget`] or touching the filesystem at
+    /// all — `output`, `rendered.write_to`, and `default` are never
+    /// looked at, so a dry-run's `-o`/`file.write_to()` value is never
+    /// confined. Otherwise gathers a [`TemplateWriteTarget`], resolves
+    /// it to a real path ([`TemplateWriteTarget::target_path`]), and
+    /// writes the content to it ([`Self::commit`]), returning
+    /// [`WriteOutcome::Written`]. Takes `rendered: RenderOutput` rather
+    /// than separate `content`/`write_to` params — the two always
+    /// travel together (one render's product) and bundling them keeps
+    /// this under `too-many-arguments-threshold`.
     ///
     /// # Errors
     ///
@@ -242,61 +286,36 @@ impl<'a> TemplateWriter<'a> {
         output: Option<&Path>,
         rendered: RenderOutput,
         mode: WriteMode,
-        default: impl FnOnce() -> TemplateTargetPath,
+        default: impl FnOnce() -> PathBuf,
     ) -> Result<WriteOutcome, TemplateError> {
         if mode == WriteMode::DryRun {
             return Ok(WriteOutcome::Previewed(rendered.content));
         }
-        let target = self.choose(output, rendered.write_to, default)?;
-        Self::commit(&target, &rendered.content, mode)?;
-        Ok(WriteOutcome::Written(target.into_path_buf()))
+        let path = TemplateWriteTarget::new()
+            .with_requested(output)
+            .with_declared(rendered.write_to)
+            .target_path(self.root, default)?;
+        Self::commit(&path, &rendered.content, mode)?;
+        Ok(WriteOutcome::Written(path))
     }
 
-    /// Picks the output target by precedence — `output` (`-o`) over
-    /// `write_to` (from `file.write_to()`) over a caller-supplied
-    /// `default`. If either `output` or `write_to` gave a candidate,
-    /// it's confined to `root` via [`TemplateTargetPath::confine`];
-    /// falling through to `default` (neither given) skips that check
-    /// entirely — `default` only ever builds from an already-trusted
-    /// config value (see
-    /// [`super::service::TemplateService::default_output_path`]).
-    ///
-    /// # Errors
-    ///
-    /// Returns [`TemplateError::OutputPathEscapesRoot`] when `output`
-    /// or `write_to` names a path outside `root`.
-    fn choose(
-        &self,
-        output: Option<&Path>,
-        write_to: Option<PathBuf>,
-        default: impl FnOnce() -> TemplateTargetPath,
-    ) -> Result<TemplateTargetPath, TemplateError> {
-        match output.map(Path::to_path_buf).or(write_to) {
-            Some(candidate) => {
-                TemplateTargetPath::confine(self.root, &candidate)
-            }
-            None => Ok(default()),
-        }
-    }
-
-    /// Writes `content` to `target`, creating its parent directory
-    /// tree first if it doesn't exist, then creating the file per
-    /// `mode` ([`WriteMode::create_file`]). Only ever called by
-    /// [`Self::write`] for [`WriteMode::CreateNew`]/[`WriteMode::Overwrite`]
-    /// — [`WriteMode::DryRun`] never reaches here.
+    /// Writes `content` to `path`, creating its parent directory tree
+    /// first if it doesn't exist, then creating the file per `mode`
+    /// ([`WriteMode::create_file`]). Only ever called by [`Self::write`]
+    /// for [`WriteMode::CreateNew`]/[`WriteMode::Overwrite`] —
+    /// [`WriteMode::DryRun`] never reaches here.
     ///
     /// # Errors
     ///
     /// Returns [`TemplateError::Write`] if the parent directory or the
     /// file itself can't be created or written, or
-    /// [`TemplateError::OutputFileAlreadyExists`] if `target` already
+    /// [`TemplateError::OutputFileAlreadyExists`] if `path` already
     /// exists and `mode` is [`WriteMode::CreateNew`].
     fn commit(
-        target: &TemplateTargetPath,
+        path: &Path,
         content: &str,
         mode: WriteMode,
     ) -> Result<(), TemplateError> {
-        let path = target.as_path();
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).map_err(|source| {
                 TemplateError::Write {
@@ -328,18 +347,19 @@ mod tests {
         let root = Path::new("/vault");
 
         let target =
-            TemplateTargetPath::confine(root, Path::new("notes/daily.md"))
+            TemplateWriteTarget::confine(root, Path::new("notes/daily.md"))
                 .expect("plain relative path is safe");
 
-        assert_eq!(target.as_path(), Path::new("/vault/notes/daily.md"));
+        assert_eq!(target, Path::new("/vault/notes/daily.md"));
     }
 
     #[test]
     fn rejects_an_absolute_candidate() {
         let root = Path::new("/vault");
 
-        let error = TemplateTargetPath::confine(root, Path::new("/etc/passwd"))
-            .expect_err("absolute candidate escapes root");
+        let error =
+            TemplateWriteTarget::confine(root, Path::new("/etc/passwd"))
+                .expect_err("absolute candidate escapes root");
 
         assert!(matches!(
             error,
@@ -351,7 +371,7 @@ mod tests {
     fn rejects_a_parent_traversal_candidate() {
         let root = Path::new("/vault");
 
-        let error = TemplateTargetPath::confine(
+        let error = TemplateWriteTarget::confine(
             root,
             Path::new("../../../tmp/evil.md"),
         )
@@ -364,7 +384,7 @@ mod tests {
     fn rejects_a_traversal_buried_in_the_middle_of_the_path() {
         let root = Path::new("/vault");
 
-        let error = TemplateTargetPath::confine(
+        let error = TemplateWriteTarget::confine(
             root,
             Path::new("notes/../../escape.md"),
         )
@@ -378,10 +398,10 @@ mod tests {
         let root = Path::new("/vault");
 
         let target =
-            TemplateTargetPath::confine(root, Path::new("./notes/daily.md"))
+            TemplateWriteTarget::confine(root, Path::new("./notes/daily.md"))
                 .expect("leading . is safe");
 
-        assert_eq!(target.as_path(), Path::new("/vault/./notes/daily.md"));
+        assert_eq!(target, Path::new("/vault/./notes/daily.md"));
     }
 
     mod write_mode {
@@ -515,7 +535,7 @@ mod tests {
                     WriteMode::DryRun,
                     || {
                         default_called.set(true);
-                        TemplateTargetPath::trusted(
+                        TemplateWriteTarget::trusted(
                             root.path(),
                             root.path().join("unused.md"),
                         )
@@ -539,7 +559,7 @@ mod tests {
 
             let outcome = writer
                 .write(None, rendered("hello"), WriteMode::CreateNew, || {
-                    TemplateTargetPath::trusted(root.path(), path.clone())
+                    TemplateWriteTarget::trusted(root.path(), path.clone())
                 })
                 .expect("writes new file");
 
@@ -559,7 +579,7 @@ mod tests {
                     rendered("hi"),
                     WriteMode::CreateNew,
                     || {
-                        TemplateTargetPath::trusted(
+                        TemplateWriteTarget::trusted(
                             root.path(),
                             default_path.clone(),
                         )
@@ -583,7 +603,7 @@ mod tests {
 
             let error = writer
                 .write(None, rendered("new"), WriteMode::CreateNew, || {
-                    TemplateTargetPath::trusted(root.path(), path.clone())
+                    TemplateWriteTarget::trusted(root.path(), path.clone())
                 })
                 .expect_err("existing target fails under CreateNew");
 
@@ -603,7 +623,8 @@ mod tests {
         fn writes_content_to_a_newly_created_file() {
             let temp = tempfile::tempdir().expect("create temp dir");
             let path = temp.path().join("note.md");
-            let target = TemplateTargetPath::trusted(temp.path(), path.clone());
+            let target =
+                TemplateWriteTarget::trusted(temp.path(), path.clone());
 
             TemplateWriter::commit(&target, "hello", WriteMode::CreateNew)
                 .expect("creates new file");
@@ -615,7 +636,8 @@ mod tests {
         fn dry_run_writes_nothing() {
             let temp = tempfile::tempdir().expect("create temp dir");
             let path = temp.path().join("note.md");
-            let target = TemplateTargetPath::trusted(temp.path(), path.clone());
+            let target =
+                TemplateWriteTarget::trusted(temp.path(), path.clone());
 
             TemplateWriter::commit(&target, "hello", WriteMode::DryRun)
                 .expect("dry run commit succeeds");
@@ -628,7 +650,8 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             let path = temp.path().join("note.md");
             fs::write(&path, "old").expect("seed existing file");
-            let target = TemplateTargetPath::trusted(temp.path(), path.clone());
+            let target =
+                TemplateWriteTarget::trusted(temp.path(), path.clone());
 
             TemplateWriter::commit(&target, "new", WriteMode::Overwrite)
                 .expect("force overwrites");
@@ -640,7 +663,8 @@ mod tests {
         fn creates_the_parent_directory_tree_before_writing() {
             let temp = tempfile::tempdir().expect("create temp dir");
             let path = temp.path().join("nested/deep/note.md");
-            let target = TemplateTargetPath::trusted(temp.path(), path.clone());
+            let target =
+                TemplateWriteTarget::trusted(temp.path(), path.clone());
 
             TemplateWriter::commit(&target, "hello", WriteMode::CreateNew)
                 .expect("creates parent dirs and file");

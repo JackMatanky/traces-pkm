@@ -24,16 +24,18 @@
 //! - [`engine`]: wraps minijinja's [`Environment`](minijinja::Environment) so
 //!   [`service`] depends on "render this source" rather than on minijinja's
 //!   API.
-//! - [`writer`][]: [`TemplateTargetPath`](writer::TemplateTargetPath), a
-//!   proven-safe output destination, and
+//! - [`writer`][]: [`TemplateWriteTarget`](writer::TemplateWriteTarget), which
+//!   gathers a render's output-destination candidates (`-o`, `file.write_to()`)
+//!   and resolves them to a real path by precedence, and
 //!   [`TemplateWriter`](writer::TemplateWriter), whose one entry point,
 //!   [`TemplateWriter::write`](writer::TemplateWriter::write), applies a
-//!   [`WriteMode`](writer::WriteMode) to rendered content: picks a target by
-//!   precedence (`file.write_to()`, `-o`, and the config default alike confined
-//!   to [`Config::root`](crate::config::Config::root), rejecting `..` and
-//!   absolute candidates before they ever reach a write) and writes to it, or —
-//!   for [`WriteMode::DryRun`](writer::WriteMode::DryRun) — returns the content
-//!   untouched, never picking a target at all.
+//!   [`WriteMode`](writer::WriteMode) to rendered content: resolves a target —
+//!   `file.write_to()`/`-o` confined to
+//!   [`Config::root`](crate::config::Config::root), rejecting `..` and absolute
+//!   candidates before they ever reach a write, falling back to the trusted
+//!   config default — and writes to it, or — for
+//!   [`WriteMode::DryRun`](writer::WriteMode::DryRun) — returns the content
+//!   untouched, never resolving a target at all.
 //! - [`service`]: [`TemplateService`], which chains resolve, render, and write
 //!   into the one call `crate::cli::template` makes.
 //!
