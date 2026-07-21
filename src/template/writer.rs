@@ -1,11 +1,12 @@
 //! [`TemplateWriter`]: the collaborator that applies one [`WriteMode`]
 //! to rendered content — [`TemplateWriter::write`] is the one entry
 //! point, and the only thing [`super::service::TemplateService`] calls
-//! on this module: for [`WriteMode::DryRun`] it hands `content`
-//! straight back as [`WriteOutcome::Previewed`] without building a
-//! [`TemplateWriteTarget`] at all; for
-//! [`WriteMode::CreateNew`]/[`WriteMode::Overwrite`] it resolves a
-//! [`TemplateWriteTarget`] to a real path and writes to it, returning
+//! on this module. For [`WriteMode::DryRun`] it ignores the supplied
+//! [`TemplateWriteTarget`] and `default` entirely and hands `content`
+//! straight back as [`WriteOutcome::Previewed`] ([`Self::preview`]);
+//! for [`WriteMode::CreateNew`]/[`WriteMode::Overwrite`] it resolves
+//! the target to a real path ([`TemplateWriteTarget::target_path`])
+//! and writes to it ([`Self::commit`]), returning
 //! [`WriteOutcome::Written`]. Deliberately a separate collaborator from
 //! [`TemplateWriteTarget`]: candidate-gathering and precedence are a
 //! pure decision over values, with no I/O of their own — `write` is
@@ -13,17 +14,20 @@
 //!
 //! [`TemplateWriteTarget`]: gathers a render's output-destination
 //! candidates — the `-o` flag (`requested`) and whatever
-//! `file.write_to()` captured (`declared`) — and, on
-//! [`TemplateWriteTarget::target_path`], applies the precedence policy:
-//! `requested` over `declared` over a caller-supplied default.
-//! `requested`/`declared` are runtime values the CLI argument or the
-//! template itself supplies, so [`TemplateWriteTarget::confine`] proves
-//! they stay within [`Config::root`](crate::config::Config::root)
-//! before anything is written. [`Config::output_dir`] is different:
-//! it's a value the project's own (already trust-gated) config chose,
-//! and — like the rest of this codebase's handling of `output_dir` —
-//! is allowed to be absolute and point anywhere the config author
-//! configured, so a caller builds its default candidate through
+//! `file.write_to()` captured (`declared`) — built by
+//! [`super::service::TemplateService::render_to_file`] right after it
+//! has both values in hand, and handed to [`TemplateWriter::write`]
+//! already assembled. On [`TemplateWriteTarget::target_path`], applies
+//! the precedence policy: `requested` over `declared` over a
+//! caller-supplied default. `requested`/`declared` are runtime values
+//! the CLI argument or the template itself supplies, so
+//! [`TemplateWriteTarget::confine`] proves they stay within
+//! [`Config::root`](crate::config::Config::root) before anything is
+//! written. [`Config::output_dir`] is different: it's a value the
+//! project's own (already trust-gated) config chose, and — like the
+//! rest of this codebase's handling of `output_dir` — is allowed to be
+//! absolute and point anywhere the config author configured, so a
+//! caller builds its default candidate through
 //! [`TemplateWriteTarget::trusted`] instead, unchecked.
 //!
 //! `root.join(candidate)` alone does **not** confine anything:
@@ -39,7 +43,7 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
-use super::{engine::RenderOutput, error::TemplateError};
+use super::error::TemplateError;
 
 /// The collaborator that applies one [`WriteMode`] to rendered content:
 /// [`Self::write`] is the one entry point, and the only thing
@@ -62,43 +66,44 @@ impl<'a> TemplateWriter<'a> {
         }
     }
 
-    /// Applies `mode` to `rendered`: for [`WriteMode::DryRun`], returns
-    /// [`RenderOutput::content`] as [`WriteOutcome::Previewed`] without
-    /// building a [`TemplateWriteTarget`] or touching the filesystem at
-    /// all — `output`, `rendered.write_to`, and `default` are never
-    /// looked at, so a dry-run's `-o`/`file.write_to()` value is never
-    /// confined. Otherwise gathers a [`TemplateWriteTarget`], resolves
-    /// it to a real path ([`TemplateWriteTarget::target_path`]), and
-    /// writes the content to it ([`Self::commit`]), returning
-    /// [`WriteOutcome::Written`]. Takes `rendered: RenderOutput` rather
-    /// than separate `content`/`write_to` params — the two always
-    /// travel together (one render's product) and bundling them keeps
-    /// this under `too-many-arguments-threshold`.
+    /// Applies `mode` to `target`/`content`: for [`WriteMode::DryRun`],
+    /// wraps `content` as [`WriteOutcome::Previewed`]
+    /// ([`Self::preview`]) without ever resolving `target` or touching
+    /// the filesystem — `target` and `default` are never looked at, so
+    /// a dry-run's `-o`/`file.write_to()` candidate is never confined.
+    /// Otherwise resolves `target` to a real path
+    /// ([`TemplateWriteTarget::target_path`]) and writes `content` to
+    /// it ([`Self::commit`]), returning [`WriteOutcome::Written`].
     ///
     /// # Errors
     ///
-    /// Returns [`TemplateError::OutputPathEscapesRoot`] when `output` or
-    /// `rendered.write_to` names a path outside `root` — never for
-    /// [`WriteMode::DryRun`]. Returns [`TemplateError::Write`] if the
-    /// output, or its parent directory, can't be written. Returns
+    /// Returns [`TemplateError::OutputPathEscapesRoot`] when `target`'s
+    /// `requested`/`declared` candidate names a path outside `root` —
+    /// never for [`WriteMode::DryRun`]. Returns
+    /// [`TemplateError::Write`] if the output, or its parent directory,
+    /// can't be written. Returns
     /// [`TemplateError::OutputFileAlreadyExists`] if the target already
     /// exists and `mode` is [`WriteMode::CreateNew`].
     pub(super) fn write(
         &self,
-        output: Option<&Path>,
-        rendered: RenderOutput,
+        target: &TemplateWriteTarget<'_>,
+        content: String,
         mode: WriteMode,
         default: impl FnOnce() -> PathBuf,
     ) -> Result<WriteOutcome, TemplateError> {
         if mode == WriteMode::DryRun {
-            return Ok(WriteOutcome::Previewed(rendered.content));
+            return Ok(Self::preview(content));
         }
-        let path = TemplateWriteTarget::new()
-            .with_requested(output)
-            .with_declared(rendered.write_to)
-            .target_path(self.root, default)?;
-        Self::commit(&path, &rendered.content, mode)?;
+        let path = target.target_path(self.root, default)?;
+        Self::commit(&path, &content, mode)?;
         Ok(WriteOutcome::Written(path))
+    }
+
+    /// Wraps `content` as [`WriteOutcome::Previewed`] without touching
+    /// the filesystem — the [`WriteMode::DryRun`] leaf of
+    /// [`Self::write`], mirroring [`Self::commit`] as its on-disk leaf.
+    fn preview(content: String) -> WriteOutcome {
+        WriteOutcome::Previewed(content)
     }
 
     /// Writes `content` to `path`, creating its parent directory tree
@@ -513,15 +518,6 @@ mod tests {
 
         use super::*;
 
-        /// A [`RenderOutput`] with `content` and no `file.write_to()`
-        /// call — the common case across these tests.
-        fn rendered(content: &str) -> RenderOutput {
-            RenderOutput {
-                content: content.to_owned(),
-                write_to: None,
-            }
-        }
-
         #[test]
         fn dry_run_returns_previewed_without_choosing_a_target() {
             let root = tempfile::tempdir().expect("create temp dir");
@@ -531,8 +527,8 @@ mod tests {
 
             let outcome = writer
                 .write(
-                    Some(escaping),
-                    rendered("hello"),
+                    &TemplateWriteTarget::new().with_requested(Some(escaping)),
+                    "hello".to_owned(),
                     WriteMode::DryRun,
                     || {
                         default_called.set(true);
@@ -559,9 +555,12 @@ mod tests {
             let path = root.path().join("note.md");
 
             let outcome = writer
-                .write(None, rendered("hello"), WriteMode::CreateNew, || {
-                    TemplateWriteTarget::trusted(root.path(), path.clone())
-                })
+                .write(
+                    &TemplateWriteTarget::new(),
+                    "hello".to_owned(),
+                    WriteMode::CreateNew,
+                    || TemplateWriteTarget::trusted(root.path(), path.clone()),
+                )
                 .expect("writes new file");
 
             assert_eq!(outcome, WriteOutcome::Written(path.clone()));
@@ -576,8 +575,9 @@ mod tests {
 
             let outcome = writer
                 .write(
-                    Some(Path::new("elsewhere.md")),
-                    rendered("hi"),
+                    &TemplateWriteTarget::new()
+                        .with_requested(Some(Path::new("elsewhere.md"))),
+                    "hi".to_owned(),
                     WriteMode::CreateNew,
                     || {
                         TemplateWriteTarget::trusted(
@@ -603,9 +603,12 @@ mod tests {
             let writer = TemplateWriter::new(root.path());
 
             let error = writer
-                .write(None, rendered("new"), WriteMode::CreateNew, || {
-                    TemplateWriteTarget::trusted(root.path(), path.clone())
-                })
+                .write(
+                    &TemplateWriteTarget::new(),
+                    "new".to_owned(),
+                    WriteMode::CreateNew,
+                    || TemplateWriteTarget::trusted(root.path(), path.clone()),
+                )
                 .expect_err("existing target fails under CreateNew");
 
             assert!(matches!(

@@ -49,16 +49,17 @@ impl<'a> TemplateService<'a> {
         }
     }
 
-    /// Resolves `name` and renders it, then hands the result to
-    /// [`TemplateWriter::write`], which either writes it to disk or —
-    /// for [`WriteMode::DryRun`] — returns it untouched (see
-    /// [`WriteOutcome`]; printing it is the caller's job). The output
-    /// path itself is chosen by precedence — an explicit `output`
-    /// (`-o`) wins, then a `file.write_to()` call inside the template,
-    /// then [`Self::default_output_path`] — entirely inside
-    /// [`TemplateWriter::write`]; this method only supplies the pieces
-    /// (`output`, `rendered.write_to`, `rendered.content`, `mode`, and
-    /// the default-path closure).
+    /// Resolves `name` and renders it, then builds a
+    /// [`TemplateWriteTarget`] from `output` (`-o`) and
+    /// `rendered.write_to` (a `file.write_to()` call inside the
+    /// template) — the two output-destination candidates — and hands
+    /// `target`, `rendered.content`, and `mode` to
+    /// [`TemplateWriter::write`], which either writes the content to
+    /// disk or — for [`WriteMode::DryRun`] — returns it untouched (see
+    /// [`WriteOutcome`]; printing it is the caller's job). When a real
+    /// path is needed, [`TemplateWriteTarget::target_path`] picks it by
+    /// precedence: `target`'s `requested` candidate, then `declared`,
+    /// then [`Self::default_output_path`].
     ///
     /// # Errors
     ///
@@ -82,7 +83,10 @@ impl<'a> TemplateService<'a> {
         let template_source = Self::read_template(&resolved)?;
         let rendered =
             self.render_template(&template_source, &resolved_path)?;
-        self.writer.write(output, rendered, mode, || {
+        let target = TemplateWriteTarget::new()
+            .with_requested(output)
+            .with_declared(rendered.write_to);
+        self.writer.write(&target, rendered.content, mode, || {
             self.default_output_path(&resolved)
         })
     }
