@@ -35,11 +35,15 @@
 //!   into the one call `crate::cli::template` makes.
 //!
 //! `pub(crate)`, not `pub`: only `crate::cli::template` calls in here.
-//! Everything below `service` is `pub(super)` at most; [`TemplateError`] is
-//! the one exception, re-exported so [`crate::cli::error::TemplateCliError`]
-//! can downcast its boxed source and special-case
-//! [`TemplateError::OutputFileAlreadyExists`] into its own diagnostic code
-//! and help text.
+//! Everything below `service` is `pub(super)` at most, with two
+//! exceptions re-exported below: [`TemplateError`], so
+//! [`crate::cli::error::TemplateCliError`] can downcast its boxed source
+//! and special-case [`TemplateError::OutputFileAlreadyExists`] into its
+//! own diagnostic code and help text; and [`writer::WriteMode`], so
+//! `crate::cli::template` can build the one mode value `--force` and
+//! `--dry-run` (mutually exclusive in effect) collapse into, instead of
+//! passing both flags into [`service::TemplateService::render_to_file`]
+//! as independent `bool`s.
 
 mod engine;
 mod error;
@@ -52,3 +56,4 @@ mod writer;
 
 pub(crate) use error::TemplateError;
 pub(crate) use service::{TemplateService, WriteOutcome};
+pub(crate) use writer::WriteMode;

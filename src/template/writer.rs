@@ -103,9 +103,14 @@ impl TemplateTargetPath {
 
 /// How [`TemplateWriter::commit`] should treat a target — the domain
 /// meaning behind `--force`/`--dry-run`, spelled out as a type instead
-/// of bare `bool`s at the call site.
+/// of bare `bool`s at the call site. `pub(crate)`, unlike everything
+/// else in this module: `--force` and `--dry-run` are mutually
+/// exclusive in effect (dry-run has no on-disk write to force), so
+/// [`TemplateService::render_to_file`](super::service::TemplateService::render_to_file)
+/// takes one `WriteMode` instead of two independent `bool`s — which
+/// means the CLI, where those flags are parsed, needs to build one.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum WriteMode {
+pub(crate) enum WriteMode {
     /// Fail with [`TemplateError::OutputFileAlreadyExists`] if the
     /// target already exists. The default, safe mode.
     CreateNew,
@@ -124,11 +129,26 @@ pub(super) enum WriteMode {
 }
 
 impl WriteMode {
-    /// Converts the CLI/API's `force` flag into the mode
-    /// [`Self::create_file`] branches on. Never returns [`Self::DryRun`]
-    /// — that variant is selected directly from `--dry-run`, not derived
-    /// from `force` (see
-    /// [`TemplateService::render_to_file`](super::service::TemplateService::render_to_file)).
+    /// Converts the CLI's `--dry-run` and `--force` flags into the one
+    /// mode that drives the rest of the pipeline. `dry_run` wins: when
+    /// set, `force` is never consulted, since the two flags don't
+    /// combine into a fourth state — there's nothing to force in
+    /// dry-run mode. The precedence rule lives here, not at the CLI
+    /// call site, so the two flags' meaning stays defined in one place.
+    #[inline]
+    #[must_use]
+    pub(crate) fn from_flags(dry_run: bool, force: bool) -> Self {
+        if dry_run {
+            Self::DryRun
+        } else {
+            Self::from_force(force)
+        }
+    }
+
+    /// Converts a bare `force` flag into the mode [`Self::create_file`]
+    /// branches on for a real (non-dry-run) write. Private: only
+    /// [`Self::from_flags`] calls this directly; nothing outside this
+    /// module needs `force` in isolation from `dry_run`.
     #[inline]
     #[must_use]
     pub(super) fn from_force(force: bool) -> Self {
@@ -343,6 +363,28 @@ mod tests {
         #[test]
         fn from_force_true_is_overwrite() {
             assert_eq!(WriteMode::from_force(true), WriteMode::Overwrite);
+        }
+
+        #[test]
+        fn from_flags_dry_run_wins_over_force() {
+            assert_eq!(WriteMode::from_flags(true, true), WriteMode::DryRun);
+        }
+
+        #[test]
+        fn from_flags_dry_run_true_ignores_force_false() {
+            assert_eq!(WriteMode::from_flags(true, false), WriteMode::DryRun);
+        }
+
+        #[test]
+        fn from_flags_no_dry_run_defers_to_force() {
+            assert_eq!(
+                WriteMode::from_flags(false, true),
+                WriteMode::Overwrite
+            );
+            assert_eq!(
+                WriteMode::from_flags(false, false),
+                WriteMode::CreateNew
+            );
         }
 
         #[test]

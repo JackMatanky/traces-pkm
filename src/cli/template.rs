@@ -16,7 +16,7 @@ use super::error::TemplateCliError;
 use crate::{
     Cwd,
     config::{ConfigLoadError, ConfigService},
-    template::{TemplateService, WriteOutcome},
+    template::{TemplateService, WriteMode, WriteOutcome},
 };
 
 /// `traces template -i <name>` (aliased `tmpl`), and the default
@@ -90,13 +90,9 @@ impl Template {
                 source: Box::new(source),
             },
         })?;
+        let mode = WriteMode::from_flags(self.dry_run, self.force);
         let outcome = TemplateService::new(&config)
-            .render_to_file(
-                &self.name,
-                self.output.as_deref(),
-                self.force,
-                self.dry_run,
-            )
+            .render_to_file(&self.name, self.output.as_deref(), mode)
             .map_err(|source| TemplateCliError::Instantiate {
                 name: self.name.clone(),
                 source: Box::new(source),
