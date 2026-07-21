@@ -21,7 +21,7 @@ The `template`/`tmpl` CLI command (and the default `-i` dispatch) wraps this ser
 5. As a user, I want to call `{{ ui.text_input("Question?") }}` in a template to ask for text input during rendering, so that templates can collect dynamic data.
 6. As a user, I want to call `{{ ui.select("Question?", items) }}` in a template to present a select menu, so that I can choose from predefined options.
 7. As a user, I want to call `{{ file.write_to("path/to/note.md") }}` in a template to declare the output path from within the template, mirroring Obsidian Templater's `tp.file.move()`.
-8. As a user, I want the `-o` flag to override the output path, and for `file.write_to()` in the template to override `-o`, so that the template can dynamically choose the path unless I explicitly override it.
+8. As a user, I want the `-o` flag to override `file.write_to()` in the template, which overrides the default output path, so that an explicit invocation-time override always wins over a template's own internal choice. **(Shipped precedence — see `.scratch/template-service/issues/02-output-path-control.md`'s "Critical AC review": inverted post-delivery from this story's original wording, on explicit maintainer direction, since `-o` is a more immediate, explicit instruction than a template's internal directive.)**
 9. As a user, I want the default output path (when neither `-o` nor `file.write_to()` is used) to be `./<template-resolved-name>.md`, so that there's always a sensible fallback.
 10. As a user, I want `-n` or `--dry-run` to render the template to stdout without writing to disk, so that I can preview the result before committing.
 11. As a user, I want dry-run mode to skip interactive prompts and return sensible default values, so that dry-run works non-interactively.
@@ -30,7 +30,7 @@ The `template`/`tmpl` CLI command (and the default `-i` dispatch) wraps this ser
 14. As a user, I want to call `{% include "other_template.md" %}` to include another template during rendering, using minijinja's built-in include mechanism against the resolved template directories.
 15. As a user, I want to call `{{ file.include("/path/to/file.md") }}` to include an arbitrary file by absolute path, matching my existing `tp.user.include_file()` pattern.
 16. As a user, I want built-in date formatting functions (e.g., `{{ date.now(format="%Y-%m-%d") }}`), so that templates can produce date-stamped output.
-17. As an AI agent (via MCP), I want TemplateService to accept all variables upfront (no interactive prompts), so that the agent can instantiate templates without a terminal.
+17. As an AI agent (via MCP), I want TemplateService to accept all variables upfront (no interactive prompts), so that the agent can instantiate templates without a terminal. **(Not covered by any issue under `.scratch/template-service/issues/` as of this writing — `TemplateEngine::render` currently always renders with an empty context; needs its own ticket before MCP mode is viable.)**
 
 ## Implementation Decisions
 
@@ -68,7 +68,7 @@ The `template`/`tmpl` CLI command (and the default `-i` dispatch) wraps this ser
 
 - Tests should only test external behavior: given a template string + custom functions + variables, does rendering produce the expected output?
 - **TemplateService tests**: provide template strings with various function calls, verify rendered output. Mock/non-interactive mode for prompt functions.
-- **Output path tests**: verify priority (file.write_to > -o > default), verify error on existing file, verify force overwrite.
+- **Output path tests**: verify priority (`-o` > `file.write_to` > default — see user story 8's note on the shipped precedence), verify error on existing file, verify force overwrite.
 - **Dry-run tests**: verify stdout output, verify no file is written, verify defaults from interactive functions.
 - **Include tests**: verify `{% include %}` resolves against template directories, verify `file.include()` reads absolute paths.
 - **CLI integration tests**: verify all three invocation forms produce the same result, verify flag parsing.
