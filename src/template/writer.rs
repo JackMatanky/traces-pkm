@@ -326,12 +326,8 @@ impl<'a> TemplateWriteTarget<'a> {
         root: &Path,
         default: impl FnOnce() -> PathBuf,
     ) -> Result<PathBuf, TemplateError> {
-        match self
-            .requested
-            .map(Path::to_path_buf)
-            .or_else(|| self.declared.clone())
-        {
-            Some(candidate) => Self::confine(root, &candidate),
+        match self.requested.or(self.declared.as_deref()) {
+            Some(candidate) => Self::confine(root, candidate),
             None => Ok(default()),
         }
     }
@@ -374,97 +370,282 @@ impl<'a> TemplateWriteTarget<'a> {
 
 #[cfg(test)]
 mod tests {
-    use pretty_assertions::assert_eq;
-
     use super::*;
 
-    #[test]
-    fn confines_a_plain_relative_path() {
-        let root = Path::new("/vault");
-
-        let target =
-            TemplateWriteTarget::confine(root, Path::new("notes/daily.md"))
-                .expect("plain relative path is safe");
-
-        assert_eq!(target, Path::new("/vault/notes/daily.md"));
-    }
-
-    #[test]
-    fn rejects_an_absolute_candidate() {
-        let root = Path::new("/vault");
-
-        let error =
-            TemplateWriteTarget::confine(root, Path::new("/etc/passwd"))
-                .expect_err("absolute candidate escapes root");
-
-        assert!(matches!(
-            error,
-            TemplateError::OutputPathEscapesRoot { path } if path == Path::new("/etc/passwd")
-        ));
-    }
-
-    #[test]
-    fn rejects_a_parent_traversal_candidate() {
-        let root = Path::new("/vault");
-
-        let error = TemplateWriteTarget::confine(
-            root,
-            Path::new("../../../tmp/evil.md"),
-        )
-        .expect_err("parent traversal escapes root");
-
-        assert!(matches!(error, TemplateError::OutputPathEscapesRoot { .. }));
-    }
-
-    #[test]
-    fn rejects_a_traversal_buried_in_the_middle_of_the_path() {
-        let root = Path::new("/vault");
-
-        let error = TemplateWriteTarget::confine(
-            root,
-            Path::new("notes/../../escape.md"),
-        )
-        .expect_err("buried parent traversal escapes root");
-
-        assert!(matches!(error, TemplateError::OutputPathEscapesRoot { .. }));
-    }
-
-    #[test]
-    fn accepts_a_leading_current_dir_segment() {
-        let root = Path::new("/vault");
-
-        let target =
-            TemplateWriteTarget::confine(root, Path::new("./notes/daily.md"))
-                .expect("leading . is safe");
-
-        assert_eq!(target, Path::new("/vault/./notes/daily.md"));
-    }
-
-    mod write_mode {
+    mod confine {
         use pretty_assertions::assert_eq;
 
         use super::*;
 
         #[test]
-        fn from_flags_dry_run_wins_over_force() {
-            assert_eq!(WriteMode::from_flags(true, true), WriteMode::DryRun);
+        fn joins_a_plain_relative_path_onto_root() {
+            let root = Path::new("/vault");
+
+            let target =
+                TemplateWriteTarget::confine(root, Path::new("notes/daily.md"))
+                    .expect("plain relative path is safe");
+
+            assert_eq!(target, Path::new("/vault/notes/daily.md"));
         }
 
         #[test]
-        fn from_flags_dry_run_true_ignores_force_false() {
-            assert_eq!(WriteMode::from_flags(true, false), WriteMode::DryRun);
+        fn rejects_an_absolute_candidate() {
+            let root = Path::new("/vault");
+
+            let error =
+                TemplateWriteTarget::confine(root, Path::new("/etc/passwd"))
+                    .expect_err("absolute candidate escapes root");
+
+            assert!(matches!(
+                error,
+                TemplateError::OutputPathEscapesRoot { path } if path == Path::new("/etc/passwd")
+            ));
         }
 
         #[test]
-        fn from_flags_no_dry_run_defers_to_force() {
-            assert_eq!(
-                WriteMode::from_flags(false, true),
-                WriteMode::Commit(CommitPolicy::Overwrite)
+        fn rejects_a_parent_traversal_candidate() {
+            let root = Path::new("/vault");
+
+            let error = TemplateWriteTarget::confine(
+                root,
+                Path::new("../../../tmp/evil.md"),
+            )
+            .expect_err("parent traversal escapes root");
+
+            assert!(matches!(
+                error,
+                TemplateError::OutputPathEscapesRoot { .. }
+            ));
+        }
+
+        #[test]
+        fn rejects_a_traversal_buried_in_the_middle_of_the_path() {
+            let root = Path::new("/vault");
+
+            let error = TemplateWriteTarget::confine(
+                root,
+                Path::new("notes/../../escape.md"),
+            )
+            .expect_err("buried parent traversal escapes root");
+
+            assert!(matches!(
+                error,
+                TemplateError::OutputPathEscapesRoot { .. }
+            ));
+        }
+
+        #[test]
+        fn accepts_a_leading_current_dir_segment() {
+            let root = Path::new("/vault");
+
+            let target = TemplateWriteTarget::confine(
+                root,
+                Path::new("./notes/daily.md"),
+            )
+            .expect("leading . is safe");
+
+            assert_eq!(target, Path::new("/vault/./notes/daily.md"));
+        }
+
+        #[test]
+        fn accepts_an_empty_candidate_by_resolving_to_root() {
+            let root = Path::new("/vault");
+
+            let target = TemplateWriteTarget::confine(root, Path::new(""))
+                .expect("an empty candidate has no unsafe components");
+
+            assert_eq!(target, root);
+        }
+    }
+
+    mod target_path {
+        use std::cell::Cell;
+
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn prefers_requested_over_declared_and_default() {
+            let root = Path::new("/vault");
+            let target = TemplateWriteTarget::new()
+                .with_requested(Some(Path::new("requested.md")))
+                .with_declared(Some(PathBuf::from("declared.md")));
+
+            let path = target
+                .target_path(root, || root.join("default.md"))
+                .expect("requested candidate is safe");
+
+            assert_eq!(path, Path::new("/vault/requested.md"));
+        }
+
+        #[test]
+        fn prefers_declared_over_default_when_requested_is_unset() {
+            let root = Path::new("/vault");
+            let target = TemplateWriteTarget::new()
+                .with_declared(Some(PathBuf::from("declared.md")));
+
+            let path = target
+                .target_path(root, || root.join("default.md"))
+                .expect("declared candidate is safe");
+
+            assert_eq!(path, Path::new("/vault/declared.md"));
+        }
+
+        #[test]
+        fn computes_default_only_when_neither_candidate_is_set() {
+            let root = Path::new("/vault");
+            let target = TemplateWriteTarget::new();
+            let default_called = Cell::new(false);
+
+            let path = target
+                .target_path(root, || {
+                    default_called.set(true);
+                    root.join("default.md")
+                })
+                .expect("default candidate is trusted, never confined");
+
+            assert_eq!(path, Path::new("/vault/default.md"));
+            assert!(default_called.get());
+        }
+
+        #[test]
+        fn skips_computing_default_when_requested_is_set() {
+            let root = Path::new("/vault");
+            let target = TemplateWriteTarget::new()
+                .with_requested(Some(Path::new("requested.md")));
+            let default_called = Cell::new(false);
+
+            target
+                .target_path(root, || {
+                    default_called.set(true);
+                    root.join("default.md")
+                })
+                .expect("requested candidate is safe");
+
+            assert!(!default_called.get());
+        }
+
+        #[test]
+        fn skips_computing_default_when_declared_is_set() {
+            let root = Path::new("/vault");
+            let target = TemplateWriteTarget::new()
+                .with_declared(Some(PathBuf::from("declared.md")));
+            let default_called = Cell::new(false);
+
+            target
+                .target_path(root, || {
+                    default_called.set(true);
+                    root.join("default.md")
+                })
+                .expect("declared candidate is safe");
+
+            assert!(!default_called.get());
+        }
+
+        #[test]
+        fn rejects_an_escaping_requested_candidate_before_consulting_declared_or_default()
+         {
+            let root = Path::new("/vault");
+            let target = TemplateWriteTarget::new()
+                .with_requested(Some(Path::new("../../escape.md")))
+                .with_declared(Some(PathBuf::from("declared.md")));
+
+            let error = target
+                .target_path(root, || root.join("default.md"))
+                .expect_err("requested candidate escapes root");
+
+            assert!(matches!(
+                error,
+                TemplateError::OutputPathEscapesRoot { .. }
+            ));
+        }
+
+        #[test]
+        fn rejects_an_escaping_declared_candidate_when_requested_is_unset() {
+            let root = Path::new("/vault");
+            let target = TemplateWriteTarget::new()
+                .with_declared(Some(PathBuf::from("../../escape.md")));
+
+            let error = target
+                .target_path(root, || root.join("default.md"))
+                .expect_err("declared candidate escapes root");
+
+            assert!(matches!(
+                error,
+                TemplateError::OutputPathEscapesRoot { .. }
+            ));
+        }
+
+        #[test]
+        fn returns_an_unconfined_default_even_when_it_would_fail_confine() {
+            let root = Path::new("/vault");
+            let target = TemplateWriteTarget::new();
+            let outside_root = PathBuf::from("/etc/passwd");
+
+            let path =
+                target.target_path(root, || outside_root.clone()).expect(
+                    "default is a trusted config value, passed through \
+                     unchecked",
+                );
+
+            assert_eq!(path, outside_root);
+        }
+    }
+
+    mod trusted {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn returns_an_absolute_candidate_unchanged() {
+            let root = Path::new("/vault");
+            let candidate = PathBuf::from("/elsewhere/note.md");
+
+            let path = TemplateWriteTarget::trusted(root, candidate.clone());
+
+            assert_eq!(path, candidate);
+        }
+
+        #[test]
+        fn joins_a_relative_candidate_onto_root() {
+            let root = Path::new("/vault");
+
+            let path = TemplateWriteTarget::trusted(
+                root,
+                PathBuf::from("notes/daily.md"),
             );
-            assert_eq!(
-                WriteMode::from_flags(false, false),
-                WriteMode::Commit(CommitPolicy::CreateNew)
-            );
+
+            assert_eq!(path, Path::new("/vault/notes/daily.md"));
+        }
+    }
+
+    mod write_mode {
+        use pretty_assertions::assert_eq;
+        use rstest::rstest;
+
+        use super::*;
+
+        #[rstest]
+        #[case::dry_run_and_force(true, true, WriteMode::DryRun)]
+        #[case::dry_run_without_force(true, false, WriteMode::DryRun)]
+        #[case::force_without_dry_run(
+            false,
+            true,
+            WriteMode::Commit(CommitPolicy::Overwrite)
+        )]
+        #[case::neither_flag_set(
+            false,
+            false,
+            WriteMode::Commit(CommitPolicy::CreateNew)
+        )]
+        fn converts_flags_to_the_matching_mode(
+            #[case] dry_run: bool,
+            #[case] force: bool,
+            #[case] expected: WriteMode,
+        ) {
+            assert_eq!(WriteMode::from_flags(dry_run, force), expected);
         }
     }
 
@@ -474,12 +655,12 @@ mod tests {
         use super::*;
 
         #[test]
-        fn from_flag_force_true_is_overwrite() {
+        fn from_flag_converts_true_to_overwrite() {
             assert_eq!(CommitPolicy::from_flag(true), CommitPolicy::Overwrite);
         }
 
         #[test]
-        fn from_flag_force_false_is_create_new() {
+        fn from_flag_converts_false_to_create_new() {
             assert_eq!(CommitPolicy::from_flag(false), CommitPolicy::CreateNew);
         }
 
@@ -493,6 +674,18 @@ mod tests {
                 .expect("creates new file");
 
             assert!(path.exists());
+        }
+
+        #[test]
+        fn create_file_creates_a_new_file_when_absent_under_overwrite() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let path = temp.path().join("note.md");
+
+            CommitPolicy::Overwrite
+                .create_file(&path)
+                .expect("creates new file when nothing exists yet");
+
+            assert_eq!(fs::read_to_string(&path).expect("read"), "");
         }
 
         #[test]
@@ -649,6 +842,53 @@ mod tests {
                 error,
                 TemplateError::OutputFileAlreadyExists { .. }
             ));
+        }
+
+        #[test]
+        fn overwrite_truncates_an_existing_file() {
+            let root = tempfile::tempdir().expect("create temp dir");
+            let path = root.path().join("note.md");
+            fs::write(&path, "old").expect("seed existing file");
+            let writer = TemplateWriter::new(root.path());
+
+            let outcome = writer
+                .write(
+                    &TemplateWriteTarget::new(),
+                    "new".to_owned(),
+                    WriteMode::Commit(CommitPolicy::Overwrite),
+                    || TemplateWriteTarget::trusted(root.path(), path.clone()),
+                )
+                .expect("overwrite mode truncates the existing target");
+
+            assert_eq!(outcome, WriteOutcome::Written(path.clone()));
+            assert_eq!(fs::read_to_string(&path).expect("read"), "new");
+        }
+
+        #[test]
+        fn commit_rejects_an_escaping_requested_path() {
+            let root = tempfile::tempdir().expect("create temp dir");
+            let writer = TemplateWriter::new(root.path());
+            let escaping = Path::new("../../escape.md");
+
+            let error = writer
+                .write(
+                    &TemplateWriteTarget::new().with_requested(Some(escaping)),
+                    "hello".to_owned(),
+                    WriteMode::Commit(CommitPolicy::CreateNew),
+                    || {
+                        TemplateWriteTarget::trusted(
+                            root.path(),
+                            root.path().join("unused.md"),
+                        )
+                    },
+                )
+                .expect_err("commit mode confines the requested candidate");
+
+            assert!(matches!(
+                error,
+                TemplateError::OutputPathEscapesRoot { .. }
+            ));
+            assert!(!root.path().join("../escape.md").exists());
         }
     }
 

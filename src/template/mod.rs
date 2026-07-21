@@ -57,10 +57,12 @@
 //! defined beside [`writer::TemplateWriter::write`], the one place a
 //! [`writer::WriteMode`] gets applied, rather than in `service`.
 //! ([`writer::CommitPolicy`] — [`writer::WriteMode::Commit`]'s payload
-//! — is separately declared `pub(crate)` too, since a `pub(crate)`
-//! enum can't carry a less-visible variant payload, but it isn't
-//! re-exported here and stays unreachable outside `template` in
-//! practice: `writer` itself is a private `mod`.)
+//! — and [`path::TemplatePathError`] — [`TemplateError::Resolve`]'s
+//! payload — are separately declared `pub(crate)` too, for the same
+//! reason: a `pub(crate)` enum can't carry a less-visible variant
+//! payload. Neither is re-exported here and both stay unreachable
+//! outside `template` in practice: `writer` and `path` are both
+//! private `mod`s.)
 
 mod engine;
 mod error;
