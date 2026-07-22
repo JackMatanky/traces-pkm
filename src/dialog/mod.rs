@@ -32,12 +32,14 @@ pub use terminal::TerminalDialogProvider;
 ///
 /// `Send + Sync` is required so an `Arc<dyn DialogProvider>` can be captured
 /// into the thread-safe closures `TemplateService` registers on its minijinja
-/// `Environment`. `Debug` is required because minijinja's own
-/// [`Object`](minijinja::value::Object) trait requires it — `UiOps` (the
-/// `ui` namespace object holding the `Arc<dyn DialogProvider>`) can't derive
-/// `Debug` otherwise. Both concrete providers already derive it, so this
-/// costs each implementor nothing.
-pub trait DialogProvider: std::fmt::Debug + Send + Sync {
+/// `Environment`. Deliberately *not* `+ Debug`: minijinja's own
+/// [`Object`](minijinja::value::Object) trait requires `Self: Debug` for
+/// `UiOps` (the `ui` namespace object holding the `Arc<dyn DialogProvider>`),
+/// but `UiOps` satisfies that with a hand-written `Debug` impl that doesn't
+/// print the provider, rather than widening this public trait's contract —
+/// forcing every implementor to derive `Debug` just to satisfy one internal
+/// consumer's unrelated trait bound would be a needless breaking constraint.
+pub trait DialogProvider: Send + Sync {
     /// Prompt for freeform text input.
     ///
     /// Displays `label` and waits for the user to type a response. When the

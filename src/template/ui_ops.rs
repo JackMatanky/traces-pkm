@@ -37,21 +37,9 @@ use minijinja::{
 
 use crate::{DialogError, DialogProvider};
 
-/// Method names `ui` exposes, for [`UiOps::enumerate`].
-const METHODS: &[&str] = &["text_input", "select", "confirm", "multi_select"];
-
-/// The attribute path used to derive a display label when `select`/
-/// `multi_select` get no `attribute=` kwarg — see [`label_items`].
-const DEFAULT_ATTRIBUTE: &str = "label";
-
-/// Display labels paired with the original [`Value`]s they were derived
-/// from, indexed identically — see [`label_items`].
-type LabeledItems = (Vec<String>, Vec<Value>);
-
 /// Backs the `ui` namespace object. Holds the interactive provider every
 /// method delegates to; [`super::service::TemplateService`] decides which
 /// concrete provider that is.
-#[derive(Debug)]
 pub(super) struct UiOps {
     provider: Arc<dyn DialogProvider>,
 }
@@ -64,6 +52,17 @@ impl UiOps {
         Self {
             provider,
         }
+    }
+}
+
+/// Hand-written rather than `#[derive(Debug)]`: deriving would require
+/// `DialogProvider: Debug`, widening that public trait's contract for
+/// every implementor just to satisfy this one internal consumer (minijinja's
+/// [`Object`] trait requires `Self: Debug`). There's nothing useful to print
+/// for an opaque `dyn DialogProvider` anyway.
+impl std::fmt::Debug for UiOps {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("UiOps").finish_non_exhaustive()
     }
 }
 
@@ -99,7 +98,7 @@ impl Object for UiOps {
                         let index = provider
                             .select(label, &labels)
                             .map_err(dialog_error)?;
-                        indexed(&values, index)
+                        recover_indexed_value(&values, index)
                     },
                 ))
             }
@@ -116,7 +115,7 @@ impl Object for UiOps {
                             .map_err(dialog_error)?;
                         indices
                             .into_iter()
-                            .map(|index| indexed(&values, index))
+                            .map(|index| recover_indexed_value(&values, index))
                             .collect()
                     },
                 ))
@@ -130,13 +129,29 @@ impl Object for UiOps {
     }
 }
 
+/// Method names `ui` exposes, for [`UiOps::enumerate`].
+const METHODS: &[&str] = &["text_input", "select", "confirm", "multi_select"];
+
 /// Maps a [`DialogError`] into a [`minijinja::Error`], keeping the dialog
 /// error as the [`source`](std::error::Error::source) so the chain can
-/// still be walked.
+/// still be walked. The detail is a stable, generic message rather than
+/// `source.to_string()`: minijinja's `Display` for `Error` already renders
+/// `"{kind}: {detail}"`, and the crate's own recommended way to show a full
+/// error chain walks `.source()` and prints each level in turn — reusing
+/// the dialog error's message as this error's detail too would print that
+/// same message twice in such a chain.
 fn dialog_error(source: DialogError) -> Error {
-    let detail = source.to_string();
-    Error::new(ErrorKind::InvalidOperation, detail).with_source(source)
+    Error::new(ErrorKind::InvalidOperation, "dialog provider failed")
+        .with_source(source)
 }
+
+/// The attribute path used to derive a display label when `select`/
+/// `multi_select` get no `attribute=` kwarg — see [`label_items`].
+const DEFAULT_ATTRIBUTE: &str = "label";
+
+/// Display labels paired with the original [`Value`]s they were derived
+/// from, indexed identically — see [`label_items`].
+type LabeledItems = (Vec<String>, Vec<Value>);
 
 /// Iterates `items`, pairing each element with a display label, while
 /// keeping the original [`Value`]s in a parallel [`Vec`] so
@@ -167,8 +182,9 @@ fn label_items(items: &Value, kwargs: &Kwargs) -> Result<LabeledItems, Error> {
     kwargs.assert_all_used()?;
     let path = attribute.unwrap_or(DEFAULT_ATTRIBUTE);
 
-    let mut labels = Vec::new();
-    let mut values = Vec::new();
+    let capacity = items.len().unwrap_or(0);
+    let mut labels = Vec::with_capacity(capacity);
+    let mut values = Vec::with_capacity(capacity);
     for item in items.try_iter()? {
         let attribute_value = get_path(&item, path)?;
         let label = if attribute_value.is_undefined() {
@@ -191,16 +207,29 @@ fn label_items(items: &Value, kwargs: &Kwargs) -> Result<LabeledItems, Error> {
 /// own (crate-private) `Value::get_path`, which backs the `attribute=`
 /// kwarg on its `map`/`sort`/`groupby` filters.
 ///
-/// # Errors
-///
-/// Propagates any [`minijinja::Error`] a path segment's lookup raises.
 /// A path segment that simply doesn't exist is *not* an error — it
 /// resolves to [`Value::UNDEFINED`], same as minijinja's own attribute
-/// lookups; only a genuinely invalid intermediate value (e.g. indexing
-/// into a scalar) raises.
+/// lookups. Once a segment resolves to `UNDEFINED`, every later segment
+/// is skipped rather than looked up: `Value::get_attr`/
+/// `Value::get_item_by_index` themselves only error when called *on* an
+/// already-undefined value (not when a key is merely missing), so
+/// without this short-circuit a missing *intermediate* segment in a
+/// dotted path (e.g. `"address.city"` when `address` itself is absent)
+/// would surface as a hard [`minijinja::Error`] instead of falling
+/// through to [`label_items`]'s `default` handling.
+///
+/// # Errors
+///
+/// In practice this never errors, since the short-circuit above means
+/// [`Value::get_attr`]/[`Value::get_item_by_index`] are never called on
+/// an undefined value — the only case either one returns `Err`. Kept as
+/// a `Result` because both are themselves fallible APIs.
 fn get_path(item: &Value, path: &str) -> Result<Value, Error> {
     let mut current = item.clone();
     for part in path.split('.') {
+        if current.is_undefined() {
+            return Ok(Value::UNDEFINED);
+        }
         current = match part.parse::<usize>() {
             Ok(index) => current.get_item_by_index(index)?,
             Err(_) => current.get_attr(part)?,
@@ -213,7 +242,10 @@ fn get_path(item: &Value, path: &str) -> Result<Value, Error> {
 /// expected from a well-behaved [`DialogProvider`], since it always
 /// returns an index into the very slice it was given — to a
 /// [`minijinja::Error`] instead of panicking.
-fn indexed(values: &[Value], index: usize) -> Result<Value, Error> {
+fn recover_indexed_value(
+    values: &[Value],
+    index: usize,
+) -> Result<Value, Error> {
     values.get(index).cloned().ok_or_else(|| {
         Error::new(
             ErrorKind::InvalidOperation,
@@ -250,6 +282,15 @@ mod tests {
         let ops = ops(PresetDialogProvider::new());
 
         assert!(matches!(ops.enumerate(), Enumerator::Str(METHODS)));
+    }
+
+    #[test]
+    fn debug_formats_without_touching_the_provider() {
+        let ops = ops(PresetDialogProvider::new());
+
+        let formatted = format!("{ops:?}");
+
+        assert!(formatted.contains("UiOps"));
     }
 
     #[test]
@@ -298,6 +339,22 @@ mod tests {
             .expect("confirm succeeds");
 
         assert_eq!(result, Value::from(true));
+    }
+
+    #[test]
+    fn confirm_returns_false_by_default_when_the_provider_has_no_queued_answer()
+    {
+        let ops = ops(PresetDialogProvider::new());
+        let confirm = ops
+            .get_value(&Value::from("confirm"))
+            .expect("confirm is a known method");
+        let env = env();
+
+        let result = confirm
+            .call(&env.empty_state(), &[Value::from("proceed?")])
+            .expect("confirm succeeds");
+
+        assert_eq!(result, Value::from(false));
     }
 
     #[test]
@@ -370,6 +427,22 @@ mod tests {
     }
 
     #[test]
+    fn select_errors_when_the_provider_returns_an_out_of_range_index() {
+        let ops = ops(PresetDialogProvider::new().with_select(5));
+        let select = ops
+            .get_value(&Value::from("select"))
+            .expect("select is a known method");
+        let env = env();
+        let items = Value::from(vec!["a", "b"]);
+
+        let error = select
+            .call(&env.empty_state(), &[Value::from("pick"), items])
+            .expect_err("an out-of-range index fails");
+
+        assert_eq!(error.kind(), ErrorKind::InvalidOperation);
+    }
+
+    #[test]
     fn select_accepts_an_attribute_kwarg_through_the_full_call() {
         let ops = ops(PresetDialogProvider::new().with_select(1));
         let select = ops
@@ -395,6 +468,28 @@ mod tests {
             result.get_item(&Value::from("value")).expect("value key"),
             Value::from(44)
         );
+    }
+
+    #[test]
+    fn select_rejects_an_unknown_kwarg_through_the_full_call() {
+        let ops = ops(PresetDialogProvider::new().with_select(0));
+        let select = ops
+            .get_value(&Value::from("select"))
+            .expect("select is a known method");
+        let env = env();
+        let items = Value::from(vec!["a", "b"]);
+        let call_kwargs: Value =
+            Kwargs::from_iter([("bogus", Value::from(1))]).into();
+
+        let error = select
+            .call(&env.empty_state(), &[
+                Value::from("pick"),
+                items,
+                call_kwargs,
+            ])
+            .expect_err("an unknown kwarg fails");
+
+        assert_eq!(error.kind(), ErrorKind::TooManyArguments);
     }
 
     fn kwargs(
@@ -444,6 +539,48 @@ mod tests {
         .expect("label_items succeeds");
 
         assert_eq!(labels, vec!["NYC".to_owned(), "LA".to_owned()]);
+    }
+
+    #[test]
+    fn get_path_resolves_to_undefined_when_an_intermediate_segment_is_missing()
+    {
+        let item = minijinja::context! { name => "US" };
+
+        let result = get_path(&item, "address.city")
+            .expect("a missing intermediate segment is not an error");
+
+        assert!(result.is_undefined());
+    }
+
+    #[test]
+    fn get_path_indexes_a_numeric_segment_by_position() {
+        let item =
+            Value::from(vec![Value::from("first"), Value::from("second")]);
+
+        let result = get_path(&item, "1")
+            .expect("a numeric segment indexes by position");
+
+        assert_eq!(result, Value::from("second"));
+    }
+
+    #[test]
+    fn label_items_falls_back_to_default_for_a_dotted_path_missing_an_intermediate_segment()
+     {
+        let items = Value::from(vec![
+            minijinja::context! { name => "no address here" },
+            minijinja::context! { address => minijinja::context! { city => "LA" } },
+        ]);
+
+        let (labels, _) = label_items(
+            &items,
+            &kwargs([
+                ("attribute", Value::from("address.city")),
+                ("default", Value::from("Unknown")),
+            ]),
+        )
+        .expect("a missing intermediate segment falls back to default");
+
+        assert_eq!(labels, vec!["Unknown".to_owned(), "LA".to_owned()]);
     }
 
     #[test]
@@ -524,5 +661,21 @@ mod tests {
             .expect("multi_select succeeds");
 
         assert_eq!(result, Value::from(Vec::<String>::new()));
+    }
+
+    #[test]
+    fn multi_select_errors_when_the_provider_returns_an_out_of_range_index() {
+        let ops = ops(PresetDialogProvider::new().with_multi_select([0, 9]));
+        let multi_select = ops
+            .get_value(&Value::from("multi_select"))
+            .expect("multi_select is a known method");
+        let env = env();
+        let items = Value::from(vec!["a", "b"]);
+
+        let error = multi_select
+            .call(&env.empty_state(), &[Value::from("pick"), items])
+            .expect_err("an out-of-range index fails");
+
+        assert_eq!(error.kind(), ErrorKind::InvalidOperation);
     }
 }
