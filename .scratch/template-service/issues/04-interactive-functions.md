@@ -45,13 +45,48 @@ Relevant skills: `m03-mutability`, `m02-resource`, `m04-zero-cost`, `m06-error-h
 {{ ui.select("pick", [{label: "US", value: 1}, {label: "GB", value: 44}]) }}
 ```
 
-The closure:
-1. Calls `items.try_iter()` to iterate, propagating errors via `minijinja::Error`.
-2. For each item, looks up a `"label"` key via `item.get_item(&"label".into())` — if present and a string, that's the display label; otherwise falls back to `item.to_string()`.
-3. Collects labels into `Vec<String>`, calls `provider.select(label, &labels)`.
-4. Returns the original `Value` at the returned index (or `Vec<Value>` for `multi_select` — minijinja converts to a seq automatically).
+**As implemented, this went further than the algorithm originally
+sketched here.** Instead of a hardcoded `"label"` key, `select`/
+`multi_select` take two optional kwargs — deliberately named and
+shaped to match minijinja's own `map`/`sort`/`groupby` filters, not
+invented fresh:
 
-Straightforward `Value::from_function` closures; no `Object` override needed.
+- `attribute` (string, default `"label"`): a dot-separated path
+  (e.g. `"address.city"`) walked via a locally reimplemented
+  `get_path` (minijinja's own `Value::get_path` is `pub(crate)`,
+  not importable) — numeric segments index by position via
+  `Value::get_item_by_index`, other segments look up an attribute
+  via `Value::get_attr`.
+- `default` (any `Value`, optional): stringified and used as the
+  label when an item's attribute is undefined. Without it, a missing
+  attribute falls back to `item.to_string()` — this is what makes a
+  plain `["a", "b", "c"]` array keep working with no `attribute=` at
+  all, since a bare string has no `"label"` attribute.
+
+```jinja
+{{ ui.select("pick", items, attribute="name") }}
+{{ ui.select("pick", items, attribute="address.city") }}
+{{ ui.select("pick", items, attribute="name", default="Unnamed") }}
+```
+
+The closure (`src/template/ui_ops.rs::label_items`):
+1. Extracts `attribute`/`default` from a trailing `Kwargs` parameter,
+   then `kwargs.assert_all_used()` — an unknown third kwarg is a
+   `minijinja::Error` (`ErrorKind::TooManyArguments`), not silently
+   ignored.
+2. Calls `items.try_iter()` to iterate, propagating errors via
+   `minijinja::Error`.
+3. For each item, walks the attribute path; if the resolved value is
+   undefined, uses `default` (stringified) or `item.to_string()`;
+   otherwise stringifies the resolved value directly (so a non-string
+   attribute, e.g. a number, renders as itself, not the whole item).
+4. Collects labels into `Vec<String>`, calls
+   `provider.select(label, &labels)`.
+5. Returns the original `Value` at the returned index (or `Vec<Value>`
+   for `multi_select` — minijinja converts to a seq automatically).
+
+Still one `Value::from_function` closure per method; no `Object`
+override needed.
 
 ## Design considerations
 
@@ -77,6 +112,19 @@ The interface the prompt module exposes is being explored. Three options, simple
   When this issue lands, its design needs to say what provider `TemplateService` uses for a real render vs. a `WriteMode::DryRun` one. The current draft above (line 18) only says *"In tests and MCP mode a `PresetDialogProvider` supplies deterministic responses"* — it doesn't mention dry-run. That gap matters concretely: `TerminalDialogProvider`'s existing non-TTY fallback (`src/dialog/terminal.rs`) only kicks in when stdin genuinely isn't a TTY, so it will **not** force defaults when `--dry-run` runs from an actual interactive terminal — which is exactly what issue 03 requires ("dry-run must not depend on a terminal").
 
   Two ways to close it: (a) `TemplateService::new` constructs the engine with a `PresetDialogProvider`-equivalent whenever `mode` is `WriteMode::DryRun`, mirroring how `WriteMode` already drives `TemplateWriter::write` (`src/template/writer.rs`); or (b) thread an explicit provider-selection parameter through similarly. Worth adding as an explicit acceptance criterion here — "dry-run selects a defaults-only provider regardless of TTY state" — rather than assuming the non-TTY fallback alone covers it.
+
+- **Implementation** (`.worktrees/interactive-functions`, branch `agent/interactive-functions`, commit `4746264`): `UiOps` (`src/template/ui_ops.rs`, new file) backs the `ui` namespace exactly as designed — Option A monolithic `DialogProvider`, `Arc<dyn DialogProvider>` cloned per method closure, `Object::get_value` + `Value::from_function`, no custom `call_method`. `DialogProvider` gained a `Debug` supertrait bound (`src/dialog/mod.rs`) because minijinja's own `Object` trait requires it and `UiOps` couldn't otherwise derive it; both concrete providers already derived `Debug`, so this cost nothing. `select`/`multi_select`'s label derivation is richer than originally sketched — see the rewritten "Items parameter handling" section above (`attribute=`/`default=` kwargs, dotted-path support), added after the user asked for `rust-docs-mcp` research into minijinja's own conventions before committing to a design; it stays backward compatible with the plain-array and hardcoded-`"label"` cases this issue specified.
+
+  **Unfulfilled acceptance criterion — deliberate, not an oversight:** *"Dry-run mode selects a defaults-only provider (not `TerminalDialogProvider`) — resolves issue 03's known gap"* (line 152, Agent Brief's AC list only — the top-level AC list at line 22 never added this bullet in the first place, per the original "Known gap" comment below) is **not** implemented as worded. Discussed with the user mid-implementation: forcing empty defaults on every `--dry-run` makes the preview useless for any template whose output branches on a `ui.select`/`ui.confirm` answer — exactly the "conditional interaction" case ADR 0001 exists to support. Instead:
+  - `WriteMode` now decides only whether output is written, never whether `ui.*` prompts (`TemplateService` builds one `TemplateEngine` at construction from whatever provider it's given, and uses it unconditionally for every render — no more per-render provider swap keyed on `WriteMode::DryRun`).
+  - A new, independent `--no-input` flag (`src/cli/template.rs`) forces a defaults-only `PresetDialogProvider`, regardless of `--dry-run` or TTY state — this is what actually satisfies issue 03's original "no hang, no TTY required" need, just decoupled from `--dry-run` rather than fused to it. The flag name and semantics ("If `--no-input` is passed, don't prompt or do anything interactive") come directly from `docs/refs/cli_guide.md`'s Interactivity section, at the user's direction.
+  - `TerminalDialogProvider`'s pre-existing non-TTY fallback (`src/dialog/terminal.rs`) still covers the common case — `--dry-run` from CI/scripts/pipes gets defaults automatically, with no flag needed — so `--no-input` is only strictly necessary for a scripted `--dry-run` run from an *actual* interactive terminal.
+  - Net effect: `--dry-run` alone now previews with real answers when stdin is a real TTY; `--dry-run --no-input` (or `--no-input` alone, for a real write) reproduces the originally-specified forced-defaults behavior. If a defaults-only dry-run needs to stay the *default* (no flag), rather than opt-in via `--no-input`, that's a follow-up decision, not something this implementation reverts.
+  - Verified: `template::service::tests::render_to_file::dry_run_still_uses_the_injected_provider_for_ui_calls` (real answers survive a dry-run preview), `cli::template::tests::run_no_input_ignores_the_injected_provider_and_uses_defaults` / `run_uses_the_injected_providers_queued_answer_by_default` (the flag's actual effect), plus a manual smoke test of the release binary confirming no terminal is touched under `--no-input`/non-TTY stdin.
+
+  Every other acceptance criterion in both lists is met: all four methods callable and delegating; `text_input`'s optional default; deterministic rendering under `PresetDialogProvider`; `select`/`multi_select` accept `Value` items with label detection and `to_string()` fallback (now generalized via `attribute=`); tests render real template source through each method (`template::service::tests::render_to_file::ui_functions_render_and_delegate_to_the_provider` and siblings). 351 tests total, `cargo clippy --workspace -- -D warnings` clean, `hk check` clean.
+
+  Incidental changes this required: `WriteFlags` (`src/cli/template.rs`) — `force`/`dry_run` flattened into their own `#[command(flatten)]` sub-struct once `--no-input` pushed `Template` to a third `bool` field, past this crate's `max-struct-bools = 2` clippy threshold. `TemplateLoader` is no longer a `TemplateService` field — it's consumed directly by `TemplateEngine::new` inside `TemplateService::new`, since engine construction reverted to happening once (not per-render) now that provider selection doesn't depend on `WriteMode`.
 
 ## Agent Brief
 
