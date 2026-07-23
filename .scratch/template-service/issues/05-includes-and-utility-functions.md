@@ -1,4 +1,4 @@
-# Includes + utility functions (file.include, date.now, uuid, str.snake_case)
+# Includes + utility functions (file.include, date.now, uuid, case filters)
 
 Status: ready-for-agent
 
@@ -8,34 +8,78 @@ Status: ready-for-agent
 
 ## What to build
 
-Round out the built-in method set on the namespace objects (`file`, `date`, `str`) plus `uuid()` standalone, and template composition:
+Add `file.include()` to the existing `file` namespace, register a `date` namespace with `date.now()`, add `uuid()` as a standalone function, and register case-conversion filters:
 
-- `{% include "other.md" %}` — minijinja's built-in include, with its file loader configured against the local and global template directories (via ConfigService).
-- `file.include("/abs/path")` — method on the `file` namespace object reading an arbitrary file by absolute path (matches `tp.user.include_file()`).
+- `file.include(path)` — method on the `file` namespace object reading a file by path relative to the project root.
 - `date.now(format="%Y-%m-%d")` — method on the `date` namespace object returning current date/time formatted via chrono.
-- `uuid()` — standalone function (via `add_function`) generating UUID v4. Doesn't belong to a domain namespace.
-- `snake_case` — a minijinja **filter** (`{{ value | snake_case }}`), not a method on a `str` namespace object. Filters are always global in minijinja (no dotted names), so `snake_case` stands alone. No `str` namespace object needed.
+- `uuid()` — standalone function generating UUID v4.
+- `| snake_case`, `| kebab_case`, `| camel_case`, `| pascal_case`, `| title_case` — minijinja **filters** (`{{ value | snake_case }}`).
 
-Namespace objects implement `minijinja::value::Object`, registered via `env.add_global(...)`. `uuid()` is registered directly via `env.add_function(...)`.
+`{% include %}` is **already implemented** — see engine tests under `src/template/engine.rs`. The rest of this issue covers what's still to build.
 
 ## Acceptance criteria
 
-- [ ] `{% include %}` resolves other templates against the configured template directories
-- [ ] `file.include()` reads and inlines a file by absolute path
+- [ ] `file.include()` reads and inlines a file by relative path, resolved against the project root (`Config::root()`)
 - [ ] `date.now(format=...)` produces the correctly formatted current date/time
 - [ ] `uuid()` returns a valid v4 UUID
 - [ ] `| snake_case` filter converts as expected
-- [ ] Tests cover include resolution, `file.include`, and each utility method
+- [ ] `| kebab_case`, `| camel_case`, `| pascal_case`, `| title_case` each convert as expected
+- [ ] Tests cover `file.include`, `date.now`, `uuid`, and each filter
 
 ## Rust guidance
 
 Relevant skills: `m11-ecosystem`, `m06-error-handling`, `m03-mutability`, custom.
 
-- **`{% include %}` uses minijinja's loader (m11):** wire a template loader via `Environment::set_loader` (or `add_template` for each discovered template) pointed at the local + global template directories from ConfigService — do not re-implement include resolution. minijinja handles the `{% include %}` tag natively once the loader can find templates by name.
-- **`file.include` is the escape hatch (m06):** a method on `FileOps` reading an **absolute** path via `std::fs::read_to_string`; map I/O failure to a `minijinja::Error`. Consider whether absolute-path reads should also respect trust — flag for the maintainer if unsure.
-- **Utility crates (m11):** `chrono` for `date.now(format)` (format with `format()` using strftime specifiers), `uuid` with the `v4` feature for `uuid()` standalone. `str.snake_case` should use the `convert_case` crate (`Case::Snake` via the `Casing` trait) — preferred over `heck` for its enum-based dispatch (easy to add `Case::Kebab`, `Case::Pascal`, etc. later) and active maintenance.
-- **Determinism in tests (m03):** `date.now()` and `uuid()` are non-deterministic. Test `date.now()` with a fixed format string and assert the shape (length/regex), or inject a clock; assert `uuid()` parses as a valid v4 rather than equals a literal.
-- **Filter, not method, for snake_case (decision):** `{{ value | snake_case }}` — registered via `env.add_filter("snake_case", ...)` so it works natively in pipelines. Filters are always global in minijinja (dotted names like `str.snake_case` don't work in pipe syntax), so a bare `snake_case` is the idiomatic choice. No `str` namespace object.
+### File layout — struct-based registration
+
+Each namespace or filter group gets its own file under `src/template/`, consistent with the existing `file_ops.rs`, `ui_ops.rs` pattern:
+
+- **`date_ops.rs`** — `DateOps` struct implementing `minijinja::value::Object` for the `date` namespace (`date.now(format)`)
+- **`str_ops.rs`** — `StrOps` unit struct with a `register(&self, env: &mut Environment<'static>)` method that calls `env.add_filter(...)` for each case filter (`snake_case`, `kebab_case`, `camel_case`, `pascal_case`, `title_case`)
+
+The pattern: each struct is an extension point that registers itself with the environment via a `register` method. This avoids any single file becoming a bottleneck — adding a new domain means a new file + struct + one `register` call in `engine.rs`, no changes to existing modules.
+
+```rust
+// in str_ops.rs
+pub(super) struct StrOps;
+
+impl StrOps {
+    pub(super) fn register(&self, env: &mut Environment<'static>) {
+        env.add_filter("snake_case", ...);
+        env.add_filter("kebab_case", ...);
+        env.add_filter("camel_case", ...);
+        env.add_filter("pascal_case", ...);
+        env.add_filter("title_case", ...);
+    }
+}
+```
+
+`engine.rs` stays a flat list of instantiations and registration calls:
+
+```rust
+// in engine.rs
+FileOps.register(&mut env);
+UiOps::new(provider).register(&mut env);
+DateOps.register(&mut env);
+StrOps.register(&mut env);
+env.add_function("uuid", uuid);
+```
+
+When a later issue adds `num.*` filters, `path.*` filters, or a `prompt.*` namespace, each gets its own struct + file + one call in `engine.rs` — zero ripple through existing modules.
+
+This means adding a `register` method to existing `FileOps` and `UiOps` too. `FileOps` is a unit struct so `register` takes `&self`; `UiOps` is constructed with a provider so it chains as `UiOps::new(provider).register(&mut env)`. Both are simple `env.add_global("name", Value::from_object(...))` inside.
+
+### file.include() is root-relative, not absolute
+
+`file.include(path)` resolves `path` relative to `Config::root()`, the same trust boundary used by `TemplateTargetPath::confine` (issue 02). This keeps the confinement model consistent: absolute paths and `..` traversal are rejected, matching how `file.write_to()` already works. Returns a `minijinja::Error` wrapping `std::fs::read_to_string` I/O errors.
+
+### Utility crates (m11)
+
+`chrono` for `date.now(format)` (format with `format()` using strftime specifiers). `uuid` with the `v4` feature for `uuid()`. `convert_case` for all case filters (`Case::Snake`, `Case::Kebab`, `Case::Camel`, `Case::Pascal`, `Case::Title` via the `Casing` trait).
+
+### Determinism in tests (m03)
+
+Test `date.now()` with a fixed format string and assert the shape (length/regex), not a literal. `uuid()`: assert it parses as a valid v4. Case filters: fully deterministic — test exact input/output pairs.
 
 ## Blocked by
 
