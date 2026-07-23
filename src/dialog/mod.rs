@@ -40,31 +40,6 @@ pub use terminal::TerminalDialogProvider;
 /// forcing every implementor to derive `Debug` just to satisfy one internal
 /// consumer's unrelated trait bound would be a needless breaking constraint.
 pub trait DialogProvider: Send + Sync {
-    /// Prompt for freeform text input.
-    ///
-    /// Displays `label` and waits for the user to type a response. When the
-    /// user submits an empty string, `default` is returned if present;
-    /// otherwise an empty string is returned.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use traces_pkm::{DialogProvider, PresetDialogProvider};
-    ///
-    /// let p = PresetDialogProvider::new().with_text("claude");
-    /// assert_eq!(p.text("name", None)?, "claude");
-    /// # Ok::<_, traces_pkm::DialogError>(())
-    /// ```
-    ///
-    /// # Errors
-    ///
-    /// Returns any [`DialogError`] variant.
-    fn text(
-        &self,
-        label: &str,
-        default: Option<&str>,
-    ) -> Result<String, DialogError>;
-
     /// Prompt for a yes/no confirmation.
     ///
     /// Displays `label` and waits for the user to confirm or cancel. When the
@@ -89,6 +64,31 @@ pub trait DialogProvider: Send + Sync {
         label: &str,
         default: Option<bool>,
     ) -> Result<bool, DialogError>;
+
+    /// Prompt the user to pick any number of items, returning their indices.
+    ///
+    /// The multi-selection counterpart to [`select`](Self::select). An empty
+    /// `items` slice yields an empty [`Vec`] (not an error).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use traces_pkm::{DialogProvider, PresetDialogProvider};
+    ///
+    /// let items = vec!["x".into(), "y".into(), "z".into()];
+    /// let p = PresetDialogProvider::new().with_multi_select([0, 2]);
+    /// assert_eq!(p.multi_select("pick", &items)?, vec![0, 2]);
+    /// # Ok::<_, traces_pkm::DialogError>(())
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns any [`DialogError`] variant.
+    fn multi_select(
+        &self,
+        label: &str,
+        items: &[String],
+    ) -> Result<Vec<usize>, DialogError>;
 
     /// Prompt the user to pick one item from `items`, returning its index.
     ///
@@ -118,30 +118,30 @@ pub trait DialogProvider: Send + Sync {
         items: &[String],
     ) -> Result<usize, DialogError>;
 
-    /// Prompt the user to pick any number of items, returning their indices.
+    /// Prompt for freeform text input.
     ///
-    /// The multi-selection counterpart to [`select`](Self::select). An empty
-    /// `items` slice yields an empty [`Vec`] (not an error).
+    /// Displays `label` and waits for the user to type a response. When the
+    /// user submits an empty string, `default` is returned if present;
+    /// otherwise an empty string is returned.
     ///
     /// # Examples
     ///
     /// ```
     /// use traces_pkm::{DialogProvider, PresetDialogProvider};
     ///
-    /// let items = vec!["x".into(), "y".into(), "z".into()];
-    /// let p = PresetDialogProvider::new().with_multi_select([0, 2]);
-    /// assert_eq!(p.multi_select("pick", &items)?, vec![0, 2]);
+    /// let p = PresetDialogProvider::new().with_text("claude");
+    /// assert_eq!(p.text("name", None)?, "claude");
     /// # Ok::<_, traces_pkm::DialogError>(())
     /// ```
     ///
     /// # Errors
     ///
     /// Returns any [`DialogError`] variant.
-    fn multi_select(
+    fn text(
         &self,
         label: &str,
-        items: &[String],
-    ) -> Result<Vec<usize>, DialogError>;
+        default: Option<&str>,
+    ) -> Result<String, DialogError>;
 }
 
 #[cfg(test)]

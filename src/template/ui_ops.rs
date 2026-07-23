@@ -37,6 +37,17 @@ use minijinja::{
 
 use crate::{DialogError, DialogProvider};
 
+/// Method names `ui` exposes, for [`UiOps::enumerate`].
+const METHODS: &[&str] = &["text_input", "select", "confirm", "multi_select"];
+
+/// The attribute path used to derive a display label when `select`/
+/// `multi_select` get no `attribute=` kwarg — see [`label_items`].
+const DEFAULT_ATTRIBUTE: &str = "label";
+
+/// Display labels paired with the original [`Value`]s they were derived
+/// from, indexed identically — see [`label_items`].
+type LabeledItems = (Vec<String>, Vec<Value>);
+
 /// Backs the `ui` namespace object. Holds the interactive provider every
 /// method delegates to; [`super::service::TemplateService`] decides which
 /// concrete provider that is.
@@ -129,9 +140,6 @@ impl Object for UiOps {
     }
 }
 
-/// Method names `ui` exposes, for [`UiOps::enumerate`].
-const METHODS: &[&str] = &["text_input", "select", "confirm", "multi_select"];
-
 /// Maps a [`DialogError`] into a [`minijinja::Error`], keeping the dialog
 /// error as the [`source`](std::error::Error::source) so the chain can
 /// still be walked. The detail is a stable, generic message rather than
@@ -144,14 +152,6 @@ fn dialog_error(source: DialogError) -> Error {
     Error::new(ErrorKind::InvalidOperation, "dialog provider failed")
         .with_source(source)
 }
-
-/// The attribute path used to derive a display label when `select`/
-/// `multi_select` get no `attribute=` kwarg — see [`label_items`].
-const DEFAULT_ATTRIBUTE: &str = "label";
-
-/// Display labels paired with the original [`Value`]s they were derived
-/// from, indexed identically — see [`label_items`].
-type LabeledItems = (Vec<String>, Vec<Value>);
 
 /// Iterates `items`, pairing each element with a display label, while
 /// keeping the original [`Value`]s in a parallel [`Vec`] so
