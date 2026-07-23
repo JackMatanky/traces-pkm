@@ -71,7 +71,7 @@ impl TemplateEngine {
             let loader = loader.clone();
             move |name| loader.load(name)
         });
-        let root: Arc<Path> = Arc::from(root);
+        let root = Arc::from(root);
         FileOps::new(Arc::clone(&root)).register(&mut env);
         PathOps::new(root).register(&mut env);
         UiOps::new(provider).register(&mut env);
