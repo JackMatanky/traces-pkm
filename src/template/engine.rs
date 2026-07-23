@@ -49,7 +49,7 @@ impl TemplateEngine {
     /// registers every namespace/function a template calls into: `file`
     /// (`file.write_to(path)`, `file.include(path)`, confined to
     /// `root`), the path-inspection filter group registered by
-    /// [`PathOps`] (`path_exists`, `path_is_file`, `path_is_dir`,
+    /// [`PathOps`] (`path_exists`, `is_file_path`, `is_dir_path`,
     /// `path_filename`, `path_basename`, `path_extension`,
     /// `path_parent` — the first three also confined to `root`), `ui`
     /// (`ui.text_input(...)` / `ui.select(...)` / `ui.confirm(...)` /
@@ -294,8 +294,8 @@ mod tests {
             let rendered = engine
                 .render(
                     "{{ 'main.rs' | path_exists }}-{{ 'missing.rs' | \
-                     path_exists }}-{{ 'main.rs' | path_is_file }}-{{ '.' | \
-                     path_is_dir }}-{{ '/foo/bar/main.rs' | path_basename \
+                     path_exists }}-{{ 'main.rs' | is_file_path }}-{{ '.' | \
+                     is_dir_path }}-{{ '/foo/bar/main.rs' | path_basename \
                      }}-{{ '/foo/bar/main.rs' | path_extension }}-{{ \
                      '/foo/bar/main.rs' | path_parent }}",
                 )

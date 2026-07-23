@@ -1,5 +1,5 @@
 //! [`PathOps`]: registers the path-inspection filter group —
-//! `path_exists`, `path_is_file`, `path_is_dir`, `path_filename`,
+//! `path_exists`, `is_file_path`, `is_dir_path`, `path_filename`,
 //! `path_basename`, `path_extension`, `path_parent` — a template applies
 //! as `{{ value | path_basename }}`. Like
 //! [`StrOps`](super::str_ops::StrOps), these are flat filters registered
@@ -7,7 +7,7 @@
 //! dispatched through an [`Object`](minijinja::value::Object) the way
 //! `file.*`/`ui.*`/`date.*` are.
 //!
-//! `path_exists`/`path_is_file`/`path_is_dir` resolve a relative `path`
+//! `path_exists`/`is_file_path`/`is_dir_path` resolve a relative `path`
 //! argument against [`Config::root`](crate::config::Config::root) —
 //! captured as `Arc<Path>` and cloned into each closure, the same way
 //! [`FileOps`](super::file_ops::FileOps) captures it for
@@ -68,14 +68,14 @@ impl PathOps {
                 inspect(&root, path, Query::Exists)
             }
         });
-        env.add_filter("path_is_file", {
+        env.add_filter("is_file_path", {
             let root = Arc::clone(&root);
             move |path: &str| -> Result<bool, Error> {
                 inspect(&root, path, Query::IsFile)
             }
         });
         env.add_filter(
-            "path_is_dir",
+            "is_dir_path",
             move |path: &str| -> Result<bool, Error> {
                 inspect(&root, path, Query::IsDir)
             },
@@ -248,7 +248,7 @@ mod tests {
         }
     }
 
-    mod path_is_file {
+    mod is_file_path {
         use pretty_assertions::assert_eq;
 
         use super::*;
@@ -259,7 +259,7 @@ mod tests {
             fs::write(temp.path().join("note.md"), "content")
                 .expect("write fixture");
 
-            assert_eq!(render(temp.path(), "path_is_file", "note.md"), "true");
+            assert_eq!(render(temp.path(), "is_file_path", "note.md"), "true");
         }
 
         #[test]
@@ -268,7 +268,7 @@ mod tests {
             fs::create_dir_all(temp.path().join("sub"))
                 .expect("create nested dir");
 
-            assert_eq!(render(temp.path(), "path_is_file", "sub"), "false");
+            assert_eq!(render(temp.path(), "is_file_path", "sub"), "false");
         }
 
         #[test]
@@ -276,13 +276,13 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
 
             assert_eq!(
-                render(temp.path(), "path_is_file", "missing.md"),
+                render(temp.path(), "is_file_path", "missing.md"),
                 "false"
             );
         }
     }
 
-    mod path_is_dir {
+    mod is_dir_path {
         use pretty_assertions::assert_eq;
 
         use super::*;
@@ -293,7 +293,7 @@ mod tests {
             fs::create_dir_all(temp.path().join("sub"))
                 .expect("create nested dir");
 
-            assert_eq!(render(temp.path(), "path_is_dir", "sub"), "true");
+            assert_eq!(render(temp.path(), "is_dir_path", "sub"), "true");
         }
 
         #[test]
@@ -302,7 +302,7 @@ mod tests {
             fs::write(temp.path().join("note.md"), "content")
                 .expect("write fixture");
 
-            assert_eq!(render(temp.path(), "path_is_dir", "note.md"), "false");
+            assert_eq!(render(temp.path(), "is_dir_path", "note.md"), "false");
         }
 
         #[test]
@@ -310,7 +310,7 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
 
             assert_eq!(
-                render(temp.path(), "path_is_dir", "missing.md"),
+                render(temp.path(), "is_dir_path", "missing.md"),
                 "false"
             );
         }
@@ -319,7 +319,7 @@ mod tests {
         fn returns_true_for_root_itself() {
             let temp = tempfile::tempdir().expect("create temp dir");
 
-            assert_eq!(render(temp.path(), "path_is_dir", ""), "true");
+            assert_eq!(render(temp.path(), "is_dir_path", ""), "true");
         }
     }
 
@@ -438,8 +438,8 @@ mod tests {
 
             for filter in [
                 "path_exists",
-                "path_is_file",
-                "path_is_dir",
+                "is_file_path",
+                "is_dir_path",
                 "path_filename",
                 "path_basename",
                 "path_extension",
