@@ -8,11 +8,11 @@
 //! capturing a fixed instant, so two calls in the same render (or across
 //! renders) can legitimately observe different times.
 
-use std::sync::Arc;
+use std::{fmt::Write as _, sync::Arc};
 
 use chrono::Local;
 use minijinja::{
-    Environment, Error,
+    Environment, Error, ErrorKind,
     value::{Enumerator, Kwargs, Object, Value},
 };
 
@@ -44,7 +44,22 @@ impl Object for DateOps {
                         .get::<Option<&str>>("format")?
                         .unwrap_or(DEFAULT_FORMAT);
                     kwargs.assert_all_used()?;
-                    Ok(Local::now().format(format).to_string())
+                    // `write!` into a `String` propagates a formatting
+                    // failure as `Err`; `.to_string()` would instead
+                    // panic on the same input, since its blanket impl
+                    // `.expect()`s a successful `Display::fmt`, and
+                    // Chrono's `DelayedFormat` returns `Err` — not a
+                    // panic of its own — for an invalid specifier such
+                    // as `%Q`.
+                    let mut rendered = String::new();
+                    write!(rendered, "{}", Local::now().format(format))
+                        .map_err(|_fmt_error| {
+                            Error::new(
+                                ErrorKind::InvalidOperation,
+                                format!("invalid date format {format:?}"),
+                            )
+                        })?;
+                    Ok(rendered)
                 },
             )),
             _ => None,
@@ -99,6 +114,19 @@ mod tests {
 
         assert_eq!(rendered.len(), 4);
         assert!(rendered.chars().all(|c| c.is_ascii_digit()));
+    }
+
+    /// Regression: Chrono's `DelayedFormat::fmt` returns `Err` for an
+    /// invalid specifier like `%Q`, and `String::to_string()`'s blanket
+    /// impl panics on that `Err` — writing through `fmt::Write`
+    /// directly instead must surface it as a normal render error.
+    #[test]
+    fn now_returns_an_error_instead_of_panicking_on_an_invalid_format() {
+        let error = env()
+            .render_str(r#"{{ date.now(format="%Q") }}"#, minijinja::context!())
+            .expect_err("invalid format specifier fails cleanly");
+
+        assert_eq!(error.kind(), ErrorKind::InvalidOperation);
     }
 
     #[test]

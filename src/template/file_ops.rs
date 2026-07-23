@@ -100,21 +100,30 @@ impl Object for FileOps {
                 Some(Value::from_function(
                     move |path: &str| -> Result<String, Error> {
                         let resolved = confine(&root, Path::new(path))
-                            .ok_or_else(|| {
+                            .ok_or_else(|| escapes_root(path))?;
+                        // Symlinks are lexically invisible to `confine` —
+                        // a `Component::Normal` name can still resolve
+                        // outside `root` at the filesystem level. Resolve
+                        // both sides and re-check containment before
+                        // reading, so a symlink planted inside `root`
+                        // can't leak a file from outside it.
+                        let canonical_root =
+                            root.canonicalize().map_err(|source| {
                                 Error::new(
                                     ErrorKind::InvalidOperation,
-                                    format!(
-                                        "path {path} escapes the project root"
-                                    ),
+                                    "failed to resolve the project root"
+                                        .to_owned(),
                                 )
+                                .with_source(source)
                             })?;
-                        std::fs::read_to_string(&resolved).map_err(|source| {
-                            Error::new(
-                                ErrorKind::InvalidOperation,
-                                format!("failed to read {path}"),
-                            )
-                            .with_source(source)
-                        })
+                        let canonical_target = resolved
+                            .canonicalize()
+                            .map_err(|source| read_error(path, source))?;
+                        if !canonical_target.starts_with(&canonical_root) {
+                            return Err(escapes_root(path));
+                        }
+                        std::fs::read_to_string(&canonical_target)
+                            .map_err(|source| read_error(path, source))
                     },
                 ))
             }
@@ -129,7 +138,10 @@ impl Object for FileOps {
 
 /// Confines `candidate` — `file.include()`'s runtime `path` argument —
 /// to `root`: rejects an absolute path or any component other than a
-/// plain name or `.`, then joins what's left onto `root`. See the
+/// plain name or `.`, then joins what's left onto `root`. Lexical only —
+/// callers still MUST canonicalize and re-check containment before
+/// touching the filesystem, since a symlink can pass this check and
+/// still resolve outside `root` (see the `include` arm above). See the
 /// module docs for why this is a deliberate duplicate of
 /// `TemplateWriteTarget::confine` in [`super::writer`], not a shared
 /// helper.
@@ -139,6 +151,25 @@ fn confine(root: &Path, candidate: &Path) -> Option<PathBuf> {
             matches!(component, Component::Normal(_) | Component::CurDir)
         });
     is_safe.then(|| root.join(candidate))
+}
+
+/// Builds the `file.include()` error for a `path` that escapes `root` —
+/// either lexically (fails [`confine`]) or, after resolving symlinks,
+/// canonicalizes to somewhere outside it. Same message either way: from
+/// the template author's perspective both are just "this path escapes
+/// the project root".
+fn escapes_root(path: &str) -> Error {
+    Error::new(
+        ErrorKind::InvalidOperation,
+        format!("path {path} escapes the project root"),
+    )
+}
+
+/// Builds the `file.include()` error for an I/O failure — canonicalizing
+/// or reading — once `path` has already passed root confinement.
+fn read_error(path: &str, source: std::io::Error) -> Error {
+    Error::new(ErrorKind::InvalidOperation, format!("failed to read {path}"))
+        .with_source(source)
 }
 
 #[cfg(test)]
@@ -301,6 +332,65 @@ mod tests {
             let error = include
                 .call(&env.empty_state(), &[Value::from("missing.md")])
                 .expect_err("missing file fails");
+
+            assert_eq!(error.kind(), ErrorKind::InvalidOperation);
+            assert!(error.source().is_some());
+        }
+
+        #[cfg(unix)]
+        #[test]
+        fn rejects_a_symlink_that_resolves_outside_root() {
+            let root = tempfile::tempdir().expect("create root dir");
+            let outside = tempfile::tempdir().expect("create outside dir");
+            let secret = outside.path().join("secret.md");
+            fs::write(&secret, "outside content").expect("write secret");
+            std::os::unix::fs::symlink(&secret, root.path().join("leak.md"))
+                .expect("create symlink");
+            let ops = ops(root.path());
+            let include = ops
+                .get_value(&Value::from("include"))
+                .expect("include is a known method");
+            let env = env();
+
+            let error = include
+                .call(&env.empty_state(), &[Value::from("leak.md")])
+                .expect_err("symlink escaping root fails");
+
+            assert_eq!(error.kind(), ErrorKind::InvalidOperation);
+        }
+
+        #[test]
+        fn rejects_a_buried_parent_traversal() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::create_dir_all(temp.path().join("sub"))
+                .expect("create nested dir");
+            let ops = ops(temp.path());
+            let include = ops
+                .get_value(&Value::from("include"))
+                .expect("include is a known method");
+            let env = env();
+
+            let error = include
+                .call(&env.empty_state(), &[Value::from("sub/../../evil.md")])
+                .expect_err("buried parent traversal escapes root");
+
+            assert_eq!(error.kind(), ErrorKind::InvalidOperation);
+        }
+
+        #[test]
+        fn wraps_the_io_error_when_the_path_is_a_directory() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::create_dir_all(temp.path().join("sub"))
+                .expect("create nested dir");
+            let ops = ops(temp.path());
+            let include = ops
+                .get_value(&Value::from("include"))
+                .expect("include is a known method");
+            let env = env();
+
+            let error = include
+                .call(&env.empty_state(), &[Value::from("sub")])
+                .expect_err("directory is not readable as a file");
 
             assert_eq!(error.kind(), ErrorKind::InvalidOperation);
             assert!(error.source().is_some());
