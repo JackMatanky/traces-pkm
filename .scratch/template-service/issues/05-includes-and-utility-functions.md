@@ -81,6 +81,98 @@ This means adding a `register` method to existing `FileOps` and `UiOps` too. `Fi
 
 Test `date.now()` with a fixed format string and assert the shape (length/regex), not a literal. `uuid()`: assert it parses as a valid v4. Case filters: fully deterministic — test exact input/output pairs.
 
+## Implementation notes
+
+Implemented in `.worktrees/issue-05-includes-utils` on branch
+`issue-05-includes-and-utility-functions`, commit `244cff0`. Not yet
+merged to `main`.
+
+### Acceptance criteria status: 6/6 met, 0 unfulfilled
+
+(Checkboxes in the "Acceptance criteria" section above are left as the
+author last set them — this list documents status only, per
+instruction not to edit that checklist directly.)
+
+- MET — `file.include()`: `FileOps::get_value("include")` in
+  `src/template/file_ops.rs`, resolved against `Config::root()`
+  (threaded through `TemplateService::new` ->
+  `TemplateEngine::new(loader, provider, config.root())`). Tested in
+  `file_ops.rs::tests::include` and
+  `engine.rs::tests::utilities::file_include_reads_relative_to_root`.
+- MET — `date.now(format=...)`: `DateOps` in
+  `src/template/date_ops.rs`, via `chrono::Local::now().format(...)`.
+  Tested in `date_ops.rs::tests` (shape-based, per the determinism
+  guidance below) and
+  `engine.rs::tests::utilities::date_now_is_reachable`.
+- MET — `uuid()`: standalone fn in `src/template/engine.rs`, via
+  `Uuid::new_v4().to_string()`. Tested in
+  `engine.rs::tests::utilities::uuid_function_returns_a_valid_v4_uuid`
+  (parses the result and asserts `Version::Random`).
+- MET — `| snake_case`: `src/template/str_ops.rs`. Tested in
+  `str_ops.rs::tests` with exact input/output pairs via `rstest`.
+- MET — `| kebab_case`, `| camel_case`, `| pascal_case`,
+  `| title_case`: same file, same test module, same pattern.
+- MET — test coverage for all four features: see above. Full crate
+  verification: 379 unit tests + 1 integration test + 10 doctests all
+  pass; `cargo clippy --all-targets` is clean (one pre-existing,
+  unrelated `disallowed_methods` failure in `src/config/store.rs`
+  predates this branch and is out of scope).
+
+### Deviations from this issue's guidance
+
+1. **`FileOps` is no longer a unit struct.** The guidance's
+   `engine.rs` snippet above shows `FileOps.register(&mut env)`,
+   implying `FileOps` stays a zero-field unit struct. `file.include()`'s
+   root-confinement requirement means `FileOps` now holds
+   `root: Arc<Path>`; the actual call is
+   `FileOps::new(Arc::from(root)).register(&mut env)`. `Arc<Path>`, not
+   `PathBuf` — `get_value`'s `include` closure must be `Send + Sync +
+   'static` per `Value::from_function`, so it clones cheaply on every
+   method lookup rather than copying the path, mirroring `UiOps`'s
+   existing `Arc<dyn DialogProvider>` pattern.
+2. **`StrOps::register` takes no `self`, not `&self`.** The guidance's
+   pseudocode above shows `fn register(&self, env: &mut
+   Environment<'static>)`. This repo denies `clippy::unused_self`
+   (`Cargo.toml`), and `StrOps` has no fields to read — an unused
+   `&self` receiver fails the lint. `register` ended up an associated
+   function (`StrOps::register(&mut env)`), not a method
+   (`StrOps.register(&mut env)`).
+3. **`TemplateTargetPath::confine` (referenced above) doesn't exist
+   under that name** — the actual symbol is
+   `TemplateWriteTarget::confine` in `src/template/writer.rs`.
+   `file.include()`'s confinement logic (rejecting absolute paths and
+   `..` traversal, the same rule) is a **deliberate, separate copy** in
+   `file_ops.rs`, not a call into `writer.rs`: GitNexus impact analysis
+   flags `TemplateWriteTarget::confine` CRITICAL risk (16 execution
+   flows through it), so this implementation avoids touching that
+   surface rather than extracting a shared helper. Both copies are
+   independently unit-tested; see "Deferred follow-up" below.
+
+### New dependencies
+
+Versions as resolved via `cargo add`, not pinned in this issue's
+original text:
+
+`chrono = "0.4.45"`, `uuid = { version = "1.24.0", features = ["v4"] }`,
+`convert_case = "0.11.0"` — default features, added to `[dependencies]`
+in `Cargo.toml`.
+
+### Deferred follow-up: confinement newtype
+
+Considered introducing a `ConfinedPath` newtype (type-driven design:
+"validate once, trust forever") to replace the two duplicated
+`confine`-style checks (`writer.rs`, `file_ops.rs`) with one
+proof-carrying type. Deferred: both current call sites consume the
+confined value within 2-3 lines of computing it (no cross-module
+travel), so the type would mostly repackage `Option<PathBuf>` without
+shrinking code; the stronger version — I/O signatures accepting only
+`&ConfinedPath` — would touch the CRITICAL-risk `writer.rs` surface
+more invasively than the current behavior-preserving duplication.
+Revisit if a third `file.*`/`path.*` confinement consumer is added
+(plausible given this issue's own mention of future `path.*` filters
+above) or if a confined value starts living longer than "compute ->
+immediately use."
+
 ## Blocked by
 
 - `.scratch/template-service/issues/01-render-pipeline-tracer.md`
