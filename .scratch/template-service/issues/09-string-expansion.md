@@ -98,10 +98,24 @@ Suppressed with `#[expect(clippy::needless_pass_by_value, reason =
 "...")]` per the repo's existing convention
 (`src/config/file.rs:435`).
 
+A minor deviation from the Rust guidance: it describes the non-regex
+filters as "stdlib wrappers (1–3 lines)". `trim_prefix`/`trim_suffix`/
+`word_count`/`repeat` fit that description, but `truncate`/
+`truncate_words` don't — the `≤ length` char-count guarantee and the
+`ellipsis` default-kwarg handling both need more than 1–3 lines to
+implement correctly (see the two deliberate choices above). Not a
+guidance violation in spirit — the guidance was evidently written
+with the four simplest filters in mind — but noted for the record.
+
 ### Acceptance criteria status: 10/10 met, 0 unfulfilled
 
 (Checkboxes above are left as originally written — this list
-documents status only.)
+documents status only.) Independently re-verified against
+`src/template/engine/str_ops.rs` at commit `d9adf18` (re-read every
+filter body and every test, re-ran `cargo test --lib
+template::engine::str_ops` — 60/60 passed — and `cargo clippy
+--workspace -- -D warnings` — clean): all 10 criteria below still
+hold; no unfulfilled criteria found.
 
 - MET — All 8 filters callable from templates: registered in
   `StrOps::register`; wiring unchanged from issue 05 (`StrOps::register`
