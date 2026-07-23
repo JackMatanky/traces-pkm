@@ -262,8 +262,7 @@ fn recover_indexed_value(
 
 #[cfg(test)]
 mod tests {
-    use minijinja::{Environment, ErrorKind};
-    use pretty_assertions::assert_eq;
+    use minijinja::Environment;
 
     use super::*;
     use crate::PresetDialogProvider;
@@ -276,412 +275,656 @@ mod tests {
         Environment::new()
     }
 
-    #[test]
-    fn get_value_returns_none_for_an_unknown_key() {
-        let ops = ops(PresetDialogProvider::new());
+    /// Shared test-only fixtures. No assertions live here — see
+    /// `code-quality.md`'s guidance against hidden assertions in helpers.
+    mod fixtures {
+        use super::*;
 
-        assert!(ops.get_value(&Value::from("unknown")).is_none());
+        /// A [`DialogProvider`] whose every method fails with
+        /// [`DialogError::NotInteractive`] — proves [`dialog_error`]'s
+        /// source-preservation reaches template callers for `confirm`/
+        /// `text_input`, the two methods [`PresetDialogProvider`] can
+        /// never fail for (unlike `select`, which fails on empty `items`
+        /// even through the preset provider).
+        #[derive(Debug)]
+        pub(super) struct FailingDialogProvider;
+
+        impl DialogProvider for FailingDialogProvider {
+            fn confirm(
+                &self,
+                _label: &str,
+                _default: Option<bool>,
+            ) -> Result<bool, DialogError> {
+                Err(DialogError::NotInteractive)
+            }
+
+            fn multi_select(
+                &self,
+                _label: &str,
+                _items: &[String],
+            ) -> Result<Vec<usize>, DialogError> {
+                Err(DialogError::NotInteractive)
+            }
+
+            fn select(
+                &self,
+                _label: &str,
+                _items: &[String],
+            ) -> Result<usize, DialogError> {
+                Err(DialogError::NotInteractive)
+            }
+
+            fn text(
+                &self,
+                _label: &str,
+                _default: Option<&str>,
+            ) -> Result<String, DialogError> {
+                Err(DialogError::NotInteractive)
+            }
+        }
     }
 
-    #[test]
-    fn enumerate_lists_every_method() {
-        let ops = ops(PresetDialogProvider::new());
+    mod get_value {
+        use super::*;
 
-        assert!(matches!(ops.enumerate(), Enumerator::Str(METHODS)));
+        #[test]
+        fn get_value_returns_none_for_an_unknown_key() {
+            let ops = ops(PresetDialogProvider::new());
+
+            assert!(ops.get_value(&Value::from("unknown")).is_none());
+        }
+
+        #[test]
+        fn get_value_returns_none_for_a_non_string_key() {
+            let ops = ops(PresetDialogProvider::new());
+
+            assert!(ops.get_value(&Value::from(1)).is_none());
+        }
     }
 
-    #[test]
-    fn debug_formats_without_touching_the_provider() {
-        let ops = ops(PresetDialogProvider::new());
+    mod enumerate {
+        use super::*;
 
-        let formatted = format!("{ops:?}");
+        #[test]
+        fn enumerate_lists_every_method() {
+            let ops = ops(PresetDialogProvider::new());
 
-        assert!(formatted.contains("UiOps"));
+            assert!(matches!(ops.enumerate(), Enumerator::Str(METHODS)));
+        }
     }
 
-    #[test]
-    fn text_input_returns_the_preset_response() {
-        let ops = ops(PresetDialogProvider::new().with_text("claude"));
-        let text_input = ops
-            .get_value(&Value::from("text_input"))
-            .expect("text_input is a known method");
-        let env = env();
+    mod formatting {
+        use pretty_assertions::assert_eq;
 
-        let result = text_input
-            .call(&env.empty_state(), &[Value::from("name")])
-            .expect("text_input succeeds");
+        use super::*;
 
-        assert_eq!(result, Value::from("claude"));
+        #[test]
+        fn debug_formats_without_touching_the_provider() {
+            let ops = ops(PresetDialogProvider::new());
+
+            let formatted = format!("{ops:?}");
+
+            assert_eq!(formatted, "UiOps { .. }");
+        }
     }
 
-    #[test]
-    fn text_input_accepts_an_optional_default() {
-        let ops = ops(PresetDialogProvider::new());
-        let text_input = ops
-            .get_value(&Value::from("text_input"))
-            .expect("text_input is a known method");
-        let env = env();
+    mod register {
+        use pretty_assertions::assert_eq;
 
-        let result = text_input
-            .call(&env.empty_state(), &[
-                Value::from("name"),
-                Value::from("fallback"),
-            ])
-            .expect("text_input succeeds");
+        use super::*;
 
-        assert_eq!(result, Value::from("fallback"));
+        #[test]
+        fn register_makes_ui_reachable_through_a_real_environment() {
+            let mut env = env();
+            UiOps::new(Arc::new(
+                PresetDialogProvider::new().with_text("claude"),
+            ))
+            .register(&mut env);
+
+            let rendered = env
+                .render_str(
+                    r#"{{ ui.text_input("name") }}"#,
+                    minijinja::context!(),
+                )
+                .expect("render succeeds");
+
+            assert_eq!(rendered, "claude");
+        }
     }
 
-    #[test]
-    fn confirm_returns_the_preset_response() {
-        let ops = ops(PresetDialogProvider::new().with_confirm(true));
-        let confirm = ops
-            .get_value(&Value::from("confirm"))
-            .expect("confirm is a known method");
-        let env = env();
+    mod text_input {
+        use std::error::Error as _;
 
-        let result = confirm
-            .call(&env.empty_state(), &[Value::from("proceed?")])
-            .expect("confirm succeeds");
+        use pretty_assertions::assert_eq;
 
-        assert_eq!(result, Value::from(true));
+        use super::{fixtures::FailingDialogProvider, *};
+
+        #[test]
+        fn text_input_returns_the_preset_response() {
+            let ops = ops(PresetDialogProvider::new().with_text("claude"));
+            let text_input = ops
+                .get_value(&Value::from("text_input"))
+                .expect("text_input is a known method");
+            let env = env();
+
+            let result = text_input
+                .call(&env.empty_state(), &[Value::from("name")])
+                .expect("text_input succeeds");
+
+            assert_eq!(result, Value::from("claude"));
+        }
+
+        #[test]
+        fn text_input_accepts_an_optional_default() {
+            let ops = ops(PresetDialogProvider::new());
+            let text_input = ops
+                .get_value(&Value::from("text_input"))
+                .expect("text_input is a known method");
+            let env = env();
+
+            let result = text_input
+                .call(&env.empty_state(), &[
+                    Value::from("name"),
+                    Value::from("fallback"),
+                ])
+                .expect("text_input succeeds");
+
+            assert_eq!(result, Value::from("fallback"));
+        }
+
+        #[test]
+        fn text_input_propagates_a_provider_error() {
+            let ops = Arc::new(UiOps::new(Arc::new(FailingDialogProvider)));
+            let text_input = ops
+                .get_value(&Value::from("text_input"))
+                .expect("text_input is a known method");
+            let env = env();
+
+            let error = text_input
+                .call(&env.empty_state(), &[Value::from("name")])
+                .expect_err("provider failure fails");
+
+            assert_eq!(error.kind(), ErrorKind::InvalidOperation);
+            assert!(
+                error.source().is_some(),
+                "expected the dialog error to be preserved as source"
+            );
+        }
     }
 
-    #[test]
-    fn confirm_returns_false_by_default_when_the_provider_has_no_queued_answer()
-    {
-        let ops = ops(PresetDialogProvider::new());
-        let confirm = ops
-            .get_value(&Value::from("confirm"))
-            .expect("confirm is a known method");
-        let env = env();
+    mod confirm {
+        use std::error::Error as _;
 
-        let result = confirm
-            .call(&env.empty_state(), &[Value::from("proceed?")])
-            .expect("confirm succeeds");
+        use pretty_assertions::assert_eq;
 
-        assert_eq!(result, Value::from(false));
+        use super::{fixtures::FailingDialogProvider, *};
+
+        #[test]
+        fn confirm_returns_the_preset_response() {
+            let ops = ops(PresetDialogProvider::new().with_confirm(true));
+            let confirm = ops
+                .get_value(&Value::from("confirm"))
+                .expect("confirm is a known method");
+            let env = env();
+
+            let result = confirm
+                .call(&env.empty_state(), &[Value::from("proceed?")])
+                .expect("confirm succeeds");
+
+            assert_eq!(result, Value::from(true));
+        }
+
+        #[test]
+        fn confirm_returns_false_by_default_when_the_provider_has_no_queued_answer()
+         {
+            let ops = ops(PresetDialogProvider::new());
+            let confirm = ops
+                .get_value(&Value::from("confirm"))
+                .expect("confirm is a known method");
+            let env = env();
+
+            let result = confirm
+                .call(&env.empty_state(), &[Value::from("proceed?")])
+                .expect("confirm succeeds");
+
+            assert_eq!(result, Value::from(false));
+        }
+
+        #[test]
+        fn confirm_propagates_a_provider_error() {
+            let ops = Arc::new(UiOps::new(Arc::new(FailingDialogProvider)));
+            let confirm = ops
+                .get_value(&Value::from("confirm"))
+                .expect("confirm is a known method");
+            let env = env();
+
+            let error = confirm
+                .call(&env.empty_state(), &[Value::from("proceed?")])
+                .expect_err("provider failure fails");
+
+            assert_eq!(error.kind(), ErrorKind::InvalidOperation);
+            assert!(
+                error.source().is_some(),
+                "expected the dialog error to be preserved as source"
+            );
+        }
     }
 
-    #[test]
-    fn select_recovers_the_original_value_from_a_plain_string_array() {
-        let ops = ops(PresetDialogProvider::new().with_select(1));
-        let select = ops
-            .get_value(&Value::from("select"))
-            .expect("select is a known method");
-        let env = env();
-        let items = Value::from(vec!["a", "b", "c"]);
+    mod select {
+        use std::error::Error as _;
 
-        let result = select
-            .call(&env.empty_state(), &[Value::from("pick"), items])
-            .expect("select succeeds");
+        use pretty_assertions::assert_eq;
 
-        assert_eq!(result, Value::from("b"));
+        use super::*;
+
+        #[test]
+        fn select_recovers_the_original_value_from_a_plain_string_array() {
+            let ops = ops(PresetDialogProvider::new().with_select(1));
+            let select = ops
+                .get_value(&Value::from("select"))
+                .expect("select is a known method");
+            let env = env();
+            let items = Value::from(vec!["a", "b", "c"]);
+
+            let result = select
+                .call(&env.empty_state(), &[Value::from("pick"), items])
+                .expect("select succeeds");
+
+            assert_eq!(result, Value::from("b"));
+        }
+
+        #[test]
+        fn select_recovers_the_original_object_by_its_label() {
+            let ops = ops(PresetDialogProvider::new().with_select(1));
+            let select = ops
+                .get_value(&Value::from("select"))
+                .expect("select is a known method");
+            let env = env();
+            let items = Value::from(vec![
+                minijinja::context! { label => "US", value => 1 },
+                minijinja::context! { label => "GB", value => 44 },
+            ]);
+
+            let result = select
+                .call(&env.empty_state(), &[Value::from("country"), items])
+                .expect("select succeeds");
+
+            assert_eq!(
+                result.get_item(&Value::from("value")).expect("value key"),
+                Value::from(44)
+            );
+        }
+
+        #[test]
+        fn select_falls_back_to_to_string_when_label_is_missing() {
+            let ops = ops(PresetDialogProvider::new().with_select(0));
+            let select = ops
+                .get_value(&Value::from("select"))
+                .expect("select is a known method");
+            let env = env();
+            let items = Value::from(vec![1_i64, 2, 3]);
+
+            let result = select
+                .call(&env.empty_state(), &[Value::from("pick"), items])
+                .expect("select succeeds");
+
+            assert_eq!(result, Value::from(1));
+        }
+
+        #[test]
+        fn select_rejects_a_non_iterable_items_argument() {
+            let ops = ops(PresetDialogProvider::new());
+            let select = ops
+                .get_value(&Value::from("select"))
+                .expect("select is a known method");
+            let env = env();
+
+            let error = select
+                .call(&env.empty_state(), &[
+                    Value::from("pick"),
+                    Value::from(1),
+                ])
+                .expect_err("non-iterable items fails");
+
+            assert_eq!(error.kind(), ErrorKind::InvalidOperation);
+        }
+
+        #[test]
+        fn select_errors_when_the_provider_returns_an_out_of_range_index() {
+            let ops = ops(PresetDialogProvider::new().with_select(5));
+            let select = ops
+                .get_value(&Value::from("select"))
+                .expect("select is a known method");
+            let env = env();
+            let items = Value::from(vec!["a", "b"]);
+
+            let error = select
+                .call(&env.empty_state(), &[Value::from("pick"), items])
+                .expect_err("an out-of-range index fails");
+
+            assert_eq!(error.kind(), ErrorKind::InvalidOperation);
+        }
+
+        #[test]
+        fn select_errors_when_items_is_empty() {
+            let ops = ops(PresetDialogProvider::new());
+            let select = ops
+                .get_value(&Value::from("select"))
+                .expect("select is a known method");
+            let env = env();
+            let items = Value::from(Vec::<String>::new());
+
+            let error = select
+                .call(&env.empty_state(), &[Value::from("pick"), items])
+                .expect_err("selecting from an empty list fails");
+
+            assert_eq!(error.kind(), ErrorKind::InvalidOperation);
+            assert!(
+                error.source().is_some(),
+                "expected the dialog error to be preserved as source"
+            );
+        }
+
+        #[test]
+        fn select_accepts_an_attribute_kwarg_through_the_full_call() {
+            let ops = ops(PresetDialogProvider::new().with_select(1));
+            let select = ops
+                .get_value(&Value::from("select"))
+                .expect("select is a known method");
+            let env = env();
+            let items = Value::from(vec![
+                minijinja::context! { name => "US", value => 1 },
+                minijinja::context! { name => "GB", value => 44 },
+            ]);
+            let call_kwargs: Value =
+                Kwargs::from_iter([("attribute", Value::from("name"))]).into();
+
+            let result = select
+                .call(&env.empty_state(), &[
+                    Value::from("pick"),
+                    items,
+                    call_kwargs,
+                ])
+                .expect("select succeeds");
+
+            assert_eq!(
+                result.get_item(&Value::from("value")).expect("value key"),
+                Value::from(44)
+            );
+        }
+
+        #[test]
+        fn select_rejects_an_unknown_kwarg_through_the_full_call() {
+            let ops = ops(PresetDialogProvider::new().with_select(0));
+            let select = ops
+                .get_value(&Value::from("select"))
+                .expect("select is a known method");
+            let env = env();
+            let items = Value::from(vec!["a", "b"]);
+            let call_kwargs: Value =
+                Kwargs::from_iter([("bogus", Value::from(1))]).into();
+
+            let error = select
+                .call(&env.empty_state(), &[
+                    Value::from("pick"),
+                    items,
+                    call_kwargs,
+                ])
+                .expect_err("an unknown kwarg fails");
+
+            assert_eq!(error.kind(), ErrorKind::TooManyArguments);
+        }
     }
 
-    #[test]
-    fn select_recovers_the_original_object_by_its_label() {
-        let ops = ops(PresetDialogProvider::new().with_select(1));
-        let select = ops
-            .get_value(&Value::from("select"))
-            .expect("select is a known method");
-        let env = env();
-        let items = Value::from(vec![
-            minijinja::context! { label => "US", value => 1 },
-            minijinja::context! { label => "GB", value => 44 },
-        ]);
+    mod label_items {
+        use pretty_assertions::assert_eq;
 
-        let result = select
-            .call(&env.empty_state(), &[Value::from("country"), items])
-            .expect("select succeeds");
+        use super::*;
 
-        assert_eq!(
-            result.get_item(&Value::from("value")).expect("value key"),
-            Value::from(44)
-        );
+        fn kwargs(
+            pairs: impl IntoIterator<Item = (&'static str, Value)>,
+        ) -> Kwargs {
+            Kwargs::from_iter(pairs)
+        }
+
+        #[test]
+        fn label_items_defaults_to_the_label_attribute() {
+            let items = Value::from(vec![
+                minijinja::context! { label => "US", value => 1 },
+                minijinja::context! { label => "GB", value => 44 },
+            ]);
+
+            let (labels, _) =
+                label_items(&items, &kwargs([])).expect("label_items succeeds");
+
+            assert_eq!(labels, vec!["US".to_owned(), "GB".to_owned()]);
+        }
+
+        #[test]
+        fn label_items_honors_a_custom_attribute() {
+            let items = Value::from(vec![
+                minijinja::context! { name => "US", value => 1 },
+                minijinja::context! { name => "GB", value => 44 },
+            ]);
+
+            let (labels, _) = label_items(
+                &items,
+                &kwargs([("attribute", Value::from("name"))]),
+            )
+            .expect("label_items succeeds");
+
+            assert_eq!(labels, vec!["US".to_owned(), "GB".to_owned()]);
+        }
+
+        #[test]
+        fn label_items_walks_a_dotted_attribute_path() {
+            let items = Value::from(vec![
+                minijinja::context! { address => minijinja::context! { city => "NYC" } },
+                minijinja::context! { address => minijinja::context! { city => "LA" } },
+            ]);
+
+            let (labels, _) = label_items(
+                &items,
+                &kwargs([("attribute", Value::from("address.city"))]),
+            )
+            .expect("label_items succeeds");
+
+            assert_eq!(labels, vec!["NYC".to_owned(), "LA".to_owned()]);
+        }
+
+        #[test]
+        fn label_items_falls_back_to_default_for_a_dotted_path_missing_an_intermediate_segment()
+         {
+            let items = Value::from(vec![
+                minijinja::context! { name => "no address here" },
+                minijinja::context! { address => minijinja::context! { city => "LA" } },
+            ]);
+
+            let (labels, _) = label_items(
+                &items,
+                &kwargs([
+                    ("attribute", Value::from("address.city")),
+                    ("default", Value::from("Unknown")),
+                ]),
+            )
+            .expect("a missing intermediate segment falls back to default");
+
+            assert_eq!(labels, vec!["Unknown".to_owned(), "LA".to_owned()]);
+        }
+
+        #[test]
+        fn label_items_falls_back_to_the_default_kwarg_when_attribute_is_missing()
+         {
+            let items = Value::from(vec![
+                minijinja::context! { value => 1 },
+                minijinja::context! { label => "GB", value => 44 },
+            ]);
+
+            let (labels, _) = label_items(
+                &items,
+                &kwargs([("default", Value::from("Unnamed"))]),
+            )
+            .expect("label_items succeeds");
+
+            assert_eq!(labels, vec!["Unnamed".to_owned(), "GB".to_owned()]);
+        }
+
+        #[test]
+        fn label_items_falls_back_to_item_to_string_without_a_default() {
+            let items = Value::from(vec![1_i64, 2, 3]);
+
+            let (labels, _) =
+                label_items(&items, &kwargs([])).expect("label_items succeeds");
+
+            assert_eq!(labels, vec![
+                "1".to_owned(),
+                "2".to_owned(),
+                "3".to_owned()
+            ]);
+        }
+
+        #[test]
+        fn label_items_stringifies_a_non_string_attribute_value() {
+            let items = Value::from(vec![minijinja::context! { label => 42 }]);
+
+            let (labels, _) =
+                label_items(&items, &kwargs([])).expect("label_items succeeds");
+
+            assert_eq!(labels, vec!["42".to_owned()]);
+        }
+
+        #[test]
+        fn label_items_rejects_an_unknown_kwarg() {
+            let items = Value::from(vec!["a"]);
+
+            let error =
+                label_items(&items, &kwargs([("bogus", Value::from(1))]))
+                    .expect_err("unknown kwarg fails");
+
+            assert_eq!(error.kind(), ErrorKind::TooManyArguments);
+        }
+
+        #[test]
+        fn label_items_rejects_a_non_string_attribute_kwarg() {
+            let items = Value::from(vec!["a"]);
+
+            let error =
+                label_items(&items, &kwargs([("attribute", Value::from(1))]))
+                    .expect_err("a non-string attribute kwarg fails");
+
+            assert_eq!(error.kind(), ErrorKind::InvalidOperation);
+        }
+
+        #[test]
+        fn label_items_returns_empty_vectors_for_empty_items() {
+            let items = Value::from(Vec::<String>::new());
+
+            let (labels, values) =
+                label_items(&items, &kwargs([])).expect("label_items succeeds");
+
+            assert_eq!(labels, Vec::<String>::new());
+            assert_eq!(values, Vec::<Value>::new());
+        }
     }
 
-    #[test]
-    fn select_falls_back_to_to_string_when_label_is_missing() {
-        let ops = ops(PresetDialogProvider::new().with_select(0));
-        let select = ops
-            .get_value(&Value::from("select"))
-            .expect("select is a known method");
-        let env = env();
-        let items = Value::from(vec![1_i64, 2, 3]);
+    mod get_path {
+        use pretty_assertions::assert_eq;
 
-        let result = select
-            .call(&env.empty_state(), &[Value::from("pick"), items])
-            .expect("select succeeds");
+        use super::*;
 
-        assert_eq!(result, Value::from(1));
+        #[test]
+        fn get_path_resolves_to_undefined_when_an_intermediate_segment_is_missing()
+         {
+            let item = minijinja::context! { name => "US" };
+
+            let result = get_path(&item, "address.city")
+                .expect("a missing intermediate segment is not an error");
+
+            assert!(result.is_undefined());
+        }
+
+        #[test]
+        fn get_path_indexes_a_numeric_segment_by_position() {
+            let item =
+                Value::from(vec![Value::from("first"), Value::from("second")]);
+
+            let result = get_path(&item, "1")
+                .expect("a numeric segment indexes by position");
+
+            assert_eq!(result, Value::from("second"));
+        }
     }
 
-    #[test]
-    fn select_rejects_a_non_iterable_items_argument() {
-        let ops = ops(PresetDialogProvider::new());
-        let select = ops
-            .get_value(&Value::from("select"))
-            .expect("select is a known method");
-        let env = env();
+    mod multi_select {
+        use pretty_assertions::assert_eq;
 
-        let error = select
-            .call(&env.empty_state(), &[Value::from("pick"), Value::from(1)])
-            .expect_err("non-iterable items fails");
+        use super::*;
 
-        assert_eq!(error.kind(), ErrorKind::InvalidOperation);
-    }
+        #[test]
+        fn multi_select_recovers_every_chosen_value_in_order() {
+            let ops =
+                ops(PresetDialogProvider::new().with_multi_select([0, 2]));
+            let multi_select = ops
+                .get_value(&Value::from("multi_select"))
+                .expect("multi_select is a known method");
+            let env = env();
+            let items = Value::from(vec!["a", "b", "c"]);
 
-    #[test]
-    fn select_errors_when_the_provider_returns_an_out_of_range_index() {
-        let ops = ops(PresetDialogProvider::new().with_select(5));
-        let select = ops
-            .get_value(&Value::from("select"))
-            .expect("select is a known method");
-        let env = env();
-        let items = Value::from(vec!["a", "b"]);
+            let result = multi_select
+                .call(&env.empty_state(), &[Value::from("pick"), items])
+                .expect("multi_select succeeds");
 
-        let error = select
-            .call(&env.empty_state(), &[Value::from("pick"), items])
-            .expect_err("an out-of-range index fails");
+            assert_eq!(result, Value::from(vec!["a", "c"]));
+        }
 
-        assert_eq!(error.kind(), ErrorKind::InvalidOperation);
-    }
+        #[test]
+        fn multi_select_returns_an_empty_seq_when_nothing_is_chosen() {
+            let ops = ops(PresetDialogProvider::new().with_multi_select([]));
+            let multi_select = ops
+                .get_value(&Value::from("multi_select"))
+                .expect("multi_select is a known method");
+            let env = env();
+            let items = Value::from(vec!["a", "b"]);
 
-    #[test]
-    fn select_accepts_an_attribute_kwarg_through_the_full_call() {
-        let ops = ops(PresetDialogProvider::new().with_select(1));
-        let select = ops
-            .get_value(&Value::from("select"))
-            .expect("select is a known method");
-        let env = env();
-        let items = Value::from(vec![
-            minijinja::context! { name => "US", value => 1 },
-            minijinja::context! { name => "GB", value => 44 },
-        ]);
-        let call_kwargs: Value =
-            Kwargs::from_iter([("attribute", Value::from("name"))]).into();
+            let result = multi_select
+                .call(&env.empty_state(), &[Value::from("pick"), items])
+                .expect("multi_select succeeds");
 
-        let result = select
-            .call(&env.empty_state(), &[
-                Value::from("pick"),
-                items,
-                call_kwargs,
-            ])
-            .expect("select succeeds");
+            assert_eq!(result, Value::from(Vec::<String>::new()));
+        }
 
-        assert_eq!(
-            result.get_item(&Value::from("value")).expect("value key"),
-            Value::from(44)
-        );
-    }
+        #[test]
+        fn multi_select_returns_an_empty_result_when_items_is_empty() {
+            let ops = ops(PresetDialogProvider::new());
+            let multi_select = ops
+                .get_value(&Value::from("multi_select"))
+                .expect("multi_select is a known method");
+            let env = env();
+            let items = Value::from(Vec::<String>::new());
 
-    #[test]
-    fn select_rejects_an_unknown_kwarg_through_the_full_call() {
-        let ops = ops(PresetDialogProvider::new().with_select(0));
-        let select = ops
-            .get_value(&Value::from("select"))
-            .expect("select is a known method");
-        let env = env();
-        let items = Value::from(vec!["a", "b"]);
-        let call_kwargs: Value =
-            Kwargs::from_iter([("bogus", Value::from(1))]).into();
+            let result = multi_select
+                .call(&env.empty_state(), &[Value::from("pick"), items])
+                .expect("multi_select succeeds on an empty item list");
 
-        let error = select
-            .call(&env.empty_state(), &[
-                Value::from("pick"),
-                items,
-                call_kwargs,
-            ])
-            .expect_err("an unknown kwarg fails");
+            assert_eq!(result, Value::from(Vec::<String>::new()));
+        }
 
-        assert_eq!(error.kind(), ErrorKind::TooManyArguments);
-    }
+        #[test]
+        fn multi_select_errors_when_the_provider_returns_an_out_of_range_index()
+        {
+            let ops =
+                ops(PresetDialogProvider::new().with_multi_select([0, 9]));
+            let multi_select = ops
+                .get_value(&Value::from("multi_select"))
+                .expect("multi_select is a known method");
+            let env = env();
+            let items = Value::from(vec!["a", "b"]);
 
-    fn kwargs(
-        pairs: impl IntoIterator<Item = (&'static str, Value)>,
-    ) -> Kwargs {
-        Kwargs::from_iter(pairs)
-    }
+            let error = multi_select
+                .call(&env.empty_state(), &[Value::from("pick"), items])
+                .expect_err("an out-of-range index fails");
 
-    #[test]
-    fn label_items_defaults_to_the_label_attribute() {
-        let items = Value::from(vec![
-            minijinja::context! { label => "US", value => 1 },
-            minijinja::context! { label => "GB", value => 44 },
-        ]);
-
-        let (labels, _) =
-            label_items(&items, &kwargs([])).expect("label_items succeeds");
-
-        assert_eq!(labels, vec!["US".to_owned(), "GB".to_owned()]);
-    }
-
-    #[test]
-    fn label_items_honors_a_custom_attribute() {
-        let items = Value::from(vec![
-            minijinja::context! { name => "US", value => 1 },
-            minijinja::context! { name => "GB", value => 44 },
-        ]);
-
-        let (labels, _) =
-            label_items(&items, &kwargs([("attribute", Value::from("name"))]))
-                .expect("label_items succeeds");
-
-        assert_eq!(labels, vec!["US".to_owned(), "GB".to_owned()]);
-    }
-
-    #[test]
-    fn label_items_walks_a_dotted_attribute_path() {
-        let items = Value::from(vec![
-            minijinja::context! { address => minijinja::context! { city => "NYC" } },
-            minijinja::context! { address => minijinja::context! { city => "LA" } },
-        ]);
-
-        let (labels, _) = label_items(
-            &items,
-            &kwargs([("attribute", Value::from("address.city"))]),
-        )
-        .expect("label_items succeeds");
-
-        assert_eq!(labels, vec!["NYC".to_owned(), "LA".to_owned()]);
-    }
-
-    #[test]
-    fn get_path_resolves_to_undefined_when_an_intermediate_segment_is_missing()
-    {
-        let item = minijinja::context! { name => "US" };
-
-        let result = get_path(&item, "address.city")
-            .expect("a missing intermediate segment is not an error");
-
-        assert!(result.is_undefined());
-    }
-
-    #[test]
-    fn get_path_indexes_a_numeric_segment_by_position() {
-        let item =
-            Value::from(vec![Value::from("first"), Value::from("second")]);
-
-        let result = get_path(&item, "1")
-            .expect("a numeric segment indexes by position");
-
-        assert_eq!(result, Value::from("second"));
-    }
-
-    #[test]
-    fn label_items_falls_back_to_default_for_a_dotted_path_missing_an_intermediate_segment()
-     {
-        let items = Value::from(vec![
-            minijinja::context! { name => "no address here" },
-            minijinja::context! { address => minijinja::context! { city => "LA" } },
-        ]);
-
-        let (labels, _) = label_items(
-            &items,
-            &kwargs([
-                ("attribute", Value::from("address.city")),
-                ("default", Value::from("Unknown")),
-            ]),
-        )
-        .expect("a missing intermediate segment falls back to default");
-
-        assert_eq!(labels, vec!["Unknown".to_owned(), "LA".to_owned()]);
-    }
-
-    #[test]
-    fn label_items_falls_back_to_the_default_kwarg_when_attribute_is_missing() {
-        let items = Value::from(vec![
-            minijinja::context! { value => 1 },
-            minijinja::context! { label => "GB", value => 44 },
-        ]);
-
-        let (labels, _) =
-            label_items(&items, &kwargs([("default", Value::from("Unnamed"))]))
-                .expect("label_items succeeds");
-
-        assert_eq!(labels, vec!["Unnamed".to_owned(), "GB".to_owned()]);
-    }
-
-    #[test]
-    fn label_items_falls_back_to_item_to_string_without_a_default() {
-        let items = Value::from(vec![1_i64, 2, 3]);
-
-        let (labels, _) =
-            label_items(&items, &kwargs([])).expect("label_items succeeds");
-
-        assert_eq!(labels, vec![
-            "1".to_owned(),
-            "2".to_owned(),
-            "3".to_owned()
-        ]);
-    }
-
-    #[test]
-    fn label_items_stringifies_a_non_string_attribute_value() {
-        let items = Value::from(vec![minijinja::context! { label => 42 }]);
-
-        let (labels, _) =
-            label_items(&items, &kwargs([])).expect("label_items succeeds");
-
-        assert_eq!(labels, vec!["42".to_owned()]);
-    }
-
-    #[test]
-    fn label_items_rejects_an_unknown_kwarg() {
-        let items = Value::from(vec!["a"]);
-
-        let error = label_items(&items, &kwargs([("bogus", Value::from(1))]))
-            .expect_err("unknown kwarg fails");
-
-        assert_eq!(error.kind(), ErrorKind::TooManyArguments);
-    }
-
-    #[test]
-    fn multi_select_recovers_every_chosen_value_in_order() {
-        let ops = ops(PresetDialogProvider::new().with_multi_select([0, 2]));
-        let multi_select = ops
-            .get_value(&Value::from("multi_select"))
-            .expect("multi_select is a known method");
-        let env = env();
-        let items = Value::from(vec!["a", "b", "c"]);
-
-        let result = multi_select
-            .call(&env.empty_state(), &[Value::from("pick"), items])
-            .expect("multi_select succeeds");
-
-        assert_eq!(result, Value::from(vec!["a", "c"]));
-    }
-
-    #[test]
-    fn multi_select_returns_an_empty_seq_when_nothing_is_chosen() {
-        let ops = ops(PresetDialogProvider::new().with_multi_select([]));
-        let multi_select = ops
-            .get_value(&Value::from("multi_select"))
-            .expect("multi_select is a known method");
-        let env = env();
-        let items = Value::from(vec!["a", "b"]);
-
-        let result = multi_select
-            .call(&env.empty_state(), &[Value::from("pick"), items])
-            .expect("multi_select succeeds");
-
-        assert_eq!(result, Value::from(Vec::<String>::new()));
-    }
-
-    #[test]
-    fn multi_select_errors_when_the_provider_returns_an_out_of_range_index() {
-        let ops = ops(PresetDialogProvider::new().with_multi_select([0, 9]));
-        let multi_select = ops
-            .get_value(&Value::from("multi_select"))
-            .expect("multi_select is a known method");
-        let env = env();
-        let items = Value::from(vec!["a", "b"]);
-
-        let error = multi_select
-            .call(&env.empty_state(), &[Value::from("pick"), items])
-            .expect_err("an out-of-range index fails");
-
-        assert_eq!(error.kind(), ErrorKind::InvalidOperation);
+            assert_eq!(error.kind(), ErrorKind::InvalidOperation);
+        }
     }
 }

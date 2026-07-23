@@ -51,11 +51,11 @@ mod tests {
     }
 
     #[rstest]
-    #[case("snake_case", "hello world", "hello_world")]
-    #[case("kebab_case", "hello world", "hello-world")]
-    #[case("camel_case", "hello world", "helloWorld")]
-    #[case("pascal_case", "hello world", "HelloWorld")]
-    #[case("title_case", "hello world", "Hello World")]
+    #[case::snake_case("snake_case", "hello world", "hello_world")]
+    #[case::kebab_case("kebab_case", "hello world", "hello-world")]
+    #[case::camel_case("camel_case", "hello world", "helloWorld")]
+    #[case::pascal_case("pascal_case", "hello world", "HelloWorld")]
+    #[case::title_case("title_case", "hello world", "Hello World")]
     fn converts_a_multi_word_phrase(
         #[case] filter: &str,
         #[case] input: &str,
@@ -63,16 +63,19 @@ mod tests {
     ) {
         let template = format!("{{{{ value | {filter} }}}}");
 
-        let rendered = env()
-            .render_str(&template, minijinja::context! { value => input })
-            .expect("render succeeds");
+        let result =
+            env().render_str(&template, minijinja::context! { value => input });
+        let rendered = result.expect("render succeeds");
 
         assert_eq!(rendered, expected);
     }
 
     #[rstest]
-    #[case("snake_case", "already_snake", "already_snake")]
-    #[case("kebab_case", "already-kebab", "already-kebab")]
+    #[case::snake_case("snake_case", "already_snake", "already_snake")]
+    #[case::kebab_case("kebab_case", "already-kebab", "already-kebab")]
+    #[case::camel_case("camel_case", "alreadyCamel", "alreadyCamel")]
+    #[case::pascal_case("pascal_case", "AlreadyPascal", "AlreadyPascal")]
+    #[case::title_case("title_case", "Already Title", "Already Title")]
     fn is_idempotent_on_already_converted_input(
         #[case] filter: &str,
         #[case] input: &str,
@@ -80,9 +83,52 @@ mod tests {
     ) {
         let template = format!("{{{{ value | {filter} }}}}");
 
-        let rendered = env()
-            .render_str(&template, minijinja::context! { value => input })
-            .expect("render succeeds");
+        let result =
+            env().render_str(&template, minijinja::context! { value => input });
+        let rendered = result.expect("render succeeds");
+
+        assert_eq!(rendered, expected);
+    }
+
+    /// Boundary rows the two behavior tables above don't reach: an empty
+    /// string (across all five filters — the input most likely to expose
+    /// a panic), a single word with no delimiter to split on, Unicode
+    /// input, digits, and punctuation. One representative filter per
+    /// non-empty boundary kind, since `convert_case`'s splitting logic is
+    /// shared across all five `Case` targets — see `str_ops.rs`'s module
+    /// docs.
+    #[rstest]
+    #[case::snake_case_with_empty_input("snake_case", "", "")]
+    #[case::kebab_case_with_empty_input("kebab_case", "", "")]
+    #[case::camel_case_with_empty_input("camel_case", "", "")]
+    #[case::pascal_case_with_empty_input("pascal_case", "", "")]
+    #[case::title_case_with_empty_input("title_case", "", "")]
+    #[case::snake_case_with_a_single_word("snake_case", "hello", "hello")]
+    #[case::kebab_case_with_unicode_input(
+        "kebab_case",
+        "café münchen",
+        "café-münchen"
+    )]
+    #[case::camel_case_with_digits(
+        "camel_case",
+        "v2 release 10",
+        "v2Release10"
+    )]
+    #[case::pascal_case_with_punctuation(
+        "pascal_case",
+        "hello, world!",
+        "Hello,World!"
+    )]
+    fn converts_boundary_inputs(
+        #[case] filter: &str,
+        #[case] input: &str,
+        #[case] expected: &str,
+    ) {
+        let template = format!("{{{{ value | {filter} }}}}");
+
+        let result =
+            env().render_str(&template, minijinja::context! { value => input });
+        let rendered = result.expect("render succeeds");
 
         assert_eq!(rendered, expected);
     }

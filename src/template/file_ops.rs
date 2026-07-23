@@ -174,8 +174,7 @@ fn read_error(path: &str, source: std::io::Error) -> Error {
 
 #[cfg(test)]
 mod tests {
-    use minijinja::{Environment, ErrorKind};
-    use pretty_assertions::assert_eq;
+    use minijinja::Environment;
 
     use super::*;
 
@@ -187,66 +186,115 @@ mod tests {
         Arc::new(FileOps::new(Arc::from(root)))
     }
 
-    #[test]
-    fn get_value_returns_none_for_an_unknown_key() {
-        let ops = ops(Path::new("/vault"));
+    mod get_value {
+        use super::*;
 
-        assert!(ops.get_value(&Value::from("move_to")).is_none());
+        #[test]
+        fn get_value_returns_none_for_an_unknown_key() {
+            let ops = ops(Path::new("/vault"));
+
+            assert!(ops.get_value(&Value::from("move_to")).is_none());
+        }
+
+        #[test]
+        fn get_value_returns_none_for_a_non_string_key() {
+            let ops = ops(Path::new("/vault"));
+
+            assert!(ops.get_value(&Value::from(1)).is_none());
+        }
     }
 
-    #[test]
-    fn write_to_stashes_the_path_into_state() {
-        let ops = ops(Path::new("/vault"));
-        let write_to = ops
-            .get_value(&Value::from("write_to"))
-            .expect("write_to is a known method");
-        let env = env();
-        let state = env.empty_state();
+    mod enumerate {
+        use super::*;
 
-        write_to
-            .call(&state, &[Value::from("notes/daily.md")])
-            .expect("write_to succeeds");
+        #[test]
+        fn enumerate_lists_every_method() {
+            let ops = ops(Path::new("/vault"));
 
-        assert_eq!(
-            state.get_temp(WRITE_TO_KEY),
-            Some(Value::from("notes/daily.md"))
-        );
+            assert!(matches!(ops.enumerate(), Enumerator::Str(METHODS)));
+        }
     }
 
-    #[test]
-    fn write_to_rejects_a_missing_argument() {
-        let ops = ops(Path::new("/vault"));
-        let write_to = ops
-            .get_value(&Value::from("write_to"))
-            .expect("write_to is a known method");
-        let env = env();
+    mod write_to {
+        use minijinja::ErrorKind;
+        use pretty_assertions::assert_eq;
 
-        let error = write_to
-            .call(&env.empty_state(), &[])
-            .expect_err("missing argument fails");
+        use super::*;
 
-        assert_eq!(error.kind(), ErrorKind::MissingArgument);
-    }
+        #[test]
+        fn write_to_stashes_the_path_into_state() {
+            let ops = ops(Path::new("/vault"));
+            let write_to = ops
+                .get_value(&Value::from("write_to"))
+                .expect("write_to is a known method");
+            let env = env();
+            let state = env.empty_state();
 
-    #[test]
-    fn write_to_rejects_a_non_string_argument() {
-        let ops = ops(Path::new("/vault"));
-        let write_to = ops
-            .get_value(&Value::from("write_to"))
-            .expect("write_to is a known method");
-        let env = env();
+            write_to
+                .call(&state, &[Value::from("notes/daily.md")])
+                .expect("write_to succeeds");
 
-        let error = write_to
-            .call(&env.empty_state(), &[Value::from(1)])
-            .expect_err("non-string argument fails");
+            assert_eq!(
+                state.get_temp(WRITE_TO_KEY),
+                Some(Value::from("notes/daily.md"))
+            );
+        }
 
-        assert_eq!(error.kind(), ErrorKind::InvalidOperation);
+        #[test]
+        fn write_to_rejects_a_missing_argument() {
+            let ops = ops(Path::new("/vault"));
+            let write_to = ops
+                .get_value(&Value::from("write_to"))
+                .expect("write_to is a known method");
+            let env = env();
+
+            let error = write_to
+                .call(&env.empty_state(), &[])
+                .expect_err("missing argument fails");
+
+            assert_eq!(error.kind(), ErrorKind::MissingArgument);
+        }
+
+        #[test]
+        fn write_to_rejects_a_non_string_argument() {
+            let ops = ops(Path::new("/vault"));
+            let write_to = ops
+                .get_value(&Value::from("write_to"))
+                .expect("write_to is a known method");
+            let env = env();
+
+            let error = write_to
+                .call(&env.empty_state(), &[Value::from(1)])
+                .expect_err("non-string argument fails");
+
+            assert_eq!(error.kind(), ErrorKind::InvalidOperation);
+        }
+
+        #[test]
+        fn write_to_rejects_too_many_arguments() {
+            let ops = ops(Path::new("/vault"));
+            let write_to = ops
+                .get_value(&Value::from("write_to"))
+                .expect("write_to is a known method");
+            let env = env();
+
+            let error = write_to
+                .call(&env.empty_state(), &[
+                    Value::from("a.md"),
+                    Value::from("b.md"),
+                ])
+                .expect_err("too many arguments fails");
+
+            assert_eq!(error.kind(), ErrorKind::TooManyArguments);
+        }
     }
 
     mod include {
         use std::{error::Error as _, fs};
 
+        use minijinja::ErrorKind;
         use pretty_assertions::assert_eq;
+        use rstest::rstest;
 
         use super::*;
 
@@ -289,8 +337,31 @@ mod tests {
         }
 
         #[test]
-        fn rejects_an_absolute_path() {
+        fn reads_a_file_via_a_leading_current_dir_segment() {
             let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("notes.md"), "included content")
+                .expect("write fixture");
+            let ops = ops(temp.path());
+            let include = ops
+                .get_value(&Value::from("include"))
+                .expect("include is a known method");
+            let env = env();
+
+            let content = include
+                .call(&env.empty_state(), &[Value::from("./notes.md")])
+                .expect("include succeeds");
+
+            assert_eq!(content, Value::from("included content"));
+        }
+
+        #[rstest]
+        #[case::an_absolute_path("/etc/passwd")]
+        #[case::a_parent_traversal("../evil.md")]
+        #[case::a_buried_parent_traversal("sub/../../evil.md")]
+        fn rejects_an_escaping_path(#[case] path: &str) {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::create_dir_all(temp.path().join("sub"))
+                .expect("create nested dir");
             let ops = ops(temp.path());
             let include = ops
                 .get_value(&Value::from("include"))
@@ -298,14 +369,14 @@ mod tests {
             let env = env();
 
             let error = include
-                .call(&env.empty_state(), &[Value::from("/etc/passwd")])
-                .expect_err("absolute path escapes root");
+                .call(&env.empty_state(), &[Value::from(path)])
+                .expect_err("escaping path fails");
 
             assert_eq!(error.kind(), ErrorKind::InvalidOperation);
         }
 
         #[test]
-        fn rejects_a_parent_traversal() {
+        fn rejects_a_missing_argument() {
             let temp = tempfile::tempdir().expect("create temp dir");
             let ops = ops(temp.path());
             let include = ops
@@ -314,10 +385,45 @@ mod tests {
             let env = env();
 
             let error = include
-                .call(&env.empty_state(), &[Value::from("../evil.md")])
-                .expect_err("parent traversal escapes root");
+                .call(&env.empty_state(), &[])
+                .expect_err("missing argument fails");
+
+            assert_eq!(error.kind(), ErrorKind::MissingArgument);
+        }
+
+        #[test]
+        fn rejects_a_non_string_argument() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let ops = ops(temp.path());
+            let include = ops
+                .get_value(&Value::from("include"))
+                .expect("include is a known method");
+            let env = env();
+
+            let error = include
+                .call(&env.empty_state(), &[Value::from(1)])
+                .expect_err("non-string argument fails");
 
             assert_eq!(error.kind(), ErrorKind::InvalidOperation);
+        }
+
+        #[test]
+        fn rejects_too_many_arguments() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let ops = ops(temp.path());
+            let include = ops
+                .get_value(&Value::from("include"))
+                .expect("include is a known method");
+            let env = env();
+
+            let error = include
+                .call(&env.empty_state(), &[
+                    Value::from("a.md"),
+                    Value::from("b.md"),
+                ])
+                .expect_err("too many arguments fails");
+
+            assert_eq!(error.kind(), ErrorKind::TooManyArguments);
         }
 
         #[test]
@@ -334,7 +440,69 @@ mod tests {
                 .expect_err("missing file fails");
 
             assert_eq!(error.kind(), ErrorKind::InvalidOperation);
-            assert!(error.source().is_some());
+            assert!(
+                error.source().is_some(),
+                "expected the io error to be preserved as source"
+            );
+        }
+
+        #[test]
+        fn wraps_the_io_error_when_the_path_is_empty() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let ops = ops(temp.path());
+            let include = ops
+                .get_value(&Value::from("include"))
+                .expect("include is a known method");
+            let env = env();
+
+            let error = include
+                .call(&env.empty_state(), &[Value::from("")])
+                .expect_err("empty path resolves to root, a directory");
+
+            assert_eq!(error.kind(), ErrorKind::InvalidOperation);
+            assert!(
+                error.source().is_some(),
+                "expected the io error to be preserved as source"
+            );
+        }
+
+        #[test]
+        fn wraps_the_io_error_when_the_path_is_a_directory() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::create_dir_all(temp.path().join("sub"))
+                .expect("create nested dir");
+            let ops = ops(temp.path());
+            let include = ops
+                .get_value(&Value::from("include"))
+                .expect("include is a known method");
+            let env = env();
+
+            let error = include
+                .call(&env.empty_state(), &[Value::from("sub")])
+                .expect_err("directory is not readable as a file");
+
+            assert_eq!(error.kind(), ErrorKind::InvalidOperation);
+            assert!(
+                error.source().is_some(),
+                "expected the io error to be preserved as source"
+            );
+        }
+
+        #[test]
+        fn wraps_the_io_error_when_root_cannot_be_resolved() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let missing_root = temp.path().join("does-not-exist");
+            let ops = ops(&missing_root);
+            let include = ops
+                .get_value(&Value::from("include"))
+                .expect("include is a known method");
+            let env = env();
+
+            let error = include
+                .call(&env.empty_state(), &[Value::from("notes.md")])
+                .expect_err("an unresolvable root fails");
+
+            assert_eq!(error.kind(), ErrorKind::InvalidOperation);
         }
 
         #[cfg(unix)]
@@ -359,11 +527,16 @@ mod tests {
             assert_eq!(error.kind(), ErrorKind::InvalidOperation);
         }
 
+        #[cfg(unix)]
         #[test]
-        fn rejects_a_buried_parent_traversal() {
+        fn wraps_the_io_error_when_the_file_is_unreadable() {
+            use std::os::unix::fs::PermissionsExt as _;
+
             let temp = tempfile::tempdir().expect("create temp dir");
-            fs::create_dir_all(temp.path().join("sub"))
-                .expect("create nested dir");
+            let file = temp.path().join("secret.md");
+            fs::write(&file, "shh").expect("write fixture");
+            fs::set_permissions(&file, fs::Permissions::from_mode(0o000))
+                .expect("revoke read permission");
             let ops = ops(temp.path());
             let include = ops
                 .get_value(&Value::from("include"))
@@ -371,29 +544,14 @@ mod tests {
             let env = env();
 
             let error = include
-                .call(&env.empty_state(), &[Value::from("sub/../../evil.md")])
-                .expect_err("buried parent traversal escapes root");
+                .call(&env.empty_state(), &[Value::from("secret.md")])
+                .expect_err("unreadable file fails");
 
             assert_eq!(error.kind(), ErrorKind::InvalidOperation);
-        }
-
-        #[test]
-        fn wraps_the_io_error_when_the_path_is_a_directory() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            fs::create_dir_all(temp.path().join("sub"))
-                .expect("create nested dir");
-            let ops = ops(temp.path());
-            let include = ops
-                .get_value(&Value::from("include"))
-                .expect("include is a known method");
-            let env = env();
-
-            let error = include
-                .call(&env.empty_state(), &[Value::from("sub")])
-                .expect_err("directory is not readable as a file");
-
-            assert_eq!(error.kind(), ErrorKind::InvalidOperation);
-            assert!(error.source().is_some());
+            assert!(
+                error.source().is_some(),
+                "expected the io error to be preserved as source"
+            );
         }
     }
 }

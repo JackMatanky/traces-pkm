@@ -73,9 +73,6 @@ impl Object for DateOps {
 
 #[cfg(test)]
 mod tests {
-    use minijinja::ErrorKind;
-    use pretty_assertions::assert_eq;
-
     use super::*;
 
     fn env() -> Environment<'static> {
@@ -84,57 +81,114 @@ mod tests {
         env
     }
 
-    #[test]
-    fn get_value_returns_none_for_an_unknown_key() {
-        let ops = Arc::new(DateOps);
+    mod get_value {
+        use super::*;
 
-        assert!(ops.get_value(&Value::from("later")).is_none());
+        #[test]
+        fn get_value_returns_none_for_an_unknown_key() {
+            let ops = Arc::new(DateOps);
+
+            assert!(ops.get_value(&Value::from("later")).is_none());
+        }
+
+        #[test]
+        fn get_value_returns_none_for_a_non_string_key() {
+            let ops = Arc::new(DateOps);
+
+            assert!(ops.get_value(&Value::from(1)).is_none());
+        }
     }
 
-    /// Asserts the shape (fixed length, all-ASCII-digit-or-hyphen), not
-    /// a literal value — see the issue's determinism guidance for
-    /// `date.now()`.
-    #[test]
-    fn now_formats_with_the_default_format_when_no_kwarg_is_given() {
-        let rendered = env()
-            .render_str("{{ date.now() }}", minijinja::context!())
-            .expect("render succeeds");
+    mod now {
+        use pretty_assertions::assert_eq;
 
-        assert_eq!(rendered.len(), "YYYY-MM-DD".len());
-        assert!(rendered.chars().all(|c| c.is_ascii_digit() || c == '-'));
-        assert_eq!(rendered.as_bytes().get(4), Some(&b'-'));
-        assert_eq!(rendered.as_bytes().get(7), Some(&b'-'));
+        use super::*;
+
+        /// Asserts the shape (fixed length, all-ASCII-digit-or-hyphen), not
+        /// a literal value — see the issue's determinism guidance for
+        /// `date.now()`.
+        #[test]
+        fn now_formats_with_the_default_format_when_no_kwarg_is_given() {
+            let rendered = env()
+                .render_str("{{ date.now() }}", minijinja::context!())
+                .expect("render succeeds");
+
+            assert_eq!(rendered.len(), "YYYY-MM-DD".len());
+            assert!(
+                rendered.chars().all(|c| c.is_ascii_digit() || c == '-'),
+                "expected an all-digit-or-hyphen date, got {rendered:?}"
+            );
+            assert_eq!(
+                rendered.as_bytes().get(4),
+                Some(&b'-'),
+                "expected a hyphen at index 4 of {rendered:?}"
+            );
+            assert_eq!(
+                rendered.as_bytes().get(7),
+                Some(&b'-'),
+                "expected a hyphen at index 7 of {rendered:?}"
+            );
+        }
+
+        #[test]
+        fn now_formats_using_an_explicit_format_kwarg() {
+            let rendered = env()
+                .render_str(
+                    r#"{{ date.now(format="%Y") }}"#,
+                    minijinja::context!(),
+                )
+                .expect("render succeeds");
+
+            assert_eq!(rendered.len(), 4);
+            assert!(
+                rendered.chars().all(|c| c.is_ascii_digit()),
+                "expected an all-digit year, got {rendered:?}"
+            );
+        }
+
+        /// Regression: Chrono's `DelayedFormat::fmt` returns `Err` for an
+        /// invalid specifier like `%Q`, and `String::to_string()`'s blanket
+        /// impl panics on that `Err` — writing through `fmt::Write`
+        /// directly instead must surface it as a normal render error.
+        #[test]
+        fn now_returns_an_error_instead_of_panicking_on_an_invalid_format() {
+            let error = env()
+                .render_str(
+                    r#"{{ date.now(format="%Q") }}"#,
+                    minijinja::context!(),
+                )
+                .expect_err("invalid format specifier fails cleanly");
+
+            assert_eq!(error.kind(), ErrorKind::InvalidOperation);
+        }
+
+        #[test]
+        fn now_rejects_a_non_string_format_kwarg() {
+            let error = env()
+                .render_str("{{ date.now(format=1) }}", minijinja::context!())
+                .expect_err("non-string format kwarg fails");
+
+            assert_eq!(error.kind(), ErrorKind::InvalidOperation);
+        }
+
+        #[test]
+        fn now_rejects_an_unknown_kwarg() {
+            let error = env()
+                .render_str("{{ date.now(bogus=1) }}", minijinja::context!())
+                .expect_err("unknown kwarg fails");
+
+            assert_eq!(error.kind(), ErrorKind::TooManyArguments);
+        }
     }
 
-    #[test]
-    fn now_formats_using_an_explicit_format_kwarg() {
-        let rendered = env()
-            .render_str(r#"{{ date.now(format="%Y") }}"#, minijinja::context!())
-            .expect("render succeeds");
+    mod enumerate {
+        use super::*;
 
-        assert_eq!(rendered.len(), 4);
-        assert!(rendered.chars().all(|c| c.is_ascii_digit()));
-    }
+        #[test]
+        fn enumerate_lists_every_method() {
+            let ops = Arc::new(DateOps);
 
-    /// Regression: Chrono's `DelayedFormat::fmt` returns `Err` for an
-    /// invalid specifier like `%Q`, and `String::to_string()`'s blanket
-    /// impl panics on that `Err` — writing through `fmt::Write`
-    /// directly instead must surface it as a normal render error.
-    #[test]
-    fn now_returns_an_error_instead_of_panicking_on_an_invalid_format() {
-        let error = env()
-            .render_str(r#"{{ date.now(format="%Q") }}"#, minijinja::context!())
-            .expect_err("invalid format specifier fails cleanly");
-
-        assert_eq!(error.kind(), ErrorKind::InvalidOperation);
-    }
-
-    #[test]
-    fn now_rejects_an_unknown_kwarg() {
-        let error = env()
-            .render_str("{{ date.now(bogus=1) }}", minijinja::context!())
-            .expect_err("unknown kwarg fails");
-
-        assert_eq!(error.kind(), ErrorKind::TooManyArguments);
+            assert!(matches!(ops.enumerate(), Enumerator::Str(METHODS)));
+        }
     }
 }
