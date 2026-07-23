@@ -2,6 +2,14 @@
 //! small interface, so [`super::service::TemplateService`] depends on
 //! "resolve this name" and "render this source" rather than on
 //! minijinja's [`Environment`] directly.
+//!
+//! Owns everything a template calls into during render, split into its
+//! own submodules: [`date_ops`], [`file_ops`], [`str_ops`], [`ui_ops`].
+
+mod date_ops;
+mod file_ops;
+mod str_ops;
+mod ui_ops;
 
 use std::{
     path::{Path, PathBuf},
@@ -11,13 +19,15 @@ use std::{
 use minijinja::{Environment, Error};
 use uuid::Uuid;
 
-use super::{
+use self::{
     date_ops::DateOps,
     file_ops::{FileOps, WRITE_TO_KEY},
-    loader::TemplateLoader,
-    path::{Found, TemplatePath, TemplatePathError},
     str_ops::StrOps,
     ui_ops::UiOps,
+};
+use super::{
+    loader::TemplateLoader,
+    path::{Found, TemplatePath, TemplatePathError},
 };
 use crate::DialogProvider;
 

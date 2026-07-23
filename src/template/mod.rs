@@ -18,27 +18,24 @@
 //!   local-before-global precedence never drifts. Never escapes the configured
 //!   directories: an absolute path or a `..` segment is always a miss, never a
 //!   traversal.
-//! - [`file_ops`][]: [`FileOps`](file_ops::FileOps), the `file` namespace
-//!   object a template calls as `file.write_to(path)` to declare its own output
-//!   path, or `file.include(path)` to read and inline another file confined to
-//!   [`Config::root`](crate::config::Config::root) — both registered as a
-//!   minijinja global by [`engine`].
-//! - [`ui_ops`][]: [`UiOps`](ui_ops::UiOps), the `ui` namespace object a
-//!   template calls as `ui.text_input(...)`/`ui.select(...)`/
-//!   `ui.confirm(...)`/`ui.multi_select(...)` to gather interactive input, each
-//!   delegating to the `Arc<dyn DialogProvider>` [`engine`] built it with —
-//!   also registered as a minijinja global by [`engine`].
-//! - [`date_ops`][]: [`DateOps`](date_ops::DateOps), the `date` namespace
-//!   object a template calls as `date.now(format)` to format the current
-//!   date/time via `chrono`.
-//! - [`str_ops`][]: [`StrOps`](str_ops::StrOps), which registers the
-//!   `snake_case`/`kebab_case`/`camel_case`/`pascal_case`/`title_case`
-//!   minijinja filters — plain filter functions, not a namespace object, since
-//!   a filter is applied as `{{ value | snake_case }}` rather than dispatched
-//!   through a method call.
 //! - [`engine`]: wraps minijinja's [`Environment`](minijinja::Environment) so
 //!   [`service`] depends on "render this source" rather than on minijinja's
-//!   API.
+//!   API, and owns everything a template calls into during render as its own
+//!   submodules: [`FileOps`](engine::file_ops::FileOps) (the `file` namespace
+//!   object — `file.write_to(path)` to declare its own output path, or
+//!   `file.include(path)` to read and inline another file confined to
+//!   [`Config::root`](crate::config::Config::root)),
+//!   [`UiOps`](engine::ui_ops::UiOps) (the `ui` namespace object —
+//!   `ui.text_input(...)`/`ui.select(...)`/`ui.confirm(...)`/
+//!   `ui.multi_select(...)` to gather interactive input, delegating to the
+//!   `Arc<dyn DialogProvider>` `engine` built it with),
+//!   [`DateOps`](engine::date_ops::DateOps) (the `date` namespace object —
+//!   `date.now(format)` to format the current date/time via `chrono`), and
+//!   [`StrOps`](engine::str_ops::StrOps) (registers the
+//!   `snake_case`/`kebab_case`/`camel_case`/`pascal_case`/`title_case`
+//!   minijinja filters — plain functions, not a namespace object, since a
+//!   filter applies as `{{ value | snake_case }}` rather than through a method
+//!   call).
 //! - [`writer`][]: [`TemplateWriteTarget`](writer::TemplateWriteTarget), which
 //!   gathers a render's output-destination candidates (`-o`, `file.write_to()`)
 //!   and resolves them to a real path by precedence, and
@@ -79,16 +76,12 @@
 //! outside `template` in practice: `writer` and `path` are both
 //! private `mod`s.)
 
-mod date_ops;
 mod engine;
 mod error;
-mod file_ops;
 mod loader;
 mod path;
 mod service;
 mod source_dir;
-mod str_ops;
-mod ui_ops;
 mod writer;
 
 pub(crate) use error::TemplateError;

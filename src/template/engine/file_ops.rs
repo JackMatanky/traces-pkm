@@ -1,5 +1,5 @@
 //! [`FileOps`]: the `file` namespace object registered as a minijinja
-//! global by [`super::engine::TemplateEngine`]. A template calls
+//! global by [`super::TemplateEngine`]. A template calls
 //! `file.write_to("path")` during render to declare its own output path —
 //! mirrors Templater's `tp.file.move()` — or `file.include("path")` to
 //! read and inline another file, resolved against
@@ -12,7 +12,7 @@
 //! whole render tree (`vm::perform_include` mutates the same `State` in
 //! place and never touches `temps`) — so it never needs resetting between
 //! renders the way a struct-held cell would.
-//! [`super::engine::TemplateEngine::render`] reads the value back via
+//! [`super::TemplateEngine::render`] reads the value back via
 //! [`minijinja::Template::render_captured`] once render completes.
 //!
 //! `include`, unlike `write_to`, does need state: the project root every
@@ -25,8 +25,8 @@
 //!
 //! [`confine`] rejects an absolute `path` or any `..` component before
 //! joining onto root — the same rule
-//! [`TemplateWriteTarget::confine`](super::writer::TemplateWriteTarget::confine)
-//! in [`super::writer`] applies to `-o`/`file.write_to()` candidates,
+//! [`TemplateWriteTarget::confine`](super::super::writer::TemplateWriteTarget::confine)
+//! in [`super::super::writer`] applies to `-o`/`file.write_to()` candidates,
 //! deliberately kept as a separate copy rather than a shared helper:
 //! that function sits on a call path `GitNexus`'s impact analysis flags
 //! CRITICAL (16 execution flows through it), so this module keeps its
@@ -53,7 +53,7 @@ use minijinja::{
 };
 
 /// The key `write_to` stashes its path under via [`State::set_temp`];
-/// [`super::engine::TemplateEngine::render`] reads it back under the same
+/// [`super::TemplateEngine::render`] reads it back under the same
 /// key after render completes.
 pub(super) const WRITE_TO_KEY: &str = "file.write_to";
 
@@ -143,7 +143,7 @@ impl Object for FileOps {
 /// touching the filesystem, since a symlink can pass this check and
 /// still resolve outside `root` (see the `include` arm above). See the
 /// module docs for why this is a deliberate duplicate of
-/// `TemplateWriteTarget::confine` in [`super::writer`], not a shared
+/// `TemplateWriteTarget::confine` in [`super::super::writer`], not a shared
 /// helper.
 fn confine(root: &Path, candidate: &Path) -> Option<PathBuf> {
     let is_safe = !candidate.is_absolute()

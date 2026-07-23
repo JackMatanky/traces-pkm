@@ -1,13 +1,14 @@
 //! [`UiOps`]: the `ui` namespace object registered as a minijinja global by
-//! [`super::engine::TemplateEngine`]. A template calls `ui.text_input(label)`,
+//! [`super::TemplateEngine`]. A template calls `ui.text_input(label)`,
 //! `ui.select(label, items)`, `ui.confirm(label)`, or
 //! `ui.multi_select(label, items)` during render to gather interactive
 //! input — each delegates to the shared [`DialogProvider`] the engine was
 //! built with (a real [`TerminalDialogProvider`](crate::TerminalDialogProvider)
 //! for a live render, or a defaults-only
 //! [`PresetDialogProvider`](crate::PresetDialogProvider) selected by
-//! `--no-input` — see [`TemplateService`](super::service::TemplateService)'s
-//! module docs for how that choice is made).
+//! `--no-input` — see
+//! [`TemplateService`](super::super::service::TemplateService)'s module docs
+//! for how that choice is made).
 //!
 //! `select`/`multi_select` derive each item's display label the same way
 //! minijinja's own `map`/`sort`/`groupby` filters derive theirs: an
@@ -49,8 +50,8 @@ const DEFAULT_ATTRIBUTE: &str = "label";
 type LabeledItems = (Vec<String>, Vec<Value>);
 
 /// Backs the `ui` namespace object. Holds the interactive provider every
-/// method delegates to; [`super::service::TemplateService`] decides which
-/// concrete provider that is.
+/// method delegates to; [`super::super::service::TemplateService`] decides
+/// which concrete provider that is.
 pub(super) struct UiOps {
     provider: Arc<dyn DialogProvider>,
 }

@@ -1,5 +1,5 @@
 //! [`DateOps`]: the `date` namespace object registered as a minijinja
-//! global by [`super::engine::TemplateEngine`]. A template calls
+//! global by [`super::TemplateEngine`]. A template calls
 //! `date.now(format="%Y-%m-%d")` during render to format the current
 //! local date/time via [`chrono`]'s strftime-style specifiers.
 //!
