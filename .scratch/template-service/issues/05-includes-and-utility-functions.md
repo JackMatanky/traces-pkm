@@ -84,39 +84,78 @@ Test `date.now()` with a fixed format string and assert the shape (length/regex)
 ## Implementation notes
 
 Implemented in `.worktrees/issue-05-includes-utils` on branch
-`issue-05-includes-and-utility-functions`, commit `244cff0`. Not yet
-merged to `main`.
+`issue-05-includes-and-utility-functions`. History since `main`
+(`2af0594`):
+
+1. `244cff0` — initial implementation (`file.include`, `date.now`,
+   `uuid()`, case filters).
+2. `98bae47` — docs: first pass of these implementation notes.
+3. `a08e20f` — bugfixes from an adversarial re-review: a real
+   symlink-escape hole in `file.include` and a real panic in
+   `date.now` on an invalid format string (both below).
+4. `5cc1ef1` — test-suite remediation from a follow-up adversarial
+   `rust-unit-testing` review: structural (naming-convention) and
+   coverage gaps across all four `*_ops.rs` suites, all closed.
+5. `2627758` (current `HEAD`) — moved `date_ops.rs`/`file_ops.rs`/
+   `str_ops.rs`/`ui_ops.rs` from `src/template/*.rs` into
+   `src/template/engine/*.rs` (they're `TemplateEngine`'s own
+   render-time surface, not siblings of `engine.rs`). Pure
+   reorganization — file citations below use the current, post-move
+   paths.
+
+Not yet merged to `main`.
 
 ### Acceptance criteria status: 6/6 met, 0 unfulfilled
+
+Re-verified against the current code at `HEAD` (`2627758`), not
+carried forward from the first write-up — the implementation changed
+twice since (bugfixes, restructuring) and every criterion below was
+re-checked against what the code does today.
 
 (Checkboxes in the "Acceptance criteria" section above are left as the
 author last set them — this list documents status only, per
 instruction not to edit that checklist directly.)
 
 - MET — `file.include()`: `FileOps::get_value("include")` in
-  `src/template/file_ops.rs`, resolved against `Config::root()`
+  `src/template/engine/file_ops.rs`, resolved against `Config::root()`
   (threaded through `TemplateService::new` ->
-  `TemplateEngine::new(loader, provider, config.root())`). Tested in
-  `file_ops.rs::tests::include` and
+  `TemplateEngine::new(loader, provider, config.root())`). As of
+  `a08e20f`, also canonicalizes both `root` and the resolved target
+  and re-checks containment before reading — closing a symlink-escape
+  gap the lexical `confine()` check alone couldn't catch (see below).
+  Tested in `file_ops.rs::tests::include` (14 tests, including
+  `rejects_a_symlink_that_resolves_outside_root`,
+  `rejects_a_buried_parent_traversal`,
+  `wraps_the_io_error_when_the_file_is_unreadable`, and arity/boundary
+  cases added in `5cc1ef1`) and
   `engine.rs::tests::utilities::file_include_reads_relative_to_root`.
 - MET — `date.now(format=...)`: `DateOps` in
-  `src/template/date_ops.rs`, via `chrono::Local::now().format(...)`.
-  Tested in `date_ops.rs::tests` (shape-based, per the determinism
-  guidance below) and
+  `src/template/engine/date_ops.rs`, via
+  `chrono::Local::now().format(...)`. As of `a08e20f`, writes through
+  `fmt::Write` instead of `.to_string()`, so an invalid strftime
+  specifier (e.g. `"%Q"`) returns a normal render error instead of
+  panicking. Tested in `date_ops.rs::tests::now` (shape-based per the
+  determinism guidance below, plus the panic regression) and
   `engine.rs::tests::utilities::date_now_is_reachable`.
 - MET — `uuid()`: standalone fn in `src/template/engine.rs`, via
-  `Uuid::new_v4().to_string()`. Tested in
+  `Uuid::new_v4().to_string()`. Unchanged since the first
+  implementation. Tested in
   `engine.rs::tests::utilities::uuid_function_returns_a_valid_v4_uuid`
   (parses the result and asserts `Version::Random`).
-- MET — `| snake_case`: `src/template/str_ops.rs`. Tested in
-  `str_ops.rs::tests` with exact input/output pairs via `rstest`.
+- MET — `| snake_case`: `src/template/engine/str_ops.rs`. Tested with
+  exact input/output pairs via `rstest`, now including idempotence for
+  all five filters (was snake/kebab only) and a boundary table (empty
+  string, single word, unicode, digits, punctuation) verified against
+  the real `convert_case` 0.11.0 crate.
 - MET — `| kebab_case`, `| camel_case`, `| pascal_case`,
   `| title_case`: same file, same test module, same pattern.
-- MET — test coverage for all four features: see above. Full crate
-  verification: 379 unit tests + 1 integration test + 10 doctests all
-  pass; `cargo clippy --all-targets` is clean (one pre-existing,
-  unrelated `disallowed_methods` failure in `src/config/store.rs`
-  predates this branch and is out of scope).
+- MET — test coverage for all four features: see above, substantially
+  expanded since first written up. Full crate verification at `HEAD`:
+  **416** unit tests (up from 379 at `244cff0`) + 1 integration test +
+  10 doctests, all pass; `cargo clippy --all-targets` is clean (one
+  pre-existing, unrelated `disallowed_methods` failure in
+  `src/config/store.rs` predates this branch, confirmed via `git diff`
+  against the branch's base commit, and is out of scope).
 
 ### Deviations from this issue's guidance
 
@@ -140,13 +179,26 @@ instruction not to edit that checklist directly.)
 3. **`TemplateTargetPath::confine` (referenced above) doesn't exist
    under that name** — the actual symbol is
    `TemplateWriteTarget::confine` in `src/template/writer.rs`.
-   `file.include()`'s confinement logic (rejecting absolute paths and
-   `..` traversal, the same rule) is a **deliberate, separate copy** in
+   `file.include()`'s lexical confinement check (rejecting absolute
+   paths and `..` traversal) is a **deliberate, separate copy** in
    `file_ops.rs`, not a call into `writer.rs`: GitNexus impact analysis
    flags `TemplateWriteTarget::confine` CRITICAL risk (16 execution
    flows through it), so this implementation avoids touching that
-   surface rather than extracting a shared helper. Both copies are
-   independently unit-tested; see "Deferred follow-up" below.
+   surface rather than extracting a shared helper.
+
+   **Update from `a08e20f`:** the two copies are no longer functionally
+   identical. An adversarial re-review found that the shared lexical
+   check alone (`confine()`: reject absolute/`..`) doesn't catch a
+   symlink planted inside the confined root pointing outside it —
+   `file_ops.rs::include` was hardened to canonicalize both `root` and
+   the resolved target and re-check containment before reading, but
+   `writer.rs::TemplateWriteTarget::confine` (which `-o`/
+   `file.write_to()` both go through) still has the **identical,
+   unfixed** gap — confirmed by reading its source during that
+   investigation, left alone per the same CRITICAL-risk-avoidance
+   rationale as before. A symlink inside the output root pointing
+   outside it can still be written through today. Worth its own
+   follow-up issue; out of scope for this one.
 
 ### New dependencies
 
@@ -160,18 +212,35 @@ in `Cargo.toml`.
 ### Deferred follow-up: confinement newtype
 
 Considered introducing a `ConfinedPath` newtype (type-driven design:
-"validate once, trust forever") to replace the two duplicated
+"validate once, trust forever") to replace the duplicated
 `confine`-style checks (`writer.rs`, `file_ops.rs`) with one
 proof-carrying type. Deferred: both current call sites consume the
-confined value within 2-3 lines of computing it (no cross-module
+confined value within a few lines of computing it (no cross-module
 travel), so the type would mostly repackage `Option<PathBuf>` without
 shrinking code; the stronger version — I/O signatures accepting only
 `&ConfinedPath` — would touch the CRITICAL-risk `writer.rs` surface
 more invasively than the current behavior-preserving duplication.
 Revisit if a third `file.*`/`path.*` confinement consumer is added
 (plausible given this issue's own mention of future `path.*` filters
-above) or if a confined value starts living longer than "compute ->
-immediately use."
+above), if a confined value starts living longer than "compute ->
+immediately use," **or when the `writer.rs` symlink-escape gap above
+gets its own follow-up** — fixing that in `writer.rs` alone would
+leave `file_ops.rs` and `writer.rs` diverging in a different way
+(canonicalization present in one, absent in the other) than they do
+today, which is exactly the kind of drift a shared, proof-carrying
+type would prevent.
+
+### Module layout (as of `2627758`)
+
+`date_ops.rs`, `file_ops.rs`, `str_ops.rs`, `ui_ops.rs` now live under
+`src/template/engine/` (standard Rust file+directory submodule
+convention: `engine.rs` declares `mod date_ops; mod file_ops; mod
+str_ops; mod ui_ops;` and owns them, rather than `template/mod.rs`
+declaring them as its own direct children). Nothing outside
+`engine.rs` consumed `FileOps`/`UiOps`/`DateOps`/`StrOps` directly, so
+their `pub(super)` visibility just narrowed from "visible to
+`template`" to "visible to `engine`" — tighter encapsulation, no
+functional change.
 
 ## Blocked by
 
