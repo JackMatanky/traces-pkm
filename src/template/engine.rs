@@ -4,10 +4,12 @@
 //! minijinja's [`Environment`] directly.
 //!
 //! Owns everything a template calls into during render, split into its
-//! own submodules: [`date_ops`], [`file_ops`], [`str_ops`], [`ui_ops`].
+//! own submodules: [`date_ops`], [`file_ops`], [`path_ops`],
+//! [`str_ops`], [`ui_ops`].
 
 mod date_ops;
 mod file_ops;
+mod path_ops;
 mod str_ops;
 mod ui_ops;
 
@@ -22,6 +24,7 @@ use uuid::Uuid;
 use self::{
     date_ops::DateOps,
     file_ops::{FileOps, WRITE_TO_KEY},
+    path_ops::PathOps,
     str_ops::StrOps,
     ui_ops::UiOps,
 };
@@ -45,13 +48,17 @@ impl TemplateEngine {
     /// minijinja's [`set_loader`](Environment::set_loader) callback, and
     /// registers every namespace/function a template calls into: `file`
     /// (`file.write_to(path)`, `file.include(path)`, confined to
-    /// `root`), `ui` (`ui.text_input(...)` / `ui.select(...)` /
-    /// `ui.confirm(...)` / `ui.multi_select(...)`, delegating to
-    /// `provider` — see [`UiOps`]'s module docs for which concrete
-    /// provider that is), `date` (`date.now(format)`), the case-filter
-    /// group registered by [`StrOps`] (`snake_case`, `kebab_case`,
-    /// `camel_case`, `pascal_case`, `title_case`), and the standalone
-    /// `uuid()` function.
+    /// `root`), the path-inspection filter group registered by
+    /// [`PathOps`] (`path_exists`, `path_is_file`, `path_is_dir`,
+    /// `path_filename`, `path_basename`, `path_extension`,
+    /// `path_parent` — the first three also confined to `root`), `ui`
+    /// (`ui.text_input(...)` / `ui.select(...)` / `ui.confirm(...)` /
+    /// `ui.multi_select(...)`, delegating to `provider` — see
+    /// [`UiOps`]'s module docs for which concrete provider that is),
+    /// `date` (`date.now(format)`), the case-filter group registered by
+    /// [`StrOps`] (`snake_case`, `kebab_case`, `camel_case`,
+    /// `pascal_case`, `title_case`), and the standalone `uuid()`
+    /// function.
     #[inline]
     #[must_use]
     pub(super) fn new(
@@ -64,7 +71,9 @@ impl TemplateEngine {
             let loader = loader.clone();
             move |name| loader.load(name)
         });
-        FileOps::new(Arc::from(root)).register(&mut env);
+        let root: Arc<Path> = Arc::from(root);
+        FileOps::new(Arc::clone(&root)).register(&mut env);
+        PathOps::new(root).register(&mut env);
         UiOps::new(provider).register(&mut env);
         DateOps.register(&mut env);
         StrOps::register(&mut env);
@@ -269,6 +278,33 @@ mod tests {
                 .expect("extension-less include name is stem-matched");
 
             assert_eq!(rendered.content, "hello");
+        }
+
+        #[test]
+        fn path_filters_are_registered_and_resolve_against_root() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("main.rs"), "fn main() {}")
+                .expect("write fixture");
+            let engine = TemplateEngine::new(
+                loader_from_dir(temp.path()),
+                preset_provider(),
+                temp.path(),
+            );
+
+            let rendered = engine
+                .render(
+                    "{{ 'main.rs' | path_exists }}-{{ 'missing.rs' | \
+                     path_exists }}-{{ 'main.rs' | path_is_file }}-{{ '.' | \
+                     path_is_dir }}-{{ '/foo/bar/main.rs' | path_basename \
+                     }}-{{ '/foo/bar/main.rs' | path_extension }}-{{ \
+                     '/foo/bar/main.rs' | path_parent }}",
+                )
+                .expect("render succeeds");
+
+            assert_eq!(
+                rendered.content,
+                "true-false-true-true-main-rs-/foo/bar"
+            );
         }
     }
 
