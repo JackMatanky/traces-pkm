@@ -31,6 +31,7 @@
 //! [`minijinja::Error`] instead of misreported as "doesn't exist".
 
 use std::{
+    ffi::OsStr,
     io,
     path::{Path, PathBuf},
     sync::Arc,
@@ -62,24 +63,19 @@ impl PathOps {
     #[inline]
     pub(super) fn register(self, env: &mut Environment<'static>) {
         let root = self.root;
-        env.add_filter("path_exists", {
-            let root = Arc::clone(&root);
-            move |path: &str| -> Result<bool, Error> {
-                inspect(&root, path, Query::Exists)
-            }
-        });
-        env.add_filter("is_file_path", {
-            let root = Arc::clone(&root);
-            move |path: &str| -> Result<bool, Error> {
-                inspect(&root, path, Query::IsFile)
-            }
-        });
-        env.add_filter(
-            "is_dir_path",
-            move |path: &str| -> Result<bool, Error> {
-                inspect(&root, path, Query::IsDir)
-            },
+        register_bool_filter(
+            env,
+            "path_exists",
+            Arc::clone(&root),
+            Query::Exists,
         );
+        register_bool_filter(
+            env,
+            "is_file_path",
+            Arc::clone(&root),
+            Query::IsFile,
+        );
+        register_bool_filter(env, "is_dir_path", root, Query::IsDir);
         env.add_filter("path_filename", filename);
         env.add_filter("path_basename", basename);
         env.add_filter("path_extension", extension);
@@ -93,6 +89,23 @@ enum Query {
     Exists,
     IsFile,
     IsDir,
+}
+
+/// Registers a single boolean I/O filter under `name`, wiring its
+/// closure through [`inspect`] with the given `query` — the shared
+/// body behind `path_exists`/`is_file_path`/`is_dir_path` in
+/// [`PathOps::register`]. Takes `root` by value so the caller controls
+/// whether it's a fresh [`Arc::clone`] or, for the last registration,
+/// the original moved in directly.
+fn register_bool_filter(
+    env: &mut Environment<'static>,
+    name: &'static str,
+    root: Arc<Path>,
+    query: Query,
+) {
+    env.add_filter(name, move |path: &str| -> Result<bool, Error> {
+        inspect(&root, path, query)
+    });
 }
 
 /// Resolves `path` against `root` — joining it on if relative, using it
@@ -132,42 +145,41 @@ fn inspect_error(path: &str, source: io::Error) -> Error {
         .with_source(source)
 }
 
+/// Converts an optional path component — an [`OsStr`], as returned by
+/// [`Path::file_name`]/[`Path::file_stem`]/[`Path::extension`], or a
+/// [`Path`], as returned by [`Path::parent`] — to an owned `String` via
+/// [`OsStr::to_string_lossy`], or an empty string when there's no
+/// component. The shared tail of all four pure string filters below.
+fn component_or_empty(component: Option<impl AsRef<OsStr>>) -> String {
+    component
+        .map(|component| component.as_ref().to_string_lossy().into_owned())
+        .unwrap_or_default()
+}
+
 /// `path_filename`: the final path component including its extension
 /// (e.g. `"main.rs"`), or an empty string when `path` has none (e.g.
 /// `""`, `"/"`, `".."`).
 fn filename(path: &str) -> String {
-    Path::new(path)
-        .file_name()
-        .map(|name| name.to_string_lossy().into_owned())
-        .unwrap_or_default()
+    component_or_empty(Path::new(path).file_name())
 }
 
 /// `path_basename`: the final path component without its extension
 /// (e.g. `"main"`), or an empty string when `path` has no filename.
 fn basename(path: &str) -> String {
-    Path::new(path)
-        .file_stem()
-        .map(|stem| stem.to_string_lossy().into_owned())
-        .unwrap_or_default()
+    component_or_empty(Path::new(path).file_stem())
 }
 
 /// `path_extension`: the final path component's extension without the
 /// leading dot (e.g. `"rs"`), or an empty string when it has none.
 fn extension(path: &str) -> String {
-    Path::new(path)
-        .extension()
-        .map(|ext| ext.to_string_lossy().into_owned())
-        .unwrap_or_default()
+    component_or_empty(Path::new(path).extension())
 }
 
 /// `path_parent`: the path with its final component removed (e.g.
 /// `"/foo/bar/main.rs"` -> `"/foo/bar"`), or an empty string when `path`
 /// has no parent (e.g. `""`, `"/"`, a single bare name).
 fn parent(path: &str) -> String {
-    Path::new(path)
-        .parent()
-        .map(|parent| parent.to_string_lossy().into_owned())
-        .unwrap_or_default()
+    component_or_empty(Path::new(path).parent())
 }
 
 #[cfg(test)]
