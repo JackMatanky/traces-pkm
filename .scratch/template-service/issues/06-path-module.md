@@ -47,8 +47,9 @@ Usage in templates:
 ## Implementation notes
 
 Implemented in `.worktrees/issue-06-path-module` on branch
-`issue-06-path-module`, commit `1b71dfe` (parent `0d9326a`). Not yet
-merged to `main`.
+`issue-06-path-module`. Two commits: `1b71dfe` (initial
+implementation, on top of `0d9326a`) and `205bc6a` (naming update, see
+below). Not yet merged to `main`.
 
 `PathOps` (`src/template/engine/path_ops.rs`) registers all 7 filters
 via `Environment::add_filter`, following `StrOps`'s flat-filter
@@ -58,8 +59,17 @@ above. `TemplateEngine::new` (`src/template/engine.rs`) now builds
 `Arc::clone`) and `PathOps::new`, rather than allocating a second
 `Arc::from(root)`.
 
+**Naming update (`205bc6a`):** the two boolean I/O filters were
+renamed per explicit request after the initial implementation —
+`path_is_file` -> `is_file_path`, `path_is_dir` -> `is_dir_path`.
+`path_exists` and the four pure string filters keep their original
+names from this spec. The rest of this document uses the current
+(post-rename) names; the "Filters"/"Usage in templates" sections above
+are left as originally written, per the "checkboxes are left as
+originally written" convention.
+
 One deliberate deviation from the Rust guidance: the I/O filters
-(`path_exists`/`path_is_file`/`path_is_dir`) do **not** call
+(`path_exists`/`is_file_path`/`is_dir_path`) do **not** call
 `Path::exists`/`Path::is_file`/`Path::is_dir` directly. Those methods
 silently fold every I/O error — not just `NotFound`, but permission
 failures too — into `false`, which contradicts the acceptance
@@ -88,13 +98,13 @@ documents status only.)
   `engine.rs::tests::render::path_filters_are_registered_and_resolve_against_root`
   renders all 7 through the real `TemplateEngine`, not just the
   isolated `PathOps` unit tests.
-- MET — `path_exists`/`path_is_file`/`path_is_dir` resolve relative
+- MET — `path_exists`/`is_file_path`/`is_dir_path` resolve relative
   paths against `Config::root()`: `resolve()` joins a relative `path`
   onto `root`; `TemplateEngine::new` passes `config.root()` in via
   `TemplateService::new` → `TemplateEngine::new(loader, provider,
   config.root())` (unchanged call site, already threading `root`
   since issue 05). Tested in `path_ops.rs::tests::path_exists`/
-  `path_is_file`/`path_is_dir` (relative, absolute, and root-itself
+  `is_file_path`/`is_dir_path` (relative, absolute, and root-itself
   cases).
 - MET — I/O filters propagate errors as `minijinja::Error`, not
   panics: see the deviation note above. Tested in
