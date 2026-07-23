@@ -18,16 +18,6 @@ use super::{
 };
 use crate::DialogProvider;
 
-/// A render's output, plus whatever `file.write_to()` captured during
-/// that render (if the template called it).
-#[derive(Debug)]
-pub(super) struct RenderOutput {
-    /// The rendered template content.
-    pub(super) content: String,
-    /// The path `file.write_to()` set, if the template called it.
-    pub(super) write_to: Option<PathBuf>,
-}
-
 /// Resolves template names and renders their source, backed by one
 /// shared [`TemplateLoader`] — the search directories are computed
 /// once and reused for `-i` resolution and for `{% include %}`/
@@ -109,6 +99,16 @@ impl TemplateEngine {
             write_to,
         })
     }
+}
+
+/// A render's output, plus whatever `file.write_to()` captured during
+/// that render (if the template called it).
+#[derive(Debug)]
+pub(super) struct RenderOutput {
+    /// The rendered template content.
+    pub(super) content: String,
+    /// The path `file.write_to()` set, if the template called it.
+    pub(super) write_to: Option<PathBuf>,
 }
 
 #[cfg(test)]

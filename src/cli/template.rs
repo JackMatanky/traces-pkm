@@ -40,23 +40,6 @@ pub(super) struct Template {
     pub(super) no_input: bool,
 }
 
-/// `-f`/`--force` and `-n`/`--dry-run` — paired because both feed
-/// [`WriteMode::from_flags`], and grouping them keeps [`Template`] at
-/// one bool field (`no_input`) instead of three, per this crate's
-/// `max-struct-bools = 2` (`clippy.toml`).
-#[derive(Debug, Args)]
-pub(super) struct WriteFlags {
-    /// Overwrite the output path if it already exists.
-    #[arg(short = 'f', long)]
-    pub(super) force: bool,
-    /// Render to stdout and write nothing to disk. Skips the existence
-    /// check and ignores `-o`/`file.write_to()` entirely. Independent of
-    /// `--no-input`: a template with `ui.*` calls still prompts during a
-    /// dry run (in a real terminal) unless `--no-input` is also passed.
-    #[arg(short = 'n', long)]
-    pub(super) dry_run: bool,
-}
-
 impl Template {
     /// Builds args directly, for the default `traces -i <name>` dispatch
     /// that bypasses subcommand parsing.
@@ -137,6 +120,23 @@ impl Template {
         }
         Ok(())
     }
+}
+
+/// `-f`/`--force` and `-n`/`--dry-run` — paired because both feed
+/// [`WriteMode::from_flags`], and grouping them keeps [`Template`] at
+/// one bool field (`no_input`) instead of three, per this crate's
+/// `max-struct-bools = 2` (`clippy.toml`).
+#[derive(Debug, Args)]
+pub(super) struct WriteFlags {
+    /// Overwrite the output path if it already exists.
+    #[arg(short = 'f', long)]
+    pub(super) force: bool,
+    /// Render to stdout and write nothing to disk. Skips the existence
+    /// check and ignores `-o`/`file.write_to()` entirely. Independent of
+    /// `--no-input`: a template with `ui.*` calls still prompts during a
+    /// dry run (in a real terminal) unless `--no-input` is also passed.
+    #[arg(short = 'n', long)]
+    pub(super) dry_run: bool,
 }
 
 fn current_dir() -> Result<PathBuf, TemplateCliError> {
