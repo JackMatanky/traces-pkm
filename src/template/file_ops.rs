@@ -1,31 +1,54 @@
 //! [`FileOps`]: the `file` namespace object registered as a minijinja
 //! global by [`super::engine::TemplateEngine`]. A template calls
 //! `file.write_to("path")` during render to declare its own output path —
-//! mirrors Templater's `tp.file.move()`.
+//! mirrors Templater's `tp.file.move()` — or `file.include("path")` to
+//! read and inline another file, resolved against
+//! [`Config::root`](crate::config::Config::root).
 //!
-//! Stateless: `write_to` stashes its argument into minijinja's own
-//! per-render [`State::set_temp`] rather than a field on this struct.
-//! That scratch space is scoped to exactly one render — including
-//! everything reached via `{% include %}`, since minijinja threads one
-//! [`State`] through the whole render tree (`vm::perform_include` mutates
-//! the same `State` in place and never touches `temps`) — so it never
-//! needs resetting between renders the way a struct-held cell would.
+//! `write_to` stashes its argument into minijinja's own per-render
+//! [`State::set_temp`] rather than a field on this struct. That scratch
+//! space is scoped to exactly one render — including everything reached
+//! via `{% include %}`, since minijinja threads one [`State`] through the
+//! whole render tree (`vm::perform_include` mutates the same `State` in
+//! place and never touches `temps`) — so it never needs resetting between
+//! renders the way a struct-held cell would.
 //! [`super::engine::TemplateEngine::render`] reads the value back via
 //! [`minijinja::Template::render_captured`] once render completes.
+//!
+//! `include`, unlike `write_to`, does need state: the project root every
+//! `path` argument is confined to. Held as `Arc<Path>`, not `PathBuf`, so
+//! [`Object::get_value`]'s closures — which must be `Send + Sync +
+//! 'static` per [`Value::from_function`]'s
+//! [`Function`](minijinja::value::Function) bound, ruling out borrowing
+//! `&Path` — clone cheaply on every lookup instead of copying the whole
+//! path.
+//!
+//! [`confine`] rejects an absolute `path` or any `..` component before
+//! joining onto root — the same rule
+//! [`TemplateWriteTarget::confine`](super::writer::TemplateWriteTarget::confine)
+//! in [`super::writer`] applies to `-o`/`file.write_to()` candidates,
+//! deliberately kept as a separate copy rather than a shared helper:
+//! that function sits on a call path `GitNexus`'s impact analysis flags
+//! CRITICAL (16 execution flows through it), so this module keeps its
+//! own small, self-contained check instead of refactoring a
+//! security-relevant boundary it has no other reason to touch. Both
+//! copies enforce the identical rule — no `..`, no absolute path — so a
+//! change to one without the other is a two-line diff, not a design
+//! this file depends on staying in sync silently.
 //!
 //! Each method `file` exposes is one self-contained
 //! [`Object::get_value`] match arm returning a
 //! [`Value::from_function`] closure; [`Object`]'s default `call_method`
 //! looks the method up via `get_value` and calls it, so there's no
-//! dispatch logic of our own to maintain. Adding a method — e.g.
-//! `file.include(path)`, per
-//! `.scratch/template-service/issues/05-includes-and-utility-functions.md`
-//! — is one more match arm and one more entry in [`METHODS`].
+//! dispatch logic of our own to maintain.
 
-use std::sync::Arc;
+use std::{
+    path::{Component, Path, PathBuf},
+    sync::Arc,
+};
 
 use minijinja::{
-    State,
+    Environment, Error, ErrorKind, State,
     value::{Enumerator, Object, Value},
 };
 
@@ -35,12 +58,33 @@ use minijinja::{
 pub(super) const WRITE_TO_KEY: &str = "file.write_to";
 
 /// Method names `file` exposes, for [`FileOps::enumerate`].
-const METHODS: &[&str] = &["write_to"];
+const METHODS: &[&str] = &["write_to", "include"];
 
-/// Backs the `file` namespace object. Stateless — see the module docs
-/// for where `write_to`'s captured value actually lives.
+/// Backs the `file` namespace object. Holds the project root
+/// `file.include()` confines its `path` argument to — `write_to` needs
+/// no equivalent state; see the module docs for where its captured
+/// value actually lives.
 #[derive(Debug)]
-pub(super) struct FileOps;
+pub(super) struct FileOps {
+    root: Arc<Path>,
+}
+
+impl FileOps {
+    /// Wraps `root` for template-facing dispatch.
+    #[inline]
+    #[must_use]
+    pub(super) fn new(root: Arc<Path>) -> Self {
+        Self {
+            root,
+        }
+    }
+
+    /// Registers this object as the `file` global.
+    #[inline]
+    pub(super) fn register(self, env: &mut Environment<'static>) {
+        env.add_global("file", Value::from_object(self));
+    }
+}
 
 impl Object for FileOps {
     fn get_value(self: &Arc<Self>, key: &Value) -> Option<Value> {
@@ -51,6 +95,29 @@ impl Object for FileOps {
                     Value::UNDEFINED
                 }))
             }
+            "include" => {
+                let root = Arc::clone(&self.root);
+                Some(Value::from_function(
+                    move |path: &str| -> Result<String, Error> {
+                        let resolved = confine(&root, Path::new(path))
+                            .ok_or_else(|| {
+                                Error::new(
+                                    ErrorKind::InvalidOperation,
+                                    format!(
+                                        "path {path} escapes the project root"
+                                    ),
+                                )
+                            })?;
+                        std::fs::read_to_string(&resolved).map_err(|source| {
+                            Error::new(
+                                ErrorKind::InvalidOperation,
+                                format!("failed to read {path}"),
+                            )
+                            .with_source(source)
+                        })
+                    },
+                ))
+            }
             _ => None,
         }
     }
@@ -58,6 +125,20 @@ impl Object for FileOps {
     fn enumerate(self: &Arc<Self>) -> Enumerator {
         Enumerator::Str(METHODS)
     }
+}
+
+/// Confines `candidate` — `file.include()`'s runtime `path` argument —
+/// to `root`: rejects an absolute path or any component other than a
+/// plain name or `.`, then joins what's left onto `root`. See the
+/// module docs for why this is a deliberate duplicate of
+/// `TemplateWriteTarget::confine` in [`super::writer`], not a shared
+/// helper.
+fn confine(root: &Path, candidate: &Path) -> Option<PathBuf> {
+    let is_safe = !candidate.is_absolute()
+        && candidate.components().all(|component| {
+            matches!(component, Component::Normal(_) | Component::CurDir)
+        });
+    is_safe.then(|| root.join(candidate))
 }
 
 #[cfg(test)]
@@ -71,16 +152,20 @@ mod tests {
         Environment::new()
     }
 
+    fn ops(root: &Path) -> Arc<FileOps> {
+        Arc::new(FileOps::new(Arc::from(root)))
+    }
+
     #[test]
     fn get_value_returns_none_for_an_unknown_key() {
-        let ops = Arc::new(FileOps);
+        let ops = ops(Path::new("/vault"));
 
         assert!(ops.get_value(&Value::from("move_to")).is_none());
     }
 
     #[test]
     fn write_to_stashes_the_path_into_state() {
-        let ops = Arc::new(FileOps);
+        let ops = ops(Path::new("/vault"));
         let write_to = ops
             .get_value(&Value::from("write_to"))
             .expect("write_to is a known method");
@@ -99,7 +184,7 @@ mod tests {
 
     #[test]
     fn write_to_rejects_a_missing_argument() {
-        let ops = Arc::new(FileOps);
+        let ops = ops(Path::new("/vault"));
         let write_to = ops
             .get_value(&Value::from("write_to"))
             .expect("write_to is a known method");
@@ -114,7 +199,7 @@ mod tests {
 
     #[test]
     fn write_to_rejects_a_non_string_argument() {
-        let ops = Arc::new(FileOps);
+        let ops = ops(Path::new("/vault"));
         let write_to = ops
             .get_value(&Value::from("write_to"))
             .expect("write_to is a known method");
@@ -125,5 +210,100 @@ mod tests {
             .expect_err("non-string argument fails");
 
         assert_eq!(error.kind(), ErrorKind::InvalidOperation);
+    }
+
+    mod include {
+        use std::{error::Error as _, fs};
+
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn reads_a_file_relative_to_root() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("notes.md"), "included content")
+                .expect("write fixture");
+            let ops = ops(temp.path());
+            let include = ops
+                .get_value(&Value::from("include"))
+                .expect("include is a known method");
+            let env = env();
+
+            let content = include
+                .call(&env.empty_state(), &[Value::from("notes.md")])
+                .expect("include succeeds");
+
+            assert_eq!(content, Value::from("included content"));
+        }
+
+        #[test]
+        fn reads_a_file_in_a_nested_directory() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::create_dir_all(temp.path().join("sub"))
+                .expect("create nested dir");
+            fs::write(temp.path().join("sub/note.md"), "nested")
+                .expect("write fixture");
+            let ops = ops(temp.path());
+            let include = ops
+                .get_value(&Value::from("include"))
+                .expect("include is a known method");
+            let env = env();
+
+            let content = include
+                .call(&env.empty_state(), &[Value::from("sub/note.md")])
+                .expect("include succeeds");
+
+            assert_eq!(content, Value::from("nested"));
+        }
+
+        #[test]
+        fn rejects_an_absolute_path() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let ops = ops(temp.path());
+            let include = ops
+                .get_value(&Value::from("include"))
+                .expect("include is a known method");
+            let env = env();
+
+            let error = include
+                .call(&env.empty_state(), &[Value::from("/etc/passwd")])
+                .expect_err("absolute path escapes root");
+
+            assert_eq!(error.kind(), ErrorKind::InvalidOperation);
+        }
+
+        #[test]
+        fn rejects_a_parent_traversal() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let ops = ops(temp.path());
+            let include = ops
+                .get_value(&Value::from("include"))
+                .expect("include is a known method");
+            let env = env();
+
+            let error = include
+                .call(&env.empty_state(), &[Value::from("../evil.md")])
+                .expect_err("parent traversal escapes root");
+
+            assert_eq!(error.kind(), ErrorKind::InvalidOperation);
+        }
+
+        #[test]
+        fn wraps_the_io_error_when_the_file_is_missing() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let ops = ops(temp.path());
+            let include = ops
+                .get_value(&Value::from("include"))
+                .expect("include is a known method");
+            let env = env();
+
+            let error = include
+                .call(&env.empty_state(), &[Value::from("missing.md")])
+                .expect_err("missing file fails");
+
+            assert_eq!(error.kind(), ErrorKind::InvalidOperation);
+            assert!(error.source().is_some());
+        }
     }
 }

@@ -8,12 +8,15 @@ use std::{
     sync::Arc,
 };
 
-use minijinja::{Environment, Error, value::Value};
+use minijinja::{Environment, Error};
+use uuid::Uuid;
 
 use super::{
+    date_ops::DateOps,
     file_ops::{FileOps, WRITE_TO_KEY},
     loader::TemplateLoader,
     path::{Found, TemplatePath, TemplatePathError},
+    str_ops::StrOps,
     ui_ops::UiOps,
 };
 use crate::DialogProvider;
@@ -30,24 +33,32 @@ pub(super) struct TemplateEngine {
 impl TemplateEngine {
     /// Builds an engine backed by `loader`, cloning it once into
     /// minijinja's [`set_loader`](Environment::set_loader) callback, and
-    /// registers two namespace globals templates call into: `file`, as
-    /// `file.write_to(path)`; and `ui`, as `ui.text_input(...)` /
-    /// `ui.select(...)` / `ui.confirm(...)` / `ui.multi_select(...)`,
-    /// each delegating to `provider` — see [`UiOps`]'s module docs for
-    /// which concrete provider that is.
+    /// registers every namespace/function a template calls into: `file`
+    /// (`file.write_to(path)`, `file.include(path)`, confined to
+    /// `root`), `ui` (`ui.text_input(...)` / `ui.select(...)` /
+    /// `ui.confirm(...)` / `ui.multi_select(...)`, delegating to
+    /// `provider` — see [`UiOps`]'s module docs for which concrete
+    /// provider that is), `date` (`date.now(format)`), the case-filter
+    /// group registered by [`StrOps`] (`snake_case`, `kebab_case`,
+    /// `camel_case`, `pascal_case`, `title_case`), and the standalone
+    /// `uuid()` function.
     #[inline]
     #[must_use]
     pub(super) fn new(
         loader: TemplateLoader,
         provider: Arc<dyn DialogProvider>,
+        root: &Path,
     ) -> Self {
         let mut env = Environment::new();
         env.set_loader({
             let loader = loader.clone();
             move |name| loader.load(name)
         });
-        env.add_global("file", Value::from_object(FileOps));
-        env.add_global("ui", Value::from_object(UiOps::new(provider)));
+        FileOps::new(Arc::from(root)).register(&mut env);
+        UiOps::new(provider).register(&mut env);
+        DateOps.register(&mut env);
+        StrOps::register(&mut env);
+        env.add_function("uuid", uuid);
         Self {
             env,
             loader,
@@ -111,6 +122,14 @@ pub(super) struct RenderOutput {
     pub(super) write_to: Option<PathBuf>,
 }
 
+/// Generates a random UUID v4, formatted per RFC 4122
+/// (`xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx`). Registered as the
+/// standalone `uuid()` function — no namespace, unlike `file.*`/
+/// `ui.*`/`date.*`, since it doesn't belong to any one domain.
+fn uuid() -> String {
+    Uuid::new_v4().to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs;
@@ -138,6 +157,7 @@ mod tests {
             let engine = TemplateEngine::new(
                 loader_from_dir(temp.path()),
                 preset_provider(),
+                temp.path(),
             );
 
             let rendered = engine
@@ -155,6 +175,7 @@ mod tests {
             let engine = TemplateEngine::new(
                 loader_from_dir(temp.path()),
                 preset_provider(),
+                temp.path(),
             );
 
             let rendered = engine
@@ -170,8 +191,11 @@ mod tests {
             let dir = temp.path().join(".traces/templates");
             fs::create_dir_all(&dir).expect("create dotted template dir");
             fs::write(dir.join("daily.md"), "hello").expect("write template");
-            let engine =
-                TemplateEngine::new(loader_from_dir(&dir), preset_provider());
+            let engine = TemplateEngine::new(
+                loader_from_dir(&dir),
+                preset_provider(),
+                temp.path(),
+            );
 
             let rendered =
                 engine.render("{% include \"daily.md\" %}").expect("render");
@@ -187,6 +211,7 @@ mod tests {
             let engine = TemplateEngine::new(
                 loader_from_dir(temp.path()),
                 preset_provider(),
+                temp.path(),
             );
 
             let rendered = engine
@@ -208,6 +233,7 @@ mod tests {
             let engine = TemplateEngine::new(
                 TemplateLoader::new(Some(local_dir), Some(global_dir)),
                 preset_provider(),
+                temp.path(),
             );
 
             let rendered = engine
@@ -225,6 +251,7 @@ mod tests {
             let engine = TemplateEngine::new(
                 loader_from_dir(temp.path()),
                 preset_provider(),
+                temp.path(),
             );
 
             let rendered = engine
@@ -248,6 +275,7 @@ mod tests {
             let engine = TemplateEngine::new(
                 loader_from_dir(temp.path()),
                 preset_provider(),
+                temp.path(),
             );
 
             let found =
@@ -268,6 +296,7 @@ mod tests {
             let engine = TemplateEngine::new(
                 loader_from_dir(temp.path()),
                 preset_provider(),
+                temp.path(),
             );
 
             let rendered =
@@ -282,6 +311,7 @@ mod tests {
             let engine = TemplateEngine::new(
                 loader_from_dir(temp.path()),
                 preset_provider(),
+                temp.path(),
             );
 
             let rendered = engine
@@ -300,6 +330,7 @@ mod tests {
             let engine = TemplateEngine::new(
                 loader_from_dir(temp.path()),
                 preset_provider(),
+                temp.path(),
             );
             engine
                 .render("{{ file.write_to(\"first.md\") }}")
@@ -317,6 +348,7 @@ mod tests {
             let engine = TemplateEngine::new(
                 loader_from_dir(temp.path()),
                 preset_provider(),
+                temp.path(),
             );
 
             let error = engine
@@ -324,6 +356,85 @@ mod tests {
                 .expect_err("unknown method fails");
 
             assert_eq!(error.kind(), minijinja::ErrorKind::UnknownMethod);
+        }
+    }
+
+    /// Wiring tests for `05-includes-and-utility-functions`: each new
+    /// namespace/filter/function is reachable through a real
+    /// [`TemplateEngine`] built by [`TemplateEngine::new`]. Exhaustive
+    /// per-feature behavior is covered by each collaborator's own test
+    /// module (`file_ops::tests::include`, `date_ops::tests`,
+    /// `str_ops::tests`).
+    mod utilities {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn file_include_reads_relative_to_root() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("snippet.md"), "inlined")
+                .expect("write fixture");
+            let engine = TemplateEngine::new(
+                loader_from_dir(temp.path()),
+                preset_provider(),
+                temp.path(),
+            );
+
+            let rendered = engine
+                .render("{{ file.include(\"snippet.md\") }}")
+                .expect("render succeeds");
+
+            assert_eq!(rendered.content, "inlined");
+        }
+
+        #[test]
+        fn date_now_is_reachable() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let engine = TemplateEngine::new(
+                loader_from_dir(temp.path()),
+                preset_provider(),
+                temp.path(),
+            );
+
+            let rendered = engine
+                .render("{{ date.now(format=\"%Y\") }}")
+                .expect("render succeeds");
+
+            assert_eq!(rendered.content.len(), 4);
+        }
+
+        #[test]
+        fn uuid_function_returns_a_valid_v4_uuid() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let engine = TemplateEngine::new(
+                loader_from_dir(temp.path()),
+                preset_provider(),
+                temp.path(),
+            );
+
+            let rendered =
+                engine.render("{{ uuid() }}").expect("render succeeds");
+
+            let parsed = ::uuid::Uuid::parse_str(&rendered.content)
+                .expect("uuid() produces a parseable UUID");
+            assert_eq!(parsed.get_version(), Some(::uuid::Version::Random));
+        }
+
+        #[test]
+        fn case_filters_are_reachable() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let engine = TemplateEngine::new(
+                loader_from_dir(temp.path()),
+                preset_provider(),
+                temp.path(),
+            );
+
+            let rendered = engine
+                .render("{{ \"hello world\" | snake_case }}")
+                .expect("render succeeds");
+
+            assert_eq!(rendered.content, "hello_world");
         }
     }
 }

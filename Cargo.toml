@@ -18,7 +18,9 @@ categories = ["command-line-utilities", "development-tools"]
 
 [dependencies]
 blake3 = "1.8"
+chrono = "0.4.45"
 clap = { version = "4", features = ["derive"] }
+convert_case = "0.11.0"
 figment = { version = "0.10", features = ["toml"] }
 inquire = "0.9"
 is-terminal = "0.4"
@@ -28,6 +30,7 @@ serde = { version = "1.0.228", features = ["derive"] }
 thiserror = "2"
 toml = "1.1"
 tracing = "0.1"
+uuid = { version = "1.24.0", features = ["v4"] }
 
 [dev-dependencies]
 pretty_assertions = "1.4.1"

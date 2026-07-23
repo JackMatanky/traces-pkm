@@ -20,12 +20,22 @@
 //!   traversal.
 //! - [`file_ops`][]: [`FileOps`](file_ops::FileOps), the `file` namespace
 //!   object a template calls as `file.write_to(path)` to declare its own output
-//!   path — registered as a minijinja global by [`engine`].
+//!   path, or `file.include(path)` to read and inline another file confined to
+//!   [`Config::root`](crate::config::Config::root) — both registered as a
+//!   minijinja global by [`engine`].
 //! - [`ui_ops`][]: [`UiOps`](ui_ops::UiOps), the `ui` namespace object a
 //!   template calls as `ui.text_input(...)`/`ui.select(...)`/
 //!   `ui.confirm(...)`/`ui.multi_select(...)` to gather interactive input, each
 //!   delegating to the `Arc<dyn DialogProvider>` [`engine`] built it with —
 //!   also registered as a minijinja global by [`engine`].
+//! - [`date_ops`][]: [`DateOps`](date_ops::DateOps), the `date` namespace
+//!   object a template calls as `date.now(format)` to format the current
+//!   date/time via `chrono`.
+//! - [`str_ops`][]: [`StrOps`](str_ops::StrOps), which registers the
+//!   `snake_case`/`kebab_case`/`camel_case`/`pascal_case`/`title_case`
+//!   minijinja filters — plain filter functions, not a namespace object, since
+//!   a filter is applied as `{{ value | snake_case }}` rather than dispatched
+//!   through a method call.
 //! - [`engine`]: wraps minijinja's [`Environment`](minijinja::Environment) so
 //!   [`service`] depends on "render this source" rather than on minijinja's
 //!   API.
@@ -69,6 +79,7 @@
 //! outside `template` in practice: `writer` and `path` are both
 //! private `mod`s.)
 
+mod date_ops;
 mod engine;
 mod error;
 mod file_ops;
@@ -76,6 +87,7 @@ mod loader;
 mod path;
 mod service;
 mod source_dir;
+mod str_ops;
 mod ui_ops;
 mod writer;
 

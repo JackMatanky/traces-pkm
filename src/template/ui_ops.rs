@@ -31,7 +31,7 @@
 use std::sync::Arc;
 
 use minijinja::{
-    Error, ErrorKind,
+    Environment, Error, ErrorKind,
     value::{Enumerator, Kwargs, Object, Value},
 };
 
@@ -63,6 +63,12 @@ impl UiOps {
         Self {
             provider,
         }
+    }
+
+    /// Registers this object as the `ui` global.
+    #[inline]
+    pub(super) fn register(self, env: &mut Environment<'static>) {
+        env.add_global("ui", Value::from_object(self));
     }
 }
 

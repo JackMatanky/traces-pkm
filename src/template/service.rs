@@ -66,7 +66,7 @@ impl<'a> TemplateService<'a> {
         provider: Arc<dyn DialogProvider>,
     ) -> Self {
         let loader = TemplateLoader::from(config);
-        let engine = TemplateEngine::new(loader, provider);
+        let engine = TemplateEngine::new(loader, provider, config.root());
         let writer = TemplateWriter::new(config.root());
         Self {
             config,
