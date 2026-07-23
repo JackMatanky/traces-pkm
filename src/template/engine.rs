@@ -48,10 +48,13 @@ impl TemplateEngine {
     /// `root`), `ui` (`ui.text_input(...)` / `ui.select(...)` /
     /// `ui.confirm(...)` / `ui.multi_select(...)`, delegating to
     /// `provider` — see [`UiOps`]'s module docs for which concrete
-    /// provider that is), `date` (`date.now(format)`), the case-filter
-    /// group registered by [`StrOps`] (`snake_case`, `kebab_case`,
-    /// `camel_case`, `pascal_case`, `title_case`), and the standalone
-    /// `uuid()` function.
+    /// provider that is), `date` (`date.now(format)`/`date.today()`/
+    /// `date.tomorrow()`/`date.yesterday()`/`date.from_timestamp(ts)`,
+    /// plus the flat `date_*` filters and `is_*` tests — see
+    /// [`DateOps`]'s module docs), the case-filter group registered by
+    /// [`StrOps`] (`snake_case`, `kebab_case`, `camel_case`,
+    /// `pascal_case`, `title_case`), and the standalone `uuid()`
+    /// function.
     #[inline]
     #[must_use]
     pub(super) fn new(
