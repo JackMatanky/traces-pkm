@@ -1,5 +1,5 @@
-amends "package://github.com/jdx/hk/releases/download/v1.50.0/hk@1.50.0#/Config.pkl"
-import "package://github.com/jdx/hk/releases/download/v1.50.0/hk@1.50.0#/Builtins.pkl"
+amends "package://github.com/jdx/hk/releases/download/v1.52.0/hk@1.52.0#/Config.pkl"
+import "package://github.com/jdx/hk/releases/download/v1.52.0/hk@1.52.0#/Builtins.pkl"
 
 fail_fast = false
 jobs = 0
@@ -25,6 +25,7 @@ local hygiene = new Mapping<String, Step> {
 
 local shell = new Mapping<String, Step> {
     ["shfmt"] = (Builtins.shfmt) {
+        glob = "**/*.sh"
         check = "shfmt -d -i 2 -ci {{files}}"
         check_diff = "shfmt -d -i 2 -ci {{files}}"
         fix = "shfmt -w -i 2 -ci {{files}}"
@@ -68,14 +69,14 @@ local rust = new Mapping<String, Step> {
 
     ["cargo-clippy"] = Builtins.cargo_clippy
 
-    ["cargo-test"] {
+    ["cargo-test"] = new Step {
         glob = List("**/*.rs", "**/Cargo.toml", "**/Cargo.lock")
         batch = true
         workspace_indicator = "Cargo.toml"
         check = "cargo test --workspace"
     }
 
-    ["cargo-deny"] {
+    ["cargo-deny"] = new Step {
         glob = List("**/Cargo.toml", "**/Cargo.lock")
         workspace_indicator = "Cargo.toml"
         check = "cargo deny check"
@@ -115,7 +116,7 @@ hooks {
     }
 
     ["commit-msg"] {
-        steps {
+        steps = new Mapping<String, Step> {
             ["conventional-commit"] = (Builtins.check_conventional_commit) {
                 check = "hk util check-conventional-commit --verbose {{commit_msg_file}}"
             }
