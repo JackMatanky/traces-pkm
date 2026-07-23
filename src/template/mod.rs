@@ -31,11 +31,14 @@
 //!   `Arc<dyn DialogProvider>` `engine` built it with),
 //!   [`DateOps`](engine::date_ops::DateOps) (the `date` namespace object —
 //!   `date.now(format)` to format the current date/time via `chrono`), and
-//!   [`StrOps`](engine::str_ops::StrOps) (registers the
-//!   `snake_case`/`kebab_case`/`camel_case`/`pascal_case`/`title_case`
-//!   minijinja filters — plain functions, not a namespace object, since a
-//!   filter applies as `{{ value | snake_case }}` rather than through a method
-//!   call).
+//!   [`StrOps`](engine::str_ops::StrOps) (registers thirteen minijinja filters
+//!   — the five case-conversion filters
+//!   (`snake_case`/`kebab_case`/`camel_case`/`pascal_case`/`title_case`) plus
+//!   manipulation/truncation/inspection/regex filters
+//!   (`trim_prefix`/`trim_suffix`/`truncate`/`truncate_words`/
+//!   `word_count`/`repeat`/`regex_replace`/`regex_match`) — plain functions,
+//!   not a namespace object, since a filter applies as `{{ value | snake_case
+//!   }}` rather than through a method call).
 //! - [`writer`][]: [`TemplateWriteTarget`](writer::TemplateWriteTarget), which
 //!   gathers a render's output-destination candidates (`-o`, `file.write_to()`)
 //!   and resolves them to a real path by precedence, and
