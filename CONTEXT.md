@@ -53,8 +53,15 @@ A value passed into the template by the CLI before rendering (e.g., `{{ date }}`
 _Avoid_: Context, parameter, argument
 
 ### Template Resolution
-A template name resolves first as an exact path, then as a filename in the local template directory, then in the global template directory. Multiple matches produce an error listing the candidates. Future: fuzzy picker.
+A template name resolves first as an exact path, then as a filename in the local template directory, then in the global template directory. Multiple matches produce an error listing the candidates.
 _Avoid_: Template lookup, search
+
+### Template Browser
+An interactive fuzzy-filtered selector shown when `traces template` or `traces -i` is invoked without a name. Lists all available template names (stems) from local then global template directories, deduplicated. Uses `inquire::Select` with the default fuzzy scorer.
+_Avoid_: Template picker, template selector, fuzzy finder
+
+### Available Templates
+The set of template stems discoverable by scanning the local and global template directories. No persisted registry — the filesystem is the source of truth.
 
 ### No-Declaration Template Format
 Templates declare nothing about what they need. They call interactive functions (`prompt_text`, `select`) at the point of need during rendering. No frontmatter declaration, no sidecar config.
@@ -63,8 +70,12 @@ _Avoid_: Declared template, template schema, manifest
 ### Commands
 
 #### template / tmpl
-The primary command for instantiating a template. `traces template -i <name>` renders a template to a note. `tmpl` is a shorthand. When `traces` is invoked with `-i` but no subcommand, it defaults to the template command.
+The primary command for instantiating a template. `traces template -i <name>` renders a template to a note. `traces template` without `-i` opens the interactive Template Browser. `tmpl` is a shorthand. When `traces -i` (with or without a name) is passed without a subcommand, it defaults to the template command.
 _Avoid_: run, apply, new
+
+#### completions
+Generates shell completion scripts. `traces completions --shell bash|zsh|fish` outputs a static completion script covering all commands and flags. `traces completions --list-templates` outputs available template names for dynamic completion.
+_Avoid_: completion, autocomplete, tab-complete
 
 #### init
 Scaffolds a `.traces/` directory with a default `config.toml` and an empty `templates/` directory. Uses inquire to interactively configure options.
@@ -87,7 +98,7 @@ _Avoid_: set_output, move_to, set_destination
 ### CLI Flags
 
 #### --input / -i
-Specifies the template name or path to instantiate.
+Specifies the template name or path to instantiate. When given without a value (just `-i`), opens the interactive Template Browser.
 
 #### --output / -o
 Specifies the output path for the resulting note. Overrides any `file.write_to()` call the template makes. Confined to the project root — an absolute path or a `..` segment is rejected, matching `file.write_to()`.
