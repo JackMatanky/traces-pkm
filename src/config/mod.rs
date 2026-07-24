@@ -4,11 +4,12 @@
 //! directory. Build records discovered candidates as best-effort tracking,
 //! then merges the user's global config before local `.traces/config.toml` so
 //! local values win. Provides the crate-internal [`ConfigService`] entry
-//! point plus read-only config domain types. [`DiscoveryOutcome`] is the opaque
+//! point plus read-only config domain types.
+//! [`DiscoveryOutcome`](discovery::DiscoveryOutcome) is the opaque
 //! token parsed into the selected config-builder input.
 //!
 //! Template resolution against the directories this module parses —
-//! [`crate::template::resolve`] — lives in `crate::template`, not here: this
+//! `crate::template::resolve` — lives in `crate::template`, not here: this
 //! module only knows about parsed/merged config data.
 //!
 //! `pub(crate)`, not `pub`: this module is private in `lib.rs`. `cli` and
@@ -23,8 +24,10 @@
 //! Error types are `thiserror`-only, no `miette::Diagnostic` — this module
 //! stays agnostic to how its errors are displayed. `crate::cli` is where
 //! that presentation belongs (see `cli::error::ConfigTrustCliError` for the
-//! pattern): `cli::error::TemplateCliError` wraps [`ConfigBuilderError`] and
-//! [`DiscoveryError`] the same way for the `traces template`/`tmpl`/default
+//! pattern): `cli::error::TemplateCliError` wraps
+//! [`ConfigBuilderError`](builder::ConfigBuilderError) and
+//! [`DiscoveryError`](discovery::DiscoveryError) the same way for the
+//! `traces template`/`tmpl`/default
 //! `-i` command. Infrastructure errors ([`crate::hash::HashError`] and
 //! [`crate::FileStateStoreError`]) are only observable through the
 //! `#[source]` chain of the re-exported domain errors and [`ConfigService`]'s

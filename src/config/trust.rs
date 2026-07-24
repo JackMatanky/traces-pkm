@@ -11,7 +11,9 @@ pub(crate) enum TrustRequest {
     Root(PathBuf),
     /// Trust a specific config file and its root.
     Config {
+        /// The workspace root.
         root: PathBuf,
+        /// The config file path.
         path: PathBuf,
     },
 }
@@ -111,8 +113,15 @@ pub(crate) enum WorkspaceTrustStatus {
 /// Trust state for a config file inside a workspace.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(crate) enum ConfigTrustStatus {
+    /// The workspace root is trusted and, when a baseline hash exists,
+    /// the config file's content still matches it.
     Trusted,
+    /// The workspace root is not trusted.
     Untrusted,
+    /// The workspace root is trusted, but no content-hash baseline was
+    /// ever recorded for this config file.
     MissingBaseline,
+    /// The workspace root is trusted and a baseline hash exists, but the
+    /// config file's current content no longer matches it.
     Stale,
 }

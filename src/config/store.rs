@@ -13,14 +13,6 @@ use crate::{
     dirs, hash::HashError,
 };
 
-const COMPANION_SUFFIX: &str = ".hash";
-
-#[derive(Clone, Debug)]
-pub(crate) struct ConfigStateStore {
-    tracked: FileStateStore,
-    trusted: FileStateStore,
-}
-
 /// Errors from config tracking or trust-state operations.
 #[derive(Debug, Error)]
 pub(crate) enum ConfigStateError {
@@ -30,6 +22,20 @@ pub(crate) enum ConfigStateError {
     /// Hashing a config file failed.
     #[error(transparent)]
     Hash(#[from] HashError),
+}
+
+const COMPANION_SUFFIX: &str = ".hash";
+
+/// Backing store for config tracking and trust records.
+///
+/// Wraps two independent hash-keyed [`FileStateStore`]s: `tracked` records
+/// config files discovery has seen (best-effort bookkeeping); `trusted`
+/// records workspace roots the user has explicitly trusted, plus each
+/// trusted config file's content-hash baseline used to detect drift.
+#[derive(Clone, Debug)]
+pub(crate) struct ConfigStateStore {
+    tracked: FileStateStore,
+    trusted: FileStateStore,
 }
 
 impl ConfigStateStore {
@@ -74,8 +80,10 @@ impl ConfigStateStore {
 
     /// Grants trust for a workspace, optionally recording a config hash.
     ///
-    /// Returns [`ConfigStateError`] when trust cannot be recorded or the config
-    /// file cannot be hashed.
+    /// # Errors
+    ///
+    /// Returns [`ConfigStateError`] when trust cannot be recorded or the
+    /// config file cannot be hashed.
     #[inline]
     pub(crate) fn grant_trust(
         &self,
@@ -97,6 +105,8 @@ impl ConfigStateStore {
     /// Returns the workspace-root trust status.
     ///
     /// # Errors
+    ///
+    /// Returns [`ConfigStateError`] when the trust store cannot be read.
     #[inline]
     pub(crate) fn workspace_trust_status(
         &self,
@@ -112,6 +122,9 @@ impl ConfigStateStore {
     /// Returns the config-file trust status.
     ///
     /// # Errors
+    ///
+    /// Returns [`ConfigStateError`] when the trust store cannot be read or
+    /// the config file cannot be hashed.
     #[inline]
     pub(crate) fn config_trust_status(
         &self,
