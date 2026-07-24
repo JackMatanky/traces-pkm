@@ -30,7 +30,10 @@
 //!   `ui.multi_select(...)` to gather interactive input, delegating to the
 //!   `Arc<dyn DialogProvider>` `engine` built it with),
 //!   [`DateOps`](engine::date_ops::DateOps) (the `date` namespace object —
-//!   `date.now(format)` to format the current date/time via `chrono`), and
+//!   `date.now(format)`/`date.today()`/`date.tomorrow()`/
+//!   `date.yesterday()`/`date.from_timestamp(ts)` via `chrono` — plus the flat
+//!   `date_*` pipeline filters and `is_past`/`is_future`/ `is_leap_year` tests
+//!   it registers alongside the namespace), and
 //!   [`StrOps`](engine::str_ops::StrOps) (registers thirteen minijinja filters
 //!   — the five case-conversion filters
 //!   (`snake_case`/`kebab_case`/`camel_case`/`pascal_case`/`title_case`) plus

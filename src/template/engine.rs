@@ -50,13 +50,16 @@ impl TemplateEngine {
     /// `root`), `ui` (`ui.text_input(...)` / `ui.select(...)` /
     /// `ui.confirm(...)` / `ui.multi_select(...)`, delegating to
     /// `provider` — see [`UiOps`]'s module docs for which concrete
-    /// provider that is), `date` (`date.now(format)`), the filter
-    /// group registered by [`StrOps`] (the five case-conversion
-    /// filters plus `trim_prefix`/`trim_suffix`/`truncate`/
-    /// `truncate_words`/`word_count`/`repeat`/`regex_replace`/
-    /// `regex_match` — see its module docs), the numeric-filter group
-    /// registered by [`NumOps`] (`ceil`, `floor`, `sqrt`,
-    /// `num_format`), and the standalone `uuid()` function.
+    /// provider that is), `date` (`date.now(format)`/`date.today()`/
+    /// `date.tomorrow()`/`date.yesterday()`/`date.from_timestamp(ts)`,
+    /// plus the flat `date_*` filters and `is_*` tests — see
+    /// [`DateOps`]'s module docs), the filter group registered by
+    /// [`StrOps`] (the five case-conversion filters plus
+    /// `trim_prefix`/`trim_suffix`/`truncate`/`truncate_words`/
+    /// `word_count`/`repeat`/`regex_replace`/`regex_match` — see its
+    /// module docs), the numeric-filter group registered by [`NumOps`]
+    /// (`ceil`, `floor`, `sqrt`, `num_format`), and the standalone
+    /// `uuid()` function.
     #[inline]
     #[must_use]
     pub(super) fn new(
