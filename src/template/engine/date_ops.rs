@@ -81,21 +81,21 @@ impl DateOps {
     /// `self` is consumed registering the `date` namespace object last.
     #[inline]
     pub(super) fn register(self, env: &mut Environment<'static>) {
-        env.add_filter("date_format", date_format_filter);
-        env.add_filter("timestamp", timestamp_filter);
-        env.add_filter("add_days", add_days_filter);
-        env.add_filter("sub_days", sub_days_filter);
-        env.add_filter("add_months", add_months_filter);
-        env.add_filter("sub_months", sub_months_filter);
-        env.add_filter("add_years", add_years_filter);
-        env.add_filter("sub_years", sub_years_filter);
-        env.add_filter("start_of_month", start_of_month_filter);
-        env.add_filter("end_of_month", end_of_month_filter);
-        env.add_filter("weekday", weekday_filter);
-        env.add_filter("date_diff", date_diff_filter);
-        env.add_test("is_past", is_past_test);
-        env.add_test("is_future", is_future_test);
-        env.add_test("is_leap_year", is_leap_year_test);
+        env.add_filter("date_format", date_format);
+        env.add_filter("timestamp", timestamp);
+        env.add_filter("add_days", add_days);
+        env.add_filter("sub_days", sub_days);
+        env.add_filter("add_months", add_months);
+        env.add_filter("sub_months", sub_months);
+        env.add_filter("add_years", add_years);
+        env.add_filter("sub_years", sub_years);
+        env.add_filter("start_of_month", start_of_month);
+        env.add_filter("end_of_month", end_of_month);
+        env.add_filter("weekday", weekday);
+        env.add_filter("date_diff", date_diff);
+        env.add_test("is_past", is_past);
+        env.add_test("is_future", is_future);
+        env.add_test("is_leap_year", is_leap_year);
         env.add_global("date", Value::from_object(self));
     }
 }
@@ -105,10 +105,7 @@ impl Object for DateOps {
         match key.as_str()? {
             "now" => Some(Value::from_function(
                 |kwargs: Kwargs| -> Result<String, Error> {
-                    let format = kwargs
-                        .get::<Option<&str>>("format")?
-                        .unwrap_or(DEFAULT_FORMAT);
-                    kwargs.assert_all_used()?;
+                    let format = format_kwarg(&kwargs)?;
                     // `write!` into a `String` propagates a formatting
                     // failure as `Err`; `.to_string()` would instead
                     // panic on the same input, since its blanket impl
@@ -121,10 +118,7 @@ impl Object for DateOps {
             )),
             "today" => Some(Value::from_function(
                 |kwargs: Kwargs| -> Result<String, Error> {
-                    let format = kwargs
-                        .get::<Option<&str>>("format")?
-                        .unwrap_or(DEFAULT_FORMAT);
-                    kwargs.assert_all_used()?;
+                    let format = format_kwarg(&kwargs)?;
                     format_with(
                         Local::now().date_naive().format(format),
                         format,
@@ -133,10 +127,7 @@ impl Object for DateOps {
             )),
             "tomorrow" => Some(Value::from_function(
                 |kwargs: Kwargs| -> Result<String, Error> {
-                    let format = kwargs
-                        .get::<Option<&str>>("format")?
-                        .unwrap_or(DEFAULT_FORMAT);
-                    kwargs.assert_all_used()?;
+                    let format = format_kwarg(&kwargs)?;
                     let date = Local::now()
                         .date_naive()
                         .succ_opt()
@@ -146,10 +137,7 @@ impl Object for DateOps {
             )),
             "yesterday" => Some(Value::from_function(
                 |kwargs: Kwargs| -> Result<String, Error> {
-                    let format = kwargs
-                        .get::<Option<&str>>("format")?
-                        .unwrap_or(DEFAULT_FORMAT);
-                    kwargs.assert_all_used()?;
+                    let format = format_kwarg(&kwargs)?;
                     let date = Local::now()
                         .date_naive()
                         .pred_opt()
@@ -159,10 +147,7 @@ impl Object for DateOps {
             )),
             "from_timestamp" => Some(Value::from_function(
                 |unix_ts: i64, kwargs: Kwargs| -> Result<String, Error> {
-                    let format = kwargs
-                        .get::<Option<&str>>("format")?
-                        .unwrap_or(DEFAULT_FORMAT);
-                    kwargs.assert_all_used()?;
+                    let format = format_kwarg(&kwargs)?;
                     let datetime = chrono::DateTime::from_timestamp(unix_ts, 0)
                         .ok_or_else(|| invalid_timestamp_error(unix_ts))?
                         .naive_utc();
@@ -176,6 +161,18 @@ impl Object for DateOps {
     fn enumerate(self: &Arc<Self>) -> Enumerator {
         Enumerator::Str(METHODS)
     }
+}
+
+/// Extracts the shared `format="..."` kwarg every `date.*` namespace
+/// method takes, defaulting to [`DEFAULT_FORMAT`], and rejects any
+/// other kwarg via [`Kwargs::assert_all_used`] — the one place all
+/// five `now`/`today`/`tomorrow`/`yesterday`/`from_timestamp` closures
+/// decide how their optional `format=` argument is read.
+fn format_kwarg(kwargs: &Kwargs) -> Result<&str, Error> {
+    let format =
+        kwargs.get::<Option<&str>>("format")?.unwrap_or(DEFAULT_FORMAT);
+    kwargs.assert_all_used()?;
+    Ok(format)
 }
 
 /// Formats `formattable` — anything chrono's `.format(fmt)` produces
@@ -225,7 +222,7 @@ fn try_parse_datetime(s: &str) -> Option<NaiveDateTime> {
 /// Parses `s` as a date/time string, reporting alongside it whether a
 /// genuine time component was found. Tries a full datetime first (see
 /// [`DATETIME_FORMATS`]); on no match, falls back to a bare `%Y-%m-%d`
-/// date at midnight. [`date_diff_filter`] uses the `bool` to decide
+/// date at midnight. [`date_diff`] uses the `bool` to decide
 /// between integer-unit and sub-day-precision (`f64`) output — every
 /// other caller goes through [`parse_date`], which discards it.
 fn parse_date_precise(s: &str) -> Result<(NaiveDateTime, bool), Error> {
@@ -240,7 +237,7 @@ fn parse_date_precise(s: &str) -> Result<(NaiveDateTime, bool), Error> {
 }
 
 /// The shared date/time string parser every filter and test besides
-/// [`date_diff_filter`] uses — see [`parse_date_precise`] for the
+/// [`date_diff`] uses — see [`parse_date_precise`] for the
 /// accepted formats and fallback behavior.
 fn parse_date(s: &str) -> Result<NaiveDateTime, Error> {
     parse_date_precise(s).map(|(datetime, _has_time)| datetime)
@@ -290,19 +287,19 @@ fn unknown_unit_error(unit: &str) -> Error {
 /// date/time string with an arbitrary strftime specifier. Prefixed
 /// (not just `format`) to avoid colliding with minijinja's built-in
 /// `format` filter, which is printf-style and unrelated to dates.
-fn date_format_filter(value: &str, format: &str) -> Result<String, Error> {
+fn date_format(value: &str, format: &str) -> Result<String, Error> {
     let datetime = parse_date(value)?;
     format_with(datetime.format(format), format)
 }
 
 /// `{{ value | timestamp }}` — converts a piped date/time string to
 /// Unix seconds, treating a naive (timezone-less) input as UTC.
-fn timestamp_filter(value: &str) -> Result<i64, Error> {
+fn timestamp(value: &str) -> Result<i64, Error> {
     Ok(parse_date(value)?.and_utc().timestamp())
 }
 
 /// `{{ value | add_days(n) }}`
-fn add_days_filter(value: &str, n: u64) -> Result<String, Error> {
+fn add_days(value: &str, n: u64) -> Result<String, Error> {
     let (datetime, has_time) = parse_date_precise(value)?;
     let shifted = datetime
         .checked_add_days(Days::new(n))
@@ -311,7 +308,7 @@ fn add_days_filter(value: &str, n: u64) -> Result<String, Error> {
 }
 
 /// `{{ value | sub_days(n) }}`
-fn sub_days_filter(value: &str, n: u64) -> Result<String, Error> {
+fn sub_days(value: &str, n: u64) -> Result<String, Error> {
     let (datetime, has_time) = parse_date_precise(value)?;
     let shifted = datetime
         .checked_sub_days(Days::new(n))
@@ -323,7 +320,7 @@ fn sub_days_filter(value: &str, n: u64) -> Result<String, Error> {
 /// resulting month when the original day doesn't exist there (e.g.
 /// `2023-01-31` + 1 month -> `2023-02-28`), per
 /// [`NaiveDateTime::checked_add_months`]'s documented behavior.
-fn add_months_filter(value: &str, n: u32) -> Result<String, Error> {
+fn add_months(value: &str, n: u32) -> Result<String, Error> {
     let (datetime, has_time) = parse_date_precise(value)?;
     let shifted = datetime
         .checked_add_months(Months::new(n))
@@ -332,8 +329,8 @@ fn add_months_filter(value: &str, n: u32) -> Result<String, Error> {
 }
 
 /// `{{ value | sub_months(n) }}` — same end-of-month clamping as
-/// [`add_months_filter`], in reverse.
-fn sub_months_filter(value: &str, n: u32) -> Result<String, Error> {
+/// [`add_months`], in reverse.
+fn sub_months(value: &str, n: u32) -> Result<String, Error> {
     let (datetime, has_time) = parse_date_precise(value)?;
     let shifted = datetime
         .checked_sub_months(Months::new(n))
@@ -342,10 +339,10 @@ fn sub_months_filter(value: &str, n: u32) -> Result<String, Error> {
 }
 
 /// `{{ value | add_years(n) }}` — implemented as `n * 12` months (via
-/// [`add_months_filter`]'s underlying call), so a Feb 29 input clamps to
+/// [`add_months`]'s underlying call), so a Feb 29 input clamps to
 /// Feb 28 in a non-leap target year exactly like `add_months` clamps
 /// across any other month-length mismatch.
-fn add_years_filter(value: &str, n: u32) -> Result<String, Error> {
+fn add_years(value: &str, n: u32) -> Result<String, Error> {
     let (datetime, has_time) = parse_date_precise(value)?;
     let months = n.checked_mul(12).ok_or_else(date_out_of_range_error)?;
     let shifted = datetime
@@ -354,8 +351,8 @@ fn add_years_filter(value: &str, n: u32) -> Result<String, Error> {
     format_precise(shifted, has_time)
 }
 
-/// `{{ value | sub_years(n) }}` — see [`add_years_filter`].
-fn sub_years_filter(value: &str, n: u32) -> Result<String, Error> {
+/// `{{ value | sub_years(n) }}` — see [`add_years`].
+fn sub_years(value: &str, n: u32) -> Result<String, Error> {
     let (datetime, has_time) = parse_date_precise(value)?;
     let months = n.checked_mul(12).ok_or_else(date_out_of_range_error)?;
     let shifted = datetime
@@ -365,14 +362,14 @@ fn sub_years_filter(value: &str, n: u32) -> Result<String, Error> {
 }
 
 /// `{{ value | start_of_month }}`
-fn start_of_month_filter(value: &str) -> Result<String, Error> {
+fn start_of_month(value: &str) -> Result<String, Error> {
     let (datetime, has_time) = parse_date_precise(value)?;
     let shifted = datetime.with_day(1).ok_or_else(date_out_of_range_error)?;
     format_precise(shifted, has_time)
 }
 
 /// `{{ value | end_of_month }}`
-fn end_of_month_filter(value: &str) -> Result<String, Error> {
+fn end_of_month(value: &str) -> Result<String, Error> {
     let (datetime, has_time) = parse_date_precise(value)?;
     let last_day = datetime.num_days_in_month();
     let shifted = datetime
@@ -384,8 +381,34 @@ fn end_of_month_filter(value: &str) -> Result<String, Error> {
 /// `{{ value | weekday }}` — `0` for Monday through `6` for Sunday, per
 /// the issue's spec (not chrono's own Sunday-first
 /// [`Weekday::number_from_sunday`](chrono::Weekday::number_from_sunday)).
-fn weekday_filter(value: &str) -> Result<u32, Error> {
+fn weekday(value: &str) -> Result<u32, Error> {
     Ok(parse_date(value)?.weekday().num_days_from_monday())
+}
+
+/// The `unit=` kwarg [`date_diff`] accepts, parsed once via
+/// [`Self::parse`] and matched exhaustively in each precision branch
+/// below — the same "small enum over a piped string" pattern
+/// [`path_ops::PathQuery`](super::path_ops) uses for its I/O tests.
+#[derive(Clone, Copy)]
+enum DiffUnit {
+    Days,
+    Hours,
+    Minutes,
+    Seconds,
+}
+
+impl DiffUnit {
+    /// Parses `unit`'s `unit=` kwarg value; `None` for anything but
+    /// the four accepted names.
+    fn parse(unit: &str) -> Option<Self> {
+        match unit {
+            "days" => Some(Self::Days),
+            "hours" => Some(Self::Hours),
+            "minutes" => Some(Self::Minutes),
+            "seconds" => Some(Self::Seconds),
+            _ => None,
+        }
+    }
 }
 
 /// `{{ value | date_diff(other, unit="days") }}` — the signed duration
@@ -399,13 +422,10 @@ fn weekday_filter(value: &str) -> Result<u32, Error> {
     reason = "minijinja's Function trait extracts a filter's trailing Kwargs \
               argument by value; only `&self` methods on it are needed here"
 )]
-fn date_diff_filter(
-    value: &str,
-    other: &str,
-    kwargs: Kwargs,
-) -> Result<Value, Error> {
+fn date_diff(value: &str, other: &str, kwargs: Kwargs) -> Result<Value, Error> {
     let unit = kwargs.get::<Option<&str>>("unit")?.unwrap_or("days");
     kwargs.assert_all_used()?;
+    let unit = DiffUnit::parse(unit).ok_or_else(|| unknown_unit_error(unit))?;
     let (from, from_has_time) = parse_date_precise(value)?;
     let (to, to_has_time) = parse_date_precise(other)?;
     let delta = to.signed_duration_since(from);
@@ -421,20 +441,18 @@ fn date_diff_filter(
         let seconds =
             delta.num_seconds() as f64 + f64::from(delta.subsec_nanos()) / 1e9;
         let result = match unit {
-            "days" => seconds / 86_400.0,
-            "hours" => seconds / 3_600.0,
-            "minutes" => seconds / 60.0,
-            "seconds" => seconds,
-            unknown => return Err(unknown_unit_error(unknown)),
+            DiffUnit::Days => seconds / 86_400.0,
+            DiffUnit::Hours => seconds / 3_600.0,
+            DiffUnit::Minutes => seconds / 60.0,
+            DiffUnit::Seconds => seconds,
         };
         Ok(Value::from(result))
     } else {
         let result = match unit {
-            "days" => delta.num_days(),
-            "hours" => delta.num_hours(),
-            "minutes" => delta.num_minutes(),
-            "seconds" => delta.num_seconds(),
-            unknown => return Err(unknown_unit_error(unknown)),
+            DiffUnit::Days => delta.num_days(),
+            DiffUnit::Hours => delta.num_hours(),
+            DiffUnit::Minutes => delta.num_minutes(),
+            DiffUnit::Seconds => delta.num_seconds(),
         };
         Ok(Value::from(result))
     }
@@ -442,20 +460,20 @@ fn date_diff_filter(
 
 /// `{% if value is is_past %}` — `true` when the piped date/time string
 /// is before now (UTC; a naive input is treated as UTC, matching
-/// [`timestamp_filter`]).
-fn is_past_test(value: &str) -> Result<bool, Error> {
+/// [`timestamp`]).
+fn is_past(value: &str) -> Result<bool, Error> {
     Ok(parse_date(value)?.and_utc() < Utc::now())
 }
 
-/// `{% if value is is_future %}` — see [`is_past_test`].
-fn is_future_test(value: &str) -> Result<bool, Error> {
+/// `{% if value is is_future %}` — see [`is_past`].
+fn is_future(value: &str) -> Result<bool, Error> {
     Ok(parse_date(value)?.and_utc() > Utc::now())
 }
 
 /// `{% if value is is_leap_year %}` — accepts either an integer year
 /// (`2024 is is_leap_year`) or a date/time string, checked via
 /// [`parse_date`].
-fn is_leap_year_test(value: &Value) -> Result<bool, Error> {
+fn is_leap_year(value: &Value) -> Result<bool, Error> {
     let year = if let Some(year) = value.as_i64() {
         i32::try_from(year)
             .map_err(|_out_of_range| leap_year_input_error(value))?
@@ -710,6 +728,19 @@ mod tests {
             let ops = Arc::new(DateOps);
 
             assert!(matches!(ops.enumerate(), Enumerator::Str(METHODS)));
+        }
+
+        #[test]
+        fn every_enumerated_method_resolves_via_get_value() {
+            let ops = Arc::new(DateOps);
+
+            for method in METHODS {
+                assert!(
+                    ops.get_value(&Value::from(*method)).is_some(),
+                    "{method:?} is enumerated but get_value has no matching \
+                     arm"
+                );
+            }
         }
     }
 

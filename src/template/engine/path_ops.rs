@@ -69,9 +69,9 @@ impl PathOps {
     /// Registers all 7 path-inspection tests and filters.
     #[inline]
     pub(super) fn register(self, env: &mut Environment<'static>) {
-        self.register_test(env, "path_exists", Query::Exists);
-        self.register_test(env, "is_file_path", Query::IsFile);
-        self.register_test(env, "is_dir_path", Query::IsDir);
+        self.register_test(env, "path_exists", PathQuery::Exists);
+        self.register_test(env, "is_file_path", PathQuery::IsFile);
+        self.register_test(env, "is_dir_path", PathQuery::IsDir);
         env.add_filter("path_filename", filename);
         env.add_filter("path_basename", basename);
         env.add_filter("path_extension", extension);
@@ -89,7 +89,7 @@ impl PathOps {
         &self,
         env: &mut Environment<'static>,
         name: &'static str,
-        query: Query,
+        query: PathQuery,
     ) {
         let root = Arc::clone(&self.root);
         env.add_test(name, move |path: &str| -> Result<bool, Error> {
@@ -100,7 +100,7 @@ impl PathOps {
 
 /// Which fact an I/O test is asking [`inspect`] to answer.
 #[derive(Clone, Copy)]
-enum Query {
+enum PathQuery {
     Exists,
     IsFile,
     IsDir,
@@ -112,13 +112,13 @@ enum Query {
 /// failure (permission denied, etc.) propagates as a
 /// [`minijinja::Error`], since the test genuinely couldn't determine
 /// the answer.
-fn inspect(root: &Path, path: &str, query: Query) -> Result<bool, Error> {
-    let resolved = resolve(root, path);
+fn inspect(root: &Path, path: &str, query: PathQuery) -> Result<bool, Error> {
+    let resolved = resolve_against_root(root, path);
     match std::fs::metadata(&resolved) {
         Ok(metadata) => Ok(match query {
-            Query::Exists => true,
-            Query::IsFile => metadata.is_file(),
-            Query::IsDir => metadata.is_dir(),
+            PathQuery::Exists => true,
+            PathQuery::IsFile => metadata.is_file(),
+            PathQuery::IsDir => metadata.is_dir(),
         }),
         Err(source) if source.kind() == io::ErrorKind::NotFound => Ok(false),
         Err(source) => Err(inspect_error(path, source)),
@@ -127,7 +127,7 @@ fn inspect(root: &Path, path: &str, query: Query) -> Result<bool, Error> {
 
 /// Joins a relative `path` onto `root`; an absolute `path` is returned
 /// unchanged.
-fn resolve(root: &Path, path: &str) -> PathBuf {
+fn resolve_against_root(root: &Path, path: &str) -> PathBuf {
     let candidate = Path::new(path);
     if candidate.is_absolute() {
         candidate.to_owned()

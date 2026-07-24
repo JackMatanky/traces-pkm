@@ -213,6 +213,19 @@ mod tests {
 
             assert!(matches!(ops.enumerate(), Enumerator::Str(METHODS)));
         }
+
+        #[test]
+        fn every_enumerated_method_resolves_via_get_value() {
+            let ops = ops(Path::new("/vault"));
+
+            for method in METHODS {
+                assert!(
+                    ops.get_value(&Value::from(*method)).is_some(),
+                    "{method:?} is enumerated but get_value has no matching \
+                     arm"
+                );
+            }
+        }
     }
 
     mod write_to {

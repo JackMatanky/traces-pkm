@@ -53,7 +53,7 @@ impl StrOps {
         env.add_filter("truncate", truncate);
         env.add_filter("truncate_words", truncate_words);
         env.add_filter("word_count", word_count);
-        env.add_filter("repeat", repeat);
+        env.add_filter("repeat", str::repeat);
         env.add_filter("regex_replace", regex_replace);
         env.add_filter("regex_match", regex_match);
     }
@@ -86,8 +86,7 @@ fn truncate(
     length: usize,
     kwargs: Kwargs,
 ) -> Result<String, Error> {
-    let ellipsis = kwargs.get::<Option<&str>>("ellipsis")?.unwrap_or("...");
-    kwargs.assert_all_used()?;
+    let ellipsis = ellipsis_kwarg(&kwargs)?;
 
     if value.chars().count() <= length {
         return Ok(value.to_owned());
@@ -123,8 +122,7 @@ fn truncate_words(
     count: usize,
     kwargs: Kwargs,
 ) -> Result<String, Error> {
-    let ellipsis = kwargs.get::<Option<&str>>("ellipsis")?.unwrap_or("...");
-    kwargs.assert_all_used()?;
+    let ellipsis = ellipsis_kwarg(&kwargs)?;
 
     let mut words = value.split_whitespace();
     let mut kept = String::new();
@@ -157,9 +155,14 @@ fn word_count(value: &str) -> usize {
     value.split_whitespace().count()
 }
 
-/// `repeat(n)` filter body: thin wrapper around [`str::repeat`].
-fn repeat(value: &str, n: usize) -> String {
-    value.repeat(n)
+/// Extracts the shared `ellipsis="..."` kwarg for [`truncate`]/
+/// [`truncate_words`], defaulting to `"..."`, and rejects any other
+/// kwarg via [`Kwargs::assert_all_used`] — the one place both filters
+/// decide how their optional `ellipsis=` argument is read.
+fn ellipsis_kwarg(kwargs: &Kwargs) -> Result<&str, Error> {
+    let ellipsis = kwargs.get::<Option<&str>>("ellipsis")?.unwrap_or("...");
+    kwargs.assert_all_used()?;
+    Ok(ellipsis)
 }
 
 /// `regex_replace(pattern, replacement)` filter body: replaces every

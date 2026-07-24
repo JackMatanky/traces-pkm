@@ -49,23 +49,15 @@ impl TemplateEngine {
     /// Builds an engine backed by `loader`, cloning it once into
     /// minijinja's [`set_loader`](Environment::set_loader) callback, and
     /// registers every namespace/function a template calls into: `file`
-    /// (`file.write_to(path)`, `file.include(path)`, confined to
-    /// `root`), the path-inspection group registered by [`PathOps`] —
-    /// `path_exists`/`is_file_path`/`is_dir_path` as tests (also
-    /// confined to `root`) and `path_filename`/`path_basename`/
-    /// `path_extension`/`path_parent` as filters — `ui`
-    /// (`ui.text_input(...)` / `ui.select(...)` / `ui.confirm(...)` /
-    /// `ui.multi_select(...)`, delegating to `provider` — see
-    /// [`UiOps`]'s module docs for which concrete provider that is),
-    /// `date` (`date.now(format)`/`date.today()`/`date.tomorrow()`/
-    /// `date.yesterday()`/`date.from_timestamp(ts)`, plus the flat
-    /// `date_*` filters and `is_*` tests — see [`DateOps`]'s module
-    /// docs), the filter group registered by [`StrOps`] (the five
-    /// case-conversion filters plus `trim_prefix`/`trim_suffix`/
-    /// `truncate`/`truncate_words`/`word_count`/`repeat`/
-    /// `regex_replace`/`regex_match` — see its module docs), the
-    /// numeric-filter group registered by [`NumOps`] (`ceil`, `floor`,
-    /// `sqrt`, `num_format`), and the standalone `uuid()` function.
+    /// (see [`FileOps`]'s module docs), the path-inspection group (see
+    /// [`PathOps`]'s module docs), `ui` (see [`UiOps`]'s module docs
+    /// for which concrete `provider` backs it), `date` (see
+    /// [`DateOps`]'s module docs), the string-filter group (see
+    /// [`StrOps`]'s module docs), the numeric-filter group (see
+    /// [`NumOps`]'s module docs), and the standalone `uuid()` function.
+    /// Each submodule's own doc comment is the source of truth for its
+    /// exact filter/test/method list — kept here only by name, not
+    /// repeated, so the two can't drift apart.
     #[inline]
     #[must_use]
     pub(super) fn new(
@@ -418,7 +410,7 @@ mod tests {
     /// [`TemplateEngine`] built by [`TemplateEngine::new`]. Exhaustive
     /// per-feature behavior is covered by each collaborator's own test
     /// module (`file_ops::tests::include`, `date_ops::tests`,
-    /// `str_ops::tests`).
+    /// `str_ops::tests`, `ui_ops::tests`).
     mod utilities {
         use pretty_assertions::assert_eq;
 
@@ -440,6 +432,22 @@ mod tests {
                 .expect("render succeeds");
 
             assert_eq!(rendered.content, "inlined");
+        }
+
+        #[test]
+        fn ui_confirm_is_reachable() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let engine = TemplateEngine::new(
+                loader_from_dir(temp.path()),
+                preset_provider(),
+                temp.path(),
+            );
+
+            let rendered = engine
+                .render("{{ ui.confirm(\"proceed?\") }}")
+                .expect("render succeeds");
+
+            assert_eq!(rendered.content, "false");
         }
 
         #[test]
