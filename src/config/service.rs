@@ -32,12 +32,11 @@ pub(crate) enum ConfigLoadError {
 
 /// Entry point for discovering and building configuration.
 ///
-/// Coordinator that hides discovery-before-build sequencing behind the normal
-/// [`ConfigService::load`] entry point. Filesystem discovery stays separate
-/// from tracking, trust, parse, and merge internals, but callers no longer need
-/// to orchestrate those phases themselves. Holds the state store so the build
-/// pipeline and trust-admin methods share the same tracked-config and trusted
-/// workspace records.
+/// Coordinates discovery before build behind the single
+/// [`ConfigService::load`] entry point, keeping filesystem discovery
+/// separate from the tracking, trust, parse, and merge internals. Holds the
+/// state store so the build pipeline and trust-admin methods share the same
+/// tracked-config and trusted-workspace records.
 #[derive(Clone, Debug)]
 pub(crate) struct ConfigService {
     state: ConfigStateStore,

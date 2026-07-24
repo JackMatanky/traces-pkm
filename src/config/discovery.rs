@@ -29,8 +29,8 @@ const GLOBAL_CONFIG_FILE: &str = "traces/config.toml";
 /// Errors during config file discovery (file-walking, not read/parse).
 ///
 /// `thiserror`-only, no `miette::Diagnostic` — this is library data, not
-/// CLI presentation. A future CLI layer wraps this type to add help text
-/// (e.g. "run `traces init`") and error codes.
+/// CLI presentation. `crate::cli` wraps this type to add help text (e.g.
+/// "run `traces init`") and error codes.
 #[derive(Debug, Error)]
 pub(crate) enum DiscoveryError {
     /// No local `.traces/config.toml` was found in any ancestor
@@ -264,9 +264,10 @@ impl DiscoveryEngine {
 
     /// Resolves trust requests from one user-supplied filesystem path.
     ///
-    /// File paths resolve to that local config. Directory paths resolve to the
-    /// nearest local config, or to a root-only request when no local config is
-    /// present and only the nearest request was requested. Subtree discovery
+    /// File paths resolve to that local config. Directory paths resolve to
+    /// the nearest local config, falling back to a root-only request when
+    /// none is found and `scope` is
+    /// [`NearestLocal`](DiscoveryScope::NearestLocal). Subtree discovery
     /// yields discovered config requests only.
     ///
     /// # Errors

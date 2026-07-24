@@ -1,10 +1,9 @@
 //! Domain types: resolved `Config` and `TemplateConfig`.
 //!
 //! Template resolution — matching a template name against these
-//! directories — is `crate::template::resolve`'s concern, not this
-//! module's (moved out in issue tmpl-01): this module only holds
-//! parsed/merged config data and the read-only accessors template-service
-//! resolves through.
+//! directories — is `crate::template`'s concern, not this module's: this
+//! module only holds parsed/merged config data and the read-only accessors
+//! template-service resolves through.
 
 use std::path::{Path, PathBuf};
 
@@ -68,21 +67,14 @@ impl Config {
     /// discovery, trust-gating, and the builder pipeline.
     ///
     /// Lets `crate::template`'s tests exercise resolution/rendering logic
-    /// against arbitrary directory layouts without standing up a full
+    /// against arbitrary directory layouts without a full
     /// [`super::builder::ConfigBuilder`] pipeline, mirroring
-    /// [`super::service::ConfigService::at`]'s test-only role for its own
-    /// module.
+    /// [`super::service::ConfigService::at`]'s test-only role.
     ///
-    /// TODO(remove): this exists only because `template::`'s tests need
-    /// arbitrary `Config` values without a real TOML fixture per test —
-    /// every `template::` unit test currently uses this instead of the
-    /// real pipeline; `cli::template`'s tests are the only ones that
-    /// exercise `ConfigService::discover`/`build` directly (see
-    /// `cli::template::tests::create_config` for the TOML-fixture
-    /// pattern to mirror). To remove: rewrite `template::`'s tests to
-    /// build real TOML fixtures and go through
-    /// `ConfigService::at(...).discover(...).build(...)`, then delete
-    /// this constructor and its `#[cfg(test)]` gate.
+    /// TODO(remove): once `template::`'s tests build real TOML fixtures and
+    /// go through [`super::service::ConfigService::at`] directly (see
+    /// `cli::template::tests::create_config`), delete this and its
+    /// `#[cfg(test)]` gate.
     #[cfg(test)]
     #[must_use]
     pub(crate) fn for_test(
@@ -101,7 +93,7 @@ impl Config {
 /// Template directories and output path from merged config.
 ///
 /// Keeps local and global directories separately. Resolution (try local
-/// first, fall back to global) lives in `crate::template::resolve`.
+/// first, fall back to global) lives in `crate::template`.
 /// Fields are private with accessors — [`super::builder::ConfigBuilder`]
 /// builds this through [`Self::new`] rather than a struct literal, so
 /// this type alone owns what "unset" and "relative vs. resolved" mean for
