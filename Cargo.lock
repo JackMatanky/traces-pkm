@@ -1204,6 +1204,7 @@ dependencies = [
  "miette",
  "minijinja",
  "pretty_assertions",
+ "regex",
  "rstest",
  "serde",
  "tempfile",
