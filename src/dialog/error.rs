@@ -97,6 +97,8 @@ mod tests {
     use super::*;
 
     mod conversions {
+        use pretty_assertions::assert_eq;
+
         use super::*;
 
         #[test]

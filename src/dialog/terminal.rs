@@ -28,8 +28,9 @@ use super::{DialogError, DialogProvider};
 ///
 /// let p = TerminalDialogProvider::new();
 /// // In non-TTY contexts all methods return their fallback defaults:
-/// let name = p.text("name", Some("carol")).unwrap();
+/// let name = p.text("name", Some("carol"))?;
 /// assert_eq!(name, "carol");
+/// # Ok::<_, traces_pkm::DialogError>(())
 /// ```
 #[derive(Copy, Clone, Debug, Default)]
 pub struct TerminalDialogProvider;

@@ -38,8 +38,9 @@ fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 /// use traces_pkm::{DialogProvider, PresetDialogProvider};
 ///
 /// let p = PresetDialogProvider::new().with_text("claude").with_confirm(true);
-/// assert_eq!(p.text("name", None).unwrap(), "claude");
-/// assert!(p.confirm("proceed?", None).unwrap());
+/// assert_eq!(p.text("name", None)?, "claude");
+/// assert!(p.confirm("proceed?", None)?);
+/// # Ok::<_, traces_pkm::DialogError>(())
 /// ```
 #[derive(Debug, Default)]
 pub struct PresetDialogProvider {
@@ -71,8 +72,9 @@ impl PresetDialogProvider {
     /// use traces_pkm::{DialogProvider, PresetDialogProvider};
     ///
     /// let p = PresetDialogProvider::new().with_text("alice").with_text("bob");
-    /// assert_eq!(p.text("name", None).unwrap(), "alice");
-    /// assert_eq!(p.text("name", None).unwrap(), "bob");
+    /// assert_eq!(p.text("name", None)?, "alice");
+    /// assert_eq!(p.text("name", None)?, "bob");
+    /// # Ok::<_, traces_pkm::DialogError>(())
     /// ```
     #[inline]
     #[must_use]
@@ -89,8 +91,9 @@ impl PresetDialogProvider {
     /// use traces_pkm::{DialogProvider, PresetDialogProvider};
     ///
     /// let p = PresetDialogProvider::new().with_confirm(true).with_confirm(false);
-    /// assert!(p.confirm("proceed?", None).unwrap());
-    /// assert!(!p.confirm("proceed?", None).unwrap());
+    /// assert!(p.confirm("proceed?", None)?);
+    /// assert!(!p.confirm("proceed?", None)?);
+    /// # Ok::<_, traces_pkm::DialogError>(())
     /// ```
     #[inline]
     #[must_use]
@@ -108,7 +111,8 @@ impl PresetDialogProvider {
     ///
     /// let items = vec!["a".to_owned(), "b".to_owned()];
     /// let p = PresetDialogProvider::new().with_select(1);
-    /// assert_eq!(p.select("pick", &items).unwrap(), 1);
+    /// assert_eq!(p.select("pick", &items)?, 1);
+    /// # Ok::<_, traces_pkm::DialogError>(())
     /// ```
     #[inline]
     #[must_use]
@@ -126,7 +130,8 @@ impl PresetDialogProvider {
     ///
     /// let items = vec!["a".to_owned(), "b".to_owned(), "c".to_owned()];
     /// let p = PresetDialogProvider::new().with_multi_select([0, 2]);
-    /// assert_eq!(p.multi_select("pick", &items).unwrap(), vec![0, 2]);
+    /// assert_eq!(p.multi_select("pick", &items)?, vec![0, 2]);
+    /// # Ok::<_, traces_pkm::DialogError>(())
     /// ```
     #[inline]
     #[must_use]
@@ -195,6 +200,8 @@ mod tests {
     use super::*;
 
     mod text {
+        use pretty_assertions::assert_eq;
+
         use super::*;
 
         #[test]
@@ -252,6 +259,8 @@ mod tests {
     }
 
     mod object_safety {
+        use pretty_assertions::assert_eq;
+
         use super::*;
 
         #[test]
@@ -265,6 +274,8 @@ mod tests {
     }
 
     mod select {
+        use pretty_assertions::assert_eq;
+
         use super::*;
 
         #[test]
@@ -332,6 +343,8 @@ mod tests {
     }
 
     mod multi_select {
+        use pretty_assertions::assert_eq;
+
         use super::*;
 
         #[test]
