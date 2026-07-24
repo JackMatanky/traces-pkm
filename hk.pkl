@@ -56,8 +56,7 @@ local security = new Mapping<String, Step> {
     ["detect-private-key"] = Builtins.detect_private_key
 
     ["gitleaks"] = (Builtins.gitleaks) {
-        batch = true
-        check = "gitleaks dir --redact --verbose --no-banner ."
+        check = "gitleaks git --redact --verbose --no-banner ."
     }
 }
 
@@ -71,7 +70,6 @@ local rust = new Mapping<String, Step> {
 
     ["cargo-test"] = new Step {
         glob = List("**/*.rs", "**/Cargo.toml", "**/Cargo.lock")
-        batch = true
         workspace_indicator = "Cargo.toml"
         check = "cargo test --workspace"
     }
