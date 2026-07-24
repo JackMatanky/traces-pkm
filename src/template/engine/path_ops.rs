@@ -69,24 +69,32 @@ impl PathOps {
     /// Registers all 7 path-inspection tests and filters.
     #[inline]
     pub(super) fn register(self, env: &mut Environment<'static>) {
-        let root = self.root;
-        register_bool_test(
-            env,
-            "path_exists",
-            Arc::clone(&root),
-            Query::Exists,
-        );
-        register_bool_test(
-            env,
-            "is_file_path",
-            Arc::clone(&root),
-            Query::IsFile,
-        );
-        register_bool_test(env, "is_dir_path", root, Query::IsDir);
+        self.register_test(env, "path_exists", Query::Exists);
+        self.register_test(env, "is_file_path", Query::IsFile);
+        self.register_test(env, "is_dir_path", Query::IsDir);
         env.add_filter("path_filename", filename);
         env.add_filter("path_basename", basename);
         env.add_filter("path_extension", extension);
         env.add_filter("path_parent", parent);
+    }
+
+    /// Registers a single boolean I/O test under `name` via
+    /// [`Environment::add_test`], wiring its closure through
+    /// [`inspect`] with the given `query` — the shared body behind
+    /// `path_exists`/`is_file_path`/`is_dir_path` in [`Self::register`].
+    /// Clones `root` into the closure since [`Value::from_function`]'s
+    /// closures must be `Send + Sync + 'static` and can't borrow
+    /// `&self`.
+    fn register_test(
+        &self,
+        env: &mut Environment<'static>,
+        name: &'static str,
+        query: Query,
+    ) {
+        let root = Arc::clone(&self.root);
+        env.add_test(name, move |path: &str| -> Result<bool, Error> {
+            inspect(&root, path, query)
+        });
     }
 }
 
@@ -96,24 +104,6 @@ enum Query {
     Exists,
     IsFile,
     IsDir,
-}
-
-/// Registers a single boolean I/O test under `name` via
-/// [`Environment::add_test`], wiring its closure through [`inspect`]
-/// with the given `query` — the shared body behind
-/// `path_exists`/`is_file_path`/`is_dir_path` in
-/// [`PathOps::register`]. Takes `root` by value so the caller controls
-/// whether it's a fresh [`Arc::clone`] or, for the last registration,
-/// the original moved in directly.
-fn register_bool_test(
-    env: &mut Environment<'static>,
-    name: &'static str,
-    root: Arc<Path>,
-    query: Query,
-) {
-    env.add_test(name, move |path: &str| -> Result<bool, Error> {
-        inspect(&root, path, query)
-    });
 }
 
 /// Resolves `path` against `root` — joining it on if relative, using it
