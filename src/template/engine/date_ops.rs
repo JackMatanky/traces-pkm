@@ -394,7 +394,7 @@ fn weekday_filter(value: &str) -> Result<u32, Error> {
 /// `"seconds"`). Returns `f64` when both `value` and `other` carry a
 /// time component (sub-day precision is meaningful); otherwise an `i64`
 /// whole-unit count.
-#[allow(
+#[expect(
     clippy::needless_pass_by_value,
     reason = "minijinja's Function trait extracts a filter's trailing Kwargs \
               argument by value; only `&self` methods on it are needed here"
@@ -411,7 +411,7 @@ fn date_diff_filter(
     let delta = to.signed_duration_since(from);
 
     if from_has_time && to_has_time {
-        #[allow(
+        #[expect(
             clippy::as_conversions,
             clippy::cast_precision_loss,
             reason = "TimeDelta::num_seconds() is bounded by chrono's \

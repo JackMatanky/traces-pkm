@@ -222,7 +222,7 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             // Canonicalize temp dir to resolve macOS /var -> /private/var
             // symlink
-            #[allow(
+            #[expect(
                 clippy::disallowed_methods,
                 reason = "canonicalize is required here, not a shortcut: \
                           macOS temp dirs are under /var, a symlink to \
