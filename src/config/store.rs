@@ -209,7 +209,6 @@ impl ConfigStateStore {
 mod tests {
     use std::fs;
 
-
     use super::*;
 
     struct Fixture {
@@ -221,19 +220,30 @@ mod tests {
     impl Fixture {
         fn new() -> Self {
             let temp = tempfile::tempdir().expect("create temp dir");
-            // Canonicalize temp dir to resolve macOS /var -> /private/var symlink
+            // Canonicalize temp dir to resolve macOS /var -> /private/var
+            // symlink
+            #[allow(
+                clippy::disallowed_methods,
+                reason = "canonicalize is required here, not a shortcut: \
+                          macOS temp dirs are under /var, a symlink to \
+                          /private/var, and later path comparisons need the \
+                          resolved form to match"
+            )]
             let root = std::fs::canonicalize(temp.path()).unwrap();
             let state = ConfigStateStore::at(
                 root.join("tracked"),
                 root.join("trusted"),
             );
-            Self { _temp: temp, root, state }
+            Self {
+                _temp: temp,
+                root,
+                state,
+            }
         }
 
         fn project_root(&self) -> PathBuf {
             self.root.join("project")
         }
-
 
         fn write_config(&self, content: &str) -> LocalConfigFile<Discovered> {
             let path = self.project_root().join(".traces/config.toml");
@@ -247,6 +257,7 @@ mod tests {
 
     mod track_seen_config {
         use pretty_assertions::assert_eq;
+
         use super::*;
 
         #[test]
@@ -266,6 +277,7 @@ mod tests {
 
     mod grant_trust {
         use pretty_assertions::assert_eq;
+
         use super::*;
 
         #[test]
@@ -279,7 +291,8 @@ mod tests {
             fixture.state.grant_trust(&subject).expect("grant trust");
 
             // Assert
-            let trusted = fixture.state.list_trusted_workspaces().expect("list");
+            let trusted =
+                fixture.state.list_trusted_workspaces().expect("list");
             assert_eq!(trusted, vec![fixture.project_root()]);
 
             // Check no baseline was created by querying config status
@@ -319,6 +332,7 @@ mod tests {
 
     mod workspace_trust_status {
         use pretty_assertions::assert_eq;
+
         use super::*;
 
         #[test]
@@ -329,10 +343,8 @@ mod tests {
             let subject = TrustRequest::from(fixture.project_root().as_path());
 
             // Act
-            let status = fixture
-                .state
-                .workspace_trust_status(&subject)
-                .expect("status");
+            let status =
+                fixture.state.workspace_trust_status(&subject).expect("status");
 
             // Assert
             assert_eq!(status, WorkspaceTrustStatus::Untrusted);
@@ -347,10 +359,8 @@ mod tests {
             fixture.state.grant_trust(&subject).expect("grant trust");
 
             // Act
-            let status = fixture
-                .state
-                .workspace_trust_status(&subject)
-                .expect("status");
+            let status =
+                fixture.state.workspace_trust_status(&subject).expect("status");
 
             // Assert
             assert_eq!(status, WorkspaceTrustStatus::Trusted);
@@ -359,6 +369,7 @@ mod tests {
 
     mod config_trust_status {
         use pretty_assertions::assert_eq;
+
         use super::*;
 
         #[test]
@@ -369,10 +380,8 @@ mod tests {
             let subject = TrustRequest::from(&config);
 
             // Act
-            let status = fixture
-                .state
-                .config_trust_status(&subject)
-                .expect("status");
+            let status =
+                fixture.state.config_trust_status(&subject).expect("status");
 
             // Assert
             assert_eq!(status, ConfigTrustStatus::Untrusted);
@@ -387,10 +396,8 @@ mod tests {
             fixture.state.grant_trust(&subject).expect("grant trust");
 
             // Act
-            let status = fixture
-                .state
-                .config_trust_status(&subject)
-                .expect("status");
+            let status =
+                fixture.state.config_trust_status(&subject).expect("status");
 
             // Assert
             assert_eq!(status, ConfigTrustStatus::Trusted);
@@ -398,11 +405,12 @@ mod tests {
 
         #[test]
         fn returns_missing_baseline_when_workspace_trusted_but_companion_missing()
-        {
+         {
             // Arrange
             let fixture = Fixture::new();
             fs::create_dir_all(fixture.project_root()).expect("create root");
-            let root_subject = TrustRequest::from(fixture.project_root().as_path());
+            let root_subject =
+                TrustRequest::from(fixture.project_root().as_path());
             fixture.state.grant_trust(&root_subject).expect("grant trust");
 
             let config = fixture.write_config("content");
@@ -427,10 +435,8 @@ mod tests {
             fixture.state.grant_trust(&subject).expect("grant trust");
 
             // Act
-            let status = fixture
-                .state
-                .config_trust_status(&subject)
-                .expect("status");
+            let status =
+                fixture.state.config_trust_status(&subject).expect("status");
 
             // Assert
             assert_eq!(status, ConfigTrustStatus::Trusted);
@@ -446,10 +452,8 @@ mod tests {
             fs::write(config.path(), "changed").expect("rewrite");
 
             // Act
-            let status = fixture
-                .state
-                .config_trust_status(&subject)
-                .expect("status");
+            let status =
+                fixture.state.config_trust_status(&subject).expect("status");
 
             // Assert
             assert_eq!(status, ConfigTrustStatus::Stale);
@@ -458,6 +462,7 @@ mod tests {
 
     mod revoke_trust {
         use pretty_assertions::assert_eq;
+
         use super::*;
 
         #[test]
@@ -472,10 +477,8 @@ mod tests {
             fixture.state.revoke_trust(&subject).expect("revoke trust");
 
             // Assert
-            let status = fixture
-                .state
-                .workspace_trust_status(&subject)
-                .expect("status");
+            let status =
+                fixture.state.workspace_trust_status(&subject).expect("status");
             assert_eq!(status, WorkspaceTrustStatus::Untrusted);
         }
 
@@ -490,20 +493,21 @@ mod tests {
             // Act
             fixture.state.revoke_trust(&subject).expect("revoke trust");
 
-            // Assert: Verify companion is gone by re-granting root trust and checking config trust
-            let root_subject = TrustRequest::from(fixture.project_root().as_path());
+            // Assert: Verify companion is gone by re-granting root trust and
+            // checking config trust
+            let root_subject =
+                TrustRequest::from(fixture.project_root().as_path());
             fixture.state.grant_trust(&root_subject).expect("grant trust");
 
-            let status = fixture
-                .state
-                .config_trust_status(&subject)
-                .expect("status");
+            let status =
+                fixture.state.config_trust_status(&subject).expect("status");
             assert_eq!(status, ConfigTrustStatus::MissingBaseline);
         }
     }
 
     mod tracked_configs {
         use pretty_assertions::assert_eq;
+
         use super::*;
 
         #[test]
@@ -529,10 +533,8 @@ mod tests {
             fs::remove_file(config.path()).expect("remove file");
 
             // Act
-            let removed = fixture
-                .state
-                .clean_tracked_configs()
-                .expect("clean configs");
+            let removed =
+                fixture.state.clean_tracked_configs().expect("clean configs");
 
             // Assert
             assert_eq!(removed, 1);
@@ -543,6 +545,7 @@ mod tests {
 
     mod trusted_workspaces {
         use pretty_assertions::assert_eq;
+
         use super::*;
 
         #[test]
@@ -554,7 +557,8 @@ mod tests {
             fixture.state.grant_trust(&subject).expect("grant trust");
 
             // Act
-            let trusted = fixture.state.list_trusted_workspaces().expect("list");
+            let trusted =
+                fixture.state.list_trusted_workspaces().expect("list");
 
             // Assert
             assert_eq!(trusted, vec![fixture.project_root()]);
@@ -577,7 +581,8 @@ mod tests {
 
             // Assert
             assert_eq!(removed, 1);
-            let trusted = fixture.state.list_trusted_workspaces().expect("list");
+            let trusted =
+                fixture.state.list_trusted_workspaces().expect("list");
             assert!(trusted.is_empty());
         }
     }
