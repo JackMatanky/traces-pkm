@@ -1,37 +1,25 @@
 //! [`DateOps`]: the `date` namespace object registered as a minijinja
-//! global by [`super::TemplateEngine`], plus the flat `date_*` pipeline
-//! filters and `is_*` tests this module registers alongside it.
+//! global by [`super::TemplateEngine`], plus the flat `date_*`/`is_*`
+//! pipeline filters and tests it registers alongside it.
 //!
 //! **Namespace functions** (`date.now()`, `date.today()`,
 //! `date.tomorrow()`, `date.yesterday()`, `date.from_timestamp(ts)`) are
-//! *generators* — they take no date argument, producing a formatted
-//! string from the current instant (or a timestamp). They live on
-//! [`DateOps`] via [`Object::get_value`], same pattern as `now`.
+//! *generators*: no date argument, producing a formatted string from the
+//! current instant (or a timestamp). **Filters** (`date_format`,
+//! `timestamp`, `add_days`, `sub_days`, `add_months`, `sub_months`,
+//! `add_years`, `sub_years`, `start_of_month`, `end_of_month`, `weekday`,
+//! `date_diff`) and **tests** (`is_past`, `is_future`, `is_leap_year`) are
+//! *transformations*: they take a piped date/time string. `date_format` is
+//! prefixed to avoid colliding with minijinja's built-in `format` filter.
 //!
-//! **Filters** (`date_format`, `timestamp`, `add_days`, `sub_days`,
-//! `add_months`, `sub_months`, `add_years`, `sub_years`,
-//! `start_of_month`, `end_of_month`, `weekday`, `date_diff`) and
-//! **tests** (`is_past`, `is_future`, `is_leap_year`) are
-//! *transformations* — they take a piped date/time string, so they're
-//! plain functions registered via [`Environment::add_filter`]/
-//! [`Environment::add_test`], same reasoning as
-//! [`StrOps`](super::str_ops::StrOps): no shared state, no namespace method
-//! dispatch needed. `date_format` is prefixed to avoid colliding with
-//! minijinja's built-in `format` filter (printf-style, unrelated to dates).
+//! All date/time string parsing funnels through [`parse_date`]/
+//! [`parse_date_precise`], so every filter and test shares the same
+//! accepted formats: a full datetime is tried first, falling back to a
+//! bare `%Y-%m-%d` date at midnight.
 //!
-//! All date/time string parsing funnels through [`parse_date`] (or
-//! [`parse_date_precise`], which additionally reports whether a time
-//! component was present) — every filter and test shares the same
-//! accepted formats, so there's exactly one place that decides what
-//! counts as a valid date string. Per [`parse_date_precise`]'s docs: a
-//! full datetime is tried first, falling back to a bare `%Y-%m-%d` date
-//! at midnight — never a panic, always a [`minijinja::Error`] on
-//! failure.
-//!
-//! Every arithmetic filter (`add_days`, `end_of_month`, etc.) re-serializes
-//! its result at the same precision its input had — see
-//! [`format_precise`] — so piping a date-only string through a chain of
-//! filters never silently grows a `00:00:00` suffix, and piping a
+//! Every arithmetic filter re-serializes its result at the same precision
+//! its input had (see [`format_precise`]), so piping a date-only string
+//! through a chain of filters never grows a fabricated `00:00:00`, and a
 //! datetime string never silently loses its time-of-day.
 
 use std::{fmt::Write as _, sync::Arc};

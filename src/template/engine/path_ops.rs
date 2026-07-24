@@ -1,37 +1,19 @@
 //! [`PathOps`] registers path-inspection **tests** and **filters** on a
 //! minijinja [`Environment`]: `path_exists`, `is_file_path`, `is_dir_path`
-//! as [`Environment::add_test`] tests (a template applies one as `{{ value
-//! is path_exists }}`, per
-//! <https://docs.rs/minijinja/latest/minijinja/tests/index.html>), and
+//! as [`Environment::add_test`] tests (`{{ value is path_exists }}`), and
 //! `path_filename`, `path_basename`, `path_extension`, `path_parent` as
 //! [`Environment::add_filter`] filters (`{{ value | path_basename }}`).
-//! Tests are boolean checks invoked with `is`/`is not`; filters are
-//! transformations invoked with `|` — the three boolean I/O checks below
-//! are tests because they *check* a path, the four string transforms are
-//! filters because they *compute a new value from* one. Each is
-//! registered as a plain function directly on the environment, not
-//! dispatched through an [`Object`](minijinja::value::Object) namespace.
 //!
-//! `path_exists`/`is_file_path`/`is_dir_path` resolve a relative `path`
-//! argument against [`Config::root`](crate::config::Config::root) —
-//! captured as `Arc<Path>` and cloned into each closure, since
-//! [`Value::from_function`](minijinja::value) closures must be
-//! `Send + Sync + 'static` and can't borrow `&Path`. An absolute `path`
-//! is used as-is. These tests only *inspect* the filesystem — they never
-//! read file contents.
+//! The three I/O tests resolve a relative `path` against
+//! [`Config::root`](crate::config::Config::root) (an absolute `path` is
+//! used as-is) and distinguish "doesn't exist" from a genuine I/O failure:
+//! reading [`std::fs::metadata`] directly, rather than calling
+//! [`Path::exists`]/[`Path::is_file`]/[`Path::is_dir`] (which fold every
+//! error into `false`), so a permission error surfaces as a
+//! [`minijinja::Error`] instead of misreporting "doesn't exist".
 //!
-//! `path_filename`/`path_basename`/`path_extension`/`path_parent` are
-//! pure string transformations over [`std::path::Path`] — no I/O, no
-//! `root` dependency, side-effect-free.
-//!
-//! The three I/O tests distinguish "doesn't exist" from a genuine I/O
-//! failure by reading [`std::fs::metadata`] directly rather than calling
-//! [`Path::exists`]/[`Path::is_file`]/[`Path::is_dir`], which each
-//! silently fold every error (including permission failures) into
-//! `false`: a missing path is a normal, expected outcome for a template
-//! author to branch on, but a permission error means the test couldn't
-//! actually answer the question, so it's surfaced as a
-//! [`minijinja::Error`] instead of misreported as "doesn't exist".
+//! The four filters are pure string transformations over
+//! [`std::path::Path`] — no I/O, no `root` dependency.
 
 use std::{
     ffi::OsStr,

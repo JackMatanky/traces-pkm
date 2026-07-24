@@ -1,11 +1,9 @@
 //! [`TemplateEngine`]: minijinja construction and rendering behind one
-//! small interface, so [`super::service::TemplateService`] depends on
-//! "resolve this name" and "render this source" rather than on
-//! minijinja's [`Environment`] directly.
+//! small interface for [`super::service::TemplateService`].
 //!
-//! Owns everything a template calls into during render, split into its
-//! own submodules: [`date_ops`], [`file_ops`], [`num_ops`],
-//! [`path_ops`], [`str_ops`], [`ui_ops`].
+//! Owns everything a template calls into during render, split into
+//! submodules: [`date_ops`], [`file_ops`], [`num_ops`], [`path_ops`],
+//! [`str_ops`], [`ui_ops`].
 
 mod date_ops;
 mod file_ops;
@@ -37,33 +35,23 @@ use super::{
 use crate::DialogProvider;
 
 /// Resolves template names and renders their source, backed by one
-/// shared [`TemplateLoader`] — the search directories are computed
-/// once and reused for `-i` resolution and for `{% include %}`/
-/// `{% extends %}` loading alike.
+/// shared [`TemplateLoader`] used for both `-i` resolution and
+/// `{% include %}`/`{% extends %}` loading.
 pub(super) struct TemplateEngine {
     env: Environment<'static>,
     loader: TemplateLoader,
 }
 
 impl TemplateEngine {
-    /// Builds an engine backed by `loader`, cloning it once into
-    /// minijinja's [`set_loader`](Environment::set_loader) callback, and
-    /// registers every namespace/function a template calls into: `file`
-    /// (see [`FileOps`]'s module docs), the path-inspection group (see
-    /// [`PathOps`]'s module docs), `ui` (see [`UiOps`]'s module docs
-    /// for which concrete `provider` backs it), `date` (see
-    /// [`DateOps`]'s module docs), the string-filter group (see
-    /// [`StrOps`]'s module docs), the numeric-filter group (see
-    /// [`NumOps`]'s module docs), and the standalone `uuid()` function.
-    /// Each submodule's own doc comment is the source of truth for its
-    /// exact filter/test/method list — kept here only by name, not
-    /// repeated, so the two can't drift apart.
+    /// Builds an engine backed by `loader`, registering the `file`,
+    /// path-inspection, `ui`, `date`, string-filter, and numeric-filter
+    /// namespaces, plus the standalone `uuid()` function.
     ///
     /// # Arguments
     ///
-    /// * `loader` - resolves template names to source; cloned once into
-    ///   minijinja's loader callback and also kept for [`Self::resolve`]
-    /// * `provider` - the interactive backend every `ui.*` call delegates to
+    /// * `loader` - resolves template names to source; also kept for
+    ///   [`Self::resolve`]
+    /// * `provider` - backend `ui.*` calls delegate to
     /// * `root` - base directory `file.*` and the path-inspection group are
     ///   confined to
     #[inline]
@@ -111,11 +99,9 @@ impl TemplateEngine {
     }
 
     /// Compiles and renders `source` with an empty template context,
-    /// then reads back whatever `file.write_to()` stashed during render
-    /// (if anything). Scoped to this one render — including everything
-    /// reached via `{% include %}`, since minijinja threads one `State`
-    /// through the whole render tree — so there's nothing to reset
-    /// between calls.
+    /// then reads back whatever `file.write_to()` stashed during
+    /// render (if anything). Captured across the whole render tree
+    /// (including `{% include %}`s), so nothing to reset between calls.
     ///
     /// # Errors
     ///
@@ -151,8 +137,7 @@ pub(super) struct RenderOutput {
 
 /// Generates a random UUID v4, formatted per RFC 4122
 /// (`xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx`). Registered as the
-/// standalone `uuid()` function — no namespace, unlike `file.*`/
-/// `ui.*`/`date.*`, since it doesn't belong to any one domain.
+/// standalone `uuid()` function, unlike `file.*`/`ui.*`/`date.*`.
 fn uuid() -> String {
     Uuid::new_v4().to_string()
 }

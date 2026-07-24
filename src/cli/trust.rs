@@ -17,12 +17,9 @@ use crate::{
 
 /// `traces trust [PATH]` / `traces trust --show` / `traces trust --untrust`.
 ///
-/// `args_conflicts_with_subcommands` is what lets `list`/`clean` disambiguate
-/// from a positional `path`: clap tries to match the first free-standing
-/// argument against a [`TrustAction`] variant name before falling back to
-/// treating it as `path`, and rejects combining the two (`traces trust list
-/// some/path` is a clap usage error, not "trust the path some/path while
-/// also listing").
+/// `list`/`clean` disambiguate from a positional `path` via
+/// `args_conflicts_with_subcommands`: combining a subcommand with `path`
+/// is a clap usage error.
 #[derive(Debug, Args)]
 #[command(
     args_conflicts_with_subcommands = true,

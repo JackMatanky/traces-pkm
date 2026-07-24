@@ -1,27 +1,18 @@
 //! [`TemplatePath<State>`]: a template identifier's journey from a raw
-//! `-i <name>` argument to a file proven to exist on disk. Each stage
-//! of that journey is its own type, not a flag or an `Option` field on
-//! one do-everything struct:
+//! `-i <name>` argument to a file proven to exist on disk, each stage
+//! its own type:
 //!
 //! - [`Raw`]: exactly the argument as given — nothing checked yet.
-//! - [`Validated`]: a safe, directory-relative identifier, produced by
-//!   [`TemplatePath::<Raw>::validate`]. Pure — no filesystem access.
-//! - [`Found`]: proven to exist, and the only state that also records which
-//!   [`super::source_dir::TemplateSourceDir`] it came from. The sole
-//!   constructor is [`TemplatePath::<Validated>::find`], so a
-//!   `TemplatePath<Found>` can never exist without having actually been
-//!   searched for.
+//! - [`Validated`]: a safe, directory-relative identifier
+//!   ([`TemplatePath::<Raw>::validate`]). Pure — no filesystem access.
+//! - [`Found`]: proven to exist, via [`TemplatePath::<Validated>::find`]; the
+//!   only state that also records which
+//!   [`super::source_dir::TemplateSourceDir`] it came from.
 //!
-//! `State` carries no default: every function signature says which
-//! state it needs, so passing an unproven `TemplatePath` where a
-//! found one is required is a compile error, not a runtime surprise.
-//!
-//! [`TemplatePath::<Validated>::find`] is the only place a search
-//! happens; its sole caller is
-//! [`super::loader::TemplateLoader::find`], used for both top-level
-//! `-i <name>` resolution and includes. [`TemplatePathError`] covers
-//! every way validation or search can fail — see its own docs for
-//! the variants.
+//! `State` carries no default, so a function requiring a found path
+//! can't accept an unproven one — a compile error, not a runtime
+//! surprise. [`TemplatePathError`] covers every way validation or
+//! search can fail.
 
 use std::{
     fs, io,
@@ -42,16 +33,14 @@ pub(super) struct Raw;
 pub(super) struct Validated;
 
 /// Proven to exist on disk. The only state that also stores which
-/// [`TemplateSourceDir`] the match came from — the one extra fact this
-/// stage, and only this stage, needs.
+/// [`TemplateSourceDir`] the match came from.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct Found {
     source: TemplateSourceDir,
 }
 
-/// A template identifier tagged with how much has been proven about it
-/// so far. See the module docs for the three states and why each
-/// exists.
+/// A template identifier tagged with how much has been proven about
+/// it so far — see the module docs for the three states.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct TemplatePath<State> {
     path: PathBuf,
@@ -62,9 +51,8 @@ impl<State> TemplatePath<State> {
     /// This candidate with its extension stripped and directory
     /// segments kept: `"folder/daily.md"` -> `"folder/daily"`.
     ///
-    /// Not [`Path::file_stem`], which drops the directory along with
-    /// the extension. Allocates, unlike [`Self::has_extension`], since
-    /// the result is a new path rather than a slice of `self.path`.
+    /// Not [`Path::file_stem`], which drops the directory too.
+    /// Allocates, unlike [`Self::has_extension`].
     #[inline]
     #[must_use]
     pub(super) fn name(&self) -> PathBuf {
@@ -75,8 +63,7 @@ impl<State> TemplatePath<State> {
     /// `true`, `"daily"` -> `false`.
     ///
     /// Gates [`TemplatePath::<Validated>::find_name_in`]: an explicit
-    /// extension pins down one exact file, so name-matching never
-    /// applies.
+    /// extension skips name-matching.
     #[inline]
     #[must_use]
     pub(super) fn has_extension(&self) -> bool {
@@ -97,8 +84,7 @@ impl<State> AsRef<Path> for TemplatePath<State> {
 
 /// Every way producing a [`TemplatePath`] can fail: validation
 /// ([`Self::Absolute`], [`Self::UnsafeComponent`]) and search
-/// ([`Self::AmbiguousTemplate`], [`Self::TemplateNotFound`]) share one
-/// enum rather than one error type each.
+/// ([`Self::AmbiguousTemplate`], [`Self::TemplateNotFound`]).
 ///
 /// No variant separates "unsafe input" from "no such template":
 /// [`super::loader::TemplateLoader::find`] folds both into
@@ -114,22 +100,12 @@ pub(crate) enum TemplatePathError {
     /// escape it (most notably `..`), or there's no
     /// [`Component::Normal`] component at all (an empty path, or a
     /// bare `.`).
-    ///
-    /// One variant covers both cases — nothing downstream cares *why*
-    /// validation failed, only that it did.
     #[error("template path {0} is not a valid template identifier")]
     UnsafeComponent(PathBuf),
     /// More than one file in a single directory matched the name.
-    ///
-    /// No `candidates` field: neither this variant's own
-    /// [`Display`](std::fmt::Display) nor
-    /// `crate::cli::error::TemplateCliError`'s help text renders one.
     #[error("template name \"{0}\" matched multiple files")]
     AmbiguousTemplate(PathBuf),
     /// No searched directory had a match.
-    ///
-    /// No `directories_searched` field, for the same reason
-    /// [`Self::AmbiguousTemplate`] carries no `candidates`.
     #[error("template \"{0}\" not found")]
     TemplateNotFound(PathBuf),
 }
@@ -295,8 +271,7 @@ impl TemplatePath<Validated> {
 }
 
 /// The extension every rendered note gets by default, absent an
-/// explicit `-o`/`file.write_to()` override — matches this project's
-/// domain definition of a "Note" (see `CONTEXT.md`): a markdown file.
+/// explicit `-o`/`file.write_to()` override.
 const DEFAULT_EXTENSION: &str = "md";
 
 impl TemplatePath<Found> {
@@ -309,25 +284,23 @@ impl TemplatePath<Found> {
     }
 
     /// The filename a rendered note gets absent an explicit
-    /// `-o`/`file.write_to()` override: [`Self::name`] — this
-    /// candidate's identity, directory segments kept — with its
-    /// extension forced to [`DEFAULT_EXTENSION`], regardless of
-    /// whatever extension the resolved template file itself has.
+    /// `-o`/`file.write_to()` override: [`Self::name`] with its
+    /// extension forced to [`DEFAULT_EXTENSION`], regardless of the
+    /// resolved template file's own extension.
     #[inline]
     #[must_use]
     pub(super) fn default_output_filename(&self) -> PathBuf {
         self.name().with_extension(DEFAULT_EXTENSION)
     }
 
-    /// Reads this resolved template's source from disk — the one
-    /// place [`super::loader::TemplateLoader::load`] and
-    /// [`super::service::TemplateService`]'s top-level read both get
-    /// a found template's bytes, so they can never disagree about
-    /// how. Returns the raw [`io::Result`], not a project error type:
-    /// the two callers map failure to different error types (a soft
-    /// `None` for a missing include vs. a hard
+    /// Reads this resolved template's source from disk.
+    ///
+    /// Returns the raw [`io::Result`], not a project error type: the
+    /// two callers ([`super::loader::TemplateLoader::load`],
+    /// [`super::service::TemplateService`]) map failure to different
+    /// error types — a soft `None` for a missing include vs. a hard
     /// [`TemplateError::Read`](super::error::TemplateError::Read) for
-    /// the top-level render), so shaping the error is left to them.
+    /// top-level render.
     ///
     /// # Errors
     ///

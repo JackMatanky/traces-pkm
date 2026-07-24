@@ -1,10 +1,8 @@
 //! Config builder using figment for merging selected config files.
 //!
-//! Per-file lifecycle is owned by
-//! [`ConfigFile`](super::file::ConfigFile). This
-//! builder owns only the
-//! aggregate load path: validated discovered files -> stored/trusted local file
-//! -> merged [`Config`].
+//! Per-file lifecycle is owned by [`ConfigFile`](super::file::ConfigFile).
+//! This builder owns only the aggregate load path: validated discovered
+//! files -> stored/trusted local file -> merged [`Config`].
 
 use std::path::PathBuf;
 

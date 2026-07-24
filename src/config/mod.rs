@@ -1,23 +1,13 @@
 //! Configuration discovery, tracking, loading, and trust.
 //!
 //! Discovers config files by walking up the directory tree from a working
-//! directory. Discovered candidates are recorded as best-effort tracking,
-//! then the user's global config is merged before local
-//! `.traces/config.toml` so local values win. Provides the crate-internal
-//! [`ConfigService`] entry point plus read-only config domain types.
-//! [`DiscoveryOutcome`](discovery::DiscoveryOutcome) is the opaque token
-//! parsed into the selected config-builder input.
+//! directory, tracks candidates as best-effort bookkeeping, then merges the
+//! user's global config before local `.traces/config.toml` so local values
+//! win. Entry point: [`ConfigService`]; also exposes read-only config
+//! domain types. Template resolution against these directories is
+//! `crate::template`'s concern.
 //!
-//! Template resolution against the directories this module parses is
-//! `crate::template`'s concern, not this module's: this module only holds
-//! parsed/merged config data.
-//!
-//! `pub(crate)`: only `cli` and `template`, sibling modules in this crate,
-//! consume it.
-//!
-//! Error types are `thiserror`-only, no `miette::Diagnostic`; CLI-facing
-//! presentation is added by `crate::cli` (see
-//! `cli::error::ConfigTrustCliError`).
+//! `pub(crate)`: only `cli` and `template` consume it.
 
 #![cfg_attr(
     not(test),

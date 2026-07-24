@@ -2,8 +2,7 @@
 //! [`super::TemplateService::render_to_file`].
 //!
 //! `thiserror`-only, no `miette::Diagnostic` — `crate::cli::error` is
-//! where user-facing help text and error codes get added, matching
-//! `crate::config`'s convention.
+//! where user-facing help text and error codes get added.
 
 use std::{io, path::PathBuf};
 
@@ -17,8 +16,7 @@ use super::path::TemplatePathError;
 pub(crate) enum TemplateError {
     /// `name` failed to resolve to a file. Transparent:
     /// [`TemplatePathError`]'s own [`Display`](std::fmt::Display)
-    /// already names the template and what went wrong, so this variant
-    /// adds no field of its own.
+    /// already names the template and what went wrong.
     #[error(transparent)]
     Resolve(#[from] TemplatePathError),
 

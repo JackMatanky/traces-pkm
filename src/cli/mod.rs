@@ -1,8 +1,7 @@
 //! Command-line interface: parses arguments and dispatches to command
-//! handlers. Each command module is a thin adapter over library services.
-//! Error types from those services stay `thiserror`-only and unnameable
-//! outside their modules by design; [`CliError`] is the first place that adds
-//! user-facing help text and error codes, via `miette::Diagnostic`.
+//! handlers. Each command module is a thin adapter over library services;
+//! [`CliError`] adds user-facing help text and error codes via
+//! `miette::Diagnostic`.
 
 mod error;
 pub mod init;
@@ -16,10 +15,8 @@ pub use error::{CliError, ConfigInitCliError, ConfigTrustCliError};
 
 /// The `traces` command-line tool.
 ///
-/// `args_conflicts_with_subcommands` lets the top-level `-i`/`--input` flag
-/// disambiguate from a subcommand: passing a subcommand and `-i` together is
-/// a clap usage error, and `-i` alone (no subcommand) is the default
-/// template dispatch handled in [`run`].
+/// `-i`/`--input` alone (no subcommand) is the default template dispatch,
+/// handled in [`run`]; combining it with a subcommand is a clap usage error.
 #[derive(Debug, Parser)]
 #[command(
     name = "traces",
@@ -39,15 +36,10 @@ struct Cli {
 impl Cli {
     /// Parse [`Cli`] from [`std::env::args`] and run the selected command.
     ///
-    /// Accepts pre-constructed [`ConfigService`](crate::config::ConfigService)
-    /// and [`DialogProvider`](crate::DialogProvider) so
-    /// that tests can drive real argv through to a real handler call with
-    /// isolated stores, without touching the process's OS-correct
-    /// trust/tracked-config paths. `provider` is `Arc`, not `&dyn`, because
-    /// [`template::Template::run`] needs to clone it into a
-    /// [`TemplateService`](crate::template::TemplateService), which in turn
-    /// captures it into `'static` minijinja closures — a borrow can't
-    /// satisfy that, an owned, cheaply-cloned handle can.
+    /// Accepts pre-built `service`/`provider` so tests can drive real argv
+    /// through a real handler with isolated stores. `provider` is `Arc`,
+    /// not `&dyn`, since [`template::Template::run`] must clone it into
+    /// `'static` minijinja closures.
     ///
     /// # Errors
     ///
@@ -84,12 +76,7 @@ enum Commands {
 }
 
 impl Commands {
-    /// Route a parsed subcommand to its handler.
-    ///
-    /// Each `Commands` variant wraps a struct that owns the command-specific
-    /// args and implements its own `run()`; this method selects the right one
-    /// and normalises the error type.  A new subcommand adds one arm here and
-    /// one variant in the enum — no other dispatch site needs updating.
+    /// Route a parsed subcommand to its handler, normalising the error type.
     fn run(
         self,
         service: &crate::config::ConfigService,

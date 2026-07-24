@@ -5,28 +5,13 @@
 //! input — each delegates to the shared [`DialogProvider`] the engine was
 //! built with (a real [`TerminalDialogProvider`](crate::TerminalDialogProvider)
 //! for a live render, or a defaults-only
-//! [`PresetDialogProvider`](crate::PresetDialogProvider) selected by
-//! `--no-input` — see
-//! [`TemplateService`](super::super::service::TemplateService)'s module docs
-//! for how that choice is made).
+//! [`PresetDialogProvider`](crate::PresetDialogProvider) under `--no-input`).
 //!
 //! `select`/`multi_select` derive each item's display label the same way
 //! minijinja's own `map`/`sort`/`groupby` filters derive theirs: an
 //! `attribute=` kwarg naming a (possibly dotted, e.g. `"address.city"`)
 //! path, defaulting to `"label"`, plus an optional `default=` kwarg for
 //! items missing that attribute. See [`label_items`].
-//!
-//! Each method closure captures a clone of the `Arc<dyn
-//! DialogProvider>` so it can call into the provider when the template
-//! invokes it. `Arc`, not `Rc` — [`Value::from_function`]'s closures must be
-//! `Send + Sync + 'static` (minijinja's
-//! [`Function`](minijinja::functions::Function) bound), which rules out
-//! `Rc`.
-//!
-//! Each method `ui` exposes is one self-contained [`Object::get_value`]
-//! match arm returning a [`Value::from_function`] closure; [`Object`]'s
-//! default `call_method` looks the method up via `get_value` and calls
-//! it, so there's no dispatch logic of our own to maintain.
 
 use std::sync::Arc;
 

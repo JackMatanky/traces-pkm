@@ -1,9 +1,4 @@
 //! Domain types: resolved `Config` and `TemplateConfig`.
-//!
-//! Template resolution — matching a template name against these
-//! directories — is `crate::template`'s concern, not this module's: this
-//! module only holds parsed/merged config data and the read-only accessors
-//! template-service resolves through.
 
 use std::path::{Path, PathBuf};
 
@@ -51,12 +46,10 @@ impl Config {
     /// The configured output directory, or [`root`](Self::root) when not
     /// configured.
     ///
-    /// May be relative (a literal `output_dir = "…"` from a config file is
-    /// preserved unresolved — see [`super::builder::ConfigBuilder::merge`]'s
-    /// docs) or absolute (the [`root`](Self::root) fallback). Consumers
-    /// that need an absolute path — `crate::template::service`'s default
-    /// output path, currently the only consumer — resolve a relative
-    /// result against [`root`](Self::root) themselves.
+    /// May be relative (preserved unresolved from the config file) or
+    /// absolute (the [`root`](Self::root) fallback); callers needing an
+    /// absolute path resolve a relative result against
+    /// [`root`](Self::root) themselves.
     #[inline]
     #[must_use]
     pub(crate) fn output_dir(&self) -> &Path {
@@ -65,11 +58,6 @@ impl Config {
 
     /// Test-only constructor that builds a `Config` directly, bypassing
     /// discovery, trust-gating, and the builder pipeline.
-    ///
-    /// Lets `crate::template`'s tests exercise resolution/rendering logic
-    /// against arbitrary directory layouts without a full
-    /// [`super::builder::ConfigBuilder`] pipeline, mirroring
-    /// [`super::service::ConfigService::at`]'s test-only role.
     ///
     /// TODO(remove): once `template::`'s tests build real TOML fixtures and
     /// go through [`super::service::ConfigService::at`] directly (see
@@ -92,12 +80,8 @@ impl Config {
 
 /// Template directories and output path from merged config.
 ///
-/// Keeps local and global directories separately. Resolution (try local
+/// Keeps local and global directories separately; resolution (try local
 /// first, fall back to global) lives in `crate::template`.
-/// Fields are private with accessors — [`super::builder::ConfigBuilder`]
-/// builds this through [`Self::new`] rather than a struct literal, so
-/// this type alone owns what "unset" and "relative vs. resolved" mean for
-/// each field.
 #[derive(Clone, Debug)]
 pub(super) struct TemplateConfig {
     /// Local project template directory (from `.traces/config.toml`).

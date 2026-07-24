@@ -1,24 +1,14 @@
 //! [`TemplateLoader`]: which directories hold templates, and the one
 //! entry point — [`TemplateLoader::find`] — that searches them.
 //!
-//! `local`/`global` are plain `Option<PathBuf>` fields rather than a
-//! collection: "at most one local directory, at most one global" holds
-//! by construction, not by a runtime check nothing enforces.
-//!
-//! [`TemplateLoader::find`] validates the raw name, then delegates the
-//! actual search to
+//! [`TemplateLoader::find`] validates the raw name, then delegates to
 //! [`TemplatePath::<Validated>::find`](super::path::TemplatePath::find)
-//! (one fixed precedence — see that method's docs). Both
-//! [`super::engine::TemplateEngine::resolve`]'s top-level `-i <name>`
-//! resolution and [`TemplateLoader::load`]'s `{% include %}`/`{% extends %}`
-//! loading call this same method, so they can never disagree about
-//! which directory wins.
-//!
-//! A `name` that fails validation (absolute, `..` traversal) reports
-//! as the same [`TemplatePathError::TemplateNotFound`] an ordinary
-//! miss produces. Splitting "unsafe" out from "not found" would let a
-//! caller tell a traversal attempt apart from a typo — deliberately
-//! not offered.
+//! (see that method's docs for the search precedence). Both top-level
+//! `-i <name>` resolution and `{% include %}`/`{% extends %}` loading call
+//! this same method, so they can never disagree about which directory
+//! wins. A `name` that fails validation (absolute, `..` traversal) reports
+//! as the same [`TemplatePathError::TemplateNotFound`] an ordinary miss
+//! produces — deliberately not distinguished from a typo.
 //!
 //! # Why not `minijinja::path_loader`
 //!
@@ -27,10 +17,9 @@
 //! directly rather than [`minijinja::path_loader`]: that loader's
 //! `safe_join` rejects any dot-prefixed path segment, so
 //! `{% include ".draft.md" %}` would fail even when the file is right
-//! there. [`TemplateLoader::find`]'s own validation plus a plain [`Path::join`]
-//! carries no such restriction — a dot-prefixed template directory
-//! (this project's own default, `.traces/templates`) and a
-//! dot-prefixed include name both just work.
+//! there. This project's own default template directory
+//! (`.traces/templates`) is itself dot-prefixed, so that restriction isn't
+//! usable here.
 
 use std::{
     io,

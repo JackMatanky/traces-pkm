@@ -2,11 +2,9 @@
 //! dispatch: renders a resolved template and writes it to disk, or — in
 //! dry-run mode — prints it to stdout.
 //!
-//! Thin adapter over [`ConfigService`] (config discovery and build, which
-//! gates untrusted project roots — see its module docs) and
-//! [`crate::template::TemplateService`] (resolve, render, write): this
-//! module only parses args, loads config for the current directory, and
-//! reports the written path.
+//! Thin adapter over [`ConfigService`] and
+//! [`crate::template::TemplateService`]: parses args, loads config for the
+//! current directory, and reports the written path.
 
 use std::{path::PathBuf, sync::Arc};
 
@@ -59,23 +57,20 @@ impl Template {
 
     /// Loads config for the current directory, then resolves and renders
     /// [`Self::name`], writing it to the default output path — or, in
-    /// dry-run mode, printing it to stdout instead (see
-    /// [`crate::template::TemplateService::render_to_file`]).
+    /// dry-run mode, printing it to stdout instead.
+    ///
     /// `provider` is the interactive provider a `ui.*` call delegates to
-    /// when [`Self::no_input`] is unset; when it's set, every render uses
-    /// a defaults-only provider instead, regardless of `provider`'s own
-    /// TTY detection — see [`crate::template::TemplateService::new`]'s
-    /// docs for why that choice is made here, not inside the service.
+    /// when [`Self::no_input`] is unset; when set, every render uses a
+    /// defaults-only provider instead.
     ///
     /// # Errors
     ///
     /// Returns [`TemplateCliError::ConfigDiscovery`] when config discovery
     /// from the current directory fails. Returns
-    /// [`TemplateCliError::ConfigBuild`] when building config fails —
-    /// including an untrusted or stale project root, since trust is gated
-    /// during config build, not per-template (see `crate::config`'s module
-    /// docs). Returns [`TemplateCliError::Instantiate`] when the
-    /// resolve/render/write pipeline fails.
+    /// [`TemplateCliError::ConfigBuild`] when building config fails,
+    /// including for an untrusted or stale project root. Returns
+    /// [`TemplateCliError::Instantiate`] when the resolve/render/write
+    /// pipeline fails.
     #[inline]
     #[allow(
         clippy::print_stdout,
@@ -122,10 +117,8 @@ impl Template {
     }
 }
 
-/// `-f`/`--force` and `-n`/`--dry-run` — paired because both feed
-/// [`WriteMode::from_flags`], and grouping them keeps [`Template`] at
-/// one bool field (`no_input`) instead of three, per this crate's
-/// `max-struct-bools = 2` (`clippy.toml`).
+/// `-f`/`--force` and `-n`/`--dry-run` flags, grouped since both feed
+/// [`WriteMode::from_flags`].
 #[derive(Debug, Args)]
 pub(super) struct WriteFlags {
     /// Overwrite the output path if it already exists.

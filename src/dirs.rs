@@ -11,8 +11,6 @@
 //!
 //! `TRACES_STATE_DIR` overrides the platform default on every supported
 //! operating system.
-//!
-//! [`FileStateStore::new`]: crate::FileStateStore::new
 
 use std::{
     ffi::OsString,
@@ -24,10 +22,6 @@ use std::{
 const APP_NAME: &str = "traces";
 
 /// State-directory-rooted store path.
-///
-/// Represents a path under the application state directory.
-///
-/// [`FileStateStore::new`]: crate::FileStateStore::new
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct StateDirRoot(PathBuf);
 

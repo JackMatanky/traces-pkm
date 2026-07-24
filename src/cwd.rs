@@ -9,10 +9,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-/// The process current working directory read at construction time.
-///
-/// A newtype rather than a bare `PathBuf` so callers that accept a cwd
-/// (e.g. `ConfigService::discover`) declare the provenance explicitly.
+/// The process current working directory, read at construction time.
 #[derive(Clone, Debug)]
 pub(crate) struct Cwd(PathBuf);
 
@@ -47,13 +44,10 @@ impl AsRef<Path> for Cwd {
     }
 }
 
-/// Serializes every [`CwdGuard`]-mediated test: the process current
-/// working directory is global process state, so two tests changing it
-/// concurrently (the default under `cargo test`'s thread-parallel runner —
-/// `cargo nextest run`, this project's designated test command, isolates
-/// each test in its own process instead and is unaffected) race, and a
-/// dropped `tempfile::TempDir` can yank the directory out from under a
-/// thread still sitting inside it. Held for a `CwdGuard`'s whole lifetime.
+/// Serializes every [`CwdGuard`]-mediated test: the process cwd is global
+/// state, so concurrent changes race, and a dropped `tempfile::TempDir` can
+/// yank the directory out from under a thread still inside it. Held for a
+/// `CwdGuard`'s whole lifetime.
 #[cfg(test)]
 static CWD_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 

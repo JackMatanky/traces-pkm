@@ -5,38 +5,16 @@
 //! read and inline another file, resolved against
 //! [`Config::root`](crate::config::Config::root).
 //!
-//! `write_to` stashes its argument into minijinja's own per-render
-//! [`State::set_temp`] rather than a field on this struct. That scratch
-//! space is scoped to exactly one render — including everything reached
-//! via `{% include %}`, since minijinja threads one [`State`] through the
-//! whole render tree (`vm::perform_include` mutates the same `State` in
-//! place and never touches `temps`) — so it never needs resetting between
-//! renders the way a struct-held cell would.
-//! [`super::TemplateEngine::render`] reads the value back via
-//! [`minijinja::Template::render_captured`] once render completes.
-//!
-//! `include`, unlike `write_to`, does need state: the project root every
-//! `path` argument is confined to. Held as `Arc<Path>`, not `PathBuf`, so
-//! [`Object::get_value`]'s closures — which must be `Send + Sync +
-//! 'static` per [`Value::from_function`]'s
-//! [`Function`](minijinja::functions::Function) bound, ruling out borrowing
-//! `&Path` — clone cheaply on every lookup instead of copying the whole
-//! path.
+//! `write_to` stashes its argument in minijinja's per-render
+//! [`State::set_temp`] rather than a struct field, so it needs no reset
+//! between renders; [`super::TemplateEngine::render`] reads it back after
+//! render completes.
 //!
 //! [`confine`] rejects an absolute `path` or any `..` component before
 //! joining onto root — the same rule
 //! [`TemplateWriteTarget::confine`](super::super::writer::TemplateWriteTarget::confine)
-//! in [`super::super::writer`] applies to `-o`/`file.write_to()`
-//! candidates. Kept as a deliberately separate copy, not a shared
-//! helper: both enforce the identical rule — no `..`, no absolute path
-//! — so a change to one without the other is a two-line diff, not a
-//! design this file depends on staying in sync silently.
-//!
-//! Each method `file` exposes is one self-contained
-//! [`Object::get_value`] match arm returning a
-//! [`Value::from_function`] closure; [`Object`]'s default `call_method`
-//! looks the method up via `get_value` and calls it, so there's no
-//! dispatch logic of our own to maintain.
+//! applies to `-o`/`file.write_to()` candidates. Kept as a separate copy
+//! rather than a shared helper, since both are a two-line rule.
 
 use std::{
     path::{Component, Path, PathBuf},

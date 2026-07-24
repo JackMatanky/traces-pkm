@@ -1,12 +1,10 @@
 //! [`TemplateWriter`] applies one [`WriteMode`] to rendered content;
 //! [`TemplateWriter::write`] is the only entry point, called solely by
 //! [`super::service::TemplateService::render_to_file`]. Under
-//! [`WriteMode::DryRun`] it returns [`WriteOutcome::Previewed`]
-//! without resolving `target`/`default` or touching the filesystem;
-//! under [`WriteMode::Commit`] it resolves `target` to a real path
-//! ([`TemplateWriteTarget::target_path`]) and writes it, returning
-//! [`WriteOutcome::Written`]. `write` is the only thing in this module
-//! that performs I/O.
+//! [`WriteMode::DryRun`] it returns [`WriteOutcome::Previewed`] without
+//! touching the filesystem; under [`WriteMode::Commit`] it resolves
+//! `target` to a real path ([`TemplateWriteTarget::target_path`]) and
+//! writes it, returning [`WriteOutcome::Written`].
 //!
 //! [`TemplateWriteTarget`] gathers a render's output-destination
 //! candidates — the `-o` flag (`requested`) and whatever
@@ -17,12 +15,12 @@
 //! [`Config::root`](crate::config::Config::root) by
 //! [`TemplateWriteTarget::confine`], which rejects `..` and absolute
 //! components before joining — `root.join(candidate)` alone does not
-//! confine, since `Path::starts_with` compares components lexically
-//! and still treats `root.join("../../../tmp/evil.md")` as inside
-//! `root`. [`Config::output_dir`](crate::config::Config::output_dir)
-//! is already trust-gated and may legitimately be absolute, so a
-//! caller builds its default candidate through
-//! [`TemplateWriteTarget::trusted`] instead, unchecked.
+//! confine, since `Path::starts_with` still treats
+//! `root.join("../../../tmp/evil.md")` as inside `root`.
+//! [`Config::output_dir`](crate::config::Config::output_dir) is already
+//! trust-gated and may legitimately be absolute, so a caller builds its
+//! default candidate through [`TemplateWriteTarget::trusted`] instead,
+//! unchecked.
 
 use std::{
     fs,

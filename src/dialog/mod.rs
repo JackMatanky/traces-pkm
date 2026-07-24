@@ -27,18 +27,10 @@ pub use terminal::TerminalDialogProvider;
 
 /// Interactive input, abstracted behind a seam.
 ///
-/// Object-safe: consumers hold a `&dyn DialogProvider`. Methods take `&self`
-/// so a shared reference can be passed to multiple consumers.
-///
-/// `Send + Sync` is required so an `Arc<dyn DialogProvider>` can be captured
-/// into the thread-safe closures `TemplateService` registers on its minijinja
-/// `Environment`. Deliberately *not* `+ Debug`: minijinja's own
-/// [`Object`](minijinja::value::Object) trait requires `Self: Debug` for
-/// `UiOps` (the `ui` namespace object holding the `Arc<dyn DialogProvider>`),
-/// but `UiOps` satisfies that with a hand-written `Debug` impl that doesn't
-/// print the provider, rather than widening this public trait's contract —
-/// forcing every implementor to derive `Debug` just to satisfy one internal
-/// consumer's unrelated trait bound would be a needless breaking constraint.
+/// Object-safe: consumers hold a `&dyn DialogProvider`. `Send + Sync` so an
+/// `Arc<dyn DialogProvider>` can be captured into `TemplateService`'s
+/// thread-safe minijinja closures. Deliberately not `+ Debug`, so
+/// implementors aren't forced to derive it.
 pub trait DialogProvider: Send + Sync {
     /// Prompt for a yes/no confirmation.
     ///

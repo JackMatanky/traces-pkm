@@ -1,14 +1,12 @@
 //! CLI-facing error types.
 //!
-//! Wraps command-specific failures with user-facing help text and error codes.
-//! Some underlying error types are deliberately unnameable outside their
-//! modules — this module only needs their [`std::error::Error`] behavior, so
-//! command errors type-erase sources behind [`Box`]. [`TemplateCliError`] is
-//! the one exception: it downcasts its boxed source back to
+//! Wraps command-specific failures with user-facing help text and error
+//! codes. Underlying error sources are type-erased behind [`Box`], except
+//! [`TemplateCliError`], which downcasts its boxed source back to
 //! [`crate::template::TemplateError`] to special-case
-//! [`TemplateError::OutputFileAlreadyExists`]
-//! and [`TemplateError::OutputPathEscapesRoot`]
-//! into their own diagnostic codes and help text.
+//! [`TemplateError::OutputFileAlreadyExists`] and
+//! [`TemplateError::OutputPathEscapesRoot`] into their own diagnostic codes
+//! and help text.
 
 use std::{error::Error as StdError, fmt::Display, path::PathBuf};
 
@@ -55,7 +53,7 @@ pub enum ConfigTrustCliError {
     TargetResolve {
         /// The path that could not be resolved.
         path: PathBuf,
-        /// Source resolver error, type-erased (see module docs for why).
+        /// Source resolver error, type-erased.
         #[source]
         source: Box<dyn StdError + Send + Sync + 'static>,
     },
@@ -64,7 +62,7 @@ pub enum ConfigTrustCliError {
     Trust {
         /// The root that couldn't be trusted.
         root: PathBuf,
-        /// Source trust error, type-erased (see module docs for why).
+        /// Source trust error, type-erased.
         #[source]
         source: Box<dyn StdError + Send + Sync + 'static>,
     },
@@ -73,7 +71,7 @@ pub enum ConfigTrustCliError {
     Untrust {
         /// The root whose trust entry could not be removed.
         root: PathBuf,
-        /// Source trust error, type-erased (see module docs for why).
+        /// Source trust error, type-erased.
         #[source]
         source: Box<dyn StdError + Send + Sync + 'static>,
     },
@@ -82,21 +80,21 @@ pub enum ConfigTrustCliError {
     Show {
         /// The root whose trust status could not be read.
         root: PathBuf,
-        /// Source trust error, type-erased (see module docs for why).
+        /// Source trust error, type-erased.
         #[source]
         source: Box<dyn StdError + Send + Sync + 'static>,
     },
     /// Listing the trust store failed.
     #[error("failed to list trusted directories")]
     List {
-        /// Source store error, type-erased (see module docs for why).
+        /// Source store error, type-erased.
         #[source]
         source: Box<dyn StdError + Send + Sync + 'static>,
     },
     /// Cleaning the trust store failed.
     #[error("failed to clean the trust store")]
     Clean {
-        /// Source trust error, type-erased (see module docs for why).
+        /// Source trust error, type-erased.
         #[source]
         source: Box<dyn StdError + Send + Sync + 'static>,
     },
@@ -112,18 +110,15 @@ pub enum ConfigInitCliError {
         root: PathBuf,
         /// Actionable remediation for the specific failure mode.
         help: &'static str,
-        /// Source init error, type-erased (see module docs for why).
+        /// Source init error, type-erased.
         #[source]
         source: Box<dyn StdError + Send + Sync + 'static>,
     },
 }
 
 /// Errors surfaced by the `traces template`/`tmpl`/default `-i` CLI
-/// surface.
-///
-/// Thin adapter over [`crate::config::ConfigService`] (config discovery and
-/// build, including the trust gate) and [`crate::template::TemplateService`]
-/// (resolve, render, write) — see [`crate::cli::template`]'s module docs.
+/// surface. Thin adapter over [`crate::config::ConfigService`] and
+/// [`crate::template::TemplateService`].
 #[derive(Debug, Error)]
 pub enum TemplateCliError {
     /// Discovering configuration from `cwd` failed.
@@ -131,7 +126,7 @@ pub enum TemplateCliError {
     ConfigDiscovery {
         /// The directory config discovery started from.
         cwd: PathBuf,
-        /// Source discovery error, type-erased (see module docs for why).
+        /// Source discovery error, type-erased.
         #[source]
         source: Box<dyn StdError + Send + Sync + 'static>,
     },
@@ -139,7 +134,7 @@ pub enum TemplateCliError {
     /// an untrusted or stale project root.
     #[error("failed to load configuration")]
     ConfigBuild {
-        /// Source build error, type-erased (see module docs for why).
+        /// Source build error, type-erased.
         #[source]
         source: Box<dyn StdError + Send + Sync + 'static>,
     },
@@ -148,7 +143,7 @@ pub enum TemplateCliError {
     Instantiate {
         /// The template name that failed to instantiate.
         name: PathBuf,
-        /// Source template error, type-erased (see module docs for why).
+        /// Source template error, type-erased.
         #[source]
         source: Box<dyn StdError + Send + Sync + 'static>,
     },

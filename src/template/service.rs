@@ -22,14 +22,8 @@ use crate::{DialogProvider, config::Config};
 
 /// Entry point for resolving, rendering, and writing one template.
 ///
-/// Coordinator that hides [`TemplateService::render_to_file`]'s
-/// resolve -> render -> write sequencing, including output-path
-/// precedence (an explicit `-o` override over `file.write_to()` over
-/// the config default) and the overwrite guard — both delegated to
-/// [`TemplateWriter`]. Holds a borrowed [`Config`], the
-/// [`TemplateEngine`] built from it, and a [`TemplateWriter`] confined
-/// to [`Config::root`], so every step reads from the same,
-/// already-trusted configuration.
+/// Holds a borrowed [`Config`], the [`TemplateEngine`] built from it,
+/// and a [`TemplateWriter`] confined to [`Config::root`].
 pub(crate) struct TemplateService<'a> {
     config: &'a Config,
     engine: TemplateEngine,
@@ -38,27 +32,12 @@ pub(crate) struct TemplateService<'a> {
 
 impl<'a> TemplateService<'a> {
     /// Builds a service for `config`, backed by a [`TemplateEngine`]
-    /// and a [`TemplateWriter`] confined to [`Config::root`]. `provider`
-    /// is the interactive provider every `ui.*` call in every render —
-    /// `WriteMode::DryRun` included — delegates to unconditionally.
-    ///
-    /// This is deliberate, not an oversight: `WriteMode` decides
-    /// whether a render's output gets written, never whether its
-    /// `ui.*` calls prompt. `--dry-run` alone still previews with real
-    /// answers when run from a real terminal — otherwise dry-run
-    /// couldn't preview a template whose output branches on a
-    /// selection. What decides *whether to prompt at all* is choosing
-    /// which `provider` to pass in here: `crate::cli::template::Template`
-    /// passes a defaults-only
-    /// [`PresetDialogProvider`](crate::PresetDialogProvider)
-    /// when `--no-input` is set (see `cli_guide.md`'s Interactivity
-    /// section: "If `--no-input` is passed, don't prompt or do
-    /// anything interactive"), and its normal, injected provider
-    /// otherwise — a [`TerminalDialogProvider`](crate::TerminalDialogProvider)
-    /// falls back to defaults on its own the moment stdin isn't a TTY
-    /// (CI, piping, scripts), so `--no-input` only needs to cover the
-    /// remaining case: a real terminal that should still not be
-    /// prompted (e.g. a scripted `--dry-run` check run interactively).
+    /// and a [`TemplateWriter`] confined to [`Config::root`].
+    /// `provider` is the interactive provider every `ui.*` call
+    /// delegates to, including under `WriteMode::DryRun` —
+    /// `WriteMode` only decides whether output gets written, never
+    /// whether `ui.*` prompts. `--no-input` is implemented by
+    /// choosing which `provider` to pass in, not by `WriteMode`.
     #[inline]
     #[must_use]
     pub(crate) fn new(
@@ -75,17 +54,12 @@ impl<'a> TemplateService<'a> {
         }
     }
 
-    /// Resolves `name` and renders it, then builds a
-    /// [`TemplateWriteTarget`] from `output` (`-o`) and
-    /// `rendered.write_to` (a `file.write_to()` call inside the
-    /// template) — the two output-destination candidates — and hands
-    /// `target`, `rendered.content`, and `mode` to
-    /// [`TemplateWriter::write`], which either writes the content to
-    /// disk or — for [`WriteMode::DryRun`] — returns it untouched (see
-    /// [`WriteOutcome`]; printing it is the caller's job). When a real
-    /// path is needed, [`TemplateWriteTarget::target_path`] picks it by
-    /// precedence: `target`'s `requested` candidate, then `declared`,
-    /// then [`Self::default_output_path`].
+    /// Resolves `name` and renders it, then writes (or previews
+    /// under [`WriteMode::DryRun`]) the result via
+    /// [`TemplateWriter::write`], using an output path resolved by
+    /// precedence: `output` (`-o`), then `rendered.write_to`
+    /// (`file.write_to()` in the template), then
+    /// [`Self::default_output_path`].
     ///
     /// # Arguments
     ///
@@ -148,15 +122,13 @@ impl<'a> TemplateService<'a> {
         })
     }
 
-    /// [`Config::output_dir`] joined with the resolved template's own
+    /// [`Config::output_dir`] joined with the resolved template's
     /// default output filename
-    /// ([`TemplatePath::default_output_filename`]) rather than the raw
-    /// `-i` argument — so two directories' same-named templates land at
-    /// different output paths instead of colliding. Uses
-    /// [`TemplateWriteTarget::trusted`], not `TemplateWriteTarget`'s
-    /// private `confine` helper — `output_dir` is a trusted config
-    /// value (see `writer`'s module docs), not a runtime
-    /// `-o`/`file.write_to()` candidate.
+    /// ([`TemplatePath::default_output_filename`]), not the raw `-i`
+    /// argument, so two directories' same-named templates don't
+    /// collide. Uses [`TemplateWriteTarget::trusted`], not the
+    /// private `confine` helper: `output_dir` is a trusted config
+    /// value, not a runtime candidate.
     fn default_output_path(&self, resolved: &TemplatePath<Found>) -> PathBuf {
         let candidate =
             self.config.output_dir().join(resolved.default_output_filename());

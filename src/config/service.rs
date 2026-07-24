@@ -32,11 +32,9 @@ pub(crate) enum ConfigLoadError {
 
 /// Entry point for discovering and building configuration.
 ///
-/// Coordinates discovery before build behind the single
-/// [`ConfigService::load`] entry point, keeping filesystem discovery
-/// separate from the tracking, trust, parse, and merge internals. Holds the
-/// state store so the build pipeline and trust-admin methods share the same
-/// tracked-config and trusted-workspace records.
+/// Keeps filesystem discovery ([`Self::load`]) separate from the
+/// tracking/trust/parse/merge internals. Holds the state store shared by
+/// the build pipeline and trust-admin methods.
 #[derive(Clone, Debug)]
 pub(crate) struct ConfigService {
     state: ConfigStateStore,
@@ -54,11 +52,9 @@ impl ConfigService {
     }
 
     /// Creates a `ConfigService` backed by explicit tracked-config and
-    /// trust-store roots. Test-only: production callers always want the
-    /// OS-correct roots from [`Self::new`]. `pub(crate)` (not restricted
-    /// to this module) so the CLI layer's tests (`crate::cli::trust`) can
-    /// construct an isolated service without touching the real OS state
-    /// directories, mirroring [`ConfigStateStore::at`].
+    /// trust-store roots. Test-only — lets `crate::cli::trust`'s tests
+    /// build an isolated service without touching real OS state
+    /// directories.
     #[cfg(test)]
     #[must_use]
     pub(crate) fn at(tracked_root: PathBuf, trusted_root: PathBuf) -> Self {
@@ -82,12 +78,8 @@ impl ConfigService {
 
     /// Discovers config files from `cwd`.
     ///
-    /// Returns discovered config files plus the invocation cwd. The local
-    /// project config is required; the global config is optional. An
-    /// associated function, not a method: discovery is a pure filesystem
-    /// walk from `cwd` with no dependency on `ConfigService`'s own state
-    /// (the tracked-config/trust stores) — [`Self::build`] is where that
-    /// state actually gets used, on the resulting [`DiscoveryOutcome`].
+    /// The local project config is required; the global config is
+    /// optional.
     ///
     /// # Errors
     ///
@@ -104,11 +96,10 @@ impl ConfigService {
 
     /// Builds a [`Config`] from discovered candidates.
     ///
-    /// Candidate paths are recorded in the config tracking store before they
-    /// are read. This is a best-effort side effect; a tracking store write
-    /// failure does not fail the build. Each local candidate's project root
-    /// is then checked against the trust store before any file is parsed;
-    /// global candidates are never checked.
+    /// Recording candidates in the tracking store is best-effort — a write
+    /// failure does not fail the build. Each local candidate's root is then
+    /// checked against the trust store before parsing; global candidates
+    /// are never checked.
     ///
     /// # Errors
     ///

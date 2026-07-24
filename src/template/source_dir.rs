@@ -2,24 +2,17 @@
 //! [`TemplatePath<Found>`](super::path::TemplatePath) was actually
 //! found in.
 //!
-//! Deliberately dependency-free — no reference to [`super::path`],
-//! [`super::loader`], or [`crate::config::Config`] — so `path.rs` and
-//! `loader.rs` both import this type from a neutral third place instead
-//! of from each other.
+//! Deliberately dependency-free — no reference to [`super::path`] or
+//! [`super::loader`] — so both can import this type without
+//! depending on each other.
 
 use std::path::{Path, PathBuf};
 
 /// Which template directory a match came from, carrying that
 /// directory's actual (always absolute) path.
 ///
-/// Only [`Self::Local`] and [`Self::Global`] exist — resolution never
-/// escapes the configured directories. A
-/// [`TemplatePath<Found>`](super::path::TemplatePath) is only ever
-/// produced by
-/// [`TemplateLoader::find`](super::loader::TemplateLoader::find), which
-/// builds its `TemplateSourceDir` from
-/// [`TemplateLoader`](super::loader::TemplateLoader)'s own
-/// `local`/`global` fields — nowhere else.
+/// Only [`Self::Local`] and [`Self::Global`] exist — resolution
+/// never escapes the configured directories.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) enum TemplateSourceDir {
     /// A match from the local, project-level template directory.

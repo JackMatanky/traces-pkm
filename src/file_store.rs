@@ -1,9 +1,8 @@
 //! Generic hash-keyed file/path state store.
 //!
-//! Stores canonical paths as BLAKE3-named entries under a caller-provided root:
-//! symlinks on Unix, plain files containing the path on Windows. Domain modules
-//! choose which root to use; this module owns only the cross-platform storage
-//! mechanics.
+//! Stores canonical paths as BLAKE3-named entries under a caller-provided
+//! root: symlinks on Unix, plain files on Windows. Domain modules choose
+//! the root; this module owns the cross-platform storage mechanics.
 
 use std::{
     fs, io,

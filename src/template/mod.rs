@@ -24,15 +24,9 @@
 //! - [`service`][]: [`TemplateService`] chains resolve, render, and write into
 //!   that one call.
 //!
-//! Everything below `service` is `pub(super)` at most. Three exceptions
-//! are re-exported here: [`TemplateError`], so
-//! `crate::cli::error::TemplateCliError` can downcast its boxed source
-//! and special-case [`TemplateError::OutputFileAlreadyExists`];
-//! [`WriteMode`], so `crate::cli::template` can build the one mode value
-//! `--force`/`--dry-run` collapse into; and [`WriteOutcome`], the result
-//! [`TemplateWriter::write`](writer::TemplateWriter::write) returns and
-//! [`TemplateService::render_to_file`](service::TemplateService::render_to_file)
-//! passes straight through.
+//! Everything below `service` is `pub(super)` at most, except three
+//! re-exports consumed by `crate::cli`: [`TemplateError`], [`WriteMode`],
+//! and [`WriteOutcome`].
 
 mod engine;
 mod error;

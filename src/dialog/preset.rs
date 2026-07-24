@@ -1,13 +1,8 @@
 //! Preset responses for the [`DialogProvider`] trait.
 //!
-//! [`PresetDialogProvider`] records answers ahead of time. Each
-//! [`DialogProvider`] method checks the internal queue and returns the next
-//! queued value.  When the queue is empty it falls back to the `default`
-//! parameter supplied at the call site (or a sensible hard-coded default:
-//! `""`, `false`, index `0`, or an empty [`Vec`]).
-//!
-//! Useful for unit tests and non-interactive / MCP mode where answers are
-//! supplied up front instead of typed at a terminal.
+//! [`PresetDialogProvider`] records answers ahead of time and replays them
+//! FIFO, falling back to the call site's `default` once empty. Useful for
+//! tests and non-interactive/MCP mode.
 
 use std::{
     collections::VecDeque,

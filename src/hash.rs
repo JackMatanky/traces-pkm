@@ -1,11 +1,8 @@
 //! BLAKE3-based hashing: file content hashing ([`Blake3FileHash`]) and path
 //! string hashing ([`Blake3PathHash`]).
 //!
-//! Not config-specific: these are plain utilities any module can reach
-//! for. [`HashError`] is deliberately `thiserror`-only, no
-//! `miette::Diagnostic` — a raw hashing I/O failure is never shown to a
-//! user or agent directly; callers wrap it in their own domain error
-//! before it reaches anything CLI-facing.
+//! [`HashError`] is `thiserror`-only, no `miette::Diagnostic`: callers wrap
+//! it in their own domain error before it reaches anything CLI-facing.
 
 use std::{
     fmt::{self, Display, Formatter},
