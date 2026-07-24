@@ -47,28 +47,56 @@ Usage in templates:
 ## Implementation notes
 
 Implemented in `.worktrees/issue-06-path-module` on branch
-`issue-06-path-module`. Two commits: `1b71dfe` (initial
-implementation, on top of `0d9326a`) and `205bc6a` (naming update, see
-below). Not yet merged to `main`.
+`issue-06-path-module`. Not yet merged to `main`. Commits, in order:
+`1b71dfe` (initial implementation, on top of `0d9326a`), `205bc6a`
+(naming update), `c88061d` + `c0e32d0` (rust-skills review dedup/
+cleanup, no behavior change), `4253f3c` (spec correction — filters ->
+tests for the 3 boolean checks, see below).
 
-`PathOps` (`src/template/engine/path_ops.rs`) registers all 7 filters
-via `Environment::add_filter`, following `StrOps`'s flat-filter
-pattern rather than an `Object` namespace, per the Rust guidance
-above. `TemplateEngine::new` (`src/template/engine.rs`) now builds
-`root: Arc<Path>` once and shares it between `FileOps::new` (via
-`Arc::clone`) and `PathOps::new`, rather than allocating a second
-`Arc::from(root)`.
+`PathOps` (`src/template/engine/path_ops.rs`) registers the 7
+path-inspection items — 3 as `Environment::add_test`, 4 as
+`Environment::add_filter` (see "Spec correction" below) — following
+`StrOps`'s flat-registration pattern rather than an `Object`
+namespace, per the Rust guidance above. `TemplateEngine::new`
+(`src/template/engine.rs`) builds `root: Arc<Path>` once and shares it
+between `FileOps::new` (via `Arc::clone`) and `PathOps::new`, rather
+than allocating a second `Arc::from(root)`.
 
 **Naming update (`205bc6a`):** the two boolean I/O filters were
 renamed per explicit request after the initial implementation —
 `path_is_file` -> `is_file_path`, `path_is_dir` -> `is_dir_path`.
 `path_exists` and the four pure string filters keep their original
-names from this spec. The rest of this document uses the current
-(post-rename) names; the "Filters"/"Usage in templates" sections above
-are left as originally written, per the "checkboxes are left as
-originally written" convention.
+names from this spec.
 
-One deliberate deviation from the Rust guidance: the I/O filters
+**Spec correction (`4253f3c`):** this spec's title, "What to build",
+acceptance criteria, and usage examples call all 7 of these "filters"
+and use `|` syntax throughout — wrong for the 3 boolean ones. Per
+explicit correction against minijinja's own docs
+(<https://docs.rs/minijinja/latest/minijinja/tests/index.html>):
+minijinja draws a real distinction between **filters** (transform a
+value, `|` syntax, `Environment::add_filter`) and **tests** (check a
+value, must return bool, `is`/`is not` syntax, `Environment::add_test`).
+`path_exists`/`is_file_path`/`is_dir_path` are checks, not
+transforms — they're registered as tests now:
+`{{ "some/file.md" is path_exists }}`, `{% if path is is_file_path %}`.
+The 4 string filters (`path_filename`/`path_basename`/
+`path_extension`/`path_parent`) are unaffected — unchanged
+`{{ "/foo/bar/main.rs" | path_basename }}` syntax; they return a
+different string, which is what a filter is for, and couldn't be
+tests anyway (minijinja tests must resolve to a bool).
+`register_bool_filter` was renamed `register_bool_test` and now calls
+`env.add_test` instead of `env.add_filter`; no closure signature
+changed, since `add_filter`/`add_test` share identical generic bounds
+in minijinja 2.21.0 (verified via `rust-docs-mcp` against the crate's
+actual source, not just its docs).
+
+The "Filters"/"Usage in templates"/"Acceptance criteria" sections
+above are left as originally written — they're the spec being
+corrected, not the corrected behavior — per the "checkboxes are left
+as originally written" convention. Everything in this section
+describes the current, corrected behavior.
+
+One deliberate deviation from the Rust guidance: the I/O tests
 (`path_exists`/`is_file_path`/`is_dir_path`) do **not** call
 `Path::exists`/`Path::is_file`/`Path::is_dir` directly. Those methods
 silently fold every I/O error — not just `NotFound`, but permission
@@ -82,20 +110,23 @@ regression test (`io_errors::propagates_a_permission_error_instead_of_reporting_
 covers this by revoking permissions on a temp directory.
 
 An absolute `path` argument is used as-is (not confined/rejected like
-`file.include()`'s `path`) — these filters only stat the filesystem,
+`file.include()`'s `path`) — these checks only stat the filesystem,
 they never read file contents, so there's no root-escape risk to
 guard against.
 
 ### Acceptance criteria status: 5/5 met, 0 unfulfilled
 
 (Checkboxes above are left as originally written — this list
-documents status only.)
+documents status only. Read against the corrected filter/test split,
+not the spec's original all-filters wording — see "Spec correction"
+above.)
 
-- MET — All 7 filters callable from templates as `{{ value | path_exists }}`,
-  etc.: registered in `PathOps::register`
+- MET — All 7 registered and callable from templates: 3 as tests
+  (`{{ value is path_exists }}`) and 4 as filters
+  (`{{ value | path_basename }}`), registered in `PathOps::register`
   (`src/template/engine/path_ops.rs`), wired into `TemplateEngine::new`
   (`src/template/engine.rs`). End-to-end regression test
-  `engine.rs::tests::render::path_filters_are_registered_and_resolve_against_root`
+  `engine.rs::tests::render::path_tests_and_filters_are_registered_and_resolve_against_root`
   renders all 7 through the real `TemplateEngine`, not just the
   isolated `PathOps` unit tests.
 - MET — `path_exists`/`is_file_path`/`is_dir_path` resolve relative
@@ -106,7 +137,7 @@ documents status only.)
   since issue 05). Tested in `path_ops.rs::tests::path_exists`/
   `is_file_path`/`is_dir_path` (relative, absolute, and root-itself
   cases).
-- MET — I/O filters propagate errors as `minijinja::Error`, not
+- MET — I/O checks propagate errors as `minijinja::Error`, not
   panics: see the deviation note above. Tested in
   `path_ops.rs::tests::io_errors::propagates_a_permission_error_instead_of_reporting_false`.
 - MET — Pure string filters (`path_filename`/`path_basename`/
@@ -119,5 +150,5 @@ documents status only.)
   (`.gitignore` — no extension per `Path::extension`'s definition,
   but the whole name as its stem per `Path::file_stem`), multi-dot
   extensions (`archive.tar.gz` → `gz`), and an absolute path passed to
-  `path_exists` against an unrelated root. 35 tests in
+  `path_exists` against an unrelated root. 36 tests in
   `path_ops.rs::tests`, plus the 1 end-to-end test in `engine.rs`.
