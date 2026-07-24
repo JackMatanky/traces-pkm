@@ -1,7 +1,7 @@
 //! Command-line interface: parses arguments and dispatches to command
 //! handlers. Each command module is a thin adapter over library services.
 //! Error types from those services stay `thiserror`-only and unnameable
-//! outside their modules by design; [`error`] is the first place that adds
+//! outside their modules by design; [`CliError`] is the first place that adds
 //! user-facing help text and error codes, via `miette::Diagnostic`.
 
 mod error;
@@ -39,7 +39,8 @@ struct Cli {
 impl Cli {
     /// Parse [`Cli`] from [`std::env::args`] and run the selected command.
     ///
-    /// Accepts pre-constructed [`ConfigService`] and [`DialogProvider`] so
+    /// Accepts pre-constructed [`ConfigService`](crate::config::ConfigService)
+    /// and [`DialogProvider`](crate::DialogProvider) so
     /// that tests can drive real argv through to a real handler call with
     /// isolated stores, without touching the process's OS-correct
     /// trust/tracked-config paths. `provider` is `Arc`, not `&dyn`, because
@@ -109,7 +110,9 @@ impl Commands {
 ///
 /// # Errors
 ///
-/// Returns [`CliError`] when the command fails or no command was given.
+/// Returns [`CliError`] when the selected command fails, or
+/// [`CliError::NoCommand`] when neither a subcommand nor `-i`/`--input`
+/// was given.
 #[inline]
 pub fn run() -> Result<(), CliError> {
     let provider: Arc<dyn crate::DialogProvider> =

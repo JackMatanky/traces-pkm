@@ -4,9 +4,9 @@
 //!
 //! Thin adapter over [`ConfigService`] (config discovery and build, which
 //! gates untrusted project roots — see its module docs) and
-//! `crate::template::TemplateService` (resolve, render, write): this module
-//! only parses args, loads config for the current directory, and reports
-//! the written path.
+//! [`crate::template::TemplateService`] (resolve, render, write): this
+//! module only parses args, loads config for the current directory, and
+//! reports the written path.
 
 use std::{path::PathBuf, sync::Arc};
 

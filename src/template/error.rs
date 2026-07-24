@@ -39,9 +39,9 @@ pub(crate) enum TemplateError {
         path: PathBuf,
     },
 
-    /// `path` — from `file.write_to()`, `-o`, or (should config ever
-    /// allow it) the computed default — is absolute or contains a `..`
-    /// component, so it would write outside the project root.
+    /// `path` — from `file.write_to()` or `-o` — is absolute or
+    /// contains a `..` component, so it would write outside the
+    /// project root.
     #[error("output path {path} escapes the project root")]
     OutputPathEscapesRoot {
         /// The rejected candidate, exactly as given.

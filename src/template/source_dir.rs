@@ -1,5 +1,5 @@
 //! [`TemplateSourceDir`]: records which configured directory a
-//! [`super::path::TemplatePath<super::path::Found>`] was actually
+//! [`TemplatePath<Found>`](super::path::TemplatePath) was actually
 //! found in.
 //!
 //! Deliberately dependency-free — no reference to [`super::path`],
@@ -12,16 +12,14 @@ use std::path::{Path, PathBuf};
 /// Which template directory a match came from, carrying that
 /// directory's actual (always absolute) path.
 ///
-/// Only [`Self::Local`] and [`Self::Global`] exist — resolution can
-/// never read outside the configured directories. An earlier version
-/// resolved names as arbitrary filesystem paths, so `-i` could read
-/// any file the process had access to; this type rules that out by
-/// construction, since
-/// [`super::path::TemplatePath::<super::path::Found>`] is only ever
-/// produced by [`super::loader::TemplateLoader::find`], which builds
-/// its `TemplateSourceDir` from
-/// [`super::loader::TemplateLoader`]'s own `local`/`global` fields —
-/// nowhere else.
+/// Only [`Self::Local`] and [`Self::Global`] exist — resolution never
+/// escapes the configured directories. A
+/// [`TemplatePath<Found>`](super::path::TemplatePath) is only ever
+/// produced by
+/// [`TemplateLoader::find`](super::loader::TemplateLoader::find), which
+/// builds its `TemplateSourceDir` from
+/// [`TemplateLoader`](super::loader::TemplateLoader)'s own
+/// `local`/`global` fields — nowhere else.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) enum TemplateSourceDir {
     /// A match from the local, project-level template directory.

@@ -58,6 +58,14 @@ impl TemplateEngine {
     /// Each submodule's own doc comment is the source of truth for its
     /// exact filter/test/method list — kept here only by name, not
     /// repeated, so the two can't drift apart.
+    ///
+    /// # Arguments
+    ///
+    /// * `loader` - resolves template names to source; cloned once into
+    ///   minijinja's loader callback and also kept for [`Self::resolve`]
+    /// * `provider` - the interactive backend every `ui.*` call delegates to
+    /// * `root` - base directory `file.*` and the path-inspection group are
+    ///   confined to
     #[inline]
     #[must_use]
     pub(super) fn new(

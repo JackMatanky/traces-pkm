@@ -19,22 +19,18 @@
 //! `path` argument is confined to. Held as `Arc<Path>`, not `PathBuf`, so
 //! [`Object::get_value`]'s closures — which must be `Send + Sync +
 //! 'static` per [`Value::from_function`]'s
-//! [`Function`](minijinja::value::Function) bound, ruling out borrowing
+//! [`Function`](minijinja::functions::Function) bound, ruling out borrowing
 //! `&Path` — clone cheaply on every lookup instead of copying the whole
 //! path.
 //!
 //! [`confine`] rejects an absolute `path` or any `..` component before
 //! joining onto root — the same rule
 //! [`TemplateWriteTarget::confine`](super::super::writer::TemplateWriteTarget::confine)
-//! in [`super::super::writer`] applies to `-o`/`file.write_to()` candidates,
-//! deliberately kept as a separate copy rather than a shared helper:
-//! that function sits on a call path `GitNexus`'s impact analysis flags
-//! CRITICAL (16 execution flows through it), so this module keeps its
-//! own small, self-contained check instead of refactoring a
-//! security-relevant boundary it has no other reason to touch. Both
-//! copies enforce the identical rule — no `..`, no absolute path — so a
-//! change to one without the other is a two-line diff, not a design
-//! this file depends on staying in sync silently.
+//! in [`super::super::writer`] applies to `-o`/`file.write_to()`
+//! candidates. Kept as a deliberately separate copy, not a shared
+//! helper: both enforce the identical rule — no `..`, no absolute path
+//! — so a change to one without the other is a two-line diff, not a
+//! design this file depends on staying in sync silently.
 //!
 //! Each method `file` exposes is one self-contained
 //! [`Object::get_value`] match arm returning a

@@ -5,11 +5,11 @@
 //! collection: "at most one local directory, at most one global" holds
 //! by construction, not by a runtime check nothing enforces.
 //!
-//! [`TemplateLoader::find`] validates the raw name, then delegates the actual
-//! search to
-//! [`super::path::TemplatePath::<super::path::Validated>::find`] (one
-//! fixed precedence — see that method's docs). Both
-//! [`super::service::TemplateService::resolve`]'s top-level `-i <name>`
+//! [`TemplateLoader::find`] validates the raw name, then delegates the
+//! actual search to
+//! [`TemplatePath::<Validated>::find`](super::path::TemplatePath::find)
+//! (one fixed precedence — see that method's docs). Both
+//! [`super::engine::TemplateEngine::resolve`]'s top-level `-i <name>`
 //! resolution and [`TemplateLoader::load`]'s `{% include %}`/`{% extends %}`
 //! loading call this same method, so they can never disagree about
 //! which directory wins.
@@ -45,7 +45,7 @@ use crate::config::Config;
 /// A template's home: at most one local directory, at most one
 /// global, searched local-first for a name match.
 ///
-/// [`From<&Config>`] is the production constructor, always built from
+/// The production constructor is `From<&Config>`, always built from
 /// [`Config::local_template_dir`]/[`Config::global_template_dir`].
 /// [`Self::new`] is the plain, `Config`-agnostic constructor underneath
 /// it; tests reach for `new` directly rather than assembling a full
@@ -126,8 +126,6 @@ impl TemplateLoader {
 }
 
 impl From<&Config> for TemplateLoader {
-    /// Builds a loader from `config`'s configured local/global template
-    /// directories.
     fn from(config: &Config) -> Self {
         Self::new(
             config.local_template_dir().map(Path::to_path_buf),

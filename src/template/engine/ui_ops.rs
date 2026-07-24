@@ -16,18 +16,17 @@
 //! path, defaulting to `"label"`, plus an optional `default=` kwarg for
 //! items missing that attribute. See [`label_items`].
 //!
-//! Unlike [`FileOps`](super::file_ops::FileOps), this object is *not*
-//! stateless: each method closure captures a clone of the `Arc<dyn
+//! Each method closure captures a clone of the `Arc<dyn
 //! DialogProvider>` so it can call into the provider when the template
 //! invokes it. `Arc`, not `Rc` — [`Value::from_function`]'s closures must be
 //! `Send + Sync + 'static` (minijinja's
-//! [`Function`](minijinja::value::Function) bound), which rules out `Rc`.
+//! [`Function`](minijinja::functions::Function) bound), which rules out
+//! `Rc`.
 //!
 //! Each method `ui` exposes is one self-contained [`Object::get_value`]
-//! match arm returning a [`Value::from_function`] closure, exactly like
-//! [`FileOps`](super::file_ops::FileOps); [`Object`]'s default `call_method`
-//! looks the method up via `get_value` and calls it, so there's no dispatch
-//! logic of our own to maintain.
+//! match arm returning a [`Value::from_function`] closure; [`Object`]'s
+//! default `call_method` looks the method up via `get_value` and calls
+//! it, so there's no dispatch logic of our own to maintain.
 
 use std::sync::Arc;
 
@@ -249,6 +248,11 @@ fn get_path(item: &Value, path: &str) -> Result<Value, Error> {
 /// expected from a well-behaved [`DialogProvider`], since it always
 /// returns an index into the very slice it was given — to a
 /// [`minijinja::Error`] instead of panicking.
+///
+/// # Errors
+///
+/// Returns [`ErrorKind::InvalidOperation`] if `index` is out of bounds for
+/// `values`.
 fn recover_indexed_value(
     values: &[Value],
     index: usize,

@@ -16,11 +16,8 @@ use std::{
 use thiserror::Error;
 
 /// Errors from hashing file contents.
-///
-/// Public (not `pub(crate)`) because config-facing error types carry it as a
-/// `#[from]` source, and a `pub` field can't have a private type.
 #[derive(Debug, Error)]
-pub enum HashError {
+pub(crate) enum HashError {
     /// The file's contents could not be read.
     #[error("failed to read {path} for hashing")]
     Read {

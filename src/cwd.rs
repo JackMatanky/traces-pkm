@@ -18,6 +18,11 @@ pub(crate) struct Cwd(PathBuf);
 
 impl Cwd {
     /// Reads the process current working directory.
+    ///
+    /// # Errors
+    ///
+    /// Returns an [`io::Error`] when the current directory does not exist
+    /// or cannot be accessed.
     #[inline]
     #[allow(
         clippy::disallowed_methods,

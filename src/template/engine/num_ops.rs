@@ -39,6 +39,10 @@ impl NumOps {
 /// template output. `-0.0 < 0.0` is `false` under IEEE 754, so `-0.0`
 /// (unlike any other negative value) correctly falls through to
 /// [`f64::sqrt`] rather than erroring.
+///
+/// # Errors
+///
+/// Returns [`ErrorKind::InvalidOperation`] if `value` is negative.
 fn sqrt(value: f64) -> Result<f64, Error> {
     if value < 0.0 {
         return Err(Error::new(

@@ -1,9 +1,7 @@
 //! [`TemplatePath<State>`]: a template identifier's journey from a raw
 //! `-i <name>` argument to a file proven to exist on disk. Each stage
 //! of that journey is its own type, not a flag or an `Option` field on
-//! one do-everything struct.
-//!
-//! # States
+//! one do-everything struct:
 //!
 //! - [`Raw`]: exactly the argument as given — nothing checked yet.
 //! - [`Validated`]: a safe, directory-relative identifier, produced by
@@ -15,28 +13,15 @@
 //!   searched for.
 //!
 //! `State` carries no default: every function signature says which
-//! state it needs, so passing an unproven `TemplatePath` where a found
-//! one is required is a compile error, not a runtime surprise.
-//!
-//! # One search
+//! state it needs, so passing an unproven `TemplatePath` where a
+//! found one is required is a compile error, not a runtime surprise.
 //!
 //! [`TemplatePath::<Validated>::find`] is the only place a search
-//! happens — [`super::loader::TemplateLoader::find`] is the one
-//! caller, for top-level `-i <name>` resolution and includes alike.
-//!
-//! # One error type
-//!
-//! [`TemplatePathError`] spans the whole lifecycle: validation
-//! failures ([`TemplatePathError::Absolute`],
-//! [`TemplatePathError::UnsafeComponent`]) and search failures
-//! ([`TemplatePathError::AmbiguousTemplate`],
-//! [`TemplatePathError::TemplateNotFound`]) all live in one enum
-//! instead of one per stage.
-//!
-//! This file never imports `loader.rs`:
-//! [`TemplatePath::<Validated>::find`] takes `local`/`global` as plain
-//! directory paths, not the concrete `TemplateLoader` type, so the
-//! dependency runs one way only.
+//! happens; its sole caller is
+//! [`super::loader::TemplateLoader::find`], used for both top-level
+//! `-i <name>` resolution and includes. [`TemplatePathError`] covers
+//! every way validation or search can fail — see its own docs for
+//! the variants.
 
 use std::{
     fs, io,
@@ -113,7 +98,7 @@ impl<State> AsRef<Path> for TemplatePath<State> {
 /// Every way producing a [`TemplatePath`] can fail: validation
 /// ([`Self::Absolute`], [`Self::UnsafeComponent`]) and search
 /// ([`Self::AmbiguousTemplate`], [`Self::TemplateNotFound`]) share one
-/// enum rather than one error type each. See the module docs for why.
+/// enum rather than one error type each.
 ///
 /// No variant separates "unsafe input" from "no such template":
 /// [`super::loader::TemplateLoader::find`] folds both into
@@ -343,6 +328,13 @@ impl TemplatePath<Found> {
     /// `None` for a missing include vs. a hard
     /// [`TemplateError::Read`](super::error::TemplateError::Read) for
     /// the top-level render), so shaping the error is left to them.
+    ///
+    /// # Errors
+    ///
+    /// Returns the underlying [`io::Error`] if the file can no longer
+    /// be read — e.g. removed since
+    /// [`TemplatePath::<Validated>::find`] proved it existed — or
+    /// does not contain valid UTF-8.
     pub(super) fn read(&self) -> io::Result<String> {
         fs::read_to_string(self.absolute())
     }

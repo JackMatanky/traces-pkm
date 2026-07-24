@@ -94,8 +94,8 @@ pub trait DialogProvider: Send + Sync {
     ///
     /// Index-based selection lets the caller recover the chosen entry from a
     /// parallel list, supporting non-string item types and disambiguating
-    /// duplicate labels. See the [module-level documentation](crate::dialog)
-    /// for the full rationale.
+    /// duplicate labels. See this trait's module documentation for the full
+    /// rationale.
     ///
     /// # Examples
     ///

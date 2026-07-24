@@ -64,7 +64,9 @@ impl Trust {
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigTrustCliError`] when the selected action fails.
+    /// Returns the [`ConfigTrustCliError`] variant produced by the
+    /// dispatched action — see [`Self::list`], [`Self::clean`],
+    /// [`Self::trust`], [`Self::untrust`], and [`Self::show`].
     #[inline]
     pub(super) fn run(
         self,
@@ -79,7 +81,12 @@ impl Trust {
         }
     }
 
-    /// Prints every currently trusted directory, one per line, to stdout.
+    /// Prints every trusted directory, one per line, to stdout.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConfigTrustCliError::List`] when the trust store cannot be
+    /// read.
     #[allow(
         clippy::print_stdout,
         reason = "trust list's output is data meant to be piped, not \
@@ -99,6 +106,11 @@ impl Trust {
     }
 
     /// Removes dangling trust entries and reports how many were removed.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConfigTrustCliError::Clean`] when the trust store cannot be
+    /// cleaned.
     fn clean(service: &ConfigService) -> Result<(), ConfigTrustCliError> {
         let removed = service.clean_trusted_store().map_err(|source| {
             ConfigTrustCliError::Clean {
@@ -113,6 +125,12 @@ impl Trust {
     }
 
     /// Trusts the resolved config target or targets.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConfigTrustCliError::TargetResolve`] when the trust
+    /// target(s) cannot be resolved, or [`ConfigTrustCliError::Trust`] when
+    /// trusting a resolved target fails.
     fn trust(
         &self,
         service: &ConfigService,
@@ -131,6 +149,12 @@ impl Trust {
     }
 
     /// Removes the resolved config target or targets from the trust store.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConfigTrustCliError::TargetResolve`] when the trust
+    /// target(s) cannot be resolved, or [`ConfigTrustCliError::Untrust`]
+    /// when removing a resolved target's trust fails.
     fn untrust(
         &self,
         service: &ConfigService,
@@ -149,6 +173,12 @@ impl Trust {
     }
 
     /// Prints the resolved config target statuses, one per line, to stdout.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConfigTrustCliError::TargetResolve`] when the trust
+    /// target(s) cannot be resolved, or [`ConfigTrustCliError::Show`] when
+    /// reading a resolved target's trust status fails.
     #[allow(
         clippy::print_stdout,
         reason = "trust --show's output is data meant to be piped, not \
@@ -174,6 +204,13 @@ impl Trust {
     }
 
     /// Visits one or many trust subjects from the optional user-provided path.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConfigTrustCliError::TargetResolve`] when the current
+    /// directory cannot be determined (no user-provided path) or when
+    /// resolving trust subjects from the path fails. Otherwise propagates
+    /// whatever error `visit` returns for a given subject.
     fn for_each_subject(
         &self,
         service: &ConfigService,

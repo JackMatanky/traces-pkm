@@ -45,7 +45,7 @@ use minijinja::{
 };
 
 /// `date.now(format=...)`'s default format when the `format` kwarg is
-/// omitted — matches the spec's own example, an ISO-8601-style date.
+/// omitted — an ISO-8601-style date (`YYYY-MM-DD`).
 /// Also the default output shape [`format_precise`] uses for a
 /// date-only (no time component) input.
 const DEFAULT_FORMAT: &str = "%Y-%m-%d";
@@ -55,8 +55,7 @@ const DEFAULT_FORMAT: &str = "%Y-%m-%d";
 const DEFAULT_DATETIME_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
 
 /// Formats [`parse_date_precise`] tries, in order, before falling back
-/// to a bare date. Covers both shapes the issue's usage examples
-/// exercise — space-separated (`2026-07-23 14:30[:00]`) and
+/// to a bare date — space-separated (`2026-07-23 14:30[:00]`) and
 /// `T`-separated ISO 8601 (with or without seconds/fractional seconds).
 const DATETIME_FORMATS: &[&str] = &[
     "%Y-%m-%d %H:%M:%S",
@@ -168,6 +167,12 @@ impl Object for DateOps {
 /// other kwarg via [`Kwargs::assert_all_used`] — the one place all
 /// five `now`/`today`/`tomorrow`/`yesterday`/`from_timestamp` closures
 /// decide how their optional `format=` argument is read.
+///
+/// # Errors
+///
+/// - [`ErrorKind::InvalidOperation`] if `format` is present but isn't a string.
+/// - [`ErrorKind::TooManyArguments`] if `kwargs` carries any key besides
+///   `format`.
 fn format_kwarg(kwargs: &Kwargs) -> Result<&str, Error> {
     let format =
         kwargs.get::<Option<&str>>("format")?.unwrap_or(DEFAULT_FORMAT);
@@ -182,6 +187,11 @@ fn format_kwarg(kwargs: &Kwargs) -> Result<&str, Error> {
 /// `DelayedFormat` returns `Err` (not a panic of its own) for an invalid
 /// strftime specifier such as `%Q`, so writing directly is what turns
 /// that into a normal [`minijinja::Error`] instead of a panic.
+///
+/// # Errors
+///
+/// [`ErrorKind::InvalidOperation`] if `format` isn't a strftime
+/// specifier `formattable` can render (e.g. `%Q`).
 fn format_with(
     formattable: impl std::fmt::Display,
     format: &str,
@@ -203,6 +213,13 @@ fn format_with(
 /// so the output shape mirrors the input shape: a date-only string
 /// piped through never grows a fabricated `00:00:00`, and a datetime
 /// string piped through never silently loses its time-of-day.
+///
+/// # Errors
+///
+/// Propagates [`format_with`]'s [`ErrorKind::InvalidOperation`]; in
+/// practice unreachable here, since `format` is always
+/// [`DEFAULT_FORMAT`] or [`DEFAULT_DATETIME_FORMAT`], both valid
+/// strftime specifiers.
 fn format_precise(dt: NaiveDateTime, has_time: bool) -> Result<String, Error> {
     let format = if has_time {
         DEFAULT_DATETIME_FORMAT
@@ -225,6 +242,11 @@ fn try_parse_datetime(s: &str) -> Option<NaiveDateTime> {
 /// date at midnight. [`date_diff`] uses the `bool` to decide
 /// between integer-unit and sub-day-precision (`f64`) output — every
 /// other caller goes through [`parse_date`], which discards it.
+///
+/// # Errors
+///
+/// [`ErrorKind::InvalidOperation`] if `s` matches neither a
+/// [`DATETIME_FORMATS`] entry nor the bare `%Y-%m-%d` fallback.
 fn parse_date_precise(s: &str) -> Result<(NaiveDateTime, bool), Error> {
     if let Some(datetime) = try_parse_datetime(s) {
         return Ok((datetime, true));
@@ -239,6 +261,10 @@ fn parse_date_precise(s: &str) -> Result<(NaiveDateTime, bool), Error> {
 /// The shared date/time string parser every filter and test besides
 /// [`date_diff`] uses — see [`parse_date_precise`] for the
 /// accepted formats and fallback behavior.
+///
+/// # Errors
+///
+/// Propagates [`parse_date_precise`]'s [`ErrorKind::InvalidOperation`].
 fn parse_date(s: &str) -> Result<NaiveDateTime, Error> {
     parse_date_precise(s).map(|(datetime, _has_time)| datetime)
 }
@@ -287,6 +313,12 @@ fn unknown_unit_error(unit: &str) -> Error {
 /// date/time string with an arbitrary strftime specifier. Prefixed
 /// (not just `format`) to avoid colliding with minijinja's built-in
 /// `format` filter, which is printf-style and unrelated to dates.
+///
+/// # Errors
+///
+/// [`ErrorKind::InvalidOperation`] if `value` isn't a parseable
+/// date/time string (see [`parse_date`]) or `format` isn't a valid
+/// strftime specifier (see [`format_with`]).
 fn date_format(value: &str, format: &str) -> Result<String, Error> {
     let datetime = parse_date(value)?;
     format_with(datetime.format(format), format)
@@ -294,11 +326,23 @@ fn date_format(value: &str, format: &str) -> Result<String, Error> {
 
 /// `{{ value | timestamp }}` — converts a piped date/time string to
 /// Unix seconds, treating a naive (timezone-less) input as UTC.
+///
+/// # Errors
+///
+/// [`ErrorKind::InvalidOperation`] if `value` isn't a parseable
+/// date/time string — see [`parse_date`].
 fn timestamp(value: &str) -> Result<i64, Error> {
     Ok(parse_date(value)?.and_utc().timestamp())
 }
 
 /// `{{ value | add_days(n) }}`
+///
+/// # Errors
+///
+/// [`ErrorKind::InvalidOperation`] if `value` isn't a parseable
+/// date/time string (see [`parse_date_precise`]) or the shift
+/// overflows chrono's representable range (see
+/// [`date_out_of_range_error`]).
 fn add_days(value: &str, n: u64) -> Result<String, Error> {
     let (datetime, has_time) = parse_date_precise(value)?;
     let shifted = datetime
@@ -308,6 +352,13 @@ fn add_days(value: &str, n: u64) -> Result<String, Error> {
 }
 
 /// `{{ value | sub_days(n) }}`
+///
+/// # Errors
+///
+/// [`ErrorKind::InvalidOperation`] if `value` isn't a parseable
+/// date/time string (see [`parse_date_precise`]) or the shift
+/// overflows chrono's representable range (see
+/// [`date_out_of_range_error`]).
 fn sub_days(value: &str, n: u64) -> Result<String, Error> {
     let (datetime, has_time) = parse_date_precise(value)?;
     let shifted = datetime
@@ -320,6 +371,13 @@ fn sub_days(value: &str, n: u64) -> Result<String, Error> {
 /// resulting month when the original day doesn't exist there (e.g.
 /// `2023-01-31` + 1 month -> `2023-02-28`), per
 /// [`NaiveDateTime::checked_add_months`]'s documented behavior.
+///
+/// # Errors
+///
+/// [`ErrorKind::InvalidOperation`] if `value` isn't a parseable
+/// date/time string (see [`parse_date_precise`]) or the shift
+/// overflows chrono's representable range (see
+/// [`date_out_of_range_error`]).
 fn add_months(value: &str, n: u32) -> Result<String, Error> {
     let (datetime, has_time) = parse_date_precise(value)?;
     let shifted = datetime
@@ -330,6 +388,13 @@ fn add_months(value: &str, n: u32) -> Result<String, Error> {
 
 /// `{{ value | sub_months(n) }}` — same end-of-month clamping as
 /// [`add_months`], in reverse.
+///
+/// # Errors
+///
+/// [`ErrorKind::InvalidOperation`] if `value` isn't a parseable
+/// date/time string (see [`parse_date_precise`]) or the shift
+/// overflows chrono's representable range (see
+/// [`date_out_of_range_error`]).
 fn sub_months(value: &str, n: u32) -> Result<String, Error> {
     let (datetime, has_time) = parse_date_precise(value)?;
     let shifted = datetime
@@ -342,6 +407,13 @@ fn sub_months(value: &str, n: u32) -> Result<String, Error> {
 /// [`add_months`]'s underlying call), so a Feb 29 input clamps to
 /// Feb 28 in a non-leap target year exactly like `add_months` clamps
 /// across any other month-length mismatch.
+///
+/// # Errors
+///
+/// [`ErrorKind::InvalidOperation`] if `value` isn't a parseable
+/// date/time string (see [`parse_date_precise`]), `n * 12` overflows
+/// [`u32`], or the shift overflows chrono's representable range (see
+/// [`date_out_of_range_error`]).
 fn add_years(value: &str, n: u32) -> Result<String, Error> {
     let (datetime, has_time) = parse_date_precise(value)?;
     let months = n.checked_mul(12).ok_or_else(date_out_of_range_error)?;
@@ -352,6 +424,13 @@ fn add_years(value: &str, n: u32) -> Result<String, Error> {
 }
 
 /// `{{ value | sub_years(n) }}` — see [`add_years`].
+///
+/// # Errors
+///
+/// [`ErrorKind::InvalidOperation`] if `value` isn't a parseable
+/// date/time string (see [`parse_date_precise`]), `n * 12` overflows
+/// [`u32`], or the shift overflows chrono's representable range (see
+/// [`date_out_of_range_error`]).
 fn sub_years(value: &str, n: u32) -> Result<String, Error> {
     let (datetime, has_time) = parse_date_precise(value)?;
     let months = n.checked_mul(12).ok_or_else(date_out_of_range_error)?;
@@ -362,6 +441,13 @@ fn sub_years(value: &str, n: u32) -> Result<String, Error> {
 }
 
 /// `{{ value | start_of_month }}`
+///
+/// # Errors
+///
+/// [`ErrorKind::InvalidOperation`] if `value` isn't a parseable
+/// date/time string — see [`parse_date_precise`]. The `with_day(1)`
+/// call underneath can't itself fail (day 1 exists in every month), but
+/// stays behind [`date_out_of_range_error`] since it's a fallible API.
 fn start_of_month(value: &str) -> Result<String, Error> {
     let (datetime, has_time) = parse_date_precise(value)?;
     let shifted = datetime.with_day(1).ok_or_else(date_out_of_range_error)?;
@@ -369,6 +455,13 @@ fn start_of_month(value: &str) -> Result<String, Error> {
 }
 
 /// `{{ value | end_of_month }}`
+///
+/// # Errors
+///
+/// [`ErrorKind::InvalidOperation`] if `value` isn't a parseable
+/// date/time string (see [`parse_date_precise`]) or the resulting
+/// last-of-month day is out of chrono's representable range (see
+/// [`date_out_of_range_error`]).
 fn end_of_month(value: &str) -> Result<String, Error> {
     let (datetime, has_time) = parse_date_precise(value)?;
     let last_day = datetime.num_days_in_month();
@@ -378,9 +471,15 @@ fn end_of_month(value: &str) -> Result<String, Error> {
     format_precise(shifted, has_time)
 }
 
-/// `{{ value | weekday }}` — `0` for Monday through `6` for Sunday, per
-/// the issue's spec (not chrono's own Sunday-first
-/// [`Weekday::number_from_sunday`](chrono::Weekday::number_from_sunday)).
+/// `{{ value | weekday }}` — `0` for Monday through `6` for Sunday
+/// (chrono's own
+/// [`Weekday::number_from_sunday`](chrono::Weekday::number_from_sunday)
+/// is Sunday-first, so this filter remaps to Monday-first order).
+///
+/// # Errors
+///
+/// [`ErrorKind::InvalidOperation`] if `value` isn't a parseable
+/// date/time string — see [`parse_date`].
 fn weekday(value: &str) -> Result<u32, Error> {
     Ok(parse_date(value)?.weekday().num_days_from_monday())
 }
@@ -417,6 +516,14 @@ impl DiffUnit {
 /// `"seconds"`). Returns `f64` when both `value` and `other` carry a
 /// time component (sub-day precision is meaningful); otherwise an `i64`
 /// whole-unit count.
+///
+/// # Errors
+///
+/// - [`ErrorKind::InvalidOperation`] if `value` or `other` isn't a parseable
+///   date/time string (see [`parse_date_precise`]), or `unit` isn't `"days"`,
+///   `"hours"`, `"minutes"`, or `"seconds"` (see [`unknown_unit_error`]).
+/// - [`ErrorKind::TooManyArguments`] if `kwargs` carries any key besides
+///   `unit`.
 #[expect(
     clippy::needless_pass_by_value,
     reason = "minijinja's Function trait extracts a filter's trailing Kwargs \
@@ -461,11 +568,21 @@ fn date_diff(value: &str, other: &str, kwargs: Kwargs) -> Result<Value, Error> {
 /// `{% if value is is_past %}` — `true` when the piped date/time string
 /// is before now (UTC; a naive input is treated as UTC, matching
 /// [`timestamp`]).
+///
+/// # Errors
+///
+/// [`ErrorKind::InvalidOperation`] if `value` isn't a parseable
+/// date/time string — see [`parse_date`].
 fn is_past(value: &str) -> Result<bool, Error> {
     Ok(parse_date(value)?.and_utc() < Utc::now())
 }
 
 /// `{% if value is is_future %}` — see [`is_past`].
+///
+/// # Errors
+///
+/// [`ErrorKind::InvalidOperation`] if `value` isn't a parseable
+/// date/time string — see [`parse_date`].
 fn is_future(value: &str) -> Result<bool, Error> {
     Ok(parse_date(value)?.and_utc() > Utc::now())
 }
@@ -473,6 +590,13 @@ fn is_future(value: &str) -> Result<bool, Error> {
 /// `{% if value is is_leap_year %}` — accepts either an integer year
 /// (`2024 is is_leap_year`) or a date/time string, checked via
 /// [`parse_date`].
+///
+/// # Errors
+///
+/// [`ErrorKind::InvalidOperation`] (via [`leap_year_input_error`]) if
+/// `value` is neither an integer year representable as [`i32`] nor a
+/// parseable date/time string (see [`parse_date`]), or the year is out
+/// of [`NaiveDate`]'s representable range.
 fn is_leap_year(value: &Value) -> Result<bool, Error> {
     let year = if let Some(year) = value.as_i64() {
         i32::try_from(year)

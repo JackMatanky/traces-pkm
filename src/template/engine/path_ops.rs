@@ -1,28 +1,24 @@
-//! [`PathOps`]: registers path-inspection **tests** and **filters** —
-//! `path_exists`, `is_file_path`, `is_dir_path` as
-//! [`Environment::add_test`] tests (a template applies one as `{{ value
+//! [`PathOps`] registers path-inspection **tests** and **filters** on a
+//! minijinja [`Environment`]: `path_exists`, `is_file_path`, `is_dir_path`
+//! as [`Environment::add_test`] tests (a template applies one as `{{ value
 //! is path_exists }}`, per
 //! <https://docs.rs/minijinja/latest/minijinja/tests/index.html>), and
 //! `path_filename`, `path_basename`, `path_extension`, `path_parent` as
 //! [`Environment::add_filter`] filters (`{{ value | path_basename }}`).
-//! minijinja draws this line deliberately: tests are boolean checks
-//! invoked with `is`/`is not`, filters are transformations invoked with
-//! `|` — the three boolean I/O checks below are tests because they
-//! *check* a path, the four string transforms are filters because they
-//! *compute a new value from* one. Neither group dispatches through an
-//! [`Object`](minijinja::value::Object) namespace the way `file.*`/
-//! `ui.*`/`date.*` do — like [`StrOps`](super::str_ops::StrOps), each
-//! is a plain function registered once.
+//! Tests are boolean checks invoked with `is`/`is not`; filters are
+//! transformations invoked with `|` — the three boolean I/O checks below
+//! are tests because they *check* a path, the four string transforms are
+//! filters because they *compute a new value from* one. Each is
+//! registered as a plain function directly on the environment, not
+//! dispatched through an [`Object`](minijinja::value::Object) namespace.
 //!
 //! `path_exists`/`is_file_path`/`is_dir_path` resolve a relative `path`
 //! argument against [`Config::root`](crate::config::Config::root) —
-//! captured as `Arc<Path>` and cloned into each closure, the same way
-//! [`FileOps`](super::file_ops::FileOps) captures it for
-//! `file.include()`, since [`Value::from_function`](minijinja::value)
-//! closures must be `Send + Sync + 'static` and can't borrow `&Path`. An
-//! absolute `path` is used as-is. These tests only *inspect* the
-//! filesystem — they never read file contents — so there's no
-//! root-escape risk to `confine` against the way `file.include()` must.
+//! captured as `Arc<Path>` and cloned into each closure, since
+//! [`Value::from_function`](minijinja::value) closures must be
+//! `Send + Sync + 'static` and can't borrow `&Path`. An absolute `path`
+//! is used as-is. These tests only *inspect* the filesystem — they never
+//! read file contents.
 //!
 //! `path_filename`/`path_basename`/`path_extension`/`path_parent` are
 //! pure string transformations over [`std::path::Path`] — no I/O, no
@@ -33,8 +29,8 @@
 //! [`Path::exists`]/[`Path::is_file`]/[`Path::is_dir`], which each
 //! silently fold every error (including permission failures) into
 //! `false`: a missing path is a normal, expected outcome for a template
-//! author to branch on, but a permission error or similar means the
-//! test couldn't actually answer the question, so it's surfaced as a
+//! author to branch on, but a permission error means the test couldn't
+//! actually answer the question, so it's surfaced as a
 //! [`minijinja::Error`] instead of misreported as "doesn't exist".
 
 use std::{
@@ -82,7 +78,8 @@ impl PathOps {
     /// [`Environment::add_test`], wiring its closure through
     /// [`inspect`] with the given `query` — the shared body behind
     /// `path_exists`/`is_file_path`/`is_dir_path` in [`Self::register`].
-    /// Clones `root` into the closure since [`Value::from_function`]'s
+    /// Clones `root` into the closure since
+    /// [`Value::from_function`](minijinja::value::Value::from_function)'s
     /// closures must be `Send + Sync + 'static` and can't borrow
     /// `&self`.
     fn register_test(
@@ -106,12 +103,16 @@ enum PathQuery {
     IsDir,
 }
 
-/// Resolves `path` against `root` — joining it on if relative, using it
-/// as-is if absolute — then answers `query` against the resolved target.
-/// A missing target answers `false` for every query; any other I/O
-/// failure (permission denied, etc.) propagates as a
-/// [`minijinja::Error`], since the test genuinely couldn't determine
-/// the answer.
+/// Resolves `path` against `root` via [`resolve_against_root`], then
+/// answers `query` against the resolved target. A missing target
+/// answers `false` for every query.
+///
+/// # Errors
+///
+/// Returns an [`ErrorKind::InvalidOperation`] error (built by
+/// [`inspect_error`]) if reading the target's metadata fails for any
+/// reason other than "not found" — permission denied, a broken symlink
+/// loop, etc. — since the test genuinely couldn't determine the answer.
 fn inspect(root: &Path, path: &str, query: PathQuery) -> Result<bool, Error> {
     let resolved = resolve_against_root(root, path);
     match std::fs::metadata(&resolved) {
@@ -136,8 +137,9 @@ fn resolve_against_root(root: &Path, path: &str) -> PathBuf {
     }
 }
 
-/// Builds the error for an I/O failure other than "not found" while
-/// inspecting `path` — permission denied, a broken symlink loop, etc.
+/// Builds the [`ErrorKind::InvalidOperation`] error for an I/O failure
+/// other than "not found" while inspecting `path` — permission denied,
+/// a broken symlink loop, etc.
 fn inspect_error(path: &str, source: io::Error) -> Error {
     Error::new(ErrorKind::InvalidOperation, format!("failed to inspect {path}"))
         .with_source(source)

@@ -1,41 +1,28 @@
-//! [`TemplateWriter`]: the collaborator that applies one [`WriteMode`]
-//! to rendered content — [`TemplateWriter::write`] is the one entry
-//! point, and the only thing [`super::service::TemplateService`] calls
-//! on this module. For [`WriteMode::DryRun`] it ignores the supplied
-//! [`TemplateWriteTarget`] and `default` entirely and hands `content`
-//! straight back as [`WriteOutcome::Previewed`] ([`Self::preview`]);
-//! for [`WriteMode::Commit`] it resolves
-//! the target to a real path ([`TemplateWriteTarget::target_path`])
-//! and writes to it ([`Self::commit`]), returning
-//! [`WriteOutcome::Written`]. Deliberately a separate collaborator from
-//! [`TemplateWriteTarget`]: candidate-gathering and precedence are a
-//! pure decision over values, with no I/O of their own — `write` is
-//! the only thing in this module that touches the filesystem.
+//! [`TemplateWriter`] applies one [`WriteMode`] to rendered content;
+//! [`TemplateWriter::write`] is the only entry point, called solely by
+//! [`super::service::TemplateService::render_to_file`]. Under
+//! [`WriteMode::DryRun`] it returns [`WriteOutcome::Previewed`]
+//! without resolving `target`/`default` or touching the filesystem;
+//! under [`WriteMode::Commit`] it resolves `target` to a real path
+//! ([`TemplateWriteTarget::target_path`]) and writes it, returning
+//! [`WriteOutcome::Written`]. `write` is the only thing in this module
+//! that performs I/O.
 //!
-//! [`TemplateWriteTarget`]: gathers a render's output-destination
+//! [`TemplateWriteTarget`] gathers a render's output-destination
 //! candidates — the `-o` flag (`requested`) and whatever
-//! `file.write_to()` captured (`declared`) — built by
-//! [`super::service::TemplateService::render_to_file`] right after it
-//! has both values in hand, and handed to [`TemplateWriter::write`]
-//! already assembled. On [`TemplateWriteTarget::target_path`], applies
-//! the precedence policy: `requested` over `declared` over a
-//! caller-supplied default. `requested`/`declared` are runtime values
-//! the CLI argument or the template itself supplies, so
-//! [`TemplateWriteTarget::confine`] proves they stay within
-//! [`Config::root`](crate::config::Config::root) before anything is
-//! written. [`Config::output_dir`] is different: it's a value the
-//! project's own (already trust-gated) config chose, and — like the
-//! rest of this codebase's handling of `output_dir` — is allowed to be
-//! absolute and point anywhere the config author configured, so a
+//! `file.write_to()` captured (`declared`) — and
+//! [`TemplateWriteTarget::target_path`] resolves them by precedence:
+//! `requested` over `declared` over a caller-supplied default.
+//! `requested`/`declared` are confined to
+//! [`Config::root`](crate::config::Config::root) by
+//! [`TemplateWriteTarget::confine`], which rejects `..` and absolute
+//! components before joining — `root.join(candidate)` alone does not
+//! confine, since `Path::starts_with` compares components lexically
+//! and still treats `root.join("../../../tmp/evil.md")` as inside
+//! `root`. [`Config::output_dir`](crate::config::Config::output_dir)
+//! is already trust-gated and may legitimately be absolute, so a
 //! caller builds its default candidate through
 //! [`TemplateWriteTarget::trusted`] instead, unchecked.
-//!
-//! `root.join(candidate)` alone does **not** confine anything:
-//! `Path::starts_with` compares components lexically, so
-//! `root.join("../../../tmp/evil.md")` still "starts with" `root` even
-//! though it resolves outside it. The only reliable check is rejecting
-//! `..` (and absolute paths) in `candidate`'s own components before
-//! joining, which is what [`TemplateWriteTarget::confine`] does.
 
 use std::{
     fs,
@@ -143,21 +130,15 @@ impl<'a> TemplateWriter<'a> {
 }
 
 /// How [`TemplateWriter::write`] should treat rendered content — the
-/// domain meaning behind `--force`/`--dry-run`, spelled out as a type
-/// instead of bare `bool`s at the call site. `pub(crate)`, unlike
-/// everything else in this module: `--force` and `--dry-run` are
-/// mutually exclusive in effect (dry-run has no on-disk write to
-/// force), so
+/// domain meaning behind `--force`/`--dry-run`, as a type instead of
+/// two independent `bool`s at the call site.
 /// [`TemplateService::render_to_file`](super::service::TemplateService::render_to_file)
-/// takes one `WriteMode` instead of two independent `bool`s — which
-/// means the CLI, where those flags are parsed, needs to build one.
-/// Two variants, not three: whether to write at all (`DryRun` vs.
-/// `Commit`) and, if writing, how strict to be
-/// ([`CommitPolicy`]) are different questions — nesting the second
-/// inside the first means [`TemplateWriter::commit`] and
-/// [`CommitPolicy::create_file`] only ever see a policy that implies
-/// "write," instead of every caller re-deriving that from a flat
-/// three-way match.
+/// takes one `WriteMode`; the CLI, where the flags are parsed, builds
+/// it. `pub(crate)`, unlike the rest of this module, since
+/// `crate::cli::template` constructs it directly. [`CommitPolicy`]
+/// nests inside [`Self::Commit`] rather than sitting beside it, so
+/// [`TemplateWriter::commit`] and [`CommitPolicy::create_file`] only
+/// ever see a policy that implies "write."
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(crate) enum WriteMode {
     /// Render only — the `--dry-run` mode. [`TemplateWriter::write`]
@@ -171,12 +152,10 @@ pub(crate) enum WriteMode {
 impl WriteMode {
     /// Converts the CLI's `--dry-run` and `--force` flags into the one
     /// mode that drives the rest of the pipeline. `dry_run` wins: when
-    /// set, `force` is never consulted — that's
-    /// [`CommitPolicy::from_flag`]'s concern, not this one's, since
-    /// the two flags don't combine into a fourth state — there's
-    /// nothing to force in dry-run mode. The precedence rule lives
-    /// here, not at the CLI call site, so the two flags' meaning stays
-    /// defined in one place.
+    /// set, `force` is never consulted (that's
+    /// [`CommitPolicy::from_flag`]'s job) since dry-run has nothing to
+    /// force. The precedence lives here, not at the CLI call site, so
+    /// the flags' combined meaning is defined in one place.
     #[inline]
     #[must_use]
     pub(crate) fn from_flags(dry_run: bool, force: bool) -> Self {
@@ -188,15 +167,12 @@ impl WriteMode {
     }
 }
 
-/// How [`TemplateWriter::commit`] should treat a target that's already
-/// known to be written to — [`WriteMode::Commit`]'s payload. Split out
-/// from [`WriteMode`] so [`Self::create_file`] never has to handle "and
-/// what if we're not writing at all," the way a flat
-/// `WriteMode::create_file` once did: that case is now unrepresentable
-/// here rather than a runtime no-op kept only for exhaustiveness.
+/// How [`TemplateWriter::commit`] should treat a target already known
+/// to be written to — [`WriteMode::Commit`]'s payload, split out so
+/// [`Self::create_file`] only ever sees a policy that implies "write."
 /// `pub(crate)`, like [`WriteMode`] — a `pub(crate)` enum can't carry a
-/// variant payload less visible than itself — though only `writer.rs`
-/// actually names it; `WriteMode` is still the only thing
+/// variant payload less visible than itself — though only this file
+/// names it; `WriteMode` is still the only thing
 /// `crate::cli::template` constructs or matches on.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(crate) enum CommitPolicy {

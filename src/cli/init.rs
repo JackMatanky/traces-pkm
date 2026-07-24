@@ -24,7 +24,8 @@ const EXISTING_TRACES_HELP: &str = "remove the existing .traces directory or \
 
 /// `traces init` — scaffold local configuration and templates.
 ///
-/// No flags yet — options are collected interactively via `DialogProvider`.
+/// Takes no flags; options are collected interactively through
+/// [`DialogProvider`].
 #[derive(Debug, Args)]
 pub struct Init;
 

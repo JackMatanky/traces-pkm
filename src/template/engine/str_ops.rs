@@ -3,33 +3,28 @@
 //! `title_case`), plus manipulation, truncation, inspection, and regex
 //! filters (`trim_prefix`, `trim_suffix`, `truncate`, `truncate_words`,
 //! `word_count`, `repeat`, `regex_replace`, `regex_match`) — a template
-//! applies each as `{{ value | snake_case }}`. Unlike
-//! [`FileOps`](super::file_ops::FileOps)/[`UiOps`](super::ui_ops::UiOps)/
-//! [`DateOps`](super::date_ops::DateOps), these aren't namespace
-//! methods: minijinja filters are plain functions registered once each
-//! via [`Environment::add_filter`], not dispatched through an
-//! [`Object`](minijinja::value::Object).
+//! applies each as `{{ value | snake_case }}`. Each filter is a plain
+//! function registered once via [`Environment::add_filter`]; none carry
+//! shared state, so there is no [`Object`](minijinja::value::Object) to
+//! dispatch through.
 //!
 //! The case-conversion filters are thin wrappers around
-//! [`convert_case`]'s [`Casing`] trait — [`Casing::to_case`] does the
+//! [`convert_case`]'s [`Casing`](convert_case::Casing) trait —
+//! [`Casing::to_case`](convert_case::Casing::to_case) does the
 //! actual conversion; this module only picks which [`Case`] each
 //! filter name maps to. The remaining stdlib-backed filters wrap
 //! `str::strip_prefix`/`strip_suffix`/`repeat`/`split_whitespace`
 //! directly.
 //!
 //! `regex_replace`/`regex_match` compile their pattern fresh on every
-//! call via [`Regex::new`] rather than caching it — the `ponytail`
-//! choice per the issue's Rust guidance; switch to a `LazyLock`-backed
-//! cache only if profiling shows repeated compilation matters.
+//! call via [`Regex::new`] rather than caching it.
 
 use convert_case::{Case, Casing as _};
 use minijinja::{Environment, Error, ErrorKind, value::Kwargs};
 use regex::Regex;
 
-/// Unit struct backing [`Self::register`] — no state, unlike
-/// [`FileOps`](super::file_ops::FileOps)/[`UiOps`](super::ui_ops::UiOps)/
-/// [`DateOps`](super::date_ops::DateOps), since these filters take no
-/// shared dependency the way `file.include()`/`ui.*` do.
+/// Unit struct backing [`Self::register`] — carries no state, since
+/// these filters take no shared dependency.
 pub(super) struct StrOps;
 
 impl StrOps {
@@ -76,6 +71,13 @@ fn trim_suffix(value: &str, suffix: &str) -> String {
 /// character count (not byte count, so multi-byte UTF-8 input isn't
 /// split mid-character), keeping the total output length — including
 /// the ellipsis — within `length`. A no-op when `value` already fits.
+///
+/// # Errors
+///
+/// Propagates [`ellipsis_kwarg`]'s errors: [`ErrorKind::InvalidOperation`]
+/// if `ellipsis` is present but not a string, or
+/// [`ErrorKind::TooManyArguments`] if `kwargs` has any key besides
+/// `ellipsis`.
 #[expect(
     clippy::needless_pass_by_value,
     reason = "Kwargs::assert_all_used consumes self by value; &Kwargs \
@@ -112,6 +114,13 @@ fn truncate(
 /// words and, via one trailing `next()`, checks whether a word was
 /// left out, so no intermediate `Vec` is collected just to measure the
 /// word count.
+///
+/// # Errors
+///
+/// Propagates [`ellipsis_kwarg`]'s errors: [`ErrorKind::InvalidOperation`]
+/// if `ellipsis` is present but not a string, or
+/// [`ErrorKind::TooManyArguments`] if `kwargs` has any key besides
+/// `ellipsis`.
 #[expect(
     clippy::needless_pass_by_value,
     reason = "Kwargs::assert_all_used consumes self by value; &Kwargs \
@@ -159,6 +168,12 @@ fn word_count(value: &str) -> usize {
 /// [`truncate_words`], defaulting to `"..."`, and rejects any other
 /// kwarg via [`Kwargs::assert_all_used`] — the one place both filters
 /// decide how their optional `ellipsis=` argument is read.
+///
+/// # Errors
+///
+/// - [`ErrorKind::InvalidOperation`] if `ellipsis` is present but not a string.
+/// - [`ErrorKind::TooManyArguments`] if `kwargs` has any key besides
+///   `ellipsis`.
 fn ellipsis_kwarg(kwargs: &Kwargs) -> Result<&str, Error> {
     let ellipsis = kwargs.get::<Option<&str>>("ellipsis")?.unwrap_or("...");
     kwargs.assert_all_used()?;
@@ -168,8 +183,13 @@ fn ellipsis_kwarg(kwargs: &Kwargs) -> Result<&str, Error> {
 /// `regex_replace(pattern, replacement)` filter body: replaces every
 /// non-overlapping match of `pattern` with `replacement`, which may
 /// reference capture groups as `$1`/`$2` — [`Regex::replace_all`]'s own
-/// replacement syntax. See this module's docs for why the pattern is
-/// compiled fresh on every call.
+/// replacement syntax. The pattern is compiled fresh on every call via
+/// [`Regex::new`] rather than cached.
+///
+/// # Errors
+///
+/// Returns [`ErrorKind::InvalidOperation`] if `pattern` is not a valid
+/// regex (see [`regex_compile_error`]).
 fn regex_replace(
     value: &str,
     pattern: &str,
@@ -182,6 +202,11 @@ fn regex_replace(
 
 /// `regex_match(pattern)` filter body: `true` if `value` contains any
 /// match for `pattern`.
+///
+/// # Errors
+///
+/// Returns [`ErrorKind::InvalidOperation`] if `pattern` is not a valid
+/// regex (see [`regex_compile_error`]).
 fn regex_match(value: &str, pattern: &str) -> Result<bool, Error> {
     let re = Regex::new(pattern)
         .map_err(|source| regex_compile_error(pattern, source))?;

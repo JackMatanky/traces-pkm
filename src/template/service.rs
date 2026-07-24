@@ -87,6 +87,13 @@ impl<'a> TemplateService<'a> {
     /// precedence: `target`'s `requested` candidate, then `declared`,
     /// then [`Self::default_output_path`].
     ///
+    /// # Arguments
+    ///
+    /// * `name` - template identifier passed to [`TemplateEngine::resolve`]
+    /// * `output` - explicit `-o` override; highest write-target precedence
+    /// * `mode` - [`WriteMode::Commit`] writes to disk, [`WriteMode::DryRun`]
+    ///   returns the rendered content untouched
+    ///
     /// # Errors
     ///
     /// | Error | When |
@@ -95,7 +102,7 @@ impl<'a> TemplateService<'a> {
     /// | [`TemplateError::Read`] | the resolved template can't be read |
     /// | [`TemplateError::Render`] | the template's source is invalid, or a `ui.*`/`file.*` call inside it fails |
     /// | [`TemplateError::OutputPathEscapesRoot`] | `file.write_to()` or `-o` names an absolute or `..`-containing path — never returned for [`WriteMode::DryRun`] |
-    /// | [`TemplateError::OutputFileAlreadyExists`] | the output path exists and `mode` is [`WriteMode::Commit`] with [`CommitPolicy::CreateNew`] — checked atomically by [`fs::File::create_new`], not a separate `exists()` call, so there's no race between the check and the write; never returned for [`WriteMode::DryRun`] |
+    /// | [`TemplateError::OutputFileAlreadyExists`] | the output path exists and `mode` is [`WriteMode::Commit`] with [`CommitPolicy::CreateNew`](super::writer::CommitPolicy::CreateNew) — checked atomically by [`fs::File::create_new`](std::fs::File::create_new), not a separate `exists()` call, so there's no race between the check and the write; never returned for [`WriteMode::DryRun`] |
     /// | [`TemplateError::Write`] | the output, or its parent directory, can't be written |
     #[inline]
     pub(crate) fn render_to_file(
@@ -146,9 +153,9 @@ impl<'a> TemplateService<'a> {
     /// ([`TemplatePath::default_output_filename`]) rather than the raw
     /// `-i` argument — so two directories' same-named templates land at
     /// different output paths instead of colliding. Uses
-    /// [`TemplateWriteTarget::trusted`], not
-    /// [`TemplateWriteTarget::confine`] — `output_dir` is a trusted
-    /// config value (see `writer`'s module docs), not a runtime
+    /// [`TemplateWriteTarget::trusted`], not `TemplateWriteTarget`'s
+    /// private `confine` helper — `output_dir` is a trusted config
+    /// value (see `writer`'s module docs), not a runtime
     /// `-o`/`file.write_to()` candidate.
     fn default_output_path(&self, resolved: &TemplatePath<Found>) -> PathBuf {
         let candidate =

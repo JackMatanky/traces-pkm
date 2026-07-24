@@ -6,8 +6,8 @@
 //! command errors type-erase sources behind [`Box`]. [`TemplateCliError`] is
 //! the one exception: it downcasts its boxed source back to
 //! [`crate::template::TemplateError`] to special-case
-//! [`TemplateError::OutputFileAlreadyExists`](crate::template::TemplateError::OutputFileAlreadyExists)
-//! and [`TemplateError::OutputPathEscapesRoot`](crate::template::TemplateError::OutputPathEscapesRoot)
+//! [`TemplateError::OutputFileAlreadyExists`]
+//! and [`TemplateError::OutputPathEscapesRoot`]
 //! into their own diagnostic codes and help text.
 
 use std::{error::Error as StdError, fmt::Display, path::PathBuf};
@@ -17,6 +17,10 @@ use thiserror::Error;
 
 use crate::template::TemplateError;
 
+/// Errors from running the `traces` binary.
+///
+/// Wraps each subcommand's failure, or reports that neither a subcommand
+/// nor `-i`/`--input` was given — returned by [`run`](crate::cli::run).
 #[derive(Debug, Diagnostic, Error)]
 pub enum CliError {
     /// `traces trust` failed.
@@ -118,8 +122,8 @@ pub enum ConfigInitCliError {
 /// surface.
 ///
 /// Thin adapter over [`crate::config::ConfigService`] (config discovery and
-/// build, including the trust gate) and `crate::template::TemplateService`
-/// (resolve, render, write) — see `crate::cli::template`'s module docs.
+/// build, including the trust gate) and [`crate::template::TemplateService`]
+/// (resolve, render, write) — see [`crate::cli::template`]'s module docs.
 #[derive(Debug, Error)]
 pub enum TemplateCliError {
     /// Discovering configuration from `cwd` failed.

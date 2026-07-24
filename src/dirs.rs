@@ -170,11 +170,8 @@ pub(crate) static TRACKED_CONFIGS: LazyLock<StateDirRoot> =
 /// Resolves to `$TRACES_STATE_DIR/trusted-configs`.
 ///
 /// Contains BLAKE3-keyed symbolic links, or path-bearing files where symbolic
-/// links are unavailable, recording every workspace
-/// [`ConfigStateStore`] has marked as safe to load configs and instantiate
-/// templates from.
-///
-/// [`ConfigStateStore`]: crate::config::store::ConfigStateStore
+/// links are unavailable, recording every workspace `ConfigStateStore` has
+/// marked as safe to load configs and instantiate templates from.
 pub(crate) static TRUSTED_CONFIGS: LazyLock<StateDirRoot> =
     LazyLock::new(|| StateDirRoot::new("trusted-configs"));
 
