@@ -10,6 +10,7 @@
 
 use std::{error::Error as StdError, fmt::Display, path::PathBuf};
 
+use inquire::InquireError;
 use miette::Diagnostic;
 use thiserror::Error;
 
@@ -147,6 +148,19 @@ pub enum TemplateCliError {
         #[source]
         source: Box<dyn StdError + Send + Sync + 'static>,
     },
+    /// The interactive picker (`traces template`/`traces -i` with no
+    /// name) found no `.md` files in either the local or global
+    /// template directory.
+    #[error("no templates found")]
+    NoTemplates,
+    /// The interactive picker prompt itself failed — an I/O error, or
+    /// the user cancelled (Esc) or interrupted (Ctrl-C) it.
+    #[error("template picker failed")]
+    Picker {
+        /// The underlying `inquire` error.
+        #[source]
+        source: InquireError,
+    },
 }
 
 impl Diagnostic for ConfigTrustCliError {
@@ -280,6 +294,10 @@ impl Diagnostic for TemplateCliError {
             Self::Instantiate {
                 ..
             } => "traces::cli::template::instantiate_failed",
+            Self::NoTemplates => "traces::cli::template::no_templates",
+            Self::Picker {
+                ..
+            } => "traces::cli::template::picker_failed",
         };
         Some(Box::new(code))
     }
@@ -320,6 +338,16 @@ impl Diagnostic for TemplateCliError {
             } => Some(Box::new(
                 "check that the template exists in a configured template \
                  directory and that its minijinja syntax is valid",
+            )),
+            Self::NoTemplates => Some(Box::new(
+                "place template (.md) files in your template directory, or \
+                 run `traces init` to scaffold one",
+            )),
+            Self::Picker {
+                ..
+            } => Some(Box::new(
+                "the picker prompt was cancelled or failed; try again, or \
+                 pass a name directly with `-i <name>`",
             )),
         }
     }
@@ -477,5 +505,46 @@ mod tests {
                     .to_owned()
             )
         );
+    }
+
+    #[test]
+    fn no_templates_error_has_a_code_and_help() {
+        let error = TemplateCliError::NoTemplates;
+
+        assert_eq!(error.to_string(), "no templates found");
+        assert_eq!(
+            error.code().map(|code| code.to_string()),
+            Some("traces::cli::template::no_templates".to_owned())
+        );
+        assert_eq!(
+            error.help().map(|help| help.to_string()),
+            Some(
+                "place template (.md) files in your template directory, or \
+                 run `traces init` to scaffold one"
+                    .to_owned()
+            )
+        );
+    }
+
+    #[test]
+    fn picker_error_has_a_code_help_and_preserves_its_source() {
+        let error = TemplateCliError::Picker {
+            source: InquireError::OperationCanceled,
+        };
+
+        assert_eq!(error.to_string(), "template picker failed");
+        assert_eq!(
+            error.code().map(|code| code.to_string()),
+            Some("traces::cli::template::picker_failed".to_owned())
+        );
+        assert_eq!(
+            error.help().map(|help| help.to_string()),
+            Some(
+                "the picker prompt was cancelled or failed; try again, or \
+                 pass a name directly with `-i <name>`"
+                    .to_owned()
+            )
+        );
+        assert!(error.source().is_some());
     }
 }

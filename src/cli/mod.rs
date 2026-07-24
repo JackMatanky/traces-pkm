@@ -3,6 +3,7 @@
 //! [`CliError`] adds user-facing help text and error codes via
 //! `miette::Diagnostic`.
 
+mod completions;
 mod error;
 pub mod init;
 mod template;
@@ -28,9 +29,25 @@ struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
     /// Template name to instantiate — the default `traces -i <name>`
-    /// dispatch, equivalent to `traces template -i <name>`.
-    #[arg(short = 'i', long = "input", value_name = "NAME")]
-    input: Option<PathBuf>,
+    /// dispatch, equivalent to `traces template -i <name>`. Pass with no
+    /// value to trigger the interactive fuzzy picker instead.
+    //
+    // `Option<Option<_>>`, not `Option<PathBuf>`, so parsing can
+    // distinguish "flag absent" (`None`, -> `CliError::NoCommand`) from
+    // "flag present, no value" (`Some(None)`, -> the interactive picker)
+    // from "flag present, value given" (`Some(Some(name))`, -> the
+    // ordinary `-i <name>` dispatch) — `Option<PathBuf>` alone collapses
+    // the first two into the same `None`.
+    #[arg(short = 'i', long = "input", value_name = "NAME", num_args = 0..=1)]
+    #[expect(
+        clippy::option_option,
+        reason = "the three states are load-bearing: None (flag absent) is \
+                  CliError::NoCommand, Some(None) (flag present, no value) is \
+                  the interactive picker, Some(Some(name)) is the ordinary -i \
+                  <name> dispatch — Option<PathBuf> alone can't distinguish \
+                  the first two"
+    )]
+    input: Option<Option<PathBuf>>,
 }
 
 impl Cli {
@@ -54,7 +71,10 @@ impl Cli {
         match self.command {
             Some(cmd) => cmd.run(service, provider),
             None => match self.input {
-                Some(name) => template::Template::new(name)
+                Some(Some(name)) => template::Template::new(name)
+                    .run(service, provider)
+                    .map_err(Into::into),
+                Some(None) => template::Template::interactive()
                     .run(service, provider)
                     .map_err(Into::into),
                 None => Err(CliError::NoCommand),
@@ -73,6 +93,8 @@ enum Commands {
     /// Render a template and write it to disk
     #[command(alias = "tmpl")]
     Template(template::Template),
+    /// Generate shell completions, or list available template names
+    Completions(completions::Completions),
 }
 
 impl Commands {
@@ -88,6 +110,7 @@ impl Commands {
             Self::Template(args) => {
                 args.run(service, provider).map_err(Into::into)
             }
+            Self::Completions(args) => args.run(service).map_err(Into::into),
         }
     }
 }
@@ -109,6 +132,8 @@ pub fn run() -> Result<(), CliError> {
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use clap::Parser as _;
     use pretty_assertions::assert_eq;
 
@@ -141,7 +166,7 @@ mod tests {
 
         assert!(matches!(
             &cli.command,
-            Some(Commands::Template(args)) if args.name.to_str() == Some("daily")
+            Some(Commands::Template(args)) if args.name.as_deref().and_then(Path::to_str) == Some("daily")
         ));
     }
 
@@ -152,7 +177,7 @@ mod tests {
 
         assert!(matches!(
             &cli.command,
-            Some(Commands::Template(args)) if args.name.to_str() == Some("daily")
+            Some(Commands::Template(args)) if args.name.as_deref().and_then(Path::to_str) == Some("daily")
         ));
     }
 
@@ -162,7 +187,7 @@ mod tests {
             .expect("parse default -i argv");
 
         assert!(cli.command.is_none());
-        assert_eq!(cli.input, Some(PathBuf::from("daily")));
+        assert_eq!(cli.input, Some(Some(PathBuf::from("daily"))));
     }
 
     #[test]
@@ -177,7 +202,7 @@ mod tests {
 
         use pretty_assertions::assert_eq;
 
-        use super::*;
+        use super::{error::TemplateCliError, *};
         use crate::{
             CwdGuard,
             config::{ConfigService, TrustRequest},
@@ -256,6 +281,48 @@ mod tests {
             assert_eq!(via_template, "123");
             assert_eq!(via_tmpl, via_template);
             assert_eq!(via_default, via_template);
+        }
+
+        #[test]
+        fn bare_input_and_bare_template_both_reach_the_interactive_picker() {
+            for argv in [vec!["traces", "-i"], vec!["traces", "template"]] {
+                let temp = tempfile::tempdir().expect("create temp dir");
+                let root = temp.path().join("project");
+                fs::create_dir_all(root.join(".traces")).expect("create dir");
+                fs::create_dir_all(root.join("templates"))
+                    .expect("create empty templates dir");
+                fs::write(
+                    root.join(".traces/config.toml"),
+                    "[templates]\ndirectory = \"templates\"\n",
+                )
+                .expect("write config file");
+                let config = crate::config::LocalConfigFile::<
+                    crate::config::Discovered,
+                >::try_new(
+                    root.join(".traces/config.toml")
+                )
+                .expect("valid local config");
+                let service = ConfigService::at(
+                    temp.path().join("tracked-store"),
+                    temp.path().join("trust-store"),
+                );
+                service
+                    .trust(&TrustRequest::from(&config))
+                    .expect("trust project root");
+                let _guard = CwdGuard::enter(&root);
+                let provider: Arc<dyn crate::DialogProvider> =
+                    Arc::new(PresetDialogProvider::new());
+                let cli = Cli::try_parse_from(argv).expect("parse argv");
+
+                let error = cli
+                    .run(&service, &provider)
+                    .expect_err("no templates to pick from");
+
+                assert!(matches!(
+                    error,
+                    CliError::Template(TemplateCliError::NoTemplates)
+                ));
+            }
         }
     }
 }

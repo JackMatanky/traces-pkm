@@ -54,6 +54,19 @@ impl<'a> TemplateService<'a> {
         }
     }
 
+    /// Lists available template names for `config` — every top-level
+    /// `.md` file's stem in the local directory, then the global
+    /// directory (local duplicates excluded). Associated function,
+    /// not a method: listing candidate names needs only the
+    /// configured directories, not a rendering engine or dialog
+    /// provider, so the interactive picker can call it before
+    /// building a full [`Self`].
+    #[inline]
+    #[must_use]
+    pub(crate) fn list_available(config: &Config) -> Vec<String> {
+        TemplateLoader::from(config).list_available()
+    }
+
     /// Resolves `name` and renders it, then writes (or previews
     /// under [`WriteMode::DryRun`]) the result via
     /// [`TemplateWriter::write`], using an output path resolved by
@@ -96,6 +109,29 @@ impl<'a> TemplateService<'a> {
         self.writer.write(&target, rendered.content, mode, || {
             self.default_output_path(&resolved)
         })
+    }
+
+    /// Resolves `name`, then computes the default output path it
+    /// would get absent `-o`/`file.write_to()` — the same path
+    /// [`Self::default_output_path`] computes internally during
+    /// [`Self::render_to_file`], but exposed standalone so the
+    /// interactive picker can test it for existence *before*
+    /// rendering. Resolving again inside `render_to_file` is cheap
+    /// (a directory search, no I/O beyond that); re-rendering would
+    /// not be, since a template's `ui.*` calls would prompt a second
+    /// time.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TemplateError::Resolve`] when `name` doesn't resolve
+    /// to a file.
+    #[inline]
+    pub(crate) fn default_output_path_for(
+        &self,
+        name: &Path,
+    ) -> Result<PathBuf, TemplateError> {
+        let resolved = self.engine.resolve(name)?;
+        Ok(self.default_output_path(&resolved))
     }
 
     /// Reads the resolved template's source from disk, mapping I/O

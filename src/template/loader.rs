@@ -22,7 +22,7 @@
 //! usable here.
 
 use std::{
-    io,
+    fs, io,
     path::{Path, PathBuf},
 };
 
@@ -111,6 +111,51 @@ impl TemplateLoader {
             )
             .with_source(err)),
         }
+    }
+
+    /// Lists available template names: the file stem of every
+    /// top-level `.md` file in the local directory, then the global
+    /// directory (global duplicates of a local stem excluded) — the
+    /// interactive picker's candidate list and
+    /// `traces completions --list-templates`'s output. Not recursive;
+    /// mirrors [`Self::find`]'s local-before-global precedence.
+    ///
+    /// A missing or unreadable directory is silently skipped, matching
+    /// [`Self::find`]'s stance on absent input — there's no error to
+    /// report, just fewer candidates.
+    pub(super) fn list_available(&self) -> Vec<String> {
+        let mut names = Self::stems_in(self.local.as_deref());
+        for stem in Self::stems_in(self.global.as_deref()) {
+            if !names.contains(&stem) {
+                names.push(stem);
+            }
+        }
+        names
+    }
+
+    /// The file stems of every top-level `.md` file directly inside
+    /// `dir`. Empty when `dir` is `None`, doesn't exist, or can't be
+    /// read — directories are never walked recursively.
+    fn stems_in(dir: Option<&Path>) -> Vec<String> {
+        let Some(dir) = dir else {
+            return Vec::new();
+        };
+        let Ok(entries) = fs::read_dir(dir) else {
+            return Vec::new();
+        };
+        entries
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_type().is_ok_and(|ty| ty.is_file()))
+            .filter(|entry| {
+                entry.path().extension().is_some_and(|ext| ext == "md")
+            })
+            .filter_map(|entry| {
+                entry
+                    .path()
+                    .file_stem()
+                    .map(|stem| stem.to_string_lossy().into_owned())
+            })
+            .collect()
     }
 }
 
@@ -222,6 +267,71 @@ mod tests {
                 loader.find(Path::new("missing")),
                 Err(TemplatePathError::TemplateNotFound(_))
             ));
+        }
+    }
+
+    mod list_available {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn returns_empty_when_no_directories_are_configured() {
+            let loader = TemplateLoader::new(None, None);
+
+            assert_eq!(loader.list_available(), Vec::<String>::new());
+        }
+
+        #[test]
+        fn returns_stems_from_a_single_directory() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_file(temp.path(), "daily.md");
+            write_file(temp.path(), "weekly.md");
+            let loader =
+                TemplateLoader::new(Some(temp.path().to_path_buf()), None);
+
+            let mut names = loader.list_available();
+            names.sort();
+
+            assert_eq!(names, vec!["daily".to_owned(), "weekly".to_owned()]);
+        }
+
+        #[test]
+        fn lists_local_before_global_and_filters_local_duplicates() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let local_dir = temp.path().join("local");
+            let global_dir = temp.path().join("global");
+            write_file(&local_dir, "daily.md");
+            write_file(&global_dir, "daily.md");
+            write_file(&global_dir, "weekly.md");
+            let loader = TemplateLoader::new(Some(local_dir), Some(global_dir));
+
+            assert_eq!(loader.list_available(), vec![
+                "daily".to_owned(),
+                "weekly".to_owned()
+            ]);
+        }
+
+        #[test]
+        fn skips_a_missing_directory_silently() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let missing = temp.path().join("does-not-exist");
+            let loader = TemplateLoader::new(Some(missing), None);
+
+            assert_eq!(loader.list_available(), Vec::<String>::new());
+        }
+
+        #[test]
+        fn only_yields_top_level_md_files_not_subdirectories() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_file(temp.path(), "daily.md");
+            write_file(temp.path(), "nested/weekly.md");
+            fs::write(temp.path().join("notes.txt"), "content")
+                .expect("write non-md file");
+            let loader =
+                TemplateLoader::new(Some(temp.path().to_path_buf()), None);
+
+            assert_eq!(loader.list_available(), vec!["daily".to_owned()]);
         }
     }
 

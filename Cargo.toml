@@ -20,6 +20,7 @@ categories = ["command-line-utilities", "development-tools"]
 blake3 = "1.8"
 chrono = "0.4.45"
 clap = { version = "4", features = ["derive"] }
+clap_complete = "4.6.7"
 convert_case = "0.11.0"
 figment = { version = "0.10", features = ["toml"] }
 inquire = "0.9"

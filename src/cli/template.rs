@@ -1,19 +1,24 @@
 //! `traces template`/`tmpl` command, and the default `traces -i <name>`
 //! dispatch: renders a resolved template and writes it to disk, or — in
-//! dry-run mode — prints it to stdout.
+//! dry-run mode — prints it to stdout. Omitting a name (`traces template`,
+//! or `traces -i` with no value) triggers an interactive fuzzy picker over
+//! every available template instead.
 //!
 //! Thin adapter over [`ConfigService`] and
 //! [`crate::template::TemplateService`]: parses args, loads config for the
 //! current directory, and reports the written path.
 
-use std::{path::PathBuf, sync::Arc};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use clap::Args;
 
 use super::error::TemplateCliError;
 use crate::{
     Cwd, DialogProvider, PresetDialogProvider,
-    config::{ConfigLoadError, ConfigService},
+    config::{Config, ConfigLoadError, ConfigService},
     template::{TemplateService, WriteMode, WriteOutcome},
 };
 
@@ -21,9 +26,10 @@ use crate::{
 /// `traces -i <name>` dispatch.
 #[derive(Debug, Args)]
 pub(super) struct Template {
-    /// Template name or path to instantiate.
-    #[arg(short = 'i', long = "input", value_name = "NAME")]
-    pub(super) name: PathBuf,
+    /// Template name or path to instantiate. Omit (or pass `-i` with no
+    /// value) to pick one interactively from every available template.
+    #[arg(short = 'i', long = "input", value_name = "NAME", num_args = 0..=1)]
+    pub(super) name: Option<PathBuf>,
     /// Output path — overrides any `file.write_to()` call inside the
     /// template; falls back to `write_to`, then the config-derived default.
     #[arg(short = 'o', long, value_name = "PATH")]
@@ -45,7 +51,24 @@ impl Template {
     #[must_use]
     pub(super) fn new(name: PathBuf) -> Self {
         Self {
-            name,
+            name: Some(name),
+            output: None,
+            write: WriteFlags {
+                force: false,
+                dry_run: false,
+            },
+            no_input: false,
+        }
+    }
+
+    /// Builds args for the interactive fuzzy-picker dispatch — the
+    /// default `traces -i` (no value) dispatch that bypasses subcommand
+    /// parsing.
+    #[inline]
+    #[must_use]
+    pub(super) fn interactive() -> Self {
+        Self {
+            name: None,
             output: None,
             write: WriteFlags {
                 force: false,
@@ -56,8 +79,9 @@ impl Template {
     }
 
     /// Loads config for the current directory, then resolves and renders
-    /// [`Self::name`], writing it to the default output path — or, in
-    /// dry-run mode, printing it to stdout instead.
+    /// [`Self::name`] — or, when absent, a name picked interactively from
+    /// [`TemplateService::list_available`] — writing it to the default
+    /// output path or, in dry-run mode, printing it to stdout instead.
     ///
     /// `provider` is the interactive provider a `ui.*` call delegates to
     /// when [`Self::no_input`] is unset; when set, every render uses a
@@ -69,8 +93,11 @@ impl Template {
     /// from the current directory fails. Returns
     /// [`TemplateCliError::ConfigBuild`] when building config fails,
     /// including for an untrusted or stale project root. Returns
-    /// [`TemplateCliError::Instantiate`] when the resolve/render/write
-    /// pipeline fails.
+    /// [`TemplateCliError::NoTemplates`] when [`Self::name`] is absent and
+    /// no template is available to pick. Returns [`TemplateCliError::Picker`]
+    /// when the interactive picker prompt fails, is cancelled, or is
+    /// interrupted. Returns [`TemplateCliError::Instantiate`] when the
+    /// resolve/render/write pipeline fails.
     #[inline]
     #[expect(
         clippy::print_stdout,
@@ -101,10 +128,22 @@ impl Template {
         } else {
             Arc::clone(provider)
         };
-        let outcome = TemplateService::new(&config, effective_provider)
-            .render_to_file(&self.name, self.output.as_deref(), mode)
+        let template_service =
+            TemplateService::new(&config, effective_provider);
+        let (name, output) = if let Some(name) = self.name {
+            (name, self.output)
+        } else {
+            let name = Self::pick_template(&config)?;
+            let output = match self.output {
+                Some(output) => Some(output),
+                None => Self::prompt_output_override(&template_service, &name)?,
+            };
+            (name, output)
+        };
+        let outcome = template_service
+            .render_to_file(&name, output.as_deref(), mode)
             .map_err(|source| TemplateCliError::Instantiate {
-                name: self.name.clone(),
+                name: name.clone(),
                 source: Box::new(source),
             })?;
         match outcome {
@@ -114,6 +153,71 @@ impl Template {
             WriteOutcome::Previewed(content) => print!("{content}"),
         }
         Ok(())
+    }
+
+    /// Presents an `inquire::Select` fuzzy-filtered picker over every
+    /// name [`TemplateService::list_available`] finds for `config` — the
+    /// `traces template`/`traces -i` (bare) dispatch. `inquire::Select`'s
+    /// default `filter_input_enabled`/`DEFAULT_SCORER` already fuzzy-match
+    /// as the user types, so no separate fuzzy-matcher crate is needed.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TemplateCliError::NoTemplates`] when `config` has no
+    /// available templates. Returns [`TemplateCliError::Picker`] when the
+    /// prompt fails, is cancelled (Esc), or is interrupted (Ctrl-C).
+    fn pick_template(config: &Config) -> Result<PathBuf, TemplateCliError> {
+        let available = TemplateService::list_available(config);
+        if available.is_empty() {
+            return Err(TemplateCliError::NoTemplates);
+        }
+        let chosen = inquire::Select::new("Select a template", available)
+            .prompt()
+            .map_err(|source| TemplateCliError::Picker {
+                source,
+            })?;
+        Ok(PathBuf::from(chosen))
+    }
+
+    /// After [`Self::pick_template`] resolves `name`, checks whether its
+    /// default output path already exists on disk; if so, prompts for an
+    /// alternative with `inquire::Text`, pre-filled with the default path,
+    /// to use as the `-o` override. Returns `Ok(None)` — no override
+    /// needed — when the default path doesn't exist yet.
+    ///
+    /// This is a UX prompt, not a TOCTOU-safe existence check: the write
+    /// itself still enforces atomically via
+    /// [`fs::File::create_new`](std::fs::File::create_new) or
+    /// `Overwrite`, depending on `--force`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TemplateCliError::Instantiate`] when `name` fails to
+    /// resolve. Returns [`TemplateCliError::Picker`] when the prompt
+    /// fails, is cancelled (Esc), or is interrupted (Ctrl-C).
+    fn prompt_output_override(
+        template_service: &TemplateService<'_>,
+        name: &Path,
+    ) -> Result<Option<PathBuf>, TemplateCliError> {
+        let default_path = template_service
+            .default_output_path_for(name)
+            .map_err(|source| TemplateCliError::Instantiate {
+                name: name.to_path_buf(),
+                source: Box::new(source),
+            })?;
+        if !default_path.exists() {
+            return Ok(None);
+        }
+        let default_display = default_path.display().to_string();
+        let chosen = inquire::Text::new(
+            "Output path already exists — enter an alternative:",
+        )
+        .with_default(&default_display)
+        .prompt()
+        .map_err(|source| TemplateCliError::Picker {
+            source,
+        })?;
+        Ok(Some(PathBuf::from(chosen)))
     }
 }
 
@@ -248,6 +352,25 @@ mod tests {
     }
 
     #[test]
+    fn run_with_no_name_and_no_available_templates_fails_with_no_templates() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let root = temp.path().join("project");
+        fs::create_dir_all(&root).expect("create project dir");
+        let config_file = create_config(&root, "templates");
+        fs::create_dir_all(root.join("templates"))
+            .expect("create templates dir");
+        let service = service(temp.path());
+        trust_config(&service, &config_file);
+        let _guard = CwdGuard::enter(&root);
+
+        let error = Template::interactive()
+            .run(&service, &preset_provider())
+            .expect_err("no templates to pick from");
+
+        assert!(matches!(error, TemplateCliError::NoTemplates));
+    }
+
+    #[test]
     fn run_writes_to_the_output_flag_path() {
         let temp = tempfile::tempdir().expect("create temp dir");
         let root = temp.path().join("project");
@@ -262,7 +385,7 @@ mod tests {
         let _guard = CwdGuard::enter(&root);
 
         Template {
-            name: PathBuf::from("daily"),
+            name: Some(PathBuf::from("daily")),
             output: Some(PathBuf::from("elsewhere.md")),
             write: WriteFlags {
                 force: false,
@@ -320,7 +443,7 @@ mod tests {
         let _guard = CwdGuard::enter(&root);
 
         Template {
-            name: PathBuf::from("daily"),
+            name: Some(PathBuf::from("daily")),
             output: None,
             write: WriteFlags {
                 force: true,
@@ -352,7 +475,7 @@ mod tests {
         let _guard = CwdGuard::enter(&root);
 
         let error = Template {
-            name: PathBuf::from("daily"),
+            name: Some(PathBuf::from("daily")),
             output: Some(PathBuf::from("../../escape.md")),
             write: WriteFlags {
                 force: false,
@@ -382,7 +505,7 @@ mod tests {
         let _guard = CwdGuard::enter(&root);
 
         Template {
-            name: PathBuf::from("daily"),
+            name: Some(PathBuf::from("daily")),
             output: None,
             write: WriteFlags {
                 force: false,
@@ -414,7 +537,7 @@ mod tests {
         let _guard = CwdGuard::enter(&root);
 
         Template {
-            name: PathBuf::from("daily"),
+            name: Some(PathBuf::from("daily")),
             output: Some(PathBuf::from("../../escape.md")),
             write: WriteFlags {
                 force: false,
@@ -480,7 +603,7 @@ mod tests {
             Arc::new(crate::PresetDialogProvider::new().with_text("claude"));
 
         Template {
-            name: PathBuf::from("daily"),
+            name: Some(PathBuf::from("daily")),
             output: None,
             write: WriteFlags {
                 force: false,
