@@ -6,21 +6,16 @@ use traces_pkm::{
     cli::{ConfigInitCliError, init::Init},
 };
 
-#[allow(
-    clippy::disallowed_methods,
-    clippy::expect_used,
-    reason = "test helper mirroring crate-internal CwdGuard"
-)]
 struct CwdGuard {
     original: std::path::PathBuf,
 }
 
-#[allow(
-    clippy::disallowed_methods,
-    clippy::expect_used,
-    reason = "see CwdGuard"
-)]
 impl CwdGuard {
+    #[expect(
+        clippy::disallowed_methods,
+        clippy::expect_used,
+        reason = "test helper mirroring crate-internal CwdGuard"
+    )]
     fn enter(path: &Path) -> Self {
         let original = env::current_dir().expect("read current dir");
         env::set_current_dir(path).expect("enter temp dir");
@@ -30,12 +25,8 @@ impl CwdGuard {
     }
 }
 
-#[allow(
-    clippy::disallowed_methods,
-    clippy::expect_used,
-    reason = "see CwdGuard"
-)]
 impl Drop for CwdGuard {
+    #[expect(clippy::expect_used, reason = "see CwdGuard")]
     fn drop(&mut self) {
         env::set_current_dir(&self.original).expect("restore current dir");
     }
@@ -86,7 +77,10 @@ fn init_scaffolds_preset_defaults_and_refuses_existing_traces_dir() {
     assert_eq!(source.kind(), io::ErrorKind::AlreadyExists);
 }
 
-#[allow(clippy::expect_used, reason = "test assertions — failure should panic")]
+#[expect(
+    clippy::expect_used,
+    reason = "test assertions — failure should panic"
+)]
 fn assert_config(
     root: &Path,
     expected_directory: &str,
@@ -104,7 +98,10 @@ fn assert_config(
     assert_eq!(table_str(templates, "output_dir"), expected_output_dir);
 }
 
-#[allow(clippy::expect_used, reason = "test assertions — failure should panic")]
+#[expect(
+    clippy::expect_used,
+    reason = "test assertions — failure should panic"
+)]
 fn table_str<'a>(table: &'a toml::value::Table, key: &str) -> &'a str {
     table.get(key).and_then(toml::Value::as_str).expect("string value")
 }
