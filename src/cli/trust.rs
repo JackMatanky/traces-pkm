@@ -25,7 +25,7 @@ use crate::{
     args_conflicts_with_subcommands = true,
     group(ArgGroup::new("mode").args(["show", "untrust"]).multiple(false))
 )]
-#[allow(
+#[expect(
     clippy::struct_excessive_bools,
     reason = "clap flag structs model independent CLI switches directly"
 )]
@@ -84,7 +84,7 @@ impl Trust {
     ///
     /// Returns [`ConfigTrustCliError::List`] when the trust store cannot be
     /// read.
-    #[allow(
+    #[expect(
         clippy::print_stdout,
         reason = "trust list's output is data meant to be piped, not \
                   diagnostic text — see the print_stderr precedent this \
@@ -176,7 +176,7 @@ impl Trust {
     /// Returns [`ConfigTrustCliError::TargetResolve`] when the trust
     /// target(s) cannot be resolved, or [`ConfigTrustCliError::Show`] when
     /// reading a resolved target's trust status fails.
-    #[allow(
+    #[expect(
         clippy::print_stdout,
         reason = "trust --show's output is data meant to be piped, not \
                   diagnostic text — see the print_stderr precedent this \

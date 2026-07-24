@@ -21,7 +21,7 @@ impl Cwd {
     /// Returns an [`io::Error`] when the current directory does not exist
     /// or cannot be accessed.
     #[inline]
-    #[allow(
+    #[expect(
         clippy::disallowed_methods,
         reason = "sole canonical call site for process cwd access"
     )]

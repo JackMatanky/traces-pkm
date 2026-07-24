@@ -72,7 +72,7 @@ impl Template {
     /// [`TemplateCliError::Instantiate`] when the resolve/render/write
     /// pipeline fails.
     #[inline]
-    #[allow(
+    #[expect(
         clippy::print_stdout,
         reason = "dry-run output is data meant to be piped, not diagnostic \
                   text — mirrors the trust list/show precedent in \

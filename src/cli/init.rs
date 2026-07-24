@@ -38,7 +38,7 @@ impl Init {
     /// Returns [`ConfigInitCliError`] when prompting, serialization, or
     /// filesystem scaffolding fails.
     #[inline]
-    #[allow(
+    #[expect(
         clippy::unused_self,
         reason = "unit struct today; will carry flags in a future iteration"
     )]
