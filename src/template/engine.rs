@@ -8,6 +8,7 @@
 
 mod date_ops;
 mod file_ops;
+mod num_ops;
 mod str_ops;
 mod ui_ops;
 
@@ -22,6 +23,7 @@ use uuid::Uuid;
 use self::{
     date_ops::DateOps,
     file_ops::{FileOps, WRITE_TO_KEY},
+    num_ops::NumOps,
     str_ops::StrOps,
     ui_ops::UiOps,
 };
@@ -52,8 +54,9 @@ impl TemplateEngine {
     /// group registered by [`StrOps`] (the five case-conversion
     /// filters plus `trim_prefix`/`trim_suffix`/`truncate`/
     /// `truncate_words`/`word_count`/`repeat`/`regex_replace`/
-    /// `regex_match` — see its module docs), and the standalone
-    /// `uuid()` function.
+    /// `regex_match` — see its module docs), the numeric-filter group
+    /// registered by [`NumOps`] (`ceil`, `floor`, `sqrt`,
+    /// `num_format`), and the standalone `uuid()` function.
     #[inline]
     #[must_use]
     pub(super) fn new(
@@ -70,6 +73,7 @@ impl TemplateEngine {
         UiOps::new(provider).register(&mut env);
         DateOps.register(&mut env);
         StrOps::register(&mut env);
+        NumOps::register(&mut env);
         env.add_function("uuid", uuid);
         Self {
             env,
@@ -447,6 +451,25 @@ mod tests {
                 .expect("render succeeds");
 
             assert_eq!(rendered.content, "hello_world");
+        }
+
+        #[test]
+        fn numeric_filters_are_reachable() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let engine = TemplateEngine::new(
+                loader_from_dir(temp.path()),
+                preset_provider(),
+                temp.path(),
+            );
+
+            let rendered = engine
+                .render(
+                    "{{ 3.14 | ceil }} {{ 42 | sqrt }} {{ 3.14159 | \
+                     num_format(2) }}",
+                )
+                .expect("render succeeds");
+
+            assert_eq!(rendered.content, "4.0 6.48074069840786 3.14");
         }
     }
 }
