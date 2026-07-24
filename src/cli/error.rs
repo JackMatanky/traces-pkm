@@ -34,6 +34,10 @@ pub enum CliError {
     #[error(transparent)]
     #[diagnostic(transparent)]
     Template(#[from] TemplateCliError),
+    /// `traces completions` failed.
+    #[error(transparent)]
+    #[diagnostic(transparent)]
+    Completions(#[from] CompletionsCliError),
     /// Neither a subcommand nor `-i`/`--input` was given.
     #[error("no template name given; pass -i <name> or run a subcommand")]
     #[diagnostic(
@@ -44,6 +48,32 @@ pub enum CliError {
         )
     )]
     NoCommand,
+}
+
+/// Errors surfaced by the `traces completions` CLI surface.
+///
+/// Only reachable via `--list-templates`, which loads configuration to
+/// find the template directories; `--shell` never loads configuration,
+/// so it can never produce one of these.
+#[derive(Debug, Error)]
+pub enum CompletionsCliError {
+    /// Discovering configuration from `cwd` failed.
+    #[error("failed to locate configuration in {cwd}")]
+    ConfigDiscovery {
+        /// The directory config discovery started from.
+        cwd: PathBuf,
+        /// Source discovery error, type-erased.
+        #[source]
+        source: Box<dyn StdError + Send + Sync + 'static>,
+    },
+    /// Building configuration from discovered candidates failed, including
+    /// an untrusted or stale project root.
+    #[error("failed to load configuration")]
+    ConfigBuild {
+        /// Source build error, type-erased.
+        #[source]
+        source: Box<dyn StdError + Send + Sync + 'static>,
+    },
 }
 
 /// Errors surfaced by the `traces trust` CLI surface.
@@ -244,6 +274,40 @@ impl Diagnostic for ConfigInitCliError {
             ..
         } = self;
         Some(Box::new(*help))
+    }
+}
+
+impl Diagnostic for CompletionsCliError {
+    #[inline]
+    fn code<'a>(&'a self) -> Option<Box<dyn Display + 'a>> {
+        let code = match self {
+            Self::ConfigDiscovery {
+                ..
+            } => "traces::cli::completions::config_discovery_failed",
+            Self::ConfigBuild {
+                ..
+            } => "traces::cli::completions::config_build_failed",
+        };
+        Some(Box::new(code))
+    }
+
+    #[inline]
+    fn help<'a>(&'a self) -> Option<Box<dyn Display + 'a>> {
+        match self {
+            Self::ConfigDiscovery {
+                cwd,
+                ..
+            } => Some(Box::new(format!(
+                "run `traces init` to scaffold local configuration, or check \
+                 that {} is readable",
+                cwd.display()
+            ))),
+            Self::ConfigBuild {
+                ..
+            } => Some(Box::new(
+                "run `traces trust` to trust this project root, then try again",
+            )),
+        }
     }
 }
 
@@ -542,6 +606,56 @@ mod tests {
             Some(
                 "the picker prompt was cancelled or failed; try again, or \
                  pass a name directly with `-i <name>`"
+                    .to_owned()
+            )
+        );
+        assert!(error.source().is_some());
+    }
+
+    #[test]
+    fn completions_config_discovery_error_has_a_code_and_help() {
+        let cwd = PathBuf::from("/some/project");
+        let error = CompletionsCliError::ConfigDiscovery {
+            cwd: cwd.clone(),
+            source: boxed_source(),
+        };
+
+        assert_eq!(
+            error.to_string(),
+            "failed to locate configuration in /some/project"
+        );
+        assert_eq!(
+            error.code().map(|code| code.to_string()),
+            Some(
+                "traces::cli::completions::config_discovery_failed".to_owned()
+            )
+        );
+        assert_eq!(
+            error.help().map(|help| help.to_string()),
+            Some(
+                "run `traces init` to scaffold local configuration, or check \
+                 that /some/project is readable"
+                    .to_owned()
+            )
+        );
+        assert!(error.source().is_some());
+    }
+
+    #[test]
+    fn completions_config_build_error_has_a_code_and_trust_help() {
+        let error = CompletionsCliError::ConfigBuild {
+            source: boxed_source(),
+        };
+
+        assert_eq!(error.to_string(), "failed to load configuration");
+        assert_eq!(
+            error.code().map(|code| code.to_string()),
+            Some("traces::cli::completions::config_build_failed".to_owned())
+        );
+        assert_eq!(
+            error.help().map(|help| help.to_string()),
+            Some(
+                "run `traces trust` to trust this project root, then try again"
                     .to_owned()
             )
         );

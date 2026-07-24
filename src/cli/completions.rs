@@ -3,17 +3,19 @@
 //! scripts for `-i <name>` tab-completion.
 //!
 //! Thin adapter over [`ConfigService`] and
-//! [`crate::template::TemplateService`], reusing [`TemplateCliError`] for
-//! `--list-templates`'s config-loading failures — the same "load config
-//! for the current directory" step [`crate::cli::template::Template::run`]
-//! performs.
+//! [`crate::template::TemplateService`]: `--list-templates` loads config
+//! for the current directory the same way
+//! [`crate::cli::template::Template::run`] does, reporting failures
+//! through its own [`CompletionsCliError`] rather than
+//! `crate::cli::template`'s, so `traces completions` failures never carry
+//! a `traces::cli::template::*` diagnostic code.
 
 use std::path::PathBuf;
 
 use clap::{ArgGroup, Args, CommandFactory as _};
 use clap_complete::{Shell, generate};
 
-use super::error::TemplateCliError;
+use super::error::CompletionsCliError;
 use crate::{
     Cwd,
     config::{ConfigLoadError, ConfigService},
@@ -46,15 +48,15 @@ impl Completions {
     ///
     /// # Errors
     ///
-    /// Returns [`TemplateCliError::ConfigDiscovery`]/
-    /// [`TemplateCliError::ConfigBuild`] when `--list-templates` fails to
-    /// load configuration for the current directory. `--shell` never
+    /// Returns [`CompletionsCliError::ConfigDiscovery`]/
+    /// [`CompletionsCliError::ConfigBuild`] when `--list-templates` fails
+    /// to load configuration for the current directory. `--shell` never
     /// fails: script generation is infallible once parsing succeeds.
     #[inline]
     pub(super) fn run(
         self,
         service: &ConfigService,
-    ) -> Result<(), TemplateCliError> {
+    ) -> Result<(), CompletionsCliError> {
         match self.shell {
             Some(shell) => {
                 Self::print_script(shell);
@@ -99,21 +101,23 @@ impl Completions {
                   completion scripts, not diagnostic text — mirrors the \
                   dry-run precedent in crate::cli::template"
     )]
-    fn list_templates(service: &ConfigService) -> Result<(), TemplateCliError> {
+    fn list_templates(
+        service: &ConfigService,
+    ) -> Result<(), CompletionsCliError> {
         let cwd = Cwd::new().map(Cwd::into_inner).map_err(|source| {
-            TemplateCliError::ConfigDiscovery {
+            CompletionsCliError::ConfigDiscovery {
                 cwd: PathBuf::from("."),
                 source: Box::new(source),
             }
         })?;
         let config = service.load(&cwd).map_err(|source| match source {
             ConfigLoadError::Discovery(_) => {
-                TemplateCliError::ConfigDiscovery {
+                CompletionsCliError::ConfigDiscovery {
                     cwd: cwd.clone(),
                     source: Box::new(source),
                 }
             }
-            ConfigLoadError::Build(_) => TemplateCliError::ConfigBuild {
+            ConfigLoadError::Build(_) => CompletionsCliError::ConfigBuild {
                 source: Box::new(source),
             },
         })?;
@@ -181,7 +185,10 @@ mod tests {
             .run(&service)
             .expect_err("no config discoverable");
 
-            assert!(matches!(error, TemplateCliError::ConfigDiscovery { .. }));
+            assert!(matches!(
+                error,
+                CompletionsCliError::ConfigDiscovery { .. }
+            ));
         }
     }
 }
