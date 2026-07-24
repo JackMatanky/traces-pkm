@@ -1,11 +1,18 @@
-//! [`PathOps`]: registers the path-inspection filter group —
-//! `path_exists`, `is_file_path`, `is_dir_path`, `path_filename`,
-//! `path_basename`, `path_extension`, `path_parent` — a template applies
-//! as `{{ value | path_basename }}`. Like
-//! [`StrOps`](super::str_ops::StrOps), these are flat filters registered
-//! once each via [`Environment::add_filter`], not namespace methods
-//! dispatched through an [`Object`](minijinja::value::Object) the way
-//! `file.*`/`ui.*`/`date.*` are.
+//! [`PathOps`]: registers path-inspection **tests** and **filters** —
+//! `path_exists`, `is_file_path`, `is_dir_path` as
+//! [`Environment::add_test`] tests (a template applies one as `{{ value
+//! is path_exists }}`, per
+//! <https://docs.rs/minijinja/latest/minijinja/tests/index.html>), and
+//! `path_filename`, `path_basename`, `path_extension`, `path_parent` as
+//! [`Environment::add_filter`] filters (`{{ value | path_basename }}`).
+//! minijinja draws this line deliberately: tests are boolean checks
+//! invoked with `is`/`is not`, filters are transformations invoked with
+//! `|` — the three boolean I/O checks below are tests because they
+//! *check* a path, the four string transforms are filters because they
+//! *compute a new value from* one. Neither group dispatches through an
+//! [`Object`](minijinja::value::Object) namespace the way `file.*`/
+//! `ui.*`/`date.*` do — like [`StrOps`](super::str_ops::StrOps), each
+//! is a plain function registered once.
 //!
 //! `path_exists`/`is_file_path`/`is_dir_path` resolve a relative `path`
 //! argument against [`Config::root`](crate::config::Config::root) —
@@ -13,7 +20,7 @@
 //! [`FileOps`](super::file_ops::FileOps) captures it for
 //! `file.include()`, since [`Value::from_function`](minijinja::value)
 //! closures must be `Send + Sync + 'static` and can't borrow `&Path`. An
-//! absolute `path` is used as-is. These filters only *inspect* the
+//! absolute `path` is used as-is. These tests only *inspect* the
 //! filesystem — they never read file contents — so there's no
 //! root-escape risk to `confine` against the way `file.include()` must.
 //!
@@ -21,13 +28,13 @@
 //! pure string transformations over [`std::path::Path`] — no I/O, no
 //! `root` dependency, side-effect-free.
 //!
-//! The three I/O filters distinguish "doesn't exist" from a genuine I/O
+//! The three I/O tests distinguish "doesn't exist" from a genuine I/O
 //! failure by reading [`std::fs::metadata`] directly rather than calling
 //! [`Path::exists`]/[`Path::is_file`]/[`Path::is_dir`], which each
 //! silently fold every error (including permission failures) into
 //! `false`: a missing path is a normal, expected outcome for a template
 //! author to branch on, but a permission error or similar means the
-//! filter couldn't actually answer the question, so it's surfaced as a
+//! test couldn't actually answer the question, so it's surfaced as a
 //! [`minijinja::Error`] instead of misreported as "doesn't exist".
 
 use std::{
@@ -39,8 +46,8 @@ use std::{
 
 use minijinja::{Environment, Error, ErrorKind};
 
-/// Backs the path-inspection filter group. Holds the project root the
-/// three I/O filters resolve a relative `path` argument against — the
+/// Backs the path-inspection test/filter group. Holds the project root
+/// the three I/O tests resolve a relative `path` argument against — the
 /// four pure string filters carry no state and are registered as plain
 /// functions.
 #[derive(Debug)]
@@ -59,23 +66,23 @@ impl PathOps {
         }
     }
 
-    /// Registers all 7 path-inspection filters.
+    /// Registers all 7 path-inspection tests and filters.
     #[inline]
     pub(super) fn register(self, env: &mut Environment<'static>) {
         let root = self.root;
-        register_bool_filter(
+        register_bool_test(
             env,
             "path_exists",
             Arc::clone(&root),
             Query::Exists,
         );
-        register_bool_filter(
+        register_bool_test(
             env,
             "is_file_path",
             Arc::clone(&root),
             Query::IsFile,
         );
-        register_bool_filter(env, "is_dir_path", root, Query::IsDir);
+        register_bool_test(env, "is_dir_path", root, Query::IsDir);
         env.add_filter("path_filename", filename);
         env.add_filter("path_basename", basename);
         env.add_filter("path_extension", extension);
@@ -83,7 +90,7 @@ impl PathOps {
     }
 }
 
-/// Which fact an I/O filter is asking [`inspect`] to answer.
+/// Which fact an I/O test is asking [`inspect`] to answer.
 #[derive(Clone, Copy)]
 enum Query {
     Exists,
@@ -91,19 +98,20 @@ enum Query {
     IsDir,
 }
 
-/// Registers a single boolean I/O filter under `name`, wiring its
-/// closure through [`inspect`] with the given `query` — the shared
-/// body behind `path_exists`/`is_file_path`/`is_dir_path` in
+/// Registers a single boolean I/O test under `name` via
+/// [`Environment::add_test`], wiring its closure through [`inspect`]
+/// with the given `query` — the shared body behind
+/// `path_exists`/`is_file_path`/`is_dir_path` in
 /// [`PathOps::register`]. Takes `root` by value so the caller controls
 /// whether it's a fresh [`Arc::clone`] or, for the last registration,
 /// the original moved in directly.
-fn register_bool_filter(
+fn register_bool_test(
     env: &mut Environment<'static>,
     name: &'static str,
     root: Arc<Path>,
     query: Query,
 ) {
-    env.add_filter(name, move |path: &str| -> Result<bool, Error> {
+    env.add_test(name, move |path: &str| -> Result<bool, Error> {
         inspect(&root, path, query)
     });
 }
@@ -112,7 +120,7 @@ fn register_bool_filter(
 /// as-is if absolute — then answers `query` against the resolved target.
 /// A missing target answers `false` for every query; any other I/O
 /// failure (permission denied, etc.) propagates as a
-/// [`minijinja::Error`], since the filter genuinely couldn't determine
+/// [`minijinja::Error`], since the test genuinely couldn't determine
 /// the answer.
 fn inspect(root: &Path, path: &str, query: Query) -> Result<bool, Error> {
     let resolved = resolve(root, path);
@@ -196,8 +204,11 @@ mod tests {
         env
     }
 
-    fn render(root: &Path, filter: &str, input: &str) -> String {
-        let template = format!("{{{{ value | {filter} }}}}");
+    /// Renders `{{ value is test }}` — the `is`/`is not` syntax
+    /// minijinja tests use ([`Environment::add_test`]), unlike filters'
+    /// `|` syntax ([`Environment::add_filter`]).
+    fn check(root: &Path, test: &str, input: &str) -> String {
+        let template = format!("{{{{ value is {test} }}}}");
         env(root)
             .render_str(&template, minijinja::context! { value => input })
             .expect("render succeeds")
@@ -214,7 +225,7 @@ mod tests {
             fs::write(temp.path().join("note.md"), "content")
                 .expect("write fixture");
 
-            assert_eq!(render(temp.path(), "path_exists", "note.md"), "true");
+            assert_eq!(check(temp.path(), "path_exists", "note.md"), "true");
         }
 
         #[test]
@@ -223,7 +234,7 @@ mod tests {
             fs::create_dir_all(temp.path().join("sub"))
                 .expect("create nested dir");
 
-            assert_eq!(render(temp.path(), "path_exists", "sub"), "true");
+            assert_eq!(check(temp.path(), "path_exists", "sub"), "true");
         }
 
         #[test]
@@ -231,7 +242,7 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
 
             assert_eq!(
-                render(temp.path(), "path_exists", "missing.md"),
+                check(temp.path(), "path_exists", "missing.md"),
                 "false"
             );
         }
@@ -243,7 +254,7 @@ mod tests {
             fs::write(&file, "content").expect("write fixture");
 
             assert_eq!(
-                render(
+                check(
                     Path::new("/unused-root"),
                     "path_exists",
                     file.to_str().expect("utf-8 temp path")
@@ -256,7 +267,7 @@ mod tests {
         fn returns_true_for_an_empty_path_because_it_resolves_to_root() {
             let temp = tempfile::tempdir().expect("create temp dir");
 
-            assert_eq!(render(temp.path(), "path_exists", ""), "true");
+            assert_eq!(check(temp.path(), "path_exists", ""), "true");
         }
     }
 
@@ -271,7 +282,7 @@ mod tests {
             fs::write(temp.path().join("note.md"), "content")
                 .expect("write fixture");
 
-            assert_eq!(render(temp.path(), "is_file_path", "note.md"), "true");
+            assert_eq!(check(temp.path(), "is_file_path", "note.md"), "true");
         }
 
         #[test]
@@ -280,7 +291,7 @@ mod tests {
             fs::create_dir_all(temp.path().join("sub"))
                 .expect("create nested dir");
 
-            assert_eq!(render(temp.path(), "is_file_path", "sub"), "false");
+            assert_eq!(check(temp.path(), "is_file_path", "sub"), "false");
         }
 
         #[test]
@@ -288,7 +299,7 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
 
             assert_eq!(
-                render(temp.path(), "is_file_path", "missing.md"),
+                check(temp.path(), "is_file_path", "missing.md"),
                 "false"
             );
         }
@@ -305,7 +316,7 @@ mod tests {
             fs::create_dir_all(temp.path().join("sub"))
                 .expect("create nested dir");
 
-            assert_eq!(render(temp.path(), "is_dir_path", "sub"), "true");
+            assert_eq!(check(temp.path(), "is_dir_path", "sub"), "true");
         }
 
         #[test]
@@ -314,7 +325,7 @@ mod tests {
             fs::write(temp.path().join("note.md"), "content")
                 .expect("write fixture");
 
-            assert_eq!(render(temp.path(), "is_dir_path", "note.md"), "false");
+            assert_eq!(check(temp.path(), "is_dir_path", "note.md"), "false");
         }
 
         #[test]
@@ -322,7 +333,7 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
 
             assert_eq!(
-                render(temp.path(), "is_dir_path", "missing.md"),
+                check(temp.path(), "is_dir_path", "missing.md"),
                 "false"
             );
         }
@@ -331,7 +342,7 @@ mod tests {
         fn returns_true_for_root_itself() {
             let temp = tempfile::tempdir().expect("create temp dir");
 
-            assert_eq!(render(temp.path(), "is_dir_path", ""), "true");
+            assert_eq!(check(temp.path(), "is_dir_path", ""), "true");
         }
     }
 
@@ -356,7 +367,7 @@ mod tests {
             let env = env(temp.path());
             let error = env
                 .render_str(
-                    "{{ value | path_exists }}",
+                    "{{ value is path_exists }}",
                     minijinja::context! { value => "locked/secret.md" },
                 )
                 .expect_err("permission-denied is not silently false");
@@ -444,14 +455,25 @@ mod tests {
         use super::*;
 
         #[test]
+        fn registers_every_test_under_its_flat_name() {
+            let root = tempfile::tempdir().expect("create temp dir");
+            let env = env(root.path());
+
+            for test in ["path_exists", "is_file_path", "is_dir_path"] {
+                let template = format!("{{{{ 'x' is {test} }}}}");
+                assert!(
+                    env.render_str(&template, minijinja::context! {}).is_ok(),
+                    "expected {test} to be registered as a test"
+                );
+            }
+        }
+
+        #[test]
         fn registers_every_filter_under_its_flat_name() {
             let root = tempfile::tempdir().expect("create temp dir");
             let env = env(root.path());
 
             for filter in [
-                "path_exists",
-                "is_file_path",
-                "is_dir_path",
                 "path_filename",
                 "path_basename",
                 "path_extension",
@@ -460,7 +482,7 @@ mod tests {
                 let template = format!("{{{{ 'x' | {filter} }}}}");
                 assert!(
                     env.render_str(&template, minijinja::context! {}).is_ok(),
-                    "expected {filter} to be registered"
+                    "expected {filter} to be registered as a filter"
                 );
             }
         }

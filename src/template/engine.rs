@@ -48,10 +48,10 @@ impl TemplateEngine {
     /// minijinja's [`set_loader`](Environment::set_loader) callback, and
     /// registers every namespace/function a template calls into: `file`
     /// (`file.write_to(path)`, `file.include(path)`, confined to
-    /// `root`), the path-inspection filter group registered by
-    /// [`PathOps`] (`path_exists`, `is_file_path`, `is_dir_path`,
-    /// `path_filename`, `path_basename`, `path_extension`,
-    /// `path_parent` — the first three also confined to `root`), `ui`
+    /// `root`), the path-inspection group registered by [`PathOps`] —
+    /// `path_exists`/`is_file_path`/`is_dir_path` as tests (also
+    /// confined to `root`) and `path_filename`/`path_basename`/
+    /// `path_extension`/`path_parent` as filters — `ui`
     /// (`ui.text_input(...)` / `ui.select(...)` / `ui.confirm(...)` /
     /// `ui.multi_select(...)`, delegating to `provider` — see
     /// [`UiOps`]'s module docs for which concrete provider that is),
@@ -281,7 +281,7 @@ mod tests {
         }
 
         #[test]
-        fn path_filters_are_registered_and_resolve_against_root() {
+        fn path_tests_and_filters_are_registered_and_resolve_against_root() {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("main.rs"), "fn main() {}")
                 .expect("write fixture");
@@ -293,8 +293,8 @@ mod tests {
 
             let rendered = engine
                 .render(
-                    "{{ 'main.rs' | path_exists }}-{{ 'missing.rs' | \
-                     path_exists }}-{{ 'main.rs' | is_file_path }}-{{ '.' | \
+                    "{{ 'main.rs' is path_exists }}-{{ 'missing.rs' is \
+                     path_exists }}-{{ 'main.rs' is is_file_path }}-{{ '.' is \
                      is_dir_path }}-{{ '/foo/bar/main.rs' | path_basename \
                      }}-{{ '/foo/bar/main.rs' | path_extension }}-{{ \
                      '/foo/bar/main.rs' | path_parent }}",
