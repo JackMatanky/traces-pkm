@@ -4,11 +4,13 @@
 //! minijinja's [`Environment`] directly.
 //!
 //! Owns everything a template calls into during render, split into its
-//! own submodules: [`date_ops`], [`file_ops`], [`str_ops`], [`ui_ops`].
+//! own submodules: [`date_ops`], [`file_ops`], [`num_ops`],
+//! [`path_ops`], [`str_ops`], [`ui_ops`].
 
 mod date_ops;
 mod file_ops;
 mod num_ops;
+mod path_ops;
 mod str_ops;
 mod ui_ops;
 
@@ -24,6 +26,7 @@ use self::{
     date_ops::DateOps,
     file_ops::{FileOps, WRITE_TO_KEY},
     num_ops::NumOps,
+    path_ops::PathOps,
     str_ops::StrOps,
     ui_ops::UiOps,
 };
@@ -47,19 +50,22 @@ impl TemplateEngine {
     /// minijinja's [`set_loader`](Environment::set_loader) callback, and
     /// registers every namespace/function a template calls into: `file`
     /// (`file.write_to(path)`, `file.include(path)`, confined to
-    /// `root`), `ui` (`ui.text_input(...)` / `ui.select(...)` /
-    /// `ui.confirm(...)` / `ui.multi_select(...)`, delegating to
-    /// `provider` — see [`UiOps`]'s module docs for which concrete
-    /// provider that is), `date` (`date.now(format)`/`date.today()`/
-    /// `date.tomorrow()`/`date.yesterday()`/`date.from_timestamp(ts)`,
-    /// plus the flat `date_*` filters and `is_*` tests — see
-    /// [`DateOps`]'s module docs), the filter group registered by
-    /// [`StrOps`] (the five case-conversion filters plus
-    /// `trim_prefix`/`trim_suffix`/`truncate`/`truncate_words`/
-    /// `word_count`/`repeat`/`regex_replace`/`regex_match` — see its
-    /// module docs), the numeric-filter group registered by [`NumOps`]
-    /// (`ceil`, `floor`, `sqrt`, `num_format`), and the standalone
-    /// `uuid()` function.
+    /// `root`), the path-inspection group registered by [`PathOps`] —
+    /// `path_exists`/`is_file_path`/`is_dir_path` as tests (also
+    /// confined to `root`) and `path_filename`/`path_basename`/
+    /// `path_extension`/`path_parent` as filters — `ui`
+    /// (`ui.text_input(...)` / `ui.select(...)` / `ui.confirm(...)` /
+    /// `ui.multi_select(...)`, delegating to `provider` — see
+    /// [`UiOps`]'s module docs for which concrete provider that is),
+    /// `date` (`date.now(format)`/`date.today()`/`date.tomorrow()`/
+    /// `date.yesterday()`/`date.from_timestamp(ts)`, plus the flat
+    /// `date_*` filters and `is_*` tests — see [`DateOps`]'s module
+    /// docs), the filter group registered by [`StrOps`] (the five
+    /// case-conversion filters plus `trim_prefix`/`trim_suffix`/
+    /// `truncate`/`truncate_words`/`word_count`/`repeat`/
+    /// `regex_replace`/`regex_match` — see its module docs), the
+    /// numeric-filter group registered by [`NumOps`] (`ceil`, `floor`,
+    /// `sqrt`, `num_format`), and the standalone `uuid()` function.
     #[inline]
     #[must_use]
     pub(super) fn new(
@@ -72,7 +78,9 @@ impl TemplateEngine {
             let loader = loader.clone();
             move |name| loader.load(name)
         });
-        FileOps::new(Arc::from(root)).register(&mut env);
+        let root = Arc::from(root);
+        FileOps::new(Arc::clone(&root)).register(&mut env);
+        PathOps::new(root).register(&mut env);
         UiOps::new(provider).register(&mut env);
         DateOps.register(&mut env);
         StrOps::register(&mut env);
@@ -278,6 +286,33 @@ mod tests {
                 .expect("extension-less include name is stem-matched");
 
             assert_eq!(rendered.content, "hello");
+        }
+
+        #[test]
+        fn path_tests_and_filters_are_registered_and_resolve_against_root() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("main.rs"), "fn main() {}")
+                .expect("write fixture");
+            let engine = TemplateEngine::new(
+                loader_from_dir(temp.path()),
+                preset_provider(),
+                temp.path(),
+            );
+
+            let rendered = engine
+                .render(
+                    "{{ 'main.rs' is path_exists }}-{{ 'missing.rs' is \
+                     path_exists }}-{{ 'main.rs' is is_file_path }}-{{ '.' is \
+                     is_dir_path }}-{{ '/foo/bar/main.rs' | path_basename \
+                     }}-{{ '/foo/bar/main.rs' | path_extension }}-{{ \
+                     '/foo/bar/main.rs' | path_parent }}",
+                )
+                .expect("render succeeds");
+
+            assert_eq!(
+                rendered.content,
+                "true-false-true-true-main-rs-/foo/bar"
+            );
         }
     }
 
