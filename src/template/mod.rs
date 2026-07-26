@@ -37,5 +37,5 @@ mod source_dir;
 mod writer;
 
 pub(crate) use error::TemplateError;
-pub(crate) use service::TemplateService;
+pub(crate) use service::{RenderedTemplate, TemplateService};
 pub(crate) use writer::{WriteMode, WriteOutcome};

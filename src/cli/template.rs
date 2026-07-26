@@ -19,7 +19,7 @@ use super::error::TemplateCliError;
 use crate::{
     Cwd, DialogProvider, PresetDialogProvider,
     config::{Config, ConfigLoadError, ConfigService},
-    template::{TemplateService, WriteMode, WriteOutcome},
+    template::{RenderedTemplate, TemplateService, WriteMode, WriteOutcome},
 };
 
 /// `traces template -i <name>` (aliased `tmpl`), and the default
@@ -97,7 +97,9 @@ impl Template {
     /// no template is available to pick. Returns [`TemplateCliError::Picker`]
     /// when the interactive picker prompt fails, is cancelled, or is
     /// interrupted. Returns [`TemplateCliError::Instantiate`] when the
-    /// resolve/render/write pipeline fails.
+    /// resolve/render/write pipeline fails — including when a picked
+    /// template's declared `file.write_to()` names an unsafe path, caught
+    /// while computing [`Self::prompt_output_override`]'s existence check.
     #[inline]
     #[expect(
         clippy::print_stdout,
@@ -114,7 +116,7 @@ impl Template {
         let config = service.load(&cwd).map_err(|source| match source {
             ConfigLoadError::Discovery(_) => {
                 TemplateCliError::ConfigDiscovery {
-                    cwd: cwd.clone(),
+                    cwd,
                     source: Box::new(source),
                 }
             }
@@ -130,22 +132,37 @@ impl Template {
         };
         let template_service =
             TemplateService::new(&config, effective_provider);
-        let (name, output) = if let Some(name) = self.name {
-            (name, self.output)
+        let outcome = if let Some(name) = self.name {
+            template_service
+                .render_to_file(&name, self.output.as_deref(), mode)
+                .map_err(|source| TemplateCliError::Instantiate {
+                    name,
+                    source: Box::new(source),
+                })?
         } else {
             let name = Self::pick_template(&config)?;
+            let rendered =
+                template_service.render(&name).map_err(|source| {
+                    TemplateCliError::Instantiate {
+                        name: name.clone(),
+                        source: Box::new(source),
+                    }
+                })?;
             let output = match self.output {
                 Some(output) => Some(output),
-                None => Self::prompt_output_override(&template_service, &name)?,
+                None => Self::prompt_output_override(
+                    &template_service,
+                    &name,
+                    &rendered,
+                )?,
             };
-            (name, output)
+            template_service.write(rendered, output.as_deref(), mode).map_err(
+                |source| TemplateCliError::Instantiate {
+                    name,
+                    source: Box::new(source),
+                },
+            )?
         };
-        let outcome = template_service
-            .render_to_file(&name, output.as_deref(), mode)
-            .map_err(|source| TemplateCliError::Instantiate {
-                name: name.clone(),
-                source: Box::new(source),
-            })?;
         match outcome {
             WriteOutcome::Written(path) => {
                 eprintln!("wrote {}", path.display());
@@ -179,11 +196,14 @@ impl Template {
         Ok(PathBuf::from(chosen))
     }
 
-    /// After [`Self::pick_template`] resolves `name`, checks whether its
-    /// default output path already exists on disk; if so, prompts for an
-    /// alternative with `inquire::Text`, pre-filled with the default path,
-    /// to use as the `-o` override. Returns `Ok(None)` — no override
-    /// needed — when the default path doesn't exist yet.
+    /// After [`Self::pick_template`] resolves `name` and
+    /// [`Self::run`] renders it, checks whether `rendered`'s effective
+    /// output path — [`TemplateService::effective_output_path`]:
+    /// its declared `file.write_to()` if it called one, else the
+    /// default output path — already exists on disk; if so, prompts
+    /// for an alternative with `inquire::Text`, pre-filled with that
+    /// path, to use as the `-o` override. Returns `Ok(None)` — no
+    /// override needed — when the effective path doesn't exist yet.
     ///
     /// This is a UX prompt, not a TOCTOU-safe existence check: the write
     /// itself still enforces atomically via
@@ -192,15 +212,17 @@ impl Template {
     ///
     /// # Errors
     ///
-    /// Returns [`TemplateCliError::Instantiate`] when `name` fails to
-    /// resolve. Returns [`TemplateCliError::Picker`] when the prompt
-    /// fails, is cancelled (Esc), or is interrupted (Ctrl-C).
+    /// Returns [`TemplateCliError::Instantiate`] when `rendered`'s
+    /// declared `write_to` names an unsafe path. Returns
+    /// [`TemplateCliError::Picker`] when the prompt fails, is
+    /// cancelled (Esc), or is interrupted (Ctrl-C).
     fn prompt_output_override(
         template_service: &TemplateService<'_>,
         name: &Path,
+        rendered: &RenderedTemplate,
     ) -> Result<Option<PathBuf>, TemplateCliError> {
         let default_path = template_service
-            .default_output_path_for(name)
+            .effective_output_path(rendered)
             .map_err(|source| TemplateCliError::Instantiate {
                 name: name.to_path_buf(),
                 source: Box::new(source),

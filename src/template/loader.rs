@@ -123,6 +123,7 @@ impl TemplateLoader {
     /// A missing or unreadable directory is silently skipped, matching
     /// [`Self::find`]'s stance on absent input — there's no error to
     /// report, just fewer candidates.
+    #[must_use]
     pub(super) fn list_available(&self) -> Vec<String> {
         let mut names = Self::stems_in(self.local.as_deref());
         for stem in Self::stems_in(self.global.as_deref()) {
@@ -146,14 +147,16 @@ impl TemplateLoader {
         entries
             .filter_map(Result::ok)
             .filter(|entry| entry.file_type().is_ok_and(|ty| ty.is_file()))
-            .filter(|entry| {
-                entry.path().extension().is_some_and(|ext| ext == "md")
-            })
             .filter_map(|entry| {
-                entry
-                    .path()
-                    .file_stem()
-                    .map(|stem| stem.to_string_lossy().into_owned())
+                let path = entry.path();
+                let is_markdown =
+                    path.extension().is_some_and(|ext| ext == "md");
+                is_markdown
+                    .then(|| {
+                        path.file_stem()
+                            .map(|stem| stem.to_string_lossy().into_owned())
+                    })
+                    .flatten()
             })
             .collect()
     }

@@ -201,6 +201,7 @@ mod tests {
         use std::{fs, path::Path};
 
         use pretty_assertions::assert_eq;
+        use rstest::rstest;
 
         use super::{error::TemplateCliError, *};
         use crate::{
@@ -283,46 +284,48 @@ mod tests {
             assert_eq!(via_default, via_template);
         }
 
-        #[test]
-        fn bare_input_and_bare_template_both_reach_the_interactive_picker() {
-            for argv in [vec!["traces", "-i"], vec!["traces", "template"]] {
-                let temp = tempfile::tempdir().expect("create temp dir");
-                let root = temp.path().join("project");
-                fs::create_dir_all(root.join(".traces")).expect("create dir");
-                fs::create_dir_all(root.join("templates"))
-                    .expect("create empty templates dir");
-                fs::write(
-                    root.join(".traces/config.toml"),
-                    "[templates]\ndirectory = \"templates\"\n",
-                )
-                .expect("write config file");
-                let config = crate::config::LocalConfigFile::<
-                    crate::config::Discovered,
-                >::try_new(
-                    root.join(".traces/config.toml")
-                )
-                .expect("valid local config");
-                let service = ConfigService::at(
-                    temp.path().join("tracked-store"),
-                    temp.path().join("trust-store"),
-                );
-                service
-                    .trust(&TrustRequest::from(&config))
-                    .expect("trust project root");
-                let _guard = CwdGuard::enter(&root);
-                let provider: Arc<dyn crate::DialogProvider> =
-                    Arc::new(PresetDialogProvider::new());
-                let cli = Cli::try_parse_from(argv).expect("parse argv");
+        #[rstest]
+        #[case::bare_dash_i(vec!["traces", "-i"])]
+        #[case::bare_template_subcommand(vec!["traces", "template"])]
+        fn bare_input_and_bare_template_both_reach_the_interactive_picker(
+            #[case] argv: Vec<&str>,
+        ) {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let root = temp.path().join("project");
+            fs::create_dir_all(root.join(".traces")).expect("create dir");
+            fs::create_dir_all(root.join("templates"))
+                .expect("create empty templates dir");
+            fs::write(
+                root.join(".traces/config.toml"),
+                "[templates]\ndirectory = \"templates\"\n",
+            )
+            .expect("write config file");
+            let config = crate::config::LocalConfigFile::<
+                crate::config::Discovered,
+            >::try_new(
+                root.join(".traces/config.toml")
+            )
+            .expect("valid local config");
+            let service = ConfigService::at(
+                temp.path().join("tracked-store"),
+                temp.path().join("trust-store"),
+            );
+            service
+                .trust(&TrustRequest::from(&config))
+                .expect("trust project root");
+            let _guard = CwdGuard::enter(&root);
+            let provider: Arc<dyn crate::DialogProvider> =
+                Arc::new(PresetDialogProvider::new());
+            let cli = Cli::try_parse_from(argv).expect("parse argv");
 
-                let error = cli
-                    .run(&service, &provider)
-                    .expect_err("no templates to pick from");
+            let error = cli
+                .run(&service, &provider)
+                .expect_err("no templates to pick from");
 
-                assert!(matches!(
-                    error,
-                    CliError::Template(TemplateCliError::NoTemplates)
-                ));
-            }
+            assert!(matches!(
+                error,
+                CliError::Template(TemplateCliError::NoTemplates)
+            ));
         }
     }
 }
