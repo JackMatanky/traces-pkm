@@ -23,13 +23,19 @@ use crate::{
 };
 
 /// `traces template -i <name>` (aliased `tmpl`), and the default
-/// `traces -i <name>` dispatch.
+/// `traces -i <name>` dispatch. `--list` is a fourth, non-interactive
+/// mode: prints every available template name and exits, for a quick
+/// look without launching the fuzzy picker.
 #[derive(Debug, Args)]
 pub(super) struct Template {
     /// Template name or path to instantiate. Omit (or pass `-i` with no
     /// value) to pick one interactively from every available template.
     #[arg(short = 'i', long = "input", value_name = "NAME", num_args = 0..=1)]
     pub(super) name: Option<PathBuf>,
+    /// List every available template name, one per line, then exit —
+    /// for a quick look without the interactive picker.
+    #[arg(short = 'l', long, conflicts_with = "name")]
+    pub(super) list: bool,
     /// Output path — overrides any `file.write_to()` call inside the
     /// template; falls back to `write_to`, then the config-derived default.
     #[arg(short = 'o', long, value_name = "PATH")]
@@ -52,6 +58,7 @@ impl Template {
     pub(super) fn new(name: PathBuf) -> Self {
         Self {
             name: Some(name),
+            list: false,
             output: None,
             write: WriteFlags {
                 force: false,
@@ -69,6 +76,7 @@ impl Template {
     pub(super) fn interactive() -> Self {
         Self {
             name: None,
+            list: false,
             output: None,
             write: WriteFlags {
                 force: false,
@@ -78,10 +86,14 @@ impl Template {
         }
     }
 
-    /// Loads config for the current directory, then resolves and renders
-    /// [`Self::name`] — or, when absent, a name picked interactively from
-    /// [`TemplateService::list_available`] — writing it to the default
-    /// output path or, in dry-run mode, printing it to stdout instead.
+    /// Loads config for the current directory. When [`Self::list`] is
+    /// set, prints every available template name
+    /// ([`TemplateService::list_available`]) and returns — a
+    /// non-interactive alternative to the fuzzy picker. Otherwise
+    /// resolves and renders [`Self::name`] — or, when absent, a name
+    /// picked interactively from the same list — writing it to the
+    /// default output path or, in dry-run mode, printing it to stdout
+    /// instead.
     ///
     /// `provider` is the interactive provider a `ui.*` call delegates to
     /// when [`Self::no_input`] is unset; when set, every render uses a
@@ -94,7 +106,10 @@ impl Template {
     /// [`TemplateCliError::ConfigBuild`] when building config fails,
     /// including for an untrusted or stale project root. Returns
     /// [`TemplateCliError::NoTemplates`] when [`Self::name`] is absent and
-    /// no template is available to pick. Returns [`TemplateCliError::Picker`]
+    /// no template is available to pick — never returned for
+    /// [`Self::list`], which prints nothing and returns `Ok` when no
+    /// template is available (a list, unlike a picker, has nothing
+    /// to fail by being empty). Returns [`TemplateCliError::Picker`]
     /// when the interactive picker prompt fails, is cancelled, or is
     /// interrupted. Returns [`TemplateCliError::Instantiate`] when the
     /// resolve/render/write pipeline fails — including when a picked
@@ -103,8 +118,8 @@ impl Template {
     #[inline]
     #[expect(
         clippy::print_stdout,
-        reason = "dry-run output is data meant to be piped, not diagnostic \
-                  text — mirrors the trust list/show precedent in \
+        reason = "--list and dry-run output are data meant to be piped, not \
+                  diagnostic text — mirrors the trust list/show precedent in \
                   crate::cli::trust"
     )]
     pub(super) fn run(
@@ -124,6 +139,12 @@ impl Template {
                 source: Box::new(source),
             },
         })?;
+        if self.list {
+            for name in TemplateService::list_available(&config) {
+                println!("{name}");
+            }
+            return Ok(());
+        }
         let mode = WriteMode::from_flags(self.write.dry_run, self.write.force);
         let effective_provider: Arc<dyn DialogProvider> = if self.no_input {
             Arc::new(PresetDialogProvider::new())
@@ -393,6 +414,66 @@ mod tests {
     }
 
     #[test]
+    fn run_with_list_does_not_render_or_write_anything() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let root = temp.path().join("project");
+        fs::create_dir_all(&root).expect("create project dir");
+        let config_file = create_config(&root, "templates");
+        let templates_dir = root.join("templates");
+        fs::create_dir_all(&templates_dir).expect("create templates dir");
+        fs::write(templates_dir.join("daily.md"), "content")
+            .expect("write template");
+        let service = service(temp.path());
+        trust_config(&service, &config_file);
+        let _guard = CwdGuard::enter(&root);
+
+        Template {
+            name: None,
+            list: true,
+            output: None,
+            write: WriteFlags {
+                force: false,
+                dry_run: false,
+            },
+            no_input: false,
+        }
+        .run(&service, &preset_provider())
+        .expect("run with --list succeeds");
+
+        assert!(!root.join("daily.md").exists());
+    }
+
+    #[test]
+    fn run_with_list_and_no_available_templates_succeeds_with_no_output() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let root = temp.path().join("project");
+        fs::create_dir_all(&root).expect("create project dir");
+        let config_file = create_config(&root, "templates");
+        fs::create_dir_all(root.join("templates"))
+            .expect("create templates dir");
+        let service = service(temp.path());
+        trust_config(&service, &config_file);
+        let _guard = CwdGuard::enter(&root);
+
+        // Unlike the interactive picker (`Template::interactive`, which
+        // errors `NoTemplates` on an empty list), `--list` is a plain
+        // listing command: nothing to pick from isn't a failure, it's
+        // just an empty list.
+        Template {
+            name: None,
+            list: true,
+            output: None,
+            write: WriteFlags {
+                force: false,
+                dry_run: false,
+            },
+            no_input: false,
+        }
+        .run(&service, &preset_provider())
+        .expect("run with --list succeeds even when nothing is listed");
+    }
+
+    #[test]
     fn run_writes_to_the_output_flag_path() {
         let temp = tempfile::tempdir().expect("create temp dir");
         let root = temp.path().join("project");
@@ -408,6 +489,7 @@ mod tests {
 
         Template {
             name: Some(PathBuf::from("daily")),
+            list: false,
             output: Some(PathBuf::from("elsewhere.md")),
             write: WriteFlags {
                 force: false,
@@ -466,6 +548,7 @@ mod tests {
 
         Template {
             name: Some(PathBuf::from("daily")),
+            list: false,
             output: None,
             write: WriteFlags {
                 force: true,
@@ -498,6 +581,7 @@ mod tests {
 
         let error = Template {
             name: Some(PathBuf::from("daily")),
+            list: false,
             output: Some(PathBuf::from("../../escape.md")),
             write: WriteFlags {
                 force: false,
@@ -528,6 +612,7 @@ mod tests {
 
         Template {
             name: Some(PathBuf::from("daily")),
+            list: false,
             output: None,
             write: WriteFlags {
                 force: false,
@@ -560,6 +645,7 @@ mod tests {
 
         Template {
             name: Some(PathBuf::from("daily")),
+            list: false,
             output: Some(PathBuf::from("../../escape.md")),
             write: WriteFlags {
                 force: false,
@@ -626,6 +712,7 @@ mod tests {
 
         Template {
             name: Some(PathBuf::from("daily")),
+            list: false,
             output: None,
             write: WriteFlags {
                 force: false,

@@ -94,6 +94,7 @@ enum Commands {
     #[command(alias = "tmpl")]
     Template(template::Template),
     /// Generate shell completions, or list available template names
+    #[command(alias = "completion")]
     Completions(completions::Completions),
 }
 
@@ -182,6 +183,15 @@ mod tests {
     }
 
     #[test]
+    fn completion_alias_parses_to_the_completions_subcommand() {
+        let cli =
+            Cli::try_parse_from(["traces", "completion", "--shell", "zsh"])
+                .expect("parse completion alias argv");
+
+        assert!(matches!(&cli.command, Some(Commands::Completions(_))));
+    }
+
+    #[test]
     fn bare_input_flag_defaults_to_no_subcommand_dispatch() {
         let cli = Cli::try_parse_from(["traces", "-i", "daily"])
             .expect("parse default -i argv");
@@ -193,6 +203,26 @@ mod tests {
     #[test]
     fn top_level_input_alongside_a_subcommand_is_rejected() {
         let result = Cli::try_parse_from(["traces", "init", "-i", "daily"]);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn template_list_flag_parses_with_no_name() {
+        let cli = Cli::try_parse_from(["traces", "template", "--list"])
+            .expect("parse template --list argv");
+
+        assert!(matches!(
+            &cli.command,
+            Some(Commands::Template(args)) if args.list && args.name.is_none()
+        ));
+    }
+
+    #[test]
+    fn template_list_flag_conflicts_with_input_name() {
+        let result = Cli::try_parse_from([
+            "traces", "template", "-i", "daily", "--list",
+        ]);
 
         assert!(result.is_err());
     }
