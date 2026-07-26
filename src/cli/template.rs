@@ -158,7 +158,7 @@ impl Template {
                 .render_to_file(&name, self.output.as_deref(), mode)
                 .map_err(|source| TemplateCliError::Instantiate {
                     name,
-                    source: Box::new(source),
+                    source,
                 })?
         } else {
             let name = Self::pick_template(&config, &effective_provider)?;
@@ -166,7 +166,7 @@ impl Template {
                 template_service.render(&name).map_err(|source| {
                     TemplateCliError::Instantiate {
                         name: name.clone(),
-                        source: Box::new(source),
+                        source,
                     }
                 })?;
             let output = match self.output {
@@ -181,7 +181,7 @@ impl Template {
             template_service.write(rendered, output.as_deref(), mode).map_err(
                 |source| TemplateCliError::Instantiate {
                     name,
-                    source: Box::new(source),
+                    source,
                 },
             )?
         };
@@ -262,7 +262,7 @@ impl Template {
             .effective_output_path(rendered)
             .map_err(|source| TemplateCliError::Instantiate {
                 name: name.to_path_buf(),
-                source: Box::new(source),
+                source,
             })?;
         if !default_path.exists() {
             return Ok(None);
