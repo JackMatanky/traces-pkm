@@ -158,3 +158,143 @@ If future work needs to automate the interactive paths, a trait can be extracted
 - The existing template resolution (`TemplateLoader::find()`) already handles local-before-global precedence. `list_available()` mirrors that order, deduplicating by stem.
 - The fuzzy picker uses `inquire::Select` with its default configuration — the user types to filter and the built-in fuzzy scorer ranks results. This is the same `inquire` crate already used for `ui.select()` inside templates.
 - The `ClError::NoCommand` case for bare `traces` is preserved. Only `traces template` (bare) and `traces -i` (bare) trigger the picker.
+
+## Implementation Notes (Post-Implementation Review)
+
+Implemented on `feature/template-browser` across four commits:
+`a13ec6c` (initial picker/completions/output-prompt), `de627e3`
+(`Completions` gets its own error enum), `675bcde` (write_to-aware
+existence check, coverage gaps closed), `5d4529a` (`--list` flag,
+`completion` alias). `Status:` above is left as `ready-for-agent` per
+this repo's convention — completion is recorded here, not by
+overwriting the triage label (compare `config-service/spec.md`,
+`prompt-service/spec.md`, whose top-level specs also keep their
+original label after their linked issues are marked `implemented`).
+
+### Acceptance criteria review — no unfulfilled criteria
+
+Every User Story and every listed Testing Decision is implemented.
+Two (#4, #7) are broadened beyond their literal wording — #4
+deliberately, to fix a real bug (see "Deviation: write_to-aware
+existence check" below); #7 because the Implementation Decisions'
+own code sketch already used the unrestricted `Shell` enum, not the
+three shells the story names. Everything else matches as written.
+
+| # | User Story | Status |
+|---|---|---|
+| 1 | Bare `traces template` → fuzzy picker | Fulfilled |
+| 2 | Bare `traces -i` → fuzzy picker | Fulfilled |
+| 3 | Picked name reuses the resolve-render-write pipeline | Fulfilled |
+| 4 | No `write_to()` + default path exists → prompt | Fulfilled, broadened — see "Deviation: write_to-aware existence check" |
+| 5 | Fuzzy substring match on names | Fulfilled (unmodified `inquire::Select` default scorer) |
+| 6 | `completions --list-templates`, one name per line | Fulfilled |
+| 7 | `completions --shell bash\|zsh\|fish` | Fulfilled — `--shell` accepts the full `clap_complete::Shell` (also `powershell`/`elvish`), matching this doc's own code sketch, not restricted to the three named here |
+| 8 | No templates → clear error | Fulfilled (`TemplateCliError::NoTemplates`) |
+
+Testing Decisions: all listed cases are implemented; several are
+exceeded (see "Testing" below).
+
+### Deviation: write_to-aware existence check
+
+"Fuzzy picker dispatch" step 6 and "The output path check is done by
+testing `default_output_path().exists()`" describe checking the
+*default* path unconditionally. That has a real bug: a template
+declaring `file.write_to()` to a different path could still trigger
+the prompt off its unrelated, unchecked default path — and accepting
+the prompt becomes a `-o` override, which outranks `write_to()`,
+silently redirecting the write away from what the template asked for.
+
+Fixed by splitting `TemplateService::render_to_file` into `render()`
+(resolve + read + render, capturing `write_to` as
+`RenderedTemplate.declared`) and `write()` (the existing write-target
+resolution + `TemplateWriter::write` call), plus a new
+`effective_output_path(&RenderedTemplate)` that resolves the same
+declared-then-default precedence the real write uses. The picker now:
+
+1. Picks a name, renders it once (`render()`).
+2. Computes `effective_output_path()` — the template's own
+   `write_to()` path if it called one, else the default.
+3. Prompts only if *that* path exists, pre-filled with it (not always
+   literally "the default output path").
+4. Writes the already-rendered content (`write()`), passing the
+   user's answer, if any, as the `-o` override.
+
+This also changes step 6's "before rendering" ordering: the existence
+check now necessarily happens *after* rendering, since rendering is
+the only way to learn whether `write_to()` was called. Rendering
+exactly once — never twice — was the hard constraint driving this
+design: a second render would re-run any `ui.*` prompts inside the
+template.
+
+### Deviation: `Cli::input` is `Option<Option<PathBuf>>`, not `Option<PathBuf>`
+
+"`traces -i` with optional value"'s code sketch shows
+`input: Option<PathBuf>`. Verified via a live clap 4.6 experiment that
+`Option<PathBuf>` + `num_args = 0..=1` cannot distinguish "flag
+absent" (bare `traces`) from "flag present, no value" (bare
+`traces -i`) — both parse to `None`. Only `Option<Option<PathBuf>>`
+disambiguates the three states this feature needs: `None` →
+`CliError::NoCommand`, `Some(None)` → picker, `Some(Some(name))` →
+ordinary dispatch. Ships with
+`#[expect(clippy::option_option, reason = "...")]`.
+
+### Deviation: `Completions`'s mutual exclusivity uses `ArgGroup`
+
+"`--shell` and `--list-templates` are mutually exclusive (clap
+`conflicts_with`)" — implemented via
+`#[command(group(ArgGroup::new("completions_mode").args(["shell", "list_templates"]).required(true).multiple(false)))]`
+instead. Strictly stronger: also rejects bare `traces completions`
+with *neither* flag (a plain `conflicts_with` pair would let that
+parse and silently fall through to the list-templates branch).
+
+### Scope additions (requested after the initial implementation)
+
+- **`traces template --list` / `-l`**: a fourth, non-interactive
+  `Template` dispatch mode — prints every available template name
+  (the same `TemplateService::list_available` the picker and
+  `completions --list-templates` already use) and exits, for a quick
+  look without launching the fuzzy picker. `conflicts_with = "name"`.
+  Unlike the picker (`TemplateCliError::NoTemplates` on an empty
+  list), `--list` on an empty list is not an error — it prints
+  nothing and returns `Ok`, matching `completions --list-templates`'s
+  existing empty-list behavior and standard Unix list-command
+  precedent (`ls`, `git branch --list`).
+- **`traces completion` alias** for `Commands::Completions`, mirroring
+  `mise completion`'s own `complete`/`completions` aliases (verified
+  against `jdx/mise`'s `src/cli/completion.rs`).
+
+### Testing (exceeded the original plan)
+
+- `render()`/`effective_output_path()` (the new write_to-aware logic)
+  are directly unit-tested (Ok path, declared-`write_to` path,
+  `OutputPathEscapesRoot` on an unsafe declared path). "Output path
+  prompt has no automated test" still holds for the *interactive*
+  prompt itself (untested by design — no trait seam, per "Interactive
+  test seam"); the path-resolution logic it depends on isn't part of
+  that interactive flow and is testable without a terminal.
+- `Completions::list_templates` was split into a testable
+  `template_names()` (mirroring the already-planned
+  `script()`/`print_script()` split for `--shell`), with success-path
+  and `ConfigBuild`-error coverage added beyond this doc's "tested via
+  [`list_available`]'s tests" minimum.
+- `--list` and the `completion` alias each have their own parsing
+  tests (`Cli::try_parse_from`); `--list` also has a behavioral test
+  proving it writes nothing to disk.
+- Verified via `cargo nextest run` (608/608), `cargo test --workspace`
+  (lib + integration + 10 doctests), `cargo clippy --workspace -- -D
+  warnings` (clean except one pre-existing, unrelated failure on
+  `main`), `cargo fmt --check`, and manual smoke tests of the built
+  binary (`--list`, `-i <name> --list` rejection, `completions
+  --shell {bash,zsh,fish}`, `completion` alias).
+
+### Architecture note: `TemplateService`'s public surface grew
+
+Beyond `list_available`, `TemplateService` now exposes
+`render(name) -> RenderedTemplate`,
+`write(RenderedTemplate, output, mode) -> WriteOutcome`, and
+`effective_output_path(&RenderedTemplate) -> PathBuf`, with
+`render_to_file` now a two-line composition of `render`+`write` kept
+for callers (the ordinary `-i <name>` dispatch) that don't need to
+inspect the render before deciding where it writes.
+`RenderedTemplate` (new `pub(crate)` type, opaque fields) carries a
+render across that boundary without rendering twice.
