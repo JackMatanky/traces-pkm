@@ -323,6 +323,21 @@ fn timestamp(value: &str) -> Result<i64, Error> {
     Ok(parse_date(value)?.and_utc().timestamp())
 }
 
+/// Parses `value` as a date/time string, transforms `datetime` via `op`,
+/// and re-serializes the result at `value`'s original precision.
+///
+/// # Errors
+///
+/// [`ErrorKind::InvalidOperation`] if `value` isn't parseable or `op`
+/// returns `None` (arithmetic overflow).
+fn shift_date(
+    value: &str,
+    op: impl FnOnce(NaiveDateTime) -> Option<NaiveDateTime>,
+) -> Result<String, Error> {
+    let (datetime, has_time) = parse_date_precise(value)?;
+    let shifted = op(datetime).ok_or_else(date_out_of_range_error)?;
+    format_precise(shifted, has_time)
+}
 /// `{{ value | add_days(n) }}`
 ///
 /// # Errors
@@ -332,11 +347,7 @@ fn timestamp(value: &str) -> Result<i64, Error> {
 /// overflows chrono's representable range (see
 /// [`date_out_of_range_error`]).
 fn add_days(value: &str, n: u64) -> Result<String, Error> {
-    let (datetime, has_time) = parse_date_precise(value)?;
-    let shifted = datetime
-        .checked_add_days(Days::new(n))
-        .ok_or_else(date_out_of_range_error)?;
-    format_precise(shifted, has_time)
+    shift_date(value, |dt| dt.checked_add_days(Days::new(n)))
 }
 
 /// `{{ value | sub_days(n) }}`
@@ -348,11 +359,7 @@ fn add_days(value: &str, n: u64) -> Result<String, Error> {
 /// overflows chrono's representable range (see
 /// [`date_out_of_range_error`]).
 fn sub_days(value: &str, n: u64) -> Result<String, Error> {
-    let (datetime, has_time) = parse_date_precise(value)?;
-    let shifted = datetime
-        .checked_sub_days(Days::new(n))
-        .ok_or_else(date_out_of_range_error)?;
-    format_precise(shifted, has_time)
+    shift_date(value, |dt| dt.checked_sub_days(Days::new(n)))
 }
 
 /// `{{ value | add_months(n) }}` — clamps to the last day of the
@@ -367,11 +374,7 @@ fn sub_days(value: &str, n: u64) -> Result<String, Error> {
 /// overflows chrono's representable range (see
 /// [`date_out_of_range_error`]).
 fn add_months(value: &str, n: u32) -> Result<String, Error> {
-    let (datetime, has_time) = parse_date_precise(value)?;
-    let shifted = datetime
-        .checked_add_months(Months::new(n))
-        .ok_or_else(date_out_of_range_error)?;
-    format_precise(shifted, has_time)
+    shift_date(value, |dt| dt.checked_add_months(Months::new(n)))
 }
 
 /// `{{ value | sub_months(n) }}` — same end-of-month clamping as
@@ -384,11 +387,7 @@ fn add_months(value: &str, n: u32) -> Result<String, Error> {
 /// overflows chrono's representable range (see
 /// [`date_out_of_range_error`]).
 fn sub_months(value: &str, n: u32) -> Result<String, Error> {
-    let (datetime, has_time) = parse_date_precise(value)?;
-    let shifted = datetime
-        .checked_sub_months(Months::new(n))
-        .ok_or_else(date_out_of_range_error)?;
-    format_precise(shifted, has_time)
+    shift_date(value, |dt| dt.checked_sub_months(Months::new(n)))
 }
 
 /// `{{ value | add_years(n) }}` — implemented as `n * 12` months (via
@@ -403,12 +402,10 @@ fn sub_months(value: &str, n: u32) -> Result<String, Error> {
 /// [`u32`], or the shift overflows chrono's representable range (see
 /// [`date_out_of_range_error`]).
 fn add_years(value: &str, n: u32) -> Result<String, Error> {
-    let (datetime, has_time) = parse_date_precise(value)?;
-    let months = n.checked_mul(12).ok_or_else(date_out_of_range_error)?;
-    let shifted = datetime
-        .checked_add_months(Months::new(months))
-        .ok_or_else(date_out_of_range_error)?;
-    format_precise(shifted, has_time)
+    shift_date(value, |dt| {
+        let months = n.checked_mul(12)?;
+        dt.checked_add_months(Months::new(months))
+    })
 }
 
 /// `{{ value | sub_years(n) }}` — see [`add_years`].
@@ -420,12 +417,10 @@ fn add_years(value: &str, n: u32) -> Result<String, Error> {
 /// [`u32`], or the shift overflows chrono's representable range (see
 /// [`date_out_of_range_error`]).
 fn sub_years(value: &str, n: u32) -> Result<String, Error> {
-    let (datetime, has_time) = parse_date_precise(value)?;
-    let months = n.checked_mul(12).ok_or_else(date_out_of_range_error)?;
-    let shifted = datetime
-        .checked_sub_months(Months::new(months))
-        .ok_or_else(date_out_of_range_error)?;
-    format_precise(shifted, has_time)
+    shift_date(value, |dt| {
+        let months = n.checked_mul(12)?;
+        dt.checked_sub_months(Months::new(months))
+    })
 }
 
 /// `{{ value | start_of_month }}`
@@ -437,9 +432,7 @@ fn sub_years(value: &str, n: u32) -> Result<String, Error> {
 /// call underneath can't itself fail (day 1 exists in every month), but
 /// stays behind [`date_out_of_range_error`] since it's a fallible API.
 fn start_of_month(value: &str) -> Result<String, Error> {
-    let (datetime, has_time) = parse_date_precise(value)?;
-    let shifted = datetime.with_day(1).ok_or_else(date_out_of_range_error)?;
-    format_precise(shifted, has_time)
+    shift_date(value, |dt| dt.with_day(1))
 }
 
 /// `{{ value | end_of_month }}`
@@ -451,12 +444,7 @@ fn start_of_month(value: &str) -> Result<String, Error> {
 /// last-of-month day is out of chrono's representable range (see
 /// [`date_out_of_range_error`]).
 fn end_of_month(value: &str) -> Result<String, Error> {
-    let (datetime, has_time) = parse_date_precise(value)?;
-    let last_day = datetime.num_days_in_month();
-    let shifted = datetime
-        .with_day(u32::from(last_day))
-        .ok_or_else(date_out_of_range_error)?;
-    format_precise(shifted, has_time)
+    shift_date(value, |dt| dt.with_day(u32::from(dt.num_days_in_month())))
 }
 
 /// `{{ value | weekday }}` — `0` for Monday through `6` for Sunday
