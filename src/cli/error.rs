@@ -10,11 +10,10 @@
 
 use std::{error::Error as StdError, fmt::Display, path::PathBuf};
 
-use inquire::InquireError;
 use miette::Diagnostic;
 use thiserror::Error;
 
-use crate::template::TemplateError;
+use crate::{DialogError, template::TemplateError};
 
 /// Errors from running the `traces` binary.
 ///
@@ -187,9 +186,9 @@ pub enum TemplateCliError {
     /// the user cancelled (Esc) or interrupted (Ctrl-C) it.
     #[error("template picker failed")]
     Picker {
-        /// The underlying `inquire` error.
+        /// The underlying dialog error.
         #[source]
-        source: InquireError,
+        source: DialogError,
     },
 }
 
@@ -593,7 +592,7 @@ mod tests {
     #[test]
     fn picker_error_has_a_code_help_and_preserves_its_source() {
         let error = TemplateCliError::Picker {
-            source: InquireError::OperationCanceled,
+            source: DialogError::UserCancelled,
         };
 
         assert_eq!(error.to_string(), "template picker failed");

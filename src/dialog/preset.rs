@@ -137,9 +137,23 @@ impl PresetDialogProvider {
         lock(&self.multi_selects).push_back(response.into_iter().collect());
         self
     }
+
+    /// Returns `true` if all preset response queues are empty.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        lock(&self.texts).is_empty()
+            && lock(&self.confirms).is_empty()
+            && lock(&self.selects).is_empty()
+            && lock(&self.multi_selects).is_empty()
+    }
 }
 
 impl DialogProvider for PresetDialogProvider {
+    #[inline]
+    fn is_interactive(&self) -> bool {
+        !self.is_empty()
+    }
+
     #[inline]
     fn text(
         &self,

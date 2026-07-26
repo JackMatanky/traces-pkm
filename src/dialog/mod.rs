@@ -32,6 +32,15 @@ pub use terminal::TerminalDialogProvider;
 /// thread-safe minijinja closures. Deliberately not `+ Debug`, so
 /// implementors aren't forced to derive it.
 pub trait DialogProvider: Send + Sync {
+    /// Whether this provider can perform interactive prompting.
+    ///
+    /// Returns `false` in non-TTY environments or when no preset answers
+    /// remain.
+    #[inline]
+    #[must_use]
+    fn is_interactive(&self) -> bool {
+        true
+    }
     /// Prompt for a yes/no confirmation.
     ///
     /// Displays `label` and waits for the user to confirm or cancel. When the

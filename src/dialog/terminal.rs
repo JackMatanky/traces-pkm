@@ -46,6 +46,11 @@ impl TerminalDialogProvider {
 
 impl DialogProvider for TerminalDialogProvider {
     #[inline]
+    fn is_interactive(&self) -> bool {
+        stdin_is_tty()
+    }
+
+    #[inline]
     fn text(
         &self,
         label: &str,

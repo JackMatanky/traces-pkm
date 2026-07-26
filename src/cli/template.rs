@@ -17,7 +17,7 @@ use clap::Args;
 
 use super::error::TemplateCliError;
 use crate::{
-    Cwd, DialogProvider, PresetDialogProvider,
+    Cwd, DialogError, DialogProvider, PresetDialogProvider,
     config::{Config, ConfigLoadError, ConfigService},
     template::{RenderedTemplate, TemplateService, WriteMode, WriteOutcome},
 };
@@ -152,7 +152,7 @@ impl Template {
             Arc::clone(provider)
         };
         let template_service =
-            TemplateService::new(&config, effective_provider);
+            TemplateService::new(&config, Arc::clone(&effective_provider));
         let outcome = if let Some(name) = self.name {
             template_service
                 .render_to_file(&name, self.output.as_deref(), mode)
@@ -161,7 +161,7 @@ impl Template {
                     source: Box::new(source),
                 })?
         } else {
-            let name = Self::pick_template(&config)?;
+            let name = Self::pick_template(&config, &effective_provider)?;
             let rendered =
                 template_service.render(&name).map_err(|source| {
                     TemplateCliError::Instantiate {
@@ -173,6 +173,7 @@ impl Template {
                 Some(output) => Some(output),
                 None => Self::prompt_output_override(
                     &template_service,
+                    &effective_provider,
                     &name,
                     &rendered,
                 )?,
@@ -193,24 +194,38 @@ impl Template {
         Ok(())
     }
 
-    /// Presents an `inquire::Select` fuzzy-filtered picker over every
-    /// name [`TemplateService::list_available`] finds for `config` — the
-    /// `traces template`/`traces -i` (bare) dispatch. `inquire::Select`'s
-    /// default `filter_input_enabled`/`DEFAULT_SCORER` already fuzzy-match
-    /// as the user types, so no separate fuzzy-matcher crate is needed.
+    /// Presents a fuzzy-filtered picker over every name
+    /// [`TemplateService::list_available`] finds for `config` — the
+    /// `traces template`/`traces -i` (bare) dispatch. Delegates to
+    /// [`DialogProvider::select`].
     ///
     /// # Errors
     ///
     /// Returns [`TemplateCliError::NoTemplates`] when `config` has no
-    /// available templates. Returns [`TemplateCliError::Picker`] when the
-    /// prompt fails, is cancelled (Esc), or is interrupted (Ctrl-C).
-    fn pick_template(config: &Config) -> Result<PathBuf, TemplateCliError> {
+    /// available templates. Returns [`TemplateCliError::Picker`] when
+    /// `provider` is not interactive, or when the prompt fails, is
+    /// cancelled (Esc), or is interrupted (Ctrl-C).
+    fn pick_template(
+        config: &Config,
+        provider: &Arc<dyn DialogProvider>,
+    ) -> Result<PathBuf, TemplateCliError> {
         let available = TemplateService::list_available(config);
         if available.is_empty() {
             return Err(TemplateCliError::NoTemplates);
         }
-        let chosen = inquire::Select::new("Select a template", available)
-            .prompt()
+        if !provider.is_interactive() {
+            return Err(TemplateCliError::Picker {
+                source: DialogError::NotInteractive,
+            });
+        }
+        let chosen_idx = provider
+            .select("Select a template", &available)
+            .map_err(|source| TemplateCliError::Picker {
+                source,
+            })?;
+        let chosen = available
+            .get(chosen_idx)
+            .ok_or(DialogError::EmptySelectionInput)
             .map_err(|source| TemplateCliError::Picker {
                 source,
             })?;
@@ -239,6 +254,7 @@ impl Template {
     /// cancelled (Esc), or is interrupted (Ctrl-C).
     fn prompt_output_override(
         template_service: &TemplateService<'_>,
+        provider: &Arc<dyn DialogProvider>,
         name: &Path,
         rendered: &RenderedTemplate,
     ) -> Result<Option<PathBuf>, TemplateCliError> {
@@ -252,14 +268,14 @@ impl Template {
             return Ok(None);
         }
         let default_display = default_path.display().to_string();
-        let chosen = inquire::Text::new(
-            "Output path already exists — enter an alternative:",
-        )
-        .with_default(&default_display)
-        .prompt()
-        .map_err(|source| TemplateCliError::Picker {
-            source,
-        })?;
+        let chosen = provider
+            .text(
+                "Output path already exists — enter an alternative:",
+                Some(&default_display),
+            )
+            .map_err(|source| TemplateCliError::Picker {
+                source,
+            })?;
         Ok(Some(PathBuf::from(chosen)))
     }
 }
@@ -727,5 +743,54 @@ mod tests {
             fs::read_to_string(root.join("daily.md")).expect("read output"),
             "anon"
         );
+    }
+    #[test]
+    fn run_interactive_uses_provider_to_pick_template() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let root = temp.path().join("project");
+        fs::create_dir_all(&root).expect("create project dir");
+        let config_file = create_config(&root, "templates");
+        let templates_dir = root.join("templates");
+        fs::create_dir_all(&templates_dir).expect("create templates dir");
+        fs::write(templates_dir.join("daily.md"), "hello interactive")
+            .expect("write template");
+        let service = service(temp.path());
+        trust_config(&service, &config_file);
+        let _guard = CwdGuard::enter(&root);
+        let provider: Arc<dyn DialogProvider> =
+            Arc::new(crate::PresetDialogProvider::new().with_select(0));
+
+        Template::interactive()
+            .run(&service, &provider)
+            .expect("run interactive template command");
+
+        assert_eq!(
+            fs::read_to_string(root.join("daily.md")).expect("read output"),
+            "hello interactive"
+        );
+    }
+
+    #[test]
+    fn run_interactive_in_non_interactive_session_fails_with_picker_not_interactive()
+     {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let root = temp.path().join("project");
+        fs::create_dir_all(&root).expect("create project dir");
+        let config_file = create_config(&root, "templates");
+        let templates_dir = root.join("templates");
+        fs::create_dir_all(&templates_dir).expect("create templates dir");
+        fs::write(templates_dir.join("daily.md"), "hello")
+            .expect("write template");
+        let service = service(temp.path());
+        trust_config(&service, &config_file);
+        let _guard = CwdGuard::enter(&root);
+
+        let error = Template::interactive()
+            .run(&service, &preset_provider())
+            .expect_err("non-interactive picker fails");
+
+        assert!(matches!(error, TemplateCliError::Picker {
+            source: DialogError::NotInteractive
+        }));
     }
 }
