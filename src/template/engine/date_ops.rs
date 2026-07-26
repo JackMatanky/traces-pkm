@@ -70,6 +70,8 @@ impl DateOps {
     pub(super) fn register(self, env: &mut Environment<'static>) {
         env.add_filter("date_format", date_format);
         env.add_filter("timestamp", timestamp);
+        env.add_filter("date_add", date_add);
+        env.add_filter("date_sub", date_sub);
         env.add_filter("add_days", add_days);
         env.add_filter("sub_days", sub_days);
         env.add_filter("add_months", add_months);
@@ -338,95 +340,131 @@ fn shift_date(
     let shifted = op(datetime).ok_or_else(date_out_of_range_error)?;
     format_precise(shifted, has_time)
 }
-/// `{{ value | add_days(n) }}`
+/// `{{ value | date_add(n, unit="days") }}` — adds `n` `unit`s to a piped
+/// date/time string (`unit` defaults to `"days"`, accepts `"years"`,
+/// `"months"`, `"days"`, `"hours"`, `"minutes"`, `"seconds"`).
 ///
 /// # Errors
 ///
-/// [`ErrorKind::InvalidOperation`] if `value` isn't a parseable
-/// date/time string (see [`parse_date_precise`]) or the shift
-/// overflows chrono's representable range (see
-/// [`date_out_of_range_error`]).
+/// [`ErrorKind::InvalidOperation`] if `value` isn't a parseable date/time
+/// string, `unit` isn't an accepted unit name, or the shift overflows chrono's
+/// representable range.
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "minijinja's Function trait extracts a filter's trailing Kwargs \
+              argument by value; only `&self` methods on it are needed here"
+)]
+fn date_add(value: &str, n: i64, kwargs: Kwargs) -> Result<String, Error> {
+    let unit_str = kwargs.get::<Option<&str>>("unit")?.unwrap_or("days");
+    kwargs.assert_all_used()?;
+    let unit = DateTimeUnit::parse(unit_str)
+        .ok_or_else(|| unknown_unit_error(unit_str))?;
+    date_shift_unit(value, n, unit)
+}
+
+/// `{{ value | date_sub(n, unit="days") }}` — subtracts `n` `unit`s from a
+/// piped date/time string (see [`date_add`]).
+///
+/// # Errors
+///
+/// See [`date_add`].
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "minijinja's Function trait extracts a filter's trailing Kwargs \
+              argument by value; only `&self` methods on it are needed here"
+)]
+fn date_sub(value: &str, n: i64, kwargs: Kwargs) -> Result<String, Error> {
+    let unit_str = kwargs.get::<Option<&str>>("unit")?.unwrap_or("days");
+    kwargs.assert_all_used()?;
+    let unit = DateTimeUnit::parse(unit_str)
+        .ok_or_else(|| unknown_unit_error(unit_str))?;
+    date_shift_unit(
+        value,
+        n.checked_neg().ok_or_else(date_out_of_range_error)?,
+        unit,
+    )
+}
+
+fn date_shift_unit(
+    value: &str,
+    n: i64,
+    unit: DateTimeUnit,
+) -> Result<String, Error> {
+    shift_date(value, |dt| match unit {
+        DateTimeUnit::Years => {
+            let months = n.checked_mul(12)?;
+            let months_u32 = u32::try_from(months.abs()).ok()?;
+            if months >= 0 {
+                dt.checked_add_months(Months::new(months_u32))
+            } else {
+                dt.checked_sub_months(Months::new(months_u32))
+            }
+        }
+        DateTimeUnit::Months => {
+            let months_u32 = u32::try_from(n.abs()).ok()?;
+            if n >= 0 {
+                dt.checked_add_months(Months::new(months_u32))
+            } else {
+                dt.checked_sub_months(Months::new(months_u32))
+            }
+        }
+        DateTimeUnit::Days => {
+            let days_u64 = u64::try_from(n.abs()).ok()?;
+            if n >= 0 {
+                dt.checked_add_days(Days::new(days_u64))
+            } else {
+                dt.checked_sub_days(Days::new(days_u64))
+            }
+        }
+        DateTimeUnit::Hours => {
+            dt.checked_add_signed(chrono::Duration::hours(n))
+        }
+        DateTimeUnit::Minutes => {
+            dt.checked_add_signed(chrono::Duration::minutes(n))
+        }
+        DateTimeUnit::Seconds => {
+            dt.checked_add_signed(chrono::Duration::seconds(n))
+        }
+    })
+}
+
+/// `{{ value | add_days(n) }}` — convenience shortcut for `{{ value |
+/// date_add(n, unit="days") }}`.
 fn add_days(value: &str, n: u64) -> Result<String, Error> {
-    shift_date(value, |dt| dt.checked_add_days(Days::new(n)))
+    let n_i64 = i64::try_from(n).map_err(|_| date_out_of_range_error())?;
+    date_shift_unit(value, n_i64, DateTimeUnit::Days)
 }
 
-/// `{{ value | sub_days(n) }}`
-///
-/// # Errors
-///
-/// [`ErrorKind::InvalidOperation`] if `value` isn't a parseable
-/// date/time string (see [`parse_date_precise`]) or the shift
-/// overflows chrono's representable range (see
-/// [`date_out_of_range_error`]).
+/// `{{ value | sub_days(n) }}` — convenience shortcut for `{{ value |
+/// date_sub(n, unit="days") }}`.
 fn sub_days(value: &str, n: u64) -> Result<String, Error> {
-    shift_date(value, |dt| dt.checked_sub_days(Days::new(n)))
+    let n_i64 = i64::try_from(n).map_err(|_| date_out_of_range_error())?;
+    date_shift_unit(value, -n_i64, DateTimeUnit::Days)
 }
 
-/// `{{ value | add_months(n) }}` — clamps to the last day of the
-/// resulting month when the original day doesn't exist there (e.g.
-/// `2023-01-31` + 1 month -> `2023-02-28`), per
-/// [`NaiveDateTime::checked_add_months`]'s documented behavior.
-///
-/// # Errors
-///
-/// [`ErrorKind::InvalidOperation`] if `value` isn't a parseable
-/// date/time string (see [`parse_date_precise`]) or the shift
-/// overflows chrono's representable range (see
-/// [`date_out_of_range_error`]).
+/// `{{ value | add_months(n) }}` — convenience shortcut for `{{ value |
+/// date_add(n, unit="months") }}`.
 fn add_months(value: &str, n: u32) -> Result<String, Error> {
-    shift_date(value, |dt| dt.checked_add_months(Months::new(n)))
+    date_shift_unit(value, i64::from(n), DateTimeUnit::Months)
 }
 
-/// `{{ value | sub_months(n) }}` — same end-of-month clamping as
-/// [`add_months`], in reverse.
-///
-/// # Errors
-///
-/// [`ErrorKind::InvalidOperation`] if `value` isn't a parseable
-/// date/time string (see [`parse_date_precise`]) or the shift
-/// overflows chrono's representable range (see
-/// [`date_out_of_range_error`]).
+/// `{{ value | sub_months(n) }}` — convenience shortcut for `{{ value |
+/// date_sub(n, unit="months") }}`.
 fn sub_months(value: &str, n: u32) -> Result<String, Error> {
-    shift_date(value, |dt| dt.checked_sub_months(Months::new(n)))
+    date_shift_unit(value, -i64::from(n), DateTimeUnit::Months)
 }
 
-/// `{{ value | add_years(n) }}` — implemented as `n * 12` months (via
-/// [`add_months`]'s underlying call), so a Feb 29 input clamps to
-/// Feb 28 in a non-leap target year exactly like `add_months` clamps
-/// across any other month-length mismatch.
-///
-/// # Errors
-///
-/// [`ErrorKind::InvalidOperation`] if `value` isn't a parseable
-/// date/time string (see [`parse_date_precise`]), `n * 12` overflows
-/// [`u32`], or the shift overflows chrono's representable range (see
-/// [`date_out_of_range_error`]).
+/// `{{ value | add_years(n) }}` — convenience shortcut for `{{ value |
+/// date_add(n, unit="years") }}`.
 fn add_years(value: &str, n: u32) -> Result<String, Error> {
-    shift_date(value, |dt| {
-        let months = n.checked_mul(12)?;
-        dt.checked_add_months(Months::new(months))
-    })
+    date_shift_unit(value, i64::from(n), DateTimeUnit::Years)
 }
 
-/// `{{ value | sub_years(n) }}` — see [`add_years`].
-///
-/// # Errors
-///
-/// [`ErrorKind::InvalidOperation`] if `value` isn't a parseable
-/// date/time string (see [`parse_date_precise`]), `n * 12` overflows
-/// [`u32`], or the shift overflows chrono's representable range (see
-/// [`date_out_of_range_error`]).
+/// `{{ value | sub_years(n) }}` — convenience shortcut for `{{ value |
+/// date_sub(n, unit="years") }}`.
 fn sub_years(value: &str, n: u32) -> Result<String, Error> {
-    shift_date(value, |dt| {
-        let months = n.checked_mul(12)?;
-        dt.checked_sub_months(Months::new(months))
-    })
+    date_shift_unit(value, -i64::from(n), DateTimeUnit::Years)
 }
-
-/// `{{ value | start_of_month }}`
-///
-/// # Errors
-///
 /// [`ErrorKind::InvalidOperation`] if `value` isn't a parseable
 /// date/time string — see [`parse_date_precise`]. The `with_day(1)`
 /// call underneath can't itself fail (day 1 exists in every month), but
@@ -464,23 +502,30 @@ fn weekday(value: &str) -> Result<u32, Error> {
 /// [`Self::parse`] and matched exhaustively in each precision branch
 /// below — the same "small enum over a piped string" pattern
 /// [`path_ops::PathQuery`](super::path_ops) uses for its I/O tests.
-#[derive(Clone, Copy)]
-enum DiffUnit {
+/// The date/time unit parsed from a `unit="..."` kwarg across the `date`
+/// namespace filters ([`date_add`], [`date_sub`], [`date_diff`]).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DateTimeUnit {
+    Years,
+    Months,
     Days,
     Hours,
     Minutes,
     Seconds,
 }
 
-impl DiffUnit {
-    /// Parses `unit`'s `unit=` kwarg value; `None` for anything but
-    /// the four accepted names.
+impl DateTimeUnit {
+    /// Parses `unit`'s `unit="..."` kwarg value, accepting both plural
+    /// (`"days"`) and singular (`"day"`) forms. `None` for unrecognized unit
+    /// names.
     fn parse(unit: &str) -> Option<Self> {
         match unit {
-            "days" => Some(Self::Days),
-            "hours" => Some(Self::Hours),
-            "minutes" => Some(Self::Minutes),
-            "seconds" => Some(Self::Seconds),
+            "years" | "year" => Some(Self::Years),
+            "months" | "month" => Some(Self::Months),
+            "days" | "day" => Some(Self::Days),
+            "hours" | "hour" => Some(Self::Hours),
+            "minutes" | "minute" => Some(Self::Minutes),
+            "seconds" | "second" => Some(Self::Seconds),
             _ => None,
         }
     }
@@ -506,9 +551,10 @@ impl DiffUnit {
               argument by value; only `&self` methods on it are needed here"
 )]
 fn date_diff(value: &str, other: &str, kwargs: Kwargs) -> Result<Value, Error> {
-    let unit = kwargs.get::<Option<&str>>("unit")?.unwrap_or("days");
+    let unit_str = kwargs.get::<Option<&str>>("unit")?.unwrap_or("days");
     kwargs.assert_all_used()?;
-    let unit = DiffUnit::parse(unit).ok_or_else(|| unknown_unit_error(unit))?;
+    let unit = DateTimeUnit::parse(unit_str)
+        .ok_or_else(|| unknown_unit_error(unit_str))?;
     let (from, from_has_time) = parse_date_precise(value)?;
     let (to, to_has_time) = parse_date_precise(other)?;
     let delta = to.signed_duration_since(from);
@@ -524,18 +570,24 @@ fn date_diff(value: &str, other: &str, kwargs: Kwargs) -> Result<Value, Error> {
         let seconds =
             delta.num_seconds() as f64 + f64::from(delta.subsec_nanos()) / 1e9;
         let result = match unit {
-            DiffUnit::Days => seconds / 86_400.0,
-            DiffUnit::Hours => seconds / 3_600.0,
-            DiffUnit::Minutes => seconds / 60.0,
-            DiffUnit::Seconds => seconds,
+            DateTimeUnit::Days => seconds / 86_400.0,
+            DateTimeUnit::Hours => seconds / 3_600.0,
+            DateTimeUnit::Minutes => seconds / 60.0,
+            DateTimeUnit::Seconds => seconds,
+            DateTimeUnit::Years | DateTimeUnit::Months => {
+                return Err(unknown_unit_error(unit_str));
+            }
         };
         Ok(Value::from(result))
     } else {
         let result = match unit {
-            DiffUnit::Days => delta.num_days(),
-            DiffUnit::Hours => delta.num_hours(),
-            DiffUnit::Minutes => delta.num_minutes(),
-            DiffUnit::Seconds => delta.num_seconds(),
+            DateTimeUnit::Days => delta.num_days(),
+            DateTimeUnit::Hours => delta.num_hours(),
+            DateTimeUnit::Minutes => delta.num_minutes(),
+            DateTimeUnit::Seconds => delta.num_seconds(),
+            DateTimeUnit::Years | DateTimeUnit::Months => {
+                return Err(unknown_unit_error(unit_str));
+            }
         };
         Ok(Value::from(result))
     }
@@ -1210,6 +1262,59 @@ mod tests {
         }
     }
 
+    mod date_add_and_date_sub {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn date_add_defaults_to_days() {
+            let rendered = env()
+                .render_str(
+                    r#"{{ '2026-07-26' | date_add(5) }}"#,
+                    minijinja::context!(),
+                )
+                .expect("render succeeds");
+
+            assert_eq!(rendered, "2026-07-31");
+        }
+
+        #[test]
+        fn date_add_accepts_units_and_singular_plural_forms() {
+            let rendered = env()
+                .render_str(
+                    r#"{{ '2026-07-26' | date_add(1, unit='month') }}-{{ '2026-07-26' | date_add(2, unit='years') }}-{{ '2026-07-26 12:00:00' | date_add(3, unit='hours') }}"#,
+                    minijinja::context!(),
+                )
+                .expect("render succeeds");
+
+            assert_eq!(rendered, "2026-08-26-2028-07-26-2026-07-26 15:00:00");
+        }
+
+        #[test]
+        fn date_sub_subtracts_units() {
+            let rendered = env()
+                .render_str(
+                    r#"{{ '2026-07-26' | date_sub(10, unit='days') }}-{{ '2026-07-26' | date_sub(1, unit='year') }}"#,
+                    minijinja::context!(),
+                )
+                .expect("render succeeds");
+
+            assert_eq!(rendered, "2026-07-16-2025-07-26");
+        }
+
+        #[test]
+        fn date_add_rejects_unknown_unit() {
+            let error = env()
+                .render_str(
+                    r#"{{ '2026-07-26' | date_add(1, unit='fortnight') }}"#,
+                    minijinja::context!(),
+                )
+                .expect_err("unknown unit fails");
+
+            assert_eq!(error.kind(), ErrorKind::InvalidOperation);
+        }
+    }
     mod is_past_and_is_future {
         use pretty_assertions::assert_eq;
 
