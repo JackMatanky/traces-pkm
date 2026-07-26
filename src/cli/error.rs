@@ -20,6 +20,11 @@ use crate::{DialogError, template::TemplateError};
 /// Wraps each subcommand's failure, or reports that neither a subcommand
 /// nor `-i`/`--input` was given — returned by [`run`](crate::cli::run).
 #[derive(Debug, Diagnostic, Error)]
+#[expect(
+    private_interfaces,
+    reason = "subcommand CLI error enums stay pub(crate) implementations of \
+              CliError"
+)]
 pub enum CliError {
     /// `traces trust` failed.
     #[error(transparent)]
@@ -55,7 +60,7 @@ pub enum CliError {
 /// find the template directories; `--shell` never loads configuration,
 /// so it can never produce one of these.
 #[derive(Debug, Error)]
-pub enum CompletionsCliError {
+pub(crate) enum CompletionsCliError {
     /// Discovering configuration from `cwd` failed.
     #[error("failed to locate configuration in {cwd}")]
     ConfigDiscovery {
@@ -150,7 +155,7 @@ pub enum ConfigInitCliError {
 /// surface. Thin adapter over [`crate::config::ConfigService`] and
 /// [`crate::template::TemplateService`].
 #[derive(Debug, Error)]
-pub enum TemplateCliError {
+pub(crate) enum TemplateCliError {
     /// Discovering configuration from `cwd` failed.
     #[error("failed to locate configuration in {cwd}")]
     ConfigDiscovery {

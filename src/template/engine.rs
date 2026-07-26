@@ -30,7 +30,7 @@ use self::{
 };
 use super::{
     loader::TemplateLoader,
-    path::{Found, TemplatePath, TemplatePathError},
+    path::{TemplatePath, TemplatePathError},
 };
 use crate::DialogProvider;
 
@@ -94,7 +94,7 @@ impl TemplateEngine {
     pub(super) fn resolve(
         &self,
         name: &Path,
-    ) -> Result<TemplatePath<Found>, TemplatePathError> {
+    ) -> Result<TemplatePath, TemplatePathError> {
         self.loader.find(name)
     }
 

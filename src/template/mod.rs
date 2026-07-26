@@ -4,8 +4,6 @@
 //! point, called by `crate::cli::template`; everything else here exists
 //! to make that one call safe and correct.
 //!
-//! - [`source_dir`][]: [`TemplateSourceDir`](source_dir::TemplateSourceDir)
-//!   records which configured directory a template came from.
 //! - [`path`][]: [`TemplatePath`](path::TemplatePath) tracks a name's journey
 //!   from raw `-i` argument to a file proven to exist, with
 //!   [`TemplatePathError`](path::TemplatePathError) as the single error type
@@ -33,7 +31,6 @@ mod error;
 mod loader;
 mod path;
 mod service;
-mod source_dir;
 mod writer;
 
 pub(crate) use error::TemplateError;

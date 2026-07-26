@@ -28,7 +28,7 @@ use std::{
 
 use minijinja::{Error, ErrorKind};
 
-use super::path::{Found, Raw, TemplatePath, TemplatePathError};
+use super::path::{TemplatePath, TemplatePathError};
 use crate::config::Config;
 
 /// A template's home: at most one local directory, at most one
@@ -77,13 +77,73 @@ impl TemplateLoader {
     pub(super) fn find(
         &self,
         name: &Path,
-    ) -> Result<TemplatePath<Found>, TemplatePathError> {
-        TemplatePath::<Raw>::new(name)
-            .validate()
-            .map_err(|_| {
-                TemplatePathError::TemplateNotFound(name.to_path_buf())
-            })?
-            .find(self.local.as_deref(), self.global.as_deref())
+    ) -> Result<TemplatePath, TemplatePathError> {
+        let validated = TemplatePath::validate(name).map_err(|_| {
+            TemplatePathError::TemplateNotFound(name.to_path_buf())
+        })?;
+
+        for dir in self.directories() {
+            if let Some(path) = self.find_path_in(dir, &validated) {
+                return Ok(TemplatePath::new(path, dir.to_path_buf()));
+            }
+            if let Some(path) = self.find_name_in(dir, &validated)? {
+                return Ok(TemplatePath::new(path, dir.to_path_buf()));
+            }
+        }
+
+        Err(TemplatePathError::TemplateNotFound(name.to_path_buf()))
+    }
+
+    /// The directories to search, local then global — deduped when
+    /// both point at the same place.
+    fn directories(&self) -> impl Iterator<Item = &Path> {
+        let global = self
+            .global
+            .as_deref()
+            .filter(|dir| self.local.as_deref() != Some(*dir));
+        self.local.as_deref().into_iter().chain(global)
+    }
+
+    /// The exact-match rule: does `dir.join(path)` name a real file?
+    #[inline]
+    #[must_use]
+    fn find_path_in(&self, dir: &Path, path: &Path) -> Option<PathBuf> {
+        dir.join(path).is_file().then(|| path.to_path_buf())
+    }
+
+    /// The name-match rule: search `dir`'s subdirectory for any file sharing
+    /// `path`'s stem.
+    fn find_name_in(
+        &self,
+        dir: &Path,
+        path: &Path,
+    ) -> Result<Option<PathBuf>, TemplatePathError> {
+        if path.extension().is_some() {
+            return Ok(None);
+        }
+        let subdir = path.parent().filter(|p| !p.as_os_str().is_empty());
+        let search_dir =
+            subdir.map_or_else(|| dir.to_path_buf(), |parent| dir.join(parent));
+        let Ok(entries) = fs::read_dir(&search_dir) else {
+            return Ok(None);
+        };
+        let key = path.file_stem().unwrap_or_else(|| path.as_os_str());
+        let hits: Vec<PathBuf> = entries
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_file()))
+            .filter(|entry| entry.path().file_stem() == Some(key))
+            .map(|entry| {
+                subdir.map_or_else(
+                    || PathBuf::from(entry.file_name()),
+                    |parent| parent.join(entry.file_name()),
+                )
+            })
+            .collect();
+        match hits.as_slice() {
+            [] => Ok(None),
+            [hit] => Ok(Some(hit.clone())),
+            _ => Err(TemplatePathError::AmbiguousTemplate(path.to_path_buf())),
+        }
     }
 
     /// Resolves `name` via [`Self::find`] and reads it — the callback
@@ -259,6 +319,144 @@ mod tests {
             ));
         }
 
+        #[test]
+        fn searches_the_candidates_own_subdirectory_for_a_stem_match() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_file(temp.path(), "daily.txt");
+            let file = write_file(temp.path(), "notes/daily.md");
+            let loader =
+                TemplateLoader::new(Some(temp.path().to_path_buf()), None);
+
+            let found =
+                loader.find(Path::new("notes/daily")).expect("find succeeds");
+
+            assert_eq!(found.absolute(), file);
+        }
+
+        #[test]
+        fn misses_when_the_named_subdirectory_does_not_exist() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let loader =
+                TemplateLoader::new(Some(temp.path().to_path_buf()), None);
+
+            assert!(matches!(
+                loader.find(Path::new("notes/daily")),
+                Err(TemplatePathError::TemplateNotFound(_))
+            ));
+        }
+
+        #[test]
+        fn skips_stem_matching_when_the_candidate_has_an_extension() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_file(temp.path(), "daily.txt");
+            let loader =
+                TemplateLoader::new(Some(temp.path().to_path_buf()), None);
+
+            assert!(matches!(
+                loader.find(Path::new("daily.md")),
+                Err(TemplatePathError::TemplateNotFound(_))
+            ));
+        }
+
+        #[test]
+        fn rejects_an_ambiguous_stem_match() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("daily.md"), "content")
+                .expect("write template");
+            fs::write(temp.path().join("daily.txt"), "content")
+                .expect("write template");
+            let loader =
+                TemplateLoader::new(Some(temp.path().to_path_buf()), None);
+
+            assert!(matches!(
+                loader.find(Path::new("daily")),
+                Err(TemplatePathError::AmbiguousTemplate(_))
+            ));
+        }
+
+        #[test]
+        fn ignores_directories_when_stem_matching() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::create_dir(temp.path().join("daily")).expect("create dir");
+            let file = write_file(temp.path(), "daily.md");
+            let loader =
+                TemplateLoader::new(Some(temp.path().to_path_buf()), None);
+
+            let found = loader.find(Path::new("daily")).expect("find succeeds");
+
+            assert_eq!(found.absolute(), file);
+        }
+
+        #[test]
+        fn prefers_local_over_global_even_via_stem_match() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let local_dir = temp.path().join("local");
+            let global_dir = temp.path().join("global");
+            let local_file = write_file(&local_dir, "daily.md");
+            write_file(&global_dir, "daily");
+            let loader = TemplateLoader::new(Some(local_dir), Some(global_dir));
+
+            let found = loader.find(Path::new("daily")).expect("find succeeds");
+
+            assert_eq!(found.absolute(), local_file);
+        }
+
+        #[test]
+        fn falls_through_to_global_when_local_has_no_match() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let local_dir = temp.path().join("local");
+            let global_dir = temp.path().join("global");
+            fs::create_dir_all(&local_dir).expect("create local dir");
+            let file = write_file(&global_dir, "daily.md");
+            let loader = TemplateLoader::new(Some(local_dir), Some(global_dir));
+
+            let found = loader.find(Path::new("daily")).expect("find succeeds");
+
+            assert_eq!(found.absolute(), file);
+        }
+
+        #[test]
+        fn matches_an_exact_name_in_the_global_directory() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let local_dir = temp.path().join("local");
+            let global_dir = temp.path().join("global");
+            fs::create_dir_all(&local_dir).expect("create local dir");
+            let file = write_file(&global_dir, "daily.md");
+            let loader = TemplateLoader::new(Some(local_dir), Some(global_dir));
+
+            let found =
+                loader.find(Path::new("daily.md")).expect("find succeeds");
+
+            assert_eq!(found.absolute(), file);
+        }
+
+        #[test]
+        fn returns_not_found_when_no_match_exists_anywhere() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let local_dir = temp.path().join("local");
+            let global_dir = temp.path().join("global");
+            fs::create_dir_all(&local_dir).expect("create local dir");
+            fs::create_dir_all(&global_dir).expect("create global dir");
+            let loader = TemplateLoader::new(Some(local_dir), Some(global_dir));
+
+            assert!(matches!(
+                loader.find(Path::new("missing")),
+                Err(TemplatePathError::TemplateNotFound(_))
+            ));
+        }
+
+        #[test]
+        fn dedups_directories_when_local_and_global_are_identical() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let loader = TemplateLoader::new(
+                Some(temp.path().to_path_buf()),
+                Some(temp.path().to_path_buf()),
+            );
+
+            let searched: Vec<_> = loader.directories().collect();
+
+            assert_eq!(searched.len(), 1);
+        }
         #[test]
         fn still_works_when_local_and_global_are_identical() {
             let temp = tempfile::tempdir().expect("create temp dir");

@@ -15,7 +15,7 @@ use super::{
     engine::{RenderOutput, TemplateEngine},
     error::TemplateError,
     loader::TemplateLoader,
-    path::{Found, TemplatePath},
+    path::TemplatePath,
     writer::{TemplateWriteTarget, TemplateWriter, WriteMode, WriteOutcome},
 };
 use crate::{DialogProvider, config::Config};
@@ -38,7 +38,7 @@ pub(crate) struct TemplateService<'a> {
 /// `ui.*` prompts inside it.
 #[derive(Debug)]
 pub(crate) struct RenderedTemplate {
-    resolved: TemplatePath<Found>,
+    resolved: TemplatePath,
     content: String,
     declared: Option<PathBuf>,
 }
@@ -192,9 +192,7 @@ impl<'a> TemplateService<'a> {
 
     /// Reads the resolved template's source from disk, mapping I/O
     /// failure to [`TemplateError::Read`].
-    fn read_template(
-        resolved: &TemplatePath<Found>,
-    ) -> Result<String, TemplateError> {
+    fn read_template(resolved: &TemplatePath) -> Result<String, TemplateError> {
         resolved.read().map_err(|source| TemplateError::Read {
             path: resolved.absolute(),
             source,
@@ -221,7 +219,7 @@ impl<'a> TemplateService<'a> {
     /// collide. Uses [`TemplateWriteTarget::trusted`], not the
     /// private `confine` helper: `output_dir` is a trusted config
     /// value, not a runtime candidate.
-    fn default_output_path(&self, resolved: &TemplatePath<Found>) -> PathBuf {
+    fn default_output_path(&self, resolved: &TemplatePath) -> PathBuf {
         let candidate =
             self.config.output_dir().join(resolved.default_output_filename());
         TemplateWriteTarget::trusted(self.config.root(), candidate)

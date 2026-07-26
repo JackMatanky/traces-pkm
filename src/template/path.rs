@@ -1,18 +1,7 @@
-//! [`TemplatePath<State>`]: a template identifier's journey from a raw
-//! `-i <name>` argument to a file proven to exist on disk, each stage
-//! its own type:
+//! [`TemplatePath`]: a template identifier resolved against configured
+//! directories, proven to exist on disk and safe to read.
 //!
-//! - [`Raw`]: exactly the argument as given — nothing checked yet.
-//! - [`Validated`]: a safe, directory-relative identifier
-//!   ([`TemplatePath::<Raw>::validate`]). Pure — no filesystem access.
-//! - [`Found`]: proven to exist, via [`TemplatePath::<Validated>::find`]; the
-//!   only state that also records which
-//!   [`super::source_dir::TemplateSourceDir`] it came from.
-//!
-//! `State` carries no default, so a function requiring a found path
-//! can't accept an unproven one — a compile error, not a runtime
-//! surprise. [`TemplatePathError`] covers every way validation or
-//! search can fail.
+//! [`TemplatePathError`] covers every way validation or search can fail.
 
 use std::{
     fs, io,
@@ -21,62 +10,95 @@ use std::{
 
 use thiserror::Error;
 
-use super::source_dir::TemplateSourceDir;
+/// The extension every rendered note gets by default, absent an
+/// explicit `-o`/`file.write_to()` override.
+const DEFAULT_EXTENSION: &str = "md";
 
-/// The starting state: `name` as the caller supplied it, unchecked.
+/// A validated template path resolved against a template directory,
+/// proven to exist on disk.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) struct Raw;
-
-/// Proven safe and directory-relative, but not yet tied to any
-/// particular template directory.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) struct Validated;
-
-/// Proven to exist on disk. The only state that also stores which
-/// [`TemplateSourceDir`] the match came from.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) struct Found {
-    source: TemplateSourceDir,
-}
-
-/// A template identifier tagged with how much has been proven about
-/// it so far — see the module docs for the three states.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) struct TemplatePath<State> {
+pub(super) struct TemplatePath {
     path: PathBuf,
-    state: State,
+    source_dir: PathBuf,
 }
 
-impl<State> TemplatePath<State> {
+impl TemplatePath {
+    /// Creates a resolved [`TemplatePath`] from a relative path and its source
+    /// directory.
+    #[inline]
+    #[must_use]
+    pub(super) fn new(path: PathBuf, source_dir: PathBuf) -> Self {
+        Self {
+            path,
+            source_dir,
+        }
+    }
+
+    /// Checks that `path` is a safe, directory-relative identifier — no
+    /// filesystem access, purely a check on the path's components.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TemplatePathError::Absolute`] when `path` is absolute.
+    /// Returns [`TemplatePathError::UnsafeComponent`] for `..`, any component
+    /// that isn't a plain name or `.`, or a path with no [`Component::Normal`].
+    pub(super) fn validate(path: &Path) -> Result<PathBuf, TemplatePathError> {
+        if path.is_absolute() {
+            return Err(TemplatePathError::Absolute(path.to_path_buf()));
+        }
+        let mut has_normal_component = false;
+        let is_safe = path.components().all(|component| match component {
+            Component::Normal(_) => {
+                has_normal_component = true;
+                true
+            }
+            Component::CurDir => true,
+            _ => false,
+        });
+        if !is_safe || !has_normal_component {
+            return Err(TemplatePathError::UnsafeComponent(path.to_path_buf()));
+        }
+        Ok(path.to_path_buf())
+    }
+
     /// This candidate with its extension stripped and directory
     /// segments kept: `"folder/daily.md"` -> `"folder/daily"`.
-    ///
-    /// Not [`Path::file_stem`], which drops the directory too.
-    /// Allocates, unlike [`Self::has_extension`].
     #[inline]
     #[must_use]
     pub(super) fn name(&self) -> PathBuf {
         self.path.with_extension("")
     }
 
-    /// Whether this candidate carries an extension: `"daily.md"` ->
-    /// `true`, `"daily"` -> `false`.
-    ///
-    /// Gates [`TemplatePath::<Validated>::find_name_in`]: an explicit
-    /// extension skips name-matching.
+    /// Whether this candidate carries an extension: `"daily.md"` -> `true`.
     #[inline]
     #[must_use]
+    #[expect(dead_code, reason = "tested in has_extension unit tests")]
     pub(super) fn has_extension(&self) -> bool {
         self.path.extension().is_some()
     }
+
+    /// Builds the absolute path on demand: `source_dir` joined with `path`.
+    #[inline]
+    #[must_use]
+    pub(super) fn absolute(&self) -> PathBuf {
+        self.source_dir.join(&self.path)
+    }
+
+    /// The default output filename: [`Self::name`] with extension forced to
+    /// `md`.
+    #[inline]
+    #[must_use]
+    pub(super) fn default_output_filename(&self) -> PathBuf {
+        self.name().with_extension(DEFAULT_EXTENSION)
+    }
+
+    /// Reads this resolved template's source from disk.
+    pub(super) fn read(&self) -> io::Result<String> {
+        fs::read_to_string(self.absolute())
+    }
 }
 
-impl<State> AsRef<Path> for TemplatePath<State> {
-    /// Borrows the stored path — relative in every state, [`Found`]
-    /// included.
-    ///
-    /// Not [`TemplatePath::<Found>::absolute`], which builds a new,
-    /// owned, absolute [`PathBuf`] instead of borrowing this one.
+impl AsRef<Path> for TemplatePath {
     fn as_ref(&self) -> &Path {
         &self.path
     }
@@ -110,217 +132,14 @@ pub(crate) enum TemplatePathError {
     TemplateNotFound(PathBuf),
 }
 
-impl TemplatePath<Raw> {
-    /// Wraps `raw` verbatim, proving nothing about it yet.
-    #[inline]
-    #[must_use]
-    pub(super) fn new(raw: &Path) -> Self {
-        Self {
-            path: raw.to_path_buf(),
-            state: Raw,
-        }
-    }
-
-    /// Checks that this candidate is a safe, directory-relative
-    /// identifier — no filesystem access, purely a check on the
-    /// path's components.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`TemplatePathError::Absolute`] when the path is
-    /// absolute.
-    ///
-    /// Returns [`TemplatePathError::UnsafeComponent`] for a `..`, any
-    /// component that isn't a plain name or `.`, or a path with no
-    /// [`Component::Normal`] component at all.
-    pub(super) fn validate(
-        self,
-    ) -> Result<TemplatePath<Validated>, TemplatePathError> {
-        if self.path.is_absolute() {
-            return Err(TemplatePathError::Absolute(self.path));
-        }
-        let mut has_normal_component = false;
-        let is_safe = self.path.components().all(|component| match component {
-            Component::Normal(_) => {
-                has_normal_component = true;
-                true
-            }
-            Component::CurDir => true,
-            _ => false,
-        });
-        if !is_safe || !has_normal_component {
-            return Err(TemplatePathError::UnsafeComponent(self.path));
-        }
-        Ok(TemplatePath {
-            path: self.path,
-            state: Validated,
-        })
-    }
-}
-
-impl TemplatePath<Validated> {
-    /// The directories to search, local then global — deduped when
-    /// both point at the same place.
-    fn directories(
-        local: Option<&Path>,
-        global: Option<&Path>,
-    ) -> impl Iterator<Item = TemplateSourceDir> {
-        let global = global.filter(|dir| Some(*dir) != local);
-        local
-            .map(|dir| TemplateSourceDir::Local(dir.to_path_buf()))
-            .into_iter()
-            .chain(
-                global.map(|dir| TemplateSourceDir::Global(dir.to_path_buf())),
-            )
-    }
-
-    /// The exact-match rule: does `dir.join(&self.path)` name a real
-    /// file? Tried first of [`Self::find`]'s two rules within each
-    /// directory.
-    #[inline]
-    #[must_use]
-    fn find_path_in(&self, dir: &Path) -> Option<PathBuf> {
-        dir.join(&self.path).is_file().then(|| self.path.clone())
-    }
-
-    /// The name-match rule: search the subdirectory `self.path` names
-    /// (`"notes/daily"` searches `dir/notes`) for any file sharing its
-    /// stem. Only tried when this candidate has no extension
-    /// ([`Self::has_extension`]) — the second of [`Self::find`]'s two
-    /// rules within each directory.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`TemplatePathError::AmbiguousTemplate`] when more than
-    /// one file in the subdirectory shares this candidate's stem.
-    fn find_name_in(
-        &self,
-        dir: &Path,
-    ) -> Result<Option<PathBuf>, TemplatePathError> {
-        if self.has_extension() {
-            return Ok(None);
-        }
-        let subdir = self.path.parent().filter(|p| !p.as_os_str().is_empty());
-        let search_dir =
-            subdir.map_or_else(|| dir.to_path_buf(), |parent| dir.join(parent));
-        let Ok(entries) = fs::read_dir(&search_dir) else {
-            return Ok(None);
-        };
-        // A bare, directory-agnostic stem — not `Self::name`, which now
-        // keeps `self.path`'s own directory segments. Entries here are
-        // already scoped to `search_dir` (this candidate's own
-        // subdirectory), so only their bare file name is comparable.
-        let key =
-            self.path.file_stem().unwrap_or_else(|| self.path.as_os_str());
-        let hits: Vec<PathBuf> = entries
-            .filter_map(Result::ok)
-            .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_file()))
-            .filter(|entry| entry.path().file_stem() == Some(key))
-            .map(|entry| {
-                subdir.map_or_else(
-                    || PathBuf::from(entry.file_name()),
-                    |parent| parent.join(entry.file_name()),
-                )
-            })
-            .collect();
-        match hits.as_slice() {
-            [] => Ok(None),
-            [hit] => Ok(Some(hit.clone())),
-            _ => Err(TemplatePathError::AmbiguousTemplate(self.path.clone())),
-        }
-    }
-
-    /// Searches local then global (see [`Self::directories`]), trying
-    /// [`Self::find_path_in`] before [`Self::find_name_in`] within
-    /// each directory before moving on to the next — so `local` wins
-    /// over `global` no matter which rule produced the match.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`TemplatePathError::AmbiguousTemplate`] when a
-    /// directory has more than one match.
-    ///
-    /// Returns [`TemplatePathError::TemplateNotFound`] when neither
-    /// directory has one.
-    pub(super) fn find(
-        self,
-        local: Option<&Path>,
-        global: Option<&Path>,
-    ) -> Result<TemplatePath<Found>, TemplatePathError> {
-        for dir in Self::directories(local, global) {
-            if let Some(path) = self.find_path_in(dir.path()) {
-                return Ok(TemplatePath {
-                    path,
-                    state: Found {
-                        source: dir,
-                    },
-                });
-            }
-            if let Some(path) = self.find_name_in(dir.path())? {
-                return Ok(TemplatePath {
-                    path,
-                    state: Found {
-                        source: dir,
-                    },
-                });
-            }
-        }
-
-        Err(TemplatePathError::TemplateNotFound(self.path))
-    }
-}
-
-/// The extension every rendered note gets by default, absent an
-/// explicit `-o`/`file.write_to()` override.
-const DEFAULT_EXTENSION: &str = "md";
-
-impl TemplatePath<Found> {
-    /// Builds the absolute path on demand: [`TemplateSourceDir`]
-    /// joined with the relative identifier, never cached redundantly.
-    #[inline]
-    #[must_use]
-    pub(super) fn absolute(&self) -> PathBuf {
-        self.state.source.path().join(&self.path)
-    }
-
-    /// The filename a rendered note gets absent an explicit
-    /// `-o`/`file.write_to()` override: [`Self::name`] with its
-    /// extension forced to [`DEFAULT_EXTENSION`], regardless of the
-    /// resolved template file's own extension.
-    #[inline]
-    #[must_use]
-    pub(super) fn default_output_filename(&self) -> PathBuf {
-        self.name().with_extension(DEFAULT_EXTENSION)
-    }
-
-    /// Reads this resolved template's source from disk.
-    ///
-    /// Returns the raw [`io::Result`], not a project error type: the
-    /// two callers ([`super::loader::TemplateLoader::load`],
-    /// [`super::service::TemplateService`]) map failure to different
-    /// error types — a soft `None` for a missing include vs. a hard
-    /// [`TemplateError::Read`](super::error::TemplateError::Read) for
-    /// top-level render.
-    ///
-    /// # Errors
-    ///
-    /// Returns the underlying [`io::Error`] if the file can no longer
-    /// be read — e.g. removed since
-    /// [`TemplatePath::<Validated>::find`] proved it existed — or
-    /// does not contain valid UTF-8.
-    pub(super) fn read(&self) -> io::Result<String> {
-        fs::read_to_string(self.absolute())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn validated(name: &str) -> TemplatePath<Validated> {
-        TemplatePath::<Raw>::new(Path::new(name))
-            .validate()
-            .expect("valid candidate")
+    fn validated(name: &str) -> TemplatePath {
+        let rel =
+            TemplatePath::validate(Path::new(name)).expect("valid candidate");
+        TemplatePath::new(rel, PathBuf::from("/dir"))
     }
 
     fn write_file(dir: &Path, name: &str) -> PathBuf {
@@ -370,8 +189,7 @@ mod tests {
             // happens — validate() never reads the filesystem, so this
             // never touches whatever real file may or may not exist at
             // this well-known path.
-            let error = TemplatePath::<Raw>::new(Path::new("/etc/passwd"))
-                .validate()
+            let error = TemplatePath::validate(Path::new("/etc/passwd"))
                 .expect_err("absolute path is rejected");
 
             assert!(matches!(error, TemplatePathError::Absolute(_)));
@@ -383,8 +201,7 @@ mod tests {
         #[case::empty_path("")]
         #[case::bare_current_dir(".")]
         fn rejects_unsafe_components(#[case] input: &str) {
-            let error = TemplatePath::<Raw>::new(Path::new(input))
-                .validate()
+            let error = TemplatePath::validate(Path::new(input))
                 .expect_err("unsafe component is rejected");
 
             assert!(matches!(error, TemplatePathError::UnsafeComponent(_)));
@@ -442,213 +259,16 @@ mod tests {
         }
     }
 
-    mod find {
-        use pretty_assertions::assert_eq;
-
-        use super::*;
-
-        #[test]
-        fn matches_an_exact_name() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            let file = write_file(temp.path(), "daily.md");
-
-            let found = validated("daily.md")
-                .find(Some(temp.path()), None)
-                .expect("find succeeds");
-
-            assert_eq!(found.absolute(), file);
-        }
-
-        #[test]
-        fn falls_back_to_a_stem_match() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            let file = write_file(temp.path(), "daily.md");
-
-            let found = validated("daily")
-                .find(Some(temp.path()), None)
-                .expect("find succeeds");
-
-            assert_eq!(found.absolute(), file);
-        }
-
-        #[test]
-        fn searches_the_candidates_own_subdirectory_for_a_stem_match() {
-            // "notes/daily" must resolve notes/daily.md, not a
-            // same-stemmed file sitting at dir's top level — the
-            // subdirectory the candidate named is part of the match,
-            // not discarded in favor of a flat, dir-wide name search.
-            let temp = tempfile::tempdir().expect("create temp dir");
-            write_file(temp.path(), "daily.txt");
-            let file = write_file(temp.path(), "notes/daily.md");
-
-            let found = validated("notes/daily")
-                .find(Some(temp.path()), None)
-                .expect("find succeeds");
-
-            assert_eq!(found.absolute(), file);
-        }
-
-        #[test]
-        fn misses_when_the_named_subdirectory_does_not_exist() {
-            // "notes/daily" but "notes/" itself was never created —
-            // distinct from an existing-but-empty subdirectory: this
-            // exercises `fs::read_dir`'s own failure, not an empty
-            // successful listing.
-            let temp = tempfile::tempdir().expect("create temp dir");
-
-            assert!(matches!(
-                validated("notes/daily").find(Some(temp.path()), None),
-                Err(TemplatePathError::TemplateNotFound(_))
-            ));
-        }
-
-        #[test]
-        fn skips_stem_matching_when_the_candidate_has_an_extension() {
-            // "daily.md" names an exact file; a miss on that exact
-            // file must not silently fall back to matching a
-            // different extension by name alone.
-            let temp = tempfile::tempdir().expect("create temp dir");
-            write_file(temp.path(), "daily.txt");
-
-            assert!(matches!(
-                validated("daily.md").find(Some(temp.path()), None),
-                Err(TemplatePathError::TemplateNotFound(_))
-            ));
-        }
-
-        #[test]
-        fn rejects_an_ambiguous_stem_match() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            fs::write(temp.path().join("daily.md"), "content")
-                .expect("write template");
-            fs::write(temp.path().join("daily.txt"), "content")
-                .expect("write template");
-
-            assert!(matches!(
-                validated("daily").find(Some(temp.path()), None),
-                Err(TemplatePathError::AmbiguousTemplate(_))
-            ));
-        }
-
-        #[test]
-        fn ignores_directories_when_stem_matching() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            fs::create_dir(temp.path().join("daily")).expect("create dir");
-            let file = write_file(temp.path(), "daily.md");
-
-            let found = validated("daily")
-                .find(Some(temp.path()), None)
-                .expect("find succeeds");
-
-            assert_eq!(found.absolute(), file);
-        }
-
-        #[test]
-        fn prefers_local_over_global_even_via_stem_match() {
-            // A stem match in local must win over an *exact* match in
-            // global — local is exhausted (exact, then stem) before
-            // global is even considered, not "best match across both
-            // directories".
-            let temp = tempfile::tempdir().expect("create temp dir");
-            let local_dir = temp.path().join("local");
-            let global_dir = temp.path().join("global");
-            let local_file = write_file(&local_dir, "daily.md");
-            write_file(&global_dir, "daily");
-
-            let found = validated("daily")
-                .find(Some(&local_dir), Some(&global_dir))
-                .expect("find succeeds");
-
-            assert_eq!(found.absolute(), local_file);
-        }
-
-        #[test]
-        fn falls_through_to_global_when_local_has_no_match() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            let local_dir = temp.path().join("local");
-            let global_dir = temp.path().join("global");
-            fs::create_dir_all(&local_dir).expect("create local dir");
-            let file = write_file(&global_dir, "daily.md");
-
-            let found = validated("daily")
-                .find(Some(&local_dir), Some(&global_dir))
-                .expect("find succeeds");
-
-            assert_eq!(found.absolute(), file);
-        }
-
-        #[test]
-        fn matches_an_exact_name_in_the_global_directory() {
-            // Distinct from a global *stem* match: this candidate
-            // already names its extension, so only `find_path_in`
-            // (tier 3 — global exact) can produce it, never
-            // `find_name_in` (tier 4 — global stem, which
-            // short-circuits on `has_extension`).
-            let temp = tempfile::tempdir().expect("create temp dir");
-            let local_dir = temp.path().join("local");
-            let global_dir = temp.path().join("global");
-            fs::create_dir_all(&local_dir).expect("create local dir");
-            let file = write_file(&global_dir, "daily.md");
-
-            let found = validated("daily.md")
-                .find(Some(&local_dir), Some(&global_dir))
-                .expect("find succeeds");
-
-            assert_eq!(found.absolute(), file);
-        }
-
-        #[test]
-        fn returns_not_found_when_no_match_exists_anywhere() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            let local_dir = temp.path().join("local");
-            let global_dir = temp.path().join("global");
-            fs::create_dir_all(&local_dir).expect("create local dir");
-            fs::create_dir_all(&global_dir).expect("create global dir");
-
-            assert!(matches!(
-                validated("missing").find(Some(&local_dir), Some(&global_dir)),
-                Err(TemplatePathError::TemplateNotFound(_))
-            ));
-        }
-
-        #[test]
-        fn still_finds_a_match_when_local_and_global_are_identical() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            let file = write_file(temp.path(), "daily.md");
-
-            let found = validated("daily.md")
-                .find(Some(temp.path()), Some(temp.path()))
-                .expect("find succeeds");
-
-            assert_eq!(found.absolute(), file);
-        }
-
-        #[test]
-        fn dedups_directories_when_local_and_global_are_identical() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-
-            let searched: Vec<_> = TemplatePath::<Validated>::directories(
-                Some(temp.path()),
-                Some(temp.path()),
-            )
-            .collect();
-
-            assert_eq!(searched.len(), 1);
-        }
-    }
-
     mod default_output_filename {
         use pretty_assertions::assert_eq;
 
         use super::*;
 
-        fn found(dir: &Path, name: &str) -> TemplatePath<Found> {
-            write_file(dir, name);
-            TemplatePath::<Raw>::new(Path::new(name))
-                .validate()
-                .expect("valid candidate")
-                .find(Some(dir), None)
-                .expect("find succeeds")
+        fn found(dir: &Path, name: &str) -> TemplatePath {
+            let path = write_file(dir, name);
+            let rel =
+                path.strip_prefix(dir).expect("relative path").to_path_buf();
+            TemplatePath::new(rel, dir.to_path_buf())
         }
 
         #[test]
@@ -679,13 +299,11 @@ mod tests {
 
         use super::*;
 
-        fn found(dir: &Path, name: &str) -> TemplatePath<Found> {
-            write_file(dir, name);
-            TemplatePath::<Raw>::new(Path::new(name))
-                .validate()
-                .expect("valid candidate")
-                .find(Some(dir), None)
-                .expect("find succeeds")
+        fn found(dir: &Path, name: &str) -> TemplatePath {
+            let path = write_file(dir, name);
+            let rel =
+                path.strip_prefix(dir).expect("relative path").to_path_buf();
+            TemplatePath::new(rel, dir.to_path_buf())
         }
 
         #[test]
