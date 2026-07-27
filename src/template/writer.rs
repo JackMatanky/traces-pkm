@@ -29,7 +29,7 @@ use std::{
 };
 
 use super::error::TemplateError;
-
+use crate::{DialogError, DialogProvider};
 /// The collaborator that applies one [`WriteMode`] to rendered content:
 /// [`Self::write`] is the one entry point, and the only thing
 /// [`super::service::TemplateService::render_to_file`] calls on it.
@@ -72,15 +72,13 @@ impl<'a> TemplateWriter<'a> {
     /// exists under [`CommitPolicy::CreateNew`].
     pub(super) fn write(
         &self,
-        target: &TemplateWriteTarget<'_>,
+        path: PathBuf,
         content: String,
         mode: WriteMode,
-        default: impl FnOnce() -> PathBuf,
     ) -> Result<WriteOutcome, TemplateError> {
         let WriteMode::Commit(policy) = mode else {
             return Ok(Self::preview(content));
         };
-        let path = target.target_path(self.root, default)?;
         Self::commit(&path, &content, policy)?;
         Ok(WriteOutcome::Written(path))
     }
@@ -252,18 +250,23 @@ pub(crate) enum WriteOutcome {
 /// built by the caller from an already trust-gated
 /// [`Config`](crate::config::Config) value and passes through
 /// [`Self::trusted`] unchecked instead (see module docs).
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub(super) struct TemplateWriteTarget<'a> {
+    root: &'a Path,
     requested: Option<&'a Path>,
     declared: Option<PathBuf>,
 }
 
 impl<'a> TemplateWriteTarget<'a> {
-    /// Starts with neither candidate set.
+    /// Builds a new target bound to `root`.
     #[inline]
     #[must_use]
-    pub(super) fn new() -> Self {
-        Self::default()
+    pub(super) fn new(root: &'a Path) -> Self {
+        Self {
+            root,
+            requested: None,
+            declared: None,
+        }
     }
 
     /// Sets the `-o` candidate.
@@ -285,24 +288,83 @@ impl<'a> TemplateWriteTarget<'a> {
         self
     }
 
-    /// Resolves the real output path: `requested` over `declared` over
-    /// a lazily-computed `default` — `default` runs only when neither
-    /// candidate is set, so callers never pay for computing a
-    /// [`Config`](crate::config::Config)-derived default filename when
-    /// `-o`/`file.write_to()` already answered the question.
+    /// Resolves the candidate path by precedence (`requested` over `declared`
+    /// over `default`), without interactive prompt or existence checks.
     ///
     /// # Errors
     ///
-    /// Returns [`TemplateError::OutputPathEscapesRoot`] when
-    /// `requested` or `declared` names a path outside `root`.
+    /// Returns [`TemplateError::OutputPathEscapesRoot`] when `requested` or
+    /// `declared` names a path outside `root`.
     pub(super) fn target_path(
         &self,
-        root: &Path,
         default: impl FnOnce() -> PathBuf,
     ) -> Result<PathBuf, TemplateError> {
         match self.requested.or(self.declared.as_deref()) {
-            Some(candidate) => Self::confine(root, candidate),
+            Some(candidate) => Self::confine(self.root, candidate),
             None => Ok(default()),
+        }
+    }
+
+    /// Resolves the output destination path under `mode`:
+    /// 1. Evaluates path precedence (`requested` > `declared` > `default`).
+    /// 2. Confines non-default candidates to `root`.
+    /// 3. In `Commit(CreateNew)` mode, if `-o` was not explicitly passed,
+    ///    `provider` is interactive, and the path exists on disk, prompts the
+    ///    user for a root-relative alternative path until a valid non-colliding
+    ///    (or accepted) path is given.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TemplateError::OutputPathEscapesRoot`] when `requested` or
+    /// `declared` escapes `root`. Returns [`TemplateError::Prompt`] when
+    /// the interactive collision prompt is cancelled or fails.
+    pub(super) fn resolve(
+        &self,
+        mode: WriteMode,
+        provider: &dyn DialogProvider,
+        default: impl FnOnce() -> PathBuf,
+    ) -> Result<PathBuf, TemplateError> {
+        let WriteMode::Commit(policy) = mode else {
+            return Ok(PathBuf::new());
+        };
+
+        let initial_path = self.target_path(default)?;
+
+        if policy == CommitPolicy::Overwrite
+            || self.requested.is_some()
+            || !provider.is_interactive()
+            || !initial_path.exists()
+        {
+            return Ok(initial_path);
+        }
+
+        let mut current_path = initial_path;
+        loop {
+            let default_display = current_path.display().to_string();
+            let chosen = match provider.text(
+                "Output path already exists — enter a path relative to \
+                 project root:",
+                Some(&default_display),
+            ) {
+                Ok(chosen) => chosen,
+                Err(DialogError::NotInteractive) => return Ok(current_path),
+                Err(err) => return Err(TemplateError::Prompt(err)),
+            };
+
+            let candidate = PathBuf::from(&chosen);
+            match Self::confine(self.root, &candidate) {
+                Ok(confined) => {
+                    if !confined.exists() || confined == current_path {
+                        return Ok(confined);
+                    }
+                    current_path = confined;
+                }
+                Err(_) => {
+                    // Path escaped root during interactive prompt; prompt
+                    // again.
+                    continue;
+                }
+            }
         }
     }
 
@@ -442,12 +504,12 @@ mod tests {
         #[test]
         fn prefers_requested_over_declared_and_default() {
             let root = Path::new("/vault");
-            let target = TemplateWriteTarget::new()
+            let target = TemplateWriteTarget::new(root)
                 .with_requested(Some(Path::new("requested.md")))
                 .with_declared(Some(PathBuf::from("declared.md")));
 
             let path = target
-                .target_path(root, || root.join("default.md"))
+                .target_path(|| root.join("default.md"))
                 .expect("requested candidate is safe");
 
             assert_eq!(path, Path::new("/vault/requested.md"));
@@ -456,11 +518,11 @@ mod tests {
         #[test]
         fn prefers_declared_over_default_when_requested_is_unset() {
             let root = Path::new("/vault");
-            let target = TemplateWriteTarget::new()
+            let target = TemplateWriteTarget::new(root)
                 .with_declared(Some(PathBuf::from("declared.md")));
 
             let path = target
-                .target_path(root, || root.join("default.md"))
+                .target_path(|| root.join("default.md"))
                 .expect("declared candidate is safe");
 
             assert_eq!(path, Path::new("/vault/declared.md"));
@@ -469,11 +531,11 @@ mod tests {
         #[test]
         fn computes_default_only_when_neither_candidate_is_set() {
             let root = Path::new("/vault");
-            let target = TemplateWriteTarget::new();
+            let target = TemplateWriteTarget::new(root);
             let default_called = Cell::new(false);
 
             let path = target
-                .target_path(root, || {
+                .target_path(|| {
                     default_called.set(true);
                     root.join("default.md")
                 })
@@ -486,12 +548,12 @@ mod tests {
         #[test]
         fn skips_computing_default_when_requested_is_set() {
             let root = Path::new("/vault");
-            let target = TemplateWriteTarget::new()
+            let target = TemplateWriteTarget::new(root)
                 .with_requested(Some(Path::new("requested.md")));
             let default_called = Cell::new(false);
 
             target
-                .target_path(root, || {
+                .target_path(|| {
                     default_called.set(true);
                     root.join("default.md")
                 })
@@ -503,12 +565,12 @@ mod tests {
         #[test]
         fn skips_computing_default_when_declared_is_set() {
             let root = Path::new("/vault");
-            let target = TemplateWriteTarget::new()
+            let target = TemplateWriteTarget::new(root)
                 .with_declared(Some(PathBuf::from("declared.md")));
             let default_called = Cell::new(false);
 
             target
-                .target_path(root, || {
+                .target_path(|| {
                     default_called.set(true);
                     root.join("default.md")
                 })
@@ -521,12 +583,12 @@ mod tests {
         fn rejects_an_escaping_requested_candidate_before_consulting_declared_or_default()
          {
             let root = Path::new("/vault");
-            let target = TemplateWriteTarget::new()
+            let target = TemplateWriteTarget::new(root)
                 .with_requested(Some(Path::new("../../escape.md")))
                 .with_declared(Some(PathBuf::from("declared.md")));
 
             let error = target
-                .target_path(root, || root.join("default.md"))
+                .target_path(|| root.join("default.md"))
                 .expect_err("requested candidate escapes root");
 
             assert!(matches!(
@@ -538,11 +600,11 @@ mod tests {
         #[test]
         fn rejects_an_escaping_declared_candidate_when_requested_is_unset() {
             let root = Path::new("/vault");
-            let target = TemplateWriteTarget::new()
+            let target = TemplateWriteTarget::new(root)
                 .with_declared(Some(PathBuf::from("../../escape.md")));
 
             let error = target
-                .target_path(root, || root.join("default.md"))
+                .target_path(|| root.join("default.md"))
                 .expect_err("declared candidate escapes root");
 
             assert!(matches!(
@@ -554,16 +616,135 @@ mod tests {
         #[test]
         fn returns_an_unconfined_default_even_when_it_would_fail_confine() {
             let root = Path::new("/vault");
-            let target = TemplateWriteTarget::new();
+            let target = TemplateWriteTarget::new(root);
             let outside_root = PathBuf::from("/etc/passwd");
 
-            let path =
-                target.target_path(root, || outside_root.clone()).expect(
-                    "default is a trusted config value, passed through \
-                     unchecked",
-                );
+            let path = target.target_path(|| outside_root.clone()).expect(
+                "default is a trusted config value, passed through unchecked",
+            );
 
             assert_eq!(path, outside_root);
+        }
+    }
+
+    mod resolve {
+        use std::sync::Arc;
+
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+        use crate::PresetDialogProvider;
+
+        #[test]
+        fn prompts_interactively_when_output_path_exists_and_reprompts_on_escaping_input()
+         {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let root = temp.path();
+            let initial_file = root.join("daily.md");
+            fs::write(&initial_file, "existing content")
+                .expect("seed existing note");
+
+            let provider: Arc<dyn DialogProvider> = Arc::new(
+                PresetDialogProvider::new()
+                    .with_text("../../escape.md")
+                    .with_text("alt.md"),
+            );
+
+            let target = TemplateWriteTarget::new(root);
+            let resolved = target
+                .resolve(
+                    WriteMode::Commit(CommitPolicy::CreateNew),
+                    provider.as_ref(),
+                    || root.join("daily.md"),
+                )
+                .expect("resolves to alternative path after reprompting");
+
+            assert_eq!(resolved, root.join("alt.md"));
+        }
+
+        #[test]
+        fn returns_prompt_error_when_prompt_is_cancelled() {
+            struct CancellingDialogProvider;
+            impl DialogProvider for CancellingDialogProvider {
+                fn is_interactive(&self) -> bool {
+                    true
+                }
+
+                fn text(
+                    &self,
+                    _l: &str,
+                    _d: Option<&str>,
+                ) -> Result<String, DialogError> {
+                    Err(DialogError::UserCancelled)
+                }
+
+                fn confirm(
+                    &self,
+                    _l: &str,
+                    _d: Option<bool>,
+                ) -> Result<bool, DialogError> {
+                    Err(DialogError::UserCancelled)
+                }
+
+                fn select(
+                    &self,
+                    _l: &str,
+                    _i: &[String],
+                ) -> Result<usize, DialogError> {
+                    Err(DialogError::UserCancelled)
+                }
+
+                fn multi_select(
+                    &self,
+                    _l: &str,
+                    _i: &[String],
+                ) -> Result<Vec<usize>, DialogError> {
+                    Err(DialogError::UserCancelled)
+                }
+            }
+
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let root = temp.path();
+            let initial_file = root.join("daily.md");
+            fs::write(&initial_file, "existing content")
+                .expect("seed existing note");
+
+            let error = TemplateWriteTarget::new(root)
+                .resolve(
+                    WriteMode::Commit(CommitPolicy::CreateNew),
+                    &CancellingDialogProvider,
+                    || root.join("daily.md"),
+                )
+                .expect_err("cancelled prompt fails");
+
+            assert!(matches!(
+                error,
+                TemplateError::Prompt(DialogError::UserCancelled)
+            ));
+        }
+
+        #[test]
+        fn returns_initial_path_when_requested_is_set_even_if_file_exists() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let root = temp.path();
+            let initial_file = root.join("explicit.md");
+            fs::write(&initial_file, "existing").expect("seed file");
+
+            let provider: Arc<dyn DialogProvider> = Arc::new(
+                PresetDialogProvider::new().with_text("alternative.md"),
+            );
+
+            let target = TemplateWriteTarget::new(root)
+                .with_requested(Some(Path::new("explicit.md")));
+            let resolved = target
+                .resolve(
+                    WriteMode::Commit(CommitPolicy::CreateNew),
+                    provider.as_ref(),
+                    || root.join("default.md"),
+                )
+                .expect("requested path bypasses prompt");
+
+            assert_eq!(resolved, root.join("explicit.md"));
         }
     }
 
@@ -713,8 +894,6 @@ mod tests {
     }
 
     mod write {
-        use std::cell::Cell;
-
         use pretty_assertions::assert_eq;
 
         use super::*;
@@ -723,30 +902,17 @@ mod tests {
         fn dry_run_returns_previewed_without_choosing_a_target() {
             let root = tempfile::tempdir().expect("create temp dir");
             let writer = TemplateWriter::new(root.path());
-            let escaping = Path::new("../../escape.md");
-            let default_called = Cell::new(false);
 
             let outcome = writer
                 .write(
-                    &TemplateWriteTarget::new().with_requested(Some(escaping)),
+                    root.path().join("unused.md"),
                     "hello".to_owned(),
                     WriteMode::DryRun,
-                    || {
-                        default_called.set(true);
-                        TemplateWriteTarget::trusted(
-                            root.path(),
-                            root.path().join("unused.md"),
-                        )
-                    },
                 )
-                .expect(
-                    "dry run never confines -o, so an escaping path never \
-                     fails",
-                );
+                .expect("dry run preview");
 
             assert_eq!(outcome, WriteOutcome::Previewed("hello".to_owned()));
-            assert!(!default_called.get());
-            assert!(!root.path().join("../escape.md").exists());
+            assert!(!root.path().join("unused.md").exists());
         }
 
         #[test]
@@ -757,10 +923,9 @@ mod tests {
 
             let outcome = writer
                 .write(
-                    &TemplateWriteTarget::new(),
+                    path.clone(),
                     "hello".to_owned(),
                     WriteMode::Commit(CommitPolicy::CreateNew),
-                    || TemplateWriteTarget::trusted(root.path(), path.clone()),
                 )
                 .expect("writes new file");
 
@@ -772,28 +937,18 @@ mod tests {
         fn output_overrides_the_default() {
             let root = tempfile::tempdir().expect("create temp dir");
             let writer = TemplateWriter::new(root.path());
-            let default_path = root.path().join("default.md");
+            let override_path = root.path().join("elsewhere.md");
 
             let outcome = writer
                 .write(
-                    &TemplateWriteTarget::new()
-                        .with_requested(Some(Path::new("elsewhere.md"))),
+                    override_path.clone(),
                     "hi".to_owned(),
                     WriteMode::Commit(CommitPolicy::CreateNew),
-                    || {
-                        TemplateWriteTarget::trusted(
-                            root.path(),
-                            default_path.clone(),
-                        )
-                    },
                 )
                 .expect("writes to override path");
 
-            assert_eq!(
-                outcome,
-                WriteOutcome::Written(root.path().join("elsewhere.md"))
-            );
-            assert!(!default_path.exists());
+            assert_eq!(outcome, WriteOutcome::Written(override_path.clone()));
+            assert_eq!(fs::read_to_string(&override_path).expect("read"), "hi");
         }
 
         #[test]
@@ -805,10 +960,9 @@ mod tests {
 
             let error = writer
                 .write(
-                    &TemplateWriteTarget::new(),
+                    path.clone(),
                     "new".to_owned(),
                     WriteMode::Commit(CommitPolicy::CreateNew),
-                    || TemplateWriteTarget::trusted(root.path(), path.clone()),
                 )
                 .expect_err("existing target fails under CreateNew");
 
@@ -820,49 +974,21 @@ mod tests {
 
         #[test]
         fn overwrite_truncates_an_existing_file() {
-            let root = tempfile::tempdir().expect("create temp dir");
-            let path = root.path().join("note.md");
-            fs::write(&path, "old").expect("seed existing file");
-            let writer = TemplateWriter::new(root.path());
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let file_path = temp.path().join("note.md");
+            fs::write(&file_path, "old").expect("seed existing file");
+            let writer = TemplateWriter::new(temp.path());
 
             let outcome = writer
                 .write(
-                    &TemplateWriteTarget::new(),
+                    file_path.clone(),
                     "new".to_owned(),
                     WriteMode::Commit(CommitPolicy::Overwrite),
-                    || TemplateWriteTarget::trusted(root.path(), path.clone()),
                 )
                 .expect("overwrite mode truncates the existing target");
 
-            assert_eq!(outcome, WriteOutcome::Written(path.clone()));
-            assert_eq!(fs::read_to_string(&path).expect("read"), "new");
-        }
-
-        #[test]
-        fn commit_rejects_an_escaping_requested_path() {
-            let root = tempfile::tempdir().expect("create temp dir");
-            let writer = TemplateWriter::new(root.path());
-            let escaping = Path::new("../../escape.md");
-
-            let error = writer
-                .write(
-                    &TemplateWriteTarget::new().with_requested(Some(escaping)),
-                    "hello".to_owned(),
-                    WriteMode::Commit(CommitPolicy::CreateNew),
-                    || {
-                        TemplateWriteTarget::trusted(
-                            root.path(),
-                            root.path().join("unused.md"),
-                        )
-                    },
-                )
-                .expect_err("commit mode confines the requested candidate");
-
-            assert!(matches!(
-                error,
-                TemplateError::OutputPathEscapesRoot { .. }
-            ));
-            assert!(!root.path().join("../escape.md").exists());
+            assert_eq!(outcome, WriteOutcome::Written(file_path.clone()));
+            assert_eq!(fs::read_to_string(&file_path).expect("read"), "new");
         }
     }
 
@@ -875,10 +1001,8 @@ mod tests {
         fn writes_content_to_a_newly_created_file() {
             let temp = tempfile::tempdir().expect("create temp dir");
             let path = temp.path().join("note.md");
-            let target =
-                TemplateWriteTarget::trusted(temp.path(), path.clone());
 
-            TemplateWriter::commit(&target, "hello", CommitPolicy::CreateNew)
+            TemplateWriter::commit(&path, "hello", CommitPolicy::CreateNew)
                 .expect("creates new file");
 
             assert_eq!(fs::read_to_string(&path).expect("read"), "hello");
@@ -889,10 +1013,8 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             let path = temp.path().join("note.md");
             fs::write(&path, "old").expect("seed existing file");
-            let target =
-                TemplateWriteTarget::trusted(temp.path(), path.clone());
 
-            TemplateWriter::commit(&target, "new", CommitPolicy::Overwrite)
+            TemplateWriter::commit(&path, "new", CommitPolicy::Overwrite)
                 .expect("force overwrites");
 
             assert_eq!(fs::read_to_string(&path).expect("read"), "new");
@@ -902,10 +1024,8 @@ mod tests {
         fn creates_the_parent_directory_tree_before_writing() {
             let temp = tempfile::tempdir().expect("create temp dir");
             let path = temp.path().join("nested/deep/note.md");
-            let target =
-                TemplateWriteTarget::trusted(temp.path(), path.clone());
 
-            TemplateWriter::commit(&target, "hello", CommitPolicy::CreateNew)
+            TemplateWriter::commit(&path, "hello", CommitPolicy::CreateNew)
                 .expect("creates parent dirs and file");
 
             assert_eq!(fs::read_to_string(&path).expect("read"), "hello");

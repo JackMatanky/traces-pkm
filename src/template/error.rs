@@ -9,6 +9,7 @@ use std::{io, path::PathBuf};
 use thiserror::Error;
 
 use super::path::TemplatePathError;
+use crate::DialogError;
 
 /// One variant per pipeline stage, so a caller can tell which stage
 /// failed without inspecting the wrapped source error.
@@ -65,4 +66,9 @@ pub(crate) enum TemplateError {
         #[source]
         source: io::Error,
     },
+
+    /// An interactive prompt (picker or collision prompt) failed or was
+    /// cancelled.
+    #[error(transparent)]
+    Prompt(#[from] DialogError),
 }

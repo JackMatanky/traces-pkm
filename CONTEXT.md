@@ -86,6 +86,7 @@ Marks a directory as safe for template execution. Templates can invoke custom fu
 _Avoid_: allow, approve, authorize
 
 ### Template Output Path
+The final path on disk where an instantiated note is written. Resolved by precedence: explicit CLI `--output` / `-o` flag > template `file.write_to(path)` declaration > config-derived default output directory (`output_dir` + template name stem). All non-default candidates are confined to the project root. If the resolved path already exists and `--force` is not set, an interactive prompt asks the user for a root-relative alternative path.
 
 #### file.write_to(path)
 A method on the `file` namespace object, callable from within a template to

@@ -28,6 +28,7 @@ pub(crate) struct TemplateService<'a> {
     config: &'a Config,
     engine: TemplateEngine,
     writer: TemplateWriter<'a>,
+    provider: Arc<dyn DialogProvider>,
 }
 
 /// The result of [`TemplateService::render`]: rendered content plus
@@ -58,12 +59,14 @@ impl<'a> TemplateService<'a> {
         provider: Arc<dyn DialogProvider>,
     ) -> Self {
         let loader = TemplateLoader::from(config);
-        let engine = TemplateEngine::new(loader, provider, config.root());
+        let engine =
+            TemplateEngine::new(loader, Arc::clone(&provider), config.root());
         let writer = TemplateWriter::new(config.root());
         Self {
             config,
             engine,
             writer,
+            provider,
         }
     }
 
@@ -131,12 +134,14 @@ impl<'a> TemplateService<'a> {
         output: Option<&Path>,
         mode: WriteMode,
     ) -> Result<WriteOutcome, TemplateError> {
-        let target = TemplateWriteTarget::new()
+        let target = TemplateWriteTarget::new(self.config.root())
             .with_requested(output)
             .with_declared(rendered.declared);
-        self.writer.write(&target, rendered.content, mode, || {
-            self.default_output_path(&rendered.resolved)
-        })
+        let resolved_path =
+            target.resolve(mode, self.provider.as_ref(), || {
+                self.default_output_path(&rendered.resolved)
+            })?;
+        self.writer.write(resolved_path, rendered.content, mode)
     }
 
     /// Resolves `name`, renders it, then writes (or previews under
@@ -183,11 +188,9 @@ impl<'a> TemplateService<'a> {
         &self,
         rendered: &RenderedTemplate,
     ) -> Result<PathBuf, TemplateError> {
-        let target =
-            TemplateWriteTarget::new().with_declared(rendered.declared.clone());
-        target.target_path(self.config.root(), || {
-            self.default_output_path(&rendered.resolved)
-        })
+        let target = TemplateWriteTarget::new(self.config.root())
+            .with_declared(rendered.declared.clone());
+        target.target_path(|| self.default_output_path(&rendered.resolved))
     }
 
     /// Reads the resolved template's source from disk, mapping I/O
