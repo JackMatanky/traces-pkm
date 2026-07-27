@@ -10,21 +10,20 @@
 //! between renders; [`super::TemplateEngine::render`] reads it back after
 //! render completes.
 //!
-//! [`confine`] rejects an absolute `path` or any `..` component before
-//! joining onto root — the same rule
-//! [`TemplateWriteTarget::confine`](super::super::writer::TemplateWriteTarget::confine)
-//! applies to `-o`/`file.write_to()` candidates. Kept as a separate copy
-//! rather than a shared helper, since both are a two-line rule.
+//! `file.include()` confines its `path` argument to `root` via
+//! [`crate::path::RootConfinedPath::parse`] — the same seam
+//! [`super::super::writer::TemplateWriteTarget::confine`] uses for
+//! `-o`/`file.write_to()` candidates, so a symlink escape is rejected
+//! identically on both the read and the write side.
 
-use std::{
-    path::{Component, Path, PathBuf},
-    sync::Arc,
-};
+use std::{path::Path, sync::Arc};
 
 use minijinja::{
     Environment, Error, ErrorKind, State,
     value::{Enumerator, Object, Value},
 };
+
+use crate::path::{PathError, RootConfinedPath};
 
 /// The key `write_to` stashes its path under via [`State::set_temp`];
 /// [`super::TemplateEngine::render`] reads it back under the same
@@ -73,30 +72,12 @@ impl Object for FileOps {
                 let root = Arc::clone(&self.root);
                 Some(Value::from_function(
                     move |path: &str| -> Result<String, Error> {
-                        let resolved = confine(&root, Path::new(path))
-                            .ok_or_else(|| escapes_root(path))?;
-                        // Symlinks are lexically invisible to `confine` —
-                        // a `Component::Normal` name can still resolve
-                        // outside `root` at the filesystem level. Resolve
-                        // both sides and re-check containment before
-                        // reading, so a symlink planted inside `root`
-                        // can't leak a file from outside it.
-                        let canonical_root =
-                            root.canonicalize().map_err(|source| {
-                                Error::new(
-                                    ErrorKind::InvalidOperation,
-                                    "failed to resolve the project root"
-                                        .to_owned(),
-                                )
-                                .with_source(source)
-                            })?;
-                        let canonical_target = resolved
-                            .canonicalize()
-                            .map_err(|source| read_error(path, source))?;
-                        if !canonical_target.starts_with(&canonical_root) {
-                            return Err(escapes_root(path));
-                        }
-                        std::fs::read_to_string(&canonical_target)
+                        let confined =
+                            RootConfinedPath::parse(&root, Path::new(path))
+                                .map_err(|source| {
+                                    confine_error(path, source)
+                                })?;
+                        std::fs::read_to_string(confined.as_ref())
                             .map_err(|source| read_error(path, source))
                     },
                 ))
@@ -110,28 +91,25 @@ impl Object for FileOps {
     }
 }
 
-/// Confines `candidate` — `file.include()`'s runtime `path` argument —
-/// to `root`: rejects an absolute path or any component other than a
-/// plain name or `.`, then joins what's left onto `root`. Lexical only —
-/// callers still MUST canonicalize and re-check containment before
-/// touching the filesystem, since a symlink can pass this check and
-/// still resolve outside `root` (see the `include` arm above). See the
-/// module docs for why this is a deliberate duplicate of
-/// `TemplateWriteTarget::confine` in [`super::super::writer`], not a shared
-/// helper.
-fn confine(root: &Path, candidate: &Path) -> Option<PathBuf> {
-    let is_safe = !candidate.is_absolute()
-        && candidate.components().all(|component| {
-            matches!(component, Component::Normal(_) | Component::CurDir)
-        });
-    is_safe.then(|| root.join(candidate))
+/// Builds the `file.include()` error for a `path` that fails
+/// confinement: unsafe lexically, or escaping `root` once symlinks
+/// resolve ([`PathError::NotRelative`]/[`PathError::EscapesRoot`]) get
+/// the same "escapes the project root" message — from the template
+/// author's perspective both are just that. [`PathError::Verify`] gets
+/// its own message, since that case isn't known to escape, only
+/// unconfirmed (root or an ancestor couldn't be canonicalized).
+fn confine_error(path: &str, source: PathError) -> Error {
+    match source {
+        PathError::NotRelative | PathError::EscapesRoot => escapes_root(path),
+        PathError::Verify(source) => Error::new(
+            ErrorKind::InvalidOperation,
+            format!("failed to verify path {path} is inside the project root"),
+        )
+        .with_source(source),
+    }
 }
 
-/// Builds the `file.include()` error for a `path` that escapes `root` —
-/// either lexically (fails [`confine`]) or, after resolving symlinks,
-/// canonicalizes to somewhere outside it. Same message either way: from
-/// the template author's perspective both are just "this path escapes
-/// the project root".
+/// Builds the `file.include()` error for a `path` that escapes `root`.
 fn escapes_root(path: &str) -> Error {
     Error::new(
         ErrorKind::InvalidOperation,
@@ -139,8 +117,8 @@ fn escapes_root(path: &str) -> Error {
     )
 }
 
-/// Builds the `file.include()` error for an I/O failure — canonicalizing
-/// or reading — once `path` has already passed root confinement.
+/// Builds the `file.include()` error for an I/O failure reading the
+/// file, once `path` has already passed root confinement.
 fn read_error(path: &str, source: std::io::Error) -> Error {
     Error::new(ErrorKind::InvalidOperation, format!("failed to read {path}"))
         .with_source(source)
@@ -345,6 +323,8 @@ mod tests {
         #[case::an_absolute_path("/etc/passwd")]
         #[case::a_parent_traversal("../evil.md")]
         #[case::a_buried_parent_traversal("sub/../../evil.md")]
+        #[case::an_empty_path("")]
+        #[case::a_bare_current_dir(".")]
         fn rejects_an_escaping_path(#[case] path: &str) {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::create_dir_all(temp.path().join("sub"))
@@ -425,26 +405,6 @@ mod tests {
             let error = include
                 .call(&env.empty_state(), &[Value::from("missing.md")])
                 .expect_err("missing file fails");
-
-            assert_eq!(error.kind(), ErrorKind::InvalidOperation);
-            assert!(
-                error.source().is_some(),
-                "expected the io error to be preserved as source"
-            );
-        }
-
-        #[test]
-        fn wraps_the_io_error_when_the_path_is_empty() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            let ops = ops(temp.path());
-            let include = ops
-                .get_value(&Value::from("include"))
-                .expect("include is a known method");
-            let env = env();
-
-            let error = include
-                .call(&env.empty_state(), &[Value::from("")])
-                .expect_err("empty path resolves to root, a directory");
 
             assert_eq!(error.kind(), ErrorKind::InvalidOperation);
             assert!(

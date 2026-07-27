@@ -47,6 +47,20 @@ pub(crate) enum TemplateError {
         path: PathBuf,
     },
 
+    /// `path` — from `file.write_to()` or `-o` — could not be verified
+    /// as staying inside the project root: canonicalizing the root or
+    /// the path's existing ancestor failed for a reason other than not
+    /// existing (permission denied, a broken symlink loop). Fails
+    /// closed rather than writing an unverified path.
+    #[error("failed to verify output path {path} is inside the project root")]
+    OutputPathUnverifiable {
+        /// The candidate that could not be verified.
+        path: PathBuf,
+        /// The underlying I/O error from canonicalization.
+        #[source]
+        source: io::Error,
+    },
+
     /// The template's source failed to render.
     #[error("failed to render template {path}")]
     Render {

@@ -1,14 +1,15 @@
 //! [`TemplateLoader`]: which directories hold templates, and the one
 //! entry point — [`TemplateLoader::find`] — that searches them.
 //!
-//! [`TemplateLoader::find`] validates the raw name, then delegates to
-//! [`TemplatePath::<Validated>::find`](super::path::TemplatePath::find)
-//! (see that method's docs for the search precedence). Both top-level
-//! `-i <name>` resolution and `{% include %}`/`{% extends %}` loading call
-//! this same method, so they can never disagree about which directory
-//! wins. A `name` that fails validation (absolute, `..` traversal) reports
-//! as the same [`TemplatePathError::TemplateNotFound`] an ordinary miss
-//! produces — deliberately not distinguished from a typo.
+//! [`TemplateLoader::find`] validates the raw name via
+//! [`TemplatePath::parse`](super::path::TemplatePath::parse), then searches
+//! [`Self::directories`] in order ([`Self::find_path_in`], then
+//! [`Self::find_name_in`]). Both top-level `-i <name>` resolution and
+//! `{% include %}`/`{% extends %}` loading call this same method, so they
+//! can never disagree about which directory wins. A `name` that fails
+//! validation (absolute, `..` traversal) reports as the same
+//! [`TemplatePathError::TemplateNotFound`] an ordinary miss produces —
+//! deliberately not distinguished from a typo.
 //!
 //! # Why not `minijinja::path_loader`
 //!
@@ -29,7 +30,7 @@ use std::{
 use minijinja::{Error, ErrorKind};
 
 use super::path::{TemplatePath, TemplatePathError};
-use crate::config::Config;
+use crate::{config::Config, path::SafeRelativePath};
 
 /// A template's home: at most one local directory, at most one
 /// global, searched local-first for a name match.
@@ -78,15 +79,15 @@ impl TemplateLoader {
         &self,
         name: &Path,
     ) -> Result<TemplatePath, TemplatePathError> {
-        let validated = TemplatePath::validate(name).map_err(|_| {
+        let validated = TemplatePath::parse(name).map_err(|_| {
             TemplatePathError::TemplateNotFound(name.to_path_buf())
         })?;
 
         for dir in self.directories() {
-            if let Some(path) = self.find_path_in(dir, &validated) {
+            if let Some(path) = Self::find_path_in(dir, &validated) {
                 return Ok(TemplatePath::new(path, dir.to_path_buf()));
             }
-            if let Some(path) = self.find_name_in(dir, &validated)? {
+            if let Some(path) = Self::find_name_in(dir, &validated)? {
                 return Ok(TemplatePath::new(path, dir.to_path_buf()));
             }
         }
@@ -107,17 +108,18 @@ impl TemplateLoader {
     /// The exact-match rule: does `dir.join(path)` name a real file?
     #[inline]
     #[must_use]
-    fn find_path_in(&self, dir: &Path, path: &Path) -> Option<PathBuf> {
+    fn find_path_in(dir: &Path, path: &SafeRelativePath) -> Option<PathBuf> {
+        let path = path.as_ref();
         dir.join(path).is_file().then(|| path.to_path_buf())
     }
 
     /// The name-match rule: search `dir`'s subdirectory for any file sharing
     /// `path`'s stem.
     fn find_name_in(
-        &self,
         dir: &Path,
-        path: &Path,
+        path: &SafeRelativePath,
     ) -> Result<Option<PathBuf>, TemplatePathError> {
+        let path = path.as_ref();
         if path.extension().is_some() {
             return Ok(None);
         }
@@ -127,7 +129,7 @@ impl TemplateLoader {
         let Ok(entries) = fs::read_dir(&search_dir) else {
             return Ok(None);
         };
-        let key = path.file_stem().unwrap_or_else(|| path.as_os_str());
+        let key = path.file_stem().unwrap_or(path.as_os_str());
         let hits: Vec<PathBuf> = entries
             .filter_map(Result::ok)
             .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_file()))

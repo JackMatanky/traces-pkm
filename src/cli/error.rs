@@ -340,6 +340,13 @@ impl Diagnostic for TemplateCliError {
                 ..
             } => "traces::cli::template::output_escapes_root",
             Self::Instantiate {
+                source:
+                    TemplateError::OutputPathUnverifiable {
+                        ..
+                    },
+                ..
+            } => "traces::cli::template::output_path_unverifiable",
+            Self::Instantiate {
                 ..
             } => "traces::cli::template::instantiate_failed",
             Self::NoTemplates => "traces::cli::template::no_templates",
@@ -382,6 +389,16 @@ impl Diagnostic for TemplateCliError {
             } => Some(Box::new(
                 "pass a path within the project — absolute paths and \"..\" \
                  segments are not allowed",
+            )),
+            Self::Instantiate {
+                source:
+                    TemplateError::OutputPathUnverifiable {
+                        ..
+                    },
+                ..
+            } => Some(Box::new(
+                "check that the project root exists and is readable; a broken \
+                 symlink in the output path can also cause this",
             )),
             Self::Instantiate {
                 ..

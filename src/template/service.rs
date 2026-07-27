@@ -22,21 +22,18 @@ use crate::{DialogProvider, config::Config};
 
 /// Entry point for resolving, rendering, and writing one template.
 ///
-/// Holds a borrowed [`Config`], the [`TemplateEngine`] built from it,
-/// and a [`TemplateWriter`] confined to [`Config::root`].
+/// Holds a borrowed [`Config`] and the [`TemplateEngine`] built from it.
 pub(crate) struct TemplateService<'a> {
     config: &'a Config,
     engine: TemplateEngine,
-    writer: TemplateWriter<'a>,
     provider: Arc<dyn DialogProvider>,
 }
 
 /// The result of [`TemplateService::render`]: rendered content plus
 /// enough of the resolved template's identity for
-/// [`TemplateService::write`] and
-/// [`TemplateService::effective_output_path`] to finish the job
-/// without rendering `name` a second time — which would re-run any
-/// `ui.*` prompts inside it.
+/// [`TemplateService::write`] to finish the job without rendering
+/// `name` a second time — which would re-run any `ui.*` prompts
+/// inside it.
 #[derive(Debug)]
 pub(crate) struct RenderedTemplate {
     resolved: TemplatePath,
@@ -45,8 +42,7 @@ pub(crate) struct RenderedTemplate {
 }
 
 impl<'a> TemplateService<'a> {
-    /// Builds a service for `config`, backed by a [`TemplateEngine`]
-    /// and a [`TemplateWriter`] confined to [`Config::root`].
+    /// Builds a service for `config`, backed by a [`TemplateEngine`].
     /// `provider` is the interactive provider every `ui.*` call
     /// delegates to, including under `WriteMode::DryRun` —
     /// `WriteMode` only decides whether output gets written, never
@@ -61,11 +57,9 @@ impl<'a> TemplateService<'a> {
         let loader = TemplateLoader::from(config);
         let engine =
             TemplateEngine::new(loader, Arc::clone(&provider), config.root());
-        let writer = TemplateWriter::new(config.root());
         Self {
             config,
             engine,
-            writer,
             provider,
         }
     }
@@ -85,10 +79,9 @@ impl<'a> TemplateService<'a> {
 
     /// Resolves `name` and renders it — the read/render half of
     /// [`Self::render_to_file`], split out so a caller can inspect the
-    /// render's resolved write target
-    /// ([`Self::effective_output_path`]) before deciding where to
-    /// write it, without rendering twice — a second render would
-    /// re-run any `ui.*` prompts inside the template.
+    /// render before deciding where it writes, without rendering
+    /// twice — a second render would re-run any `ui.*` prompts inside
+    /// the template.
     ///
     /// # Errors
     ///
@@ -141,7 +134,7 @@ impl<'a> TemplateService<'a> {
             target.resolve(mode, self.provider.as_ref(), || {
                 self.default_output_path(&rendered.resolved)
             })?;
-        self.writer.write(resolved_path, rendered.content, mode)
+        TemplateWriter::write(resolved_path, rendered.content, mode)
     }
 
     /// Resolves `name`, renders it, then writes (or previews under
@@ -167,30 +160,6 @@ impl<'a> TemplateService<'a> {
         mode: WriteMode,
     ) -> Result<WriteOutcome, TemplateError> {
         self.write(self.render(name)?, output, mode)
-    }
-
-    /// The output path `rendered` would land on absent an explicit
-    /// `-o` override: its declared `file.write_to()` if it called
-    /// one, else [`Self::default_output_path`] — resolved through the
-    /// same [`TemplateWriteTarget::target_path`] precedence
-    /// [`Self::write`] uses for the real write, so a pre-write
-    /// existence check (the interactive picker's output-path prompt)
-    /// inspects the path a write would actually land on, not always
-    /// the default.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`TemplateError::OutputPathEscapesRoot`] when
-    /// `rendered`'s declared `write_to` names an absolute or
-    /// `..`-containing path.
-    #[inline]
-    pub(crate) fn effective_output_path(
-        &self,
-        rendered: &RenderedTemplate,
-    ) -> Result<PathBuf, TemplateError> {
-        let target = TemplateWriteTarget::new(self.config.root())
-            .with_declared(rendered.declared.clone());
-        target.target_path(|| self.default_output_path(&rendered.resolved))
     }
 
     /// Reads the resolved template's source from disk, mapping I/O
@@ -644,6 +613,50 @@ mod tests {
             ));
         }
 
+        #[cfg(unix)]
+        #[test]
+        fn write_to_rejects_writing_through_a_symlink_that_escapes_root() {
+            use std::os::unix::fs::symlink;
+
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let root = temp.path().to_path_buf();
+            let local_dir = root.join("templates");
+            let outside = tempfile::tempdir().expect("create outside dir");
+            write_file(
+                &local_dir,
+                "daily.md",
+                "{{ file.write_to(\"link/secret.md\") }}",
+            );
+            symlink(outside.path(), root.join("link"))
+                .expect("plant a symlink inside root pointing outside it");
+            let config = Config::for_test(
+                root.clone(),
+                Some(local_dir),
+                None,
+                root.clone(),
+            );
+            let service = TemplateService::new(&config, preset_provider());
+
+            let error = service
+                .render_to_file(
+                    Path::new("daily"),
+                    None,
+                    WriteMode::Commit(CommitPolicy::CreateNew),
+                )
+                .expect_err(
+                    "write_to through a symlink escaping root is rejected",
+                );
+
+            assert!(matches!(
+                error,
+                TemplateError::OutputPathEscapesRoot { .. }
+            ));
+            assert!(
+                !outside.path().join("secret.md").exists(),
+                "nothing was written outside root through the symlink"
+            );
+        }
+
         #[test]
         fn output_flag_overrides_write_to() {
             let temp = tempfile::tempdir().expect("create temp dir");
@@ -1054,86 +1067,6 @@ mod tests {
                 .expect_err("missing template fails");
 
             assert!(matches!(error, TemplateError::Resolve(_)));
-        }
-    }
-
-    mod effective_output_path {
-        use pretty_assertions::assert_eq;
-
-        use super::*;
-
-        #[test]
-        fn returns_the_default_output_path_without_a_declared_write_to() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            let local_dir = temp.path().join("templates");
-            write_file(&local_dir, "daily.md", "hello");
-            let config = Config::for_test(
-                temp.path().to_path_buf(),
-                Some(local_dir),
-                None,
-                temp.path().to_path_buf(),
-            );
-            let service = TemplateService::new(&config, preset_provider());
-            let rendered = service.render(Path::new("daily")).expect("render");
-
-            let path = service
-                .effective_output_path(&rendered)
-                .expect("effective_output_path");
-
-            assert_eq!(path, temp.path().join("daily.md"));
-        }
-
-        #[test]
-        fn returns_the_declared_write_to_path_when_the_template_calls_it() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            let local_dir = temp.path().join("templates");
-            write_file(
-                &local_dir,
-                "daily.md",
-                "{{ file.write_to(\"from-template.md\") }}",
-            );
-            let config = Config::for_test(
-                temp.path().to_path_buf(),
-                Some(local_dir),
-                None,
-                temp.path().to_path_buf(),
-            );
-            let service = TemplateService::new(&config, preset_provider());
-            let rendered = service.render(Path::new("daily")).expect("render");
-
-            let path = service
-                .effective_output_path(&rendered)
-                .expect("effective_output_path");
-
-            assert_eq!(path, temp.path().join("from-template.md"));
-        }
-
-        #[test]
-        fn rejects_a_declared_write_to_that_escapes_root() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            let local_dir = temp.path().join("templates");
-            write_file(
-                &local_dir,
-                "daily.md",
-                "{{ file.write_to(\"../../escape.md\") }}",
-            );
-            let config = Config::for_test(
-                temp.path().to_path_buf(),
-                Some(local_dir),
-                None,
-                temp.path().to_path_buf(),
-            );
-            let service = TemplateService::new(&config, preset_provider());
-            let rendered = service.render(Path::new("daily")).expect("render");
-
-            let error = service
-                .effective_output_path(&rendered)
-                .expect_err("escaping write_to is rejected");
-
-            assert!(matches!(
-                error,
-                TemplateError::OutputPathEscapesRoot { .. }
-            ));
         }
     }
 }

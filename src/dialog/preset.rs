@@ -139,6 +139,7 @@ impl PresetDialogProvider {
     }
 
     /// Returns `true` if all preset response queues are empty.
+    #[inline]
     #[must_use]
     pub fn is_empty(&self) -> bool {
         lock(&self.texts).is_empty()

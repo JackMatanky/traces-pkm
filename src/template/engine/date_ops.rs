@@ -439,7 +439,8 @@ fn add_days(value: &str, n: u64) -> Result<String, Error> {
 /// date_sub(n, unit="days") }}`.
 fn sub_days(value: &str, n: u64) -> Result<String, Error> {
     let n_i64 = i64::try_from(n).map_err(|_| date_out_of_range_error())?;
-    date_shift_unit(value, -n_i64, DateTimeUnit::Days)
+    let n_i64 = n_i64.checked_neg().ok_or_else(date_out_of_range_error)?;
+    date_shift_unit(value, n_i64, DateTimeUnit::Days)
 }
 
 /// `{{ value | add_months(n) }}` — convenience shortcut for `{{ value |
@@ -451,7 +452,9 @@ fn add_months(value: &str, n: u32) -> Result<String, Error> {
 /// `{{ value | sub_months(n) }}` — convenience shortcut for `{{ value |
 /// date_sub(n, unit="months") }}`.
 fn sub_months(value: &str, n: u32) -> Result<String, Error> {
-    date_shift_unit(value, -i64::from(n), DateTimeUnit::Months)
+    let n_i64 =
+        i64::from(n).checked_neg().ok_or_else(date_out_of_range_error)?;
+    date_shift_unit(value, n_i64, DateTimeUnit::Months)
 }
 
 /// `{{ value | add_years(n) }}` — convenience shortcut for `{{ value |
@@ -463,7 +466,9 @@ fn add_years(value: &str, n: u32) -> Result<String, Error> {
 /// `{{ value | sub_years(n) }}` — convenience shortcut for `{{ value |
 /// date_sub(n, unit="years") }}`.
 fn sub_years(value: &str, n: u32) -> Result<String, Error> {
-    date_shift_unit(value, -i64::from(n), DateTimeUnit::Years)
+    let n_i64 =
+        i64::from(n).checked_neg().ok_or_else(date_out_of_range_error)?;
+    date_shift_unit(value, n_i64, DateTimeUnit::Years)
 }
 /// [`ErrorKind::InvalidOperation`] if `value` isn't a parseable
 /// date/time string — see [`parse_date_precise`]. The `with_day(1)`
@@ -1271,7 +1276,7 @@ mod tests {
         fn date_add_defaults_to_days() {
             let rendered = env()
                 .render_str(
-                    r#"{{ '2026-07-26' | date_add(5) }}"#,
+                    r"{{ '2026-07-26' | date_add(5) }}",
                     minijinja::context!(),
                 )
                 .expect("render succeeds");
@@ -1283,7 +1288,7 @@ mod tests {
         fn date_add_accepts_units_and_singular_plural_forms() {
             let rendered = env()
                 .render_str(
-                    r#"{{ '2026-07-26' | date_add(1, unit='month') }}-{{ '2026-07-26' | date_add(2, unit='years') }}-{{ '2026-07-26 12:00:00' | date_add(3, unit='hours') }}"#,
+                    r"{{ '2026-07-26' | date_add(1, unit='month') }}-{{ '2026-07-26' | date_add(2, unit='years') }}-{{ '2026-07-26 12:00:00' | date_add(3, unit='hours') }}",
                     minijinja::context!(),
                 )
                 .expect("render succeeds");
@@ -1295,7 +1300,7 @@ mod tests {
         fn date_sub_subtracts_units() {
             let rendered = env()
                 .render_str(
-                    r#"{{ '2026-07-26' | date_sub(10, unit='days') }}-{{ '2026-07-26' | date_sub(1, unit='year') }}"#,
+                    r"{{ '2026-07-26' | date_sub(10, unit='days') }}-{{ '2026-07-26' | date_sub(1, unit='year') }}",
                     minijinja::context!(),
                 )
                 .expect("render succeeds");
@@ -1307,7 +1312,7 @@ mod tests {
         fn date_add_rejects_unknown_unit() {
             let error = env()
                 .render_str(
-                    r#"{{ '2026-07-26' | date_add(1, unit='fortnight') }}"#,
+                    r"{{ '2026-07-26' | date_add(1, unit='fortnight') }}",
                     minijinja::context!(),
                 )
                 .expect_err("unknown unit fails");

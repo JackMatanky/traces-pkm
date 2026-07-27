@@ -5,10 +5,12 @@
 
 use std::{
     fs, io,
-    path::{Component, Path, PathBuf},
+    path::{Path, PathBuf},
 };
 
 use thiserror::Error;
+
+use crate::path::SafeRelativePath;
 
 /// The extension every rendered note gets by default, absent an
 /// explicit `-o`/`file.write_to()` override.
@@ -34,31 +36,29 @@ impl TemplatePath {
         }
     }
 
-    /// Checks that `path` is a safe, directory-relative identifier — no
-    /// filesystem access, purely a check on the path's components.
+    /// Validates `path`'s components via [`SafeRelativePath::parse`] — no
+    /// filesystem access, purely a check on the path's shape. Re-derives
+    /// which of the two rejection reasons applies, since
+    /// [`SafeRelativePath::parse`]'s single
+    /// [`PathError`](crate::path::PathError) doesn't distinguish them.
     ///
     /// # Errors
     ///
     /// Returns [`TemplatePathError::Absolute`] when `path` is absolute.
     /// Returns [`TemplatePathError::UnsafeComponent`] for `..`, any component
     /// that isn't a plain name or `.`, or a path with no [`Component::Normal`].
-    pub(super) fn validate(path: &Path) -> Result<PathBuf, TemplatePathError> {
-        if path.is_absolute() {
-            return Err(TemplatePathError::Absolute(path.to_path_buf()));
-        }
-        let mut has_normal_component = false;
-        let is_safe = path.components().all(|component| match component {
-            Component::Normal(_) => {
-                has_normal_component = true;
-                true
+    ///
+    /// [`Component::Normal`]: std::path::Component::Normal
+    pub(super) fn parse(
+        path: &Path,
+    ) -> Result<SafeRelativePath, TemplatePathError> {
+        SafeRelativePath::parse(path).map_err(|_| {
+            if path.is_absolute() {
+                TemplatePathError::Absolute(path.to_path_buf())
+            } else {
+                TemplatePathError::UnsafeComponent(path.to_path_buf())
             }
-            Component::CurDir => true,
-            _ => false,
-        });
-        if !is_safe || !has_normal_component {
-            return Err(TemplatePathError::UnsafeComponent(path.to_path_buf()));
-        }
-        Ok(path.to_path_buf())
+        })
     }
 
     /// This candidate with its extension stripped and directory
@@ -72,7 +72,10 @@ impl TemplatePath {
     /// Whether this candidate carries an extension: `"daily.md"` -> `true`.
     #[inline]
     #[must_use]
-    #[expect(dead_code, reason = "tested in has_extension unit tests")]
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "tested in has_extension unit tests")
+    )]
     pub(super) fn has_extension(&self) -> bool {
         self.path.extension().is_some()
     }
@@ -138,8 +141,8 @@ mod tests {
 
     fn validated(name: &str) -> TemplatePath {
         let rel =
-            TemplatePath::validate(Path::new(name)).expect("valid candidate");
-        TemplatePath::new(rel, PathBuf::from("/dir"))
+            TemplatePath::parse(Path::new(name)).expect("valid candidate");
+        TemplatePath::new(rel.as_ref().to_path_buf(), PathBuf::from("/dir"))
     }
 
     fn write_file(dir: &Path, name: &str) -> PathBuf {
@@ -186,10 +189,10 @@ mod tests {
         #[test]
         fn rejects_an_absolute_path() {
             // A syntactically absolute path is rejected before any I/O
-            // happens — validate() never reads the filesystem, so this
+            // happens — parse() never reads the filesystem, so this
             // never touches whatever real file may or may not exist at
             // this well-known path.
-            let error = TemplatePath::validate(Path::new("/etc/passwd"))
+            let error = TemplatePath::parse(Path::new("/etc/passwd"))
                 .expect_err("absolute path is rejected");
 
             assert!(matches!(error, TemplatePathError::Absolute(_)));
@@ -201,7 +204,7 @@ mod tests {
         #[case::empty_path("")]
         #[case::bare_current_dir(".")]
         fn rejects_unsafe_components(#[case] input: &str) {
-            let error = TemplatePath::validate(Path::new(input))
+            let error = TemplatePath::parse(Path::new(input))
                 .expect_err("unsafe component is rejected");
 
             assert!(matches!(error, TemplatePathError::UnsafeComponent(_)));

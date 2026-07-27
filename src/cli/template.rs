@@ -8,10 +8,7 @@
 //! [`crate::template::TemplateService`]: parses args, loads config for the
 //! current directory, and reports the written path.
 
-use std::{
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::{path::PathBuf, sync::Arc};
 
 use clap::Args;
 

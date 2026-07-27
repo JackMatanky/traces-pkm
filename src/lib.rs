@@ -6,6 +6,7 @@ mod dialog;
 mod dirs;
 mod file_store;
 mod hash;
+mod path;
 mod template;
 
 pub mod cli;
