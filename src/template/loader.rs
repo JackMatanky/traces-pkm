@@ -1,4 +1,5 @@
-//! [`TemplateLoader`]: which directories hold templates, and the one entry point — [`TemplateLoader::find`] — that searches them.
+//! [`TemplateLoader`]: which directories hold templates, and the one entry
+//! point — [`TemplateLoader::find`] — that searches them.
 //!
 //! [`TemplateLoader::find`] validates the raw name via
 //! [`TemplatePath::parse`](super::path::TemplatePath::parse), then searches
@@ -108,26 +109,29 @@ impl TemplateLoader {
         self.local.as_deref().into_iter().chain(global)
     }
 
-    /// The exact-match rule: if `dir.join(path)` names a real file —
-    /// [`Path::is_file`](std::path::Path::is_file) follows symlinks, so a
-    /// symlinked file matches too — returns `path` unchanged (relative to
-    /// `dir`, for [`TemplatePath::new`] to rejoin).
+    /// The exact-match rule: if `dir.join(path)` names a real file,
+    /// returns `path` unchanged (relative to `dir`, for
+    /// [`TemplatePath::new`] to rejoin). Uses
+    /// [`fs::symlink_metadata`] rather than
+    /// [`Path::is_file`](std::path::Path::is_file), so — like
+    /// [`Self::find_name_in`] — a symlink never counts as a match.
     #[inline]
     #[must_use]
     fn find_path_in(dir: &Path, path: &SafeRelativePath) -> Option<PathBuf> {
         let path = path.as_ref();
-        dir.join(path).is_file().then(|| path.to_path_buf())
+        fs::symlink_metadata(dir.join(path))
+            .is_ok_and(|metadata| metadata.is_file())
+            .then(|| path.to_path_buf())
     }
 
     /// The stem-match rule, skipped entirely when `path` already has an
     /// extension ([`Self::find_path_in`]'s exact match is the only rule that
     /// applies then). Searches `dir` itself — or `dir`'s subdirectory named by
     /// `path`'s parent component, if it has one — for files sharing `path`'s
-    /// file stem: `None` for no matches, the sole match for exactly one. A
-    /// symlink never counts as a match here, unlike
-    /// [`Self::find_path_in`]'s exact match — see
-    /// [`DirEntry::file_type`](std::fs::DirEntry::file_type), which reports
-    /// the link's own type, not its target's.
+    /// file stem: `None` for no matches, the sole match for exactly one. Like
+    /// [`Self::find_path_in`], a symlink never counts as a match —
+    /// [`DirEntry::file_type`](std::fs::DirEntry::file_type) reports the
+    /// link's own type, not its target's.
     ///
     /// # Errors
     ///
@@ -497,6 +501,44 @@ mod tests {
                 Err(TemplatePathError::TemplateNotFound(_))
             ));
         }
+
+        #[cfg(unix)]
+        #[test]
+        fn exact_match_does_not_follow_a_symlink() {
+            use std::os::unix::fs::symlink;
+
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let outside_file = write_file(temp.path(), "outside/secret.md");
+            let local_dir = temp.path().join("templates");
+            fs::create_dir_all(&local_dir).expect("create local templates");
+            symlink(&outside_file, local_dir.join("daily.md"))
+                .expect("create symlink");
+            let loader = TemplateLoader::new(Some(local_dir), None);
+
+            assert!(matches!(
+                loader.find(Path::new("daily.md")),
+                Err(TemplatePathError::TemplateNotFound(_))
+            ));
+        }
+
+        #[cfg(unix)]
+        #[test]
+        fn stem_match_does_not_follow_a_symlink() {
+            use std::os::unix::fs::symlink;
+
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let outside_file = write_file(temp.path(), "outside/secret.md");
+            let local_dir = temp.path().join("templates");
+            fs::create_dir_all(&local_dir).expect("create local templates");
+            symlink(&outside_file, local_dir.join("daily"))
+                .expect("create symlink");
+            let loader = TemplateLoader::new(Some(local_dir), None);
+
+            assert!(matches!(
+                loader.find(Path::new("daily")),
+                Err(TemplatePathError::TemplateNotFound(_))
+            ));
+        }
     }
 
     mod list_available {
@@ -561,6 +603,22 @@ mod tests {
                 TemplateLoader::new(Some(temp.path().to_path_buf()), None);
 
             assert_eq!(loader.list_available(), vec!["daily".to_owned()]);
+        }
+
+        #[cfg(unix)]
+        #[test]
+        fn excludes_a_symlinked_entry() {
+            use std::os::unix::fs::symlink;
+
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let outside_file = write_file(temp.path(), "outside/secret.md");
+            let local_dir = temp.path().join("templates");
+            fs::create_dir_all(&local_dir).expect("create local templates");
+            symlink(&outside_file, local_dir.join("linked.md"))
+                .expect("create symlink");
+            let loader = TemplateLoader::new(Some(local_dir), None);
+
+            assert_eq!(loader.list_available(), Vec::<String>::new());
         }
     }
 
