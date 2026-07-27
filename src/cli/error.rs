@@ -13,12 +13,16 @@ use std::{error::Error as StdError, fmt::Display, path::PathBuf};
 use miette::Diagnostic;
 use thiserror::Error;
 
-use crate::{DialogError, template::TemplateError};
+use super::UserAbort;
+use crate::{
+    DialogError,
+    template::{TemplateError, TemplatePathError},
+};
 
 /// Errors from running the `traces` binary.
 ///
-/// Wraps each subcommand's failure, or reports that neither a subcommand
-/// nor `-i`/`--input` was given — returned by [`run`](crate::cli::run).
+/// Wraps each subcommand's failure, or reports that neither a subcommand nor
+/// `-i`/`--input` was given — returned by [`run`](crate::cli::run).
 #[derive(Debug, Diagnostic, Error)]
 #[expect(
     private_interfaces,
@@ -54,11 +58,31 @@ pub enum CliError {
     NoCommand,
 }
 
+impl CliError {
+    /// Returns the deliberate user abort preserved anywhere in this error's
+    /// source chain.
+    pub(super) fn user_abort(&self) -> Option<UserAbort> {
+        let mut error: &(dyn StdError + 'static) = self;
+        loop {
+            if let Some(dialog) = error.downcast_ref::<DialogError>() {
+                return match dialog {
+                    DialogError::UserCancelled => Some(UserAbort::Cancelled),
+                    DialogError::UserInterrupted => {
+                        Some(UserAbort::Interrupted)
+                    }
+                    _ => None,
+                };
+            }
+            error = error.source()?;
+        }
+    }
+}
+
 /// Errors surfaced by the `traces completions` CLI surface.
 ///
-/// Only reachable via `--list-templates`, which loads configuration to
-/// find the template directories; `--shell` never loads configuration,
-/// so it can never produce one of these.
+/// Only reachable via `--list-templates`, which loads configuration to find the
+/// template directories; `--shell` never loads configuration, so it can never
+/// produce one of these.
 #[derive(Debug, Error)]
 pub(crate) enum CompletionsCliError {
     /// Discovering configuration from `cwd` failed.
@@ -70,8 +94,8 @@ pub(crate) enum CompletionsCliError {
         #[source]
         source: Box<dyn StdError + Send + Sync + 'static>,
     },
-    /// Building configuration from discovered candidates failed, including
-    /// an untrusted or stale project root.
+    /// Building configuration from discovered candidates failed, including an
+    /// untrusted or stale project root.
     #[error("failed to load configuration")]
     ConfigBuild {
         /// Source build error, type-erased.
@@ -151,8 +175,8 @@ pub enum ConfigInitCliError {
     },
 }
 
-/// Errors surfaced by the `traces template`/`tmpl`/default `-i` CLI
-/// surface. Thin adapter over [`crate::config::ConfigService`] and
+/// Errors surfaced by the `traces template`/`tmpl`/default `-i` CLI surface.
+/// Thin adapter over [`crate::config::ConfigService`] and
 /// [`crate::template::TemplateService`].
 #[derive(Debug, Error)]
 pub(crate) enum TemplateCliError {
@@ -165,8 +189,8 @@ pub(crate) enum TemplateCliError {
         #[source]
         source: Box<dyn StdError + Send + Sync + 'static>,
     },
-    /// Building configuration from discovered candidates failed, including
-    /// an untrusted or stale project root.
+    /// Building configuration from discovered candidates failed, including an
+    /// untrusted or stale project root.
     #[error("failed to load configuration")]
     ConfigBuild {
         /// Source build error, type-erased.
@@ -182,13 +206,12 @@ pub(crate) enum TemplateCliError {
         #[source]
         source: TemplateError,
     },
-    /// The interactive picker (`traces template`/`traces -i` with no
-    /// name) found no `.md` files in either the local or global
-    /// template directory.
+    /// The interactive picker (`traces template`/`traces -i` with no name)
+    /// found no `.md` files in either the local or global template directory.
     #[error("no templates found")]
     NoTemplates,
-    /// The interactive picker prompt itself failed — an I/O error, or
-    /// the user cancelled (Esc) or interrupted (Ctrl-C) it.
+    /// The interactive picker prompt itself failed — an I/O error, or the user
+    /// cancelled (Esc) or interrupted (Ctrl-C) it.
     #[error("template picker failed")]
     Picker {
         /// The underlying dialog error.
@@ -347,6 +370,33 @@ impl Diagnostic for TemplateCliError {
                 ..
             } => "traces::cli::template::output_path_unverifiable",
             Self::Instantiate {
+                source:
+                    TemplateError::Resolve(
+                        TemplatePathError::Absolute(_)
+                        | TemplatePathError::UnsafeComponent(_),
+                    ),
+                ..
+            } => "traces::cli::template::invalid_identifier",
+            Self::Instantiate {
+                source:
+                    TemplateError::Resolve(TemplatePathError::TemplateNotFound(_)),
+                ..
+            } => "traces::cli::template::not_found",
+            Self::Instantiate {
+                source:
+                    TemplateError::Resolve(TemplatePathError::AmbiguousTemplate {
+                        ..
+                    }),
+                ..
+            } => "traces::cli::template::ambiguous",
+            Self::Instantiate {
+                source:
+                    TemplateError::Resolve(TemplatePathError::DirectoryRead {
+                        ..
+                    }),
+                ..
+            } => "traces::cli::template::directory_read_failed",
+            Self::Instantiate {
                 ..
             } => "traces::cli::template::instantiate_failed",
             Self::NoTemplates => "traces::cli::template::no_templates",
@@ -399,6 +449,43 @@ impl Diagnostic for TemplateCliError {
             } => Some(Box::new(
                 "check that the project root exists and is readable; a broken \
                  symlink in the output path can also cause this",
+            )),
+            Self::Instantiate {
+                source:
+                    TemplateError::Resolve(
+                        TemplatePathError::Absolute(_)
+                        | TemplatePathError::UnsafeComponent(_),
+                    ),
+                ..
+            } => Some(Box::new(
+                "pass a relative template identifier without \"..\" segments",
+            )),
+            Self::Instantiate {
+                source:
+                    TemplateError::Resolve(TemplatePathError::TemplateNotFound(_)),
+                ..
+            } => Some(Box::new(
+                "choose a template from a configured Template Directory",
+            )),
+            Self::Instantiate {
+                source:
+                    TemplateError::Resolve(TemplatePathError::AmbiguousTemplate {
+                        ..
+                    }),
+                ..
+            } => Some(Box::new(
+                "pass an exact template filename to choose one of the listed \
+                 candidates",
+            )),
+            Self::Instantiate {
+                source:
+                    TemplateError::Resolve(TemplatePathError::DirectoryRead {
+                        ..
+                    }),
+                ..
+            } => Some(Box::new(
+                "check that the configured Template Directory exists and is \
+                 readable",
             )),
             Self::Instantiate {
                 ..
@@ -615,6 +702,19 @@ mod tests {
             )
         );
         assert!(error.source().is_some());
+    }
+
+    #[test]
+    fn user_abort_is_recovered_from_a_template_picker_source_chain() {
+        let cancelled = CliError::Template(TemplateCliError::Picker {
+            source: DialogError::UserCancelled,
+        });
+        let interrupted = CliError::Template(TemplateCliError::Picker {
+            source: DialogError::UserInterrupted,
+        });
+
+        assert_eq!(cancelled.user_abort(), Some(UserAbort::Cancelled));
+        assert_eq!(interrupted.user_abort(), Some(UserAbort::Interrupted));
     }
 
     #[test]

@@ -34,5 +34,6 @@ mod service;
 mod writer;
 
 pub(crate) use error::TemplateError;
+pub(crate) use path::TemplatePathError;
 pub(crate) use service::TemplateService;
 pub(crate) use writer::{WriteMode, WriteOutcome};

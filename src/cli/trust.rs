@@ -61,9 +61,9 @@ impl Trust {
     ///
     /// # Errors
     ///
-    /// Returns the [`ConfigTrustCliError`] variant produced by the
-    /// dispatched action — see [`Self::list`], [`Self::clean`],
-    /// [`Self::trust`], [`Self::untrust`], and [`Self::show`].
+    /// Returns the [`ConfigTrustCliError`] variant produced by the dispatched
+    /// action — see [`Self::list`], [`Self::clean`], [`Self::trust`],
+    /// [`Self::untrust`], and [`Self::show`].
     #[inline]
     pub(super) fn run(
         self,
@@ -125,9 +125,9 @@ impl Trust {
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigTrustCliError::TargetResolve`] when the trust
-    /// target(s) cannot be resolved, or [`ConfigTrustCliError::Trust`] when
-    /// trusting a resolved target fails.
+    /// Returns [`ConfigTrustCliError::TargetResolve`] when the trust target(s)
+    /// cannot be resolved, or [`ConfigTrustCliError::Trust`] when trusting a
+    /// resolved target fails.
     fn trust(
         &self,
         service: &ConfigService,
@@ -149,9 +149,9 @@ impl Trust {
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigTrustCliError::TargetResolve`] when the trust
-    /// target(s) cannot be resolved, or [`ConfigTrustCliError::Untrust`]
-    /// when removing a resolved target's trust fails.
+    /// Returns [`ConfigTrustCliError::TargetResolve`] when the trust target(s)
+    /// cannot be resolved, or [`ConfigTrustCliError::Untrust`] when removing a
+    /// resolved target's trust fails.
     fn untrust(
         &self,
         service: &ConfigService,
@@ -173,9 +173,9 @@ impl Trust {
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigTrustCliError::TargetResolve`] when the trust
-    /// target(s) cannot be resolved, or [`ConfigTrustCliError::Show`] when
-    /// reading a resolved target's trust status fails.
+    /// Returns [`ConfigTrustCliError::TargetResolve`] when the trust target(s)
+    /// cannot be resolved, or [`ConfigTrustCliError::Show`] when reading a
+    /// resolved target's trust status fails.
     #[expect(
         clippy::print_stdout,
         reason = "trust --show's output is data meant to be piped, not \
@@ -205,9 +205,9 @@ impl Trust {
     /// # Errors
     ///
     /// Returns [`ConfigTrustCliError::TargetResolve`] when the current
-    /// directory cannot be determined (no user-provided path) or when
-    /// resolving trust subjects from the path fails. Otherwise propagates
-    /// whatever error `visit` returns for a given subject.
+    /// directory cannot be determined (no user-provided path) or when resolving
+    /// trust subjects from the path fails. Otherwise propagates whatever error
+    /// `visit` returns for a given subject.
     fn for_each_subject(
         &self,
         service: &ConfigService,
@@ -253,8 +253,8 @@ mod tests {
     use super::*;
 
     /// Wraps [`Trust`] in a minimal top-level parser so its
-    /// `args_conflicts_with_subcommands` disambiguation can be exercised
-    /// with [`Parser::try_parse_from`] — [`clap::Args`] types don't parse
+    /// `args_conflicts_with_subcommands` disambiguation can be exercised with
+    /// [`Parser::try_parse_from`] — [`clap::Args`] types don't parse
     /// standalone.
     #[derive(Debug, Parser)]
     struct TestCli {

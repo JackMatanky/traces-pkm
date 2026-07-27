@@ -1,10 +1,10 @@
-# Task Plan: Config Typestate Design Grilling
+# Task Plan: Error Architecture Cutover
 
 ## Goal
-Implement the accepted config discovery/loading/trust typestate refactor in an isolated worktree: `ConfigFile<State>` for single-file lifecycle invariants, `DiscoveryEngine`/`DiscoveryContext` inside `src/config/discovery.rs`, `ConfigBuilderInput` for load precedence, and `ConfigBuilder<State>` for aggregate final `Config` construction.
+Implement ADR-0004: command outcomes, centralized CLI diagnostics, and typed Template Resolution failures without losing source chains or interactive abort semantics.
 
 ## Current Phase
-Trust state-store refactor plus follow-up corrections complete in `.worktrees/config-typestate`; focused tests, formatter, clippy, CI, and GitNexus change detection passed.
+Phase 1: map current propagation seams and migrate each one as a clean cutover.
 ## Phases
 
 ### Phase 1: Establish Shared Design Questions
@@ -167,3 +167,22 @@ Trust state-store refactor plus follow-up corrections complete in `.worktrees/co
 - Worktree containing the prior implementation commit: `/Users/jack/Documents/41_personal/traces-pkm-init-cli`.
 - Current planning files are in project root: `/Users/jack/Documents/41_personal/traces-pkm`.
 - Follow grilling skill: ask one decision question at a time, recommend an answer, and wait for user feedback.
+
+### Phase 11: Error Architecture Cutover
+- [ ] Map current error propagation and diagnostic ownership.
+- [ ] Introduce `CommandOutcome` and `UserAbort` for every interactive command.
+- [ ] Centralize CLI diagnostic presentation and stable diagnostic codes.
+- [ ] Classify Template Resolution, Template Instantiation, and Custom Function failures.
+- [ ] Delete superseded shallow error translations and migrate all callers.
+- [ ] Verify focused contracts, full project checks, and GitNexus affected scope.
+- **Status:** in_progress
+
+## Error Architecture Decisions
+| Decision | Rationale |
+|----------|-----------|
+| ADR-0004 is the implementation contract | Its decisions were accepted before source changes began. |
+| Escape is a successful `UserAbort`; Ctrl-C exits 130 | Intentional abandonment is not a diagnostic failure. |
+| The CLI seam owns miette presentation and exit policy | Domain modules preserve typed failures and source chains. |
+| Template Resolution distinguishes invalid input, no match, ambiguity, and inaccessible Template Directory | The User needs remediation based on the real failure category. |
+
+| `mise run check` reported an unclosed `impl Cli` delimiter | 1 | Restored the `impl` closing brace dropped by the initial surgical replacement; rerunning the check now. |

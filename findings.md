@@ -249,3 +249,12 @@
 - `TrustSubject` is a constructor-only borrowed view over a workspace root plus optional config file. Discovery produces subjects; state-store methods consume them.
 - Trust traversal reuses `DiscoveryScope::{NearestLocal, LocalSubtree}`; `Full` remains load-only and is rejected for trust target resolution.
 - I/O-bearing lifecycle conversions remain: discovered-to-tracked records best-effort tracking through `ConfigStateStore`, and tracked-to-trusted verifies trust through `ConfigStateStore`.
+
+## Error Architecture Cutover — 2026-07-27
+- User authorized implementation after ADR-0004 and the critical `Template::run` blast radius were disclosed.
+- The cutover preserves domain error source chains; miette codes, help text, stderr rendering, and exit policy belong only at the CLI seam.
+- `UserAbort` is a control-flow outcome: Escape completes with exit 0 and no diagnostic; Ctrl-C exits 130.
+- Template Resolution must make unsafe identifiers, absence, ambiguity with candidates, and Template Directory access failures observable and distinct.
+- Current CLI presentation is centralized physically in `src/cli/error.rs` but shallow semantically: four command-specific wrappers erase Config sources behind `Box<dyn Error>` and `TemplateCliError` downcasts a source to recover output collisions.
+- `TemplateError` already separates pipeline stages, but Template Resolution folds unsafe identifiers into absence and its loader silently converts all resolution errors into minijinja absence.
+- `DialogError` already contains the exact `UserCancelled` and `UserInterrupted` facts required for `UserAbort`; no new dialog error type is needed.

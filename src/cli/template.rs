@@ -20,36 +20,36 @@ use crate::{
 };
 
 /// `traces template -i <name>` (aliased `tmpl`), and the default
-/// `traces -i <name>` dispatch. `--list` is a fourth, non-interactive
-/// mode: prints every available template name and exits, for a quick
-/// look without launching the fuzzy picker.
+/// `traces -i <name>` dispatch. `--list` is a fourth, non-interactive mode:
+/// prints every available template name and exits, for a quick look without
+/// launching the fuzzy picker.
 #[derive(Debug, Args)]
 pub(super) struct Template {
-    /// Template name or path to instantiate. Omit (or pass `-i` with no
-    /// value) to pick one interactively from every available template.
+    /// Template name or path to instantiate. Omit (or pass `-i` with no value)
+    /// to pick one interactively from every available template.
     #[arg(short = 'i', long = "input", value_name = "NAME", num_args = 0..=1)]
     pub(super) name: Option<PathBuf>,
-    /// List every available template name, one per line, then exit —
-    /// for a quick look without the interactive picker.
+    /// List every available template name, one per line, then exit — for a
+    /// quick look without the interactive picker.
     #[arg(short = 'l', long, conflicts_with = "name")]
     pub(super) list: bool,
-    /// Output path — overrides any `file.write_to()` call inside the
-    /// template; falls back to `write_to`, then the config-derived default.
+    /// Output path — overrides any `file.write_to()` call inside the template;
+    /// falls back to `write_to`, then the config-derived default.
     #[arg(short = 'o', long, value_name = "PATH")]
     pub(super) output: Option<PathBuf>,
     #[command(flatten)]
     pub(super) write: WriteFlags,
     /// Never prompt — every `ui.*` call returns its default (or an
     /// empty/false/first-item response when it has none), regardless of
-    /// whether stdin is a terminal. For scripted or CI use; independent
-    /// of `--dry-run`.
+    /// whether stdin is a terminal. For scripted or CI use; independent of
+    /// `--dry-run`.
     #[arg(long = "no-input")]
     pub(super) no_input: bool,
 }
 
 impl Template {
-    /// Builds args directly, for the default `traces -i <name>` dispatch
-    /// that bypasses subcommand parsing.
+    /// Builds args directly, for the default `traces -i <name>` dispatch that
+    /// bypasses subcommand parsing.
     #[inline]
     #[must_use]
     pub(super) fn new(name: PathBuf) -> Self {
@@ -65,9 +65,8 @@ impl Template {
         }
     }
 
-    /// Builds args for the interactive fuzzy-picker dispatch — the
-    /// default `traces -i` (no value) dispatch that bypasses subcommand
-    /// parsing.
+    /// Builds args for the interactive fuzzy-picker dispatch — the default
+    /// `traces -i` (no value) dispatch that bypasses subcommand parsing.
     #[inline]
     #[must_use]
     pub(super) fn interactive() -> Self {
@@ -83,35 +82,33 @@ impl Template {
         }
     }
 
-    /// Loads config for the current directory. When [`Self::list`] is
-    /// set, prints every available template name
-    /// ([`TemplateService::list_available`]) and returns — a
-    /// non-interactive alternative to the fuzzy picker. Otherwise
-    /// resolves and renders [`Self::name`] — or, when absent, a name
-    /// picked interactively from the same list — writing it to the
-    /// default output path or, in dry-run mode, printing it to stdout
-    /// instead.
+    /// Loads config for the current directory. When [`Self::list`] is set,
+    /// prints every available template name
+    /// ([`TemplateService::list_available`]) and returns — a non-interactive
+    /// alternative to the fuzzy picker. Otherwise resolves and renders
+    /// [`Self::name`] — or, when absent, a name picked interactively from the
+    /// same list — writing it to the default output path or, in dry-run mode,
+    /// printing it to stdout instead.
     ///
-    /// `provider` is the interactive provider a `ui.*` call delegates to
-    /// when [`Self::no_input`] is unset; when set, every render uses a
-    /// defaults-only provider instead.
+    /// `provider` is the interactive provider a `ui.*` call delegates to when
+    /// [`Self::no_input`] is unset; when set, every render uses a defaults-only
+    /// provider instead.
     ///
     /// # Errors
     ///
-    /// Returns [`TemplateCliError::ConfigDiscovery`] when config discovery
-    /// from the current directory fails. Returns
-    /// [`TemplateCliError::ConfigBuild`] when building config fails,
-    /// including for an untrusted or stale project root. Returns
-    /// [`TemplateCliError::NoTemplates`] when [`Self::name`] is absent and
-    /// no template is available to pick — never returned for
-    /// [`Self::list`], which prints nothing and returns `Ok` when no
-    /// template is available (a list, unlike a picker, has nothing
-    /// to fail by being empty). Returns [`TemplateCliError::Picker`]
-    /// when the interactive picker prompt fails, is cancelled, or is
-    /// interrupted. Returns [`TemplateCliError::Instantiate`] when the
-    /// resolve/render/write pipeline fails — including when a picked
-    /// template's declared `file.write_to()` names an unsafe path, caught
-    /// while computing [`Self::prompt_output_override`]'s existence check.
+    /// Returns [`TemplateCliError::ConfigDiscovery`] when config discovery from
+    /// the current directory fails. Returns [`TemplateCliError::ConfigBuild`]
+    /// when building config fails, including for an untrusted or stale project
+    /// root. Returns [`TemplateCliError::NoTemplates`] when [`Self::name`] is
+    /// absent and no template is available to pick — never returned for
+    /// [`Self::list`], which prints nothing and returns `Ok` when no template
+    /// is available (a list, unlike a picker, has nothing to fail by being
+    /// empty). Returns [`TemplateCliError::Picker`] when the interactive picker
+    /// prompt fails, is cancelled, or is interrupted. Returns
+    /// [`TemplateCliError::Instantiate`] when the resolve/render/write pipeline
+    /// fails — including when a picked template's declared `file.write_to()`
+    /// names an unsafe path, caught while computing
+    /// [`Self::prompt_output_override`]'s existence check.
     #[inline]
     #[expect(
         clippy::print_stdout,
@@ -175,16 +172,16 @@ impl Template {
     }
 
     /// Presents a fuzzy-filtered picker over every name
-    /// [`TemplateService::list_available`] finds for `config` — the
-    /// `traces template`/`traces -i` (bare) dispatch. Delegates to
+    /// [`TemplateService::list_available`] finds for `config` — the `traces
+    /// template`/`traces -i` (bare) dispatch. Delegates to
     /// [`DialogProvider::select`].
     ///
     /// # Errors
     ///
-    /// Returns [`TemplateCliError::NoTemplates`] when `config` has no
-    /// available templates. Returns [`TemplateCliError::Picker`] when
-    /// `provider` is not interactive, or when the prompt fails, is
-    /// cancelled (Esc), or is interrupted (Ctrl-C).
+    /// Returns [`TemplateCliError::NoTemplates`] when `config` has no available
+    /// templates. Returns [`TemplateCliError::Picker`] when `provider` is not
+    /// interactive, or when the prompt fails, is cancelled (Esc), or is
+    /// interrupted (Ctrl-C).
     fn pick_template(
         config: &Config,
         provider: &Arc<dyn DialogProvider>,
@@ -219,10 +216,10 @@ pub(super) struct WriteFlags {
     /// Overwrite the output path if it already exists.
     #[arg(short = 'f', long)]
     pub(super) force: bool,
-    /// Render to stdout and write nothing to disk. Skips the existence
-    /// check and ignores `-o`/`file.write_to()` entirely. Independent of
-    /// `--no-input`: a template with `ui.*` calls still prompts during a
-    /// dry run (in a real terminal) unless `--no-input` is also passed.
+    /// Render to stdout and write nothing to disk. Skips the existence check
+    /// and ignores `-o`/`file.write_to()` entirely. Independent of
+    /// `--no-input`: a template with `ui.*` calls still prompts during a dry
+    /// run (in a real terminal) unless `--no-input` is also passed.
     #[arg(short = 'n', long)]
     pub(super) dry_run: bool,
 }

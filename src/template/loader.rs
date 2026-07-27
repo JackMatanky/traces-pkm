@@ -72,16 +72,16 @@ impl TemplateLoader {
     /// # Errors
     ///
     /// - [`TemplatePathError::AmbiguousTemplate`] when `name`'s stem matches
-    ///   more than one file within a single directory
-    /// - [`TemplatePathError::TemplateNotFound`] when `name` fails validation
-    ///   or no directory has a match
+    ///   more than one file within a single Template Directory
+    /// - [`TemplatePathError::TemplateNotFound`] when no Template Directory has
+    ///   a match
+    /// - [`TemplatePathError::Absolute`] or
+    ///   [`TemplatePathError::UnsafeComponent`] when `name` is invalid
     pub(super) fn find(
         &self,
         name: &Path,
     ) -> Result<TemplatePath, TemplatePathError> {
-        let validated = TemplatePath::parse(name).map_err(|_| {
-            TemplatePathError::TemplateNotFound(name.to_path_buf())
-        })?;
+        let validated = TemplatePath::parse(name)?;
 
         for dir in self.directories() {
             if let Some(path) = Self::find_path_in(dir, &validated) {
@@ -147,25 +147,47 @@ impl TemplateLoader {
         let subdir = path.parent().filter(|p| !p.as_os_str().is_empty());
         let search_dir =
             subdir.map_or_else(|| dir.to_path_buf(), |parent| dir.join(parent));
-        let Ok(entries) = fs::read_dir(&search_dir) else {
-            return Ok(None);
+        let entries = match fs::read_dir(&search_dir) {
+            Ok(entries) => entries,
+            Err(source) if source.kind() == io::ErrorKind::NotFound => {
+                return Ok(None);
+            }
+            Err(source) => {
+                return Err(TemplatePathError::DirectoryRead {
+                    directory: search_dir.clone(),
+                    source,
+                });
+            }
         };
         let key = path.file_stem().unwrap_or(path.as_os_str());
-        let hits: Vec<PathBuf> = entries
-            .filter_map(Result::ok)
-            .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_file()))
-            .filter(|entry| entry.path().file_stem() == Some(key))
-            .map(|entry| {
-                subdir.map_or_else(
+        let mut hits = Vec::new();
+        for entry in entries {
+            let entry =
+                entry.map_err(|source| TemplatePathError::DirectoryRead {
+                    directory: search_dir.clone(),
+                    source,
+                })?;
+            let file_type = entry.file_type().map_err(|source| {
+                TemplatePathError::DirectoryRead {
+                    directory: search_dir.clone(),
+                    source,
+                }
+            })?;
+            if file_type.is_file() && entry.path().file_stem() == Some(key) {
+                hits.push(subdir.map_or_else(
                     || PathBuf::from(entry.file_name()),
                     |parent| parent.join(entry.file_name()),
-                )
-            })
-            .collect();
+                ));
+            }
+        }
+        hits.sort_unstable();
         match hits.as_slice() {
             [] => Ok(None),
             [hit] => Ok(Some(hit.clone())),
-            _ => Err(TemplatePathError::AmbiguousTemplate(path.to_path_buf())),
+            _ => Err(TemplatePathError::AmbiguousTemplate {
+                name: path.to_path_buf(),
+                candidates: hits,
+            }),
         }
     }
 
@@ -173,21 +195,26 @@ impl TemplateLoader {
     /// minijinja's `{% include %}`/`{% extends %}` loader callback (wired in by
     /// [`TemplateEngine::new`](super::engine::TemplateEngine::new)).
     ///
-    /// A resolution failure (unsafe input, ambiguous match, no match) reports
-    /// as `None`, not an `Err` — the loader protocol's way of saying "I don't
-    /// have this," matching [`Self::find`]'s own stance on unsafe input.
-    /// Whether that becomes a render failure is minijinja's call: `{% include
-    /// %}`/`{% extends %}` errors by default, unless the template opts into
-    /// `ignore missing`.
+    /// A missing include becomes `Ok(None)`, which lets minijinja honour
+    /// `ignore missing`. Invalid identifiers, ambiguity, and inaccessible
+    /// Template Directories are hard failures so template authors can repair
+    /// the actual cause.
     ///
     /// # Errors
     ///
-    /// Returns [`minijinja::Error`] when `name` resolves to a file that then
-    /// fails to read for a reason other than having disappeared (a `NotFound`
-    /// there maps to `Ok(None)` too, matching a resolution miss).
+    /// Returns [`minijinja::Error`] for a non-absence resolution failure or
+    /// when a resolved file cannot be read.
     pub(super) fn load(&self, name: &str) -> Result<Option<String>, Error> {
-        let Ok(found) = self.find(Path::new(name)) else {
-            return Ok(None);
+        let found = match self.find(Path::new(name)) {
+            Ok(found) => found,
+            Err(TemplatePathError::TemplateNotFound(_)) => return Ok(None),
+            Err(error) => {
+                return Err(Error::new(
+                    ErrorKind::InvalidOperation,
+                    "could not resolve template",
+                )
+                .with_source(error));
+            }
         };
         match found.read() {
             Ok(source) => Ok(Some(source)),
@@ -318,7 +345,7 @@ mod tests {
             // miss — not be treated as "found by exact path".
             assert!(matches!(
                 loader.find(&outside_file),
-                Err(TemplatePathError::TemplateNotFound(_))
+                Err(TemplatePathError::Absolute(_))
             ));
         }
 
@@ -332,7 +359,7 @@ mod tests {
 
             assert!(matches!(
                 loader.find(Path::new("../secret.md")),
-                Err(TemplatePathError::TemplateNotFound(_))
+                Err(TemplatePathError::UnsafeComponent(_))
             ));
         }
 
@@ -344,7 +371,7 @@ mod tests {
 
             assert!(matches!(
                 loader.find(Path::new("")),
-                Err(TemplatePathError::TemplateNotFound(_))
+                Err(TemplatePathError::UnsafeComponent(_))
             ));
         }
 
@@ -397,10 +424,21 @@ mod tests {
             let loader =
                 TemplateLoader::new(Some(temp.path().to_path_buf()), None);
 
-            assert!(matches!(
-                loader.find(Path::new("daily")),
-                Err(TemplatePathError::AmbiguousTemplate(_))
-            ));
+            let error = loader
+                .find(Path::new("daily"))
+                .expect_err("ambiguous stem match");
+            let TemplatePathError::AmbiguousTemplate {
+                name,
+                candidates,
+            } = error
+            else {
+                panic!("expected ambiguous template error");
+            };
+            assert_eq!(name, PathBuf::from("daily"));
+            assert_eq!(candidates, vec![
+                PathBuf::from("daily.md"),
+                PathBuf::from("daily.txt")
+            ]);
         }
 
         #[test]
@@ -649,14 +687,19 @@ mod tests {
         }
 
         #[test]
-        fn returns_none_for_an_unsafe_name_instead_of_erroring() {
+        fn rejects_an_unsafe_include_name() {
             let temp = tempfile::tempdir().expect("create temp dir");
             let loader =
                 TemplateLoader::new(Some(temp.path().to_path_buf()), None);
 
-            let source = loader.load("../outside.md").expect("load succeeds");
+            let error = loader
+                .load("../outside.md")
+                .expect_err("unsafe include must be rejected");
 
-            assert_eq!(source, None);
+            assert_eq!(
+                error.to_string(),
+                "invalid operation: could not resolve template"
+            );
         }
 
         #[test]

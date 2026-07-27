@@ -1,7 +1,6 @@
-//! Command-line interface: parses arguments and dispatches to command
-//! handlers. Each command module is a thin adapter over library services;
-//! [`CliError`] adds user-facing help text and error codes via
-//! `miette::Diagnostic`.
+//! Command-line interface: parses arguments and dispatches to command handlers.
+//! Each command module is a thin adapter over library services; [`CliError`]
+//! adds user-facing help text and error codes via `miette::Diagnostic`.
 
 mod completions;
 mod error;
@@ -13,6 +12,27 @@ use std::{path::PathBuf, sync::Arc};
 
 use clap::{Parser, Subcommand};
 pub use error::{CliError, ConfigInitCliError, ConfigTrustCliError};
+
+/// The result of a command that did not fail.
+///
+/// User abandonment is control flow, not a diagnostic failure. The outer CLI
+/// seam maps these outcomes to process exit status.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum CommandOutcome {
+    /// The command completed normally.
+    Completed,
+    /// The user deliberately ended an interactive command.
+    Aborted(UserAbort),
+}
+
+/// The user gesture that deliberately ended an interactive command.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum UserAbort {
+    /// Escape cancelled the command.
+    Cancelled,
+    /// Ctrl-C interrupted the command.
+    Interrupted,
+}
 
 /// The `traces` command-line tool.
 ///
@@ -28,16 +48,15 @@ pub use error::{CliError, ConfigInitCliError, ConfigTrustCliError};
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
-    /// Template name to instantiate — the default `traces -i <name>`
-    /// dispatch, equivalent to `traces template -i <name>`. Pass with no
-    /// value to trigger the interactive fuzzy picker instead.
+    /// Template name to instantiate — the default `traces -i <name>` dispatch,
+    /// equivalent to `traces template -i <name>`. Pass with no value to
+    /// trigger the interactive fuzzy picker instead.
     //
-    // `Option<Option<_>>`, not `Option<PathBuf>`, so parsing can
-    // distinguish "flag absent" (`None`, -> `CliError::NoCommand`) from
-    // "flag present, no value" (`Some(None)`, -> the interactive picker)
-    // from "flag present, value given" (`Some(Some(name))`, -> the
-    // ordinary `-i <name>` dispatch) — `Option<PathBuf>` alone collapses
-    // the first two into the same `None`.
+    // `Option<Option<_>>`, not `Option<PathBuf>`, so parsing can distinguish
+    // "flag absent" (`None`, -> `CliError::NoCommand`) from "flag present, no
+    // value" (`Some(None)`, -> the interactive picker) from "flag present,
+    // value given" (`Some(Some(name))`, -> the ordinary `-i <name>` dispatch) —
+    // `Option<PathBuf>` alone collapses the first two into the same `None`.
     #[arg(short = 'i', long = "input", value_name = "NAME", num_args = 0..=1)]
     #[expect(
         clippy::option_option,
@@ -54,22 +73,22 @@ impl Cli {
     /// Parse [`Cli`] from [`std::env::args`] and run the selected command.
     ///
     /// Accepts pre-built `service`/`provider` so tests can drive real argv
-    /// through a real handler with isolated stores. `provider` is `Arc`,
-    /// not `&dyn`, since [`template::Template::run`] must clone it into
-    /// `'static` minijinja closures.
+    /// through a real handler with isolated stores. `provider` is `Arc`, not
+    /// `&dyn`, since [`template::Template::run`] must clone it into `'static`
+    /// minijinja closures.
     ///
     /// # Errors
     ///
     /// Returns [`CliError`] when the selected command fails, or
-    /// [`CliError::NoCommand`] when neither a subcommand nor
-    /// `-i`/`--input` was given.
+    /// [`CliError::NoCommand`] when neither a subcommand nor `-i`/`--input` was
+    /// given.
     fn run(
         self,
         service: &crate::config::ConfigService,
         provider: &Arc<dyn crate::DialogProvider>,
-    ) -> Result<(), CliError> {
-        match self.command {
-            Some(cmd) => cmd.run(service, provider),
+    ) -> Result<CommandOutcome, CliError> {
+        let result = match self.command {
+            Some(command) => command.run(service, provider),
             None => match self.input {
                 Some(Some(name)) => template::Template::new(name)
                     .run(service, provider)
@@ -79,6 +98,12 @@ impl Cli {
                     .map_err(Into::into),
                 None => Err(CliError::NoCommand),
             },
+        };
+        match result {
+            Ok(()) => Ok(CommandOutcome::Completed),
+            Err(error) => error
+                .user_abort()
+                .map_or(Err(error), |abort| Ok(CommandOutcome::Aborted(abort))),
         }
     }
 }
@@ -116,16 +141,16 @@ impl Commands {
     }
 }
 
-/// Entry point: parse process arguments, wire up real service
-/// implementations, and run the selected command.
+/// Entry point: parse process arguments, wire up real service implementations,
+/// and run the selected command.
 ///
 /// # Errors
 ///
 /// Returns [`CliError`] when the selected command fails, or
-/// [`CliError::NoCommand`] when neither a subcommand nor `-i`/`--input`
-/// was given.
+/// [`CliError::NoCommand`] when neither a subcommand nor `-i`/`--input` was
+/// given. Otherwise returns a [`CommandOutcome`].
 #[inline]
-pub fn run() -> Result<(), CliError> {
+pub fn run() -> Result<CommandOutcome, CliError> {
     let provider: Arc<dyn crate::DialogProvider> =
         Arc::new(crate::TerminalDialogProvider::new());
     Cli::parse().run(&crate::config::ConfigService::new(), &provider)

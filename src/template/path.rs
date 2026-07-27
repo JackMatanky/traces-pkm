@@ -12,12 +12,12 @@ use thiserror::Error;
 
 use crate::path::SafeRelativePath;
 
-/// The extension every rendered note gets by default, absent an
-/// explicit `-o`/`file.write_to()` override.
+/// The extension every rendered note gets by default, absent an explicit
+/// `-o`/`file.write_to()` override.
 const DEFAULT_EXTENSION: &str = "md";
 
-/// A validated template path resolved against a template directory,
-/// proven to exist on disk.
+/// A validated template path resolved against a template directory, proven to
+/// exist on disk.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct TemplatePath {
     path: PathBuf,
@@ -37,8 +37,8 @@ impl TemplatePath {
     }
 
     /// Validates `path`'s components via [`SafeRelativePath::parse`] — no
-    /// filesystem access, purely a check on the path's shape. Re-derives
-    /// which of the two rejection reasons applies, since
+    /// filesystem access, purely a check on the path's shape. Re-derives which
+    /// of the two rejection reasons applies, since
     /// [`SafeRelativePath::parse`]'s single
     /// [`PathError`](crate::path::PathError) doesn't distinguish them.
     ///
@@ -61,8 +61,8 @@ impl TemplatePath {
         })
     }
 
-    /// This candidate with its extension stripped and directory
-    /// segments kept: `"folder/daily.md"` -> `"folder/daily"`.
+    /// This candidate with its extension stripped and directory segments kept:
+    /// `"folder/daily.md"` -> `"folder/daily"`.
     #[inline]
     #[must_use]
     pub(super) fn name(&self) -> PathBuf {
@@ -109,28 +109,37 @@ impl AsRef<Path> for TemplatePath {
 
 /// Every way producing a [`TemplatePath`] can fail: validation
 /// ([`Self::Absolute`], [`Self::UnsafeComponent`]) and search
-/// ([`Self::AmbiguousTemplate`], [`Self::TemplateNotFound`]).
-///
-/// No variant separates "unsafe input" from "no such template":
-/// [`super::loader::TemplateLoader::find`] folds both into
-/// [`Self::TemplateNotFound`], so a caller can't distinguish a
-/// traversal attempt from an ordinary typo.
+/// ([`Self::AmbiguousTemplate`], [`Self::TemplateNotFound`], or
+/// [`Self::DirectoryRead`]).
 #[derive(Debug, Error)]
 pub(crate) enum TemplatePathError {
-    /// `name` is absolute. A template identifier must be relative to
-    /// whichever directory it's searched in.
+    /// `name` is absolute. A template identifier must be relative to whichever
+    /// directory it is searched in.
     #[error("template path {0} must be relative, not absolute")]
     Absolute(PathBuf),
-    /// `name` can't stay inside a directory: some component could
-    /// escape it (most notably `..`), or there's no
-    /// [`Component::Normal`] component at all (an empty path, or a
-    /// bare `.`).
+    /// `name` can't stay inside a directory: some component could escape it
+    /// (most notably `..`), or there's no [`Component::Normal`] component at
+    /// all (an empty path, or a bare `.`).
     #[error("template path {0} is not a valid template identifier")]
     UnsafeComponent(PathBuf),
-    /// More than one file in a single directory matched the name.
-    #[error("template name \"{0}\" matched multiple files")]
-    AmbiguousTemplate(PathBuf),
-    /// No searched directory had a match.
+    /// More than one file in a Template Directory matched the name.
+    #[error("template name \"{name}\" matched multiple files: {candidates:?}")]
+    AmbiguousTemplate {
+        /// The identifier the User requested.
+        name: PathBuf,
+        /// Matching paths relative to the Template Directory.
+        candidates: Vec<PathBuf>,
+    },
+    /// The configured Template Directory could not be read.
+    #[error("failed to read template directory {directory}")]
+    DirectoryRead {
+        /// The Template Directory that could not be read.
+        directory: PathBuf,
+        /// The underlying filesystem failure.
+        #[source]
+        source: io::Error,
+    },
+    /// No searched Template Directory had a match.
     #[error("template \"{0}\" not found")]
     TemplateNotFound(PathBuf),
 }

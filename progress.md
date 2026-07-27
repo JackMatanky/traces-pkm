@@ -304,3 +304,16 @@
 - CleanMode follow-up:
   - Added `FileStoreCleanMode` to make companion cleanup an explicit `FileStateStore::clean(...)` policy.
   - Removed `clean_with_companions()` and updated config store/tests to use `EntriesOnly` or `WithCompanions`.
+
+## Session: 2026-07-27
+
+### Error Architecture Cutover
+- **Status:** complete
+- User authorized the ADR-0004 implementation after the critical `Template::run` impact was disclosed.
+- Restored the source baseline after a deferred preliminary command-outcome sketch; `mise run check` passed before the authorized cutover.
+- Beginning with direct propagation mapping before modifying the command, Template Resolution, or diagnostic symbols.
+- Implemented `CommandOutcome`/`UserAbort`; the CLI now walks retained source chains to recognize cancellation and the binary maps Escape to 0 and Ctrl-C to 130.
+- Preserved Template Resolution facts instead of folding unsafe identifiers into absence: invalid identifiers, not found, ambiguity with deterministic candidates, and inaccessible Template Directories now remain typed.
+- Changed `{% include %}` resolution so only a genuine absence is `None`; unsafe and ambiguous identifiers are hard minijinja errors.
+- Added stable CLI diagnostic codes and remediation for each Template Resolution outcome.
+- Verification: `mise run test` passed all 628 tests; `mise run fmt`; `mise run clippy`; `cargo run -- --help`.
