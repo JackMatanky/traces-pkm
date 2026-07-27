@@ -1,27 +1,18 @@
-//! [`TemplateWriter`] applies one [`WriteMode`] to rendered content;
-//! [`TemplateWriter::write`] is the only entry point, called solely by
-//! [`super::service::TemplateService::render_to_file`]. Under
-//! [`WriteMode::DryRun`] it returns [`WriteOutcome::Previewed`] without
-//! touching the filesystem; under [`WriteMode::Commit`] it resolves
-//! `target` to a real path ([`TemplateWriteTarget::target_path`]) and
-//! writes it, returning [`WriteOutcome::Written`].
+//! [`TemplateWriter::write`] applies one [`WriteMode`] to rendered
+//! content: [`WriteMode::DryRun`] returns [`WriteOutcome::Previewed`]
+//! without touching disk; [`WriteMode::Commit`] writes `content` to
+//! `path` and returns [`WriteOutcome::Written`].
 //!
 //! [`TemplateWriteTarget`] gathers a render's output-destination
 //! candidates — the `-o` flag (`requested`) and whatever
-//! `file.write_to()` captured (`declared`) — and
-//! [`TemplateWriteTarget::target_path`] resolves them by precedence:
-//! `requested` over `declared` over a caller-supplied default.
-//! `requested`/`declared` are confined to
-//! [`Config::root`](crate::config::Config::root) by
-//! [`TemplateWriteTarget::confine`], which delegates to
-//! [`crate::path::RootConfinedPath::parse`] — rejecting `..` and absolute
-//! components, then verifying the candidate's existing ancestor
-//! canonicalizes to somewhere still inside `root`, so a symlink planted
-//! inside `root` can't redirect a write outside it.
-//! [`Config::output_dir`](crate::config::Config::output_dir) is already
-//! trust-gated and may legitimately be absolute, so a caller builds its
-//! default candidate through [`TemplateWriteTarget::trusted`] instead,
-//! unchecked.
+//! `file.write_to()` captured (`declared`) — and resolves them by
+//! precedence: `requested` over `declared` over a caller-supplied
+//! default. `requested`/`declared` are runtime values, confined to
+//! [`Config::root`](crate::config::Config::root) via
+//! [`crate::path::RootConfinedPath::parse`]. The default comes from
+//! an already trust-gated
+//! [`Config::output_dir`](crate::config::Config::output_dir) and
+//! passes through unchecked instead ([`TemplateWriteTarget::trusted`]).
 
 use std::{
     fs,
@@ -34,37 +25,26 @@ use crate::{
     DialogError, DialogProvider,
     path::{PathError, RootConfinedPath},
 };
-/// The collaborator that applies one [`WriteMode`] to rendered content:
-/// [`Self::write`] is the one entry point, and the only thing
-/// [`super::service::TemplateService::render_to_file`] calls on it.
-/// Stateless: an associated-function-only unit struct
-/// (`clippy::unused_self` denies a `&self` receiver that goes unused,
-/// matching [`super::engine::str_ops::StrOps`]/
-/// [`super::engine::num_ops::NumOps`]'s convention), grouping
-/// `write`/`commit`/`preview` as one collaborator's interface rather
-/// than three free functions.
+/// Applies one [`WriteMode`] to rendered content. [`Self::write`] is
+/// the only entry point. A stateless unit struct — groups
+/// `write`/`commit`/`preview` as one interface instead of three free
+/// functions.
 pub(super) struct TemplateWriter;
 
 impl TemplateWriter {
-    /// Applies `mode` to `target`/`content`: for [`WriteMode::DryRun`],
-    /// wraps `content` as [`WriteOutcome::Previewed`]
-    /// ([`Self::preview`]) without ever resolving `target` or touching
-    /// the filesystem — `target` and `default` are never looked at, so
-    /// a dry-run's `-o`/`file.write_to()` candidate is never confined.
-    /// Otherwise resolves `target` to a real path
-    /// ([`TemplateWriteTarget::target_path`]) and writes `content` to
-    /// it under the [`CommitPolicy`] ([`Self::commit`]), returning
-    /// [`WriteOutcome::Written`].
+    /// Applies `mode` to `content` at `path`. Under
+    /// [`WriteMode::DryRun`], returns [`WriteOutcome::Previewed`]
+    /// without touching disk. Under [`WriteMode::Commit`], writes
+    /// `content` to `path` under the [`CommitPolicy`]
+    /// ([`Self::commit`]), returning [`WriteOutcome::Written`].
     ///
     /// # Errors
     ///
-    /// Returns [`TemplateError::OutputPathEscapesRoot`] when `target`'s
-    /// `requested`/`declared` candidate names a path outside `root` —
-    /// never for [`WriteMode::DryRun`]. Returns
-    /// [`TemplateError::Write`] if the output, or its parent directory,
-    /// can't be written. Returns
-    /// [`TemplateError::OutputFileAlreadyExists`] if the target already
-    /// exists under [`CommitPolicy::CreateNew`].
+    /// Returns [`TemplateError::Write`] if `path` or its parent
+    /// directory can't be written, or
+    /// [`TemplateError::OutputFileAlreadyExists`] if `path` already
+    /// exists under [`CommitPolicy::CreateNew`]. Never for
+    /// [`WriteMode::DryRun`].
     pub(super) fn write(
         path: PathBuf,
         content: String,
@@ -77,23 +57,19 @@ impl TemplateWriter {
         Ok(WriteOutcome::Written(path))
     }
 
-    /// Wraps `content` as [`WriteOutcome::Previewed`] without touching
-    /// the filesystem — the [`WriteMode::DryRun`] leaf of
-    /// [`Self::write`], mirroring [`Self::commit`] as its on-disk leaf.
+    /// Wraps `content` as [`WriteOutcome::Previewed`] — the
+    /// [`WriteMode::DryRun`] leaf of [`Self::write`].
     fn preview(content: String) -> WriteOutcome {
         WriteOutcome::Previewed(content)
     }
 
-    /// Writes `content` to `path` under `policy`, creating its parent
-    /// directory tree first if it doesn't exist, then creating the
-    /// file ([`CommitPolicy::create_file`]). Only ever called by
-    /// [`Self::write`] — [`WriteMode::DryRun`] never reaches here, and
-    /// [`CommitPolicy`] has no variant that could mean "don't write."
+    /// Writes `content` to `path` under `policy`, creating parent
+    /// directories first if needed.
     ///
     /// # Errors
     ///
-    /// Returns [`TemplateError::Write`] if the parent directory or the
-    /// file itself can't be created or written, or
+    /// Returns [`TemplateError::Write`] if the parent directory or
+    /// file can't be written, or
     /// [`TemplateError::OutputFileAlreadyExists`] if `path` already
     /// exists under [`CommitPolicy::CreateNew`].
     fn commit(
@@ -121,31 +97,22 @@ impl TemplateWriter {
 
 /// How [`TemplateWriter::write`] should treat rendered content — the
 /// domain meaning behind `--force`/`--dry-run`, as a type instead of
-/// two independent `bool`s at the call site.
-/// [`TemplateService::render_to_file`](super::service::TemplateService::render_to_file)
-/// takes one `WriteMode`; the CLI, where the flags are parsed, builds
-/// it. `pub(crate)`, unlike the rest of this module, since
-/// `crate::cli::template` constructs it directly. [`CommitPolicy`]
-/// nests inside [`Self::Commit`] rather than sitting beside it, so
-/// [`TemplateWriter::commit`] and [`CommitPolicy::create_file`] only
-/// ever see a policy that implies "write."
+/// two independent `bool`s. `pub(crate)` since `crate::cli::template`
+/// constructs it directly. [`CommitPolicy`] nests inside
+/// [`Self::Commit`] so [`TemplateWriter::commit`] only ever sees a
+/// policy that implies "write."
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(crate) enum WriteMode {
-    /// Render only — the `--dry-run` mode. [`TemplateWriter::write`]
-    /// returns [`WriteOutcome::Previewed`] without resolving a target
-    /// or touching the filesystem at all.
+    /// Render only, the `--dry-run` mode — [`TemplateWriter::write`]
+    /// returns [`WriteOutcome::Previewed`] without touching disk.
     DryRun,
     /// Write to disk under this [`CommitPolicy`].
     Commit(CommitPolicy),
 }
 
 impl WriteMode {
-    /// Converts the CLI's `--dry-run` and `--force` flags into the one
-    /// mode that drives the rest of the pipeline. `dry_run` wins: when
-    /// set, `force` is never consulted (that's
-    /// [`CommitPolicy::from_flag`]'s job) since dry-run has nothing to
-    /// force. The precedence lives here, not at the CLI call site, so
-    /// the flags' combined meaning is defined in one place.
+    /// Converts the CLI's `--dry-run` and `--force` flags into one
+    /// mode. `dry_run` wins: when set, `force` is never consulted.
     #[inline]
     #[must_use]
     pub(crate) fn from_flags(dry_run: bool, force: bool) -> Self {
@@ -157,13 +124,9 @@ impl WriteMode {
     }
 }
 
-/// How [`TemplateWriter::commit`] should treat a target already known
-/// to be written to — [`WriteMode::Commit`]'s payload, split out so
-/// [`Self::create_file`] only ever sees a policy that implies "write."
-/// `pub(crate)`, like [`WriteMode`] — a `pub(crate)` enum can't carry a
-/// variant payload less visible than itself — though only this file
-/// names it; `WriteMode` is still the only thing
-/// `crate::cli::template` constructs or matches on.
+/// How [`TemplateWriter::commit`] should treat an existing target —
+/// [`WriteMode::Commit`]'s payload. `pub(crate)` like [`WriteMode`],
+/// though only this file names it directly.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(crate) enum CommitPolicy {
     /// Fail with [`TemplateError::OutputFileAlreadyExists`] if the
@@ -175,11 +138,8 @@ pub(crate) enum CommitPolicy {
 }
 
 impl CommitPolicy {
-    /// Converts the CLI's `--force` flag into a commit policy:
-    /// [`Self::Overwrite`] when set, [`Self::CreateNew`] otherwise.
-    /// [`WriteMode::from_flags`]'s only caller — `--dry-run` is
-    /// resolved there first, since it isn't a question this type
-    /// answers.
+    /// Converts the CLI's `--force` flag: [`Self::Overwrite`] when
+    /// set, [`Self::CreateNew`] otherwise.
     #[inline]
     #[must_use]
     fn from_flag(force: bool) -> Self {
@@ -191,13 +151,14 @@ impl CommitPolicy {
     }
 
     /// Creates `path` per this policy: [`Self::CreateNew`] uses
-    /// [`fs::File::create_new`] (`O_CREAT | O_EXCL`), which fails
-    /// atomically with [`io::ErrorKind::AlreadyExists`] if `path`
-    /// already exists — no separate `exists()` check first, since that
-    /// would leave a race between the check and this write.
-    /// [`Self::Overwrite`] uses [`fs::File::create`], truncating
-    /// unconditionally. Maps `AlreadyExists` under [`Self::CreateNew`]
-    /// to [`TemplateError::OutputFileAlreadyExists`]; any other I/O
+    /// [`fs::File::create_new`] (atomic — no separate `exists()`
+    /// check, avoiding a race); [`Self::Overwrite`] uses
+    /// [`fs::File::create`], truncating unconditionally.
+    ///
+    /// # Errors
+    ///
+    /// Maps `AlreadyExists` under [`Self::CreateNew`] to
+    /// [`TemplateError::OutputFileAlreadyExists`]; any other I/O
     /// failure to [`TemplateError::Write`].
     fn create_file(self, path: &Path) -> Result<fs::File, TemplateError> {
         let file = match self {
@@ -221,11 +182,8 @@ impl CommitPolicy {
     }
 }
 
-/// What [`TemplateWriter::write`] did with `content`: wrote it to disk,
-/// or — for [`WriteMode::DryRun`] — handed it straight back unwritten.
-/// Printing a dry-run's content to stdout is the CLI adapter's job
-/// (`crate::cli::template`), not this collaborator's — this only
-/// carries the content back.
+/// What [`TemplateWriter::write`] did with `content`: wrote it to
+/// disk, or — under [`WriteMode::DryRun`] — handed it back unwritten.
 #[derive(Debug, Eq, PartialEq)]
 pub(crate) enum WriteOutcome {
     /// Written to disk at this path.
@@ -236,14 +194,11 @@ pub(crate) enum WriteOutcome {
 }
 
 /// Where a render's output goes. Gathers the `-o` candidate
-/// (`requested`) and whatever `file.write_to()` captured (`declared`),
-/// then [`Self::target_path`] applies the precedence policy —
-/// `requested` over `declared` over a caller-supplied default — the
-/// moment a real path is needed. `requested`/`declared` are runtime
-/// values, confined to `root` via [`Self::confine`]; the default is
-/// built by the caller from an already trust-gated
-/// [`Config`](crate::config::Config) value and passes through
-/// [`Self::trusted`] unchecked instead (see module docs).
+/// (`requested`) and whatever `file.write_to()` captured (`declared`);
+/// [`Self::target_path`] applies the precedence policy — `requested`
+/// over `declared` over a caller-supplied default — confining
+/// `requested`/`declared` to `root` via [`Self::confine`]. See the
+/// module docs.
 #[derive(Debug)]
 pub(super) struct TemplateWriteTarget<'a> {
     root: &'a Path,
@@ -282,15 +237,15 @@ impl<'a> TemplateWriteTarget<'a> {
         self
     }
 
-    /// Resolves the candidate path by precedence (`requested` over `declared`
-    /// over `default`), without interactive prompt or existence checks.
+    /// Resolves the candidate by precedence (`requested` > `declared`
+    /// > `default`), without interactive prompt or existence checks.
     ///
     /// # Errors
     ///
-    /// Returns [`TemplateError::OutputPathEscapesRoot`] when `requested` or
-    /// `declared` names a path outside `root`. Returns
-    /// [`TemplateError::OutputPathUnverifiable`] when confinement can't be
-    /// verified — see [`Self::confine`].
+    /// Returns [`TemplateError::OutputPathEscapesRoot`] when
+    /// `requested`/`declared` names a path outside `root`, or
+    /// [`TemplateError::OutputPathUnverifiable`] when confinement
+    /// can't be verified.
     pub(super) fn target_path(
         &self,
         default: impl FnOnce() -> PathBuf,
@@ -301,20 +256,19 @@ impl<'a> TemplateWriteTarget<'a> {
         }
     }
 
-    /// Resolves the output destination path under `mode`:
-    /// 1. Evaluates path precedence (`requested` > `declared` > `default`).
+    /// Resolves the output destination under `mode`:
+    /// 1. Evaluates precedence (`requested` > `declared` > `default`).
     /// 2. Confines non-default candidates to `root`.
-    /// 3. In `Commit(CreateNew)` mode, if `-o` was not explicitly passed,
-    ///    `provider` is interactive, and the path exists on disk, prompts the
-    ///    user for a root-relative alternative path until a valid non-colliding
-    ///    (or accepted) path is given.
+    /// 3. Under `Commit(CreateNew)`, if `-o` wasn't passed, `provider` is
+    ///    interactive, and the path exists, prompts for a root-relative
+    ///    alternative until a valid, non-colliding path is given.
     ///
     /// # Errors
     ///
-    /// Returns [`TemplateError::OutputPathEscapesRoot`] when `requested` or
-    /// `declared` escapes `root`. Returns
-    /// [`TemplateError::OutputPathUnverifiable`] when confinement can't be
-    /// verified. Returns [`TemplateError::Prompt`] when the interactive
+    /// Returns [`TemplateError::OutputPathEscapesRoot`] when
+    /// `requested`/`declared` escapes `root`,
+    /// [`TemplateError::OutputPathUnverifiable`] when confinement
+    /// can't be verified, or [`TemplateError::Prompt`] when the
     /// collision prompt is cancelled or fails.
     pub(super) fn resolve(
         &self,
@@ -362,18 +316,14 @@ impl<'a> TemplateWriteTarget<'a> {
     }
 
     /// Confines `candidate` — a runtime `-o`/`file.write_to()` value —
-    /// to `root` via [`RootConfinedPath::parse`]: rejects an absolute
-    /// path or any component other than a plain name or `.`, then
-    /// verifies the candidate's existing ancestor still canonicalizes
-    /// inside `root` before joining. See the module docs.
+    /// to `root` via [`RootConfinedPath::parse`]. See the module docs.
     ///
     /// # Errors
     ///
-    /// Returns [`TemplateError::OutputPathEscapesRoot`] when `candidate`
-    /// is unsafe or resolves outside `root`. Returns
-    /// [`TemplateError::OutputPathUnverifiable`] when confinement itself
-    /// can't be verified — `root` or `candidate`'s existing ancestor
-    /// failed to canonicalize for a reason other than not existing.
+    /// Returns [`TemplateError::OutputPathEscapesRoot`] when
+    /// `candidate` is unsafe or resolves outside `root`, or
+    /// [`TemplateError::OutputPathUnverifiable`] when confinement
+    /// itself can't be verified.
     fn confine(
         root: &Path,
         candidate: &Path,
@@ -395,12 +345,10 @@ impl<'a> TemplateWriteTarget<'a> {
             })
     }
 
-    /// Builds a default candidate path without validating it — for
-    /// [`Config::output_dir`](crate::config::Config::output_dir) only,
-    /// a value the project's own trusted config chose and which may
-    /// legitimately be absolute (see the module docs). Joins onto
-    /// `root` when relative, exactly like [`Self::confine`], but never
-    /// rejects.
+    /// Joins `candidate` onto `root` when relative, without
+    /// validating it — for the already trust-gated
+    /// [`Config::output_dir`](crate::config::Config::output_dir),
+    /// which may legitimately be absolute. See the module docs.
     #[inline]
     #[must_use]
     pub(super) fn trusted(root: &Path, candidate: PathBuf) -> PathBuf {
@@ -416,12 +364,10 @@ impl<'a> TemplateWriteTarget<'a> {
 mod tests {
     use super::*;
 
-    /// A real, canonicalized temp directory. [`RootConfinedPath::parse`]
-    /// canonicalizes `root`, so a test asserting an exact output path
-    /// needs a root that's already canonical — macOS's temp directory is
-    /// itself reached through a symlink (`/tmp` -> `/private/tmp`), so a
-    /// non-canonicalized root would never exact-match the canonicalized
-    /// result.
+    /// A real, canonicalized temp directory — macOS's temp dir is
+    /// itself reached through a symlink (`/tmp` -> `/private/tmp`), so
+    /// tests asserting an exact output path need an already-canonical
+    /// root.
     fn canonical_root() -> (tempfile::TempDir, PathBuf) {
         let temp = tempfile::tempdir().expect("create temp dir");
         let root = temp.path().canonicalize().expect("canonicalize temp root");
