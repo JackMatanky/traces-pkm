@@ -1,34 +1,21 @@
 //! Root-relative path validation and confinement, shared by every
-//! subsystem that resolves a caller-supplied candidate path against a
-//! trusted root directory.
+//! subsystem that resolves a caller-supplied path against a trusted
+//! root directory.
 //!
-//! [`SafeRelativePath`] is the lexical stage: no `..`, no absolute path,
-//! at least one real ([`Component::Normal`]) segment. No I/O — it never
-//! implies the path, or any root, exists.
+//! [`SafeRelativePath`] is the lexical check: no `..`, no absolute
+//! path, at least one real ([`Component::Normal`]) segment. No I/O.
 //!
-//! [`RootConfinedPath`] builds on it with an I/O stage:
-//! [`RootConfinedPath::parse`] canonicalizes the longest ancestor of
-//! `root.join(candidate)` that already exists and verifies it is still
-//! inside `root`'s own canonicalization — catching a symlink planted
-//! inside `root` that resolves outside it, which the lexical stage alone
-//! cannot see (`root.join(candidate)` can pass [`SafeRelativePath::parse`]
-//! yet still land outside `root` once symlinks resolve). Canonicalization
-//! is used only to verify: the returned path is the plain
-//! `root.join(candidate)`, in `root`'s own textual form, not the
-//! canonicalized one — the kernel resolves the same symlinks at actual
-//! I/O time as this check already did, so the plain join is equally safe
-//! to use. A candidate that doesn't exist yet — the common case for a
-//! write target — is handled the same way: only the ancestor that already
-//! exists needs checking, since a path component that doesn't exist on
-//! disk can't be a symlink. `root` itself is always a valid fallback
-//! ancestor, since every caller here already requires it to exist.
+//! [`RootConfinedPath`] adds the I/O check: canonicalizes the longest
+//! existing ancestor of `root.join(candidate)` and confirms it's
+//! still inside `root`, catching a symlink the lexical check can't
+//! see. The returned path is the plain join, not the canonicalized
+//! form — I/O later resolves the same symlinks, so the plain join is
+//! equally safe, and it keeps `root`'s original textual form (no
+//! `/tmp` silently becoming `/private/tmp`).
 //!
-//! Neither type performs any filesystem mutation — no directory is
-//! created, no file is written. A caller that goes on to create what a
-//! [`RootConfinedPath`] names should not need to re-verify confinement
-//! afterward; a symlink planted between this check and that write is a
-//! race inherent to any confinement check, not one particular to this
-//! module.
+//! Neither type touches the filesystem. A symlink planted between
+//! this check and a later write is a race inherent to any
+//! confinement check, not specific to this module.
 
 use std::{
     io,
@@ -37,46 +24,36 @@ use std::{
 
 use thiserror::Error;
 
-/// Every way [`SafeRelativePath::parse`]/[`RootConfinedPath::parse`] can
-/// fail. Deliberately generic over every caller's own root/candidate
-/// vocabulary — each caller converts this into its own error type with
-/// its own message (see `crate::template::writer`,
-/// `crate::template::engine::file_ops`, `crate::template::path`).
+/// Every way [`SafeRelativePath::parse`]/[`RootConfinedPath::parse`]
+/// can fail. Callers convert this into their own error type.
 #[derive(Debug, Error)]
 pub(crate) enum PathError {
-    /// The candidate is absolute, contains `..`, contains any component
-    /// other than a plain name or `.`, or has no plain-name component at
-    /// all (an empty path, or a bare `.`).
+    /// Absolute, contains `..`, contains a component other than a
+    /// plain name or `.`, or has no plain-name component at all.
     #[error("path is absolute or contains an unsafe component")]
     NotRelative,
-    /// The candidate's existing ancestor canonicalizes to somewhere
-    /// outside `root` — a symlink escape.
+    /// The candidate's existing ancestor canonicalizes outside
+    /// `root` — a symlink escape.
     #[error("path escapes the root directory")]
     EscapesRoot,
-    /// `root`, or the candidate's existing ancestor, could not be
-    /// canonicalized for a reason other than not existing — permission
-    /// denied, a broken symlink loop, etc. Fails closed: treated as
-    /// unsafe rather than silently assumed safe, mirroring how
-    /// `crate::template::engine::path_ops` distinguishes "doesn't exist"
-    /// from a genuine I/O failure instead of folding both into `false`.
+    /// Canonicalizing `root` or the candidate's existing ancestor
+    /// failed for a reason other than not existing. Fails closed.
     #[error("failed to verify path is inside the root directory")]
     Verify(#[source] io::Error),
 }
 
-/// A relative path proven safe by its components alone. No I/O — never
-/// touches disk, never implies the path (or any root) exists.
+/// A relative path proven safe by its components alone. No I/O.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct SafeRelativePath(PathBuf);
 
 impl SafeRelativePath {
-    /// Validates `candidate`'s components: not absolute, no component
-    /// other than [`Component::Normal`]/[`Component::CurDir`], and at
-    /// least one [`Component::Normal`] component.
+    /// Validates `candidate`: not absolute, only
+    /// [`Component::Normal`]/[`Component::CurDir`] components, and at
+    /// least one `Normal` component.
     ///
     /// # Errors
     ///
-    /// Returns [`PathError::NotRelative`] when `candidate` fails any of
-    /// the checks above.
+    /// Returns [`PathError::NotRelative`] if any check fails.
     pub(crate) fn parse(candidate: &Path) -> Result<Self, PathError> {
         if candidate.is_absolute() {
             return Err(PathError::NotRelative);
@@ -104,35 +81,24 @@ impl AsRef<Path> for SafeRelativePath {
     }
 }
 
-/// A path proven, by filesystem inspection, to resolve inside `root` —
-/// accounting for a symlink among its already-existing ancestors. May
-/// itself not exist yet: only the existing prefix of `root.join(candidate)`
-/// is canonicalized and checked; see the module docs.
+/// A path proven, by filesystem inspection, to resolve inside
+/// `root`, accounting for symlinks among its existing ancestors. May
+/// not exist yet — see [`RootConfinedPath::parse`].
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct RootConfinedPath(PathBuf);
 
 impl RootConfinedPath {
-    /// Validates `candidate` via [`SafeRelativePath::parse`], joins it
-    /// onto `root`, then verifies the join stays inside `root` even
-    /// after resolving symlinks: canonicalizes the longest ancestor of
-    /// `root.join(candidate)` that already exists, and checks the
-    /// canonical ancestor is still inside `root.canonicalize()`.
-    /// Canonicalization is used only to verify — the returned path is
-    /// the plain `root.join(candidate)`, not the canonicalized form:
-    /// the kernel resolves the same symlinks at actual I/O time as this
-    /// check already did, so the plain join is equally safe to use, and
-    /// keeps the output in the same textual form as `root` was given in
-    /// (avoiding e.g. a `/tmp` root silently becoming `/private/tmp` in
-    /// a path shown to the user).
+    /// Validates `candidate` via [`SafeRelativePath::parse`], joins
+    /// it onto `root`, then canonicalizes the longest existing
+    /// ancestor of the join to confirm it's still inside `root`.
+    /// Returns the plain join, not the canonicalized form.
     ///
     /// # Errors
     ///
-    /// Returns [`PathError::NotRelative`] when `candidate` fails
-    /// [`SafeRelativePath::parse`]. Returns [`PathError::EscapesRoot`]
-    /// when the canonicalized ancestor lands outside `root`. Returns
-    /// [`PathError::Verify`] when canonicalizing `root` or the
-    /// candidate's existing ancestor fails for a reason other than not
-    /// existing.
+    /// Returns [`PathError::NotRelative`] if `candidate` fails
+    /// [`SafeRelativePath::parse`], [`PathError::EscapesRoot`] if the
+    /// ancestor resolves outside `root`, or [`PathError::Verify`] if
+    /// canonicalizing `root` or the ancestor fails.
     pub(crate) fn parse(
         root: &Path,
         candidate: &Path,
@@ -156,10 +122,7 @@ impl RootConfinedPath {
         self.0
     }
 
-    /// The longest ancestor of `path` that already exists on disk —
-    /// `path` itself if it exists, all the way up to `path`'s
-    /// filesystem root otherwise (which always exists, so this always
-    /// finds some ancestor).
+    /// The longest ancestor of `path` that already exists on disk.
     fn longest_existing_ancestor(path: &Path) -> PathBuf {
         path.ancestors()
             .find(|ancestor| ancestor.exists())
