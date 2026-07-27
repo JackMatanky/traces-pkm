@@ -1,10 +1,10 @@
-//! [`TemplateEngine`]: minijinja construction and rendering behind one
-//! small interface for [`super::service::TemplateService`].
+//! [`TemplateEngine`]: minijinja construction and rendering behind one small
+//! interface for [`super::service::TemplateService`].
 //!
-//! Most of what a template calls into during render lives in a
-//! submodule: [`date_ops`], [`file_ops`], [`num_ops`], [`path_ops`],
-//! [`str_ops`], [`ui_ops`]. The one exception is the standalone
-//! [`uuid`](fn@uuid) function, defined directly here.
+//! Most of what a template calls into during render lives in a submodule:
+//! [`date_ops`], [`file_ops`], [`num_ops`], [`path_ops`], [`str_ops`],
+//! [`ui_ops`]. The one exception is the standalone [`uuid`](fn@uuid) function,
+//! defined directly here.
 
 mod date_ops;
 mod file_ops;
@@ -37,19 +37,18 @@ use crate::DialogProvider;
 
 /// Resolves template names and renders their source. The same
 /// [`TemplateLoader`] configuration backs both `-i` resolution
-/// ([`Self::resolve`]) and `{% include %}`/`{% extends %}` loading, so
-/// the two can never disagree about which directory wins.
+/// ([`Self::resolve`]) and `{% include %}`/`{% extends %}` loading, so the two
+/// can never disagree about which directory wins.
 pub(super) struct TemplateEngine {
     env: Environment<'static>,
     loader: TemplateLoader,
 }
 
 impl TemplateEngine {
-    /// Builds an engine backed by `loader`, registering every
-    /// submodule's custom functions ([`date_ops`], [`file_ops`],
-    /// [`num_ops`], [`path_ops`], [`str_ops`], [`ui_ops`] — see each
-    /// module's own docs for what it contributes) plus the standalone
-    /// [`uuid`](fn@uuid) function.
+    /// Builds an engine backed by `loader`, registering every submodule's
+    /// custom functions ([`date_ops`], [`file_ops`], [`num_ops`], [`path_ops`],
+    /// [`str_ops`], [`ui_ops`] — see each module's own docs for what it
+    /// contributes) plus the standalone [`uuid`](fn@uuid) function.
     ///
     /// # Arguments
     ///
@@ -84,9 +83,9 @@ impl TemplateEngine {
         }
     }
 
-    /// Resolves `name` to a file that actually exists. Delegates
-    /// directly to [`TemplateLoader::find`], searching the configured
-    /// directories local-then-global.
+    /// Resolves `name` to a file that actually exists. Delegates directly to
+    /// [`TemplateLoader::find`], searching the configured directories
+    /// local-then-global.
     ///
     /// # Errors
     ///
@@ -102,10 +101,10 @@ impl TemplateEngine {
         self.loader.find(name)
     }
 
-    /// Compiles and renders `source` with an empty template context,
-    /// then reads back whatever `file.write_to()` stashed during
-    /// render (if anything). Captured across the whole render tree
-    /// (including `{% include %}`s), so nothing to reset between calls.
+    /// Compiles and renders `source` with an empty template context, then reads
+    /// back whatever `file.write_to()` stashed during render (if anything).
+    /// Captured across the whole render tree (including `{% include %}`s), so
+    /// nothing to reset between calls.
     ///
     /// # Errors
     ///
@@ -129,8 +128,8 @@ impl TemplateEngine {
     }
 }
 
-/// A render's output, plus whatever `file.write_to()` captured during
-/// that render (if the template called it).
+/// A render's output, plus whatever `file.write_to()` captured during that
+/// render (if the template called it).
 #[derive(Debug)]
 pub(super) struct RenderOutput {
     /// The rendered template content.
@@ -140,8 +139,8 @@ pub(super) struct RenderOutput {
 }
 
 /// Generates a random UUID v4, formatted per RFC 4122
-/// (`xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx`). Registered as the
-/// standalone `uuid()` function, unlike `file.*`/`ui.*`/`date.*`.
+/// (`xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx`). Registered as the standalone
+/// `uuid()` function, unlike `file.*`/`ui.*`/`date.*`.
 fn uuid() -> String {
     Uuid::new_v4().to_string()
 }
@@ -156,8 +155,8 @@ mod tests {
         TemplateLoader::new(Some(path.to_path_buf()), None)
     }
 
-    /// A cheap, deterministic provider for tests that never exercise
-    /// `ui.*` — `TemplateEngine::new` requires one regardless.
+    /// A cheap, deterministic provider for tests that never exercise `ui.*` —
+    /// `TemplateEngine::new` requires one regardless.
     fn preset_provider() -> Arc<dyn DialogProvider> {
         Arc::new(crate::PresetDialogProvider::new())
     }
