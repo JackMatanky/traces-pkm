@@ -28,6 +28,10 @@ _Avoid_: tp function, internal function, helper
 A custom function that blocks for user input during rendering (text prompt, select menu, multi-select, confirmation). Returns a default value in non-interactive mode (dry-run, MCP).
 _Avoid_: Prompt, modal, dialog
 
+### User Abort
+The User intentionally stops an interactive sequence. Escape cancels the current command without a diagnostic; Ctrl-C interrupts it using the terminal's conventional interruption outcome.
+_Avoid_: Error, failure, cancelled prompt
+
 ### Template Directory
 A user-configurable directory containing template files. Local (project-level, `.traces/templates/`) is checked first, then global (user-level, OS-appropriate default). Configured via the `[templates]` table in `.traces/config.toml` or `~/.config/traces/config.toml`.
 _Avoid_: Templates folder, template location
