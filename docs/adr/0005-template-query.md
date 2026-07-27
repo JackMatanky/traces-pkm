@@ -15,7 +15,7 @@ Proposed
 
 ## Context
 
-Traces needs a queryable note index to replace Obsidian Dataview in the terminal. The index must scan the project root, extract metadata from markdown files (frontmatter, inline fields, tags, tasks, lists, links), and expose a query API from within minijinja templates and through CLI commands.
+Traces needs a queryable FileIndex to replace Obsidian Dataview in the terminal. The index must scan the project root, extract general metadata from every file, extract richer metadata from markdown Notes (frontmatter, inline fields, tags, tasks, lists, links), and expose a query API from within minijinja templates and through CLI commands.
 
 The core questions were: (1) persistence format — options included SQLite, redb, JSON, MessagePack; (2) query API shape — Dataview-style DQL parser, method chaining on a namespace object, or pipeline filters; (3) automatic vs explicit re-indexing; (4) inline field parsing scope; (5) CLI command structure.
 
@@ -23,7 +23,7 @@ The existing architecture uses minijinja namespace Objects for `file.*`, `ui.*`,
 
 ## Decision
 
-Use a redb database with two tables for the note index. Expose the query API through a QueryOps minijinja namespace Object with method chaining for query construction, and pipeline filters for terminal output rendering.
+Use a redb database with two tables for the FileIndex. Expose the query API through a QueryOps minijinja namespace Object with method chaining for query construction, and pipeline filters for terminal output rendering.
 
 Key design choices:
 

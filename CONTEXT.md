@@ -122,9 +122,9 @@ Renders the template to stdout without writing to disk.
 #### --force / -f
 Overwrites the output file if it already exists.
 
-### Note Index
+### FileIndex
 A persisted cache of metadata extracted from every file in the project root. Built by `traces index` and transparently kept fresh on every query. Two tiers: every file gets a **File Record**; markdown files additionally get **Note Metadata** (frontmatter, inline fields, tags, tasks, lists, links). Stored in a redb database.
-_Avoid_: database, cache, vault
+_Avoid_: NoteIndex, database, cache, vault
 
 ### File Record
 The indexed metadata for every file regardless of type: `file.path`, `file.name`, `file.folder`, `file.created_at`, `file.modified_at`, `file.size`. Exposes `ctime`/`cdate`/`mtime`/`mdate` accessors for Dataview-style queries.
