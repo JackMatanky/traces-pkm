@@ -32,6 +32,10 @@ _Avoid_: Prompt, modal, dialog
 The User intentionally stops an interactive sequence. Escape cancels the current command without a diagnostic; Ctrl-C interrupts it using the terminal's conventional interruption outcome.
 _Avoid_: Error, failure, cancelled prompt
 
+### Command Outcome
+The result of a Command that completed or ended in a User Abort. It is distinct from a failure.
+_Avoid_: Success, error, exit status
+
 ### Template Directory
 A user-configurable directory containing template files. Local (project-level, `.traces/templates/`) is checked first, then global (user-level, OS-appropriate default). Configured via the `[templates]` table in `.traces/config.toml` or `~/.config/traces/config.toml`.
 _Avoid_: Templates folder, template location
