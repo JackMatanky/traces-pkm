@@ -1,9 +1,10 @@
 //! [`TemplateEngine`]: minijinja construction and rendering behind one
 //! small interface for [`super::service::TemplateService`].
 //!
-//! Owns everything a template calls into during render, split into
-//! submodules: [`date_ops`], [`file_ops`], [`num_ops`], [`path_ops`],
-//! [`str_ops`], [`ui_ops`].
+//! Most of what a template calls into during render lives in a
+//! submodule: [`date_ops`], [`file_ops`], [`num_ops`], [`path_ops`],
+//! [`str_ops`], [`ui_ops`]. The one exception is the standalone
+//! [`uuid`](fn@uuid) function, defined directly here.
 
 mod date_ops;
 mod file_ops;
@@ -34,23 +35,26 @@ use super::{
 };
 use crate::DialogProvider;
 
-/// Resolves template names and renders their source, backed by one
-/// shared [`TemplateLoader`] used for both `-i` resolution and
-/// `{% include %}`/`{% extends %}` loading.
+/// Resolves template names and renders their source. The same
+/// [`TemplateLoader`] configuration backs both `-i` resolution
+/// ([`Self::resolve`]) and `{% include %}`/`{% extends %}` loading, so
+/// the two can never disagree about which directory wins.
 pub(super) struct TemplateEngine {
     env: Environment<'static>,
     loader: TemplateLoader,
 }
 
 impl TemplateEngine {
-    /// Builds an engine backed by `loader`, registering the `file`,
-    /// path-inspection, `ui`, `date`, string-filter, and numeric-filter
-    /// namespaces, plus the standalone `uuid()` function.
+    /// Builds an engine backed by `loader`, registering every
+    /// submodule's custom functions ([`date_ops`], [`file_ops`],
+    /// [`num_ops`], [`path_ops`], [`str_ops`], [`ui_ops`] — see each
+    /// module's own docs for what it contributes) plus the standalone
+    /// [`uuid`](fn@uuid) function.
     ///
     /// # Arguments
     ///
-    /// * `loader` - resolves template names to source; also kept for
-    ///   [`Self::resolve`]
+    /// * `loader` - the [`TemplateLoader`] to wire into minijinja's
+    ///   include/extends resolution and store for [`Self::resolve`]
     /// * `provider` - backend `ui.*` calls delegate to
     /// * `root` - base directory `file.*` and the path-inspection group are
     ///   confined to
@@ -80,14 +84,16 @@ impl TemplateEngine {
         }
     }
 
-    /// Resolves `name` to a file that actually exists, searching the
-    /// configured directories local-then-global.
+    /// Resolves `name` to a file that actually exists. Delegates
+    /// directly to [`TemplateLoader::find`], searching the configured
+    /// directories local-then-global.
     ///
     /// # Errors
     ///
-    /// - [`TemplatePathError::AmbiguousTemplate`] when `name` matches more than
-    ///   one file within a single directory
-    /// - [`TemplatePathError::TemplateNotFound`] when no directory has a match
+    /// - [`TemplatePathError::AmbiguousTemplate`] when `name`'s stem matches
+    ///   more than one file within a single directory
+    /// - [`TemplatePathError::TemplateNotFound`] when `name` fails validation
+    ///   or no directory has a match
     #[inline]
     pub(super) fn resolve(
         &self,
