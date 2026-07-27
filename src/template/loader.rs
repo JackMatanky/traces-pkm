@@ -3,8 +3,10 @@
 //!
 //! [`TemplateLoader::find`] validates the raw name via
 //! [`TemplatePath::parse`](super::path::TemplatePath::parse), then searches
-//! [`Self::directories`] in order ([`Self::find_path_in`], then
-//! [`Self::find_name_in`]). Both top-level `-i <name>` resolution and
+//! [`TemplateLoader::directories`] in order
+//! ([`TemplateLoader::find_path_in`], then
+//! [`TemplateLoader::find_name_in`]). Both top-level `-i <name>`
+//! resolution and
 //! `{% include %}`/`{% extends %}` loading call this same method, so they
 //! can never disagree about which directory wins. A `name` that fails
 //! validation (absolute, `..` traversal) reports as the same
@@ -13,14 +15,16 @@
 //!
 //! # Why not `minijinja::path_loader`
 //!
-//! [`TemplateLoader::load`] wires into minijinja via
-//! [`Environment::set_loader`](minijinja::Environment::set_loader)
-//! directly rather than [`minijinja::path_loader`]: that loader's
+//! [`TemplateLoader::load`] is registered directly as minijinja's
+//! loader — via
+//! [`Environment::set_loader`](minijinja::Environment::set_loader) in
+//! [`TemplateEngine::new`](super::engine::TemplateEngine::new) —
+//! rather than using [`minijinja::path_loader`]: that loader's
 //! `safe_join` rejects any dot-prefixed path segment, so
 //! `{% include ".draft.md" %}` would fail even when the file is right
 //! there. This project's own default template directory
-//! (`.traces/templates`) is itself dot-prefixed, so that restriction isn't
-//! usable here.
+//! (`.traces/templates`) is itself dot-prefixed, so that restriction
+//! isn't usable here.
 
 use std::{
     fs, io,
@@ -70,11 +74,10 @@ impl TemplateLoader {
     ///
     /// # Errors
     ///
-    /// Returns [`TemplatePathError::AmbiguousTemplate`] when `name`'s
-    /// stem matches more than one file within a single directory.
-    ///
-    /// Returns [`TemplatePathError::TemplateNotFound`] when `name`
-    /// fails validation or no directory has a match.
+    /// - [`TemplatePathError::AmbiguousTemplate`] when `name`'s stem matches
+    ///   more than one file within a single directory
+    /// - [`TemplatePathError::TemplateNotFound`] when `name` fails validation
+    ///   or no directory has a match
     pub(super) fn find(
         &self,
         name: &Path,
@@ -105,7 +108,9 @@ impl TemplateLoader {
         self.local.as_deref().into_iter().chain(global)
     }
 
-    /// The exact-match rule: does `dir.join(path)` name a real file?
+    /// The exact-match rule: if `dir.join(path)` names a real file,
+    /// returns `path` unchanged (relative to `dir`, for
+    /// [`TemplatePath::new`] to rejoin).
     #[inline]
     #[must_use]
     fn find_path_in(dir: &Path, path: &SafeRelativePath) -> Option<PathBuf> {
@@ -113,8 +118,17 @@ impl TemplateLoader {
         dir.join(path).is_file().then(|| path.to_path_buf())
     }
 
-    /// The name-match rule: search `dir`'s subdirectory for any file sharing
-    /// `path`'s stem.
+    /// The stem-match rule, skipped entirely when `path` already has
+    /// an extension ([`Self::find_path_in`]'s exact match is the only
+    /// rule that applies then). Searches `dir` itself — or `dir`'s
+    /// subdirectory named by `path`'s parent component, if it has one
+    /// — for files sharing `path`'s file stem: `None` for no matches,
+    /// the sole match for exactly one.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TemplatePathError::AmbiguousTemplate`] when more than
+    /// one file in the search directory shares the stem.
     fn find_name_in(
         dir: &Path,
         path: &SafeRelativePath,
@@ -148,18 +162,24 @@ impl TemplateLoader {
         }
     }
 
-    /// Resolves `name` via [`Self::find`] and reads it — the callback
-    /// minijinja invokes for `{% include %}`/`{% extends %}`.
+    /// Resolves `name` via [`Self::find`] and reads it — the logic
+    /// behind minijinja's `{% include %}`/`{% extends %}` loader
+    /// callback (wired in by
+    /// [`TemplateEngine::new`](super::engine::TemplateEngine::new)).
     ///
     /// A resolution failure (unsafe input, ambiguous match, no match)
-    /// reports as `None` rather than an error: minijinja treats a
-    /// missing include as absent content, not a hard failure, matching
-    /// [`Self::find`]'s own stance on unsafe input.
+    /// reports as `None`, not an `Err` — the loader protocol's way of
+    /// saying "I don't have this," matching [`Self::find`]'s own
+    /// stance on unsafe input. Whether that becomes a render failure
+    /// is minijinja's call: `{% include %}`/`{% extends %}` errors by
+    /// default, unless the template opts into `ignore missing`.
     ///
     /// # Errors
     ///
-    /// Returns a [`minijinja::Error`] when `name` resolves to a file
-    /// that then can't be read.
+    /// Returns [`minijinja::Error`] when `name` resolves to a file
+    /// that then fails to read for a reason other than having
+    /// disappeared (a `NotFound` there maps to `Ok(None)` too,
+    /// matching a resolution miss).
     pub(super) fn load(&self, name: &str) -> Result<Option<String>, Error> {
         let Ok(found) = self.find(Path::new(name)) else {
             return Ok(None);
@@ -177,10 +197,11 @@ impl TemplateLoader {
 
     /// Lists available template names: the file stem of every
     /// top-level `.md` file in the local directory, then the global
-    /// directory (global duplicates of a local stem excluded) — the
-    /// interactive picker's candidate list and
-    /// `traces completions --list-templates`'s output. Not recursive;
-    /// mirrors [`Self::find`]'s local-before-global precedence.
+    /// directory (global duplicates of a local stem excluded) —
+    /// backs the `--list` flag, the interactive picker's candidate
+    /// list, and `traces completions --list-templates`'s output. Not
+    /// recursive; mirrors [`Self::find`]'s local-before-global
+    /// precedence.
     ///
     /// A missing or unreadable directory is silently skipped, matching
     /// [`Self::find`]'s stance on absent input — there's no error to
@@ -198,7 +219,9 @@ impl TemplateLoader {
 
     /// The file stems of every top-level `.md` file directly inside
     /// `dir`. Empty when `dir` is `None`, doesn't exist, or can't be
-    /// read — directories are never walked recursively.
+    /// read; an individual unreadable entry inside an otherwise-valid
+    /// `dir` is skipped, not fatal. Never recurses into
+    /// subdirectories.
     fn stems_in(dir: Option<&Path>) -> Vec<String> {
         let Some(dir) = dir else {
             return Vec::new();
