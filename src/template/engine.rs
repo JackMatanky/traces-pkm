@@ -85,11 +85,9 @@ impl TemplateEngine {
     ///
     /// # Errors
     ///
-    /// Returns [`TemplatePathError::AmbiguousTemplate`] when `name`
-    /// matches more than one file within a single directory.
-    ///
-    /// Returns [`TemplatePathError::TemplateNotFound`] when no
-    /// directory has a match.
+    /// - [`TemplatePathError::AmbiguousTemplate`] when `name` matches more than
+    ///   one file within a single directory
+    /// - [`TemplatePathError::TemplateNotFound`] when no directory has a match
     #[inline]
     pub(super) fn resolve(
         &self,
@@ -105,9 +103,9 @@ impl TemplateEngine {
     ///
     /// # Errors
     ///
-    /// Returns a [`minijinja::Error`] when `source` fails to parse, or
-    /// when an `{% include %}`/`{% extends %}` it references fails to
-    /// load or render in turn.
+    /// Returns [`minijinja::Error`] when:
+    /// - `source` fails to parse
+    /// - a referenced `{% include %}`/`{% extends %}` fails to load or render
     #[inline]
     pub(super) fn render(&self, source: &str) -> Result<RenderOutput, Error> {
         let captured = self
@@ -400,10 +398,9 @@ mod tests {
 
     /// Wiring tests for `05-includes-and-utility-functions`: each new
     /// namespace/filter/function is reachable through a real
-    /// [`TemplateEngine`] built by [`TemplateEngine::new`]. Exhaustive
-    /// per-feature behavior is covered by each collaborator's own test
-    /// module (`file_ops::tests::include`, `date_ops::tests`,
-    /// `str_ops::tests`, `ui_ops::tests`).
+    /// [`TemplateEngine`]. Exhaustive per-feature behavior lives in each
+    /// collaborator's own tests (`file_ops`, `date_ops`, `str_ops`,
+    /// `ui_ops`).
     mod utilities {
         use pretty_assertions::assert_eq;
 
