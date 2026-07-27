@@ -1,16 +1,20 @@
 # Traces
 
-A CLI tool for template-driven personal knowledge management. Replaces Obsidian Templater in the terminal, with future expansion into note querying, frontmatter validation, and MCP-based AI integration.
+A CLI tool for template-driven personal knowledge management, with a queryable index over the project's markdown notes. Replaces Obsidian Templater + Dataview in the terminal.
 
 ## Language
 
 ### Template
-A markdown file with minijinja syntax (`{{ }}`, `{% %}`) and calls to registered custom functions that produces a note when instantiated.
+A markdown file with minijinja syntax (`{{ }}`, `{% %}`) and calls to registered custom functions that produces a rendered output when instantiated.
 _Avoid_: Template file, template script
 
 ### Note
-A markdown file on disk produced by instantiating a template.
+A markdown file on disk. Distinct from a Template — the majority of Notes are authored directly, not produced by template instantiation.
 _Avoid_: Output file, document, page
+
+### Note Index
+A persisted cache of metadata extracted from every file in the project. Two tiers: a **File Record** for every file (path, size, timestamps) and richer **Note Metadata** for markdown files (frontmatter, inline fields, tags, tasks, lists, links).
+_Avoid_: Database, cache, vault
 
 ### Instantiate
 The process of rendering a template with dynamic values to produce a note.
