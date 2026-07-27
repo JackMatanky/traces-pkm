@@ -1,9 +1,9 @@
-use std::{env, fs, io, path::Path};
+use std::{env, fs, path::Path};
 
 use pretty_assertions::assert_eq;
 use traces_pkm::{
     PresetDialogProvider,
-    cli::{ConfigInitCliError, init::Init},
+    cli::{CliError, init::Init},
 };
 
 struct CwdGuard {
@@ -68,13 +68,8 @@ fn init_scaffolds_preset_defaults_and_refuses_existing_traces_dir() {
         Init.run(&provider)
     };
 
-    let ConfigInitCliError::InitFailed {
-        source,
-        ..
-    } = result.expect_err("existing .traces directory fails init");
-    let source =
-        source.downcast_ref::<io::Error>().expect("source is io error");
-    assert_eq!(source.kind(), io::ErrorKind::AlreadyExists);
+    let error = result.expect_err("existing .traces directory fails init");
+    assert!(matches!(error, CliError::InitAlreadyInitialized { .. }));
 }
 
 #[expect(

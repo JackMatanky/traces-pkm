@@ -186,3 +186,22 @@ Phase 1: map current propagation seams and migrate each one as a clean cutover.
 | Template Resolution distinguishes invalid input, no match, ambiguity, and inaccessible Template Directory | The User needs remediation based on the real failure category. |
 
 | `mise run check` reported an unclosed `impl Cli` delimiter | 1 | Restored the `impl` closing brace dropped by the initial surgical replacement; rerunning the check now. |
+
+### Phase 12: Complete ADR-0004 Error Architecture
+- [x] Inventory every conversion into `CliError`, including Config load, trust, init, Template Resolution, Template Instantiation, and completions.
+- [x] Replace command-specific wrapper enums and erased `Box<dyn Error>` sources with a small typed `CliError` family that retains domain sources.
+- [x] Give every user-correctable Config failure one code and remediation regardless of which Command reaches it.
+- [x] Separate Template Resolution, Template Instantiation, and Custom Function/render errors while retaining minijinja locations and source chains.
+- [x] Preserve the `UserAbort` outcome through every interactive command and add transactional no-side-effect contracts.
+- [x] Add end-to-end exit-status and stable-diagnostic-code contracts.
+- [x] Run formatter, full tests, clippy, CI, and GitNexus change detection.
+- **Status:** complete
+
+## Remaining ADR-0004 Plan
+1. **Map the remaining seams.** Trace every `map_err` in `src/cli/`, every erased source in `src/cli/error.rs`, and every TemplateError conversion. The target interface is a typed domain failure plus operation context; only the CLI module formats it.
+2. **Deepen the CLI presentation module.** Replace the four command wrapper enums with one `CliError` family. It owns the stable code/help lookup and wraps concrete Config, Template, trust-store, or initialization errors rather than `Box<dyn Error>`.
+3. **Unify Config presentation.** Model Config discovery/load/trust failures once at the CLI seam so Template and completions cannot mint command-specific aliases for the same failure.
+4. **Deepen Template failure classification.** Keep `TemplateError` as the pipeline module, but classify Resolution separately from Template Instantiation and inspect minijinja's retained source chain to identify Custom Function/Dialog/I/O failures without losing line and location context.
+5. **Prove control-flow contracts.** Add process-facing tests for exit `0` on Escape and `130` on Ctrl-C, plus unit/integration contracts proving init and Template output collision do not write after User Abort.
+6. **Clean cutover.** Migrate every caller and delete wrapper enums, source erasure, duplicate codes, and obsolete tests. No aliases or compatibility shims.
+7. **Verify.** `mise run fmt`, `mise run test`, `mise run clippy`, `mise run ci`, a CLI smoke scenario, then GitNexus change detection before commit.

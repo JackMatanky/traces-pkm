@@ -12,11 +12,11 @@ use std::{path::PathBuf, sync::Arc};
 
 use clap::Args;
 
-use super::error::TemplateCliError;
+use super::error::CliError;
 use crate::{
-    Cwd, DialogError, DialogProvider, PresetDialogProvider,
-    config::{Config, ConfigLoadError, ConfigService},
-    template::{TemplateError, TemplateService, WriteMode, WriteOutcome},
+    DialogError, DialogProvider, PresetDialogProvider,
+    config::{Config, ConfigService},
+    template::{TemplateService, WriteMode, WriteOutcome},
 };
 
 /// `traces template -i <name>` (aliased `tmpl`), and the default
@@ -96,18 +96,18 @@ impl Template {
     ///
     /// # Errors
     ///
-    /// Returns [`TemplateCliError::ConfigDiscovery`] when config discovery from
-    /// the current directory fails. Returns [`TemplateCliError::ConfigBuild`]
-    /// when building config fails, including for an untrusted or stale project
-    /// root. Returns [`TemplateCliError::NoTemplates`] when [`Self::name`] is
-    /// absent and no template is available to pick — never returned for
-    /// [`Self::list`], which prints nothing and returns `Ok` when no template
-    /// is available (a list, unlike a picker, has nothing to fail by being
-    /// empty). Returns [`TemplateCliError::Picker`] when the interactive picker
+    /// Returns [`CliError::CurrentDirectory`] when the process working
+    /// directory cannot be read. Returns [`CliError::ConfigLoad`] when
+    /// configuration discovery or construction fails. Returns
+    /// [`CliError::NoTemplates`] when [`Self::name`] is absent and no
+    /// template is available to pick — never returned for [`Self::list`],
+    /// which prints nothing and returns `Ok` when no template is available
+    /// (a list, unlike a picker, has nothing to fail by being empty).
+    /// Returns [`CliError::TemplatePicker`] when the interactive picker
     /// prompt fails, is cancelled, or is interrupted. Returns
-    /// [`TemplateCliError::Instantiate`] when the resolve/render/write pipeline
-    /// fails — including when a picked template's declared `file.write_to()`
-    /// names an unsafe path, caught while computing
+    /// [`CliError::TemplateInstantiate`] when the resolve/render/write
+    /// pipeline fails — including when a picked template's declared
+    /// `file.write_to()` names an unsafe path, caught while computing
     /// [`Self::prompt_output_override`]'s existence check.
     #[inline]
     #[expect(
@@ -120,19 +120,8 @@ impl Template {
         self,
         service: &ConfigService,
         provider: &Arc<dyn DialogProvider>,
-    ) -> Result<(), TemplateCliError> {
-        let cwd = current_dir()?;
-        let config = service.load(&cwd).map_err(|source| match source {
-            ConfigLoadError::Discovery(_) => {
-                TemplateCliError::ConfigDiscovery {
-                    cwd,
-                    source: Box::new(source),
-                }
-            }
-            ConfigLoadError::Build(_) => TemplateCliError::ConfigBuild {
-                source: Box::new(source),
-            },
-        })?;
+    ) -> Result<(), CliError> {
+        let config = super::load_config(service)?;
         if self.list {
             for name in TemplateService::list_available(&config) {
                 println!("{name}");
@@ -153,14 +142,9 @@ impl Template {
         };
         let outcome = template_service
             .render_to_file(&name, self.output.as_deref(), mode)
-            .map_err(|source| match source {
-                TemplateError::Prompt(source) => TemplateCliError::Picker {
-                    source,
-                },
-                source => TemplateCliError::Instantiate {
-                    name,
-                    source,
-                },
+            .map_err(|source| CliError::TemplateInstantiate {
+                name,
+                source,
             })?;
         match outcome {
             WriteOutcome::Written(path) => {
@@ -178,32 +162,32 @@ impl Template {
     ///
     /// # Errors
     ///
-    /// Returns [`TemplateCliError::NoTemplates`] when `config` has no available
-    /// templates. Returns [`TemplateCliError::Picker`] when `provider` is not
-    /// interactive, or when the prompt fails, is cancelled (Esc), or is
+    /// Returns [`CliError::NoTemplates`] when `config` has no available
+    /// templates. Returns [`CliError::TemplatePicker`] when `provider` is
+    /// not interactive, or when the prompt fails, is cancelled (Esc), or is
     /// interrupted (Ctrl-C).
     fn pick_template(
         config: &Config,
         provider: &Arc<dyn DialogProvider>,
-    ) -> Result<PathBuf, TemplateCliError> {
+    ) -> Result<PathBuf, CliError> {
         let available = TemplateService::list_available(config);
         if available.is_empty() {
-            return Err(TemplateCliError::NoTemplates);
+            return Err(CliError::NoTemplates);
         }
         if !provider.is_interactive() {
-            return Err(TemplateCliError::Picker {
+            return Err(CliError::TemplatePicker {
                 source: DialogError::NotInteractive,
             });
         }
         let chosen_idx = provider
             .select("Select a template", &available)
-            .map_err(|source| TemplateCliError::Picker {
+            .map_err(|source| CliError::TemplatePicker {
                 source,
             })?;
         let chosen = available
             .get(chosen_idx)
             .ok_or(DialogError::EmptySelectionInput)
-            .map_err(|source| TemplateCliError::Picker {
+            .map_err(|source| CliError::TemplatePicker {
                 source,
             })?;
         Ok(PathBuf::from(chosen))
@@ -224,25 +208,17 @@ pub(super) struct WriteFlags {
     pub(super) dry_run: bool,
 }
 
-fn current_dir() -> Result<PathBuf, TemplateCliError> {
-    Cwd::new().map(Cwd::into_inner).map_err(|source| {
-        TemplateCliError::ConfigDiscovery {
-            cwd: PathBuf::from("."),
-            source: Box::new(source),
-        }
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use std::{fs, path::Path};
 
     use pretty_assertions::assert_eq;
 
-    use super::*;
+    use super::{super::error::CliError, *};
     use crate::{
         CwdGuard,
-        config::{Discovered, LocalConfigFile, TrustRequest},
+        cli::UserAbort,
+        config::{ConfigLoadError, Discovered, LocalConfigFile, TrustRequest},
     };
 
     fn service(temp: &Path) -> ConfigService {
@@ -317,7 +293,10 @@ mod tests {
             .run(&service, &preset_provider())
             .expect_err("untrusted root fails");
 
-        assert!(matches!(error, TemplateCliError::ConfigBuild { .. }));
+        assert!(matches!(error, CliError::ConfigLoad {
+            source: ConfigLoadError::Build(_),
+            ..
+        }));
     }
 
     #[test]
@@ -336,7 +315,7 @@ mod tests {
             .run(&service, &preset_provider())
             .expect_err("missing template fails");
 
-        assert!(matches!(error, TemplateCliError::Instantiate { .. }));
+        assert!(matches!(error, CliError::TemplateInstantiate { .. }));
     }
 
     #[test]
@@ -355,7 +334,7 @@ mod tests {
             .run(&service, &preset_provider())
             .expect_err("no templates to pick from");
 
-        assert!(matches!(error, TemplateCliError::NoTemplates));
+        assert!(matches!(error, CliError::NoTemplates));
     }
 
     #[test]
@@ -469,7 +448,7 @@ mod tests {
             .run(&service, &preset_provider())
             .expect_err("existing output without force fails");
 
-        assert!(matches!(error, TemplateCliError::Instantiate { .. }));
+        assert!(matches!(error, CliError::TemplateInstantiate { .. }));
         assert_eq!(
             fs::read_to_string(root.join("daily.md")).expect("read output"),
             "old"
@@ -537,7 +516,7 @@ mod tests {
         .run(&service, &preset_provider())
         .expect_err("escaping -o path fails");
 
-        assert!(matches!(error, TemplateCliError::Instantiate { .. }));
+        assert!(matches!(error, CliError::TemplateInstantiate { .. }));
     }
 
     #[test]
@@ -718,8 +697,74 @@ mod tests {
             .run(&service, &preset_provider())
             .expect_err("non-interactive picker fails");
 
-        assert!(matches!(error, TemplateCliError::Picker {
+        assert!(matches!(error, CliError::TemplatePicker {
             source: DialogError::NotInteractive
         }));
+    }
+
+    struct CancellingDialogProvider;
+    impl DialogProvider for CancellingDialogProvider {
+        fn is_interactive(&self) -> bool {
+            true
+        }
+
+        fn text(
+            &self,
+            _label: &str,
+            _default: Option<&str>,
+        ) -> Result<String, DialogError> {
+            Err(DialogError::UserCancelled)
+        }
+
+        fn confirm(
+            &self,
+            _label: &str,
+            _default: Option<bool>,
+        ) -> Result<bool, DialogError> {
+            Err(DialogError::UserCancelled)
+        }
+
+        fn select(
+            &self,
+            _label: &str,
+            _items: &[String],
+        ) -> Result<usize, DialogError> {
+            Err(DialogError::UserCancelled)
+        }
+
+        fn multi_select(
+            &self,
+            _label: &str,
+            _items: &[String],
+        ) -> Result<Vec<usize>, DialogError> {
+            Err(DialogError::UserCancelled)
+        }
+    }
+
+    #[test]
+    fn run_writes_nothing_when_a_ui_prompt_inside_render_is_cancelled() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let root = temp.path().join("project");
+        fs::create_dir_all(&root).expect("create project dir");
+        let config_file = create_config(&root, "templates");
+        let templates_dir = root.join("templates");
+        fs::create_dir_all(&templates_dir).expect("create templates dir");
+        fs::write(
+            templates_dir.join("daily.md"),
+            "{{ ui.confirm(\"Continue?\") }}",
+        )
+        .expect("write template");
+        let service = service(temp.path());
+        trust_config(&service, &config_file);
+        let _guard = CwdGuard::enter(&root);
+        let provider: Arc<dyn DialogProvider> =
+            Arc::new(CancellingDialogProvider);
+
+        let error = Template::new(PathBuf::from("daily"))
+            .run(&service, &provider)
+            .expect_err("cancelled ui.* prompt fails render");
+
+        assert_eq!(error.user_abort(), Some(UserAbort::Cancelled));
+        assert!(!root.join("daily.md").exists());
     }
 }

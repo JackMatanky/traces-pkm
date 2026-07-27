@@ -5,22 +5,15 @@
 //! Thin adapter over [`ConfigService`] and
 //! [`crate::template::TemplateService`]: `--list-templates` loads config
 //! for the current directory the same way
-//! [`crate::cli::template::Template::run`] does, reporting failures
-//! through its own [`CompletionsCliError`] rather than
-//! `crate::cli::template`'s, so `traces completions` failures never carry
-//! a `traces::cli::template::*` diagnostic code.
-
-use std::path::PathBuf;
+//! [`crate::cli::template::Template::run`] does, through the same
+//! [`super::load_config`] seam — a Config failure gets the identical
+//! [`CliError`] code and remediation regardless of which command hit it.
 
 use clap::{ArgGroup, Args, CommandFactory as _};
 use clap_complete::{Shell, generate};
 
-use super::error::CompletionsCliError;
-use crate::{
-    Cwd,
-    config::{ConfigLoadError, ConfigService},
-    template::TemplateService,
-};
+use super::error::CliError;
+use crate::{config::ConfigService, template::TemplateService};
 
 /// `traces completions --shell <bash|zsh|fish>` or
 /// `traces completions --list-templates`.
@@ -48,15 +41,12 @@ impl Completions {
     ///
     /// # Errors
     ///
-    /// Returns [`CompletionsCliError::ConfigDiscovery`]/
-    /// [`CompletionsCliError::ConfigBuild`] when `--list-templates` fails
-    /// to load configuration for the current directory. `--shell` never
+    /// Returns [`CliError::CurrentDirectory`]/[`CliError::ConfigLoad`] when
+    /// `--list-templates` fails to load configuration for the current
+    /// directory. `--shell` never
     /// fails: script generation is infallible once parsing succeeds.
     #[inline]
-    pub(super) fn run(
-        self,
-        service: &ConfigService,
-    ) -> Result<(), CompletionsCliError> {
+    pub(super) fn run(self, service: &ConfigService) -> Result<(), CliError> {
         match self.shell {
             Some(shell) => {
                 Self::print_script(shell);
@@ -114,30 +104,14 @@ impl Completions {
     ///
     /// # Errors
     ///
-    /// Returns [`CompletionsCliError::ConfigDiscovery`] when config
-    /// discovery from the current directory fails. Returns
-    /// [`CompletionsCliError::ConfigBuild`] when building config
-    /// fails, including for an untrusted or stale project root.
+    /// Returns [`CliError::CurrentDirectory`] when the process working
+    /// directory cannot be read. Returns [`CliError::ConfigLoad`] when
+    /// loading configuration fails, including for an untrusted or stale
+    /// project root.
     fn template_names(
         service: &ConfigService,
-    ) -> Result<Vec<String>, CompletionsCliError> {
-        let cwd = Cwd::new().map(Cwd::into_inner).map_err(|source| {
-            CompletionsCliError::ConfigDiscovery {
-                cwd: PathBuf::from("."),
-                source: Box::new(source),
-            }
-        })?;
-        let config = service.load(&cwd).map_err(|source| match source {
-            ConfigLoadError::Discovery(_) => {
-                CompletionsCliError::ConfigDiscovery {
-                    cwd,
-                    source: Box::new(source),
-                }
-            }
-            ConfigLoadError::Build(_) => CompletionsCliError::ConfigBuild {
-                source: Box::new(source),
-            },
-        })?;
+    ) -> Result<Vec<String>, CliError> {
+        let config = super::load_config(service)?;
         Ok(TemplateService::list_available(&config))
     }
 
@@ -154,9 +128,7 @@ impl Completions {
                   completion scripts, not diagnostic text — mirrors the \
                   dry-run precedent in crate::cli::template"
     )]
-    fn list_templates(
-        service: &ConfigService,
-    ) -> Result<(), CompletionsCliError> {
+    fn list_templates(service: &ConfigService) -> Result<(), CliError> {
         for name in Self::template_names(service)? {
             println!("{name}");
         }
@@ -203,7 +175,7 @@ mod tests {
         use std::fs;
 
         use super::*;
-        use crate::CwdGuard;
+        use crate::{CwdGuard, cli::error::CliError, config::ConfigLoadError};
 
         #[test]
         fn fails_with_config_discovery_when_no_config_is_found() {
@@ -220,22 +192,25 @@ mod tests {
             .run(&service)
             .expect_err("no config discoverable");
 
-            assert!(matches!(
-                error,
-                CompletionsCliError::ConfigDiscovery { .. }
-            ));
+            assert!(matches!(error, CliError::ConfigLoad {
+                source: ConfigLoadError::Discovery(_),
+                ..
+            }));
         }
     }
 
     mod template_names {
-        use std::fs;
+        use std::{fs, path::PathBuf};
 
         use pretty_assertions::assert_eq;
 
         use super::*;
         use crate::{
             CwdGuard,
-            config::{Discovered, LocalConfigFile, TrustRequest},
+            cli::error::CliError,
+            config::{
+                ConfigLoadError, Discovered, LocalConfigFile, TrustRequest,
+            },
         };
 
         fn create_config(root: &Path, directory: &str) -> PathBuf {
@@ -294,7 +269,10 @@ mod tests {
             let error = Completions::template_names(&service)
                 .expect_err("untrusted root fails");
 
-            assert!(matches!(error, CompletionsCliError::ConfigBuild { .. }));
+            assert!(matches!(error, CliError::ConfigLoad {
+                source: ConfigLoadError::Build(_),
+                ..
+            }));
         }
     }
 }

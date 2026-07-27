@@ -317,3 +317,36 @@
 - Changed `{% include %}` resolution so only a genuine absence is `None`; unsafe and ambiguous identifiers are hard minijinja errors.
 - Added stable CLI diagnostic codes and remediation for each Template Resolution outcome.
 - Verification: `mise run test` passed all 628 tests; `mise run fmt`; `mise run clippy`; `cargo run -- --help`.
+
+### Remaining ADR-0004 Planning
+- **Status:** complete
+- Committed the first cutover as `0fd7957`.
+- Audited it against the accepted ADR and recorded the complete remaining implementation plan in `task_plan.md` and `findings.md`.
+
+### ADR-0004 Full-Refactor Reconnaissance
+- **Status:** complete
+- Reviewed the entire remaining error propagation surface: CLI dispatch and presentation, template and completions configuration loading, trust operations, init scaffolding, dialog sources, Template service/engine/custom-function propagation, and configuration domain errors.
+- Confirmed three real seams for the next implementation: a shared CLI configuration-load module, one deep CLI presentation module, and a typed render-origin classifier adjacent to `TemplateEngine`.
+- No source changes made in this reconnaissance pass beyond the previously verified `ConfigStateError` preservation for trust-store operations.
+- Replaced the duplicate Template/completions current-directory and Config-load translations with `src/cli/config_load.rs` and a typed `ConfigCliError`. Current-directory I/O is no longer misreported as configuration discovery; Config diagnostics now have command-independent stable codes.
+- Removed the obsolete completions wrapper and the Template Config variants. Updated command tests to assert `CliError::Config` retains the actual `ConfigLoadError` category.
+- Verification: `mise run check` and `mise run test` pass; 625 tests passed after deleting three superseded wrapper-specific tests.
+- Split trust target resolution into typed `CurrentDirectory(io::Error)` and `TargetResolve(DiscoveryError)` variants; removed its final erased source. Preserved the existing trust operation variants and handler flow after the CRITICAL impact warning.
+- Verification: `mise run check` and `mise run test` pass; 625 tests passed.
+- Moved the shared configuration load seam into `src/cli/mod.rs` as requested and deleted `src/cli/config_load.rs`.
+- Verification: `mise run check` and `mise run test` pass; 625 tests passed.
+- Fixed a mislabeled diagnostic identity found while classifying render failures: `Template::run` previously mapped `TemplateError::Prompt` (the output-collision reprompt from `TemplateWriteTarget::resolve`) to `CliError::TemplatePicker`, giving it "picker failed, try -i <name>" remediation even though nothing about template selection was happening. Removed the special case; `TemplateError::Prompt` now flows through the ordinary `CliError::TemplateInstantiate` classification with its own `output_confirm_failed` code and accurate remediation (--force / -o). `CliError::TemplatePicker` is now used only by the actual `pick_template()` fuzzy picker.
+- Confirmed `RenderFailureKind`/`classify_render_error` and the corrected `TemplateInstantiate` match now cover every `TemplateError` variant explicitly — the compiler flagged the old catch-all arms as unreachable, which were removed.
+- Verification: `mise run check` and `mise run test` pass; 633 tests passed.
+
+### Phase 12 Closure: Complete ADR-0004 Error Architecture
+- **Status:** complete
+- Moved the shared configuration-load seam into `src/cli/mod.rs` (`load_config`) per user direction; deleted the standalone `src/cli/config_load.rs`.
+- Flattened `CliError` into one presentation family: deleted `ConfigCliError`, `ConfigTrustCliError`, `ConfigInitCliError`, `TemplateCliError`, and `CompletionsCliError`. `CliError` now has 17 variants, each holding a concrete typed domain source (`io::Error`, `ConfigLoadError`, `DiscoveryError`, `ConfigStateError`, `DialogError`, `toml::ser::Error`, `TemplateError`) — zero `Box<dyn Error>` erasure remains anywhere in `src/cli/`.
+- Gave `traces init` typed failure stages (`InitPrompt`, `InitAlreadyInitialized`, `InitScaffold`, `InitSerialize`, `InitWriteConfig`) replacing the single erased `InitFailed { source: Box<dyn Error> }`.
+- Added `RenderFailureKind`/`classify_render_error` in `src/cli/error.rs`, classifying `TemplateError::Render`'s retained `minijinja::Error` by `.kind()` and its typed source chain (Syntax / Prompt / Io / Other) — no changes needed to `crate::template`.
+- Found and fixed a real mislabeled diagnostic: `TemplateError::Prompt` (the output-collision reprompt) was mapped to `CliError::TemplatePicker`, giving wrong "picker failed" remediation. Removed the special case; it now flows through `CliError::TemplateInstantiate`'s ordinary classification with its own `output_confirm_failed` code.
+- Extracted `template_instantiate_code`/`template_instantiate_help` free functions so `Diagnostic::code`/`help` stay under the crate's `clippy::too_many_lines` limit.
+- Added abort/diagnostic contracts: `src/main.rs` now has a pure `exit_code()` function (4 unit tests: Completed→0, Cancelled→0, Interrupted→130, Err→1). Added `cli::init::run_leaves_no_traces_directory_when_the_prompt_is_cancelled` and `cli::template::run_writes_nothing_when_a_ui_prompt_inside_render_is_cancelled`, each proving no filesystem side effect survives a cancelled interactive prompt.
+- Verification: `mise run fmt`, `mise run clippy` (clean, `-D warnings`), `mise run test` (639/639 passed), `mise run ci` (check + clippy + test + audit; only pre-existing dependency-duplicate/license audit warnings unrelated to this change). Manual CLI smoke test confirmed exit codes (`0`/`1`) and diagnostic codes/help/source chains for `init`, `trust`, and `template` end to end, including the shared `traces::cli::config_build_failed` code appearing identically whether reached through `template` or would-be `completions`.
+- GitNexus `detect_changes` confirms the diff is contained to `src/cli/{completions,error,init,mod,template,trust}.rs`, `src/config/mod.rs`, `src/main.rs`, and `tests/init_cli.rs` — no unexpected files touched. Two concurrent unrelated edits (`CONTEXT.md`, `docs/adr/0005-template-query.md`, from a separate FileIndex ADR effort) were left untouched and excluded from this commit.

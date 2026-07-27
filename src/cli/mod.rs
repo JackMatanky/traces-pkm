@@ -11,7 +11,31 @@ mod trust;
 use std::{path::PathBuf, sync::Arc};
 
 use clap::{Parser, Subcommand};
-pub use error::{CliError, ConfigInitCliError, ConfigTrustCliError};
+pub use error::CliError;
+
+use crate::{
+    Cwd,
+    config::{Config, ConfigService},
+};
+
+/// Reads the current directory and loads its effective configuration.
+///
+/// # Errors
+///
+/// Returns [`CliError::CurrentDirectory`] when the process working
+/// directory cannot be read. Returns [`CliError::ConfigLoad`] when
+/// configuration discovery or construction fails.
+fn load_config(service: &ConfigService) -> Result<Config, CliError> {
+    let cwd = Cwd::new().map(Cwd::into_inner).map_err(|source| {
+        CliError::CurrentDirectory {
+            source,
+        }
+    })?;
+    service.load(&cwd).map_err(|source| CliError::ConfigLoad {
+        cwd,
+        source,
+    })
+}
 
 /// The result of a command that did not fail.
 ///
@@ -90,12 +114,12 @@ impl Cli {
         let result = match self.command {
             Some(command) => command.run(service, provider),
             None => match self.input {
-                Some(Some(name)) => template::Template::new(name)
-                    .run(service, provider)
-                    .map_err(Into::into),
-                Some(None) => template::Template::interactive()
-                    .run(service, provider)
-                    .map_err(Into::into),
+                Some(Some(name)) => {
+                    template::Template::new(name).run(service, provider)
+                }
+                Some(None) => {
+                    template::Template::interactive().run(service, provider)
+                }
                 None => Err(CliError::NoCommand),
             },
         };
@@ -131,12 +155,10 @@ impl Commands {
         provider: &Arc<dyn crate::DialogProvider>,
     ) -> Result<(), CliError> {
         match self {
-            Self::Init(args) => args.run(provider.as_ref()).map_err(Into::into),
-            Self::Trust(args) => args.run(service).map_err(Into::into),
-            Self::Template(args) => {
-                args.run(service, provider).map_err(Into::into)
-            }
-            Self::Completions(args) => args.run(service).map_err(Into::into),
+            Self::Init(args) => args.run(provider.as_ref()),
+            Self::Trust(args) => args.run(service),
+            Self::Template(args) => args.run(service, provider),
+            Self::Completions(args) => args.run(service),
         }
     }
 }
@@ -258,7 +280,7 @@ mod tests {
         use pretty_assertions::assert_eq;
         use rstest::rstest;
 
-        use super::{error::TemplateCliError, *};
+        use super::*;
         use crate::{
             CwdGuard,
             config::{ConfigService, TrustRequest},
@@ -377,10 +399,7 @@ mod tests {
                 .run(&service, &provider)
                 .expect_err("no templates to pick from");
 
-            assert!(matches!(
-                error,
-                CliError::Template(TemplateCliError::NoTemplates)
-            ));
+            assert!(matches!(error, CliError::NoTemplates));
         }
     }
 }

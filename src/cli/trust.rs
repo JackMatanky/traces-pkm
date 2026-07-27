@@ -9,7 +9,7 @@ use std::path::PathBuf;
 
 use clap::{ArgGroup, Args, Subcommand};
 
-use super::error::ConfigTrustCliError;
+use super::error::CliError;
 use crate::{
     Cwd,
     config::{ConfigService, DiscoveryScope, TrustRequest},
@@ -61,14 +61,11 @@ impl Trust {
     ///
     /// # Errors
     ///
-    /// Returns the [`ConfigTrustCliError`] variant produced by the dispatched
+    /// Returns the [`CliError`] variant produced by the dispatched
     /// action — see [`Self::list`], [`Self::clean`], [`Self::trust`],
     /// [`Self::untrust`], and [`Self::show`].
     #[inline]
-    pub(super) fn run(
-        self,
-        service: &ConfigService,
-    ) -> Result<(), ConfigTrustCliError> {
+    pub(super) fn run(self, service: &ConfigService) -> Result<(), CliError> {
         match self.action {
             Some(TrustAction::List) => Self::list(service),
             Some(TrustAction::Clean) => Self::clean(service),
@@ -82,7 +79,7 @@ impl Trust {
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigTrustCliError::List`] when the trust store cannot be
+    /// Returns [`CliError::TrustList`] when the trust store cannot be
     /// read.
     #[expect(
         clippy::print_stdout,
@@ -90,12 +87,11 @@ impl Trust {
                   diagnostic text — see the print_stderr precedent this \
                   mirrors"
     )]
-    fn list(service: &ConfigService) -> Result<(), ConfigTrustCliError> {
-        let roots: Vec<PathBuf> = service.list_trusted().map_err(|source| {
-            ConfigTrustCliError::List {
-                source: Box::new(source),
-            }
-        })?;
+    fn list(service: &ConfigService) -> Result<(), CliError> {
+        let roots: Vec<PathBuf> =
+            service.list_trusted().map_err(|source| CliError::TrustList {
+                source,
+            })?;
         for root in &roots {
             println!("{}", root.display());
         }
@@ -106,12 +102,12 @@ impl Trust {
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigTrustCliError::Clean`] when the trust store cannot be
+    /// Returns [`CliError::TrustClean`] when the trust store cannot be
     /// cleaned.
-    fn clean(service: &ConfigService) -> Result<(), ConfigTrustCliError> {
+    fn clean(service: &ConfigService) -> Result<(), CliError> {
         let removed = service.clean_trusted_store().map_err(|source| {
-            ConfigTrustCliError::Clean {
-                source: Box::new(source),
+            CliError::TrustClean {
+                source,
             }
         })?;
         match removed {
@@ -125,19 +121,16 @@ impl Trust {
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigTrustCliError::TargetResolve`] when the trust target(s)
-    /// cannot be resolved, or [`ConfigTrustCliError::Trust`] when trusting a
+    /// Returns [`CliError::TrustTargetResolve`] when the trust target(s)
+    /// cannot be resolved, or [`CliError::Trust`] when trusting a
     /// resolved target fails.
-    fn trust(
-        &self,
-        service: &ConfigService,
-    ) -> Result<(), ConfigTrustCliError> {
+    fn trust(&self, service: &ConfigService) -> Result<(), CliError> {
         self.for_each_subject(service, |subject: TrustRequest| {
             let root = subject.root_path().to_path_buf();
             if let Err(source) = service.trust(&subject) {
-                return Err(ConfigTrustCliError::Trust {
+                return Err(CliError::Trust {
                     root,
-                    source: Box::new(source),
+                    source,
                 });
             }
             eprintln!("trusted {}", root.display());
@@ -149,19 +142,16 @@ impl Trust {
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigTrustCliError::TargetResolve`] when the trust target(s)
-    /// cannot be resolved, or [`ConfigTrustCliError::Untrust`] when removing a
+    /// Returns [`CliError::TrustTargetResolve`] when the trust target(s)
+    /// cannot be resolved, or [`CliError::Untrust`] when removing a
     /// resolved target's trust fails.
-    fn untrust(
-        &self,
-        service: &ConfigService,
-    ) -> Result<(), ConfigTrustCliError> {
+    fn untrust(&self, service: &ConfigService) -> Result<(), CliError> {
         self.for_each_subject(service, |subject: TrustRequest| {
             let root = subject.root_path().to_path_buf();
             if let Err(source) = service.untrust(&subject) {
-                return Err(ConfigTrustCliError::Untrust {
+                return Err(CliError::Untrust {
                     root,
-                    source: Box::new(source),
+                    source,
                 });
             }
             eprintln!("untrusted {}", root.display());
@@ -173,8 +163,8 @@ impl Trust {
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigTrustCliError::TargetResolve`] when the trust target(s)
-    /// cannot be resolved, or [`ConfigTrustCliError::Show`] when reading a
+    /// Returns [`CliError::TrustTargetResolve`] when the trust target(s)
+    /// cannot be resolved, or [`CliError::TrustShow`] when reading a
     /// resolved target's trust status fails.
     #[expect(
         clippy::print_stdout,
@@ -182,7 +172,7 @@ impl Trust {
                   diagnostic text — see the print_stderr precedent this \
                   mirrors"
     )]
-    fn show(&self, service: &ConfigService) -> Result<(), ConfigTrustCliError> {
+    fn show(&self, service: &ConfigService) -> Result<(), CliError> {
         self.for_each_subject(service, |subject: TrustRequest| {
             let root = subject.root_path().to_path_buf();
             let path = subject
@@ -190,9 +180,9 @@ impl Trust {
                 .unwrap_or(subject.root_path())
                 .to_path_buf();
             let state = service.trust_status(&subject).map_err(|source| {
-                ConfigTrustCliError::Show {
+                CliError::TrustShow {
                     root,
-                    source: Box::new(source),
+                    source,
                 }
             })?;
             println!("{}\t{}", path.display(), state);
@@ -204,24 +194,22 @@ impl Trust {
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigTrustCliError::TargetResolve`] when the current
-    /// directory cannot be determined (no user-provided path) or when resolving
-    /// trust subjects from the path fails. Otherwise propagates whatever error
-    /// `visit` returns for a given subject.
+    /// Returns [`CliError::CurrentDirectory`] when the current
+    /// directory cannot be determined (no user-provided path) or
+    /// [`CliError::TrustTargetResolve`] when resolving trust subjects from
+    /// the path fails. Otherwise propagates whatever error `visit` returns
+    /// for a given subject.
     fn for_each_subject(
         &self,
         service: &ConfigService,
-        mut visit: impl FnMut(TrustRequest) -> Result<(), ConfigTrustCliError>,
-    ) -> Result<(), ConfigTrustCliError> {
+        mut visit: impl FnMut(TrustRequest) -> Result<(), CliError>,
+    ) -> Result<(), CliError> {
         let cwd;
         let path = if let Some(path) = self.path.as_deref() {
             path
         } else {
-            cwd = Cwd::new().map_err(|source| {
-                ConfigTrustCliError::TargetResolve {
-                    path: PathBuf::from("."),
-                    source: Box::new(source),
-                }
+            cwd = Cwd::new().map_err(|source| CliError::CurrentDirectory {
+                source,
             })?;
             cwd.as_ref()
         };
@@ -232,9 +220,9 @@ impl Trust {
         };
         let subjects =
             service.trust_requests(path, scope).map_err(|source| {
-                ConfigTrustCliError::TargetResolve {
+                CliError::TrustTargetResolve {
                     path: path.to_path_buf(),
-                    source: Box::new(source),
+                    source,
                 }
             })?;
         for subject in subjects {

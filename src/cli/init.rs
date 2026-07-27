@@ -1,14 +1,13 @@
 //! `traces init` command: scaffold local configuration and templates.
 
 use std::{
-    error::Error as StdError,
-    fs, io,
+    fs,
     path::{Path, PathBuf},
 };
 
 use clap::Args;
 
-use super::error::ConfigInitCliError;
+use super::error::CliError;
 use crate::{
     Cwd, DialogProvider,
     config::{LOCAL_CONFIG_FILE, RawConfig, RawTemplateConfig},
@@ -17,10 +16,6 @@ use crate::{
 const TRACES_DIR: &str = ".traces";
 const DEFAULT_TEMPLATE_DIRECTORY: &str = ".traces/templates";
 const DEFAULT_OUTPUT_DIRECTORY: &str = ".";
-const GENERIC_INIT_HELP: &str =
-    "check that the project directory is writable and try again";
-const EXISTING_TRACES_HELP: &str = "remove the existing .traces directory or \
-                                    run init from a different directory";
 
 /// `traces init` — scaffold local configuration and templates.
 ///
@@ -35,55 +30,67 @@ impl Init {
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigInitCliError`] when prompting, serialization, or
-    /// filesystem scaffolding fails.
+    /// Returns [`CliError::CurrentDirectory`] when the current directory
+    /// cannot be read. Returns [`CliError::InitPrompt`] when collecting
+    /// input interactively fails. Returns
+    /// [`CliError::InitAlreadyInitialized`] when `.traces` already exists.
+    /// Returns [`CliError::InitScaffold`] when scaffolding `.traces`/
+    /// `.traces/templates` fails. Returns [`CliError::InitSerialize`] when
+    /// serialising the collected config fails. Returns
+    /// [`CliError::InitWriteConfig`] when writing the config file fails.
     #[inline]
-    pub fn run(
-        self,
-        provider: &dyn DialogProvider,
-    ) -> Result<(), ConfigInitCliError> {
-        let root =
-            Cwd::new().map_err(|source| failed(Path::new("."), source))?;
-        let (directory, output_dir) =
-            Self::collect_config(root.as_ref(), provider)?;
-        Self::scaffold_directory(root.as_ref())?;
-        Self::write_config_file(root.as_ref(), &directory, &output_dir)?;
-        eprintln!("initialised traces in {}", root.as_ref().display());
+    pub fn run(self, provider: &dyn DialogProvider) -> Result<(), CliError> {
+        let root = Cwd::new().map(Cwd::into_inner).map_err(|source| {
+            CliError::CurrentDirectory {
+                source,
+            }
+        })?;
+        let (directory, output_dir) = Self::collect_config(provider)?;
+        Self::scaffold_directory(&root)?;
+        Self::write_config_file(&root, &directory, &output_dir)?;
+        eprintln!("initialised traces in {}", root.display());
         Ok(())
     }
 
     /// Collect template configuration from the user interactively.
     fn collect_config(
-        root: &Path,
         provider: &dyn DialogProvider,
-    ) -> Result<(PathBuf, PathBuf), ConfigInitCliError> {
+    ) -> Result<(PathBuf, PathBuf), CliError> {
         let directory = provider
             .text("Template directory", Some(DEFAULT_TEMPLATE_DIRECTORY))
-            .map_err(|source| failed(root, source))?;
+            .map_err(|source| CliError::InitPrompt {
+                source,
+            })?;
         let output_dir = provider
             .text("Output directory", Some(DEFAULT_OUTPUT_DIRECTORY))
-            .map_err(|source| failed(root, source))?;
+            .map_err(|source| CliError::InitPrompt {
+                source,
+            })?;
         Ok((PathBuf::from(directory), PathBuf::from(output_dir)))
     }
 
     /// Scaffold `.traces/` and `.traces/templates/`.
     ///
     /// Refuses to run when `.traces/` already exists.
-    fn scaffold_directory(root: &Path) -> Result<(), ConfigInitCliError> {
+    fn scaffold_directory(root: &Path) -> Result<(), CliError> {
         let traces_dir = root.join(TRACES_DIR);
         if traces_dir.exists() {
-            return Err(ConfigInitCliError::InitFailed {
+            return Err(CliError::InitAlreadyInitialized {
                 root: root.to_path_buf(),
-                help: EXISTING_TRACES_HELP,
-                source: Box::new(io::Error::new(
-                    io::ErrorKind::AlreadyExists,
-                    format!("{} already exists", traces_dir.display()),
-                )),
             });
         }
-        fs::create_dir(&traces_dir).map_err(|source| failed(root, source))?;
-        fs::create_dir(root.join(DEFAULT_TEMPLATE_DIRECTORY))
-            .map_err(|source| failed(root, source))?;
+        fs::create_dir(&traces_dir).map_err(|source| {
+            CliError::InitScaffold {
+                root: root.to_path_buf(),
+                source,
+            }
+        })?;
+        fs::create_dir(root.join(DEFAULT_TEMPLATE_DIRECTORY)).map_err(
+            |source| CliError::InitScaffold {
+                root: root.to_path_buf(),
+                source,
+            },
+        )?;
         Ok(())
     }
 
@@ -92,39 +99,88 @@ impl Init {
         root: &Path,
         directory: &Path,
         output_dir: &Path,
-    ) -> Result<(), ConfigInitCliError> {
+    ) -> Result<(), CliError> {
         let config = RawConfig {
             templates: RawTemplateConfig {
                 directory: Some(directory.to_path_buf()),
                 output_dir: Some(output_dir.to_path_buf()),
             },
         };
-        let contents =
-            toml::to_string(&config).map_err(|source| failed(root, source))?;
-        fs::write(root.join(LOCAL_CONFIG_FILE), contents)
-            .map_err(|source| failed(root, source))?;
+        let contents = toml::to_string(&config).map_err(|source| {
+            CliError::InitSerialize {
+                root: root.to_path_buf(),
+                source,
+            }
+        })?;
+        fs::write(root.join(LOCAL_CONFIG_FILE), contents).map_err(
+            |source| CliError::InitWriteConfig {
+                root: root.to_path_buf(),
+                source,
+            },
+        )?;
         Ok(())
-    }
-}
-
-fn failed<E>(root: &Path, source: E) -> ConfigInitCliError
-where
-    E: StdError + Send + Sync + 'static,
-{
-    ConfigInitCliError::InitFailed {
-        root: root.to_path_buf(),
-        help: GENERIC_INIT_HELP,
-        source: Box::new(source),
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::io;
 
     use pretty_assertions::assert_eq;
 
     use super::*;
+    use crate::{CwdGuard, DialogError, cli::UserAbort};
+
+    struct CancellingDialogProvider;
+    impl DialogProvider for CancellingDialogProvider {
+        fn is_interactive(&self) -> bool {
+            true
+        }
+
+        fn text(
+            &self,
+            _label: &str,
+            _default: Option<&str>,
+        ) -> Result<String, DialogError> {
+            Err(DialogError::UserCancelled)
+        }
+
+        fn confirm(
+            &self,
+            _label: &str,
+            _default: Option<bool>,
+        ) -> Result<bool, DialogError> {
+            Err(DialogError::UserCancelled)
+        }
+
+        fn select(
+            &self,
+            _label: &str,
+            _items: &[String],
+        ) -> Result<usize, DialogError> {
+            Err(DialogError::UserCancelled)
+        }
+
+        fn multi_select(
+            &self,
+            _label: &str,
+            _items: &[String],
+        ) -> Result<Vec<usize>, DialogError> {
+            Err(DialogError::UserCancelled)
+        }
+    }
+
+    #[test]
+    fn run_leaves_no_traces_directory_when_the_prompt_is_cancelled() {
+        let root = tempfile::tempdir().expect("create temp dir");
+        let _guard = CwdGuard::enter(root.path());
+
+        let error = Init
+            .run(&CancellingDialogProvider)
+            .expect_err("cancelled prompt fails init");
+
+        assert_eq!(error.user_abort(), Some(UserAbort::Cancelled));
+        assert!(!root.path().join(".traces").exists());
+    }
 
     #[test]
     fn scaffold_directory_creates_traces_and_templates() {
@@ -146,12 +202,13 @@ mod tests {
         let err = Init::scaffold_directory(root.path())
             .expect_err("existing .traces should fail");
 
-        let ConfigInitCliError::InitFailed {
-            source,
-            ..
-        } = &err;
-        let io_err = source.downcast_ref::<io::Error>().expect("io error");
-        assert_eq!(io_err.kind(), io::ErrorKind::AlreadyExists);
+        let CliError::InitAlreadyInitialized {
+            root: failed_root,
+        } = &err
+        else {
+            panic!("expected InitAlreadyInitialized, got {err:?}");
+        };
+        assert_eq!(failed_root, root.path());
     }
 
     fn scaffold(root: &Path) {
