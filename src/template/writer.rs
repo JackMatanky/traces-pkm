@@ -37,10 +37,12 @@ impl TemplateWriter {
     ///
     /// # Errors
     ///
-    /// Returns [`TemplateError::Write`] if `path` or its parent directory can't
-    /// be written, or [`TemplateError::OutputFileAlreadyExists`] if `path`
-    /// already exists under [`CommitPolicy::CreateNew`]. Never for
-    /// [`WriteMode::DryRun`].
+    /// - [`TemplateError::Write`] if `path` or its parent directory can't be
+    ///   written
+    /// - [`TemplateError::OutputFileAlreadyExists`] if `path` already exists
+    ///   under [`CommitPolicy::CreateNew`]
+    ///
+    /// Never for [`WriteMode::DryRun`].
     pub(super) fn write(
         path: PathBuf,
         content: String,
@@ -64,9 +66,10 @@ impl TemplateWriter {
     ///
     /// # Errors
     ///
-    /// Returns [`TemplateError::Write`] if the parent directory or file can't
-    /// be written, or [`TemplateError::OutputFileAlreadyExists`] if `path`
-    /// already exists under [`CommitPolicy::CreateNew`].
+    /// - [`TemplateError::Write`] if the parent directory or file can't be
+    ///   written
+    /// - [`TemplateError::OutputFileAlreadyExists`] if `path` already exists
+    ///   under [`CommitPolicy::CreateNew`]
     fn commit(
         path: &Path,
         content: &str,
@@ -150,9 +153,9 @@ impl CommitPolicy {
     ///
     /// # Errors
     ///
-    /// Maps `AlreadyExists` under [`Self::CreateNew`] to
-    /// [`TemplateError::OutputFileAlreadyExists`]; any other I/O failure to
-    /// [`TemplateError::Write`].
+    /// - `AlreadyExists` under [`Self::CreateNew`] maps to
+    ///   [`TemplateError::OutputFileAlreadyExists`]
+    /// - Any other I/O failure maps to [`TemplateError::Write`]
     fn create_file(self, path: &Path) -> Result<fs::File, TemplateError> {
         let file = match self {
             Self::Overwrite => fs::File::create(path),
@@ -234,10 +237,10 @@ impl<'a> TemplateWriteTarget<'a> {
     ///
     /// # Errors
     ///
-    /// Returns [`TemplateError::OutputPathEscapesRoot`] when
-    /// `requested`/`declared` names a path outside `root`, or
-    /// [`TemplateError::OutputPathUnverifiable`] when confinement can't be
-    /// verified.
+    /// - [`TemplateError::OutputPathEscapesRoot`] when `requested`/`declared`
+    ///   names a path outside `root`
+    /// - [`TemplateError::OutputPathUnverifiable`] when confinement can't be
+    ///   verified
     pub(super) fn target_path(
         &self,
         default: impl FnOnce() -> PathBuf,
@@ -257,11 +260,12 @@ impl<'a> TemplateWriteTarget<'a> {
     ///
     /// # Errors
     ///
-    /// Returns [`TemplateError::OutputPathEscapesRoot`] when
-    /// `requested`/`declared` escapes `root`,
-    /// [`TemplateError::OutputPathUnverifiable`] when confinement can't be
-    /// verified, or [`TemplateError::Prompt`] when the collision prompt is
-    /// cancelled or fails.
+    /// - [`TemplateError::OutputPathEscapesRoot`] when `requested`/`declared`
+    ///   escapes `root`
+    /// - [`TemplateError::OutputPathUnverifiable`] when confinement can't be
+    ///   verified
+    /// - [`TemplateError::Prompt`] when the collision prompt is cancelled or
+    ///   fails
     pub(super) fn resolve(
         &self,
         mode: WriteMode,
@@ -312,10 +316,10 @@ impl<'a> TemplateWriteTarget<'a> {
     ///
     /// # Errors
     ///
-    /// Returns [`TemplateError::OutputPathEscapesRoot`] when `candidate` is
-    /// unsafe or resolves outside `root`, or
-    /// [`TemplateError::OutputPathUnverifiable`] when confinement itself can't
-    /// be verified.
+    /// - [`TemplateError::OutputPathEscapesRoot`] when `candidate` is unsafe or
+    ///   resolves outside `root`
+    /// - [`TemplateError::OutputPathUnverifiable`] when confinement itself
+    ///   can't be verified
     fn confine(
         root: &Path,
         candidate: &Path,

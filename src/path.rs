@@ -93,10 +93,10 @@ impl RootConfinedPath {
     ///
     /// # Errors
     ///
-    /// Returns [`PathError::NotRelative`] if `candidate` fails
-    /// [`SafeRelativePath::parse`], [`PathError::EscapesRoot`] if the ancestor
-    /// resolves outside `root`, or [`PathError::Verify`] if canonicalizing
-    /// `root` or the ancestor fails.
+    /// - [`PathError::NotRelative`] if `candidate` fails
+    ///   [`SafeRelativePath::parse`]
+    /// - [`PathError::EscapesRoot`] if the ancestor resolves outside `root`
+    /// - [`PathError::Verify`] if canonicalizing `root` or the ancestor fails
     pub(crate) fn parse(
         root: &Path,
         candidate: &Path,
