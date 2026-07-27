@@ -114,13 +114,13 @@ impl TemplateLoader {
     /// Uses [`fs::symlink_metadata`] rather than
     /// [`Path::is_file`](std::path::Path::is_file), so — like
     /// [`Self::find_name_in`] — a symlink never counts as a match.
-    #[inline]
-    #[must_use]
-    fn find_path_in(dir: &Path, path: &SafeRelativePath) -> Option<PathBuf> {
-        let path = path.as_ref();
-        fs::symlink_metadata(dir.join(path))
+    fn find_path_in(
+        dir: &Path,
+        path: &SafeRelativePath,
+    ) -> Option<SafeRelativePath> {
+        fs::symlink_metadata(dir.join(path.as_ref()))
             .is_ok_and(|metadata| metadata.is_file())
-            .then(|| path.to_path_buf())
+            .then(|| path.clone())
     }
 
     /// The stem-match rule, skipped entirely when `path` already has an
@@ -139,7 +139,7 @@ impl TemplateLoader {
     fn find_name_in(
         dir: &Path,
         path: &SafeRelativePath,
-    ) -> Result<Option<PathBuf>, TemplatePathError> {
+    ) -> Result<Option<SafeRelativePath>, TemplatePathError> {
         let path = path.as_ref();
         if path.extension().is_some() {
             return Ok(None);
@@ -183,7 +183,7 @@ impl TemplateLoader {
         hits.sort_unstable();
         match hits.as_slice() {
             [] => Ok(None),
-            [hit] => Ok(Some(hit.clone())),
+            [hit] => Ok(Some(TemplatePath::parse(hit)?)),
             _ => Err(TemplatePathError::AmbiguousTemplate {
                 name: path.to_path_buf(),
                 candidates: hits,
@@ -427,18 +427,19 @@ mod tests {
             let error = loader
                 .find(Path::new("daily"))
                 .expect_err("ambiguous stem match");
-            let TemplatePathError::AmbiguousTemplate {
-                name,
-                candidates,
-            } = error
-            else {
-                panic!("expected ambiguous template error");
-            };
-            assert_eq!(name, PathBuf::from("daily"));
-            assert_eq!(candidates, vec![
-                PathBuf::from("daily.md"),
-                PathBuf::from("daily.txt")
-            ]);
+            assert!(
+                matches!(
+                    &error,
+                    TemplatePathError::AmbiguousTemplate { name, candidates }
+                        if name.as_path() == Path::new("daily")
+                            && *candidates == vec![
+                                PathBuf::from("daily.md"),
+                                PathBuf::from("daily.txt"),
+                            ]
+                ),
+                "expected ambiguous template error for daily.{{md,txt}}, got \
+                 {error:?}"
+            );
         }
 
         #[test]

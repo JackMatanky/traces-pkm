@@ -165,7 +165,7 @@ impl FileStateStore {
         #[cfg(windows)]
         let write_entry = fs::write(
             &entry_path,
-            entry.canonical_target.as_os_str().to_string_lossy().as_bytes(),
+            entry.canonical_target.as_os_str().as_encoded_bytes(),
         );
 
         write_entry.map_err(|source| FileStateStoreError::StoreIo {

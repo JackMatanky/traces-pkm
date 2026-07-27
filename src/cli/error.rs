@@ -38,6 +38,7 @@ use crate::{
               use CliError's Display/Diagnostic surface, never these types \
               directly"
 )]
+#[non_exhaustive]
 pub enum CliError {
     /// The process current directory could not be read — shared by every
     /// command that needs it (Config loading, trust target resolution,

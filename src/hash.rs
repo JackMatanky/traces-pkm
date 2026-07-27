@@ -35,6 +35,9 @@ pub(crate) struct Blake3FileHash(blake3::Hash);
 impl Blake3FileHash {
     /// Computes the BLAKE3 hash of `path`'s current contents.
     ///
+    /// Reads `path` fully into memory before hashing — acceptable for the
+    /// small template/config files this crate hashes, not a streaming read.
+    ///
     /// # Errors
     ///
     /// Returns [`HashError::Read`] when `path` cannot be read.

@@ -20,16 +20,19 @@ const DEFAULT_EXTENSION: &str = "md";
 /// exist on disk.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct TemplatePath {
-    path: PathBuf,
+    path: SafeRelativePath,
     source_dir: PathBuf,
 }
 
 impl TemplatePath {
-    /// Creates a resolved [`TemplatePath`] from a relative path and its source
-    /// directory.
+    /// Creates a resolved [`TemplatePath`] from an already-validated relative
+    /// path and its source directory. `path` must come from [`Self::parse`]
+    /// (or another [`SafeRelativePath`] proven safe the same way) — this is
+    /// the only constructor, so a [`TemplatePath`] can never wrap an
+    /// unvalidated path.
     #[inline]
     #[must_use]
-    pub(super) fn new(path: PathBuf, source_dir: PathBuf) -> Self {
+    pub(super) fn new(path: SafeRelativePath, source_dir: PathBuf) -> Self {
         Self {
             path,
             source_dir,
@@ -66,7 +69,7 @@ impl TemplatePath {
     #[inline]
     #[must_use]
     pub(super) fn name(&self) -> PathBuf {
-        self.path.with_extension("")
+        self.path.as_ref().with_extension("")
     }
 
     /// Whether this candidate carries an extension: `"daily.md"` -> `true`.
@@ -77,14 +80,14 @@ impl TemplatePath {
         expect(dead_code, reason = "tested in has_extension unit tests")
     )]
     pub(super) fn has_extension(&self) -> bool {
-        self.path.extension().is_some()
+        self.path.as_ref().extension().is_some()
     }
 
     /// Builds the absolute path on demand: `source_dir` joined with `path`.
     #[inline]
     #[must_use]
     pub(super) fn absolute(&self) -> PathBuf {
-        self.source_dir.join(&self.path)
+        self.source_dir.join(self.path.as_ref())
     }
 
     /// The default output filename: [`Self::name`] with extension forced to
@@ -103,7 +106,7 @@ impl TemplatePath {
 
 impl AsRef<Path> for TemplatePath {
     fn as_ref(&self) -> &Path {
-        &self.path
+        self.path.as_ref()
     }
 }
 
@@ -151,7 +154,7 @@ mod tests {
     fn validated(name: &str) -> TemplatePath {
         let rel =
             TemplatePath::parse(Path::new(name)).expect("valid candidate");
-        TemplatePath::new(rel.as_ref().to_path_buf(), PathBuf::from("/dir"))
+        TemplatePath::new(rel, PathBuf::from("/dir"))
     }
 
     fn write_file(dir: &Path, name: &str) -> PathBuf {
@@ -278,9 +281,11 @@ mod tests {
 
         fn found(dir: &Path, name: &str) -> TemplatePath {
             let path = write_file(dir, name);
-            let rel =
-                path.strip_prefix(dir).expect("relative path").to_path_buf();
-            TemplatePath::new(rel, dir.to_path_buf())
+            let rel = path.strip_prefix(dir).expect("relative path");
+            TemplatePath::new(
+                TemplatePath::parse(rel).expect("relative path is safe"),
+                dir.to_path_buf(),
+            )
         }
 
         #[test]
@@ -313,9 +318,11 @@ mod tests {
 
         fn found(dir: &Path, name: &str) -> TemplatePath {
             let path = write_file(dir, name);
-            let rel =
-                path.strip_prefix(dir).expect("relative path").to_path_buf();
-            TemplatePath::new(rel, dir.to_path_buf())
+            let rel = path.strip_prefix(dir).expect("relative path");
+            TemplatePath::new(
+                TemplatePath::parse(rel).expect("relative path is safe"),
+                dir.to_path_buf(),
+            )
         }
 
         #[test]

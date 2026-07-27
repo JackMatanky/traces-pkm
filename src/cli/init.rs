@@ -24,6 +24,12 @@ const DEFAULT_OUTPUT_DIRECTORY: &str = ".";
 #[derive(Debug, Args)]
 pub struct Init;
 
+/// The user's chosen template/output directories, collected interactively.
+struct InitInput {
+    directory: PathBuf,
+    output_dir: PathBuf,
+}
+
 impl Init {
     /// Dispatches `traces init` using the current directory as the project
     /// root.
@@ -45,9 +51,9 @@ impl Init {
                 source,
             }
         })?;
-        let (directory, output_dir) = Self::collect_config(provider)?;
+        let input = Self::collect_config(provider)?;
         Self::scaffold_directory(&root)?;
-        Self::write_config_file(&root, &directory, &output_dir)?;
+        Self::write_config_file(&root, &input.directory, &input.output_dir)?;
         eprintln!("initialised traces in {}", root.display());
         Ok(())
     }
@@ -55,7 +61,7 @@ impl Init {
     /// Collect template configuration from the user interactively.
     fn collect_config(
         provider: &dyn DialogProvider,
-    ) -> Result<(PathBuf, PathBuf), CliError> {
+    ) -> Result<InitInput, CliError> {
         let directory = provider
             .text("Template directory", Some(DEFAULT_TEMPLATE_DIRECTORY))
             .map_err(|source| CliError::InitPrompt {
@@ -66,7 +72,10 @@ impl Init {
             .map_err(|source| CliError::InitPrompt {
                 source,
             })?;
-        Ok((PathBuf::from(directory), PathBuf::from(output_dir)))
+        Ok(InitInput {
+            directory: PathBuf::from(directory),
+            output_dir: PathBuf::from(output_dir),
+        })
     }
 
     /// Scaffold `.traces/` and `.traces/templates/`.
@@ -202,13 +211,15 @@ mod tests {
         let err = Init::scaffold_directory(root.path())
             .expect_err("existing .traces should fail");
 
-        let CliError::InitAlreadyInitialized {
-            root: failed_root,
-        } = &err
-        else {
-            panic!("expected InitAlreadyInitialized, got {err:?}");
-        };
-        assert_eq!(failed_root, root.path());
+        assert!(
+            matches!(
+                &err,
+                CliError::InitAlreadyInitialized { root: failed_root }
+                    if failed_root == root.path()
+            ),
+            "expected InitAlreadyInitialized for {}, got {err:?}",
+            root.path().display()
+        );
     }
 
     fn scaffold(root: &Path) {

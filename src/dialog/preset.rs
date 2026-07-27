@@ -99,6 +99,12 @@ impl PresetDialogProvider {
 
     /// Queue a chosen index for the next [`DialogProvider::select`] call.
     ///
+    /// The queued index isn't validated until [`DialogProvider::select`]
+    /// consumes it — an index at or beyond the prompted items' length then
+    /// returns [`DialogError::InvalidConfiguration`] instead of an
+    /// out-of-range `usize`, mirroring how the real prompt can never return
+    /// an invalid choice.
+    ///
     /// # Examples
     ///
     /// ```
@@ -177,6 +183,14 @@ impl DialogProvider for PresetDialogProvider {
             .unwrap_or_else(|| default.unwrap_or(false)))
     }
 
+    /// Returns the next queued index, or `0` when the queue is empty.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DialogError::EmptySelectionInput`] when `items` is empty.
+    /// Returns [`DialogError::InvalidConfiguration`] when the queued index is
+    /// out of range for `items` — [`Self::with_select`] doesn't validate
+    /// against a specific prompt's item count at queue time.
     #[inline]
     fn select(
         &self,
@@ -187,7 +201,15 @@ impl DialogProvider for PresetDialogProvider {
             return Err(DialogError::EmptySelectionInput);
         }
         if let Some(queued) = lock(&self.selects).pop_front() {
-            return Ok(queued);
+            return if queued < items.len() {
+                Ok(queued)
+            } else {
+                Err(DialogError::InvalidConfiguration(format!(
+                    "queued select index {queued} is out of bounds for {} \
+                     items",
+                    items.len()
+                )))
+            };
         }
         Ok(0)
     }
@@ -317,14 +339,14 @@ mod tests {
 
         #[test]
         fn returns_error_when_items_are_empty_and_preserves_queue() {
-            let p = PresetDialogProvider::new().with_select(42);
+            let p = PresetDialogProvider::new().with_select(0);
 
             assert!(matches!(
                 p.select("pick", &[]),
                 Err(DialogError::EmptySelectionInput)
             ));
 
-            assert_eq!(p.select("pick", &["a".to_owned()]).unwrap(), 42);
+            assert_eq!(p.select("pick", &["a".to_owned()]).unwrap(), 0);
         }
 
         #[test]
