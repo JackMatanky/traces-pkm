@@ -121,3 +121,58 @@ Renders the template to stdout without writing to disk.
 
 #### --force / -f
 Overwrites the output file if it already exists.
+
+### Note Index
+A persisted cache of metadata extracted from every file in the project root. Built by `traces index` and transparently kept fresh on every query. Two tiers: every file gets a **File Record**; markdown files additionally get **Note Metadata** (frontmatter, inline fields, tags, tasks, lists, links). Stored in a redb database.
+_Avoid_: database, cache, vault
+
+### File Record
+The indexed metadata for every file regardless of type: `file.path`, `file.name`, `file.folder`, `file.created_at`, `file.modified_at`, `file.size`. Exposes `ctime`/`cdate`/`mtime`/`mdate` accessors for Dataview-style queries.
+_Avoid_: file metadata, fs entry
+
+### Note Metadata
+The rich indexed data for markdown files only, layered on top of the File Record: frontmatter fields, inline fields (`Key:: Value`), tags, tasks, lists, and links.
+_Avoid_: page data, document info
+
+### Inline Field
+A `Key:: Value` pair embedded in a note's body using Dataview-compatible syntax: `Key:: Value` (start of line), `[Key:: Value]` (inline with visible key), or `(Key:: Value)` (inline with hidden key). Parsed from body text and list items, not from code blocks or inline code.
+_Avoid_: metadata tag, embedded field
+
+### QueryOutcome
+The type returned by a query — an iterable, indexable collection of `IndexRecord`s. Supports `len`, indexing by integer position, and iteration via `{% for %}`. Registered as a minijinja type so pipeline filters compose against it.
+_Avoid_: QueryResult, result set
+
+### IndexRecord
+A single item inside a `QueryOutcome`: a Note with its implicit `file.*` fields and all indexed frontmatter/inline field metadata.
+_Avoid_: QueryRow, page, record
+
+### Pipeline Query
+A template-side query composed through minijinja pipeline filters. Non-terminal filters (`where`, `sort`, `limit`, `group_by`, `flatten`) accept and return a `QueryOutcome`; terminal filters (`table`, `list`, `count`) accept a `QueryOutcome` and return a string.
+
+Built-in pipeline sources:
+- `query(from=...)` — returns a `QueryOutcome` over Notes matching the FROM criteria
+- `tasks(from=...)` — returns a `QueryOutcome` over individual tasks (task-level, not page-level)
+
+```jinja
+{% for note in query(from=["#book"]) | where("rating > 7") | sort("rating", "desc") %}
+  - {{ note.file.name }} ({{ note.rating }})
+{% endfor %}
+
+{{ query(from=["#book"]) | table(["Name", "Rating"], ["file.name", "rating"]) }}
+
+{% set books = query(from=["#book"]) %}
+{% set idx = ui.select("Pick", books | map(attribute="file.name")) %}
+{{ books[idx].file.name }}
+```
+_Avoid_: DQL, dataview query
+
+### CLI Query Commands
+
+#### list
+`traces list --from "#book" --where "rating > 7"` — page-level bullet list output.
+
+#### table
+`traces table "rating, author" --from "#book" --sort "rating" --desc` — page-level tabular output.
+
+#### task
+`traces task --from "#projects" --where "!completed"` — task-level output (operates on individual tasks, not pages).
