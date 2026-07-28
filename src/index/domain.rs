@@ -8,8 +8,73 @@ use std::{
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 
 use super::error::FileIndexError;
+
+/// A file's full name, including any extension (e.g. `"todo.md"`) - the
+/// last component of a path. Distinct from [`BaseName`], which strips the
+/// extension.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct FileName(String);
+
+impl FileName {
+    /// This name's extension, if any (e.g. `"md"` for `"todo.md"`).
+    fn extension(&self) -> Option<&str> {
+        Path::new(&self.0).extension().and_then(|ext| ext.to_str())
+    }
+}
+
+/// `path` has no final component to name a file with (e.g. `/`, `..`, or an
+/// empty path) - unreachable for any path [`super::scan::scan_root`]
+/// actually produces (a real file entry always has one), but the
+/// conversion is naturally fallible so it's modeled as `TryFrom`.
+#[derive(Debug, Error)]
+#[error("path has no file name")]
+pub(crate) struct MissingFileName;
+
+impl TryFrom<&Path> for FileName {
+    type Error = MissingFileName;
+
+    /// # Errors
+    ///
+    /// Returns [`MissingFileName`] if `path` has no final component (e.g.
+    /// `/`, `..`, or an empty path).
+    fn try_from(path: &Path) -> Result<Self, Self::Error> {
+        path.file_name()
+            .map(|name| Self(name.to_string_lossy().into_owned()))
+            .ok_or(MissingFileName)
+    }
+}
+
+/// A file's name with any extension stripped (e.g. `"todo"` for
+/// `"todo.md"`). Distinct from [`FileName`], which keeps the extension.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct BaseName(String);
+
+impl BaseName {
+    /// This name as a plain string slice.
+    #[inline]
+    #[must_use]
+    pub(crate) fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<&FileName> for BaseName {
+    /// Strips `name`'s extension, if any. Always succeeds: a name with no
+    /// extension (or a dotfile like `.gitignore`, where the leading dot
+    /// isn't treated as an extension separator) keeps its full text as the
+    /// stem.
+    fn from(name: &FileName) -> Self {
+        Self(
+            Path::new(&name.0)
+                .file_stem()
+                .map(|stem| stem.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+        )
+    }
+}
 
 /// Coarse classification of a [`FileRecord`] — whether Traces treats it as
 /// a markdown Note (eligible for future Note Metadata extraction; see the
@@ -25,10 +90,10 @@ pub(crate) enum FileKind {
 }
 
 impl FileKind {
-    /// Classifies `path` by its extension: `.md`/`.markdown`
+    /// Classifies a file by its name's extension: `.md`/`.markdown`
     /// (case-insensitive) is a Note, everything else is `Other`.
-    fn from_path(path: &Path) -> Self {
-        match path.extension().and_then(|ext| ext.to_str()) {
+    fn from_name(name: &FileName) -> Self {
+        match name.extension() {
             Some(ext)
                 if ext.eq_ignore_ascii_case("md")
                     || ext.eq_ignore_ascii_case("markdown") =>
@@ -40,25 +105,33 @@ impl FileKind {
     }
 }
 
-/// A File Record's creation time, as reported by the filesystem.
+/// A single point in time associated with a file: its creation or
+/// modification time.
 ///
-/// `None` on filesystems that don't report a creation time at all (e.g.
-/// some Linux filesystems without `statx` support) — see
-/// [`FileRecord::created_at`] for the convenience accessor most callers
-/// want, which falls back to `modified_at` in that case. Keeping the two
-/// apart means a future caller that cares about provenance (e.g. a "sort
-/// by creation time" query) can tell a real value from the fallback
-/// instead of silently treating a modification time as a creation time.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct CreatedAt(Option<DateTime<Utc>>);
+/// Wraps [`DateTime<Utc>`] as the domain-facing file-time type, named to
+/// avoid colliding with `std::time::Instant`, `std::fs::FileTimes`, or
+/// chrono's own `DateTime` - one place to add file-time-specific behavior
+/// (formatting, comparisons) as later tickets need it, shared by both
+/// [`FileRecord::created_at`] and [`FileRecord::modified_at`].
+#[derive(
+    Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize,
+)]
+pub(crate) struct Timestamp(DateTime<Utc>);
 
-impl CreatedAt {
-    /// The filesystem-reported creation time, or `None` if this filesystem
-    /// doesn't support reporting one.
-    #[inline]
+impl Timestamp {
+    /// The current time.
     #[must_use]
-    pub(crate) fn reported(&self) -> Option<DateTime<Utc>> {
-        self.0
+    pub(crate) fn now() -> Self {
+        Self(Utc::now())
+    }
+}
+
+impl From<SystemTime> for Timestamp {
+    /// Converts a filesystem timestamp to UTC, discarding sub-timezone
+    /// precision concerns — [`SystemTime`] carries no timezone, so this is
+    /// a lossless reinterpretation, not a conversion.
+    fn from(time: SystemTime) -> Self {
+        Self(DateTime::<Utc>::from(time))
     }
 }
 
@@ -69,11 +142,11 @@ impl CreatedAt {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct FileRecord {
     path: PathBuf,
-    name: String,
+    name: BaseName,
     folder: PathBuf,
     kind: FileKind,
-    created: CreatedAt,
-    modified_at: DateTime<Utc>,
+    created: Option<Timestamp>,
+    modified_at: Timestamp,
     size: u64,
 }
 
@@ -92,21 +165,19 @@ impl FileRecord {
     ) -> Result<Self, FileIndexError> {
         let relative = path.strip_prefix(root).unwrap_or(path).to_path_buf();
         let modified_at =
-            metadata.modified().map(system_time_to_utc).map_err(|source| {
+            metadata.modified().map(Timestamp::from).map_err(|source| {
                 FileIndexError::Io {
                     path: path.to_path_buf(),
                     source,
                 }
             })?;
-        let created =
-            CreatedAt(metadata.created().map(system_time_to_utc).ok());
-        let name = relative
-            .file_stem()
-            .map(|stem| stem.to_string_lossy().into_owned())
-            .unwrap_or_default();
+        let created = metadata.created().map(Timestamp::from).ok();
+        let file_name =
+            FileName::try_from(relative.as_path()).unwrap_or_default();
+        let name = BaseName::from(&file_name);
+        let kind = FileKind::from_name(&file_name);
         let folder =
             relative.parent().unwrap_or_else(|| Path::new("")).to_path_buf();
-        let kind = FileKind::from_path(&relative);
 
         Ok(Self {
             path: relative,
@@ -129,7 +200,7 @@ impl FileRecord {
     /// The file's name, without its extension.
     #[inline]
     #[must_use]
-    pub(crate) fn name(&self) -> &str {
+    pub(crate) fn name(&self) -> &BaseName {
         &self.name
     }
 
@@ -153,23 +224,23 @@ impl FileRecord {
     /// convenience accessor.
     #[inline]
     #[must_use]
-    pub(crate) fn created(&self) -> CreatedAt {
+    pub(crate) fn reported_created_at(&self) -> Option<Timestamp> {
         self.created
     }
 
     /// The file's creation time, or its modification time where the
-    /// filesystem doesn't report a creation time. Use [`Self::created`] to
-    /// tell the two cases apart.
+    /// filesystem doesn't report a creation time. Use
+    /// [`Self::reported_created_at`] to tell the two cases apart.
     #[inline]
     #[must_use]
-    pub(crate) fn created_at(&self) -> DateTime<Utc> {
-        self.created.reported().unwrap_or(self.modified_at)
+    pub(crate) fn created_at(&self) -> Timestamp {
+        self.created.unwrap_or(self.modified_at)
     }
 
     /// The file's last modification time.
     #[inline]
     #[must_use]
-    pub(crate) fn modified_at(&self) -> DateTime<Utc> {
+    pub(crate) fn modified_at(&self) -> Timestamp {
         self.modified_at
     }
 
@@ -181,16 +252,83 @@ impl FileRecord {
     }
 }
 
-/// Converts a filesystem timestamp to UTC, discarding sub-timezone precision
-/// concerns — [`SystemTime`] carries no timezone, so this is a lossless
-/// reinterpretation, not a conversion.
-fn system_time_to_utc(time: SystemTime) -> DateTime<Utc> {
-    DateTime::<Utc>::from(time)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    mod file_name {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn keeps_the_extension() {
+            let name = FileName::try_from(Path::new("todo.md"))
+                .expect("valid file name");
+
+            assert_eq!(name.extension(), Some("md"));
+        }
+
+        #[test]
+        fn fails_when_the_path_has_no_final_component() {
+            let error = FileName::try_from(Path::new(".."))
+                .expect_err("path with no file name is rejected");
+
+            assert!(matches!(error, MissingFileName));
+        }
+    }
+
+    mod base_name {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn strips_the_extension() {
+            let name = FileName::try_from(Path::new("todo.md"))
+                .expect("valid file name");
+
+            assert_eq!(BaseName::from(&name).as_str(), "todo");
+        }
+
+        #[test]
+        fn keeps_the_whole_name_when_there_is_no_extension() {
+            let name = FileName::try_from(Path::new("LICENSE"))
+                .expect("valid file name");
+
+            assert_eq!(BaseName::from(&name).as_str(), "LICENSE");
+        }
+
+        #[test]
+        fn treats_a_leading_dot_as_part_of_the_stem() {
+            let name = FileName::try_from(Path::new(".gitignore"))
+                .expect("valid file name");
+
+            assert_eq!(BaseName::from(&name).as_str(), ".gitignore");
+        }
+    }
+
+    mod from_name {
+        use pretty_assertions::assert_eq;
+        use rstest::rstest;
+
+        use super::*;
+
+        #[rstest]
+        #[case::lowercase_md_extension("note.md", FileKind::Note)]
+        #[case::mixed_case_markdown_extension("note.MARKDOWN", FileKind::Note)]
+        #[case::non_markdown_extension("config.toml", FileKind::Other)]
+        #[case::no_extension("LICENSE", FileKind::Other)]
+        fn classifies_by_extension(
+            #[case] file_name: &str,
+            #[case] expected: FileKind,
+        ) {
+            let name = FileName::try_from(Path::new(file_name))
+                .expect("valid file name");
+
+            assert_eq!(FileKind::from_name(&name), expected);
+        }
+    }
 
     mod from_metadata {
         use pretty_assertions::assert_eq;
@@ -215,7 +353,7 @@ mod tests {
             )
             .expect("build record");
 
-            assert_eq!(record.name(), "todo");
+            assert_eq!(record.name().as_str(), "todo");
             assert_eq!(record.path(), Path::new("notes/todo.md"));
             assert_eq!(record.folder(), Path::new("notes"));
             assert_eq!(record.kind(), FileKind::Note);
@@ -265,10 +403,9 @@ mod tests {
             let file = temp.path().join("note.md");
             fs::write(&file, "content").expect("write file");
             let metadata = metadata_for(&file);
-            let expected: DateTime<Utc> = metadata
-                .modified()
-                .expect("filesystem reports modified time")
-                .into();
+            let expected = Timestamp::from(
+                metadata.modified().expect("filesystem reports modified time"),
+            );
 
             let record =
                 FileRecord::from_metadata(&file, temp.path(), &metadata)
@@ -297,29 +434,10 @@ mod tests {
             // whether this filesystem reports a creation time isn't
             // something a test controls.
             assert!(
-                record.created_at() <= Utc::now(),
+                record.created_at() <= Timestamp::now(),
                 "expected a populated, non-future created_at, got {:?}",
                 record.created_at()
             );
-        }
-    }
-
-    mod from_path {
-        use pretty_assertions::assert_eq;
-        use rstest::rstest;
-
-        use super::*;
-
-        #[rstest]
-        #[case::lowercase_md_extension("note.md", FileKind::Note)]
-        #[case::mixed_case_markdown_extension("note.MARKDOWN", FileKind::Note)]
-        #[case::non_markdown_extension("config.toml", FileKind::Other)]
-        #[case::no_extension("LICENSE", FileKind::Other)]
-        fn classifies_by_extension(
-            #[case] file_name: &str,
-            #[case] expected: FileKind,
-        ) {
-            assert_eq!(FileKind::from_path(Path::new(file_name)), expected);
         }
     }
 
@@ -334,12 +452,12 @@ mod tests {
         /// real dev/CI filesystem reports a creation time isn't something
         /// a test controls.
         fn record_with(
-            created: CreatedAt,
-            modified_at: DateTime<Utc>,
+            created: Option<Timestamp>,
+            modified_at: Timestamp,
         ) -> FileRecord {
             FileRecord {
                 path: PathBuf::from("note.md"),
-                name: "note".to_owned(),
+                name: BaseName("note".to_owned()),
                 folder: PathBuf::new(),
                 kind: FileKind::Note,
                 created,
@@ -350,21 +468,21 @@ mod tests {
 
         #[test]
         fn returns_the_reported_value_when_the_filesystem_supports_it() {
-            let modified_at = Utc::now();
-            let reported = modified_at - chrono::Duration::days(1);
-            let record = record_with(CreatedAt(Some(reported)), modified_at);
+            let modified_at = Timestamp::now();
+            let reported = Timestamp(modified_at.0 - chrono::Duration::days(1));
+            let record = record_with(Some(reported), modified_at);
 
             assert_eq!(record.created_at(), reported);
-            assert_eq!(record.created().reported(), Some(reported));
+            assert_eq!(record.reported_created_at(), Some(reported));
         }
 
         #[test]
         fn falls_back_to_modified_at_when_unsupported() {
-            let modified_at = Utc::now();
-            let record = record_with(CreatedAt(None), modified_at);
+            let modified_at = Timestamp::now();
+            let record = record_with(None, modified_at);
 
             assert_eq!(record.created_at(), modified_at);
-            assert_eq!(record.created().reported(), None);
+            assert_eq!(record.reported_created_at(), None);
         }
     }
 }
