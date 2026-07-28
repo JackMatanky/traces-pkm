@@ -12,11 +12,10 @@ use serde::{Deserialize, Serialize};
 use super::error::FileIndexError;
 use crate::file_name::{BaseName, FileName};
 
-/// Coarse classification of a [`FileRecord`] — whether Traces treats it as
-/// a markdown Note (eligible for future Note Metadata extraction; see the
-/// spec's two-tier File Record / Note Metadata model) or a plain file.
-///
-/// Named `kind` to match the `file_records` schema in ADR-0005.
+/// Coarse classification of a [`FileRecord`] — whether Traces treats it as a
+/// markdown Note (eligible for future Note Metadata extraction; see the spec's
+/// two-tier File Record / Note Metadata model) or a plain file. Named `kind` to
+/// match the `file_records` schema in ADR-0005.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) enum FileKind {
     /// A markdown Note (`.md` or `.markdown` extension).
@@ -44,11 +43,9 @@ impl FileKind {
 /// A single point in time associated with a file: its creation or
 /// modification time.
 ///
-/// Wraps [`DateTime<Utc>`] as the domain-facing file-time type, named to
-/// avoid colliding with `std::time::Instant`, `std::fs::FileTimes`, or
-/// chrono's own `DateTime` - one place to add file-time-specific behavior
-/// (formatting, comparisons) as later tickets need it, shared by both
-/// [`FileRecord::created_at`] and [`FileRecord::modified_at`].
+/// Wraps [`DateTime<Utc>`] to avoid colliding with `std::time::Instant` or
+/// `std::fs::FileTimes`, and gives file timestamps one shared place for
+/// formatting/comparison behavior as later tickets need it.
 #[derive(
     Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize,
 )]

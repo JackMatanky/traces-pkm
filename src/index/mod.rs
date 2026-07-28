@@ -9,10 +9,10 @@
     not(test),
     expect(
         dead_code,
-        reason = "load(), records() accessors, and most FileRecord fields are \
-                  exercised by tests now but only get a non-test caller once \
-                  the query surface (tickets 02-04) lands; `traces index` \
-                  itself only needs build+persist"
+        reason = "load() and most FileRecord accessors/fields are exercised \
+                  by tests now but only get a non-test caller once the query \
+                  surface (tickets 02-04) lands; `traces index` itself only \
+                  uses build+persist+records()"
     )
 )]
 

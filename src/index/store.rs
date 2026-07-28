@@ -25,7 +25,7 @@ use super::{INDEX_FILE, error::FileIndexError, file::FileRecord};
 const FILE_RECORDS: TableDefinition<&str, &[u8]> =
     TableDefinition::new("file_records");
 
-/// Opens the redb database backing one project root's `FileIndex`.
+/// Redb-backed handle to one project root's index database.
 pub(super) struct IndexStore {
     db: Database,
     /// The database's own path, kept for error context.
@@ -97,7 +97,8 @@ impl IndexStore {
         write_txn.commit().map_err(|source| self.store_error(source))
     }
 
-    /// Loads every stored File Record.
+    /// Loads every stored File Record, sorted by path for deterministic
+    /// output.
     ///
     /// # Errors
     ///
@@ -116,21 +117,25 @@ impl IndexStore {
             Err(source) => return Err(self.store_error(source)),
         };
 
-        let mut records = Vec::new();
+        let mut records: Vec<FileRecord> = Vec::new();
         for entry in table.iter().map_err(|source| self.store_error(source))? {
-            let (_, value) =
+            let (key, value) =
                 entry.map_err(|source| self.store_error(source))?;
+            let path = PathBuf::from(key.value());
             let text = str::from_utf8(value.value()).map_err(|source| {
                 FileIndexError::Corrupt {
+                    path: path.clone(),
                     source,
                 }
             })?;
             records.push(toml::from_str(text).map_err(|source| {
                 FileIndexError::Deserialize {
-                    source,
+                    path,
+                    source: Box::new(source),
                 }
             })?);
         }
+        records.sort_by(|a, b| a.path().cmp(b.path()));
         Ok(records)
     }
 
@@ -221,6 +226,29 @@ mod tests {
 
             assert_eq!(loaded, records);
         }
+
+        #[test]
+        fn load_all_matches_the_path_sort_order_not_the_raw_key_order() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            // A raw byte comparison of the redb keys puts `"a-b/c.md"`
+            // before `"a/z.md"` (`-` sorts before `/` in ASCII), but
+            // `Path`'s component-wise `Ord` puts `"a/z.md"` first (`"a"`
+            // is a prefix of `"a-b"`). This set exercises that divergence
+            // to prove `load_all` returns `FileRecord::path` order, not
+            // whatever order redb's table happens to iterate in.
+            fs::create_dir_all(temp.path().join("a-b")).expect("mkdir a-b");
+            fs::create_dir_all(temp.path().join("a")).expect("mkdir a");
+            fs::write(temp.path().join("a-b/c.md"), "1")
+                .expect("write a-b/c.md");
+            fs::write(temp.path().join("a/z.md"), "2").expect("write a/z.md");
+            let records = scan_root(temp.path()).expect("scan root");
+            let store = IndexStore::open(temp.path()).expect("open store");
+            store.replace_all(&records).expect("persist records");
+
+            let loaded = store.load_all().expect("load records");
+
+            assert_eq!(loaded, records);
+        }
     }
 
     mod load_all {
@@ -248,7 +276,10 @@ mod tests {
             let error =
                 store.load_all().expect_err("non-UTF8 bytes fail to load");
 
-            assert!(matches!(error, FileIndexError::Corrupt { .. }));
+            assert!(matches!(
+                &error,
+                FileIndexError::Corrupt { path, .. } if path == Path::new("bad.md")
+            ));
         }
 
         #[test]
@@ -260,7 +291,11 @@ mod tests {
             let error =
                 store.load_all().expect_err("invalid TOML text fails to load");
 
-            assert!(matches!(error, FileIndexError::Deserialize { .. }));
+            assert!(matches!(
+                &error,
+                FileIndexError::Deserialize { path, .. }
+                    if path == Path::new("bad.md")
+            ));
         }
     }
 }

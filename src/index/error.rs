@@ -8,8 +8,8 @@ use thiserror::Error;
 /// Errors from building, persisting, or loading a [`super::FileIndex`].
 #[derive(Debug, Error)]
 pub(crate) enum FileIndexError {
-    /// A filesystem operation failed while scanning a project root or
-    /// preparing the index database's parent directory.
+    /// A filesystem operation failed while scanning a project root or preparing
+    /// the index database's parent directory.
     #[error("failed to access {path}")]
     Io {
         /// The path that could not be accessed.
@@ -23,9 +23,9 @@ pub(crate) enum FileIndexError {
     Store {
         /// The index database file.
         path: PathBuf,
-        /// Source redb error, boxed to keep this enum (and `CliError`,
-        /// which wraps it) small — `redb::Error` is a large,
-        /// many-variant enum, and `Store` is by far the rarest path here.
+        /// Source redb error, boxed to keep this enum (and `CliError`, which
+        /// wraps it) small — `redb::Error` is a large, many-variant enum, and
+        /// `Store` is by far the rarest path here.
         #[source]
         source: Box<redb::Error>,
     },
@@ -40,18 +40,26 @@ pub(crate) enum FileIndexError {
     },
     /// A stored File Record's bytes were not valid UTF-8 — the index
     /// database is corrupted.
-    #[error("corrupted File Record bytes in the index database")]
+    #[error("corrupted File Record bytes in the index database for {path}")]
     Corrupt {
+        /// The corrupted record's project-relative path (its key in the
+        /// index database).
+        path: PathBuf,
         /// Source UTF-8 decoding error.
         #[source]
         source: Utf8Error,
     },
     /// A stored File Record's text could not be parsed back into a
     /// [`super::FileRecord`].
-    #[error("failed to deserialize a File Record")]
+    #[error("failed to deserialize the File Record for {path}")]
     Deserialize {
-        /// Source TOML deserialization error.
+        /// The record's project-relative path (its key in the index database).
+        path: PathBuf,
+        /// Source TOML deserialization error, boxed to keep this enum (and
+        /// `CliError`, which wraps it) small — `toml::de::Error` carries a
+        /// full parse diagnostic and is large relative to the other variants
+        /// here.
         #[source]
-        source: toml::de::Error,
+        source: Box<toml::de::Error>,
     },
 }
