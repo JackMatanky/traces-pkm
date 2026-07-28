@@ -9,17 +9,6 @@ use super::types::{
     TaskStatus,
 };
 
-struct ListFrame {
-    is_ordered: bool,
-    items: Vec<ListItem>,
-}
-
-struct ItemFrame {
-    task_status: Option<TaskStatus>,
-    text_buffer: String,
-    children: Vec<List>,
-}
-
 /// Parses a markdown string into a [`Note`] record using `pulldown-cmark`.
 #[must_use]
 pub(crate) fn parse_markdown(src: &str) -> Note {
@@ -155,6 +144,17 @@ pub(crate) fn parse_markdown(src: &str) -> Note {
     Note::new(frontmatter, lists, outlinks, code_regions)
 }
 
+struct ListFrame {
+    is_ordered: bool,
+    items: Vec<ListItem>,
+}
+
+struct ItemFrame {
+    task_status: Option<TaskStatus>,
+    text_buffer: String,
+    children: Vec<List>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -273,6 +273,7 @@ mod tests {
             assert_eq!(list.is_ordered(), expected_ordered);
             assert_eq!(list.items().len(), 2);
         }
+
         #[rstest]
         #[case::inline_code_span(
             "Text with `inline code` span.",

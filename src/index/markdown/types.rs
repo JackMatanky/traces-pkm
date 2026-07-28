@@ -4,247 +4,41 @@ use std::ops::Range;
 
 use serde::{Deserialize, Serialize};
 
-/// Frontmatter metadata block extracted from a markdown Note.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct Frontmatter {
-    raw: String,
+/// Pair of a project-relative path and its extracted [`Note`] metadata.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+pub(crate) struct NoteRecord {
+    path: std::path::PathBuf,
+    note: Note,
 }
 
-impl Frontmatter {
-    /// Creates a new [`Frontmatter`] instance.
+impl NoteRecord {
+    /// Creates a new [`NoteRecord`].
     #[inline]
     #[must_use]
-    pub(crate) fn new(raw: impl Into<String>) -> Self {
+    pub(crate) fn new(path: impl Into<std::path::PathBuf>, note: Note) -> Self {
         Self {
-            raw: raw.into(),
+            path: path.into(),
+            note,
         }
     }
 
-    /// Raw YAML content of the frontmatter block.
+    /// Project-relative path of the note.
     #[inline]
     #[must_use]
-    pub(crate) fn raw(&self) -> &str {
-        &self.raw
+    pub(crate) fn path(&self) -> &std::path::Path {
+        &self.path
     }
 
-    /// Returns `true` if the frontmatter block is empty.
+    /// Extracted Note Metadata.
     #[inline]
     #[must_use]
-    pub(crate) fn is_empty(&self) -> bool {
-        self.raw.is_empty()
-    }
-}
-
-/// Link target classification: standard Markdown link or Obsidian Wikilink.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) enum LinkType {
-    Markdown,
-    Wikilink,
-}
-
-/// An outgoing link extracted from a markdown Note.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct Outlink {
-    target: String,
-    text: String,
-    kind: LinkType,
-}
-
-impl Outlink {
-    /// Creates a new [`Outlink`].
-    #[inline]
-    #[must_use]
-    pub(crate) fn new(
-        target: impl Into<String>,
-        text: impl Into<String>,
-        kind: LinkType,
-    ) -> Self {
-        Self {
-            target: target.into(),
-            text: text.into(),
-            kind,
-        }
-    }
-
-    /// Target URL, relative file path, or wikilink page target.
-    #[inline]
-    #[must_use]
-    pub(crate) fn target(&self) -> &str {
-        &self.target
-    }
-
-    /// Display text or alias for the link.
-    #[inline]
-    #[must_use]
-    pub(crate) fn text(&self) -> &str {
-        &self.text
-    }
-
-    /// Link syntax classification ([`LinkType::Markdown`] or
-    /// [`LinkType::Wikilink`]).
-    #[inline]
-    #[must_use]
-    pub(crate) fn kind(&self) -> LinkType {
-        self.kind
-    }
-
-    /// Returns `true` if this link is a Wikilink.
-    #[inline]
-    #[must_use]
-    pub(crate) fn is_wikilink(&self) -> bool {
-        matches!(self.kind, LinkType::Wikilink)
-    }
-
-    /// Returns `true` if this link is a standard Markdown link.
-    #[inline]
-    #[must_use]
-    pub(crate) fn is_markdown(&self) -> bool {
-        matches!(self.kind, LinkType::Markdown)
-    }
-}
-
-/// Completion state for a task list item.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) enum TaskStatus {
-    Incomplete,
-    Complete,
-}
-
-/// A single item within a markdown list.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct ListItem {
-    text: String,
-    task_status: Option<TaskStatus>,
-    children: Vec<List>,
-}
-
-impl ListItem {
-    /// Creates a new [`ListItem`].
-    #[inline]
-    #[must_use]
-    pub(crate) fn new(
-        text: impl Into<String>,
-        task_status: Option<TaskStatus>,
-    ) -> Self {
-        Self {
-            text: text.into(),
-            task_status,
-            children: Vec::new(),
-        }
-    }
-
-    /// Creates a new [`ListItem`] with child lists.
-    #[inline]
-    #[must_use]
-    pub(crate) fn with_children(
-        text: impl Into<String>,
-        task_status: Option<TaskStatus>,
-        children: Vec<List>,
-    ) -> Self {
-        Self {
-            text: text.into(),
-            task_status,
-            children,
-        }
-    }
-
-    #[inline]
-    #[must_use]
-    pub(crate) fn text(&self) -> &str {
-        &self.text
-    }
-
-    /// Task completion state, if this list item is a task.
-    #[inline]
-    #[must_use]
-    pub(crate) fn task_status(&self) -> Option<TaskStatus> {
-        self.task_status
-    }
-
-    /// Returns `true` if this item is a task item (`- [ ]` or `- [x]`).
-    #[inline]
-    #[must_use]
-    pub(crate) fn is_task(&self) -> bool {
-        self.task_status.is_some()
-    }
-
-    /// Returns `true` if this task item is completed (`- [x]`).
-    #[inline]
-    #[must_use]
-    pub(crate) fn is_completed(&self) -> bool {
-        matches!(self.task_status, Some(TaskStatus::Complete))
-    }
-
-    /// Nested child lists under this item.
-    #[inline]
-    #[must_use]
-    pub(crate) fn children(&self) -> &[List] {
-        &self.children
-    }
-}
-
-/// A list extracted from a markdown Note.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct List {
-    is_ordered: bool,
-    items: Vec<ListItem>,
-}
-
-impl List {
-    /// Creates a new [`List`].
-    #[inline]
-    #[must_use]
-    pub(crate) fn new(is_ordered: bool, items: Vec<ListItem>) -> Self {
-        Self {
-            is_ordered,
-            items,
-        }
-    }
-
-    /// Returns `true` if this is an ordered list.
-    #[inline]
-    #[must_use]
-    pub(crate) fn is_ordered(&self) -> bool {
-        self.is_ordered
-    }
-
-    /// Top-level list items contained in this list.
-    #[inline]
-    #[must_use]
-    pub(crate) fn items(&self) -> &[ListItem] {
-        &self.items
-    }
-}
-
-/// An excludable code region (inline code or code block byte range) in source
-/// markdown.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct CodeRegion {
-    start: usize,
-    end: usize,
-}
-
-impl CodeRegion {
-    /// Creates a new [`CodeRegion`].
-    #[inline]
-    #[must_use]
-    pub(crate) fn new(start: usize, end: usize) -> Self {
-        Self {
-            start,
-            end,
-        }
-    }
-
-    /// Byte range in the original markdown source.
-    #[inline]
-    #[must_use]
-    pub(crate) fn range(&self) -> Range<usize> {
-        self.start..self.end
+    pub(crate) fn note(&self) -> &Note {
+        &self.note
     }
 }
 
 /// Rich Note Metadata extracted from a markdown file.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub(crate) struct Note {
     frontmatter: Option<Frontmatter>,
     lists: Vec<List>,
@@ -320,38 +114,246 @@ fn collect_tasks_recursive<'a>(list: &'a List, acc: &mut Vec<&'a ListItem>) {
     }
 }
 
-/// Pair of a project-relative path and its extracted [`Note`] metadata.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct NoteRecord {
-    path: std::path::PathBuf,
-    note: Note,
+/// Frontmatter metadata block extracted from a markdown Note.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+pub(crate) struct Frontmatter {
+    raw: String,
 }
 
-impl NoteRecord {
-    /// Creates a new [`NoteRecord`].
+impl Frontmatter {
+    /// Creates a new [`Frontmatter`] instance.
     #[inline]
     #[must_use]
-    pub(crate) fn new(path: impl Into<std::path::PathBuf>, note: Note) -> Self {
+    pub(crate) fn new(raw: impl Into<String>) -> Self {
         Self {
-            path: path.into(),
-            note,
+            raw: raw.into(),
         }
     }
 
-    /// Project-relative path of the note.
+    /// Raw YAML content of the frontmatter block.
     #[inline]
     #[must_use]
-    pub(crate) fn path(&self) -> &std::path::Path {
-        &self.path
+    pub(crate) fn raw(&self) -> &str {
+        &self.raw
     }
 
-    /// Extracted Note Metadata.
+    /// Returns `true` if the frontmatter block is empty.
     #[inline]
     #[must_use]
-    pub(crate) fn note(&self) -> &Note {
-        &self.note
+    pub(crate) fn is_empty(&self) -> bool {
+        self.raw.is_empty()
     }
 }
+
+/// Link target classification: standard Markdown link or Obsidian Wikilink.
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+pub(crate) enum LinkType {
+    Markdown,
+    Wikilink,
+}
+
+/// An outgoing link extracted from a markdown Note.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+pub(crate) struct Outlink {
+    target: String,
+    text: String,
+    kind: LinkType,
+}
+
+impl Outlink {
+    /// Creates a new [`Outlink`].
+    #[inline]
+    #[must_use]
+    pub(crate) fn new(
+        target: impl Into<String>,
+        text: impl Into<String>,
+        kind: LinkType,
+    ) -> Self {
+        Self {
+            target: target.into(),
+            text: text.into(),
+            kind,
+        }
+    }
+
+    /// Target URL, relative file path, or wikilink page target.
+    #[inline]
+    #[must_use]
+    pub(crate) fn target(&self) -> &str {
+        &self.target
+    }
+
+    /// Display text or alias for the link.
+    #[inline]
+    #[must_use]
+    pub(crate) fn text(&self) -> &str {
+        &self.text
+    }
+
+    /// Link syntax classification ([`LinkType::Markdown`] or
+    /// [`LinkType::Wikilink`]).
+    #[inline]
+    #[must_use]
+    pub(crate) fn kind(&self) -> LinkType {
+        self.kind
+    }
+
+    /// Returns `true` if this link is a Wikilink.
+    #[inline]
+    #[must_use]
+    pub(crate) fn is_wikilink(&self) -> bool {
+        matches!(self.kind, LinkType::Wikilink)
+    }
+
+    /// Returns `true` if this link is a standard Markdown link.
+    #[inline]
+    #[must_use]
+    pub(crate) fn is_markdown(&self) -> bool {
+        matches!(self.kind, LinkType::Markdown)
+    }
+}
+
+/// Completion state for a task list item.
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+pub(crate) enum TaskStatus {
+    Incomplete,
+    Complete,
+}
+
+/// A single item within a markdown list.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+pub(crate) struct ListItem {
+    text: String,
+    task_status: Option<TaskStatus>,
+    children: Vec<List>,
+}
+
+impl ListItem {
+    /// Creates a new [`ListItem`].
+    #[inline]
+    #[must_use]
+    pub(crate) fn new(
+        text: impl Into<String>,
+        task_status: Option<TaskStatus>,
+    ) -> Self {
+        Self {
+            text: text.into(),
+            task_status,
+            children: Vec::new(),
+        }
+    }
+
+    /// Creates a new [`ListItem`] with child lists.
+    #[inline]
+    #[must_use]
+    pub(crate) fn with_children(
+        text: impl Into<String>,
+        task_status: Option<TaskStatus>,
+        children: Vec<List>,
+    ) -> Self {
+        Self {
+            text: text.into(),
+            task_status,
+            children,
+        }
+    }
+
+    /// Plain text content of the list item.
+    #[inline]
+    #[must_use]
+    pub(crate) fn text(&self) -> &str {
+        &self.text
+    }
+
+    /// Task completion state, if this list item is a task.
+    #[inline]
+    #[must_use]
+    pub(crate) fn task_status(&self) -> Option<TaskStatus> {
+        self.task_status
+    }
+
+    /// Returns `true` if this item is a task item (`- [ ]` or `- [x]`).
+    #[inline]
+    #[must_use]
+    pub(crate) fn is_task(&self) -> bool {
+        self.task_status.is_some()
+    }
+
+    /// Returns `true` if this task item is completed (`- [x]`).
+    #[inline]
+    #[must_use]
+    pub(crate) fn is_completed(&self) -> bool {
+        matches!(self.task_status, Some(TaskStatus::Complete))
+    }
+
+    /// Nested child lists under this item.
+    #[inline]
+    #[must_use]
+    pub(crate) fn children(&self) -> &[List] {
+        &self.children
+    }
+}
+
+/// A list extracted from a markdown Note.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+pub(crate) struct List {
+    is_ordered: bool,
+    items: Vec<ListItem>,
+}
+
+impl List {
+    /// Creates a new [`List`].
+    #[inline]
+    #[must_use]
+    pub(crate) fn new(is_ordered: bool, items: Vec<ListItem>) -> Self {
+        Self {
+            is_ordered,
+            items,
+        }
+    }
+
+    /// Returns `true` if this is an ordered list.
+    #[inline]
+    #[must_use]
+    pub(crate) fn is_ordered(&self) -> bool {
+        self.is_ordered
+    }
+
+    /// Top-level list items contained in this list.
+    #[inline]
+    #[must_use]
+    pub(crate) fn items(&self) -> &[ListItem] {
+        &self.items
+    }
+}
+
+/// An excludable code region (inline code or code block byte range) in source
+/// markdown.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+pub(crate) struct CodeRegion {
+    start: usize,
+    end: usize,
+}
+
+impl CodeRegion {
+    /// Creates a new [`CodeRegion`].
+    #[inline]
+    #[must_use]
+    pub(crate) fn new(start: usize, end: usize) -> Self {
+        Self {
+            start,
+            end,
+        }
+    }
+
+    /// Byte range in the original markdown source.
+    #[inline]
+    #[must_use]
+    pub(crate) fn range(&self) -> Range<usize> {
+        self.start..self.end
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

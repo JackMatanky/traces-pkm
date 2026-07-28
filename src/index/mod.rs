@@ -14,16 +14,22 @@
     )
 )]
 
+mod error;
+mod file;
+mod markdown;
+mod scan;
+mod store;
+
 use std::{fs, path::Path};
 
 pub(crate) use error::FileIndexError;
-#[allow(
+#[expect(
     unused_imports,
     reason = "domain types exported for index module callers"
 )]
 pub(crate) use file::{FileFormat, FileRecord, Timestamp};
 use markdown::parse_markdown;
-#[allow(
+#[expect(
     unused_imports,
     reason = "domain types exported for index module callers"
 )]
@@ -32,12 +38,6 @@ pub(crate) use markdown::{
     Outlink, TaskStatus,
 };
 use store::IndexStore;
-
-mod error;
-mod file;
-mod markdown;
-mod scan;
-mod store;
 
 /// The persisted `FileIndex` database's path, relative to a project root.
 const INDEX_FILE: &str = ".traces/index.redb";
@@ -151,6 +151,7 @@ mod tests {
         use pretty_assertions::assert_eq;
 
         use super::*;
+
         #[test]
         fn finds_every_file_under_root_and_extracts_notes() {
             let temp = tempfile::tempdir().expect("create temp dir");
@@ -185,6 +186,7 @@ mod tests {
         use pretty_assertions::assert_eq;
 
         use super::*;
+
         #[test]
         fn persist_then_load_recovers_the_same_records_and_notes() {
             let temp = tempfile::tempdir().expect("create temp dir");
@@ -253,6 +255,7 @@ mod tests {
             );
         }
     }
+
     mod lookup {
         use pretty_assertions::assert_eq;
 
