@@ -3,7 +3,7 @@
 use pulldown_cmark::{Event, LinkType, Options, Parser, Tag, TagEnd};
 
 use super::types::{
-    CodeRegion, Frontmatter, List, ListItem, Note, Outlink, OutlinkKind,
+    CodeRegion, Frontmatter, List, ListItem, Note, Outlink, OutlinkType,
     TaskStatus,
 };
 
@@ -33,7 +33,7 @@ pub(crate) fn parse_markdown(src: &str) -> Note {
     let mut metadata_buffer = String::new();
 
     let mut outlinks: Vec<Outlink> = Vec::new();
-    let mut active_link: Option<(String, OutlinkKind, String)> = None;
+    let mut active_link: Option<(String, OutlinkType, String)> = None;
 
     let mut code_regions: Vec<CodeRegion> = Vec::new();
     let mut active_code_block_start: Option<usize> = None;
@@ -60,9 +60,9 @@ pub(crate) fn parse_markdown(src: &str) -> Note {
                 ..
             }) => {
                 let kind = if matches!(link_type, LinkType::WikiLink { .. }) {
-                    OutlinkKind::Wikilink
+                    OutlinkType::Wikilink
                 } else {
-                    OutlinkKind::Markdown
+                    OutlinkType::Markdown
                 };
                 active_link =
                     Some((dest_url.into_string(), kind, String::new()));

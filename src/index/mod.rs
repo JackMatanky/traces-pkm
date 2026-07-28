@@ -21,7 +21,7 @@ pub(crate) use error::FileIndexError;
     unused_imports,
     reason = "domain types exported for index module callers"
 )]
-pub(crate) use file::{FileKind, FileRecord, Timestamp};
+pub(crate) use file::{FileFormat, FileRecord, Timestamp};
 use markdown::parse_markdown;
 #[allow(
     unused_imports,
@@ -29,7 +29,7 @@ use markdown::parse_markdown;
 )]
 pub(crate) use markdown::{
     CodeRegion, Frontmatter, List, ListItem, Note, NoteRecord, Outlink,
-    OutlinkKind, TaskStatus,
+    OutlinkType, TaskStatus,
 };
 use store::IndexStore;
 
@@ -64,7 +64,7 @@ impl FileIndex {
         let mut notes = Vec::new();
 
         for record in &records {
-            if record.kind() == FileKind::Note {
+            if record.format() == FileFormat::Note {
                 let full_path = root.join(record.path());
                 let content =
                     fs::read_to_string(&full_path).map_err(|source| {

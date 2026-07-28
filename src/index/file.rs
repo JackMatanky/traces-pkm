@@ -16,14 +16,14 @@ use crate::file_name::{BaseName, FileName};
 /// markdown Note (eligible for future Note Metadata extraction; see the spec's
 /// two-tier File Record / Note Metadata model) or a plain file.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) enum FileKind {
+pub(crate) enum FileFormat {
     /// A markdown Note (`.md` or `.markdown` extension).
     Note,
     /// Any other file.
     Other,
 }
 
-impl FileKind {
+impl FileFormat {
     /// Classifies a file by its name's extension: `.md`/`.markdown`
     /// (case-insensitive) is a Note, everything else is `Other`.
     fn from_name(name: &FileName) -> Self {
@@ -76,7 +76,7 @@ pub(crate) struct FileRecord {
     path: PathBuf,
     name: BaseName,
     folder: PathBuf,
-    kind: FileKind,
+    format: FileFormat,
     created: Option<Timestamp>,
     modified_at: Timestamp,
     size: u64,
@@ -107,7 +107,7 @@ impl FileRecord {
         let file_name =
             FileName::try_from(relative.as_path()).unwrap_or_default();
         let name = BaseName::from(&file_name);
-        let kind = FileKind::from_name(&file_name);
+        let format = FileFormat::from_name(&file_name);
         let folder =
             relative.parent().unwrap_or_else(|| Path::new("")).to_path_buf();
 
@@ -115,7 +115,7 @@ impl FileRecord {
             path: relative,
             name,
             folder,
-            kind,
+            format,
             created,
             modified_at,
             size: metadata.len(),
@@ -147,8 +147,8 @@ impl FileRecord {
     /// Whether this file is a markdown Note or a plain file.
     #[inline]
     #[must_use]
-    pub(crate) fn kind(&self) -> FileKind {
-        self.kind
+    pub(crate) fn format(&self) -> FileFormat {
+        self.format
     }
 
     /// This file's creation time, as reported by the filesystem — `None` if
@@ -196,18 +196,21 @@ mod tests {
         use super::*;
 
         #[rstest]
-        #[case::lowercase_md_extension("note.md", FileKind::Note)]
-        #[case::mixed_case_markdown_extension("note.MARKDOWN", FileKind::Note)]
-        #[case::non_markdown_extension("config.toml", FileKind::Other)]
-        #[case::no_extension("LICENSE", FileKind::Other)]
+        #[case::lowercase_md_extension("note.md", FileFormat::Note)]
+        #[case::mixed_case_markdown_extension(
+            "note.MARKDOWN",
+            FileFormat::Note
+        )]
+        #[case::non_markdown_extension("config.toml", FileFormat::Other)]
+        #[case::no_extension("LICENSE", FileFormat::Other)]
         fn classifies_by_extension(
             #[case] file_name: &str,
-            #[case] expected: FileKind,
+            #[case] expected: FileFormat,
         ) {
             let name = FileName::try_from(Path::new(file_name))
                 .expect("valid file name");
 
-            assert_eq!(FileKind::from_name(&name), expected);
+            assert_eq!(FileFormat::from_name(&name), expected);
         }
     }
 
@@ -237,7 +240,7 @@ mod tests {
             assert_eq!(record.name().as_str(), "todo");
             assert_eq!(record.path(), Path::new("notes/todo.md"));
             assert_eq!(record.folder(), Path::new("notes"));
-            assert_eq!(record.kind(), FileKind::Note);
+            assert_eq!(record.format(), FileFormat::Note);
             assert_eq!(record.size(), 7);
         }
 
@@ -337,7 +340,7 @@ mod tests {
                         .expect("valid file name"),
                 ),
                 folder: PathBuf::new(),
-                kind: FileKind::Note,
+                format: FileFormat::Note,
                 created,
                 modified_at,
                 size: 0,
