@@ -1,6 +1,9 @@
 //! Unified config tracking and trust state.
 
-use std::{fs, path::PathBuf};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 use thiserror::Error;
 
@@ -22,6 +25,39 @@ pub(crate) enum ConfigStateError {
     /// Hashing a config file failed.
     #[error(transparent)]
     Hash(#[from] HashError),
+}
+
+/// Outcome of checking a config file's trust status, carrying its
+/// already-read content only when [`Self::Trusted`] — content and "is
+/// trusted" can't disagree by construction, unlike pairing a status with a
+/// separate `Option<String>`.
+#[derive(Debug, Eq, PartialEq)]
+pub(crate) enum ConfigTrustCheck {
+    /// The workspace root is not trusted.
+    Untrusted,
+    /// The workspace root is trusted and a baseline hash exists, but the
+    /// config file's current content no longer matches it.
+    Stale,
+    /// The workspace root is trusted, but no content-hash baseline was ever
+    /// recorded for this config file.
+    MissingBaseline,
+    /// The workspace root is trusted and the config file's content matches
+    /// its baseline hash. Carries the content read while verifying it.
+    Trusted(String),
+}
+
+impl ConfigTrustCheck {
+    /// The status-only view, discarding any trusted content.
+    #[inline]
+    #[must_use]
+    pub(crate) fn status(&self) -> ConfigTrustStatus {
+        match self {
+            Self::Untrusted => ConfigTrustStatus::Untrusted,
+            Self::Stale => ConfigTrustStatus::Stale,
+            Self::MissingBaseline => ConfigTrustStatus::MissingBaseline,
+            Self::Trusted(_) => ConfigTrustStatus::Trusted,
+        }
+    }
 }
 
 const COMPANION_SUFFIX: &str = ".hash";
@@ -130,14 +166,27 @@ impl ConfigStateStore {
         &self,
         subject: &TrustRequest,
     ) -> Result<ConfigTrustStatus, ConfigStateError> {
-        self.config_trust_status_with_content(subject).map(|(status, _)| status)
+        let Some(config_file) = subject.config_file() else {
+            return Ok(if self.trusted.contains(subject.root_path())? {
+                ConfigTrustStatus::Trusted
+            } else {
+                ConfigTrustStatus::Untrusted
+            });
+        };
+        self.config_file_trust_check(subject.root_path(), config_file)
+            .map(|check| check.status())
     }
 
-    /// Returns the config-file trust status, plus its content when the file
-    /// is fully trusted.
+    /// Checks a config file's trust status, threading its content through
+    /// when trusted.
+    ///
+    /// Requires both `root` and `config_path` directly (rather than a
+    /// [`TrustRequest`], which may be root-only) so a trusted result always
+    /// carries content — [`ConfigTrustCheck::Trusted`] has no
+    /// "trusted but no content" state to defend against.
     ///
     /// Hashes content read directly into memory rather than hashing from
-    /// `subject`'s path and letting the caller re-read that same path
+    /// `config_path` and letting the caller re-read that same path
     /// separately to parse it — a second, independent read would open a
     /// TOCTOU window between the trust check and the file's actual use.
     ///
@@ -145,33 +194,30 @@ impl ConfigStateStore {
     ///
     /// Returns [`ConfigStateError`] when the trust store cannot be read or
     /// the config file cannot be read.
-    pub(crate) fn config_trust_status_with_content(
+    pub(crate) fn config_file_trust_check(
         &self,
-        subject: &TrustRequest,
-    ) -> Result<(ConfigTrustStatus, Option<String>), ConfigStateError> {
-        if !self.trusted.contains(subject.root_path())? {
-            return Ok((ConfigTrustStatus::Untrusted, None));
+        root: &Path,
+        config_path: &Path,
+    ) -> Result<ConfigTrustCheck, ConfigStateError> {
+        if !self.trusted.contains(root)? {
+            return Ok(ConfigTrustCheck::Untrusted);
         }
-        let Some(config_file) = subject.config_file() else {
-            return Ok((ConfigTrustStatus::Trusted, None));
-        };
-        let Some(recorded) = self
-            .trusted
-            .read_companion(subject.root_path(), COMPANION_SUFFIX)?
+        let Some(recorded) =
+            self.trusted.read_companion(root, COMPANION_SUFFIX)?
         else {
-            return Ok((ConfigTrustStatus::MissingBaseline, None));
+            return Ok(ConfigTrustCheck::MissingBaseline);
         };
-        let content = fs::read_to_string(config_file).map_err(|source| {
+        let content = fs::read_to_string(config_path).map_err(|source| {
             ConfigStateError::Hash(HashError::Read {
-                path: config_file.to_path_buf(),
+                path: config_path.to_path_buf(),
                 source,
             })
         })?;
         let current = Blake3FileHash::from_content(&content);
         if recorded.trim() == current.to_string() {
-            Ok((ConfigTrustStatus::Trusted, Some(content)))
+            Ok(ConfigTrustCheck::Trusted(content))
         } else {
-            Ok((ConfigTrustStatus::Stale, None))
+            Ok(ConfigTrustCheck::Stale)
         }
     }
 

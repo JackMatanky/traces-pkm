@@ -119,8 +119,9 @@ impl TryFrom<DiscoveryOutcome> for ConfigBuilderInput {
 }
 
 /// Builds a [`Config`] from validated discovery input: tracks and
-/// trust-checks the local config, then parses and merges local (and
-/// optional global) config into the resolved output directory.
+/// trust-checks the local config, then parses and merges it against the
+/// optional global config into the resolved output directory. See
+/// [`ConfigBuilderInput`] for the file-selection precedence.
 ///
 /// A single linear pipeline — this is the only call site, so the staged
 /// typestate builder this replaced bought no real ordering safety.
@@ -137,10 +138,7 @@ pub(super) fn build_config(
     state: &ConfigStateStore,
 ) -> Result<Config, ConfigBuilderError> {
     let tracked_local = LocalConfigFile::<Tracked>::from((input.local, state));
-    let trusted_local = match tracked_local
-        .verify_trust(state)
-        .map_err(ConfigFileError::Trust)?
-    {
+    let trusted_local = match tracked_local.verify_trust(state)? {
         super::file::TrustOutcome::Trusted(trusted) => trusted,
         super::file::TrustOutcome::Halted(file, status) => {
             return Err(ConfigBuilderError::Untrusted {
@@ -575,7 +573,7 @@ mod tests {
             assert!(matches!(
                 result,
                 Err(ConfigBuilderError::ConfigFile(
-                    ConfigFileError::Parse { .. }
+                    ConfigFileError::Read { .. }
                 ))
             ));
         }
@@ -594,7 +592,7 @@ mod tests {
             assert!(matches!(
                 result,
                 Err(ConfigBuilderError::ConfigFile(
-                    ConfigFileError::Parse { .. }
+                    ConfigFileError::Read { .. }
                 ))
             ));
         }

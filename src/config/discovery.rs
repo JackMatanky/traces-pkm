@@ -6,7 +6,6 @@
 
 use std::{
     fs, io,
-    marker::PhantomData,
     path::{Path, PathBuf},
 };
 
@@ -358,10 +357,13 @@ impl DiscoveryEngine {
                 .into());
             }
         };
-        DiscoveryProcessor::new(&cwd)
-            .collect_local()?
-            .collect_global()
-            .map(DiscoveryProcessor::finish)
+        let local = Self::nearest_local_from_dir(&cwd)?;
+        let global = Self::global_from_default_path()?;
+        Ok(DiscoveryOutcome::new(
+            DiscoveryAnchor::Directory(cwd),
+            vec![local],
+            global,
+        ))
     }
 
     fn nearest_local(
@@ -422,6 +424,25 @@ impl DiscoveryEngine {
         })
     }
 
+    /// Checks the default global config path, returning a candidate if the
+    /// file exists.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DiscoveryError::PathInaccessible`] when config file
+    /// metadata cannot be read.
+    fn global_from_default_path()
+    -> Result<Vec<GlobalConfigFile<Discovered>>, DiscoveryError> {
+        let global_config_path = dirs::CONFIG_HOME.join(GLOBAL_CONFIG_FILE);
+        if Self::is_config_file(&global_config_path)? {
+            Ok(vec![GlobalConfigFile::<Discovered>::try_new(
+                global_config_path,
+            )?])
+        } else {
+            Ok(Vec::new())
+        }
+    }
+
     fn collect_descendant_configs(
         dir: &Path,
         configs: &mut Vec<LocalConfigFile<Discovered>>,
@@ -466,126 +487,6 @@ impl DiscoveryEngine {
                 source,
             }),
         }
-    }
-}
-
-/// Initial discovery state.
-#[derive(Debug)]
-pub(super) struct Init;
-/// Local config search has completed.
-#[derive(Debug)]
-pub(super) struct LocalCollected;
-/// Global config search has completed.
-#[derive(Debug)]
-pub(super) struct GlobalCollected;
-
-/// Typestate-driven config file discovery.
-///
-/// Transitions: `Init` -> `LocalCollected` -> `GlobalCollected`.
-/// Each `collect_*` method consumes `self` and returns the next state.
-/// Missing global config is not an error; missing local config is reported so
-/// callers can distinguish "no project config" from filesystem access errors.
-#[derive(Debug)]
-pub(super) struct DiscoveryProcessor<State> {
-    cwd: PathBuf,
-    local: Vec<LocalConfigFile<Discovered>>,
-    global: Vec<GlobalConfigFile<Discovered>>,
-    _state: PhantomData<State>,
-}
-
-impl DiscoveryProcessor<Init> {
-    #[must_use]
-    pub(super) fn new(cwd: &Path) -> Self {
-        Self {
-            cwd: cwd.to_path_buf(),
-            local: Vec::new(),
-            global: Vec::new(),
-            _state: PhantomData,
-        }
-    }
-
-    /// Walk up the directory tree from `cwd`, collecting the closest
-    /// local `.traces/config.toml`.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`DiscoveryError::PathInaccessible`] when config file
-    /// metadata cannot be read. Returns [`DiscoveryError::LocalConfigAbsent`]
-    /// when no local config is found in any ancestor of `cwd`.
-    #[inline]
-    pub(super) fn collect_local(
-        self,
-    ) -> Result<DiscoveryProcessor<LocalCollected>, DiscoveryError> {
-        let Self {
-            cwd,
-            mut local,
-            global,
-            ..
-        } = self;
-        for ancestor in cwd.ancestors() {
-            let path = ancestor.join(LOCAL_CONFIG_FILE);
-            if DiscoveryEngine::is_config_file(&path)? {
-                local.push(LocalConfigFile::<Discovered>::try_new(path)?);
-                break;
-            }
-        }
-        if local.is_empty() {
-            return Err(DiscoveryError::LocalConfigAbsent {
-                cwd,
-            });
-        }
-        Ok(DiscoveryProcessor {
-            cwd,
-            local,
-            global,
-            _state: PhantomData,
-        })
-    }
-}
-
-impl DiscoveryProcessor<LocalCollected> {
-    /// Check the default global config path. Adds a candidate if the file
-    /// exists.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`DiscoveryError::PathInaccessible`] when config file
-    /// metadata cannot be read.
-    #[inline]
-    pub(super) fn collect_global(
-        self,
-    ) -> Result<DiscoveryProcessor<GlobalCollected>, DiscoveryError> {
-        let global_config_path = dirs::CONFIG_HOME.join(GLOBAL_CONFIG_FILE);
-        let Self {
-            cwd,
-            local,
-            mut global,
-            ..
-        } = self;
-        if DiscoveryEngine::is_config_file(&global_config_path)? {
-            global.push(GlobalConfigFile::<Discovered>::try_new(
-                global_config_path,
-            )?);
-        }
-        Ok(DiscoveryProcessor {
-            cwd,
-            local,
-            global,
-            _state: PhantomData,
-        })
-    }
-}
-
-impl DiscoveryProcessor<GlobalCollected> {
-    /// Finish discovery and return real config files plus the invocation cwd.
-    #[inline]
-    #[must_use]
-    pub(super) fn finish(self) -> DiscoveryOutcome {
-        DiscoveryOutcome::new(
-            DiscoveryAnchor::Directory(self.cwd),
-            self.local,
-            self.global,
-        )
     }
 }
 
@@ -881,73 +782,6 @@ mod tests {
                 result,
                 Err(DiscoveryError::PathInaccessible { .. })
             ));
-        }
-    }
-
-    mod processor {
-        use pretty_assertions::assert_eq;
-
-        use super::*;
-
-        #[test]
-        fn collect_local_finds_config_in_ancestor() {
-            // Arrange
-            let fixture = Fixture::new();
-            let _project = fixture.create_dir("project");
-            let cwd = fixture.create_dir("project/notes/daily");
-            fixture.create_config("project");
-            let processor = DiscoveryProcessor::new(&cwd);
-
-            // Act
-            let result = processor.collect_local();
-
-            // Assert
-            assert!(result.is_ok());
-            let next_state = result.unwrap();
-            assert_eq!(next_state.local.len(), 1);
-            assert!(next_state.global.is_empty());
-        }
-
-        #[test]
-        fn collect_local_returns_absent_error_when_no_config_exists() {
-            // Arrange
-            let fixture = Fixture::new();
-            let cwd = fixture.create_dir("project/notes/daily");
-            let processor = DiscoveryProcessor::new(&cwd);
-
-            // Act
-            let result = processor.collect_local();
-
-            // Assert
-            assert!(matches!(
-                result,
-                Err(DiscoveryError::LocalConfigAbsent { .. })
-            ));
-        }
-
-        #[test]
-        fn finish_returns_cwd_when_local_config_found() {
-            // Arrange
-            let fixture = Fixture::new();
-            let _project = fixture.create_dir("project");
-            let cwd = fixture.create_dir("project/notes/daily");
-            fixture.create_config("project");
-
-            let processor = DiscoveryProcessor::new(&cwd)
-                .collect_local()
-                .unwrap()
-                .collect_global()
-                .unwrap();
-
-            // Act
-            let outcome = processor.finish();
-
-            // Assert
-            assert_eq!(outcome.local().len(), 1);
-            // We cannot reliably assert on global() without creating flaky
-            // cross-test interactions, as CONFIG_HOME is resolved
-            // from process-shared context. But we verify the local
-            // processing works securely.
         }
     }
 }

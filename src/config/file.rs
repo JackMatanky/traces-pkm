@@ -8,10 +8,12 @@ use figment::{
 };
 use thiserror::Error;
 
+#[cfg(test)]
+use super::trust::TrustRequest;
 use super::{
     raw::RawConfig,
-    store::{ConfigStateError, ConfigStateStore},
-    trust::{ConfigTrustStatus, TrustRequest},
+    store::{ConfigStateError, ConfigStateStore, ConfigTrustCheck},
+    trust::ConfigTrustStatus,
 };
 
 /// Errors constructing or transitioning config-file lifecycle values.
@@ -29,17 +31,6 @@ pub(crate) enum ConfigFileError {
         /// Unsupported path.
         path: PathBuf,
     },
-    /// Config file parsing failed.
-    #[error(transparent)]
-    Parse(#[from] ConfigFileParseError),
-    /// Config file trust checking failed.
-    #[error(transparent)]
-    Trust(#[from] ConfigFileTrustError),
-}
-
-/// Errors parsing a config file into raw config data.
-#[derive(Debug, Error)]
-pub(crate) enum ConfigFileParseError {
     /// The config file could not be read or parsed.
     #[error("failed to load config file {path}")]
     Read {
@@ -49,11 +40,6 @@ pub(crate) enum ConfigFileParseError {
         #[source]
         source: Box<figment::Error>,
     },
-}
-
-/// Errors checking whether a tracked config file can become trusted.
-#[derive(Debug, Error)]
-pub(crate) enum ConfigFileTrustError {
     /// The trust check itself failed.
     #[error("failed to check trust for {root}")]
     TrustCheckFailed {
@@ -102,10 +88,10 @@ impl Parsed {
     ///
     /// Used for global config, which has no trust gate and thus no risk of
     /// a second, independent read racing the first.
-    fn read(path: &Path) -> Result<Self, ConfigFileParseError> {
+    fn read(path: &Path) -> Result<Self, ConfigFileError> {
         let raw = Figment::from(Toml::file_exact(path))
             .extract::<RawConfig>()
-            .map_err(|source| ConfigFileParseError::Read {
+            .map_err(|source| ConfigFileError::Read {
                 path: path.to_path_buf(),
                 source: Box::new(source),
             })?;
@@ -123,10 +109,10 @@ impl Parsed {
     fn from_content(
         path: &Path,
         content: &str,
-    ) -> Result<Self, ConfigFileParseError> {
+    ) -> Result<Self, ConfigFileError> {
         let raw = Figment::from(Toml::string(content))
             .extract::<RawConfig>()
-            .map_err(|source| ConfigFileParseError::Read {
+            .map_err(|source| ConfigFileError::Read {
             path: path.to_path_buf(),
             source: Box::new(source),
         })?;
@@ -258,29 +244,31 @@ impl LocalConfigFile<Tracked> {
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigFileTrustError`] if the underlying state store fails.
+    /// Returns [`ConfigFileError::TrustCheckFailed`] if the underlying state
+    /// store fails.
     pub(crate) fn verify_trust(
         self,
         state: &ConfigStateStore,
-    ) -> Result<TrustOutcome, ConfigFileTrustError> {
+    ) -> Result<TrustOutcome, ConfigFileError> {
         let root = self.root().to_path_buf();
-        let subject = TrustRequest::from(&self);
-        match state.config_trust_status_with_content(&subject) {
-            Ok((ConfigTrustStatus::Trusted, Some(content))) => {
+        let path = self.path().to_path_buf();
+        match state.config_file_trust_check(&root, &path) {
+            Ok(ConfigTrustCheck::Trusted(content)) => {
                 Ok(TrustOutcome::Trusted(self.transition_to(Trusted {
                     content,
                 })))
             }
-            // A `LocalConfigFile` trust request always carries a config
-            // path (see `TrustRequest::from`), so `Trusted` with no content
-            // never occurs in practice — halt rather than panic if that
-            // invariant ever changes.
-            Ok((ConfigTrustStatus::Trusted, None)) => Ok(TrustOutcome::Halted(
+            Ok(ConfigTrustCheck::Untrusted) => {
+                Ok(TrustOutcome::Halted(self, ConfigTrustStatus::Untrusted))
+            }
+            Ok(ConfigTrustCheck::Stale) => {
+                Ok(TrustOutcome::Halted(self, ConfigTrustStatus::Stale))
+            }
+            Ok(ConfigTrustCheck::MissingBaseline) => Ok(TrustOutcome::Halted(
                 self,
                 ConfigTrustStatus::MissingBaseline,
             )),
-            Ok((status, _)) => Ok(TrustOutcome::Halted(self, status)),
-            Err(source) => Err(ConfigFileTrustError::TrustCheckFailed {
+            Err(source) => Err(ConfigFileError::TrustCheckFailed {
                 root,
                 source: Box::new(source),
             }),
@@ -602,7 +590,7 @@ mod tests {
             let result = tracked.verify_trust(&state);
             assert!(matches!(
                 result,
-                Err(ConfigFileTrustError::TrustCheckFailed { .. })
+                Err(ConfigFileError::TrustCheckFailed { .. })
             ));
         }
     }
@@ -634,7 +622,7 @@ mod tests {
 
             let result = Parsed::read(&path);
 
-            assert!(matches!(result, Err(ConfigFileParseError::Read { .. })));
+            assert!(matches!(result, Err(ConfigFileError::Read { .. })));
         }
 
         #[test]
@@ -644,7 +632,7 @@ mod tests {
 
             let result = Parsed::read(&path);
 
-            assert!(matches!(result, Err(ConfigFileParseError::Read { .. })));
+            assert!(matches!(result, Err(ConfigFileError::Read { .. })));
         }
     }
 
