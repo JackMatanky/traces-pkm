@@ -231,7 +231,7 @@ impl DiscoveryOutcome {
 pub(crate) struct DiscoveryEngine;
 
 impl DiscoveryEngine {
-    /// Runs the discovery operation described by `context`.
+    /// Runs the discovery operation described by `ctx`.
     ///
     /// # Errors
     ///
@@ -247,9 +247,9 @@ impl DiscoveryEngine {
     )]
     pub(crate) fn process(
         self,
-        context: DiscoveryContext,
+        ctx: DiscoveryContext,
     ) -> Result<DiscoveryOutcome, DiscoveryError> {
-        let (kind, anchor) = context.into_parts();
+        let (kind, anchor) = ctx.into_parts();
         match kind {
             DiscoveryScope::Full => Self::full(anchor),
             DiscoveryScope::NearestLocal => Self::nearest_local(anchor),
@@ -331,8 +331,8 @@ impl DiscoveryEngine {
         scope: DiscoveryScope,
         anchor: DiscoveryAnchor,
     ) -> Result<TrustRequests, DiscoveryError> {
-        let context = DiscoveryContext::new(scope, anchor)?;
-        let outcome = DiscoveryEngine.process(context)?;
+        let ctx = DiscoveryContext::new(scope, anchor)?;
+        let outcome = DiscoveryEngine.process(ctx)?;
         let requests: Vec<TrustRequest> =
             outcome.local().iter().map(TrustRequest::from).collect();
         Ok(TrustRequests::from(requests))
@@ -602,14 +602,14 @@ mod tests {
             let cwd = fixture.create_dir("project/notes/daily");
             fixture.create_config("project");
 
-            let context = DiscoveryContext::new(
+            let ctx = DiscoveryContext::new(
                 DiscoveryScope::Full,
                 DiscoveryAnchor::Directory(cwd.clone()),
             )
             .unwrap();
 
             // Act
-            let result = DiscoveryEngine.process(context);
+            let result = DiscoveryEngine.process(ctx);
 
             // Assert
             assert!(result.is_ok());
@@ -628,14 +628,14 @@ mod tests {
             let cwd = fixture.create_dir("project/notes/daily");
             fixture.create_config("project");
 
-            let context = DiscoveryContext::new(
+            let ctx = DiscoveryContext::new(
                 DiscoveryScope::NearestLocal,
                 DiscoveryAnchor::Directory(cwd.clone()),
             )
             .unwrap();
 
             // Act
-            let result = DiscoveryEngine.process(context);
+            let result = DiscoveryEngine.process(ctx);
 
             // Assert
             assert!(result.is_ok());
@@ -654,14 +654,14 @@ mod tests {
             fixture.create_config("parent");
             fixture.create_config("parent/child");
 
-            let context = DiscoveryContext::new(
+            let ctx = DiscoveryContext::new(
                 DiscoveryScope::LocalSubtree,
                 DiscoveryAnchor::Directory(parent.clone()),
             )
             .unwrap();
 
             // Act
-            let result = DiscoveryEngine.process(context);
+            let result = DiscoveryEngine.process(ctx);
 
             // Assert
             assert!(result.is_ok());

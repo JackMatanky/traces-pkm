@@ -19,11 +19,11 @@ pub(crate) fn parse_markdown(path: impl Into<PathBuf>, src: &str) -> Note {
     opts.insert(Options::ENABLE_YAML_STYLE_METADATA_BLOCKS);
     opts.insert(Options::ENABLE_WIKILINKS);
 
-    let mut context = ParserContext::default();
+    let mut ctx = ParserContext::default();
     for (event, range) in Parser::new_ext(src, opts).into_offset_iter() {
-        context.handle_event(event, range);
+        ctx.handle_event(event, range);
     }
-    context.into_note(path)
+    ctx.into_note(path)
 }
 
 /// Accumulated context while walking `pulldown-cmark` events for one Note.
