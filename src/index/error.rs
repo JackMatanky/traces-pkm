@@ -1,11 +1,15 @@
 //! Errors from [`super::FileIndex`] operations: scanning, persisting, and
-//! loading File Records.
+//! loading File Records and Note Records.
 
 use std::{io, path::PathBuf, str::Utf8Error};
 
 use thiserror::Error;
 
 /// Errors from building, persisting, or loading a [`super::FileIndex`].
+///
+/// [`Io`](Self::Io) originates from scanning ([`super::scan`]); the rest
+/// originate from the redb-backed store ([`super::store`]) — opening,
+/// reading, or writing the index database.
 #[derive(Debug, Error)]
 pub(crate) enum FileIndexError {
     /// A filesystem operation failed while scanning a project root or preparing
@@ -29,9 +33,9 @@ pub(crate) enum FileIndexError {
         #[source]
         source: Box<redb::Error>,
     },
-    /// A stored File Record's bytes were not valid UTF-8 — the index
-    /// database is corrupted.
-    #[error("corrupted File Record bytes in the index database for {path}")]
+    /// A stored File Record or Note Record's bytes were not valid UTF-8 — the
+    /// index database is corrupted.
+    #[error("corrupted record bytes in the index database for {path}")]
     Corrupt {
         /// The corrupted record's project-relative path (its key in the
         /// index database).
@@ -40,8 +44,8 @@ pub(crate) enum FileIndexError {
         #[source]
         source: Utf8Error,
     },
-    /// A File Record could not be serialized for storage.
-    #[error("failed to serialize the File Record for {path}")]
+    /// A File Record or Note Record could not be serialized for storage.
+    #[error("failed to serialize the record for {path}")]
     Serialize {
         /// The record's project-relative path.
         path: PathBuf,
@@ -49,9 +53,9 @@ pub(crate) enum FileIndexError {
         #[source]
         source: toml::ser::Error,
     },
-    /// A stored File Record's text could not be parsed back into a
-    /// [`super::FileRecord`].
-    #[error("failed to deserialize the File Record for {path}")]
+    /// A stored File Record or Note Record's text could not be parsed back into
+    /// a record.
+    #[error("failed to deserialize the record for {path}")]
     Deserialize {
         /// The record's project-relative path (its key in the index database).
         path: PathBuf,

@@ -191,11 +191,11 @@ impl ConfigService {
     ///   during discovery
     #[inline]
     fn discover(cwd: &Path) -> Result<DiscoveryOutcome, DiscoveryError> {
-        let context = DiscoveryContext::new(
+        let ctx = DiscoveryContext::new(
             DiscoveryScope::Full,
             DiscoveryAnchor::Directory(cwd.to_path_buf()),
         )?;
-        DiscoveryEngine.process(context)
+        DiscoveryEngine.process(ctx)
     }
 
     /// Builds a [`Config`] from discovered candidates: selects the local and

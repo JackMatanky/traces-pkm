@@ -1,5 +1,5 @@
-//! redb-backed persistence for [`FileRecord`]s, keyed by project-relative
-//! path.
+//! redb-backed persistence for [`FileRecord`]s and [`Note`]s, keyed by
+//! project-relative path.
 //!
 //! The sole seam that knows about redb tables — [`super::FileIndex`] and its
 //! callers never see a [`TableDefinition`] or transaction.
@@ -11,21 +11,28 @@ use std::{
 };
 
 use redb::{
-    Database, ReadableDatabase as _, ReadableTable as _, TableDefinition,
+    Database, ReadTransaction, ReadableDatabase as _, ReadableTable as _,
+    TableDefinition, WriteTransaction,
+};
+use serde::{Serialize, de::DeserializeOwned};
+
+use super::{
+    INDEX_FILE, error::FileIndexError, file::FileRecord, markdown::Note,
 };
 
-use super::{INDEX_FILE, error::FileIndexError, file::FileRecord};
-
 /// Path → TOML-encoded [`FileRecord`] bytes.
-///
-/// A byte-slice value (not a typed redb value) keeps the redb schema
-/// independent of `FileRecord`'s shape; encoding is TOML because `toml` is
-/// already a dependency and File Records are small, infrequently-written
-/// values where a self-describing text format costs nothing observable.
 const FILE_RECORDS: TableDefinition<&str, &[u8]> =
     TableDefinition::new("file_records");
 
+/// Path → TOML-encoded [`Note`] bytes.
+const NOTES: TableDefinition<&str, &[u8]> = TableDefinition::new("notes");
+
+/// An atomically read snapshot of every File Record and Note Record
+/// persisted in the index database, sorted by path.
+type IndexSnapshot = (Vec<FileRecord>, Vec<Note>);
+
 /// Redb-backed handle to one project root's index database.
+#[derive(Debug)]
 pub(super) struct IndexStore {
     db: Database,
     /// The database's own path, kept for error context.
@@ -62,7 +69,10 @@ impl IndexStore {
         })
     }
 
-    /// Replaces every stored File Record with `records`.
+    /// Replaces every stored File Record with `records` and Note Record with
+    /// `notes`, atomically — both tables are cleared and rewritten in one redb
+    /// write transaction, so a reader never observes a state with one table
+    /// replaced and the other stale.
     ///
     /// # Errors
     ///
@@ -71,72 +81,121 @@ impl IndexStore {
     pub(super) fn replace_all(
         &self,
         records: &[FileRecord],
+        notes: &[Note],
     ) -> Result<(), FileIndexError> {
         let write_txn =
             self.db.begin_write().map_err(|source| self.store_error(source))?;
         write_txn
             .delete_table(FILE_RECORDS)
             .map_err(|source| self.store_error(source))?;
-        {
-            let mut table = write_txn
-                .open_table(FILE_RECORDS)
-                .map_err(|source| self.store_error(source))?;
-            for record in records {
-                let key = record.path().to_string_lossy();
-                let value = toml::to_string(record).map_err(|source| {
-                    FileIndexError::Serialize {
-                        path: record.path().to_path_buf(),
-                        source,
-                    }
-                })?;
-                table
-                    .insert(&*key, value.as_bytes())
-                    .map_err(|source| self.store_error(source))?;
-            }
-        }
+        write_txn
+            .delete_table(NOTES)
+            .map_err(|source| self.store_error(source))?;
+        self.store_table(&write_txn, FILE_RECORDS, records, FileRecord::path)?;
+        self.store_table(&write_txn, NOTES, notes, Note::path)?;
         write_txn.commit().map_err(|source| self.store_error(source))
     }
 
-    /// Loads every stored File Record, sorted by path for deterministic
-    /// output.
+    /// Loads every stored File Record and Note Record, sorted by path for
+    /// deterministic output.
     ///
     /// # Errors
     ///
     /// - [`FileIndexError::Store`] if the table cannot be read
     /// - [`FileIndexError::Corrupt`] if stored bytes aren't valid UTF-8
-    /// - [`FileIndexError::Deserialize`] if stored text isn't a valid
-    ///   [`FileRecord`]
-    pub(super) fn load_all(&self) -> Result<Vec<FileRecord>, FileIndexError> {
+    /// - [`FileIndexError::Deserialize`] if stored text isn't valid UTF-8/TOML
+    pub(super) fn load_all(&self) -> Result<IndexSnapshot, FileIndexError> {
         let read_txn =
             self.db.begin_read().map_err(|source| self.store_error(source))?;
-        let table = match read_txn.open_table(FILE_RECORDS) {
-            Ok(table) => table,
-            Err(redb::TableError::TableDoesNotExist(_)) => {
-                return Ok(Vec::new());
-            }
-            Err(source) => return Err(self.store_error(source)),
-        };
+        let records =
+            self.load_table(&read_txn, FILE_RECORDS, FileRecord::path)?;
+        let notes = self.load_table(&read_txn, NOTES, Note::path)?;
+        Ok((records, notes))
+    }
 
-        let mut records: Vec<FileRecord> = Vec::new();
-        for entry in table.iter().map_err(|source| self.store_error(source))? {
-            let (key, value) =
-                entry.map_err(|source| self.store_error(source))?;
-            let path = PathBuf::from(key.value());
-            let text = str::from_utf8(value.value()).map_err(|source| {
-                FileIndexError::Corrupt {
-                    path: path.clone(),
+    /// Serializes `items` as TOML into `table`, keyed by `path_of`.
+    ///
+    /// Generic over `T` so [`Self::replace_all`] can drive both the
+    /// `file_records` and `notes` tables through this one code path instead of
+    /// duplicating the open/serialize/insert loop per table.
+    ///
+    /// # Errors
+    ///
+    /// - [`FileIndexError::Store`] if the table cannot be opened or written
+    /// - [`FileIndexError::Serialize`] if an item cannot be TOML-encoded
+    fn store_table<T: Serialize>(
+        &self,
+        write_txn: &WriteTransaction,
+        table: TableDefinition<&str, &[u8]>,
+        items: &[T],
+        path_of: impl Fn(&T) -> &Path,
+    ) -> Result<(), FileIndexError> {
+        let mut table = write_txn
+            .open_table(table)
+            .map_err(|source| self.store_error(source))?;
+        for item in items {
+            let path = path_of(item);
+            let key = path.to_string_lossy();
+            let value = toml::to_string(item).map_err(|source| {
+                FileIndexError::Serialize {
+                    path: path.to_path_buf(),
                     source,
                 }
             })?;
-            records.push(toml::from_str(text).map_err(|source| {
-                FileIndexError::Deserialize {
-                    path,
-                    source: Box::new(source),
-                }
-            })?);
+            table
+                .insert(&*key, value.as_bytes())
+                .map_err(|source| self.store_error(source))?;
         }
-        records.sort_by(|a, b| a.path().cmp(b.path()));
-        Ok(records)
+        Ok(())
+    }
+
+    /// Deserializes every TOML value in `table` into a `Vec<T>`, sorted by
+    /// `path_of` for deterministic output.
+    ///
+    /// Generic for the same reason as [`Self::store_table`]: one code path for
+    /// both tables instead of a near-identical copy per table.
+    ///
+    /// # Errors
+    ///
+    /// - [`FileIndexError::Store`] if the table cannot be read
+    /// - [`FileIndexError::Corrupt`] if stored bytes aren't valid UTF-8
+    /// - [`FileIndexError::Deserialize`] if stored text isn't valid TOML
+    fn load_table<T: DeserializeOwned>(
+        &self,
+        read_txn: &ReadTransaction,
+        table: TableDefinition<&str, &[u8]>,
+        path_of: impl Fn(&T) -> &Path,
+    ) -> Result<Vec<T>, FileIndexError> {
+        let mut items: Vec<T> = match read_txn.open_table(table) {
+            Ok(table) => {
+                let mut items = Vec::new();
+                for entry in
+                    table.iter().map_err(|source| self.store_error(source))?
+                {
+                    let (key, value) =
+                        entry.map_err(|source| self.store_error(source))?;
+                    let path = PathBuf::from(key.value());
+                    let text =
+                        str::from_utf8(value.value()).map_err(|source| {
+                            FileIndexError::Corrupt {
+                                path: path.clone(),
+                                source,
+                            }
+                        })?;
+                    items.push(toml::from_str(text).map_err(|source| {
+                        FileIndexError::Deserialize {
+                            path,
+                            source: Box::new(source),
+                        }
+                    })?);
+                }
+                items
+            }
+            Err(redb::TableError::TableDoesNotExist(_)) => Vec::new(),
+            Err(source) => return Err(self.store_error(source)),
+        };
+        items.sort_by(|a, b| path_of(a).cmp(path_of(b)));
+        Ok(items)
     }
 
     /// Wraps a redb error with this store's database path.
@@ -151,35 +210,44 @@ impl IndexStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::index::scan::scan_root;
+    use crate::index::{markdown::parse_markdown, scan::scan_root};
 
     mod persistence {
         use pretty_assertions::assert_eq;
 
         use super::*;
-
         #[test]
         fn load_all_on_a_freshly_opened_database_is_empty() {
             let temp = tempfile::tempdir().expect("create temp dir");
             let store = IndexStore::open(temp.path()).expect("open store");
 
-            let records = store.load_all().expect("load empty database");
+            let (records, notes) =
+                store.load_all().expect("load empty database");
 
             assert_eq!(records.len(), 0);
+            assert_eq!(notes.len(), 0);
         }
 
         #[test]
-        fn replace_all_then_load_all_round_trips_records() {
+        fn replace_all_then_load_all_round_trips_records_and_notes() {
             let temp = tempfile::tempdir().expect("create temp dir");
-            fs::write(temp.path().join("note.md"), "content")
-                .expect("write note");
+            fs::write(
+                temp.path().join("note.md"),
+                "---\ntitle: Hello\n---\n- [ ] task",
+            )
+            .expect("write note");
             let records = scan_root(temp.path()).expect("scan root");
+            let note =
+                parse_markdown("note.md", "---\ntitle: Hello\n---\n- [ ] task");
+            let notes = vec![note];
             let store = IndexStore::open(temp.path()).expect("open store");
 
-            store.replace_all(&records).expect("persist records");
-            let loaded = store.load_all().expect("load records");
+            store.replace_all(&records, &notes).expect("persist records");
+            let (loaded_records, loaded_notes) =
+                store.load_all().expect("load records");
 
-            assert_eq!(loaded, records);
+            assert_eq!(loaded_records, records);
+            assert_eq!(loaded_notes, notes);
         }
 
         #[test]
@@ -189,17 +257,19 @@ mod tests {
                 .expect("write stale");
             let stale = scan_root(temp.path()).expect("scan stale");
             let store = IndexStore::open(temp.path()).expect("open store");
-            store.replace_all(&stale).expect("persist stale");
+            store.replace_all(&stale, &[]).expect("persist stale");
             fs::remove_file(temp.path().join("stale.md"))
                 .expect("remove stale");
             fs::write(temp.path().join("fresh.md"), "new")
                 .expect("write fresh");
             let fresh = scan_root(temp.path()).expect("scan fresh");
 
-            store.replace_all(&fresh).expect("persist fresh");
-            let loaded = store.load_all().expect("load records");
+            store.replace_all(&fresh, &[]).expect("persist fresh");
+            let (loaded_records, loaded_notes) =
+                store.load_all().expect("load records");
 
-            assert_eq!(loaded, fresh);
+            assert_eq!(loaded_records, fresh);
+            assert_eq!(loaded_notes.len(), 0);
         }
 
         #[test]
@@ -207,10 +277,12 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             let store = IndexStore::open(temp.path()).expect("open store");
 
-            store.replace_all(&[]).expect("persist an empty record set");
-            let loaded = store.load_all().expect("load records");
+            store.replace_all(&[], &[]).expect("persist an empty record set");
+            let (loaded_records, loaded_notes) =
+                store.load_all().expect("load records");
 
-            assert_eq!(loaded.len(), 0);
+            assert_eq!(loaded_records.len(), 0);
+            assert_eq!(loaded_notes.len(), 0);
         }
 
         #[test]
@@ -221,21 +293,15 @@ mod tests {
             let records = scan_root(temp.path()).expect("scan root");
             let store = IndexStore::open(temp.path()).expect("open store");
 
-            store.replace_all(&records).expect("persist records");
-            let loaded = store.load_all().expect("load records");
+            store.replace_all(&records, &[]).expect("persist records");
+            let (loaded_records, _) = store.load_all().expect("load records");
 
-            assert_eq!(loaded, records);
+            assert_eq!(loaded_records, records);
         }
 
         #[test]
         fn load_all_matches_the_path_sort_order_not_the_raw_key_order() {
             let temp = tempfile::tempdir().expect("create temp dir");
-            // A raw byte comparison of the redb keys puts `"a-b/c.md"`
-            // before `"a/z.md"` (`-` sorts before `/` in ASCII), but
-            // `Path`'s component-wise `Ord` puts `"a/z.md"` first (`"a"`
-            // is a prefix of `"a-b"`). This set exercises that divergence
-            // to prove `load_all` returns `FileRecord::path` order, not
-            // whatever order redb's table happens to iterate in.
             fs::create_dir_all(temp.path().join("a-b")).expect("mkdir a-b");
             fs::create_dir_all(temp.path().join("a")).expect("mkdir a");
             fs::write(temp.path().join("a-b/c.md"), "1")
@@ -243,25 +309,77 @@ mod tests {
             fs::write(temp.path().join("a/z.md"), "2").expect("write a/z.md");
             let records = scan_root(temp.path()).expect("scan root");
             let store = IndexStore::open(temp.path()).expect("open store");
-            store.replace_all(&records).expect("persist records");
+            store.replace_all(&records, &[]).expect("persist records");
 
-            let loaded = store.load_all().expect("load records");
+            let (loaded_records, _) = store.load_all().expect("load records");
 
-            assert_eq!(loaded, records);
+            assert_eq!(loaded_records, records);
+        }
+    }
+
+    mod open {
+        use super::*;
+
+        #[test]
+        fn returns_store_error_when_the_index_path_is_a_directory() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let root = temp.path();
+            fs::create_dir_all(root.join(INDEX_FILE))
+                .expect("create directory at db path");
+
+            let error = IndexStore::open(root)
+                .expect_err("directory at db path fails to open");
+
+            assert!(matches!(error, FileIndexError::Store { .. }));
+        }
+
+        #[cfg(unix)]
+        #[test]
+        fn returns_io_error_when_the_parent_directory_cannot_be_created() {
+            use std::os::unix::fs::PermissionsExt as _;
+
+            /// Restores a locked directory's permissions on drop, even if
+            /// the test panics - otherwise a `0o500` root blocks the
+            /// tempdir's own cleanup.
+            struct RestorePermissions<'a>(&'a Path);
+
+            impl Drop for RestorePermissions<'_> {
+                fn drop(&mut self) {
+                    let _ = fs::set_permissions(
+                        self.0,
+                        fs::Permissions::from_mode(0o700),
+                    );
+                }
+            }
+
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let root = temp.path();
+            fs::set_permissions(root, fs::Permissions::from_mode(0o500))
+                .expect("revoke write permission");
+            let _restore = RestorePermissions(root);
+
+            let error = IndexStore::open(root)
+                .expect_err("unwritable root fails to open store");
+
+            assert!(matches!(error, FileIndexError::Io { .. }));
         }
     }
 
     mod load_all {
-        use super::*;
 
-        /// Bypasses [`IndexStore::replace_all`] to write a raw, possibly
-        /// invalid value directly into the `file_records` table - the only
-        /// way to deterministically simulate a corrupted index database.
-        fn write_raw_value(store: &IndexStore, key: &str, value: &[u8]) {
+        use rstest::rstest;
+
+        use super::*;
+        fn write_raw_value(
+            store: &IndexStore,
+            table_def: TableDefinition<&str, &[u8]>,
+            key: &str,
+            value: &[u8],
+        ) {
             let write_txn = store.db.begin_write().expect("begin write txn");
             {
                 let mut table =
-                    write_txn.open_table(FILE_RECORDS).expect("open table");
+                    write_txn.open_table(table_def).expect("open table");
                 table.insert(key, value).expect("insert raw bytes");
             }
             write_txn.commit().expect("commit raw insert");
@@ -271,7 +389,7 @@ mod tests {
         fn returns_corrupt_when_stored_bytes_are_not_utf8() {
             let temp = tempfile::tempdir().expect("create temp dir");
             let store = IndexStore::open(temp.path()).expect("open store");
-            write_raw_value(&store, "bad.md", &[0xFF, 0xFE]);
+            write_raw_value(&store, FILE_RECORDS, "bad.md", &[0xFF, 0xFE]);
 
             let error =
                 store.load_all().expect_err("non-UTF8 bytes fail to load");
@@ -282,11 +400,15 @@ mod tests {
             ));
         }
 
-        #[test]
-        fn returns_deserialize_error_when_stored_text_is_not_valid_toml() {
+        #[rstest]
+        #[case::file_records(FILE_RECORDS)]
+        #[case::notes(NOTES)]
+        fn returns_deserialize_error_when_stored_text_is_not_valid_toml(
+            #[case] table_def: TableDefinition<&str, &[u8]>,
+        ) {
             let temp = tempfile::tempdir().expect("create temp dir");
             let store = IndexStore::open(temp.path()).expect("open store");
-            write_raw_value(&store, "bad.md", b"not valid toml {{{");
+            write_raw_value(&store, table_def, "bad.md", b"not valid toml {{{");
 
             let error =
                 store.load_all().expect_err("invalid TOML text fails to load");
