@@ -29,15 +29,6 @@ pub(crate) enum FileIndexError {
         #[source]
         source: Box<redb::Error>,
     },
-    /// A File Record could not be serialized for storage.
-    #[error("failed to serialize the File Record for {path}")]
-    Serialize {
-        /// The record's project-relative path.
-        path: PathBuf,
-        /// Source TOML serialization error.
-        #[source]
-        source: toml::ser::Error,
-    },
     /// A stored File Record's bytes were not valid UTF-8 — the index
     /// database is corrupted.
     #[error("corrupted File Record bytes in the index database for {path}")]
@@ -48,6 +39,15 @@ pub(crate) enum FileIndexError {
         /// Source UTF-8 decoding error.
         #[source]
         source: Utf8Error,
+    },
+    /// A File Record could not be serialized for storage.
+    #[error("failed to serialize the File Record for {path}")]
+    Serialize {
+        /// The record's project-relative path.
+        path: PathBuf,
+        /// Source TOML serialization error.
+        #[source]
+        source: toml::ser::Error,
     },
     /// A stored File Record's text could not be parsed back into a
     /// [`super::FileRecord`].

@@ -43,9 +43,9 @@ pub(super) fn scan_root(
     Ok(records)
 }
 
-/// Wraps a `walkdir` error with the path it occurred at, falling back to
-/// `root` for the rare case (symlink loops, never reached since this walk
-/// never follows symlinks) where `walkdir` doesn't have one.
+/// Wraps a `walkdir` error with the path it occurred at, falling back to `root`
+/// for the rare case (symlink loops, never reached since this walk never
+/// follows symlinks) where `walkdir` doesn't have one.
 fn io_error(root: &Path, source: walkdir::Error) -> FileIndexError {
     let path = source.path().unwrap_or(root).to_path_buf();
     FileIndexError::Io {

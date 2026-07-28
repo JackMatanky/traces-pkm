@@ -14,8 +14,7 @@ use crate::file_name::{BaseName, FileName};
 
 /// Coarse classification of a [`FileRecord`] — whether Traces treats it as a
 /// markdown Note (eligible for future Note Metadata extraction; see the spec's
-/// two-tier File Record / Note Metadata model) or a plain file. Named `kind` to
-/// match the `file_records` schema in ADR-0005.
+/// two-tier File Record / Note Metadata model) or a plain file.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) enum FileKind {
     /// A markdown Note (`.md` or `.markdown` extension).
@@ -61,8 +60,8 @@ impl Timestamp {
 
 impl From<SystemTime> for Timestamp {
     /// Converts a filesystem timestamp to UTC, discarding sub-timezone
-    /// precision concerns — [`SystemTime`] carries no timezone, so this is
-    /// a lossless reinterpretation, not a conversion.
+    /// precision concerns — [`SystemTime`] carries no timezone, so this is a
+    /// lossless reinterpretation, not a conversion.
     fn from(time: SystemTime) -> Self {
         Self(DateTime::<Utc>::from(time))
     }
@@ -161,9 +160,9 @@ impl FileRecord {
         self.created
     }
 
-    /// The file's creation time, or its modification time where the
-    /// filesystem doesn't report a creation time. Use
-    /// [`Self::reported_created_at`] to tell the two cases apart.
+    /// The file's creation time, or its modification time where the filesystem
+    /// doesn't report a creation time. Use [`Self::reported_created_at`] to
+    /// tell the two cases apart.
     #[inline]
     #[must_use]
     pub(crate) fn created_at(&self) -> Timestamp {

@@ -42,8 +42,8 @@ impl FileIndex {
     ///
     /// # Errors
     ///
-    /// Returns [`FileIndexError::Io`] if a directory cannot be read or a
-    /// file's metadata cannot be inspected.
+    /// Returns [`FileIndexError::Io`] if a directory cannot be read or a file's
+    /// metadata cannot be inspected.
     #[inline]
     pub(crate) fn build(root: &Path) -> Result<Self, FileIndexError> {
         Ok(Self {
