@@ -118,8 +118,8 @@ impl ConfigStateStore {
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigStateError`] when trust cannot be recorded or the
-    /// config file cannot be hashed.
+    /// - [`ConfigStateError::Store`] when trust cannot be recorded
+    /// - [`ConfigStateError::Hash`] when the config file cannot be hashed
     #[inline]
     pub(crate) fn grant_trust(
         &self,
@@ -142,7 +142,7 @@ impl ConfigStateStore {
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigStateError`] when the trust store cannot be read.
+    /// - [`ConfigStateError::Store`] when the trust store cannot be read
     #[inline]
     pub(crate) fn workspace_trust_status(
         &self,
@@ -159,8 +159,8 @@ impl ConfigStateStore {
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigStateError`] when the trust store cannot be read or
-    /// the config file cannot be hashed.
+    /// - [`ConfigStateError::Store`] when the trust store cannot be read
+    /// - [`ConfigStateError::Hash`] when the config file cannot be hashed
     #[inline]
     pub(crate) fn config_trust_status(
         &self,
@@ -192,8 +192,8 @@ impl ConfigStateStore {
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigStateError`] when the trust store cannot be read or
-    /// the config file cannot be read.
+    /// - [`ConfigStateError::Store`] when the trust store cannot be read
+    /// - [`ConfigStateError::Hash`] when the config file cannot be read
     pub(crate) fn config_file_trust_check(
         &self,
         root: &Path,
@@ -225,7 +225,7 @@ impl ConfigStateStore {
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigStateError`] when the trust entry cannot be removed.
+    /// - [`ConfigStateError::Store`] when the trust entry cannot be removed
     #[inline]
     pub(crate) fn revoke_trust(
         &self,
@@ -240,8 +240,8 @@ impl ConfigStateStore {
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigStateError`] when the tracked-config store cannot be
-    /// read.
+    /// - [`ConfigStateError::Store`] when the tracked-config store cannot be
+    ///   read
     #[inline]
     pub(crate) fn list_tracked_configs(
         &self,
@@ -253,7 +253,7 @@ impl ConfigStateStore {
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigStateError`] when stale entries cannot be cleaned.
+    /// - [`ConfigStateError::Store`] when stale entries cannot be cleaned
     #[inline]
     pub(crate) fn clean_tracked_configs(
         &self,
@@ -265,7 +265,7 @@ impl ConfigStateStore {
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigStateError`] when the trust store cannot be read.
+    /// - [`ConfigStateError::Store`] when the trust store cannot be read
     #[inline]
     pub(crate) fn list_trusted_workspaces(
         &self,
@@ -278,7 +278,7 @@ impl ConfigStateStore {
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigStateError`] when stale entries cannot be cleaned.
+    /// - [`ConfigStateError::Store`] when stale entries cannot be cleaned
     #[inline]
     pub(crate) fn clean_trusted_workspaces(
         &self,

@@ -91,8 +91,8 @@ impl Parsed {
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigFileError::Read`] if `path` cannot be read or its
-    /// content cannot be parsed as TOML.
+    /// - [`ConfigFileError::Read`] when `path` cannot be read or its content
+    ///   cannot be parsed as TOML
     fn read(path: &Path) -> Result<Self, ConfigFileError> {
         let raw = Figment::from(Toml::file_exact(path))
             .extract::<RawConfig>()
@@ -114,8 +114,7 @@ impl Parsed {
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigFileError::Read`] if `content` cannot be parsed as
-    /// TOML.
+    /// - [`ConfigFileError::Read`] when `content` cannot be parsed as TOML
     fn from_content(
         path: &Path,
         content: &str,
@@ -190,8 +189,8 @@ impl LocalConfigFile<Discovered> {
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigFileError::UnsupportedLocalConfigFile`] when `path` is
-    /// not shaped like a local `.traces/config.toml` path.
+    /// - [`ConfigFileError::UnsupportedLocalConfigFile`] when `path` is not
+    ///   shaped like a local `.traces/config.toml` path
     #[inline]
     pub(crate) fn try_new(path: PathBuf) -> Result<Self, ConfigFileError> {
         let Some(traces_dir) = path.parent() else {
@@ -220,8 +219,8 @@ impl GlobalConfigFile<Discovered> {
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigFileError::UnsupportedGlobalConfigFile`] when `path` has
-    /// no parent directory or is not named `config.toml`.
+    /// - [`ConfigFileError::UnsupportedGlobalConfigFile`] when `path` has no
+    ///   parent directory or is not named `config.toml`
     #[inline]
     pub(super) fn try_new(path: PathBuf) -> Result<Self, ConfigFileError> {
         if path.file_name() != Some("config.toml".as_ref()) {
@@ -249,14 +248,14 @@ pub(crate) enum TrustOutcome {
 impl LocalConfigFile<Tracked> {
     /// Verifies the trust status of this tracked config file.
     ///
-    /// Returns `TrustOutcome::Trusted` if the file is fully trusted. Returns
-    /// `TrustOutcome::Halted` if trust is absent or stale, allowing the caller
-    /// to prompt the user.
+    /// Returns [`TrustOutcome::Trusted`] if the file is fully trusted.
+    /// Returns [`TrustOutcome::Halted`] if trust is absent or stale,
+    /// allowing the caller to prompt the user.
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigFileError::TrustCheckFailed`] if the underlying state
-    /// store fails.
+    /// - [`ConfigFileError::TrustCheckFailed`] when the underlying state store
+    ///   fails
     pub(crate) fn verify_trust(
         self,
         state: &ConfigStateStore,

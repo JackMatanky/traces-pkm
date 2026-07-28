@@ -81,10 +81,10 @@ impl DiscoveryContext {
     ///
     /// # Errors
     ///
-    /// Returns [`DiscoveryContextError::UnsupportedFileAnchor`] when full
-    /// discovery is given a file anchor. Full loading is always cwd/directory
-    /// rooted; focused local discovery may be rooted at either a directory or
-    /// a concrete local config file.
+    /// - [`DiscoveryContextError::UnsupportedFileAnchor`] when `kind` is
+    ///   [`Full`](DiscoveryScope::Full) and `anchor` is a file — full loading
+    ///   is always directory-rooted; focused local discovery may root at either
+    ///   a directory or a concrete local config file
     #[inline]
     pub(crate) fn new(
         kind: DiscoveryScope,
@@ -235,8 +235,10 @@ impl DiscoveryEngine {
     ///
     /// # Errors
     ///
-    /// Returns [`DiscoveryError`] when required local config is absent or when
-    /// discovery cannot inspect a filesystem path.
+    /// - [`DiscoveryError::LocalConfigAbsent`] when required local config is
+    ///   absent
+    /// - [`DiscoveryError::PathInaccessible`] when discovery cannot inspect a
+    ///   filesystem path
     #[inline]
     #[expect(
         clippy::unused_self,
@@ -265,9 +267,14 @@ impl DiscoveryEngine {
     ///
     /// # Errors
     ///
-    /// Returns [`DiscoveryError`] when discovery cannot inspect a filesystem
-    /// path, a config-file anchor is invalid, or subtree discovery has no local
-    /// root to walk from.
+    /// - [`DiscoveryError::PathInaccessible`] when discovery cannot inspect a
+    ///   filesystem path
+    /// - [`DiscoveryError::Context`] when `scope` is
+    ///   [`Full`](DiscoveryScope::Full), which trust resolution doesn't support
+    /// - [`DiscoveryError::ConfigFile`] when a config-file anchor is invalid
+    /// - [`DiscoveryError::LocalConfigAbsent`] when
+    ///   [`LocalSubtree`](DiscoveryScope::LocalSubtree) discovery has no local
+    ///   root to walk from
     #[inline]
     #[expect(
         clippy::unused_self,
@@ -430,8 +437,8 @@ impl DiscoveryEngine {
     ///
     /// # Errors
     ///
-    /// Returns [`DiscoveryError::PathInaccessible`] when config file
-    /// metadata cannot be read.
+    /// - [`DiscoveryError::PathInaccessible`] when config file metadata cannot
+    ///   be read
     fn global_from_default_path()
     -> Result<Vec<GlobalConfigFile<Discovered>>, DiscoveryError> {
         let global_config_path = dirs::CONFIG_HOME.join(GLOBAL_CONFIG_FILE);

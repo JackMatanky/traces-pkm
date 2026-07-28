@@ -169,9 +169,10 @@ impl ConfigService {
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigLoadError::Discovery`] when no local config is found or
-    /// discovery cannot inspect a path. Returns [`ConfigLoadError::Build`] when
-    /// trust, parsing, or merging fails after discovery succeeds.
+    /// - [`ConfigLoadError::Discovery`] when no local config is found or
+    ///   discovery cannot inspect a path
+    /// - [`ConfigLoadError::Build`] when trust, parsing, or merging fails after
+    ///   discovery succeeds
     #[inline]
     pub(crate) fn load(&self, cwd: &Path) -> Result<Config, ConfigLoadError> {
         let discovered = Self::discover(cwd)?;
@@ -185,8 +186,9 @@ impl ConfigService {
     ///
     /// # Errors
     ///
-    /// Returns an error when local config is absent or when a path cannot be
-    /// accessed during discovery.
+    /// - [`DiscoveryError::LocalConfigAbsent`] when local config is absent
+    /// - [`DiscoveryError::PathInaccessible`] when a path cannot be accessed
+    ///   during discovery
     #[inline]
     fn discover(cwd: &Path) -> Result<DiscoveryOutcome, DiscoveryError> {
         let context = DiscoveryContext::new(
@@ -212,14 +214,14 @@ impl ConfigService {
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigBuilderError::Input`] when discovery output isn't
-    /// valid builder input. Returns [`ConfigBuilderError::Untrusted`] when
-    /// the local config's workspace isn't trusted, is missing its baseline
-    /// hash, or is stale. Returns [`ConfigBuilderError::ConfigFile`] when a
-    /// selected config file fails path validation, tracking/trust
-    /// transition, or parsing. Returns [`ConfigBuilderError::Merge`] when
-    /// the merged local/global config cannot be re-extracted for its output
-    /// directory.
+    /// - [`ConfigBuilderError::Input`] when discovery output isn't valid
+    ///   builder input
+    /// - [`ConfigBuilderError::Untrusted`] when the local config's workspace
+    ///   isn't trusted, is missing its baseline hash, or is stale
+    /// - [`ConfigBuilderError::ConfigFile`] when a selected config file fails
+    ///   path validation, tracking/trust transition, or parsing
+    /// - [`ConfigBuilderError::Merge`] when the merged local/global config
+    ///   cannot be re-extracted for its output directory
     fn build(
         &self,
         discovered: DiscoveryOutcome,
@@ -271,8 +273,14 @@ impl ConfigService {
     ///
     /// # Errors
     ///
-    /// Returns [`DiscoveryError`] when discovery cannot inspect the path or the
-    /// requested traversal scope cannot be resolved.
+    /// - [`DiscoveryError::PathInaccessible`] when discovery cannot inspect the
+    ///   path
+    /// - [`DiscoveryError::Context`] when `scope` is
+    ///   [`Full`](DiscoveryScope::Full), which trust resolution doesn't support
+    /// - [`DiscoveryError::ConfigFile`] when a config-file anchor is invalid
+    /// - [`DiscoveryError::LocalConfigAbsent`] when
+    ///   [`LocalSubtree`](DiscoveryScope::LocalSubtree) discovery has no local
+    ///   root to walk from
     #[inline]
     #[expect(
         clippy::unused_self,
@@ -292,8 +300,8 @@ impl ConfigService {
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigStateError`] when trust cannot be recorded or a config
-    /// file cannot be hashed.
+    /// - [`ConfigStateError::Store`] when trust cannot be recorded
+    /// - [`ConfigStateError::Hash`] when the config file cannot be hashed
     #[inline]
     pub(crate) fn trust(
         &self,
@@ -306,7 +314,8 @@ impl ConfigService {
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigStateError`] when the status check cannot complete.
+    /// - [`ConfigStateError::Store`] when the trust store cannot be read
+    /// - [`ConfigStateError::Hash`] when the config file cannot be hashed
     #[inline]
     pub(crate) fn trust_status(
         &self,
@@ -326,7 +335,7 @@ impl ConfigService {
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigStateError`] when the trust entry cannot be removed.
+    /// - [`ConfigStateError::Store`] when the trust entry cannot be removed
     #[inline]
     pub(crate) fn untrust(
         &self,
@@ -339,8 +348,8 @@ impl ConfigService {
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigStateError`] when the tracking store exists but cannot
-    /// be read.
+    /// - [`ConfigStateError::Store`] when the tracking store exists but cannot
+    ///   be read
     #[inline]
     pub(crate) fn list_tracked(
         &self,
@@ -353,8 +362,8 @@ impl ConfigService {
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigStateError`] when the tracking store exists but cannot
-    /// be read, or a stale entry cannot be removed.
+    /// - [`ConfigStateError::Store`] when the tracking store exists but cannot
+    ///   be read, or a stale entry cannot be removed
     #[inline]
     pub(crate) fn clean_tracked_store(
         &self,
@@ -366,8 +375,8 @@ impl ConfigService {
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigStateError`] when the trust store exists but cannot be
-    /// read.
+    /// - [`ConfigStateError::Store`] when the trust store exists but cannot be
+    ///   read
     #[inline]
     pub(crate) fn list_trusted(
         &self,
@@ -381,9 +390,9 @@ impl ConfigService {
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigStateError`] when the trust store exists but cannot be
-    /// read, a stale root entry cannot be removed, or an existing content-hash
-    /// companion cannot be removed.
+    /// - [`ConfigStateError::Store`] when the trust store exists but cannot be
+    ///   read, a stale root entry cannot be removed, or an existing
+    ///   content-hash companion cannot be removed
     #[inline]
     pub(crate) fn clean_trusted_store(
         &self,
