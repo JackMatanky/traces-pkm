@@ -41,7 +41,7 @@
   - Enforced canonical derive ordering (`Copy` first, std traits lexicographical, third-party traits lexicographical).
   - Enforced Clippy module item ordering (`mod` declarations before `use` imports).
 - **Testing**:
-  - 713 tests pass cleanly (698 lib + 4 integration + 1 doc-integration +
+  - 714 tests pass cleanly (699 lib + 4 integration + 1 doc-integration +
     10 doctests), 0 `cargo clippy --all-targets --all-features` warnings in
     files touched by this ticket, clean `cargo doc --no-deps` build.
   - Organized with canonical submodules (`mod parse`, `mod tasks`, `mod
@@ -61,6 +61,13 @@
     dead_code)` was partially unfulfilled (`missing_inline_in_public_items`
     never fires on `pub(crate)` items) and has been narrowed to `dead_code`
     only.
+  - `index/markdown/parser.rs`: `push_text` treated "inside a link" and
+    "inside a list item" as mutually exclusive via an if/else-if chain, so
+    a link's display text (e.g. `- [ ] see [foo](bar) here`) was captured
+    into the `Outlink` but silently dropped from the containing
+    `ListItem::text()`. These conditions are independent, not exclusive —
+    fixed by routing text into both buffers when both are active. Covered
+    by `includes_link_display_text_in_the_containing_item_text`.
 
 ## Agent Brief
 

@@ -172,33 +172,30 @@ impl ParserState {
         }
     }
 
-    /// Appends `text` to the active metadata buffer, link display text, or
-    /// list item text, in that priority order.
-    #[expect(
-        clippy::else_if_without_else,
-        reason = "trailing case is a deliberate no-op: text outside every \
-                  tracked container carries no Note metadata signal"
-    )]
+    /// Appends `text` to the active metadata buffer and/or link display
+    /// text; independently, also appends to the enclosing list item's text
+    /// if one is active, so a link's display text is part of both the
+    /// [`Outlink`] and the plain text of the item containing it.
     fn push_text(&mut self, text: &str) {
         if self.in_metadata_block {
             self.metadata_buffer.push_str(text);
-        } else if let Some((_, _, link_text)) = self.active_link.as_mut() {
+            return;
+        }
+        if let Some((_, _, link_text)) = self.active_link.as_mut() {
             link_text.push_str(text);
-        } else if let Some(item) = self.item_stack.last_mut() {
+        }
+        if let Some(item) = self.item_stack.last_mut() {
             item.text_buffer.push_str(text);
         }
     }
 
     /// Appends a newline to the active metadata buffer or list item text.
-    #[expect(
-        clippy::else_if_without_else,
-        reason = "trailing case is a deliberate no-op: breaks outside every \
-                  tracked container carry no Note metadata signal"
-    )]
     fn push_break(&mut self) {
         if self.in_metadata_block {
             self.metadata_buffer.push('\n');
-        } else if let Some(item) = self.item_stack.last_mut() {
+            return;
+        }
+        if let Some(item) = self.item_stack.last_mut() {
             item.text_buffer.push('\n');
         }
     }
@@ -306,6 +303,22 @@ mod tests {
             assert_eq!(item1.text(), "Completed task");
             assert_eq!(item1.is_task(), true);
             assert_eq!(item1.is_completed(), true);
+        }
+
+        #[test]
+        fn includes_link_display_text_in_the_containing_item_text() {
+            let input = "- [ ] Check [link text](https://example.com) here";
+            let note = parse_markdown("note.md", input);
+
+            let item = note
+                .lists()
+                .first()
+                .and_then(|list| list.items().first())
+                .expect("item present");
+            assert_eq!(item.text(), "Check link text here");
+
+            let link = note.outlinks().first().expect("outlink present");
+            assert_eq!(link.text(), "link text");
         }
 
         #[test]
