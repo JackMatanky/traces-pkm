@@ -161,6 +161,7 @@ mod tests {
 
     mod parse {
         use pretty_assertions::assert_eq;
+        use rstest::rstest;
 
         use super::*;
 
@@ -193,40 +194,37 @@ mod tests {
             assert_eq!(fm.is_empty(), false);
         }
 
-        #[test]
-        fn extracts_wikilinks_with_display_alias() {
-            let input = "See [[target_page|Display Alias]] for context.";
+        #[rstest]
+        #[case::wikilink_with_alias(
+            "See [[target_page|Display Alias]] for context.",
+            "target_page",
+            "Display Alias",
+            LinkType::Wikilink
+        )]
+        #[case::wikilink_without_alias(
+            "See [[simple_target]] for details.",
+            "simple_target",
+            "simple_target",
+            LinkType::Wikilink
+        )]
+        #[case::markdown_link(
+            "Check out [Markdown Link](https://example.com).",
+            "https://example.com",
+            "Markdown Link",
+            LinkType::Markdown
+        )]
+        fn extracts_outlinks(
+            #[case] input: &str,
+            #[case] expected_target: &str,
+            #[case] expected_text: &str,
+            #[case] expected_kind: LinkType,
+        ) {
             let note = parse_markdown(input);
 
-            let link = note.outlinks().first().expect("wikilink present");
-            assert_eq!(link.target(), "target_page");
-            assert_eq!(link.text(), "Display Alias");
-            assert_eq!(link.kind(), LinkType::Wikilink);
-            assert_eq!(link.is_wikilink(), true);
-        }
-
-        #[test]
-        fn extracts_wikilinks_without_display_alias() {
-            let input = "See [[simple_target]] for details.";
-            let note = parse_markdown(input);
-
-            let link = note.outlinks().first().expect("wikilink present");
-            assert_eq!(link.target(), "simple_target");
-            assert_eq!(link.text(), "simple_target");
-            assert_eq!(link.kind(), LinkType::Wikilink);
-            assert_eq!(link.is_wikilink(), true);
-        }
-
-        #[test]
-        fn extracts_standard_markdown_links() {
-            let input = "Check out [Markdown Link](https://example.com).";
-            let note = parse_markdown(input);
-
-            let link = note.outlinks().first().expect("markdown link present");
-            assert_eq!(link.target(), "https://example.com");
-            assert_eq!(link.text(), "Markdown Link");
-            assert_eq!(link.kind(), LinkType::Markdown);
-            assert_eq!(link.is_markdown(), true);
+            let link = note.outlinks().first().expect("outlink present");
+            assert_eq!(link.target(), expected_target);
+            assert_eq!(link.text(), expected_text);
+            assert_eq!(link.kind(), expected_kind);
         }
 
         #[test]
@@ -262,42 +260,36 @@ mod tests {
             assert_eq!(child_item.text(), "Child item");
         }
 
-        #[test]
-        fn extracts_unordered_lists() {
-            let input = "- First\n- Second";
+        #[rstest]
+        #[case::unordered_list("- First\n- Second", false)]
+        #[case::ordered_list("1. First step\n2. Second step", true)]
+        fn extracts_list_ordering(
+            #[case] input: &str,
+            #[case] expected_ordered: bool,
+        ) {
             let note = parse_markdown(input);
 
             let list = note.lists().first().expect("list present");
-            assert_eq!(list.is_ordered(), false);
+            assert_eq!(list.is_ordered(), expected_ordered);
             assert_eq!(list.items().len(), 2);
         }
-
-        #[test]
-        fn extracts_ordered_lists() {
-            let input = "1. First step\n2. Second step";
-            let note = parse_markdown(input);
-
-            let list = note.lists().first().expect("list present");
-            assert_eq!(list.is_ordered(), true);
-            assert_eq!(list.items().len(), 2);
-        }
-
-        #[test]
-        fn tracks_inline_code_span_byte_regions() {
-            let input = "Text with `inline code` span.";
+        #[rstest]
+        #[case::inline_code_span(
+            "Text with `inline code` span.",
+            "`inline code`"
+        )]
+        #[case::fenced_code_block(
+            "```rust\nfn main() {}\n```",
+            "```rust\nfn main() {}\n```"
+        )]
+        fn tracks_code_regions(
+            #[case] input: &str,
+            #[case] expected_snippet: &str,
+        ) {
             let note = parse_markdown(input);
 
             let region = note.code_regions().first().expect("code region");
-            assert_eq!(&input[region.range()], "`inline code`");
-        }
-
-        #[test]
-        fn tracks_fenced_code_block_byte_regions() {
-            let input = "```rust\nfn main() {}\n```";
-            let note = parse_markdown(input);
-
-            let region = note.code_regions().first().expect("code region");
-            assert_eq!(&input[region.range()], "```rust\nfn main() {}\n```");
+            assert_eq!(&input[region.range()], expected_snippet);
         }
     }
 

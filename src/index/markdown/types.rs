@@ -358,8 +358,10 @@ mod tests {
 
     mod constructor {
         use pretty_assertions::assert_eq;
+        use rstest::rstest;
 
         use super::*;
+
         #[test]
         fn creates_frontmatter_with_raw_content() {
             let fm = Frontmatter::new("key: value\n");
@@ -373,24 +375,46 @@ mod tests {
             assert_eq!(fm.is_empty(), true);
         }
 
-        #[test]
-        fn creates_outlink_with_kind() {
-            let link = Outlink::new("target", "alias", LinkType::Wikilink);
-            assert_eq!(link.target(), "target");
-            assert_eq!(link.text(), "alias");
-            assert_eq!(link.kind(), LinkType::Wikilink);
-            assert_eq!(link.is_wikilink(), true);
-            assert_eq!(link.is_markdown(), false);
+        #[rstest]
+        #[case::wikilink("target", "alias", LinkType::Wikilink, true, false)]
+        #[case::markdown(
+            "https://example.com",
+            "text",
+            LinkType::Markdown,
+            false,
+            true
+        )]
+        fn evaluates_outlink_kind_predicates(
+            #[case] target: &str,
+            #[case] text: &str,
+            #[case] link_type: LinkType,
+            #[case] expected_wikilink: bool,
+            #[case] expected_markdown: bool,
+        ) {
+            let link = Outlink::new(target, text, link_type);
+
+            assert_eq!(link.target(), target);
+            assert_eq!(link.text(), text);
+            assert_eq!(link.kind(), link_type);
+            assert_eq!(link.is_wikilink(), expected_wikilink);
+            assert_eq!(link.is_markdown(), expected_markdown);
         }
 
-        #[test]
-        fn creates_list_item_and_task_status() {
-            let item = ListItem::new("Task 1", Some(TaskStatus::Incomplete));
-            assert_eq!(item.text(), "Task 1");
-            assert_eq!(item.task_status(), Some(TaskStatus::Incomplete));
-            assert_eq!(item.is_task(), true);
-            assert_eq!(item.is_completed(), false);
-            assert_eq!(item.children().len(), 0);
+        #[rstest]
+        #[case::incomplete_task(Some(TaskStatus::Incomplete), true, false)]
+        #[case::completed_task(Some(TaskStatus::Complete), true, true)]
+        #[case::plain_bullet(None, false, false)]
+        fn evaluates_list_item_task_predicates(
+            #[case] task_status: Option<TaskStatus>,
+            #[case] expected_is_task: bool,
+            #[case] expected_is_completed: bool,
+        ) {
+            let item = ListItem::new("Task item", task_status);
+
+            assert_eq!(item.text(), "Task item");
+            assert_eq!(item.task_status(), task_status);
+            assert_eq!(item.is_task(), expected_is_task);
+            assert_eq!(item.is_completed(), expected_is_completed);
         }
 
         #[test]
