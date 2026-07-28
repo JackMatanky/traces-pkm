@@ -151,21 +151,22 @@ impl FileRecord {
         self.kind
     }
 
-    /// This file's creation time, as reported by the filesystem - `None` if
-    /// unsupported. See [`Self::created_at`] for the always-populated
-    /// convenience accessor.
+    /// This file's creation time, as reported by the filesystem — `None` if
+    /// unsupported on the host OS or filesystem.
+    ///
+    /// See [`Self::created_at_or_modified`] for a convenience accessor that
+    /// falls back to [`Self::modified_at`].
     #[inline]
     #[must_use]
-    pub(crate) fn reported_created_at(&self) -> Option<Timestamp> {
+    pub(crate) fn created_at(&self) -> Option<Timestamp> {
         self.created
     }
 
-    /// The file's creation time, or its modification time where the filesystem
-    /// doesn't report a creation time. Use [`Self::reported_created_at`] to
-    /// tell the two cases apart.
+    /// The file's creation time, falling back to its modification time where
+    /// the filesystem doesn't report a creation time.
     #[inline]
     #[must_use]
-    pub(crate) fn created_at(&self) -> Timestamp {
+    pub(crate) fn created_at_or_modified(&self) -> Timestamp {
         self.created.unwrap_or(self.modified_at)
     }
 
@@ -295,7 +296,7 @@ mod tests {
         }
 
         #[test]
-        fn always_populates_created_at() {
+        fn created_at_or_modified_is_non_future() {
             let temp = tempfile::tempdir().expect("create temp dir");
             let file = temp.path().join("note.md");
             fs::write(&file, "content").expect("write file");
@@ -307,16 +308,10 @@ mod tests {
             )
             .expect("build record");
 
-            // Whichever branch is taken - the real filesystem value or the
-            // `modified_at` fallback - the field is populated, never a
-            // sentinel/default. The fallback branch itself is covered
-            // deterministically by `created_at`'s own tests below, since
-            // whether this filesystem reports a creation time isn't
-            // something a test controls.
             assert!(
-                record.created_at() <= Timestamp::now(),
-                "expected a populated, non-future created_at, got {:?}",
-                record.created_at()
+                record.created_at_or_modified() <= Timestamp::now(),
+                "expected non-future created_at_or_modified, got {:?}",
+                record.created_at_or_modified()
             );
         }
     }
@@ -350,22 +345,32 @@ mod tests {
         }
 
         #[test]
-        fn returns_the_reported_value_when_the_filesystem_supports_it() {
+        fn created_at_returns_raw_option() {
             let modified_at = Timestamp::now();
             let reported = Timestamp(modified_at.0 - chrono::Duration::days(1));
             let record = record_with(Some(reported), modified_at);
 
-            assert_eq!(record.created_at(), reported);
-            assert_eq!(record.reported_created_at(), Some(reported));
+            assert_eq!(record.created_at(), Some(reported));
+
+            let unsupported = record_with(None, modified_at);
+            assert_eq!(unsupported.created_at(), None);
         }
 
         #[test]
-        fn falls_back_to_modified_at_when_unsupported() {
+        fn created_at_or_modified_returns_reported_value_when_available() {
+            let modified_at = Timestamp::now();
+            let reported = Timestamp(modified_at.0 - chrono::Duration::days(1));
+            let record = record_with(Some(reported), modified_at);
+
+            assert_eq!(record.created_at_or_modified(), reported);
+        }
+
+        #[test]
+        fn created_at_or_modified_falls_back_to_modified_at_when_unsupported() {
             let modified_at = Timestamp::now();
             let record = record_with(None, modified_at);
 
-            assert_eq!(record.created_at(), modified_at);
-            assert_eq!(record.reported_created_at(), None);
+            assert_eq!(record.created_at_or_modified(), modified_at);
         }
     }
 }

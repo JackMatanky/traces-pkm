@@ -61,11 +61,11 @@ filesystems that don't report one - deliberately *not* silently defaulted to
 `modified_at` at storage time, to keep provenance visible to future
 consumers), `modified_at: Timestamp`, `size: u64`. `Timestamp` wraps
 `DateTime<Utc>` (needed for TOML round-tripping and reuse by the template
-`FileRecord::created_at()` resolves the `created`-is-`None` fallback to `modified_at`
-for convenience (ensuring Dataview/template query filters like `file.cdate`/`file.ctime`
-always have a non-null timestamp to evaluate against, matching Dataview precedent);
-`FileRecord::reported_created_at()` returns the honest `Option<Timestamp>` for callers
-that need to distinguish genuine creation time from the `modified_at` fallback.
+`FileRecord::created_at()` returns `Option<Timestamp>` (the actual creation time as reported
+by the filesystem, `None` if unsupported); `FileRecord::created_at_or_modified()` returns
+`Timestamp` (falling back to `modified_at` where creation time is `None`, ensuring
+Dataview/template query filters like `file.cdate`/`file.ctime` have a non-null timestamp to
+evaluate against when needed).
 
 **Explicitly not done** (per this ticket's Out of scope, confirmed
 untouched): Note Metadata extraction, lazy refresh during query, any
