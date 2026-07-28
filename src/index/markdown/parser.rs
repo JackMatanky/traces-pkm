@@ -1,5 +1,7 @@
 //! Markdown note event parser yielding [`Note`] records.
 
+use std::path::PathBuf;
+
 use pulldown_cmark::{
     Event, LinkType as CmarkLinkType, Options, Parser, Tag, TagEnd,
 };
@@ -11,7 +13,7 @@ use super::types::{
 
 /// Parses a markdown string into a [`Note`] record using `pulldown-cmark`.
 #[must_use]
-pub(crate) fn parse_markdown(src: &str) -> Note {
+pub(crate) fn parse_markdown(path: impl Into<PathBuf>, src: &str) -> Note {
     let mut opts = Options::empty();
     opts.insert(Options::ENABLE_TASKLISTS);
     opts.insert(Options::ENABLE_YAML_STYLE_METADATA_BLOCKS);
@@ -61,7 +63,7 @@ pub(crate) fn parse_markdown(src: &str) -> Note {
             }
             Event::End(TagEnd::Link) => {
                 if let Some((target, kind, text)) = active_link.take() {
-                    outlinks.push(Outlink::new(target, text.trim(), kind));
+                    outlinks.push(Outlink::new(target, text, kind));
                 }
             }
             Event::Start(Tag::CodeBlock(_)) => {
@@ -78,18 +80,17 @@ pub(crate) fn parse_markdown(src: &str) -> Note {
                     item.text_buffer.push_str(&text);
                 }
             }
-            Event::Start(Tag::List(first_item_number)) => {
+            Event::Start(Tag::List(start_number)) => {
                 list_stack.push(ListFrame {
-                    is_ordered: first_item_number.is_some(),
+                    is_ordered: start_number.is_some(),
                     items: Vec::new(),
                 });
             }
             Event::End(TagEnd::List(_)) => {
-                if let Some(list_frame) = list_stack.pop() {
-                    let list =
-                        List::new(list_frame.is_ordered, list_frame.items);
-                    if let Some(parent_item) = item_stack.last_mut() {
-                        parent_item.children.push(list);
+                if let Some(frame) = list_stack.pop() {
+                    let list = List::new(frame.is_ordered, frame.items);
+                    if let Some(item) = item_stack.last_mut() {
+                        item.children.push(list);
                     } else {
                         lists.push(list);
                     }
@@ -104,13 +105,13 @@ pub(crate) fn parse_markdown(src: &str) -> Note {
             }
             Event::End(TagEnd::Item) => {
                 if let Some(item_frame) = item_stack.pop() {
-                    let list_item = ListItem::with_children(
-                        item_frame.text_buffer.trim(),
+                    let item = ListItem::with_children(
+                        item_frame.text_buffer,
                         item_frame.task_status,
                         item_frame.children,
                     );
-                    if let Some(parent_list) = list_stack.last_mut() {
-                        parent_list.items.push(list_item);
+                    if let Some(list_frame) = list_stack.last_mut() {
+                        list_frame.items.push(item);
                     }
                 }
             }
@@ -126,22 +127,24 @@ pub(crate) fn parse_markdown(src: &str) -> Note {
             Event::Text(text) => {
                 if in_metadata_block {
                     metadata_buffer.push_str(&text);
-                } else if let Some((_, _, link_text)) = &mut active_link {
+                } else if let Some((_, _, ref mut link_text)) = active_link {
                     link_text.push_str(&text);
                 } else if let Some(item) = item_stack.last_mut() {
                     item.text_buffer.push_str(&text);
                 }
             }
             Event::SoftBreak | Event::HardBreak => {
-                if let Some(item) = item_stack.last_mut() {
-                    item.text_buffer.push(' ');
+                if in_metadata_block {
+                    metadata_buffer.push('\n');
+                } else if let Some(item) = item_stack.last_mut() {
+                    item.text_buffer.push('\n');
                 }
             }
             _ => {}
         }
     }
 
-    Note::new(frontmatter, lists, outlinks, code_regions)
+    Note::new(path, frontmatter, lists, outlinks, code_regions)
 }
 
 /// Active list context on the parser stack.
@@ -170,8 +173,9 @@ mod tests {
         #[test]
         fn returns_empty_note_when_source_is_empty() {
             let input = "";
-            let note = parse_markdown(input);
+            let note = parse_markdown("note.md", input);
 
+            assert_eq!(note.path(), std::path::Path::new("note.md"));
             assert_eq!(note.frontmatter(), None);
             assert_eq!(note.lists().len(), 0);
             assert_eq!(note.outlinks().len(), 0);
@@ -181,7 +185,7 @@ mod tests {
         #[test]
         fn returns_none_for_frontmatter_when_absent() {
             let input = "# Header\nNo YAML block.";
-            let note = parse_markdown(input);
+            let note = parse_markdown("note.md", input);
 
             assert_eq!(note.frontmatter(), None);
         }
@@ -189,7 +193,7 @@ mod tests {
         #[test]
         fn extracts_yaml_frontmatter_block_raw_content() {
             let input = "---\ntitle: My Note\ntags: [rust, pkm]\n---\n# Header";
-            let note = parse_markdown(input);
+            let note = parse_markdown("note.md", input);
 
             let fm = note.frontmatter().expect("frontmatter present");
             assert_eq!(fm.raw(), "title: My Note\ntags: [rust, pkm]\n");
@@ -221,7 +225,7 @@ mod tests {
             #[case] expected_text: &str,
             #[case] expected_kind: LinkType,
         ) {
-            let note = parse_markdown(input);
+            let note = parse_markdown("note.md", input);
 
             let link = note.outlinks().first().expect("outlink present");
             assert_eq!(link.target(), expected_target);
@@ -232,7 +236,7 @@ mod tests {
         #[test]
         fn extracts_task_item_completion_status() {
             let input = "- [ ] Incomplete task\n- [x] Completed task";
-            let note = parse_markdown(input);
+            let note = parse_markdown("note.md", input);
 
             let list = note.lists().first().expect("list present");
             let item0 = list.items().get(0).expect("item 0");
@@ -250,7 +254,7 @@ mod tests {
         #[test]
         fn extracts_nested_child_lists() {
             let input = "- Parent item\n  - Child item";
-            let note = parse_markdown(input);
+            let note = parse_markdown("note.md", input);
 
             let parent_list = note.lists().first().expect("parent list");
             let parent_item = parent_list.items().first().expect("parent item");
@@ -269,7 +273,7 @@ mod tests {
             #[case] input: &str,
             #[case] expected_ordered: bool,
         ) {
-            let note = parse_markdown(input);
+            let note = parse_markdown("note.md", input);
 
             let list = note.lists().first().expect("list present");
             assert_eq!(list.is_ordered(), expected_ordered);
@@ -289,7 +293,7 @@ mod tests {
             #[case] input: &str,
             #[case] expected_snippet: &str,
         ) {
-            let note = parse_markdown(input);
+            let note = parse_markdown("note.md", input);
 
             let region = note.code_regions().first().expect("code region");
             assert_eq!(&input[region.range()], expected_snippet);
@@ -304,7 +308,7 @@ mod tests {
         #[test]
         fn iterates_top_level_task_items() {
             let input = "- [ ] Task 1\n- Plain item\n- [x] Task 2";
-            let note = parse_markdown(input);
+            let note = parse_markdown("note.md", input);
 
             let tasks: Vec<&ListItem> = note.tasks().collect();
             assert_eq!(tasks.len(), 2);
@@ -315,7 +319,7 @@ mod tests {
         #[test]
         fn iterates_nested_sub_list_task_items() {
             let input = "- Plain parent\n  - [x] Subtask 1";
-            let note = parse_markdown(input);
+            let note = parse_markdown("note.md", input);
 
             let tasks: Vec<&ListItem> = note.tasks().collect();
             assert_eq!(tasks.len(), 1);

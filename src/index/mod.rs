@@ -34,8 +34,8 @@ use markdown::parse_markdown;
     reason = "domain types exported for index module callers"
 )]
 pub(crate) use markdown::{
-    CodeRegion, Frontmatter, LinkType, List, ListItem, Note, NoteRecord,
-    Outlink, TaskStatus,
+    CodeRegion, Frontmatter, LinkType, List, ListItem, Note, Outlink,
+    TaskStatus,
 };
 use store::IndexStore;
 
@@ -47,7 +47,7 @@ const INDEX_FILE: &str = ".traces/index.redb";
 #[derive(Debug)]
 pub(crate) struct FileIndex {
     records: Vec<FileRecord>,
-    notes: Vec<NoteRecord>,
+    notes: Vec<Note>,
 }
 
 impl FileIndex {
@@ -73,8 +73,8 @@ impl FileIndex {
                             source,
                         }
                     })?;
-                let note = parse_markdown(&content);
-                notes.push(NoteRecord::new(record.path().to_path_buf(), note));
+                let note = parse_markdown(record.path(), &content);
+                notes.push(note);
             }
         }
         notes.sort_by(|a, b| a.path().cmp(b.path()));
@@ -123,10 +123,10 @@ impl FileIndex {
         &self.records
     }
 
-    /// Every indexed Note Record, sorted by path.
+    /// Every indexed Note, sorted by path.
     #[inline]
     #[must_use]
-    pub(crate) fn notes(&self) -> &[NoteRecord] {
+    pub(crate) fn notes(&self) -> &[Note] {
         &self.notes
     }
 
@@ -134,10 +134,9 @@ impl FileIndex {
     #[must_use]
     pub(crate) fn note(&self, path: &Path) -> Option<&Note> {
         self.notes
-            .binary_search_by(|r| r.path().cmp(path))
+            .binary_search_by(|n| n.path().cmp(path))
             .ok()
             .and_then(|idx| self.notes.get(idx))
-            .map(NoteRecord::note)
     }
 }
 
@@ -250,7 +249,7 @@ mod tests {
                 Some(Path::new("second.md"))
             );
             assert_eq!(
-                loaded.notes().first().map(NoteRecord::path),
+                loaded.notes().first().map(Note::path),
                 Some(Path::new("second.md"))
             );
         }

@@ -1,45 +1,16 @@
 //! Markdown Note Metadata domain types.
 
-use std::ops::Range;
+use std::{
+    ops::Range,
+    path::{Path, PathBuf},
+};
 
 use serde::{Deserialize, Serialize};
-
-/// Pair of a project-relative path and its extracted [`Note`] metadata.
-#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
-pub(crate) struct NoteRecord {
-    path: std::path::PathBuf,
-    note: Note,
-}
-
-impl NoteRecord {
-    /// Creates a new [`NoteRecord`].
-    #[inline]
-    #[must_use]
-    pub(crate) fn new(path: impl Into<std::path::PathBuf>, note: Note) -> Self {
-        Self {
-            path: path.into(),
-            note,
-        }
-    }
-
-    /// Project-relative path of the note.
-    #[inline]
-    #[must_use]
-    pub(crate) fn path(&self) -> &std::path::Path {
-        &self.path
-    }
-
-    /// Extracted Note Metadata.
-    #[inline]
-    #[must_use]
-    pub(crate) fn note(&self) -> &Note {
-        &self.note
-    }
-}
 
 /// Rich Note Metadata extracted from a markdown file.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub(crate) struct Note {
+    path: PathBuf,
     frontmatter: Option<Frontmatter>,
     lists: Vec<List>,
     outlinks: Vec<Outlink>,
@@ -51,17 +22,26 @@ impl Note {
     #[inline]
     #[must_use]
     pub(crate) fn new(
+        path: impl Into<PathBuf>,
         frontmatter: Option<Frontmatter>,
         lists: Vec<List>,
         outlinks: Vec<Outlink>,
         code_regions: Vec<CodeRegion>,
     ) -> Self {
         Self {
+            path: path.into(),
             frontmatter,
             lists,
             outlinks,
             code_regions,
         }
+    }
+
+    /// Project-relative path of this note.
+    #[inline]
+    #[must_use]
+    pub(crate) fn path(&self) -> &Path {
+        &self.path
     }
 
     /// Extracted YAML frontmatter block, if present.
@@ -358,9 +338,30 @@ impl CodeRegion {
 mod tests {
     use super::*;
 
-    mod constructor {
+    mod note {
         use pretty_assertions::assert_eq;
-        use rstest::rstest;
+
+        use super::*;
+
+        #[test]
+        fn creates_note_with_path_and_metadata() {
+            let note = Note::new(
+                "notes/a.md",
+                None,
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+            );
+            assert_eq!(note.path(), Path::new("notes/a.md"));
+            assert_eq!(note.frontmatter(), None);
+            assert_eq!(note.lists().len(), 0);
+            assert_eq!(note.outlinks().len(), 0);
+            assert_eq!(note.code_regions().len(), 0);
+        }
+    }
+
+    mod frontmatter {
+        use pretty_assertions::assert_eq;
 
         use super::*;
 
@@ -374,8 +375,16 @@ mod tests {
         #[test]
         fn creates_empty_frontmatter() {
             let fm = Frontmatter::default();
+            assert_eq!(fm.raw(), "");
             assert_eq!(fm.is_empty(), true);
         }
+    }
+
+    mod outlink {
+        use pretty_assertions::assert_eq;
+        use rstest::rstest;
+
+        use super::*;
 
         #[rstest]
         #[case::wikilink("target", "alias", LinkType::Wikilink, true, false)]
@@ -389,18 +398,24 @@ mod tests {
         fn evaluates_outlink_kind_predicates(
             #[case] target: &str,
             #[case] text: &str,
-            #[case] link_type: LinkType,
+            #[case] kind: LinkType,
             #[case] expected_wikilink: bool,
             #[case] expected_markdown: bool,
         ) {
-            let link = Outlink::new(target, text, link_type);
-
+            let link = Outlink::new(target, text, kind);
             assert_eq!(link.target(), target);
             assert_eq!(link.text(), text);
-            assert_eq!(link.kind(), link_type);
+            assert_eq!(link.kind(), kind);
             assert_eq!(link.is_wikilink(), expected_wikilink);
             assert_eq!(link.is_markdown(), expected_markdown);
         }
+    }
+
+    mod list_item {
+        use pretty_assertions::assert_eq;
+        use rstest::rstest;
+
+        use super::*;
 
         #[rstest]
         #[case::incomplete_task(Some(TaskStatus::Incomplete), true, false)]
@@ -411,39 +426,56 @@ mod tests {
             #[case] expected_is_task: bool,
             #[case] expected_is_completed: bool,
         ) {
-            let item = ListItem::new("Task item", task_status);
-
-            assert_eq!(item.text(), "Task item");
+            let item = ListItem::new("task item", task_status);
+            assert_eq!(item.text(), "task item");
             assert_eq!(item.task_status(), task_status);
             assert_eq!(item.is_task(), expected_is_task);
             assert_eq!(item.is_completed(), expected_is_completed);
+            assert_eq!(item.children().len(), 0);
         }
 
         #[test]
-        fn creates_list_item_with_children() {
-            let child_list =
-                List::new(false, vec![ListItem::new("Child", None)]);
-            let item =
-                ListItem::with_children("Parent", None, vec![child_list]);
-            assert_eq!(item.children().len(), 1);
-            assert_eq!(
-                item.children().get(0).map(List::is_ordered),
-                Some(false)
-            );
+        fn creates_item_with_children() {
+            let child_item = ListItem::new("child item", None);
+            let child_list = List::new(false, vec![child_item]);
+            let parent_item =
+                ListItem::with_children("parent item", None, vec![child_list]);
+
+            assert_eq!(parent_item.children().len(), 1);
+            let parent_children = parent_item.children();
+            let first_child_list = parent_children.first().expect("child list");
+            assert_eq!(first_child_list.items().len(), 1);
+            let child_items = first_child_list.items();
+            let first_child_item = child_items.first().expect("child item");
+            assert_eq!(first_child_item.text(), "child item");
         }
+    }
+
+    mod list {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
 
         #[test]
-        fn creates_code_region_range() {
+        fn creates_ordered_list() {
+            let item1 = ListItem::new("First step", None);
+            let item2 = ListItem::new("Second step", None);
+            let list = List::new(true, vec![item1, item2]);
+
+            assert_eq!(list.is_ordered(), true);
+            assert_eq!(list.items().len(), 2);
+        }
+    }
+
+    mod code_region {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn returns_range() {
             let region = CodeRegion::new(10, 25);
             assert_eq!(region.range(), 10..25);
-        }
-
-        #[test]
-        fn creates_note_record() {
-            let note = Note::new(None, Vec::new(), Vec::new(), Vec::new());
-            let rec = NoteRecord::new("notes/a.md", note.clone());
-            assert_eq!(rec.path(), std::path::Path::new("notes/a.md"));
-            assert_eq!(rec.note(), &note);
         }
     }
 }

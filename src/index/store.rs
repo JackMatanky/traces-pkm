@@ -1,4 +1,4 @@
-//! redb-backed persistence for [`FileRecord`]s and [`NoteRecord`]s, keyed by
+//! redb-backed persistence for [`FileRecord`]s and [`Note`]s, keyed by
 //! project-relative path.
 //!
 //! The sole seam that knows about redb tables — [`super::FileIndex`] and its
@@ -15,10 +15,7 @@ use redb::{
 };
 
 use super::{
-    INDEX_FILE,
-    error::FileIndexError,
-    file::FileRecord,
-    markdown::{Note, NoteRecord},
+    INDEX_FILE, error::FileIndexError, file::FileRecord, markdown::Note,
 };
 
 /// Path → TOML-encoded [`FileRecord`] bytes.
@@ -75,7 +72,7 @@ impl IndexStore {
     pub(super) fn replace_all(
         &self,
         records: &[FileRecord],
-        notes: &[NoteRecord],
+        notes: &[Note],
     ) -> Result<(), FileIndexError> {
         let write_txn =
             self.db.begin_write().map_err(|source| self.store_error(source))?;
@@ -106,15 +103,14 @@ impl IndexStore {
             let mut notes_table = write_txn
                 .open_table(NOTES)
                 .map_err(|source| self.store_error(source))?;
-            for note_record in notes {
-                let key = note_record.path().to_string_lossy();
-                let value =
-                    toml::to_string(note_record.note()).map_err(|source| {
-                        FileIndexError::Serialize {
-                            path: note_record.path().to_path_buf(),
-                            source,
-                        }
-                    })?;
+            for note in notes {
+                let key = note.path().to_string_lossy();
+                let value = toml::to_string(note).map_err(|source| {
+                    FileIndexError::Serialize {
+                        path: note.path().to_path_buf(),
+                        source,
+                    }
+                })?;
                 notes_table
                     .insert(&*key, value.as_bytes())
                     .map_err(|source| self.store_error(source))?;
@@ -133,7 +129,7 @@ impl IndexStore {
     /// - [`FileIndexError::Deserialize`] if stored text isn't valid UTF-8/TOML
     pub(super) fn load_all(
         &self,
-    ) -> Result<(Vec<FileRecord>, Vec<NoteRecord>), FileIndexError> {
+    ) -> Result<(Vec<FileRecord>, Vec<Note>), FileIndexError> {
         let read_txn =
             self.db.begin_read().map_err(|source| self.store_error(source))?;
 
@@ -169,7 +165,7 @@ impl IndexStore {
 
         let notes = match read_txn.open_table(NOTES) {
             Ok(table) => {
-                let mut notes: Vec<NoteRecord> = Vec::new();
+                let mut notes: Vec<Note> = Vec::new();
                 for entry in
                     table.iter().map_err(|source| self.store_error(source))?
                 {
@@ -190,7 +186,7 @@ impl IndexStore {
                                 source: Box::new(source),
                             }
                         })?;
-                    notes.push(NoteRecord::new(path, note));
+                    notes.push(note);
                 }
                 notes.sort_by(|a, b| a.path().cmp(b.path()));
                 notes
@@ -241,19 +237,17 @@ mod tests {
             )
             .expect("write note");
             let records = scan_root(temp.path()).expect("scan root");
-            let note = parse_markdown("---\ntitle: Hello\n---\n- [ ] task");
-            let note_records =
-                vec![NoteRecord::new(PathBuf::from("note.md"), note)];
+            let note =
+                parse_markdown("note.md", "---\ntitle: Hello\n---\n- [ ] task");
+            let notes = vec![note];
             let store = IndexStore::open(temp.path()).expect("open store");
 
-            store
-                .replace_all(&records, &note_records)
-                .expect("persist records");
+            store.replace_all(&records, &notes).expect("persist records");
             let (loaded_records, loaded_notes) =
                 store.load_all().expect("load records");
 
             assert_eq!(loaded_records, records);
-            assert_eq!(loaded_notes, note_records);
+            assert_eq!(loaded_notes, notes);
         }
 
         #[test]
