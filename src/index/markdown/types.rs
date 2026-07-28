@@ -351,7 +351,29 @@ mod tests {
         use super::*;
 
         #[test]
-        fn creates_note_with_path_and_metadata() {
+        fn constructs_note_with_the_given_path_and_parts() {
+            let frontmatter = Frontmatter::new("title: A\n");
+            let list = List::new(false, vec![ListItem::new("item", None)]);
+            let outlink = Outlink::new("target", "text", LinkType::Wikilink);
+            let code_region = CodeRegion::new(3, 7);
+
+            let note = Note::new(
+                "notes/a.md",
+                Some(frontmatter.clone()),
+                vec![list.clone()],
+                vec![outlink.clone()],
+                vec![code_region.clone()],
+            );
+
+            assert_eq!(note.path(), Path::new("notes/a.md"));
+            assert_eq!(note.frontmatter(), Some(&frontmatter));
+            assert_eq!(note.lists(), [list]);
+            assert_eq!(note.outlinks(), [outlink]);
+            assert_eq!(note.code_regions(), [code_region]);
+        }
+
+        #[test]
+        fn constructs_note_with_no_frontmatter_and_empty_collections() {
             let note = Note::new(
                 "notes/a.md",
                 None,
@@ -460,16 +482,19 @@ mod tests {
 
     mod list {
         use pretty_assertions::assert_eq;
+        use rstest::rstest;
 
         use super::*;
 
-        #[test]
-        fn creates_ordered_list() {
+        #[rstest]
+        #[case::ordered(true)]
+        #[case::unordered(false)]
+        fn stores_the_given_ordering_and_items(#[case] is_ordered: bool) {
             let item1 = ListItem::new("First step", None);
             let item2 = ListItem::new("Second step", None);
-            let list = List::new(true, vec![item1, item2]);
+            let list = List::new(is_ordered, vec![item1, item2]);
 
-            assert_eq!(list.is_ordered(), true);
+            assert_eq!(list.is_ordered(), is_ordered);
             assert_eq!(list.items().len(), 2);
         }
     }

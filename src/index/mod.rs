@@ -160,14 +160,11 @@ mod tests {
         use super::*;
 
         #[test]
-        fn finds_every_file_under_root_and_extracts_notes() {
+        fn extracts_note_metadata_only_for_markdown_files() {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::create_dir_all(temp.path().join("notes")).expect("mkdir notes");
-            fs::write(
-                temp.path().join("notes/todo.md"),
-                "---\ntitle: Todo\n---\n- [ ] task 1",
-            )
-            .expect("write note");
+            fs::write(temp.path().join("notes/todo.md"), "- [ ] task 1")
+                .expect("write note");
             fs::write(temp.path().join("readme.txt"), "text content")
                 .expect("write txt");
 
@@ -175,12 +172,24 @@ mod tests {
 
             assert_eq!(index.records().len(), 2);
             assert_eq!(index.notes().len(), 1);
+            assert_eq!(
+                index.notes().first().map(Note::path),
+                Some(Path::new("notes/todo.md"))
+            );
+        }
 
-            let note_rec = index.notes().first().expect("note present");
-            assert_eq!(note_rec.path(), Path::new("notes/todo.md"));
+        #[test]
+        fn parses_frontmatter_and_tasks_from_markdown_content() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(
+                temp.path().join("todo.md"),
+                "---\ntitle: Todo\n---\n- [ ] task 1",
+            )
+            .expect("write note");
 
-            let note =
-                index.note(Path::new("notes/todo.md")).expect("note lookup");
+            let index = FileIndex::build(temp.path()).expect("build index");
+
+            let note = index.note(Path::new("todo.md")).expect("note lookup");
             assert_eq!(
                 note.frontmatter().map(Frontmatter::raw),
                 Some("title: Todo\n")

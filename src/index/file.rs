@@ -188,6 +188,27 @@ impl From<SystemTime> for Timestamp {
 mod tests {
     use super::*;
 
+    /// Builds a `FileRecord` with `created`/`modified_at` set directly, for
+    /// exercising timestamp accessor behavior without touching the
+    /// filesystem.
+    fn record_with(
+        created: Option<Timestamp>,
+        modified_at: Timestamp,
+    ) -> FileRecord {
+        FileRecord {
+            path: PathBuf::from("note.md"),
+            name: BaseName::from(
+                &FileName::try_from(Path::new("note.md"))
+                    .expect("valid file name"),
+            ),
+            folder: PathBuf::new(),
+            format: FileFormat::Note,
+            created,
+            modified_at,
+            size: 0,
+        }
+    }
+
     mod from_name {
         use pretty_assertions::assert_eq;
         use rstest::rstest;
@@ -196,10 +217,7 @@ mod tests {
 
         #[rstest]
         #[case::lowercase_md_extension("note.md", FileFormat::Note)]
-        #[case::mixed_case_markdown_extension(
-            "note.MARKDOWN",
-            FileFormat::Note
-        )]
+        #[case::uppercase_markdown_extension("note.MARKDOWN", FileFormat::Note)]
         #[case::non_markdown_extension("config.toml", FileFormat::Other)]
         #[case::no_extension("LICENSE", FileFormat::Other)]
         fn classifies_by_extension(
@@ -263,23 +281,27 @@ mod tests {
             assert_eq!(record.format(), FileFormat::Note);
             assert_eq!(record.size(), 2);
         }
+    }
+
+    mod created_at {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
 
         #[test]
-        fn created_at_returns_none_when_unsupported() {
-            let record = FileRecord {
-                path: PathBuf::from("note.md"),
-                name: BaseName::from(
-                    &FileName::try_from(Path::new("note.md"))
-                        .expect("valid file name"),
-                ),
-                folder: PathBuf::new(),
-                format: FileFormat::Note,
-                created: None,
-                modified_at: Timestamp::now(),
-                size: 0,
-            };
+        fn returns_none_when_creation_time_is_unsupported() {
+            let record = record_with(None, Timestamp::now());
 
             assert_eq!(record.created_at(), None);
+        }
+
+        #[test]
+        fn returns_some_when_creation_time_is_reported() {
+            let modified_at = Timestamp::now();
+            let reported = Timestamp(modified_at.0 - chrono::Duration::days(1));
+            let record = record_with(Some(reported), modified_at);
+
+            assert_eq!(record.created_at(), Some(reported));
         }
     }
 
@@ -288,35 +310,8 @@ mod tests {
 
         use super::*;
 
-        fn record_with(
-            created: Option<Timestamp>,
-            modified_at: Timestamp,
-        ) -> FileRecord {
-            FileRecord {
-                path: PathBuf::from("note.md"),
-                name: BaseName::from(
-                    &FileName::try_from(Path::new("note.md"))
-                        .expect("valid file name"),
-                ),
-                folder: PathBuf::new(),
-                format: FileFormat::Note,
-                created,
-                modified_at,
-                size: 0,
-            }
-        }
-
         #[test]
-        fn created_at_returns_raw_option() {
-            let modified_at = Timestamp::now();
-            let reported = Timestamp(modified_at.0 - chrono::Duration::days(1));
-            let record = record_with(Some(reported), modified_at);
-
-            assert_eq!(record.created_at(), Some(reported));
-        }
-
-        #[test]
-        fn created_at_or_modified_returns_created_when_present() {
+        fn returns_created_when_present() {
             let modified_at = Timestamp::now();
             let reported = Timestamp(modified_at.0 - chrono::Duration::days(1));
             let record = record_with(Some(reported), modified_at);
@@ -325,8 +320,7 @@ mod tests {
         }
 
         #[test]
-        fn created_at_or_modified_falls_back_to_modified_when_created_is_none()
-        {
+        fn falls_back_to_modified_when_created_is_none() {
             let modified_at = Timestamp::now();
             let record = record_with(None, modified_at);
 

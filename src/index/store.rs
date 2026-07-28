@@ -32,6 +32,7 @@ const NOTES: TableDefinition<&str, &[u8]> = TableDefinition::new("notes");
 type IndexSnapshot = (Vec<FileRecord>, Vec<Note>);
 
 /// Redb-backed handle to one project root's index database.
+#[derive(Debug)]
 pub(super) struct IndexStore {
     db: Database,
     /// The database's own path, kept for error context.
@@ -316,7 +317,57 @@ mod tests {
         }
     }
 
+    mod open {
+        use super::*;
+
+        #[test]
+        fn returns_store_error_when_the_index_path_is_a_directory() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let root = temp.path();
+            fs::create_dir_all(root.join(INDEX_FILE))
+                .expect("create directory at db path");
+
+            let error = IndexStore::open(root)
+                .expect_err("directory at db path fails to open");
+
+            assert!(matches!(error, FileIndexError::Store { .. }));
+        }
+
+        #[cfg(unix)]
+        #[test]
+        fn returns_io_error_when_the_parent_directory_cannot_be_created() {
+            use std::os::unix::fs::PermissionsExt as _;
+
+            /// Restores a locked directory's permissions on drop, even if
+            /// the test panics - otherwise a `0o500` root blocks the
+            /// tempdir's own cleanup.
+            struct RestorePermissions<'a>(&'a Path);
+
+            impl Drop for RestorePermissions<'_> {
+                fn drop(&mut self) {
+                    let _ = fs::set_permissions(
+                        self.0,
+                        fs::Permissions::from_mode(0o700),
+                    );
+                }
+            }
+
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let root = temp.path();
+            fs::set_permissions(root, fs::Permissions::from_mode(0o500))
+                .expect("revoke write permission");
+            let _restore = RestorePermissions(root);
+
+            let error = IndexStore::open(root)
+                .expect_err("unwritable root fails to open store");
+
+            assert!(matches!(error, FileIndexError::Io { .. }));
+        }
+    }
+
     mod load_all {
+
+        use rstest::rstest;
 
         use super::*;
         fn write_raw_value(
@@ -349,35 +400,18 @@ mod tests {
             ));
         }
 
-        #[test]
-        fn returns_deserialize_error_when_stored_text_is_not_valid_toml() {
+        #[rstest]
+        #[case::file_records(FILE_RECORDS)]
+        #[case::notes(NOTES)]
+        fn returns_deserialize_error_when_stored_text_is_not_valid_toml(
+            #[case] table_def: TableDefinition<&str, &[u8]>,
+        ) {
             let temp = tempfile::tempdir().expect("create temp dir");
             let store = IndexStore::open(temp.path()).expect("open store");
-            write_raw_value(
-                &store,
-                FILE_RECORDS,
-                "bad.md",
-                b"not valid toml {{{",
-            );
+            write_raw_value(&store, table_def, "bad.md", b"not valid toml {{{");
 
             let error =
                 store.load_all().expect_err("invalid TOML text fails to load");
-
-            assert!(matches!(
-                &error,
-                FileIndexError::Deserialize { path, .. }
-                    if path == Path::new("bad.md")
-            ));
-        }
-
-        #[test]
-        fn returns_deserialize_error_when_note_bytes_are_not_valid_toml() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            let store = IndexStore::open(temp.path()).expect("open store");
-            write_raw_value(&store, NOTES, "bad.md", b"invalid note content");
-
-            let error =
-                store.load_all().expect_err("invalid note fails to load");
 
             assert!(matches!(
                 &error,
