@@ -56,10 +56,10 @@ impl FileIndex {
     ///
     /// # Errors
     ///
-    /// Returns [`FileIndexError::Io`] if the database's parent directory
-    /// cannot be created, [`FileIndexError::Store`] if the database
-    /// transaction fails, or [`FileIndexError::Serialize`] if a record
-    /// cannot be encoded.
+    /// - [`FileIndexError::Io`] if the database's parent directory cannot be
+    ///   created
+    /// - [`FileIndexError::Store`] if the database transaction fails
+    /// - [`FileIndexError::Serialize`] if a record cannot be encoded
     #[inline]
     pub(crate) fn persist(&self, root: &Path) -> Result<(), FileIndexError> {
         IndexStore::open(root)?.replace_all(&self.records)
@@ -70,10 +70,10 @@ impl FileIndex {
     ///
     /// # Errors
     ///
-    /// Returns [`FileIndexError::Store`] if the database cannot be read,
-    /// [`FileIndexError::Corrupt`] if stored bytes aren't valid UTF-8, or
-    /// [`FileIndexError::Deserialize`] if stored text isn't a valid
-    /// [`FileRecord`].
+    /// - [`FileIndexError::Store`] if the database cannot be read
+    /// - [`FileIndexError::Corrupt`] if stored bytes aren't valid UTF-8
+    /// - [`FileIndexError::Deserialize`] if stored text isn't a valid
+    ///   [`FileRecord`]
     #[inline]
     pub(crate) fn load(root: &Path) -> Result<Self, FileIndexError> {
         Ok(Self {

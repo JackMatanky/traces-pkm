@@ -288,7 +288,7 @@ impl Diagnostic for CliError {
             } => "traces::cli::init::write_config_failed",
             Self::Index {
                 ..
-            } => "traces::cli::index_failed",
+            } => "traces::cli::index::failed",
             Self::TemplateInstantiate {
                 source,
                 ..
@@ -638,7 +638,7 @@ mod tests {
         assert_eq!(error.to_string(), "failed to index /some/project");
         assert_eq!(
             error.code().map(|code| code.to_string()),
-            Some("traces::cli::index_failed".to_owned())
+            Some("traces::cli::index::failed".to_owned())
         );
         assert_eq!(
             error.help().map(|help| help.to_string()),

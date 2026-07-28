@@ -37,9 +37,9 @@ impl IndexStore {
     ///
     /// # Errors
     ///
-    /// Returns [`FileIndexError::Io`] if the database's parent directory
-    /// cannot be created, or [`FileIndexError::Store`] if the database file
-    /// cannot be opened.
+    /// - [`FileIndexError::Io`] if the database's parent directory cannot be
+    ///   created
+    /// - [`FileIndexError::Store`] if the database file cannot be opened
     pub(super) fn open(root: &Path) -> Result<Self, FileIndexError> {
         let path = root.join(INDEX_FILE);
         if let Some(parent) = path.parent() {
@@ -66,8 +66,8 @@ impl IndexStore {
     ///
     /// # Errors
     ///
-    /// Returns [`FileIndexError::Store`] if the transaction fails, or
-    /// [`FileIndexError::Serialize`] if a record cannot be TOML-encoded.
+    /// - [`FileIndexError::Store`] if the transaction fails
+    /// - [`FileIndexError::Serialize`] if a record cannot be TOML-encoded
     pub(super) fn replace_all(
         &self,
         records: &[FileRecord],
@@ -101,10 +101,10 @@ impl IndexStore {
     ///
     /// # Errors
     ///
-    /// Returns [`FileIndexError::Store`] if the table cannot be read,
-    /// [`FileIndexError::Corrupt`] if stored bytes aren't valid UTF-8, or
-    /// [`FileIndexError::Deserialize`] if stored text isn't a valid
-    /// [`FileRecord`].
+    /// - [`FileIndexError::Store`] if the table cannot be read
+    /// - [`FileIndexError::Corrupt`] if stored bytes aren't valid UTF-8
+    /// - [`FileIndexError::Deserialize`] if stored text isn't a valid
+    ///   [`FileRecord`]
     pub(super) fn load_all(&self) -> Result<Vec<FileRecord>, FileIndexError> {
         let read_txn =
             self.db.begin_read().map_err(|source| self.store_error(source))?;

@@ -11,6 +11,19 @@ use serde::{Deserialize, Serialize};
 
 use super::error::FileIndexError;
 
+/// Coarse classification of a [`FileRecord`] — whether Traces treats it as
+/// a markdown Note (eligible for future Note Metadata extraction; see the
+/// spec's two-tier File Record / Note Metadata model) or a plain file.
+///
+/// Named `kind` to match the `file_records` schema in ADR-0005.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) enum FileKind {
+    /// A markdown Note (`.md` or `.markdown` extension).
+    Note,
+    /// Any other file.
+    Other,
+}
+
 /// General metadata indexed for every file under a project root, regardless
 /// of type.
 ///
@@ -22,6 +35,7 @@ pub(crate) struct FileRecord {
     path: PathBuf,
     name: String,
     folder: PathBuf,
+    kind: FileKind,
     created_at: DateTime<Utc>,
     modified_at: DateTime<Utc>,
     size: u64,
@@ -56,11 +70,17 @@ impl FileRecord {
             .unwrap_or_default();
         let folder =
             relative.parent().unwrap_or_else(|| Path::new("")).to_path_buf();
+        let kind = match relative.extension().and_then(|ext| ext.to_str()) {
+            Some(ext) if ext.eq_ignore_ascii_case("md") => FileKind::Note,
+            Some(ext) if ext.eq_ignore_ascii_case("markdown") => FileKind::Note,
+            _ => FileKind::Other,
+        };
 
         Ok(Self {
             path: relative,
             name,
             folder,
+            kind,
             created_at,
             modified_at,
             size: metadata.len(),
@@ -87,6 +107,13 @@ impl FileRecord {
     #[must_use]
     pub(crate) fn folder(&self) -> &Path {
         &self.folder
+    }
+
+    /// Whether this file is a markdown Note or a plain file.
+    #[inline]
+    #[must_use]
+    pub(crate) fn kind(&self) -> FileKind {
+        self.kind
     }
 
     /// The file's creation time, or its modification time where the
@@ -205,5 +232,40 @@ mod tests {
         if metadata.created().is_err() {
             assert_eq!(record.created_at(), record.modified_at());
         }
+    }
+
+    #[test]
+    fn markdown_extensions_are_classified_as_notes() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let md = temp.path().join("note.md");
+        let markdown = temp.path().join("note.MARKDOWN");
+        fs::write(&md, "content").expect("write .md file");
+        fs::write(&markdown, "content").expect("write .MARKDOWN file");
+
+        let md_record =
+            FileRecord::from_metadata(&md, temp.path(), &metadata_for(&md))
+                .expect("build .md record");
+        let markdown_record = FileRecord::from_metadata(
+            &markdown,
+            temp.path(),
+            &metadata_for(&markdown),
+        )
+        .expect("build .MARKDOWN record");
+
+        assert_eq!(md_record.kind(), FileKind::Note);
+        assert_eq!(markdown_record.kind(), FileKind::Note);
+    }
+
+    #[test]
+    fn non_markdown_files_are_classified_as_other() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let file = temp.path().join("config.toml");
+        fs::write(&file, "content").expect("write file");
+
+        let record =
+            FileRecord::from_metadata(&file, temp.path(), &metadata_for(&file))
+                .expect("build record");
+
+        assert_eq!(record.kind(), FileKind::Other);
     }
 }

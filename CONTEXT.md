@@ -127,7 +127,7 @@ A persisted cache of metadata extracted from every file in the project root. Bui
 _Avoid_: NoteIndex, database, cache, vault
 
 ### File Record
-The indexed metadata for every file regardless of type: `file.path`, `file.name`, `file.folder`, `file.created_at`, `file.modified_at`, `file.size`. Exposes `ctime`/`cdate`/`mtime`/`mdate` accessors for Dataview-style queries.
+The indexed metadata for every file regardless of type: `file.path`, `file.name`, `file.folder`, `file.created_at`, `file.modified_at`, `file.size`, and `kind` (whether the file is a markdown Note or a plain file — per ADR-0005's `file_records` schema). Exposes `ctime`/`cdate`/`mtime`/`mdate` accessors for Dataview-style queries.
 _Avoid_: file metadata, fs entry
 
 ### Note Metadata
