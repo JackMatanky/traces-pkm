@@ -4,8 +4,10 @@ mod config;
 mod cwd;
 mod dialog;
 mod dirs;
+mod file_name;
 mod file_store;
 mod hash;
+mod index;
 mod path;
 mod template;
 
