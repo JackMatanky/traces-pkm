@@ -124,6 +124,10 @@ impl ParserContext {
         }
     }
 
+    /// Pushes the code span's byte range and its text — inline code has no
+    /// surrounding markup to strip, so its content is also part of the
+    /// item's plain text (unlike fenced code blocks, which are typically
+    /// their own paragraph outside any item's inline text run).
     fn inline_code(&mut self, text: &str, range: Range<usize>) {
         self.code_regions.push(CodeRegion::new(range.start, range.end));
         if let Some(item) = self.item_stack.last_mut() {
@@ -138,6 +142,11 @@ impl ParserContext {
         });
     }
 
+    /// Closes the innermost list: nests it under the current item if one is
+    /// active (so `- parent\n  - child` puts `child` under `parent`'s
+    /// [`ListItem::children`]), otherwise it's a top-level list on the Note
+    /// itself. This is the one branch that decides [`Note::lists`]
+    /// top-level-only vs. nested.
     fn end_list(&mut self) {
         if let Some(frame) = self.list_stack.pop() {
             let list = List::new(frame.is_ordered, frame.items);

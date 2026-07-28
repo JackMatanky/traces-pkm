@@ -68,8 +68,10 @@ impl IndexStore {
         })
     }
 
-    /// Replaces every stored File Record with `records` and Note Record with
-    /// `notes`.
+    /// Replaces every stored File Record with `records` and Note Record
+    /// with `notes`, atomically — both tables are cleared and rewritten in
+    /// one redb write transaction, so a reader never observes a state with
+    /// one table replaced and the other stale.
     ///
     /// # Errors
     ///
@@ -112,6 +114,10 @@ impl IndexStore {
 
     /// Serializes `items` as TOML into `table`, keyed by `path_of`.
     ///
+    /// Generic over `T` so [`Self::replace_all`] can drive both the
+    /// `file_records` and `notes` tables through this one code path instead
+    /// of duplicating the open/serialize/insert loop per table.
+    ///
     /// # Errors
     ///
     /// - [`FileIndexError::Store`] if the table cannot be opened or written
@@ -144,6 +150,9 @@ impl IndexStore {
 
     /// Deserializes every TOML value in `table` into a `Vec<T>`, sorted by
     /// `path_of` for deterministic output.
+    ///
+    /// Generic for the same reason as [`Self::store_table`]: one code path
+    /// for both tables instead of a near-identical copy per table.
     ///
     /// # Errors
     ///

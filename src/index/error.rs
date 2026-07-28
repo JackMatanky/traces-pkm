@@ -6,6 +6,10 @@ use std::{io, path::PathBuf, str::Utf8Error};
 use thiserror::Error;
 
 /// Errors from building, persisting, or loading a [`super::FileIndex`].
+///
+/// [`Io`](Self::Io) originates from scanning ([`super::scan`]); the rest
+/// originate from the redb-backed store ([`super::store`]) — opening,
+/// reading, or writing the index database.
 #[derive(Debug, Error)]
 pub(crate) enum FileIndexError {
     /// A filesystem operation failed while scanning a project root or preparing

@@ -44,7 +44,9 @@ use store::IndexStore;
 const INDEX_FILE: &str = ".traces/index.redb";
 
 /// A persisted cache of File Records and Note Metadata for files under a
-/// project root.
+/// project root. Two tiers: every file gets a [`FileRecord`]
+/// ([`Self::records`]); markdown files additionally get a [`Note`]
+/// ([`Self::notes`], [`Self::note`]).
 #[derive(Debug)]
 pub(crate) struct FileIndex {
     records: Vec<FileRecord>,
@@ -132,6 +134,11 @@ impl FileIndex {
     }
 
     /// Returns the [`Note`] for the note at `path`, if indexed.
+    ///
+    /// # Performance
+    ///
+    /// O(log n) — [`Self::notes`] is kept sorted by path, so this binary
+    /// searches rather than scanning.
     #[must_use]
     pub(crate) fn note(&self, path: &Path) -> Option<&Note> {
         self.notes

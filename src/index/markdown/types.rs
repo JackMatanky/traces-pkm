@@ -7,7 +7,9 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-/// Rich Note Metadata extracted from a markdown file.
+/// Rich Note Metadata extracted from a markdown file: frontmatter, lists,
+/// outlinks, and code regions. [`Self::tasks`] derives task items from the
+/// indexed lists rather than storing them separately.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub(crate) struct Note {
     path: PathBuf,
@@ -51,7 +53,9 @@ impl Note {
         self.frontmatter.as_ref()
     }
 
-    /// Extracted lists.
+    /// Top-level lists extracted from the note's body. Nested lists live
+    /// under each [`ListItem::children`], not here — see [`Self::tasks`]
+    /// for a flattened view that does walk into nested lists.
     #[inline]
     #[must_use]
     pub(crate) fn lists(&self) -> &[List] {
@@ -83,6 +87,9 @@ impl Note {
     }
 }
 
+/// Depth-first walk of `list` and its nested sub-lists, appending every
+/// task item to `acc`. Recursion depth tracks list nesting depth, which
+/// markdown limits in practice (indentation-driven).
 fn collect_tasks_recursive<'a>(list: &'a List, acc: &mut Vec<&'a ListItem>) {
     for item in &list.items {
         if item.is_task() {
