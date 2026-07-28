@@ -88,6 +88,11 @@ impl Parsed {
     ///
     /// Used for global config, which has no trust gate and thus no risk of
     /// a second, independent read racing the first.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConfigFileError::Read`] if `path` cannot be read or its
+    /// content cannot be parsed as TOML.
     fn read(path: &Path) -> Result<Self, ConfigFileError> {
         let raw = Figment::from(Toml::file_exact(path))
             .extract::<RawConfig>()
@@ -106,6 +111,11 @@ impl Parsed {
     /// Used for local config, whose content was already read once while
     /// verifying trust — reusing it here avoids a second, independent read
     /// of the same path that a fresh [`Self::read`] call would require.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConfigFileError::Read`] if `content` cannot be parsed as
+    /// TOML.
     fn from_content(
         path: &Path,
         content: &str,

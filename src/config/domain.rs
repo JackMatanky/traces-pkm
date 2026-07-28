@@ -56,7 +56,7 @@ impl Config {
         self.templates.output()
     }
 
-    /// Test-only constructor that builds a `Config` directly, bypassing
+    /// Test-only constructor that builds a [`Self`] directly, bypassing
     /// discovery, trust-gating, and the builder pipeline.
     ///
     /// TODO(remove): once `template::`'s tests build real TOML fixtures and
@@ -93,7 +93,7 @@ pub(super) struct TemplateConfig {
 }
 
 impl TemplateConfig {
-    /// Creates a `TemplateConfig` from builder-owned parts.
+    /// Creates a template config from builder-owned parts.
     #[inline]
     #[must_use]
     pub(super) fn new(

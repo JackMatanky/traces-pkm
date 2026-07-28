@@ -144,8 +144,8 @@ pub(crate) struct ConfigService {
 }
 
 impl ConfigService {
-    /// Creates a `ConfigService` backed by the OS-correct tracked-config and
-    /// trust stores.
+    /// Creates a service backed by the OS-correct tracked-config and trust
+    /// stores.
     #[must_use]
     #[inline]
     pub(crate) fn new() -> Self {
@@ -154,10 +154,9 @@ impl ConfigService {
         }
     }
 
-    /// Creates a `ConfigService` backed by explicit tracked-config and
-    /// trust-store roots. Test-only — lets `crate::cli::trust`'s tests
-    /// build an isolated service without touching real OS state
-    /// directories.
+    /// Creates a service backed by explicit tracked-config and trust-store
+    /// roots. Test-only — lets `crate::cli::trust`'s tests build an
+    /// isolated service without touching real OS state directories.
     #[cfg(test)]
     #[must_use]
     pub(crate) fn at(tracked_root: PathBuf, trusted_root: PathBuf) -> Self {
