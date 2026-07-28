@@ -124,7 +124,7 @@ impl FileIndex {
         &self.records
     }
 
-    /// Every indexed Note, sorted by path.
+    /// Every indexed Note Record, sorted by path.
     #[inline]
     #[must_use]
     pub(crate) fn notes(&self) -> &[Note] {

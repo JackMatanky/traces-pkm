@@ -1,4 +1,12 @@
 //! Markdown note event parser yielding [`Note`] records.
+//!
+//! [`parse_markdown`] walks `pulldown-cmark`'s event stream once,
+//! accumulating into a [`ParserContext`]. Nested lists are tracked with an
+//! explicit stack (`list_stack`/`item_stack`) rather than recursion, so
+//! depth is bounded only by available memory, not call-stack size. A
+//! link's display text is pushed into both its [`Outlink`] and the plain
+//! text of the list item containing it — the two aren't mutually
+//! exclusive, since a link can appear inside an item.
 
 use std::{mem, ops::Range, path::PathBuf};
 
