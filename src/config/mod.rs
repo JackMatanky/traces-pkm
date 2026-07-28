@@ -29,7 +29,6 @@ pub(crate) use store::ConfigStateError;
 pub(crate) use trust::ConfigTrustStatus;
 pub(crate) use trust::TrustRequest;
 
-mod builder;
 mod discovery;
 mod domain;
 mod file;
