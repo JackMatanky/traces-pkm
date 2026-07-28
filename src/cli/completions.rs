@@ -1,13 +1,5 @@
-//! `traces completions` command: static shell completion scripts via
-//! `clap_complete`, and dynamic template-name listing consumed by those
-//! scripts for `-i <name>` tab-completion.
-//!
-//! Thin adapter over [`ConfigService`] and
-//! [`crate::template::TemplateService`]: `--list-templates` loads config
-//! for the current directory the same way
-//! [`crate::cli::template::Template::run`] does, through the same
-//! [`super::load_config`] seam — a Config failure gets the identical
-//! [`CliError`] code and remediation regardless of which command hit it.
+//! Command handler for `traces completions`: shell completions and template
+//! listing.
 
 use clap::{ArgGroup, Args, CommandFactory as _};
 use clap_complete::{Shell, generate};
@@ -15,8 +7,7 @@ use clap_complete::{Shell, generate};
 use super::error::CliError;
 use crate::{config::ConfigService, template::TemplateService};
 
-/// `traces completions --shell <bash|zsh|fish>` or
-/// `traces completions --list-templates`.
+/// Command-line arguments for `traces completions`.
 #[derive(Debug, Args)]
 #[command(group(
     ArgGroup::new("completions_mode")
@@ -25,26 +16,23 @@ use crate::{config::ConfigService, template::TemplateService};
         .multiple(false)
 ))]
 pub(super) struct Completions {
-    /// Generate a static shell completion script for the whole `traces`
-    /// command tree.
+    /// Generate a static shell completion script for `traces`.
     #[arg(long, value_enum)]
     shell: Option<Shell>,
-    /// Print every available template name, one per line — for dynamic
-    /// `-i <name>` tab-completion.
+    /// Print available template names for dynamic tab-completion.
     #[arg(long)]
     list_templates: bool,
 }
 
 impl Completions {
-    /// Generates a static completion script (`--shell`), or lists
-    /// available template names (`--list-templates`).
+    /// Runs the `completions` subcommand.
     ///
     /// # Errors
     ///
-    /// Returns [`CliError::CurrentDirectory`]/[`CliError::ConfigLoad`] when
-    /// `--list-templates` fails to load configuration for the current
-    /// directory. `--shell` never
-    /// fails: script generation is infallible once parsing succeeds.
+    /// - [`CliError::CurrentDirectory`] if the current directory cannot be
+    ///   read.
+    /// - [`CliError::ConfigLoad`] if loading configuration for
+    ///   `--list-templates` fails.
     #[inline]
     pub(super) fn run(self, service: &ConfigService) -> Result<(), CliError> {
         match self.shell {
@@ -56,10 +44,7 @@ impl Completions {
         }
     }
 
-    /// Writes `shell`'s completion script for the whole `traces` command
-    /// tree to stdout — data meant to be sourced by the shell, not
-    /// diagnostic text, mirroring the template dry-run precedent in
-    /// `crate::cli::template`.
+    /// Writes the completion script for `shell` to stdout.
     #[expect(
         clippy::print_stdout,
         reason = "completion scripts are data meant to be sourced by the \
@@ -70,15 +55,11 @@ impl Completions {
         print!("{}", Self::script(shell));
     }
 
-    /// Renders `shell`'s completion script as a `String` — split out from
-    /// [`Self::print_script`] so tests can assert on the generated text
-    /// without capturing real stdout.
+    /// Generates the shell completion script for `shell`.
     ///
     /// # Panics
     ///
-    /// Panics if `clap_complete::generate` ever emits non-UTF-8 bytes —
-    /// an invariant violation, since it only ever writes shell-script
-    /// source text, never arbitrary/binary data.
+    /// Panics if generated output is not valid UTF-8.
     #[expect(
         clippy::expect_used,
         reason = "clap_complete::generate always emits valid UTF-8 \
@@ -95,19 +76,13 @@ impl Completions {
             .expect("clap_complete generates valid UTF-8 shell-script text")
     }
 
-    /// Loads config for the current directory, then lists every
-    /// available template name via
-    /// [`TemplateService::list_available`] — the testable core of
-    /// [`Self::list_templates`], split out so tests can assert on the
-    /// returned names without capturing real stdout, mirroring
-    /// [`Self::script`]/[`Self::print_script`]'s split.
+    /// Loads configuration and returns available template names.
     ///
     /// # Errors
     ///
-    /// Returns [`CliError::CurrentDirectory`] when the process working
-    /// directory cannot be read. Returns [`CliError::ConfigLoad`] when
-    /// loading configuration fails, including for an untrusted or stale
-    /// project root.
+    /// - [`CliError::CurrentDirectory`] if the current directory cannot be
+    ///   read.
+    /// - [`CliError::ConfigLoad`] if configuration discovery or loading fails.
     fn template_names(
         service: &ConfigService,
     ) -> Result<Vec<String>, CliError> {
@@ -115,9 +90,7 @@ impl Completions {
         Ok(TemplateService::list_available(&config))
     }
 
-    /// Prints every name [`Self::template_names`] finds, one per line —
-    /// for shell completion scripts to call into when tab-completing
-    /// `-i <name>`.
+    /// Prints available template names to stdout, one per line.
     ///
     /// # Errors
     ///

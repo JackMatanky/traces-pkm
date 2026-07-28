@@ -1,4 +1,5 @@
-//! `traces init` command: scaffold local configuration and templates.
+//! Command handler for `traces init`: scaffolds local configuration and
+//! templates.
 
 use std::{
     fs,
@@ -16,10 +17,7 @@ use crate::{
 const DEFAULT_TEMPLATE_DIRECTORY: &str = ".traces/templates";
 const DEFAULT_OUTPUT_DIRECTORY: &str = ".";
 
-/// `traces init` — scaffold local configuration and templates.
-///
-/// Takes no flags; options are collected interactively through
-/// [`DialogProvider`].
+/// Command-line arguments for `traces init`.
 #[derive(Debug, Args)]
 pub struct Init;
 
@@ -30,19 +28,17 @@ struct InitInput {
 }
 
 impl Init {
-    /// Dispatches `traces init` using the current directory as the project
-    /// root.
+    /// Runs `traces init` using the current directory as the project root.
     ///
     /// # Errors
     ///
-    /// Returns [`CliError::CurrentDirectory`] when the current directory
-    /// cannot be read. Returns [`CliError::InitPrompt`] when collecting
-    /// input interactively fails. Returns
-    /// [`CliError::InitAlreadyInitialized`] when `.traces` already exists.
-    /// Returns [`CliError::InitScaffold`] when scaffolding `.traces`/
-    /// `.traces/templates` fails. Returns [`CliError::InitSerialize`] when
-    /// serialising the collected config fails. Returns
-    /// [`CliError::InitWriteConfig`] when writing the config file fails.
+    /// - [`CliError::CurrentDirectory`] if the current directory cannot be
+    ///   read.
+    /// - [`CliError::InitPrompt`] if collecting input interactively fails.
+    /// - [`CliError::InitAlreadyInitialized`] if `.traces` already exists.
+    /// - [`CliError::InitScaffold`] if directory scaffolding fails.
+    /// - [`CliError::InitSerialize`] if serializing configuration fails.
+    /// - [`CliError::InitWriteConfig`] if writing the configuration file fails.
     #[inline]
     pub fn run(self, provider: &dyn DialogProvider) -> Result<(), CliError> {
         let root = super::current_dir()?.into_inner();
@@ -53,7 +49,11 @@ impl Init {
         Ok(())
     }
 
-    /// Collect template configuration from the user interactively.
+    /// Collects template configuration from the user interactively.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CliError::InitPrompt`] if prompt dialog fails.
     fn collect_config(
         provider: &dyn DialogProvider,
     ) -> Result<InitInput, CliError> {
@@ -73,9 +73,13 @@ impl Init {
         })
     }
 
-    /// Scaffold `.traces/` and `.traces/templates/`.
+    /// Scaffolds `.traces/` and `.traces/templates/`.
     ///
-    /// Refuses to run when `.traces/` already exists.
+    /// # Errors
+    ///
+    /// - [`CliError::InitAlreadyInitialized`] if `.traces` already exists under
+    ///   `root`.
+    /// - [`CliError::InitScaffold`] if creating directories fails.
     #[expect(
         clippy::expect_used,
         reason = "LOCAL_CONFIG_FILE is a compile-time constant with a known \
@@ -109,7 +113,12 @@ impl Init {
         Ok(())
     }
 
-    /// Serialise the `[templates]` config and write `.traces/config.toml`.
+    /// Serializes template configuration and writes `.traces/config.toml`.
+    ///
+    /// # Errors
+    ///
+    /// - [`CliError::InitSerialize`] if TOML serialization fails.
+    /// - [`CliError::InitWriteConfig`] if writing the configuration file fails.
     fn write_config_file(
         root: &Path,
         directory: &Path,

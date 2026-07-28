@@ -1,12 +1,5 @@
-//! `traces template`/`tmpl` command, and the default `traces -i <name>`
-//! dispatch: renders a resolved template and writes it to disk, or — in
-//! dry-run mode — prints it to stdout. Omitting a name (`traces template`,
-//! or `traces -i` with no value) triggers an interactive fuzzy picker over
-//! every available template instead.
-//!
-//! Thin adapter over [`ConfigService`] and
-//! [`crate::template::TemplateService`]: parses args, loads config for the
-//! current directory, and reports the written path.
+//! Command handler for `traces template` and `traces -i <name>`: renders
+//! templates to disk or stdout.
 
 use std::{path::PathBuf, sync::Arc};
 
@@ -19,10 +12,7 @@ use crate::{
     template::{TemplateService, WriteMode, WriteOutcome},
 };
 
-/// `traces template -i <name>` (aliased `tmpl`), and the default
-/// `traces -i <name>` dispatch. `--list` is a fourth, non-interactive mode:
-/// prints every available template name and exits, for a quick look without
-/// launching the fuzzy picker.
+/// Command-line arguments for `traces template`.
 #[derive(Debug, Args)]
 pub(super) struct Template {
     /// Template name or path to instantiate. Omit (or pass `-i` with no value)
@@ -48,8 +38,8 @@ pub(super) struct Template {
 }
 
 impl Template {
-    /// Builds args directly, for the default `traces -i <name>` dispatch that
-    /// bypasses subcommand parsing.
+    /// Constructs [`Template`] args for explicit name dispatch (`traces -i
+    /// <name>`).
     #[inline]
     #[must_use]
     pub(super) fn new(name: PathBuf) -> Self {
@@ -65,8 +55,8 @@ impl Template {
         }
     }
 
-    /// Builds args for the interactive fuzzy-picker dispatch — the default
-    /// `traces -i` (no value) dispatch that bypasses subcommand parsing.
+    /// Constructs [`Template`] args for interactive fuzzy-picker dispatch
+    /// (`traces -i`).
     #[inline]
     #[must_use]
     pub(super) fn interactive() -> Self {
@@ -82,33 +72,18 @@ impl Template {
         }
     }
 
-    /// Loads config for the current directory. When [`Self::list`] is set,
-    /// prints every available template name
-    /// ([`TemplateService::list_available`]) and returns — a non-interactive
-    /// alternative to the fuzzy picker. Otherwise resolves and renders
-    /// [`Self::name`] — or, when absent, a name picked interactively from the
-    /// same list — writing it to the default output path or, in dry-run mode,
-    /// printing it to stdout instead.
-    ///
-    /// `provider` is the interactive provider a `ui.*` call delegates to when
-    /// [`Self::no_input`] is unset; when set, every render uses a defaults-only
-    /// provider instead.
+    /// Runs the `template` subcommand.
     ///
     /// # Errors
     ///
-    /// Returns [`CliError::CurrentDirectory`] when the process working
-    /// directory cannot be read. Returns [`CliError::ConfigLoad`] when
-    /// configuration discovery or construction fails. Returns
-    /// [`CliError::NoTemplates`] when [`Self::name`] is absent and no
-    /// template is available to pick — never returned for [`Self::list`],
-    /// which prints nothing and returns `Ok` when no template is available
-    /// (a list, unlike a picker, has nothing to fail by being empty).
-    /// Returns [`CliError::TemplatePicker`] when the interactive picker
-    /// prompt fails, is cancelled, or is interrupted. Returns
-    /// [`CliError::TemplateInstantiate`] when the resolve/render/write
-    /// pipeline fails — including when a picked template's declared
-    /// `file.write_to()` names an unsafe path, caught while computing
-    /// [`Self::prompt_output_override`]'s existence check.
+    /// - [`CliError::CurrentDirectory`] if the current directory cannot be
+    ///   read.
+    /// - [`CliError::ConfigLoad`] if loading configuration fails.
+    /// - [`CliError::NoTemplates`] if no template is available to pick.
+    /// - [`CliError::TemplatePicker`] if interactive selection fails or is
+    ///   cancelled.
+    /// - [`CliError::TemplateInstantiate`] if resolving, rendering, or writing
+    ///   fails.
     #[inline]
     #[expect(
         clippy::print_stdout,
@@ -155,17 +130,13 @@ impl Template {
         Ok(())
     }
 
-    /// Presents a fuzzy-filtered picker over every name
-    /// [`TemplateService::list_available`] finds for `config` — the `traces
-    /// template`/`traces -i` (bare) dispatch. Delegates to
-    /// [`DialogProvider::select`].
+    /// Prompts the user to select a template interactively.
     ///
     /// # Errors
     ///
-    /// Returns [`CliError::NoTemplates`] when `config` has no available
-    /// templates. Returns [`CliError::TemplatePicker`] when `provider` is
-    /// not interactive, or when the prompt fails, is cancelled (Esc), or is
-    /// interrupted (Ctrl-C).
+    /// - [`CliError::NoTemplates`] if no templates are available in `config`.
+    /// - [`CliError::TemplatePicker`] if interactive prompt fails, is
+    ///   non-interactive, or is cancelled.
     fn pick_template(
         config: &Config,
         provider: &Arc<dyn DialogProvider>,
@@ -193,8 +164,7 @@ impl Template {
         Ok(PathBuf::from(chosen))
     }
 }
-/// `-f`/`--force` and `-n`/`--dry-run` flags, grouped since both feed
-/// [`WriteMode::from_flags`].
+/// Command-line flags controlling output writing (`--force` and `--dry-run`).
 #[derive(Debug, Args)]
 pub(super) struct WriteFlags {
     /// Overwrite the output path if it already exists.

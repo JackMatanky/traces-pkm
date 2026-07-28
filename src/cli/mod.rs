@@ -1,6 +1,6 @@
-//! Command-line interface: parses arguments and dispatches to command handlers.
-//! Each command module is a thin adapter over library services; [`CliError`]
-//! adds user-facing help text and error codes via `miette::Diagnostic`.
+//! Command-line interface for `traces`: argument parsing and command dispatch.
+//!
+//! Provides [`CliError`] for user-facing diagnostics and error formatting.
 
 mod completions;
 mod error;
@@ -18,13 +18,12 @@ use crate::{
     config::{Config, ConfigService},
 };
 
-/// Reads the process current directory, wrapped for callers that need to
-/// retain [`Cwd`]'s guarantees (e.g. path confinement).
+/// Reads the process current directory as a [`Cwd`].
 ///
 /// # Errors
 ///
-/// Returns [`CliError::CurrentDirectory`] when the current directory cannot
-/// be read.
+/// Returns [`CliError::CurrentDirectory`] if the current directory cannot be
+/// read.
 fn current_dir() -> Result<Cwd, CliError> {
     Cwd::new().map_err(|source| CliError::CurrentDirectory {
         source,
@@ -35,9 +34,8 @@ fn current_dir() -> Result<Cwd, CliError> {
 ///
 /// # Errors
 ///
-/// Returns [`CliError::CurrentDirectory`] when the process working
-/// directory cannot be read. Returns [`CliError::ConfigLoad`] when
-/// configuration discovery or construction fails.
+/// - [`CliError::CurrentDirectory`] if the current directory cannot be read.
+/// - [`CliError::ConfigLoad`] if configuration discovery or loading fails.
 fn load_config(service: &ConfigService) -> Result<Config, CliError> {
     let cwd = current_dir()?.into_inner();
     service.load(&cwd).map_err(|source| CliError::ConfigLoad {
@@ -46,10 +44,10 @@ fn load_config(service: &ConfigService) -> Result<Config, CliError> {
     })
 }
 
-/// The result of a command that did not fail.
+/// Outcome of a successful CLI command.
 ///
-/// User abandonment is control flow, not a diagnostic failure. The outer CLI
-/// seam maps these outcomes to process exit status.
+/// Distinguishes normal completion from deliberate user cancellation or
+/// interruption.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum CommandOutcome {
     /// The command completed normally.
@@ -58,7 +56,7 @@ pub enum CommandOutcome {
     Aborted(UserAbort),
 }
 
-/// The user gesture that deliberately ended an interactive command.
+/// User gesture that ended an interactive command.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum UserAbort {
     /// Escape cancelled the command.
@@ -67,10 +65,10 @@ pub enum UserAbort {
     Interrupted,
 }
 
-/// The `traces` command-line tool.
+/// Root command-line parser for `traces`.
 ///
-/// `-i`/`--input` alone (no subcommand) is the default template dispatch,
-/// handled in [`run`]; combining it with a subcommand is a clap usage error.
+/// When no subcommand is specified, `-i`/`--input` dispatches to template
+/// instantiation.
 #[derive(Debug, Parser)]
 #[command(
     name = "traces",
@@ -103,18 +101,13 @@ struct Cli {
 }
 
 impl Cli {
-    /// Parse [`Cli`] from [`std::env::args`] and run the selected command.
-    ///
-    /// Accepts pre-built `service`/`provider` so tests can drive real argv
-    /// through a real handler with isolated stores. `provider` is `Arc`, not
-    /// `&dyn`, since [`template::Template::run`] must clone it into `'static`
-    /// minijinja closures.
+    /// Runs the parsed command with the given services.
     ///
     /// # Errors
     ///
-    /// Returns [`CliError`] when the selected command fails, or
-    /// [`CliError::NoCommand`] when neither a subcommand nor `-i`/`--input` was
-    /// given.
+    /// - [`CliError::NoCommand`] if neither a subcommand nor `-i`/`--input` was
+    ///   provided.
+    /// - [`CliError`] if command execution fails.
     fn run(
         self,
         service: &crate::config::ConfigService,
@@ -157,7 +150,7 @@ enum Commands {
 }
 
 impl Commands {
-    /// Route a parsed subcommand to its handler, normalising the error type.
+    /// Routes a parsed subcommand to its handler.
     fn run(
         self,
         service: &crate::config::ConfigService,
@@ -172,15 +165,15 @@ impl Commands {
     }
 }
 
-/// Entry point: parse process arguments, wire up real service implementations,
-/// and run the selected command.
+/// Main entry point: parses CLI arguments and runs the selected command.
+///
+/// Returns a [`CommandOutcome`] on success.
 ///
 /// # Errors
 ///
-/// Returns [`CliError`] when the selected command fails, or
-/// [`CliError::NoCommand`] when neither a subcommand nor `-i`/`--input` was
-/// given. Otherwise returns a [`CommandOutcome`].
-#[inline]
+/// - [`CliError::NoCommand`] if neither a subcommand nor `-i`/`--input` was
+///   provided.
+/// - [`CliError`] if command execution fails.
 pub fn run() -> Result<CommandOutcome, CliError> {
     let provider: Arc<dyn crate::DialogProvider> =
         Arc::new(crate::TerminalDialogProvider::new());

@@ -1,16 +1,8 @@
-//! CLI-facing error types.
+//! CLI-facing error types and diagnostic formatting.
 //!
-//! One flat [`CliError`] presentation seam for every command: each variant
-//! wraps a concrete domain source (never a type-erased [`Box`]) plus the
-//! operation context needed for its miette code and help text. Commands
-//! never mint their own diagnostic identity — a Config failure reached
-//! through `template`, `completions`, `trust`, or `init` gets the same code
-//! and remediation regardless of which command hit it.
-//!
-//! [`Self::TemplateInstantiate`]'s render classification inspects
-//! [`minijinja::Error::kind`] and its retained source chain rather than the
-//! `Template` pipeline's own types — no change to `crate::template` was
-//! needed to add it.
+//! Defines [`CliError`], the single error presentation seam for all `traces`
+//! CLI commands, wrapping domain errors with user-facing diagnostics via
+//! [`miette::Diagnostic`].
 
 use std::{error::Error as StdError, fmt::Display, io, path::PathBuf};
 
@@ -24,11 +16,7 @@ use crate::{
     template::{TemplateError, TemplatePathError},
 };
 
-/// Errors from running the `traces` binary.
-///
-/// One flat presentation seam for every subcommand's failure, or a report
-/// that neither a subcommand nor `-i`/`--input` was given — returned by
-/// [`run`](crate::cli::run).
+/// Unified error type for all `traces` CLI operations.
 #[derive(Debug, Error)]
 #[expect(
     private_interfaces,
@@ -177,8 +165,8 @@ pub enum CliError {
 }
 
 impl CliError {
-    /// Returns the deliberate user abort preserved anywhere in this error's
-    /// source chain.
+    /// Extracts a deliberate user abort from the error source chain, if
+    /// present.
     pub(super) fn user_abort(&self) -> Option<UserAbort> {
         let mut error: &(dyn StdError + 'static) = self;
         loop {
@@ -400,9 +388,7 @@ impl Diagnostic for CliError {
     }
 }
 
-/// Classifies [`TemplateError`] for [`CliError::TemplateInstantiate`]'s
-/// diagnostic code — split out from [`Diagnostic::code`] so that function
-/// stays within the crate's line-count lint.
+/// Returns the diagnostic code for [`TemplateError`].
 fn template_instantiate_code(source: &TemplateError) -> &'static str {
     match source {
         TemplateError::Prompt(_) => {
@@ -452,9 +438,7 @@ fn template_instantiate_code(source: &TemplateError) -> &'static str {
     }
 }
 
-/// Classifies [`TemplateError`] for [`CliError::TemplateInstantiate`]'s
-/// diagnostic help — split out from [`Diagnostic::help`] so that function
-/// stays within the crate's line-count lint.
+/// Returns the diagnostic help text for [`TemplateError`].
 fn template_instantiate_help(source: &TemplateError) -> Box<dyn Display + '_> {
     match source {
         TemplateError::Prompt(_) => Box::new(
