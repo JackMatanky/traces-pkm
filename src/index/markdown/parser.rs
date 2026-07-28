@@ -1,12 +1,11 @@
 //! Markdown note event parser yielding [`Note`] records.
 //!
-//! [`parse_markdown`] walks `pulldown-cmark`'s event stream once,
-//! accumulating into a [`ParserContext`]. Nested lists are tracked with an
-//! explicit stack (`list_stack`/`item_stack`) rather than recursion, so
-//! depth is bounded only by available memory, not call-stack size. A
-//! link's display text is pushed into both its [`Outlink`] and the plain
-//! text of the list item containing it — the two aren't mutually
-//! exclusive, since a link can appear inside an item.
+//! [`parse_markdown`] walks `pulldown-cmark`'s event stream once, accumulating
+//! into a [`ParserContext`]. Nested lists are tracked with an explicit stack
+//! (`list_stack`/`item_stack`) rather than recursion, so depth is bounded only
+//! by available memory, not call-stack size. A link's display text is pushed
+//! into both its [`Outlink`] and the plain text of the list item containing it
+//! — the two aren't mutually exclusive, since a link can appear inside an item.
 
 use std::{mem, ops::Range, path::PathBuf};
 
@@ -125,9 +124,9 @@ impl ParserContext {
     }
 
     /// Pushes the code span's byte range and its text — inline code has no
-    /// surrounding markup to strip, so its content is also part of the
-    /// item's plain text (unlike fenced code blocks, which are typically
-    /// their own paragraph outside any item's inline text run).
+    /// surrounding markup to strip, so its content is also part of the item's
+    /// plain text (unlike fenced code blocks, which are typically their own
+    /// paragraph outside any item's inline text run).
     fn inline_code(&mut self, text: &str, range: Range<usize>) {
         self.code_regions.push(CodeRegion::new(range.start, range.end));
         if let Some(item) = self.item_stack.last_mut() {
@@ -189,10 +188,10 @@ impl ParserContext {
         }
     }
 
-    /// Appends `text` to the active metadata buffer and/or link display
-    /// text; independently, also appends to the enclosing list item's text
-    /// if one is active, so a link's display text is part of both the
-    /// [`Outlink`] and the plain text of the item containing it.
+    /// Appends `text` to the active metadata buffer and/or link display text;
+    /// independently, also appends to the enclosing list item's text if one is
+    /// active, so a link's display text is part of both the [`Outlink`] and the
+    /// plain text of the item containing it.
     fn push_text(&mut self, text: &str) {
         if self.in_metadata_block {
             self.metadata_buffer.push_str(text);
