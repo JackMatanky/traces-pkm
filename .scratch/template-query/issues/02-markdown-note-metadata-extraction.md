@@ -6,12 +6,12 @@
 
 **Status:** ready-for-agent
 
-- [ ] Markdown Notes store `Note` records in the `notes` redb table in addition to their File Record.
-- [ ] YAML metadata blocks are extracted from markdown Notes into `Note`.
-- [ ] List and list item structure is extracted with task completion status.
-- [ ] `Note::tasks()` method exposes task list items derived from indexed lists.
-- [ ] Wikilinks or markdown links are indexed as outlinks.
-- [ ] Parser tests use `pulldown-cmark` events, including code block and inline code events.
+- [x] Markdown Notes store `Note` records in the `notes` redb table in addition to their File Record.
+- [x] YAML metadata blocks are extracted from markdown Notes into `Note`.
+- [x] List and list item structure is extracted with task completion status.
+- [x] `Note::tasks()` method exposes task list items derived from indexed lists.
+- [x] Wikilinks or markdown links are indexed as outlinks.
+- [x] Parser tests use `pulldown-cmark` events, including code block and inline code events.
 
 ## Comments
 
@@ -51,11 +51,13 @@
   - `index/store.rs`: `replace_all`/`load_all` had duplicated per-table
     read/write loops and a `clippy::type_complexity`-denied return type;
     extracted generic `store_table`/`load_table` helpers keyed by a
-    `path_of` accessor, and a `LoadedIndex` type alias.
+    `path_of` accessor, and an `IndexSnapshot` type alias (renamed from
+    `LoadedIndex` post-review — see Post-Review Naming Refinements below).
   - `index/markdown/parser.rs`: `parse_markdown` exceeded the
     `clippy::too_many_lines` deny threshold (124/100); decomposed into a
-    `ParserState` struct with one small handler method per
-    `pulldown-cmark` event kind, dispatched from `handle_event`.
+    `ParserContext` struct (renamed from `ParserState` post-review — see
+    below) with one small handler method per `pulldown-cmark` event kind,
+    dispatched from `handle_event`.
   - `index/mod.rs`: module doc referenced the removed `NoteRecord` type;
     fixed to `[`Note`]`. The crate-level `expect(missing_inline_in_public_items,
     dead_code)` was partially unfulfilled (`missing_inline_in_public_items`
@@ -68,6 +70,54 @@
     `ListItem::text()`. These conditions are independent, not exclusive —
     fixed by routing text into both buffers when both are active. Covered
     by `includes_link_display_text_in_the_containing_item_text`.
+- **Post-Review Naming Refinements**:
+  - `ParserState` → `ParserContext`, `LoadedIndex` → `IndexSnapshot`.
+    `IndexSnapshot` was chosen over the alternatives `ReadIndex` (reads as
+    a verb phrase) and `IndexView` (misleading — the type owns
+    `Vec<FileRecord>`/`Vec<Note>`, it borrows nothing).
+  - Every local variable/parameter binding a `*Context` value (both
+    `ParserContext` and the pre-existing `DiscoveryContext` in
+    `src/config/discovery.rs`/`service.rs`) now uses `ctx`, not `context`,
+    per explicit direction — `DiscoveryContext` predates this ticket but
+    was brought in line for consistency. No behavior change.
+- **Acceptance Criteria Verification** (this session, re-checked against
+  final code state):
+  - Notes stored in the `notes` table alongside `FileRecord` —
+    `index::mod::tests::persistence::persist_then_load_recovers_the_same_records_and_notes`,
+    `index::store::tests::persistence::replace_all_then_load_all_round_trips_records_and_notes`.
+  - YAML frontmatter extracted — `markdown::parser::tests::parse::extracts_yaml_frontmatter_block_raw_content`.
+  - List/ListItem structure with task completion status —
+    `extracts_task_item_completion_status`, `extracts_nested_child_lists`,
+    `extracts_list_ordering` (both ordered and unordered cases).
+  - `Note::tasks()` — `tasks::iterates_top_level_task_items`,
+    `tasks::iterates_nested_sub_list_task_items`.
+  - Wikilinks/markdown links as outlinks — `extracts_outlinks`
+    (`#[case::wikilink_with_alias]`, `#[case::wikilink_without_alias]`,
+    `#[case::markdown_link]`).
+  - Code block/inline code byte ranges tracked from `pulldown-cmark`
+    events — `tracks_code_regions` (`#[case::inline_code_span]`,
+    `#[case::fenced_code_block]`).
+  - `notes` table survives build/persist/load round-trips —
+    `index::mod::tests::persistence::*` (3 tests, including
+    `rebuilds_rather_than_appends_when_persisted_again`),
+    `index::store::tests::persistence::*` (6 tests, including corrupt/
+    invalid-TOML error paths for both tables).
+  - **All 7 acceptance criteria (top-level and Agent Brief) are fully
+    met.** None are partially fulfilled or outstanding.
+- **Known Limitations (not AC gaps — flagged for whoever picks up #03)**:
+  - `Frontmatter` stores the raw YAML block text only; it is not parsed
+    into structured key/value fields. Correctly out of scope here per the
+    ticket's Key Interfaces (`Note { frontmatter, lists, outlinks }`);
+    structured field extraction is #03's job.
+  - Text inside a fenced/indented code block nested under a list item
+    still flows into that item's `ListItem::text()` verbatim (only the
+    code's *byte range* is tracked in `code_regions`, the text itself
+    isn't excluded from the item's plain-text buffer). Not a violation of
+    any stated AC — `code_regions` exists precisely so #03's Inline Field
+    extraction can skip these ranges when scanning the raw source: it
+    doesn't claim to keep `ListItem::text()` code-free. Worth a note for
+    whoever consumes `.text()` for search/display, since it isn't
+    currently code-clean.
 
 ## Agent Brief
 
@@ -83,13 +133,13 @@
 - Extend `IndexStore` with the `notes` table; `FileIndex::build` parses markdown files and `persist`/`load` round-trip both `file_records` and `notes` tables.
 
 **Acceptance criteria:**
-- [ ] Markdown Notes store a `Note` record in the `notes` table in addition to their `FileRecord`.
-- [ ] YAML frontmatter metadata blocks are extracted into `Note`.
-- [ ] List and list item structure is extracted with task completion status.
-- [ ] `Note::tasks()` accessor returns task list items derived from indexed lists.
-- [ ] Wikilinks and markdown links are indexed as outlinks.
-- [ ] Parser tests verify code block and inline code byte ranges are tracked as excludable regions for #03.
-- [ ] `notes` redb table survives build, persist, and load round-trips in `FileIndex`.
+- [x] Markdown Notes store a `Note` record in the `notes` table in addition to their `FileRecord`.
+- [x] YAML frontmatter metadata blocks are extracted into `Note`.
+- [x] List and list item structure is extracted with task completion status.
+- [x] `Note::tasks()` accessor returns task list items derived from indexed lists.
+- [x] Wikilinks and markdown links are indexed as outlinks.
+- [x] Parser tests verify code block and inline code byte ranges are tracked as excludable regions for #03.
+- [x] `notes` redb table survives build, persist, and load round-trips in `FileIndex`.
 
 **Out of scope:**
 - Inline fields and tags (ticket #03).
