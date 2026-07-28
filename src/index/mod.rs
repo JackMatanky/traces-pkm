@@ -10,8 +10,7 @@
     expect(
         dead_code,
         reason = "crate-internal API surface for FileIndex note metadata, \
-                  consumed by later tickets (#03 inline fields, #04 lazy \
-                  query refresh)"
+                  consumed by later tickets (#04 lazy query refresh)"
     )
 )]
 
@@ -35,8 +34,8 @@ use markdown::parse_markdown;
     reason = "domain types exported for index module callers"
 )]
 pub(crate) use markdown::{
-    CodeRegion, Frontmatter, LinkType, List, ListItem, Note, Outlink,
-    TaskStatus,
+    CodeRegion, Frontmatter, InlineField, InlineFieldForm, LinkType, List,
+    ListItem, Note, Outlink, TaskStatus,
 };
 use store::IndexStore;
 
@@ -227,6 +226,35 @@ mod tests {
                 Some("other_note")
             );
             assert_eq!(loaded_note.tasks().count(), 1);
+        }
+
+        #[test]
+        fn persist_then_load_recovers_inline_fields_and_tags() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(
+                temp.path().join("note.md"),
+                "Status:: Draft\n\nFiled under #book today.",
+            )
+            .expect("write note");
+            let built = FileIndex::build(temp.path()).expect("build index");
+            built.persist(temp.path()).expect("persist index");
+
+            let loaded = FileIndex::load(temp.path()).expect("load index");
+
+            let loaded_note =
+                loaded.note(Path::new("note.md")).expect("loaded note");
+            assert_eq!(loaded_note.inline_fields().len(), 1);
+            let field = loaded_note
+                .inline_fields()
+                .first()
+                .expect("inline field present");
+            assert_eq!(field.key(), "Status");
+            assert_eq!(field.value(), "Draft");
+            assert_eq!(loaded_note.tags(), ["#book".to_owned()]);
+            assert_eq!(
+                loaded_note.inline_fields(),
+                built.notes().first().expect("built note").inline_fields()
+            );
         }
 
         #[test]

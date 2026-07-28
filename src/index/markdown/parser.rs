@@ -6,6 +6,15 @@
 //! by available memory, not call-stack size. A link's display text is pushed
 //! into both its [`Outlink`] and the plain text of the list item containing it
 //! — the two aren't mutually exclusive, since a link can appear inside an item.
+//!
+//! Inline Field and tag extraction ([`inline::extract_inline_fields`],
+//! [`inline::extract_tags`]) run over the same plain-text buffers: one per
+//! top-level body paragraph (`body_buffer`), one per list item
+//! (`ItemFrame::scan_buffer`). Both buffers skip fenced/indented code block
+//! text (tracked via [`BlockContext::CodeBlock`]) and inline code (never
+//! appended, since [`ParserContext::inline_code`] only ever touches
+//! `ItemFrame::text_buffer`), so neither lexer pass needs to consult
+//! [`CodeRegion`] ranges directly.
 
 use std::{mem, ops::Range, path::PathBuf};
 
@@ -13,9 +22,12 @@ use pulldown_cmark::{
     CowStr, Event, LinkType as CmarkLinkType, Options, Parser, Tag, TagEnd,
 };
 
-use super::types::{
-    CodeRegion, Frontmatter, LinkType, List, ListItem, Note, Outlink,
-    TaskStatus,
+use super::{
+    inline,
+    types::{
+        CodeRegion, Frontmatter, InlineField, LinkType, List, ListItem, Note,
+        Outlink, TaskStatus,
+    },
 };
 
 /// Parses a markdown string into a [`Note`] record using `pulldown-cmark`.
@@ -33,11 +45,24 @@ pub(crate) fn parse_markdown(path: impl Into<PathBuf>, src: &str) -> Note {
     ctx.into_note(path)
 }
 
+/// Which top-level block kind the parser is currently inside, if any. A
+/// metadata block, code block, and paragraph never nest inside one another,
+/// so this single enum replaces three independent booleans (and keeps
+/// [`ParserContext`] under `clippy::struct_excessive_bools`'s threshold).
+#[derive(Default, Eq, PartialEq)]
+enum BlockContext {
+    #[default]
+    None,
+    MetadataBlock,
+    CodeBlock,
+    Paragraph,
+}
+
 /// Accumulated context while walking `pulldown-cmark` events for one Note.
 #[derive(Default)]
 struct ParserContext {
     frontmatter: Option<Frontmatter>,
-    in_metadata_block: bool,
+    block: BlockContext,
     metadata_buffer: String,
     outlinks: Vec<Outlink>,
     active_link: Option<(String, LinkType, String)>,
@@ -46,6 +71,9 @@ struct ParserContext {
     lists: Vec<List>,
     list_stack: Vec<ListFrame>,
     item_stack: Vec<ItemFrame>,
+    body_buffer: String,
+    inline_fields: Vec<InlineField>,
+    tags: Vec<String>,
 }
 
 impl ParserContext {
@@ -58,6 +86,8 @@ impl ParserContext {
             self.outlinks,
             self.code_regions,
         )
+        .with_inline_fields(self.inline_fields)
+        .with_tags(self.tags)
     }
 
     /// Dispatches one `pulldown-cmark` event to the handler for its kind.
@@ -73,6 +103,8 @@ impl ParserContext {
             Event::End(TagEnd::Link) => self.end_link(),
             Event::Start(Tag::CodeBlock(_)) => self.start_code_block(range),
             Event::End(TagEnd::CodeBlock) => self.end_code_block(range),
+            Event::Start(Tag::Paragraph) => self.start_paragraph(),
+            Event::End(TagEnd::Paragraph) => self.end_paragraph(),
             Event::Code(text) => self.inline_code(&text, range),
             Event::Start(Tag::List(start_number)) => {
                 self.start_list(start_number.is_some());
@@ -88,12 +120,12 @@ impl ParserContext {
     }
 
     fn start_metadata_block(&mut self) {
-        self.in_metadata_block = true;
+        self.block = BlockContext::MetadataBlock;
         self.metadata_buffer.clear();
     }
 
     fn end_metadata_block(&mut self) {
-        self.in_metadata_block = false;
+        self.block = BlockContext::None;
         self.frontmatter =
             Some(Frontmatter::new(mem::take(&mut self.metadata_buffer)));
     }
@@ -115,12 +147,14 @@ impl ParserContext {
 
     fn start_code_block(&mut self, range: Range<usize>) {
         self.active_code_block_start = Some(range.start);
+        self.block = BlockContext::CodeBlock;
     }
 
     fn end_code_block(&mut self, range: Range<usize>) {
         if let Some(start) = self.active_code_block_start.take() {
             self.code_regions.push(CodeRegion::new(start, range.end));
         }
+        self.block = BlockContext::None;
     }
 
     /// Pushes the code span's byte range and its text — inline code has no
@@ -161,12 +195,18 @@ impl ParserContext {
         self.item_stack.push(ItemFrame {
             task_status: None,
             text_buffer: String::new(),
+            scan_buffer: String::new(),
             children: Vec::new(),
         });
     }
 
+    /// Pops the innermost item, lexing its `scan_buffer` for Inline Fields
+    /// and tags before building the [`ListItem`] from `text_buffer`.
     fn end_item(&mut self) {
         if let Some(item_frame) = self.item_stack.pop() {
+            self.inline_fields
+                .extend(inline::extract_inline_fields(&item_frame.scan_buffer));
+            self.tags.extend(inline::extract_tags(&item_frame.scan_buffer));
             let item = ListItem::with_children(
                 item_frame.text_buffer,
                 item_frame.task_status,
@@ -188,12 +228,38 @@ impl ParserContext {
         }
     }
 
+    /// Marks a top-level paragraph as active and clears `body_buffer`, ready
+    /// to accumulate its plain text. A no-op when nested inside a list item
+    /// — that text instead flows into the active [`ItemFrame::scan_buffer`].
+    fn start_paragraph(&mut self) {
+        self.block = BlockContext::Paragraph;
+        if self.item_stack.is_empty() {
+            self.body_buffer.clear();
+        }
+    }
+
+    /// Lexes a completed top-level paragraph's `body_buffer` for Inline
+    /// Fields and tags. A no-op when nested inside a list item, matching
+    /// [`Self::start_paragraph`].
+    fn end_paragraph(&mut self) {
+        self.block = BlockContext::None;
+        if self.item_stack.is_empty() {
+            self.inline_fields
+                .extend(inline::extract_inline_fields(&self.body_buffer));
+            self.tags.extend(inline::extract_tags(&self.body_buffer));
+            self.body_buffer.clear();
+        }
+    }
+
     /// Appends `text` to the active metadata buffer and/or link display text;
     /// independently, also appends to the enclosing list item's text if one is
     /// active, so a link's display text is part of both the [`Outlink`] and the
-    /// plain text of the item containing it.
+    /// plain text of the item containing it. `ItemFrame::scan_buffer` and
+    /// `body_buffer` mirror `text_buffer`/paragraph text respectively, minus
+    /// any text inside a fenced/indented code block — the Inline Field/tag
+    /// lexer never sees code block content.
     fn push_text(&mut self, text: &str) {
-        if self.in_metadata_block {
+        if self.block == BlockContext::MetadataBlock {
             self.metadata_buffer.push_str(text);
             return;
         }
@@ -202,17 +268,30 @@ impl ParserContext {
         }
         if let Some(item) = self.item_stack.last_mut() {
             item.text_buffer.push_str(text);
+            if self.block != BlockContext::CodeBlock {
+                item.scan_buffer.push_str(text);
+            }
+            return;
+        }
+        if self.block == BlockContext::Paragraph {
+            self.body_buffer.push_str(text);
         }
     }
 
-    /// Appends a newline to the active metadata buffer or list item text.
+    /// Appends a newline to the active metadata buffer, list item text, or
+    /// top-level paragraph text.
     fn push_break(&mut self) {
-        if self.in_metadata_block {
+        if self.block == BlockContext::MetadataBlock {
             self.metadata_buffer.push('\n');
             return;
         }
         if let Some(item) = self.item_stack.last_mut() {
             item.text_buffer.push('\n');
+            item.scan_buffer.push('\n');
+            return;
+        }
+        if self.block == BlockContext::Paragraph {
+            self.body_buffer.push('\n');
         }
     }
 }
@@ -227,6 +306,9 @@ struct ListFrame {
 struct ItemFrame {
     task_status: Option<TaskStatus>,
     text_buffer: String,
+    /// Mirrors `text_buffer` but excludes inline code text — the buffer
+    /// [`ParserContext::end_item`] lexes for Inline Fields and tags.
+    scan_buffer: String,
     children: Vec<List>,
 }
 
@@ -411,6 +493,103 @@ mod tests {
             assert_eq!(tasks.len(), 1);
             assert_eq!(tasks.first().map(|t| t.text()), Some("Subtask 1"));
             assert_eq!(tasks.first().map(|t| t.is_completed()), Some(true));
+        }
+    }
+
+    mod inline_metadata {
+        use pretty_assertions::assert_eq;
+        use rstest::rstest;
+
+        use super::*;
+        use crate::index::InlineFieldForm;
+
+        #[test]
+        fn extracts_a_bare_body_field() {
+            let note = parse_markdown("note.md", "Author:: Jane Doe");
+
+            let field = note.inline_fields().first().expect("field present");
+            assert_eq!(field.key(), "Author");
+            assert_eq!(field.value(), "Jane Doe");
+            assert_eq!(field.form(), InlineFieldForm::Body);
+        }
+
+        #[test]
+        fn extracts_a_visible_key_field_from_body_text() {
+            let note =
+                parse_markdown("note.md", "See the [Status:: Draft] note.");
+
+            let field = note.inline_fields().first().expect("field present");
+            assert_eq!(field.key(), "Status");
+            assert_eq!(field.value(), "Draft");
+            assert_eq!(field.form(), InlineFieldForm::VisibleKey);
+        }
+
+        #[test]
+        fn extracts_a_hidden_key_field_from_body_text() {
+            let note =
+                parse_markdown("note.md", "See the (Status:: Draft) note.");
+
+            let field = note.inline_fields().first().expect("field present");
+            assert_eq!(field.key(), "Status");
+            assert_eq!(field.value(), "Draft");
+            assert_eq!(field.form(), InlineFieldForm::HiddenKey);
+        }
+
+        #[test]
+        fn extracts_a_bare_field_from_a_list_item_and_keeps_it_in_item_text() {
+            let note = parse_markdown("note.md", "- Status:: Draft #urgent");
+
+            let item = note
+                .lists()
+                .first()
+                .and_then(|list| list.items().first())
+                .expect("item present");
+            assert_eq!(item.text(), "Status:: Draft #urgent");
+
+            let field = note.inline_fields().first().expect("field present");
+            assert_eq!(field.key(), "Status");
+            assert_eq!(field.value(), "Draft #urgent");
+            assert_eq!(field.form(), InlineFieldForm::Body);
+        }
+
+        #[rstest]
+        #[case::fenced_code_block("```\nKey:: Value\n```")]
+        #[case::indented_code_block("Paragraph text.\n\n    Key:: Value\n")]
+        #[case::inline_code_span("Text with `Key:: Value` inline.")]
+        fn ignores_fields_inside_excluded_code_regions(#[case] input: &str) {
+            let note = parse_markdown("note.md", input);
+
+            assert_eq!(note.inline_fields().len(), 0);
+        }
+
+        #[test]
+        fn extracts_a_tag_from_body_text() {
+            let note = parse_markdown("note.md", "Filed under #book today.");
+
+            assert_eq!(note.tags(), ["#book".to_owned()]);
+        }
+
+        #[test]
+        fn extracts_a_tag_from_a_list_item_and_keeps_it_in_item_text() {
+            let note = parse_markdown("note.md", "- Reading #book now");
+
+            let item = note
+                .lists()
+                .first()
+                .and_then(|list| list.items().first())
+                .expect("item present");
+            assert_eq!(item.text(), "Reading #book now");
+            assert_eq!(note.tags(), ["#book".to_owned()]);
+        }
+
+        #[rstest]
+        #[case::fenced_code_block("```\n#book\n```")]
+        #[case::indented_code_block("Paragraph text.\n\n    #book\n")]
+        #[case::inline_code_span("Text with `#book` inline.")]
+        fn ignores_tags_inside_excluded_code_regions(#[case] input: &str) {
+            let note = parse_markdown("note.md", input);
+
+            assert_eq!(note.tags().len(), 0);
         }
     }
 }

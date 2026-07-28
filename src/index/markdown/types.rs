@@ -8,8 +8,8 @@ use std::{
 use serde::{Deserialize, Serialize};
 
 /// Rich Note Metadata extracted from a markdown file: frontmatter, lists,
-/// outlinks, and code regions. [`Self::tasks`] derives task items from the
-/// indexed lists rather than storing them separately.
+/// outlinks, code regions, Inline Fields, and tags. [`Self::tasks`] derives
+/// task items from the indexed lists rather than storing them separately.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub(crate) struct Note {
     path: PathBuf,
@@ -17,10 +17,15 @@ pub(crate) struct Note {
     lists: Vec<List>,
     outlinks: Vec<Outlink>,
     code_regions: Vec<CodeRegion>,
+    inline_fields: Vec<InlineField>,
+    tags: Vec<String>,
 }
 
 impl Note {
-    /// Creates a new [`Note`].
+    /// Creates a new [`Note`] with no Inline Fields or tags. Chain
+    /// [`Self::with_inline_fields`] and/or [`Self::with_tags`] to attach
+    /// them — kept out of this constructor's parameter list so it doesn't
+    /// grow past `clippy::too_many_arguments`.
     #[inline]
     #[must_use]
     pub(crate) fn new(
@@ -36,7 +41,28 @@ impl Note {
             lists,
             outlinks,
             code_regions,
+            inline_fields: Vec::new(),
+            tags: Vec::new(),
         }
+    }
+
+    /// Returns this [`Note`] with `inline_fields` attached.
+    #[inline]
+    #[must_use]
+    pub(crate) fn with_inline_fields(
+        mut self,
+        inline_fields: Vec<InlineField>,
+    ) -> Self {
+        self.inline_fields = inline_fields;
+        self
+    }
+
+    /// Returns this [`Note`] with `tags` attached.
+    #[inline]
+    #[must_use]
+    pub(crate) fn with_tags(mut self, tags: Vec<String>) -> Self {
+        self.tags = tags;
+        self
     }
 
     /// Project-relative path of this note.
@@ -74,6 +100,22 @@ impl Note {
     #[must_use]
     pub(crate) fn code_regions(&self) -> &[CodeRegion] {
         &self.code_regions
+    }
+
+    /// Dataview-compatible Inline Fields extracted from body text and list
+    /// items, in document order.
+    #[inline]
+    #[must_use]
+    pub(crate) fn inline_fields(&self) -> &[InlineField] {
+        &self.inline_fields
+    }
+
+    /// Markdown tags (e.g. `#book`, `#projects/active`) extracted from body
+    /// text and list items, in document order.
+    #[inline]
+    #[must_use]
+    pub(crate) fn tags(&self) -> &[String] {
+        &self.tags
     }
 
     /// Iterator over all task list items in this Note, including items in
@@ -341,6 +383,64 @@ impl CodeRegion {
     }
 }
 
+/// Dataview-compatible Inline Field syntax form.
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+pub(crate) enum InlineFieldForm {
+    /// `Key:: Value` filling an entire line.
+    Body,
+    /// `[Key:: Value]` — the key stays visible in rendered text.
+    VisibleKey,
+    /// `(Key:: Value)` — the key is hidden in rendered text.
+    HiddenKey,
+}
+
+/// A Dataview-compatible Inline Field extracted from a Note's body text or
+/// list items.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+pub(crate) struct InlineField {
+    key: String,
+    value: String,
+    form: InlineFieldForm,
+}
+
+impl InlineField {
+    /// Creates a new [`InlineField`].
+    #[inline]
+    #[must_use]
+    pub(crate) fn new(
+        key: impl Into<String>,
+        value: impl Into<String>,
+        form: InlineFieldForm,
+    ) -> Self {
+        Self {
+            key: key.into(),
+            value: value.into(),
+            form,
+        }
+    }
+
+    /// The field's key.
+    #[inline]
+    #[must_use]
+    pub(crate) fn key(&self) -> &str {
+        &self.key
+    }
+
+    /// The field's value.
+    #[inline]
+    #[must_use]
+    pub(crate) fn value(&self) -> &str {
+        &self.value
+    }
+
+    /// Syntax form the field was written in.
+    #[inline]
+    #[must_use]
+    pub(crate) fn form(&self) -> InlineFieldForm {
+        self.form
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -508,6 +608,64 @@ mod tests {
         fn returns_range() {
             let region = CodeRegion::new(10, 25);
             assert_eq!(region.range(), 10..25);
+        }
+    }
+
+    mod inline_field {
+        use pretty_assertions::assert_eq;
+        use rstest::rstest;
+
+        use super::*;
+
+        #[rstest]
+        #[case::body(InlineFieldForm::Body)]
+        #[case::visible_key(InlineFieldForm::VisibleKey)]
+        #[case::hidden_key(InlineFieldForm::HiddenKey)]
+        fn stores_key_value_and_form(#[case] form: InlineFieldForm) {
+            let field = InlineField::new("Author", "Jane Doe", form);
+
+            assert_eq!(field.key(), "Author");
+            assert_eq!(field.value(), "Jane Doe");
+            assert_eq!(field.form(), form);
+        }
+    }
+
+    mod note_builder {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn attaches_inline_fields_and_tags_via_with_methods() {
+            let field =
+                InlineField::new("Status", "Draft", InlineFieldForm::Body);
+
+            let note = Note::new(
+                "notes/a.md",
+                None,
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+            )
+            .with_inline_fields(vec![field.clone()])
+            .with_tags(vec!["#book".to_owned()]);
+
+            assert_eq!(note.inline_fields(), [field]);
+            assert_eq!(note.tags(), ["#book".to_owned()]);
+        }
+
+        #[test]
+        fn defaults_to_no_inline_fields_or_tags() {
+            let note = Note::new(
+                "notes/a.md",
+                None,
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+            );
+
+            assert_eq!(note.inline_fields().len(), 0);
+            assert_eq!(note.tags().len(), 0);
         }
     }
 }
