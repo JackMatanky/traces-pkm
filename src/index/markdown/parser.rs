@@ -1,9 +1,9 @@
 //! Markdown note event parser yielding [`Note`] records.
 
-use std::path::PathBuf;
+use std::{mem, ops::Range, path::PathBuf};
 
 use pulldown_cmark::{
-    Event, LinkType as CmarkLinkType, Options, Parser, Tag, TagEnd,
+    CowStr, Event, LinkType as CmarkLinkType, Options, Parser, Tag, TagEnd,
 };
 
 use super::types::{
@@ -19,132 +19,189 @@ pub(crate) fn parse_markdown(path: impl Into<PathBuf>, src: &str) -> Note {
     opts.insert(Options::ENABLE_YAML_STYLE_METADATA_BLOCKS);
     opts.insert(Options::ENABLE_WIKILINKS);
 
-    let parser = Parser::new_ext(src, opts).into_offset_iter();
+    let mut state = ParserState::default();
+    for (event, range) in Parser::new_ext(src, opts).into_offset_iter() {
+        state.handle_event(event, range);
+    }
+    state.into_note(path)
+}
 
-    let mut frontmatter: Option<Frontmatter> = None;
-    let mut in_metadata_block = false;
-    let mut metadata_buffer = String::new();
+/// Accumulated state while walking `pulldown-cmark` events for one Note.
+#[derive(Default)]
+struct ParserState {
+    frontmatter: Option<Frontmatter>,
+    in_metadata_block: bool,
+    metadata_buffer: String,
+    outlinks: Vec<Outlink>,
+    active_link: Option<(String, LinkType, String)>,
+    code_regions: Vec<CodeRegion>,
+    active_code_block_start: Option<usize>,
+    lists: Vec<List>,
+    list_stack: Vec<ListFrame>,
+    item_stack: Vec<ItemFrame>,
+}
 
-    let mut outlinks: Vec<Outlink> = Vec::new();
-    let mut active_link: Option<(String, LinkType, String)> = None;
+impl ParserState {
+    /// Consumes the accumulated state into a [`Note`] at `path`.
+    fn into_note(self, path: impl Into<PathBuf>) -> Note {
+        Note::new(
+            path,
+            self.frontmatter,
+            self.lists,
+            self.outlinks,
+            self.code_regions,
+        )
+    }
 
-    let mut code_regions: Vec<CodeRegion> = Vec::new();
-    let mut active_code_block_start: Option<usize> = None;
-
-    let mut lists: Vec<List> = Vec::new();
-    let mut list_stack: Vec<ListFrame> = Vec::new();
-    let mut item_stack: Vec<ItemFrame> = Vec::new();
-
-    for (event, range) in parser {
+    /// Dispatches one `pulldown-cmark` event to the handler for its kind.
+    fn handle_event(&mut self, event: Event<'_>, range: Range<usize>) {
         match event {
-            Event::Start(Tag::MetadataBlock(_)) => {
-                in_metadata_block = true;
-                metadata_buffer.clear();
-            }
-            Event::End(TagEnd::MetadataBlock(_)) => {
-                in_metadata_block = false;
-                frontmatter = Some(Frontmatter::new(std::mem::take(
-                    &mut metadata_buffer,
-                )));
-            }
+            Event::Start(Tag::MetadataBlock(_)) => self.start_metadata_block(),
+            Event::End(TagEnd::MetadataBlock(_)) => self.end_metadata_block(),
             Event::Start(Tag::Link {
                 link_type,
                 dest_url,
                 ..
-            }) => {
-                let kind =
-                    if matches!(link_type, CmarkLinkType::WikiLink { .. }) {
-                        LinkType::Wikilink
-                    } else {
-                        LinkType::Markdown
-                    };
-                active_link =
-                    Some((dest_url.into_string(), kind, String::new()));
-            }
-            Event::End(TagEnd::Link) => {
-                if let Some((target, kind, text)) = active_link.take() {
-                    outlinks.push(Outlink::new(target, text, kind));
-                }
-            }
-            Event::Start(Tag::CodeBlock(_)) => {
-                active_code_block_start = Some(range.start);
-            }
-            Event::End(TagEnd::CodeBlock) => {
-                if let Some(start) = active_code_block_start.take() {
-                    code_regions.push(CodeRegion::new(start, range.end));
-                }
-            }
-            Event::Code(text) => {
-                code_regions.push(CodeRegion::new(range.start, range.end));
-                if let Some(item) = item_stack.last_mut() {
-                    item.text_buffer.push_str(&text);
-                }
-            }
+            }) => self.start_link(link_type, dest_url),
+            Event::End(TagEnd::Link) => self.end_link(),
+            Event::Start(Tag::CodeBlock(_)) => self.start_code_block(range),
+            Event::End(TagEnd::CodeBlock) => self.end_code_block(range),
+            Event::Code(text) => self.inline_code(&text, range),
             Event::Start(Tag::List(start_number)) => {
-                list_stack.push(ListFrame {
-                    is_ordered: start_number.is_some(),
-                    items: Vec::new(),
-                });
+                self.start_list(start_number.is_some());
             }
-            Event::End(TagEnd::List(_)) => {
-                if let Some(frame) = list_stack.pop() {
-                    let list = List::new(frame.is_ordered, frame.items);
-                    if let Some(item) = item_stack.last_mut() {
-                        item.children.push(list);
-                    } else {
-                        lists.push(list);
-                    }
-                }
-            }
-            Event::Start(Tag::Item) => {
-                item_stack.push(ItemFrame {
-                    task_status: None,
-                    text_buffer: String::new(),
-                    children: Vec::new(),
-                });
-            }
-            Event::End(TagEnd::Item) => {
-                if let Some(item_frame) = item_stack.pop() {
-                    let item = ListItem::with_children(
-                        item_frame.text_buffer,
-                        item_frame.task_status,
-                        item_frame.children,
-                    );
-                    if let Some(list_frame) = list_stack.last_mut() {
-                        list_frame.items.push(item);
-                    }
-                }
-            }
-            Event::TaskListMarker(checked) => {
-                if let Some(item) = item_stack.last_mut() {
-                    item.task_status = Some(if checked {
-                        TaskStatus::Complete
-                    } else {
-                        TaskStatus::Incomplete
-                    });
-                }
-            }
-            Event::Text(text) => {
-                if in_metadata_block {
-                    metadata_buffer.push_str(&text);
-                } else if let Some((_, _, ref mut link_text)) = active_link {
-                    link_text.push_str(&text);
-                } else if let Some(item) = item_stack.last_mut() {
-                    item.text_buffer.push_str(&text);
-                }
-            }
-            Event::SoftBreak | Event::HardBreak => {
-                if in_metadata_block {
-                    metadata_buffer.push('\n');
-                } else if let Some(item) = item_stack.last_mut() {
-                    item.text_buffer.push('\n');
-                }
-            }
+            Event::End(TagEnd::List(_)) => self.end_list(),
+            Event::Start(Tag::Item) => self.start_item(),
+            Event::End(TagEnd::Item) => self.end_item(),
+            Event::TaskListMarker(checked) => self.set_task_status(checked),
+            Event::Text(text) => self.push_text(&text),
+            Event::SoftBreak | Event::HardBreak => self.push_break(),
             _ => {}
         }
     }
 
-    Note::new(path, frontmatter, lists, outlinks, code_regions)
+    fn start_metadata_block(&mut self) {
+        self.in_metadata_block = true;
+        self.metadata_buffer.clear();
+    }
+
+    fn end_metadata_block(&mut self) {
+        self.in_metadata_block = false;
+        self.frontmatter =
+            Some(Frontmatter::new(mem::take(&mut self.metadata_buffer)));
+    }
+
+    fn start_link(&mut self, link_type: CmarkLinkType, dest_url: CowStr<'_>) {
+        let kind = if matches!(link_type, CmarkLinkType::WikiLink { .. }) {
+            LinkType::Wikilink
+        } else {
+            LinkType::Markdown
+        };
+        self.active_link = Some((dest_url.into_string(), kind, String::new()));
+    }
+
+    fn end_link(&mut self) {
+        if let Some((target, kind, text)) = self.active_link.take() {
+            self.outlinks.push(Outlink::new(target, text, kind));
+        }
+    }
+
+    fn start_code_block(&mut self, range: Range<usize>) {
+        self.active_code_block_start = Some(range.start);
+    }
+
+    fn end_code_block(&mut self, range: Range<usize>) {
+        if let Some(start) = self.active_code_block_start.take() {
+            self.code_regions.push(CodeRegion::new(start, range.end));
+        }
+    }
+
+    fn inline_code(&mut self, text: &str, range: Range<usize>) {
+        self.code_regions.push(CodeRegion::new(range.start, range.end));
+        if let Some(item) = self.item_stack.last_mut() {
+            item.text_buffer.push_str(text);
+        }
+    }
+
+    fn start_list(&mut self, is_ordered: bool) {
+        self.list_stack.push(ListFrame {
+            is_ordered,
+            items: Vec::new(),
+        });
+    }
+
+    fn end_list(&mut self) {
+        if let Some(frame) = self.list_stack.pop() {
+            let list = List::new(frame.is_ordered, frame.items);
+            if let Some(item) = self.item_stack.last_mut() {
+                item.children.push(list);
+            } else {
+                self.lists.push(list);
+            }
+        }
+    }
+
+    fn start_item(&mut self) {
+        self.item_stack.push(ItemFrame {
+            task_status: None,
+            text_buffer: String::new(),
+            children: Vec::new(),
+        });
+    }
+
+    fn end_item(&mut self) {
+        if let Some(item_frame) = self.item_stack.pop() {
+            let item = ListItem::with_children(
+                item_frame.text_buffer,
+                item_frame.task_status,
+                item_frame.children,
+            );
+            if let Some(list_frame) = self.list_stack.last_mut() {
+                list_frame.items.push(item);
+            }
+        }
+    }
+
+    fn set_task_status(&mut self, checked: bool) {
+        if let Some(item) = self.item_stack.last_mut() {
+            item.task_status = Some(if checked {
+                TaskStatus::Complete
+            } else {
+                TaskStatus::Incomplete
+            });
+        }
+    }
+
+    /// Appends `text` to the active metadata buffer, link display text, or
+    /// list item text, in that priority order.
+    #[expect(
+        clippy::else_if_without_else,
+        reason = "trailing case is a deliberate no-op: text outside every \
+                  tracked container carries no Note metadata signal"
+    )]
+    fn push_text(&mut self, text: &str) {
+        if self.in_metadata_block {
+            self.metadata_buffer.push_str(text);
+        } else if let Some((_, _, link_text)) = self.active_link.as_mut() {
+            link_text.push_str(text);
+        } else if let Some(item) = self.item_stack.last_mut() {
+            item.text_buffer.push_str(text);
+        }
+    }
+
+    /// Appends a newline to the active metadata buffer or list item text.
+    #[expect(
+        clippy::else_if_without_else,
+        reason = "trailing case is a deliberate no-op: breaks outside every \
+                  tracked container carry no Note metadata signal"
+    )]
+    fn push_break(&mut self) {
+        if self.in_metadata_block {
+            self.metadata_buffer.push('\n');
+        } else if let Some(item) = self.item_stack.last_mut() {
+            item.text_buffer.push('\n');
+        }
+    }
 }
 
 /// Active list context on the parser stack.
@@ -239,7 +296,7 @@ mod tests {
             let note = parse_markdown("note.md", input);
 
             let list = note.lists().first().expect("list present");
-            let item0 = list.items().get(0).expect("item 0");
+            let item0 = list.items().first().expect("item 0");
             let item1 = list.items().get(1).expect("item 1");
 
             assert_eq!(item0.text(), "Incomplete task");
@@ -312,7 +369,7 @@ mod tests {
 
             let tasks: Vec<&ListItem> = note.tasks().collect();
             assert_eq!(tasks.len(), 2);
-            assert_eq!(tasks.get(0).map(|t| t.text()), Some("Task 1"));
+            assert_eq!(tasks.first().map(|t| t.text()), Some("Task 1"));
             assert_eq!(tasks.get(1).map(|t| t.text()), Some("Task 2"));
         }
 
@@ -323,8 +380,8 @@ mod tests {
 
             let tasks: Vec<&ListItem> = note.tasks().collect();
             assert_eq!(tasks.len(), 1);
-            assert_eq!(tasks.get(0).map(|t| t.text()), Some("Subtask 1"));
-            assert_eq!(tasks.get(0).map(|t| t.is_completed()), Some(true));
+            assert_eq!(tasks.first().map(|t| t.text()), Some("Subtask 1"));
+            assert_eq!(tasks.first().map(|t| t.is_completed()), Some(true));
         }
     }
 }

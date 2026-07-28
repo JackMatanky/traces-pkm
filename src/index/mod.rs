@@ -1,5 +1,5 @@
-//! `FileIndex`: a persisted cache of [`FileRecord`]s and [`NoteRecord`]s for
-//! files under a trusted project root.
+//! `FileIndex`: a persisted cache of [`FileRecord`]s and [`Note`]s for files
+//! under a trusted project root.
 //!
 //! Persistence is redb-backed (see [`store`]) but that detail stays behind
 //! [`FileIndex`] — callers (`cli`, later `template`) only ever see
@@ -8,9 +8,10 @@
 #![cfg_attr(
     not(test),
     expect(
-        clippy::missing_inline_in_public_items,
         dead_code,
-        reason = "crate-internal API surface for FileIndex note metadata"
+        reason = "crate-internal API surface for FileIndex note metadata, \
+                  consumed by later tickets (#03 inline fields, #04 lazy \
+                  query refresh)"
     )
 )]
 

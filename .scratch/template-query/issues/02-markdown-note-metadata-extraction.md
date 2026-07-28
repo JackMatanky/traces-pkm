@@ -41,8 +41,26 @@
   - Enforced canonical derive ordering (`Copy` first, std traits lexicographical, third-party traits lexicographical).
   - Enforced Clippy module item ordering (`mod` declarations before `use` imports).
 - **Testing**:
-  - 714 tests pass cleanly with 0 warnings.
-  - Organized with canonical submodules (`mod parse`, `mod tasks`, `mod constructor`), table-driven `rstest` cases (`#[case::descriptor]`), and explicit AAA formatting.
+  - 713 tests pass cleanly (698 lib + 4 integration + 1 doc-integration +
+    10 doctests), 0 `cargo clippy --all-targets --all-features` warnings in
+    files touched by this ticket, clean `cargo doc --no-deps` build.
+  - Organized with canonical submodules (`mod parse`, `mod tasks`, `mod
+    constructor`), table-driven `rstest` cases (`#[case::descriptor]`), and
+    explicit AAA formatting.
+- **Adversarial Review Fixes** (post-implementation):
+  - `index/store.rs`: `replace_all`/`load_all` had duplicated per-table
+    read/write loops and a `clippy::type_complexity`-denied return type;
+    extracted generic `store_table`/`load_table` helpers keyed by a
+    `path_of` accessor, and a `LoadedIndex` type alias.
+  - `index/markdown/parser.rs`: `parse_markdown` exceeded the
+    `clippy::too_many_lines` deny threshold (124/100); decomposed into a
+    `ParserState` struct with one small handler method per
+    `pulldown-cmark` event kind, dispatched from `handle_event`.
+  - `index/mod.rs`: module doc referenced the removed `NoteRecord` type;
+    fixed to `[`Note`]`. The crate-level `expect(missing_inline_in_public_items,
+    dead_code)` was partially unfulfilled (`missing_inline_in_public_items`
+    never fires on `pub(crate)` items) and has been narrowed to `dead_code`
+    only.
 
 ## Agent Brief
 

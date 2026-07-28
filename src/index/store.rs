@@ -11,8 +11,10 @@ use std::{
 };
 
 use redb::{
-    Database, ReadableDatabase as _, ReadableTable as _, TableDefinition,
+    Database, ReadTransaction, ReadableDatabase as _, ReadableTable as _,
+    TableDefinition, WriteTransaction,
 };
+use serde::{Serialize, de::DeserializeOwned};
 
 use super::{
     INDEX_FILE, error::FileIndexError, file::FileRecord, markdown::Note,
@@ -24,6 +26,10 @@ const FILE_RECORDS: TableDefinition<&str, &[u8]> =
 
 /// Path → TOML-encoded [`Note`] bytes.
 const NOTES: TableDefinition<&str, &[u8]> = TableDefinition::new("notes");
+
+/// Every File Record and Note Record loaded from the index database,
+/// sorted by path.
+type LoadedIndex = (Vec<FileRecord>, Vec<Note>);
 
 /// Redb-backed handle to one project root's index database.
 pub(super) struct IndexStore {
@@ -82,40 +88,8 @@ impl IndexStore {
         write_txn
             .delete_table(NOTES)
             .map_err(|source| self.store_error(source))?;
-        {
-            let mut records_table = write_txn
-                .open_table(FILE_RECORDS)
-                .map_err(|source| self.store_error(source))?;
-            for record in records {
-                let key = record.path().to_string_lossy();
-                let value = toml::to_string(record).map_err(|source| {
-                    FileIndexError::Serialize {
-                        path: record.path().to_path_buf(),
-                        source,
-                    }
-                })?;
-                records_table
-                    .insert(&*key, value.as_bytes())
-                    .map_err(|source| self.store_error(source))?;
-            }
-        }
-        {
-            let mut notes_table = write_txn
-                .open_table(NOTES)
-                .map_err(|source| self.store_error(source))?;
-            for note in notes {
-                let key = note.path().to_string_lossy();
-                let value = toml::to_string(note).map_err(|source| {
-                    FileIndexError::Serialize {
-                        path: note.path().to_path_buf(),
-                        source,
-                    }
-                })?;
-                notes_table
-                    .insert(&*key, value.as_bytes())
-                    .map_err(|source| self.store_error(source))?;
-            }
-        }
+        self.store_table(&write_txn, FILE_RECORDS, records, FileRecord::path)?;
+        self.store_table(&write_txn, NOTES, notes, Note::path)?;
         write_txn.commit().map_err(|source| self.store_error(source))
     }
 
@@ -127,15 +101,64 @@ impl IndexStore {
     /// - [`FileIndexError::Store`] if the table cannot be read
     /// - [`FileIndexError::Corrupt`] if stored bytes aren't valid UTF-8
     /// - [`FileIndexError::Deserialize`] if stored text isn't valid UTF-8/TOML
-    pub(super) fn load_all(
-        &self,
-    ) -> Result<(Vec<FileRecord>, Vec<Note>), FileIndexError> {
+    pub(super) fn load_all(&self) -> Result<LoadedIndex, FileIndexError> {
         let read_txn =
             self.db.begin_read().map_err(|source| self.store_error(source))?;
+        let records =
+            self.load_table(&read_txn, FILE_RECORDS, FileRecord::path)?;
+        let notes = self.load_table(&read_txn, NOTES, Note::path)?;
+        Ok((records, notes))
+    }
 
-        let records = match read_txn.open_table(FILE_RECORDS) {
+    /// Serializes `items` as TOML into `table`, keyed by `path_of`.
+    ///
+    /// # Errors
+    ///
+    /// - [`FileIndexError::Store`] if the table cannot be opened or written
+    /// - [`FileIndexError::Serialize`] if an item cannot be TOML-encoded
+    fn store_table<T: Serialize>(
+        &self,
+        write_txn: &WriteTransaction,
+        table: TableDefinition<&str, &[u8]>,
+        items: &[T],
+        path_of: impl Fn(&T) -> &Path,
+    ) -> Result<(), FileIndexError> {
+        let mut table = write_txn
+            .open_table(table)
+            .map_err(|source| self.store_error(source))?;
+        for item in items {
+            let path = path_of(item);
+            let key = path.to_string_lossy();
+            let value = toml::to_string(item).map_err(|source| {
+                FileIndexError::Serialize {
+                    path: path.to_path_buf(),
+                    source,
+                }
+            })?;
+            table
+                .insert(&*key, value.as_bytes())
+                .map_err(|source| self.store_error(source))?;
+        }
+        Ok(())
+    }
+
+    /// Deserializes every TOML value in `table` into a `Vec<T>`, sorted by
+    /// `path_of` for deterministic output.
+    ///
+    /// # Errors
+    ///
+    /// - [`FileIndexError::Store`] if the table cannot be read
+    /// - [`FileIndexError::Corrupt`] if stored bytes aren't valid UTF-8
+    /// - [`FileIndexError::Deserialize`] if stored text isn't valid TOML
+    fn load_table<T: DeserializeOwned>(
+        &self,
+        read_txn: &ReadTransaction,
+        table: TableDefinition<&str, &[u8]>,
+        path_of: impl Fn(&T) -> &Path,
+    ) -> Result<Vec<T>, FileIndexError> {
+        let mut items: Vec<T> = match read_txn.open_table(table) {
             Ok(table) => {
-                let mut records: Vec<FileRecord> = Vec::new();
+                let mut items = Vec::new();
                 for entry in
                     table.iter().map_err(|source| self.store_error(source))?
                 {
@@ -149,53 +172,20 @@ impl IndexStore {
                                 source,
                             }
                         })?;
-                    records.push(toml::from_str(text).map_err(|source| {
+                    items.push(toml::from_str(text).map_err(|source| {
                         FileIndexError::Deserialize {
                             path,
                             source: Box::new(source),
                         }
                     })?);
                 }
-                records.sort_by(|a, b| a.path().cmp(b.path()));
-                records
+                items
             }
             Err(redb::TableError::TableDoesNotExist(_)) => Vec::new(),
             Err(source) => return Err(self.store_error(source)),
         };
-
-        let notes = match read_txn.open_table(NOTES) {
-            Ok(table) => {
-                let mut notes: Vec<Note> = Vec::new();
-                for entry in
-                    table.iter().map_err(|source| self.store_error(source))?
-                {
-                    let (key, value) =
-                        entry.map_err(|source| self.store_error(source))?;
-                    let path = PathBuf::from(key.value());
-                    let text =
-                        str::from_utf8(value.value()).map_err(|source| {
-                            FileIndexError::Corrupt {
-                                path: path.clone(),
-                                source,
-                            }
-                        })?;
-                    let note: Note =
-                        toml::from_str(text).map_err(|source| {
-                            FileIndexError::Deserialize {
-                                path: path.clone(),
-                                source: Box::new(source),
-                            }
-                        })?;
-                    notes.push(note);
-                }
-                notes.sort_by(|a, b| a.path().cmp(b.path()));
-                notes
-            }
-            Err(redb::TableError::TableDoesNotExist(_)) => Vec::new(),
-            Err(source) => return Err(self.store_error(source)),
-        };
-
-        Ok((records, notes))
+        items.sort_by(|a, b| path_of(a).cmp(path_of(b)));
+        Ok(items)
     }
 
     /// Wraps a redb error with this store's database path.
