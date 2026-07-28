@@ -1,0 +1,65 @@
+refactor: sharpen FileIndex domain types and use walkdir for scanning
+
+Addresses design review questions on the FileIndex baseline.
+
+FileKind::from_path (was inline in FileRecord::from_metadata):
+Extension classification is FileKind's own concern, not from_metadata's.
+Moving it to an associated function lets it be tested as pure logic
+(Path literals, no tempfile/fs::write) instead of round-tripping through
+real file creation just to check a match arm.
+
+CreatedAt newtype (was created_at: DateTime<Utc> with an eager fallback):
+SystemTime was already being converted to DateTime<Utc> at the metadata
+boundary on purpose - the record round-trips through TOML (chrono's
+DateTime<Utc> has serde support; SystemTime doesn't) and the template
+engine's date filters (engine/date_ops.rs) already operate on chrono
+types, so converting once at ingestion avoids leaking the conversion
+into every future consumer. Kept that; SystemTime does not belong on
+FileRecord.
+
+The real problem was the *fallback itself*: silently resolving "no
+creation time reported" to modified_at at construction time made the
+two indistinguishable by the time anything read the field - a future
+"sort by creation time" query would have no way to know it was actually
+sorting some files by modification time instead. CreatedAt(Option
+<DateTime<Utc>>) keeps the honest value (`reported()`) separate from the
+convenience accessor (FileRecord::created_at(), unchanged signature,
+now resolves the fallback lazily instead of eagerly). This also deleted
+the resolve_created_at free function entirely - the fallback is a
+one-line `unwrap_or` inside the accessor now, tested deterministically
+by constructing FileRecord via struct literal (private-field access,
+same module) instead of depending on filesystem behavior.
+
+Declined a general "FileTimes" component: modified_at has no fallback
+ambiguity (a failed read is a hard Io error, never silent), so wrapping
+it too would just be a transparent no-op wrapper. FileRecord's own
+accessor methods already are "the one component" that owns file-time
+handling; CreatedAt only needed to exist for the one field with
+genuinely different semantics.
+
+Declined a BaseName newtype for `name: String`: this codebase already
+has an established convention for stem/extension handling as plain
+&str/String plus free functions (template/engine/path_ops.rs's
+basename/extension), and FileRecord's own surface has no place `name`
+(a &str) could be confused with a full filename (path() is a distinctly-
+typed &Path already). A newtype here would be a second, competing
+convention for a concept the codebase already solved, with no current
+consumer needing the type-level distinction.
+
+scan_root now uses walkdir instead of a hand-rolled stack-based
+traversal: same behavior (no symlink following, .git directories and
+the index's own database file skipped, final explicit sort by path for
+a self-evident ordering guarantee independent of any traversal-order
+argument), fewer lines, no clippy suppression needed anymore (the old
+else_if_without_else allowance for the dir/file/other trichotomy is
+gone - walkdir's DirEntry::file_type() plus a plain `if !is_file() ||
+is_index_db { continue }` replaces it), and inherits walkdir's own
+tested handling of directory-open failures via filter_entry, rather
+than a hand-rolled read_dir wrapper. walkdir pulls in exactly one
+transitive dependency (same-file, Windows-only hardlink comparison) -
+cargo deny still reports advisories/bans/licenses/sources ok.
+
+Verification: cargo clippy --all-targets clean (only the pre-existing
+unrelated missing_inline warning on main), cargo fmt --all -- --check
+clean, cargo deny check clean, cargo test --all: 665 tests pass. Smoke-
+tested the real `traces trust` / `traces index` binary end-to-end.

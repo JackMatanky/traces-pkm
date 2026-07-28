@@ -1,7 +1,9 @@
 //! Filesystem walk building a [`FileRecord`] for every regular file under a
 //! project root.
 
-use std::{fs, path::Path};
+use std::path::Path;
+
+use walkdir::WalkDir;
 
 use super::{INDEX_FILE, domain::FileRecord, error::FileIndexError};
 
@@ -22,52 +24,34 @@ pub(super) fn scan_root(
 ) -> Result<Vec<FileRecord>, FileIndexError> {
     let index_db = root.join(INDEX_FILE);
     let mut records = Vec::new();
-    let mut pending = vec![root.to_path_buf()];
 
-    while let Some(dir) = pending.pop() {
-        for entry in read_dir(&dir)? {
-            let entry = entry.map_err(|source| FileIndexError::Io {
-                path: dir.clone(),
-                source,
-            })?;
-            let path = entry.path();
-            let file_type =
-                entry.file_type().map_err(|source| FileIndexError::Io {
-                    path: path.clone(),
-                    source,
-                })?;
-
-            #[expect(
-                clippy::else_if_without_else,
-                reason = "a symlink or other non-dir/non-file entry falls \
-                          through both branches deliberately — nothing to \
-                          index, no else case needed"
-            )]
-            if file_type.is_dir() {
-                if !is_git_dir(&path) {
-                    pending.push(path);
-                }
-            } else if file_type.is_file() && path != index_db {
-                let metadata =
-                    entry.metadata().map_err(|source| FileIndexError::Io {
-                        path: path.clone(),
-                        source,
-                    })?;
-                records
-                    .push(FileRecord::from_metadata(&path, root, &metadata)?);
-            }
+    let entries = WalkDir::new(root).into_iter().filter_entry(|entry| {
+        !(entry.file_type().is_dir() && is_git_dir(entry.path()))
+    });
+    for entry in entries {
+        let entry = entry.map_err(|source| io_error(root, source))?;
+        let path = entry.path();
+        if !entry.file_type().is_file() || path == index_db {
+            continue;
         }
+        let metadata =
+            entry.metadata().map_err(|source| io_error(root, source))?;
+        records.push(FileRecord::from_metadata(path, root, &metadata)?);
     }
 
     records.sort_by(|a, b| a.path().cmp(b.path()));
     Ok(records)
 }
 
-fn read_dir(dir: &Path) -> Result<fs::ReadDir, FileIndexError> {
-    fs::read_dir(dir).map_err(|source| FileIndexError::Io {
-        path: dir.to_path_buf(),
-        source,
-    })
+/// Wraps a `walkdir` error with the path it occurred at, falling back to
+/// `root` for the rare case (symlink loops, never reached since this walk
+/// never follows symlinks) where `walkdir` doesn't have one.
+fn io_error(root: &Path, source: walkdir::Error) -> FileIndexError {
+    let path = source.path().unwrap_or(root).to_path_buf();
+    FileIndexError::Io {
+        path,
+        source: source.into(),
+    }
 }
 
 fn is_git_dir(path: &Path) -> bool {
@@ -79,6 +63,8 @@ mod tests {
     use super::*;
 
     mod scan_root {
+        use std::fs;
+
         use pretty_assertions::assert_eq;
 
         use super::*;

@@ -34,6 +34,7 @@ thiserror = "2"
 toml = "1.1"
 tracing = "0.1"
 uuid = { version = "1.24.0", features = ["v4"] }
+walkdir = "2.5"
 
 [dev-dependencies]
 pretty_assertions = "1.4.1"

@@ -24,19 +24,55 @@ pub(crate) enum FileKind {
     Other,
 }
 
+impl FileKind {
+    /// Classifies `path` by its extension: `.md`/`.markdown`
+    /// (case-insensitive) is a Note, everything else is `Other`.
+    fn from_path(path: &Path) -> Self {
+        match path.extension().and_then(|ext| ext.to_str()) {
+            Some(ext)
+                if ext.eq_ignore_ascii_case("md")
+                    || ext.eq_ignore_ascii_case("markdown") =>
+            {
+                Self::Note
+            }
+            _ => Self::Other,
+        }
+    }
+}
+
+/// A File Record's creation time, as reported by the filesystem.
+///
+/// `None` on filesystems that don't report a creation time at all (e.g.
+/// some Linux filesystems without `statx` support) — see
+/// [`FileRecord::created_at`] for the convenience accessor most callers
+/// want, which falls back to `modified_at` in that case. Keeping the two
+/// apart means a future caller that cares about provenance (e.g. a "sort
+/// by creation time" query) can tell a real value from the fallback
+/// instead of silently treating a modification time as a creation time.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct CreatedAt(Option<DateTime<Utc>>);
+
+impl CreatedAt {
+    /// The filesystem-reported creation time, or `None` if this filesystem
+    /// doesn't support reporting one.
+    #[inline]
+    #[must_use]
+    pub(crate) fn reported(&self) -> Option<DateTime<Utc>> {
+        self.0
+    }
+}
+
 /// General metadata indexed for every file under a project root, regardless
 /// of type.
 ///
-/// `path` and `folder` are project-root-relative. `created_at` falls back to
-/// `modified_at` on filesystems that don't report a creation time (e.g. some
-/// Linux filesystems without `statx` support).
+/// `path` and `folder` are project-root-relative.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct FileRecord {
     path: PathBuf,
     name: String,
     folder: PathBuf,
     kind: FileKind,
-    created_at: DateTime<Utc>,
+    created: CreatedAt,
     modified_at: DateTime<Utc>,
     size: u64,
 }
@@ -62,25 +98,22 @@ impl FileRecord {
                     source,
                 }
             })?;
-        let created_at = resolve_created_at(metadata.created(), modified_at);
+        let created =
+            CreatedAt(metadata.created().map(system_time_to_utc).ok());
         let name = relative
             .file_stem()
             .map(|stem| stem.to_string_lossy().into_owned())
             .unwrap_or_default();
         let folder =
             relative.parent().unwrap_or_else(|| Path::new("")).to_path_buf();
-        let kind = match relative.extension().and_then(|ext| ext.to_str()) {
-            Some(ext) if ext.eq_ignore_ascii_case("md") => FileKind::Note,
-            Some(ext) if ext.eq_ignore_ascii_case("markdown") => FileKind::Note,
-            _ => FileKind::Other,
-        };
+        let kind = FileKind::from_path(&relative);
 
         Ok(Self {
             path: relative,
             name,
             folder,
             kind,
-            created_at,
+            created,
             modified_at,
             size: metadata.len(),
         })
@@ -115,12 +148,22 @@ impl FileRecord {
         self.kind
     }
 
+    /// This file's creation time, as reported by the filesystem - `None` if
+    /// unsupported. See [`Self::created_at`] for the always-populated
+    /// convenience accessor.
+    #[inline]
+    #[must_use]
+    pub(crate) fn created(&self) -> CreatedAt {
+        self.created
+    }
+
     /// The file's creation time, or its modification time where the
-    /// filesystem doesn't report creation time.
+    /// filesystem doesn't report a creation time. Use [`Self::created`] to
+    /// tell the two cases apart.
     #[inline]
     #[must_use]
     pub(crate) fn created_at(&self) -> DateTime<Utc> {
-        self.created_at
+        self.created.reported().unwrap_or(self.modified_at)
     }
 
     /// The file's last modification time.
@@ -138,16 +181,6 @@ impl FileRecord {
     }
 }
 
-/// Resolves a File Record's creation time: the filesystem-reported value, or
-/// `modified_at` as a fallback on filesystems that don't report a creation
-/// time at all (e.g. some Linux filesystems without `statx` support).
-fn resolve_created_at(
-    created: std::io::Result<SystemTime>,
-    modified_at: DateTime<Utc>,
-) -> DateTime<Utc> {
-    created.map(system_time_to_utc).unwrap_or(modified_at)
-}
-
 /// Converts a filesystem timestamp to UTC, discarding sub-timezone precision
 /// concerns — [`SystemTime`] carries no timezone, so this is a lossless
 /// reinterpretation, not a conversion.
@@ -161,7 +194,6 @@ mod tests {
 
     mod from_metadata {
         use pretty_assertions::assert_eq;
-        use rstest::rstest;
 
         use super::*;
 
@@ -186,6 +218,7 @@ mod tests {
             assert_eq!(record.name(), "todo");
             assert_eq!(record.path(), Path::new("notes/todo.md"));
             assert_eq!(record.folder(), Path::new("notes"));
+            assert_eq!(record.kind(), FileKind::Note);
             assert_eq!(record.size(), 7);
         }
 
@@ -257,70 +290,81 @@ mod tests {
             )
             .expect("build record");
 
-            // Whichever branch `resolve_created_at` takes - the real
-            // filesystem value or the `modified_at` fallback - the field is
-            // populated, never a sentinel/default. The fallback branch
-            // itself is covered deterministically by `resolve_created_at`'s
-            // own tests below, since whether this filesystem reports a
-            // creation time isn't something a test controls.
+            // Whichever branch is taken - the real filesystem value or the
+            // `modified_at` fallback - the field is populated, never a
+            // sentinel/default. The fallback branch itself is covered
+            // deterministically by `created_at`'s own tests below, since
+            // whether this filesystem reports a creation time isn't
+            // something a test controls.
             assert!(
                 record.created_at() <= Utc::now(),
                 "expected a populated, non-future created_at, got {:?}",
                 record.created_at()
             );
         }
+    }
+
+    mod from_path {
+        use pretty_assertions::assert_eq;
+        use rstest::rstest;
+
+        use super::*;
 
         #[rstest]
         #[case::lowercase_md_extension("note.md", FileKind::Note)]
         #[case::mixed_case_markdown_extension("note.MARKDOWN", FileKind::Note)]
         #[case::non_markdown_extension("config.toml", FileKind::Other)]
         #[case::no_extension("LICENSE", FileKind::Other)]
-        fn classifies_kind_from_the_file_extension(
+        fn classifies_by_extension(
             #[case] file_name: &str,
             #[case] expected: FileKind,
         ) {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            let file = temp.path().join(file_name);
-            fs::write(&file, "content").expect("write file");
-
-            let record = FileRecord::from_metadata(
-                &file,
-                temp.path(),
-                &metadata_for(&file),
-            )
-            .expect("build record");
-
-            assert_eq!(record.kind(), expected);
+            assert_eq!(FileKind::from_path(Path::new(file_name)), expected);
         }
     }
 
-    mod resolve_created_at {
-        use std::io;
-
+    mod created_at {
         use pretty_assertions::assert_eq;
 
         use super::*;
 
-        #[test]
-        fn uses_the_filesystem_value_when_creation_time_is_reported() {
-            let created = SystemTime::now();
-            let modified_at = Utc::now();
-
-            let resolved = resolve_created_at(Ok(created), modified_at);
-
-            assert_eq!(resolved, DateTime::<Utc>::from(created));
+        /// A minimal `FileRecord`, built via struct literal (private-field
+        /// access is available here, same module tree) so `created_at`'s
+        /// fallback logic can be tested deterministically - whether the
+        /// real dev/CI filesystem reports a creation time isn't something
+        /// a test controls.
+        fn record_with(
+            created: CreatedAt,
+            modified_at: DateTime<Utc>,
+        ) -> FileRecord {
+            FileRecord {
+                path: PathBuf::from("note.md"),
+                name: "note".to_owned(),
+                folder: PathBuf::new(),
+                kind: FileKind::Note,
+                created,
+                modified_at,
+                size: 0,
+            }
         }
 
         #[test]
-        fn falls_back_to_modified_at_when_creation_time_is_unsupported() {
+        fn returns_the_reported_value_when_the_filesystem_supports_it() {
             let modified_at = Utc::now();
+            let reported = modified_at - chrono::Duration::days(1);
+            let record = record_with(CreatedAt(Some(reported)), modified_at);
 
-            let resolved = resolve_created_at(
-                Err(io::Error::other("creation time unsupported")),
-                modified_at,
-            );
+            assert_eq!(record.created_at(), reported);
+            assert_eq!(record.created().reported(), Some(reported));
+        }
 
-            assert_eq!(resolved, modified_at);
+        #[test]
+        fn falls_back_to_modified_at_when_unsupported() {
+            let modified_at = Utc::now();
+            let record = record_with(CreatedAt(None), modified_at);
+
+            assert_eq!(record.created_at(), modified_at);
+            assert_eq!(record.created().reported(), None);
         }
     }
 }
