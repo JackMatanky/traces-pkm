@@ -21,19 +21,18 @@
 ### Implementation notes (2026-07-28)
 
 Implemented in the dedicated worktree `.worktrees/fileindex-baseline`, branch
-`feat/fileindex-baseline`, commits `1c9b1ef`..`9f54f1f` (6 commits: initial
-build, a code-review pass, a unit-test-suite audit, and three design-review
-follow-ups). All work happened in that worktree; the `main` checkout was left
-untouched throughout.
+`feat/fileindex-baseline`, commits `1c9b1ef`..`af067e1` (9 commits: initial
+build, code-review pass, unit-test-suite audit, design-review refinements, file
+rename `domain.rs` -> `file.rs`, adversarial review fixes, and code layout/doc formatting).
+All work happened in that worktree; the `main` checkout was left untouched throughout.
 
 **What landed:**
 - `src/index/` (new module): `FileIndex` (`mod.rs`) behind a deep interface -
   `build(root)`, `persist(root)`, `load(root)`, `records()` - callers never
-  see redb. `domain.rs` holds `FileRecord`/`FileKind`; `scan.rs` walks the
-  project root (via the `walkdir` crate, not hand-rolled); `store.rs` is the
-  sole seam that knows about redb tables (`file_records: TableDefinition<&str,
-  &[u8]>`, path -> TOML-encoded `FileRecord` bytes); `error.rs` defines
-  `FileIndexError`.
+  see redb. `file.rs` (renamed from `domain.rs`) holds `FileRecord`/`FileKind`/`Timestamp`;
+  `scan.rs` walks the project root (via `walkdir`); `store.rs` is the sole seam that knows
+  about redb tables (`file_records: TableDefinition<&str, &[u8]>`, path -> TOML-encoded
+  `FileRecord` bytes); `error.rs` defines `FileIndexError`.
 - `src/file_name.rs` (new top-level module, not index-specific): `FileName`
   (full name with extension) and `BaseName` (extension stripped) as distinct
   newtypes with `TryFrom<&Path> for FileName` / `From<&FileName> for
@@ -62,24 +61,30 @@ filesystems that don't report one - deliberately *not* silently defaulted to
 `modified_at` at storage time, to keep provenance visible to future
 consumers), `modified_at: Timestamp`, `size: u64`. `Timestamp` wraps
 `DateTime<Utc>` (needed for TOML round-tripping and reuse by the template
-engine's existing chrono-based date filters). `FileRecord::created_at()`
-resolves the `created`-is-`None` fallback to `modified_at` for convenience;
-`FileRecord::reported_created_at()` returns the honest `Option<Timestamp>`
-for callers that need to tell the two apart.
+`FileRecord::created_at()` resolves the `created`-is-`None` fallback to `modified_at`
+for convenience (ensuring Dataview/template query filters like `file.cdate`/`file.ctime`
+always have a non-null timestamp to evaluate against, matching Dataview precedent);
+`FileRecord::reported_created_at()` returns the honest `Option<Timestamp>` for callers
+that need to distinguish genuine creation time from the `modified_at` fallback.
 
 **Explicitly not done** (per this ticket's Out of scope, confirmed
 untouched): Note Metadata extraction, lazy refresh during query, any
 QueryOps/CLI query commands, content hashing, a file watcher/daemon, JSON
 output.
 
-**Verification:** `cargo clippy --all-targets`, `cargo fmt --all -- --check`,
-and `cargo deny check` all clean (no new advisories/bans/license/duplicate
-issues from `redb`/`walkdir`). `cargo test --all`: 670 lib tests + 4 main +
-1 integration + 10 doctests, all passing. Smoke-tested the real
-`traces trust` / `traces index` binary end-to-end (including a no-extension
-file to exercise `FileKind::Other`). Not yet merged to `main` and the
-acceptance criteria above are intentionally left unchecked pending review.
+**Verification & Hardening:** `cargo clippy --all-targets`, `cargo fmt --all -- --check`,
+and `cargo deny check` all clean. `cargo test --all`: 671 lib tests + 4 main +
+1 integration + 10 doctests, all passing.
+Key review hardening applied:
+- Threaded `path: PathBuf` through `FileIndexError::Corrupt` and `Deserialize` (with
+  `toml::de::Error` boxed) so error context is preserved on corrupt store reads.
+- Ensured `IndexStore::load_all()` sorts by `FileRecord::path` so reload order strictly
+  matches `scan_root()` even when redb byte key ordering diverges from `Path::Ord`.
+- Added a regression test specifically for `Path::Ord` vs raw ASCII key order.
+- Smoke-tested the real `traces trust` / `traces index` binary end-to-end.
 
+Not yet merged to `main`, and the acceptance criteria above are intentionally left
+unchecked (`- [ ]`) per explicit user instruction.
 ## Agent Brief
 
 **Category:** enhancement
