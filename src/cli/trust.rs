@@ -234,7 +234,7 @@ mod tests {
     use clap::Parser;
 
     use super::*;
-    use crate::config::TrustStatusLabel;
+    use crate::config::ConfigTrustStatus;
 
     /// Wraps [`Trust`] in a minimal top-level parser so its
     /// `args_conflicts_with_subcommands` disambiguation can be exercised with
@@ -386,7 +386,7 @@ mod tests {
                 service
                     .trust_status(&TrustRequest::from(root.as_path()))
                     .expect("check trust"),
-                TrustStatusLabel::Trusted
+                ConfigTrustStatus::Trusted
             );
         }
 
@@ -425,7 +425,7 @@ mod tests {
                 service
                     .trust_status(&TrustRequest::from(root.as_path()))
                     .expect("check trust"),
-                TrustStatusLabel::Trusted
+                ConfigTrustStatus::Trusted
             );
         }
 
@@ -461,7 +461,7 @@ mod tests {
                 service
                     .trust_status(&TrustRequest::from(root.as_path()))
                     .expect("check trust"),
-                TrustStatusLabel::Untrusted
+                ConfigTrustStatus::Untrusted
             );
         }
 

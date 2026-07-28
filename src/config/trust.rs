@@ -1,6 +1,9 @@
 //! Trust domain logic and requests.
 
-use std::path::{Path, PathBuf};
+use std::{
+    fmt::{self, Display, Formatter},
+    path::{Path, PathBuf},
+};
 
 use super::file::{Discovered, LocalConfigFile, Tracked};
 
@@ -124,4 +127,33 @@ pub(crate) enum ConfigTrustStatus {
     /// The workspace root is trusted and a baseline hash exists, but the
     /// config file's current content no longer matches it.
     Stale,
+}
+
+impl Display for ConfigTrustStatus {
+    /// Formats for `trust --show`'s one-word status column.
+    ///
+    /// [`Self::MissingBaseline`] and [`Self::Stale`] both mean "needs
+    /// re-trusting" from the user's perspective, so they share a display
+    /// string; callers needing the distinction match the enum directly.
+    #[inline]
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Trusted => "trusted",
+            Self::Untrusted => "untrusted",
+            Self::MissingBaseline | Self::Stale => "stale",
+        })
+    }
+}
+
+impl From<WorkspaceTrustStatus> for ConfigTrustStatus {
+    /// A root-only trust check never has baseline-hash state to report, so
+    /// [`Self::MissingBaseline`]/[`Self::Stale`] can't arise here — only
+    /// [`Self::Trusted`]/[`Self::Untrusted`] are reachable.
+    #[inline]
+    fn from(status: WorkspaceTrustStatus) -> Self {
+        match status {
+            WorkspaceTrustStatus::Trusted => Self::Trusted,
+            WorkspaceTrustStatus::Untrusted => Self::Untrusted,
+        }
+    }
 }

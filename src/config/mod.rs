@@ -23,10 +23,10 @@ pub(crate) use domain::Config;
 #[cfg(test)]
 pub(crate) use file::{Discovered, LocalConfigFile};
 pub(crate) use raw::{RawConfig, RawTemplateConfig};
-#[cfg(test)]
-pub(crate) use service::TrustStatusLabel;
 pub(crate) use service::{ConfigLoadError, ConfigService};
 pub(crate) use store::ConfigStateError;
+#[cfg(test)]
+pub(crate) use trust::ConfigTrustStatus;
 pub(crate) use trust::TrustRequest;
 
 mod builder;

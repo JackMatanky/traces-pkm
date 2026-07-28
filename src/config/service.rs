@@ -2,10 +2,7 @@
 //! records, trust-checks, parses, and merges them. Tracking and trust
 //! administration live in [`super::store::ConfigStateStore`].
 
-use std::{
-    fmt::{self, Display, Formatter},
-    path::{Path, PathBuf},
-};
+use std::path::{Path, PathBuf};
 
 use thiserror::Error;
 
@@ -17,35 +14,8 @@ use super::{
     },
     domain::Config,
     store::{ConfigStateError, ConfigStateStore},
-    trust::{
-        ConfigTrustStatus, TrustRequest, TrustRequests, WorkspaceTrustStatus,
-    },
+    trust::{ConfigTrustStatus, TrustRequest, TrustRequests},
 };
-
-/// A trust status label for presentation (e.g. `trust --show`'s output).
-///
-/// Merges [`ConfigTrustStatus`] and [`WorkspaceTrustStatus`] into one
-/// display-ready value so callers never format a domain status by hand.
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub(crate) enum TrustStatusLabel {
-    /// The subject is trusted.
-    Trusted,
-    /// The subject is not trusted.
-    Untrusted,
-    /// The subject was trusted but its baseline is missing or stale.
-    Stale,
-}
-
-impl Display for TrustStatusLabel {
-    #[inline]
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            Self::Trusted => "trusted",
-            Self::Untrusted => "untrusted",
-            Self::Stale => "stale",
-        })
-    }
-}
 
 /// Errors from the full config loading pipeline.
 #[derive(Debug, Error)]
@@ -185,21 +155,13 @@ impl ConfigService {
     pub(crate) fn trust_status(
         &self,
         subject: &TrustRequest,
-    ) -> Result<TrustStatusLabel, ConfigStateError> {
+    ) -> Result<ConfigTrustStatus, ConfigStateError> {
         if subject.config_file().is_some() {
-            match self.state.config_trust_status(subject)? {
-                ConfigTrustStatus::Trusted => Ok(TrustStatusLabel::Trusted),
-                ConfigTrustStatus::Untrusted => Ok(TrustStatusLabel::Untrusted),
-                ConfigTrustStatus::MissingBaseline
-                | ConfigTrustStatus::Stale => Ok(TrustStatusLabel::Stale),
-            }
+            self.state.config_trust_status(subject)
         } else {
-            match self.state.workspace_trust_status(subject)? {
-                WorkspaceTrustStatus::Trusted => Ok(TrustStatusLabel::Trusted),
-                WorkspaceTrustStatus::Untrusted => {
-                    Ok(TrustStatusLabel::Untrusted)
-                }
-            }
+            self.state
+                .workspace_trust_status(subject)
+                .map(ConfigTrustStatus::from)
         }
     }
 
@@ -583,7 +545,7 @@ mod tests {
             assert!(result.is_ok());
             assert_eq!(
                 fixture.service.trust_status(&subject).unwrap(),
-                TrustStatusLabel::Trusted
+                ConfigTrustStatus::Trusted
             );
         }
 
@@ -603,7 +565,7 @@ mod tests {
             assert!(result.is_ok());
             assert_eq!(
                 fixture.service.trust_status(&subject).unwrap(),
-                TrustStatusLabel::Trusted
+                ConfigTrustStatus::Trusted
             );
         }
     }
@@ -625,7 +587,7 @@ mod tests {
 
             // Assert
             assert!(result.is_ok());
-            assert_eq!(result.unwrap(), TrustStatusLabel::Untrusted);
+            assert_eq!(result.unwrap(), ConfigTrustStatus::Untrusted);
         }
 
         #[test]
@@ -642,7 +604,7 @@ mod tests {
 
             // Assert
             assert!(result.is_ok());
-            assert_eq!(result.unwrap(), TrustStatusLabel::Untrusted);
+            assert_eq!(result.unwrap(), ConfigTrustStatus::Untrusted);
         }
 
         #[test]
@@ -662,7 +624,7 @@ mod tests {
 
             // Assert
             assert!(result.is_ok());
-            assert_eq!(result.unwrap(), TrustStatusLabel::Stale);
+            assert_eq!(result.unwrap(), ConfigTrustStatus::Stale);
         }
     }
 
@@ -687,7 +649,7 @@ mod tests {
             assert_eq!(result.unwrap(), 1); // 1 entry removed
             assert_eq!(
                 fixture.service.trust_status(&subject).unwrap(),
-                TrustStatusLabel::Untrusted
+                ConfigTrustStatus::Untrusted
             );
         }
 
