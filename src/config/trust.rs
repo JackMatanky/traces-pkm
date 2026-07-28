@@ -81,7 +81,6 @@ impl From<&LocalConfigFile<Tracked>> for TrustRequest {
 pub(crate) struct TrustRequests(Box<[TrustRequest]>);
 
 impl From<Vec<TrustRequest>> for TrustRequests {
-    /// Creates trust requests.
     #[inline]
     fn from(requests: Vec<TrustRequest>) -> Self {
         Self(requests.into_boxed_slice())
@@ -89,7 +88,6 @@ impl From<Vec<TrustRequest>> for TrustRequests {
 }
 
 impl From<TrustRequest> for TrustRequests {
-    /// Creates a single trust request.
     #[inline]
     fn from(request: TrustRequest) -> Self {
         Self(Box::new([request]))

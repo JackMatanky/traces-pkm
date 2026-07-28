@@ -1,4 +1,4 @@
-//! Raw (unresolved) config types deserialized from TOML.
+//! Config types deserialized directly from TOML, before path resolution.
 
 use std::path::PathBuf;
 

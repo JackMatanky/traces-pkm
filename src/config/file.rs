@@ -121,6 +121,7 @@ impl Parsed {
         })
     }
 }
+
 /// A local project config file.
 pub(crate) type LocalConfigFile<State> = ConfigFile<IsLocal, State>;
 
@@ -287,6 +288,7 @@ impl From<(LocalConfigFile<Discovered>, &ConfigStateStore)>
         file.transition_to(Tracked)
     }
 }
+
 impl<Source> ConfigFile<Source, Parsed> {
     /// Parsed raw config data.
     #[inline]
@@ -333,6 +335,7 @@ impl TryFrom<GlobalConfigFile<Discovered>> for GlobalConfigFile<Parsed> {
         Ok(file.transition_to(parsed))
     }
 }
+
 #[cfg(test)]
 mod tests {
     use std::path::{Path, PathBuf};
