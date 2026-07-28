@@ -144,11 +144,13 @@ pub(crate) fn parse_markdown(src: &str) -> Note {
     Note::new(frontmatter, lists, outlinks, code_regions)
 }
 
+/// Active list context on the parser stack.
 struct ListFrame {
     is_ordered: bool,
     items: Vec<ListItem>,
 }
 
+/// Active list item context on the parser stack.
 struct ItemFrame {
     task_status: Option<TaskStatus>,
     text_buffer: String,
