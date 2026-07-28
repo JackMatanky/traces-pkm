@@ -14,7 +14,7 @@ use super::{
     domain::{Config, TemplateConfig},
     file::{
         ConfigFileError, Discovered as FileDiscovered, GlobalConfigFile,
-        LocalConfigFile, Parsed, Tracked, Trusted,
+        LocalConfigFile, Parsed, Tracked,
     },
     store::ConfigStateStore,
 };
@@ -35,6 +35,14 @@ pub(crate) enum ConfigBuilderError {
         file: super::file::LocalConfigFile<super::file::Tracked>,
         /// The trust status that caused the halt.
         status: crate::config::trust::ConfigTrustStatus,
+    },
+    /// The merged local/global config could not be re-extracted to resolve
+    /// the effective output directory.
+    #[error("failed to merge local and global config")]
+    Merge {
+        /// Source figment error.
+        #[source]
+        source: Box<figment::Error>,
     },
 }
 
@@ -110,124 +118,66 @@ impl TryFrom<DiscoveryOutcome> for ConfigBuilderInput {
     }
 }
 
-/// Aggregate config builder.
-pub(super) struct ConfigBuilder<State> {
-    state: State,
-}
-
-/// Discovery output has been validated into selected load input.
-pub(super) struct Discovered {
+/// Builds a [`Config`] from validated discovery input: tracks and
+/// trust-checks the local config, then parses and merges local (and
+/// optional global) config into the resolved output directory.
+///
+/// A single linear pipeline — this is the only call site, so the staged
+/// typestate builder this replaced bought no real ordering safety.
+///
+/// # Errors
+///
+/// Returns [`ConfigBuilderError::Untrusted`] when the local config's
+/// workspace isn't trusted, is missing its baseline hash, or is stale.
+/// Returns [`ConfigBuilderError::ConfigFile`] when a selected config file
+/// cannot be parsed. Returns [`ConfigBuilderError::Merge`] when the merged
+/// local/global config cannot be re-extracted for its output directory.
+pub(super) fn build_config(
     input: ConfigBuilderInput,
-}
-
-/// Local config has been tracked and checked against trust.
-pub(super) struct LocalStored {
-    local: LocalConfigFile<Trusted>,
-    global: Option<GlobalConfigFile<FileDiscovered>>,
-}
-
-/// Config files have been read and merged into a [`Config`].
-pub(super) struct Merged {
-    config: Config,
-}
-
-impl ConfigBuilder<Discovered> {
-    /// Initializes the builder from validated load input.
-    #[inline]
-    #[must_use]
-    pub(super) fn new(input: ConfigBuilderInput) -> Self {
-        Self {
-            state: Discovered {
-                input,
-            },
+    state: &ConfigStateStore,
+) -> Result<Config, ConfigBuilderError> {
+    let tracked_local = LocalConfigFile::<Tracked>::from((input.local, state));
+    let trusted_local = match tracked_local
+        .verify_trust(state)
+        .map_err(ConfigFileError::Trust)?
+    {
+        super::file::TrustOutcome::Trusted(trusted) => trusted,
+        super::file::TrustOutcome::Halted(file, status) => {
+            return Err(ConfigBuilderError::Untrusted {
+                file,
+                status,
+            });
         }
+    };
+
+    let root = trusted_local.root().to_path_buf();
+    let mut figment = Figment::new();
+    let mut global_dir = None;
+
+    if let Some(global) = input.global {
+        let parsed = GlobalConfigFile::<Parsed>::try_from(global)?;
+        global_dir = parsed.resolved_template_dir();
+        figment = figment.merge(Serialized::defaults(parsed.raw()));
     }
 
-    /// Records the local config and checks its trust state.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ConfigBuilderError`] when the local config is untrusted,
-    /// stale, or cannot be checked.
-    #[inline]
-    pub(super) fn store_locals(
-        self,
-        state: &ConfigStateStore,
-    ) -> Result<ConfigBuilder<LocalStored>, ConfigBuilderError> {
-        let tracked_local =
-            LocalConfigFile::<Tracked>::from((self.state.input.local, state));
-        let trusted_local = match tracked_local
-            .verify_trust(state)
-            .map_err(ConfigFileError::Trust)?
-        {
-            super::file::TrustOutcome::Trusted(trusted) => trusted,
-            super::file::TrustOutcome::Halted(file, status) => {
-                return Err(ConfigBuilderError::Untrusted {
-                    file,
-                    status,
-                });
-            }
-        };
-        Ok(ConfigBuilder {
-            state: LocalStored {
-                local: trusted_local,
-                global: self.state.input.global,
-            },
-        })
-    }
-}
+    let parsed_local = LocalConfigFile::<Parsed>::try_from(trusted_local)?;
+    let local_dir = parsed_local.resolved_template_dir();
+    figment = figment.merge(Serialized::defaults(parsed_local.raw()));
 
-impl ConfigBuilder<LocalStored> {
-    /// Reads, merges, and builds config.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ConfigBuilderError::ConfigFile`] when a selected config file
-    /// cannot be parsed.
-    #[inline]
-    pub(super) fn merge(
-        self,
-    ) -> Result<ConfigBuilder<Merged>, ConfigBuilderError> {
-        let root = self.state.local.root().to_path_buf();
-        let mut figment = Figment::new();
-        let mut global_dir = None;
+    let output = figment
+        .extract::<super::raw::RawConfig>()
+        .map_err(|source| ConfigBuilderError::Merge {
+            source: Box::new(source),
+        })?
+        .templates
+        .output_dir
+        .unwrap_or_else(|| root.clone());
 
-        if let Some(global) = self.state.global {
-            let parsed = GlobalConfigFile::<Parsed>::try_from(global)?;
-            global_dir = parsed.resolved_template_dir();
-            figment = figment.merge(Serialized::defaults(parsed.raw()));
-        }
-
-        let parsed_local =
-            LocalConfigFile::<Parsed>::try_from(self.state.local)?;
-        let local_dir = parsed_local.resolved_template_dir();
-        figment = figment.merge(Serialized::defaults(parsed_local.raw()));
-
-        let output = figment
-            .extract::<super::raw::RawConfig>()
-            .ok()
-            .and_then(|extracted| extracted.templates.output_dir)
-            .unwrap_or_else(|| root.clone());
-
-        Ok(ConfigBuilder {
-            state: Merged {
-                config: Config::new(root, TemplateConfig {
-                    local: local_dir,
-                    global: global_dir,
-                    output,
-                }),
-            },
-        })
-    }
-}
-
-impl ConfigBuilder<Merged> {
-    /// Returns the merged config.
-    #[inline]
-    #[must_use]
-    pub(super) fn build(self) -> Config {
-        self.state.config
-    }
+    Ok(Config::new(root, TemplateConfig {
+        local: local_dir,
+        global: global_dir,
+        output,
+    }))
 }
 
 #[cfg(test)]
@@ -434,11 +384,13 @@ mod tests {
             let local = fixture.local("project");
             let state = fixture.state();
 
-            let builder = ConfigBuilder::new(ConfigBuilderInput {
-                local: local.clone(),
-                global: None,
-            });
-            let result = builder.store_locals(&state);
+            let result = build_config(
+                ConfigBuilderInput {
+                    local,
+                    global: None,
+                },
+                &state,
+            );
 
             assert!(matches!(
                 result,
@@ -455,19 +407,20 @@ mod tests {
 
         use super::*;
 
-        fn build_ready(
+        fn build(
             fixture: &Fixture,
             local: LocalConfigFile<FileDiscovered>,
             global: Option<GlobalConfigFile<FileDiscovered>>,
-        ) -> ConfigBuilder<LocalStored> {
+        ) -> Result<Config, ConfigBuilderError> {
             fixture.trust(&local);
             let state = fixture.state();
-            ConfigBuilder::new(ConfigBuilderInput {
-                local,
-                global,
-            })
-            .store_locals(&state)
-            .expect("store_locals")
+            build_config(
+                ConfigBuilderInput {
+                    local,
+                    global,
+                },
+                &state,
+            )
         }
 
         #[test]
@@ -480,13 +433,10 @@ mod tests {
             let local =
                 LocalConfigFile::<FileDiscovered>::try_new(local_path).unwrap();
 
-            let builder = build_ready(&fixture, local, None);
-
             // Act
-            let result = builder.merge();
+            let config = build(&fixture, local, None).expect("build");
 
             // Assert
-            let config = result.expect("merge").build();
             assert_eq!(config.output_dir(), Path::new("local_out"));
         }
 
@@ -500,13 +450,10 @@ mod tests {
             let local =
                 LocalConfigFile::<FileDiscovered>::try_new(local_path).unwrap();
 
-            let builder = build_ready(&fixture, local, None);
-
             // Act
-            let result = builder.merge();
+            let config = build(&fixture, local, None).expect("build");
 
             // Assert
-            let config = result.expect("merge").build();
             assert_eq!(config.global_template_dir(), None);
         }
 
@@ -528,14 +475,11 @@ mod tests {
                 GlobalConfigFile::<FileDiscovered>::try_new(global_path)
                     .unwrap();
 
-            let builder =
-                build_ready(&fixture, local.clone(), Some(global.clone()));
-
             // Act
-            let result = builder.merge();
+            let config =
+                build(&fixture, local.clone(), Some(global)).expect("build");
 
             // Assert
-            let config = result.expect("merge").build();
             assert_eq!(
                 config.local_template_dir(),
                 Some(local.root().join(".traces/templates").as_path())
@@ -560,14 +504,11 @@ mod tests {
                 GlobalConfigFile::<FileDiscovered>::try_new(global_path)
                     .unwrap();
 
-            let builder =
-                build_ready(&fixture, local.clone(), Some(global.clone()));
-
             // Act
-            let result = builder.merge();
+            let config =
+                build(&fixture, local, Some(global.clone())).expect("build");
 
             // Assert
-            let config = result.expect("merge").build();
             assert_eq!(
                 config.global_template_dir(),
                 Some(global.root().join("global_tmpl").as_path())
@@ -592,13 +533,10 @@ mod tests {
                 GlobalConfigFile::<FileDiscovered>::try_new(global_path)
                     .unwrap();
 
-            let builder = build_ready(&fixture, local, Some(global));
-
             // Act
-            let result = builder.merge();
+            let config = build(&fixture, local, Some(global)).expect("build");
 
             // Assert
-            let config = result.expect("merge").build();
             assert_eq!(config.output_dir(), Path::new("local_out"));
         }
 
@@ -610,13 +548,10 @@ mod tests {
             let local =
                 LocalConfigFile::<FileDiscovered>::try_new(local_path).unwrap();
 
-            let builder = build_ready(&fixture, local.clone(), None);
-
             // Act
-            let result = builder.merge();
+            let config = build(&fixture, local.clone(), None).expect("build");
 
             // Assert
-            let config = result.expect("merge").build();
             assert_eq!(config.output_dir(), local.root());
         }
 
@@ -634,10 +569,8 @@ mod tests {
                 GlobalConfigFile::<FileDiscovered>::try_new(global_path)
                     .unwrap();
 
-            let builder = build_ready(&fixture, local, Some(global));
-
             // Act
-            let result = builder.merge();
+            let result = build(&fixture, local, Some(global));
 
             assert!(matches!(
                 result,
@@ -655,10 +588,8 @@ mod tests {
             let local =
                 LocalConfigFile::<FileDiscovered>::try_new(local_path).unwrap();
 
-            let builder = build_ready(&fixture, local, None);
-
             // Act
-            let result = builder.merge();
+            let result = build(&fixture, local, None);
 
             assert!(matches!(
                 result,

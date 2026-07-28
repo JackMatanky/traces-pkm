@@ -9,11 +9,10 @@ use clap::Args;
 
 use super::error::CliError;
 use crate::{
-    Cwd, DialogProvider,
+    DialogProvider,
     config::{LOCAL_CONFIG_FILE, RawConfig, RawTemplateConfig},
 };
 
-const TRACES_DIR: &str = ".traces";
 const DEFAULT_TEMPLATE_DIRECTORY: &str = ".traces/templates";
 const DEFAULT_OUTPUT_DIRECTORY: &str = ".";
 
@@ -46,11 +45,7 @@ impl Init {
     /// [`CliError::InitWriteConfig`] when writing the config file fails.
     #[inline]
     pub fn run(self, provider: &dyn DialogProvider) -> Result<(), CliError> {
-        let root = Cwd::new().map(Cwd::into_inner).map_err(|source| {
-            CliError::CurrentDirectory {
-                source,
-            }
-        })?;
+        let root = super::current_dir()?.into_inner();
         let input = Self::collect_config(provider)?;
         Self::scaffold_directory(&root)?;
         Self::write_config_file(&root, &input.directory, &input.output_dir)?;
@@ -81,8 +76,19 @@ impl Init {
     /// Scaffold `.traces/` and `.traces/templates/`.
     ///
     /// Refuses to run when `.traces/` already exists.
+    #[expect(
+        clippy::expect_used,
+        reason = "LOCAL_CONFIG_FILE is a compile-time constant with a known \
+                  parent component; failure here means the constant itself \
+                  was changed to something without a directory segment, not a \
+                  recoverable runtime condition"
+    )]
     fn scaffold_directory(root: &Path) -> Result<(), CliError> {
-        let traces_dir = root.join(TRACES_DIR);
+        let traces_dir = root.join(
+            Path::new(LOCAL_CONFIG_FILE)
+                .parent()
+                .expect("LOCAL_CONFIG_FILE has a parent directory component"),
+        );
         if traces_dir.exists() {
             return Err(CliError::InitAlreadyInitialized {
                 root: root.to_path_buf(),

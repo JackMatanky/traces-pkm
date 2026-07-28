@@ -17,6 +17,16 @@ fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     m.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
+/// Access a mutex's data directly, recovering from poison.
+///
+/// For use only where the caller already has exclusive (`&mut`) access to
+/// the [`Mutex`] — e.g. a consuming builder method — where the lock itself
+/// is redundant.
+#[inline]
+fn get_mut<T>(m: &mut Mutex<T>) -> &mut T {
+    m.get_mut().unwrap_or_else(PoisonError::into_inner)
+}
+
 /// A deterministic [`DialogProvider`] that replays preset responses.
 ///
 /// Queue answers with [`with_text`](Self::with_text) /
@@ -73,8 +83,8 @@ impl PresetDialogProvider {
     /// ```
     #[inline]
     #[must_use]
-    pub fn with_text<S: Into<String>>(self, response: S) -> Self {
-        lock(&self.texts).push_back(response.into());
+    pub fn with_text<S: Into<String>>(mut self, response: S) -> Self {
+        get_mut(&mut self.texts).push_back(response.into());
         self
     }
 
@@ -92,8 +102,8 @@ impl PresetDialogProvider {
     /// ```
     #[inline]
     #[must_use]
-    pub fn with_confirm(self, response: bool) -> Self {
-        lock(&self.confirms).push_back(response);
+    pub fn with_confirm(mut self, response: bool) -> Self {
+        get_mut(&mut self.confirms).push_back(response);
         self
     }
 
@@ -117,8 +127,8 @@ impl PresetDialogProvider {
     /// ```
     #[inline]
     #[must_use]
-    pub fn with_select(self, response: usize) -> Self {
-        lock(&self.selects).push_back(response);
+    pub fn with_select(mut self, response: usize) -> Self {
+        get_mut(&mut self.selects).push_back(response);
         self
     }
 
@@ -136,11 +146,12 @@ impl PresetDialogProvider {
     /// ```
     #[inline]
     #[must_use]
-    pub fn with_multi_select<I>(self, response: I) -> Self
+    pub fn with_multi_select<I>(mut self, response: I) -> Self
     where
         I: IntoIterator<Item = usize>,
     {
-        lock(&self.multi_selects).push_back(response.into_iter().collect());
+        get_mut(&mut self.multi_selects)
+            .push_back(response.into_iter().collect());
         self
     }
 

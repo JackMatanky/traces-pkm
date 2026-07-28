@@ -1,6 +1,6 @@
 //! Unified config tracking and trust state.
 
-use std::path::PathBuf;
+use std::{fs, path::PathBuf};
 
 use thiserror::Error;
 
@@ -130,23 +130,48 @@ impl ConfigStateStore {
         &self,
         subject: &TrustRequest,
     ) -> Result<ConfigTrustStatus, ConfigStateError> {
+        self.config_trust_status_with_content(subject).map(|(status, _)| status)
+    }
+
+    /// Returns the config-file trust status, plus its content when the file
+    /// is fully trusted.
+    ///
+    /// Hashes content read directly into memory rather than hashing from
+    /// `subject`'s path and letting the caller re-read that same path
+    /// separately to parse it — a second, independent read would open a
+    /// TOCTOU window between the trust check and the file's actual use.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConfigStateError`] when the trust store cannot be read or
+    /// the config file cannot be read.
+    pub(crate) fn config_trust_status_with_content(
+        &self,
+        subject: &TrustRequest,
+    ) -> Result<(ConfigTrustStatus, Option<String>), ConfigStateError> {
         if !self.trusted.contains(subject.root_path())? {
-            return Ok(ConfigTrustStatus::Untrusted);
+            return Ok((ConfigTrustStatus::Untrusted, None));
         }
         let Some(config_file) = subject.config_file() else {
-            return Ok(ConfigTrustStatus::Trusted);
+            return Ok((ConfigTrustStatus::Trusted, None));
         };
         let Some(recorded) = self
             .trusted
             .read_companion(subject.root_path(), COMPANION_SUFFIX)?
         else {
-            return Ok(ConfigTrustStatus::MissingBaseline);
+            return Ok((ConfigTrustStatus::MissingBaseline, None));
         };
-        let current = Blake3FileHash::new(config_file)?;
+        let content = fs::read_to_string(config_file).map_err(|source| {
+            ConfigStateError::Hash(HashError::Read {
+                path: config_file.to_path_buf(),
+                source,
+            })
+        })?;
+        let current = Blake3FileHash::from_content(&content);
         if recorded.trim() == current.to_string() {
-            Ok(ConfigTrustStatus::Trusted)
+            Ok((ConfigTrustStatus::Trusted, Some(content)))
         } else {
-            Ok(ConfigTrustStatus::Stale)
+            Ok((ConfigTrustStatus::Stale, None))
         }
     }
 

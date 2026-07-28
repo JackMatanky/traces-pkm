@@ -173,10 +173,12 @@ impl TemplateLoader {
                     source,
                 }
             })?;
-            if file_type.is_file() && entry.path().file_stem() == Some(key) {
+            let name = entry.file_name();
+            if file_type.is_file() && Path::new(&name).file_stem() == Some(key)
+            {
                 hits.push(subdir.map_or_else(
-                    || PathBuf::from(entry.file_name()),
-                    |parent| parent.join(entry.file_name()),
+                    || PathBuf::from(&name),
+                    |parent| parent.join(&name),
                 ));
             }
         }
@@ -264,7 +266,8 @@ impl TemplateLoader {
             .filter_map(Result::ok)
             .filter(|entry| entry.file_type().is_ok_and(|ty| ty.is_file()))
             .filter_map(|entry| {
-                let path = entry.path();
+                let name = entry.file_name();
+                let path = Path::new(&name);
                 let is_markdown =
                     path.extension().is_some_and(|ext| ext == "md");
                 is_markdown

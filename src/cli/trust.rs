@@ -10,10 +10,7 @@ use std::path::PathBuf;
 use clap::{ArgGroup, Args, Subcommand};
 
 use super::error::CliError;
-use crate::{
-    Cwd,
-    config::{ConfigService, DiscoveryScope, TrustRequest},
-};
+use crate::config::{ConfigService, DiscoveryScope, TrustRequest};
 
 /// `traces trust [PATH]` / `traces trust --show` / `traces trust --untrust`.
 ///
@@ -208,9 +205,7 @@ impl Trust {
         let path = if let Some(path) = self.path.as_deref() {
             path
         } else {
-            cwd = Cwd::new().map_err(|source| CliError::CurrentDirectory {
-                source,
-            })?;
+            cwd = super::current_dir()?;
             cwd.as_ref()
         };
         let scope = if self.all {
@@ -239,6 +234,7 @@ mod tests {
     use clap::Parser;
 
     use super::*;
+    use crate::config::TrustStatusLabel;
 
     /// Wraps [`Trust`] in a minimal top-level parser so its
     /// `args_conflicts_with_subcommands` disambiguation can be exercised with
@@ -390,7 +386,7 @@ mod tests {
                 service
                     .trust_status(&TrustRequest::from(root.as_path()))
                     .expect("check trust"),
-                "trusted"
+                TrustStatusLabel::Trusted
             );
         }
 
@@ -429,7 +425,7 @@ mod tests {
                 service
                     .trust_status(&TrustRequest::from(root.as_path()))
                     .expect("check trust"),
-                "trusted"
+                TrustStatusLabel::Trusted
             );
         }
 
@@ -465,7 +461,7 @@ mod tests {
                 service
                     .trust_status(&TrustRequest::from(root.as_path()))
                     .expect("check trust"),
-                "untrusted"
+                TrustStatusLabel::Untrusted
             );
         }
 

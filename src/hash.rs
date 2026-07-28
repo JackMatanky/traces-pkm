@@ -49,6 +49,17 @@ impl Blake3FileHash {
         })?;
         Ok(Self(blake3::hash(&contents)))
     }
+
+    /// Computes the BLAKE3 hash of `content` already read into memory.
+    ///
+    /// Prefer this over [`Self::new`] whenever the caller already holds the
+    /// file's content in hand — hashing from a path and then reading that
+    /// same path again for use opens a TOCTOU window between the two reads.
+    #[inline]
+    #[must_use]
+    pub(crate) fn from_content(content: &str) -> Self {
+        Self(blake3::hash(content.as_bytes()))
+    }
 }
 
 impl Display for Blake3FileHash {
@@ -63,8 +74,13 @@ impl Display for Blake3FileHash {
 /// Used as a hash-keyed store filename (see
 /// [`crate::FileStateStore`]). Callers that need canonical keys
 /// must canonicalize before constructing this value.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct Blake3PathHash(String);
+///
+/// Stores the hex digest as a fixed-size byte array rather than a heap
+/// `String` — BLAKE3's hex encoding is always exactly 64 ASCII bytes, so a
+/// stack array avoids an allocation this type constructs often (once per
+/// tracked/trusted store entry).
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub(crate) struct Blake3PathHash([u8; 64]);
 
 impl Blake3PathHash {
     /// Hashes `path`'s bytes to a hex string.
@@ -72,14 +88,23 @@ impl Blake3PathHash {
     #[must_use]
     pub(crate) fn new(path: &Path) -> Self {
         let hash = blake3::hash(path.as_os_str().as_encoded_bytes());
-        Self(hash.to_hex().to_string())
+        let mut bytes = [0_u8; 64];
+        bytes.copy_from_slice(hash.to_hex().as_bytes());
+        Self(bytes)
     }
 
     /// The hash string to use as a store entry filename.
     #[inline]
     #[must_use]
+    #[expect(
+        clippy::expect_used,
+        reason = "blake3's hex digest is always ASCII; failure here means \
+                  blake3 itself violated its documented output format, not a \
+                  recoverable caller error"
+    )]
     pub(crate) fn as_str(&self) -> &str {
-        &self.0
+        str::from_utf8(&self.0)
+            .expect("blake3 hex digest is always valid ASCII/UTF-8")
     }
 }
 
@@ -206,7 +231,7 @@ mod tests {
                 blake3::hash(path.as_os_str().as_encoded_bytes())
                     .to_hex()
                     .to_string();
-            assert_eq!(hash, Blake3PathHash(expected_hex));
+            assert_eq!(hash.as_str(), expected_hex.as_str());
         }
 
         #[test]

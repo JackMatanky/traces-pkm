@@ -18,6 +18,19 @@ use crate::{
     config::{Config, ConfigService},
 };
 
+/// Reads the process current directory, wrapped for callers that need to
+/// retain [`Cwd`]'s guarantees (e.g. path confinement).
+///
+/// # Errors
+///
+/// Returns [`CliError::CurrentDirectory`] when the current directory cannot
+/// be read.
+fn current_dir() -> Result<Cwd, CliError> {
+    Cwd::new().map_err(|source| CliError::CurrentDirectory {
+        source,
+    })
+}
+
 /// Reads the current directory and loads its effective configuration.
 ///
 /// # Errors
@@ -26,11 +39,7 @@ use crate::{
 /// directory cannot be read. Returns [`CliError::ConfigLoad`] when
 /// configuration discovery or construction fails.
 fn load_config(service: &ConfigService) -> Result<Config, CliError> {
-    let cwd = Cwd::new().map(Cwd::into_inner).map_err(|source| {
-        CliError::CurrentDirectory {
-            source,
-        }
-    })?;
+    let cwd = current_dir()?.into_inner();
     service.load(&cwd).map_err(|source| CliError::ConfigLoad {
         cwd,
         source,

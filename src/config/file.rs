@@ -81,8 +81,15 @@ pub(crate) struct Discovered;
 pub(crate) struct Tracked;
 
 /// A local config file whose root passed the trust gate.
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub(crate) struct Trusted;
+///
+/// Carries the content read while verifying the trust hash. [`Parsed`]'s
+/// local conversion reuses this content instead of reading the file from
+/// disk again, closing the TOCTOU window a second, independent read would
+/// open between the trust check and parsing.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct Trusted {
+    content: String,
+}
 
 /// A config file parsed into raw config data.
 #[derive(Clone, Debug)]
@@ -91,6 +98,10 @@ pub(super) struct Parsed {
 }
 
 impl Parsed {
+    /// Parses `path`'s content directly from disk.
+    ///
+    /// Used for global config, which has no trust gate and thus no risk of
+    /// a second, independent read racing the first.
     fn read(path: &Path) -> Result<Self, ConfigFileParseError> {
         let raw = Figment::from(Toml::file_exact(path))
             .extract::<RawConfig>()
@@ -98,6 +109,27 @@ impl Parsed {
                 path: path.to_path_buf(),
                 source: Box::new(source),
             })?;
+        Ok(Self {
+            raw,
+        })
+    }
+
+    /// Parses already-read `content` for `path` (used only for error
+    /// context).
+    ///
+    /// Used for local config, whose content was already read once while
+    /// verifying trust — reusing it here avoids a second, independent read
+    /// of the same path that a fresh [`Self::read`] call would require.
+    fn from_content(
+        path: &Path,
+        content: &str,
+    ) -> Result<Self, ConfigFileParseError> {
+        let raw = Figment::from(Toml::string(content))
+            .extract::<RawConfig>()
+            .map_err(|source| ConfigFileParseError::Read {
+            path: path.to_path_buf(),
+            source: Box::new(source),
+        })?;
         Ok(Self {
             raw,
         })
@@ -233,26 +265,26 @@ impl LocalConfigFile<Tracked> {
     ) -> Result<TrustOutcome, ConfigFileTrustError> {
         let root = self.root().to_path_buf();
         let subject = TrustRequest::from(&self);
-        match state.config_trust_status(&subject) {
-            Ok(ConfigTrustStatus::Trusted) => {
-                Ok(TrustOutcome::Trusted(self.transition_to(Trusted)))
+        match state.config_trust_status_with_content(&subject) {
+            Ok((ConfigTrustStatus::Trusted, Some(content))) => {
+                Ok(TrustOutcome::Trusted(self.transition_to(Trusted {
+                    content,
+                })))
             }
-            Ok(status) => Ok(TrustOutcome::Halted(self, status)),
+            // A `LocalConfigFile` trust request always carries a config
+            // path (see `TrustRequest::from`), so `Trusted` with no content
+            // never occurs in practice — halt rather than panic if that
+            // invariant ever changes.
+            Ok((ConfigTrustStatus::Trusted, None)) => Ok(TrustOutcome::Halted(
+                self,
+                ConfigTrustStatus::MissingBaseline,
+            )),
+            Ok((status, _)) => Ok(TrustOutcome::Halted(self, status)),
             Err(source) => Err(ConfigFileTrustError::TrustCheckFailed {
                 root,
                 source: Box::new(source),
             }),
         }
-    }
-
-    /// Unconditionally transitions a halted file to trusted.
-    ///
-    /// Used after interactively prompting the user and calling
-    /// `store.grant_trust(...)`.
-    #[must_use]
-    #[expect(dead_code, reason = "part of config lifecycle API")]
-    pub(crate) fn force_trust(self) -> LocalConfigFile<Trusted> {
-        self.transition_to(Trusted)
     }
 }
 
@@ -297,7 +329,7 @@ impl TryFrom<LocalConfigFile<Trusted>> for LocalConfigFile<Parsed> {
 
     #[inline]
     fn try_from(file: LocalConfigFile<Trusted>) -> Result<Self, Self::Error> {
-        let parsed = Parsed::read(file.path())?;
+        let parsed = Parsed::from_content(file.path(), &file.state.content)?;
         Ok(file.transition_to(parsed))
     }
 }

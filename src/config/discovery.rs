@@ -280,7 +280,24 @@ impl DiscoveryEngine {
         path: &Path,
         scope: DiscoveryScope,
     ) -> Result<TrustRequests, DiscoveryError> {
-        let start = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+        let start = match path.canonicalize() {
+            Ok(canonical) => canonical,
+            // The path may legitimately not exist yet (e.g. a trust target
+            // that will be created); fall back to the given path. Any other
+            // error (permission denied, symlink loop) is unexpected for a
+            // trust operation, where the canonical path is the workspace
+            // identity — propagate it instead of silently trusting a
+            // possibly-different, non-canonical path.
+            Err(source) if source.kind() == io::ErrorKind::NotFound => {
+                path.to_path_buf()
+            }
+            Err(source) => {
+                return Err(DiscoveryError::PathInaccessible {
+                    path: path.to_path_buf(),
+                    source,
+                });
+            }
+        };
         let anchor = Self::trust_anchor(&start);
         let allow_root_fallback = match scope {
             DiscoveryScope::NearestLocal => true,

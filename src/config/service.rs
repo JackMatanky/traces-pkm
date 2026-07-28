@@ -2,12 +2,15 @@
 //! records, trust-checks, parses, and merges them. Tracking and trust
 //! administration live in [`super::store::ConfigStateStore`].
 
-use std::path::{Path, PathBuf};
+use std::{
+    fmt::{self, Display, Formatter},
+    path::{Path, PathBuf},
+};
 
 use thiserror::Error;
 
 use super::{
-    builder::{ConfigBuilder, ConfigBuilderError, ConfigBuilderInput},
+    builder::{ConfigBuilderError, ConfigBuilderInput, build_config},
     discovery::{
         DiscoveryAnchor, DiscoveryContext, DiscoveryEngine, DiscoveryError,
         DiscoveryOutcome, DiscoveryScope,
@@ -18,6 +21,31 @@ use super::{
         ConfigTrustStatus, TrustRequest, TrustRequests, WorkspaceTrustStatus,
     },
 };
+
+/// A trust status label for presentation (e.g. `trust --show`'s output).
+///
+/// Merges [`ConfigTrustStatus`] and [`WorkspaceTrustStatus`] into one
+/// display-ready value so callers never format a domain status by hand.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub(crate) enum TrustStatusLabel {
+    /// The subject is trusted.
+    Trusted,
+    /// The subject is not trusted.
+    Untrusted,
+    /// The subject was trusted but its baseline is missing or stale.
+    Stale,
+}
+
+impl Display for TrustStatusLabel {
+    #[inline]
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Trusted => "trusted",
+            Self::Untrusted => "untrusted",
+            Self::Stale => "stale",
+        })
+    }
+}
 
 /// Errors from the full config loading pipeline.
 #[derive(Debug, Error)]
@@ -105,16 +133,12 @@ impl ConfigService {
     ///
     /// Returns [`ConfigBuilderError::ConfigFile`] when a candidate config file
     /// fails path validation, tracking/trust transition, or parsing.
-    #[inline]
     fn build(
         &self,
         discovered: DiscoveryOutcome,
     ) -> Result<Config, ConfigBuilderError> {
         let input = ConfigBuilderInput::try_from(discovered)?;
-        Ok(ConfigBuilder::new(input)
-            .store_locals(&self.state)?
-            .merge()?
-            .build())
+        build_config(input, &self.state)
     }
 
     /// Resolves trust subjects from one user-supplied filesystem path.
@@ -161,18 +185,20 @@ impl ConfigService {
     pub(crate) fn trust_status(
         &self,
         subject: &TrustRequest,
-    ) -> Result<&'static str, ConfigStateError> {
+    ) -> Result<TrustStatusLabel, ConfigStateError> {
         if subject.config_file().is_some() {
             match self.state.config_trust_status(subject)? {
-                ConfigTrustStatus::Trusted => Ok("trusted"),
-                ConfigTrustStatus::Untrusted => Ok("untrusted"),
+                ConfigTrustStatus::Trusted => Ok(TrustStatusLabel::Trusted),
+                ConfigTrustStatus::Untrusted => Ok(TrustStatusLabel::Untrusted),
                 ConfigTrustStatus::MissingBaseline
-                | ConfigTrustStatus::Stale => Ok("stale"),
+                | ConfigTrustStatus::Stale => Ok(TrustStatusLabel::Stale),
             }
         } else {
             match self.state.workspace_trust_status(subject)? {
-                WorkspaceTrustStatus::Trusted => Ok("trusted"),
-                WorkspaceTrustStatus::Untrusted => Ok("untrusted"),
+                WorkspaceTrustStatus::Trusted => Ok(TrustStatusLabel::Trusted),
+                WorkspaceTrustStatus::Untrusted => {
+                    Ok(TrustStatusLabel::Untrusted)
+                }
             }
         }
     }
@@ -557,7 +583,7 @@ mod tests {
             assert!(result.is_ok());
             assert_eq!(
                 fixture.service.trust_status(&subject).unwrap(),
-                "trusted"
+                TrustStatusLabel::Trusted
             );
         }
 
@@ -577,7 +603,7 @@ mod tests {
             assert!(result.is_ok());
             assert_eq!(
                 fixture.service.trust_status(&subject).unwrap(),
-                "trusted"
+                TrustStatusLabel::Trusted
             );
         }
     }
@@ -599,7 +625,7 @@ mod tests {
 
             // Assert
             assert!(result.is_ok());
-            assert_eq!(result.unwrap(), "untrusted");
+            assert_eq!(result.unwrap(), TrustStatusLabel::Untrusted);
         }
 
         #[test]
@@ -616,7 +642,7 @@ mod tests {
 
             // Assert
             assert!(result.is_ok());
-            assert_eq!(result.unwrap(), "untrusted");
+            assert_eq!(result.unwrap(), TrustStatusLabel::Untrusted);
         }
 
         #[test]
@@ -636,7 +662,7 @@ mod tests {
 
             // Assert
             assert!(result.is_ok());
-            assert_eq!(result.unwrap(), "stale");
+            assert_eq!(result.unwrap(), TrustStatusLabel::Stale);
         }
     }
 
@@ -661,7 +687,7 @@ mod tests {
             assert_eq!(result.unwrap(), 1); // 1 entry removed
             assert_eq!(
                 fixture.service.trust_status(&subject).unwrap(),
-                "untrusted"
+                TrustStatusLabel::Untrusted
             );
         }
 

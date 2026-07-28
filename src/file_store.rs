@@ -209,8 +209,9 @@ impl FileStateStore {
         if !self.root.is_dir() {
             return Ok(Vec::new());
         }
-        let mut targets = Vec::new();
-        for entry in read_dir_entries(&self.root)? {
+        let entries = read_dir_entries(&self.root)?;
+        let mut targets = Vec::with_capacity(entries.len());
+        for entry in entries {
             if let Some(target) = recorded_target(&entry)
                 && target.exists()
             {
@@ -352,8 +353,9 @@ impl FileStateStore {
         if !self.root.is_dir() {
             return Ok(Vec::new());
         }
-        let mut removed = Vec::new();
-        for entry in read_dir_entries(&self.root)? {
+        let entries = read_dir_entries(&self.root)?;
+        let mut removed = Vec::with_capacity(entries.len());
+        for entry in entries {
             let Some(target) = recorded_target(&entry) else {
                 continue;
             };

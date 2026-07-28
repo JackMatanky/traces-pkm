@@ -95,7 +95,9 @@ impl DialogProvider for TerminalDialogProvider {
         if !stdin_is_tty() {
             return Ok(0);
         }
-        Ok(inquire::Select::new(label, items.to_vec()).raw_prompt()?.index)
+        Ok(inquire::Select::new(label, items.iter().collect())
+            .raw_prompt()?
+            .index)
     }
 
     #[inline]
@@ -110,7 +112,7 @@ impl DialogProvider for TerminalDialogProvider {
         if !stdin_is_tty() {
             return Ok(Vec::new());
         }
-        Ok(inquire::MultiSelect::new(label, items.to_vec())
+        Ok(inquire::MultiSelect::new(label, items.iter().collect())
             .raw_prompt()?
             .into_iter()
             .map(|op| op.index)

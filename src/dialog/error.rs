@@ -11,6 +11,7 @@
 /// Categorised into user-initiated cancellation, input validation, I/O
 /// failures, backend errors, and non-TTY conditions.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum DialogError {
     /// A single-selection prompt received an empty list of options.
     ///
