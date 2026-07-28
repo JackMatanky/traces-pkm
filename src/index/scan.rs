@@ -5,7 +5,7 @@ use std::path::Path;
 
 use walkdir::WalkDir;
 
-use super::{INDEX_FILE, domain::FileRecord, error::FileIndexError};
+use super::{INDEX_FILE, error::FileIndexError, file::FileRecord};
 
 /// Recursively scans `root`, returning a File Record for every regular file,
 /// sorted by path for deterministic output.

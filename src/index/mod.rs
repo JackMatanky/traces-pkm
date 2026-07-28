@@ -18,12 +18,12 @@
 
 use std::path::Path;
 
-pub(crate) use domain::FileRecord;
 pub(crate) use error::FileIndexError;
+pub(crate) use file::FileRecord;
 use store::IndexStore;
 
-mod domain;
 mod error;
+mod file;
 mod scan;
 mod store;
 

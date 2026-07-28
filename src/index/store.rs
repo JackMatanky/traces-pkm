@@ -14,7 +14,7 @@ use redb::{
     Database, ReadableDatabase as _, ReadableTable as _, TableDefinition,
 };
 
-use super::{INDEX_FILE, domain::FileRecord, error::FileIndexError};
+use super::{INDEX_FILE, error::FileIndexError, file::FileRecord};
 
 /// Path → TOML-encoded [`FileRecord`] bytes.
 ///
