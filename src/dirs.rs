@@ -29,10 +29,12 @@ impl StateDirRoot {
     fn new(name: &str) -> Self {
         Self(TRACES_STATE_DIR.join(name))
     }
+}
 
-    #[cfg(test)]
+#[cfg(test)]
+impl From<PathBuf> for StateDirRoot {
     #[inline]
-    pub(crate) fn from_path(path: PathBuf) -> Self {
+    fn from(path: PathBuf) -> Self {
         Self(path)
     }
 }

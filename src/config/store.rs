@@ -80,8 +80,8 @@ impl ConfigStateStore {
     #[must_use]
     pub(crate) fn new() -> Self {
         Self {
-            tracked: FileStateStore::new((*dirs::TRACKED_CONFIGS).clone()),
-            trusted: FileStateStore::new((*dirs::TRUSTED_CONFIGS).clone()),
+            tracked: FileStateStore::from((*dirs::TRACKED_CONFIGS).clone()),
+            trusted: FileStateStore::from((*dirs::TRUSTED_CONFIGS).clone()),
         }
     }
 
@@ -129,7 +129,7 @@ impl ConfigStateStore {
         let Some(config_file) = subject.config_file() else {
             return Ok(());
         };
-        let digest = Blake3FileHash::new(config_file)?;
+        let digest = Blake3FileHash::try_from(config_file)?;
         self.trusted.write_companion(
             subject.root_path(),
             COMPANION_SUFFIX,
@@ -213,7 +213,7 @@ impl ConfigStateStore {
                 source,
             })
         })?;
-        let current = Blake3FileHash::from_content(&content);
+        let current = Blake3FileHash::from(content.as_str());
         if recorded.trim() == current.to_string() {
             Ok(ConfigTrustCheck::Trusted(content))
         } else {

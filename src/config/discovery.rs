@@ -314,7 +314,7 @@ impl DiscoveryEngine {
             Err(DiscoveryError::LocalConfigAbsent {
                 ..
             }) if allow_root_fallback => {
-                Ok(TrustRequests::single(TrustRequest::from(start.as_path())))
+                Ok(TrustRequests::from(TrustRequest::from(start.as_path())))
             }
             Err(error) => Err(error),
         }
@@ -326,8 +326,9 @@ impl DiscoveryEngine {
     ) -> Result<TrustRequests, DiscoveryError> {
         let context = DiscoveryContext::new(scope, anchor)?;
         let outcome = DiscoveryEngine.process(context)?;
-        let requests = outcome.local().iter().map(TrustRequest::from).collect();
-        Ok(TrustRequests::new(requests))
+        let requests: Vec<TrustRequest> =
+            outcome.local().iter().map(TrustRequest::from).collect();
+        Ok(TrustRequests::from(requests))
     }
 
     fn trust_anchor(path: &Path) -> DiscoveryAnchor {

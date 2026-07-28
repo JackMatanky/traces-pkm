@@ -455,7 +455,8 @@ mod tests {
             #[expect(clippy::disallowed_methods, reason = "tests use std fs")]
             let canonical_path = std::fs::canonicalize(&config_path).unwrap();
             let expected_marker = temp.path().join("tracked").join(
-                crate::hash::Blake3PathHash::new(&canonical_path).as_str(),
+                crate::hash::Blake3PathHash::from(canonical_path.as_path())
+                    .as_str(),
             );
 
             assert!(expected_marker.exists());

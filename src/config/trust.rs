@@ -80,18 +80,18 @@ impl From<&LocalConfigFile<Tracked>> for TrustRequest {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct TrustRequests(Box<[TrustRequest]>);
 
-impl TrustRequests {
+impl From<Vec<TrustRequest>> for TrustRequests {
     /// Creates trust requests.
     #[inline]
-    #[must_use]
-    pub(crate) fn new(requests: Vec<TrustRequest>) -> Self {
+    fn from(requests: Vec<TrustRequest>) -> Self {
         Self(requests.into_boxed_slice())
     }
+}
 
+impl From<TrustRequest> for TrustRequests {
     /// Creates a single trust request.
     #[inline]
-    #[must_use]
-    pub(crate) fn single(request: TrustRequest) -> Self {
+    fn from(request: TrustRequest) -> Self {
         Self(Box::new([request]))
     }
 }

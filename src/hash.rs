@@ -32,7 +32,9 @@ pub(crate) enum HashError {
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(crate) struct Blake3FileHash(blake3::Hash);
 
-impl Blake3FileHash {
+impl TryFrom<&Path> for Blake3FileHash {
+    type Error = HashError;
+
     /// Computes the BLAKE3 hash of `path`'s current contents.
     ///
     /// Reads `path` fully into memory before hashing — acceptable for the
@@ -42,22 +44,24 @@ impl Blake3FileHash {
     ///
     /// Returns [`HashError::Read`] when `path` cannot be read.
     #[inline]
-    pub(crate) fn new(path: &Path) -> Result<Self, HashError> {
+    fn try_from(path: &Path) -> Result<Self, HashError> {
         let contents = fs::read(path).map_err(|source| HashError::Read {
             path: path.to_path_buf(),
             source,
         })?;
         Ok(Self(blake3::hash(&contents)))
     }
+}
 
+impl From<&str> for Blake3FileHash {
     /// Computes the BLAKE3 hash of `content` already read into memory.
     ///
-    /// Prefer this over [`Self::new`] whenever the caller already holds the
-    /// file's content in hand — hashing from a path and then reading that
-    /// same path again for use opens a TOCTOU window between the two reads.
+    /// Prefer this over hashing from a `&Path` (`TryFrom<&Path>`)
+    /// whenever the caller already holds the file's content in hand —
+    /// hashing from a path and then reading that same path again for use
+    /// opens a TOCTOU window between the two reads.
     #[inline]
-    #[must_use]
-    pub(crate) fn from_content(content: &str) -> Self {
+    fn from(content: &str) -> Self {
         Self(blake3::hash(content.as_bytes()))
     }
 }
@@ -82,17 +86,18 @@ impl Display for Blake3FileHash {
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(crate) struct Blake3PathHash([u8; 64]);
 
-impl Blake3PathHash {
+impl From<&Path> for Blake3PathHash {
     /// Hashes `path`'s bytes to a hex string.
     #[inline]
-    #[must_use]
-    pub(crate) fn new(path: &Path) -> Self {
+    fn from(path: &Path) -> Self {
         let hash = blake3::hash(path.as_os_str().as_encoded_bytes());
         let mut bytes = [0_u8; 64];
         bytes.copy_from_slice(hash.to_hex().as_bytes());
         Self(bytes)
     }
+}
 
+impl Blake3PathHash {
     /// The hash string to use as a store entry filename.
     #[inline]
     #[must_use]
@@ -127,8 +132,8 @@ mod tests {
             fs::write(&path, "hello").expect("write file");
 
             // Act
-            let first = Blake3FileHash::new(&path);
-            let second = Blake3FileHash::new(&path);
+            let first = Blake3FileHash::try_from(path.as_path());
+            let second = Blake3FileHash::try_from(path.as_path());
 
             // Assert
             assert!(first.is_ok());
@@ -146,8 +151,8 @@ mod tests {
             fs::write(&path2, "goodbye").expect("write file 2");
 
             // Act
-            let first = Blake3FileHash::new(&path1);
-            let second = Blake3FileHash::new(&path2);
+            let first = Blake3FileHash::try_from(path1.as_path());
+            let second = Blake3FileHash::try_from(path2.as_path());
 
             // Assert
             assert!(first.is_ok());
@@ -162,7 +167,7 @@ mod tests {
             let path = temp.path().join("missing.txt");
 
             // Act
-            let result = Blake3FileHash::new(&path);
+            let result = Blake3FileHash::try_from(path.as_path());
 
             // Assert
             assert!(matches!(result, Err(HashError::Read { .. })));
@@ -174,7 +179,8 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             let path = temp.path().join("file.txt");
             fs::write(&path, "hello").expect("write file");
-            let hash = Blake3FileHash::new(&path).expect("hash file");
+            let hash =
+                Blake3FileHash::try_from(path.as_path()).expect("hash file");
 
             // Act
             let display_string = format!("{hash}");
@@ -197,8 +203,8 @@ mod tests {
             let path = Path::new("/project/.traces/config.toml");
 
             // Act
-            let first = Blake3PathHash::new(path);
-            let second = Blake3PathHash::new(path);
+            let first = Blake3PathHash::from(path);
+            let second = Blake3PathHash::from(path);
 
             // Assert
             assert_eq!(first, second);
@@ -211,8 +217,8 @@ mod tests {
             let second_path = Path::new("/project/second");
 
             // Act
-            let first = Blake3PathHash::new(first_path);
-            let second = Blake3PathHash::new(second_path);
+            let first = Blake3PathHash::from(first_path);
+            let second = Blake3PathHash::from(second_path);
 
             // Assert
             assert_ne!(first, second);
@@ -224,7 +230,7 @@ mod tests {
             let path = Path::new("/project/.traces/config.toml");
 
             // Act
-            let hash = Blake3PathHash::new(path);
+            let hash = Blake3PathHash::from(path);
 
             // Assert
             let expected_hex =
@@ -238,7 +244,7 @@ mod tests {
         fn exposes_as_str_for_inner_hash() {
             // Arrange
             let path = Path::new("/project/.traces/config.toml");
-            let hash = Blake3PathHash::new(path);
+            let hash = Blake3PathHash::from(path);
 
             // Act
             let hash_str = hash.as_str();

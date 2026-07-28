@@ -106,7 +106,7 @@ impl TryFrom<&Path> for StoreEntry {
                 source,
             }
         })?;
-        let hash = Blake3PathHash::new(&canonical_target);
+        let hash = Blake3PathHash::from(canonical_target.as_path());
         Ok(Self {
             canonical_target,
             hash,
@@ -114,23 +114,24 @@ impl TryFrom<&Path> for StoreEntry {
     }
 }
 
-impl FileStateStore {
+impl From<StateDirRoot> for FileStateStore {
     /// Creates a store rooted at `root`.
     #[inline]
-    #[must_use]
-    pub(crate) fn new(root: StateDirRoot) -> Self {
+    fn from(root: StateDirRoot) -> Self {
         Self {
             root,
         }
     }
+}
 
+impl FileStateStore {
     /// Creates a store rooted at an arbitrary path for tests.
     #[cfg(test)]
     #[inline]
     #[must_use]
     pub(crate) fn at(root: PathBuf) -> Self {
         Self {
-            root: StateDirRoot::from_path(root),
+            root: StateDirRoot::from(root),
         }
     }
 
