@@ -19,16 +19,16 @@ pub(crate) fn parse_markdown(path: impl Into<PathBuf>, src: &str) -> Note {
     opts.insert(Options::ENABLE_YAML_STYLE_METADATA_BLOCKS);
     opts.insert(Options::ENABLE_WIKILINKS);
 
-    let mut state = ParserState::default();
+    let mut context = ParserContext::default();
     for (event, range) in Parser::new_ext(src, opts).into_offset_iter() {
-        state.handle_event(event, range);
+        context.handle_event(event, range);
     }
-    state.into_note(path)
+    context.into_note(path)
 }
 
-/// Accumulated state while walking `pulldown-cmark` events for one Note.
+/// Accumulated context while walking `pulldown-cmark` events for one Note.
 #[derive(Default)]
-struct ParserState {
+struct ParserContext {
     frontmatter: Option<Frontmatter>,
     in_metadata_block: bool,
     metadata_buffer: String,
@@ -41,8 +41,8 @@ struct ParserState {
     item_stack: Vec<ItemFrame>,
 }
 
-impl ParserState {
-    /// Consumes the accumulated state into a [`Note`] at `path`.
+impl ParserContext {
+    /// Consumes the accumulated context into a [`Note`] at `path`.
     fn into_note(self, path: impl Into<PathBuf>) -> Note {
         Note::new(
             path,

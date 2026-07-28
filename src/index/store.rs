@@ -27,9 +27,9 @@ const FILE_RECORDS: TableDefinition<&str, &[u8]> =
 /// Path → TOML-encoded [`Note`] bytes.
 const NOTES: TableDefinition<&str, &[u8]> = TableDefinition::new("notes");
 
-/// Every File Record and Note Record loaded from the index database,
-/// sorted by path.
-type LoadedIndex = (Vec<FileRecord>, Vec<Note>);
+/// An atomically read snapshot of every File Record and Note Record
+/// persisted in the index database, sorted by path.
+type IndexSnapshot = (Vec<FileRecord>, Vec<Note>);
 
 /// Redb-backed handle to one project root's index database.
 pub(super) struct IndexStore {
@@ -101,7 +101,7 @@ impl IndexStore {
     /// - [`FileIndexError::Store`] if the table cannot be read
     /// - [`FileIndexError::Corrupt`] if stored bytes aren't valid UTF-8
     /// - [`FileIndexError::Deserialize`] if stored text isn't valid UTF-8/TOML
-    pub(super) fn load_all(&self) -> Result<LoadedIndex, FileIndexError> {
+    pub(super) fn load_all(&self) -> Result<IndexSnapshot, FileIndexError> {
         let read_txn =
             self.db.begin_read().map_err(|source| self.store_error(source))?;
         let records =
