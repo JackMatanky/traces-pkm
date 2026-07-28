@@ -12,10 +12,6 @@ _Avoid_: Template file, template script
 A markdown file on disk. Distinct from a Template — the majority of Notes are authored directly, not produced by template instantiation.
 _Avoid_: Output file, document, page
 
-### Note Index
-A persisted cache of metadata extracted from every file in the project. Two tiers: a **File Record** for every file (path, size, timestamps) and richer **Note Metadata** for markdown files (frontmatter, inline fields, tags, tasks, lists, links).
-_Avoid_: Database, cache, vault
-
 ### Instantiate
 The process of rendering a template with dynamic values to produce a note.
 _Avoid_: Apply, insert, compile
@@ -96,6 +92,10 @@ _Avoid_: setup, create, bootstrap
 #### trust
 Marks a directory as safe for template execution. Templates can invoke custom functions and include files, so untrusted directories are rejected by default (or prompt for confirmation). Trust state is stored by directory path hash in the user's data directory, following the same tracked/trusted/ignore pattern as mise.
 _Avoid_: allow, approve, authorize
+
+#### index
+Builds or rebuilds the persisted FileIndex for the trusted project root. `traces index` scans every file under the root and persists a File Record for each, replacing any previously persisted contents.
+_Avoid_: scan, reindex, refresh
 
 ### Template Output Path
 The final path on disk where an instantiated note is written. Resolved by precedence: explicit CLI `--output` / `-o` flag > template `file.write_to(path)` declaration > config-derived default output directory (`output_dir` + template name stem). All non-default candidates are confined to the project root. If the resolved path already exists and `--force` is not set, an interactive prompt asks the user for a root-relative alternative path.

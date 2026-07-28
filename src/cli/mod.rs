@@ -4,6 +4,7 @@
 
 mod completions;
 mod error;
+mod index;
 pub mod init;
 mod template;
 mod trust;
@@ -141,6 +142,8 @@ enum Commands {
     Init(init::Init),
     /// Manage trusted project roots
     Trust(trust::Trust),
+    /// Build or rebuild the persisted `FileIndex`
+    Index(index::Index),
     /// Render a template and write it to disk
     #[command(alias = "tmpl")]
     Template(template::Template),
@@ -159,6 +162,7 @@ impl Commands {
         match self {
             Self::Init(args) => args.run(provider.as_ref()),
             Self::Trust(args) => args.run(service),
+            Self::Index(_) => index::Index::run(service),
             Self::Template(args) => args.run(service, provider),
             Self::Completions(args) => args.run(service),
         }
@@ -207,6 +211,14 @@ mod tests {
             Cli::try_parse_from(["traces", "init"]).expect("parse init argv");
 
         assert!(matches!(cli.command, Some(Commands::Init(_))));
+    }
+
+    #[test]
+    fn index_argv_parses_to_the_index_subcommand() {
+        let cli =
+            Cli::try_parse_from(["traces", "index"]).expect("parse index argv");
+
+        assert!(matches!(cli.command, Some(Commands::Index(_))));
     }
 
     #[test]

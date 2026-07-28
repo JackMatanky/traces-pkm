@@ -4,7 +4,12 @@
 //! CLI commands, wrapping domain errors with user-facing diagnostics via
 //! [`miette::Diagnostic`].
 
-use std::{error::Error as StdError, fmt::Display, io, path::PathBuf};
+use std::{
+    error::Error as StdError,
+    fmt::Display,
+    io,
+    path::{Path, PathBuf},
+};
 
 use miette::Diagnostic;
 use thiserror::Error;
@@ -13,6 +18,7 @@ use super::UserAbort;
 use crate::{
     DialogError,
     config::{ConfigLoadError, ConfigStateError, DiscoveryError},
+    index::FileIndexError,
     template::{TemplateError, TemplatePathError},
 };
 
@@ -21,10 +27,10 @@ use crate::{
 #[expect(
     private_interfaces,
     reason = "domain source types (ConfigLoadError, ConfigStateError, \
-              DiscoveryError, TemplateError) stay pub(crate) — only \
-              construction and matching happens inside crate::cli, callers \
-              use CliError's Display/Diagnostic surface, never these types \
-              directly"
+              DiscoveryError, TemplateError, FileIndexError) stay pub(crate) \
+              — only construction and matching happens inside crate::cli, \
+              callers use CliError's Display/Diagnostic surface, never these \
+              types directly"
 )]
 #[non_exhaustive]
 pub enum CliError {
@@ -136,6 +142,15 @@ pub enum CliError {
         /// Source filesystem error.
         #[source]
         source: io::Error,
+    },
+    /// Building or persisting the `FileIndex` for `root` failed.
+    #[error("failed to index {root}")]
+    Index {
+        /// The project root being indexed.
+        root: PathBuf,
+        /// Source `FileIndex` error.
+        #[source]
+        source: FileIndexError,
     },
     /// Resolving, rendering, or writing `name` failed.
     #[error("failed to instantiate template {name}")]
@@ -271,6 +286,9 @@ impl Diagnostic for CliError {
             Self::InitWriteConfig {
                 ..
             } => "traces::cli::init::write_config_failed",
+            Self::Index {
+                ..
+            } => "traces::cli::index_failed",
             Self::TemplateInstantiate {
                 source,
                 ..
@@ -315,24 +333,19 @@ impl Diagnostic for CliError {
             Self::Trust {
                 root,
                 ..
-            } => Some(Box::new(format!(
-                "check that {} exists and is readable",
-                root.display()
-            ))),
+            } => Some(root_help(root, "exists and is readable")),
             Self::Untrust {
                 root,
                 ..
-            } => Some(Box::new(format!(
-                "check that {} exists and the trust store is writable",
-                root.display()
-            ))),
+            } => {
+                Some(root_help(root, "exists and the trust store is writable"))
+            }
             Self::TrustShow {
                 root,
                 ..
-            } => Some(Box::new(format!(
-                "check that {} exists and the trust store is readable",
-                root.display()
-            ))),
+            } => {
+                Some(root_help(root, "exists and the trust store is readable"))
+            }
             Self::TrustList {
                 ..
             } => Some(Box::new("check that the trust store is readable")),
@@ -366,6 +379,10 @@ impl Diagnostic for CliError {
                 "this is an internal error — the collected template and \
                  output directories could not be serialised to TOML",
             )),
+            Self::Index {
+                root,
+                ..
+            } => Some(root_help(root, "is readable and writable")),
             Self::TemplateInstantiate {
                 source,
                 ..
@@ -386,6 +403,12 @@ impl Diagnostic for CliError {
             )),
         }
     }
+}
+
+/// Returns generic root-access diagnostic help text: "check that `root`
+/// {suffix}".
+fn root_help<'a>(root: &'a Path, suffix: &str) -> Box<dyn Display + 'a> {
+    Box::new(format!("check that {} {suffix}", root.display()))
 }
 
 /// Returns the diagnostic code for [`TemplateError`].
@@ -596,6 +619,31 @@ mod tests {
             Some(
                 "check that the trust store is readable and writable"
                     .to_owned()
+            )
+        );
+        assert!(error.source().is_some());
+    }
+
+    #[test]
+    fn index_error_names_the_root_with_a_code_and_help() {
+        let root = PathBuf::from("/some/project");
+        let error = CliError::Index {
+            root: root.clone(),
+            source: FileIndexError::Io {
+                path: root.join("notes"),
+                source: io::Error::other("boom"),
+            },
+        };
+
+        assert_eq!(error.to_string(), "failed to index /some/project");
+        assert_eq!(
+            error.code().map(|code| code.to_string()),
+            Some("traces::cli::index_failed".to_owned())
+        );
+        assert_eq!(
+            error.help().map(|help| help.to_string()),
+            Some(
+                "check that /some/project is readable and writable".to_owned()
             )
         );
         assert!(error.source().is_some());
