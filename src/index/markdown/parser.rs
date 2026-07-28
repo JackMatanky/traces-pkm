@@ -1,9 +1,11 @@
 //! Markdown note event parser yielding [`Note`] records.
 
-use pulldown_cmark::{Event, LinkType, Options, Parser, Tag, TagEnd};
+use pulldown_cmark::{
+    Event, LinkType as CmarkLinkType, Options, Parser, Tag, TagEnd,
+};
 
 use super::types::{
-    CodeRegion, Frontmatter, List, ListItem, Note, Outlink, OutlinkType,
+    CodeRegion, Frontmatter, LinkType, List, ListItem, Note, Outlink,
     TaskStatus,
 };
 
@@ -33,7 +35,7 @@ pub(crate) fn parse_markdown(src: &str) -> Note {
     let mut metadata_buffer = String::new();
 
     let mut outlinks: Vec<Outlink> = Vec::new();
-    let mut active_link: Option<(String, OutlinkType, String)> = None;
+    let mut active_link: Option<(String, LinkType, String)> = None;
 
     let mut code_regions: Vec<CodeRegion> = Vec::new();
     let mut active_code_block_start: Option<usize> = None;
@@ -59,11 +61,12 @@ pub(crate) fn parse_markdown(src: &str) -> Note {
                 dest_url,
                 ..
             }) => {
-                let kind = if matches!(link_type, LinkType::WikiLink { .. }) {
-                    OutlinkType::Wikilink
-                } else {
-                    OutlinkType::Markdown
-                };
+                let kind =
+                    if matches!(link_type, CmarkLinkType::WikiLink { .. }) {
+                        LinkType::Wikilink
+                    } else {
+                        LinkType::Markdown
+                    };
                 active_link =
                     Some((dest_url.into_string(), kind, String::new()));
             }

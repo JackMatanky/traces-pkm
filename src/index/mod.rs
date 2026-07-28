@@ -28,8 +28,8 @@ use markdown::parse_markdown;
     reason = "domain types exported for index module callers"
 )]
 pub(crate) use markdown::{
-    CodeRegion, Frontmatter, List, ListItem, Note, NoteRecord, Outlink,
-    OutlinkType, TaskStatus,
+    CodeRegion, Frontmatter, LinkType, List, ListItem, Note, NoteRecord,
+    Outlink, TaskStatus,
 };
 use store::IndexStore;
 

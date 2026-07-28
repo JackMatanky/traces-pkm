@@ -35,9 +35,9 @@ impl Frontmatter {
     }
 }
 
-/// Outlink target classification: standard Markdown link or Obsidian Wikilink.
+/// Link target classification: standard Markdown link or Obsidian Wikilink.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) enum OutlinkType {
+pub(crate) enum LinkType {
     Markdown,
     Wikilink,
 }
@@ -47,7 +47,7 @@ pub(crate) enum OutlinkType {
 pub(crate) struct Outlink {
     target: String,
     text: String,
-    outlink_type: OutlinkType,
+    link_type: LinkType,
 }
 
 impl Outlink {
@@ -57,12 +57,12 @@ impl Outlink {
     pub(crate) fn new(
         target: impl Into<String>,
         text: impl Into<String>,
-        outlink_type: OutlinkType,
+        link_type: LinkType,
     ) -> Self {
         Self {
             target: target.into(),
             text: text.into(),
-            outlink_type,
+            link_type,
         }
     }
 
@@ -80,26 +80,26 @@ impl Outlink {
         &self.text
     }
 
-    /// Link syntax classification ([`OutlinkType::Markdown`] or
-    /// [`OutlinkType::Wikilink`]).
+    /// Link syntax classification ([`LinkType::Markdown`] or
+    /// [`LinkType::Wikilink`]).
     #[inline]
     #[must_use]
-    pub(crate) fn outlink_type(&self) -> OutlinkType {
-        self.outlink_type
+    pub(crate) fn link_type(&self) -> LinkType {
+        self.link_type
     }
 
     /// Returns `true` if this link is a Wikilink.
     #[inline]
     #[must_use]
     pub(crate) fn is_wikilink(&self) -> bool {
-        matches!(self.outlink_type, OutlinkType::Wikilink)
+        matches!(self.link_type, LinkType::Wikilink)
     }
 
     /// Returns `true` if this link is a standard Markdown link.
     #[inline]
     #[must_use]
     pub(crate) fn is_markdown(&self) -> bool {
-        matches!(self.outlink_type, OutlinkType::Markdown)
+        matches!(self.link_type, LinkType::Markdown)
     }
 }
 
