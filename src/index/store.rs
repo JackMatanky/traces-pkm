@@ -145,48 +145,122 @@ impl IndexStore {
 
 #[cfg(test)]
 mod tests {
-    use pretty_assertions::assert_eq;
-
     use super::*;
     use crate::index::scan::scan_root;
 
-    #[test]
-    fn load_all_on_a_freshly_opened_database_is_empty() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let store = IndexStore::open(temp.path()).expect("open store");
+    mod persistence {
+        use pretty_assertions::assert_eq;
 
-        let records = store.load_all().expect("load empty database");
+        use super::*;
 
-        assert_eq!(records.len(), 0);
+        #[test]
+        fn load_all_on_a_freshly_opened_database_is_empty() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let store = IndexStore::open(temp.path()).expect("open store");
+
+            let records = store.load_all().expect("load empty database");
+
+            assert_eq!(records.len(), 0);
+        }
+
+        #[test]
+        fn replace_all_then_load_all_round_trips_records() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("note.md"), "content")
+                .expect("write note");
+            let records = scan_root(temp.path()).expect("scan root");
+            let store = IndexStore::open(temp.path()).expect("open store");
+
+            store.replace_all(&records).expect("persist records");
+            let loaded = store.load_all().expect("load records");
+
+            assert_eq!(loaded, records);
+        }
+
+        #[test]
+        fn replace_all_drops_records_absent_from_the_new_set() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("stale.md"), "old")
+                .expect("write stale");
+            let stale = scan_root(temp.path()).expect("scan stale");
+            let store = IndexStore::open(temp.path()).expect("open store");
+            store.replace_all(&stale).expect("persist stale");
+            fs::remove_file(temp.path().join("stale.md"))
+                .expect("remove stale");
+            fs::write(temp.path().join("fresh.md"), "new")
+                .expect("write fresh");
+            let fresh = scan_root(temp.path()).expect("scan fresh");
+
+            store.replace_all(&fresh).expect("persist fresh");
+            let loaded = store.load_all().expect("load records");
+
+            assert_eq!(loaded, fresh);
+        }
+
+        #[test]
+        fn replace_all_with_no_records_persists_an_empty_table() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let store = IndexStore::open(temp.path()).expect("open store");
+
+            store.replace_all(&[]).expect("persist an empty record set");
+            let loaded = store.load_all().expect("load records");
+
+            assert_eq!(loaded.len(), 0);
+        }
+
+        #[test]
+        fn round_trips_a_record_with_a_unicode_path() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("café ☕.md"), "content")
+                .expect("write unicode-named file");
+            let records = scan_root(temp.path()).expect("scan root");
+            let store = IndexStore::open(temp.path()).expect("open store");
+
+            store.replace_all(&records).expect("persist records");
+            let loaded = store.load_all().expect("load records");
+
+            assert_eq!(loaded, records);
+        }
     }
 
-    #[test]
-    fn replace_all_then_load_all_round_trips_records() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        fs::write(temp.path().join("note.md"), "content").expect("write note");
-        let records = scan_root(temp.path()).expect("scan root");
-        let store = IndexStore::open(temp.path()).expect("open store");
+    mod load_all {
+        use super::*;
 
-        store.replace_all(&records).expect("persist records");
-        let loaded = store.load_all().expect("load records");
+        /// Bypasses [`IndexStore::replace_all`] to write a raw, possibly
+        /// invalid value directly into the `file_records` table - the only
+        /// way to deterministically simulate a corrupted index database.
+        fn write_raw_value(store: &IndexStore, key: &str, value: &[u8]) {
+            let write_txn = store.db.begin_write().expect("begin write txn");
+            {
+                let mut table =
+                    write_txn.open_table(FILE_RECORDS).expect("open table");
+                table.insert(key, value).expect("insert raw bytes");
+            }
+            write_txn.commit().expect("commit raw insert");
+        }
 
-        assert_eq!(loaded, records);
-    }
+        #[test]
+        fn returns_corrupt_when_stored_bytes_are_not_utf8() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let store = IndexStore::open(temp.path()).expect("open store");
+            write_raw_value(&store, "bad.md", &[0xFF, 0xFE]);
 
-    #[test]
-    fn replace_all_drops_records_absent_from_the_new_set() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        fs::write(temp.path().join("stale.md"), "old").expect("write stale");
-        let stale = scan_root(temp.path()).expect("scan stale");
-        let store = IndexStore::open(temp.path()).expect("open store");
-        store.replace_all(&stale).expect("persist stale");
-        fs::remove_file(temp.path().join("stale.md")).expect("remove stale");
-        fs::write(temp.path().join("fresh.md"), "new").expect("write fresh");
-        let fresh = scan_root(temp.path()).expect("scan fresh");
+            let error =
+                store.load_all().expect_err("non-UTF8 bytes fail to load");
 
-        store.replace_all(&fresh).expect("persist fresh");
-        let loaded = store.load_all().expect("load records");
+            assert!(matches!(error, FileIndexError::Corrupt { .. }));
+        }
 
-        assert_eq!(loaded, fresh);
+        #[test]
+        fn returns_deserialize_error_when_stored_text_is_not_valid_toml() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let store = IndexStore::open(temp.path()).expect("open store");
+            write_raw_value(&store, "bad.md", b"not valid toml {{{");
+
+            let error =
+                store.load_all().expect_err("invalid TOML text fails to load");
+
+            assert!(matches!(error, FileIndexError::Deserialize { .. }));
+        }
     }
 }

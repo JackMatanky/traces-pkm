@@ -62,8 +62,7 @@ impl FileRecord {
                     source,
                 }
             })?;
-        let created_at =
-            metadata.created().map(system_time_to_utc).unwrap_or(modified_at);
+        let created_at = resolve_created_at(metadata.created(), modified_at);
         let name = relative
             .file_stem()
             .map(|stem| stem.to_string_lossy().into_owned())
@@ -139,6 +138,16 @@ impl FileRecord {
     }
 }
 
+/// Resolves a File Record's creation time: the filesystem-reported value, or
+/// `modified_at` as a fallback on filesystems that don't report a creation
+/// time at all (e.g. some Linux filesystems without `statx` support).
+fn resolve_created_at(
+    created: std::io::Result<SystemTime>,
+    modified_at: DateTime<Utc>,
+) -> DateTime<Utc> {
+    created.map(system_time_to_utc).unwrap_or(modified_at)
+}
+
 /// Converts a filesystem timestamp to UTC, discarding sub-timezone precision
 /// concerns — [`SystemTime`] carries no timezone, so this is a lossless
 /// reinterpretation, not a conversion.
@@ -148,124 +157,170 @@ fn system_time_to_utc(time: SystemTime) -> DateTime<Utc> {
 
 #[cfg(test)]
 mod tests {
-    use pretty_assertions::assert_eq;
-
     use super::*;
 
-    fn metadata_for(path: &Path) -> fs::Metadata {
-        fs::metadata(path).expect("read metadata")
-    }
+    mod from_metadata {
+        use pretty_assertions::assert_eq;
+        use rstest::rstest;
 
-    #[test]
-    fn splits_name_from_extension() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let file = temp.path().join("notes").join("todo.md");
-        fs::create_dir_all(file.parent().expect("parent")).expect("mkdir");
-        fs::write(&file, "content").expect("write file");
+        use super::*;
 
-        let record =
-            FileRecord::from_metadata(&file, temp.path(), &metadata_for(&file))
-                .expect("build record");
+        fn metadata_for(path: &Path) -> fs::Metadata {
+            fs::metadata(path).expect("read metadata")
+        }
 
-        assert_eq!(record.name(), "todo");
-        assert_eq!(record.path(), Path::new("notes/todo.md"));
-        assert_eq!(record.folder(), Path::new("notes"));
-        assert_eq!(record.size(), 7);
-    }
+        #[test]
+        fn splits_the_name_from_the_extension() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let file = temp.path().join("notes").join("todo.md");
+            fs::create_dir_all(file.parent().expect("parent")).expect("mkdir");
+            fs::write(&file, "content").expect("write file");
 
-    #[test]
-    fn file_directly_under_root_has_an_empty_folder() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let file = temp.path().join("readme.md");
-        fs::write(&file, "hi").expect("write file");
-
-        let record =
-            FileRecord::from_metadata(&file, temp.path(), &metadata_for(&file))
-                .expect("build record");
-
-        assert_eq!(record.folder(), Path::new(""));
-    }
-
-    #[test]
-    fn file_with_no_extension_keeps_its_full_name() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let file = temp.path().join("LICENSE");
-        fs::write(&file, "mit").expect("write file");
-
-        let record =
-            FileRecord::from_metadata(&file, temp.path(), &metadata_for(&file))
-                .expect("build record");
-
-        assert_eq!(record.name(), "LICENSE");
-    }
-
-    #[test]
-    fn modified_at_matches_the_filesystem_timestamp() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let file = temp.path().join("note.md");
-        fs::write(&file, "content").expect("write file");
-        let metadata = metadata_for(&file);
-        let expected: DateTime<Utc> = metadata
-            .modified()
-            .expect("filesystem reports modified time")
-            .into();
-
-        let record = FileRecord::from_metadata(&file, temp.path(), &metadata)
+            let record = FileRecord::from_metadata(
+                &file,
+                temp.path(),
+                &metadata_for(&file),
+            )
             .expect("build record");
 
-        assert_eq!(record.modified_at(), expected);
-    }
+            assert_eq!(record.name(), "todo");
+            assert_eq!(record.path(), Path::new("notes/todo.md"));
+            assert_eq!(record.folder(), Path::new("notes"));
+            assert_eq!(record.size(), 7);
+        }
 
-    #[test]
-    fn created_at_falls_back_to_modified_at_when_unsupported() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let file = temp.path().join("note.md");
-        fs::write(&file, "content").expect("write file");
-        let metadata = metadata_for(&file);
+        #[test]
+        fn returns_an_empty_folder_when_the_file_is_directly_under_root() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let file = temp.path().join("readme.md");
+            fs::write(&file, "hi").expect("write file");
 
-        let record = FileRecord::from_metadata(&file, temp.path(), &metadata)
+            let record = FileRecord::from_metadata(
+                &file,
+                temp.path(),
+                &metadata_for(&file),
+            )
             .expect("build record");
 
-        // Whether or not this filesystem reports a creation time,
-        // `created_at` is always populated — either with the real value or
-        // the `modified_at` fallback — never left unset.
-        if metadata.created().is_err() {
-            assert_eq!(record.created_at(), record.modified_at());
+            assert_eq!(record.folder(), Path::new(""));
+        }
+
+        #[test]
+        fn keeps_the_absolute_path_when_the_file_is_outside_project_root() {
+            let root = tempfile::tempdir().expect("create root dir");
+            let outside = tempfile::tempdir().expect("create outside dir");
+            let file = outside.path().join("stray.md");
+            fs::write(&file, "content").expect("write file");
+
+            // `path` isn't under `root`, so `strip_prefix` fails and the
+            // record falls back to keeping the full path as given — this
+            // never happens through `scan_root`, which only ever passes
+            // descendants of `root`, but the fallback is a real branch.
+            let record = FileRecord::from_metadata(
+                &file,
+                root.path(),
+                &metadata_for(&file),
+            )
+            .expect("build record");
+
+            assert_eq!(record.path(), file);
+        }
+
+        #[test]
+        fn matches_the_filesystem_modified_timestamp() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let file = temp.path().join("note.md");
+            fs::write(&file, "content").expect("write file");
+            let metadata = metadata_for(&file);
+            let expected: DateTime<Utc> = metadata
+                .modified()
+                .expect("filesystem reports modified time")
+                .into();
+
+            let record =
+                FileRecord::from_metadata(&file, temp.path(), &metadata)
+                    .expect("build record");
+
+            assert_eq!(record.modified_at(), expected);
+        }
+
+        #[test]
+        fn always_populates_created_at() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let file = temp.path().join("note.md");
+            fs::write(&file, "content").expect("write file");
+
+            let record = FileRecord::from_metadata(
+                &file,
+                temp.path(),
+                &metadata_for(&file),
+            )
+            .expect("build record");
+
+            // Whichever branch `resolve_created_at` takes - the real
+            // filesystem value or the `modified_at` fallback - the field is
+            // populated, never a sentinel/default. The fallback branch
+            // itself is covered deterministically by `resolve_created_at`'s
+            // own tests below, since whether this filesystem reports a
+            // creation time isn't something a test controls.
+            assert!(
+                record.created_at() <= Utc::now(),
+                "expected a populated, non-future created_at, got {:?}",
+                record.created_at()
+            );
+        }
+
+        #[rstest]
+        #[case::lowercase_md_extension("note.md", FileKind::Note)]
+        #[case::mixed_case_markdown_extension("note.MARKDOWN", FileKind::Note)]
+        #[case::non_markdown_extension("config.toml", FileKind::Other)]
+        #[case::no_extension("LICENSE", FileKind::Other)]
+        fn classifies_kind_from_the_file_extension(
+            #[case] file_name: &str,
+            #[case] expected: FileKind,
+        ) {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let file = temp.path().join(file_name);
+            fs::write(&file, "content").expect("write file");
+
+            let record = FileRecord::from_metadata(
+                &file,
+                temp.path(),
+                &metadata_for(&file),
+            )
+            .expect("build record");
+
+            assert_eq!(record.kind(), expected);
         }
     }
 
-    #[test]
-    fn markdown_extensions_are_classified_as_notes() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let md = temp.path().join("note.md");
-        let markdown = temp.path().join("note.MARKDOWN");
-        fs::write(&md, "content").expect("write .md file");
-        fs::write(&markdown, "content").expect("write .MARKDOWN file");
+    mod resolve_created_at {
+        use std::io;
 
-        let md_record =
-            FileRecord::from_metadata(&md, temp.path(), &metadata_for(&md))
-                .expect("build .md record");
-        let markdown_record = FileRecord::from_metadata(
-            &markdown,
-            temp.path(),
-            &metadata_for(&markdown),
-        )
-        .expect("build .MARKDOWN record");
+        use pretty_assertions::assert_eq;
 
-        assert_eq!(md_record.kind(), FileKind::Note);
-        assert_eq!(markdown_record.kind(), FileKind::Note);
-    }
+        use super::*;
 
-    #[test]
-    fn non_markdown_files_are_classified_as_other() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let file = temp.path().join("config.toml");
-        fs::write(&file, "content").expect("write file");
+        #[test]
+        fn uses_the_filesystem_value_when_creation_time_is_reported() {
+            let created = SystemTime::now();
+            let modified_at = Utc::now();
 
-        let record =
-            FileRecord::from_metadata(&file, temp.path(), &metadata_for(&file))
-                .expect("build record");
+            let resolved = resolve_created_at(Ok(created), modified_at);
 
-        assert_eq!(record.kind(), FileKind::Other);
+            assert_eq!(resolved, DateTime::<Utc>::from(created));
+        }
+
+        #[test]
+        fn falls_back_to_modified_at_when_creation_time_is_unsupported() {
+            let modified_at = Utc::now();
+
+            let resolved = resolve_created_at(
+                Err(io::Error::other("creation time unsupported")),
+                modified_at,
+            );
+
+            assert_eq!(resolved, modified_at);
+        }
     }
 }

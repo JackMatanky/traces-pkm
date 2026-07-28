@@ -93,68 +93,80 @@ impl FileIndex {
 mod tests {
     use std::fs;
 
-    use pretty_assertions::assert_eq;
-
     use super::*;
 
-    #[test]
-    fn build_finds_every_file_under_root() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        fs::create_dir_all(temp.path().join("notes")).expect("mkdir notes");
-        fs::write(temp.path().join("notes/todo.md"), "content")
-            .expect("write note");
-        fs::write(temp.path().join("readme.md"), "content")
-            .expect("write readme");
+    mod build {
+        use pretty_assertions::assert_eq;
 
-        let index = FileIndex::build(temp.path()).expect("build index");
+        use super::*;
 
-        assert_eq!(index.records().len(), 2);
+        #[test]
+        fn finds_every_file_under_root() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::create_dir_all(temp.path().join("notes")).expect("mkdir notes");
+            fs::write(temp.path().join("notes/todo.md"), "content")
+                .expect("write note");
+            fs::write(temp.path().join("readme.md"), "content")
+                .expect("write readme");
+
+            let index = FileIndex::build(temp.path()).expect("build index");
+
+            assert_eq!(index.records().len(), 2);
+        }
     }
 
-    #[test]
-    fn persist_then_load_recovers_the_same_records() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        fs::write(temp.path().join("note.md"), "content").expect("write note");
-        let built = FileIndex::build(temp.path()).expect("build index");
-        built.persist(temp.path()).expect("persist index");
+    mod persistence {
+        use pretty_assertions::assert_eq;
 
-        let loaded = FileIndex::load(temp.path()).expect("load index");
+        use super::*;
 
-        assert_eq!(loaded.records(), built.records());
-    }
+        #[test]
+        fn persist_then_load_recovers_the_same_records() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("note.md"), "content")
+                .expect("write note");
+            let built = FileIndex::build(temp.path()).expect("build index");
+            built.persist(temp.path()).expect("persist index");
 
-    #[test]
-    fn loading_an_unpersisted_root_yields_an_empty_index() {
-        let temp = tempfile::tempdir().expect("create temp dir");
+            let loaded = FileIndex::load(temp.path()).expect("load index");
 
-        let index = FileIndex::load(temp.path()).expect("load index");
+            assert_eq!(loaded.records(), built.records());
+        }
 
-        assert_eq!(index.records().len(), 0);
-    }
+        #[test]
+        fn returns_an_empty_index_when_the_root_was_never_persisted() {
+            let temp = tempfile::tempdir().expect("create temp dir");
 
-    #[test]
-    fn persisting_again_rebuilds_rather_than_appends() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        fs::write(temp.path().join("first.md"), "content")
-            .expect("write first");
-        FileIndex::build(temp.path())
-            .expect("build first index")
-            .persist(temp.path())
-            .expect("persist first index");
-        fs::remove_file(temp.path().join("first.md")).expect("remove first");
-        fs::write(temp.path().join("second.md"), "content")
-            .expect("write second");
+            let index = FileIndex::load(temp.path()).expect("load index");
 
-        FileIndex::build(temp.path())
-            .expect("build second index")
-            .persist(temp.path())
-            .expect("persist second index");
-        let loaded = FileIndex::load(temp.path()).expect("load index");
+            assert_eq!(index.records().len(), 0);
+        }
 
-        assert_eq!(loaded.records().len(), 1);
-        assert_eq!(
-            loaded.records().first().map(super::FileRecord::path),
-            Some(Path::new("second.md"))
-        );
+        #[test]
+        fn rebuilds_rather_than_appends_when_persisted_again() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("first.md"), "content")
+                .expect("write first");
+            FileIndex::build(temp.path())
+                .expect("build first index")
+                .persist(temp.path())
+                .expect("persist first index");
+            fs::remove_file(temp.path().join("first.md"))
+                .expect("remove first");
+            fs::write(temp.path().join("second.md"), "content")
+                .expect("write second");
+
+            FileIndex::build(temp.path())
+                .expect("build second index")
+                .persist(temp.path())
+                .expect("persist second index");
+            let loaded = FileIndex::load(temp.path()).expect("load index");
+
+            assert_eq!(loaded.records().len(), 1);
+            assert_eq!(
+                loaded.records().first().map(FileRecord::path),
+                Some(Path::new("second.md"))
+            );
+        }
     }
 }

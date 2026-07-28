@@ -43,121 +43,173 @@ impl Index {
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, path::Path};
-
-    use pretty_assertions::assert_eq;
+    use std::path::Path;
 
     use super::*;
-    use crate::{
-        CwdGuard,
-        config::{ConfigLoadError, Discovered, LocalConfigFile, TrustRequest},
-        index::FileIndex,
-    };
 
-    fn service(temp: &Path) -> ConfigService {
-        ConfigService::at(temp.join("tracked-store"), temp.join("trust-store"))
-    }
+    mod handlers {
+        use std::fs;
 
-    fn trust_config(service: &ConfigService, config_path: &Path) {
-        let config =
-            LocalConfigFile::<Discovered>::try_new(config_path.to_path_buf())
-                .expect("valid local config");
-        service
-            .trust(&TrustRequest::from(&config))
-            .expect("trust project config");
-    }
+        use pretty_assertions::assert_eq;
 
-    fn create_trusted_project(service: &ConfigService, root: &Path) {
-        fs::create_dir_all(root).expect("create project dir");
-        let config_file = root.join(".traces/config.toml");
-        fs::create_dir_all(config_file.parent().expect("config parent"))
-            .expect("create config parent");
-        fs::write(&config_file, "[templates]\ndirectory = \"templates\"\n")
-            .expect("write config file");
-        trust_config(service, &config_file);
-    }
+        use super::*;
+        use crate::{
+            CwdGuard,
+            config::{
+                ConfigLoadError, Discovered, LocalConfigFile, TrustRequest,
+            },
+            index::{FileIndex, FileIndexError},
+        };
 
-    #[test]
-    fn run_persists_a_file_index_covering_every_project_file() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let root = temp.path().join("project");
-        let service = service(temp.path());
-        create_trusted_project(&service, &root);
-        fs::create_dir_all(root.join("notes")).expect("mkdir notes");
-        fs::write(root.join("notes/todo.md"), "- [ ] task")
-            .expect("write note");
-        let _guard = CwdGuard::enter(&root);
+        fn service(temp: &Path) -> ConfigService {
+            ConfigService::at(
+                temp.join("tracked-store"),
+                temp.join("trust-store"),
+            )
+        }
 
-        Index::run(&service).expect("run index command");
+        fn trust_config(service: &ConfigService, config_path: &Path) {
+            let config = LocalConfigFile::<Discovered>::try_new(
+                config_path.to_path_buf(),
+            )
+            .expect("valid local config");
+            service
+                .trust(&TrustRequest::from(&config))
+                .expect("trust project config");
+        }
 
-        let loaded = FileIndex::load(&root).expect("load persisted index");
-        let paths = record_paths(&loaded);
-        assert!(paths.contains(&"notes/todo.md".to_owned()));
-        assert!(paths.contains(&".traces/config.toml".to_owned()));
-    }
+        fn create_trusted_project(service: &ConfigService, root: &Path) {
+            fs::create_dir_all(root).expect("create project dir");
+            let config_file = root.join(".traces/config.toml");
+            fs::create_dir_all(config_file.parent().expect("config parent"))
+                .expect("create config parent");
+            fs::write(&config_file, "[templates]\ndirectory = \"templates\"\n")
+                .expect("write config file");
+            trust_config(service, &config_file);
+        }
 
-    #[test]
-    fn run_survives_a_later_process_invocation_via_load() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let root = temp.path().join("project");
-        let service = service(temp.path());
-        create_trusted_project(&service, &root);
-        fs::write(root.join("first.md"), "content").expect("write first");
-        let _guard = CwdGuard::enter(&root);
-        Index::run(&service).expect("first index run");
+        fn record_paths(index: &FileIndex) -> Vec<String> {
+            index
+                .records()
+                .iter()
+                .map(|record| record.path().to_string_lossy().into_owned())
+                .collect()
+        }
 
-        // Simulate a later invocation: load without rescanning.
-        let reloaded = FileIndex::load(&root).expect("reload persisted index");
+        #[test]
+        fn persists_a_file_index_covering_every_project_file() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let root = temp.path().join("project");
+            let service = service(temp.path());
+            create_trusted_project(&service, &root);
+            fs::create_dir_all(root.join("notes")).expect("mkdir notes");
+            fs::write(root.join("notes/todo.md"), "- [ ] task")
+                .expect("write note");
+            let _guard = CwdGuard::enter(&root);
 
-        assert_eq!(reloaded.records().len(), 2);
-    }
+            Index::run(&service).expect("run index command");
 
-    #[test]
-    fn run_rebuilds_rather_than_appends_on_repeated_invocations() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let root = temp.path().join("project");
-        let service = service(temp.path());
-        create_trusted_project(&service, &root);
-        fs::write(root.join("stale.md"), "old").expect("write stale");
-        let _guard = CwdGuard::enter(&root);
-        Index::run(&service).expect("first index run");
-        fs::remove_file(root.join("stale.md")).expect("remove stale");
-        fs::write(root.join("fresh.md"), "new").expect("write fresh");
+            let loaded = FileIndex::load(&root).expect("load persisted index");
+            let paths = record_paths(&loaded);
+            assert!(paths.contains(&"notes/todo.md".to_owned()));
+            assert!(paths.contains(&".traces/config.toml".to_owned()));
+        }
 
-        Index::run(&service).expect("second index run");
+        #[test]
+        fn survives_a_later_process_invocation_via_load() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let root = temp.path().join("project");
+            let service = service(temp.path());
+            create_trusted_project(&service, &root);
+            fs::write(root.join("first.md"), "content").expect("write first");
+            let _guard = CwdGuard::enter(&root);
+            Index::run(&service).expect("first index run");
 
-        let loaded = FileIndex::load(&root).expect("load persisted index");
-        let paths = record_paths(&loaded);
-        assert!(!paths.contains(&"stale.md".to_owned()));
-        assert!(paths.contains(&"fresh.md".to_owned()));
-    }
+            // Simulate a later invocation: load without rescanning.
+            let reloaded =
+                FileIndex::load(&root).expect("reload persisted index");
 
-    #[test]
-    fn run_fails_when_the_project_root_is_not_trusted() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let root = temp.path().join("project");
-        fs::create_dir_all(&root).expect("create project dir");
-        let config_file = root.join(".traces/config.toml");
-        fs::create_dir_all(config_file.parent().expect("config parent"))
-            .expect("create config parent");
-        fs::write(&config_file, "[templates]\ndirectory = \"templates\"\n")
-            .expect("write config file");
-        let service = service(temp.path());
-        let _guard = CwdGuard::enter(&root);
+            assert_eq!(reloaded.records().len(), 2);
+        }
 
-        let error = Index::run(&service).expect_err("untrusted root fails");
+        #[test]
+        fn rebuilds_rather_than_appends_on_repeated_invocations() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let root = temp.path().join("project");
+            let service = service(temp.path());
+            create_trusted_project(&service, &root);
+            fs::write(root.join("stale.md"), "old").expect("write stale");
+            let _guard = CwdGuard::enter(&root);
+            Index::run(&service).expect("first index run");
+            fs::remove_file(root.join("stale.md")).expect("remove stale");
+            fs::write(root.join("fresh.md"), "new").expect("write fresh");
 
-        assert!(matches!(error, CliError::ConfigLoad {
-            source: ConfigLoadError::Build(_),
-            ..
-        }));
-    }
+            Index::run(&service).expect("second index run");
 
-    fn record_paths(index: &FileIndex) -> Vec<String> {
-        index
-            .records()
-            .iter()
-            .map(|record| record.path().to_string_lossy().into_owned())
-            .collect()
+            let loaded = FileIndex::load(&root).expect("load persisted index");
+            let paths = record_paths(&loaded);
+            assert!(!paths.contains(&"stale.md".to_owned()));
+            assert!(paths.contains(&"fresh.md".to_owned()));
+        }
+
+        #[test]
+        fn fails_when_the_project_root_is_not_trusted() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let root = temp.path().join("project");
+            fs::create_dir_all(&root).expect("create project dir");
+            let config_file = root.join(".traces/config.toml");
+            fs::create_dir_all(config_file.parent().expect("config parent"))
+                .expect("create config parent");
+            fs::write(&config_file, "[templates]\ndirectory = \"templates\"\n")
+                .expect("write config file");
+            let service = service(temp.path());
+            let _guard = CwdGuard::enter(&root);
+
+            let error = Index::run(&service).expect_err("untrusted root fails");
+
+            assert!(matches!(error, CliError::ConfigLoad {
+                source: ConfigLoadError::Build(_),
+                ..
+            }));
+        }
+
+        #[cfg(unix)]
+        #[test]
+        fn wraps_a_scan_failure_as_a_cli_index_error() {
+            use std::os::unix::fs::PermissionsExt as _;
+
+            /// Restores a locked directory's permissions on drop, even if
+            /// the test panics - otherwise a `0o000` directory blocks the
+            /// tempdir's own cleanup.
+            struct RestorePermissions<'a>(&'a Path);
+
+            impl Drop for RestorePermissions<'_> {
+                fn drop(&mut self) {
+                    let _ = fs::set_permissions(
+                        self.0,
+                        fs::Permissions::from_mode(0o700),
+                    );
+                }
+            }
+
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let root = temp.path().join("project");
+            let service = service(temp.path());
+            create_trusted_project(&service, &root);
+            let locked = root.join("locked");
+            fs::create_dir(&locked).expect("create locked dir");
+            fs::set_permissions(&locked, fs::Permissions::from_mode(0o000))
+                .expect("revoke read permission");
+            let _restore = RestorePermissions(&locked);
+            let _guard = CwdGuard::enter(&root);
+
+            let error = Index::run(&service)
+                .expect_err("unreadable subdirectory fails");
+
+            assert!(matches!(error, CliError::Index {
+                source: FileIndexError::Io { .. },
+                ..
+            }));
+        }
     }
 }
