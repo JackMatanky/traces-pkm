@@ -47,7 +47,7 @@ pub(crate) enum LinkType {
 pub(crate) struct Outlink {
     target: String,
     text: String,
-    link_type: LinkType,
+    kind: LinkType,
 }
 
 impl Outlink {
@@ -57,12 +57,12 @@ impl Outlink {
     pub(crate) fn new(
         target: impl Into<String>,
         text: impl Into<String>,
-        link_type: LinkType,
+        kind: LinkType,
     ) -> Self {
         Self {
             target: target.into(),
             text: text.into(),
-            link_type,
+            kind,
         }
     }
 
@@ -84,22 +84,22 @@ impl Outlink {
     /// [`LinkType::Wikilink`]).
     #[inline]
     #[must_use]
-    pub(crate) fn link_type(&self) -> LinkType {
-        self.link_type
+    pub(crate) fn kind(&self) -> LinkType {
+        self.kind
     }
 
     /// Returns `true` if this link is a Wikilink.
     #[inline]
     #[must_use]
     pub(crate) fn is_wikilink(&self) -> bool {
-        matches!(self.link_type, LinkType::Wikilink)
+        matches!(self.kind, LinkType::Wikilink)
     }
 
     /// Returns `true` if this link is a standard Markdown link.
     #[inline]
     #[must_use]
     pub(crate) fn is_markdown(&self) -> bool {
-        matches!(self.link_type, LinkType::Markdown)
+        matches!(self.kind, LinkType::Markdown)
     }
 }
 
