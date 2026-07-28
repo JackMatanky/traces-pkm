@@ -13,7 +13,7 @@ use super::{INDEX_FILE, error::FileIndexError, file::FileRecord};
 /// Skips `.git` directories (VCS metadata, not project content) and the
 /// `FileIndex`'s own database file (avoids the index indexing itself).
 /// Symlinks are not followed, so they're skipped rather than resolved —
-/// ponytail: revisit if PKM projects turn out to rely on symlinked notes.
+/// NOTE: revisit if PKM projects turn out to rely on symlinked notes.
 ///
 /// # Errors
 ///
