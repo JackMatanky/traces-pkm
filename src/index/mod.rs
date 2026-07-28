@@ -1,5 +1,5 @@
-//! `FileIndex`: a persisted cache of [`FileRecord`]s for every file under a
-//! trusted project root.
+//! `FileIndex`: a persisted cache of [`FileRecord`]s and [`NoteRecord`]s for
+//! files under a trusted project root.
 //!
 //! Persistence is redb-backed (see [`store`]) but that detail stays behind
 //! [`FileIndex`] — callers (`cli`, later `template`) only ever see
@@ -8,51 +8,85 @@
 #![cfg_attr(
     not(test),
     expect(
+        clippy::missing_inline_in_public_items,
         dead_code,
-        reason = "load() and most FileRecord accessors/fields are exercised \
-                  by tests now but only get a non-test caller once the query \
-                  surface (tickets 02-04) lands; `traces index` itself only \
-                  uses build+persist+records()"
+        reason = "crate-internal API surface for FileIndex note metadata"
     )
 )]
 
-use std::path::Path;
+use std::{fs, path::Path};
 
 pub(crate) use error::FileIndexError;
-pub(crate) use file::FileRecord;
+#[allow(
+    unused_imports,
+    reason = "domain types exported for index module callers"
+)]
+pub(crate) use file::{FileKind, FileRecord, Timestamp};
+use markdown::parse_markdown;
+#[allow(
+    unused_imports,
+    reason = "domain types exported for index module callers"
+)]
+pub(crate) use markdown::{
+    CodeRegion, Frontmatter, List, ListItem, Note, NoteRecord, Outlink,
+    OutlinkKind, TaskStatus,
+};
 use store::IndexStore;
 
 mod error;
 mod file;
+mod markdown;
 mod scan;
 mod store;
 
 /// The persisted `FileIndex` database's path, relative to a project root.
 const INDEX_FILE: &str = ".traces/index.redb";
 
-/// A persisted cache of File Records for every file under a project root.
+/// A persisted cache of File Records and Note Metadata for files under a
+/// project root.
 #[derive(Debug)]
 pub(crate) struct FileIndex {
     records: Vec<FileRecord>,
+    notes: Vec<NoteRecord>,
 }
 
 impl FileIndex {
-    /// Scans `root` and builds a `FileIndex` in memory. Does not persist —
-    /// call [`Self::persist`] to write it to disk.
+    /// Scans `root` and builds a `FileIndex` in memory, extracting [`Note`]
+    /// metadata for markdown files. Does not persist — call [`Self::persist`]
+    /// to write it to disk.
     ///
     /// # Errors
     ///
-    /// Returns [`FileIndexError::Io`] if a directory cannot be read or a file's
-    /// metadata cannot be inspected.
-    #[inline]
+    /// Returns [`FileIndexError::Io`] if a directory cannot be read, a file's
+    /// metadata cannot be inspected, or a markdown file cannot be read.
     pub(crate) fn build(root: &Path) -> Result<Self, FileIndexError> {
+        let records = scan::scan_root(root)?;
+        let mut notes = Vec::new();
+
+        for record in &records {
+            if record.kind() == FileKind::Note {
+                let full_path = root.join(record.path());
+                let content =
+                    fs::read_to_string(&full_path).map_err(|source| {
+                        FileIndexError::Io {
+                            path: full_path,
+                            source,
+                        }
+                    })?;
+                let note = parse_markdown(&content);
+                notes.push(NoteRecord::new(record.path().to_path_buf(), note));
+            }
+        }
+        notes.sort_by(|a, b| a.path().cmp(b.path()));
+
         Ok(Self {
-            records: scan::scan_root(root)?,
+            records,
+            notes,
         })
     }
 
-    /// Persists this `FileIndex`'s File Records to `root`'s index database,
-    /// replacing any previously persisted contents.
+    /// Persists this `FileIndex`'s File Records and Note Records to `root`'s
+    /// index database, replacing any previously persisted contents.
     ///
     /// # Errors
     ///
@@ -62,7 +96,7 @@ impl FileIndex {
     /// - [`FileIndexError::Serialize`] if a record cannot be encoded
     #[inline]
     pub(crate) fn persist(&self, root: &Path) -> Result<(), FileIndexError> {
-        IndexStore::open(root)?.replace_all(&self.records)
+        IndexStore::open(root)?.replace_all(&self.records, &self.notes)
     }
 
     /// Loads the `FileIndex` previously persisted for `root`. Returns an empty
@@ -72,12 +106,13 @@ impl FileIndex {
     ///
     /// - [`FileIndexError::Store`] if the database cannot be read
     /// - [`FileIndexError::Corrupt`] if stored bytes aren't valid UTF-8
-    /// - [`FileIndexError::Deserialize`] if stored text isn't a valid
-    ///   [`FileRecord`]
+    /// - [`FileIndexError::Deserialize`] if stored text isn't a valid record
     #[inline]
     pub(crate) fn load(root: &Path) -> Result<Self, FileIndexError> {
+        let (records, notes) = IndexStore::open(root)?.load_all()?;
         Ok(Self {
-            records: IndexStore::open(root)?.load_all()?,
+            records,
+            notes,
         })
     }
 
@@ -86,6 +121,23 @@ impl FileIndex {
     #[must_use]
     pub(crate) fn records(&self) -> &[FileRecord] {
         &self.records
+    }
+
+    /// Every indexed Note Record, sorted by path.
+    #[inline]
+    #[must_use]
+    pub(crate) fn notes(&self) -> &[NoteRecord] {
+        &self.notes
+    }
+
+    /// Returns the [`Note`] for the note at `path`, if indexed.
+    #[must_use]
+    pub(crate) fn note(&self, path: &Path) -> Option<&Note> {
+        self.notes
+            .binary_search_by(|r| r.path().cmp(path))
+            .ok()
+            .and_then(|idx| self.notes.get(idx))
+            .map(NoteRecord::note)
     }
 }
 
@@ -99,19 +151,33 @@ mod tests {
         use pretty_assertions::assert_eq;
 
         use super::*;
-
         #[test]
-        fn finds_every_file_under_root() {
+        fn finds_every_file_under_root_and_extracts_notes() {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::create_dir_all(temp.path().join("notes")).expect("mkdir notes");
-            fs::write(temp.path().join("notes/todo.md"), "content")
-                .expect("write note");
-            fs::write(temp.path().join("readme.md"), "content")
-                .expect("write readme");
+            fs::write(
+                temp.path().join("notes/todo.md"),
+                "---\ntitle: Todo\n---\n- [ ] task 1",
+            )
+            .expect("write note");
+            fs::write(temp.path().join("readme.txt"), "text content")
+                .expect("write txt");
 
             let index = FileIndex::build(temp.path()).expect("build index");
 
             assert_eq!(index.records().len(), 2);
+            assert_eq!(index.notes().len(), 1);
+
+            let note_rec = index.notes().first().expect("note present");
+            assert_eq!(note_rec.path(), Path::new("notes/todo.md"));
+
+            let note =
+                index.note(Path::new("notes/todo.md")).expect("note lookup");
+            assert_eq!(
+                note.frontmatter().map(Frontmatter::raw),
+                Some("title: Todo\n")
+            );
+            assert_eq!(note.tasks().count(), 1);
         }
     }
 
@@ -119,18 +185,30 @@ mod tests {
         use pretty_assertions::assert_eq;
 
         use super::*;
-
         #[test]
-        fn persist_then_load_recovers_the_same_records() {
+        fn persist_then_load_recovers_the_same_records_and_notes() {
             let temp = tempfile::tempdir().expect("create temp dir");
-            fs::write(temp.path().join("note.md"), "content")
-                .expect("write note");
+            fs::write(
+                temp.path().join("note.md"),
+                "---\ntitle: Hello\n---\n[[other_note]]\n- [x] done",
+            )
+            .expect("write note");
             let built = FileIndex::build(temp.path()).expect("build index");
             built.persist(temp.path()).expect("persist index");
 
             let loaded = FileIndex::load(temp.path()).expect("load index");
 
             assert_eq!(loaded.records(), built.records());
+            assert_eq!(loaded.notes(), built.notes());
+
+            let loaded_note =
+                loaded.note(Path::new("note.md")).expect("loaded note");
+            assert_eq!(loaded_note.outlinks().len(), 1);
+            assert_eq!(
+                loaded_note.outlinks().first().map(Outlink::target),
+                Some("other_note")
+            );
+            assert_eq!(loaded_note.tasks().count(), 1);
         }
 
         #[test]
@@ -140,12 +218,13 @@ mod tests {
             let index = FileIndex::load(temp.path()).expect("load index");
 
             assert_eq!(index.records().len(), 0);
+            assert_eq!(index.notes().len(), 0);
         }
 
         #[test]
         fn rebuilds_rather_than_appends_when_persisted_again() {
             let temp = tempfile::tempdir().expect("create temp dir");
-            fs::write(temp.path().join("first.md"), "content")
+            fs::write(temp.path().join("first.md"), "- [ ] first")
                 .expect("write first");
             FileIndex::build(temp.path())
                 .expect("build first index")
@@ -153,7 +232,7 @@ mod tests {
                 .expect("persist first index");
             fs::remove_file(temp.path().join("first.md"))
                 .expect("remove first");
-            fs::write(temp.path().join("second.md"), "content")
+            fs::write(temp.path().join("second.md"), "- [x] second")
                 .expect("write second");
 
             FileIndex::build(temp.path())
@@ -163,8 +242,13 @@ mod tests {
             let loaded = FileIndex::load(temp.path()).expect("load index");
 
             assert_eq!(loaded.records().len(), 1);
+            assert_eq!(loaded.notes().len(), 1);
             assert_eq!(
                 loaded.records().first().map(FileRecord::path),
+                Some(Path::new("second.md"))
+            );
+            assert_eq!(
+                loaded.notes().first().map(NoteRecord::path),
                 Some(Path::new("second.md"))
             );
         }

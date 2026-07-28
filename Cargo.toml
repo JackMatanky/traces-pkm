@@ -27,6 +27,7 @@ inquire = "0.9"
 is-terminal = "0.4"
 miette = { version = "7.6.0", features = ["derive", "fancy"] }
 minijinja = "2.21.0"
+pulldown-cmark = "0.13"
 redb = "4.1"
 regex = "1.13.1"
 serde = { version = "1.0.228", features = ["derive"] }
