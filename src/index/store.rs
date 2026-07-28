@@ -220,6 +220,7 @@ mod tests {
         use pretty_assertions::assert_eq;
 
         use super::*;
+        #[test]
         fn load_all_on_a_freshly_opened_database_is_empty() {
             let temp = tempfile::tempdir().expect("create temp dir");
             let store = IndexStore::open(temp.path()).expect("open store");
@@ -323,7 +324,6 @@ mod tests {
     }
 
     mod load_all {
-        use pretty_assertions::assert_eq;
 
         use super::*;
         fn write_raw_value(

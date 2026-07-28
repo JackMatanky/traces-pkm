@@ -157,105 +157,153 @@ pub(crate) fn parse_markdown(src: &str) -> Note {
 
 #[cfg(test)]
 mod tests {
-    use pretty_assertions::assert_eq;
-
     use super::*;
 
-    #[test]
-    fn extracts_yaml_frontmatter() {
-        let input =
-            "---\ntitle: My Note\ntags: [rust, pkm]\n---\n# Header\nBody text";
-        let note = parse_markdown(input);
-        let fm = note.frontmatter().expect("frontmatter present");
-        assert_eq!(fm.raw(), "title: My Note\ntags: [rust, pkm]\n");
-        assert_eq!(fm.is_empty(), false);
+    mod parse {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+        #[test]
+        fn returns_empty_note_when_source_is_empty() {
+            let input = "";
+            let note = parse_markdown(input);
+            assert_eq!(note.frontmatter(), None);
+            assert_eq!(note.lists().len(), 0);
+            assert_eq!(note.outlinks().len(), 0);
+            assert_eq!(note.code_regions().len(), 0);
+        }
+
+        #[test]
+        fn returns_none_for_frontmatter_when_absent() {
+            let input = "# Just a header\nNo frontmatter here.";
+            let note = parse_markdown(input);
+            assert_eq!(note.frontmatter(), None);
+        }
+
+        #[test]
+        fn extracts_yaml_frontmatter() {
+            let input = "---\ntitle: My Note\ntags: [rust, pkm]\n---\n# \
+                         Header\nBody text";
+            let note = parse_markdown(input);
+            let fm = note.frontmatter().expect("frontmatter present");
+            assert_eq!(fm.raw(), "title: My Note\ntags: [rust, pkm]\n");
+            assert_eq!(fm.is_empty(), false);
+        }
+
+        #[test]
+        fn extracts_markdown_and_wikilinks() {
+            let input = "Here is a [[target_page|Display Alias]] and [[simple_target]] as well as [Markdown Link](https://example.com).";
+            let note = parse_markdown(input);
+            let links = note.outlinks();
+            assert_eq!(links.len(), 3);
+
+            assert_eq!(links.get(0).map(Outlink::target), Some("target_page"));
+            assert_eq!(links.get(0).map(Outlink::text), Some("Display Alias"));
+            assert_eq!(links.get(0).map(Outlink::is_wikilink), Some(true));
+
+            assert_eq!(
+                links.get(1).map(Outlink::target),
+                Some("simple_target")
+            );
+            assert_eq!(links.get(1).map(Outlink::text), Some("simple_target"));
+            assert_eq!(links.get(1).map(Outlink::is_wikilink), Some(true));
+
+            assert_eq!(
+                links.get(2).map(Outlink::target),
+                Some("https://example.com")
+            );
+            assert_eq!(links.get(2).map(Outlink::text), Some("Markdown Link"));
+            assert_eq!(links.get(2).map(Outlink::is_markdown), Some(true));
+        }
+
+        #[test]
+        fn extracts_lists_and_tasks() {
+            let input = "- [ ] Buy milk\n- [x] Read book\n  - [ ] Subtask \
+                         1\n- Plain bullet";
+            let note = parse_markdown(input);
+            assert_eq!(note.lists().len(), 1);
+
+            let list = note.lists().get(0).expect("list present");
+            assert_eq!(list.is_ordered(), false);
+            assert_eq!(list.items().len(), 3);
+
+            let item0 = list.items().get(0).expect("item 0");
+            assert_eq!(item0.text(), "Buy milk");
+            assert_eq!(item0.is_task(), true);
+            assert_eq!(item0.is_completed(), false);
+
+            let item1 = list.items().get(1).expect("item 1");
+            assert_eq!(item1.text(), "Read book");
+            assert_eq!(item1.is_completed(), true);
+            assert_eq!(item1.children().len(), 1);
+
+            let sub_list = item1.children().get(0).expect("sub list");
+            assert_eq!(sub_list.items().len(), 1);
+            let sub_item = sub_list.items().get(0).expect("sub item");
+            assert_eq!(sub_item.text(), "Subtask 1");
+            assert_eq!(sub_item.is_task(), true);
+            assert_eq!(sub_item.is_completed(), false);
+
+            let item2 = list.items().get(2).expect("item 2");
+            assert_eq!(item2.text(), "Plain bullet");
+            assert_eq!(item2.is_task(), false);
+        }
+
+        #[test]
+        fn extracts_ordered_lists() {
+            let input = "1. First step\n2. Second step";
+            let note = parse_markdown(input);
+            assert_eq!(note.lists().len(), 1);
+
+            let list = note.lists().get(0).expect("list present");
+            assert_eq!(list.is_ordered(), true);
+            assert_eq!(list.items().len(), 2);
+            assert_eq!(
+                list.items().get(0).map(ListItem::text),
+                Some("First step")
+            );
+            assert_eq!(
+                list.items().get(1).map(ListItem::text),
+                Some("Second step")
+            );
+        }
+        #[test]
+        fn tracks_code_regions_for_inline_and_fenced_code() {
+            let input =
+                "Text with `inline code` span.\n\n```rust\nfn main() {}\n```\n";
+            let note = parse_markdown(input);
+            let regions = note.code_regions();
+            assert_eq!(regions.len(), 2);
+
+            let r0 = regions.get(0).expect("region 0");
+            assert_eq!(&input[r0.range()], "`inline code`");
+
+            let r1 = regions.get(1).expect("region 1");
+            assert_eq!(&input[r1.range()], "```rust\nfn main() {}\n```");
+        }
     }
 
-    #[test]
-    fn extracts_markdown_and_wikilinks() {
-        let input = "Here is a [[target_page|Display Alias]] and [[simple_target]] as well as [Markdown Link](https://example.com).";
-        let note = parse_markdown(input);
-        let links = note.outlinks();
-        assert_eq!(links.len(), 3);
+    mod tasks {
+        use pretty_assertions::assert_eq;
 
-        assert_eq!(links.get(0).map(Outlink::target), Some("target_page"));
-        assert_eq!(links.get(0).map(Outlink::text), Some("Display Alias"));
-        assert_eq!(links.get(0).map(Outlink::is_wikilink), Some(true));
+        use super::*;
 
-        assert_eq!(links.get(1).map(Outlink::target), Some("simple_target"));
-        assert_eq!(links.get(1).map(Outlink::is_wikilink), Some(true));
+        #[test]
+        fn iterates_all_top_level_and_nested_task_items() {
+            let input = "- [ ] Top task 1\n- Plain bullet\n  - [x] Nested \
+                         task 1\n- [ ] Top task 2";
+            let note = parse_markdown(input);
+            let tasks: Vec<&ListItem> = note.tasks().collect();
+            assert_eq!(tasks.len(), 3);
 
-        assert_eq!(
-            links.get(2).map(Outlink::target),
-            Some("https://example.com")
-        );
-        assert_eq!(links.get(2).map(Outlink::text), Some("Markdown Link"));
-        assert_eq!(links.get(2).map(Outlink::is_markdown), Some(true));
-    }
+            assert_eq!(tasks.get(0).map(|t| t.text()), Some("Top task 1"));
+            assert_eq!(tasks.get(0).map(|t| t.is_completed()), Some(false));
 
-    #[test]
-    fn extracts_lists_and_tasks() {
-        let input = "- [ ] Buy milk\n- [x] Read book\n  - [ ] Subtask 1\n- \
-                     Plain bullet";
-        let note = parse_markdown(input);
-        assert_eq!(note.lists().len(), 1);
+            assert_eq!(tasks.get(1).map(|t| t.text()), Some("Nested task 1"));
+            assert_eq!(tasks.get(1).map(|t| t.is_completed()), Some(true));
 
-        let list = note.lists().get(0).expect("list present");
-        assert_eq!(list.is_ordered(), false);
-        assert_eq!(list.items().len(), 3);
-
-        let item0 = list.items().get(0).expect("item 0");
-        assert_eq!(item0.text(), "Buy milk");
-        assert_eq!(item0.is_task(), true);
-        assert_eq!(item0.is_completed(), false);
-
-        let item1 = list.items().get(1).expect("item 1");
-        assert_eq!(item1.text(), "Read book");
-        assert_eq!(item1.is_completed(), true);
-        assert_eq!(item1.children().len(), 1);
-
-        let sub_list = item1.children().get(0).expect("sub list");
-        assert_eq!(sub_list.items().len(), 1);
-        let sub_item = sub_list.items().get(0).expect("sub item");
-        assert_eq!(sub_item.text(), "Subtask 1");
-        assert_eq!(sub_item.is_task(), true);
-        assert_eq!(sub_item.is_completed(), false);
-
-        let item2 = list.items().get(2).expect("item 2");
-        assert_eq!(item2.text(), "Plain bullet");
-        assert_eq!(item2.is_task(), false);
-    }
-
-    #[test]
-    fn note_tasks_accessor_returns_all_task_items() {
-        let input = "- [ ] Top task 1\n- Plain bullet\n  - [x] Nested task \
-                     1\n- [ ] Top task 2";
-        let note = parse_markdown(input);
-        let tasks: Vec<&ListItem> = note.tasks().collect();
-        assert_eq!(tasks.len(), 3);
-
-        assert_eq!(tasks.get(0).map(|t| t.text()), Some("Top task 1"));
-        assert_eq!(tasks.get(0).map(|t| t.is_completed()), Some(false));
-
-        assert_eq!(tasks.get(1).map(|t| t.text()), Some("Nested task 1"));
-        assert_eq!(tasks.get(1).map(|t| t.is_completed()), Some(true));
-
-        assert_eq!(tasks.get(2).map(|t| t.text()), Some("Top task 2"));
-        assert_eq!(tasks.get(2).map(|t| t.is_completed()), Some(false));
-    }
-
-    #[test]
-    fn tracks_code_regions_for_inline_and_fenced_code() {
-        let input =
-            "Text with `inline code` span.\n\n```rust\nfn main() {}\n```\n";
-        let note = parse_markdown(input);
-        let regions = note.code_regions();
-        assert_eq!(regions.len(), 2);
-
-        let r0 = regions.get(0).expect("region 0");
-        assert_eq!(&input[r0.range()], "`inline code`");
-
-        let r1 = regions.get(1).expect("region 1");
-        assert_eq!(&input[r1.range()], "```rust\nfn main() {}\n```");
+            assert_eq!(tasks.get(2).map(|t| t.text()), Some("Top task 2"));
+            assert_eq!(tasks.get(2).map(|t| t.is_completed()), Some(false));
+        }
     }
 }

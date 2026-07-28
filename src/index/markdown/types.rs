@@ -352,3 +352,72 @@ impl NoteRecord {
         &self.note
     }
 }
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    mod constructor {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+        #[test]
+        fn creates_frontmatter_with_raw_content() {
+            let fm = Frontmatter::new("key: value\n");
+            assert_eq!(fm.raw(), "key: value\n");
+            assert_eq!(fm.is_empty(), false);
+        }
+
+        #[test]
+        fn creates_empty_frontmatter() {
+            let fm = Frontmatter::default();
+            assert_eq!(fm.is_empty(), true);
+        }
+
+        #[test]
+        fn creates_outlink_with_kind() {
+            let link = Outlink::new("target", "alias", LinkType::Wikilink);
+            assert_eq!(link.target(), "target");
+            assert_eq!(link.text(), "alias");
+            assert_eq!(link.kind(), LinkType::Wikilink);
+            assert_eq!(link.is_wikilink(), true);
+            assert_eq!(link.is_markdown(), false);
+        }
+
+        #[test]
+        fn creates_list_item_and_task_status() {
+            let item = ListItem::new("Task 1", Some(TaskStatus::Incomplete));
+            assert_eq!(item.text(), "Task 1");
+            assert_eq!(item.task_status(), Some(TaskStatus::Incomplete));
+            assert_eq!(item.is_task(), true);
+            assert_eq!(item.is_completed(), false);
+            assert_eq!(item.children().len(), 0);
+        }
+
+        #[test]
+        fn creates_list_item_with_children() {
+            let child_list =
+                List::new(false, vec![ListItem::new("Child", None)]);
+            let item =
+                ListItem::with_children("Parent", None, vec![child_list]);
+            assert_eq!(item.children().len(), 1);
+            assert_eq!(
+                item.children().get(0).map(List::is_ordered),
+                Some(false)
+            );
+        }
+
+        #[test]
+        fn creates_code_region_range() {
+            let region = CodeRegion::new(10, 25);
+            assert_eq!(region.range(), 10..25);
+        }
+
+        #[test]
+        fn creates_note_record() {
+            let note = Note::new(None, Vec::new(), Vec::new(), Vec::new());
+            let rec = NoteRecord::new("notes/a.md", note.clone());
+            assert_eq!(rec.path(), std::path::Path::new("notes/a.md"));
+            assert_eq!(rec.note(), &note);
+        }
+    }
+}

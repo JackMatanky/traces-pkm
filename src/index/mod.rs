@@ -253,4 +253,26 @@ mod tests {
             );
         }
     }
+    mod lookup {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn returns_none_when_note_path_is_not_indexed() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let index = FileIndex::build(temp.path()).expect("build index");
+
+            assert_eq!(index.note(Path::new("nonexistent.md")), None);
+        }
+
+        #[test]
+        fn returns_note_when_path_is_indexed() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("a.md"), "# Title").expect("write file");
+            let index = FileIndex::build(temp.path()).expect("build index");
+
+            assert_eq!(index.note(Path::new("a.md")).is_some(), true);
+        }
+    }
 }
