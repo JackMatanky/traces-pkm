@@ -145,6 +145,49 @@
   (the markdown event tag, unrelated) already shares the name; resolved
   by aliasing the import in `parser.rs` (`Tag as CmarkTag`), the same
   pattern already used for `LinkType as CmarkLinkType`.
+- **Critical Review Findings and Fixes** (2026-07-29): An adversarial
+  multi-agent review (spec/AC compliance, Rust correctness, rustdoc,
+  test-coverage) against the state above found two genuine bugs and
+  several coverage/doc gaps, all now fixed:
+  - **Bug — loose list-item paragraphs dropped bare `Key:: Value` fields.**
+    `start_paragraph`/`end_paragraph` only reset `body_buffer` at the top
+    level; nested inside a list item, consecutive paragraphs within one
+    loose item concatenated into `ItemFrame::scan_buffer` with no
+    separator, so `BODY_FIELD_RE`'s line-anchor (`(?m)^...$`) never lined
+    up with a field on a later paragraph. Fixed by inserting a newline
+    into `scan_buffer` when a new paragraph starts inside an item and the
+    buffer already holds text (`start_paragraph`, `parser.rs`).
+  - **Bug — `Note::inline_fields()`/`Note::tags()` violated their own
+    "document order" doc contract for a list item with a nested child
+    list.** `end_item` appended a popped item's fields/tags only after
+    any nested sub-list's items had already closed and appended theirs
+    (children close before parents in `pulldown-cmark`'s event stream),
+    so a parent item's own metadata landed *after* its children's despite
+    appearing earlier in the source. Fixed by extracting a `flush_item_
+    scan_buffer` step that lexes and clears the active item's buffer both
+    when a nested list starts (flushing the parent's own text first) and
+    when the item closes (flushing anything accumulated afterward).
+  - **Test evidence correction**: the "Fields/tags remain in enclosing
+    plain text" AC note above cited an example (`"Status:: Draft
+    #urgent"`) that no test actually exercised. Added
+    `extracts_both_a_field_and_a_tag_from_the_same_list_item_text`,
+    which now covers exactly that case.
+  - Added coverage for: the empty-note baseline asserting zero Inline
+    Fields/tags; nested parent/child item field and tag isolation and
+    ordering; list-item code-region exclusion (fenced, indented, inline)
+    mirroring the existing top-level cases; document order across a body
+    paragraph and a list item in both directions; a field value directly
+    abutting excluded inline code; and all three `InlineFieldForm`
+    variants through the FileIndex persistence round-trip (previously
+    only `Body` was exercised).
+  - Rustdoc cleanup: `inline.rs`'s module doc had an intra-doc link whose
+    display text named `ParserContext` but whose target resolved to the
+    `parser` module (the struct is private, unreachable from a sibling
+    module) — reworded to a plain module reference. Trimmed several doc
+    comments (`inline.rs` module doc and `push_field`; `parser.rs`'s
+    `BlockContext`; `types.rs`'s `Note::new`) that spent more space
+    justifying implementation choices against specific clippy lints or
+    rejected alternatives than describing behavior.
 
 
 ## Agent Brief

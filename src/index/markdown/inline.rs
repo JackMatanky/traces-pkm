@@ -1,14 +1,10 @@
 //! Dataview-compatible Inline Field and markdown tag lexer.
 //!
-//! Operates on already-composed plain-text buffers ([`parser::ParserContext`]
-//! assembles one per body paragraph and per list item, skipping fenced code
-//! blocks, indented code blocks, and inline code spans as it goes — see
-//! [`super::parser`]) rather than re-deriving exclusions from
-//! [`super::types::CodeRegion`] byte ranges over raw source. Both approaches
-//! observe the same code-block boundaries; scanning the pre-excluded buffer
-//! avoids a second raw-source pass and byte-range overlap arithmetic.
-//!
-//! [`parser::ParserContext`]: super::parser
+//! Runs over plain-text buffers assembled by [`super::parser`]: one per body
+//! paragraph, one per list item. Both buffers already exclude fenced code
+//! blocks, indented code blocks, and inline code, so this module scans
+//! plain text only and never touches [`super::types::CodeRegion`] ranges
+//! directly.
 
 use std::sync::LazyLock;
 
@@ -80,11 +76,9 @@ pub(super) fn extract_inline_fields(text: &str) -> Vec<InlineField> {
     matches.into_iter().map(|(_, field)| field).collect()
 }
 
-/// Pushes the field captured by `caps` (with its match start offset, for
-/// later sorting) onto `matches`. The `let`-`else` reads as a guard rather
-/// than an `unwrap`/index (`clippy::indexing_slicing` denies `Captures`
-/// indexing too), even though groups 1 and 2 are mandatory in every source
-/// pattern and so are always present once `caps` exists.
+/// Pushes the field captured by `caps`, together with its match start
+/// offset for later sorting, onto `matches`. No-op if `caps` is missing the
+/// mandatory key/value capture groups.
 fn push_field(
     matches: &mut Vec<(usize, InlineField)>,
     caps: &Captures<'_>,

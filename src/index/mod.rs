@@ -199,6 +199,7 @@ mod tests {
 
     mod persistence {
         use pretty_assertions::assert_eq;
+        use rstest::rstest;
 
         use super::*;
 
@@ -228,11 +229,33 @@ mod tests {
             assert_eq!(loaded_note.tasks().count(), 1);
         }
 
-        #[test]
-        fn persist_then_load_recovers_inline_fields() {
+        #[rstest]
+        #[case::body(
+            "Status:: Draft",
+            "Status",
+            "Draft",
+            InlineFieldForm::Body
+        )]
+        #[case::visible_key(
+            "[Status:: Draft]",
+            "Status",
+            "Draft",
+            InlineFieldForm::VisibleKey
+        )]
+        #[case::hidden_key(
+            "(Status:: Draft)",
+            "Status",
+            "Draft",
+            InlineFieldForm::HiddenKey
+        )]
+        fn persist_then_load_recovers_inline_fields(
+            #[case] source: &str,
+            #[case] expected_key: &str,
+            #[case] expected_value: &str,
+            #[case] expected_form: InlineFieldForm,
+        ) {
             let temp = tempfile::tempdir().expect("create temp dir");
-            fs::write(temp.path().join("note.md"), "Status:: Draft")
-                .expect("write note");
+            fs::write(temp.path().join("note.md"), source).expect("write note");
             let built = FileIndex::build(temp.path()).expect("build index");
             built.persist(temp.path()).expect("persist index");
 
@@ -247,8 +270,9 @@ mod tests {
                 .inline_fields()
                 .first()
                 .expect("inline field present");
-            assert_eq!(field.key(), "Status");
-            assert_eq!(field.value(), "Draft");
+            assert_eq!(field.key(), expected_key);
+            assert_eq!(field.value(), expected_value);
+            assert_eq!(field.form(), expected_form);
         }
 
         #[test]

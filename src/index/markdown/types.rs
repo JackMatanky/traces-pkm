@@ -24,8 +24,7 @@ pub(crate) struct Note {
 impl Note {
     /// Creates a new [`Note`] with no Inline Fields or tags. Chain
     /// [`Self::with_inline_fields`] and/or [`Self::with_tags`] to attach
-    /// them — kept out of this constructor's parameter list so it doesn't
-    /// grow past `clippy::too_many_arguments`.
+    /// them.
     #[inline]
     #[must_use]
     pub(crate) fn new(

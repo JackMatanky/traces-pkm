@@ -9,13 +9,12 @@
 //! link can appear inside an item.
 //!
 //! Inline Field and tag extraction ([`inline::extract_inline_fields`],
-//! [`inline::extract_tags`]) run over the same plain-text buffers: one per
-//! top-level body paragraph (`body_buffer`), one per list item
-//! (`ItemFrame::scan_buffer`). Both buffers skip fenced/indented code block
-//! text (tracked via [`BlockContext::CodeBlock`]) and inline code (never
-//! appended, since [`ParserContext::inline_code`] only ever touches
-//! `ItemFrame::text_buffer`), so neither lexer pass needs to consult
-//! [`CodeRegion`] ranges directly.
+//! [`inline::extract_tags`]) runs over plain-text buffers built alongside
+//! the event walk, one per top-level body paragraph and one per list item.
+//! Both exclude fenced/indented code block text and inline code, so neither
+//! lexer pass consults [`CodeRegion`] ranges directly. A list item's buffer
+//! is lexed before any nested sub-list is entered, so fields and tags land
+//! in [`Note::inline_fields`]/[`Note::tags`] in overall document order.
 
 use std::{mem, ops::Range, path::PathBuf};
 
@@ -49,9 +48,8 @@ pub(crate) fn parse_markdown(path: impl Into<PathBuf>, src: &str) -> Note {
 }
 
 /// Which top-level block kind the parser is currently inside, if any. A
-/// metadata block, code block, and paragraph never nest inside one another,
-/// so this single enum replaces three independent booleans (and keeps
-/// [`ParserContext`] under `clippy::struct_excessive_bools`'s threshold).
+/// metadata block, code block, and paragraph are mutually exclusive at this
+/// granularity.
 #[derive(Default, Eq, PartialEq)]
 enum BlockContext {
     #[default]
@@ -177,11 +175,32 @@ impl ParserContext {
         }
     }
 
+    /// Pushes a new list frame. If a list item is already active, first
+    /// flushes its buffered text for Inline Fields/tags — see
+    /// [`Self::flush_item_scan_buffer`] — so the item's own metadata lands
+    /// ahead of its nested children's in document order.
     fn start_list(&mut self, is_ordered: bool) {
+        self.flush_item_scan_buffer();
         self.list_stack.push(ListFrame {
             is_ordered,
             items: Vec::new(),
         });
+    }
+
+    /// Lexes the active list item's buffered plain text (if any) for Inline
+    /// Fields and tags, appending them to `self.inline_fields`/`self.tags`
+    /// and clearing the buffer. Called both when a nested list starts inside
+    /// the item (so the item's own text is ordered ahead of its children's)
+    /// and when the item closes (for any text accumulated after the last
+    /// nested list, or the item's only text if it had none).
+    fn flush_item_scan_buffer(&mut self) {
+        if let Some(item) = self.item_stack.last_mut()
+            && !item.scan_buffer.is_empty()
+        {
+            let text = mem::take(&mut item.scan_buffer);
+            self.inline_fields.extend(inline::extract_inline_fields(&text));
+            self.tags.extend(inline::extract_tags(&text));
+        }
     }
 
     /// Closes the innermost list: nests it under the current item if one is
@@ -209,13 +228,12 @@ impl ParserContext {
         });
     }
 
-    /// Pops the innermost item, lexing its `scan_buffer` for Inline Fields
-    /// and tags before building the [`ListItem`] from `text_buffer`.
+    /// Flushes and pops the innermost item, then builds the [`ListItem`]
+    /// from its `text_buffer`. See [`Self::flush_item_scan_buffer`] for the
+    /// Inline Field/tag lexing this performs before the item is popped.
     fn end_item(&mut self) {
+        self.flush_item_scan_buffer();
         if let Some(item_frame) = self.item_stack.pop() {
-            self.inline_fields
-                .extend(inline::extract_inline_fields(&item_frame.scan_buffer));
-            self.tags.extend(inline::extract_tags(&item_frame.scan_buffer));
             let item = ListItem::with_children(
                 item_frame.text_buffer,
                 item_frame.task_status,
@@ -238,12 +256,20 @@ impl ParserContext {
     }
 
     /// Marks a top-level paragraph as active and clears `body_buffer`, ready
-    /// to accumulate its plain text. A no-op when nested inside a list item
-    /// — that text instead flows into the active [`ItemFrame::scan_buffer`].
+    /// to accumulate its plain text. When nested inside a list item, instead
+    /// separates it from the item's prior paragraph(s) with a newline in the
+    /// active `ItemFrame::scan_buffer` (if it already holds text), so a
+    /// loose list item's later paragraphs don't merge into one line.
     fn start_paragraph(&mut self) {
         self.block = BlockContext::Paragraph;
         if self.item_stack.is_empty() {
             self.body_buffer.clear();
+            return;
+        }
+        if let Some(item) = self.item_stack.last_mut()
+            && !item.scan_buffer.is_empty()
+        {
+            item.scan_buffer.push('\n');
         }
     }
 
@@ -316,7 +342,8 @@ struct ItemFrame {
     task_status: Option<TaskStatus>,
     text_buffer: String,
     /// Mirrors `text_buffer` but excludes inline code text — the buffer
-    /// [`ParserContext::end_item`] lexes for Inline Fields and tags.
+    /// [`ParserContext::flush_item_scan_buffer`] lexes for Inline Fields and
+    /// tags, either when a nested list starts or when the item closes.
     scan_buffer: String,
     children: Vec<List>,
 }
@@ -341,6 +368,8 @@ mod tests {
             assert_eq!(note.lists().len(), 0);
             assert_eq!(note.outlinks().len(), 0);
             assert_eq!(note.code_regions().len(), 0);
+            assert_eq!(note.inline_fields().len(), 0);
+            assert_eq!(note.tags().len(), 0);
         }
 
         #[test]
@@ -539,6 +568,7 @@ mod tests {
         ) {
             let note = parse_markdown("note.md", input);
 
+            assert_eq!(note.inline_fields().len(), 1);
             let field = note.inline_fields().first().expect("field present");
             assert_eq!(field.key(), expected_key);
             assert_eq!(field.value(), expected_value);
@@ -558,6 +588,7 @@ mod tests {
         #[test]
         fn extracts_a_bare_field_from_a_list_item_and_keeps_it_in_item_text() {
             let note = parse_markdown("note.md", "- Status:: Draft");
+            assert_eq!(note.inline_fields().len(), 1);
 
             let item = note
                 .lists()
@@ -610,6 +641,119 @@ mod tests {
             let note = parse_markdown("note.md", input);
 
             assert_eq!(note.tags().len(), 0);
+        }
+
+        #[test]
+        fn extracts_a_bare_field_from_a_second_paragraph_within_a_loose_list_item()
+         {
+            let note =
+                parse_markdown("note.md", "- Task line\n\n  Status:: Draft\n");
+
+            let field = note.inline_fields().first().expect("field present");
+            assert_eq!(field.key(), "Status");
+            assert_eq!(field.value(), "Draft");
+        }
+
+        #[test]
+        fn orders_parent_item_fields_before_nested_child_item_fields() {
+            let note = parse_markdown(
+                "note.md",
+                "- Status:: Draft\n  - Priority:: High\n",
+            );
+
+            let keys: Vec<&str> =
+                note.inline_fields().iter().map(InlineField::key).collect();
+            assert_eq!(keys, ["Status", "Priority"]);
+        }
+
+        #[test]
+        fn isolates_parent_and_child_item_tags_without_leaking_between_levels()
+        {
+            let note =
+                parse_markdown("note.md", "- Parent #alpha\n  - Child #beta\n");
+
+            assert_eq!(note.tags(), [Tag::new("#alpha"), Tag::new("#beta")]);
+        }
+
+        #[rstest]
+        #[case::fenced_code_block(
+            "- Item text\n\n  ```\n  Key:: Value\n  ```\n"
+        )]
+        #[case::indented_code_block("- Item text\n\n      Key:: Value\n")]
+        #[case::inline_code_span("- Text with `Key:: Value` inline")]
+        fn ignores_fields_inside_excluded_code_regions_within_a_list_item(
+            #[case] input: &str,
+        ) {
+            let note = parse_markdown("note.md", input);
+
+            assert_eq!(note.inline_fields().len(), 0);
+        }
+
+        #[rstest]
+        #[case::fenced_code_block("- Item text\n\n  ```\n  #book\n  ```\n")]
+        #[case::indented_code_block("- Item text\n\n      #book\n")]
+        #[case::inline_code_span("- Text with `#book` inline")]
+        fn ignores_tags_inside_excluded_code_regions_within_a_list_item(
+            #[case] input: &str,
+        ) {
+            let note = parse_markdown("note.md", input);
+
+            assert_eq!(note.tags().len(), 0);
+        }
+
+        #[test]
+        fn extracts_both_a_field_and_a_tag_from_the_same_list_item_text() {
+            let note = parse_markdown("note.md", "- Status:: Draft #urgent");
+
+            let item = note
+                .lists()
+                .first()
+                .and_then(|list| list.items().first())
+                .expect("item present");
+            assert_eq!(item.text(), "Status:: Draft #urgent");
+
+            let field = note.inline_fields().first().expect("field present");
+            assert_eq!(field.key(), "Status");
+            assert_eq!(field.value(), "Draft #urgent");
+
+            assert_eq!(note.tags(), [Tag::new("#urgent")]);
+        }
+
+        #[test]
+        fn preserves_document_order_between_a_body_field_and_a_list_item_field()
+        {
+            let note = parse_markdown(
+                "note.md",
+                "Status:: Draft\n\n- Reviewer:: Jane",
+            );
+
+            let keys: Vec<&str> =
+                note.inline_fields().iter().map(InlineField::key).collect();
+            assert_eq!(keys, ["Status", "Reviewer"]);
+        }
+
+        #[test]
+        fn preserves_document_order_between_a_list_item_field_and_a_body_field()
+        {
+            let note = parse_markdown(
+                "note.md",
+                "- Reviewer:: Jane\n\nStatus:: Draft",
+            );
+
+            let keys: Vec<&str> =
+                note.inline_fields().iter().map(InlineField::key).collect();
+            assert_eq!(keys, ["Reviewer", "Status"]);
+        }
+
+        #[test]
+        fn keeps_a_field_value_intact_when_it_directly_abuts_excluded_inline_code()
+         {
+            let note =
+                parse_markdown("note.md", "Status:: Draft`note` more text");
+
+            let field = note.inline_fields().first().expect("field present");
+            assert_eq!(field.key(), "Status");
+            assert_eq!(field.value(), "Draft more text");
         }
     }
 }
