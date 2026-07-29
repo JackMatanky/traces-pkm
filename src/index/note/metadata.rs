@@ -102,7 +102,7 @@ fn parse_yaml_frontmatter(raw: &str) -> Vec<MetadataField> {
             serde_yaml::Value::Bool(b) => b.to_string(),
             _ => continue,
         };
-        let field_val = yaml_value_to_field_value(v);
+        let field_val = FieldValue::from(v);
         fields.push(MetadataField::new(
             key,
             field_val,
@@ -117,47 +117,47 @@ fn parse_yaml_frontmatter(raw: &str) -> Vec<MetadataField> {
     clippy::cast_precision_loss,
     reason = "YAML integer numbers converted to f64"
 )]
-fn yaml_value_to_field_value(val: serde_yaml::Value) -> FieldValue {
-    match val {
-        serde_yaml::Value::Null => FieldValue::Null,
-        serde_yaml::Value::Bool(b) => FieldValue::Bool(b),
-        serde_yaml::Value::Number(n) => {
-            if let Some(f) = n.as_f64() {
-                FieldValue::Number(f)
-            } else if let Some(i) = n.as_i64() {
-                FieldValue::Number(i as f64)
-            } else {
-                FieldValue::Null
+impl From<serde_yaml::Value> for FieldValue {
+    fn from(val: serde_yaml::Value) -> Self {
+        match val {
+            serde_yaml::Value::Null => Self::Null,
+            serde_yaml::Value::Bool(b) => Self::Bool(b),
+            serde_yaml::Value::Number(n) => {
+                if let Some(f) = n.as_f64() {
+                    Self::Number(f)
+                } else if let Some(i) = n.as_i64() {
+                    Self::Number(i as f64)
+                } else {
+                    Self::Null
+                }
             }
-        }
-        serde_yaml::Value::String(s) => {
-            let trimmed = s.trim();
-            if trimmed.is_empty() {
-                FieldValue::Null
-            } else if is_iso_date(trimmed) {
-                FieldValue::Date(s)
-            } else {
-                FieldValue::String(s)
+            serde_yaml::Value::String(s) => {
+                let trimmed = s.trim();
+                if trimmed.is_empty() {
+                    Self::Null
+                } else if is_iso_date(trimmed) {
+                    Self::Date(s)
+                } else {
+                    Self::String(s)
+                }
             }
-        }
-        serde_yaml::Value::Sequence(seq) => FieldValue::List(
-            seq.into_iter().map(yaml_value_to_field_value).collect(),
-        ),
-        serde_yaml::Value::Mapping(map) => {
-            let mut btree = BTreeMap::new();
-            for (k, v) in map {
-                let key = match k {
-                    serde_yaml::Value::String(s) => s,
-                    serde_yaml::Value::Number(n) => n.to_string(),
-                    serde_yaml::Value::Bool(b) => b.to_string(),
-                    _ => continue,
-                };
-                btree.insert(key, yaml_value_to_field_value(v));
+            serde_yaml::Value::Sequence(seq) => {
+                Self::List(seq.into_iter().map(Self::from).collect())
             }
-            FieldValue::Object(btree)
-        }
-        serde_yaml::Value::Tagged(tagged) => {
-            yaml_value_to_field_value(tagged.value)
+            serde_yaml::Value::Mapping(map) => {
+                let mut btree = BTreeMap::new();
+                for (k, v) in map {
+                    let key = match k {
+                        serde_yaml::Value::String(s) => s,
+                        serde_yaml::Value::Number(n) => n.to_string(),
+                        serde_yaml::Value::Bool(b) => b.to_string(),
+                        _ => continue,
+                    };
+                    btree.insert(key, Self::from(v));
+                }
+                Self::Object(btree)
+            }
+            serde_yaml::Value::Tagged(tagged) => Self::from(tagged.value),
         }
     }
 }
@@ -317,6 +317,50 @@ mod tests {
             let fm = Frontmatter::from(&raw);
 
             assert_eq!(fm.is_empty(), true);
+        }
+    }
+    mod field_value {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn converts_serde_yaml_value_into_field_value_variants() {
+            let yaml = serde_yaml::from_str::<serde_yaml::Value>(
+                "
+                str: hello
+                num: 42.5
+                bool: true
+                null_val: null
+                date: 2026-07-29
+                list: [1, 2]
+            ",
+            )
+            .expect("valid yaml");
+
+            let field_val = FieldValue::from(yaml);
+            if let FieldValue::Object(map) = field_val {
+                assert_eq!(
+                    map.get("str"),
+                    Some(&FieldValue::String("hello".to_string()))
+                );
+                assert_eq!(map.get("num"), Some(&FieldValue::Number(42.5)));
+                assert_eq!(map.get("bool"), Some(&FieldValue::Bool(true)));
+                assert_eq!(map.get("null_val"), Some(&FieldValue::Null));
+                assert_eq!(
+                    map.get("date"),
+                    Some(&FieldValue::Date("2026-07-29".to_string()))
+                );
+                assert_eq!(
+                    map.get("list"),
+                    Some(&FieldValue::List(vec![
+                        FieldValue::Number(1.0),
+                        FieldValue::Number(2.0)
+                    ]))
+                );
+            } else {
+                panic!("expected FieldValue::Object");
+            }
         }
     }
 
