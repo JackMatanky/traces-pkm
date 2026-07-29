@@ -1,8 +1,8 @@
-//! redb-backed persistence for [`FileRecord`]s and [`Note`]s, keyed by
-//! project-relative path.
+//! redb persistence for [`FileRecord`] and [`Note`] records.
 //!
-//! The sole seam that knows about redb tables — [`super::FileIndex`] and its
-//! callers never see a [`TableDefinition`] or transaction.
+//! This module is the only layer that knows about redb tables.
+//! [`super::FileIndex`] callers never handle [`TableDefinition`]s or
+//! transactions directly.
 
 use std::{
     fs,
@@ -16,9 +16,7 @@ use redb::{
 };
 use serde::{Serialize, de::DeserializeOwned};
 
-use super::{
-    INDEX_FILE, error::FileIndexError, file::FileRecord, markdown::Note,
-};
+use super::{INDEX_FILE, error::FileIndexError, file::FileRecord, note::Note};
 
 /// Path → TOML-encoded [`FileRecord`] bytes.
 const FILE_RECORDS: TableDefinition<&str, &[u8]> =
@@ -27,8 +25,8 @@ const FILE_RECORDS: TableDefinition<&str, &[u8]> =
 /// Path → TOML-encoded [`Note`] bytes.
 const NOTES: TableDefinition<&str, &[u8]> = TableDefinition::new("notes");
 
-/// An atomically read snapshot of every File Record and Note Record
-/// persisted in the index database, sorted by path.
+/// Atomically read snapshot of persisted [`FileRecord`] and [`Note`] records,
+/// sorted by path.
 type IndexSnapshot = (Vec<FileRecord>, Vec<Note>);
 
 /// Redb-backed handle to one project root's index database.
@@ -69,10 +67,10 @@ impl IndexStore {
         })
     }
 
-    /// Replaces every stored File Record with `records` and Note Record with
-    /// `notes`, atomically — both tables are cleared and rewritten in one redb
-    /// write transaction, so a reader never observes a state with one table
-    /// replaced and the other stale.
+    /// Atomically replaces every stored [`FileRecord`] and [`Note`].
+    ///
+    /// Both redb tables are cleared and rewritten in one write transaction, so
+    /// readers never observe one table refreshed while the other remains stale.
     ///
     /// # Errors
     ///
@@ -96,8 +94,7 @@ impl IndexStore {
         write_txn.commit().map_err(|source| self.store_error(source))
     }
 
-    /// Loads every stored File Record and Note Record, sorted by path for
-    /// deterministic output.
+    /// Loads every stored [`FileRecord`] and [`Note`], sorted by path.
     ///
     /// # Errors
     ///
@@ -115,9 +112,8 @@ impl IndexStore {
 
     /// Serializes `items` as TOML into `table`, keyed by `path_of`.
     ///
-    /// Generic over `T` so [`Self::replace_all`] can drive both the
-    /// `file_records` and `notes` tables through this one code path instead of
-    /// duplicating the open/serialize/insert loop per table.
+    /// [`Self::replace_all`] uses this helper for both the `file_records` and
+    /// `notes` tables instead of duplicating the serialize-and-insert loop.
     ///
     /// # Errors
     ///
@@ -149,11 +145,10 @@ impl IndexStore {
         Ok(())
     }
 
-    /// Deserializes every TOML value in `table` into a `Vec<T>`, sorted by
-    /// `path_of` for deterministic output.
+    /// Deserializes every TOML value in `table` and sorts the records.
     ///
-    /// Generic for the same reason as [`Self::store_table`]: one code path for
-    /// both tables instead of a near-identical copy per table.
+    /// [`Self::load_all`] uses this helper for both the `file_records` and
+    /// `notes` tables instead of duplicating the decode-and-sort loop.
     ///
     /// # Errors
     ///
@@ -210,7 +205,7 @@ impl IndexStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::index::{markdown::parse_markdown, scan::scan_root};
+    use crate::index::{parse_markdown, scan::scan_root};
 
     mod persistence {
         use pretty_assertions::assert_eq;

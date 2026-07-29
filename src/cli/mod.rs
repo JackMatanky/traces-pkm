@@ -178,6 +178,7 @@ impl Commands {
 /// - [`CliError::NoCommand`] if neither a subcommand nor `-i`/`--input` was
 ///   provided.
 /// - [`CliError`] if command execution fails.
+#[inline]
 pub fn run() -> Result<CommandOutcome, CliError> {
     let provider: Arc<dyn crate::DialogProvider> =
         Arc::new(crate::TerminalDialogProvider::new());

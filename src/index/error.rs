@@ -1,15 +1,14 @@
-//! Errors from [`super::FileIndex`] operations: scanning, persisting, and
-//! loading File Records and Note Records.
+//! Errors returned while scanning, persisting, or loading a
+//! [`super::FileIndex`].
 
 use std::{io, path::PathBuf, str::Utf8Error};
 
 use thiserror::Error;
 
-/// Errors from building, persisting, or loading a [`super::FileIndex`].
+/// Error type for [`super::FileIndex`] operations.
 ///
-/// [`Io`](Self::Io) originates from scanning ([`super::scan`]); the rest
-/// originate from the redb-backed store ([`super::store`]) — opening,
-/// reading, or writing the index database.
+/// [`Self::Io`] comes from filesystem scans and index-directory setup. The
+/// remaining variants come from redb persistence and TOML record encoding.
 #[derive(Debug, Error)]
 pub(crate) enum FileIndexError {
     /// A filesystem operation failed while scanning a project root or preparing
@@ -33,8 +32,8 @@ pub(crate) enum FileIndexError {
         #[source]
         source: Box<redb::Error>,
     },
-    /// A stored File Record or Note Record's bytes were not valid UTF-8 — the
-    /// index database is corrupted.
+    /// A stored [`super::FileRecord`] or [`super::Note`] was not valid UTF-8,
+    /// which means the index database is corrupted.
     #[error("corrupted record bytes in the index database for {path}")]
     Corrupt {
         /// The corrupted record's project-relative path (its key in the
@@ -44,7 +43,7 @@ pub(crate) enum FileIndexError {
         #[source]
         source: Utf8Error,
     },
-    /// A File Record or Note Record could not be serialized for storage.
+    /// A [`super::FileRecord`] or [`super::Note`] could not be serialized.
     #[error("failed to serialize the record for {path}")]
     Serialize {
         /// The record's project-relative path.
@@ -53,8 +52,8 @@ pub(crate) enum FileIndexError {
         #[source]
         source: toml::ser::Error,
     },
-    /// A stored File Record or Note Record's text could not be parsed back into
-    /// a record.
+    /// A stored [`super::FileRecord`] or [`super::Note`] could not be
+    /// deserialized.
     #[error("failed to deserialize the record for {path}")]
     Deserialize {
         /// The record's project-relative path (its key in the index database).

@@ -1,4 +1,7 @@
-//! [`FileRecord`]: the general metadata indexed for every file, classified by [`FileFormat`] and timestamped via [`Timestamp`].
+//! File metadata captured by the index.
+//!
+//! [`FileRecord`] stores root-relative identity, type classification, file
+//! timestamps, and size for every regular file under a project root.
 
 use std::{
     fs,
@@ -12,10 +15,10 @@ use serde::{Deserialize, Serialize};
 use super::error::FileIndexError;
 use crate::file_name::{BaseName, FileName};
 
-/// General metadata indexed for every file under a project root, regardless
-/// of type.
+/// Metadata captured for one regular file under a project root.
 ///
-/// `path` and `folder` are project-root-relative.
+/// Stored paths are project-root-relative so the index can move with the
+/// project directory.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub(crate) struct FileRecord {
     path: PathBuf,
@@ -28,13 +31,15 @@ pub(crate) struct FileRecord {
 }
 
 impl FileRecord {
-    /// Builds a File Record for `path` (absolute, under `root`) from its
-    /// filesystem `metadata`.
+    /// Builds a [`FileRecord`] from filesystem metadata.
+    ///
+    /// `path` is the absolute file path under `root`; both are used to store a
+    /// project-relative path in the record.
     ///
     /// # Errors
     ///
-    /// Returns [`FileIndexError::Io`] if `metadata`'s modification time
-    /// cannot be read.
+    /// Returns [`FileIndexError::Io`] if the file's modification time cannot
+    /// be read.
     pub(super) fn from_metadata(
         path: &Path,
         root: &Path,
@@ -89,7 +94,7 @@ impl FileRecord {
         &self.folder
     }
 
-    /// Whether this file is a markdown Note or a plain file.
+    /// Whether this file is a markdown note or another regular file.
     #[inline]
     #[must_use]
     pub(crate) fn format(&self) -> FileFormat {
@@ -131,9 +136,10 @@ impl FileRecord {
     }
 }
 
-/// Coarse classification of a [`FileRecord`] — whether Traces treats it as a
-/// markdown Note (eligible for future Note Metadata extraction; see the spec's
-/// two-tier File Record / Note Metadata model) or a plain file.
+/// Coarse file classification used by the two-tier index.
+///
+/// Markdown notes get parsed [`Note`](super::note::Note) metadata in addition
+/// to their [`FileRecord`]. Other files only keep general file metadata.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub(crate) enum FileFormat {
     /// A markdown Note (`.md` or `.markdown` extension).
@@ -143,8 +149,10 @@ pub(crate) enum FileFormat {
 }
 
 impl FileFormat {
-    /// Classifies a file by its name's extension: `.md`/`.markdown`
-    /// (case-insensitive) is a Note, everything else is `Other`.
+    /// Classifies `.md` and `.markdown` file names as [`Self::Note`].
+    ///
+    /// Extension matching is ASCII case-insensitive. Every other extension, or
+    /// a missing extension, is [`Self::Other`].
     fn from_name(name: &FileName) -> Self {
         match name.extension() {
             Some(ext)
@@ -158,19 +166,17 @@ impl FileFormat {
     }
 }
 
-/// A single point in time associated with a file: its creation or
-/// modification time.
+/// Timestamp associated with indexed file metadata.
 ///
-/// Wraps [`DateTime<Utc>`] to avoid colliding with `std::time::Instant` or
-/// `std::fs::FileTimes`, and gives file timestamps one shared place for
-/// formatting/comparison behavior as later tickets need it.
+/// Wraps [`DateTime<Utc>`] so file timestamps have one formatting and ordering
+/// type instead of leaking storage-library or filesystem clock types.
 #[derive(
     Copy, Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Deserialize, Serialize,
 )]
 pub(crate) struct Timestamp(DateTime<Utc>);
 
 impl Timestamp {
-    /// Constructs a `Timestamp` representing the current UTC time.
+    /// Returns the current UTC timestamp.
     #[inline]
     #[must_use]
     pub(crate) fn now() -> Self {

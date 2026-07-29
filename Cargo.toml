@@ -36,6 +36,7 @@ toml = "1.1"
 tracing = "0.1"
 uuid = { version = "1.24.0", features = ["v4"] }
 walkdir = "2.5"
+yaml_serde = { version = "0.10", package = "yaml_serde" }
 
 [dev-dependencies]
 pretty_assertions = "1.4.1"
@@ -43,63 +44,59 @@ rstest = "0.24"
 tempfile = "3.27.0"
 
 [lints.clippy]
+absolute_paths = "allow"
+allow_attributes_without_reason = "deny"
+arithmetic_side_effects = "deny"
+# ------------------------------------------------------------- #
+#            Warnings (Best Practices & Suggestions)            #
+# ------------------------------------------------------------- #
+as_conversions = "warn"
+as_pointer_underscore = "deny"
+as_underscore = "deny"
 cargo = { level = "warn", priority = -1 }
 # ------------------------------------------------------------- #
 #                        Lint Categories                        #
 # ------------------------------------------------------------- #
 complexity = { level = "deny", priority = -1 }
-pedantic = { level = "warn", priority = -1 }
-perf = { level = "deny", priority = -1 }
-
-absolute_paths = "allow"
-implicit_return = "allow"
-min_ident_chars = "allow"
-missing_docs_in_private_items = "allow"
-mod_module_files = "allow"
-# ------------------------------------------------------------- #
-#              Allowed (Exceptions & Relaxations)               #
-# ------------------------------------------------------------- #
-multiple_crate_versions = "allow"
-print_stderr = "allow"
-pub_with_shorthand = "allow"
-question_mark_used = "allow"
-semicolon_inside_block = "allow"
-shadow_reuse = "allow"
-shadow_same = "allow"
-single_call_fn = "allow"
-std_instead_of_alloc = "allow"
-std_instead_of_core = "allow"
-unseparated_literal_suffix = "allow"
-
-# ------------------------------------------------------------- #
-#            Warnings (Best Practices & Suggestions)            #
-# ------------------------------------------------------------- #
-as_conversions = "warn"
-else_if_without_else = "warn"
-format_push_string = "warn"
-impl_trait_in_params = "warn"
-missing_inline_in_public_items = "warn"
-
-allow_attributes_without_reason = "deny"
-arithmetic_side_effects = "deny"
-as_pointer_underscore = "deny"
-as_underscore = "deny"
 dbg_macro = "deny"
 disallowed_methods = "deny"
+else_if_without_else = "warn"
 # ------------------------------------------------------------- #
 #                 Denials (Strict Enforcements)                 #
 # ------------------------------------------------------------- #
 exit = "deny"
 expect_used = "deny"
 fn_params_excessive_bools = "deny"
+format_push_string = "warn"
+impl_trait_in_params = "warn"
+implicit_return = "allow"
 indexing_slicing = "deny"
 large_types_passed_by_value = "deny"
+min_ident_chars = "allow"
+missing_docs_in_private_items = "allow"
 missing_errors_doc = "deny"
+missing_inline_in_public_items = "warn"
 missing_panics_doc = "deny"
+mod_module_files = "allow"
+# ------------------------------------------------------------- #
+#              Allowed (Exceptions & Relaxations)               #
+# ------------------------------------------------------------- #
+multiple_crate_versions = "allow"
 panic = "deny"
 panic_in_result_fn = "deny"
+pedantic = { level = "warn", priority = -1 }
+perf = { level = "deny", priority = -1 }
+print_stderr = "allow"
 print_stdout = "deny"
+pub_with_shorthand = "allow"
+question_mark_used = "allow"
+semicolon_inside_block = "allow"
+shadow_reuse = "allow"
+shadow_same = "allow"
 shadow_unrelated = "deny"
+single_call_fn = "allow"
+std_instead_of_alloc = "allow"
+std_instead_of_core = "allow"
 str_to_string = "deny"
 struct_excessive_bools = "deny"
 todo = "deny"
@@ -107,5 +104,6 @@ too_many_lines = "deny"
 undocumented_unsafe_blocks = "deny"
 unimplemented = "deny"
 unreachable = "deny"
+unseparated_literal_suffix = "allow"
 unused_self = "deny"
 unwrap_used = "deny"

@@ -1,23 +1,22 @@
-//! `FileIndex`: a persisted cache of [`FileRecord`]s and [`Note`]s for files
-//! under a trusted project root.
+//! File index for project files and parsed markdown notes.
 //!
-//! Persistence is redb-backed (see [`store`]) but that detail stays behind
-//! [`FileIndex`] — callers (`cli`, later `template`) only ever see
-//! build/persist/load/enumerate.
+//! [`FileIndex`] keeps a sorted [`FileRecord`] for every regular file under a
+//! trusted project root. Markdown files also get parsed into [`Note`] records.
+//! Persistence is redb-backed through [`store`], but callers only use the
+//! build, persist, load, and enumerate APIs.
 
 #![cfg_attr(
     not(test),
     expect(
         dead_code,
         reason = "crate-internal API surface for FileIndex note metadata, \
-                  consumed by later tickets (#03 inline fields, #04 lazy \
-                  query refresh)"
+                  consumed by later tickets (#04 lazy query refresh)"
     )
 )]
 
 mod error;
 mod file;
-mod markdown;
+mod note;
 mod scan;
 mod store;
 
@@ -29,24 +28,25 @@ pub(crate) use error::FileIndexError;
     reason = "domain types exported for index module callers"
 )]
 pub(crate) use file::{FileFormat, FileRecord, Timestamp};
-use markdown::parse_markdown;
+use note::parse_markdown;
 #[expect(
     unused_imports,
     reason = "domain types exported for index module callers"
 )]
-pub(crate) use markdown::{
-    CodeRegion, Frontmatter, LinkType, List, ListItem, Note, Outlink,
-    TaskStatus,
+pub(crate) use note::{
+    CodeRegion, FieldValue, Frontmatter, InlineField, InlineFieldForm,
+    LinkType, List, ListItem, MetadataField, Note, Outlink, RawFrontmatter,
+    Tag, TaskStatus,
 };
 use store::IndexStore;
 
-/// The persisted `FileIndex` database's path, relative to a project root.
+/// Project-relative path of the persisted [`FileIndex`] database.
 const INDEX_FILE: &str = ".traces/index.redb";
 
-/// A persisted cache of File Records and Note Metadata for files under a
-/// project root. Two tiers: every file gets a [`FileRecord`]
-/// ([`Self::records`]); markdown files additionally get a [`Note`]
-/// ([`Self::notes`], [`Self::note`]).
+/// Persisted cache of file metadata and parsed markdown note metadata.
+///
+/// Every indexed file has a [`FileRecord`]. Markdown files also have a
+/// [`Note`], available through [`Self::notes`] or [`Self::note`].
 #[derive(Debug)]
 pub(crate) struct FileIndex {
     records: Vec<FileRecord>,
@@ -54,9 +54,10 @@ pub(crate) struct FileIndex {
 }
 
 impl FileIndex {
-    /// Scans `root` and builds a `FileIndex` in memory, extracting [`Note`]
-    /// metadata for markdown files. Does not persist — call [`Self::persist`]
-    /// to write it to disk.
+    /// Scans `root` and builds a [`FileIndex`] in memory.
+    ///
+    /// Markdown files are parsed into [`Note`] records. The index is not
+    /// persisted until [`Self::persist`] is called.
     ///
     /// # Errors
     ///
@@ -88,8 +89,9 @@ impl FileIndex {
         })
     }
 
-    /// Persists this `FileIndex`'s File Records and Note Records to `root`'s
-    /// index database, replacing any previously persisted contents.
+    /// Persists this index to `root`, replacing any existing index contents.
+    ///
+    /// Both [`FileRecord`] and [`Note`] records are written atomically.
     ///
     /// # Errors
     ///
@@ -102,8 +104,9 @@ impl FileIndex {
         IndexStore::open(root)?.replace_all(&self.records, &self.notes)
     }
 
-    /// Loads the `FileIndex` previously persisted for `root`. Returns an empty
-    /// `FileIndex` if none was ever persisted.
+    /// Loads the index previously persisted for `root`.
+    ///
+    /// Returns an empty [`FileIndex`] if no index has been persisted yet.
     ///
     /// # Errors
     ///
@@ -119,14 +122,14 @@ impl FileIndex {
         })
     }
 
-    /// Every indexed File Record, sorted by path.
+    /// Indexed [`FileRecord`]s, sorted by path.
     #[inline]
     #[must_use]
     pub(crate) fn records(&self) -> &[FileRecord] {
         &self.records
     }
 
-    /// Every indexed Note Record, sorted by path.
+    /// Indexed [`Note`] records, sorted by path.
     #[inline]
     #[must_use]
     pub(crate) fn notes(&self) -> &[Note] {
@@ -179,27 +182,82 @@ mod tests {
         }
 
         #[test]
-        fn parses_frontmatter_and_tasks_from_markdown_content() {
+        fn includes_frontmatter_fields_in_the_indexed_note() {
             let temp = tempfile::tempdir().expect("create temp dir");
-            fs::write(
-                temp.path().join("todo.md"),
-                "---\ntitle: Todo\n---\n- [ ] task 1",
-            )
-            .expect("write note");
+            fs::write(temp.path().join("todo.md"), "---\ntitle: Todo\n---")
+                .expect("write note");
 
             let index = FileIndex::build(temp.path()).expect("build index");
 
-            let note = index.note(Path::new("todo.md")).expect("note lookup");
             assert_eq!(
-                note.frontmatter().map(Frontmatter::raw),
-                Some("title: Todo\n")
+                index
+                    .note(Path::new("todo.md"))
+                    .and_then(Note::frontmatter)
+                    .map(|fm| fm.fields().len()),
+                Some(1)
             );
-            assert_eq!(note.tasks().count(), 1);
+        }
+
+        #[test]
+        fn includes_tasks_in_the_indexed_note() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("todo.md"), "- [ ] task 1")
+                .expect("write note");
+
+            let index = FileIndex::build(temp.path()).expect("build index");
+
+            assert_eq!(
+                index
+                    .note(Path::new("todo.md"))
+                    .map(Note::tasks)
+                    .map(Iterator::count),
+                Some(1)
+            );
+        }
+
+        #[test]
+        fn indexing_never_rewrites_the_source_markdown_file() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let original = "Status:: Draft #urgent\n\n- Reviewer:: Jane \
+                            #book\n\n# Heading #chapter\n";
+            fs::write(temp.path().join("note.md"), original)
+                .expect("write note");
+
+            FileIndex::build(temp.path()).expect("build index");
+
+            let after = fs::read_to_string(temp.path().join("note.md"))
+                .expect("read note back");
+            assert_eq!(after, original);
+        }
+
+        #[test]
+        fn returns_io_error_when_markdown_file_is_not_utf8() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("bad.md"), [0xFF, 0xFE])
+                .expect("write invalid utf8");
+
+            let result = FileIndex::build(temp.path());
+
+            assert!(matches!(result, Err(FileIndexError::Io { .. })));
+        }
+
+        #[test]
+        fn sorts_indexed_notes_by_path() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("b.md"), "# B").expect("write b");
+            fs::write(temp.path().join("a.md"), "# A").expect("write a");
+
+            let index = FileIndex::build(temp.path()).expect("build index");
+
+            let paths: Vec<&Path> =
+                index.notes().iter().map(Note::path).collect();
+            assert_eq!(paths, [Path::new("a.md"), Path::new("b.md")]);
         }
     }
 
     mod persistence {
         use pretty_assertions::assert_eq;
+        use rstest::rstest;
 
         use super::*;
 
@@ -227,6 +285,132 @@ mod tests {
                 Some("other_note")
             );
             assert_eq!(loaded_note.tasks().count(), 1);
+        }
+
+        #[test]
+        fn persist_then_load_recovers_frontmatter_link_fields() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(
+                temp.path().join("note.md"),
+                "---\nrelated: \"[[Project Alpha|Alpha]]\"\n---\nBody text.",
+            )
+            .expect("write note");
+            let built = FileIndex::build(temp.path()).expect("build index");
+            built.persist(temp.path()).expect("persist index");
+
+            let loaded = FileIndex::load(temp.path()).expect("load index");
+
+            let field = loaded
+                .note(Path::new("note.md"))
+                .and_then(Note::frontmatter)
+                .into_iter()
+                .flat_map(Frontmatter::fields)
+                .find(|field| field.key() == "related")
+                .expect("related field");
+            assert_eq!(
+                field.value(),
+                &FieldValue::Link(Outlink::new(
+                    "Project Alpha",
+                    "Alpha",
+                    LinkType::Wikilink
+                ))
+            );
+        }
+
+        #[rstest]
+        #[case::body(
+            "Status:: Draft",
+            "Status",
+            "Draft",
+            InlineFieldForm::Body
+        )]
+        #[case::visible_key(
+            "[Status:: Draft]",
+            "Status",
+            "Draft",
+            InlineFieldForm::VisibleKey
+        )]
+        #[case::hidden_key(
+            "(Status:: Draft)",
+            "Status",
+            "Draft",
+            InlineFieldForm::HiddenKey
+        )]
+        fn persist_then_load_recovers_inline_fields(
+            #[case] source: &str,
+            #[case] expected_key: &str,
+            #[case] expected_value: &str,
+            #[case] expected_form: InlineFieldForm,
+        ) {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("note.md"), source).expect("write note");
+            let built = FileIndex::build(temp.path()).expect("build index");
+            built.persist(temp.path()).expect("persist index");
+
+            let loaded = FileIndex::load(temp.path()).expect("load index");
+
+            let loaded_note =
+                loaded.note(Path::new("note.md")).expect("loaded note");
+            let built_note =
+                built.note(Path::new("note.md")).expect("built note");
+            assert_eq!(loaded_note.inline_fields(), built_note.inline_fields());
+            let field = loaded_note
+                .inline_fields()
+                .first()
+                .expect("inline field present");
+            assert_eq!(field.key(), expected_key);
+            assert_eq!(field.value().as_str(), Some(expected_value));
+            assert_eq!(field.form(), expected_form);
+        }
+
+        #[test]
+        fn persist_then_load_recovers_typed_inline_field_values() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(
+                temp.path().join("note.md"),
+                "[duration:: 7 hours]\n[values:: 1, 2]",
+            )
+            .expect("write note");
+            let built = FileIndex::build(temp.path()).expect("build index");
+            built.persist(temp.path()).expect("persist index");
+
+            let loaded = FileIndex::load(temp.path()).expect("load index");
+
+            let loaded_note =
+                loaded.note(Path::new("note.md")).expect("loaded note");
+            let built_note =
+                built.note(Path::new("note.md")).expect("built note");
+            assert_eq!(loaded_note.inline_fields(), built_note.inline_fields());
+            let values: Vec<&FieldValue> = loaded_note
+                .inline_fields()
+                .iter()
+                .map(InlineField::value)
+                .collect();
+            assert_eq!(values, [
+                &FieldValue::Duration("7 hours".to_owned()),
+                &FieldValue::List(vec![
+                    FieldValue::Number(1.0),
+                    FieldValue::Number(2.0)
+                ])
+            ]);
+        }
+
+        #[test]
+        fn persist_then_load_recovers_tags() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("note.md"), "Filed under #book today.")
+                .expect("write note");
+            let built = FileIndex::build(temp.path()).expect("build index");
+            built.persist(temp.path()).expect("persist index");
+
+            let loaded = FileIndex::load(temp.path()).expect("load index");
+
+            let loaded_note =
+                loaded.note(Path::new("note.md")).expect("loaded note");
+            let built_note =
+                built.note(Path::new("note.md")).expect("built note");
+            assert_eq!(loaded_note.tags(), built_note.tags());
+            assert_eq!(loaded_note.tags(), [Tag::new("#book")]);
         }
 
         #[test]
@@ -286,12 +470,17 @@ mod tests {
         }
 
         #[test]
-        fn returns_note_when_path_is_indexed() {
+        fn returns_the_matching_note_when_path_is_indexed() {
             let temp = tempfile::tempdir().expect("create temp dir");
-            fs::write(temp.path().join("a.md"), "# Title").expect("write file");
+            fs::write(temp.path().join("a.md"), "# A").expect("write a");
+            fs::write(temp.path().join("b.md"), "# B").expect("write b");
+            fs::write(temp.path().join("c.md"), "# C").expect("write c");
             let index = FileIndex::build(temp.path()).expect("build index");
 
-            assert_eq!(index.note(Path::new("a.md")).is_some(), true);
+            assert_eq!(
+                index.note(Path::new("b.md")).map(Note::path),
+                Some(Path::new("b.md"))
+            );
         }
     }
 }
