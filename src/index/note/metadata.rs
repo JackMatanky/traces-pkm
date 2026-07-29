@@ -215,6 +215,8 @@ pub(crate) enum FieldValue {
     String(String),
     /// ISO-date-like string value.
     Date(String),
+    /// Dataview duration literal, kept in source spelling.
+    Duration(String),
     /// Link value.
     Link(Outlink),
     /// Ordered list value.
@@ -232,13 +234,12 @@ impl FieldValue {
         matches!(self, Self::Null)
     }
 
-    /// Returns the string slice if this value is [`FieldValue::String`] or
-    /// [`FieldValue::Date`].
+    /// Returns the string slice if this value stores textual content.
     #[inline]
     #[must_use]
     pub(crate) fn as_str(&self) -> Option<&str> {
         match self {
-            Self::String(s) | Self::Date(s) => Some(s),
+            Self::String(s) | Self::Date(s) | Self::Duration(s) => Some(s),
             _ => None,
         }
     }

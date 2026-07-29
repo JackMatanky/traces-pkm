@@ -22,6 +22,7 @@ pub(crate) struct Outlink {
     target: String,
     text: String,
     kind: LinkType,
+    embedded: bool,
 }
 
 impl Outlink {
@@ -37,27 +38,50 @@ impl Outlink {
             target: target.into(),
             text: text.into(),
             kind,
+            embedded: false,
         }
     }
 
     /// Parses an Obsidian wikilink value such as `[[target|text]]`.
     #[must_use]
     pub(crate) fn parse_wikilink(s: &str) -> Option<Self> {
-        let inner = s.strip_prefix("[[")?.strip_suffix("]]")?;
-        let (target, text) = inner.split_once('|').unwrap_or((inner, inner));
-        let target = target.trim();
+        let (link, consumed) = Self::parse_wikilink_prefix(s)?;
+        (consumed == s.len()).then_some(link)
+    }
+
+    /// Parses an Obsidian wikilink prefix and returns the consumed byte count.
+    #[must_use]
+    #[expect(
+        clippy::arithmetic_side_effects,
+        reason = "wikilink byte offsets are derived from valid string slices"
+    )]
+    pub(crate) fn parse_wikilink_prefix(s: &str) -> Option<(Self, usize)> {
+        let (embedded, raw) =
+            s.strip_prefix('!').map_or((false, s), |rest| (true, rest));
+        let inner_start = s.len() - raw.len() + 2;
+        let inner = raw.strip_prefix("[[")?;
+        let inner_end = find_wikilink_close(inner)?;
+        let raw_inner = &inner[..inner_end];
+        let consumed = inner_start + inner_end + 2;
+        let (target, text) = split_wikilink_text(raw_inner);
+        let target = unescape_wikilink_part(target.trim());
         if target.is_empty() {
             return None;
         }
-        let text = text.trim();
-        Some(Self::new(
-            target,
-            if text.is_empty() {
-                target
-            } else {
-                text
+        let text = unescape_wikilink_part(text.trim());
+        let text = if text.is_empty() {
+            target.clone()
+        } else {
+            text
+        };
+        Some((
+            Self {
+                target,
+                text,
+                kind: LinkType::Wikilink,
+                embedded,
             },
-            LinkType::Wikilink,
+            consumed,
         ))
     }
 
@@ -95,6 +119,79 @@ impl Outlink {
     pub(crate) fn is_markdown(&self) -> bool {
         matches!(self.kind, LinkType::Markdown)
     }
+
+    /// Returns `true` if this link is an embedded wikilink.
+    #[inline]
+    #[must_use]
+    pub(crate) fn is_embedded(&self) -> bool {
+        self.embedded
+    }
+}
+
+#[expect(
+    clippy::arithmetic_side_effects,
+    reason = "wikilink byte offsets are derived from valid string slices"
+)]
+fn find_wikilink_close(s: &str) -> Option<usize> {
+    let mut escaped = false;
+    for (index, ch) in s.char_indices() {
+        if ch == '\\' {
+            escaped = !escaped;
+            continue;
+        }
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if ch == ']' && s[index + ch.len_utf8()..].starts_with(']') {
+            return Some(index);
+        }
+    }
+    None
+}
+
+#[expect(
+    clippy::arithmetic_side_effects,
+    reason = "wikilink byte offsets are derived from valid string slices"
+)]
+fn split_wikilink_text(s: &str) -> (&str, &str) {
+    let mut escaped = false;
+    for (index, ch) in s.char_indices() {
+        if ch == '\\' {
+            escaped = !escaped;
+            continue;
+        }
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if ch == '|' {
+            return (&s[..index], &s[index + ch.len_utf8()..]);
+        }
+    }
+    (s, s)
+}
+
+fn unescape_wikilink_part(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut escaped = false;
+    for ch in s.chars() {
+        if escaped {
+            if ch != '|' {
+                out.push('\\');
+            }
+            out.push(ch);
+            escaped = false;
+        } else if ch == '\\' {
+            escaped = true;
+        } else {
+            out.push(ch);
+        }
+    }
+    if escaped {
+        out.push('\\');
+    }
+    out
 }
 
 /// Completion state of a markdown task list item.
@@ -309,6 +406,26 @@ mod tests {
             assert_eq!(link.target(), expected_target);
             assert_eq!(link.text(), expected_text);
             assert_eq!(link.kind(), LinkType::Wikilink);
+        }
+
+        #[test]
+        fn parses_embedded_wikilink_values() {
+            let link = Outlink::parse_wikilink("![[hello]]")
+                .expect("valid embedded wikilink");
+
+            assert_eq!(link.target(), "hello");
+            assert_eq!(link.text(), "hello");
+            assert_eq!(link.kind(), LinkType::Wikilink);
+            assert_eq!(link.is_embedded(), true);
+        }
+
+        #[test]
+        fn parses_escaped_pipe_in_wikilink_target() {
+            let link = Outlink::parse_wikilink(r"[[Hello \| There]]")
+                .expect("valid wikilink");
+
+            assert_eq!(link.target(), "Hello | There");
+            assert_eq!(link.text(), "Hello | There");
         }
 
         #[rstest]

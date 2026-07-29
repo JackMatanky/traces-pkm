@@ -217,7 +217,12 @@ impl ParserContext {
             && !item.scan_buffer.is_empty()
         {
             let text = mem::take(&mut item.scan_buffer);
-            self.inline_fields.extend(inline::extract_inline_fields(&text));
+            let fields = if item.task_status.is_some() {
+                inline::extract_task_inline_fields(&text)
+            } else {
+                inline::extract_inline_fields(&text)
+            };
+            self.inline_fields.extend(fields);
             self.tags.extend(inline::extract_tags(&text));
         }
     }
@@ -735,6 +740,52 @@ mod tests {
             assert_eq!(field.key(), "Status");
             assert_eq!(field.value().as_str(), Some("Draft"));
             assert_eq!(field.form(), InlineFieldForm::Body);
+        }
+
+        #[rstest]
+        #[case::due_variant_selector(
+            "- [ ] testTask 🗓️2022-07-14",
+            "due",
+            "2022-07-14"
+        )]
+        #[case::due_text_selector(
+            "- [ ] testTask 🗓2022-07-14",
+            "due",
+            "2022-07-14"
+        )]
+        #[case::created("- [ ] testTask ➕2022-07-25", "created", "2022-07-25")]
+        #[case::start("- [ ] testTask 🛫2022-07-21", "start", "2022-07-21")]
+        #[case::scheduled(
+            "- [ ] testTask ⏳2022-07-24",
+            "scheduled",
+            "2022-07-24"
+        )]
+        #[case::completion(
+            "- [x] testTask ✅2022-07-26",
+            "completion",
+            "2022-07-26"
+        )]
+        fn extracts_task_emoji_shorthand_fields_from_task_items_only(
+            #[case] input: &str,
+            #[case] expected_key: &str,
+            #[case] expected_date: &str,
+        ) {
+            let note = parse_markdown("note.md", input);
+
+            assert_eq!(note.inline_fields().len(), 1);
+            let field = note.inline_fields().first().expect("field present");
+            assert_eq!(field.key(), expected_key);
+            assert_eq!(
+                field.value(),
+                &FieldValue::Date(expected_date.to_owned())
+            );
+        }
+
+        #[test]
+        fn ignores_task_emoji_shorthand_fields_outside_task_items() {
+            let note = parse_markdown("note.md", "testTask 🗓2022-07-14");
+
+            assert_eq!(note.inline_fields().len(), 0);
         }
 
         #[rstest]
