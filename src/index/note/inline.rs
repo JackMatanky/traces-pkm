@@ -10,9 +10,7 @@ use std::sync::LazyLock;
 
 use regex::{Captures, Regex};
 
-use super::{
-    FieldSource, FieldValue, InlineField, InlineFieldForm, MetadataField, Tag,
-};
+use super::{FieldSource, FieldValue, InlineFieldForm, MetadataField, Tag};
 
 /// Matches a full-line `Key:: Value` body field: a letter-led key token
 /// (no whitespace — an unambiguous single word, unlike the bracket/paren
@@ -63,8 +61,8 @@ static TAG_RE: LazyLock<Regex> = LazyLock::new(|| {
 /// Extracts every Dataview-compatible Inline Field from `text`, sorted by
 /// byte position. `text` is a pre-composed plain-text buffer that has already
 /// excluded code spans/blocks — see the module docs.
-pub(super) fn extract_inline_fields(text: &str) -> Vec<InlineField> {
-    let mut matches: Vec<(usize, InlineField)> = Vec::new();
+pub(super) fn extract_inline_fields(text: &str) -> Vec<MetadataField> {
+    let mut matches: Vec<(usize, MetadataField)> = Vec::new();
     for caps in BODY_FIELD_RE.captures_iter(text) {
         push_field(&mut matches, &caps, InlineFieldForm::Body);
     }
@@ -225,7 +223,8 @@ mod tests {
             let fields =
                 extract_inline_fields("Status:: Draft\nAuthor:: Jane Doe");
 
-            let keys: Vec<&str> = fields.iter().map(InlineField::key).collect();
+            let keys: Vec<&str> =
+                fields.iter().map(MetadataField::key).collect();
             assert_eq!(keys, ["Status", "Author"]);
         }
 
@@ -259,7 +258,8 @@ mod tests {
                 "Status:: Draft\nSee [Reviewer:: Jane] and (Editor:: Sam).",
             );
 
-            let keys: Vec<&str> = fields.iter().map(InlineField::key).collect();
+            let keys: Vec<&str> =
+                fields.iter().map(MetadataField::key).collect();
             assert_eq!(keys, ["Status", "Reviewer", "Editor"]);
         }
     }

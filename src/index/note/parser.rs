@@ -32,9 +32,8 @@ use pulldown_cmark::{
 use yaml_serde as serde_yaml;
 
 use super::{
-    CodeRegion, FieldSource, FieldValue, Frontmatter, InlineField, LinkType,
-    List, ListItem, MetadataField, Note, Outlink, RawFrontmatter, Tag,
-    TaskStatus, inline,
+    CodeRegion, FieldSource, FieldValue, Frontmatter, LinkType, List, ListItem,
+    MetadataField, Note, Outlink, RawFrontmatter, Tag, TaskStatus, inline,
 };
 
 /// Parses a markdown string into a [`Note`] record using `pulldown-cmark`,
@@ -81,7 +80,7 @@ struct ParserContext {
     list_stack: Vec<ListFrame>,
     item_stack: Vec<ItemFrame>,
     body_buffer: String,
-    inline_fields: Vec<InlineField>,
+    inline_fields: Vec<MetadataField>,
     tags: Vec<Tag>,
 }
 
@@ -717,7 +716,7 @@ mod tests {
                 parse_markdown("note.md", "Status:: Draft\n\nAuthor:: Jane");
 
             let keys: Vec<&str> =
-                note.inline_fields().iter().map(InlineField::key).collect();
+                note.inline_fields().iter().map(MetadataField::key).collect();
             assert_eq!(keys, ["Status", "Author"]);
         }
 
@@ -798,7 +797,7 @@ mod tests {
             );
 
             let keys: Vec<&str> =
-                note.inline_fields().iter().map(InlineField::key).collect();
+                note.inline_fields().iter().map(MetadataField::key).collect();
             assert_eq!(keys, ["Status", "Priority"]);
         }
 
@@ -864,7 +863,7 @@ mod tests {
             );
 
             let keys: Vec<&str> =
-                note.inline_fields().iter().map(InlineField::key).collect();
+                note.inline_fields().iter().map(MetadataField::key).collect();
             assert_eq!(keys, ["Status", "Reviewer"]);
         }
 
@@ -877,7 +876,7 @@ mod tests {
             );
 
             let keys: Vec<&str> =
-                note.inline_fields().iter().map(InlineField::key).collect();
+                note.inline_fields().iter().map(MetadataField::key).collect();
             assert_eq!(keys, ["Reviewer", "Status"]);
         }
 

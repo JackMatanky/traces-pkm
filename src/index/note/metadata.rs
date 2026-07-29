@@ -280,9 +280,6 @@ impl MetadataField {
     }
 }
 
-/// Backward-compatible type alias for body inline fields.
-pub(crate) type InlineField = MetadataField;
-
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -34,9 +34,9 @@ use note::parse_markdown;
     reason = "domain types exported for index module callers"
 )]
 pub(crate) use note::{
-    CodeRegion, FieldSource, FieldValue, Frontmatter, InlineField,
-    InlineFieldForm, LinkType, List, ListItem, MetadataField, Note, Outlink,
-    RawFrontmatter, Tag, TaskStatus,
+    CodeRegion, FieldSource, FieldValue, Frontmatter, InlineFieldForm,
+    LinkType, List, ListItem, MetadataField, Note, Outlink, RawFrontmatter,
+    Tag, TaskStatus,
 };
 use store::IndexStore;
 

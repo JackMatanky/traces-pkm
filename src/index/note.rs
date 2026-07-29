@@ -7,8 +7,8 @@ mod structure;
 use std::path::{Path, PathBuf};
 
 pub(crate) use metadata::{
-    FieldSource, FieldValue, Frontmatter, InlineField, InlineFieldForm,
-    MetadataField, RawFrontmatter,
+    FieldSource, FieldValue, Frontmatter, InlineFieldForm, MetadataField,
+    RawFrontmatter,
 };
 pub(crate) use parser::parse_markdown;
 use serde::{Deserialize, Serialize};
