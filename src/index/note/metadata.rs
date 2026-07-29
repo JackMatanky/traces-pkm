@@ -34,60 +34,6 @@ impl RawFrontmatter {
     pub(crate) fn is_empty(&self) -> bool {
         self.0.trim().is_empty()
     }
-
-    /// Parses this raw frontmatter block as YAML into a structured
-    /// [`Frontmatter`].
-    #[must_use]
-    pub(crate) fn parse_yaml(&self) -> Frontmatter {
-        if self.is_empty() {
-            return Frontmatter::default();
-        }
-        let fields = self.parse_yaml_fields();
-        Frontmatter::new(fields)
-    }
-
-    /// Parses this raw frontmatter block into a structured [`Frontmatter`],
-    /// defaulting to YAML format.
-    #[inline]
-    #[must_use]
-    pub(crate) fn parse(&self) -> Frontmatter {
-        self.parse_yaml()
-    }
-
-    /// Parses the raw YAML string into structured [`MetadataField`]s,
-    /// emitting a tracing warning on syntax failure.
-    fn parse_yaml_fields(&self) -> Vec<MetadataField> {
-        let val = match serde_yaml::from_str::<serde_yaml::Value>(&self.0) {
-            Ok(v) => v,
-            Err(err) => {
-                warn!(%err, "failed to parse YAML frontmatter block; ignoring malformed fields");
-                return Vec::new();
-            }
-        };
-        let serde_yaml::Value::Mapping(map) = val else {
-            warn!(
-                "YAML frontmatter is not a key-value mapping; ignoring \
-                 top-level value"
-            );
-            return Vec::new();
-        };
-        let mut fields = Vec::with_capacity(map.len());
-        for (k, v) in map {
-            let key = match k {
-                serde_yaml::Value::String(s) => s,
-                serde_yaml::Value::Number(n) => n.to_string(),
-                serde_yaml::Value::Bool(b) => b.to_string(),
-                _ => continue,
-            };
-            let field_val = FieldValue::from(v);
-            fields.push(MetadataField::new(
-                key,
-                field_val,
-                FieldSource::Frontmatter,
-            ));
-        }
-        fields
-    }
 }
 
 /// Structured frontmatter metadata parsed from a [`RawFrontmatter`] block.
@@ -122,9 +68,40 @@ impl Frontmatter {
 }
 
 impl From<&RawFrontmatter> for Frontmatter {
-    #[inline]
     fn from(raw: &RawFrontmatter) -> Self {
-        raw.parse()
+        if raw.is_empty() {
+            return Self::default();
+        }
+        let val = match serde_yaml::from_str::<serde_yaml::Value>(raw.as_str())
+        {
+            Ok(v) => v,
+            Err(err) => {
+                warn!(%err, "failed to parse YAML frontmatter block; ignoring malformed fields");
+                return Self::default();
+            }
+        };
+        let serde_yaml::Value::Mapping(map) = val else {
+            warn!(
+                "YAML frontmatter is not a key-value mapping; ignoring \
+                 top-level value"
+            );
+            return Self::default();
+        };
+        let mut fields = Vec::with_capacity(map.len());
+        for (k, v) in map {
+            let key = match k {
+                serde_yaml::Value::String(s) => s,
+                serde_yaml::Value::Number(n) => n.to_string(),
+                serde_yaml::Value::Bool(b) => b.to_string(),
+                _ => continue,
+            };
+            fields.push(MetadataField::new(
+                key,
+                FieldValue::from(v),
+                FieldSource::Frontmatter,
+            ));
+        }
+        Self::new(fields)
     }
 }
 /// Dataview-compatible Inline Field syntax form in body text.
@@ -314,19 +291,6 @@ mod tests {
                 fm.fields().iter().find(|f| f.key() == "title").expect("title");
             assert_eq!(title.value(), &FieldValue::String("Test".to_string()));
             assert_eq!(title.source(), FieldSource::Frontmatter);
-        }
-
-        #[test]
-        fn parse_yaml_method_parses_raw_frontmatter_as_yaml() {
-            let raw = RawFrontmatter::new("title: Direct\n");
-            let fm = raw.parse_yaml();
-
-            assert_eq!(fm.fields().len(), 1);
-            assert_eq!(
-                raw.parse().fields().len(),
-                1,
-                "parse() defaults to parse_yaml()"
-            );
         }
 
         #[test]
