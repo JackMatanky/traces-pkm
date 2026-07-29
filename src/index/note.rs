@@ -4,6 +4,7 @@ mod inline;
 mod metadata;
 mod parser;
 mod structure;
+
 use std::path::{Path, PathBuf};
 
 pub(crate) use metadata::{

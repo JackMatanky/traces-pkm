@@ -189,7 +189,7 @@ impl List {
 
 /// An excludable code region (inline code or code block byte range) in source
 /// markdown.
-#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub(crate) struct CodeRegion {
     start: usize,
     end: usize,

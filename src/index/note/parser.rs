@@ -29,11 +29,10 @@ use pulldown_cmark::{
     CowStr, Event, LinkType as CmarkLinkType, Options, Parser, Tag as CmarkTag,
     TagEnd,
 };
-use yaml_serde as serde_yaml;
 
 use super::{
-    CodeRegion, FieldSource, FieldValue, Frontmatter, LinkType, List, ListItem,
-    MetadataField, Note, Outlink, RawFrontmatter, Tag, TaskStatus, inline,
+    CodeRegion, Frontmatter, LinkType, List, ListItem, MetadataField, Note,
+    Outlink, RawFrontmatter, Tag, TaskStatus, inline,
 };
 
 /// Parses a markdown string into a [`Note`] record using `pulldown-cmark`,
@@ -379,92 +378,6 @@ impl ParserContext {
         }
     }
 }
-/// Parses a raw YAML frontmatter string into structured [`MetadataField`]s.
-fn parse_yaml_frontmatter(raw: &str) -> Vec<MetadataField> {
-    let Ok(val) = serde_yaml::from_str::<serde_yaml::Value>(raw) else {
-        return Vec::new();
-    };
-    let serde_yaml::Value::Mapping(map) = val else {
-        return Vec::new();
-    };
-    let mut fields = Vec::with_capacity(map.len());
-    for (k, v) in map {
-        let key = match k {
-            serde_yaml::Value::String(s) => s,
-            serde_yaml::Value::Number(n) => n.to_string(),
-            serde_yaml::Value::Bool(b) => b.to_string(),
-            _ => continue,
-        };
-        let field_val = yaml_value_to_field_value(v);
-        fields.push(MetadataField::new(
-            key,
-            field_val,
-            FieldSource::Frontmatter,
-        ));
-    }
-    fields
-}
-
-#[expect(
-    clippy::as_conversions,
-    clippy::cast_precision_loss,
-    reason = "YAML integer numbers converted to f64"
-)]
-fn yaml_value_to_field_value(val: serde_yaml::Value) -> FieldValue {
-    match val {
-        serde_yaml::Value::Null => FieldValue::Null,
-        serde_yaml::Value::Bool(b) => FieldValue::Bool(b),
-        serde_yaml::Value::Number(n) => {
-            if let Some(f) = n.as_f64() {
-                FieldValue::Number(f)
-            } else if let Some(i) = n.as_i64() {
-                FieldValue::Number(i as f64)
-            } else {
-                FieldValue::Null
-            }
-        }
-        serde_yaml::Value::String(s) => {
-            let trimmed = s.trim();
-            if trimmed.is_empty() {
-                FieldValue::Null
-            } else if is_iso_date(trimmed) {
-                FieldValue::Date(s)
-            } else {
-                FieldValue::String(s)
-            }
-        }
-        serde_yaml::Value::Sequence(seq) => FieldValue::List(
-            seq.into_iter().map(yaml_value_to_field_value).collect(),
-        ),
-        serde_yaml::Value::Mapping(map) => {
-            let mut btree = std::collections::BTreeMap::new();
-            for (k, v) in map {
-                let key = match k {
-                    serde_yaml::Value::String(s) => s,
-                    serde_yaml::Value::Number(n) => n.to_string(),
-                    serde_yaml::Value::Bool(b) => b.to_string(),
-                    _ => continue,
-                };
-                btree.insert(key, yaml_value_to_field_value(v));
-            }
-            FieldValue::Object(btree)
-        }
-        serde_yaml::Value::Tagged(tagged) => {
-            yaml_value_to_field_value(tagged.value)
-        }
-    }
-}
-
-/// Returns `true` if `s` starts with an ISO date format `YYYY-MM-DD`.
-fn is_iso_date(s: &str) -> bool {
-    let bytes = s.as_bytes();
-    bytes.len() >= 10
-        && bytes.get(0..4).is_some_and(|b| b.iter().all(u8::is_ascii_digit))
-        && bytes.get(4) == Some(&b'-')
-        && bytes.get(5..7).is_some_and(|b| b.iter().all(u8::is_ascii_digit))
-        && bytes.get(7) == Some(&b'-')
-        && bytes.get(8..10).is_some_and(|b| b.iter().all(u8::is_ascii_digit))
-}
 
 /// Active list context on the parser stack.
 struct ListFrame {
@@ -485,8 +398,10 @@ struct ItemFrame {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
+    use super::{
+        super::{FieldSource, FieldValue},
+        *,
+    };
     mod parse {
         use pretty_assertions::assert_eq;
         use rstest::rstest;

@@ -111,101 +111,6 @@ fn parse_yaml_frontmatter(raw: &str) -> Vec<MetadataField> {
     }
     fields
 }
-
-#[expect(
-    clippy::as_conversions,
-    clippy::cast_precision_loss,
-    reason = "YAML integer numbers converted to f64"
-)]
-impl From<serde_yaml::Value> for FieldValue {
-    fn from(val: serde_yaml::Value) -> Self {
-        match val {
-            serde_yaml::Value::Null => Self::Null,
-            serde_yaml::Value::Bool(b) => Self::Bool(b),
-            serde_yaml::Value::Number(n) => {
-                if let Some(f) = n.as_f64() {
-                    Self::Number(f)
-                } else if let Some(i) = n.as_i64() {
-                    Self::Number(i as f64)
-                } else {
-                    Self::Null
-                }
-            }
-            serde_yaml::Value::String(s) => {
-                let trimmed = s.trim();
-                if trimmed.is_empty() {
-                    Self::Null
-                } else if is_iso_date(trimmed) {
-                    Self::Date(s)
-                } else {
-                    Self::String(s)
-                }
-            }
-            serde_yaml::Value::Sequence(seq) => {
-                Self::List(seq.into_iter().map(Self::from).collect())
-            }
-            serde_yaml::Value::Mapping(map) => {
-                let mut btree = BTreeMap::new();
-                for (k, v) in map {
-                    let key = match k {
-                        serde_yaml::Value::String(s) => s,
-                        serde_yaml::Value::Number(n) => n.to_string(),
-                        serde_yaml::Value::Bool(b) => b.to_string(),
-                        _ => continue,
-                    };
-                    btree.insert(key, Self::from(v));
-                }
-                Self::Object(btree)
-            }
-            serde_yaml::Value::Tagged(tagged) => Self::from(tagged.value),
-        }
-    }
-}
-
-/// Returns `true` if `s` starts with an ISO date format `YYYY-MM-DD`.
-fn is_iso_date(s: &str) -> bool {
-    let bytes = s.as_bytes();
-    bytes.len() >= 10
-        && bytes.get(0..4).is_some_and(|b| b.iter().all(u8::is_ascii_digit))
-        && bytes.get(4) == Some(&b'-')
-        && bytes.get(5..7).is_some_and(|b| b.iter().all(u8::is_ascii_digit))
-        && bytes.get(7) == Some(&b'-')
-        && bytes.get(8..10).is_some_and(|b| b.iter().all(u8::is_ascii_digit))
-}
-
-/// Dataview-compatible metadata field value.
-#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
-pub(crate) enum FieldValue {
-    Null,
-    Bool(bool),
-    Number(f64),
-    String(String),
-    Date(String),
-    Link(Outlink),
-    List(Vec<FieldValue>),
-    Object(BTreeMap<String, FieldValue>),
-}
-
-impl FieldValue {
-    /// Returns `true` if this value is [`FieldValue::Null`].
-    #[inline]
-    #[must_use]
-    pub(crate) fn is_null(&self) -> bool {
-        matches!(self, Self::Null)
-    }
-
-    /// Returns the string slice if this value is [`FieldValue::String`] or
-    /// [`FieldValue::Date`].
-    #[inline]
-    #[must_use]
-    pub(crate) fn as_str(&self) -> Option<&str> {
-        match self {
-            Self::String(s) | Self::Date(s) => Some(s),
-            _ => None,
-        }
-    }
-}
-
 /// Dataview-compatible Inline Field syntax form in body text.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub(crate) enum InlineFieldForm {
@@ -278,6 +183,101 @@ impl MetadataField {
             FieldSource::Frontmatter => None,
         }
     }
+}
+
+/// Dataview-compatible metadata field value.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+pub(crate) enum FieldValue {
+    Null,
+    Bool(bool),
+    Number(f64),
+    String(String),
+    Date(String),
+    Link(Outlink),
+    List(Vec<FieldValue>),
+    Object(BTreeMap<String, FieldValue>),
+}
+
+impl FieldValue {
+    /// Returns `true` if this value is [`FieldValue::Null`].
+    #[expect(dead_code, reason = "domain accessor for QueryOps filtering")]
+    #[inline]
+    #[must_use]
+    pub(crate) fn is_null(&self) -> bool {
+        matches!(self, Self::Null)
+    }
+
+    /// Returns the string slice if this value is [`FieldValue::String`] or
+    /// [`FieldValue::Date`].
+    #[inline]
+    #[must_use]
+    pub(crate) fn as_str(&self) -> Option<&str> {
+        match self {
+            Self::String(s) | Self::Date(s) => Some(s),
+            _ => None,
+        }
+    }
+}
+
+#[expect(
+    clippy::as_conversions,
+    clippy::cast_precision_loss,
+    reason = "YAML integer numbers converted to f64"
+)]
+impl From<serde_yaml::Value> for FieldValue {
+    fn from(val: serde_yaml::Value) -> Self {
+        match val {
+            serde_yaml::Value::Null => Self::Null,
+            serde_yaml::Value::Bool(b) => Self::Bool(b),
+            serde_yaml::Value::Number(n) => {
+                if let Some(f) = n.as_f64() {
+                    Self::Number(f)
+                } else if let Some(i) = n.as_i64() {
+                    Self::Number(i as f64)
+                } else {
+                    Self::Null
+                }
+            }
+            serde_yaml::Value::String(s) => {
+                let trimmed = s.trim();
+                if trimmed.is_empty() {
+                    Self::Null
+                } else if is_iso_date(trimmed) {
+                    Self::Date(s)
+                } else {
+                    Self::String(s)
+                }
+            }
+            serde_yaml::Value::Sequence(seq) => {
+                Self::List(seq.into_iter().map(Self::from).collect())
+            }
+            serde_yaml::Value::Mapping(map) => {
+                let mut btree = BTreeMap::new();
+                for (k, v) in map {
+                    let key = match k {
+                        serde_yaml::Value::String(s) => s,
+                        serde_yaml::Value::Number(n) => n.to_string(),
+                        serde_yaml::Value::Bool(b) => b.to_string(),
+                        _ => continue,
+                    };
+                    btree.insert(key, Self::from(v));
+                }
+                Self::Object(btree)
+            }
+            serde_yaml::Value::Tagged(tagged) => Self::from(tagged.value),
+        }
+    }
+}
+
+/// Returns `true` if `s` starts with an ISO date format `YYYY-MM-DD`.
+fn is_iso_date(s: &str) -> bool {
+    let bytes = s.as_bytes();
+    bytes.len() >= 10
+        && bytes.get(0..4).is_some_and(|b| b.iter().all(u8::is_ascii_digit))
+        && bytes.get(4) == Some(&b'-')
+        && bytes.get(5..7).is_some_and(|b| b.iter().all(u8::is_ascii_digit))
+        && bytes.get(7) == Some(&b'-')
+        && bytes.get(8..10).is_some_and(|b| b.iter().all(u8::is_ascii_digit))
 }
 
 #[cfg(test)]

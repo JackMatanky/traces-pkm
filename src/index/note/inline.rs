@@ -75,6 +75,24 @@ pub(super) fn extract_inline_fields(text: &str) -> Vec<MetadataField> {
     matches.sort_by_key(|(start, _)| *start);
     matches.into_iter().map(|(_, field)| field).collect()
 }
+/// Extracts every markdown tag from `text`, in encounter order, keeping the
+/// leading `#`. A tag is rejected when the byte immediately before its `#`
+/// is alphanumeric or `_` (e.g. the `#` in `foo#bar`), checked directly on
+/// `text` after a boundary-agnostic [`TAG_RE`] match — the `regex` crate has
+/// no lookbehind, and folding the check into a consuming leading alternative
+/// (`(?:\A|[^alnum])`) would eat a character other matches might need.
+pub(super) fn extract_tags(text: &str) -> Vec<Tag> {
+    TAG_RE
+        .find_iter(text)
+        .filter(|found| {
+            text[..found.start()]
+                .chars()
+                .next_back()
+                .is_none_or(|c| !c.is_alphanumeric() && c != '_')
+        })
+        .map(|found| Tag::new(found.as_str()))
+        .collect()
+}
 
 /// Pushes the field captured by `caps`, together with its match start
 /// offset for later sorting, onto `matches`. No-op if `caps` is missing the
@@ -131,25 +149,6 @@ fn is_iso_date(s: &str) -> bool {
         && bytes.get(5..7).is_some_and(|b| b.iter().all(u8::is_ascii_digit))
         && bytes.get(7) == Some(&b'-')
         && bytes.get(8..10).is_some_and(|b| b.iter().all(u8::is_ascii_digit))
-}
-
-/// Extracts every markdown tag from `text`, in encounter order, keeping the
-/// leading `#`. A tag is rejected when the byte immediately before its `#`
-/// is alphanumeric or `_` (e.g. the `#` in `foo#bar`), checked directly on
-/// `text` after a boundary-agnostic [`TAG_RE`] match — the `regex` crate has
-/// no lookbehind, and folding the check into a consuming leading alternative
-/// (`(?:\A|[^alnum])`) would eat a character other matches might need.
-pub(super) fn extract_tags(text: &str) -> Vec<Tag> {
-    TAG_RE
-        .find_iter(text)
-        .filter(|found| {
-            text[..found.start()]
-                .chars()
-                .next_back()
-                .is_none_or(|c| !c.is_alphanumeric() && c != '_')
-        })
-        .map(|found| Tag::new(found.as_str()))
-        .collect()
 }
 
 #[cfg(test)]
