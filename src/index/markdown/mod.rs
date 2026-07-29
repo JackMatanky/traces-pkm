@@ -1,22 +1,26 @@
 //! Markdown Note Metadata: parses `.md`/`.markdown` source into [`Note`]
 //! records for the [`super::FileIndex`].
 //!
-//! - [`types`]: the [`Note`] domain model — frontmatter, lists, outlinks, code
-//!   regions, Inline Fields, and tags.
-//! - [`parser`]: [`parse_markdown`] walks `pulldown-cmark` events into that
-//!   model with an explicit stack (not recursion) for arbitrarily nested lists.
-//!   A link's display text feeds both its [`Outlink`] and the plain text of the
-//!   list item containing it.
-//! - [`inline`]: the Dataview-compatible Inline Field and markdown tag lexer
-//!   [`parser`] runs over each body paragraph and list item's plain text.
+//! - [`note`]: [`Note`] aggregate domain record.
+//! - [`metadata`]: YAML [`RawFrontmatter`], [`Frontmatter`], and
+//!   [`MetadataField`]/[`FieldValue`] model.
+//! - [`structure`]: markdown lists, tasks, outlinks, tags, and code regions.
+//! - [`parser`]: [`parse_markdown`] walks `pulldown-cmark` events into the
+//!   domain model.
+//! - [`inline`]: the Dataview-compatible Inline Field and markdown tag lexer.
 
 mod inline;
+mod metadata;
+mod note;
 mod parser;
-mod types;
+mod structure;
 
+pub(crate) use metadata::{
+    FieldSource, FieldValue, Frontmatter, InlineField, InlineFieldForm,
+    MetadataField, RawFrontmatter,
+};
+pub(crate) use note::Note;
 pub(crate) use parser::parse_markdown;
-pub(crate) use types::{
-    CodeRegion, FieldSource, FieldValue, Frontmatter, InlineField,
-    InlineFieldForm, LinkType, List, ListItem, MetadataField, Note, Outlink,
-    Tag, TaskStatus,
+pub(crate) use structure::{
+    CodeRegion, LinkType, List, ListItem, Outlink, Tag, TaskStatus,
 };

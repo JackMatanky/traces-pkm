@@ -10,7 +10,7 @@ use std::sync::LazyLock;
 
 use regex::{Captures, Regex};
 
-use super::types::{
+use super::{
     FieldSource, FieldValue, InlineField, InlineFieldForm, MetadataField, Tag,
 };
 

@@ -32,12 +32,9 @@ use pulldown_cmark::{
 use yaml_serde as serde_yaml;
 
 use super::{
-    inline,
-    types::{
-        CodeRegion, FieldSource, FieldValue, Frontmatter, InlineField,
-        LinkType, List, ListItem, MetadataField, Note, Outlink, RawFrontmatter,
-        Tag, TaskStatus,
-    },
+    CodeRegion, FieldSource, FieldValue, Frontmatter, InlineField, LinkType,
+    List, ListItem, MetadataField, Note, Outlink, RawFrontmatter, Tag,
+    TaskStatus, inline,
 };
 
 /// Parses a markdown string into a [`Note`] record using `pulldown-cmark`,
