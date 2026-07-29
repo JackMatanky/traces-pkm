@@ -630,13 +630,13 @@ mod tests {
         }
     }
 
-    mod note_builder {
+    mod builder {
         use pretty_assertions::assert_eq;
 
         use super::*;
 
         #[test]
-        fn attaches_inline_fields_and_tags_via_with_methods() {
+        fn with_inline_fields_attaches_the_given_fields() {
             let field =
                 InlineField::new("Status", "Draft", InlineFieldForm::Body);
 
@@ -647,10 +647,22 @@ mod tests {
                 Vec::new(),
                 Vec::new(),
             )
-            .with_inline_fields(vec![field.clone()])
-            .with_tags(vec!["#book".to_owned()]);
+            .with_inline_fields(vec![field.clone()]);
 
             assert_eq!(note.inline_fields(), [field]);
+        }
+
+        #[test]
+        fn with_tags_attaches_the_given_tags() {
+            let note = Note::new(
+                "notes/a.md",
+                None,
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+            )
+            .with_tags(vec!["#book".to_owned()]);
+
             assert_eq!(note.tags(), ["#book".to_owned()]);
         }
 

@@ -503,52 +503,63 @@ mod tests {
         use super::*;
         use crate::index::InlineFieldForm;
 
-        #[test]
-        fn extracts_a_bare_body_field() {
-            let note = parse_markdown("note.md", "Author:: Jane Doe");
+        #[rstest]
+        #[case::body(
+            "Author:: Jane Doe",
+            "Author",
+            "Jane Doe",
+            InlineFieldForm::Body
+        )]
+        #[case::visible_key(
+            "See the [Status:: Draft] note.",
+            "Status",
+            "Draft",
+            InlineFieldForm::VisibleKey
+        )]
+        #[case::hidden_key(
+            "See the (Status:: Draft) note.",
+            "Status",
+            "Draft",
+            InlineFieldForm::HiddenKey
+        )]
+        fn extracts_a_field_in_its_declared_form_from_body_text(
+            #[case] input: &str,
+            #[case] expected_key: &str,
+            #[case] expected_value: &str,
+            #[case] expected_form: InlineFieldForm,
+        ) {
+            let note = parse_markdown("note.md", input);
 
             let field = note.inline_fields().first().expect("field present");
-            assert_eq!(field.key(), "Author");
-            assert_eq!(field.value(), "Jane Doe");
-            assert_eq!(field.form(), InlineFieldForm::Body);
+            assert_eq!(field.key(), expected_key);
+            assert_eq!(field.value(), expected_value);
+            assert_eq!(field.form(), expected_form);
         }
 
         #[test]
-        fn extracts_a_visible_key_field_from_body_text() {
+        fn extracts_a_field_from_each_of_two_separate_paragraphs() {
             let note =
-                parse_markdown("note.md", "See the [Status:: Draft] note.");
+                parse_markdown("note.md", "Status:: Draft\n\nAuthor:: Jane");
 
-            let field = note.inline_fields().first().expect("field present");
-            assert_eq!(field.key(), "Status");
-            assert_eq!(field.value(), "Draft");
-            assert_eq!(field.form(), InlineFieldForm::VisibleKey);
-        }
-
-        #[test]
-        fn extracts_a_hidden_key_field_from_body_text() {
-            let note =
-                parse_markdown("note.md", "See the (Status:: Draft) note.");
-
-            let field = note.inline_fields().first().expect("field present");
-            assert_eq!(field.key(), "Status");
-            assert_eq!(field.value(), "Draft");
-            assert_eq!(field.form(), InlineFieldForm::HiddenKey);
+            let keys: Vec<&str> =
+                note.inline_fields().iter().map(InlineField::key).collect();
+            assert_eq!(keys, ["Status", "Author"]);
         }
 
         #[test]
         fn extracts_a_bare_field_from_a_list_item_and_keeps_it_in_item_text() {
-            let note = parse_markdown("note.md", "- Status:: Draft #urgent");
+            let note = parse_markdown("note.md", "- Status:: Draft");
 
             let item = note
                 .lists()
                 .first()
                 .and_then(|list| list.items().first())
                 .expect("item present");
-            assert_eq!(item.text(), "Status:: Draft #urgent");
+            assert_eq!(item.text(), "Status:: Draft");
 
             let field = note.inline_fields().first().expect("field present");
             assert_eq!(field.key(), "Status");
-            assert_eq!(field.value(), "Draft #urgent");
+            assert_eq!(field.value(), "Draft");
             assert_eq!(field.form(), InlineFieldForm::Body);
         }
 

@@ -126,50 +126,97 @@ mod tests {
 
     mod inline_fields {
         use pretty_assertions::assert_eq;
+        use rstest::rstest;
 
         use super::*;
 
-        #[test]
-        fn extracts_a_bare_body_field() {
-            let fields = extract_inline_fields("Author:: Jane Doe");
+        #[rstest]
+        #[case::body(
+            "Author:: Jane Doe",
+            "Author",
+            "Jane Doe",
+            InlineFieldForm::Body
+        )]
+        #[case::visible_key(
+            "See the [Status:: Draft] note.",
+            "Status",
+            "Draft",
+            InlineFieldForm::VisibleKey
+        )]
+        #[case::hidden_key(
+            "See the (Status:: Draft) note.",
+            "Status",
+            "Draft",
+            InlineFieldForm::HiddenKey
+        )]
+        fn extracts_a_field_in_its_declared_form(
+            #[case] input: &str,
+            #[case] expected_key: &str,
+            #[case] expected_value: &str,
+            #[case] expected_form: InlineFieldForm,
+        ) {
+            let fields = extract_inline_fields(input);
 
             assert_eq!(fields.len(), 1);
             let field = fields.first().expect("field present");
-            assert_eq!(field.key(), "Author");
-            assert_eq!(field.value(), "Jane Doe");
-            assert_eq!(field.form(), InlineFieldForm::Body);
+            assert_eq!(field.key(), expected_key);
+            assert_eq!(field.value(), expected_value);
+            assert_eq!(field.form(), expected_form);
         }
 
         #[test]
-        fn extracts_a_visible_key_bracket_field() {
-            let fields =
-                extract_inline_fields("See the [Status:: Draft] note.");
-
-            assert_eq!(fields.len(), 1);
-            let field = fields.first().expect("field present");
-            assert_eq!(field.key(), "Status");
-            assert_eq!(field.value(), "Draft");
-            assert_eq!(field.form(), InlineFieldForm::VisibleKey);
-        }
-
-        #[test]
-        fn extracts_a_hidden_key_paren_field() {
-            let fields =
-                extract_inline_fields("See the (Status:: Draft) note.");
-
-            assert_eq!(fields.len(), 1);
-            let field = fields.first().expect("field present");
-            assert_eq!(field.key(), "Status");
-            assert_eq!(field.value(), "Draft");
-            assert_eq!(field.form(), InlineFieldForm::HiddenKey);
-        }
-
-        #[test]
-        fn does_not_match_a_bare_field_mid_sentence() {
+        fn rejects_a_multi_word_bare_key() {
             let fields =
                 extract_inline_fields("This sentence has a :: but no key.");
 
             assert_eq!(fields.len(), 0);
+        }
+
+        #[rstest]
+        #[case::visible_key("[Due Date:: 2024-01-01]", "Due Date")]
+        #[case::hidden_key("(Due Date:: 2024-01-01)", "Due Date")]
+        fn accepts_a_multi_word_key_when_delimiter_bounded(
+            #[case] input: &str,
+            #[case] expected_key: &str,
+        ) {
+            let fields = extract_inline_fields(input);
+
+            let field = fields.first().expect("field present");
+            assert_eq!(field.key(), expected_key);
+            assert_eq!(field.value(), "2024-01-01");
+        }
+
+        #[test]
+        fn extracts_a_bare_field_from_each_line_of_a_multiline_buffer() {
+            let fields =
+                extract_inline_fields("Status:: Draft\nAuthor:: Jane Doe");
+
+            let keys: Vec<&str> = fields.iter().map(InlineField::key).collect();
+            assert_eq!(keys, ["Status", "Author"]);
+        }
+
+        #[test]
+        fn trims_surrounding_whitespace_from_the_value() {
+            let fields = extract_inline_fields("Status::    Draft   ");
+
+            let field = fields.first().expect("field present");
+            assert_eq!(field.value(), "Draft");
+        }
+
+        #[test]
+        fn extracts_an_empty_value_when_nothing_follows_the_double_colon() {
+            let fields = extract_inline_fields("Status::");
+
+            let field = fields.first().expect("field present");
+            assert_eq!(field.value(), "");
+        }
+
+        #[test]
+        fn accepts_a_bare_key_preceded_by_leading_whitespace() {
+            let fields = extract_inline_fields("  Status:: Draft");
+
+            let field = fields.first().expect("field present");
+            assert_eq!(field.key(), "Status");
         }
 
         #[test]
@@ -185,49 +232,40 @@ mod tests {
 
     mod tags {
         use pretty_assertions::assert_eq;
+        use rstest::rstest;
 
         use super::*;
 
-        #[test]
-        fn extracts_a_standalone_tag() {
-            let tags = extract_tags("Filed under #book for later.");
+        #[rstest]
+        #[case::standalone(
+            "Filed under #book for later.",
+            &["#book"]
+        )]
+        #[case::nested_path(
+            "#projects/active needs review.",
+            &["#projects/active"]
+        )]
+        #[case::multiple_space_separated(
+            "#book #fiction favorites.",
+            &["#book", "#fiction"]
+        )]
+        #[case::hash_embedded_in_a_word(
+            "The issue is foo#bar, not a tag.",
+            &[]
+        )]
+        #[case::adjacent_separated_by_punctuation("(#a)(#b)", &["#a", "#b"])]
+        #[case::glued_directly_onto_another_tag("#a#b", &["#a"])]
+        #[case::preceded_by_multibyte_punctuation("café—#book", &["#book"])]
+        #[case::glued_onto_a_multibyte_letter("café#book", &[])]
+        fn extracts_tags_matching_the_expected_set(
+            #[case] input: &str,
+            #[case] expected: &[&str],
+        ) {
+            let tags = extract_tags(input);
 
-            assert_eq!(tags, ["#book".to_owned()]);
-        }
-
-        #[test]
-        fn extracts_a_nested_tag() {
-            let tags = extract_tags("#projects/active needs review.");
-
-            assert_eq!(tags, ["#projects/active".to_owned()]);
-        }
-
-        #[test]
-        fn extracts_multiple_tags_in_order() {
-            let tags = extract_tags("#book #fiction favorites.");
-
-            assert_eq!(tags, ["#book".to_owned(), "#fiction".to_owned()]);
-        }
-
-        #[test]
-        fn ignores_a_hash_embedded_in_a_word() {
-            let tags = extract_tags("The issue is foo#bar, not a tag.");
-
-            assert_eq!(tags.len(), 0);
-        }
-
-        #[test]
-        fn extracts_adjacent_tags_separated_only_by_punctuation() {
-            let tags = extract_tags("(#a)(#b)");
-
-            assert_eq!(tags, ["#a".to_owned(), "#b".to_owned()]);
-        }
-
-        #[test]
-        fn rejects_a_second_tag_glued_directly_onto_the_first() {
-            let tags = extract_tags("#a#b");
-
-            assert_eq!(tags, ["#a".to_owned()]);
+            let expected: Vec<String> =
+                expected.iter().map(|tag| (*tag).to_owned()).collect();
+            assert_eq!(tags, expected);
         }
     }
 }

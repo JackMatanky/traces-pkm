@@ -229,13 +229,10 @@ mod tests {
         }
 
         #[test]
-        fn persist_then_load_recovers_inline_fields_and_tags() {
+        fn persist_then_load_recovers_inline_fields() {
             let temp = tempfile::tempdir().expect("create temp dir");
-            fs::write(
-                temp.path().join("note.md"),
-                "Status:: Draft\n\nFiled under #book today.",
-            )
-            .expect("write note");
+            fs::write(temp.path().join("note.md"), "Status:: Draft")
+                .expect("write note");
             let built = FileIndex::build(temp.path()).expect("build index");
             built.persist(temp.path()).expect("persist index");
 
@@ -243,18 +240,33 @@ mod tests {
 
             let loaded_note =
                 loaded.note(Path::new("note.md")).expect("loaded note");
-            assert_eq!(loaded_note.inline_fields().len(), 1);
+            let built_note =
+                built.note(Path::new("note.md")).expect("built note");
+            assert_eq!(loaded_note.inline_fields(), built_note.inline_fields());
             let field = loaded_note
                 .inline_fields()
                 .first()
                 .expect("inline field present");
             assert_eq!(field.key(), "Status");
             assert_eq!(field.value(), "Draft");
+        }
+
+        #[test]
+        fn persist_then_load_recovers_tags() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("note.md"), "Filed under #book today.")
+                .expect("write note");
+            let built = FileIndex::build(temp.path()).expect("build index");
+            built.persist(temp.path()).expect("persist index");
+
+            let loaded = FileIndex::load(temp.path()).expect("load index");
+
+            let loaded_note =
+                loaded.note(Path::new("note.md")).expect("loaded note");
+            let built_note =
+                built.note(Path::new("note.md")).expect("built note");
+            assert_eq!(loaded_note.tags(), built_note.tags());
             assert_eq!(loaded_note.tags(), ["#book".to_owned()]);
-            assert_eq!(
-                loaded_note.inline_fields(),
-                built.notes().first().expect("built note").inline_fields()
-            );
         }
 
         #[test]
