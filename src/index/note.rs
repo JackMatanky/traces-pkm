@@ -1,21 +1,25 @@
 //! Parsed markdown note metadata.
 
+mod code;
 mod inline;
+mod links;
+mod lists;
 mod metadata;
 mod parser;
-mod structure;
+mod tag;
 
 use std::path::{Path, PathBuf};
 
+pub(crate) use code::CodeRegion;
+pub(crate) use links::{LinkType, Outlink};
+pub(crate) use lists::{List, ListItem, TaskStatus};
 pub(crate) use metadata::{
     FieldValue, Frontmatter, InlineField, InlineFieldForm, MetadataField,
     RawFrontmatter,
 };
 pub(crate) use parser::parse_markdown;
 use serde::{Deserialize, Serialize};
-pub(crate) use structure::{
-    CodeRegion, LinkType, List, ListItem, Outlink, Tag, TaskStatus,
-};
+pub(crate) use tag::Tag;
 
 /// Metadata extracted from one markdown note.
 ///

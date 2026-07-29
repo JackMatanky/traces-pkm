@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use tracing::warn;
 use yaml_serde as serde_yaml;
 
-use super::structure::Outlink;
+use super::Outlink;
 
 /// Raw YAML frontmatter block extracted from a markdown note.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
