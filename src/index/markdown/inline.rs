@@ -10,7 +10,9 @@ use std::sync::LazyLock;
 
 use regex::{Captures, Regex};
 
-use super::types::{InlineField, InlineFieldForm, Tag};
+use super::types::{
+    FieldSource, FieldValue, InlineField, InlineFieldForm, MetadataField, Tag,
+};
 
 /// Matches a full-line `Key:: Value` body field: a letter-led key token
 /// (no whitespace — an unambiguous single word, unlike the bracket/paren
@@ -80,7 +82,7 @@ pub(super) fn extract_inline_fields(text: &str) -> Vec<InlineField> {
 /// offset for later sorting, onto `matches`. No-op if `caps` is missing the
 /// mandatory key/value capture groups.
 fn push_field(
-    matches: &mut Vec<(usize, InlineField)>,
+    matches: &mut Vec<(usize, MetadataField)>,
     caps: &Captures<'_>,
     form: InlineFieldForm,
 ) {
@@ -91,8 +93,46 @@ fn push_field(
     };
     matches.push((
         whole.start(),
-        InlineField::new(key.as_str().trim(), value.as_str().trim(), form),
+        MetadataField::new(
+            key.as_str().trim(),
+            parse_inline_value_str(value.as_str()),
+            FieldSource::Body(form),
+        ),
     ));
+}
+
+/// Parses a raw string value into a [`FieldValue`].
+fn parse_inline_value_str(raw: &str) -> FieldValue {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return FieldValue::Null;
+    }
+    if trimmed.eq_ignore_ascii_case("true") {
+        return FieldValue::Bool(true);
+    }
+    if trimmed.eq_ignore_ascii_case("false") {
+        return FieldValue::Bool(false);
+    }
+    if let Ok(num) = trimmed.parse::<f64>()
+        && num.is_finite()
+    {
+        return FieldValue::Number(num);
+    }
+    if is_iso_date(trimmed) {
+        return FieldValue::Date(trimmed.to_owned());
+    }
+    FieldValue::String(trimmed.to_owned())
+}
+
+/// Returns `true` if `s` starts with an ISO date format `YYYY-MM-DD`.
+fn is_iso_date(s: &str) -> bool {
+    let bytes = s.as_bytes();
+    bytes.len() >= 10
+        && bytes.get(0..4).is_some_and(|b| b.iter().all(u8::is_ascii_digit))
+        && bytes.get(4) == Some(&b'-')
+        && bytes.get(5..7).is_some_and(|b| b.iter().all(u8::is_ascii_digit))
+        && bytes.get(7) == Some(&b'-')
+        && bytes.get(8..10).is_some_and(|b| b.iter().all(u8::is_ascii_digit))
 }
 
 /// Extracts every markdown tag from `text`, in encounter order, keeping the
@@ -154,8 +194,8 @@ mod tests {
             assert_eq!(fields.len(), 1);
             let field = fields.first().expect("field present");
             assert_eq!(field.key(), expected_key);
-            assert_eq!(field.value(), expected_value);
-            assert_eq!(field.form(), expected_form);
+            assert_eq!(field.value().as_str(), Some(expected_value));
+            assert_eq!(field.form(), Some(expected_form));
         }
 
         #[test]
@@ -177,7 +217,7 @@ mod tests {
 
             let field = fields.first().expect("field present");
             assert_eq!(field.key(), expected_key);
-            assert_eq!(field.value(), "2024-01-01");
+            assert_eq!(field.value().as_str(), Some("2024-01-01"));
         }
 
         #[test]
@@ -194,7 +234,7 @@ mod tests {
             let fields = extract_inline_fields("Status::    Draft   ");
 
             let field = fields.first().expect("field present");
-            assert_eq!(field.value(), "Draft");
+            assert_eq!(field.value().as_str(), Some("Draft"));
         }
 
         #[test]
@@ -202,7 +242,7 @@ mod tests {
             let fields = extract_inline_fields("Status::");
 
             let field = fields.first().expect("field present");
-            assert_eq!(field.value(), "");
+            assert_eq!(field.value(), &FieldValue::Null);
         }
 
         #[test]

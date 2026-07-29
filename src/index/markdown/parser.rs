@@ -29,12 +29,14 @@ use pulldown_cmark::{
     CowStr, Event, LinkType as CmarkLinkType, Options, Parser, Tag as CmarkTag,
     TagEnd,
 };
+use yaml_serde as serde_yaml;
 
 use super::{
     inline,
     types::{
-        CodeRegion, Frontmatter, InlineField, LinkType, List, ListItem, Note,
-        Outlink, Tag, TaskStatus,
+        CodeRegion, FieldSource, FieldValue, Frontmatter, InlineField,
+        LinkType, List, ListItem, MetadataField, Note, Outlink, Tag,
+        TaskStatus,
     },
 };
 
@@ -149,8 +151,9 @@ impl ParserContext {
 
     fn end_metadata_block(&mut self) {
         self.block = BlockContext::None;
-        self.frontmatter =
-            Some(Frontmatter::new(mem::take(&mut self.metadata_buffer)));
+        let raw = mem::take(&mut self.metadata_buffer);
+        let fields = parse_yaml_frontmatter(&raw);
+        self.frontmatter = Some(Frontmatter::new(raw, fields));
     }
 
     /// Starts tracking a link. For a standard Markdown link (not a
@@ -377,6 +380,92 @@ impl ParserContext {
             self.body_buffer.push(ch);
         }
     }
+}
+/// Parses a raw YAML frontmatter string into structured [`MetadataField`]s.
+fn parse_yaml_frontmatter(raw: &str) -> Vec<MetadataField> {
+    let Ok(val) = serde_yaml::from_str::<serde_yaml::Value>(raw) else {
+        return Vec::new();
+    };
+    let serde_yaml::Value::Mapping(map) = val else {
+        return Vec::new();
+    };
+    let mut fields = Vec::with_capacity(map.len());
+    for (k, v) in map {
+        let key = match k {
+            serde_yaml::Value::String(s) => s,
+            serde_yaml::Value::Number(n) => n.to_string(),
+            serde_yaml::Value::Bool(b) => b.to_string(),
+            _ => continue,
+        };
+        let field_val = yaml_value_to_field_value(v);
+        fields.push(MetadataField::new(
+            key,
+            field_val,
+            FieldSource::Frontmatter,
+        ));
+    }
+    fields
+}
+
+#[expect(
+    clippy::as_conversions,
+    clippy::cast_precision_loss,
+    reason = "YAML integer numbers converted to f64"
+)]
+fn yaml_value_to_field_value(val: serde_yaml::Value) -> FieldValue {
+    match val {
+        serde_yaml::Value::Null => FieldValue::Null,
+        serde_yaml::Value::Bool(b) => FieldValue::Bool(b),
+        serde_yaml::Value::Number(n) => {
+            if let Some(f) = n.as_f64() {
+                FieldValue::Number(f)
+            } else if let Some(i) = n.as_i64() {
+                FieldValue::Number(i as f64)
+            } else {
+                FieldValue::Null
+            }
+        }
+        serde_yaml::Value::String(s) => {
+            let trimmed = s.trim();
+            if trimmed.is_empty() {
+                FieldValue::Null
+            } else if is_iso_date(trimmed) {
+                FieldValue::Date(s)
+            } else {
+                FieldValue::String(s)
+            }
+        }
+        serde_yaml::Value::Sequence(seq) => FieldValue::List(
+            seq.into_iter().map(yaml_value_to_field_value).collect(),
+        ),
+        serde_yaml::Value::Mapping(map) => {
+            let mut btree = std::collections::BTreeMap::new();
+            for (k, v) in map {
+                let key = match k {
+                    serde_yaml::Value::String(s) => s,
+                    serde_yaml::Value::Number(n) => n.to_string(),
+                    serde_yaml::Value::Bool(b) => b.to_string(),
+                    _ => continue,
+                };
+                btree.insert(key, yaml_value_to_field_value(v));
+            }
+            FieldValue::Object(btree)
+        }
+        serde_yaml::Value::Tagged(tagged) => {
+            yaml_value_to_field_value(tagged.value)
+        }
+    }
+}
+
+/// Returns `true` if `s` starts with an ISO date format `YYYY-MM-DD`.
+fn is_iso_date(s: &str) -> bool {
+    let bytes = s.as_bytes();
+    bytes.len() >= 10
+        && bytes.get(0..4).is_some_and(|b| b.iter().all(u8::is_ascii_digit))
+        && bytes.get(4) == Some(&b'-')
+        && bytes.get(5..7).is_some_and(|b| b.iter().all(u8::is_ascii_digit))
+        && bytes.get(7) == Some(&b'-')
+        && bytes.get(8..10).is_some_and(|b| b.iter().all(u8::is_ascii_digit))
 }
 
 /// Active list context on the parser stack.
@@ -619,8 +708,8 @@ mod tests {
             assert_eq!(note.inline_fields().len(), 1);
             let field = note.inline_fields().first().expect("field present");
             assert_eq!(field.key(), expected_key);
-            assert_eq!(field.value(), expected_value);
-            assert_eq!(field.form(), expected_form);
+            assert_eq!(field.value().as_str(), Some(expected_value));
+            assert_eq!(field.form(), Some(expected_form));
         }
 
         #[test]
@@ -647,8 +736,8 @@ mod tests {
 
             let field = note.inline_fields().first().expect("field present");
             assert_eq!(field.key(), "Status");
-            assert_eq!(field.value(), "Draft");
-            assert_eq!(field.form(), InlineFieldForm::Body);
+            assert_eq!(field.value().as_str(), Some("Draft"));
+            assert_eq!(field.form(), Some(InlineFieldForm::Body));
         }
 
         #[rstest]
@@ -699,7 +788,7 @@ mod tests {
 
             let field = note.inline_fields().first().expect("field present");
             assert_eq!(field.key(), "Status");
-            assert_eq!(field.value(), "Draft");
+            assert_eq!(field.value().as_str(), Some("Draft"));
         }
 
         #[test]
@@ -762,7 +851,7 @@ mod tests {
 
             let field = note.inline_fields().first().expect("field present");
             assert_eq!(field.key(), "Status");
-            assert_eq!(field.value(), "Draft #urgent");
+            assert_eq!(field.value().as_str(), Some("Draft #urgent"));
 
             assert_eq!(note.tags(), [Tag::new("#urgent")]);
         }
@@ -801,7 +890,7 @@ mod tests {
 
             let field = note.inline_fields().first().expect("field present");
             assert_eq!(field.key(), "Status");
-            assert_eq!(field.value(), "Draft more text");
+            assert_eq!(field.value().as_str(), Some("Draft more text"));
         }
 
         #[test]
@@ -817,7 +906,7 @@ mod tests {
 
             let field = note.inline_fields().first().expect("field present");
             assert_eq!(field.key(), "Status");
-            assert_eq!(field.value(), "Draft");
+            assert_eq!(field.value().as_str(), Some("Draft"));
         }
 
         #[test]
@@ -829,8 +918,8 @@ mod tests {
 
             let field = note.inline_fields().first().expect("field present");
             assert_eq!(field.key(), "Status");
-            assert_eq!(field.value(), "Draft");
-            assert_eq!(field.form(), InlineFieldForm::VisibleKey);
+            assert_eq!(field.value().as_str(), Some("Draft"));
+            assert_eq!(field.form(), Some(InlineFieldForm::VisibleKey));
 
             let link = note.outlinks().first().expect("outlink present");
             assert_eq!(link.target(), "http://example.com");
@@ -846,8 +935,55 @@ mod tests {
 
             let field = note.inline_fields().first().expect("field present");
             assert_eq!(field.key(), "Status");
-            assert_eq!(field.value(), "Draft");
-            assert_eq!(field.form(), InlineFieldForm::VisibleKey);
+            assert_eq!(field.value().as_str(), Some("Draft"));
+            assert_eq!(field.form(), Some(InlineFieldForm::VisibleKey));
         }
+    }
+    #[test]
+    fn extracts_structured_fields_from_yaml_frontmatter() {
+        let input = "---\ntitle: Note Title\nauthor: Alice\ndraft: \
+                     true\nrating: 5.0\ndate: 2026-07-29\n---\nBody text.";
+        let note = parse_markdown("note.md", input);
+
+        let fm = note.frontmatter().expect("frontmatter present");
+        assert_eq!(fm.fields().len(), 5);
+
+        let title =
+            fm.fields().iter().find(|f| f.key() == "title").expect("title");
+        assert_eq!(
+            title.value(),
+            &FieldValue::String("Note Title".to_string())
+        );
+        assert_eq!(title.source(), FieldSource::Frontmatter);
+
+        let draft =
+            fm.fields().iter().find(|f| f.key() == "draft").expect("draft");
+        assert_eq!(draft.value(), &FieldValue::Bool(true));
+
+        let rating =
+            fm.fields().iter().find(|f| f.key() == "rating").expect("rating");
+        assert_eq!(rating.value(), &FieldValue::Number(5.0));
+
+        let date =
+            fm.fields().iter().find(|f| f.key() == "date").expect("date");
+        assert_eq!(date.value(), &FieldValue::Date("2026-07-29".to_string()));
+    }
+
+    #[test]
+    fn fields_iterator_yields_frontmatter_fields_first_then_inline_fields() {
+        use crate::index::InlineFieldForm;
+
+        let input = "---\nauthor: Alice\n---\nStatus:: Draft\n";
+        let note = parse_markdown("note.md", input);
+
+        let keys: Vec<&str> = note.fields().map(MetadataField::key).collect();
+        assert_eq!(keys, ["author", "Status"]);
+
+        let sources: Vec<FieldSource> =
+            note.fields().map(MetadataField::source).collect();
+        assert_eq!(sources, [
+            FieldSource::Frontmatter,
+            FieldSource::Body(InlineFieldForm::Body)
+        ]);
     }
 }

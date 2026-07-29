@@ -1,6 +1,7 @@
 //! Markdown Note Metadata domain types.
 
 use std::{
+    collections::BTreeMap,
     ops::Range,
     path::{Path, PathBuf},
 };
@@ -10,14 +11,14 @@ use serde::{Deserialize, Serialize};
 /// Rich Note Metadata extracted from a markdown file: frontmatter, lists,
 /// outlinks, code regions, Inline Fields, and tags. [`Self::tasks`] derives
 /// task items from the indexed lists rather than storing them separately.
-#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub(crate) struct Note {
     path: PathBuf,
     frontmatter: Option<Frontmatter>,
     lists: Vec<List>,
     outlinks: Vec<Outlink>,
     code_regions: Vec<CodeRegion>,
-    inline_fields: Vec<InlineField>,
+    inline_fields: Vec<MetadataField>,
     tags: Vec<Tag>,
 }
 
@@ -50,7 +51,7 @@ impl Note {
     #[must_use]
     pub(crate) fn with_inline_fields(
         mut self,
-        inline_fields: Vec<InlineField>,
+        inline_fields: Vec<MetadataField>,
     ) -> Self {
         self.inline_fields = inline_fields;
         self
@@ -105,8 +106,18 @@ impl Note {
     /// heading text and from list items, in document order.
     #[inline]
     #[must_use]
-    pub(crate) fn inline_fields(&self) -> &[InlineField] {
+    pub(crate) fn inline_fields(&self) -> &[MetadataField] {
         &self.inline_fields
+    }
+
+    /// Combined iterator over all key-value metadata fields on this Note,
+    /// yielding frontmatter fields first, followed by body inline fields
+    /// in document order.
+    pub(crate) fn fields(&self) -> impl Iterator<Item = &MetadataField> {
+        let empty: &[MetadataField] = &[];
+        let frontmatter_fields =
+            self.frontmatter.as_ref().map_or(empty, Frontmatter::fields);
+        frontmatter_fields.iter().chain(self.inline_fields.iter())
     }
 
     /// Markdown tags (e.g. `#book`, `#projects/active`) extracted from
@@ -143,18 +154,23 @@ fn collect_tasks_recursive<'a>(list: &'a List, acc: &mut Vec<&'a ListItem>) {
 }
 
 /// Frontmatter metadata block extracted from a markdown Note.
-#[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub(crate) struct Frontmatter {
     raw: String,
+    fields: Vec<MetadataField>,
 }
 
 impl Frontmatter {
     /// Creates a new [`Frontmatter`] instance.
     #[inline]
     #[must_use]
-    pub(crate) fn new(raw: impl Into<String>) -> Self {
+    pub(crate) fn new(
+        raw: impl Into<String>,
+        fields: Vec<MetadataField>,
+    ) -> Self {
         Self {
             raw: raw.into(),
+            fields,
         }
     }
 
@@ -163,6 +179,13 @@ impl Frontmatter {
     #[must_use]
     pub(crate) fn raw(&self) -> &str {
         &self.raw
+    }
+
+    /// Structured key-value fields parsed from frontmatter.
+    #[inline]
+    #[must_use]
+    pub(crate) fn fields(&self) -> &[MetadataField] {
+        &self.fields
     }
 
     /// Returns `true` if the frontmatter block is empty.
@@ -382,7 +405,40 @@ impl CodeRegion {
     }
 }
 
-/// Dataview-compatible Inline Field syntax form.
+/// Dataview-compatible metadata field value.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+pub(crate) enum FieldValue {
+    Null,
+    Bool(bool),
+    Number(f64),
+    String(String),
+    Date(String),
+    Link(Outlink),
+    List(Vec<FieldValue>),
+    Object(BTreeMap<String, FieldValue>),
+}
+
+impl FieldValue {
+    /// Returns `true` if this value is [`FieldValue::Null`].
+    #[inline]
+    #[must_use]
+    pub(crate) fn is_null(&self) -> bool {
+        matches!(self, Self::Null)
+    }
+
+    /// Returns the string slice if this value is [`FieldValue::String`] or
+    /// [`FieldValue::Date`].
+    #[inline]
+    #[must_use]
+    pub(crate) fn as_str(&self) -> Option<&str> {
+        match self {
+            Self::String(s) | Self::Date(s) => Some(s),
+            _ => None,
+        }
+    }
+}
+
+/// Dataview-compatible Inline Field syntax form in body text.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub(crate) enum InlineFieldForm {
     /// `Key:: Value` filling an entire line.
@@ -393,28 +449,34 @@ pub(crate) enum InlineFieldForm {
     HiddenKey,
 }
 
-/// A Dataview-compatible Inline Field extracted from a Note's body text or
-/// list items.
-#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
-pub(crate) struct InlineField {
-    key: String,
-    value: String,
-    form: InlineFieldForm,
+/// Origin source of a [`MetadataField`].
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+pub(crate) enum FieldSource {
+    Frontmatter,
+    Body(InlineFieldForm),
 }
 
-impl InlineField {
-    /// Creates a new [`InlineField`].
+/// A key-value metadata field extracted from frontmatter or note body.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+pub(crate) struct MetadataField {
+    key: String,
+    value: FieldValue,
+    source: FieldSource,
+}
+
+impl MetadataField {
+    /// Creates a new [`MetadataField`].
     #[inline]
     #[must_use]
     pub(crate) fn new(
         key: impl Into<String>,
-        value: impl Into<String>,
-        form: InlineFieldForm,
+        value: FieldValue,
+        source: FieldSource,
     ) -> Self {
         Self {
             key: key.into(),
-            value: value.into(),
-            form,
+            value,
+            source,
         }
     }
 
@@ -428,17 +490,30 @@ impl InlineField {
     /// The field's value.
     #[inline]
     #[must_use]
-    pub(crate) fn value(&self) -> &str {
+    pub(crate) fn value(&self) -> &FieldValue {
         &self.value
     }
 
-    /// Syntax form the field was written in.
+    /// Origin source of this field.
     #[inline]
     #[must_use]
-    pub(crate) fn form(&self) -> InlineFieldForm {
-        self.form
+    pub(crate) fn source(&self) -> FieldSource {
+        self.source
+    }
+
+    /// Syntax form if this field is from body inline field syntax.
+    #[inline]
+    #[must_use]
+    pub(crate) fn form(&self) -> Option<InlineFieldForm> {
+        match self.source {
+            FieldSource::Body(form) => Some(form),
+            FieldSource::Frontmatter => None,
+        }
     }
 }
+
+/// Backward-compatible type alias for body inline fields.
+pub(crate) type InlineField = MetadataField;
 
 /// A markdown tag (e.g. `#book`, `#projects/active`), including its
 /// leading `#`.
@@ -472,7 +547,7 @@ mod tests {
 
         #[test]
         fn constructs_note_with_the_given_path_and_parts() {
-            let frontmatter = Frontmatter::new("title: A\n");
+            let frontmatter = Frontmatter::new("title: A\n", Vec::new());
             let list = List::new(false, vec![ListItem::new("item", None)]);
             let outlink = Outlink::new("target", "text", LinkType::Wikilink);
             let code_region = CodeRegion::new(3, 7);
@@ -516,7 +591,7 @@ mod tests {
 
         #[test]
         fn creates_frontmatter_with_raw_content() {
-            let fm = Frontmatter::new("key: value\n");
+            let fm = Frontmatter::new("key: value\n", Vec::new());
             assert_eq!(fm.raw(), "key: value\n");
             assert_eq!(fm.is_empty(), false);
         }
@@ -642,11 +717,18 @@ mod tests {
         #[case::visible_key(InlineFieldForm::VisibleKey)]
         #[case::hidden_key(InlineFieldForm::HiddenKey)]
         fn stores_key_value_and_form(#[case] form: InlineFieldForm) {
-            let field = InlineField::new("Author", "Jane Doe", form);
+            let field = MetadataField::new(
+                "Author",
+                FieldValue::String("Jane Doe".to_string()),
+                FieldSource::Body(form),
+            );
 
             assert_eq!(field.key(), "Author");
-            assert_eq!(field.value(), "Jane Doe");
-            assert_eq!(field.form(), form);
+            assert_eq!(
+                field.value(),
+                &FieldValue::String("Jane Doe".to_string())
+            );
+            assert_eq!(field.form(), Some(form));
         }
     }
 
@@ -670,8 +752,11 @@ mod tests {
 
         #[test]
         fn with_inline_fields_attaches_the_given_fields() {
-            let field =
-                InlineField::new("Status", "Draft", InlineFieldForm::Body);
+            let field = MetadataField::new(
+                "Status",
+                FieldValue::String("Draft".to_string()),
+                FieldSource::Body(InlineFieldForm::Body),
+            );
 
             let note = Note::new(
                 "notes/a.md",

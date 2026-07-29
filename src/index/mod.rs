@@ -34,8 +34,9 @@ use markdown::parse_markdown;
     reason = "domain types exported for index module callers"
 )]
 pub(crate) use markdown::{
-    CodeRegion, Frontmatter, InlineField, InlineFieldForm, LinkType, List,
-    ListItem, Note, Outlink, Tag, TaskStatus,
+    CodeRegion, FieldSource, FieldValue, Frontmatter, InlineField,
+    InlineFieldForm, LinkType, List, ListItem, MetadataField, Note, Outlink,
+    Tag, TaskStatus,
 };
 use store::IndexStore;
 
@@ -286,8 +287,8 @@ mod tests {
                 .first()
                 .expect("inline field present");
             assert_eq!(field.key(), expected_key);
-            assert_eq!(field.value(), expected_value);
-            assert_eq!(field.form(), expected_form);
+            assert_eq!(field.value().as_str(), Some(expected_value));
+            assert_eq!(field.form(), Some(expected_form));
         }
 
         #[test]

@@ -16,6 +16,7 @@ mod types;
 
 pub(crate) use parser::parse_markdown;
 pub(crate) use types::{
-    CodeRegion, Frontmatter, InlineField, InlineFieldForm, LinkType, List,
-    ListItem, Note, Outlink, Tag, TaskStatus,
+    CodeRegion, FieldSource, FieldValue, Frontmatter, InlineField,
+    InlineFieldForm, LinkType, List, ListItem, MetadataField, Note, Outlink,
+    Tag, TaskStatus,
 };
