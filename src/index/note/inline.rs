@@ -355,9 +355,35 @@ fn parse_quoted_string_at(s: &str, pos: usize) -> Option<(FieldValue, usize)> {
     reason = "duration token offsets are derived from valid string slices"
 )]
 fn parse_duration_at(s: &str, pos: usize) -> Option<(FieldValue, usize)> {
+    let mut end = parse_duration_part_end(s, pos)?;
+    loop {
+        let separator = skip_whitespace(s, end);
+        if separator == s.len() {
+            return Some((FieldValue::Duration(s[pos..end].to_owned()), end));
+        }
+        let next = if s[separator..].starts_with(',') {
+            skip_whitespace(s, separator + 1)
+        } else {
+            separator
+        };
+        if let Some(part_end) = parse_duration_part_end(s, next) {
+            end = part_end;
+        } else if separator == end {
+            return Some((FieldValue::Duration(s[pos..end].to_owned()), end));
+        } else {
+            return None;
+        }
+    }
+}
+
+#[expect(
+    clippy::arithmetic_side_effects,
+    reason = "duration token offsets are derived from valid string slices"
+)]
+fn parse_duration_part_end(s: &str, pos: usize) -> Option<usize> {
     let number_end = parse_number_end(s, pos)?;
     let unit_start = skip_whitespace(s, number_end);
-    if unit_start == number_end {
+    if unit_start == s.len() {
         return None;
     }
     let unit_end = s[unit_start..]
@@ -365,27 +391,48 @@ fn parse_duration_at(s: &str, pos: usize) -> Option<(FieldValue, usize)> {
         .take_while(|(_, ch)| ch.is_ascii_alphabetic())
         .map(|(offset, ch)| unit_start + offset + ch.len_utf8())
         .last()?;
-    let unit = s[unit_start..unit_end].to_ascii_lowercase();
-    matches!(
-        unit.as_str(),
-        "millisecond"
-            | "milliseconds"
-            | "second"
-            | "seconds"
-            | "minute"
-            | "minutes"
-            | "hour"
-            | "hours"
-            | "day"
-            | "days"
-            | "week"
-            | "weeks"
-            | "month"
-            | "months"
-            | "year"
-            | "years"
-    )
-    .then(|| (FieldValue::Duration(s[pos..unit_end].to_owned()), unit_end))
+    is_duration_unit(&s[unit_start..unit_end]).then_some(unit_end)
+}
+
+fn is_duration_unit(unit: &str) -> bool {
+    [
+        "year",
+        "years",
+        "yr",
+        "yrs",
+        "month",
+        "months",
+        "mo",
+        "mos",
+        "week",
+        "weeks",
+        "wk",
+        "wks",
+        "w",
+        "day",
+        "days",
+        "d",
+        "hour",
+        "hours",
+        "hr",
+        "hrs",
+        "h",
+        "minute",
+        "minutes",
+        "min",
+        "mins",
+        "m",
+        "second",
+        "seconds",
+        "sec",
+        "secs",
+        "s",
+        "millisecond",
+        "milliseconds",
+        "ms",
+    ]
+    .iter()
+    .any(|candidate| unit.eq_ignore_ascii_case(candidate))
 }
 
 fn parse_bool_at(s: &str, pos: usize) -> Option<(FieldValue, usize)> {
@@ -704,13 +751,27 @@ mod tests {
             );
         }
 
-        #[test]
-        fn parses_dataview_duration_value() {
-            let fields = extract_inline_fields("[duration:: 7 hours]");
+        #[rstest]
+        #[case::full_unit("[duration:: 7 hours]", "7 hours")]
+        #[case::abbreviated_unit("[duration:: 4hr]", "4hr")]
+        #[case::adjacent_units("[duration:: 4h15m]", "4h15m")]
+        #[case::comma_separated_units(
+            "[duration:: 4 hours, 15 minutes]",
+            "4 hours, 15 minutes"
+        )]
+        #[case::mixed_abbreviated_units(
+            "[duration:: 4 yrs, 6 wks, 9 mins, 3 s]",
+            "4 yrs, 6 wks, 9 mins, 3 s"
+        )]
+        fn parses_dataview_duration_value(
+            #[case] input: &str,
+            #[case] expected: &str,
+        ) {
+            let fields = extract_inline_fields(input);
 
             assert_eq!(
                 fields.first().map(InlineField::value),
-                Some(&FieldValue::Duration("7 hours".to_owned()))
+                Some(&FieldValue::Duration(expected.to_owned()))
             );
         }
 
