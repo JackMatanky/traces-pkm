@@ -1,6 +1,6 @@
-# 03 — Dataview Inline Fields and Tags
+# 03 — Dataview Inline Fields, Tags, and Frontmatter Key-Value Parsing
 
-**What to build:** Markdown Notes index Dataview-compatible Inline Fields and markdown tags from body text and list items. Inline Fields remain in the Note source, but they do not index inside fenced code blocks, indented code blocks, or inline code.
+**What to build:** Markdown Notes index Dataview-compatible Inline Fields, markdown tags from body text/list items, and structured key-value fields from YAML frontmatter blocks. Inline Fields remain in the Note source, but they do not index inside fenced code blocks, indented code blocks, or inline code.
 
 **Blocked by:** 02 — Markdown Note Metadata Extraction
 
@@ -319,11 +319,13 @@ Markdown Notes should index Inline Fields from normal body text and list item te
 Inline Fields must not be indexed when their source bytes are inside fenced code blocks, indented code blocks, or inline code spans. Markdown tags in body text and list items should also be indexed as Note Metadata so later tag-source queries can select Notes by tags such as `#book` and `#projects/active`.
 
 **Key interfaces:**
-- `Note` should expose stored Inline Fields and tags through small accessors; callers should not inspect parser internals or redb tables.
-- `InlineField` should preserve at least key, value, and whether the syntax used body, visible-key, or hidden-key form.
+- `Note` exposes `frontmatter(&self) -> Option<&Frontmatter>`, `inline_fields(&self) -> &[MetadataField]`, and a unified `fields(&self) -> impl Iterator<Item = &MetadataField>` (frontmatter fields followed by body inline fields in document order).
+- `MetadataField` captures `key: String`, `value: FieldValue`, and `source: FieldSource` (`FieldSource::Frontmatter` vs `FieldSource::Body(InlineFieldForm)`).
+- `FieldValue` supports `Null`, `Bool(bool)`, `Number(f64)`, `String(String)`, `Date(String)`, `Link(Outlink)`, `List(Vec<FieldValue>)`, and `Object(BTreeMap<String, FieldValue>)`.
 - `CodeRegion` ranges from #02 are the exclusion source for fenced code, indented code, and inline code.
-- The FileIndex persistence boundary should round-trip the new Note Metadata fields through the existing Note table.
+- The FileIndex persistence boundary round-trips the updated Note Metadata fields through the existing Note table.
 
+**Acceptance criteria:**
 - [x] `Key:: Value` in normal body text is indexed as an Inline Field.
 - [x] `[Key:: Value]` is indexed as a visible-key Inline Field.
 - [x] `(Key:: Value)` is indexed as a hidden-key Inline Field.
@@ -337,7 +339,7 @@ Inline Fields must not be indexed when their source bytes are inside fenced code
 - [x] Inline Fields, frontmatter fields, and tags survive FileIndex build, persist, and load round-trips.
 - [x] Parser tests cover the markdown event seam and include body text, list items, fenced code, indented code, inline code, and YAML frontmatter cases.
 **Out of scope:**
-- YAML frontmatter extraction, list/task extraction, outlinks, and `Note::tasks()` from #02.
+- List/task extraction, outlinks, and `Note::tasks()` from #02.
 - Query source selection such as `query.from_tags(...)` from #04.
 - Inlinks.
 - A Dataview Query Language parser or DataviewJS.
