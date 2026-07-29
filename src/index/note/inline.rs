@@ -11,6 +11,7 @@ use regex::{Captures, Regex};
 
 use super::{
     FieldValue, InlineField, InlineFieldForm, Outlink, Tag,
+    byte::{ByteRange, ByteSource},
     metadata::is_iso_date,
 };
 
@@ -77,12 +78,12 @@ fn extract_inline_fields_with_task_shorthands(
     if include_task_shorthands {
         push_task_shorthand_fields(text, &mut matches);
     }
-    matches.sort_by_key(|field| field.start);
+    matches.sort_by_key(|field| field.range.start());
     let mut filtered = Vec::new();
     let mut last_end = 0;
     for field_match in matches {
-        if filtered.is_empty() || last_end <= field_match.start {
-            last_end = field_match.end;
+        if filtered.is_empty() || last_end <= field_match.range.start() {
+            last_end = field_match.range.end();
             filtered.push(field_match.field);
         }
     }
@@ -107,8 +108,7 @@ pub(super) fn extract_tags(text: &str) -> Vec<Tag> {
 }
 
 struct FieldMatch {
-    start: usize,
-    end: usize,
+    range: ByteRange,
     field: InlineField,
 }
 
@@ -120,8 +120,7 @@ fn push_body_field(matches: &mut Vec<FieldMatch>, caps: &Captures<'_>) {
         return;
     };
     matches.push(FieldMatch {
-        start: whole.start(),
-        end: whole.end(),
+        range: ByteRange::new(whole.start(), whole.end()),
         field: InlineField::new(
             key.as_str().trim(),
             parse_inline_value_str(value.as_str()),
@@ -130,10 +129,6 @@ fn push_body_field(matches: &mut Vec<FieldMatch>, caps: &Captures<'_>) {
     });
 }
 
-#[expect(
-    clippy::arithmetic_side_effects,
-    reason = "scanner byte offsets are derived from valid string slices"
-)]
 fn scan_wrapped_fields(
     text: &str,
     open: char,
@@ -141,24 +136,20 @@ fn scan_wrapped_fields(
     form: InlineFieldForm,
     matches: &mut Vec<FieldMatch>,
 ) {
+    let source = ByteSource::new(text);
     let mut next = 0;
-    while let Some(found) = text[next..].find(open) {
-        let start = next + found;
+    while let Some(start) = source.find_char_from(next, open) {
         if let Some(field_match) =
             find_wrapped_field(text, start, open, close, form)
         {
-            next = field_match.end;
+            next = field_match.range.end();
             matches.push(field_match);
         } else {
-            next = start + open.len_utf8();
+            next = source.advance_char(start, open);
         }
     }
 }
 
-#[expect(
-    clippy::arithmetic_side_effects,
-    reason = "scanner byte offsets are derived from valid string slices"
-)]
 fn find_wrapped_field(
     text: &str,
     start: usize,
@@ -166,7 +157,9 @@ fn find_wrapped_field(
     close: char,
     form: InlineFieldForm,
 ) -> Option<FieldMatch> {
-    let (key, value_start) = find_separator(text, start + open.len_utf8())?;
+    let source = ByteSource::new(text);
+    let (key, value_start) =
+        find_separator(text, source.advance_char(start, open))?;
     if key.is_empty()
         || key.chars().any(|ch| matches!(ch, '[' | ']' | '(' | ')'))
     {
@@ -174,34 +167,27 @@ fn find_wrapped_field(
     }
     let (value, end) = find_closing(text, value_start, open, close)?;
     Some(FieldMatch {
-        start,
-        end,
+        range: ByteRange::new(start, end),
         field: InlineField::new(key, parse_inline_value_str(value), form),
     })
 }
 
-#[expect(
-    clippy::arithmetic_side_effects,
-    reason = "separator byte offsets are derived from valid string slices"
-)]
 fn find_separator(text: &str, start: usize) -> Option<(&str, usize)> {
-    let separator = text[start..].find("::")? + start;
-    Some((text[start..separator].trim(), separator + 2))
+    let source = ByteSource::new(text);
+    let separator = source.find_str_from(start, "::")?;
+    Some((source.get(start..separator)?.trim(), source.advance(separator, 2)))
 }
 
-#[expect(
-    clippy::arithmetic_side_effects,
-    reason = "scanner byte offsets are derived from valid string slices"
-)]
 fn find_closing(
     text: &str,
     start: usize,
     open: char,
     close: char,
 ) -> Option<(&str, usize)> {
-    let mut nesting = 0;
+    let source = ByteSource::new(text);
+    let mut nesting = 0usize;
     let mut escaped = false;
-    for (offset, ch) in text[start..].char_indices() {
+    for (offset, ch) in source.from(start)?.char_indices() {
         if ch == '\\' {
             escaped = !escaped;
             continue;
@@ -211,25 +197,25 @@ fn find_closing(
             continue;
         }
         if ch == open {
-            nesting += 1;
+            nesting = nesting.saturating_add(1);
         } else if ch == close {
-            nesting -= 1;
+            if nesting == 0 {
+                let end = source.advance(start, offset);
+                return Some((
+                    source.get(start..end)?.trim(),
+                    source.advance_char(end, ch),
+                ));
+            }
+            nesting = nesting.saturating_sub(1);
         } else {
             // Other characters do not affect wrapper nesting.
-        }
-        if nesting < 0 {
-            let end = start + offset;
-            return Some((text[start..end].trim(), end + ch.len_utf8()));
         }
     }
     None
 }
 
-#[expect(
-    clippy::arithmetic_side_effects,
-    reason = "emoji shorthand offsets are derived from valid string slices"
-)]
 fn push_task_shorthand_fields(text: &str, matches: &mut Vec<FieldMatch>) {
+    let source = ByteSource::new(text);
     for (emoji, key) in [
         ("🗓️", "due"),
         ("🗓", "due"),
@@ -239,15 +225,14 @@ fn push_task_shorthand_fields(text: &str, matches: &mut Vec<FieldMatch>) {
         ("✅", "completion"),
     ] {
         let mut next = 0;
-        while let Some(found) = text[next..].find(emoji) {
-            let start = next + found;
-            let value_start = start + emoji.len();
-            if let Some(value) = text.get(value_start..value_start + 10)
+        while let Some(start) = source.find_str_from(next, emoji) {
+            let value_start = source.advance(start, emoji.len());
+            let value_end = source.advance(value_start, 10);
+            if let Some(value) = source.get(value_start..value_end)
                 && is_iso_date(value)
             {
                 matches.push(FieldMatch {
-                    start,
-                    end: value_start + 10,
+                    range: ByteRange::new(start, value_end),
                     field: InlineField::new(
                         key,
                         FieldValue::Date(value.to_owned()),
@@ -277,11 +262,8 @@ fn parse_inline_value_str(raw: &str) -> FieldValue {
     FieldValue::String(trimmed.to_owned())
 }
 
-#[expect(
-    clippy::arithmetic_side_effects,
-    reason = "comma separators are one ASCII byte"
-)]
 fn parse_comma_list(s: &str) -> Option<Vec<FieldValue>> {
+    let source = ByteSource::new(s);
     let (first, mut pos) = parse_atom_at(s, 0)?;
     pos = skip_whitespace(s, pos);
     if !s[pos..].starts_with(',') {
@@ -289,7 +271,7 @@ fn parse_comma_list(s: &str) -> Option<Vec<FieldValue>> {
     }
     let mut values = vec![first];
     loop {
-        pos += 1;
+        pos = source.advance(pos, 1);
         pos = skip_whitespace(s, pos);
         if pos == s.len() {
             return Some(values);
@@ -318,21 +300,15 @@ fn parse_atom_at(s: &str, pos: usize) -> Option<(FieldValue, usize)> {
         .or_else(|| parse_tag_at(s, pos))
 }
 
-#[expect(
-    clippy::arithmetic_side_effects,
-    reason = "link parser returns a consumed byte count for this slice"
-)]
 fn parse_link_at(s: &str, pos: usize) -> Option<(FieldValue, usize)> {
-    let (link, consumed) = Outlink::parse_wikilink_prefix(&s[pos..])?;
-    Some((FieldValue::Link(link), pos + consumed))
+    let source = ByteSource::new(s);
+    let (link, consumed) = Outlink::parse_wikilink_prefix(source.from(pos)?)?;
+    Some((FieldValue::Link(link), source.advance(pos, consumed)))
 }
 
-#[expect(
-    clippy::arithmetic_side_effects,
-    reason = "quoted string offsets are derived from valid string slices"
-)]
 fn parse_quoted_string_at(s: &str, pos: usize) -> Option<(FieldValue, usize)> {
-    let rest = s[pos..].strip_prefix('"')?;
+    let source = ByteSource::new(s);
+    let rest = source.from(pos)?.strip_prefix('"')?;
     let mut value = String::new();
     let mut escaped = false;
     for (offset, ch) in rest.char_indices() {
@@ -342,7 +318,10 @@ fn parse_quoted_string_at(s: &str, pos: usize) -> Option<(FieldValue, usize)> {
         } else if ch == '\\' {
             escaped = true;
         } else if ch == '"' {
-            return Some((FieldValue::String(value), pos + 1 + offset + 1));
+            return Some((
+                FieldValue::String(value),
+                source.advance(source.advance(pos, offset), 2),
+            ));
         } else {
             value.push(ch);
         }
@@ -350,11 +329,8 @@ fn parse_quoted_string_at(s: &str, pos: usize) -> Option<(FieldValue, usize)> {
     None
 }
 
-#[expect(
-    clippy::arithmetic_side_effects,
-    reason = "duration token offsets are derived from valid string slices"
-)]
 fn parse_duration_at(s: &str, pos: usize) -> Option<(FieldValue, usize)> {
+    let source = ByteSource::new(s);
     let mut end = parse_duration_part_end(s, pos)?;
     loop {
         let separator = skip_whitespace(s, end);
@@ -362,7 +338,7 @@ fn parse_duration_at(s: &str, pos: usize) -> Option<(FieldValue, usize)> {
             return Some((FieldValue::Duration(s[pos..end].to_owned()), end));
         }
         let next = if s[separator..].starts_with(',') {
-            skip_whitespace(s, separator + 1)
+            skip_whitespace(s, source.advance(separator, 1))
         } else {
             separator
         };
@@ -376,20 +352,18 @@ fn parse_duration_at(s: &str, pos: usize) -> Option<(FieldValue, usize)> {
     }
 }
 
-#[expect(
-    clippy::arithmetic_side_effects,
-    reason = "duration token offsets are derived from valid string slices"
-)]
 fn parse_duration_part_end(s: &str, pos: usize) -> Option<usize> {
+    let source = ByteSource::new(s);
     let number_end = parse_number_end(s, pos)?;
     let unit_start = skip_whitespace(s, number_end);
     if unit_start == s.len() {
         return None;
     }
-    let unit_end = s[unit_start..]
+    let unit_end = source
+        .from(unit_start)?
         .char_indices()
         .take_while(|(_, ch)| ch.is_ascii_alphabetic())
-        .map(|(offset, ch)| unit_start + offset + ch.len_utf8())
+        .map(|(offset, ch)| source.token_end(unit_start, offset, ch))
         .last()?;
     is_duration_unit(&s[unit_start..unit_end]).then_some(unit_end)
 }
@@ -448,21 +422,18 @@ fn parse_null_at(s: &str, pos: usize) -> Option<(FieldValue, usize)> {
     parse_keyword_at(s, pos, "null").map(|end| (FieldValue::Null, end))
 }
 
-#[expect(clippy::arithmetic_side_effects, reason = "keywords are ASCII tokens")]
 fn parse_keyword_at(s: &str, pos: usize, keyword: &str) -> Option<usize> {
-    let end = pos + keyword.len();
-    let token = s.get(pos..end)?;
+    let source = ByteSource::new(s);
+    let end = source.advance(pos, keyword.len());
+    let token = source.get(pos..end)?;
     token.eq_ignore_ascii_case(keyword).then_some(())?;
     is_atom_boundary(s, end).then_some(end)
 }
 
-#[expect(
-    clippy::arithmetic_side_effects,
-    reason = "ISO dates are ten ASCII bytes"
-)]
 fn parse_date_at(s: &str, pos: usize) -> Option<(FieldValue, usize)> {
-    let end = pos + 10;
-    let date = s.get(pos..end)?;
+    let source = ByteSource::new(s);
+    let end = source.advance(pos, 10);
+    let date = source.get(pos..end)?;
     (is_iso_date(date) && is_atom_boundary(s, end))
         .then(|| (FieldValue::Date(date.to_owned()), end))
 }
@@ -474,53 +445,52 @@ fn parse_number_at(s: &str, pos: usize) -> Option<(FieldValue, usize)> {
         .then_some((FieldValue::Number(num), end))
 }
 
-#[expect(
-    clippy::arithmetic_side_effects,
-    reason = "number token offsets are derived from valid string slices"
-)]
 fn parse_number_end(s: &str, pos: usize) -> Option<usize> {
-    s[pos..]
+    let source = ByteSource::new(s);
+    source
+        .from(pos)?
         .char_indices()
         .take_while(|(_, ch)| {
             ch.is_ascii_digit() || matches!(ch, '+' | '-' | '.' | 'e' | 'E')
         })
-        .map(|(offset, ch)| pos + offset + ch.len_utf8())
+        .map(|(offset, ch)| source.token_end(pos, offset, ch))
         .last()
 }
 
-#[expect(
-    clippy::arithmetic_side_effects,
-    reason = "tag token offsets are derived from valid string slices"
-)]
 fn parse_tag_at(s: &str, pos: usize) -> Option<(FieldValue, usize)> {
-    let rest = s[pos..].strip_prefix('#')?;
+    let source = ByteSource::new(s);
+    let rest = source.from(pos)?.strip_prefix('#')?;
     let mut chars = rest.chars();
     chars.next().filter(|ch| ch.is_alphabetic())?;
-    let end = s[pos..]
+    let end = source
+        .from(pos)?
         .char_indices()
         .skip(1)
         .take_while(|(_, ch)| {
             ch.is_alphanumeric() || matches!(ch, '_' | '/' | '-')
         })
-        .map(|(offset, ch)| pos + offset + ch.len_utf8())
+        .map(|(offset, ch)| source.token_end(pos, offset, ch))
         .last()
-        .unwrap_or(pos + 1);
+        .unwrap_or_else(|| source.advance(pos, 1));
     Some((FieldValue::String(s[pos..end].to_owned()), end))
 }
 
 fn is_atom_boundary(s: &str, pos: usize) -> bool {
-    s[pos..].chars().next().is_none_or(|ch| ch.is_whitespace() || ch == ',')
+    ByteSource::new(s).from(pos).is_some_and(|source| {
+        source.chars().next().is_none_or(|ch| ch.is_whitespace() || ch == ',')
+    })
 }
 
-#[expect(
-    clippy::arithmetic_side_effects,
-    reason = "whitespace offsets are derived from valid string slices"
-)]
 fn skip_whitespace(s: &str, pos: usize) -> usize {
-    s[pos..]
-        .char_indices()
-        .find(|(_, ch)| !ch.is_whitespace())
-        .map_or(s.len(), |(offset, _)| pos + offset)
+    let source = ByteSource::new(s);
+    source
+        .from(pos)
+        .and_then(|rest| {
+            rest.char_indices()
+                .find(|(_, ch)| !ch.is_whitespace())
+                .map(|(offset, _)| source.advance(pos, offset))
+        })
+        .unwrap_or_else(|| source.len())
 }
 
 #[cfg(test)]

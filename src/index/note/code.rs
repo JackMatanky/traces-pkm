@@ -2,12 +2,14 @@ use std::ops::Range;
 
 use serde::{Deserialize, Serialize};
 
+use super::byte::ByteRange;
+
 /// Source byte range of inline code or a code block excluded from metadata
 /// scanning.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(transparent)]
 pub(crate) struct CodeRegion {
-    start: usize,
-    end: usize,
+    range: ByteRange,
 }
 
 impl CodeRegion {
@@ -16,8 +18,7 @@ impl CodeRegion {
     #[must_use]
     pub(crate) fn new(start: usize, end: usize) -> Self {
         Self {
-            start,
-            end,
+            range: ByteRange::new(start, end),
         }
     }
 
@@ -25,7 +26,7 @@ impl CodeRegion {
     #[inline]
     #[must_use]
     pub(crate) fn range(&self) -> Range<usize> {
-        self.start..self.end
+        self.range.range()
     }
 }
 

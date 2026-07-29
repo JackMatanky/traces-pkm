@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use super::byte::ByteSource;
+
 /// Link syntax used for an extracted [`Outlink`].
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub(crate) enum LinkType {
@@ -44,18 +46,17 @@ impl Outlink {
 
     /// Parses an Obsidian wikilink prefix and returns the consumed byte count.
     #[must_use]
-    #[expect(
-        clippy::arithmetic_side_effects,
-        reason = "wikilink byte offsets are derived from valid string slices"
-    )]
     pub(crate) fn parse_wikilink_prefix(s: &str) -> Option<(Self, usize)> {
-        let (embedded, raw) =
-            s.strip_prefix('!').map_or((false, s), |rest| (true, rest));
-        let inner_start = s.len() - raw.len() + 2;
+        let source = ByteSource::new(s);
+        let (embedded, raw_start, raw) =
+            s.strip_prefix('!').map_or((false, 0, s), |rest| (true, 1, rest));
+        let inner_start = source.advance(raw_start, 2);
         let inner = raw.strip_prefix("[[")?;
+        let inner_source = ByteSource::new(inner);
         let inner_end = find_wikilink_close(inner)?;
-        let raw_inner = &inner[..inner_end];
-        let consumed = inner_start + inner_end + 2;
+        let raw_inner = inner_source.get(0..inner_end)?;
+        let consumed =
+            source.advance(source.advance(inner_start, inner_end), 2);
         let (target, text) = split_wikilink_text(raw_inner);
         let target = unescape_wikilink_part(target.trim());
         if target.is_empty() {
@@ -121,11 +122,8 @@ impl Outlink {
     }
 }
 
-#[expect(
-    clippy::arithmetic_side_effects,
-    reason = "wikilink byte offsets are derived from valid string slices"
-)]
 fn find_wikilink_close(s: &str) -> Option<usize> {
+    let source = ByteSource::new(s);
     let mut escaped = false;
     for (index, ch) in s.char_indices() {
         if ch == '\\' {
@@ -136,18 +134,16 @@ fn find_wikilink_close(s: &str) -> Option<usize> {
             escaped = false;
             continue;
         }
-        if ch == ']' && s[index + ch.len_utf8()..].starts_with(']') {
+        if ch == ']' && source.starts_with(source.advance_char(index, ch), "]")
+        {
             return Some(index);
         }
     }
     None
 }
 
-#[expect(
-    clippy::arithmetic_side_effects,
-    reason = "wikilink byte offsets are derived from valid string slices"
-)]
 fn split_wikilink_text(s: &str) -> (&str, &str) {
+    let source = ByteSource::new(s);
     let mut escaped = false;
     for (index, ch) in s.char_indices() {
         if ch == '\\' {
@@ -159,7 +155,7 @@ fn split_wikilink_text(s: &str) -> (&str, &str) {
             continue;
         }
         if ch == '|' {
-            return (&s[..index], &s[index + ch.len_utf8()..]);
+            return (&s[..index], &s[source.advance_char(index, ch)..]);
         }
     }
     (s, s)

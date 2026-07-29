@@ -1,5 +1,6 @@
 //! Parsed markdown note metadata.
 
+mod byte;
 mod code;
 mod inline;
 mod links;
