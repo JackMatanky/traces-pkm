@@ -10,8 +10,7 @@ use std::sync::LazyLock;
 use regex::{Captures, Regex};
 
 use super::{
-    FieldSource, FieldValue, InlineFieldForm, MetadataField, Tag,
-    metadata::is_iso_date,
+    FieldValue, InlineField, InlineFieldForm, Tag, metadata::is_iso_date,
 };
 
 /// Matches full-line `Key:: Value` body fields.
@@ -63,8 +62,8 @@ static TAG_RE: LazyLock<Regex> = LazyLock::new(|| {
 /// Extracts inline fields from `text`, sorted by byte position.
 ///
 /// The input must already exclude code spans and blocks.
-pub(super) fn extract_inline_fields(text: &str) -> Vec<MetadataField> {
-    let mut matches: Vec<(usize, MetadataField)> = Vec::new();
+pub(super) fn extract_inline_fields(text: &str) -> Vec<InlineField> {
+    let mut matches: Vec<(usize, InlineField)> = Vec::new();
     for caps in BODY_FIELD_RE.captures_iter(text) {
         push_field(&mut matches, &caps, InlineFieldForm::Body);
     }
@@ -99,7 +98,7 @@ pub(super) fn extract_tags(text: &str) -> Vec<Tag> {
 ///
 /// Missing key or value captures are ignored.
 fn push_field(
-    matches: &mut Vec<(usize, MetadataField)>,
+    matches: &mut Vec<(usize, InlineField)>,
     caps: &Captures<'_>,
     form: InlineFieldForm,
 ) {
@@ -110,10 +109,10 @@ fn push_field(
     };
     matches.push((
         whole.start(),
-        MetadataField::new(
+        InlineField::new(
             key.as_str().trim(),
             parse_inline_value_str(value.as_str()),
-            FieldSource::Body(form),
+            form,
         ),
     ));
 }
@@ -180,7 +179,7 @@ mod tests {
 
             assert_eq!(fields.len(), 1);
             assert_eq!(
-                fields.first().map(MetadataField::key),
+                fields.first().map(InlineField::key),
                 Some(expected_key)
             );
             assert_eq!(
@@ -188,7 +187,7 @@ mod tests {
                 Some(expected_value)
             );
             assert_eq!(
-                fields.first().and_then(MetadataField::form),
+                fields.first().map(InlineField::form),
                 Some(expected_form)
             );
         }
@@ -211,7 +210,7 @@ mod tests {
             let fields = extract_inline_fields(input);
 
             assert_eq!(
-                fields.first().map(MetadataField::key),
+                fields.first().map(InlineField::key),
                 Some(expected_key)
             );
             assert_eq!(
@@ -225,8 +224,7 @@ mod tests {
             let fields =
                 extract_inline_fields("Status:: Draft\nAuthor:: Jane Doe");
 
-            let keys: Vec<&str> =
-                fields.iter().map(MetadataField::key).collect();
+            let keys: Vec<&str> = fields.iter().map(InlineField::key).collect();
             assert_eq!(keys, ["Status", "Author"]);
         }
 
@@ -245,7 +243,7 @@ mod tests {
             let fields = extract_inline_fields("Status::");
 
             assert_eq!(
-                fields.first().map(MetadataField::value),
+                fields.first().map(InlineField::value),
                 Some(&FieldValue::Null)
             );
         }
@@ -262,17 +260,14 @@ mod tests {
         ) {
             let fields = extract_inline_fields(input);
 
-            assert_eq!(
-                fields.first().map(MetadataField::value),
-                Some(&expected)
-            );
+            assert_eq!(fields.first().map(InlineField::value), Some(&expected));
         }
 
         #[test]
         fn accepts_a_bare_key_preceded_by_leading_whitespace() {
             let fields = extract_inline_fields("  Status:: Draft");
 
-            assert_eq!(fields.first().map(MetadataField::key), Some("Status"));
+            assert_eq!(fields.first().map(InlineField::key), Some("Status"));
         }
 
         #[test]
@@ -281,8 +276,7 @@ mod tests {
                 "Status:: Draft\nSee [Reviewer:: Jane] and (Editor:: Sam).",
             );
 
-            let keys: Vec<&str> =
-                fields.iter().map(MetadataField::key).collect();
+            let keys: Vec<&str> = fields.iter().map(InlineField::key).collect();
             assert_eq!(keys, ["Status", "Reviewer", "Editor"]);
         }
     }

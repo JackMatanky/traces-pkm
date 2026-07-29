@@ -8,7 +8,7 @@ mod structure;
 use std::path::{Path, PathBuf};
 
 pub(crate) use metadata::{
-    FieldSource, FieldValue, Frontmatter, InlineFieldForm, MetadataField,
+    FieldValue, Frontmatter, InlineField, InlineFieldForm, MetadataField,
     RawFrontmatter,
 };
 pub(crate) use parser::parse_markdown;
@@ -29,7 +29,7 @@ pub(crate) struct Note {
     lists: Vec<List>,
     outlinks: Vec<Outlink>,
     code_regions: Vec<CodeRegion>,
-    inline_fields: Vec<MetadataField>,
+    inline_fields: Vec<InlineField>,
     tags: Vec<Tag>,
 }
 
@@ -65,7 +65,7 @@ impl Note {
     #[must_use]
     pub(crate) fn with_inline_fields(
         mut self,
-        inline_fields: Vec<MetadataField>,
+        inline_fields: Vec<InlineField>,
     ) -> Self {
         self.inline_fields = inline_fields;
         self
@@ -120,7 +120,7 @@ impl Note {
     /// document order.
     #[inline]
     #[must_use]
-    pub(crate) fn inline_fields(&self) -> &[MetadataField] {
+    pub(crate) fn inline_fields(&self) -> &[InlineField] {
         &self.inline_fields
     }
 
@@ -132,7 +132,9 @@ impl Note {
         let empty: &[MetadataField] = &[];
         let frontmatter_fields =
             self.frontmatter.as_ref().map_or(empty, Frontmatter::fields);
-        frontmatter_fields.iter().chain(self.inline_fields.iter())
+        frontmatter_fields
+            .iter()
+            .chain(self.inline_fields.iter().map(InlineField::metadata))
     }
 
     /// Markdown tags (e.g. `#book`, `#projects/active`) extracted from
@@ -168,10 +170,7 @@ fn collect_tasks_recursive<'a>(list: &'a List, acc: &mut Vec<&'a ListItem>) {
 #[cfg(test)]
 mod tests {
 
-    use super::{
-        metadata::{FieldSource, FieldValue, InlineFieldForm},
-        *,
-    };
+    use super::*;
 
     mod constructor {
         use pretty_assertions::assert_eq;
@@ -225,10 +224,10 @@ mod tests {
 
         #[test]
         fn with_inline_fields_attaches_the_given_fields() {
-            let field = MetadataField::new(
+            let field = InlineField::new(
                 "Status",
                 FieldValue::String("Draft".to_owned()),
-                FieldSource::Body(InlineFieldForm::Body),
+                InlineFieldForm::Body,
             );
 
             let note = Note::new(
@@ -281,12 +280,11 @@ mod tests {
             let frontmatter = Frontmatter::new(vec![MetadataField::new(
                 "title",
                 FieldValue::String("Note".to_owned()),
-                FieldSource::Frontmatter,
             )]);
-            let inline_field = MetadataField::new(
+            let inline_field = InlineField::new(
                 "Status",
                 FieldValue::String("Draft".to_owned()),
-                FieldSource::Body(InlineFieldForm::Body),
+                InlineFieldForm::Body,
             );
 
             let note = Note::new(
@@ -301,12 +299,6 @@ mod tests {
             let keys: Vec<&str> =
                 note.fields().map(MetadataField::key).collect();
             assert_eq!(keys, ["title", "Status"]);
-            let sources: Vec<FieldSource> =
-                note.fields().map(MetadataField::source).collect();
-            assert_eq!(sources, [
-                FieldSource::Frontmatter,
-                FieldSource::Body(InlineFieldForm::Body)
-            ]);
         }
     }
 

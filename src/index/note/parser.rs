@@ -23,7 +23,7 @@ use pulldown_cmark::{
 };
 
 use super::{
-    CodeRegion, Frontmatter, LinkType, List, ListItem, MetadataField, Note,
+    CodeRegion, Frontmatter, InlineField, LinkType, List, ListItem, Note,
     Outlink, RawFrontmatter, Tag, TaskStatus, inline,
 };
 
@@ -73,7 +73,7 @@ struct ParserContext {
     list_stack: Vec<ListFrame>,
     item_stack: Vec<ItemFrame>,
     body_buffer: String,
-    inline_fields: Vec<MetadataField>,
+    inline_fields: Vec<InlineField>,
     tags: Vec<Tag>,
 }
 
@@ -377,10 +377,7 @@ struct ItemFrame {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        super::{FieldSource, FieldValue},
-        *,
-    };
+    use super::{super::FieldValue, *};
     mod parse {
         use pretty_assertions::assert_eq;
         use rstest::rstest;
@@ -446,33 +443,27 @@ mod tests {
                          true\nrating: 5.0\ndate: 2026-07-29\n---\nBody text.";
             let note = parse_markdown("note.md", input);
 
-            let fields: std::collections::BTreeMap<
-                &str,
-                (&FieldValue, FieldSource),
-            > = note
+            let fields: std::collections::BTreeMap<&str, &FieldValue> = note
                 .frontmatter()
                 .into_iter()
                 .flat_map(Frontmatter::fields)
-                .map(|field| (field.key(), (field.value(), field.source())))
+                .map(|field| (field.key(), field.value()))
                 .collect();
             assert_eq!(fields.len(), 5);
             assert_eq!(
                 fields.get("title").copied(),
-                Some((
-                    &FieldValue::String("Note Title".to_owned()),
-                    FieldSource::Frontmatter
-                ))
+                Some(&FieldValue::String("Note Title".to_owned()))
             );
             assert_eq!(
-                fields.get("draft").map(|(value, _)| *value),
+                fields.get("draft").copied(),
                 Some(&FieldValue::Bool(true))
             );
             assert_eq!(
-                fields.get("rating").map(|(value, _)| *value),
+                fields.get("rating").copied(),
                 Some(&FieldValue::Number(5.0))
             );
             assert_eq!(
-                fields.get("date").map(|(value, _)| *value),
+                fields.get("date").copied(),
                 Some(&FieldValue::Date("2026-07-29".to_owned()))
             );
         }
@@ -692,7 +683,7 @@ mod tests {
             let field = note.inline_fields().first().expect("field present");
             assert_eq!(field.key(), expected_key);
             assert_eq!(field.value().as_str(), Some(expected_value));
-            assert_eq!(field.form(), Some(expected_form));
+            assert_eq!(field.form(), expected_form);
         }
 
         #[test]
@@ -701,7 +692,7 @@ mod tests {
                 parse_markdown("note.md", "Status:: Draft\n\nAuthor:: Jane");
 
             let keys: Vec<&str> =
-                note.inline_fields().iter().map(MetadataField::key).collect();
+                note.inline_fields().iter().map(InlineField::key).collect();
             assert_eq!(keys, ["Status", "Author"]);
         }
 
@@ -720,7 +711,7 @@ mod tests {
             let field = note.inline_fields().first().expect("field present");
             assert_eq!(field.key(), "Status");
             assert_eq!(field.value().as_str(), Some("Draft"));
-            assert_eq!(field.form(), Some(InlineFieldForm::Body));
+            assert_eq!(field.form(), InlineFieldForm::Body);
         }
 
         #[rstest]
@@ -783,7 +774,7 @@ mod tests {
             );
 
             let keys: Vec<&str> =
-                note.inline_fields().iter().map(MetadataField::key).collect();
+                note.inline_fields().iter().map(InlineField::key).collect();
             assert_eq!(keys, ["Status", "Priority"]);
         }
 
@@ -795,7 +786,7 @@ mod tests {
             );
 
             let keys: Vec<&str> =
-                note.inline_fields().iter().map(MetadataField::key).collect();
+                note.inline_fields().iter().map(InlineField::key).collect();
             assert_eq!(keys, ["Status", "Priority", "Reviewer"]);
         }
 
@@ -862,7 +853,7 @@ mod tests {
             );
 
             let keys: Vec<&str> =
-                note.inline_fields().iter().map(MetadataField::key).collect();
+                note.inline_fields().iter().map(InlineField::key).collect();
             assert_eq!(keys, ["Status", "Reviewer"]);
         }
 
@@ -875,7 +866,7 @@ mod tests {
             );
 
             let keys: Vec<&str> =
-                note.inline_fields().iter().map(MetadataField::key).collect();
+                note.inline_fields().iter().map(InlineField::key).collect();
             assert_eq!(keys, ["Reviewer", "Status"]);
         }
 
@@ -920,7 +911,7 @@ mod tests {
             let field = note.inline_fields().first().expect("field present");
             assert_eq!(field.key(), "Status");
             assert_eq!(field.value().as_str(), Some("Draft"));
-            assert_eq!(field.form(), Some(InlineFieldForm::VisibleKey));
+            assert_eq!(field.form(), InlineFieldForm::VisibleKey);
 
             let link = note.outlinks().first().expect("outlink present");
             assert_eq!(link.target(), "http://example.com");
@@ -938,7 +929,7 @@ mod tests {
             let field = note.inline_fields().first().expect("field present");
             assert_eq!(field.key(), "Status");
             assert_eq!(field.value().as_str(), Some("Draft"));
-            assert_eq!(field.form(), Some(InlineFieldForm::VisibleKey));
+            assert_eq!(field.form(), InlineFieldForm::VisibleKey);
         }
     }
 }

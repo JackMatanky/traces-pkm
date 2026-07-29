@@ -243,8 +243,8 @@
 - **Frontmatter Key-Value Parsing & Module Refactoring** (2026-07-29, post-grilling):
   - **Scope Expansion**: Expanded #03 to include structured YAML frontmatter key-value field parsing. Added `yaml_serde` (v0.10, official maintained successor to `serde_yaml`) to `Cargo.toml`.
   - **RawFrontmatter Newtype & Resilient Conversion**: Introduced `RawFrontmatter(String)` for unparsed YAML frontmatter text blocks. Implemented `From<&RawFrontmatter> for Frontmatter` which parses raw YAML into `Frontmatter`'s structured `fields: Vec<MetadataField>`, emitting `tracing::warn!` diagnostics on invalid YAML syntax without interrupting note indexing. Removed redundant `raw: String` from `Frontmatter`, eliminating memory duplication on `Note`.
-  - **MetadataField & Dataview FieldValue Model**: Defined unified `MetadataField` carrying `key: String`, `value: FieldValue`, and `source: FieldSource` (`FieldSource::Frontmatter` vs `FieldSource::Body(InlineFieldForm)`). Implemented standard `From<serde_yaml::Value> for FieldValue` supporting all Dataview data types (`Null`, `Bool`, `Number`, `String`, `Date`, `Link`, `List`, `Object`).
-  - **Note Accessor API**: `Note` exposes `frontmatter()`, `inline_fields()`, and a unified `fields()` iterator yielding frontmatter fields first, followed by body inline fields in document order. Removed legacy `type InlineField` backward-compatibility alias in favor of `MetadataField`.
+  - **MetadataField, InlineField & Dataview FieldValue Model**: Defined `MetadataField` as the shared key-value pair (`key: String`, `value: FieldValue`) and `InlineField` as `MetadataField` plus non-optional `InlineFieldForm`, avoiding redundant `FieldSource` tags for frontmatter fields. Implemented standard `From<serde_yaml::Value> for FieldValue` supporting all Dataview data types (`Null`, `Bool`, `Number`, `String`, `Date`, `Link`, `List`, `Object`).
+  - **Note Accessor API**: `Note` exposes `frontmatter()`, `inline_fields()`, and a unified `fields()` iterator yielding frontmatter `MetadataField`s first, followed by each body `InlineField`'s embedded `MetadataField` in document order.
   - **Submodule Layout**: Renamed `src/index/markdown/` → `src/index/note/` and placed `src/index/note.rs` directly as the parent module file holding `Note` and declaring `metadata`, `structure`, `parser`, and `inline` submodules.
 
 
@@ -319,8 +319,8 @@ Markdown Notes should index Inline Fields from normal body text and list item te
 Inline Fields must not be indexed when their source bytes are inside fenced code blocks, indented code blocks, or inline code spans. Markdown tags in body text and list items should also be indexed as Note Metadata so later tag-source queries can select Notes by tags such as `#book` and `#projects/active`.
 
 **Key interfaces:**
-- `Note` exposes `frontmatter(&self) -> Option<&Frontmatter>`, `inline_fields(&self) -> &[MetadataField]`, and a unified `fields(&self) -> impl Iterator<Item = &MetadataField>` (frontmatter fields followed by body inline fields in document order).
-- `MetadataField` captures `key: String`, `value: FieldValue`, and `source: FieldSource` (`FieldSource::Frontmatter` vs `FieldSource::Body(InlineFieldForm)`).
+- `Note` exposes `frontmatter(&self) -> Option<&Frontmatter>`, `inline_fields(&self) -> &[InlineField]`, and a unified `fields(&self) -> impl Iterator<Item = &MetadataField>` (frontmatter fields followed by body inline fields in document order).
+- `MetadataField` captures `key: String` and `value: FieldValue`; `InlineField` embeds a `MetadataField` with its `InlineFieldForm`.
 - `FieldValue` supports `Null`, `Bool(bool)`, `Number(f64)`, `String(String)`, `Date(String)`, `Link(Outlink)`, `List(Vec<FieldValue>)`, and `Object(BTreeMap<String, FieldValue>)`.
 - `CodeRegion` ranges from #02 are the exclusion source for fenced code, indented code, and inline code.
 - The FileIndex persistence boundary round-trips the updated Note Metadata fields through the existing Note table.

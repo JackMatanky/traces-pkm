@@ -1,8 +1,8 @@
 //! Metadata extracted from frontmatter and Dataview-compatible inline fields.
 //!
 //! [`RawFrontmatter`] stores the source YAML block. [`Frontmatter`] and
-//! [`MetadataField`] store parsed key-value metadata with a [`FieldSource`] and
-//! typed [`FieldValue`].
+//! [`MetadataField`] store parsed key-value metadata; [`InlineField`] wraps a
+//! [`MetadataField`] with the [`InlineFieldForm`] it was written in.
 
 use std::collections::BTreeMap;
 
@@ -98,11 +98,7 @@ impl From<&RawFrontmatter> for Frontmatter {
                 serde_yaml::Value::Bool(b) => b.to_string(),
                 _ => continue,
             };
-            fields.push(MetadataField::new(
-                key,
-                FieldValue::from(v),
-                FieldSource::Frontmatter,
-            ));
+            fields.push(MetadataField::new(key, FieldValue::from(v)));
         }
         Self::new(fields)
     }
@@ -119,36 +115,21 @@ pub(crate) enum InlineFieldForm {
     HiddenKey,
 }
 
-/// Source location of a [`MetadataField`].
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
-pub(crate) enum FieldSource {
-    /// YAML frontmatter.
-    Frontmatter,
-    /// Dataview inline field syntax in markdown body text.
-    Body(InlineFieldForm),
-}
-
 /// Key-value metadata parsed from frontmatter or markdown body text.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub(crate) struct MetadataField {
     key: String,
     value: FieldValue,
-    source: FieldSource,
 }
 
 impl MetadataField {
-    /// Creates a metadata field from a key, value, and source.
+    /// Creates a metadata field from a key and value.
     #[inline]
     #[must_use]
-    pub(crate) fn new(
-        key: impl Into<String>,
-        value: FieldValue,
-        source: FieldSource,
-    ) -> Self {
+    pub(crate) fn new(key: impl Into<String>, value: FieldValue) -> Self {
         Self {
             key: key.into(),
             value,
-            source,
         }
     }
 
@@ -165,22 +146,59 @@ impl MetadataField {
     pub(crate) fn value(&self) -> &FieldValue {
         &self.value
     }
+}
 
-    /// Source location of this field.
+/// A [`MetadataField`] parsed from Dataview-compatible inline field syntax in
+/// markdown body text, tagged with the [`InlineFieldForm`] it was written in.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+pub(crate) struct InlineField {
+    #[serde(flatten)]
+    metadata: MetadataField,
+    form: InlineFieldForm,
+}
+
+impl InlineField {
+    /// Creates an inline field from a key, value, and syntax `form`.
     #[inline]
     #[must_use]
-    pub(crate) fn source(&self) -> FieldSource {
-        self.source
+    pub(crate) fn new(
+        key: impl Into<String>,
+        value: FieldValue,
+        form: InlineFieldForm,
+    ) -> Self {
+        Self {
+            metadata: MetadataField::new(key, value),
+            form,
+        }
     }
 
-    /// Inline field syntax form, if this field came from body text.
+    /// Metadata key.
     #[inline]
     #[must_use]
-    pub(crate) fn form(&self) -> Option<InlineFieldForm> {
-        match self.source {
-            FieldSource::Body(form) => Some(form),
-            FieldSource::Frontmatter => None,
-        }
+    pub(crate) fn key(&self) -> &str {
+        self.metadata.key()
+    }
+
+    /// Typed metadata value.
+    #[inline]
+    #[must_use]
+    pub(crate) fn value(&self) -> &FieldValue {
+        self.metadata.value()
+    }
+
+    /// Inline field syntax form.
+    #[inline]
+    #[must_use]
+    pub(crate) fn form(&self) -> InlineFieldForm {
+        self.form
+    }
+
+    /// Borrows the underlying key-value [`MetadataField`], discarding the
+    /// syntax form.
+    #[inline]
+    #[must_use]
+    pub(crate) fn metadata(&self) -> &MetadataField {
+        &self.metadata
     }
 }
 
@@ -304,7 +322,6 @@ mod tests {
             let title =
                 fm.fields().iter().find(|f| f.key() == "title").expect("title");
             assert_eq!(title.value(), &FieldValue::String("Test".to_owned()));
-            assert_eq!(title.source(), FieldSource::Frontmatter);
         }
 
         #[test]
@@ -376,10 +393,10 @@ mod tests {
         #[case::visible_key(InlineFieldForm::VisibleKey)]
         #[case::hidden_key(InlineFieldForm::HiddenKey)]
         fn stores_key_value_and_form(#[case] form: InlineFieldForm) {
-            let field = MetadataField::new(
+            let field = InlineField::new(
                 "Author",
                 FieldValue::String("Jane Doe".to_owned()),
-                FieldSource::Body(form),
+                form,
             );
 
             assert_eq!(field.key(), "Author");
@@ -387,7 +404,7 @@ mod tests {
                 field.value(),
                 &FieldValue::String("Jane Doe".to_owned())
             );
-            assert_eq!(field.form(), Some(form));
+            assert_eq!(field.form(), form);
         }
     }
 }

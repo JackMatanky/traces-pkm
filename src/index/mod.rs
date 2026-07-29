@@ -34,7 +34,7 @@ use note::parse_markdown;
     reason = "domain types exported for index module callers"
 )]
 pub(crate) use note::{
-    CodeRegion, FieldSource, FieldValue, Frontmatter, InlineFieldForm,
+    CodeRegion, FieldValue, Frontmatter, InlineField, InlineFieldForm,
     LinkType, List, ListItem, MetadataField, Note, Outlink, RawFrontmatter,
     Tag, TaskStatus,
 };
@@ -330,7 +330,7 @@ mod tests {
                 .expect("inline field present");
             assert_eq!(field.key(), expected_key);
             assert_eq!(field.value().as_str(), Some(expected_value));
-            assert_eq!(field.form(), Some(expected_form));
+            assert_eq!(field.form(), expected_form);
         }
 
         #[test]
