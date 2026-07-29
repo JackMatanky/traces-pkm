@@ -16,7 +16,7 @@
 
 mod error;
 mod file;
-mod markdown;
+mod note;
 mod scan;
 mod store;
 
@@ -28,15 +28,15 @@ pub(crate) use error::FileIndexError;
     reason = "domain types exported for index module callers"
 )]
 pub(crate) use file::{FileFormat, FileRecord, Timestamp};
-use markdown::parse_markdown;
+use note::parse_markdown;
 #[expect(
     unused_imports,
     reason = "domain types exported for index module callers"
 )]
-pub(crate) use markdown::{
+pub(crate) use note::{
     CodeRegion, FieldSource, FieldValue, Frontmatter, InlineField,
     InlineFieldForm, LinkType, List, ListItem, MetadataField, Note, Outlink,
-    Tag, TaskStatus,
+    RawFrontmatter, Tag, TaskStatus,
 };
 use store::IndexStore;
 

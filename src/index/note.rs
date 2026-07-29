@@ -1,13 +1,19 @@
-//! Primary [`Note`] aggregate domain type representing an indexed markdown
-//! file.
+//! Note Metadata module: [`Note`] aggregate domain model and markdown parser.
 
+mod inline;
+mod metadata;
+mod parser;
+mod structure;
 use std::path::{Path, PathBuf};
 
+pub(crate) use metadata::{
+    FieldSource, FieldValue, Frontmatter, InlineField, InlineFieldForm,
+    MetadataField, RawFrontmatter,
+};
+pub(crate) use parser::parse_markdown;
 use serde::{Deserialize, Serialize};
-
-use super::{
-    metadata::{Frontmatter, MetadataField},
-    structure::{CodeRegion, List, ListItem, Outlink, Tag},
+pub(crate) use structure::{
+    CodeRegion, LinkType, List, ListItem, Outlink, Tag, TaskStatus,
 };
 
 /// Rich Note Metadata extracted from a markdown file: frontmatter, lists,
@@ -159,7 +165,7 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use super::{
-        super::metadata::{FieldSource, FieldValue, InlineFieldForm},
+        metadata::{FieldSource, FieldValue, InlineFieldForm},
         *,
     };
     use crate::index::LinkType;
