@@ -1,4 +1,4 @@
-//! Note Metadata module: [`Note`] aggregate domain model and markdown parser.
+//! Parsed markdown note metadata.
 
 mod inline;
 mod metadata;
@@ -17,9 +17,11 @@ pub(crate) use structure::{
     CodeRegion, LinkType, List, ListItem, Outlink, Tag, TaskStatus,
 };
 
-/// Rich Note Metadata extracted from a markdown file: frontmatter, lists,
-/// outlinks, code regions, Inline Fields, and tags. [`Self::tasks`] derives
-/// task items from the indexed lists rather than storing them separately.
+/// Metadata extracted from one markdown note.
+///
+/// A [`Note`] stores frontmatter, lists, outlinks, code regions, inline fields,
+/// and tags. [`Self::tasks`] derives task items from stored lists instead of
+/// duplicating them.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub(crate) struct Note {
     path: PathBuf,
@@ -32,9 +34,12 @@ pub(crate) struct Note {
 }
 
 impl Note {
-    /// Creates a new [`Note`] with no Inline Fields or tags. Chain
-    /// [`Self::with_inline_fields`] and/or [`Self::with_tags`] to attach
-    /// them.
+    /// Creates a [`Note`] without inline fields or tags.
+    ///
+    /// The constructor stores parsed path, frontmatter, list, link, and code
+    /// region data. Attach inline fields and tags with
+    /// [`Self::with_inline_fields`] and [`Self::with_tags`] after parser-owned
+    /// extraction has finished.
     #[inline]
     #[must_use]
     pub(crate) fn new(
@@ -81,7 +86,7 @@ impl Note {
         &self.path
     }
 
-    /// Extracted YAML frontmatter block, if present.
+    /// Parsed YAML frontmatter block, if present.
     #[inline]
     #[must_use]
     pub(crate) fn frontmatter(&self) -> Option<&Frontmatter> {
@@ -97,31 +102,32 @@ impl Note {
         &self.lists
     }
 
-    /// Extracted outlinks.
+    /// Outgoing links extracted from markdown and wikilink syntax.
     #[inline]
     #[must_use]
     pub(crate) fn outlinks(&self) -> &[Outlink] {
         &self.outlinks
     }
 
-    /// Extracted excludable code regions.
+    /// Source byte ranges excluded from inline metadata scanning.
     #[inline]
     #[must_use]
     pub(crate) fn code_regions(&self) -> &[CodeRegion] {
         &self.code_regions
     }
 
-    /// Dataview-compatible Inline Fields extracted from paragraph and
-    /// heading text and from list items, in document order.
+    /// Dataview-compatible inline fields from text blocks and list items, in
+    /// document order.
     #[inline]
     #[must_use]
     pub(crate) fn inline_fields(&self) -> &[MetadataField] {
         &self.inline_fields
     }
 
-    /// Combined iterator over all key-value metadata fields on this Note,
-    /// yielding frontmatter fields first, followed by body inline fields
-    /// in document order.
+    /// Iterates over all metadata fields on this note.
+    ///
+    /// Frontmatter fields are yielded first, followed by body inline fields in
+    /// document order.
     pub(crate) fn fields(&self) -> impl Iterator<Item = &MetadataField> {
         let empty: &[MetadataField] = &[];
         let frontmatter_fields =
@@ -137,8 +143,7 @@ impl Note {
         &self.tags
     }
 
-    /// Iterator over all task list items in this Note, including items in
-    /// nested sub-lists.
+    /// Iterates over all task list items, including nested sub-list items.
     pub(crate) fn tasks(&self) -> impl Iterator<Item = &ListItem> {
         let mut tasks = Vec::new();
         for list in &self.lists {
@@ -148,8 +153,7 @@ impl Note {
     }
 }
 
-/// Depth-first walk of `list` and its nested sub-lists, appending every task
-/// item to `acc`.
+/// Appends task items from `list` and its nested sub-lists to `acc`.
 fn collect_tasks_recursive<'a>(list: &'a List, acc: &mut Vec<&'a ListItem>) {
     for item in list.items() {
         if item.is_task() {

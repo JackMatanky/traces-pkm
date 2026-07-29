@@ -1,5 +1,4 @@
-//! Filesystem walk building a [`FileRecord`] for every regular file under a
-//! project root.
+//! Filesystem scan that builds [`FileRecord`]s for regular project files.
 
 use std::path::Path;
 
@@ -7,13 +6,10 @@ use walkdir::WalkDir;
 
 use super::{INDEX_FILE, error::FileIndexError, file::FileRecord};
 
-/// Recursively scans `root`, returning a File Record for every regular file,
-/// sorted by path for deterministic output.
+/// Recursively scans `root` for regular files and returns sorted records.
 ///
-/// Skips `.git` directories (VCS metadata, not project content) and the
-/// `FileIndex`'s own database file (avoids the index indexing itself).
-/// Symlinks are not followed, so they're skipped rather than resolved —
-/// NOTE: revisit if PKM projects turn out to rely on symlinked notes.
+/// Skips `.git` directories, the index database itself, and symlinks. Symlink
+/// support can be added later if PKM projects need linked note trees.
 ///
 /// # Errors
 ///

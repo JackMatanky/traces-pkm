@@ -1,5 +1,8 @@
-//! Metadata domain types: `RawFrontmatter`, `Frontmatter`, `MetadataField`,
-//! `FieldValue`, `FieldSource`, and `InlineFieldForm`.
+//! Metadata extracted from frontmatter and Dataview-compatible inline fields.
+//!
+//! [`RawFrontmatter`] stores the source YAML block. [`Frontmatter`] and
+//! [`MetadataField`] store parsed key-value metadata with a [`FieldSource`] and
+//! typed [`FieldValue`].
 
 use std::collections::BTreeMap;
 
@@ -9,19 +12,19 @@ use yaml_serde as serde_yaml;
 
 use super::structure::Outlink;
 
-/// Unparsed raw YAML frontmatter text block extracted from a markdown Note.
+/// Raw YAML frontmatter block extracted from a markdown note.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 pub(crate) struct RawFrontmatter(String);
 
 impl RawFrontmatter {
-    /// Creates a new [`RawFrontmatter`] instance.
+    /// Stores `raw` as the unparsed frontmatter text.
     #[inline]
     #[must_use]
     pub(crate) fn new(raw: impl Into<String>) -> Self {
         Self(raw.into())
     }
 
-    /// Raw YAML content of the frontmatter block.
+    /// Raw YAML text between the frontmatter delimiters.
     #[inline]
     #[must_use]
     pub(crate) fn as_str(&self) -> &str {
@@ -36,14 +39,14 @@ impl RawFrontmatter {
     }
 }
 
-/// Structured frontmatter metadata parsed from a [`RawFrontmatter`] block.
+/// Structured key-value metadata parsed from a [`RawFrontmatter`] block.
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub(crate) struct Frontmatter {
     fields: Vec<MetadataField>,
 }
 
 impl Frontmatter {
-    /// Creates a new [`Frontmatter`] with the given structured fields.
+    /// Stores the structured frontmatter `fields`.
     #[inline]
     #[must_use]
     pub(crate) fn new(fields: Vec<MetadataField>) -> Self {
@@ -52,14 +55,14 @@ impl Frontmatter {
         }
     }
 
-    /// Structured key-value fields parsed from frontmatter.
+    /// Parsed key-value fields from frontmatter.
     #[inline]
     #[must_use]
     pub(crate) fn fields(&self) -> &[MetadataField] {
         &self.fields
     }
 
-    /// Returns `true` if this frontmatter block contains no structured fields.
+    /// Returns `true` if no structured fields were parsed.
     #[inline]
     #[must_use]
     pub(crate) fn is_empty(&self) -> bool {
@@ -104,25 +107,28 @@ impl From<&RawFrontmatter> for Frontmatter {
         Self::new(fields)
     }
 }
-/// Dataview-compatible Inline Field syntax form in body text.
+
+/// Dataview-compatible inline field syntax form.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub(crate) enum InlineFieldForm {
-    /// `Key:: Value` filling an entire line.
+    /// `Key:: Value`, filling an entire line.
     Body,
-    /// `[Key:: Value]` — the key stays visible in rendered text.
+    /// `[Key:: Value]`, with the key visible in rendered markdown.
     VisibleKey,
-    /// `(Key:: Value)` — the key is hidden in rendered text.
+    /// `(Key:: Value)`, with the key hidden in rendered markdown.
     HiddenKey,
 }
 
-/// Origin source of a [`MetadataField`].
+/// Source location of a [`MetadataField`].
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub(crate) enum FieldSource {
+    /// YAML frontmatter.
     Frontmatter,
+    /// Dataview inline field syntax in markdown body text.
     Body(InlineFieldForm),
 }
 
-/// A key-value metadata field extracted from frontmatter or note body.
+/// Key-value metadata parsed from frontmatter or markdown body text.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub(crate) struct MetadataField {
     key: String,
@@ -131,7 +137,7 @@ pub(crate) struct MetadataField {
 }
 
 impl MetadataField {
-    /// Creates a new [`MetadataField`].
+    /// Creates a metadata field from a key, value, and source.
     #[inline]
     #[must_use]
     pub(crate) fn new(
@@ -146,28 +152,28 @@ impl MetadataField {
         }
     }
 
-    /// The field's key.
+    /// Metadata key.
     #[inline]
     #[must_use]
     pub(crate) fn key(&self) -> &str {
         &self.key
     }
 
-    /// The field's value.
+    /// Typed metadata value.
     #[inline]
     #[must_use]
     pub(crate) fn value(&self) -> &FieldValue {
         &self.value
     }
 
-    /// Origin source of this field.
+    /// Source location of this field.
     #[inline]
     #[must_use]
     pub(crate) fn source(&self) -> FieldSource {
         self.source
     }
 
-    /// Syntax form if this field is from body inline field syntax.
+    /// Inline field syntax form, if this field came from body text.
     #[inline]
     #[must_use]
     pub(crate) fn form(&self) -> Option<InlineFieldForm> {
@@ -178,16 +184,24 @@ impl MetadataField {
     }
 }
 
-/// Dataview-compatible metadata field value.
+/// Typed Dataview-compatible metadata value.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub(crate) enum FieldValue {
+    /// Empty or missing value.
     Null,
+    /// Boolean value.
     Bool(bool),
+    /// Floating-point numeric value.
     Number(f64),
+    /// Plain string value.
     String(String),
+    /// ISO-date-like string value.
     Date(String),
+    /// Link value.
     Link(Outlink),
+    /// Ordered list value.
     List(Vec<FieldValue>),
+    /// Keyed object value with deterministic key order.
     Object(BTreeMap<String, FieldValue>),
 }
 

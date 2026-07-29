@@ -1,9 +1,9 @@
-//! `FileIndex`: a persisted cache of [`FileRecord`]s and [`Note`]s for files
-//! under a trusted project root.
+//! File index for project files and parsed markdown notes.
 //!
-//! Persistence is redb-backed (see [`store`]) but that detail stays behind
-//! [`FileIndex`] — callers (`cli`, later `template`) only ever see
-//! build/persist/load/enumerate.
+//! [`FileIndex`] keeps a sorted [`FileRecord`] for every regular file under a
+//! trusted project root. Markdown files also get parsed into [`Note`] records.
+//! Persistence is redb-backed through [`store`], but callers only use the
+//! build, persist, load, and enumerate APIs.
 
 #![cfg_attr(
     not(test),
@@ -40,13 +40,13 @@ pub(crate) use note::{
 };
 use store::IndexStore;
 
-/// The persisted `FileIndex` database's path, relative to a project root.
+/// Project-relative path of the persisted [`FileIndex`] database.
 const INDEX_FILE: &str = ".traces/index.redb";
 
-/// A persisted cache of File Records and Note Metadata for files under a
-/// project root. Two tiers: every file gets a [`FileRecord`]
-/// ([`Self::records`]); markdown files additionally get a [`Note`]
-/// ([`Self::notes`], [`Self::note`]).
+/// Persisted cache of file metadata and parsed markdown note metadata.
+///
+/// Every indexed file has a [`FileRecord`]. Markdown files also have a
+/// [`Note`], available through [`Self::notes`] or [`Self::note`].
 #[derive(Debug)]
 pub(crate) struct FileIndex {
     records: Vec<FileRecord>,
@@ -54,9 +54,10 @@ pub(crate) struct FileIndex {
 }
 
 impl FileIndex {
-    /// Scans `root` and builds a `FileIndex` in memory, extracting [`Note`]
-    /// metadata for markdown files. Does not persist — call [`Self::persist`]
-    /// to write it to disk.
+    /// Scans `root` and builds a [`FileIndex`] in memory.
+    ///
+    /// Markdown files are parsed into [`Note`] records. The index is not
+    /// persisted until [`Self::persist`] is called.
     ///
     /// # Errors
     ///
@@ -88,8 +89,9 @@ impl FileIndex {
         })
     }
 
-    /// Persists this `FileIndex`'s File Records and Note Records to `root`'s
-    /// index database, replacing any previously persisted contents.
+    /// Persists this index to `root`, replacing any existing index contents.
+    ///
+    /// Both [`FileRecord`] and [`Note`] records are written atomically.
     ///
     /// # Errors
     ///
@@ -102,8 +104,9 @@ impl FileIndex {
         IndexStore::open(root)?.replace_all(&self.records, &self.notes)
     }
 
-    /// Loads the `FileIndex` previously persisted for `root`. Returns an empty
-    /// `FileIndex` if none was ever persisted.
+    /// Loads the index previously persisted for `root`.
+    ///
+    /// Returns an empty [`FileIndex`] if no index has been persisted yet.
     ///
     /// # Errors
     ///
@@ -119,14 +122,14 @@ impl FileIndex {
         })
     }
 
-    /// Every indexed File Record, sorted by path.
+    /// Indexed [`FileRecord`]s, sorted by path.
     #[inline]
     #[must_use]
     pub(crate) fn records(&self) -> &[FileRecord] {
         &self.records
     }
 
-    /// Every indexed Note Record, sorted by path.
+    /// Indexed [`Note`] records, sorted by path.
     #[inline]
     #[must_use]
     pub(crate) fn notes(&self) -> &[Note] {

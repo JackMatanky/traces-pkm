@@ -1,27 +1,19 @@
-//! Markdown note event parser yielding [`Note`] records.
+//! Event parser that converts markdown into [`Note`] records.
 //!
-//! [`parse_markdown`] walks `pulldown-cmark`'s event stream once,
-//! accumulating into a [`ParserContext`]. Nested lists are tracked with an
-//! explicit stack (`list_stack`/`item_stack`) rather than recursion, so
-//! depth is bounded only by available memory, not call-stack size. A link's
-//! display text is pushed into both its [`Outlink`] and the plain text of
-//! the list item containing it — the two aren't mutually exclusive, since a
-//! link can appear inside an item.
+//! [`parse_markdown`] walks the `pulldown-cmark` event stream once and stores
+//! state in [`ParserContext`]. Nested lists use explicit stacks instead of
+//! recursion, so nesting is limited by available memory rather than call-stack
+//! depth.
 //!
-//! Inline Field and tag extraction ([`inline::extract_inline_fields`],
-//! [`inline::extract_tags`]) runs over plain-text buffers built alongside
-//! the event walk, one per top-level text block (a paragraph or heading —
-//! Dataview indexes both) and one per list item. Both exclude
-//! fenced/indented code block text and inline code, so neither lexer pass
-//! consults [`CodeRegion`] ranges directly. A list item's buffer is lexed
-//! before any nested sub-list is entered, so fields and tags land in
-//! [`Note::inline_fields`]/[`Note::tags`] in overall document order. A
-//! standard Markdown link's display text is bracketed with a reconstructed
-//! `[`/`]` pair in these buffers (though never in `text_buffer`/
-//! [`ListItem::text`]), so a link whose display text looks like a
-//! bracket-form field — `[Key:: Value](url)` — is still detected, matching
-//! Dataview's own raw-text field scanner, which is agnostic to whether the
-//! brackets are also link syntax.
+//! Inline fields and tags are extracted from parser-built plain-text buffers:
+//! one per top-level paragraph or heading, and one per list item. The buffers
+//! exclude fenced code blocks, indented code blocks, and inline code, so lexer
+//! passes never need to inspect [`CodeRegion`] ranges.
+//!
+//! Standard Markdown link text is also copied into the surrounding text buffer.
+//! For scan buffers, the parser reconstructs the literal `[` and `]` around
+//! Markdown link text so `[Key:: Value](url)` is detected as a visible-key
+//! inline field while [`ListItem::text`] remains plain display text.
 
 use std::{mem, ops::Range, path::PathBuf};
 
@@ -35,8 +27,9 @@ use super::{
     Outlink, RawFrontmatter, Tag, TaskStatus, inline,
 };
 
-/// Parses a markdown string into a [`Note`] record using `pulldown-cmark`,
-/// with task lists, YAML frontmatter blocks, and Obsidian wikilinks enabled.
+/// Parses `src` into a [`Note`] at `path`.
+///
+/// Enables task lists, YAML frontmatter blocks, and Obsidian wikilinks.
 #[must_use]
 pub(crate) fn parse_markdown(path: impl Into<PathBuf>, src: &str) -> Note {
     let mut opts = Options::empty();
@@ -51,9 +44,10 @@ pub(crate) fn parse_markdown(path: impl Into<PathBuf>, src: &str) -> Note {
     ctx.into_note(path)
 }
 
-/// Which top-level block kind the parser is currently inside, if any. A
-/// metadata block, code block, and text block (paragraph or heading) are
-/// mutually exclusive at this granularity.
+/// Top-level block currently being parsed.
+///
+/// Metadata blocks, code blocks, and text blocks are mutually exclusive in the
+/// parser state.
 #[derive(Default, Eq, PartialEq)]
 enum BlockContext {
     #[default]
@@ -63,7 +57,7 @@ enum BlockContext {
     Text,
 }
 
-/// Accumulated context while walking `pulldown-cmark` events for one Note.
+/// State accumulated while walking `pulldown-cmark` events for one note.
 #[derive(Default)]
 struct ParserContext {
     frontmatter: Option<Frontmatter>,
@@ -153,10 +147,10 @@ impl ParserContext {
         }
     }
 
-    /// Starts tracking a link. For a standard Markdown link (not a
-    /// Wikilink), also pushes a literal `[` into the active scan buffer —
-    /// see [`Self::push_scan_char`] — so its display text can be detected
-    /// as a bracket-form Inline Field if it looks like one.
+    /// Starts tracking a markdown or wikilink outlink.
+    ///
+    /// Standard Markdown links also push `[` into the active scan buffer so
+    /// visible-key inline fields can be detected in link text.
     fn start_link(&mut self, link_type: CmarkLinkType, dest_url: CowStr<'_>) {
         let kind = if matches!(link_type, CmarkLinkType::WikiLink { .. }) {
             LinkType::Wikilink
@@ -169,9 +163,7 @@ impl ParserContext {
         self.active_link = Some((dest_url.into_string(), kind, String::new()));
     }
 
-    /// Closes the active link, recording its [`Outlink`]. Pushes the
-    /// closing `]` matching [`Self::start_link`]'s opening bracket for a
-    /// standard Markdown link.
+    /// Records the active [`Outlink`] and closes any scan-buffer bracket.
     fn end_link(&mut self) {
         if let Some((target, kind, text)) = self.active_link.take() {
             if kind == LinkType::Markdown {
@@ -193,10 +185,10 @@ impl ParserContext {
         self.block = BlockContext::None;
     }
 
-    /// Pushes the code span's byte range and its text — inline code has no
-    /// surrounding markup to strip, so its content is also part of the item's
-    /// plain text (unlike fenced code blocks, which are typically their own
-    /// paragraph outside any item's inline text run).
+    /// Records an inline code span and copies its text into the active item.
+    ///
+    /// Inline code contributes to list item display text but is excluded from
+    /// the scan buffer used for inline fields and tags.
     fn inline_code(&mut self, text: &str, range: Range<usize>) {
         self.code_regions.push(CodeRegion::new(range.start, range.end));
         if let Some(item) = self.item_stack.last_mut() {
@@ -204,10 +196,10 @@ impl ParserContext {
         }
     }
 
-    /// Pushes a new list frame. If a list item is already active, first
-    /// flushes its buffered text for Inline Fields/tags — see
-    /// [`Self::flush_item_scan_buffer`] — so the item's own metadata lands
-    /// ahead of its nested children's in document order.
+    /// Pushes a list frame and flushes any active parent item scan buffer.
+    ///
+    /// Flushing before entering a nested list keeps parent metadata ordered
+    /// before child metadata.
     fn start_list(&mut self, is_ordered: bool) {
         self.flush_item_scan_buffer();
         self.list_stack.push(ListFrame {
@@ -216,12 +208,10 @@ impl ParserContext {
         });
     }
 
-    /// Lexes the active list item's buffered plain text (if any) for Inline
-    /// Fields and tags, appending them to `self.inline_fields`/`self.tags`
-    /// and clearing the buffer. Called both when a nested list starts inside
-    /// the item (so the item's own text is ordered ahead of its children's)
-    /// and when the item closes (for any text accumulated after the last
-    /// nested list, or the item's only text if it had none).
+    /// Lexes and clears the active list item's scan buffer.
+    ///
+    /// Called before entering a nested list and when the item closes, so
+    /// metadata before and after child lists keeps document order.
     fn flush_item_scan_buffer(&mut self) {
         if let Some(item) = self.item_stack.last_mut()
             && !item.scan_buffer.is_empty()
@@ -232,11 +222,11 @@ impl ParserContext {
         }
     }
 
-    /// Closes the innermost list: nests it under the current item if one is
-    /// active (so `- parent\n  - child` puts `child` under `parent`'s
-    /// [`ListItem::children`]), otherwise it's a top-level list on the Note
-    /// itself. This is the one branch that decides [`Note::lists`]
-    /// top-level-only vs. nested.
+    /// Closes the innermost list.
+    ///
+    /// A list nested inside an active item is stored under
+    /// [`ListItem::children`]. Otherwise it becomes a top-level [`Note::lists`]
+    /// entry.
     fn end_list(&mut self) {
         if let Some(frame) = self.list_stack.pop() {
             let list = List::new(frame.is_ordered, frame.items);
@@ -257,9 +247,7 @@ impl ParserContext {
         });
     }
 
-    /// Flushes and pops the innermost item, then builds the [`ListItem`]
-    /// from its `text_buffer`. See [`Self::flush_item_scan_buffer`] for the
-    /// Inline Field/tag lexing this performs before the item is popped.
+    /// Flushes and records the innermost list item.
     fn end_item(&mut self) {
         self.flush_item_scan_buffer();
         if let Some(item_frame) = self.item_stack.pop() {
@@ -284,13 +272,10 @@ impl ParserContext {
         }
     }
 
-    /// Marks a top-level text block (a paragraph or heading — Dataview
-    /// extracts Inline Fields and tags from both) as active and clears
-    /// `body_buffer`, ready to accumulate its plain text. When nested
-    /// inside a list item, instead separates it from the item's prior
-    /// text block(s) with a newline in the active `ItemFrame::scan_buffer`
-    /// (if it already holds text), so a loose list item's later
-    /// paragraphs don't merge into one line.
+    /// Starts a paragraph or heading text block.
+    ///
+    /// Top-level text fills `body_buffer`. Text nested inside a list item
+    /// separates multiple paragraphs with a newline in that item's scan buffer.
     fn start_text_block(&mut self) {
         self.block = BlockContext::Text;
         if self.item_stack.is_empty() {
@@ -304,9 +289,9 @@ impl ParserContext {
         }
     }
 
-    /// Lexes a completed top-level text block's `body_buffer` for Inline
-    /// Fields and tags. A no-op when nested inside a list item, matching
-    /// [`Self::start_text_block`].
+    /// Lexes a completed top-level text block.
+    ///
+    /// Nested text blocks are handled through the active list item instead.
     fn end_text_block(&mut self) {
         self.block = BlockContext::None;
         if self.item_stack.is_empty() {
@@ -317,14 +302,10 @@ impl ParserContext {
         }
     }
 
-    /// Appends `text` to whichever buffers are active: the metadata buffer,
-    /// the active link's display text, and the enclosing list item's plain
-    /// text — independently, so a link's display text ends up in both its
-    /// [`Outlink`] and the item's text. `ItemFrame::scan_buffer` and
-    /// `body_buffer` mirror `text_buffer` and top-level text-block content
-    /// respectively, but skip text from inside a fenced/indented code
-    /// block, so neither Inline Field nor tag extraction ever sees code
-    /// block content.
+    /// Appends text to every active output buffer.
+    ///
+    /// The same text can update frontmatter, link display text, list item text,
+    /// and scan buffers independently. Scan buffers skip code block content.
     fn push_text(&mut self, text: &str) {
         if self.block == BlockContext::MetadataBlock {
             self.metadata_buffer.push_str(text);
@@ -345,8 +326,7 @@ impl ParserContext {
         }
     }
 
-    /// Appends a newline to the active metadata buffer, list item text, or
-    /// top-level text-block text.
+    /// Appends a markdown line break to the active text buffer.
     fn push_break(&mut self) {
         if self.block == BlockContext::MetadataBlock {
             self.metadata_buffer.push('\n');
@@ -362,12 +342,10 @@ impl ParserContext {
         }
     }
 
-    /// Pushes a literal character into whichever scan buffer is currently
-    /// active — the enclosing list item's, or the top-level text block's —
-    /// mirroring [`Self::push_text`]'s buffer selection. Used by
-    /// [`Self::start_link`]/[`Self::end_link`] to reconstruct the literal
-    /// `[`/`]` a standard Markdown link's display text loses when
-    /// `pulldown-cmark` consumes them as link syntax.
+    /// Pushes a literal character into the active scan buffer.
+    ///
+    /// Used to reconstruct `[` and `]` around standard Markdown link text for
+    /// visible-key inline field scanning.
     fn push_scan_char(&mut self, ch: char) {
         if let Some(item) = self.item_stack.last_mut() {
             item.scan_buffer.push(ch);
@@ -379,19 +357,20 @@ impl ParserContext {
     }
 }
 
-/// Active list context on the parser stack.
+/// Active list frame on the parser stack.
 struct ListFrame {
     is_ordered: bool,
     items: Vec<ListItem>,
 }
 
-/// Active list item context on the parser stack.
+/// Active list item frame on the parser stack.
 struct ItemFrame {
     task_status: Option<TaskStatus>,
     text_buffer: String,
-    /// Mirrors `text_buffer` but excludes inline code text — the buffer
-    /// [`ParserContext::flush_item_scan_buffer`] lexes for Inline Fields and
-    /// tags, either when a nested list starts or when the item closes.
+    /// Mirrors `text_buffer` but excludes code text.
+    ///
+    /// [`ParserContext::flush_item_scan_buffer`] lexes this buffer for inline
+    /// fields and tags.
     scan_buffer: String,
     children: Vec<List>,
 }

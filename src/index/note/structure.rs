@@ -1,18 +1,22 @@
-//! Markdown document structure types: lists, tasks, outlinks, tags, and code
-//! regions.
+//! Markdown structure extracted from notes.
+//!
+//! This module stores links, lists, task state, tags, and code ranges produced
+//! by the markdown parser.
 
 use std::ops::Range;
 
 use serde::{Deserialize, Serialize};
 
-/// Link target classification: standard Markdown link or Obsidian Wikilink.
+/// Link syntax used for an extracted [`Outlink`].
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub(crate) enum LinkType {
+    /// Standard Markdown `[text](target)` link.
     Markdown,
+    /// Obsidian `[[target|alias]]` wikilink.
     Wikilink,
 }
 
-/// An outgoing link extracted from a markdown Note.
+/// Outgoing link extracted from markdown link syntax.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub(crate) struct Outlink {
     target: String,
@@ -21,7 +25,7 @@ pub(crate) struct Outlink {
 }
 
 impl Outlink {
-    /// Creates a new [`Outlink`].
+    /// Creates an outlink from a target, display text, and syntax kind.
     #[inline]
     #[must_use]
     pub(crate) fn new(
@@ -36,22 +40,21 @@ impl Outlink {
         }
     }
 
-    /// Target URL, relative file path, or wikilink page target.
+    /// Target URL, relative path, or wikilink page target.
     #[inline]
     #[must_use]
     pub(crate) fn target(&self) -> &str {
         &self.target
     }
 
-    /// Display text or alias for the link.
+    /// Display text, or alias text for wikilinks.
     #[inline]
     #[must_use]
     pub(crate) fn text(&self) -> &str {
         &self.text
     }
 
-    /// Link syntax classification ([`LinkType::Markdown`] or
-    /// [`LinkType::Wikilink`]).
+    /// Link syntax kind.
     #[inline]
     #[must_use]
     pub(crate) fn kind(&self) -> LinkType {
@@ -73,14 +76,16 @@ impl Outlink {
     }
 }
 
-/// Completion state for a task list item.
+/// Completion state of a markdown task list item.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub(crate) enum TaskStatus {
+    /// Unchecked task item.
     Incomplete,
+    /// Checked task item.
     Complete,
 }
 
-/// A single item within a markdown list.
+/// List item text, optional task state, and nested child lists.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub(crate) struct ListItem {
     text: String,
@@ -89,7 +94,7 @@ pub(crate) struct ListItem {
 }
 
 impl ListItem {
-    /// Creates a new [`ListItem`].
+    /// Creates a list item without child lists.
     #[inline]
     #[must_use]
     pub(crate) fn new(
@@ -103,7 +108,7 @@ impl ListItem {
         }
     }
 
-    /// Creates a new [`ListItem`] with child lists.
+    /// Creates a list item with nested child lists.
     #[inline]
     #[must_use]
     pub(crate) fn with_children(
@@ -118,7 +123,7 @@ impl ListItem {
         }
     }
 
-    /// Plain text content of the list item.
+    /// Plain text content.
     #[inline]
     #[must_use]
     pub(crate) fn text(&self) -> &str {
@@ -146,7 +151,7 @@ impl ListItem {
         matches!(self.task_status, Some(TaskStatus::Complete))
     }
 
-    /// Nested child lists under this item.
+    /// Nested lists under this item.
     #[inline]
     #[must_use]
     pub(crate) fn children(&self) -> &[List] {
@@ -154,7 +159,7 @@ impl ListItem {
     }
 }
 
-/// A list extracted from a markdown Note.
+/// Ordered or unordered markdown list.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub(crate) struct List {
     is_ordered: bool,
@@ -162,7 +167,7 @@ pub(crate) struct List {
 }
 
 impl List {
-    /// Creates a new [`List`].
+    /// Creates a list from its ordering flag and items.
     #[inline]
     #[must_use]
     pub(crate) fn new(is_ordered: bool, items: Vec<ListItem>) -> Self {
@@ -179,7 +184,7 @@ impl List {
         self.is_ordered
     }
 
-    /// Top-level list items contained in this list.
+    /// Items contained directly in this list.
     #[inline]
     #[must_use]
     pub(crate) fn items(&self) -> &[ListItem] {
@@ -187,8 +192,8 @@ impl List {
     }
 }
 
-/// An excludable code region (inline code or code block byte range) in source
-/// markdown.
+/// Source byte range of inline code or a code block excluded from metadata
+/// scanning.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub(crate) struct CodeRegion {
     start: usize,
@@ -196,7 +201,7 @@ pub(crate) struct CodeRegion {
 }
 
 impl CodeRegion {
-    /// Creates a new [`CodeRegion`].
+    /// Creates a code region from start and end byte offsets.
     #[inline]
     #[must_use]
     pub(crate) fn new(start: usize, end: usize) -> Self {
@@ -214,20 +219,19 @@ impl CodeRegion {
     }
 }
 
-/// A markdown tag (e.g. `#book`, `#projects/active`), including its
-/// leading `#`.
+/// Markdown tag including its leading `#`, such as `#book`.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub(crate) struct Tag(String);
 
 impl Tag {
-    /// Creates a new [`Tag`] from its full text, including the leading `#`.
+    /// Creates a tag from text that includes the leading `#`.
     #[inline]
     #[must_use]
     pub(crate) fn new(text: impl Into<String>) -> Self {
         Self(text.into())
     }
 
-    /// The tag's full text, including the leading `#`.
+    /// Full tag text, including the leading `#`.
     #[inline]
     #[must_use]
     pub(crate) fn as_str(&self) -> &str {

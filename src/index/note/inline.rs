@@ -1,10 +1,9 @@
-//! Dataview-compatible Inline Field and markdown tag lexer.
+//! Lexer for Dataview-compatible inline fields and markdown tags.
 //!
-//! Runs over plain-text buffers assembled by [`super::parser`]: one per
-//! top-level text block (paragraph or heading), one per list item. Both
-//! already exclude fenced code blocks, indented code blocks, and inline
-//! code, so this module scans plain text only and never touches
-//! [`super::types::CodeRegion`] ranges directly.
+//! The parser passes this module plain-text buffers for each text block and
+//! list item. Those buffers already exclude fenced code blocks, indented code
+//! blocks, and inline code, so the lexer does not inspect [`super::CodeRegion`]
+//! ranges.
 
 use std::sync::LazyLock;
 
@@ -12,10 +11,11 @@ use regex::{Captures, Regex};
 
 use super::{FieldSource, FieldValue, InlineFieldForm, MetadataField, Tag};
 
-/// Matches a full-line `Key:: Value` body field: a letter-led key token
-/// (no whitespace — an unambiguous single word, unlike the bracket/paren
-/// forms below, which are safely delimited even with a multi-word key)
-/// followed by `::` and a value running to the end of its line.
+/// Matches full-line `Key:: Value` body fields.
+///
+/// Body fields require a single letter-led key token with no whitespace. The
+/// bracketed forms below are safely delimited, so they can allow multi-word
+/// keys.
 #[expect(
     clippy::expect_used,
     reason = "static regex pattern is valid at compile time"
@@ -45,11 +45,10 @@ static HIDDEN_FIELD_RE: LazyLock<Regex> = LazyLock::new(|| {
         .expect("HIDDEN_FIELD_RE pattern is valid")
 });
 
-/// Matches a markdown tag token: `#` immediately followed by a letter, then
-/// word characters, hyphens, or `/` for nested tags (`#projects/active`).
-/// [`extract_tags`] separately checks the character preceding each match to
-/// reject mid-word occurrences like the `#` in `foo#bar` — see there for why
-/// that check isn't folded into this pattern.
+/// Matches markdown tag tokens such as `#book` and `#projects/active`.
+///
+/// [`extract_tags`] checks the byte before each match and rejects mid-word
+/// occurrences like `foo#bar`.
 #[expect(
     clippy::expect_used,
     reason = "static regex pattern is valid at compile time"
@@ -58,9 +57,9 @@ static TAG_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"#[[:alpha:]][[:alnum:]_/-]*").expect("TAG_RE pattern is valid")
 });
 
-/// Extracts every Dataview-compatible Inline Field from `text`, sorted by
-/// byte position. `text` is a pre-composed plain-text buffer that has already
-/// excluded code spans/blocks — see the module docs.
+/// Extracts inline fields from `text`, sorted by byte position.
+///
+/// The input must already exclude code spans and blocks.
 pub(super) fn extract_inline_fields(text: &str) -> Vec<MetadataField> {
     let mut matches: Vec<(usize, MetadataField)> = Vec::new();
     for caps in BODY_FIELD_RE.captures_iter(text) {
@@ -75,12 +74,11 @@ pub(super) fn extract_inline_fields(text: &str) -> Vec<MetadataField> {
     matches.sort_by_key(|(start, _)| *start);
     matches.into_iter().map(|(_, field)| field).collect()
 }
-/// Extracts every markdown tag from `text`, in encounter order, keeping the
-/// leading `#`. A tag is rejected when the byte immediately before its `#`
-/// is alphanumeric or `_` (e.g. the `#` in `foo#bar`), checked directly on
-/// `text` after a boundary-agnostic [`TAG_RE`] match — the `regex` crate has
-/// no lookbehind, and folding the check into a consuming leading alternative
-/// (`(?:\A|[^alnum])`) would eat a character other matches might need.
+
+/// Extracts markdown tags from `text` in encounter order.
+///
+/// Tags keep their leading `#`. Matches whose `#` is immediately preceded by
+/// an alphanumeric character or `_` are rejected so `foo#bar` is not a tag.
 pub(super) fn extract_tags(text: &str) -> Vec<Tag> {
     TAG_RE
         .find_iter(text)
@@ -94,9 +92,9 @@ pub(super) fn extract_tags(text: &str) -> Vec<Tag> {
         .collect()
 }
 
-/// Pushes the field captured by `caps`, together with its match start
-/// offset for later sorting, onto `matches`. No-op if `caps` is missing the
-/// mandatory key/value capture groups.
+/// Pushes a captured inline field and its byte offset onto `matches`.
+///
+/// Missing key or value captures are ignored.
 fn push_field(
     matches: &mut Vec<(usize, MetadataField)>,
     caps: &Captures<'_>,
