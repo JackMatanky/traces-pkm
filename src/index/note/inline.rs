@@ -189,10 +189,18 @@ mod tests {
             let fields = extract_inline_fields(input);
 
             assert_eq!(fields.len(), 1);
-            let field = fields.first().expect("field present");
-            assert_eq!(field.key(), expected_key);
-            assert_eq!(field.value().as_str(), Some(expected_value));
-            assert_eq!(field.form(), Some(expected_form));
+            assert_eq!(
+                fields.first().map(MetadataField::key),
+                Some(expected_key)
+            );
+            assert_eq!(
+                fields.first().and_then(|field| field.value().as_str()),
+                Some(expected_value)
+            );
+            assert_eq!(
+                fields.first().and_then(MetadataField::form),
+                Some(expected_form)
+            );
         }
 
         #[test]
@@ -212,9 +220,14 @@ mod tests {
         ) {
             let fields = extract_inline_fields(input);
 
-            let field = fields.first().expect("field present");
-            assert_eq!(field.key(), expected_key);
-            assert_eq!(field.value().as_str(), Some("2024-01-01"));
+            assert_eq!(
+                fields.first().map(MetadataField::key),
+                Some(expected_key)
+            );
+            assert_eq!(
+                fields.first().and_then(|field| field.value().as_str()),
+                Some("2024-01-01")
+            );
         }
 
         #[test]
@@ -231,24 +244,45 @@ mod tests {
         fn trims_surrounding_whitespace_from_the_value() {
             let fields = extract_inline_fields("Status::    Draft   ");
 
-            let field = fields.first().expect("field present");
-            assert_eq!(field.value().as_str(), Some("Draft"));
+            assert_eq!(
+                fields.first().and_then(|field| field.value().as_str()),
+                Some("Draft")
+            );
         }
 
         #[test]
         fn extracts_an_empty_value_when_nothing_follows_the_double_colon() {
             let fields = extract_inline_fields("Status::");
 
-            let field = fields.first().expect("field present");
-            assert_eq!(field.value(), &FieldValue::Null);
+            assert_eq!(
+                fields.first().map(MetadataField::value),
+                Some(&FieldValue::Null)
+            );
+        }
+
+        #[rstest]
+        #[case::true_value("flag:: true", FieldValue::Bool(true))]
+        #[case::false_value("flag:: false", FieldValue::Bool(false))]
+        #[case::number("score:: 4.5", FieldValue::Number(4.5))]
+        #[case::date("due:: 2026-07-29", FieldValue::Date("2026-07-29".to_owned()))]
+        #[case::non_finite_number("score:: NaN", FieldValue::String("NaN".to_owned()))]
+        fn parses_inline_value_types(
+            #[case] input: &str,
+            #[case] expected: FieldValue,
+        ) {
+            let fields = extract_inline_fields(input);
+
+            assert_eq!(
+                fields.first().map(MetadataField::value),
+                Some(&expected)
+            );
         }
 
         #[test]
         fn accepts_a_bare_key_preceded_by_leading_whitespace() {
             let fields = extract_inline_fields("  Status:: Draft");
 
-            let field = fields.first().expect("field present");
-            assert_eq!(field.key(), "Status");
+            assert_eq!(fields.first().map(MetadataField::key), Some("Status"));
         }
 
         #[test]

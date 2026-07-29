@@ -179,19 +179,37 @@ mod tests {
         }
 
         #[test]
-        fn parses_frontmatter_and_tasks_from_markdown_content() {
+        fn includes_frontmatter_fields_in_the_indexed_note() {
             let temp = tempfile::tempdir().expect("create temp dir");
-            fs::write(
-                temp.path().join("todo.md"),
-                "---\ntitle: Todo\n---\n- [ ] task 1",
-            )
-            .expect("write note");
+            fs::write(temp.path().join("todo.md"), "---\ntitle: Todo\n---")
+                .expect("write note");
 
             let index = FileIndex::build(temp.path()).expect("build index");
 
-            let note = index.note(Path::new("todo.md")).expect("note lookup");
-            assert_eq!(note.frontmatter().map(|fm| fm.fields().len()), Some(1));
-            assert_eq!(note.tasks().count(), 1);
+            assert_eq!(
+                index
+                    .note(Path::new("todo.md"))
+                    .and_then(Note::frontmatter)
+                    .map(|fm| fm.fields().len()),
+                Some(1)
+            );
+        }
+
+        #[test]
+        fn includes_tasks_in_the_indexed_note() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("todo.md"), "- [ ] task 1")
+                .expect("write note");
+
+            let index = FileIndex::build(temp.path()).expect("build index");
+
+            assert_eq!(
+                index
+                    .note(Path::new("todo.md"))
+                    .map(Note::tasks)
+                    .map(Iterator::count),
+                Some(1)
+            );
         }
 
         #[test]
@@ -207,6 +225,30 @@ mod tests {
             let after = fs::read_to_string(temp.path().join("note.md"))
                 .expect("read note back");
             assert_eq!(after, original);
+        }
+
+        #[test]
+        fn returns_io_error_when_markdown_file_is_not_utf8() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("bad.md"), [0xFF, 0xFE])
+                .expect("write invalid utf8");
+
+            let result = FileIndex::build(temp.path());
+
+            assert!(matches!(result, Err(FileIndexError::Io { .. })));
+        }
+
+        #[test]
+        fn sorts_indexed_notes_by_path() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("b.md"), "# B").expect("write b");
+            fs::write(temp.path().join("a.md"), "# A").expect("write a");
+
+            let index = FileIndex::build(temp.path()).expect("build index");
+
+            let paths: Vec<&Path> =
+                index.notes().iter().map(Note::path).collect();
+            assert_eq!(paths, [Path::new("a.md"), Path::new("b.md")]);
         }
     }
 
@@ -363,12 +405,17 @@ mod tests {
         }
 
         #[test]
-        fn returns_note_when_path_is_indexed() {
+        fn returns_the_matching_note_when_path_is_indexed() {
             let temp = tempfile::tempdir().expect("create temp dir");
-            fs::write(temp.path().join("a.md"), "# Title").expect("write file");
+            fs::write(temp.path().join("a.md"), "# A").expect("write a");
+            fs::write(temp.path().join("b.md"), "# B").expect("write b");
+            fs::write(temp.path().join("c.md"), "# C").expect("write c");
             let index = FileIndex::build(temp.path()).expect("build index");
 
-            assert_eq!(index.note(Path::new("a.md")).is_some(), true);
+            assert_eq!(
+                index.note(Path::new("b.md")).map(Note::path),
+                Some(Path::new("b.md"))
+            );
         }
     }
 }

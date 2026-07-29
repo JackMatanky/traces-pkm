@@ -163,61 +163,175 @@ fn collect_tasks_recursive<'a>(list: &'a List, acc: &mut Vec<&'a ListItem>) {
 
 #[cfg(test)]
 mod tests {
-    use pretty_assertions::assert_eq;
 
     use super::{
         metadata::{FieldSource, FieldValue, InlineFieldForm},
         *,
     };
-    use crate::index::LinkType;
 
-    #[test]
-    fn constructs_note_with_the_given_path_and_parts() {
-        let frontmatter = Frontmatter::new(Vec::new());
-        let list = List::new(false, vec![ListItem::new("item", None)]);
-        let outlink = Outlink::new("target", "text", LinkType::Wikilink);
-        let code_region = CodeRegion::new(3, 7);
+    mod constructor {
+        use pretty_assertions::assert_eq;
 
-        let note = Note::new(
-            "notes/a.md",
-            Some(frontmatter.clone()),
-            vec![list.clone()],
-            vec![outlink.clone()],
-            vec![code_region.clone()],
-        );
+        use super::*;
 
-        assert_eq!(note.path(), Path::new("notes/a.md"));
-        assert_eq!(note.frontmatter(), Some(&frontmatter));
-        assert_eq!(note.lists(), [list]);
-        assert_eq!(note.outlinks(), [outlink]);
-        assert_eq!(note.code_regions(), [code_region]);
+        #[test]
+        fn constructs_note_with_the_given_path_and_parts() {
+            let frontmatter = Frontmatter::new(Vec::new());
+            let list = List::new(false, vec![ListItem::new("item", None)]);
+            let outlink = Outlink::new("target", "text", LinkType::Wikilink);
+            let code_region = CodeRegion::new(3, 7);
+
+            let note = Note::new(
+                "notes/a.md",
+                Some(frontmatter.clone()),
+                vec![list.clone()],
+                vec![outlink.clone()],
+                vec![code_region],
+            );
+
+            assert_eq!(note.path(), Path::new("notes/a.md"));
+            assert_eq!(note.frontmatter(), Some(&frontmatter));
+            assert_eq!(note.lists(), [list]);
+            assert_eq!(note.outlinks(), [outlink]);
+            assert_eq!(note.code_regions(), [code_region]);
+        }
+
+        #[test]
+        fn constructs_note_with_no_frontmatter_and_empty_collections() {
+            let note = Note::new(
+                "notes/a.md",
+                None,
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+            );
+
+            assert_eq!(note.path(), Path::new("notes/a.md"));
+            assert_eq!(note.frontmatter(), None);
+            assert_eq!(note.lists().len(), 0);
+            assert_eq!(note.outlinks().len(), 0);
+            assert_eq!(note.code_regions().len(), 0);
+        }
     }
 
-    #[test]
-    fn constructs_note_with_no_frontmatter_and_empty_collections() {
-        let note =
-            Note::new("notes/a.md", None, Vec::new(), Vec::new(), Vec::new());
-        assert_eq!(note.path(), Path::new("notes/a.md"));
-        assert_eq!(note.frontmatter(), None);
-        assert_eq!(note.lists().len(), 0);
-        assert_eq!(note.outlinks().len(), 0);
-        assert_eq!(note.code_regions().len(), 0);
+    mod builder {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn with_inline_fields_attaches_the_given_fields() {
+            let field = MetadataField::new(
+                "Status",
+                FieldValue::String("Draft".to_owned()),
+                FieldSource::Body(InlineFieldForm::Body),
+            );
+
+            let note = Note::new(
+                "notes/a.md",
+                None,
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+            )
+            .with_inline_fields(vec![field.clone()]);
+
+            assert_eq!(note.inline_fields(), [field]);
+        }
+
+        #[test]
+        fn with_tags_attaches_the_given_tags() {
+            let note = Note::new(
+                "notes/a.md",
+                None,
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+            )
+            .with_tags(vec![Tag::new("#book")]);
+
+            assert_eq!(note.tags(), [Tag::new("#book")]);
+        }
     }
 
-    #[test]
-    fn builder_methods_attach_inline_fields_and_tags() {
-        let field = MetadataField::new(
-            "Status",
-            FieldValue::String("Draft".to_string()),
-            FieldSource::Body(InlineFieldForm::Body),
-        );
+    mod fields {
+        use pretty_assertions::assert_eq;
 
-        let note =
-            Note::new("notes/a.md", None, Vec::new(), Vec::new(), Vec::new())
-                .with_inline_fields(vec![field.clone()])
-                .with_tags(vec![Tag::new("#book")]);
+        use super::*;
 
-        assert_eq!(note.inline_fields(), [field]);
-        assert_eq!(note.tags(), [Tag::new("#book")]);
+        #[test]
+        fn returns_empty_iterator_when_note_has_no_fields() {
+            let note = Note::new(
+                "notes/a.md",
+                None,
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+            );
+
+            assert_eq!(note.fields().count(), 0);
+        }
+
+        #[test]
+        fn yields_frontmatter_fields_before_inline_fields() {
+            let frontmatter = Frontmatter::new(vec![MetadataField::new(
+                "title",
+                FieldValue::String("Note".to_owned()),
+                FieldSource::Frontmatter,
+            )]);
+            let inline_field = MetadataField::new(
+                "Status",
+                FieldValue::String("Draft".to_owned()),
+                FieldSource::Body(InlineFieldForm::Body),
+            );
+
+            let note = Note::new(
+                "notes/a.md",
+                Some(frontmatter),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+            )
+            .with_inline_fields(vec![inline_field]);
+
+            let keys: Vec<&str> =
+                note.fields().map(MetadataField::key).collect();
+            assert_eq!(keys, ["title", "Status"]);
+            let sources: Vec<FieldSource> =
+                note.fields().map(MetadataField::source).collect();
+            assert_eq!(sources, [
+                FieldSource::Frontmatter,
+                FieldSource::Body(InlineFieldForm::Body)
+            ]);
+        }
+    }
+
+    mod tasks {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn yields_task_items_from_top_level_and_nested_lists_in_order() {
+            let child_task =
+                ListItem::new("child task", Some(TaskStatus::Complete));
+            let parent = ListItem::with_children(
+                "parent task",
+                Some(TaskStatus::Incomplete),
+                vec![List::new(false, vec![child_task])],
+            );
+            let plain = ListItem::new("plain item", None);
+            let note = Note::new(
+                "notes/a.md",
+                None,
+                vec![List::new(false, vec![parent, plain])],
+                Vec::new(),
+                Vec::new(),
+            );
+
+            let task_text: Vec<&str> =
+                note.tasks().map(ListItem::text).collect();
+            assert_eq!(task_text, ["parent task", "child task"]);
+        }
     }
 }

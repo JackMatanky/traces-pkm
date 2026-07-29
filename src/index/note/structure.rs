@@ -291,6 +291,43 @@ mod tests {
             assert_eq!(item.is_task(), expected_is_task);
             assert_eq!(item.is_completed(), expected_is_completed);
         }
+
+        #[test]
+        fn stores_child_lists_when_constructed_with_children() {
+            let child = List::new(false, vec![ListItem::new("child", None)]);
+            let item =
+                ListItem::with_children("parent", None, vec![child.clone()]);
+
+            assert_eq!(item.children(), [child]);
+        }
+    }
+
+    mod list {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn stores_ordering_and_items() {
+            let item = ListItem::new("task item", Some(TaskStatus::Incomplete));
+            let list = List::new(true, vec![item.clone()]);
+
+            assert_eq!(list.is_ordered(), true);
+            assert_eq!(list.items(), [item]);
+        }
+    }
+
+    mod code_region {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn returns_the_original_source_range() {
+            let region = CodeRegion::new(3, 7);
+
+            assert_eq!(region.range(), 3..7);
+        }
     }
 
     mod tag {

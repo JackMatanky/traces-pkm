@@ -435,9 +435,67 @@ mod tests {
             let input = "---\ntitle: My Note\ntags: [rust, pkm]\n---\n# Header";
             let note = parse_markdown("note.md", input);
 
-            let fm = note.frontmatter().expect("frontmatter present");
-            assert_eq!(fm.fields().len(), 2);
-            assert_eq!(fm.is_empty(), false);
+            assert_eq!(note.frontmatter().map(|fm| fm.fields().len()), Some(2));
+            assert_eq!(
+                note.frontmatter().map(Frontmatter::is_empty),
+                Some(false)
+            );
+        }
+
+        #[test]
+        fn returns_none_for_frontmatter_when_yaml_block_is_empty() {
+            let input = "---\n---\n# Header";
+            let note = parse_markdown("note.md", input);
+
+            assert_eq!(note.frontmatter(), None);
+        }
+
+        #[test]
+        fn returns_empty_frontmatter_when_yaml_block_is_malformed() {
+            let input = "---\ninvalid: [yaml: :\n---\n# Header";
+            let note = parse_markdown("note.md", input);
+
+            assert_eq!(
+                note.frontmatter().map(Frontmatter::is_empty),
+                Some(true)
+            );
+        }
+
+        #[test]
+        fn extracts_structured_fields_from_yaml_frontmatter() {
+            let input = "---\ntitle: Note Title\nauthor: Alice\ndraft: \
+                         true\nrating: 5.0\ndate: 2026-07-29\n---\nBody text.";
+            let note = parse_markdown("note.md", input);
+
+            let fields: std::collections::BTreeMap<
+                &str,
+                (&FieldValue, FieldSource),
+            > = note
+                .frontmatter()
+                .into_iter()
+                .flat_map(Frontmatter::fields)
+                .map(|field| (field.key(), (field.value(), field.source())))
+                .collect();
+            assert_eq!(fields.len(), 5);
+            assert_eq!(
+                fields.get("title").copied(),
+                Some((
+                    &FieldValue::String("Note Title".to_owned()),
+                    FieldSource::Frontmatter
+                ))
+            );
+            assert_eq!(
+                fields.get("draft").map(|(value, _)| *value),
+                Some(&FieldValue::Bool(true))
+            );
+            assert_eq!(
+                fields.get("rating").map(|(value, _)| *value),
+                Some(&FieldValue::Number(5.0))
+            );
+            assert_eq!(
+                fields.get("date").map(|(value, _)| *value),
+                Some(&FieldValue::Date("2026-07-29".to_owned()))
+            );
         }
 
         #[rstest]
@@ -522,6 +580,23 @@ mod tests {
             assert_eq!(child_item.text(), "Child item");
         }
 
+        #[test]
+        fn extracts_grandchild_lists_beyond_two_levels() {
+            let input = "- Parent\n  - Child\n    - Grandchild";
+            let note = parse_markdown("note.md", input);
+
+            let grandchild = note
+                .lists()
+                .first()
+                .and_then(|list| list.items().first())
+                .and_then(|item| item.children().first())
+                .and_then(|list| list.items().first())
+                .and_then(|item| item.children().first())
+                .and_then(|list| list.items().first())
+                .map(ListItem::text);
+            assert_eq!(grandchild, Some("Grandchild"));
+        }
+
         #[rstest]
         #[case::unordered_list("- First\n- Second", false)]
         #[case::ordered_list("1. First step\n2. Second step", true)]
@@ -545,6 +620,10 @@ mod tests {
             "```rust\nfn main() {}\n```",
             "```rust\nfn main() {}\n```"
         )]
+        #[case::indented_code_block(
+            "Paragraph text.\n\n    fn main() {}\n",
+            "fn main() {}\n"
+        )]
         fn tracks_code_regions(
             #[case] input: &str,
             #[case] expected_snippet: &str,
@@ -553,6 +632,18 @@ mod tests {
 
             let region = note.code_regions().first().expect("code region");
             assert_eq!(&input[region.range()], expected_snippet);
+        }
+
+        #[test]
+        fn preserves_soft_breaks_inside_list_item_text() {
+            let note = parse_markdown("note.md", "- Wrapped\n  line");
+
+            let text = note
+                .lists()
+                .first()
+                .and_then(|list| list.items().first())
+                .map(ListItem::text);
+            assert_eq!(text, Some("Wrapped\nline"));
         }
     }
 
@@ -699,6 +790,7 @@ mod tests {
             let note =
                 parse_markdown("note.md", "- Task line\n\n  Status:: Draft\n");
 
+            assert_eq!(note.inline_fields().len(), 1);
             let field = note.inline_fields().first().expect("field present");
             assert_eq!(field.key(), "Status");
             assert_eq!(field.value().as_str(), Some("Draft"));
@@ -714,6 +806,18 @@ mod tests {
             let keys: Vec<&str> =
                 note.inline_fields().iter().map(MetadataField::key).collect();
             assert_eq!(keys, ["Status", "Priority"]);
+        }
+
+        #[test]
+        fn orders_parent_item_fields_before_and_after_nested_child_fields() {
+            let note = parse_markdown(
+                "note.md",
+                "- Status:: Draft\n  - Priority:: High\n\n  Reviewer:: Jane\n",
+            );
+
+            let keys: Vec<&str> =
+                note.inline_fields().iter().map(MetadataField::key).collect();
+            assert_eq!(keys, ["Status", "Priority", "Reviewer"]);
         }
 
         #[test]
@@ -762,6 +866,7 @@ mod tests {
                 .expect("item present");
             assert_eq!(item.text(), "Status:: Draft #urgent");
 
+            assert_eq!(note.inline_fields().len(), 1);
             let field = note.inline_fields().first().expect("field present");
             assert_eq!(field.key(), "Status");
             assert_eq!(field.value().as_str(), Some("Draft #urgent"));
@@ -801,6 +906,7 @@ mod tests {
             let note =
                 parse_markdown("note.md", "Status:: Draft`note` more text");
 
+            assert_eq!(note.inline_fields().len(), 1);
             let field = note.inline_fields().first().expect("field present");
             assert_eq!(field.key(), "Status");
             assert_eq!(field.value().as_str(), Some("Draft more text"));
@@ -817,6 +923,7 @@ mod tests {
         fn extracts_a_bare_field_from_heading_text() {
             let note = parse_markdown("note.md", "# Status:: Draft");
 
+            assert_eq!(note.inline_fields().len(), 1);
             let field = note.inline_fields().first().expect("field present");
             assert_eq!(field.key(), "Status");
             assert_eq!(field.value().as_str(), Some("Draft"));
@@ -829,6 +936,8 @@ mod tests {
                 "[Status:: Draft](http://example.com)",
             );
 
+            assert_eq!(note.inline_fields().len(), 1);
+            assert_eq!(note.outlinks().len(), 1);
             let field = note.inline_fields().first().expect("field present");
             assert_eq!(field.key(), "Status");
             assert_eq!(field.value().as_str(), Some("Draft"));
@@ -846,57 +955,11 @@ mod tests {
                 "See [Status:: Draft](http://example.com) here.",
             );
 
+            assert_eq!(note.inline_fields().len(), 1);
             let field = note.inline_fields().first().expect("field present");
             assert_eq!(field.key(), "Status");
             assert_eq!(field.value().as_str(), Some("Draft"));
             assert_eq!(field.form(), Some(InlineFieldForm::VisibleKey));
         }
-    }
-    #[test]
-    fn extracts_structured_fields_from_yaml_frontmatter() {
-        let input = "---\ntitle: Note Title\nauthor: Alice\ndraft: \
-                     true\nrating: 5.0\ndate: 2026-07-29\n---\nBody text.";
-        let note = parse_markdown("note.md", input);
-
-        let fm = note.frontmatter().expect("frontmatter present");
-        assert_eq!(fm.fields().len(), 5);
-
-        let title =
-            fm.fields().iter().find(|f| f.key() == "title").expect("title");
-        assert_eq!(
-            title.value(),
-            &FieldValue::String("Note Title".to_string())
-        );
-        assert_eq!(title.source(), FieldSource::Frontmatter);
-
-        let draft =
-            fm.fields().iter().find(|f| f.key() == "draft").expect("draft");
-        assert_eq!(draft.value(), &FieldValue::Bool(true));
-
-        let rating =
-            fm.fields().iter().find(|f| f.key() == "rating").expect("rating");
-        assert_eq!(rating.value(), &FieldValue::Number(5.0));
-
-        let date =
-            fm.fields().iter().find(|f| f.key() == "date").expect("date");
-        assert_eq!(date.value(), &FieldValue::Date("2026-07-29".to_string()));
-    }
-
-    #[test]
-    fn fields_iterator_yields_frontmatter_fields_first_then_inline_fields() {
-        use crate::index::InlineFieldForm;
-
-        let input = "---\nauthor: Alice\n---\nStatus:: Draft\n";
-        let note = parse_markdown("note.md", input);
-
-        let keys: Vec<&str> = note.fields().map(MetadataField::key).collect();
-        assert_eq!(keys, ["author", "Status"]);
-
-        let sources: Vec<FieldSource> =
-            note.fields().map(MetadataField::source).collect();
-        assert_eq!(sources, [
-            FieldSource::Frontmatter,
-            FieldSource::Body(InlineFieldForm::Body)
-        ]);
     }
 }

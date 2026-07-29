@@ -212,11 +212,6 @@ impl FieldValue {
     }
 }
 
-#[expect(
-    clippy::as_conversions,
-    clippy::cast_precision_loss,
-    reason = "YAML integer numbers converted to f64"
-)]
 impl From<serde_yaml::Value> for FieldValue {
     fn from(val: serde_yaml::Value) -> Self {
         match val {
@@ -226,6 +221,11 @@ impl From<serde_yaml::Value> for FieldValue {
                 if let Some(f) = n.as_f64() {
                     Self::Number(f)
                 } else if let Some(i) = n.as_i64() {
+                    #[expect(
+                        clippy::as_conversions,
+                        clippy::cast_precision_loss,
+                        reason = "YAML integer numbers converted to f64"
+                    )]
                     Self::Number(i as f64)
                 } else {
                     Self::Null
@@ -289,7 +289,7 @@ mod tests {
             assert_eq!(fm.fields().len(), 2);
             let title =
                 fm.fields().iter().find(|f| f.key() == "title").expect("title");
-            assert_eq!(title.value(), &FieldValue::String("Test".to_string()));
+            assert_eq!(title.value(), &FieldValue::String("Test".to_owned()));
             assert_eq!(title.source(), FieldSource::Frontmatter);
         }
 
@@ -328,29 +328,26 @@ mod tests {
             )
             .expect("valid yaml");
 
-            let field_val = FieldValue::from(yaml);
-            if let FieldValue::Object(map) = field_val {
-                assert_eq!(
-                    map.get("str"),
-                    Some(&FieldValue::String("hello".to_string()))
-                );
-                assert_eq!(map.get("num"), Some(&FieldValue::Number(42.5)));
-                assert_eq!(map.get("bool"), Some(&FieldValue::Bool(true)));
-                assert_eq!(map.get("null_val"), Some(&FieldValue::Null));
-                assert_eq!(
-                    map.get("date"),
-                    Some(&FieldValue::Date("2026-07-29".to_string()))
-                );
-                assert_eq!(
-                    map.get("list"),
-                    Some(&FieldValue::List(vec![
-                        FieldValue::Number(1.0),
-                        FieldValue::Number(2.0)
-                    ]))
-                );
-            } else {
-                panic!("expected FieldValue::Object");
-            }
+            assert_eq!(
+                FieldValue::from(yaml),
+                FieldValue::Object(BTreeMap::from([
+                    ("bool".to_owned(), FieldValue::Bool(true)),
+                    (
+                        "date".to_owned(),
+                        FieldValue::Date("2026-07-29".to_owned())
+                    ),
+                    (
+                        "list".to_owned(),
+                        FieldValue::List(vec![
+                            FieldValue::Number(1.0),
+                            FieldValue::Number(2.0)
+                        ]),
+                    ),
+                    ("null_val".to_owned(), FieldValue::Null),
+                    ("num".to_owned(), FieldValue::Number(42.5)),
+                    ("str".to_owned(), FieldValue::String("hello".to_owned())),
+                ]))
+            );
         }
     }
 
@@ -367,14 +364,14 @@ mod tests {
         fn stores_key_value_and_form(#[case] form: InlineFieldForm) {
             let field = MetadataField::new(
                 "Author",
-                FieldValue::String("Jane Doe".to_string()),
+                FieldValue::String("Jane Doe".to_owned()),
                 FieldSource::Body(form),
             );
 
             assert_eq!(field.key(), "Author");
             assert_eq!(
                 field.value(),
-                &FieldValue::String("Jane Doe".to_string())
+                &FieldValue::String("Jane Doe".to_owned())
             );
             assert_eq!(field.form(), Some(form));
         }
