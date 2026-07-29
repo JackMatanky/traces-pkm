@@ -38,6 +38,52 @@ static TAG_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"#[[:alpha:]][[:alnum:]_/-]*").expect("TAG_RE pattern is valid")
 });
 
+const TASK_SHORTHAND_DATE_LEN: usize = 10;
+const TASK_SHORTHAND_FIELDS: &[(&str, &str)] = &[
+    ("🗓️", "due"),
+    ("🗓", "due"),
+    ("➕", "created"),
+    ("🛫", "start"),
+    ("⏳", "scheduled"),
+    ("✅", "completion"),
+];
+const DURATION_UNITS: &[&str] = &[
+    "year",
+    "years",
+    "yr",
+    "yrs",
+    "month",
+    "months",
+    "mo",
+    "mos",
+    "week",
+    "weeks",
+    "wk",
+    "wks",
+    "w",
+    "day",
+    "days",
+    "d",
+    "hour",
+    "hours",
+    "hr",
+    "hrs",
+    "h",
+    "minute",
+    "minutes",
+    "min",
+    "mins",
+    "m",
+    "second",
+    "seconds",
+    "sec",
+    "secs",
+    "s",
+    "millisecond",
+    "milliseconds",
+    "ms",
+];
+
 /// Extracts inline fields from `text` in byte-position order.
 ///
 /// `text` must already exclude code spans and blocks.
@@ -213,18 +259,12 @@ fn find_closing(
 
 fn push_task_shorthand_fields(text: &str, matches: &mut Vec<FieldMatch>) {
     let source = ByteSource::new(text);
-    for (emoji, key) in [
-        ("🗓️", "due"),
-        ("🗓", "due"),
-        ("➕", "created"),
-        ("🛫", "start"),
-        ("⏳", "scheduled"),
-        ("✅", "completion"),
-    ] {
+    for &(emoji, key) in TASK_SHORTHAND_FIELDS {
         let mut next = 0;
         while let Some(start) = source.find_str_from(next, emoji) {
             let value_start = source.advance(start, emoji.len());
-            let value_end = source.advance(value_start, 10);
+            let value_end =
+                source.advance(value_start, TASK_SHORTHAND_DATE_LEN);
             if let Some(value) = source.get(value_start..value_end)
                 && is_iso_date(value)
             {
@@ -366,44 +406,7 @@ fn parse_duration_part_end(s: &str, pos: usize) -> Option<usize> {
 }
 
 fn is_duration_unit(unit: &str) -> bool {
-    [
-        "year",
-        "years",
-        "yr",
-        "yrs",
-        "month",
-        "months",
-        "mo",
-        "mos",
-        "week",
-        "weeks",
-        "wk",
-        "wks",
-        "w",
-        "day",
-        "days",
-        "d",
-        "hour",
-        "hours",
-        "hr",
-        "hrs",
-        "h",
-        "minute",
-        "minutes",
-        "min",
-        "mins",
-        "m",
-        "second",
-        "seconds",
-        "sec",
-        "secs",
-        "s",
-        "millisecond",
-        "milliseconds",
-        "ms",
-    ]
-    .iter()
-    .any(|candidate| unit.eq_ignore_ascii_case(candidate))
+    DURATION_UNITS.iter().any(|candidate| unit.eq_ignore_ascii_case(candidate))
 }
 
 fn parse_bool_at(s: &str, pos: usize) -> Option<(FieldValue, usize)> {
