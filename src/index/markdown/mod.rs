@@ -17,5 +17,5 @@ mod types;
 pub(crate) use parser::parse_markdown;
 pub(crate) use types::{
     CodeRegion, Frontmatter, InlineField, InlineFieldForm, LinkType, List,
-    ListItem, Note, Outlink, TaskStatus,
+    ListItem, Note, Outlink, Tag, TaskStatus,
 };

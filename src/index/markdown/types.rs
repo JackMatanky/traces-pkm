@@ -18,7 +18,7 @@ pub(crate) struct Note {
     outlinks: Vec<Outlink>,
     code_regions: Vec<CodeRegion>,
     inline_fields: Vec<InlineField>,
-    tags: Vec<String>,
+    tags: Vec<Tag>,
 }
 
 impl Note {
@@ -60,7 +60,7 @@ impl Note {
     /// Returns this [`Note`] with `tags` attached.
     #[inline]
     #[must_use]
-    pub(crate) fn with_tags(mut self, tags: Vec<String>) -> Self {
+    pub(crate) fn with_tags(mut self, tags: Vec<Tag>) -> Self {
         self.tags = tags;
         self
     }
@@ -114,7 +114,7 @@ impl Note {
     /// text and list items, in document order.
     #[inline]
     #[must_use]
-    pub(crate) fn tags(&self) -> &[String] {
+    pub(crate) fn tags(&self) -> &[Tag] {
         &self.tags
     }
 
@@ -441,6 +441,27 @@ impl InlineField {
     }
 }
 
+/// A markdown tag (e.g. `#book`, `#projects/active`), including its
+/// leading `#`.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+pub(crate) struct Tag(String);
+
+impl Tag {
+    /// Creates a new [`Tag`] from its full text, including the leading `#`.
+    #[inline]
+    #[must_use]
+    pub(crate) fn new(text: impl Into<String>) -> Self {
+        Self(text.into())
+    }
+
+    /// The tag's full text, including the leading `#`.
+    #[inline]
+    #[must_use]
+    pub(crate) fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -630,6 +651,19 @@ mod tests {
         }
     }
 
+    mod tag {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn stores_the_given_text() {
+            let tag = Tag::new("#book");
+
+            assert_eq!(tag.as_str(), "#book");
+        }
+    }
+
     mod builder {
         use pretty_assertions::assert_eq;
 
@@ -661,9 +695,9 @@ mod tests {
                 Vec::new(),
                 Vec::new(),
             )
-            .with_tags(vec!["#book".to_owned()]);
+            .with_tags(vec![Tag::new("#book")]);
 
-            assert_eq!(note.tags(), ["#book".to_owned()]);
+            assert_eq!(note.tags(), [Tag::new("#book")]);
         }
 
         #[test]

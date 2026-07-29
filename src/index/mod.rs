@@ -35,7 +35,7 @@ use markdown::parse_markdown;
 )]
 pub(crate) use markdown::{
     CodeRegion, Frontmatter, InlineField, InlineFieldForm, LinkType, List,
-    ListItem, Note, Outlink, TaskStatus,
+    ListItem, Note, Outlink, Tag, TaskStatus,
 };
 use store::IndexStore;
 
@@ -266,7 +266,7 @@ mod tests {
             let built_note =
                 built.note(Path::new("note.md")).expect("built note");
             assert_eq!(loaded_note.tags(), built_note.tags());
-            assert_eq!(loaded_note.tags(), ["#book".to_owned()]);
+            assert_eq!(loaded_note.tags(), [Tag::new("#book")]);
         }
 
         #[test]

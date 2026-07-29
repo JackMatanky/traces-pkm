@@ -137,6 +137,14 @@
     (a Note mentioning `#book` three times gets three `"#book"` entries).
     `from_tags` (ticket #04, out of scope here) will need to dedupe or
     treat membership-only when it consumes `Note::tags()`.
+- **Post-Close Refinement**: `Note::tags()` originally returned
+  `&[String]`. Replaced with a `Tag` newtype (`types.rs`, wraps a
+  `String` including the leading `#`, no validation — matches the
+  `Frontmatter` precedent) at explicit request, giving the domain
+  concept its own type instead of a bare primitive. `pulldown_cmark::Tag`
+  (the markdown event tag, unrelated) already shares the name; resolved
+  by aliasing the import in `parser.rs` (`Tag as CmarkTag`), the same
+  pattern already used for `LinkType as CmarkLinkType`.
 
 
 ## Agent Brief

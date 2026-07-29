@@ -14,7 +14,7 @@ use std::sync::LazyLock;
 
 use regex::{Captures, Regex};
 
-use super::types::{InlineField, InlineFieldForm};
+use super::types::{InlineField, InlineFieldForm, Tag};
 
 /// Matches a full-line `Key:: Value` body field: a letter-led key token
 /// (no whitespace — an unambiguous single word, unlike the bracket/paren
@@ -107,7 +107,7 @@ fn push_field(
 /// `text` after a boundary-agnostic [`TAG_RE`] match — the `regex` crate has
 /// no lookbehind, and folding the check into a consuming leading alternative
 /// (`(?:\A|[^alnum])`) would eat a character other matches might need.
-pub(super) fn extract_tags(text: &str) -> Vec<String> {
+pub(super) fn extract_tags(text: &str) -> Vec<Tag> {
     TAG_RE
         .find_iter(text)
         .filter(|found| {
@@ -116,7 +116,7 @@ pub(super) fn extract_tags(text: &str) -> Vec<String> {
                 .next_back()
                 .is_none_or(|c| !c.is_alphanumeric() && c != '_')
         })
-        .map(|found| found.as_str().to_owned())
+        .map(|found| Tag::new(found.as_str()))
         .collect()
 }
 
@@ -263,8 +263,8 @@ mod tests {
         ) {
             let tags = extract_tags(input);
 
-            let expected: Vec<String> =
-                expected.iter().map(|tag| (*tag).to_owned()).collect();
+            let expected: Vec<Tag> =
+                expected.iter().map(|tag| Tag::new(*tag)).collect();
             assert_eq!(tags, expected);
         }
     }

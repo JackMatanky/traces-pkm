@@ -20,14 +20,15 @@
 use std::{mem, ops::Range, path::PathBuf};
 
 use pulldown_cmark::{
-    CowStr, Event, LinkType as CmarkLinkType, Options, Parser, Tag, TagEnd,
+    CowStr, Event, LinkType as CmarkLinkType, Options, Parser, Tag as CmarkTag,
+    TagEnd,
 };
 
 use super::{
     inline,
     types::{
         CodeRegion, Frontmatter, InlineField, LinkType, List, ListItem, Note,
-        Outlink, TaskStatus,
+        Outlink, Tag, TaskStatus,
     },
 };
 
@@ -77,7 +78,7 @@ struct ParserContext {
     item_stack: Vec<ItemFrame>,
     body_buffer: String,
     inline_fields: Vec<InlineField>,
-    tags: Vec<String>,
+    tags: Vec<Tag>,
 }
 
 impl ParserContext {
@@ -97,24 +98,28 @@ impl ParserContext {
     /// Dispatches one `pulldown-cmark` event to the handler for its kind.
     fn handle_event(&mut self, event: Event<'_>, range: Range<usize>) {
         match event {
-            Event::Start(Tag::MetadataBlock(_)) => self.start_metadata_block(),
+            Event::Start(CmarkTag::MetadataBlock(_)) => {
+                self.start_metadata_block();
+            }
             Event::End(TagEnd::MetadataBlock(_)) => self.end_metadata_block(),
-            Event::Start(Tag::Link {
+            Event::Start(CmarkTag::Link {
                 link_type,
                 dest_url,
                 ..
             }) => self.start_link(link_type, dest_url),
             Event::End(TagEnd::Link) => self.end_link(),
-            Event::Start(Tag::CodeBlock(_)) => self.start_code_block(range),
+            Event::Start(CmarkTag::CodeBlock(_)) => {
+                self.start_code_block(range);
+            }
             Event::End(TagEnd::CodeBlock) => self.end_code_block(range),
-            Event::Start(Tag::Paragraph) => self.start_paragraph(),
+            Event::Start(CmarkTag::Paragraph) => self.start_paragraph(),
             Event::End(TagEnd::Paragraph) => self.end_paragraph(),
             Event::Code(text) => self.inline_code(&text, range),
-            Event::Start(Tag::List(start_number)) => {
+            Event::Start(CmarkTag::List(start_number)) => {
                 self.start_list(start_number.is_some());
             }
             Event::End(TagEnd::List(_)) => self.end_list(),
-            Event::Start(Tag::Item) => self.start_item(),
+            Event::Start(CmarkTag::Item) => self.start_item(),
             Event::End(TagEnd::Item) => self.end_item(),
             Event::TaskListMarker(checked) => self.set_task_status(checked),
             Event::Text(text) => self.push_text(&text),
@@ -505,7 +510,7 @@ mod tests {
         use rstest::rstest;
 
         use super::*;
-        use crate::index::InlineFieldForm;
+        use crate::index::{InlineFieldForm, Tag};
 
         #[rstest]
         #[case::body(
@@ -581,7 +586,7 @@ mod tests {
         fn extracts_a_tag_from_body_text() {
             let note = parse_markdown("note.md", "Filed under #book today.");
 
-            assert_eq!(note.tags(), ["#book".to_owned()]);
+            assert_eq!(note.tags(), [Tag::new("#book")]);
         }
 
         #[test]
@@ -594,7 +599,7 @@ mod tests {
                 .and_then(|list| list.items().first())
                 .expect("item present");
             assert_eq!(item.text(), "Reading #book now");
-            assert_eq!(note.tags(), ["#book".to_owned()]);
+            assert_eq!(note.tags(), [Tag::new("#book")]);
         }
 
         #[rstest]
