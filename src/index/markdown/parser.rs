@@ -10,11 +10,18 @@
 //!
 //! Inline Field and tag extraction ([`inline::extract_inline_fields`],
 //! [`inline::extract_tags`]) runs over plain-text buffers built alongside
-//! the event walk, one per top-level body paragraph and one per list item.
-//! Both exclude fenced/indented code block text and inline code, so neither
-//! lexer pass consults [`CodeRegion`] ranges directly. A list item's buffer
-//! is lexed before any nested sub-list is entered, so fields and tags land
-//! in [`Note::inline_fields`]/[`Note::tags`] in overall document order.
+//! the event walk, one per top-level text block (a paragraph or heading —
+//! Dataview indexes both) and one per list item. Both exclude
+//! fenced/indented code block text and inline code, so neither lexer pass
+//! consults [`CodeRegion`] ranges directly. A list item's buffer is lexed
+//! before any nested sub-list is entered, so fields and tags land in
+//! [`Note::inline_fields`]/[`Note::tags`] in overall document order. A
+//! standard Markdown link's display text is bracketed with a reconstructed
+//! `[`/`]` pair in these buffers (though never in `text_buffer`/
+//! [`ListItem::text`]), so a link whose display text looks like a
+//! bracket-form field — `[Key:: Value](url)` — is still detected, matching
+//! Dataview's own raw-text field scanner, which is agnostic to whether the
+//! brackets are also link syntax.
 
 use std::{mem, ops::Range, path::PathBuf};
 
@@ -48,15 +55,15 @@ pub(crate) fn parse_markdown(path: impl Into<PathBuf>, src: &str) -> Note {
 }
 
 /// Which top-level block kind the parser is currently inside, if any. A
-/// metadata block, code block, and paragraph are mutually exclusive at this
-/// granularity.
+/// metadata block, code block, and text block (paragraph or heading) are
+/// mutually exclusive at this granularity.
 #[derive(Default, Eq, PartialEq)]
 enum BlockContext {
     #[default]
     None,
     MetadataBlock,
     CodeBlock,
-    Paragraph,
+    Text,
 }
 
 /// Accumulated context while walking `pulldown-cmark` events for one Note.
@@ -110,8 +117,17 @@ impl ParserContext {
                 self.start_code_block(range);
             }
             Event::End(TagEnd::CodeBlock) => self.end_code_block(range),
-            Event::Start(CmarkTag::Paragraph) => self.start_paragraph(),
-            Event::End(TagEnd::Paragraph) => self.end_paragraph(),
+            Event::Start(
+                CmarkTag::Paragraph
+                | CmarkTag::Heading {
+                    ..
+                },
+            ) => {
+                self.start_text_block();
+            }
+            Event::End(TagEnd::Paragraph | TagEnd::Heading(_)) => {
+                self.end_text_block();
+            }
             Event::Code(text) => self.inline_code(&text, range),
             Event::Start(CmarkTag::List(start_number)) => {
                 self.start_list(start_number.is_some());
@@ -137,17 +153,30 @@ impl ParserContext {
             Some(Frontmatter::new(mem::take(&mut self.metadata_buffer)));
     }
 
+    /// Starts tracking a link. For a standard Markdown link (not a
+    /// Wikilink), also pushes a literal `[` into the active scan buffer —
+    /// see [`Self::push_scan_char`] — so its display text can be detected
+    /// as a bracket-form Inline Field if it looks like one.
     fn start_link(&mut self, link_type: CmarkLinkType, dest_url: CowStr<'_>) {
         let kind = if matches!(link_type, CmarkLinkType::WikiLink { .. }) {
             LinkType::Wikilink
         } else {
             LinkType::Markdown
         };
+        if kind == LinkType::Markdown {
+            self.push_scan_char('[');
+        }
         self.active_link = Some((dest_url.into_string(), kind, String::new()));
     }
 
+    /// Closes the active link, recording its [`Outlink`]. Pushes the
+    /// closing `]` matching [`Self::start_link`]'s opening bracket for a
+    /// standard Markdown link.
     fn end_link(&mut self) {
         if let Some((target, kind, text)) = self.active_link.take() {
+            if kind == LinkType::Markdown {
+                self.push_scan_char(']');
+            }
             self.outlinks.push(Outlink::new(target, text, kind));
         }
     }
@@ -255,13 +284,15 @@ impl ParserContext {
         }
     }
 
-    /// Marks a top-level paragraph as active and clears `body_buffer`, ready
-    /// to accumulate its plain text. When nested inside a list item, instead
-    /// separates it from the item's prior paragraph(s) with a newline in the
-    /// active `ItemFrame::scan_buffer` (if it already holds text), so a
-    /// loose list item's later paragraphs don't merge into one line.
-    fn start_paragraph(&mut self) {
-        self.block = BlockContext::Paragraph;
+    /// Marks a top-level text block (a paragraph or heading — Dataview
+    /// extracts Inline Fields and tags from both) as active and clears
+    /// `body_buffer`, ready to accumulate its plain text. When nested
+    /// inside a list item, instead separates it from the item's prior
+    /// text block(s) with a newline in the active `ItemFrame::scan_buffer`
+    /// (if it already holds text), so a loose list item's later
+    /// paragraphs don't merge into one line.
+    fn start_text_block(&mut self) {
+        self.block = BlockContext::Text;
         if self.item_stack.is_empty() {
             self.body_buffer.clear();
             return;
@@ -273,10 +304,10 @@ impl ParserContext {
         }
     }
 
-    /// Lexes a completed top-level paragraph's `body_buffer` for Inline
+    /// Lexes a completed top-level text block's `body_buffer` for Inline
     /// Fields and tags. A no-op when nested inside a list item, matching
-    /// [`Self::start_paragraph`].
-    fn end_paragraph(&mut self) {
+    /// [`Self::start_text_block`].
+    fn end_text_block(&mut self) {
         self.block = BlockContext::None;
         if self.item_stack.is_empty() {
             self.inline_fields
@@ -290,9 +321,10 @@ impl ParserContext {
     /// the active link's display text, and the enclosing list item's plain
     /// text — independently, so a link's display text ends up in both its
     /// [`Outlink`] and the item's text. `ItemFrame::scan_buffer` and
-    /// `body_buffer` mirror `text_buffer` and paragraph text respectively,
-    /// but skip text from inside a fenced/indented code block, so neither
-    /// Inline Field nor tag extraction ever sees code block content.
+    /// `body_buffer` mirror `text_buffer` and top-level text-block content
+    /// respectively, but skip text from inside a fenced/indented code
+    /// block, so neither Inline Field nor tag extraction ever sees code
+    /// block content.
     fn push_text(&mut self, text: &str) {
         if self.block == BlockContext::MetadataBlock {
             self.metadata_buffer.push_str(text);
@@ -308,13 +340,13 @@ impl ParserContext {
             }
             return;
         }
-        if self.block == BlockContext::Paragraph {
+        if self.block == BlockContext::Text {
             self.body_buffer.push_str(text);
         }
     }
 
     /// Appends a newline to the active metadata buffer, list item text, or
-    /// top-level paragraph text.
+    /// top-level text-block text.
     fn push_break(&mut self) {
         if self.block == BlockContext::MetadataBlock {
             self.metadata_buffer.push('\n');
@@ -325,8 +357,24 @@ impl ParserContext {
             item.scan_buffer.push('\n');
             return;
         }
-        if self.block == BlockContext::Paragraph {
+        if self.block == BlockContext::Text {
             self.body_buffer.push('\n');
+        }
+    }
+
+    /// Pushes a literal character into whichever scan buffer is currently
+    /// active — the enclosing list item's, or the top-level text block's —
+    /// mirroring [`Self::push_text`]'s buffer selection. Used by
+    /// [`Self::start_link`]/[`Self::end_link`] to reconstruct the literal
+    /// `[`/`]` a standard Markdown link's display text loses when
+    /// `pulldown-cmark` consumes them as link syntax.
+    fn push_scan_char(&mut self, ch: char) {
+        if let Some(item) = self.item_stack.last_mut() {
+            item.scan_buffer.push(ch);
+            return;
+        }
+        if self.block == BlockContext::Text {
+            self.body_buffer.push(ch);
         }
     }
 }
@@ -754,6 +802,52 @@ mod tests {
             let field = note.inline_fields().first().expect("field present");
             assert_eq!(field.key(), "Status");
             assert_eq!(field.value(), "Draft more text");
+        }
+
+        #[test]
+        fn extracts_a_tag_from_heading_text() {
+            let note = parse_markdown("note.md", "# Chapter #book\n\nBody.");
+
+            assert_eq!(note.tags(), [Tag::new("#book")]);
+        }
+
+        #[test]
+        fn extracts_a_bare_field_from_heading_text() {
+            let note = parse_markdown("note.md", "# Status:: Draft");
+
+            let field = note.inline_fields().first().expect("field present");
+            assert_eq!(field.key(), "Status");
+            assert_eq!(field.value(), "Draft");
+        }
+
+        #[test]
+        fn extracts_a_visible_key_field_from_a_markdown_links_display_text() {
+            let note = parse_markdown(
+                "note.md",
+                "[Status:: Draft](http://example.com)",
+            );
+
+            let field = note.inline_fields().first().expect("field present");
+            assert_eq!(field.key(), "Status");
+            assert_eq!(field.value(), "Draft");
+            assert_eq!(field.form(), InlineFieldForm::VisibleKey);
+
+            let link = note.outlinks().first().expect("outlink present");
+            assert_eq!(link.target(), "http://example.com");
+            assert_eq!(link.text(), "Status:: Draft");
+        }
+
+        #[test]
+        fn extracts_a_visible_key_field_from_link_text_amid_other_prose() {
+            let note = parse_markdown(
+                "note.md",
+                "See [Status:: Draft](http://example.com) here.",
+            );
+
+            let field = note.inline_fields().first().expect("field present");
+            assert_eq!(field.key(), "Status");
+            assert_eq!(field.value(), "Draft");
+            assert_eq!(field.form(), InlineFieldForm::VisibleKey);
         }
     }
 }

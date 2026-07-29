@@ -195,6 +195,21 @@ mod tests {
             );
             assert_eq!(note.tasks().count(), 1);
         }
+
+        #[test]
+        fn indexing_never_rewrites_the_source_markdown_file() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let original = "Status:: Draft #urgent\n\n- Reviewer:: Jane \
+                            #book\n\n# Heading #chapter\n";
+            fs::write(temp.path().join("note.md"), original)
+                .expect("write note");
+
+            FileIndex::build(temp.path()).expect("build index");
+
+            let after = fs::read_to_string(temp.path().join("note.md"))
+                .expect("read note back");
+            assert_eq!(after, original);
+        }
     }
 
     mod persistence {

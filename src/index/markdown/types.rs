@@ -101,16 +101,16 @@ impl Note {
         &self.code_regions
     }
 
-    /// Dataview-compatible Inline Fields extracted from body text and list
-    /// items, in document order.
+    /// Dataview-compatible Inline Fields extracted from paragraph and
+    /// heading text and from list items, in document order.
     #[inline]
     #[must_use]
     pub(crate) fn inline_fields(&self) -> &[InlineField] {
         &self.inline_fields
     }
 
-    /// Markdown tags (e.g. `#book`, `#projects/active`) extracted from body
-    /// text and list items, in document order.
+    /// Markdown tags (e.g. `#book`, `#projects/active`) extracted from
+    /// paragraph and heading text and from list items, in document order.
     #[inline]
     #[must_use]
     pub(crate) fn tags(&self) -> &[Tag] {

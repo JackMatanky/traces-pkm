@@ -1,10 +1,10 @@
 //! Dataview-compatible Inline Field and markdown tag lexer.
 //!
-//! Runs over plain-text buffers assembled by [`super::parser`]: one per body
-//! paragraph, one per list item. Both buffers already exclude fenced code
-//! blocks, indented code blocks, and inline code, so this module scans
-//! plain text only and never touches [`super::types::CodeRegion`] ranges
-//! directly.
+//! Runs over plain-text buffers assembled by [`super::parser`]: one per
+//! top-level text block (paragraph or heading), one per list item. Both
+//! already exclude fenced code blocks, indented code blocks, and inline
+//! code, so this module scans plain text only and never touches
+//! [`super::types::CodeRegion`] ranges directly.
 
 use std::sync::LazyLock;
 

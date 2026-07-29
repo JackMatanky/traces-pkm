@@ -188,6 +188,58 @@
     `BlockContext`; `types.rs`'s `Note::new`) that spent more space
     justifying implementation choices against specific clippy lints or
     rejected alternatives than describing behavior.
+- **AC Completeness Follow-Up** (2026-07-29, continued): A further
+  critical pass, prompted by user pushback on the prior review's AC7
+  finding, corrected three items:
+  - **Test added for source-preservation (AC "remain in the plain text
+    of their enclosing component")**: the prior review claimed this
+    half of the AC was unverifiable since `Note` has no body-paragraph
+    accessor. That reasoning was too narrow — the real seam to test is
+    the source *file*, not a `Note` field. Added
+    `index::tests::build::indexing_never_rewrites_the_source_markdown_file`,
+    which writes a note with a body field, a list-item field+tag, and a
+    heading tag, runs `FileIndex::build`, then reads the file back from
+    disk and asserts it is byte-identical to what was written.
+  - **Bug — tags (and fields) in headings were not indexed.** The prior
+    review's "Finding 2" wrongly treated this as an acceptable scope
+    boundary. Checked against the actual Dataview plugin source
+    (`src/data-import/markdown-file.ts`'s `parseMarkdown`): its section
+    loop skips only `list` and `ruling` section types when extracting
+    inline fields — headings and paragraphs are both scanned (the
+    function's own comment: *"Only parse heading and paragraph elements
+    for inline fields"*) — and file-level tags come from Obsidian's own
+    document-wide tag cache, which is not scoped to paragraphs either.
+    Fixed by renaming `BlockContext::Paragraph` to `BlockContext::Text`
+    and routing `pulldown-cmark`'s `Heading` start/end events through
+    the same `start_text_block`/`end_text_block` handlers (renamed from
+    `start_paragraph`/`end_paragraph`) already used for paragraphs, so
+    heading text now feeds `body_buffer` identically.
+  - **Bug — a Markdown link whose display text looks like a bracket-form
+    field (`[Key:: Value](url)`) was not reliably detected.** Checked
+    against Dataview's `extractInlineFields`/`findSpecificInlineField`
+    (`src/data-import/inline-field.ts`): it scans the *raw* line text
+    for wrapper characters and is completely agnostic to whether a `[`
+    is also markdown link syntax — `findClosing` stops at the first
+    matching `]` and the trailing `(url)` is simply ignored by the field
+    scanner. Our `pulldown-cmark`-event-based buffers never contained
+    literal `[`/`]` for a real link (the parser consumes them as
+    structural markup), so `VISIBLE_FIELD_RE` could never match one, and
+    the display text alone only coincidentally matched as a *bare* field
+    when a link was the entire line. Fixed by reconstructing the
+    brackets: `start_link`/`end_link` now push a literal `[`/`]` into
+    the active scan buffer (`ItemFrame::scan_buffer`/`body_buffer`, via
+    a new `push_scan_char` helper) around a standard Markdown link's
+    display text — never for Wikilinks, and never in `text_buffer`, so
+    `ListItem::text()`'s rendered output is unaffected. This is scoped
+    to plain Markdown links only; a Wikilink target containing `::` is
+    out of scope (not requested, and Dataview's own handling of that
+    case is itself an inconsistent edge case in `findSpecificInlineField`).
+  - Added tests: `extracts_a_tag_from_heading_text`,
+    `extracts_a_bare_field_from_heading_text`,
+    `extracts_a_visible_key_field_from_a_markdown_links_display_text`,
+    `extracts_a_visible_key_field_from_link_text_amid_other_prose`.
+  - 770 tests pass (was 765), `cargo clippy --workspace -- -D warnings`,
+    `cargo fmt --all --check`, and `cargo doc --no-deps` all clean.
 
 
 ## Agent Brief
