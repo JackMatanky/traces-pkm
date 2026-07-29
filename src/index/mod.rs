@@ -190,10 +190,7 @@ mod tests {
             let index = FileIndex::build(temp.path()).expect("build index");
 
             let note = index.note(Path::new("todo.md")).expect("note lookup");
-            assert_eq!(
-                note.frontmatter().map(Frontmatter::raw),
-                Some("title: Todo\n")
-            );
+            assert_eq!(note.frontmatter().map(|fm| fm.fields().len()), Some(1));
             assert_eq!(note.tasks().count(), 1);
         }
 

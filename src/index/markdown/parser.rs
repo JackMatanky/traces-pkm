@@ -35,8 +35,8 @@ use super::{
     inline,
     types::{
         CodeRegion, FieldSource, FieldValue, Frontmatter, InlineField,
-        LinkType, List, ListItem, MetadataField, Note, Outlink, Tag,
-        TaskStatus,
+        LinkType, List, ListItem, MetadataField, Note, Outlink, RawFrontmatter,
+        Tag, TaskStatus,
     },
 };
 
@@ -151,9 +151,11 @@ impl ParserContext {
 
     fn end_metadata_block(&mut self) {
         self.block = BlockContext::None;
-        let raw = mem::take(&mut self.metadata_buffer);
-        let fields = parse_yaml_frontmatter(&raw);
-        self.frontmatter = Some(Frontmatter::new(raw, fields));
+        let raw_text = mem::take(&mut self.metadata_buffer);
+        let raw = RawFrontmatter::new(raw_text);
+        if !raw.is_empty() {
+            self.frontmatter = Some(Frontmatter::from(&raw));
+        }
     }
 
     /// Starts tracking a link. For a standard Markdown link (not a
@@ -518,12 +520,12 @@ mod tests {
         }
 
         #[test]
-        fn extracts_yaml_frontmatter_block_raw_content() {
+        fn extracts_yaml_frontmatter_block_fields() {
             let input = "---\ntitle: My Note\ntags: [rust, pkm]\n---\n# Header";
             let note = parse_markdown("note.md", input);
 
             let fm = note.frontmatter().expect("frontmatter present");
-            assert_eq!(fm.raw(), "title: My Note\ntags: [rust, pkm]\n");
+            assert_eq!(fm.fields().len(), 2);
             assert_eq!(fm.is_empty(), false);
         }
 
