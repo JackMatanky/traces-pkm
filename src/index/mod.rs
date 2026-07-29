@@ -16,7 +16,6 @@
 
 mod error;
 mod file;
-mod note;
 mod scan;
 mod store;
 
@@ -28,17 +27,9 @@ pub(crate) use error::FileIndexError;
     reason = "domain types exported for index module callers"
 )]
 pub(crate) use file::{FileFormat, FileRecord, Timestamp};
-use note::parse_markdown;
-#[expect(
-    unused_imports,
-    reason = "domain types exported for index module callers"
-)]
-pub(crate) use note::{
-    CodeRegion, FieldValue, Frontmatter, InlineField, InlineFieldForm,
-    LinkType, List, ListItem, MetadataField, Note, Outlink, RawFrontmatter,
-    Tag, TaskStatus,
-};
 use store::IndexStore;
+
+use crate::note::{Note, parse_markdown};
 
 /// Project-relative path of the persisted [`FileIndex`] database.
 const INDEX_FILE: &str = ".traces/index.redb";
@@ -260,6 +251,10 @@ mod tests {
         use rstest::rstest;
 
         use super::*;
+        use crate::note::{
+            FieldValue, Frontmatter, InlineField, InlineFieldForm, LinkType,
+            Outlink, Tag,
+        };
 
         #[test]
         fn persist_then_load_recovers_the_same_records_and_notes() {

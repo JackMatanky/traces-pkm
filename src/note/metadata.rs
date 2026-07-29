@@ -351,7 +351,7 @@ mod tests {
         use pretty_assertions::assert_eq;
 
         use super::*;
-        use crate::index::LinkType;
+        use crate::note::LinkType;
 
         #[test]
         fn converts_serde_yaml_value_into_field_value_variants() {

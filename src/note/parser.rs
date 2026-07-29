@@ -674,7 +674,7 @@ mod tests {
         use rstest::rstest;
 
         use super::*;
-        use crate::index::{InlineFieldForm, Tag};
+        use crate::note::{InlineFieldForm, Tag};
 
         #[rstest]
         #[case::body(

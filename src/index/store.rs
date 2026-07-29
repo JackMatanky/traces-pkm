@@ -16,7 +16,8 @@ use redb::{
 };
 use serde::{Serialize, de::DeserializeOwned};
 
-use super::{INDEX_FILE, error::FileIndexError, file::FileRecord, note::Note};
+use super::{INDEX_FILE, error::FileIndexError, file::FileRecord};
+use crate::note::Note;
 
 /// Path → TOML-encoded [`FileRecord`] bytes.
 const FILE_RECORDS: TableDefinition<&str, &[u8]> =
@@ -205,7 +206,7 @@ impl IndexStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::index::{parse_markdown, scan::scan_root};
+    use crate::{index::scan::scan_root, note::parse_markdown};
 
     mod persistence {
         use pretty_assertions::assert_eq;

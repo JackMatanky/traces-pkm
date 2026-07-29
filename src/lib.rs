@@ -8,6 +8,7 @@ mod file_name;
 mod file_store;
 mod hash;
 mod index;
+mod note;
 mod path;
 mod template;
 

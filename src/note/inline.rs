@@ -502,7 +502,7 @@ mod tests {
         use rstest::rstest;
 
         use super::*;
-        use crate::index::LinkType;
+        use crate::note::LinkType;
 
         #[rstest]
         #[case::body(

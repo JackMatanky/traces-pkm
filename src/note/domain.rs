@@ -1,26 +1,16 @@
 //! Parsed Markdown note model.
 
-mod byte;
-mod code;
-mod inline;
-mod links;
-mod lists;
-mod metadata;
-mod parser;
-mod tag;
-
 use std::path::{Path, PathBuf};
 
-pub(crate) use code::CodeRegion;
-pub(crate) use links::{LinkType, Outlink};
-pub(crate) use lists::{List, ListItem, TaskStatus};
-pub(crate) use metadata::{
-    FieldValue, Frontmatter, InlineField, InlineFieldForm, MetadataField,
-    RawFrontmatter,
-};
-pub(crate) use parser::parse_markdown;
 use serde::{Deserialize, Serialize};
-pub(crate) use tag::Tag;
+
+use super::{
+    code::CodeRegion,
+    links::Outlink,
+    lists::{List, ListItem},
+    metadata::{Frontmatter, InlineField, MetadataField},
+    tag::Tag,
+};
 
 /// Parsed metadata and structure for one Markdown note.
 ///
@@ -180,6 +170,7 @@ fn collect_tasks_recursive<'a>(list: &'a List, acc: &mut Vec<&'a ListItem>) {
 mod tests {
 
     use super::*;
+    use crate::note::{FieldValue, InlineFieldForm, LinkType, TaskStatus};
 
     mod constructor {
         use pretty_assertions::assert_eq;
