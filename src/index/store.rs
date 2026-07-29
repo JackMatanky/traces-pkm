@@ -69,10 +69,10 @@ impl IndexStore {
         })
     }
 
-    /// Replaces every stored File Record with `records` and Note Record with
-    /// `notes`, atomically — both tables are cleared and rewritten in one redb
-    /// write transaction, so a reader never observes a state with one table
-    /// replaced and the other stale.
+    /// Replaces every stored File Record with `records` and Note Record
+    /// with `notes`, atomically — both tables are cleared and rewritten in
+    /// one redb write transaction, so a reader never observes a state with
+    /// one table replaced and the other stale.
     ///
     /// # Errors
     ///

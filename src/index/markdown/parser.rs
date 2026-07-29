@@ -1,11 +1,12 @@
 //! Markdown note event parser yielding [`Note`] records.
 //!
-//! [`parse_markdown`] walks `pulldown-cmark`'s event stream once, accumulating
-//! into a [`ParserContext`]. Nested lists are tracked with an explicit stack
-//! (`list_stack`/`item_stack`) rather than recursion, so depth is bounded only
-//! by available memory, not call-stack size. A link's display text is pushed
-//! into both its [`Outlink`] and the plain text of the list item containing it
-//! — the two aren't mutually exclusive, since a link can appear inside an item.
+//! [`parse_markdown`] walks `pulldown-cmark`'s event stream once,
+//! accumulating into a [`ParserContext`]. Nested lists are tracked with an
+//! explicit stack (`list_stack`/`item_stack`) rather than recursion, so
+//! depth is bounded only by available memory, not call-stack size. A link's
+//! display text is pushed into both its [`Outlink`] and the plain text of
+//! the list item containing it — the two aren't mutually exclusive, since a
+//! link can appear inside an item.
 //!
 //! Inline Field and tag extraction ([`inline::extract_inline_fields`],
 //! [`inline::extract_tags`]) run over the same plain-text buffers: one per
@@ -30,7 +31,8 @@ use super::{
     },
 };
 
-/// Parses a markdown string into a [`Note`] record using `pulldown-cmark`.
+/// Parses a markdown string into a [`Note`] record using `pulldown-cmark`,
+/// with task lists, YAML frontmatter blocks, and Obsidian wikilinks enabled.
 #[must_use]
 pub(crate) fn parse_markdown(path: impl Into<PathBuf>, src: &str) -> Note {
     let mut opts = Options::empty();
@@ -65,6 +67,8 @@ struct ParserContext {
     block: BlockContext,
     metadata_buffer: String,
     outlinks: Vec<Outlink>,
+    /// `(target, kind, accumulating display text)` for the link currently
+    /// being walked, if any.
     active_link: Option<(String, LinkType, String)>,
     code_regions: Vec<CodeRegion>,
     active_code_block_start: Option<usize>,
@@ -251,13 +255,13 @@ impl ParserContext {
         }
     }
 
-    /// Appends `text` to the active metadata buffer and/or link display text;
-    /// independently, also appends to the enclosing list item's text if one is
-    /// active, so a link's display text is part of both the [`Outlink`] and the
-    /// plain text of the item containing it. `ItemFrame::scan_buffer` and
-    /// `body_buffer` mirror `text_buffer`/paragraph text respectively, minus
-    /// any text inside a fenced/indented code block — the Inline Field/tag
-    /// lexer never sees code block content.
+    /// Appends `text` to whichever buffers are active: the metadata buffer,
+    /// the active link's display text, and the enclosing list item's plain
+    /// text — independently, so a link's display text ends up in both its
+    /// [`Outlink`] and the item's text. `ItemFrame::scan_buffer` and
+    /// `body_buffer` mirror `text_buffer` and paragraph text respectively,
+    /// but skip text from inside a fenced/indented code block, so neither
+    /// Inline Field nor tag extraction ever sees code block content.
     fn push_text(&mut self, text: &str) {
         if self.block == BlockContext::MetadataBlock {
             self.metadata_buffer.push_str(text);

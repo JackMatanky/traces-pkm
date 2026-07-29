@@ -1,4 +1,5 @@
-//! [`FileRecord`]: the general metadata indexed for every file, classified by [`FileFormat`] and timestamped via [`Timestamp`].
+//! [`FileRecord`]: the general metadata indexed for every file, classified
+//! by [`FileFormat`] and timestamped via [`Timestamp`].
 
 use std::{
     fs,
