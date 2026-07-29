@@ -2,16 +2,9 @@
 
 **What to build:** Query execution refreshes stale FileIndex entries before returning data and can produce page-level QueryOutcome values from all Notes, tag sources, and folder sources.
 
-**Blocked by:** 03 — Dataview Inline Fields and Tags
+**Blocked by:** None — #03's Note inline fields and tags are present in the codebase.
 
 **Status:** ready-for-agent
-
-- [ ] Query execution refreshes stale entries when file freshness metadata changes.
-- [ ] Query execution returns all markdown Notes when no source is specified.
-- [ ] Query execution can select Notes by tag source.
-- [ ] Query execution can select Notes by folder source.
-- [ ] QueryOutcome exposes IndexRecord values with File Record and Note Metadata fields.
-- [ ] Tests verify freshness through observable query results, not redb internals.
 
 ## Comments
 
@@ -23,13 +16,13 @@
 **Summary:** Add page-level query source selection with lazy FileIndex freshness before query results are returned.
 
 **Current behavior:**
-The FileIndex can build, persist, load, and enumerate File Records and markdown Notes. The active `03 — Dataview Inline Fields and Tags` implementation is adding Note inline fields and tags, which this issue depends on for tag sources. No existing QueryOutcome, IndexRecord, no-source query, tag-source query, folder-source query, or lazy query refresh implementation was found in the main source tree or the active #03 worktree. Prior-rejection check found no `.out-of-scope/` records.
+The FileIndex can build, persist, load, and enumerate File Records and parsed markdown Notes. The codebase now has Note Metadata for frontmatter fields, inline fields, tags, lists/tasks, outlinks, and code-region exclusions. No existing QueryOutcome, IndexRecord, no-source query, tag-source query, folder-source query, or lazy query refresh implementation was found in the source tree. Prior-rejection check found no `.out-of-scope/` records.
 
 **Desired behavior:**
-Page-level query execution should return fresh Note results from the persisted FileIndex. Before returning data, query execution should compare current file freshness metadata against the stored File Records and refresh stale, added, changed, and removed entries so results reflect the project root on disk. A query with no source should return every markdown Note. Tag sources should return Notes whose Note Metadata contains matching markdown tags such as `#book` and nested tags such as `#projects/active`. Folder sources should return Notes whose File Record folder matches the requested folder source. Results should be represented as QueryOutcome values containing IndexRecord items that expose both `file.*` fields and Note Metadata fields.
+Page-level query execution should return fresh Note results from the persisted FileIndex. Before returning data, query execution should compare current file freshness metadata against the stored File Records and refresh stale, added, changed, and removed entries so results reflect the project root on disk. A query with no source should return every markdown Note. Tag sources should return Notes whose existing Note Metadata contains matching markdown tags such as `#book` and nested tags such as `#projects/active`. Folder sources should return Notes whose File Record folder matches the requested folder source. Results should be represented as QueryOutcome values containing IndexRecord items that expose both `file.*` fields and Note Metadata fields.
 
 **Key interfaces:**
-- `FileIndex` — should provide a small caller-facing refresh/query seam; callers should not inspect redb tables or implement their own freshness comparisons.
+- `FileIndex` — should provide a small caller-facing refresh/query seam over the existing File Record and Note Metadata models; callers should not inspect redb tables or implement their own freshness comparisons.
 - `QueryOutcome` — iterable page-level collection of IndexRecord values, ready for later filtering, Template namespace integration, and CLI query commands.
 - `IndexRecord` — single page-level record combining a File Record with the matching Note Metadata so Template authors can access `file.*`, frontmatter, inline fields, and tags through one value.
 - Source selection — should support all Notes, tag sources, and folder sources without introducing a Dataview Query Language parser.
@@ -41,11 +34,11 @@ Page-level query execution should return fresh Note results from the persisted F
 - [ ] Query execution with no source returns all markdown Notes and excludes non-markdown files.
 - [ ] Tag-source queries return Notes with matching markdown tags, including nested tags such as `#projects/active`.
 - [ ] Folder-source queries return Notes under the requested project-relative folder.
-- [ ] QueryOutcome items expose IndexRecord values with File Record fields and Note Metadata fields.
+- [ ] QueryOutcome items expose IndexRecord values with File Record fields and Note Metadata fields, including frontmatter, inline fields, and tags.
 - [ ] Freshness tests assert observable query results after file changes, not redb internals.
 
 **Out of scope:**
-- Implementing Inline Field or tag extraction itself; that belongs to #03.
+- Changing Inline Field or tag extraction behavior; this issue should consume the existing Note Metadata.
 - Query filtering, sorting, limiting, grouping, or flattening; that belongs to #05.
 - Registering the minijinja `query` namespace or Interactive Function integration; that belongs to #06.
 - Terminal table/list/task renderers and CLI query commands.
