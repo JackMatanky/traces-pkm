@@ -40,6 +40,27 @@ impl Outlink {
         }
     }
 
+    /// Parses an Obsidian wikilink value such as `[[target|text]]`.
+    #[must_use]
+    pub(crate) fn parse_wikilink(s: &str) -> Option<Self> {
+        let inner = s.strip_prefix("[[")?.strip_suffix("]]")?;
+        let (target, text) = inner.split_once('|').unwrap_or((inner, inner));
+        let target = target.trim();
+        if target.is_empty() {
+            return None;
+        }
+        let text = text.trim();
+        Some(Self::new(
+            target,
+            if text.is_empty() {
+                target
+            } else {
+                text
+            },
+            LinkType::Wikilink,
+        ))
+    }
+
     /// Target URL, relative path, or wikilink page target.
     #[inline]
     #[must_use]
@@ -271,6 +292,32 @@ mod tests {
             assert_eq!(link.kind(), kind);
             assert_eq!(link.is_wikilink(), expected_wikilink);
             assert_eq!(link.is_markdown(), expected_markdown);
+        }
+
+        #[rstest]
+        #[case::target_only("[[target]]", "target", "target")]
+        #[case::target_with_alias("[[target|alias]]", "target", "alias")]
+        #[case::trims_parts("[[ target | alias ]]", "target", "alias")]
+        #[case::empty_alias_uses_target("[[target| ]]", "target", "target")]
+        fn parses_wikilink_values(
+            #[case] raw: &str,
+            #[case] expected_target: &str,
+            #[case] expected_text: &str,
+        ) {
+            let link = Outlink::parse_wikilink(raw).expect("valid wikilink");
+
+            assert_eq!(link.target(), expected_target);
+            assert_eq!(link.text(), expected_text);
+            assert_eq!(link.kind(), LinkType::Wikilink);
+        }
+
+        #[rstest]
+        #[case::missing_open("target]]")]
+        #[case::missing_close("[[target")]
+        #[case::empty_target("[[]]")]
+        #[case::blank_target("[[ | alias]]")]
+        fn rejects_invalid_wikilink_values(#[case] raw: &str) {
+            assert_eq!(Outlink::parse_wikilink(raw), None);
         }
     }
 

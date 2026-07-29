@@ -267,6 +267,8 @@ impl From<serde_yaml::Value> for FieldValue {
                 let trimmed = s.trim();
                 if trimmed.is_empty() {
                     Self::Null
+                } else if let Some(link) = Outlink::parse_wikilink(trimmed) {
+                    Self::Link(link)
                 } else if is_iso_date(trimmed) {
                     Self::Date(s)
                 } else {
@@ -344,6 +346,7 @@ mod tests {
         use pretty_assertions::assert_eq;
 
         use super::*;
+        use crate::index::LinkType;
 
         #[test]
         fn converts_serde_yaml_value_into_field_value_variants() {
@@ -378,6 +381,50 @@ mod tests {
                     ("num".to_owned(), FieldValue::Number(42.5)),
                     ("str".to_owned(), FieldValue::String("hello".to_owned())),
                 ]))
+            );
+        }
+
+        #[test]
+        fn converts_wikilink_strings_into_link_values() {
+            let yaml = serde_yaml::from_str::<serde_yaml::Value>(
+                r#"
+                link: "[[Project Alpha|Alpha]]"
+                "#,
+            )
+            .expect("valid yaml");
+
+            assert_eq!(
+                FieldValue::from(yaml),
+                FieldValue::Object(BTreeMap::from([(
+                    "link".to_owned(),
+                    FieldValue::Link(Outlink::new(
+                        "Project Alpha",
+                        "Alpha",
+                        LinkType::Wikilink
+                    ))
+                )]))
+            );
+        }
+
+        #[test]
+        fn preserves_nested_yaml_objects() {
+            let yaml = serde_yaml::from_str::<serde_yaml::Value>(
+                "
+                outer:
+                  inner: value
+                ",
+            )
+            .expect("valid yaml");
+
+            assert_eq!(
+                FieldValue::from(yaml),
+                FieldValue::Object(BTreeMap::from([(
+                    "outer".to_owned(),
+                    FieldValue::Object(BTreeMap::from([(
+                        "inner".to_owned(),
+                        FieldValue::String("value".to_owned())
+                    )]))
+                )]))
             );
         }
     }

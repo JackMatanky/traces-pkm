@@ -287,6 +287,36 @@ mod tests {
             assert_eq!(loaded_note.tasks().count(), 1);
         }
 
+        #[test]
+        fn persist_then_load_recovers_frontmatter_link_fields() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(
+                temp.path().join("note.md"),
+                "---\nrelated: \"[[Project Alpha|Alpha]]\"\n---\nBody text.",
+            )
+            .expect("write note");
+            let built = FileIndex::build(temp.path()).expect("build index");
+            built.persist(temp.path()).expect("persist index");
+
+            let loaded = FileIndex::load(temp.path()).expect("load index");
+
+            let field = loaded
+                .note(Path::new("note.md"))
+                .and_then(Note::frontmatter)
+                .into_iter()
+                .flat_map(Frontmatter::fields)
+                .find(|field| field.key() == "related")
+                .expect("related field");
+            assert_eq!(
+                field.value(),
+                &FieldValue::Link(Outlink::new(
+                    "Project Alpha",
+                    "Alpha",
+                    LinkType::Wikilink
+                ))
+            );
+        }
+
         #[rstest]
         #[case::body(
             "Status:: Draft",

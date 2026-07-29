@@ -468,6 +468,29 @@ mod tests {
             );
         }
 
+        #[test]
+        fn extracts_wikilink_values_from_yaml_frontmatter() {
+            let note = parse_markdown(
+                "note.md",
+                "---\nrelated: \"[[Project Alpha|Alpha]]\"\n---\nBody text.",
+            );
+
+            let field = note
+                .frontmatter()
+                .into_iter()
+                .flat_map(Frontmatter::fields)
+                .find(|field| field.key() == "related")
+                .expect("related field");
+            assert_eq!(
+                field.value(),
+                &FieldValue::Link(Outlink::new(
+                    "Project Alpha",
+                    "Alpha",
+                    LinkType::Wikilink
+                ))
+            );
+        }
+
         #[rstest]
         #[case::wikilink_with_alias(
             "See [[target_page|Display Alias]] for context.",
