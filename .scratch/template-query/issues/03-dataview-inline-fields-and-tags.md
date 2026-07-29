@@ -248,6 +248,59 @@
   - **Submodule Layout**: Renamed `src/index/markdown/` → `src/index/note/` and placed `src/index/note.rs` directly as the parent module file holding `Note` and declaring `metadata`, `structure`, `parser`, and `inline` submodules.
 
 
+- **Fresh Adversarial Review** (2026-07-29, continued): Re-reviewed the
+  implementation from scratch against `rust-code-review`, `rust-doc`,
+  `rust-unit-testing`, and the canonical ordering-discipline guide, with
+  no assumptions carried over from prior review notes above.
+  - **Bug found and fixed — duplicated `is_iso_date`.** `metadata.rs`
+    (`From<serde_yaml::Value>`) and `inline.rs`
+    (`parse_inline_value_str`) each defined a byte-for-byte identical
+    private `is_iso_date` helper. Consolidated to one `pub(super)`
+    definition in `metadata.rs`, imported by `inline.rs` via
+    `super::metadata::is_iso_date`. No behavior change; `cargo nextest
+    run --all-features` still reports 788/788 passing.
+  - **Verified, not a bug — `push_break` now emits `\n` instead of a
+    space for soft/hard breaks inside list items.** This diverges from
+    #02's original behavior (`item.text_buffer.push(' ')`), confirmed by
+    diffing against `8b5a037` (the #02 landing commit). The change is
+    deliberate and covered by
+    `parser::tests::parse::preserves_soft_breaks_inside_list_item_text`,
+    likely made so `BODY_FIELD_RE`'s `(?m)^...$` line anchors line up
+    correctly against wrapped list-item paragraphs in `scan_buffer`, and
+    applied to `text_buffer` too for consistency. It changes
+    `ListItem::text()`'s rendered output for every soft-wrapped list
+    item, not just ones containing inline fields — outside the Agent
+    Brief's stated scope (`Out of scope: ... list/task extraction ...
+    from #02`) and not called out as a behavior change in the notes
+    above until now. Flagging for visibility; not reverted since the
+    newline behavior is arguably more correct (preserves actual source
+    line breaks) and is already under test.
+  - **Environment caveat — `cargo clippy -- -D warnings` currently fails
+    on a spurious `clippy::large_stack_arrays` diagnostic** whose span
+    resolves to `clippy.toml:1` rather than any source file. Reproduces
+    identically on `main` (`04119b2`) with zero #03 changes present, so
+    it predates and is unrelated to this branch — a clippy/toolchain
+    quirk tied to `array-size-threshold = 1024` in `clippy.toml`, not a
+    code defect. `cargo clippy -- -D warnings -A
+    clippy::large_stack_arrays` is clean. Earlier "clippy clean"
+    validation claims in this file were accurate for the toolchain
+    active in that session; this session's toolchain differs.
+  - Re-verified all 15 top-level + Agent Brief acceptance criteria
+    against current code: all remain fully met. No AC regressions from
+    the `is_iso_date` dedupe (pure refactor, tests unchanged).
+  - `cargo fmt --all --check` reports diffs across many files repo-wide
+    (not just `index/`) because the active `rustfmt` is on the stable
+    channel and this repo's `rustfmt.toml` requests nightly-only options
+    (`wrap_comments`, `imports_granularity`, `group_imports`, etc.),
+    which stable silently ignores — producing different array/call-arg
+    wrapping than what's committed. Confirmed pre-existing and unrelated
+    to `index/note/` specifically (e.g. `cli/completions.rs`,
+    `config/service.rs`, `template/loader.rs` all show the same class of
+    diff). Not a #03 defect; flagging as a toolchain-pinning gap for
+    whoever owns CI.
+  - `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features`:
+    clean. `cargo nextest run --all-features`: 788/788 passed.
+
 ## Agent Brief
 
 **Category:** enhancement
