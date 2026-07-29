@@ -629,6 +629,32 @@ mod tests {
         }
 
         #[test]
+        fn parses_dataview_wikilink_value_with_commas_in_target() {
+            let fields =
+                extract_inline_fields("[link:: [[yes, no, and maybe]]]");
+
+            assert_eq!(
+                fields.first().map(InlineField::value),
+                Some(&FieldValue::Link(Outlink::new(
+                    "yes, no, and maybe",
+                    "yes, no, and maybe",
+                    LinkType::Wikilink
+                )))
+            );
+        }
+
+        #[test]
+        fn preserves_dataview_html_link_values_as_text() {
+            let fields =
+                extract_inline_fields(r#"[link:: <a href="Page">Value</a>]"#);
+
+            assert_eq!(
+                fields.first().and_then(|field| field.value().as_str()),
+                Some(r#"<a href="Page">Value</a>"#)
+            );
+        }
+
+        #[test]
         fn parses_dataview_embed_link_value() {
             let fields = extract_inline_fields("[embed:: ![[hello]]]");
 
@@ -696,6 +722,16 @@ mod tests {
         }
 
         #[test]
+        fn parses_quoted_string_with_escaped_quote() {
+            let fields = extract_inline_fields(r#"[str:: "yes, \"maybe\""]"#);
+
+            assert_eq!(
+                fields.first().map(InlineField::value),
+                Some(&FieldValue::String(r#"yes, "maybe""#.to_owned()))
+            );
+        }
+
+        #[test]
         fn extracts_nested_bracket_value() {
             let fields =
                 extract_inline_fields("This is some text. [key:: [value]]");
@@ -715,6 +751,28 @@ mod tests {
             assert_eq!(
                 fields.first().and_then(|field| field.value().as_str()),
                 Some(r"\[value")
+            );
+        }
+
+        #[test]
+        fn keeps_escaped_closing_bracket_inside_visible_value() {
+            let fields = extract_inline_fields(r"Hello [key:: \] value]");
+
+            assert_eq!(fields.first().map(InlineField::key), Some("key"));
+            assert_eq!(
+                fields.first().and_then(|field| field.value().as_str()),
+                Some(r"\] value")
+            );
+        }
+
+        #[test]
+        fn extracts_wrapped_field_after_large_leading_whitespace() {
+            let fields = extract_inline_fields("      - [ ] Huh! [p:: 1]");
+
+            assert_eq!(fields.first().map(InlineField::key), Some("p"));
+            assert_eq!(
+                fields.first().map(InlineField::value),
+                Some(&FieldValue::Number(1.0))
             );
         }
 

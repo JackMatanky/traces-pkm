@@ -364,6 +364,38 @@ mod tests {
         }
 
         #[test]
+        fn persist_then_load_recovers_typed_inline_field_values() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(
+                temp.path().join("note.md"),
+                "[duration:: 7 hours]\n[values:: 1, 2]",
+            )
+            .expect("write note");
+            let built = FileIndex::build(temp.path()).expect("build index");
+            built.persist(temp.path()).expect("persist index");
+
+            let loaded = FileIndex::load(temp.path()).expect("load index");
+
+            let loaded_note =
+                loaded.note(Path::new("note.md")).expect("loaded note");
+            let built_note =
+                built.note(Path::new("note.md")).expect("built note");
+            assert_eq!(loaded_note.inline_fields(), built_note.inline_fields());
+            let values: Vec<&FieldValue> = loaded_note
+                .inline_fields()
+                .iter()
+                .map(InlineField::value)
+                .collect();
+            assert_eq!(values, [
+                &FieldValue::Duration("7 hours".to_owned()),
+                &FieldValue::List(vec![
+                    FieldValue::Number(1.0),
+                    FieldValue::Number(2.0)
+                ])
+            ]);
+        }
+
+        #[test]
         fn persist_then_load_recovers_tags() {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("note.md"), "Filed under #book today.")

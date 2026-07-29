@@ -775,8 +775,36 @@ mod tests {
                 field.value(),
                 &FieldValue::Date(expected_date.to_owned())
             );
+            assert_eq!(field.form(), InlineFieldForm::Body);
         }
 
+        #[test]
+        fn extracts_multiple_task_emoji_shorthand_fields_from_one_task_item() {
+            let note = parse_markdown(
+                "note.md",
+                "- [ ] testTask 🗓2022-07-14 ⏳2022-07-24",
+            );
+
+            let fields = note.inline_fields();
+            assert_eq!(fields.len(), 2);
+            assert_eq!(fields.first().map(InlineField::key), Some("due"));
+            assert_eq!(
+                fields.first().map(InlineField::value),
+                Some(&FieldValue::Date("2022-07-14".to_owned()))
+            );
+            assert_eq!(fields.get(1).map(InlineField::key), Some("scheduled"));
+            assert_eq!(
+                fields.get(1).map(InlineField::value),
+                Some(&FieldValue::Date("2022-07-24".to_owned()))
+            );
+        }
+
+        #[test]
+        fn ignores_task_emoji_shorthand_fields_in_plain_list_items() {
+            let note = parse_markdown("note.md", "- Plain item 🗓2022-07-14");
+
+            assert_eq!(note.inline_fields().len(), 0);
+        }
         #[test]
         fn ignores_task_emoji_shorthand_fields_outside_task_items() {
             let note = parse_markdown("note.md", "testTask 🗓2022-07-14");
