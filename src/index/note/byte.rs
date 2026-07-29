@@ -1,8 +1,10 @@
+//! Byte-offset helpers for parser-owned UTF-8 source text.
+
 use std::ops::Range;
 
 use serde::{Deserialize, Serialize};
 
-/// Byte range into a UTF-8 source string.
+/// Byte offsets into a UTF-8 source string.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub(crate) struct ByteRange {
     start: usize,
@@ -10,7 +12,7 @@ pub(crate) struct ByteRange {
 }
 
 impl ByteRange {
-    /// Creates a byte range from source offsets.
+    /// Creates a range from start and end byte offsets.
     #[inline]
     #[must_use]
     pub(crate) fn new(start: usize, end: usize) -> Self {
@@ -34,7 +36,7 @@ impl ByteRange {
         self.end
     }
 
-    /// Standard library range for slicing.
+    /// Returns a [`Range`] for slicing source text.
     #[inline]
     #[must_use]
     pub(crate) fn range(&self) -> Range<usize> {
@@ -42,26 +44,26 @@ impl ByteRange {
     }
 }
 
-/// UTF-8 byte-offset helper for parser-local source text.
+/// Borrowed UTF-8 source text with byte-offset helpers.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(crate) struct ByteSource<'a>(&'a str);
 
 impl<'a> ByteSource<'a> {
-    /// Wraps parser source text.
+    /// Wraps source text for byte-offset operations.
     #[inline]
     #[must_use]
     pub(crate) fn new(source: &'a str) -> Self {
         Self(source)
     }
 
-    /// Source byte length.
+    /// Source length in bytes.
     #[inline]
     #[must_use]
     pub(crate) fn len(&self) -> usize {
         self.0.len()
     }
 
-    /// Returns the suffix starting at `pos`.
+    /// Returns the suffix beginning at `pos`.
     #[inline]
     #[must_use]
     pub(crate) fn from(&self, pos: usize) -> Option<&'a str> {
@@ -104,7 +106,7 @@ impl<'a> ByteSource<'a> {
         self.from(pos).is_some_and(|source| source.starts_with(needle))
     }
 
-    /// Advances `pos` by a validated byte count.
+    /// Adds `bytes` to `pos`.
     #[inline]
     #[must_use]
     #[expect(
@@ -116,14 +118,20 @@ impl<'a> ByteSource<'a> {
         pos + bytes
     }
 
-    /// Returns the byte offset immediately after `ch` at `pos`.
+    /// Advances `pos` past `ch`.
     #[inline]
     #[must_use]
     pub(crate) fn advance_char(&self, pos: usize, ch: char) -> usize {
         self.advance(pos, ch.len_utf8())
     }
 
-    /// Returns the absolute end offset for a char-indexed token.
+    /// Returns the end offset for a token ending with `ch`.
+    ///
+    /// # Arguments
+    ///
+    /// * `pos` - Token start offset.
+    /// * `offset` - Character offset within the token.
+    /// * `ch` - Final token character.
     #[inline]
     #[must_use]
     pub(crate) fn token_end(

@@ -1,8 +1,8 @@
-//! Metadata extracted from frontmatter and Dataview-compatible inline fields.
+//! Frontmatter and Dataview-compatible inline metadata values.
 //!
-//! [`RawFrontmatter`] stores the source YAML block. [`Frontmatter`] and
-//! [`MetadataField`] store parsed key-value metadata; [`InlineField`] wraps a
-//! [`MetadataField`] with the [`InlineFieldForm`] it was written in.
+//! [`RawFrontmatter`] stores source YAML. [`Frontmatter`] and
+//! [`MetadataField`] store parsed key-value pairs. [`InlineField`] records the
+//! [`InlineFieldForm`] used in Markdown body text.
 
 use std::collections::BTreeMap;
 
@@ -12,19 +12,19 @@ use yaml_serde as serde_yaml;
 
 use super::Outlink;
 
-/// Raw YAML frontmatter block extracted from a markdown note.
+/// Raw YAML frontmatter block from a Markdown note.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 pub(crate) struct RawFrontmatter(String);
 
 impl RawFrontmatter {
-    /// Stores `raw` as the unparsed frontmatter text.
+    /// Stores unparsed frontmatter text.
     #[inline]
     #[must_use]
     pub(crate) fn new(raw: impl Into<String>) -> Self {
         Self(raw.into())
     }
 
-    /// Raw YAML text between the frontmatter delimiters.
+    /// YAML text between frontmatter delimiters.
     #[inline]
     #[must_use]
     pub(crate) fn as_str(&self) -> &str {
@@ -39,14 +39,14 @@ impl RawFrontmatter {
     }
 }
 
-/// Structured key-value metadata parsed from a [`RawFrontmatter`] block.
+/// Structured key-value metadata parsed from [`RawFrontmatter`].
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub(crate) struct Frontmatter {
     fields: Vec<MetadataField>,
 }
 
 impl Frontmatter {
-    /// Stores the structured frontmatter `fields`.
+    /// Creates frontmatter from parsed metadata fields.
     #[inline]
     #[must_use]
     pub(crate) fn new(fields: Vec<MetadataField>) -> Self {
@@ -55,7 +55,7 @@ impl Frontmatter {
         }
     }
 
-    /// Parsed key-value fields from frontmatter.
+    /// Parsed frontmatter fields.
     #[inline]
     #[must_use]
     pub(crate) fn fields(&self) -> &[MetadataField] {
@@ -104,18 +104,18 @@ impl From<&RawFrontmatter> for Frontmatter {
     }
 }
 
-/// Dataview-compatible inline field syntax form.
+/// Dataview-compatible inline field syntax.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub(crate) enum InlineFieldForm {
     /// `Key:: Value`, filling an entire line.
     Body,
-    /// `[Key:: Value]`, with the key visible in rendered markdown.
+    /// `[Key:: Value]`, with the key visible in rendered Markdown.
     VisibleKey,
-    /// `(Key:: Value)`, with the key hidden in rendered markdown.
+    /// `(Key:: Value)`, with the key hidden in rendered Markdown.
     HiddenKey,
 }
 
-/// Key-value metadata parsed from frontmatter or markdown body text.
+/// Key-value metadata from frontmatter or Markdown body text.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub(crate) struct MetadataField {
     key: String,
@@ -123,7 +123,7 @@ pub(crate) struct MetadataField {
 }
 
 impl MetadataField {
-    /// Creates a metadata field from a key and value.
+    /// Creates a metadata field from `key` and `value`.
     #[inline]
     #[must_use]
     pub(crate) fn new(key: impl Into<String>, value: FieldValue) -> Self {
@@ -133,14 +133,14 @@ impl MetadataField {
         }
     }
 
-    /// Metadata key.
+    /// Field key.
     #[inline]
     #[must_use]
     pub(crate) fn key(&self) -> &str {
         &self.key
     }
 
-    /// Typed metadata value.
+    /// Field value.
     #[inline]
     #[must_use]
     pub(crate) fn value(&self) -> &FieldValue {
@@ -148,8 +148,7 @@ impl MetadataField {
     }
 }
 
-/// A [`MetadataField`] parsed from Dataview-compatible inline field syntax in
-/// markdown body text, tagged with the [`InlineFieldForm`] it was written in.
+/// Dataview-compatible inline field with its source syntax.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub(crate) struct InlineField {
     #[serde(flatten)]
@@ -158,7 +157,13 @@ pub(crate) struct InlineField {
 }
 
 impl InlineField {
-    /// Creates an inline field from a key, value, and syntax `form`.
+    /// Creates an inline field.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - Field key.
+    /// * `value` - Field value.
+    /// * `form` - Inline field syntax.
     #[inline]
     #[must_use]
     pub(crate) fn new(
@@ -172,29 +177,28 @@ impl InlineField {
         }
     }
 
-    /// Metadata key.
+    /// Field key.
     #[inline]
     #[must_use]
     pub(crate) fn key(&self) -> &str {
         self.metadata.key()
     }
 
-    /// Typed metadata value.
+    /// Field value.
     #[inline]
     #[must_use]
     pub(crate) fn value(&self) -> &FieldValue {
         self.metadata.value()
     }
 
-    /// Inline field syntax form.
+    /// Inline field syntax.
     #[inline]
     #[must_use]
     pub(crate) fn form(&self) -> InlineFieldForm {
         self.form
     }
 
-    /// Borrows the underlying key-value [`MetadataField`], discarding the
-    /// syntax form.
+    /// Underlying key-value metadata without syntax information.
     #[inline]
     #[must_use]
     pub(crate) fn metadata(&self) -> &MetadataField {
@@ -202,26 +206,26 @@ impl InlineField {
     }
 }
 
-/// Typed Dataview-compatible metadata value.
+/// Dataview-compatible metadata value.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub(crate) enum FieldValue {
     /// Empty or missing value.
     Null,
     /// Boolean value.
     Bool(bool),
-    /// Floating-point numeric value.
+    /// Numeric value.
     Number(f64),
-    /// Plain string value.
+    /// Text value.
     String(String),
-    /// ISO-date-like string value.
+    /// ISO date string.
     Date(String),
-    /// Dataview duration literal, kept in source spelling.
+    /// Dataview duration literal in source spelling.
     Duration(String),
     /// Link value.
     Link(Outlink),
-    /// Ordered list value.
+    /// Ordered list value stored in a [`Vec`].
     List(Vec<FieldValue>),
-    /// Keyed object value with deterministic key order.
+    /// Keyed object value stored in a deterministically ordered [`BTreeMap`].
     Object(BTreeMap<String, FieldValue>),
 }
 
@@ -234,7 +238,7 @@ impl FieldValue {
         matches!(self, Self::Null)
     }
 
-    /// Returns the string slice if this value stores textual content.
+    /// Returns textual content for string-like values.
     #[inline]
     #[must_use]
     pub(crate) fn as_str(&self) -> Option<&str> {

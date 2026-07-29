@@ -1,8 +1,10 @@
+//! Markdown and Obsidian link values extracted from notes.
+
 use serde::{Deserialize, Serialize};
 
 use super::byte::ByteSource;
 
-/// Link syntax used for an extracted [`Outlink`].
+/// Link syntax for an extracted [`Outlink`].
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub(crate) enum LinkType {
     /// Standard Markdown `[text](target)` link.
@@ -11,7 +13,7 @@ pub(crate) enum LinkType {
     Wikilink,
 }
 
-/// Outgoing link extracted from markdown link syntax.
+/// Outgoing Markdown link or Obsidian wikilink.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub(crate) struct Outlink {
     target: String,
@@ -21,7 +23,13 @@ pub(crate) struct Outlink {
 }
 
 impl Outlink {
-    /// Creates an outlink from a target, display text, and syntax kind.
+    /// Creates a non-embedded outlink.
+    ///
+    /// # Arguments
+    ///
+    /// * `target` - Link destination.
+    /// * `text` - Display text.
+    /// * `kind` - Markdown or wikilink syntax.
     #[inline]
     #[must_use]
     pub(crate) fn new(
@@ -37,14 +45,14 @@ impl Outlink {
         }
     }
 
-    /// Parses an Obsidian wikilink value such as `[[target|text]]`.
+    /// Parses a complete Obsidian wikilink such as `[[target|text]]`.
     #[must_use]
     pub(crate) fn parse_wikilink(s: &str) -> Option<Self> {
         let (link, consumed) = Self::parse_wikilink_prefix(s)?;
         (consumed == s.len()).then_some(link)
     }
 
-    /// Parses an Obsidian wikilink prefix and returns the consumed byte count.
+    /// Parses an Obsidian wikilink prefix and returns its byte length.
     #[must_use]
     pub(crate) fn parse_wikilink_prefix(s: &str) -> Option<(Self, usize)> {
         let source = ByteSource::new(s);
@@ -79,42 +87,42 @@ impl Outlink {
         ))
     }
 
-    /// Target URL, relative path, or wikilink page target.
+    /// Link target.
     #[inline]
     #[must_use]
     pub(crate) fn target(&self) -> &str {
         &self.target
     }
 
-    /// Display text, or alias text for wikilinks.
+    /// Display text, or alias text for a wikilink.
     #[inline]
     #[must_use]
     pub(crate) fn text(&self) -> &str {
         &self.text
     }
 
-    /// Link syntax kind.
+    /// Link syntax.
     #[inline]
     #[must_use]
     pub(crate) fn kind(&self) -> LinkType {
         self.kind
     }
 
-    /// Returns `true` if this link is a Wikilink.
+    /// Returns `true` for Obsidian wikilinks.
     #[inline]
     #[must_use]
     pub(crate) fn is_wikilink(&self) -> bool {
         matches!(self.kind, LinkType::Wikilink)
     }
 
-    /// Returns `true` if this link is a standard Markdown link.
+    /// Returns `true` for standard Markdown links.
     #[inline]
     #[must_use]
     pub(crate) fn is_markdown(&self) -> bool {
         matches!(self.kind, LinkType::Markdown)
     }
 
-    /// Returns `true` if this link is an embedded wikilink.
+    /// Returns `true` for embedded wikilinks.
     #[inline]
     #[must_use]
     pub(crate) fn is_embedded(&self) -> bool {

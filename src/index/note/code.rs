@@ -1,11 +1,12 @@
+//! Code-region spans excluded from metadata scanning.
+
 use std::ops::Range;
 
 use serde::{Deserialize, Serialize};
 
 use super::byte::ByteRange;
 
-/// Source byte range of inline code or a code block excluded from metadata
-/// scanning.
+/// Source byte range of inline code or a code block.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(transparent)]
 pub(crate) struct CodeRegion {
@@ -13,7 +14,7 @@ pub(crate) struct CodeRegion {
 }
 
 impl CodeRegion {
-    /// Creates a code region from start and end byte offsets.
+    /// Creates a code region from source byte offsets.
     #[inline]
     #[must_use]
     pub(crate) fn new(start: usize, end: usize) -> Self {
@@ -22,7 +23,7 @@ impl CodeRegion {
         }
     }
 
-    /// Byte range in the original markdown source.
+    /// Byte range in the original Markdown source.
     #[inline]
     #[must_use]
     pub(crate) fn range(&self) -> Range<usize> {

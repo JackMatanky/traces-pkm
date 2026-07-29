@@ -1,6 +1,8 @@
+//! Markdown tags extracted from note text.
+
 use serde::{Deserialize, Serialize};
 
-/// Markdown tag including its leading `#`, such as `#book`.
+/// Markdown tag including its leading `#`.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub(crate) struct Tag(String);
 

@@ -1,9 +1,8 @@
-//! Lexer for Dataview-compatible inline fields and markdown tags.
+//! Dataview-compatible inline-field and Markdown tag lexer.
 //!
-//! The parser passes this module plain-text buffers for each text block and
-//! list item. Those buffers already exclude fenced code blocks, indented code
-//! blocks, and inline code, so the lexer does not inspect [`super::CodeRegion`]
-//! ranges.
+//! Parses plain-text buffers produced by the Markdown parser. Those buffers
+//! already exclude fenced code blocks, indented code blocks, and inline code,
+//! so this lexer does not inspect [`super::CodeRegion`] ranges.
 
 use std::sync::LazyLock;
 
@@ -17,9 +16,8 @@ use super::{
 
 /// Matches full-line `Key:: Value` body fields.
 ///
-/// Body fields require a single letter-led key token with no whitespace. The
-/// bracketed forms below are safely delimited, so they can allow multi-word
-/// keys.
+/// Body fields require a single letter-led key without whitespace. Wrapped
+/// forms are delimiter-bounded and allow multi-word keys.
 #[expect(
     clippy::expect_used,
     reason = "static regex pattern is valid at compile time"
@@ -29,10 +27,9 @@ static BODY_FIELD_RE: LazyLock<Regex> = LazyLock::new(|| {
         .expect("BODY_FIELD_RE pattern is valid")
 });
 
-/// Matches markdown tag tokens such as `#book` and `#projects/active`.
+/// Matches Markdown tag tokens such as `#book` and `#projects/active`.
 ///
-/// [`extract_tags`] checks the byte before each match and rejects mid-word
-/// occurrences like `foo#bar`.
+/// [`extract_tags`] rejects mid-word occurrences like `foo#bar`.
 #[expect(
     clippy::expect_used,
     reason = "static regex pattern is valid at compile time"
@@ -41,9 +38,9 @@ static TAG_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"#[[:alpha:]][[:alnum:]_/-]*").expect("TAG_RE pattern is valid")
 });
 
-/// Extracts inline fields from `text`, sorted by byte position.
+/// Extracts inline fields from `text` in byte-position order.
 ///
-/// The input must already exclude code spans and blocks.
+/// `text` must already exclude code spans and blocks.
 pub(super) fn extract_inline_fields(text: &str) -> Vec<InlineField> {
     extract_inline_fields_with_task_shorthands(text, false)
 }
@@ -90,10 +87,10 @@ fn extract_inline_fields_with_task_shorthands(
     filtered
 }
 
-/// Extracts markdown tags from `text` in encounter order.
+/// Extracts Markdown tags from `text` in encounter order.
 ///
-/// Tags keep their leading `#`. Matches whose `#` is immediately preceded by
-/// an alphanumeric character or `_` are rejected so `foo#bar` is not a tag.
+/// Tags keep their leading `#`. Mid-word occurrences like `foo#bar` are
+/// rejected.
 pub(super) fn extract_tags(text: &str) -> Vec<Tag> {
     TAG_RE
         .find_iter(text)
@@ -245,7 +242,7 @@ fn push_task_shorthand_fields(text: &str, matches: &mut Vec<FieldMatch>) {
     }
 }
 
-/// Parses a raw string value into a [`FieldValue`].
+/// Parses raw inline value text into a [`FieldValue`].
 fn parse_inline_value_str(raw: &str) -> FieldValue {
     let trimmed = raw.trim();
     if trimmed.is_empty() {

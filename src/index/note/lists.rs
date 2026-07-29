@@ -1,6 +1,8 @@
+//! Markdown list and task-list structures.
+
 use serde::{Deserialize, Serialize};
 
-/// Completion state of a markdown task list item.
+/// Completion state of a Markdown task list item.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub(crate) enum TaskStatus {
     /// Unchecked task item.
@@ -9,7 +11,7 @@ pub(crate) enum TaskStatus {
     Complete,
 }
 
-/// List item text, optional task state, and nested child lists.
+/// Markdown list item with optional task state and nested lists.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub(crate) struct ListItem {
     text: String,
@@ -33,6 +35,12 @@ impl ListItem {
     }
 
     /// Creates a list item with nested child lists.
+    ///
+    /// # Arguments
+    ///
+    /// * `text` - Plain item text.
+    /// * `task_status` - Task completion state, if this item is a task.
+    /// * `children` - Nested lists under this item.
     #[inline]
     #[must_use]
     pub(crate) fn with_children(
@@ -54,7 +62,7 @@ impl ListItem {
         &self.text
     }
 
-    /// Task completion state, if this list item is a task.
+    /// Task completion state, if this item is a task.
     #[inline]
     #[must_use]
     pub(crate) fn task_status(&self) -> Option<TaskStatus> {
@@ -83,7 +91,7 @@ impl ListItem {
     }
 }
 
-/// Ordered or unordered markdown list.
+/// Ordered or unordered Markdown list.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub(crate) struct List {
     is_ordered: bool,
@@ -91,7 +99,7 @@ pub(crate) struct List {
 }
 
 impl List {
-    /// Creates a list from its ordering flag and items.
+    /// Creates a list from its ordering flag and direct items.
     #[inline]
     #[must_use]
     pub(crate) fn new(is_ordered: bool, items: Vec<ListItem>) -> Self {
@@ -108,7 +116,7 @@ impl List {
         self.is_ordered
     }
 
-    /// Items contained directly in this list.
+    /// Direct child items in this list.
     #[inline]
     #[must_use]
     pub(crate) fn items(&self) -> &[ListItem] {

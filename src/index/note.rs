@@ -1,4 +1,4 @@
-//! Parsed markdown note metadata.
+//! Parsed Markdown note model.
 
 mod byte;
 mod code;
@@ -22,11 +22,11 @@ pub(crate) use parser::parse_markdown;
 use serde::{Deserialize, Serialize};
 pub(crate) use tag::Tag;
 
-/// Metadata extracted from one markdown note.
+/// Parsed metadata and structure for one Markdown note.
 ///
-/// A [`Note`] stores frontmatter, lists, outlinks, code regions, inline fields,
-/// and tags. [`Self::tasks`] derives task items from stored lists instead of
-/// duplicating them.
+/// Stores frontmatter, lists, outlinks, code regions, inline fields, and tags.
+/// [`Self::tasks`] derives task items from stored lists instead of duplicating
+/// them.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub(crate) struct Note {
     path: PathBuf,
@@ -41,10 +41,16 @@ pub(crate) struct Note {
 impl Note {
     /// Creates a [`Note`] without inline fields or tags.
     ///
-    /// The constructor stores parsed path, frontmatter, list, link, and code
-    /// region data. Attach inline fields and tags with
-    /// [`Self::with_inline_fields`] and [`Self::with_tags`] after parser-owned
-    /// extraction has finished.
+    /// Attach inline fields and tags with [`Self::with_inline_fields`] and
+    /// [`Self::with_tags`] after parser-owned extraction finishes.
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - Project-relative note path.
+    /// * `frontmatter` - Parsed YAML frontmatter, if present.
+    /// * `lists` - Top-level body lists.
+    /// * `outlinks` - Links extracted from Markdown and wikilink syntax.
+    /// * `code_regions` - Source ranges excluded from metadata scanning.
     #[inline]
     #[must_use]
     pub(crate) fn new(
@@ -65,7 +71,7 @@ impl Note {
         }
     }
 
-    /// Returns this [`Note`] with `inline_fields` attached.
+    /// Attaches `inline_fields` and returns the updated [`Note`].
     #[inline]
     #[must_use]
     pub(crate) fn with_inline_fields(
@@ -76,7 +82,7 @@ impl Note {
         self
     }
 
-    /// Returns this [`Note`] with `tags` attached.
+    /// Attaches `tags` and returns the updated [`Note`].
     #[inline]
     #[must_use]
     pub(crate) fn with_tags(mut self, tags: Vec<Tag>) -> Self {
@@ -84,7 +90,7 @@ impl Note {
         self
     }
 
-    /// Project-relative path of this note.
+    /// Project-relative note path.
     #[inline]
     #[must_use]
     pub(crate) fn path(&self) -> &Path {
@@ -98,16 +104,17 @@ impl Note {
         self.frontmatter.as_ref()
     }
 
-    /// Top-level lists extracted from the note's body. Nested lists live under
-    /// each [`ListItem::children`], not here — see [`Self::tasks`] for a
-    /// flattened view that does walk into nested lists.
+    /// Top-level body lists.
+    ///
+    /// Nested lists live under [`ListItem::children`]. Use [`Self::tasks`] for
+    /// a flattened view of task items from every list depth.
     #[inline]
     #[must_use]
     pub(crate) fn lists(&self) -> &[List] {
         &self.lists
     }
 
-    /// Outgoing links extracted from markdown and wikilink syntax.
+    /// Outgoing links extracted from Markdown and wikilink syntax.
     #[inline]
     #[must_use]
     pub(crate) fn outlinks(&self) -> &[Outlink] {
@@ -129,10 +136,7 @@ impl Note {
         &self.inline_fields
     }
 
-    /// Iterates over all metadata fields on this note.
-    ///
-    /// Frontmatter fields are yielded first, followed by body inline fields in
-    /// document order.
+    /// Iterates over frontmatter fields followed by body inline fields.
     pub(crate) fn fields(&self) -> impl Iterator<Item = &MetadataField> {
         let empty: &[MetadataField] = &[];
         let frontmatter_fields =
@@ -142,15 +146,15 @@ impl Note {
             .chain(self.inline_fields.iter().map(InlineField::metadata))
     }
 
-    /// Markdown tags (e.g. `#book`, `#projects/active`) extracted from
-    /// paragraph and heading text and from list items, in document order.
+    /// Markdown tags from paragraphs, headings, and list items, in document
+    /// order.
     #[inline]
     #[must_use]
     pub(crate) fn tags(&self) -> &[Tag] {
         &self.tags
     }
 
-    /// Iterates over all task list items, including nested sub-list items.
+    /// Iterates over task list items at every list depth.
     pub(crate) fn tasks(&self) -> impl Iterator<Item = &ListItem> {
         let mut tasks = Vec::new();
         for list in &self.lists {
@@ -160,7 +164,7 @@ impl Note {
     }
 }
 
-/// Appends task items from `list` and its nested sub-lists to `acc`.
+/// Appends task items from `list` and descendant lists to `acc`.
 fn collect_tasks_recursive<'a>(list: &'a List, acc: &mut Vec<&'a ListItem>) {
     for item in list.items() {
         if item.is_task() {
