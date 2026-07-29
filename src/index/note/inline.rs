@@ -9,7 +9,10 @@ use std::sync::LazyLock;
 
 use regex::{Captures, Regex};
 
-use super::{FieldSource, FieldValue, InlineFieldForm, MetadataField, Tag};
+use super::{
+    FieldSource, FieldValue, InlineFieldForm, MetadataField, Tag,
+    metadata::is_iso_date,
+};
 
 /// Matches full-line `Key:: Value` body fields.
 ///
@@ -136,17 +139,6 @@ fn parse_inline_value_str(raw: &str) -> FieldValue {
         return FieldValue::Date(trimmed.to_owned());
     }
     FieldValue::String(trimmed.to_owned())
-}
-
-/// Returns `true` if `s` starts with an ISO date format `YYYY-MM-DD`.
-fn is_iso_date(s: &str) -> bool {
-    let bytes = s.as_bytes();
-    bytes.len() >= 10
-        && bytes.get(0..4).is_some_and(|b| b.iter().all(u8::is_ascii_digit))
-        && bytes.get(4) == Some(&b'-')
-        && bytes.get(5..7).is_some_and(|b| b.iter().all(u8::is_ascii_digit))
-        && bytes.get(7) == Some(&b'-')
-        && bytes.get(8..10).is_some_and(|b| b.iter().all(u8::is_ascii_digit))
 }
 
 #[cfg(test)]

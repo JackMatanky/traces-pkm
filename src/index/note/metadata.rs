@@ -277,7 +277,7 @@ impl From<serde_yaml::Value> for FieldValue {
 }
 
 /// Returns `true` if `s` starts with an ISO date format `YYYY-MM-DD`.
-fn is_iso_date(s: &str) -> bool {
+pub(super) fn is_iso_date(s: &str) -> bool {
     let bytes = s.as_bytes();
     bytes.len() >= 10
         && bytes.get(0..4).is_some_and(|b| b.iter().all(u8::is_ascii_digit))
