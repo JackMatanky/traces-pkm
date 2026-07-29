@@ -28,14 +28,14 @@ Page-level query execution should return fresh Note results from the persisted F
 - Source selection — should support all Notes, tag sources, and folder sources without introducing a Dataview Query Language parser.
 
 **Acceptance criteria:**
-- [ ] Query execution refreshes changed markdown Notes before returning results when stored `(created_at, modified_at, size)` no longer matches the filesystem.
-- [ ] Query execution adds newly created markdown Notes before returning results.
-- [ ] Query execution removes deleted markdown Notes from results.
-- [ ] Query execution with no source returns all markdown Notes and excludes non-markdown files.
-- [ ] Tag-source queries return Notes with matching markdown tags, including nested tags such as `#projects/active`.
-- [ ] Folder-source queries return Notes under the requested project-relative folder.
-- [ ] QueryOutcome items expose IndexRecord values with File Record fields and Note Metadata fields, including frontmatter, inline fields, and tags.
-- [ ] Freshness tests assert observable query results after file changes, not redb internals.
+- [x] Query execution refreshes changed markdown Notes before returning results when stored `(created_at, modified_at, size)` no longer matches the filesystem.
+- [x] Query execution adds newly created markdown Notes before returning results.
+- [x] Query execution removes deleted markdown Notes from results.
+- [x] Query execution with no source returns all markdown Notes and excludes non-markdown files.
+- [x] Tag-source queries return Notes with matching markdown tags, including nested tags such as `#projects/active`.
+- [x] Folder-source queries return Notes under the requested project-relative folder.
+- [x] QueryOutcome items expose IndexRecord values with File Record fields and Note Metadata fields, including frontmatter, inline fields, and tags.
+- [x] Freshness tests assert observable query results after file changes, not redb internals.
 
 **Out of scope:**
 - Changing Inline Field or tag extraction behavior; this issue should consume the existing Note Metadata.

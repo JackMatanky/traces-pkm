@@ -8,7 +8,7 @@
     expect(
         dead_code,
         reason = "crate-internal API surface for note metadata, consumed by \
-                  later tickets (#04 lazy query refresh)"
+                  later tickets (#06 QueryOps template namespace)"
     )
 )]
 
