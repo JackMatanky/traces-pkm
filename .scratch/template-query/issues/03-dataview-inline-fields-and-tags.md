@@ -300,6 +300,37 @@
     whoever owns CI.
   - `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features`:
     clean. `cargo nextest run --all-features`: 788/788 passed.
+- **Dataview Compatibility Follow-Up** (2026-07-29, latest state):
+  - **Inline value parser**: `inline.rs` now uses a small parser pipeline
+    for scalar atoms, comma lists, quoted strings, durations, tags, and
+    Markdown/Obsidian links. `Outlink::parse_wikilink` owns wikilink
+    parsing and supports embedded wikilinks (`![[target]]`) without
+    duplicating link parsing in the inline lexer.
+  - **Wrapped-field scanner**: bracket/paren inline fields are no longer
+    extracted by delimiter regexes. A scanner finds balanced wrappers,
+    handles escaped closing delimiters, and preserves nested bracket values
+    such as `[Key:: [value]]`.
+  - **Task emoji shorthands**: task-only date shorthands are indexed as
+    `InlineFieldForm::Body` when parsing task list items, and are ignored
+    for plain list items and body text. This is a Dataview-compatibility
+    addition beyond the written #03 Agent Brief.
+  - **Named constants**: task shorthand tokens, task date length, and
+    duration units are centralized in named constants in `inline.rs`; regex
+    patterns remain local to their `LazyLock<Regex>` statics.
+  - **Latest AC review**: all stated #03 acceptance criteria remain
+    fulfilled in the current implementation. Verification from the latest
+    session: `index::note::inline::tests::inline_fields` 34/34 passed,
+    `mise run test` 830/830 passed, `mise run clippy` clean, LSP diagnostics
+    OK, and GitNexus change detection reported low risk.
+  - **Non-AC caveats**: task emoji shorthand parsing currently accepts only
+    emoji immediately followed by a date and does not check a trailing date
+    atom boundary, so `🗓2022-07-1499` would be truncated if this shorthand
+    path becomes acceptance-scope. HTML inline values are tested at the
+    inline-lexer seam, but the full markdown parser currently ignores
+    `pulldown-cmark` HTML events, so `[link:: <a href="Page">Value</a>]`
+    is a Dataview-compatibility parser-seam gap unless later accepted as
+    part of #03 scope.
+
 
 ## Agent Brief
 
