@@ -25,7 +25,6 @@ local hygiene = new Mapping<String, Step> {
 
 local shell = new Mapping<String, Step> {
     ["shfmt"] = (Builtins.shfmt) {
-        glob = "**/*.sh"
         check = "shfmt -d -i 2 -ci {{files}}"
         check_diff = "shfmt -d -i 2 -ci {{files}}"
         fix = "shfmt -w -i 2 -ci {{files}}"
