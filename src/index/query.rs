@@ -221,15 +221,20 @@ impl QueryOutcome {
     /// Keeps only records matching the filter expression `expr`.
     ///
     /// `expr` takes the form `"<field> <op> <value>"` (e.g. `"rating > 7"` or
-    /// `"status == \"done\""`). Supported operators: `==`, `!=`, `>=`, `<=`,
-    /// `>`, `<`. `value` is a double-quoted string (no escape support), a
-    /// number, or `true`/`false`. `==`/`!=` treat `String`, `Date`, and
-    /// `Duration` field values as the same kind, comparing their text (so a
-    /// quoted literal matches a `file.mtime`-style `Date` field with equal
-    /// text); every other kind mismatch (e.g. a numeric field against a string
-    /// literal) never matches under any operator except `!=`. A record missing
-    /// the field entirely (`Null`) behaves the same way: it never matches `==`
-    /// or an ordering operator, but does match `!=`.
+    /// `"status == \"done\""`).
+    ///
+    /// # Matching Rules
+    ///
+    /// - **Operators**: `==`, `!=`, `>=`, `<=`, `>`, `<`.
+    /// - **Literals**: Double-quoted strings (no escape sequences), numbers, or
+    ///   `true`/`false`.
+    /// - **Text Normalization**: `==` and `!=` treat `String`, `Date`, and
+    ///   `Duration` values as textually comparable (e.g. `"2026-07-29"` matches
+    ///   a `Date` field with equal text).
+    /// - **Type Mismatches**: Other cross-kind comparisons (e.g. comparing a
+    ///   number to a string) never match under any operator except `!=`.
+    /// - **Null Values**: Records missing the field (`Null`) never match `==`
+    ///   or ordering operators, but do match `!=`.
     ///
     /// # Errors
     ///
@@ -247,11 +252,11 @@ impl QueryOutcome {
 
     /// Orders records by `path`, ascending unless `descending` is set.
     ///
-    /// Matches Dataview's own sort semantics: records missing `path`
-    /// (resolving to [`FieldValue::Null`]) sort as the minimum value, so
-    /// they lead ascending and trail descending, the same as any other
-    /// value. The sort is stable: records with equal or incomparable
-    /// values keep their relative order.
+    /// Matches Dataview's sort semantics:
+    /// - **Null Values**: Records missing `path` ([`FieldValue::Null`]) sort as
+    ///   minimum values, so they lead ascending and trail descending.
+    /// - **Stability**: The sort is stable — equal or incomparable records
+    ///   preserve their original relative order.
     ///
     /// # Errors
     ///
@@ -296,13 +301,16 @@ impl QueryOutcome {
 
     /// Explodes each record's `path` field into one row per list element.
     ///
-    /// Applies to fields that resolve to a [`FieldValue::List`] (frontmatter
-    /// or inline multi-value fields, or `tags`).
-    ///
-    /// A record whose `path` value is an empty list contributes no rows. A
-    /// record whose `path` value is not a list passes through unchanged. On
-    /// every exploded row, `path` itself resolves to that row's single list
-    /// element; every other field still resolves from the original record.
+    /// Behavioral details:
+    /// - **Target Fields**: Applies to fields resolving to [`FieldValue::List`]
+    ///   (frontmatter lists, inline list fields, or `tags`).
+    /// - **Non-List Fields**: Records with scalar values pass through
+    ///   unchanged.
+    /// - **Empty Lists**: Records with empty list values contribute no rows to
+    ///   the outcome.
+    /// - **Row Resolution**: On exploded rows, `path` resolves to that row's
+    ///   single element, while all other fields resolve from the original
+    ///   record.
     ///
     /// # Errors
     ///
@@ -650,13 +658,15 @@ fn fields_equal(a: &FieldValue, b: &FieldValue) -> bool {
     a == b || compare_field_values(a, b) == Some(Ordering::Equal)
 }
 
-/// Total order for [`QueryOutcome::sort`]/[`QueryOutcome::group_by`], matching
-/// Dataview's `compareValue`: [`FieldValue::Null`] (a record missing the field)
-/// sorts as the minimum value, and `descending` reverses the whole comparator
-/// uniformly — so `Null` sorts first ascending, last descending, exactly like
-/// every other value. Non-`Null` records order by [`compare_field_values`],
-/// falling back to [`Ordering::Equal`] (keeping stable relative order) for
-/// incomparable kinds.
+/// Total order for [`QueryOutcome::sort`] and [`QueryOutcome::group_by`].
+///
+/// Matches Dataview's `compareValue` semantics:
+/// - **Null Values**: [`FieldValue::Null`] acts as the minimum value.
+/// - **Direction**: `descending` reverses the entire comparator uniformly (so
+///   `Null` leads ascending and trails descending).
+/// - **Non-Null Ordering**: Ordered by [`compare_field_values`], falling back
+///   to [`Ordering::Equal`] to maintain stable relative order for incomparable
+///   kinds.
 fn sort_key_cmp(a: &FieldValue, b: &FieldValue, descending: bool) -> Ordering {
     let ord = match (a, b) {
         (FieldValue::Null, FieldValue::Null) => Ordering::Equal,
