@@ -541,10 +541,11 @@ enum FilterExpr {
         field: FieldPath,
         args: Vec<FieldValue>,
     },
-    /// Logical `AND` (`&&`) of expressions.
-    And(Vec<FilterExpr>),
-    /// Logical `OR` (`||`) of expressions.
-    Or(Vec<FilterExpr>),
+    /// Logical `AND` or `OR` combination of expressions.
+    Logical {
+        op: LogicalOp,
+        exprs: Vec<FilterExpr>,
+    },
     /// Logical `NOT` (`!`) of an expression.
     Not(Box<FilterExpr>),
 }
@@ -598,9 +599,29 @@ impl FilterExpr {
                     false
                 }
             }
-            Self::And(exprs) => exprs.iter().all(|e| e.matches(record)),
-            Self::Or(exprs) => exprs.iter().any(|e| e.matches(record)),
+            Self::Logical {
+                op,
+                exprs,
+            } => op.eval(exprs, record),
             Self::Not(expr) => !expr.matches(record),
+        }
+    }
+}
+/// A logical operator parsed from a [`QueryOutcome::filter`] expression.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+enum LogicalOp {
+    /// `AND` / `and` / `&&`
+    And,
+    /// `OR` / `or` / `||`
+    Or,
+}
+
+impl LogicalOp {
+    /// Combines boolean results for `exprs` evaluated against `record`.
+    fn eval(self, exprs: &[FilterExpr], record: &IndexRecord) -> bool {
+        match self {
+            Self::And => exprs.iter().all(|e| e.matches(record)),
+            Self::Or => exprs.iter().any(|e| e.matches(record)),
         }
     }
 }
@@ -822,7 +843,10 @@ impl<'a> FilterParser<'a> {
         if arms.is_empty() {
             Ok(left)
         } else {
-            Ok(FilterExpr::Or(arms))
+            Ok(FilterExpr::Logical {
+                op: LogicalOp::Or,
+                exprs: arms,
+            })
         }
     }
 
@@ -840,7 +864,10 @@ impl<'a> FilterParser<'a> {
         if arms.is_empty() {
             Ok(left)
         } else {
-            Ok(FilterExpr::And(arms))
+            Ok(FilterExpr::Logical {
+                op: LogicalOp::And,
+                exprs: arms,
+            })
         }
     }
 
