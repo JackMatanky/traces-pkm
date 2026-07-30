@@ -49,44 +49,59 @@ impl Index {
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, path::Path};
-
     use super::*;
-    use crate::config::{Discovered, LocalConfigFile, TrustRequest};
 
-    fn service(temp: &Path) -> ConfigService {
-        ConfigService::at(temp.join("tracked-store"), temp.join("trust-store"))
-    }
+    mod fixtures {
+        use std::{fs, path::Path};
 
-    fn trust_config(service: &ConfigService, config_path: &Path) {
-        let config =
-            LocalConfigFile::<Discovered>::try_new(config_path.to_path_buf())
-                .expect("valid local config");
-        service
-            .trust(&TrustRequest::from(&config))
-            .expect("trust project config");
-    }
+        use super::*;
+        use crate::config::{Discovered, LocalConfigFile, TrustRequest};
 
-    fn create_trusted_project(service: &ConfigService, root: &Path) {
-        fs::create_dir_all(root).expect("create project dir");
-        let config_file = root.join(".traces/config.toml");
-        fs::create_dir_all(config_file.parent().expect("config parent"))
-            .expect("create config parent");
-        fs::write(&config_file, "[templates]\ndirectory = \"templates\"\n")
-            .expect("write config file");
-        trust_config(service, &config_file);
-    }
+        pub(super) fn service(temp: &Path) -> ConfigService {
+            ConfigService::at(
+                temp.join("tracked-store"),
+                temp.join("trust-store"),
+            )
+        }
 
-    fn record_paths(index: &FileIndex) -> Vec<String> {
-        index
-            .records()
-            .iter()
-            .map(|record| record.path().to_string_lossy().into_owned())
-            .collect()
+        pub(super) fn trust_config(
+            service: &ConfigService,
+            config_path: &Path,
+        ) {
+            let config = LocalConfigFile::<Discovered>::try_new(
+                config_path.to_path_buf(),
+            )
+            .expect("valid local config");
+            service
+                .trust(&TrustRequest::from(&config))
+                .expect("trust project config");
+        }
+
+        pub(super) fn create_trusted_project(
+            service: &ConfigService,
+            root: &Path,
+        ) {
+            fs::create_dir_all(root).expect("create project dir");
+            let config_file = root.join(".traces/config.toml");
+            fs::create_dir_all(config_file.parent().expect("config parent"))
+                .expect("create config parent");
+            fs::write(&config_file, "[templates]\ndirectory = \"templates\"\n")
+                .expect("write config file");
+            trust_config(service, &config_file);
+        }
+
+        pub(super) fn record_paths(index: &FileIndex) -> Vec<String> {
+            index
+                .records()
+                .iter()
+                .map(|record| record.path().to_string_lossy().into_owned())
+                .collect()
+        }
     }
+    use fixtures::*;
 
     mod index {
-        use std::fs;
+        use std::{fs, path::Path};
 
         use pretty_assertions::assert_eq;
 
@@ -101,8 +116,8 @@ mod tests {
         fn persists_covering_every_project_file() {
             let temp = tempfile::tempdir().expect("create temp dir");
             let root = temp.path().join("project");
-            let service = super::service(temp.path());
-            super::create_trusted_project(&service, &root);
+            let service = service(temp.path());
+            create_trusted_project(&service, &root);
             fs::create_dir_all(root.join("notes")).expect("mkdir notes");
             fs::write(root.join("notes/todo.md"), "- [ ] task")
                 .expect("write note");
@@ -111,7 +126,7 @@ mod tests {
             Index.run(&service).expect("run index command");
 
             let loaded = FileIndex::load(&root).expect("load persisted index");
-            let paths = super::record_paths(&loaded);
+            let paths = record_paths(&loaded);
             assert!(paths.contains(&"notes/todo.md".to_owned()));
             assert!(paths.contains(&".traces/config.toml".to_owned()));
         }
@@ -120,8 +135,8 @@ mod tests {
         fn survives_a_later_process_invocation_via_load() {
             let temp = tempfile::tempdir().expect("create temp dir");
             let root = temp.path().join("project");
-            let service = super::service(temp.path());
-            super::create_trusted_project(&service, &root);
+            let service = service(temp.path());
+            create_trusted_project(&service, &root);
             fs::write(root.join("first.md"), "content").expect("write first");
             let _guard = CwdGuard::enter(&root);
             Index.run(&service).expect("first index run");
@@ -136,8 +151,8 @@ mod tests {
         fn rebuilds_rather_than_appends() {
             let temp = tempfile::tempdir().expect("create temp dir");
             let root = temp.path().join("project");
-            let service = super::service(temp.path());
-            super::create_trusted_project(&service, &root);
+            let service = service(temp.path());
+            create_trusted_project(&service, &root);
             fs::write(root.join("stale.md"), "old").expect("write stale");
             let _guard = CwdGuard::enter(&root);
             Index.run(&service).expect("first index run");
@@ -147,7 +162,7 @@ mod tests {
             Index.run(&service).expect("second index run");
 
             let loaded = FileIndex::load(&root).expect("load persisted index");
-            let paths = super::record_paths(&loaded);
+            let paths = record_paths(&loaded);
             assert!(!paths.contains(&"stale.md".to_owned()));
             assert!(paths.contains(&"fresh.md".to_owned()));
         }
@@ -162,7 +177,7 @@ mod tests {
                 .expect("create config parent");
             fs::write(&config_file, "[templates]\ndirectory = \"templates\"\n")
                 .expect("write config file");
-            let service = super::service(temp.path());
+            let service = service(temp.path());
             let _guard = CwdGuard::enter(&root);
 
             let error = Index.run(&service).expect_err("untrusted root fails");
@@ -191,8 +206,8 @@ mod tests {
 
             let temp = tempfile::tempdir().expect("create temp dir");
             let root = temp.path().join("project");
-            let service = super::service(temp.path());
-            super::create_trusted_project(&service, &root);
+            let service = service(temp.path());
+            create_trusted_project(&service, &root);
             let locked = root.join("locked");
             fs::create_dir(&locked).expect("create locked dir");
             fs::set_permissions(&locked, fs::Permissions::from_mode(0o000))

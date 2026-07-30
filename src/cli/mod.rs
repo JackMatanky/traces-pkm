@@ -193,6 +193,102 @@ fn load_config(service: &ConfigService) -> Result<Config, CliError> {
 mod tests {
     use super::*;
 
+    mod fixtures {
+        use std::{fs, path::Path, sync::Arc};
+
+        use super::*;
+        use crate::{
+            CwdGuard,
+            config::{ConfigService, TrustRequest},
+            dialog::PresetDialogProvider,
+        };
+
+        pub(super) struct CancellingSelect;
+        impl DialogProvider for CancellingSelect {
+            fn is_interactive(&self) -> bool {
+                true
+            }
+
+            fn text(
+                &self,
+                _: &str,
+                _: Option<&str>,
+            ) -> Result<String, crate::DialogError> {
+                Ok(String::new())
+            }
+
+            fn confirm(
+                &self,
+                _: &str,
+                _: Option<bool>,
+            ) -> Result<bool, crate::DialogError> {
+                Ok(true)
+            }
+
+            fn select(
+                &self,
+                _: &str,
+                _: &[String],
+            ) -> Result<usize, crate::DialogError> {
+                Err(crate::DialogError::UserCancelled)
+            }
+
+            fn multi_select(
+                &self,
+                _: &str,
+                _: &[String],
+            ) -> Result<Vec<usize>, crate::DialogError> {
+                Err(crate::DialogError::UserCancelled)
+            }
+        }
+
+        /// Parses `argv` and drives it through [`Cli::run`] against an
+        /// isolated, trusted project, writing (and returning the contents
+        /// of) `daily.md`.
+        pub(super) fn dispatch_argv_and_read_output(
+            argv: &[&str],
+            root: &Path,
+        ) -> String {
+            let cli = Cli::try_parse_from(argv).expect("parse argv");
+            let service = ConfigService::at(
+                root.join("tracked-store"),
+                root.join("trust-store"),
+            );
+            let project = root.join("project");
+            fs::create_dir_all(project.join(".traces"))
+                .expect("create .traces dir");
+            fs::create_dir_all(project.join("templates"))
+                .expect("create templates dir");
+            fs::write(
+                project.join(".traces/config.toml"),
+                "[templates]\ndirectory = \"templates\"\n",
+            )
+            .expect("write config file");
+            fs::write(
+                project.join("templates/daily.md"),
+                "{% for n in [1, 2, 3] %}{{ n }}{% endfor %}",
+            )
+            .expect("write template");
+            let config = crate::config::LocalConfigFile::<
+                crate::config::Discovered,
+            >::try_new(
+                project.join(".traces/config.toml")
+            )
+            .expect("valid local config");
+            service
+                .trust(&TrustRequest::from(&config))
+                .expect("trust project root");
+            let _guard = CwdGuard::enter(&project);
+
+            let provider: Arc<dyn DialogProvider> =
+                Arc::new(PresetDialogProvider::new());
+            cli.run(&service, provider).expect("run succeeds");
+
+            fs::read_to_string(project.join("daily.md"))
+                .expect("read written output")
+        }
+    }
+
     mod parse {
         use std::path::Path;
 
@@ -351,7 +447,7 @@ mod tests {
     }
 
     mod dispatch_end_to_end {
-        use std::{fs, path::Path};
+        use std::fs;
 
         use pretty_assertions::assert_eq;
         use rstest::rstest;
@@ -363,71 +459,21 @@ mod tests {
             dialog::PresetDialogProvider,
         };
 
-        /// Parses `argv` and drives it through [`Cli::run`] against an
-        /// isolated, trusted project, writing (and returning the contents
-        /// of) `daily.md`.
-        ///
-        /// Exercises the exact same path a real `traces` invocation takes
-        /// — real argv parsing through to a real handler call — without
-        /// touching the process's real OS-correct trust/tracked-config
-        /// stores, proving all three invocation forms produce identical
-        /// output by construction (same [`Cli::run`] call, same args) and
-        /// by observation (the file each writes matches).
-        fn dispatch_argv_and_read_output(argv: &[&str], root: &Path) -> String {
-            let cli = Cli::try_parse_from(argv).expect("parse argv");
-            let service = ConfigService::at(
-                root.join("tracked-store"),
-                root.join("trust-store"),
-            );
-            let project = root.join("project");
-            fs::create_dir_all(project.join(".traces"))
-                .expect("create .traces dir");
-            fs::create_dir_all(project.join("templates"))
-                .expect("create templates dir");
-            fs::write(
-                project.join(".traces/config.toml"),
-                "[templates]\ndirectory = \"templates\"\n",
-            )
-            .expect("write config file");
-            fs::write(
-                project.join("templates/daily.md"),
-                "{% for n in [1, 2, 3] %}{{ n }}{% endfor %}",
-            )
-            .expect("write template");
-            let config = crate::config::LocalConfigFile::<
-                crate::config::Discovered,
-            >::try_new(
-                project.join(".traces/config.toml")
-            )
-            .expect("valid local config");
-            service
-                .trust(&TrustRequest::from(&config))
-                .expect("trust project root");
-            let _guard = CwdGuard::enter(&project);
-
-            let provider: Arc<dyn DialogProvider> =
-                Arc::new(PresetDialogProvider::new());
-            cli.run(&service, provider).expect("run succeeds");
-
-            fs::read_to_string(project.join("daily.md"))
-                .expect("read written output")
-        }
-
         #[test]
         fn all_three_invocation_forms_produce_identical_output() {
             let form_a = tempfile::tempdir().expect("create temp dir");
             let form_b = tempfile::tempdir().expect("create temp dir");
             let form_c = tempfile::tempdir().expect("create temp dir");
 
-            let via_template = dispatch_argv_and_read_output(
+            let via_template = fixtures::dispatch_argv_and_read_output(
                 &["traces", "template", "-i", "daily"],
                 form_a.path(),
             );
-            let via_tmpl = dispatch_argv_and_read_output(
+            let via_tmpl = fixtures::dispatch_argv_and_read_output(
                 &["traces", "tmpl", "-i", "daily"],
                 form_b.path(),
             );
-            let via_default = dispatch_argv_and_read_output(
+            let via_default = fixtures::dispatch_argv_and_read_output(
                 &["traces", "-i", "daily"],
                 form_c.path(),
             );
@@ -533,50 +579,11 @@ mod tests {
                 .expect("trust project root");
             let _guard = CwdGuard::enter(&root);
 
-            struct CancellingSelect;
-            impl DialogProvider for CancellingSelect {
-                fn is_interactive(&self) -> bool {
-                    true
-                }
-
-                fn text(
-                    &self,
-                    _: &str,
-                    _: Option<&str>,
-                ) -> Result<String, crate::DialogError> {
-                    Ok(String::new())
-                }
-
-                fn confirm(
-                    &self,
-                    _: &str,
-                    _: Option<bool>,
-                ) -> Result<bool, crate::DialogError> {
-                    Ok(true)
-                }
-
-                fn select(
-                    &self,
-                    _: &str,
-                    _: &[String],
-                ) -> Result<usize, crate::DialogError> {
-                    Err(crate::DialogError::UserCancelled)
-                }
-
-                fn multi_select(
-                    &self,
-                    _: &str,
-                    _: &[String],
-                ) -> Result<Vec<usize>, crate::DialogError> {
-                    Err(crate::DialogError::UserCancelled)
-                }
-            }
-
             let outcome = Cli {
                 command: None,
                 input: Some(None),
             }
-            .run(&service, Arc::new(CancellingSelect))
+            .run(&service, Arc::new(fixtures::CancellingSelect))
             .expect("user abort is not an error");
 
             assert_eq!(outcome, CommandOutcome::Aborted(UserAbort::Cancelled));

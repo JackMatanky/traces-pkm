@@ -180,30 +180,75 @@ impl Trust {
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, path::Path};
+    use std::fs;
 
     use clap::Parser;
 
     use super::*;
     use crate::config::ConfigTrustStatus;
 
-    /// Wraps [`Trust`] in a minimal top-level parser so its
-    /// `args_conflicts_with_subcommands` disambiguation can be exercised with
-    /// [`Parser::try_parse_from`] — [`clap::Args`] types don't parse
-    /// standalone.
-    #[derive(Debug, Parser)]
-    struct TestCli {
-        #[command(flatten)]
-        trust: Trust,
-    }
+    mod fixtures {
+        use std::{
+            fs,
+            path::{Path, PathBuf},
+        };
 
-    fn parse(args: &[&str]) -> Trust {
-        TestCli::try_parse_from(
-            std::iter::once("test").chain(args.iter().copied()),
-        )
-        .expect("parse trust args")
-        .trust
+        use clap::Parser;
+
+        use super::super::*;
+
+        /// Wraps [`Trust`] in a minimal top-level parser so its
+        /// `args_conflicts_with_subcommands` disambiguation can be exercised
+        /// with [`Parser::try_parse_from`] — [`clap::Args`] types don't
+        /// parse standalone.
+        #[derive(Debug, Parser)]
+        pub(super) struct TestCli {
+            #[command(flatten)]
+            pub(super) trust: Trust,
+        }
+
+        pub(super) fn parse(args: &[&str]) -> Trust {
+            TestCli::try_parse_from(
+                std::iter::once("test").chain(args.iter().copied()),
+            )
+            .expect("parse trust args")
+            .trust
+        }
+
+        pub(super) fn service(temp: &Path) -> ConfigService {
+            ConfigService::at(
+                temp.join("tracked-store"),
+                temp.join("trust-store"),
+            )
+        }
+
+        pub(super) fn trust_args(path: Option<PathBuf>) -> Trust {
+            Trust {
+                action: None,
+                show: false,
+                all: false,
+                path,
+            }
+        }
+
+        pub(super) fn action_args(action: TrustAction) -> Trust {
+            Trust {
+                action: Some(action),
+                show: false,
+                all: false,
+                path: None,
+            }
+        }
+
+        pub(super) fn create_config(root: &Path) -> PathBuf {
+            let config_file = root.join(".traces/config.toml");
+            fs::create_dir_all(config_file.parent().expect("config parent"))
+                .expect("create config parent");
+            fs::write(&config_file, "").expect("write config file");
+            config_file
+        }
     }
+    use fixtures::*;
 
     mod parsing {
         use pretty_assertions::assert_eq;
@@ -260,40 +305,14 @@ mod tests {
 
         #[test]
         fn combining_an_action_with_a_path_is_rejected() {
-            let result = TestCli::try_parse_from(["test", "list", "some/path"]);
+            let result = fixtures::TestCli::try_parse_from([
+                "test",
+                "list",
+                "some/path",
+            ]);
 
             assert!(result.is_err());
         }
-    }
-
-    fn service(temp: &Path) -> ConfigService {
-        ConfigService::at(temp.join("tracked-store"), temp.join("trust-store"))
-    }
-
-    fn trust_args(path: Option<PathBuf>) -> Trust {
-        Trust {
-            action: None,
-            show: false,
-            all: false,
-            path,
-        }
-    }
-
-    fn action_args(action: TrustAction) -> Trust {
-        Trust {
-            action: Some(action),
-            show: false,
-            all: false,
-            path: None,
-        }
-    }
-
-    fn create_config(root: &Path) -> PathBuf {
-        let config_file = root.join(".traces/config.toml");
-        fs::create_dir_all(config_file.parent().expect("config parent"))
-            .expect("create config parent");
-        fs::write(&config_file, "").expect("write config file");
-        config_file
     }
 
     mod trust {

@@ -220,72 +220,127 @@ impl Template {
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, path::Path};
-
     use super::*;
-    use crate::config::{Discovered, LocalConfigFile, TrustRequest};
 
-    fn service(temp: &Path) -> ConfigService {
-        ConfigService::at(temp.join("tracked-store"), temp.join("trust-store"))
-    }
+    mod fixtures {
+        use std::{
+            fs,
+            path::{Path, PathBuf},
+            sync::Arc,
+        };
 
-    /// A cheap, deterministic provider for tests that never exercise
-    /// `ui.*` — `Template::run` requires one regardless.
-    fn preset_provider() -> Arc<dyn DialogProvider> {
-        Arc::new(crate::PresetDialogProvider::new())
-    }
+        use super::super::*;
+        use crate::{
+            DialogError,
+            config::{Discovered, LocalConfigFile, TrustRequest},
+        };
 
-    fn trust_config(service: &ConfigService, config_path: &Path) {
-        let config =
-            LocalConfigFile::<Discovered>::try_new(config_path.to_path_buf())
-                .expect("valid local config");
-        service
-            .trust(&TrustRequest::from(&config))
-            .expect("trust project config");
-    }
-
-    fn create_config(root: &Path, directory: &str) -> PathBuf {
-        let config_file = root.join(".traces/config.toml");
-        fs::create_dir_all(config_file.parent().expect("config parent"))
-            .expect("create config parent");
-        fs::write(
-            &config_file,
-            format!("[templates]\ndirectory = \"{directory}\"\n"),
-        )
-        .expect("write config file");
-        config_file
-    }
-
-    /// Sets up a trusted project with a template directory and optional
-    /// template file, returning the project root and a ready-to-use
-    /// [`ConfigService`].
-    fn create_test_project(
-        temp: &Path,
-        template_content: &str,
-    ) -> (PathBuf, ConfigService) {
-        let root = temp.join("project");
-        fs::create_dir_all(&root).expect("create project dir");
-        let config_file = create_config(&root, "templates");
-        let templates_dir = root.join("templates");
-        fs::create_dir_all(&templates_dir).expect("create templates dir");
-        if !template_content.is_empty() {
-            fs::write(templates_dir.join("daily.md"), template_content)
-                .expect("write template");
+        pub(super) fn service(temp: &Path) -> ConfigService {
+            ConfigService::at(
+                temp.join("tracked-store"),
+                temp.join("trust-store"),
+            )
         }
-        let service = service(temp);
-        trust_config(&service, &config_file);
-        (root, service)
+
+        /// A cheap, deterministic provider for tests that never exercise
+        /// `ui.*` — `Template::run` requires one regardless.
+        pub(super) fn preset_provider() -> Arc<dyn DialogProvider> {
+            Arc::new(crate::PresetDialogProvider::new())
+        }
+
+        pub(super) fn trust_config(
+            service: &ConfigService,
+            config_path: &Path,
+        ) {
+            let config = LocalConfigFile::<Discovered>::try_new(
+                config_path.to_path_buf(),
+            )
+            .expect("valid local config");
+            service
+                .trust(&TrustRequest::from(&config))
+                .expect("trust project config");
+        }
+
+        pub(super) fn create_config(root: &Path, directory: &str) -> PathBuf {
+            let config_file = root.join(".traces/config.toml");
+            fs::create_dir_all(config_file.parent().expect("config parent"))
+                .expect("create config parent");
+            fs::write(
+                &config_file,
+                format!("[templates]\ndirectory = \"{directory}\"\n"),
+            )
+            .expect("write config file");
+            config_file
+        }
+
+        /// Sets up a trusted project with a template directory and optional
+        /// template file, returning the project root and a ready-to-use
+        /// [`ConfigService`].
+        pub(super) fn create_test_project(
+            temp: &Path,
+            template_content: &str,
+        ) -> (PathBuf, ConfigService) {
+            let root = temp.join("project");
+            fs::create_dir_all(&root).expect("create project dir");
+            let config_file = create_config(&root, "templates");
+            let templates_dir = root.join("templates");
+            fs::create_dir_all(&templates_dir).expect("create templates dir");
+            if !template_content.is_empty() {
+                fs::write(templates_dir.join("daily.md"), template_content)
+                    .expect("write template");
+            }
+            let service = service(temp);
+            trust_config(&service, &config_file);
+            (root, service)
+        }
+
+        pub(super) struct CancellingDialogProvider;
+        impl DialogProvider for CancellingDialogProvider {
+            fn is_interactive(&self) -> bool {
+                true
+            }
+
+            fn text(
+                &self,
+                _label: &str,
+                _default: Option<&str>,
+            ) -> Result<String, DialogError> {
+                Err(DialogError::UserCancelled)
+            }
+
+            fn confirm(
+                &self,
+                _label: &str,
+                _default: Option<bool>,
+            ) -> Result<bool, DialogError> {
+                Err(DialogError::UserCancelled)
+            }
+
+            fn select(
+                &self,
+                _label: &str,
+                _items: &[String],
+            ) -> Result<usize, DialogError> {
+                Err(DialogError::UserCancelled)
+            }
+
+            fn multi_select(
+                &self,
+                _label: &str,
+                _items: &[String],
+            ) -> Result<Vec<usize>, DialogError> {
+                Err(DialogError::UserCancelled)
+            }
+        }
     }
+    use fixtures::*;
 
     mod run {
         use std::{fs, path::PathBuf, sync::Arc};
 
         use pretty_assertions::assert_eq;
 
-        use super::{
-            super::*, create_config, create_test_project, preset_provider,
-            service,
-        };
+        use super::*;
         use crate::{CwdGuard, cli::UserAbort, config::ConfigLoadError};
 
         #[test]
@@ -560,45 +615,6 @@ mod tests {
             );
             let _guard = CwdGuard::enter(&root);
 
-            struct CancellingDialogProvider;
-            impl DialogProvider for CancellingDialogProvider {
-                fn is_interactive(&self) -> bool {
-                    true
-                }
-
-                fn text(
-                    &self,
-                    _label: &str,
-                    _default: Option<&str>,
-                ) -> Result<String, DialogError> {
-                    Err(DialogError::UserCancelled)
-                }
-
-                fn confirm(
-                    &self,
-                    _label: &str,
-                    _default: Option<bool>,
-                ) -> Result<bool, DialogError> {
-                    Err(DialogError::UserCancelled)
-                }
-
-                fn select(
-                    &self,
-                    _label: &str,
-                    _items: &[String],
-                ) -> Result<usize, DialogError> {
-                    Err(DialogError::UserCancelled)
-                }
-
-                fn multi_select(
-                    &self,
-                    _label: &str,
-                    _items: &[String],
-                ) -> Result<Vec<usize>, DialogError> {
-                    Err(DialogError::UserCancelled)
-                }
-            }
-
             let provider: Arc<dyn DialogProvider> =
                 Arc::new(CancellingDialogProvider);
 
@@ -616,7 +632,7 @@ mod tests {
 
         use pretty_assertions::assert_eq;
 
-        use super::{super::*, create_test_project, preset_provider};
+        use super::*;
         use crate::CwdGuard;
 
         #[test]

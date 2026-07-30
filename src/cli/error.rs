@@ -540,12 +540,19 @@ fn template_instantiate_help(source: &TemplateError) -> Box<dyn Display + '_> {
 mod tests {
     use super::*;
 
-    fn state_source() -> ConfigStateError {
-        ConfigStateError::Hash(crate::hash::HashError::Read {
-            path: PathBuf::from("/some/project/.traces/config.toml"),
-            source: io::Error::other("boom"),
-        })
+    mod fixtures {
+        use std::{io, path::PathBuf};
+
+        use super::*;
+
+        pub(super) fn state_source() -> ConfigStateError {
+            ConfigStateError::Hash(crate::hash::HashError::Read {
+                path: PathBuf::from("/some/project/.traces/config.toml"),
+                source: io::Error::other("boom"),
+            })
+        }
     }
+    use fixtures::*;
 
     mod display {
         use std::{io, path::PathBuf};
@@ -553,7 +560,7 @@ mod tests {
         use pretty_assertions::assert_eq;
         use serde::ser::Error as SerdeError;
 
-        use super::{super::*, state_source};
+        use super::{super::*, *};
 
         #[test]
         fn current_directory() {

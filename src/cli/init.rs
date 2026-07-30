@@ -148,48 +148,58 @@ impl Init {
 
 #[cfg(test)]
 mod tests {
-
     use super::*;
-    use crate::DialogError;
 
-    struct CancellingDialogProvider;
-    impl DialogProvider for CancellingDialogProvider {
-        fn is_interactive(&self) -> bool {
-            true
+    mod fixtures {
+        use std::path::Path;
+
+        use super::super::*;
+        use crate::DialogError;
+
+        pub(super) struct CancellingDialogProvider;
+        impl DialogProvider for CancellingDialogProvider {
+            fn is_interactive(&self) -> bool {
+                true
+            }
+
+            fn text(
+                &self,
+                _label: &str,
+                _default: Option<&str>,
+            ) -> Result<String, DialogError> {
+                Err(DialogError::UserCancelled)
+            }
+
+            fn confirm(
+                &self,
+                _label: &str,
+                _default: Option<bool>,
+            ) -> Result<bool, DialogError> {
+                Err(DialogError::UserCancelled)
+            }
+
+            fn select(
+                &self,
+                _label: &str,
+                _items: &[String],
+            ) -> Result<usize, DialogError> {
+                Err(DialogError::UserCancelled)
+            }
+
+            fn multi_select(
+                &self,
+                _label: &str,
+                _items: &[String],
+            ) -> Result<Vec<usize>, DialogError> {
+                Err(DialogError::UserCancelled)
+            }
         }
 
-        fn text(
-            &self,
-            _label: &str,
-            _default: Option<&str>,
-        ) -> Result<String, DialogError> {
-            Err(DialogError::UserCancelled)
-        }
-
-        fn confirm(
-            &self,
-            _label: &str,
-            _default: Option<bool>,
-        ) -> Result<bool, DialogError> {
-            Err(DialogError::UserCancelled)
-        }
-
-        fn select(
-            &self,
-            _label: &str,
-            _items: &[String],
-        ) -> Result<usize, DialogError> {
-            Err(DialogError::UserCancelled)
-        }
-
-        fn multi_select(
-            &self,
-            _label: &str,
-            _items: &[String],
-        ) -> Result<Vec<usize>, DialogError> {
-            Err(DialogError::UserCancelled)
+        pub(super) fn scaffold(root: &Path) {
+            Init::scaffold_directory(root).expect("scaffold");
         }
     }
+    use fixtures::*;
 
     mod scaffold {
         use super::super::*;
@@ -227,11 +237,7 @@ mod tests {
     }
 
     mod config {
-        use super::super::*;
-
-        fn scaffold(root: &Path) {
-            Init::scaffold_directory(root).expect("scaffold");
-        }
+        use super::*;
 
         #[test]
         fn produces_valid_toml() {
