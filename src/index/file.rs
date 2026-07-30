@@ -183,13 +183,24 @@ impl Timestamp {
         Self(Utc::now())
     }
 
-    /// Formats this timestamp as an RFC 3339 datetime string (e.g.
-    /// `"2026-07-29T14:30:00+00:00"`), for Dataview-style `ctime`/`mtime`
-    /// query field values.
+    /// Formats this timestamp as a date and time with a UTC offset (e.g.
+    /// `"2026-07-29T14:30:00+00:00"`, RFC 3339). The offset is always
+    /// `+00:00` — [`Timestamp`] is always UTC — so prefer
+    /// [`Self::to_datetime_string`] unless the offset itself matters.
     #[inline]
     #[must_use]
-    pub(crate) fn to_rfc3339(self) -> String {
+    pub(crate) fn to_offset_datetime_string(self) -> String {
         self.0.to_rfc3339()
+    }
+
+    /// Formats this timestamp's date and time without a UTC offset (e.g.
+    /// `"2026-07-29T14:30:00"`), for Dataview-style `ctime`/`mtime` query
+    /// field values — no offset suffix to break a filter literal's exact
+    /// text match.
+    #[inline]
+    #[must_use]
+    pub(crate) fn to_datetime_string(self) -> String {
+        self.0.format("%Y-%m-%dT%H:%M:%S").to_string()
     }
 
     /// Formats this timestamp's date component (e.g. `"2026-07-29"`), for
@@ -198,6 +209,14 @@ impl Timestamp {
     #[must_use]
     pub(crate) fn to_date_string(self) -> String {
         self.0.format("%Y-%m-%d").to_string()
+    }
+
+    /// Formats this timestamp's time-of-day component (e.g.
+    /// `"14:30:00"`), with no date.
+    #[inline]
+    #[must_use]
+    pub(crate) fn to_time_string(self) -> String {
+        self.0.format("%H:%M:%S").to_string()
     }
 }
 
@@ -348,6 +367,47 @@ mod tests {
             let record = record_with(None, modified_at);
 
             assert_eq!(record.created_at_or_modified(), modified_at);
+        }
+    }
+
+    mod formatting {
+        use chrono::TimeZone;
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        fn fixed_timestamp() -> Timestamp {
+            Timestamp(
+                Utc.with_ymd_and_hms(2026, 7, 29, 14, 30, 5).single().expect(
+                    "2026-07-29 14:30:05 UTC is a valid, unambiguous instant",
+                ),
+            )
+        }
+
+        #[test]
+        fn to_offset_datetime_string_includes_the_utc_offset() {
+            assert_eq!(
+                fixed_timestamp().to_offset_datetime_string(),
+                "2026-07-29T14:30:05+00:00"
+            );
+        }
+
+        #[test]
+        fn to_datetime_string_omits_the_offset() {
+            assert_eq!(
+                fixed_timestamp().to_datetime_string(),
+                "2026-07-29T14:30:05"
+            );
+        }
+
+        #[test]
+        fn to_date_string_omits_the_time() {
+            assert_eq!(fixed_timestamp().to_date_string(), "2026-07-29");
+        }
+
+        #[test]
+        fn to_time_string_omits_the_date() {
+            assert_eq!(fixed_timestamp().to_time_string(), "14:30:05");
         }
     }
 }

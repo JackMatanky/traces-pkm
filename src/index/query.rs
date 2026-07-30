@@ -108,11 +108,12 @@ enum FileField {
     Folder,
     /// [`FileRecord::size`].
     Size,
-    /// [`FileRecord::created_at_or_modified`], as an RFC 3339 datetime.
+    /// [`FileRecord::created_at_or_modified`], as a datetime with no UTC
+    /// offset.
     CreatedDateTime,
     /// [`FileRecord::created_at_or_modified`], as a bare date.
     CreatedDate,
-    /// [`FileRecord::modified_at`], as an RFC 3339 datetime.
+    /// [`FileRecord::modified_at`], as a datetime with no UTC offset.
     ModifiedDateTime,
     /// [`FileRecord::modified_at`], as a bare date.
     ModifiedDate,
@@ -191,14 +192,14 @@ impl FileField {
                           projects, so f64 keeps exact byte counts"
             )]
             Self::Size => FieldValue::Number(file.size() as f64),
-            Self::CreatedDateTime => {
-                FieldValue::Date(file.created_at_or_modified().to_rfc3339())
-            }
+            Self::CreatedDateTime => FieldValue::Date(
+                file.created_at_or_modified().to_datetime_string(),
+            ),
             Self::CreatedDate => {
                 FieldValue::Date(file.created_at_or_modified().to_date_string())
             }
             Self::ModifiedDateTime => {
-                FieldValue::Date(file.modified_at().to_rfc3339())
+                FieldValue::Date(file.modified_at().to_datetime_string())
             }
             Self::ModifiedDate => {
                 FieldValue::Date(file.modified_at().to_date_string())
@@ -814,7 +815,7 @@ mod tests {
 
             assert_eq!(
                 record.field("file.mtime"),
-                Ok(FieldValue::Date(file.modified_at().to_rfc3339()))
+                Ok(FieldValue::Date(file.modified_at().to_datetime_string()))
             );
             assert_eq!(
                 record.field("file.mdate"),
@@ -823,7 +824,7 @@ mod tests {
             assert_eq!(
                 record.field("file.ctime"),
                 Ok(FieldValue::Date(
-                    file.created_at_or_modified().to_rfc3339()
+                    file.created_at_or_modified().to_datetime_string()
                 ))
             );
             assert_eq!(
