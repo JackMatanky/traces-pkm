@@ -10,7 +10,7 @@ use regex::Regex;
 
 use super::{
     FieldValue, InlineField, InlineFieldForm, Outlink, Tag,
-    byte::{ByteRange, ByteSource},
+    byte::{ByteSpan, SourceText},
     metadata::is_iso_date,
 };
 
@@ -161,14 +161,14 @@ impl BracketPair {
 
 /// Candidate inline field match with its byte range in source text.
 struct FieldMatch {
-    range: ByteRange,
+    range: ByteSpan,
     field: InlineField,
 }
 
 /// Stateful lexer for extracting [`InlineField`] candidates from Markdown text.
 struct InlineFieldLexer<'a> {
     text: &'a str,
-    source: ByteSource<'a>,
+    source: SourceText<'a>,
     matches: Vec<FieldMatch>,
 }
 
@@ -177,7 +177,7 @@ impl<'a> InlineFieldLexer<'a> {
     fn new(text: &'a str) -> Self {
         Self {
             text,
-            source: ByteSource::new(text),
+            source: SourceText::new(text),
             matches: Vec::new(),
         }
     }
@@ -190,7 +190,7 @@ impl<'a> InlineFieldLexer<'a> {
                 continue;
             };
             self.matches.push(FieldMatch {
-                range: ByteRange::new(whole.start(), whole.end()),
+                range: ByteSpan::new(whole.start(), whole.end()),
                 field: InlineField::new(
                     key.as_str().trim(),
                     parse_inline_value_str(value.as_str()),
@@ -226,7 +226,7 @@ impl<'a> InlineFieldLexer<'a> {
         }
         let (value, end) = self.find_closing(value_start, pair)?;
         Some(FieldMatch {
-            range: ByteRange::new(start, end),
+            range: ByteSpan::new(start, end),
             field: InlineField::new(
                 key,
                 parse_inline_value_str(value),
@@ -288,7 +288,7 @@ impl<'a> InlineFieldLexer<'a> {
                     && is_iso_date(value)
                 {
                     self.matches.push(FieldMatch {
-                        range: ByteRange::new(start, date_end),
+                        range: ByteSpan::new(start, date_end),
                         field: InlineField::new(
                             key,
                             FieldValue::Date(value.to_owned()),
@@ -332,7 +332,7 @@ fn parse_inline_value_str(raw: &str) -> FieldValue {
 }
 struct ValueParser<'a> {
     text: &'a str,
-    source: ByteSource<'a>,
+    source: SourceText<'a>,
 }
 
 impl<'a> ValueParser<'a> {
@@ -340,7 +340,7 @@ impl<'a> ValueParser<'a> {
     fn new(text: &'a str) -> Self {
         Self {
             text,
-            source: ByteSource::new(text),
+            source: SourceText::new(text),
         }
     }
 

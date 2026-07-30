@@ -6,12 +6,12 @@ use serde::{Deserialize, Serialize};
 
 /// Byte offsets into a UTF-8 source string.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
-pub(crate) struct ByteRange {
+pub(crate) struct ByteSpan {
     start: usize,
     end: usize,
 }
 
-impl ByteRange {
+impl ByteSpan {
     /// Creates a range from start and end byte offsets.
     #[inline]
     #[must_use]
@@ -45,10 +45,9 @@ impl ByteRange {
 }
 
 /// Borrowed UTF-8 source text with byte-offset helpers.
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub(crate) struct ByteSource<'a>(&'a str);
+pub(crate) struct SourceText<'a>(&'a str);
 
-impl<'a> ByteSource<'a> {
+impl<'a> SourceText<'a> {
     /// Wraps source text for byte-offset operations.
     #[inline]
     #[must_use]

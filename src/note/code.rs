@@ -4,13 +4,13 @@ use std::ops::Range;
 
 use serde::{Deserialize, Serialize};
 
-use super::byte::ByteRange;
+use super::byte::ByteSpan;
 
 /// Source byte range of inline code or a code block.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(transparent)]
 pub(crate) struct CodeRegion {
-    range: ByteRange,
+    range: ByteSpan,
 }
 
 impl CodeRegion {
@@ -19,7 +19,7 @@ impl CodeRegion {
     #[must_use]
     pub(crate) fn new(start: usize, end: usize) -> Self {
         Self {
-            range: ByteRange::new(start, end),
+            range: ByteSpan::new(start, end),
         }
     }
 
