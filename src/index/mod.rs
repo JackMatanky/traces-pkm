@@ -741,10 +741,22 @@ mod tests {
         }
 
         #[test]
-        fn tag_source_matches_exact_and_nested_tags() {
+        fn tag_source_matches_the_exact_tag() {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("book.md"), "Filed under #book.")
                 .expect("write book");
+            fs::write(temp.path().join("other.md"), "No tags here.")
+                .expect("write other");
+            let index = FileIndex::build(temp.path()).expect("build index");
+
+            let outcome = index.query(&Source::Tag("#book".to_owned()));
+
+            assert_eq!(note_paths(&outcome), [Path::new("book.md")]);
+        }
+
+        #[test]
+        fn tag_source_matches_sub_tags_nested_under_the_query() {
+            let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(
                 temp.path().join("project.md"),
                 "Tracked in #projects/active.",
@@ -754,12 +766,26 @@ mod tests {
                 .expect("write other");
             let index = FileIndex::build(temp.path()).expect("build index");
 
-            let books = index.clone().query(&Source::Tag("#book".to_owned()));
-            let projects =
+            let exact = index
+                .clone()
+                .query(&Source::Tag("#projects/active".to_owned()));
+            let parent = index.query(&Source::Tag("#projects".to_owned()));
+
+            assert_eq!(note_paths(&exact), [Path::new("project.md")]);
+            assert_eq!(note_paths(&parent), [Path::new("project.md")]);
+        }
+
+        #[test]
+        fn tag_source_does_not_match_a_more_specific_query_than_the_tag() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("project.md"), "Tracked in #projects.")
+                .expect("write project");
+            let index = FileIndex::build(temp.path()).expect("build index");
+
+            let outcome =
                 index.query(&Source::Tag("#projects/active".to_owned()));
 
-            assert_eq!(note_paths(&books), [Path::new("book.md")]);
-            assert_eq!(note_paths(&projects), [Path::new("project.md")]);
+            assert!(outcome.is_empty());
         }
 
         #[test]

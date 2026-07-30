@@ -19,8 +19,8 @@ use crate::note::Note;
 pub(crate) enum Source {
     /// Every indexed markdown Note.
     All,
-    /// Notes tagged with an exact markdown tag, e.g. `#book` or
-    /// `#projects/active`.
+    /// Notes tagged with a markdown tag, or a sub-tag nested under it, e.g.
+    /// `#book` or `#projects` (which also matches `#projects/active`).
     Tag(String),
     /// Notes whose [`FileRecord::folder`] is the requested project-relative
     /// folder, or a folder nested under it.
@@ -32,10 +32,9 @@ impl Source {
     pub(super) fn is_match(&self, file: &FileRecord, note: &Note) -> bool {
         match self {
             Self::All => true,
-            // ponytail: exact-tag match only, no Dataview-style parent-tag
-            // hierarchy (`#projects` matching `#projects/active`); add if a
-            // later ticket needs full Dataview tag-source parity.
-            Self::Tag(tag) => note.tags().iter().any(|t| t.as_str() == tag),
+            Self::Tag(tag) => {
+                note.tags().iter().any(|t| t.is_nested_under(tag))
+            }
             Self::Folder(folder) => file.folder().starts_with(folder),
         }
     }
