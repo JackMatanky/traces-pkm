@@ -2,31 +2,21 @@
 
 use std::path::PathBuf;
 
-use clap::{ArgGroup, Args, Subcommand};
+use clap::{Args, Subcommand};
 
 use super::error::CliError;
 use crate::config::{ConfigService, DiscoveryScope, TrustRequest};
 
 /// Command-line arguments for `traces trust`.
 #[derive(Debug, Args)]
-#[command(
-    args_conflicts_with_subcommands = true,
-    group(ArgGroup::new("mode").args(["show", "untrust"]).multiple(false))
-)]
-#[expect(
-    clippy::struct_excessive_bools,
-    reason = "clap flag structs model independent CLI switches directly"
-)]
+#[command(args_conflicts_with_subcommands = true)]
 pub(super) struct Trust {
     #[command(subcommand)]
     action: Option<TrustAction>,
     /// Show resolved config trust status instead of changing it
     #[arg(long)]
     show: bool,
-    /// Remove the resolved config from the trust store
-    #[arg(long)]
-    untrust: bool,
-    /// Apply trust, untrust, or show to descendant configs too
+    /// Apply trust or show to descendant configs too
     #[arg(long)]
     all: bool,
     /// Directory or .traces/config.toml to trust (defaults to the current
@@ -55,7 +45,6 @@ impl Trust {
             Some(TrustAction::List) => Self::list(service),
             Some(TrustAction::Clean) => Self::clean(service),
             None if self.show => self.show(service),
-            None if self.untrust => self.untrust(service),
             None => self.trust(service),
         }
     }
@@ -116,26 +105,6 @@ impl Trust {
                 });
             }
             eprintln!("trusted {}", root.display());
-            Ok(())
-        })
-    }
-
-    /// Revokes trust from the specified target directory or configuration.
-    ///
-    /// # Errors
-    ///
-    /// - [`CliError::TrustTargetResolve`] if resolving trust targets fails.
-    /// - [`CliError::Untrust`] if updating the trust store fails.
-    fn untrust(&self, service: &ConfigService) -> Result<(), CliError> {
-        self.for_each_subject(service, |subject: TrustRequest| {
-            let root = subject.root_path().to_path_buf();
-            if let Err(source) = service.untrust(&subject) {
-                return Err(CliError::Untrust {
-                    root,
-                    source,
-                });
-            }
-            eprintln!("untrusted {}", root.display());
             Ok(())
         })
     }
@@ -274,14 +243,11 @@ mod tests {
         }
 
         #[test]
-        fn show_and_untrust_modes_parse() {
+        fn show_mode_parses() {
             let show = parse(&["--show", "some/path"]);
-            let untrust = parse(&["--untrust", "some/path"]);
 
             assert!(show.show);
             assert_eq!(show.path, Some(PathBuf::from("some/path")));
-            assert!(untrust.untrust);
-            assert_eq!(untrust.path, Some(PathBuf::from("some/path")));
         }
 
         #[test]
@@ -290,14 +256,6 @@ mod tests {
 
             assert!(args.all);
             assert_eq!(args.path, Some(PathBuf::from("some/path")));
-        }
-
-        #[test]
-        fn show_and_untrust_conflict() {
-            let result =
-                TestCli::try_parse_from(["test", "--show", "--untrust"]);
-
-            assert!(result.is_err());
         }
 
         #[test]
@@ -325,7 +283,6 @@ mod tests {
             Trust {
                 action: None,
                 show: false,
-                untrust: false,
                 all: false,
                 path,
             }
@@ -335,7 +292,6 @@ mod tests {
             Trust {
                 action: Some(action),
                 show: false,
-                untrust: false,
                 all: false,
                 path: None,
             }
@@ -424,27 +380,6 @@ mod tests {
             args.run(&service).expect("show trust status");
 
             assert!(service.list_trusted().expect("list trusted").is_empty());
-        }
-
-        #[test]
-        fn untrust_removes_the_resolved_root_and_companion() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            let root = temp.path().join("project");
-            fs::create_dir_all(&root).expect("create project dir");
-            create_config(&root);
-            let service = service(temp.path());
-            trust_args(Some(root.clone())).run(&service).expect("trust root");
-            let mut args = trust_args(Some(root.clone()));
-            args.untrust = true;
-
-            args.run(&service).expect("untrust root");
-
-            assert_eq!(
-                service
-                    .trust_status(&TrustRequest::from(root.as_path()))
-                    .expect("check trust"),
-                ConfigTrustStatus::Untrusted
-            );
         }
 
         #[test]

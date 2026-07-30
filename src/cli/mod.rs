@@ -8,6 +8,7 @@ mod index;
 pub mod init;
 mod template;
 mod trust;
+mod untrust;
 
 use std::{path::PathBuf, sync::Arc};
 
@@ -142,6 +143,8 @@ enum Commands {
     Init(init::Init),
     /// Manage trusted project roots
     Trust(trust::Trust),
+    /// Revoke trust from project roots
+    Untrust(untrust::Untrust),
     /// Build or rebuild the persisted `FileIndex`
     Index(index::Index),
     /// Render a template and write it to disk
@@ -162,6 +165,7 @@ impl Commands {
         match self {
             Self::Init(args) => args.run(provider.as_ref()),
             Self::Trust(args) => args.run(service),
+            Self::Untrust(args) => args.run(service),
             Self::Index(_) => index::Index::run(service),
             Self::Template(args) => args.run(service, provider),
             Self::Completions(args) => args.run(service),
@@ -204,6 +208,13 @@ mod tests {
             .expect("parse trust argv");
 
         assert!(matches!(cli.command, Some(Commands::Trust(_))));
+    }
+    #[test]
+    fn untrust_argv_parses_to_the_untrust_subcommand() {
+        let cli = Cli::try_parse_from(["traces", "untrust", "some/path"])
+            .expect("parse untrust argv");
+
+        assert!(matches!(cli.command, Some(Commands::Untrust(_))));
     }
 
     #[test]
