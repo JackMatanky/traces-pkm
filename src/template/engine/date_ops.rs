@@ -41,7 +41,7 @@ const DEFAULT_FORMAT: &str = "%Y-%m-%d";
 /// component.
 const DEFAULT_DATETIME_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
 
-/// Formats [`parse_date_precise`] tries, in order, before falling back to a
+/// Formats [`ParsedDate::parse`] tries, in order, before falling back to a
 /// bare date — space-separated (`2026-07-23 14:30[:00]`) and `T`-separated
 /// ISO 8601 (with or without seconds/fractional seconds).
 const DATETIME_FORMATS: &[&str] = &[
@@ -188,12 +188,10 @@ impl ParsedDate {
     }
 }
 
-/// The `unit=` kwarg [`date_diff`] accepts, parsed once via
-/// [`Self::parse`] and matched exhaustively in each precision branch
-/// below — the same "small enum over a piped string" pattern
-/// [`path_ops::PathQuery`](super::path_ops) uses for its I/O tests.
 /// The date/time unit parsed from a `unit="..."` kwarg across the `date`
-/// namespace filters ([`date_add`], [`date_sub`], [`date_diff`]).
+/// namespace filters ([`date_add`], [`date_sub`], [`date_diff`]) — the
+/// same "small enum over a piped string" pattern
+/// [`path_ops::PathQuery`](super::path_ops) uses for its I/O tests.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum DateTimeUnit {
     Years,
@@ -219,6 +217,34 @@ impl DateTimeUnit {
             _ => None,
         }
     }
+
+    /// This unit's canonical (plural) name, for error messages — reported
+    /// even when the `unit=` kwarg used the singular form ([`Self::parse`]
+    /// accepts both).
+    const fn name(self) -> &'static str {
+        match self {
+            Self::Years => "years",
+            Self::Months => "months",
+            Self::Days => "days",
+            Self::Hours => "hours",
+            Self::Minutes => "minutes",
+            Self::Seconds => "seconds",
+        }
+    }
+
+    /// This unit's length in whole seconds — [`date_diff`]'s divisor for
+    /// both its sub-day (`f64`) and whole-unit (`i64`) output. `None` for
+    /// [`Self::Years`]/[`Self::Months`], which vary in length (28–31 days,
+    /// 365–366 days) and so aren't a fixed number of seconds.
+    const fn diff_seconds(self) -> Option<i64> {
+        match self {
+            Self::Days => Some(86_400),
+            Self::Hours => Some(3_600),
+            Self::Minutes => Some(60),
+            Self::Seconds => Some(1),
+            Self::Years | Self::Months => None,
+        }
+    }
 }
 
 /// Extracts the shared `format="..."` kwarg every `date.*` namespace
@@ -237,6 +263,23 @@ fn format_kwarg(kwargs: &Kwargs) -> Result<&str, Error> {
         kwargs.get::<Option<&str>>("format")?.unwrap_or(DEFAULT_FORMAT);
     kwargs.assert_all_used()?;
     Ok(format)
+}
+
+/// Extracts the shared `unit="..."` kwarg [`date_add`], [`date_sub`], and
+/// [`date_diff`] all take, defaulting to `"days"`, and rejects any other
+/// kwarg via [`Kwargs::assert_all_used`] — mirrors [`format_kwarg`] for the
+/// `date.*` namespace methods' `format=` kwarg.
+///
+/// # Errors
+///
+/// - [`ErrorKind::InvalidOperation`] if `unit` doesn't name one of
+///   [`DateTimeUnit::parse`]'s six accepted units.
+/// - [`ErrorKind::TooManyArguments`] if `kwargs` carries any key besides
+///   `unit`.
+fn unit_kwarg(kwargs: &Kwargs) -> Result<DateTimeUnit, Error> {
+    let unit_str = kwargs.get::<Option<&str>>("unit")?.unwrap_or("days");
+    kwargs.assert_all_used()?;
+    DateTimeUnit::parse(unit_str).ok_or_else(|| unknown_unit_error(unit_str))
 }
 
 /// Formats `formattable` — anything chrono's `.format(fmt)` produces
@@ -347,6 +390,7 @@ fn shift_date(
     let shifted = op(parsed.datetime).ok_or_else(date_out_of_range_error)?;
     format_precise(shifted, parsed.has_time)
 }
+
 /// `{{ value | date_add(n, unit="days") }}` — adds `n` `unit`s to a piped
 /// date/time string (`unit` defaults to `"days"`, accepts `"years"`,
 /// `"months"`, `"days"`, `"hours"`, `"minutes"`, `"seconds"`).
@@ -362,11 +406,7 @@ fn shift_date(
               argument by value; only `&self` methods on it are needed here"
 )]
 fn date_add(value: &str, n: i64, kwargs: Kwargs) -> Result<String, Error> {
-    let unit_str = kwargs.get::<Option<&str>>("unit")?.unwrap_or("days");
-    kwargs.assert_all_used()?;
-    let unit = DateTimeUnit::parse(unit_str)
-        .ok_or_else(|| unknown_unit_error(unit_str))?;
-    date_shift_unit(value, n, unit)
+    date_shift_unit(value, n, unit_kwarg(&kwargs)?)
 }
 
 /// `{{ value | date_sub(n, unit="days") }}` — subtracts `n` `unit`s from a
@@ -381,14 +421,10 @@ fn date_add(value: &str, n: i64, kwargs: Kwargs) -> Result<String, Error> {
               argument by value; only `&self` methods on it are needed here"
 )]
 fn date_sub(value: &str, n: i64, kwargs: Kwargs) -> Result<String, Error> {
-    let unit_str = kwargs.get::<Option<&str>>("unit")?.unwrap_or("days");
-    kwargs.assert_all_used()?;
-    let unit = DateTimeUnit::parse(unit_str)
-        .ok_or_else(|| unknown_unit_error(unit_str))?;
     date_shift_unit(
         value,
         n.checked_neg().ok_or_else(date_out_of_range_error)?,
-        unit,
+        unit_kwarg(&kwargs)?,
     )
 }
 
@@ -479,7 +515,7 @@ fn sub_years(value: &str, n: u32) -> Result<String, Error> {
 }
 
 /// [`ErrorKind::InvalidOperation`] if `value` isn't a parseable
-/// date/time string — see [`parse_date_precise`]. The `with_day(1)`
+/// date/time string — see [`ParsedDate::parse`]. The `with_day(1)`
 /// call underneath can't itself fail (day 1 exists in every month), but
 /// stays behind [`date_out_of_range_error`] since it's a fallible API.
 fn start_of_month(value: &str) -> Result<String, Error> {
@@ -491,7 +527,7 @@ fn start_of_month(value: &str) -> Result<String, Error> {
 /// # Errors
 ///
 /// [`ErrorKind::InvalidOperation`] if `value` isn't a parseable
-/// date/time string (see [`parse_date_precise`]) or the resulting
+/// date/time string (see [`ParsedDate::parse`]) or the resulting
 /// last-of-month day is out of chrono's representable range (see
 /// [`date_out_of_range_error`]).
 fn end_of_month(value: &str) -> Result<String, Error> {
@@ -521,8 +557,11 @@ fn weekday(value: &str) -> Result<u32, Error> {
 /// # Errors
 ///
 /// - [`ErrorKind::InvalidOperation`] if `value` or `other` isn't a parseable
-///   date/time string (see [`parse_date_precise`]), or `unit` isn't `"days"`,
-///   `"hours"`, `"minutes"`, or `"seconds"` (see [`unknown_unit_error`]).
+///   date/time string (see [`ParsedDate::parse`]), `unit` isn't one of
+///   [`DateTimeUnit::parse`]'s six accepted names (see [`unit_kwarg`]), or
+///   `unit` names [`DateTimeUnit::Years`]/[`DateTimeUnit::Months`], which
+///   [`DateTimeUnit::diff_seconds`] doesn't support (see
+///   [`undiffable_unit_error`]).
 /// - [`ErrorKind::TooManyArguments`] if `kwargs` carries any key besides
 ///   `unit`.
 #[expect(
@@ -531,10 +570,9 @@ fn weekday(value: &str) -> Result<u32, Error> {
               argument by value; only `&self` methods on it are needed here"
 )]
 fn date_diff(value: &str, other: &str, kwargs: Kwargs) -> Result<Value, Error> {
-    let unit_str = kwargs.get::<Option<&str>>("unit")?.unwrap_or("days");
-    kwargs.assert_all_used()?;
-    let unit = DateTimeUnit::parse(unit_str)
-        .ok_or_else(|| unknown_unit_error(unit_str))?;
+    let unit = unit_kwarg(&kwargs)?;
+    let unit_seconds =
+        unit.diff_seconds().ok_or_else(|| undiffable_unit_error(unit))?;
     let from = ParsedDate::parse(value)?;
     let to = ParsedDate::parse(other)?;
     let delta = to.datetime.signed_duration_since(from.datetime);
@@ -545,30 +583,21 @@ fn date_diff(value: &str, other: &str, kwargs: Kwargs) -> Result<Value, Error> {
             clippy::cast_precision_loss,
             reason = "TimeDelta::num_seconds() is bounded by chrono's \
                       NaiveDateTime range (~262,000 years, well under 2^52 \
-                      seconds), so this cast never loses precision in practice"
+                      seconds), and unit_seconds is at most 86,400 — neither \
+                      cast loses precision in practice"
         )]
-        let seconds =
-            delta.num_seconds() as f64 + f64::from(delta.subsec_nanos()) / 1e9;
-        let result = match unit {
-            DateTimeUnit::Days => seconds / 86_400.0,
-            DateTimeUnit::Hours => seconds / 3_600.0,
-            DateTimeUnit::Minutes => seconds / 60.0,
-            DateTimeUnit::Seconds => seconds,
-            DateTimeUnit::Years | DateTimeUnit::Months => {
-                return Err(unknown_unit_error(unit_str));
-            }
-        };
+        let result = (delta.num_seconds() as f64
+            + f64::from(delta.subsec_nanos()) / 1e9)
+            / unit_seconds as f64;
         Ok(Value::from(result))
     } else {
-        let result = match unit {
-            DateTimeUnit::Days => delta.num_days(),
-            DateTimeUnit::Hours => delta.num_hours(),
-            DateTimeUnit::Minutes => delta.num_minutes(),
-            DateTimeUnit::Seconds => delta.num_seconds(),
-            DateTimeUnit::Years | DateTimeUnit::Months => {
-                return Err(unknown_unit_error(unit_str));
-            }
-        };
+        #[expect(
+            clippy::arithmetic_side_effects,
+            reason = "unit_seconds is 86_400, 3_600, 60, or 1 \
+                      (DateTimeUnit::diff_seconds), never zero, so this \
+                      division never panics"
+        )]
+        let result = delta.num_seconds() / unit_seconds;
         Ok(Value::from(result))
     }
 }
@@ -659,14 +688,30 @@ fn date_out_of_range_error() -> Error {
     )
 }
 
-/// Builds the error for `date_diff`'s `unit` kwarg when it isn't one of
-/// the four accepted unit names.
+/// Builds the error for a `unit="..."` kwarg naming something other than
+/// one of [`DateTimeUnit::parse`]'s six accepted unit names — shared by
+/// [`date_add`], [`date_sub`], and [`date_diff`] via [`unit_kwarg`].
 fn unknown_unit_error(unit: &str) -> Error {
     Error::new(
         ErrorKind::InvalidOperation,
         format!(
-            "unknown date_diff unit {unit:?} (expected \"days\", \"hours\", \
-             \"minutes\", or \"seconds\")"
+            "unknown unit {unit:?} (expected \"years\", \"months\", \"days\", \
+             \"hours\", \"minutes\", or \"seconds\")"
+        ),
+    )
+}
+
+/// Builds the error for [`date_diff`]'s `unit` kwarg naming a real
+/// [`DateTimeUnit`] that [`DateTimeUnit::diff_seconds`] doesn't support:
+/// [`DateTimeUnit::Years`]/[`DateTimeUnit::Months`] vary in length (28–31
+/// days, 365–366 days), so there's no fixed number of seconds to divide by.
+fn undiffable_unit_error(unit: DateTimeUnit) -> Error {
+    Error::new(
+        ErrorKind::InvalidOperation,
+        format!(
+            "date_diff doesn't support unit {:?} (expected \"days\", \
+             \"hours\", \"minutes\", or \"seconds\")",
+            unit.name()
         ),
     )
 }
@@ -1279,6 +1324,28 @@ mod tests {
                 .expect_err("unknown unit fails cleanly");
 
             assert_eq!(error.kind(), ErrorKind::InvalidOperation);
+        }
+
+        #[rstest]
+        #[case::years("years")]
+        #[case::months("months")]
+        fn rejects_a_recognized_but_undiffable_unit_instead_of_panicking(
+            #[case] unit: &str,
+        ) {
+            let error = env()
+                .render_str(
+                    &format!(
+                        r#"{{{{ "2026-07-23" | date_diff("2026-07-24", unit="{unit}") }}}}"#
+                    ),
+                    minijinja::context!(),
+                )
+                .expect_err("undiffable unit fails cleanly");
+
+            assert_eq!(error.kind(), ErrorKind::InvalidOperation);
+            assert!(
+                error.to_string().contains("date_diff doesn't support"),
+                "expected an undiffable-unit message, got {error}"
+            );
         }
     }
 
