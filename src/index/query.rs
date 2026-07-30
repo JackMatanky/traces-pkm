@@ -109,13 +109,13 @@ enum FileField {
     /// [`FileRecord::size`].
     Size,
     /// [`FileRecord::created_at_or_modified`], as an RFC 3339 datetime.
-    Ctime,
+    CreatedDateTime,
     /// [`FileRecord::created_at_or_modified`], as a bare date.
-    Cdate,
+    CreatedDate,
     /// [`FileRecord::modified_at`], as an RFC 3339 datetime.
-    Mtime,
+    ModifiedDateTime,
     /// [`FileRecord::modified_at`], as a bare date.
-    Mdate,
+    ModifiedDate,
 }
 
 impl FieldPath {
@@ -164,10 +164,10 @@ impl FileField {
             "name" => Ok(Self::Name),
             "folder" => Ok(Self::Folder),
             "size" => Ok(Self::Size),
-            "created_at" | "ctime" => Ok(Self::Ctime),
-            "cdate" => Ok(Self::Cdate),
-            "modified_at" | "mtime" => Ok(Self::Mtime),
-            "mdate" => Ok(Self::Mdate),
+            "created_at" | "ctime" => Ok(Self::CreatedDateTime),
+            "cdate" => Ok(Self::CreatedDate),
+            "modified_at" | "mtime" => Ok(Self::ModifiedDateTime),
+            "mdate" => Ok(Self::ModifiedDate),
             _ => Err(QueryError::UnknownFieldPath {
                 path: format!("file.{name}"),
             }),
@@ -191,14 +191,16 @@ impl FileField {
                           projects, so f64 keeps exact byte counts"
             )]
             Self::Size => FieldValue::Number(file.size() as f64),
-            Self::Ctime => {
+            Self::CreatedDateTime => {
                 FieldValue::Date(file.created_at_or_modified().to_rfc3339())
             }
-            Self::Cdate => {
+            Self::CreatedDate => {
                 FieldValue::Date(file.created_at_or_modified().to_date_string())
             }
-            Self::Mtime => FieldValue::Date(file.modified_at().to_rfc3339()),
-            Self::Mdate => {
+            Self::ModifiedDateTime => {
+                FieldValue::Date(file.modified_at().to_rfc3339())
+            }
+            Self::ModifiedDate => {
                 FieldValue::Date(file.modified_at().to_date_string())
             }
         }
@@ -360,22 +362,22 @@ impl QueryOutcome {
     /// parsed, or [`QueryError::UnknownFieldPath`] if its field path is
     /// malformed.
     pub(crate) fn filter(self, expr: &str) -> Result<Self, QueryError> {
-        let (field_path, op, literal) = parse_filter_expr(expr)?;
+        let expr = FilterExpr::parse(expr)?;
         let records = self
             .records
             .into_iter()
-            .filter(|record| {
-                op.is_satisfied_by(&record.resolve(&field_path), &literal)
-            })
+            .filter(|record| expr.matches(record))
             .collect();
         Ok(Self::new(records))
     }
 
     /// Orders records by `path`, ascending unless `descending` is set.
     ///
-    /// Records missing `path` (resolving to [`FieldValue::Null`]) sort last
-    /// regardless of direction. The sort is stable: records with equal or
-    /// incomparable values keep their relative order.
+    /// Matches Dataview's own sort semantics: records missing `path`
+    /// (resolving to [`FieldValue::Null`]) sort as the minimum value, so
+    /// they lead ascending and trail descending, the same as any other
+    /// value. The sort is stable: records with equal or incomparable
+    /// values keep their relative order.
     ///
     /// # Errors
     ///
@@ -555,35 +557,57 @@ impl CompareOp {
     }
 }
 
-/// Parses a [`QueryOutcome::filter`] expression into its field path,
-/// operator, and literal value.
+/// A parsed `.filter()` expression: a field path, a comparison operator,
+/// and the literal value to compare it against.
 ///
-/// # Errors
-///
-/// Returns [`QueryError::UnparsableFilterExpression`] if `expr` does not match
-/// `<field> <op> <value>`, or [`QueryError::UnknownFieldPath`] if its field
-/// path is malformed.
-fn parse_filter_expr(
-    expr: &str,
-) -> Result<(FieldPath, CompareOp, FieldValue), QueryError> {
-    let invalid = || QueryError::UnparsableFilterExpression {
-        expr: expr.to_owned(),
-    };
-    let trimmed = expr.trim();
-    let op_start = trimmed
-        .find(|c: char| {
-            !(c.is_alphanumeric() || c == '_' || c == '.' || c == '-')
+/// Names the shape [`QueryOutcome::filter`] parses once per call instead of
+/// threading an anonymous `(FieldPath, CompareOp, FieldValue)` triple
+/// through it.
+#[derive(Clone, Debug, PartialEq)]
+struct FilterExpr {
+    field: FieldPath,
+    op: CompareOp,
+    value: FieldValue,
+}
+
+impl FilterExpr {
+    /// Parses `"<field> <op> <value>"` — see [`QueryOutcome::filter`] for
+    /// the full grammar.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`QueryError::UnparsableFilterExpression`] if `expr` does not
+    /// match `<field> <op> <value>`, or [`QueryError::UnknownFieldPath`] if
+    /// its field path is malformed.
+    fn parse(expr: &str) -> Result<Self, QueryError> {
+        let invalid = || QueryError::UnparsableFilterExpression {
+            expr: expr.to_owned(),
+        };
+        let trimmed = expr.trim();
+        let op_start = trimmed
+            .find(|c: char| {
+                !(c.is_alphanumeric() || c == '_' || c == '.' || c == '-')
+            })
+            .ok_or_else(invalid)?;
+        let (field, rest) = trimmed.split_at(op_start);
+        let field = field.trim();
+        if field.is_empty() {
+            return Err(invalid());
+        }
+        let (op, rest) =
+            CompareOp::strip_prefix(rest.trim_start()).ok_or_else(invalid)?;
+        let value = parse_filter_literal(rest.trim()).ok_or_else(invalid)?;
+        Ok(Self {
+            field: FieldPath::parse(field)?,
+            op,
+            value,
         })
-        .ok_or_else(invalid)?;
-    let (field, rest) = trimmed.split_at(op_start);
-    let field = field.trim();
-    if field.is_empty() {
-        return Err(invalid());
     }
-    let (op, rest) =
-        CompareOp::strip_prefix(rest.trim_start()).ok_or_else(invalid)?;
-    let literal = parse_filter_literal(rest.trim()).ok_or_else(invalid)?;
-    Ok((FieldPath::parse(field)?, op, literal))
+
+    /// Whether `record`'s resolved field satisfies this expression.
+    fn matches(&self, record: &IndexRecord) -> bool {
+        self.op.is_satisfied_by(&record.resolve(&self.field), &self.value)
+    }
 }
 
 /// Parses a filter expression's literal value: a double-quoted string (no
@@ -625,25 +649,24 @@ fn fields_equal(a: &FieldValue, b: &FieldValue) -> bool {
     a == b || compare_field_values(a, b) == Some(Ordering::Equal)
 }
 
-/// Total order for [`QueryOutcome::sort`]/[`QueryOutcome::group_by`]:
-/// [`FieldValue::Null`] (a record missing the field) always sorts last;
-/// otherwise records order by [`compare_field_values`], falling back to
-/// [`Ordering::Equal`] (keeping stable relative order) for incomparable
-/// kinds. `descending` reverses only the comparable case, so missing values
-/// stay last either way.
+/// Total order for [`QueryOutcome::sort`]/[`QueryOutcome::group_by`],
+/// matching Dataview's `compareValue`: [`FieldValue::Null`] (a record
+/// missing the field) sorts as the minimum value, and `descending` reverses
+/// the whole comparator uniformly — so `Null` sorts first ascending, last
+/// descending, exactly like every other value. Non-`Null` records order by
+/// [`compare_field_values`], falling back to [`Ordering::Equal`] (keeping
+/// stable relative order) for incomparable kinds.
 fn sort_key_cmp(a: &FieldValue, b: &FieldValue, descending: bool) -> Ordering {
-    match (a, b) {
+    let ord = match (a, b) {
         (FieldValue::Null, FieldValue::Null) => Ordering::Equal,
-        (FieldValue::Null, _) => Ordering::Greater,
-        (_, FieldValue::Null) => Ordering::Less,
-        _ => {
-            let ord = compare_field_values(a, b).unwrap_or(Ordering::Equal);
-            if descending {
-                ord.reverse()
-            } else {
-                ord
-            }
-        }
+        (FieldValue::Null, _) => Ordering::Less,
+        (_, FieldValue::Null) => Ordering::Greater,
+        _ => compare_field_values(a, b).unwrap_or(Ordering::Equal),
+    };
+    if descending {
+        ord.reverse()
+    } else {
+        ord
     }
 }
 
@@ -1061,7 +1084,7 @@ mod tests {
         }
 
         #[test]
-        fn missing_field_sorts_last_regardless_of_direction() {
+        fn missing_field_sorts_as_the_minimum_value() {
             let temp = tempfile::tempdir().expect("create temp dir");
             let outcome = outcome_for_files(temp.path(), &[
                 ("rated.md", "---\nrating: 3\n---"),
@@ -1072,7 +1095,9 @@ mod tests {
                 outcome.clone().sort("rating", false).expect("valid sort");
             let descending = outcome.sort("rating", true).expect("valid sort");
 
-            assert_eq!(names(&ascending), ["rated", "unrated"]);
+            // Matches Dataview: Null is the minimum value, so it leads
+            // ascending and trails descending, like any other value would.
+            assert_eq!(names(&ascending), ["unrated", "rated"]);
             assert_eq!(names(&descending), ["rated", "unrated"]);
         }
 
