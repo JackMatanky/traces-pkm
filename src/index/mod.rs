@@ -2,8 +2,10 @@
 //!
 //! [`FileIndex`] keeps a sorted [`FileRecord`] for every regular file under a
 //! trusted project root. Markdown files also get parsed into [`Note`] records.
-//! Persistence is redb-backed through [`store`], but callers only use the
-//! build, refresh, persist, load, query, and enumerate APIs.
+//! Persistence is redb-backed through [`store`](mod@store), but callers only
+//! use the [`FileIndex::build`], [`FileIndex::refresh`],
+//! [`FileIndex::persist`], [`FileIndex::load`], [`FileIndex::query`],
+//! [`FileIndex::records`], and [`FileIndex::notes`] APIs.
 
 #![cfg_attr(
     not(test),
@@ -78,15 +80,15 @@ impl FileIndex {
         })
     }
 
-    /// Refreshes the persisted index for `root` so results reflect the
-    /// current filesystem, then persists any changes and returns the fresh
-    /// index.
+    /// Refreshes the persisted index for `root` against current filesystem
+    /// state.
     ///
     /// Compares each current file's `(created_at, modified_at, size)` — via
     /// [`FileRecord`] equality — against the previously persisted record.
     /// Unchanged markdown Notes reuse their previously parsed [`Note`];
     /// added or changed markdown Notes are reparsed. Deleted files are
-    /// dropped because they no longer appear in the scan.
+    /// dropped because they no longer appear in the scan. Returns the fresh
+    /// [`FileIndex`] and persists any changes.
     ///
     /// # Errors
     ///
@@ -244,11 +246,10 @@ impl FileIndex {
     }
 }
 
-/// Reads and parses `record`'s markdown file into a [`Note`].
+/// Reads and parses the markdown file for `record` into a [`Note`].
 ///
 /// Shared by [`FileIndex::build`] (parses every markdown file from scratch)
 /// and [`FileIndex::refresh`] (parses only added or changed markdown files).
-///
 /// # Errors
 ///
 /// Returns [`FileIndexError::Io`] if the file cannot be read.

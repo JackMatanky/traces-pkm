@@ -39,9 +39,10 @@ pub(super) fn scan_root(
     Ok(records)
 }
 
-/// Wraps a `walkdir` error with the path it occurred at, falling back to `root`
-/// for the rare case (symlink loops, never reached since this walk never
-/// follows symlinks) where `walkdir` doesn't have one.
+/// Wraps a [`walkdir::Error`] with path context as a [`FileIndexError::Io`].
+///
+/// Falls back to `root` if the underlying error provides no path (such as
+/// rare symlink loop errors).
 fn io_error(root: &Path, source: walkdir::Error) -> FileIndexError {
     let path = source.path().unwrap_or(root).to_path_buf();
     FileIndexError::Io {
@@ -50,6 +51,7 @@ fn io_error(root: &Path, source: walkdir::Error) -> FileIndexError {
     }
 }
 
+/// Returns `true` if `path` names a `.git` directory.
 fn is_git_dir(path: &Path) -> bool {
     path.file_name().is_some_and(|name| name == ".git")
 }

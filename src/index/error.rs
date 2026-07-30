@@ -11,8 +11,10 @@ use thiserror::Error;
 /// remaining variants come from redb persistence and TOML record encoding.
 #[derive(Debug, Error)]
 pub(crate) enum FileIndexError {
-    /// A filesystem operation failed while scanning a project root or preparing
-    /// the index database's parent directory.
+    /// A filesystem operation failed during a scan or directory setup.
+    ///
+    /// Occurs while scanning a project root or preparing the index database's
+    /// parent directory.
     #[error("failed to access {path}")]
     Io {
         /// The path that could not be accessed.
@@ -32,8 +34,10 @@ pub(crate) enum FileIndexError {
         #[source]
         source: Box<redb::Error>,
     },
-    /// A stored [`super::FileRecord`] or [`super::Note`] was not valid UTF-8,
-    /// which means the index database is corrupted.
+    /// A stored record was not valid UTF-8, indicating database corruption.
+    ///
+    /// Occurs when stored [`super::FileRecord`] or [`super::Note`] bytes fail
+    /// UTF-8 decoding.
     #[error("corrupted record bytes in the index database for {path}")]
     Corrupt {
         /// The corrupted record's project-relative path (its key in the
@@ -52,7 +56,9 @@ pub(crate) enum FileIndexError {
         #[source]
         source: toml::ser::Error,
     },
-    /// A stored [`super::FileRecord`] or [`super::Note`] could not be
+    /// A stored record could not be deserialized from TOML.
+    ///
+    /// Occurs when a stored [`super::FileRecord`] or [`super::Note`] cannot be
     /// deserialized.
     #[error("failed to deserialize the record for {path}")]
     Deserialize {

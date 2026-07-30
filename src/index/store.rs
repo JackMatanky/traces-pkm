@@ -1,8 +1,8 @@
-//! redb persistence for [`FileRecord`] and [`Note`] records.
+//! Redb persistence for [`FileRecord`] and [`Note`] records.
 //!
-//! This module is the only layer that knows about redb tables.
-//! [`super::FileIndex`] callers never handle [`TableDefinition`]s or
-//! transactions directly.
+//! Handles database transactions and table definitions for index storage.
+//! Callers of [`super::FileIndex`] use its high-level methods rather than
+//! interacting with [`IndexStore`] or redb tables directly.
 
 use std::{
     fs,
@@ -39,7 +39,7 @@ pub(super) struct IndexStore {
 }
 
 impl IndexStore {
-    /// Opens (creating if absent) the index database under `root`.
+    /// Opens the index database under `root`, creating it if absent.
     ///
     /// # Errors
     ///

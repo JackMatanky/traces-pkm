@@ -123,11 +123,11 @@ impl IndexRecord {
         &self.note
     }
 
-    /// Resolves `path` against this record's `file.*` metadata or Note
-    /// Metadata (frontmatter fields, inline fields, and `tags`).
+    /// Resolves `path` against this record's file and note metadata.
     ///
-    /// Frontmatter fields take precedence over an inline field with the same
-    /// key (see [`Note::fields`]). A well-formed path this record has no
+    /// Resolves `file.*` accessors, frontmatter fields, inline fields, and
+    /// `tags`. Frontmatter fields take precedence over an inline field with the
+    /// same key (see [`Note::fields`]). A well-formed path this record has no
     /// value for (e.g. a frontmatter key it does not define) resolves to
     /// [`FieldValue::Null`], not an error.
     ///
@@ -221,24 +221,23 @@ impl QueryOutcome {
         self.records.iter()
     }
 
-    /// Keeps only records matching `expr` (`"<field> <op> <value>"`, e.g.
-    /// `"rating > 7"` or `"status == \"done\""`).
+    /// Keeps only records matching the filter expression `expr`.
     ///
-    /// Supported operators: `==`, `!=`, `>=`, `<=`, `>`, `<`. `value` is a
-    /// double-quoted string (no escape support), a number, or
-    /// `true`/`false`. `==`/`!=` treat `String`, `Date`, and `Duration`
-    /// field values as the same kind, comparing their text (so a quoted
-    /// literal matches a `file.mtime`-style `Date` field with equal text);
-    /// every other kind mismatch (e.g. a numeric field against a string
-    /// literal) never matches under any operator except `!=`. A record
-    /// missing the field entirely (`Null`) behaves the same way: it never
-    /// matches `==` or an ordering operator, but does match `!=`.
+    /// `expr` takes the form `"<field> <op> <value>"` (e.g. `"rating > 7"` or
+    /// `"status == \"done\""`). Supported operators: `==`, `!=`, `>=`, `<=`,
+    /// `>`, `<`. `value` is a double-quoted string (no escape support), a
+    /// number, or `true`/`false`. `==`/`!=` treat `String`, `Date`, and
+    /// `Duration` field values as the same kind, comparing their text (so a
+    /// quoted literal matches a `file.mtime`-style `Date` field with equal
+    /// text); every other kind mismatch (e.g. a numeric field against a string
+    /// literal) never matches under any operator except `!=`. A record missing
+    /// the field entirely (`Null`) behaves the same way: it never matches `==`
+    /// or an ordering operator, but does match `!=`.
     ///
     /// # Errors
     ///
-    /// Returns [`QueryError::UnparsableFilterExpression`] if `expr` cannot be
-    /// parsed, or [`QueryError::UnknownFieldPath`] if its field path is
-    /// malformed.
+    /// - [`QueryError::UnparsableFilterExpression`] if `expr` cannot be parsed
+    /// - [`QueryError::UnknownFieldPath`] if its field path is malformed
     pub(crate) fn filter(self, expr: &str) -> Result<Self, QueryError> {
         let expr = FilterExpr::parse(expr)?;
         let records = self
@@ -329,9 +328,11 @@ impl QueryOutcome {
         Ok(Self::new(records))
     }
 
+    /// Sorts records by the resolved value of `path`.
+    ///
     /// Shared implementation for [`Self::sort`] and [`Self::group_by`]: a
-    /// stable sort by `path`'s resolved value, with [`FieldValue::Null`]
-    /// always last.
+    /// stable sort by `path`'s resolved value, treating [`FieldValue::Null`]
+    /// as the minimum value.
     fn sort_by_field(
         self,
         path: &str,

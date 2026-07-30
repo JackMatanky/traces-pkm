@@ -183,36 +183,42 @@ impl Timestamp {
         Self(Utc::now())
     }
 
-    /// Formats this timestamp as a date and time with a UTC offset (e.g.
-    /// `"2026-07-29T14:30:00+00:00"`, RFC 3339). The offset is always
-    /// `+00:00` — [`Timestamp`] is always UTC — so prefer
-    /// [`Self::to_datetime_string`] unless the offset itself matters.
+    /// Formats this timestamp as an RFC 3339 date and time with a UTC offset.
+    ///
+    /// Produces `"YYYY-MM-DDTHH:MM:SS+00:00"` (e.g.
+    /// `"2026-07-29T14:30:00+00:00"`). The offset is always `+00:00` —
+    /// [`Timestamp`] is always UTC — so prefer [`Self::to_datetime_string`]
+    /// unless the offset itself matters.
     #[inline]
     #[must_use]
     pub(crate) fn to_offset_string(self) -> String {
         self.0.to_rfc3339()
     }
 
-    /// Formats this timestamp's date and time without a UTC offset (e.g.
-    /// `"2026-07-29T14:30:00"`), for Dataview-style `ctime`/`mtime` query
-    /// field values — no offset suffix to break a filter literal's exact
-    /// text match.
+    /// Formats this timestamp as a date and time without a UTC offset.
+    ///
+    /// Produces `"YYYY-MM-DDTHH:MM:SS"` (e.g. `"2026-07-29T14:30:00"`), for
+    /// Dataview-style `ctime`/`mtime` query field values without an offset
+    /// suffix to break filter literal text matching.
     #[inline]
     #[must_use]
     pub(crate) fn to_datetime_string(self) -> String {
         self.0.format("%Y-%m-%dT%H:%M:%S").to_string()
     }
 
-    /// Formats this timestamp's date component (e.g. `"2026-07-29"`), for
-    /// Dataview-style `cdate`/`mdate` query field values.
+    /// Formats this timestamp as a bare date without time or offset.
+    ///
+    /// Produces `"YYYY-MM-DD"` (e.g. `"2026-07-29"`), for Dataview-style
+    /// `cdate`/`mdate` query field values.
     #[inline]
     #[must_use]
     pub(crate) fn to_date_string(self) -> String {
         self.0.format("%Y-%m-%d").to_string()
     }
 
-    /// Formats this timestamp's time-of-day component (e.g.
-    /// `"14:30:00"`), with no date.
+    /// Formats this timestamp as a bare time-of-day component without a date.
+    ///
+    /// Produces `"HH:MM:SS"` (e.g. `"14:30:00"`).
     #[inline]
     #[must_use]
     pub(crate) fn to_time_string(self) -> String {
