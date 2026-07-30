@@ -1,5 +1,7 @@
 //! Filter expression AST, tokenizer, and recursive descent parser.
 
+use std::{iter::Peekable, str::CharIndices};
+
 use super::{
     IndexRecord, QueryError,
     field::FieldPath,
@@ -19,12 +21,8 @@ pub(super) enum FilterExpr {
         op: CompareOp,
         value: FieldValue,
     },
-    /// Function call: `contains(field, target)`.
-    Function {
-        name: String,
-        field: FieldPath,
-        args: Vec<FieldValue>,
-    },
+    /// A recognized function call, e.g. `contains(tags, "#book")`.
+    Function(FilterFunction),
     /// Logical `AND`, `OR`, or `NOT` combination of expressions.
     Logical {
         op: LogicalOp,
@@ -67,20 +65,7 @@ impl FilterExpr {
                 op,
                 value,
             } => op.is_satisfied_by(&record.resolve(field), value),
-            Self::Function {
-                name,
-                field,
-                args,
-            } => {
-                if name.eq_ignore_ascii_case("contains")
-                    && let Some(target) = args.first()
-                {
-                    let field_val = record.resolve(field);
-                    eval_contains(&field_val, target)
-                } else {
-                    false
-                }
-            }
+            Self::Function(function) => function.matches(record),
             Self::Logical {
                 op,
                 exprs,
@@ -89,24 +74,75 @@ impl FilterExpr {
     }
 }
 
+/// A recognized filter function call, e.g. `contains(tags, "#book")`.
+///
+/// Adding a function means adding a variant here, a name check in
+/// [`Self::build`], and matching logic in [`Self::matches`].
+#[derive(Clone, Debug, PartialEq)]
+pub(super) enum FilterFunction {
+    /// `contains(field, target)`: list membership (with tag-prefix
+    /// matching, e.g. `#book` matching `#book/fiction`) or string substring
+    /// containment.
+    Contains {
+        field: FieldPath,
+        target: FieldValue,
+    },
+}
+
+impl FilterFunction {
+    /// Builds the function call named `name`, if `name` names a known
+    /// function.
+    fn build(name: &str, field: FieldPath, target: FieldValue) -> Option<Self> {
+        if name.eq_ignore_ascii_case("contains") {
+            Some(Self::Contains {
+                field,
+                target,
+            })
+        } else {
+            None
+        }
+    }
+
+    /// Whether `record` satisfies this function call.
+    fn matches(&self, record: &IndexRecord) -> bool {
+        match self {
+            Self::Contains {
+                field,
+                target,
+            } => eval_contains(&record.resolve(field), target),
+        }
+    }
+}
+
 /// Evaluates `contains(field_val, target)` logic.
+///
+/// Lists match by equality or tag-prefix (e.g. `#book` matching
+/// `#book/fiction`); everything else falls back to substring containment on
+/// stringified values.
 fn eval_contains(field_val: &FieldValue, target: &FieldValue) -> bool {
     match field_val {
-        FieldValue::List(items) => items.iter().any(|item| {
-            fields_equal(item, target)
-                || matches!(
-                    item.as_str(),
-                    Some(s) if matches!(
-                        target.as_str(),
-                        Some(t) if s.starts_with(t) || s.contains(t)
-                    )
-                )
-        }),
+        FieldValue::List(items) => {
+            items.iter().any(|item| tag_or_value_matches(item, target))
+        }
         _ => match (field_val.as_str(), target.as_str()) {
             (Some(haystack), Some(needle)) => haystack.contains(needle),
             _ => false,
         },
     }
+}
+
+/// Whether list element `item` matches `target`: exact equality, or (for
+/// tag-like strings) `item` equals `target` or nests under it as a sub-tag
+/// (e.g. `#book/fiction` under `#book`).
+fn tag_or_value_matches(item: &FieldValue, target: &FieldValue) -> bool {
+    if fields_equal(item, target) {
+        return true;
+    }
+    let (Some(item_str), Some(target_str)) = (item.as_str(), target.as_str())
+    else {
+        return false;
+    };
+    item_str.starts_with(target_str) || item_str.contains(target_str)
 }
 
 /// Tokens parsed from a filter expression.
@@ -123,15 +159,19 @@ enum FilterToken {
     Ident(String),
 }
 
-/// Tokenizes `expr` into a vector of [`FilterToken`]s.
-#[expect(
-    clippy::too_many_lines,
-    reason = "tokenizer covers all filter token rules in one scanner loop"
-)]
-fn tokenize_filter_expr(expr: &str) -> Result<Vec<FilterToken>, QueryError> {
-    let invalid = || QueryError::UnparsableFilterExpression {
+/// Peekable character stream with byte offsets, threaded through the
+/// tokenizer's per-token-kind scanners.
+type Chars<'a> = Peekable<CharIndices<'a>>;
+
+/// Builds the "unparsable filter expression" error for the full `expr`.
+fn unparsable(expr: &str) -> QueryError {
+    QueryError::UnparsableFilterExpression {
         expr: expr.to_owned(),
-    };
+    }
+}
+
+/// Tokenizes `expr` into a vector of [`FilterToken`]s.
+fn tokenize_filter_expr(expr: &str) -> Result<Vec<FilterToken>, QueryError> {
     let mut tokens = Vec::new();
     let mut chars = expr.char_indices().peekable();
 
@@ -140,112 +180,128 @@ fn tokenize_filter_expr(expr: &str) -> Result<Vec<FilterToken>, QueryError> {
             chars.next();
             continue;
         }
-        match c {
+        let token = match c {
             '(' => {
-                tokens.push(FilterToken::LParen);
                 chars.next();
+                FilterToken::LParen
             }
             ')' => {
-                tokens.push(FilterToken::RParen);
                 chars.next();
+                FilterToken::RParen
             }
             ',' => {
-                tokens.push(FilterToken::Comma);
                 chars.next();
+                FilterToken::Comma
             }
-            '"' => {
-                chars.next();
-                let mut s = String::new();
-                let mut closed = false;
-                while let Some((_, ch)) = chars.next() {
-                    if ch == '\\' {
-                        let escaped = chars
-                            .next()
-                            .map(|(_, esc_char)| esc_char)
-                            .ok_or_else(invalid)?;
-                        s.push(escaped);
-                    } else if ch == '"' {
-                        closed = true;
-                        break;
-                    } else {
-                        s.push(ch);
-                    }
-                }
-                if !closed {
-                    return Err(invalid());
-                }
-                tokens.push(FilterToken::Literal(FieldValue::String(s)));
-            }
+            '"' => scan_string_literal(expr, &mut chars)?,
             '=' | '!' | '>' | '<' | '&' | '|' => {
-                let rest = &expr[i..];
-                if let Some((op, stripped)) = CompareOp::strip_prefix(rest) {
-                    tokens.push(FilterToken::Op(op));
-                    let consumed = rest.len().saturating_sub(stripped.len());
-                    for _ in 0..consumed {
-                        chars.next();
-                    }
-                } else if rest.starts_with("&&") {
-                    tokens.push(FilterToken::And);
-                    chars.next();
-                    chars.next();
-                } else if rest.starts_with("||") {
-                    tokens.push(FilterToken::Or);
-                    chars.next();
-                    chars.next();
-                } else if rest.starts_with('!') {
-                    tokens.push(FilterToken::Not);
-                    chars.next();
-                } else {
-                    return Err(invalid());
-                }
+                scan_operator(expr, i, &mut chars)?
             }
-            _ => {
-                let start = i;
-                while let Some(&(_, ch)) = chars.peek() {
-                    if ch.is_whitespace()
-                        || matches!(
-                            ch,
-                            '(' | ')'
-                                | ','
-                                | '"'
-                                | '='
-                                | '!'
-                                | '>'
-                                | '<'
-                                | '&'
-                                | '|'
-                        )
-                    {
-                        break;
-                    }
-                    chars.next();
-                }
-                let end = chars.peek().map_or(expr.len(), |&(k, _)| k);
-                let word = expr[start..end].trim();
-                if word.is_empty() {
-                    return Err(invalid());
-                }
-                if word.eq_ignore_ascii_case("AND") {
-                    tokens.push(FilterToken::And);
-                } else if word.eq_ignore_ascii_case("OR") {
-                    tokens.push(FilterToken::Or);
-                } else if word.eq_ignore_ascii_case("NOT") {
-                    tokens.push(FilterToken::Not);
-                } else if word == "true" {
-                    tokens.push(FilterToken::Literal(FieldValue::Bool(true)));
-                } else if word == "false" {
-                    tokens.push(FilterToken::Literal(FieldValue::Bool(false)));
-                } else if word == "null" || word == "Null" {
-                    tokens.push(FilterToken::Literal(FieldValue::Null));
-                } else if let Ok(num) = word.parse::<f64>() {
-                    tokens.push(FilterToken::Literal(FieldValue::Number(num)));
-                } else {
-                    tokens.push(FilterToken::Ident(word.to_owned()));
-                }
-            }
-        }
+            _ => scan_word(expr, i, &mut chars)?,
+        };
+        tokens.push(token);
     }
     Ok(tokens)
+}
+
+/// Scans a double-quoted string literal starting at the opening `"`.
+///
+/// Supports `\`-escaped characters; consumes through the closing quote.
+fn scan_string_literal(
+    expr: &str,
+    chars: &mut Chars<'_>,
+) -> Result<FilterToken, QueryError> {
+    chars.next(); // Consume the opening quote.
+    let mut s = String::new();
+    while let Some((_, ch)) = chars.next() {
+        match ch {
+            '\\' => {
+                let escaped = chars
+                    .next()
+                    .map(|(_, esc)| esc)
+                    .ok_or_else(|| unparsable(expr))?;
+                s.push(escaped);
+            }
+            '"' => return Ok(FilterToken::Literal(FieldValue::String(s))),
+            _ => s.push(ch),
+        }
+    }
+    Err(unparsable(expr)) // Unterminated string.
+}
+
+/// Scans an operator or logical symbol (`==`, `!=`, `&&`, `||`, `!`, ...)
+/// starting at byte offset `i`.
+fn scan_operator(
+    expr: &str,
+    i: usize,
+    chars: &mut Chars<'_>,
+) -> Result<FilterToken, QueryError> {
+    let rest = &expr[i..];
+    if let Some((op, stripped)) = CompareOp::strip_prefix(rest) {
+        let consumed = rest.len().saturating_sub(stripped.len());
+        for _ in 0..consumed {
+            chars.next();
+        }
+        return Ok(FilterToken::Op(op));
+    }
+    if rest.starts_with("&&") {
+        chars.next();
+        chars.next();
+        return Ok(FilterToken::And);
+    }
+    if rest.starts_with("||") {
+        chars.next();
+        chars.next();
+        return Ok(FilterToken::Or);
+    }
+    if rest.starts_with('!') {
+        chars.next();
+        return Ok(FilterToken::Not);
+    }
+    Err(unparsable(expr))
+}
+
+/// Scans a bare word starting at byte offset `start`: a boolean-logic
+/// keyword (`AND`/`OR`/`NOT`), a literal (`true`/`false`/`null`/a number),
+/// or a field identifier.
+fn scan_word(
+    expr: &str,
+    start: usize,
+    chars: &mut Chars<'_>,
+) -> Result<FilterToken, QueryError> {
+    while let Some(&(_, ch)) = chars.peek() {
+        if ch.is_whitespace()
+            || matches!(
+                ch,
+                '(' | ')' | ',' | '"' | '=' | '!' | '>' | '<' | '&' | '|'
+            )
+        {
+            break;
+        }
+        chars.next();
+    }
+    let end = chars.peek().map_or(expr.len(), |&(k, _)| k);
+    let word = expr[start..end].trim();
+    if word.is_empty() {
+        return Err(unparsable(expr));
+    }
+    Ok(if word.eq_ignore_ascii_case("AND") {
+        FilterToken::And
+    } else if word.eq_ignore_ascii_case("OR") {
+        FilterToken::Or
+    } else if word.eq_ignore_ascii_case("NOT") {
+        FilterToken::Not
+    } else if word == "true" {
+        FilterToken::Literal(FieldValue::Bool(true))
+    } else if word == "false" {
+        FilterToken::Literal(FieldValue::Bool(false))
+    } else if word == "null" || word == "Null" {
+        FilterToken::Literal(FieldValue::Null)
+    } else if let Ok(num) = word.parse::<f64>() {
+        FilterToken::Literal(FieldValue::Number(num))
+    } else {
+        FilterToken::Ident(word.to_owned())
+    })
 }
 
 /// Recursive descent parser for [`FilterExpr`] ASTs.
@@ -265,9 +321,7 @@ impl<'a> FilterParser<'a> {
     }
 
     fn invalid(&self) -> QueryError {
-        QueryError::UnparsableFilterExpression {
-            expr: self.expr.to_owned(),
-        }
+        unparsable(self.expr)
     }
 
     fn peek(&self) -> Option<&FilterToken> {
@@ -293,32 +347,35 @@ impl<'a> FilterParser<'a> {
     }
 
     fn parse_or(&mut self) -> Result<FilterExpr, QueryError> {
-        let left = self.parse_and()?;
-        let mut arms = Vec::new();
-        while self.peek() == Some(&FilterToken::Or) {
-            self.next();
-            let right = self.parse_and()?;
-            if arms.is_empty() {
-                arms.push(left.clone());
-            }
-            arms.push(right);
-        }
-        if arms.is_empty() {
-            Ok(left)
-        } else {
-            Ok(FilterExpr::Logical {
-                op: LogicalOp::Or,
-                exprs: arms,
-            })
-        }
+        self.parse_logical_chain(
+            &FilterToken::Or,
+            LogicalOp::Or,
+            Self::parse_and,
+        )
     }
 
     fn parse_and(&mut self) -> Result<FilterExpr, QueryError> {
-        let left = self.parse_not()?;
+        self.parse_logical_chain(
+            &FilterToken::And,
+            LogicalOp::And,
+            Self::parse_not,
+        )
+    }
+
+    /// Parses a left-associative chain of `term`s separated by `sep`,
+    /// combining more than one term into a [`FilterExpr::Logical`] under
+    /// `op`. A lone term passes through unwrapped.
+    fn parse_logical_chain(
+        &mut self,
+        sep: &FilterToken,
+        op: LogicalOp,
+        mut term: impl FnMut(&mut Self) -> Result<FilterExpr, QueryError>,
+    ) -> Result<FilterExpr, QueryError> {
+        let left = term(self)?;
         let mut arms = Vec::new();
-        while self.peek() == Some(&FilterToken::And) {
+        while self.peek() == Some(sep) {
             self.next();
-            let right = self.parse_not()?;
+            let right = term(self)?;
             if arms.is_empty() {
                 arms.push(left.clone());
             }
@@ -328,7 +385,7 @@ impl<'a> FilterParser<'a> {
             Ok(left)
         } else {
             Ok(FilterExpr::Logical {
-                op: LogicalOp::And,
+                op,
                 exprs: arms,
             })
         }
@@ -364,40 +421,50 @@ impl<'a> FilterParser<'a> {
                 self.expect(FilterToken::RParen)?;
                 Ok(expr)
             }
-            FilterToken::Ident(name) => {
-                if self.peek() == Some(&FilterToken::LParen) {
-                    self.next();
-                    let Some(FilterToken::Ident(field_ident)) = self.next()
-                    else {
-                        return Err(self.invalid());
-                    };
-                    let field = FieldPath::parse(&field_ident)?;
-                    let mut args = Vec::new();
-                    if self.peek() != Some(&FilterToken::RParen) {
-                        self.expect(FilterToken::Comma)?;
-                        args.push(self.parse_literal_arg()?);
-                    }
-                    self.expect(FilterToken::RParen)?;
-                    Ok(FilterExpr::Function {
-                        name,
-                        field,
-                        args,
-                    })
-                } else if let Some(FilterToken::Op(op)) = self.peek().cloned() {
-                    self.next();
-                    let field = FieldPath::parse(&name)?;
-                    let value = self.parse_literal_arg()?;
-                    Ok(FilterExpr::Binary {
-                        field,
-                        op,
-                        value,
-                    })
-                } else {
-                    Err(self.invalid())
-                }
+            FilterToken::Ident(name)
+                if self.peek() == Some(&FilterToken::LParen) =>
+            {
+                self.parse_function_call(&name).map(FilterExpr::Function)
             }
+            FilterToken::Ident(name) => self.parse_comparison(&name),
             _ => Err(self.invalid()),
         }
+    }
+
+    /// Parses a function call's `(field, target)` argument list starting at
+    /// the opening `(`, dispatching on `name` to build the matching
+    /// [`FilterFunction`].
+    fn parse_function_call(
+        &mut self,
+        name: &str,
+    ) -> Result<FilterFunction, QueryError> {
+        self.expect(FilterToken::LParen)?;
+        let Some(FilterToken::Ident(field_ident)) = self.next() else {
+            return Err(self.invalid());
+        };
+        let field = FieldPath::parse(&field_ident)?;
+        self.expect(FilterToken::Comma)?;
+        let target = self.parse_literal_arg()?;
+        self.expect(FilterToken::RParen)?;
+        FilterFunction::build(name, field, target).ok_or_else(|| self.invalid())
+    }
+
+    /// Parses a `<field> <op> <value>` comparison starting after the
+    /// already-consumed `field_ident` token.
+    fn parse_comparison(
+        &mut self,
+        field_ident: &str,
+    ) -> Result<FilterExpr, QueryError> {
+        let Some(FilterToken::Op(op)) = self.next() else {
+            return Err(self.invalid());
+        };
+        let field = FieldPath::parse(field_ident)?;
+        let value = self.parse_literal_arg()?;
+        Ok(FilterExpr::Binary {
+            field,
+            op,
+            value,
+        })
     }
 }
 #[cfg(test)]
@@ -491,6 +558,8 @@ mod tests {
     #[case::empty_field(" > 5")]
     #[case::empty_value("rating >")]
     #[case::unquoted_string("status == done")]
+    #[case::unknown_function("unknown(tags, \"#book\")")]
+    #[case::function_missing_target("contains(tags)")]
     fn rejects_malformed_expressions(#[case] expr: &str) {
         let temp = tempfile::tempdir().expect("create temp dir");
         let outcome = rated_outcome(temp.path());
