@@ -161,3 +161,11 @@ Expose secondary CLI query commands as top-level commands: `traces list`, `trace
 - Terminal helpers are deliberately convenience features. Complex formatting belongs in Template loops.
 - The term FileIndex replaces NoteIndex everywhere in new design work.
 - ADR 5 is proposed and should be reviewed before acceptance.
+- `Source` (page-level query source selection, #04) intentionally stays at
+  `All` / `Tag` / `Folder` for this spec: each is a single fixed-shape
+  string value with no comparison-operator expression needed. General
+  metadata/frontmatter field filtering (`rating > 7`, etc.) is QueryOutcome's
+  `.where()`/`.filter()` (#05), not a source. A future File Class feature
+  modeled on Obsidian's Metadata Menu plugin is the concrete candidate for
+  extending `Source` further (`Source::FileClass`) — see
+  `issues/12-file-class-query-source-metadata-menu.md`.
