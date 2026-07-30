@@ -1,9 +1,12 @@
 //! Command handler for `traces template` and `traces -i <name>`: renders
 //! templates to disk or stdout.
 
-use std::{path::PathBuf, sync::Arc};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
-use clap::Args;
+use clap::{ArgGroup, Args};
 
 use super::error::CliError;
 use crate::{
@@ -14,21 +17,34 @@ use crate::{
 
 /// Command-line arguments for `traces template`.
 #[derive(Debug, Args)]
+#[command(group(ArgGroup::new("mode").args(["list"]).multiple(false)))]
 pub(super) struct Template {
-    /// Template name or path to instantiate. Omit (or pass `-i` with no value)
-    /// to pick one interactively from every available template.
-    #[arg(short = 'i', long = "input", value_name = "NAME", num_args = 0..=1)]
+    /// Template name or path to instantiate positional argument.
+    #[arg(value_name = "NAME", conflicts_with = "input")]
     pub(super) name: Option<PathBuf>,
+    /// Template name or path to instantiate via `-i`/`--input` flag.
+    #[arg(
+        short = 'i',
+        long = "input",
+        value_name = "NAME",
+        conflicts_with = "name"
+    )]
+    pub(super) input: Option<PathBuf>,
     /// List every available template name, one per line, then exit — for a
     /// quick look without the interactive picker.
-    #[arg(short = 'l', long, conflicts_with = "name")]
+    #[arg(short = 'l', long, conflicts_with_all = ["name", "input"])]
     pub(super) list: bool,
     /// Output path — overrides any `file.write_to()` call inside the template;
     /// falls back to `write_to`, then the config-derived default.
     #[arg(short = 'o', long, value_name = "PATH")]
     pub(super) output: Option<PathBuf>,
-    #[command(flatten)]
-    pub(super) write: WriteFlags,
+    /// Overwrite the output path if it already exists.
+    #[arg(short = 'f', long)]
+    pub(super) force: bool,
+    /// Render to stdout and write nothing to disk. Skips the existence check
+    /// and conflicts with `-o`/`--output`.
+    #[arg(short = 'n', long, conflicts_with = "output")]
+    pub(super) dry_run: bool,
     /// Never prompt — every `ui.*` call returns its default (or an
     /// empty/false/first-item response when it has none), regardless of
     /// whether stdin is a terminal. For scripted or CI use; independent of
@@ -40,36 +56,38 @@ pub(super) struct Template {
 impl Template {
     /// Constructs [`Template`] args for explicit name dispatch (`traces -i
     /// <name>`).
-    #[inline]
-    #[must_use]
     pub(super) fn new(name: PathBuf) -> Self {
         Self {
             name: Some(name),
+            input: None,
             list: false,
             output: None,
-            write: WriteFlags {
-                force: false,
-                dry_run: false,
-            },
+            force: false,
+            dry_run: false,
             no_input: false,
         }
     }
 
     /// Constructs [`Template`] args for interactive fuzzy-picker dispatch
     /// (`traces -i`).
-    #[inline]
-    #[must_use]
     pub(super) fn interactive() -> Self {
         Self {
             name: None,
+            input: None,
             list: false,
             output: None,
-            write: WriteFlags {
-                force: false,
-                dry_run: false,
-            },
+            force: false,
+            dry_run: false,
             no_input: false,
         }
+    }
+
+    /// Returns the specified template name, whether passed positionally or
+    /// via `-i`/`--input`.
+    #[inline]
+    #[must_use]
+    pub(super) fn name(&self) -> Option<&Path> {
+        self.name.as_deref().or(self.input.as_deref())
     }
 
     /// Runs the `template` subcommand.
@@ -85,12 +103,6 @@ impl Template {
     /// - [`CliError::TemplateInstantiate`] if resolving, rendering, or writing
     ///   fails.
     #[inline]
-    #[expect(
-        clippy::print_stdout,
-        reason = "--list and dry-run output are data meant to be piped, not \
-                  diagnostic text — mirrors the trust list/show precedent in \
-                  crate::cli::trust"
-    )]
     pub(super) fn run(
         self,
         service: &ConfigService,
@@ -98,36 +110,72 @@ impl Template {
     ) -> Result<(), CliError> {
         let config = super::load_config(service)?;
         if self.list {
-            for name in TemplateService::list_available(&config) {
-                println!("{name}");
-            }
+            Self::list_templates(&config);
             return Ok(());
         }
-        let mode = WriteMode::from_flags(self.write.dry_run, self.write.force);
-        let effective_provider: Arc<dyn DialogProvider> = if self.no_input {
-            Arc::new(PresetDialogProvider::new())
-        } else {
-            Arc::clone(provider)
-        };
+        let effective_provider = self.resolve_provider(provider);
         let template_service =
             TemplateService::new(&config, Arc::clone(&effective_provider));
-        let name = match self.name {
-            Some(name) => name,
-            None => Self::pick_template(&config, &effective_provider)?,
-        };
+        let name = self.resolve_name(&config, &effective_provider)?;
+        let mode = WriteMode::from_flags(self.dry_run, self.force);
         let outcome = template_service
             .render_to_file(&name, self.output.as_deref(), mode)
             .map_err(|source| CliError::TemplateInstantiate {
                 name,
                 source,
             })?;
+        Self::print_outcome(&outcome);
+        Ok(())
+    }
+
+    /// Lists all available templates to stdout, one per line.
+    #[expect(
+        clippy::print_stdout,
+        reason = "--list output is data meant to be piped, not diagnostic text"
+    )]
+    fn list_templates(config: &Config) {
+        for name in TemplateService::list_available(config) {
+            println!("{name}");
+        }
+    }
+
+    /// Returns the effective dialog provider given command-line flags.
+    fn resolve_provider(
+        &self,
+        provider: &Arc<dyn DialogProvider>,
+    ) -> Arc<dyn DialogProvider> {
+        if self.no_input {
+            Arc::new(PresetDialogProvider::new())
+        } else {
+            Arc::clone(provider)
+        }
+    }
+
+    /// Resolves the template name from arguments or interactive selection.
+    fn resolve_name(
+        &self,
+        config: &Config,
+        provider: &Arc<dyn DialogProvider>,
+    ) -> Result<PathBuf, CliError> {
+        match self.name() {
+            Some(name) => Ok(name.to_path_buf()),
+            None => Self::pick_template(config, provider),
+        }
+    }
+
+    /// Prints the rendered outcome to stdout or diagnostic log to stderr.
+    #[expect(
+        clippy::print_stdout,
+        reason = "dry-run preview content is data meant to be piped, not \
+                  diagnostic text"
+    )]
+    fn print_outcome(outcome: &WriteOutcome) {
         match outcome {
             WriteOutcome::Written(path) => {
                 eprintln!("wrote {}", path.display());
             }
             WriteOutcome::Previewed(content) => print!("{content}"),
         }
-        Ok(())
     }
 
     /// Prompts the user to select a template interactively.
@@ -163,19 +211,6 @@ impl Template {
             })?;
         Ok(PathBuf::from(chosen))
     }
-}
-/// Command-line flags controlling output writing (`--force` and `--dry-run`).
-#[derive(Debug, Args)]
-pub(super) struct WriteFlags {
-    /// Overwrite the output path if it already exists.
-    #[arg(short = 'f', long)]
-    pub(super) force: bool,
-    /// Render to stdout and write nothing to disk. Skips the existence check
-    /// and ignores `-o`/`file.write_to()` entirely. Independent of
-    /// `--no-input`: a template with `ui.*` calls still prompts during a dry
-    /// run (in a real terminal) unless `--no-input` is also passed.
-    #[arg(short = 'n', long)]
-    pub(super) dry_run: bool,
 }
 
 #[cfg(test)]
@@ -323,12 +358,11 @@ mod tests {
 
         Template {
             name: None,
+            input: None,
             list: true,
             output: None,
-            write: WriteFlags {
-                force: false,
-                dry_run: false,
-            },
+            force: false,
+            dry_run: false,
             no_input: false,
         }
         .run(&service, &preset_provider())
@@ -355,12 +389,11 @@ mod tests {
         // just an empty list.
         Template {
             name: None,
+            input: None,
             list: true,
             output: None,
-            write: WriteFlags {
-                force: false,
-                dry_run: false,
-            },
+            force: false,
+            dry_run: false,
             no_input: false,
         }
         .run(&service, &preset_provider())
@@ -383,12 +416,11 @@ mod tests {
 
         Template {
             name: Some(PathBuf::from("daily")),
+            input: None,
             list: false,
             output: Some(PathBuf::from("elsewhere.md")),
-            write: WriteFlags {
-                force: false,
-                dry_run: false,
-            },
+            force: false,
+            dry_run: false,
             no_input: false,
         }
         .run(&service, &preset_provider())
@@ -442,12 +474,11 @@ mod tests {
 
         Template {
             name: Some(PathBuf::from("daily")),
+            input: None,
             list: false,
             output: None,
-            write: WriteFlags {
-                force: true,
-                dry_run: false,
-            },
+            force: true,
+            dry_run: false,
             no_input: false,
         }
         .run(&service, &preset_provider())
@@ -475,12 +506,11 @@ mod tests {
 
         let error = Template {
             name: Some(PathBuf::from("daily")),
+            input: None,
             list: false,
             output: Some(PathBuf::from("../../escape.md")),
-            write: WriteFlags {
-                force: false,
-                dry_run: false,
-            },
+            force: false,
+            dry_run: false,
             no_input: false,
         }
         .run(&service, &preset_provider())
@@ -503,15 +533,13 @@ mod tests {
         let service = service(temp.path());
         trust_config(&service, &config_file);
         let _guard = CwdGuard::enter(&root);
-
         Template {
             name: Some(PathBuf::from("daily")),
+            input: None,
             list: false,
             output: None,
-            write: WriteFlags {
-                force: false,
-                dry_run: true,
-            },
+            force: false,
+            dry_run: true,
             no_input: false,
         }
         .run(&service, &preset_provider())
@@ -522,36 +550,21 @@ mod tests {
             "old"
         );
     }
-
     #[test]
-    fn run_dry_run_ignores_an_output_flag_that_would_escape_the_project_root() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let root = temp.path().join("project");
-        fs::create_dir_all(&root).expect("create project dir");
-        let config_file = create_config(&root, "templates");
-        let templates_dir = root.join("templates");
-        fs::create_dir_all(&templates_dir).expect("create templates dir");
-        fs::write(templates_dir.join("daily.md"), "hello")
-            .expect("write template");
-        let service = service(temp.path());
-        trust_config(&service, &config_file);
-        let _guard = CwdGuard::enter(&root);
+    fn dry_run_and_output_flags_conflict() {
+        use clap::Parser as _;
 
-        Template {
-            name: Some(PathBuf::from("daily")),
-            list: false,
-            output: Some(PathBuf::from("../../escape.md")),
-            write: WriteFlags {
-                force: false,
-                dry_run: true,
-            },
-            no_input: false,
-        }
-        .run(&service, &preset_provider())
-        .expect("dry run never confines an output path, so it never fails");
+        use crate::cli::Cli;
 
-        assert!(!root.join("../escape.md").exists());
-        assert!(!root.join("daily.md").exists());
+        let result = Cli::try_parse_from([
+            "traces",
+            "template",
+            "daily",
+            "--dry-run",
+            "-o",
+            "out.md",
+        ]);
+        assert!(result.is_err());
     }
 
     #[test]
@@ -606,12 +619,11 @@ mod tests {
 
         Template {
             name: Some(PathBuf::from("daily")),
+            input: None,
             list: false,
             output: None,
-            write: WriteFlags {
-                force: false,
-                dry_run: false,
-            },
+            force: false,
+            dry_run: false,
             no_input: true,
         }
         .run(&service, &provider)

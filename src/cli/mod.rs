@@ -240,7 +240,17 @@ mod tests {
 
         assert!(matches!(
             &cli.command,
-            Some(Commands::Template(args)) if args.name.as_deref().and_then(Path::to_str) == Some("daily")
+            Some(Commands::Template(args)) if args.name().and_then(Path::to_str) == Some("daily")
+        ));
+    }
+    #[test]
+    fn template_positional_argv_parses_to_the_template_subcommand() {
+        let cli = Cli::try_parse_from(["traces", "template", "daily"])
+            .expect("parse template positional argv");
+
+        assert!(matches!(
+            &cli.command,
+            Some(Commands::Template(args)) if args.name().and_then(Path::to_str) == Some("daily")
         ));
     }
 
@@ -251,7 +261,7 @@ mod tests {
 
         assert!(matches!(
             &cli.command,
-            Some(Commands::Template(args)) if args.name.as_deref().and_then(Path::to_str) == Some("daily")
+            Some(Commands::Template(args)) if args.name().and_then(Path::to_str) == Some("daily")
         ));
     }
 
