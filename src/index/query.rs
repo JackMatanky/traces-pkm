@@ -541,13 +541,11 @@ enum FilterExpr {
         field: FieldPath,
         args: Vec<FieldValue>,
     },
-    /// Logical `AND` or `OR` combination of expressions.
+    /// Logical `AND`, `OR`, or `NOT` combination of expressions.
     Logical {
         op: LogicalOp,
         exprs: Vec<FilterExpr>,
     },
-    /// Logical `NOT` (`!`) of an expression.
-    Not(Box<FilterExpr>),
 }
 
 impl FilterExpr {
@@ -603,7 +601,6 @@ impl FilterExpr {
                 op,
                 exprs,
             } => op.eval(exprs, record),
-            Self::Not(expr) => !expr.matches(record),
         }
     }
 }
@@ -614,6 +611,8 @@ enum LogicalOp {
     And,
     /// `OR` / `or` / `||`
     Or,
+    /// `NOT` / `not` / `!`
+    Not,
 }
 
 impl LogicalOp {
@@ -622,6 +621,7 @@ impl LogicalOp {
         match self {
             Self::And => exprs.iter().all(|e| e.matches(record)),
             Self::Or => exprs.iter().any(|e| e.matches(record)),
+            Self::Not => !exprs.first().is_some_and(|e| e.matches(record)),
         }
     }
 }
@@ -875,7 +875,10 @@ impl<'a> FilterParser<'a> {
         if self.peek() == Some(&FilterToken::Not) {
             self.next();
             let expr = self.parse_not()?;
-            Ok(FilterExpr::Not(Box::new(expr)))
+            Ok(FilterExpr::Logical {
+                op: LogicalOp::Not,
+                exprs: vec![expr],
+            })
         } else {
             self.parse_primary()
         }
