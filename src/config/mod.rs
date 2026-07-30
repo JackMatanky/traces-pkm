@@ -23,6 +23,8 @@ pub(crate) use discovery::{DiscoveryError, DiscoveryScope, LOCAL_CONFIG_FILE};
 pub(crate) use file::{Discovered, LocalConfigFile};
 pub(crate) use model::Config;
 pub(crate) use raw::{RawConfig, RawTemplateConfig};
+#[cfg(test)]
+pub(crate) use service::{ConfigBuilderError, ConfigBuilderInputError};
 pub(crate) use service::{ConfigLoadError, ConfigService};
 pub(crate) use store::ConfigStateError;
 #[cfg(test)]

@@ -282,6 +282,19 @@ mod tests {
         }
 
         #[test]
+        fn completions_shell_flag_accepts_bash() {
+            let cli = Cli::try_parse_from([
+                "traces",
+                "completions",
+                "--shell",
+                "bash",
+            ])
+            .expect("parse completions --shell bash");
+
+            assert!(matches!(&cli.command, Some(Commands::Completions(_))));
+        }
+
+        #[test]
         fn bare_input_flag_has_no_subcommand() {
             let cli = Cli::try_parse_from(["traces", "-i", "daily"])
                 .expect("parse default -i argv");
@@ -463,6 +476,144 @@ mod tests {
                 .expect_err("no templates to pick from");
 
             assert!(matches!(error, CliError::NoTemplates));
+        }
+    }
+
+    mod run {
+        use std::{fs, sync::Arc};
+
+        use super::*;
+        use crate::{
+            CwdGuard, config::ConfigService, dialog::PresetDialogProvider,
+        };
+
+        #[test]
+        fn no_command_returns_no_command_error() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let service = ConfigService::at(
+                temp.path().join("tracked-store"),
+                temp.path().join("trust-store"),
+            );
+            let provider: Arc<dyn DialogProvider> =
+                Arc::new(PresetDialogProvider::new());
+
+            let error = Cli {
+                command: None,
+                input: None,
+            }
+            .run(&service, provider)
+            .expect_err("no command should fail");
+
+            assert!(matches!(error, CliError::NoCommand));
+        }
+
+        #[test]
+        fn user_cancelled_during_template_picker_returns_aborted() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let root = temp.path().join("project");
+            let config_file = root.join(".traces/config.toml");
+            fs::create_dir_all(config_file.parent().expect("config parent"))
+                .expect("create config parent");
+            fs::write(&config_file, "[templates]\ndirectory = \"templates\"\n")
+                .expect("write config file");
+            fs::create_dir_all(root.join("templates"))
+                .expect("create templates dir");
+            fs::write(root.join("templates/daily.md"), "content")
+                .expect("write template");
+            let service = ConfigService::at(
+                temp.path().join("tracked-store"),
+                temp.path().join("trust-store"),
+            );
+            let config = crate::config::LocalConfigFile::<
+                crate::config::Discovered,
+            >::try_new(config_file)
+            .expect("valid local config");
+            service
+                .trust(&crate::config::TrustRequest::from(&config))
+                .expect("trust project root");
+            let _guard = CwdGuard::enter(&root);
+
+            struct CancellingSelect;
+            impl DialogProvider for CancellingSelect {
+                fn is_interactive(&self) -> bool {
+                    true
+                }
+
+                fn text(
+                    &self,
+                    _: &str,
+                    _: Option<&str>,
+                ) -> Result<String, crate::DialogError> {
+                    Ok(String::new())
+                }
+
+                fn confirm(
+                    &self,
+                    _: &str,
+                    _: Option<bool>,
+                ) -> Result<bool, crate::DialogError> {
+                    Ok(true)
+                }
+
+                fn select(
+                    &self,
+                    _: &str,
+                    _: &[String],
+                ) -> Result<usize, crate::DialogError> {
+                    Err(crate::DialogError::UserCancelled)
+                }
+
+                fn multi_select(
+                    &self,
+                    _: &str,
+                    _: &[String],
+                ) -> Result<Vec<usize>, crate::DialogError> {
+                    Err(crate::DialogError::UserCancelled)
+                }
+            }
+
+            let outcome = Cli {
+                command: None,
+                input: Some(None),
+            }
+            .run(&service, Arc::new(CancellingSelect))
+            .expect("user abort is not an error");
+
+            assert_eq!(outcome, CommandOutcome::Aborted(UserAbort::Cancelled));
+        }
+    }
+
+    mod helpers {
+        use super::*;
+        use crate::{CwdGuard, config::ConfigLoadError};
+
+        #[test]
+        fn current_dir_reads_process_cwd() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let cwd = temp.path().canonicalize().expect("canonicalize");
+            let guard = CwdGuard::enter(&cwd);
+            let dir = current_dir().expect("current_dir succeeds");
+
+            assert_eq!(dir.as_ref(), cwd);
+            drop(guard);
+        }
+
+        #[test]
+        fn load_config_fails_without_a_config_file() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let service = ConfigService::at(
+                temp.path().join("tracked-store"),
+                temp.path().join("trust-store"),
+            );
+            let _guard = CwdGuard::enter(temp.path());
+
+            let error =
+                load_config(&service).expect_err("no config should fail");
+
+            assert!(matches!(error, CliError::ConfigLoad {
+                source: ConfigLoadError::Discovery(_),
+                ..
+            }));
         }
     }
 }

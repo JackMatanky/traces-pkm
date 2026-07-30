@@ -144,7 +144,24 @@ mod tests {
         }
     }
 
-    mod list_templates {
+    mod dispatch {
+        use super::*;
+
+        #[test]
+        fn generates_shell_script_and_returns_ok() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let service = service(temp.path());
+
+            Completions {
+                shell: Some(Shell::Bash),
+                list_templates: false,
+            }
+            .run(&service)
+            .expect("shell completion should succeed without config");
+        }
+    }
+
+    mod template_listing {
         use std::fs;
 
         use super::*;

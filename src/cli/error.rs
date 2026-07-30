@@ -551,6 +551,7 @@ mod tests {
         use std::{io, path::PathBuf};
 
         use pretty_assertions::assert_eq;
+        use serde::ser::Error as SerdeError;
 
         use super::{super::*, state_source};
 
@@ -567,6 +568,70 @@ mod tests {
             assert_eq!(
                 error.code().map(|code| code.to_string()),
                 Some("traces::cli::current_directory_failed".to_owned())
+            );
+            assert!(error.source().is_some());
+        }
+
+        #[test]
+        fn config_load_discovery() {
+            let cwd = PathBuf::from("/some/project");
+            let error = CliError::ConfigLoad {
+                cwd: cwd.clone(),
+                source: ConfigLoadError::Discovery(
+                    DiscoveryError::LocalConfigAbsent {
+                        cwd,
+                    },
+                ),
+            };
+
+            assert_eq!(
+                error.to_string(),
+                "failed to load configuration from /some/project"
+            );
+            assert_eq!(
+                error.code().map(|code| code.to_string()),
+                Some("traces::cli::config_discovery_failed".to_owned())
+            );
+            assert_eq!(
+                error.help().map(|help| help.to_string()),
+                Some(
+                    "run `traces init` to scaffold local configuration, or \
+                     check that /some/project is readable"
+                        .to_owned()
+                )
+            );
+            assert!(error.source().is_some());
+        }
+
+        #[test]
+        fn config_load_build() {
+            let cwd = PathBuf::from("/some/project");
+            let error = CliError::ConfigLoad {
+                cwd: cwd.clone(),
+                source: ConfigLoadError::Build(
+                    crate::config::ConfigBuilderError::Input(
+                        crate::config::ConfigBuilderInputError::WrongDiscoveryKindForBuild {
+                            actual: crate::config::DiscoveryScope::NearestLocal,
+                        },
+                    ),
+                ),
+            };
+
+            assert_eq!(
+                error.to_string(),
+                "failed to load configuration from /some/project"
+            );
+            assert_eq!(
+                error.code().map(|code| code.to_string()),
+                Some("traces::cli::config_build_failed".to_owned())
+            );
+            assert_eq!(
+                error.help().map(|help| help.to_string()),
+                Some(
+                    "run `traces trust` to trust this project root, then try \
+                     again"
+                        .to_owned()
+                )
             );
             assert!(error.source().is_some());
         }
@@ -683,11 +748,19 @@ mod tests {
                 source: DialogError::UserCancelled,
             };
 
+            assert_eq!(error.to_string(), "failed to collect init input");
             assert_eq!(
                 error.code().map(|code| code.to_string()),
                 Some("traces::cli::init::prompt_failed".to_owned())
             );
-            assert_eq!(error.user_abort(), Some(UserAbort::Cancelled));
+            assert_eq!(
+                error.help().map(|help| help.to_string()),
+                Some(
+                    "the init prompt was cancelled or failed; try again"
+                        .to_owned()
+                )
+            );
+            assert!(error.source().is_some());
         }
 
         #[test]
@@ -953,6 +1026,33 @@ mod tests {
         }
 
         #[test]
+        fn init_serialize() {
+            let root = PathBuf::from("/some/project");
+            let error = CliError::InitSerialize {
+                root: root.clone(),
+                source: toml::ser::Error::custom("serialization failure"),
+            };
+
+            assert_eq!(
+                error.to_string(),
+                "failed to serialise config for /some/project"
+            );
+            assert_eq!(
+                error.code().map(|code| code.to_string()),
+                Some("traces::cli::init::serialize_failed".to_owned())
+            );
+            assert_eq!(
+                error.help().map(|help| help.to_string()),
+                Some(
+                    "this is an internal error — the collected template and \
+                     output directories could not be serialised to TOML"
+                        .to_owned()
+                )
+            );
+            assert!(error.source().is_some());
+        }
+
+        #[test]
         fn output_path_unverifiable() {
             let name = PathBuf::from("daily");
             let path = PathBuf::from("/project/daily.md");
@@ -1082,6 +1182,29 @@ mod tests {
                 Some(
                     "check that the output path and its parent directory are \
                      writable"
+                        .to_owned()
+                )
+            );
+        }
+
+        #[test]
+        fn output_confirm_failed() {
+            let name = PathBuf::from("daily");
+            let error = CliError::TemplateInstantiate {
+                name,
+                source: TemplateError::Prompt(DialogError::UserCancelled),
+            };
+
+            assert_eq!(
+                error.code().map(|code| code.to_string()),
+                Some("traces::cli::template::output_confirm_failed".to_owned())
+            );
+            assert_eq!(
+                error.help().map(|help| help.to_string()),
+                Some(
+                    "the output confirmation prompt was cancelled or failed; \
+                     try again, pass --force to overwrite, or pass -o for a \
+                     different path"
                         .to_owned()
                 )
             );
@@ -1221,6 +1344,15 @@ mod tests {
 
             assert_eq!(cancelled.user_abort(), Some(UserAbort::Cancelled));
             assert_eq!(interrupted.user_abort(), Some(UserAbort::Interrupted));
+        }
+
+        #[test]
+        fn recovered_from_init_prompt() {
+            let error = CliError::InitPrompt {
+                source: DialogError::UserCancelled,
+            };
+
+            assert_eq!(error.user_abort(), Some(UserAbort::Cancelled));
         }
     }
 }

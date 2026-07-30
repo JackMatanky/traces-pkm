@@ -266,56 +266,53 @@ mod tests {
         }
     }
 
-    mod handlers {
+    fn service(temp: &Path) -> ConfigService {
+        ConfigService::at(temp.join("tracked-store"), temp.join("trust-store"))
+    }
+
+    fn trust_args(path: Option<PathBuf>) -> Trust {
+        Trust {
+            action: None,
+            show: false,
+            all: false,
+            path,
+        }
+    }
+
+    fn action_args(action: TrustAction) -> Trust {
+        Trust {
+            action: Some(action),
+            show: false,
+            all: false,
+            path: None,
+        }
+    }
+
+    fn create_config(root: &Path) -> PathBuf {
+        let config_file = root.join(".traces/config.toml");
+        fs::create_dir_all(config_file.parent().expect("config parent"))
+            .expect("create config parent");
+        fs::write(&config_file, "").expect("write config file");
+        config_file
+    }
+
+    mod trust {
         use pretty_assertions::assert_eq;
 
         use super::*;
         use crate::CwdGuard;
 
-        fn service(temp: &Path) -> ConfigService {
-            ConfigService::at(
-                temp.join("tracked-store"),
-                temp.join("trust-store"),
-            )
-        }
-
-        fn trust_args(path: Option<PathBuf>) -> Trust {
-            Trust {
-                action: None,
-                show: false,
-                all: false,
-                path,
-            }
-        }
-
-        fn action_args(action: TrustAction) -> Trust {
-            Trust {
-                action: Some(action),
-                show: false,
-                all: false,
-                path: None,
-            }
-        }
-
-        fn create_config(root: &Path) -> PathBuf {
-            let config_file = root.join(".traces/config.toml");
-            fs::create_dir_all(config_file.parent().expect("config parent"))
-                .expect("create config parent");
-            fs::write(&config_file, "").expect("write config file");
-            config_file
-        }
-
         #[test]
-        fn trust_with_no_path_trusts_the_discovered_project_root() {
+        fn with_no_path_trusts_the_discovered_project_root() {
             let temp = tempfile::tempdir().expect("create temp dir");
             let root = temp.path().join("project");
             let cwd = root.join("notes/daily");
             fs::create_dir_all(&cwd).expect("create nested cwd");
-            create_config(&root);
-            let service = service(temp.path());
+            super::create_config(&root);
+            let service = super::service(temp.path());
             let _guard = CwdGuard::enter(&cwd);
 
-            trust_args(None).run(&service).expect("trust cwd");
+            super::trust_args(None).run(&service).expect("trust cwd");
 
             assert_eq!(service.list_trusted().expect("list trusted"), vec![
                 root.canonicalize().expect("canonicalize root")
@@ -329,14 +326,14 @@ mod tests {
         }
 
         #[test]
-        fn trust_accepts_a_config_file_path() {
+        fn accepts_a_config_file_path() {
             let temp = tempfile::tempdir().expect("create temp dir");
             let root = temp.path().join("project");
             fs::create_dir_all(&root).expect("create project dir");
-            let config_file = create_config(&root);
-            let service = service(temp.path());
+            let config_file = super::create_config(&root);
+            let service = super::service(temp.path());
 
-            trust_args(Some(config_file.clone()))
+            super::trust_args(Some(config_file.clone()))
                 .run(&service)
                 .expect("trust config file");
 
@@ -346,13 +343,13 @@ mod tests {
         }
 
         #[test]
-        fn trust_missing_config_trusts_the_directory_target() {
+        fn missing_config_trusts_the_directory_target() {
             let temp = tempfile::tempdir().expect("create temp dir");
             let root = temp.path().join("project");
             fs::create_dir_all(&root).expect("create project dir");
-            let service = service(temp.path());
+            let service = super::service(temp.path());
 
-            trust_args(Some(root.clone()))
+            super::trust_args(Some(root.clone()))
                 .run(&service)
                 .expect("trust directory");
 
@@ -368,58 +365,72 @@ mod tests {
         }
 
         #[test]
-        fn show_checks_status_without_changing_trust_store() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            let root = temp.path().join("project");
-            fs::create_dir_all(&root).expect("create project dir");
-            create_config(&root);
-            let service = service(temp.path());
-            let mut args = trust_args(Some(root));
-            args.show = true;
-
-            args.run(&service).expect("show trust status");
-
-            assert!(service.list_trusted().expect("list trusted").is_empty());
-        }
-
-        #[test]
         fn all_mode_trusts_descendant_configs() {
             let temp = tempfile::tempdir().expect("create temp dir");
             let parent = temp.path().join("parent");
             let child = parent.join("child");
             fs::create_dir_all(&child).expect("create child dir");
-            create_config(&parent);
-            create_config(&child);
-            let service = service(temp.path());
-            let mut args = trust_args(Some(parent));
+            super::create_config(&parent);
+            super::create_config(&child);
+            let service = super::service(temp.path());
+            let mut args = super::trust_args(Some(parent));
             args.all = true;
 
             args.run(&service).expect("trust all configs");
 
             assert_eq!(service.list_trusted().expect("list trusted").len(), 2);
         }
+    }
+
+    mod show {
+        use super::*;
 
         #[test]
-        fn list_succeeds_against_an_empty_trust_store() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            let service = service(temp.path());
-
-            action_args(TrustAction::List)
-                .run(&service)
-                .expect("list empty trust store");
-        }
-
-        #[test]
-        fn clean_removes_a_stale_root_and_its_companion() {
+        fn checks_status_without_changing_trust_store() {
             let temp = tempfile::tempdir().expect("create temp dir");
             let root = temp.path().join("project");
             fs::create_dir_all(&root).expect("create project dir");
-            create_config(&root);
-            let service = service(temp.path());
-            trust_args(Some(root.clone())).run(&service).expect("trust root");
+            super::create_config(&root);
+            let service = super::service(temp.path());
+            let mut args = super::trust_args(Some(root));
+            args.show = true;
+
+            args.run(&service).expect("show trust status");
+
+            assert!(service.list_trusted().expect("list trusted").is_empty());
+        }
+    }
+
+    mod list {
+        use super::*;
+
+        #[test]
+        fn succeeds_against_an_empty_trust_store() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let service = super::service(temp.path());
+
+            super::action_args(TrustAction::List)
+                .run(&service)
+                .expect("list empty trust store");
+        }
+    }
+
+    mod clean {
+        use super::*;
+
+        #[test]
+        fn removes_a_stale_root() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let root = temp.path().join("project");
+            fs::create_dir_all(&root).expect("create project dir");
+            super::create_config(&root);
+            let service = super::service(temp.path());
+            super::trust_args(Some(root.clone()))
+                .run(&service)
+                .expect("trust root");
             fs::remove_dir_all(&root).expect("delete project dir");
 
-            action_args(TrustAction::Clean)
+            super::action_args(TrustAction::Clean)
                 .run(&service)
                 .expect("clean trust store");
 
@@ -427,11 +438,11 @@ mod tests {
         }
 
         #[test]
-        fn clean_on_an_empty_trust_store_does_not_error() {
+        fn on_an_empty_trust_store_does_not_error() {
             let temp = tempfile::tempdir().expect("create temp dir");
-            let service = service(temp.path());
+            let service = super::service(temp.path());
 
-            action_args(TrustAction::Clean)
+            super::action_args(TrustAction::Clean)
                 .run(&service)
                 .expect("clean empty trust store");
         }

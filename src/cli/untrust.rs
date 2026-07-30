@@ -116,49 +116,46 @@ mod tests {
         }
     }
 
-    mod handlers {
+    fn service(temp: &Path) -> ConfigService {
+        ConfigService::at(temp.join("tracked-store"), temp.join("trust-store"))
+    }
+
+    fn untrust_args(path: Option<PathBuf>, all: bool) -> Untrust {
+        Untrust {
+            all,
+            path,
+        }
+    }
+
+    fn create_config(root: &Path) -> PathBuf {
+        let config_file = root.join(".traces/config.toml");
+        fs::create_dir_all(config_file.parent().expect("config parent"))
+            .expect("create config parent");
+        fs::write(&config_file, "").expect("write config file");
+        config_file
+    }
+
+    fn trust_root(service: &ConfigService, root: &Path) {
+        let request = TrustRequest::from(root);
+        service.trust(&request).expect("trust root");
+    }
+
+    mod untrust {
         use pretty_assertions::assert_eq;
 
         use super::*;
         use crate::CwdGuard;
 
-        fn service(temp: &Path) -> ConfigService {
-            ConfigService::at(
-                temp.join("tracked-store"),
-                temp.join("trust-store"),
-            )
-        }
-
-        fn untrust_args(path: Option<PathBuf>, all: bool) -> Untrust {
-            Untrust {
-                all,
-                path,
-            }
-        }
-
-        fn create_config(root: &Path) -> PathBuf {
-            let config_file = root.join(".traces/config.toml");
-            fs::create_dir_all(config_file.parent().expect("config parent"))
-                .expect("create config parent");
-            fs::write(&config_file, "").expect("write config file");
-            config_file
-        }
-
-        fn trust_root(service: &ConfigService, root: &Path) {
-            let request = TrustRequest::from(root);
-            service.trust(&request).expect("trust root");
-        }
-
         #[test]
-        fn untrust_removes_the_resolved_root() {
+        fn removes_the_resolved_root() {
             let temp = tempfile::tempdir().expect("create temp dir");
             let root = temp.path().join("project");
             fs::create_dir_all(&root).expect("create project dir");
-            create_config(&root);
-            let service = service(temp.path());
-            trust_root(&service, &root);
+            super::create_config(&root);
+            let service = super::service(temp.path());
+            super::trust_root(&service, &root);
 
-            untrust_args(Some(root.clone()), false)
+            super::untrust_args(Some(root.clone()), false)
                 .run(&service)
                 .expect("untrust root");
 
@@ -171,17 +168,19 @@ mod tests {
         }
 
         #[test]
-        fn untrust_with_no_path_untrusts_cwd_project_root() {
+        fn with_no_path_untrusts_cwd_project_root() {
             let temp = tempfile::tempdir().expect("create temp dir");
             let root = temp.path().join("project");
             let cwd = root.join("notes/daily");
             fs::create_dir_all(&cwd).expect("create nested cwd");
-            create_config(&root);
-            let service = service(temp.path());
-            trust_root(&service, &root);
+            super::create_config(&root);
+            let service = super::service(temp.path());
+            super::trust_root(&service, &root);
             let _guard = CwdGuard::enter(&cwd);
 
-            untrust_args(None, false).run(&service).expect("untrust cwd");
+            super::untrust_args(None, false)
+                .run(&service)
+                .expect("untrust cwd");
 
             assert_eq!(
                 service
@@ -197,13 +196,13 @@ mod tests {
             let parent = temp.path().join("parent");
             let child = parent.join("child");
             fs::create_dir_all(&child).expect("create child dir");
-            create_config(&parent);
-            create_config(&child);
-            let service = service(temp.path());
-            trust_root(&service, &parent);
-            trust_root(&service, &child);
+            super::create_config(&parent);
+            super::create_config(&child);
+            let service = super::service(temp.path());
+            super::trust_root(&service, &parent);
+            super::trust_root(&service, &child);
 
-            untrust_args(Some(parent.clone()), true)
+            super::untrust_args(Some(parent.clone()), true)
                 .run(&service)
                 .expect("untrust all configs");
 

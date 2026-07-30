@@ -301,7 +301,7 @@ mod tests {
     }
 
     mod run {
-        use super::{super::*, CancellingDialogProvider};
+        use super::*;
         use crate::{CwdGuard, cli::UserAbort};
 
         #[test]
