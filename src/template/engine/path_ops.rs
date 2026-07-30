@@ -18,13 +18,16 @@
 use std::{
     ffi::OsStr,
     io,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     sync::Arc,
 };
 
 use minijinja::{Environment, Error, ErrorKind};
 
-use crate::file_name::{BaseName, FileName};
+use crate::{
+    file_name::{BaseName, FileName},
+    path::{PathError, RootConfinedPath},
+};
 
 /// Which fact an I/O test is asking [`inspect`] to answer.
 #[derive(Clone, Copy)]
@@ -93,12 +96,14 @@ impl PathOps {
 ///
 /// # Errors
 ///
-/// Returns an [`ErrorKind::InvalidOperation`] error (built by
-/// [`inspect_error`]) if reading the target's metadata fails for any
-/// reason other than "not found" — permission denied, a broken symlink
-/// loop, etc. — since the test genuinely couldn't determine the answer.
+/// - [`ErrorKind::InvalidOperation`] (via [`confine_error`]) if a relative
+///   `path` traverses outside `root` — `..` or a symlink escape.
+/// - [`ErrorKind::InvalidOperation`] (via [`inspect_error`]) if reading the
+///   resolved target's metadata fails for any reason other than "not found" —
+///   permission denied, a broken symlink loop, etc.
 fn inspect(root: &Path, path: &str, query: PathQuery) -> Result<bool, Error> {
-    let resolved = resolve_against_root(root, path);
+    let resolved = resolve_against_root(root, path)
+        .map_err(|source| confine_error(path, source))?;
     match std::fs::metadata(&resolved) {
         Ok(metadata) => Ok(match query {
             PathQuery::Exists => true,
@@ -110,14 +115,60 @@ fn inspect(root: &Path, path: &str, query: PathQuery) -> Result<bool, Error> {
     }
 }
 
-/// Joins a relative `path` onto `root`; an absolute `path` is returned
-/// unchanged.
-fn resolve_against_root(root: &Path, path: &str) -> PathBuf {
+/// Resolves `path` against `root`: an absolute `path` is used as-is; a
+/// `path` naming `root` itself ([`is_root_reference`]) resolves directly to
+/// it; any other relative `path` is confined via
+/// [`RootConfinedPath::parse`] — the same seam [`super::file_ops`]'s
+/// `file.include()`/`file.write_to()` use, so a `..`/symlink escape is
+/// rejected identically across every path-taking template primitive.
+///
+/// # Errors
+///
+/// [`PathError::NotRelative`]/[`PathError::EscapesRoot`] if a relative
+/// `path` resolves outside `root`; [`PathError::Verify`] if confirming
+/// containment fails for another reason.
+fn resolve_against_root(root: &Path, path: &str) -> Result<PathBuf, PathError> {
     let candidate = Path::new(path);
     if candidate.is_absolute() {
-        candidate.to_owned()
+        Ok(candidate.to_owned())
+    } else if is_root_reference(candidate) {
+        Ok(root.to_owned())
     } else {
-        root.join(candidate)
+        RootConfinedPath::parse(root, candidate)
+            .map(RootConfinedPath::into_path_buf)
+    }
+}
+
+/// True when `candidate`'s components are all [`Component::CurDir`] (or it
+/// has none at all, e.g. an empty path) — i.e. it names `root` itself and
+/// can't possibly escape it no matter how it's joined.
+/// [`SafeRelativePath::parse`](crate::path::SafeRelativePath::parse)
+/// rejects exactly this shape (no [`Component::Normal`] component) since
+/// it's meaningless as a *file* to write or include; here it's the
+/// legitimate "ask about root" case `is_dir_path('.')`/`path_exists('')`
+/// rely on.
+fn is_root_reference(candidate: &Path) -> bool {
+    candidate.components().all(|component| component == Component::CurDir)
+}
+
+/// Builds the error for a `path` argument that fails root confinement:
+/// unsafe lexically, or escaping `root` once symlinks resolve
+/// ([`PathError::NotRelative`]/[`PathError::EscapesRoot`]) get the same
+/// "escapes the project root" message — from the template author's
+/// perspective both are just that. [`PathError::Verify`] gets its own
+/// message, since that case isn't known to escape, only unconfirmed (root
+/// or an ancestor couldn't be canonicalized).
+fn confine_error(path: &str, source: PathError) -> Error {
+    match source {
+        PathError::NotRelative | PathError::EscapesRoot => Error::new(
+            ErrorKind::InvalidOperation,
+            format!("path {path} escapes the project root"),
+        ),
+        PathError::Verify(inner) => Error::new(
+            ErrorKind::InvalidOperation,
+            format!("failed to verify path {path} is inside the project root"),
+        )
+        .with_source(inner),
     }
 }
 
@@ -356,6 +407,50 @@ mod tests {
             // Restore permissions so the tempdir can be cleaned up.
             fs::set_permissions(&locked_dir, fs::Permissions::from_mode(0o755))
                 .expect("restore permissions");
+
+            assert_eq!(error.kind(), ErrorKind::InvalidOperation);
+        }
+
+        #[test]
+        fn rejects_a_relative_candidate_that_traverses_outside_root() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let root = temp.path().join("root");
+            let outside = temp.path().join("outside");
+            fs::create_dir_all(&root).expect("create root");
+            fs::create_dir_all(&outside).expect("create outside dir");
+            fs::write(outside.join("secret.md"), "content")
+                .expect("write fixture outside root");
+
+            let error = env(&root)
+                .render_str(
+                    "{{ value is path_exists }}",
+                    minijinja::context! { value => "../outside/secret.md" },
+                )
+                .expect_err(
+                    "`..` traversal outside root is not silently answered",
+                );
+
+            assert_eq!(error.kind(), ErrorKind::InvalidOperation);
+        }
+
+        #[cfg(unix)]
+        #[test]
+        fn rejects_a_candidate_escaping_through_an_existing_symlink() {
+            use std::os::unix::fs::symlink;
+
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let root = temp.path().join("root");
+            let outside = temp.path().join("outside");
+            fs::create_dir_all(&root).expect("create root");
+            fs::create_dir_all(&outside).expect("create outside dir");
+            symlink(&outside, root.join("link")).expect("create symlink");
+
+            let error = env(&root)
+                .render_str(
+                    "{{ value is path_exists }}",
+                    minijinja::context! { value => "link/secret.md" },
+                )
+                .expect_err("symlink escaping root is not silently answered");
 
             assert_eq!(error.kind(), ErrorKind::InvalidOperation);
         }
