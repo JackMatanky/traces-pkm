@@ -24,6 +24,14 @@ use std::{
 
 use minijinja::{Environment, Error, ErrorKind};
 
+/// Which fact an I/O test is asking [`inspect`] to answer.
+#[derive(Clone, Copy)]
+enum PathQuery {
+    Exists,
+    IsFile,
+    IsDir,
+}
+
 /// Backs the path-inspection test/filter group. Holds the project root
 /// the three I/O tests resolve a relative `path` argument against — the
 /// four pure string filters carry no state and are registered as plain
@@ -75,14 +83,6 @@ impl PathOps {
             inspect(&root, path, query)
         });
     }
-}
-
-/// Which fact an I/O test is asking [`inspect`] to answer.
-#[derive(Clone, Copy)]
-enum PathQuery {
-    Exists,
-    IsFile,
-    IsDir,
 }
 
 /// Resolves `path` against `root` via [`resolve_against_root`], then

@@ -29,14 +29,6 @@ const METHODS: &[&str] = &["text_input", "select", "confirm", "multi_select"];
 /// `multi_select` get no `attribute=` kwarg — see [`SelectOptions::extract`].
 const DEFAULT_ATTRIBUTE: &str = "label";
 
-/// Display labels paired with the original [`Value`]s they were derived
-/// from, indexed identically — see [`SelectOptions::extract`].
-#[derive(Debug)]
-struct SelectOptions {
-    labels: Vec<String>,
-    values: Vec<Value>,
-}
-
 /// Backs the `ui` namespace object. Holds the interactive provider every
 /// method delegates to; [`super::super::service::TemplateService`] decides
 /// which concrete provider that is.
@@ -137,17 +129,12 @@ impl Object for UiOps {
     }
 }
 
-/// Maps a [`DialogError`] into a [`minijinja::Error`], keeping the dialog
-/// error as the [`source`](std::error::Error::source) so the chain can
-/// still be walked. The detail is a stable, generic message rather than
-/// `source.to_string()`: minijinja's `Display` for `Error` already renders
-/// `"{kind}: {detail}"`, and the crate's own recommended way to show a full
-/// error chain walks `.source()` and prints each level in turn — reusing
-/// the dialog error's message as this error's detail too would print that
-/// same message twice in such a chain.
-fn dialog_error(source: DialogError) -> Error {
-    Error::new(ErrorKind::InvalidOperation, "dialog provider failed")
-        .with_source(source)
+/// Display labels paired with the original [`Value`]s they were derived
+/// from, indexed identically — see [`SelectOptions::extract`].
+#[derive(Debug)]
+struct SelectOptions {
+    labels: Vec<String>,
+    values: Vec<Value>,
 }
 
 impl SelectOptions {
@@ -201,6 +188,19 @@ impl SelectOptions {
             values,
         })
     }
+}
+
+/// Maps a [`DialogError`] into a [`minijinja::Error`], keeping the dialog
+/// error as the [`source`](std::error::Error::source) so the chain can
+/// still be walked. The detail is a stable, generic message rather than
+/// `source.to_string()`: minijinja's `Display` for `Error` already renders
+/// `"{kind}: {detail}"`, and the crate's own recommended way to show a full
+/// error chain walks `.source()` and prints each level in turn — reusing
+/// the dialog error's message as this error's detail too would print that
+/// same message twice in such a chain.
+fn dialog_error(source: DialogError) -> Error {
+    Error::new(ErrorKind::InvalidOperation, "dialog provider failed")
+        .with_source(source)
 }
 
 /// Walks a dot-separated attribute path on `item` — numeric segments

@@ -56,43 +56,6 @@ const DATETIME_FORMATS: &[&str] = &[
 const METHODS: &[&str] =
     &["now", "today", "tomorrow", "yesterday", "from_timestamp"];
 
-/// A successfully parsed date/time string — the [`NaiveDateTime`] itself plus a
-/// flag indicating whether the original input carried a time component (as
-/// opposed to a bare `YYYY-MM-DD` date). Every arithmetic filter re-serializes
-/// at the same precision the input had via [`format_precise`], so piping a
-/// date-only string through a chain of filters never grows a fabricated
-/// `00:00:00`, and a datetime string never silently loses its time-of-day.
-struct ParsedDate {
-    datetime: NaiveDateTime,
-    has_time: bool,
-}
-
-impl ParsedDate {
-    /// Parses `s` as a date/time string. Tries each of [`DATETIME_FORMATS`] in
-    /// turn; on no match, falls back to a bare `%Y-%m-%d` date at midnight.
-    ///
-    /// # Errors
-    ///
-    /// [`ErrorKind::InvalidOperation`] if `s` matches neither a
-    /// [`DATETIME_FORMATS`] entry nor the bare `%Y-%m-%d` fallback.
-    fn parse(s: &str) -> Result<Self, Error> {
-        if let Some(datetime) = try_parse_datetime(s) {
-            return Ok(Self {
-                datetime,
-                has_time: true,
-            });
-        }
-        NaiveDate::parse_from_str(s, DEFAULT_FORMAT)
-            .ok()
-            .and_then(|date| date.and_hms_opt(0, 0, 0))
-            .map(|datetime| Self {
-                datetime,
-                has_time: false,
-            })
-            .ok_or_else(|| invalid_date_error(s))
-    }
-}
-
 /// Backs the `date` namespace object. Stateless — see the module docs.
 #[derive(Debug)]
 pub(super) struct DateOps;
@@ -188,6 +151,76 @@ impl Object for DateOps {
     }
 }
 
+/// A successfully parsed date/time string — the [`NaiveDateTime`] itself plus a
+/// flag indicating whether the original input carried a time component (as
+/// opposed to a bare `YYYY-MM-DD` date). Every arithmetic filter re-serializes
+/// at the same precision the input had via [`format_precise`], so piping a
+/// date-only string through a chain of filters never grows a fabricated
+/// `00:00:00`, and a datetime string never silently loses its time-of-day.
+struct ParsedDate {
+    datetime: NaiveDateTime,
+    has_time: bool,
+}
+
+impl ParsedDate {
+    /// Parses `s` as a date/time string. Tries each of [`DATETIME_FORMATS`] in
+    /// turn; on no match, falls back to a bare `%Y-%m-%d` date at midnight.
+    ///
+    /// # Errors
+    ///
+    /// [`ErrorKind::InvalidOperation`] if `s` matches neither a
+    /// [`DATETIME_FORMATS`] entry nor the bare `%Y-%m-%d` fallback.
+    fn parse(s: &str) -> Result<Self, Error> {
+        if let Some(datetime) = try_parse_datetime(s) {
+            return Ok(Self {
+                datetime,
+                has_time: true,
+            });
+        }
+        NaiveDate::parse_from_str(s, DEFAULT_FORMAT)
+            .ok()
+            .and_then(|date| date.and_hms_opt(0, 0, 0))
+            .map(|datetime| Self {
+                datetime,
+                has_time: false,
+            })
+            .ok_or_else(|| invalid_date_error(s))
+    }
+}
+
+/// The `unit=` kwarg [`date_diff`] accepts, parsed once via
+/// [`Self::parse`] and matched exhaustively in each precision branch
+/// below — the same "small enum over a piped string" pattern
+/// [`path_ops::PathQuery`](super::path_ops) uses for its I/O tests.
+/// The date/time unit parsed from a `unit="..."` kwarg across the `date`
+/// namespace filters ([`date_add`], [`date_sub`], [`date_diff`]).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DateTimeUnit {
+    Years,
+    Months,
+    Days,
+    Hours,
+    Minutes,
+    Seconds,
+}
+
+impl DateTimeUnit {
+    /// Parses `unit`'s `unit="..."` kwarg value, accepting both plural
+    /// (`"days"`) and singular (`"day"`) forms. `None` for unrecognized unit
+    /// names.
+    fn parse(unit: &str) -> Option<Self> {
+        match unit {
+            "years" | "year" => Some(Self::Years),
+            "months" | "month" => Some(Self::Months),
+            "days" | "day" => Some(Self::Days),
+            "hours" | "hour" => Some(Self::Hours),
+            "minutes" | "minute" => Some(Self::Minutes),
+            "seconds" | "second" => Some(Self::Seconds),
+            _ => None,
+        }
+    }
+}
+
 /// Extracts the shared `format="..."` kwarg every `date.*` namespace
 /// method takes, defaulting to [`DEFAULT_FORMAT`], and rejects any
 /// other kwarg via [`Kwargs::assert_all_used`] — the one place all
@@ -271,46 +304,6 @@ fn try_parse_datetime(s: &str) -> Option<NaiveDateTime> {
 /// Propagates [`ParsedDate::parse`]'s [`ErrorKind::InvalidOperation`].
 fn parse_date(s: &str) -> Result<NaiveDateTime, Error> {
     ParsedDate::parse(s).map(|parsed| parsed.datetime)
-}
-
-/// Builds the error for a date/time string matching none of
-/// [`ParsedDate::parse`]'s accepted formats.
-fn invalid_date_error(s: &str) -> Error {
-    Error::new(ErrorKind::InvalidOperation, format!("invalid date {s:?}"))
-}
-
-/// Builds the error for a Unix timestamp chrono can't represent as a
-/// `NaiveDateTime` (`date.from_timestamp`'s `unix_ts` argument, roughly
-/// ±262,000 years from the epoch).
-fn invalid_timestamp_error(unix_ts: i64) -> Error {
-    Error::new(
-        ErrorKind::InvalidOperation,
-        format!("timestamp {unix_ts} is out of range"),
-    )
-}
-
-/// Builds the error for date arithmetic (`add_days`, `add_years`,
-/// `date.tomorrow()`, etc.) that overflows chrono's representable date
-/// range — reached only at the extremes (multi-millennia offsets), but
-/// every `checked_*` chrono call this module makes can return `None`,
-/// and this module never `.unwrap()`s one.
-fn date_out_of_range_error() -> Error {
-    Error::new(
-        ErrorKind::InvalidOperation,
-        "date arithmetic overflowed the supported range",
-    )
-}
-
-/// Builds the error for `date_diff`'s `unit` kwarg when it isn't one of
-/// the four accepted unit names.
-fn unknown_unit_error(unit: &str) -> Error {
-    Error::new(
-        ErrorKind::InvalidOperation,
-        format!(
-            "unknown date_diff unit {unit:?} (expected \"days\", \"hours\", \
-             \"minutes\", or \"seconds\")"
-        ),
-    )
 }
 
 /// `{{ value | date_format(format_string) }}` — re-formats a piped
@@ -484,6 +477,7 @@ fn sub_years(value: &str, n: u32) -> Result<String, Error> {
         i64::from(n).checked_neg().ok_or_else(date_out_of_range_error)?;
     date_shift_unit(value, n_i64, DateTimeUnit::Years)
 }
+
 /// [`ErrorKind::InvalidOperation`] if `value` isn't a parseable
 /// date/time string — see [`parse_date_precise`]. The `with_day(1)`
 /// call underneath can't itself fail (day 1 exists in every month), but
@@ -515,39 +509,6 @@ fn end_of_month(value: &str) -> Result<String, Error> {
 /// date/time string — see [`parse_date`].
 fn weekday(value: &str) -> Result<u32, Error> {
     Ok(parse_date(value)?.weekday().num_days_from_monday())
-}
-
-/// The `unit=` kwarg [`date_diff`] accepts, parsed once via
-/// [`Self::parse`] and matched exhaustively in each precision branch
-/// below — the same "small enum over a piped string" pattern
-/// [`path_ops::PathQuery`](super::path_ops) uses for its I/O tests.
-/// The date/time unit parsed from a `unit="..."` kwarg across the `date`
-/// namespace filters ([`date_add`], [`date_sub`], [`date_diff`]).
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum DateTimeUnit {
-    Years,
-    Months,
-    Days,
-    Hours,
-    Minutes,
-    Seconds,
-}
-
-impl DateTimeUnit {
-    /// Parses `unit`'s `unit="..."` kwarg value, accepting both plural
-    /// (`"days"`) and singular (`"day"`) forms. `None` for unrecognized unit
-    /// names.
-    fn parse(unit: &str) -> Option<Self> {
-        match unit {
-            "years" | "year" => Some(Self::Years),
-            "months" | "month" => Some(Self::Months),
-            "days" | "day" => Some(Self::Days),
-            "hours" | "hour" => Some(Self::Hours),
-            "minutes" | "minute" => Some(Self::Minutes),
-            "seconds" | "second" => Some(Self::Seconds),
-            _ => None,
-        }
-    }
 }
 
 /// `{{ value | date_diff(other, unit="days") }}` — the signed duration
@@ -666,6 +627,46 @@ fn leap_year_input_error(value: &Value) -> Error {
         format!(
             "is_leap_year expects an integer year or a date string, got \
              {value:?}"
+        ),
+    )
+}
+
+/// Builds the error for a date/time string matching none of
+/// [`ParsedDate::parse`]'s accepted formats.
+fn invalid_date_error(s: &str) -> Error {
+    Error::new(ErrorKind::InvalidOperation, format!("invalid date {s:?}"))
+}
+
+/// Builds the error for a Unix timestamp chrono can't represent as a
+/// `NaiveDateTime` (`date.from_timestamp`'s `unix_ts` argument, roughly
+/// ±262,000 years from the epoch).
+fn invalid_timestamp_error(unix_ts: i64) -> Error {
+    Error::new(
+        ErrorKind::InvalidOperation,
+        format!("timestamp {unix_ts} is out of range"),
+    )
+}
+
+/// Builds the error for date arithmetic (`add_days`, `add_years`,
+/// `date.tomorrow()`, etc.) that overflows chrono's representable date
+/// range — reached only at the extremes (multi-millennia offsets), but
+/// every `checked_*` chrono call this module makes can return `None`,
+/// and this module never `.unwrap()`s one.
+fn date_out_of_range_error() -> Error {
+    Error::new(
+        ErrorKind::InvalidOperation,
+        "date arithmetic overflowed the supported range",
+    )
+}
+
+/// Builds the error for `date_diff`'s `unit` kwarg when it isn't one of
+/// the four accepted unit names.
+fn unknown_unit_error(unit: &str) -> Error {
+    Error::new(
+        ErrorKind::InvalidOperation,
+        format!(
+            "unknown date_diff unit {unit:?} (expected \"days\", \"hours\", \
+             \"minutes\", or \"seconds\")"
         ),
     )
 }
