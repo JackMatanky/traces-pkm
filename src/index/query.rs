@@ -61,7 +61,7 @@ pub(crate) enum QueryError {
          folder, size, ctime, cdate, mtime, mdate) or a single frontmatter, \
          inline field, or `tags` name"
     )]
-    InvalidFieldPath {
+    UnknownFieldPath {
         /// The unparsable field path.
         path: String,
     },
@@ -72,9 +72,16 @@ pub(crate) enum QueryError {
          with op one of ==, !=, >=, <=, >, < and value a quoted string, \
          number, or boolean"
     )]
-    InvalidFilterExpression {
+    UnparsableFilterExpression {
         /// The unparsable filter expression.
         expr: String,
+    },
+    /// A `.limit()` count was negative or otherwise did not fit in a
+    /// [`usize`] on this platform.
+    #[error("invalid limit {n}; expected a non-negative row count")]
+    NegativeLimit {
+        /// The rejected limit value.
+        n: i64,
     },
 }
 
@@ -120,11 +127,11 @@ impl FieldPath {
     ///
     /// # Errors
     ///
-    /// Returns [`QueryError::InvalidFieldPath`] if `path` is empty, uses an
+    /// Returns [`QueryError::UnknownFieldPath`] if `path` is empty, uses an
     /// unknown `file.*` accessor, or has unexpected `.` structure.
     fn parse(path: &str) -> Result<Self, QueryError> {
         let path = path.trim();
-        let invalid = || QueryError::InvalidFieldPath {
+        let invalid = || QueryError::UnknownFieldPath {
             path: path.to_owned(),
         };
         if let Some(field) = path.strip_prefix("file.") {
@@ -149,7 +156,7 @@ impl FileField {
     ///
     /// # Errors
     ///
-    /// Returns [`QueryError::InvalidFieldPath`] if `name` is not a known
+    /// Returns [`QueryError::UnknownFieldPath`] if `name` is not a known
     /// accessor.
     fn parse(name: &str) -> Result<Self, QueryError> {
         match name {
@@ -161,7 +168,7 @@ impl FileField {
             "cdate" => Ok(Self::Cdate),
             "modified_at" | "mtime" => Ok(Self::Mtime),
             "mdate" => Ok(Self::Mdate),
-            _ => Err(QueryError::InvalidFieldPath {
+            _ => Err(QueryError::UnknownFieldPath {
                 path: format!("file.{name}"),
             }),
         }
@@ -246,7 +253,7 @@ impl IndexRecord {
     ///
     /// # Errors
     ///
-    /// Returns [`QueryError::InvalidFieldPath`] if `path` is malformed; see
+    /// Returns [`QueryError::UnknownFieldPath`] if `path` is malformed; see
     /// [`FieldPath::parse`].
     #[inline]
     pub(crate) fn field(&self, path: &str) -> Result<FieldValue, QueryError> {
@@ -293,7 +300,7 @@ impl IndexRecord {
 /// [`Self::filter`], [`Self::sort`], [`Self::limit`], [`Self::group_by`],
 /// and [`Self::flatten`] each consume this outcome and return a new,
 /// transformed one, so calls chain naturally:
-/// `outcome.filter("rating > 7")?.sort("rating", true)?.limit(10)`.
+/// `outcome.filter("rating > 7")?.sort("rating", true)?.limit(10)?`.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct QueryOutcome {
     records: Vec<IndexRecord>,
@@ -339,16 +346,18 @@ impl QueryOutcome {
     ///
     /// Supported operators: `==`, `!=`, `>=`, `<=`, `>`, `<`. `value` is a
     /// double-quoted string (no escape support), a number, or
-    /// `true`/`false`. Comparing values of different kinds (e.g. a string
-    /// field against a numeric literal) never matches under `==`/`<`-family
-    /// operators, rather than erroring; under `!=` it does match, the same
-    /// way a record missing the field entirely (`Null`) matches `!=` but
-    /// never `==` or an ordering operator.
+    /// `true`/`false`. `==`/`!=` treat `String`, `Date`, and `Duration`
+    /// field values as the same kind, comparing their text (so a quoted
+    /// literal matches a `file.mtime`-style `Date` field with equal text);
+    /// every other kind mismatch (e.g. a numeric field against a string
+    /// literal) never matches under any operator except `!=`. A record
+    /// missing the field entirely (`Null`) behaves the same way: it never
+    /// matches `==` or an ordering operator, but does match `!=`.
     ///
     /// # Errors
     ///
-    /// Returns [`QueryError::InvalidFilterExpression`] if `expr` cannot be
-    /// parsed, or [`QueryError::InvalidFieldPath`] if its field path is
+    /// Returns [`QueryError::UnparsableFilterExpression`] if `expr` cannot be
+    /// parsed, or [`QueryError::UnknownFieldPath`] if its field path is
     /// malformed.
     pub(crate) fn filter(self, expr: &str) -> Result<Self, QueryError> {
         let (field_path, op, literal) = parse_filter_expr(expr)?;
@@ -370,7 +379,7 @@ impl QueryOutcome {
     ///
     /// # Errors
     ///
-    /// Returns [`QueryError::InvalidFieldPath`] if `path` is malformed.
+    /// Returns [`QueryError::UnknownFieldPath`] if `path` is malformed.
     #[inline]
     pub(crate) fn sort(
         self,
@@ -381,10 +390,18 @@ impl QueryOutcome {
     }
 
     /// Keeps at most `n` leading records.
-    #[inline]
-    #[must_use]
-    pub(crate) fn limit(self, n: usize) -> Self {
-        Self::new(self.records.into_iter().take(n).collect())
+    ///
+    /// # Errors
+    ///
+    /// Returns [`QueryError::NegativeLimit`] if `n` is negative or does not
+    /// fit in a [`usize`] on this platform.
+    pub(crate) fn limit(self, n: i64) -> Result<Self, QueryError> {
+        let n = usize::try_from(n).map_err(|_source| {
+            QueryError::NegativeLimit {
+                n,
+            }
+        })?;
+        Ok(Self::new(self.records.into_iter().take(n).collect()))
     }
 
     /// Orders records by `path`, ascending, clustering equal values so
@@ -394,7 +411,7 @@ impl QueryOutcome {
     ///
     /// # Errors
     ///
-    /// Returns [`QueryError::InvalidFieldPath`] if `path` is malformed.
+    /// Returns [`QueryError::UnknownFieldPath`] if `path` is malformed.
     #[inline]
     pub(crate) fn group_by(self, path: &str) -> Result<Self, QueryError> {
         self.sort_by_field(path, false)
@@ -411,7 +428,7 @@ impl QueryOutcome {
     ///
     /// # Errors
     ///
-    /// Returns [`QueryError::InvalidFieldPath`] if `path` is malformed.
+    /// Returns [`QueryError::UnknownFieldPath`] if `path` is malformed.
     pub(crate) fn flatten(self, path: &str) -> Result<Self, QueryError> {
         let field_path = FieldPath::parse(path)?;
         let mut records = Vec::with_capacity(self.records.len());
@@ -510,14 +527,16 @@ impl CompareOp {
 
     /// Whether `field` matches `literal` under this operator.
     ///
-    /// `==`/`!=` use [`FieldValue`]'s structural equality, so they are
-    /// total: every value kind, including [`FieldValue::Null`], compares.
-    /// The ordering operators require [`compare_field_values`] to return an
-    /// ordering (same comparable kind only) and are `false` otherwise.
+    /// `==`/`!=` are total: every value kind, including
+    /// [`FieldValue::Null`], compares. They use [`fields_equal`], not raw
+    /// [`FieldValue`] equality, so a `String`, `Date`, or `Duration` field
+    /// matches a same-text literal of any of those three kinds — the same
+    /// cross-kind text normalization [`compare_field_values`] applies to
+    /// the ordering operators below.
     fn is_satisfied_by(self, field: &FieldValue, literal: &FieldValue) -> bool {
         match self {
-            Self::Eq => field == literal,
-            Self::Ne => field != literal,
+            Self::Eq => fields_equal(field, literal),
+            Self::Ne => !fields_equal(field, literal),
             Self::Lt => {
                 compare_field_values(field, literal) == Some(Ordering::Less)
             }
@@ -541,13 +560,13 @@ impl CompareOp {
 ///
 /// # Errors
 ///
-/// Returns [`QueryError::InvalidFilterExpression`] if `expr` does not match
-/// `<field> <op> <value>`, or [`QueryError::InvalidFieldPath`] if its field
+/// Returns [`QueryError::UnparsableFilterExpression`] if `expr` does not match
+/// `<field> <op> <value>`, or [`QueryError::UnknownFieldPath`] if its field
 /// path is malformed.
 fn parse_filter_expr(
     expr: &str,
 ) -> Result<(FieldPath, CompareOp, FieldValue), QueryError> {
-    let invalid = || QueryError::InvalidFilterExpression {
+    let invalid = || QueryError::UnparsableFilterExpression {
         expr: expr.to_owned(),
     };
     let trimmed = expr.trim();
@@ -595,6 +614,15 @@ fn compare_field_values(a: &FieldValue, b: &FieldValue) -> Option<Ordering> {
             _ => None,
         },
     }
+}
+
+/// Whether `a` and `b` represent the same value for `.filter()`'s
+/// `==`/`!=`. Falls back to [`compare_field_values`] returning
+/// [`Ordering::Equal`] when [`FieldValue`]'s own structural equality says
+/// no — the same cross-kind text normalization that lets a `String`
+/// literal match a `Date`/`Duration` field for the ordering operators.
+fn fields_equal(a: &FieldValue, b: &FieldValue) -> bool {
+    a == b || compare_field_values(a, b) == Some(Ordering::Equal)
 }
 
 /// Total order for [`QueryOutcome::sort`]/[`QueryOutcome::group_by`]:
@@ -859,7 +887,7 @@ mod tests {
 
             assert_eq!(
                 record.field(path),
-                Err(QueryError::InvalidFieldPath {
+                Err(QueryError::UnknownFieldPath {
                     path: path.to_owned()
                 })
             );
@@ -949,7 +977,7 @@ mod tests {
 
             assert_eq!(
                 outcome.filter(expr),
-                Err(QueryError::InvalidFilterExpression {
+                Err(QueryError::UnparsableFilterExpression {
                     expr: expr.to_owned()
                 })
             );
@@ -962,7 +990,7 @@ mod tests {
 
             assert_eq!(
                 outcome.filter("file.bogus == 1"),
-                Err(QueryError::InvalidFieldPath {
+                Err(QueryError::UnknownFieldPath {
                     path: "file.bogus".to_owned()
                 })
             );
@@ -980,6 +1008,17 @@ mod tests {
                 .expect("valid filter");
 
             assert_eq!(names(&filtered), ["high"]);
+        }
+
+        #[test]
+        fn equal_matches_a_date_field_against_a_string_literal() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let outcome = outcome_for(temp.path(), "---\ndue: 2026-01-01\n---");
+
+            let filtered =
+                outcome.filter("due == \"2026-01-01\"").expect("valid filter");
+
+            assert_eq!(filtered.len(), 1);
         }
     }
 
@@ -1057,7 +1096,7 @@ mod tests {
 
             assert_eq!(
                 outcome.sort("file.bogus", false),
-                Err(QueryError::InvalidFieldPath {
+                Err(QueryError::UnknownFieldPath {
                     path: "file.bogus".to_owned()
                 })
             );
@@ -1082,7 +1121,7 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             let outcome = outcome_of_three(temp.path());
 
-            assert_eq!(outcome.limit(2).len(), 2);
+            assert_eq!(outcome.limit(2).expect("valid limit").len(), 2);
         }
 
         #[test]
@@ -1090,7 +1129,7 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             let outcome = outcome_of_three(temp.path());
 
-            assert_eq!(outcome.limit(10).len(), 3);
+            assert_eq!(outcome.limit(10).expect("valid limit").len(), 3);
         }
 
         #[test]
@@ -1098,7 +1137,20 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             let outcome = outcome_of_three(temp.path());
 
-            assert!(outcome.limit(0).is_empty());
+            assert!(outcome.limit(0).expect("valid limit").is_empty());
+        }
+
+        #[test]
+        fn rejects_a_negative_limit() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let outcome = outcome_of_three(temp.path());
+
+            assert_eq!(
+                outcome.limit(-1),
+                Err(QueryError::NegativeLimit {
+                    n: -1
+                })
+            );
         }
     }
 
@@ -1136,7 +1188,7 @@ mod tests {
 
             assert_eq!(
                 outcome.group_by("file.bogus"),
-                Err(QueryError::InvalidFieldPath {
+                Err(QueryError::UnknownFieldPath {
                     path: "file.bogus".to_owned()
                 })
             );
@@ -1224,7 +1276,7 @@ mod tests {
 
             assert_eq!(
                 outcome.flatten("file.bogus"),
-                Err(QueryError::InvalidFieldPath {
+                Err(QueryError::UnknownFieldPath {
                     path: "file.bogus".to_owned()
                 })
             );
