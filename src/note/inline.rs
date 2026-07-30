@@ -38,7 +38,7 @@ static TAG_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"#[[:alpha:]][[:alnum:]_/-]*").expect("TAG_RE pattern is valid")
 });
 
-const TASK_SHORTHAND_DATE_LEN: usize = 10;
+const ISO_DATE_LEN: usize = 10;
 /// Dataview task emoji shorthand mappings to inline field keys.
 ///
 /// Supported emoji shorthands:
@@ -281,14 +281,14 @@ impl<'a> InlineFieldLexer<'a> {
         for &(emoji, key) in TASK_EMOJI_FIELDS {
             let mut next = 0;
             while let Some(start) = self.source.find_str_from(next, emoji) {
-                let value_start = self.source.advance(start, emoji.len());
-                let value_end =
-                    self.source.advance(value_start, TASK_SHORTHAND_DATE_LEN);
-                if let Some(value) = self.source.get(value_start..value_end)
+                let emoji_end = self.source.advance(start, emoji.len());
+                let date_start = self.skip_inline_whitespace(emoji_end);
+                let date_end = self.source.advance(date_start, ISO_DATE_LEN);
+                if let Some(value) = self.source.get(date_start..date_end)
                     && is_iso_date(value)
                 {
                     self.matches.push(FieldMatch {
-                        range: ByteRange::new(start, value_end),
+                        range: ByteRange::new(start, date_end),
                         field: InlineField::new(
                             key,
                             FieldValue::Date(value.to_owned()),
@@ -296,9 +296,20 @@ impl<'a> InlineFieldLexer<'a> {
                         ),
                     });
                 }
-                next = value_start;
+                next = emoji_end;
             }
         }
+    }
+
+    fn skip_inline_whitespace(&self, pos: usize) -> usize {
+        self.source
+            .from(pos)
+            .and_then(|rest| {
+                rest.char_indices()
+                    .find(|(_, ch)| !matches!(ch, ' ' | '\t'))
+                    .map(|(offset, _)| self.source.advance(pos, offset))
+            })
+            .unwrap_or_else(|| self.source.len())
     }
 
     fn finish(mut self) -> Vec<InlineField> {
@@ -859,6 +870,27 @@ mod tests {
             );
         }
 
+        #[rstest]
+        #[case::no_space("🗓️2026-07-30", "due", "2026-07-30")]
+        #[case::single_space("🗓️ 2026-07-30", "due", "2026-07-30")]
+        #[case::multiple_spaces("🗓️   2026-07-30", "due", "2026-07-30")]
+        fn extracts_task_emoji_shorthands_with_optional_spaces(
+            #[case] input: &str,
+            #[case] expected_key: &str,
+            #[case] expected_date: &str,
+        ) {
+            let fields = extract_task_inline_fields(input);
+
+            assert_eq!(fields.len(), 1);
+            assert_eq!(
+                fields.first().map(InlineField::key),
+                Some(expected_key)
+            );
+            assert_eq!(
+                fields.first().map(InlineField::value),
+                Some(&FieldValue::Date(expected_date.to_owned()))
+            );
+        }
         #[test]
         fn accepts_a_bare_key_preceded_by_leading_whitespace() {
             let fields = extract_inline_fields("  Status:: Draft");
