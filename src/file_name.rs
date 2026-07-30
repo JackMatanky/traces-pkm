@@ -6,16 +6,6 @@
 //! (e.g. `template::engine::path_ops`'s `basename`/`extension` filters)
 //! shares these instead of reinventing stem/extension parsing.
 
-#![cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "BaseName::as_str() is exercised by tests now but only gets \
-                  a non-test caller once a consumer outside the index needs a \
-                  raw &str (template rendering, tickets 02-04)"
-    )
-)]
-
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};

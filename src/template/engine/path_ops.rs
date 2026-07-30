@@ -24,6 +24,8 @@ use std::{
 
 use minijinja::{Environment, Error, ErrorKind};
 
+use crate::file_name::{BaseName, FileName};
+
 /// Which fact an I/O test is asking [`inspect`] to answer.
 #[derive(Clone, Copy)]
 enum PathQuery {
@@ -148,13 +150,18 @@ fn filename(path: &str) -> String {
 /// `path_basename`: the final path component without its extension
 /// (e.g. `"main"`), or an empty string when `path` has no filename.
 fn basename(path: &str) -> String {
-    component_or_empty(Path::new(path).file_stem())
+    FileName::try_from(Path::new(path))
+        .map(|name| BaseName::from(&name).as_str().to_owned())
+        .unwrap_or_default()
 }
 
 /// `path_extension`: the final path component's extension without the
 /// leading dot (e.g. `"rs"`), or an empty string when it has none.
 fn extension(path: &str) -> String {
-    component_or_empty(Path::new(path).extension())
+    FileName::try_from(Path::new(path))
+        .ok()
+        .and_then(|name| name.extension().map(str::to_owned))
+        .unwrap_or_default()
 }
 
 /// `path_parent`: the path with its final component removed (e.g.
