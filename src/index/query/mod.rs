@@ -12,13 +12,15 @@
 //! - [`QueryError`]: Errors returned by field resolution and outcome
 //!   transformations.
 
+mod field;
 mod filter;
-mod operators;
+mod sort;
 
 use std::path::PathBuf;
 
+use field::FieldPath;
 use filter::FilterExpr;
-use operators::{FileField, sort_key_cmp};
+use sort::sort_key_cmp;
 use thiserror::Error;
 
 use super::file::FileRecord;
@@ -407,50 +409,6 @@ impl<'a> IntoIterator for &'a QueryOutcome {
     #[inline]
     fn into_iter(self) -> Self::IntoIter {
         self.records.iter()
-    }
-}
-
-/// A query field path, resolved once per [`QueryOutcome`] transformation and
-/// then applied to every [`IndexRecord`].
-#[derive(Clone, Debug, Eq, PartialEq)]
-enum FieldPath {
-    /// A `file.<field>` accessor.
-    File(FileField),
-    /// A frontmatter or inline field, looked up by key.
-    Metadata(String),
-    /// The Note's markdown tags, as a [`FieldValue::List`] of tag strings.
-    Tags,
-}
-
-impl FieldPath {
-    /// Parses a query field path string into a [`FieldPath`].
-    ///
-    /// Resolves `file.<field>` accessors, `tags`, or frontmatter/inline field
-    /// keys.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`QueryError::UnknownFieldPath`] if `path` is empty, uses an
-    /// unknown `file.*` accessor, or has unexpected `.` structure.
-    fn parse(path: &str) -> Result<Self, QueryError> {
-        let path = path.trim();
-        let invalid = || QueryError::UnknownFieldPath {
-            path: path.to_owned(),
-        };
-        if let Some(field) = path.strip_prefix("file.") {
-            return if field.is_empty() || field.contains('.') {
-                Err(invalid())
-            } else {
-                FileField::parse(field).map(Self::File)
-            };
-        }
-        if path.is_empty() || path == "file" || path.contains('.') {
-            return Err(invalid());
-        }
-        if path == "tags" {
-            return Ok(Self::Tags);
-        }
-        Ok(Self::Metadata(path.to_owned()))
     }
 }
 
