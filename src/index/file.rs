@@ -189,7 +189,7 @@ impl Timestamp {
     /// [`Self::to_datetime_string`] unless the offset itself matters.
     #[inline]
     #[must_use]
-    pub(crate) fn to_offset_datetime_string(self) -> String {
+    pub(crate) fn to_offset_string(self) -> String {
         self.0.to_rfc3339()
     }
 
@@ -385,9 +385,9 @@ mod tests {
         }
 
         #[test]
-        fn to_offset_datetime_string_includes_the_utc_offset() {
+        fn to_offset_string_includes_the_utc_offset() {
             assert_eq!(
-                fixed_timestamp().to_offset_datetime_string(),
+                fixed_timestamp().to_offset_string(),
                 "2026-07-29T14:30:05+00:00"
             );
         }
