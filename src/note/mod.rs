@@ -15,7 +15,7 @@
 mod byte;
 mod code;
 mod domain;
-mod inline;
+mod lexer;
 mod links;
 mod lists;
 mod metadata;

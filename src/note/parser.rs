@@ -22,7 +22,7 @@ use pulldown_cmark::{
 
 use super::{
     CodeRegion, Frontmatter, InlineField, LinkType, List, ListItem, Note,
-    Outlink, RawFrontmatter, Tag, TaskStatus, inline,
+    Outlink, RawFrontmatter, Tag, TaskStatus, lexer,
 };
 
 /// Parses Markdown source into a [`Note`].
@@ -214,12 +214,12 @@ impl ParserContext {
         {
             let text = mem::take(&mut item.scan_buffer);
             let fields = if item.task_status.is_some() {
-                inline::extract_task_inline_fields(&text)
+                lexer::extract_task_inline_fields(&text)
             } else {
-                inline::extract_inline_fields(&text)
+                lexer::extract_inline_fields(&text)
             };
             self.inline_fields.extend(fields);
-            self.tags.extend(inline::extract_tags(&text));
+            self.tags.extend(lexer::extract_tags(&text));
         }
     }
 
@@ -297,8 +297,8 @@ impl ParserContext {
         self.block = BlockContext::None;
         if self.item_stack.is_empty() {
             self.inline_fields
-                .extend(inline::extract_inline_fields(&self.body_buffer));
-            self.tags.extend(inline::extract_tags(&self.body_buffer));
+                .extend(lexer::extract_inline_fields(&self.body_buffer));
+            self.tags.extend(lexer::extract_tags(&self.body_buffer));
             self.body_buffer.clear();
         }
     }
