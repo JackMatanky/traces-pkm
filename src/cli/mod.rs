@@ -193,7 +193,6 @@ fn load_config(service: &ConfigService) -> Result<Config, CliError> {
 mod tests {
     use std::path::Path;
 
-    use clap::Parser as _;
     use pretty_assertions::assert_eq;
 
     use super::*;
@@ -281,6 +280,23 @@ mod tests {
 
         assert!(cli.command.is_none());
         assert_eq!(cli.input, Some(Some(PathBuf::from("daily"))));
+    }
+
+    #[test]
+    fn bare_input_flag_without_a_value_sets_input_to_some_none() {
+        let cli =
+            Cli::try_parse_from(["traces", "-i"]).expect("parse bare -i flag");
+
+        assert!(cli.command.is_none());
+        assert_eq!(cli.input, Some(None));
+    }
+
+    #[test]
+    fn no_args_parses_with_no_command_and_no_input() {
+        let cli = Cli::try_parse_from(["traces"]).expect("parse with no args");
+
+        assert!(cli.command.is_none());
+        assert_eq!(cli.input, None);
     }
 
     #[test]

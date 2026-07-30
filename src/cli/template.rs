@@ -262,21 +262,34 @@ mod tests {
         config_file
     }
 
-    #[test]
-    fn run_writes_the_rendered_template_to_the_default_output_path() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let root = temp.path().join("project");
+    /// Sets up a trusted project with a template directory and optional
+    /// template file, returning the project root and a ready-to-use
+    /// [`ConfigService`].
+    fn create_test_project(
+        temp: &Path,
+        template_content: &str,
+    ) -> (PathBuf, ConfigService) {
+        let root = temp.join("project");
         fs::create_dir_all(&root).expect("create project dir");
         let config_file = create_config(&root, "templates");
         let templates_dir = root.join("templates");
         fs::create_dir_all(&templates_dir).expect("create templates dir");
-        fs::write(
-            templates_dir.join("daily.md"),
-            "{% for n in [1, 2] %}{{ n }}{% endfor %}",
-        )
-        .expect("write template");
-        let service = service(temp.path());
+        if !template_content.is_empty() {
+            fs::write(templates_dir.join("daily.md"), template_content)
+                .expect("write template");
+        }
+        let service = service(temp);
         trust_config(&service, &config_file);
+        (root, service)
+    }
+
+    #[test]
+    fn run_writes_the_rendered_template_to_the_default_output_path() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let (root, service) = create_test_project(
+            temp.path(),
+            "{% for n in [1, 2] %}{{ n }}{% endfor %}",
+        );
         let _guard = CwdGuard::enter(&root);
 
         Template::new(PathBuf::from("daily"))
@@ -312,13 +325,7 @@ mod tests {
     #[test]
     fn run_fails_when_template_cannot_be_resolved() {
         let temp = tempfile::tempdir().expect("create temp dir");
-        let root = temp.path().join("project");
-        fs::create_dir_all(&root).expect("create project dir");
-        let config_file = create_config(&root, "templates");
-        fs::create_dir_all(root.join("templates"))
-            .expect("create templates dir");
-        let service = service(temp.path());
-        trust_config(&service, &config_file);
+        let (root, service) = create_test_project(temp.path(), "");
         let _guard = CwdGuard::enter(&root);
 
         let error = Template::new(PathBuf::from("missing"))
@@ -331,13 +338,7 @@ mod tests {
     #[test]
     fn run_with_no_name_and_no_available_templates_fails_with_no_templates() {
         let temp = tempfile::tempdir().expect("create temp dir");
-        let root = temp.path().join("project");
-        fs::create_dir_all(&root).expect("create project dir");
-        let config_file = create_config(&root, "templates");
-        fs::create_dir_all(root.join("templates"))
-            .expect("create templates dir");
-        let service = service(temp.path());
-        trust_config(&service, &config_file);
+        let (root, service) = create_test_project(temp.path(), "");
         let _guard = CwdGuard::enter(&root);
 
         let error = Template::interactive()
@@ -350,15 +351,7 @@ mod tests {
     #[test]
     fn run_with_list_does_not_render_or_write_anything() {
         let temp = tempfile::tempdir().expect("create temp dir");
-        let root = temp.path().join("project");
-        fs::create_dir_all(&root).expect("create project dir");
-        let config_file = create_config(&root, "templates");
-        let templates_dir = root.join("templates");
-        fs::create_dir_all(&templates_dir).expect("create templates dir");
-        fs::write(templates_dir.join("daily.md"), "content")
-            .expect("write template");
-        let service = service(temp.path());
-        trust_config(&service, &config_file);
+        let (root, service) = create_test_project(temp.path(), "content");
         let _guard = CwdGuard::enter(&root);
 
         Template {
@@ -379,13 +372,7 @@ mod tests {
     #[test]
     fn run_with_list_and_no_available_templates_succeeds_with_no_output() {
         let temp = tempfile::tempdir().expect("create temp dir");
-        let root = temp.path().join("project");
-        fs::create_dir_all(&root).expect("create project dir");
-        let config_file = create_config(&root, "templates");
-        fs::create_dir_all(root.join("templates"))
-            .expect("create templates dir");
-        let service = service(temp.path());
-        trust_config(&service, &config_file);
+        let (root, service) = create_test_project(temp.path(), "");
         let _guard = CwdGuard::enter(&root);
 
         // Unlike the interactive picker (`Template::interactive`, which
@@ -408,15 +395,7 @@ mod tests {
     #[test]
     fn run_writes_to_the_output_flag_path() {
         let temp = tempfile::tempdir().expect("create temp dir");
-        let root = temp.path().join("project");
-        fs::create_dir_all(&root).expect("create project dir");
-        let config_file = create_config(&root, "templates");
-        let templates_dir = root.join("templates");
-        fs::create_dir_all(&templates_dir).expect("create templates dir");
-        fs::write(templates_dir.join("daily.md"), "hello")
-            .expect("write template");
-        let service = service(temp.path());
-        trust_config(&service, &config_file);
+        let (root, service) = create_test_project(temp.path(), "hello");
         let _guard = CwdGuard::enter(&root);
 
         Template {
@@ -439,16 +418,8 @@ mod tests {
     #[test]
     fn run_fails_when_output_already_exists_without_force() {
         let temp = tempfile::tempdir().expect("create temp dir");
-        let root = temp.path().join("project");
-        fs::create_dir_all(&root).expect("create project dir");
-        let config_file = create_config(&root, "templates");
-        let templates_dir = root.join("templates");
-        fs::create_dir_all(&templates_dir).expect("create templates dir");
-        fs::write(templates_dir.join("daily.md"), "new")
-            .expect("write template");
+        let (root, service) = create_test_project(temp.path(), "new");
         fs::write(root.join("daily.md"), "old").expect("seed existing output");
-        let service = service(temp.path());
-        trust_config(&service, &config_file);
         let _guard = CwdGuard::enter(&root);
 
         let error = Template::new(PathBuf::from("daily"))
@@ -465,16 +436,8 @@ mod tests {
     #[test]
     fn run_overwrites_existing_output_with_force() {
         let temp = tempfile::tempdir().expect("create temp dir");
-        let root = temp.path().join("project");
-        fs::create_dir_all(&root).expect("create project dir");
-        let config_file = create_config(&root, "templates");
-        let templates_dir = root.join("templates");
-        fs::create_dir_all(&templates_dir).expect("create templates dir");
-        fs::write(templates_dir.join("daily.md"), "new")
-            .expect("write template");
+        let (root, service) = create_test_project(temp.path(), "new");
         fs::write(root.join("daily.md"), "old").expect("seed existing output");
-        let service = service(temp.path());
-        trust_config(&service, &config_file);
         let _guard = CwdGuard::enter(&root);
 
         Template {
@@ -498,15 +461,7 @@ mod tests {
     #[test]
     fn run_fails_when_the_output_flag_escapes_the_project_root() {
         let temp = tempfile::tempdir().expect("create temp dir");
-        let root = temp.path().join("project");
-        fs::create_dir_all(&root).expect("create project dir");
-        let config_file = create_config(&root, "templates");
-        let templates_dir = root.join("templates");
-        fs::create_dir_all(&templates_dir).expect("create templates dir");
-        fs::write(templates_dir.join("daily.md"), "hello")
-            .expect("write template");
-        let service = service(temp.path());
-        trust_config(&service, &config_file);
+        let (root, service) = create_test_project(temp.path(), "hello");
         let _guard = CwdGuard::enter(&root);
 
         let error = Template {
@@ -527,16 +482,8 @@ mod tests {
     #[test]
     fn run_dry_run_writes_nothing_even_when_output_already_exists() {
         let temp = tempfile::tempdir().expect("create temp dir");
-        let root = temp.path().join("project");
-        fs::create_dir_all(&root).expect("create project dir");
-        let config_file = create_config(&root, "templates");
-        let templates_dir = root.join("templates");
-        fs::create_dir_all(&templates_dir).expect("create templates dir");
-        fs::write(templates_dir.join("daily.md"), "new")
-            .expect("write template");
+        let (root, service) = create_test_project(temp.path(), "new");
         fs::write(root.join("daily.md"), "old").expect("seed existing output");
-        let service = service(temp.path());
-        trust_config(&service, &config_file);
         let _guard = CwdGuard::enter(&root);
         Template {
             name: Some(PathBuf::from("daily")),
@@ -575,18 +522,10 @@ mod tests {
     #[test]
     fn run_uses_the_injected_providers_queued_answer_by_default() {
         let temp = tempfile::tempdir().expect("create temp dir");
-        let root = temp.path().join("project");
-        fs::create_dir_all(&root).expect("create project dir");
-        let config_file = create_config(&root, "templates");
-        let templates_dir = root.join("templates");
-        fs::create_dir_all(&templates_dir).expect("create templates dir");
-        fs::write(
-            templates_dir.join("daily.md"),
+        let (root, service) = create_test_project(
+            temp.path(),
             "{{ ui.text_input(\"name\", \"anon\") }}",
-        )
-        .expect("write template");
-        let service = service(temp.path());
-        trust_config(&service, &config_file);
+        );
         let _guard = CwdGuard::enter(&root);
         let provider: Arc<dyn DialogProvider> =
             Arc::new(crate::PresetDialogProvider::new().with_text("claude"));
@@ -604,18 +543,10 @@ mod tests {
     #[test]
     fn run_no_input_ignores_the_injected_provider_and_uses_defaults() {
         let temp = tempfile::tempdir().expect("create temp dir");
-        let root = temp.path().join("project");
-        fs::create_dir_all(&root).expect("create project dir");
-        let config_file = create_config(&root, "templates");
-        let templates_dir = root.join("templates");
-        fs::create_dir_all(&templates_dir).expect("create templates dir");
-        fs::write(
-            templates_dir.join("daily.md"),
+        let (root, service) = create_test_project(
+            temp.path(),
             "{{ ui.text_input(\"name\", \"anon\") }}",
-        )
-        .expect("write template");
-        let service = service(temp.path());
-        trust_config(&service, &config_file);
+        );
         let _guard = CwdGuard::enter(&root);
         // A provider whose queued answer must never be consulted once
         // `--no-input` is set.
@@ -642,15 +573,8 @@ mod tests {
     #[test]
     fn run_interactive_uses_provider_to_pick_template() {
         let temp = tempfile::tempdir().expect("create temp dir");
-        let root = temp.path().join("project");
-        fs::create_dir_all(&root).expect("create project dir");
-        let config_file = create_config(&root, "templates");
-        let templates_dir = root.join("templates");
-        fs::create_dir_all(&templates_dir).expect("create templates dir");
-        fs::write(templates_dir.join("daily.md"), "hello interactive")
-            .expect("write template");
-        let service = service(temp.path());
-        trust_config(&service, &config_file);
+        let (root, service) =
+            create_test_project(temp.path(), "hello interactive");
         let _guard = CwdGuard::enter(&root);
         let provider: Arc<dyn DialogProvider> =
             Arc::new(crate::PresetDialogProvider::new().with_select(0));
@@ -669,15 +593,7 @@ mod tests {
     fn run_interactive_in_non_interactive_session_fails_with_picker_not_interactive()
      {
         let temp = tempfile::tempdir().expect("create temp dir");
-        let root = temp.path().join("project");
-        fs::create_dir_all(&root).expect("create project dir");
-        let config_file = create_config(&root, "templates");
-        let templates_dir = root.join("templates");
-        fs::create_dir_all(&templates_dir).expect("create templates dir");
-        fs::write(templates_dir.join("daily.md"), "hello")
-            .expect("write template");
-        let service = service(temp.path());
-        trust_config(&service, &config_file);
+        let (root, service) = create_test_project(temp.path(), "hello");
         let _guard = CwdGuard::enter(&root);
 
         let error = Template::interactive()
@@ -731,18 +647,8 @@ mod tests {
     #[test]
     fn run_writes_nothing_when_a_ui_prompt_inside_render_is_cancelled() {
         let temp = tempfile::tempdir().expect("create temp dir");
-        let root = temp.path().join("project");
-        fs::create_dir_all(&root).expect("create project dir");
-        let config_file = create_config(&root, "templates");
-        let templates_dir = root.join("templates");
-        fs::create_dir_all(&templates_dir).expect("create templates dir");
-        fs::write(
-            templates_dir.join("daily.md"),
-            "{{ ui.confirm(\"Continue?\") }}",
-        )
-        .expect("write template");
-        let service = service(temp.path());
-        trust_config(&service, &config_file);
+        let (root, service) =
+            create_test_project(temp.path(), "{{ ui.confirm(\"Continue?\") }}");
         let _guard = CwdGuard::enter(&root);
         let provider: Arc<dyn DialogProvider> =
             Arc::new(CancellingDialogProvider);
