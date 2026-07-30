@@ -52,7 +52,7 @@ impl Source {
 /// expression. A well-formed field path that a given [`IndexRecord`] simply
 /// does not have a value for resolves to [`FieldValue::Null`] instead of
 /// erroring.
-#[derive(Clone, Debug, Eq, Error, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Error)]
 pub(crate) enum QueryError {
     /// A field path was empty, used an unknown `file.*` accessor, or had
     /// unexpected `.` structure.
@@ -85,6 +85,95 @@ pub(crate) enum QueryError {
     },
 }
 
+/// One page-level query result: a [`FileRecord`] paired with its [`Note`].
+///
+/// Exposes both `file.*` fields and Note Metadata (frontmatter, inline
+/// fields, tags) through one value for Template and CLI callers.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct IndexRecord {
+    file: FileRecord,
+    note: Note,
+    /// Set by [`QueryOutcome::flatten`]: overrides resolution of one field
+    /// path with a single element taken from that field's original list
+    /// value.
+    flattened: Option<(FieldPath, FieldValue)>,
+}
+
+impl IndexRecord {
+    /// Pairs `file` with its parsed `note`.
+    pub(super) fn new(file: FileRecord, note: Note) -> Self {
+        Self {
+            file,
+            note,
+            flattened: None,
+        }
+    }
+
+    /// The indexed file's general metadata.
+    #[inline]
+    #[must_use]
+    pub(crate) fn file(&self) -> &FileRecord {
+        &self.file
+    }
+
+    /// The indexed file's parsed Note Metadata.
+    #[inline]
+    #[must_use]
+    pub(crate) fn note(&self) -> &Note {
+        &self.note
+    }
+
+    /// Resolves `path` against this record's `file.*` metadata or Note
+    /// Metadata (frontmatter fields, inline fields, and `tags`).
+    ///
+    /// Frontmatter fields take precedence over an inline field with the same
+    /// key (see [`Note::fields`]). A well-formed path this record has no
+    /// value for (e.g. a frontmatter key it does not define) resolves to
+    /// [`FieldValue::Null`], not an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`QueryError::UnknownFieldPath`] if `path` is malformed; see
+    /// [`FieldPath::parse`].
+    #[inline]
+    pub(crate) fn field(&self, path: &str) -> Result<FieldValue, QueryError> {
+        Ok(self.resolve(&FieldPath::parse(path)?))
+    }
+
+    /// Resolves an already-[parsed](FieldPath::parse) `path`, applying a
+    /// [`Self::flattened`] override first if one matches `path`.
+    fn resolve(&self, path: &FieldPath) -> FieldValue {
+        if let Some((flattened_path, value)) = &self.flattened
+            && flattened_path == path
+        {
+            return value.clone();
+        }
+        match path {
+            FieldPath::File(field) => field.resolve(&self.file),
+            FieldPath::Tags => FieldValue::List(
+                self.note
+                    .tags()
+                    .iter()
+                    .map(|tag| FieldValue::String(tag.as_str().to_owned()))
+                    .collect(),
+            ),
+            FieldPath::Metadata(key) => self
+                .note
+                .fields()
+                .find(|field| field.key() == key)
+                .map_or(FieldValue::Null, |field| field.value().clone()),
+        }
+    }
+
+    /// Returns this record with `path` overridden to resolve to `value`, for
+    /// one exploded row produced by [`QueryOutcome::flatten`].
+    #[must_use]
+    fn with_flattened(mut self, path: FieldPath, value: FieldValue) -> Self {
+        self.flattened = Some((path, value));
+        self
+    }
+}
+
 /// A query field path, resolved once per [`QueryOutcome`] transformation and
 /// then applied to every [`IndexRecord`].
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -98,7 +187,7 @@ enum FieldPath {
 }
 
 /// General `file.*` metadata accessors available to query field paths.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
 enum FileField {
     /// [`FileRecord::path`].
     Path,
@@ -205,95 +294,6 @@ impl FileField {
                 FieldValue::Date(file.modified_at().to_date_string())
             }
         }
-    }
-}
-
-/// One page-level query result: a [`FileRecord`] paired with its [`Note`].
-///
-/// Exposes both `file.*` fields and Note Metadata (frontmatter, inline
-/// fields, tags) through one value for Template and CLI callers.
-#[derive(Clone, Debug, PartialEq)]
-pub(crate) struct IndexRecord {
-    file: FileRecord,
-    note: Note,
-    /// Set by [`QueryOutcome::flatten`]: overrides resolution of one field
-    /// path with a single element taken from that field's original list
-    /// value.
-    flattened: Option<(FieldPath, FieldValue)>,
-}
-
-impl IndexRecord {
-    /// Pairs `file` with its parsed `note`.
-    pub(super) fn new(file: FileRecord, note: Note) -> Self {
-        Self {
-            file,
-            note,
-            flattened: None,
-        }
-    }
-
-    /// The indexed file's general metadata.
-    #[inline]
-    #[must_use]
-    pub(crate) fn file(&self) -> &FileRecord {
-        &self.file
-    }
-
-    /// The indexed file's parsed Note Metadata.
-    #[inline]
-    #[must_use]
-    pub(crate) fn note(&self) -> &Note {
-        &self.note
-    }
-
-    /// Resolves `path` against this record's `file.*` metadata or Note
-    /// Metadata (frontmatter fields, inline fields, and `tags`).
-    ///
-    /// Frontmatter fields take precedence over an inline field with the same
-    /// key (see [`Note::fields`]). A well-formed path this record has no
-    /// value for (e.g. a frontmatter key it does not define) resolves to
-    /// [`FieldValue::Null`], not an error.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`QueryError::UnknownFieldPath`] if `path` is malformed; see
-    /// [`FieldPath::parse`].
-    #[inline]
-    pub(crate) fn field(&self, path: &str) -> Result<FieldValue, QueryError> {
-        Ok(self.resolve(&FieldPath::parse(path)?))
-    }
-
-    /// Resolves an already-[parsed](FieldPath::parse) `path`, applying a
-    /// [`Self::flattened`] override first if one matches `path`.
-    fn resolve(&self, path: &FieldPath) -> FieldValue {
-        if let Some((flattened_path, value)) = &self.flattened
-            && flattened_path == path
-        {
-            return value.clone();
-        }
-        match path {
-            FieldPath::File(field) => field.resolve(&self.file),
-            FieldPath::Tags => FieldValue::List(
-                self.note
-                    .tags()
-                    .iter()
-                    .map(|tag| FieldValue::String(tag.as_str().to_owned()))
-                    .collect(),
-            ),
-            FieldPath::Metadata(key) => self
-                .note
-                .fields()
-                .find(|field| field.key() == key)
-                .map_or(FieldValue::Null, |field| field.value().clone()),
-        }
-    }
-
-    /// Returns this record with `path` overridden to resolve to `value`, for
-    /// one exploded row produced by [`QueryOutcome::flatten`].
-    #[must_use]
-    fn with_flattened(mut self, path: FieldPath, value: FieldValue) -> Self {
-        self.flattened = Some((path, value));
-        self
     }
 }
 
@@ -494,7 +494,7 @@ impl<'a> IntoIterator for &'a QueryOutcome {
 }
 
 /// A comparison operator parsed from a [`QueryOutcome::filter`] expression.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
 enum CompareOp {
     /// `==`
     Eq,
