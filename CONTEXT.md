@@ -149,10 +149,10 @@ _Avoid_: QueryRow, page, record
 ### Pipeline Query
 A template-side query composed by chaining methods on the `query` namespace Object and the `QueryOutcome` values it returns. Non-terminal methods (`where`/`filter`, `sort`, `limit`, `group_by`, `flatten`) accept and return a `QueryOutcome`; terminal methods (`table`, `list`, `count`) accept a `QueryOutcome` and return a string. Terminal methods are also exposed as pipeline filters for template authors who prefer that syntax; non-terminal transformations are method calls only — there is no pipeline-filter form of `where`/`sort`/`limit`/`group_by`/`flatten`.
 
-`query` mirrors `Source`'s variants: `query.from_tags(...)` and `query.from_folder(...)` start a page-level query from a tag or folder source; an all-Notes default covers `Source::All`. `tasks.from_tags(...)`/`tasks.from_folder(...)` is the parallel task-level namespace.
+`query` mirrors `Source`'s variants: `query.all()` selects every indexed Note, `query.from_tags(...)` and `query.from_folder(...)` start a page-level query from a tag or folder source. `tasks.from_tags(...)`/`tasks.from_folder(...)` is the parallel task-level namespace.
 
 ```jinja
-{% for note in query.from_tags("#book").where("rating > 7").sort("rating", "desc") %}
+{% for note in query.from_tags("#book").where("rating > 7").sort("rating", true) %}
   - {{ note.file.name }} ({{ note.rating }})
 {% endfor %}
 
