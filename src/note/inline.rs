@@ -6,7 +6,7 @@
 
 use std::sync::LazyLock;
 
-use regex::{Captures, Regex};
+use regex::Regex;
 
 use super::{
     FieldValue, InlineField, InlineFieldForm, Outlink, Tag,
@@ -96,41 +96,20 @@ pub(super) fn extract_task_inline_fields(text: &str) -> Vec<InlineField> {
     extract_inline_fields_with_task_shorthands(text, true)
 }
 
+/// Extracts inline fields from `text`, optionally including task emoji
+/// shorthands.
 fn extract_inline_fields_with_task_shorthands(
     text: &str,
     include_task_shorthands: bool,
 ) -> Vec<InlineField> {
-    let mut matches: Vec<FieldMatch> = Vec::new();
-    for caps in BODY_FIELD_RE.captures_iter(text) {
-        push_body_field(&mut matches, &caps);
-    }
-    scan_wrapped_fields(
-        text,
-        '[',
-        ']',
-        InlineFieldForm::VisibleKey,
-        &mut matches,
-    );
-    scan_wrapped_fields(
-        text,
-        '(',
-        ')',
-        InlineFieldForm::HiddenKey,
-        &mut matches,
-    );
+    let mut lexer = InlineFieldLexer::new(text);
+    lexer.scan_body_fields();
+    lexer.scan_wrapped_fields(BracketPair::VISIBLE);
+    lexer.scan_wrapped_fields(BracketPair::HIDDEN);
     if include_task_shorthands {
-        push_task_shorthand_fields(text, &mut matches);
+        lexer.scan_task_shorthands();
     }
-    matches.sort_by_key(|field| field.range.start());
-    let mut filtered = Vec::new();
-    let mut last_end = 0;
-    for field_match in matches {
-        if filtered.is_empty() || last_end <= field_match.range.start() {
-            last_end = field_match.range.end();
-            filtered.push(field_match.field);
-        }
-    }
-    filtered
+    lexer.finish()
 }
 
 /// Extracts Markdown tags from `text` in encounter order.
@@ -150,347 +129,415 @@ pub(super) fn extract_tags(text: &str) -> Vec<Tag> {
         .collect()
 }
 
+/// Bracket delimiters and their corresponding [`InlineFieldForm`].
+#[derive(Copy, Clone, Debug)]
+struct BracketPair {
+    open: char,
+    close: char,
+    form: InlineFieldForm,
+}
+
+impl BracketPair {
+    const HIDDEN: Self = Self {
+        open: '(',
+        close: ')',
+        form: InlineFieldForm::HiddenKey,
+    };
+    const VISIBLE: Self = Self {
+        open: '[',
+        close: ']',
+        form: InlineFieldForm::VisibleKey,
+    };
+}
+
+/// Candidate inline field match with its byte range in source text.
 struct FieldMatch {
     range: ByteRange,
     field: InlineField,
 }
 
-/// Pushes a captured body field and its byte range onto `matches`.
-fn push_body_field(matches: &mut Vec<FieldMatch>, caps: &Captures<'_>) {
-    let (Some(whole), Some(key), Some(value)) =
-        (caps.get(0), caps.get(1), caps.get(2))
-    else {
-        return;
-    };
-    matches.push(FieldMatch {
-        range: ByteRange::new(whole.start(), whole.end()),
-        field: InlineField::new(
-            key.as_str().trim(),
-            parse_inline_value_str(value.as_str()),
-            InlineFieldForm::Body,
-        ),
-    });
+/// Stateful lexer for extracting [`InlineField`] candidates from Markdown text.
+struct InlineFieldLexer<'a> {
+    text: &'a str,
+    source: ByteSource<'a>,
+    matches: Vec<FieldMatch>,
 }
 
-fn scan_wrapped_fields(
-    text: &str,
-    open: char,
-    close: char,
-    form: InlineFieldForm,
-    matches: &mut Vec<FieldMatch>,
-) {
-    let source = ByteSource::new(text);
-    let mut next = 0;
-    while let Some(start) = source.find_char_from(next, open) {
-        if let Some(field_match) =
-            find_wrapped_field(text, start, open, close, form)
-        {
-            next = field_match.range.end();
-            matches.push(field_match);
-        } else {
-            next = source.advance_char(start, open);
+impl<'a> InlineFieldLexer<'a> {
+    #[inline]
+    fn new(text: &'a str) -> Self {
+        Self {
+            text,
+            source: ByteSource::new(text),
+            matches: Vec::new(),
         }
     }
-}
 
-fn find_wrapped_field(
-    text: &str,
-    start: usize,
-    open: char,
-    close: char,
-    form: InlineFieldForm,
-) -> Option<FieldMatch> {
-    let source = ByteSource::new(text);
-    let (key, value_start) =
-        find_separator(text, source.advance_char(start, open))?;
-    if key.is_empty()
-        || key.chars().any(|ch| matches!(ch, '[' | ']' | '(' | ')'))
-    {
-        return None;
-    }
-    let (value, end) = find_closing(text, value_start, open, close)?;
-    Some(FieldMatch {
-        range: ByteRange::new(start, end),
-        field: InlineField::new(key, parse_inline_value_str(value), form),
-    })
-}
-
-fn find_separator(text: &str, start: usize) -> Option<(&str, usize)> {
-    let source = ByteSource::new(text);
-    let separator = source.find_str_from(start, "::")?;
-    Some((source.get(start..separator)?.trim(), source.advance(separator, 2)))
-}
-
-fn find_closing(
-    text: &str,
-    start: usize,
-    open: char,
-    close: char,
-) -> Option<(&str, usize)> {
-    let source = ByteSource::new(text);
-    let mut nesting = 0usize;
-    let mut escaped = false;
-    for (offset, ch) in source.from(start)?.char_indices() {
-        if ch == '\\' {
-            escaped = !escaped;
-            continue;
-        }
-        if escaped {
-            escaped = false;
-            continue;
-        }
-        if ch == open {
-            nesting = nesting.saturating_add(1);
-        } else if ch == close {
-            if nesting == 0 {
-                let end = source.advance(start, offset);
-                return Some((
-                    source.get(start..end)?.trim(),
-                    source.advance_char(end, ch),
-                ));
-            }
-            nesting = nesting.saturating_sub(1);
-        } else {
-            // Other characters do not affect wrapper nesting.
+    fn scan_body_fields(&mut self) {
+        for caps in BODY_FIELD_RE.captures_iter(self.text) {
+            let (Some(whole), Some(key), Some(value)) =
+                (caps.get(0), caps.get(1), caps.get(2))
+            else {
+                continue;
+            };
+            self.matches.push(FieldMatch {
+                range: ByteRange::new(whole.start(), whole.end()),
+                field: InlineField::new(
+                    key.as_str().trim(),
+                    parse_inline_value_str(value.as_str()),
+                    InlineFieldForm::Body,
+                ),
+            });
         }
     }
-    None
-}
 
-fn push_task_shorthand_fields(text: &str, matches: &mut Vec<FieldMatch>) {
-    let source = ByteSource::new(text);
-    for &(emoji, key) in TASK_SHORTHAND_FIELDS {
+    fn scan_wrapped_fields(&mut self, pair: BracketPair) {
         let mut next = 0;
-        while let Some(start) = source.find_str_from(next, emoji) {
-            let value_start = source.advance(start, emoji.len());
-            let value_end =
-                source.advance(value_start, TASK_SHORTHAND_DATE_LEN);
-            if let Some(value) = source.get(value_start..value_end)
-                && is_iso_date(value)
-            {
-                matches.push(FieldMatch {
-                    range: ByteRange::new(start, value_end),
-                    field: InlineField::new(
-                        key,
-                        FieldValue::Date(value.to_owned()),
-                        InlineFieldForm::Body,
-                    ),
-                });
+        while let Some(start) = self.source.find_char_from(next, pair.open) {
+            if let Some(field_match) = self.find_wrapped_field(start, pair) {
+                next = field_match.range.end();
+                self.matches.push(field_match);
+            } else {
+                next = self.source.advance_char(start, pair.open);
             }
-            next = value_start;
         }
+    }
+
+    fn find_wrapped_field(
+        &self,
+        start: usize,
+        pair: BracketPair,
+    ) -> Option<FieldMatch> {
+        let (key, value_start) =
+            self.find_separator(self.source.advance_char(start, pair.open))?;
+        if key.is_empty()
+            || key.chars().any(|ch| matches!(ch, '[' | ']' | '(' | ')'))
+        {
+            return None;
+        }
+        let (value, end) = self.find_closing(value_start, pair)?;
+        Some(FieldMatch {
+            range: ByteRange::new(start, end),
+            field: InlineField::new(
+                key,
+                parse_inline_value_str(value),
+                pair.form,
+            ),
+        })
+    }
+
+    fn find_separator(&self, start: usize) -> Option<(&'a str, usize)> {
+        let separator = self.source.find_str_from(start, "::")?;
+        Some((
+            self.source.get(start..separator)?.trim(),
+            self.source.advance(separator, 2),
+        ))
+    }
+
+    fn find_closing(
+        &self,
+        start: usize,
+        pair: BracketPair,
+    ) -> Option<(&'a str, usize)> {
+        let mut nesting = 0usize;
+        let mut escaped = false;
+        for (offset, ch) in self.source.from(start)?.char_indices() {
+            if ch == '\\' {
+                escaped = !escaped;
+                continue;
+            }
+            if escaped {
+                escaped = false;
+                continue;
+            }
+            if ch == pair.open {
+                nesting = nesting.saturating_add(1);
+            } else if ch == pair.close {
+                if nesting == 0 {
+                    let end = self.source.advance(start, offset);
+                    return Some((
+                        self.source.get(start..end)?.trim(),
+                        self.source.advance_char(end, ch),
+                    ));
+                }
+                nesting = nesting.saturating_sub(1);
+            } else {
+                // Other characters do not affect wrapper nesting.
+            }
+        }
+        None
+    }
+
+    fn scan_task_shorthands(&mut self) {
+        for &(emoji, key) in TASK_SHORTHAND_FIELDS {
+            let mut next = 0;
+            while let Some(start) = self.source.find_str_from(next, emoji) {
+                let value_start = self.source.advance(start, emoji.len());
+                let value_end =
+                    self.source.advance(value_start, TASK_SHORTHAND_DATE_LEN);
+                if let Some(value) = self.source.get(value_start..value_end)
+                    && is_iso_date(value)
+                {
+                    self.matches.push(FieldMatch {
+                        range: ByteRange::new(start, value_end),
+                        field: InlineField::new(
+                            key,
+                            FieldValue::Date(value.to_owned()),
+                            InlineFieldForm::Body,
+                        ),
+                    });
+                }
+                next = value_start;
+            }
+        }
+    }
+
+    fn finish(mut self) -> Vec<InlineField> {
+        self.matches.sort_by_key(|field| field.range.start());
+        let mut filtered = Vec::new();
+        let mut last_end = 0;
+        for field_match in self.matches {
+            if filtered.is_empty() || last_end <= field_match.range.start() {
+                last_end = field_match.range.end();
+                filtered.push(field_match.field);
+            }
+        }
+        filtered
     }
 }
 
 /// Parses raw inline value text into a [`FieldValue`].
 fn parse_inline_value_str(raw: &str) -> FieldValue {
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        return FieldValue::Null;
-    }
-    if let Some(values) = parse_comma_list(trimmed) {
-        return FieldValue::List(values);
-    }
-    if let Some((value, end)) = parse_atom_at(trimmed, 0)
-        && skip_whitespace(trimmed, end) == trimmed.len()
-    {
-        return value;
-    }
-    FieldValue::String(trimmed.to_owned())
+    ValueParser::new(raw).parse()
+}
+struct ValueParser<'a> {
+    text: &'a str,
+    source: ByteSource<'a>,
 }
 
-fn parse_comma_list(s: &str) -> Option<Vec<FieldValue>> {
-    let source = ByteSource::new(s);
-    let (first, mut pos) = parse_atom_at(s, 0)?;
-    pos = skip_whitespace(s, pos);
-    if !s[pos..].starts_with(',') {
-        return None;
+impl<'a> ValueParser<'a> {
+    #[inline]
+    fn new(text: &'a str) -> Self {
+        Self {
+            text,
+            source: ByteSource::new(text),
+        }
     }
-    let mut values = vec![first];
-    loop {
-        pos = source.advance(pos, 1);
-        pos = skip_whitespace(s, pos);
-        if pos == s.len() {
-            return Some(values);
+
+    fn parse(&self) -> FieldValue {
+        let trimmed = self.text.trim();
+        if trimmed.is_empty() {
+            return FieldValue::Null;
         }
-        let (value, end) = parse_atom_at(s, pos)?;
-        values.push(value);
-        pos = skip_whitespace(s, end);
-        if pos == s.len() {
-            return Some(values);
+        let sub_parser = ValueParser::new(trimmed);
+        if let Some(values) = sub_parser.parse_comma_list() {
+            return FieldValue::List(values);
         }
-        if !s[pos..].starts_with(',') {
+        if let Some((value, end)) = sub_parser.parse_atom_at(0)
+            && sub_parser.skip_whitespace(end) == sub_parser.source.len()
+        {
+            return value;
+        }
+        FieldValue::String(trimmed.to_owned())
+    }
+
+    fn parse_comma_list(&self) -> Option<Vec<FieldValue>> {
+        let (first, mut pos) = self.parse_atom_at(0)?;
+        pos = self.skip_whitespace(pos);
+        if !self.source.from(pos)?.starts_with(',') {
             return None;
         }
-    }
-}
-
-fn parse_atom_at(s: &str, pos: usize) -> Option<(FieldValue, usize)> {
-    let pos = skip_whitespace(s, pos);
-    parse_quoted_string_at(s, pos)
-        .or_else(|| parse_link_at(s, pos))
-        .or_else(|| parse_duration_at(s, pos))
-        .or_else(|| parse_bool_at(s, pos))
-        .or_else(|| parse_null_at(s, pos))
-        .or_else(|| parse_date_at(s, pos))
-        .or_else(|| parse_number_at(s, pos))
-        .or_else(|| parse_tag_at(s, pos))
-}
-
-fn parse_link_at(s: &str, pos: usize) -> Option<(FieldValue, usize)> {
-    let source = ByteSource::new(s);
-    let (link, consumed) = Outlink::parse_wikilink_prefix(source.from(pos)?)?;
-    Some((FieldValue::Link(link), source.advance(pos, consumed)))
-}
-
-fn parse_quoted_string_at(s: &str, pos: usize) -> Option<(FieldValue, usize)> {
-    let source = ByteSource::new(s);
-    let rest = source.from(pos)?.strip_prefix('"')?;
-    let mut value = String::new();
-    let mut escaped = false;
-    for (offset, ch) in rest.char_indices() {
-        if escaped {
-            value.push(ch);
-            escaped = false;
-        } else if ch == '\\' {
-            escaped = true;
-        } else if ch == '"' {
-            return Some((
-                FieldValue::String(value),
-                source.advance(source.advance(pos, offset), 2),
-            ));
-        } else {
-            value.push(ch);
+        let mut values = vec![first];
+        loop {
+            pos = self.source.advance(pos, 1);
+            pos = self.skip_whitespace(pos);
+            if pos == self.source.len() {
+                return Some(values);
+            }
+            let (value, end) = self.parse_atom_at(pos)?;
+            values.push(value);
+            pos = self.skip_whitespace(end);
+            if pos == self.source.len() {
+                return Some(values);
+            }
+            if !self.source.from(pos)?.starts_with(',') {
+                return None;
+            }
         }
     }
-    None
-}
 
-fn parse_duration_at(s: &str, pos: usize) -> Option<(FieldValue, usize)> {
-    let source = ByteSource::new(s);
-    let mut end = parse_duration_part_end(s, pos)?;
-    loop {
-        let separator = skip_whitespace(s, end);
-        if separator == s.len() {
-            return Some((FieldValue::Duration(s[pos..end].to_owned()), end));
+    fn parse_atom_at(&self, pos: usize) -> Option<(FieldValue, usize)> {
+        let pos = self.skip_whitespace(pos);
+        self.parse_quoted_string_at(pos)
+            .or_else(|| self.parse_link_at(pos))
+            .or_else(|| self.parse_duration_at(pos))
+            .or_else(|| self.parse_bool_at(pos))
+            .or_else(|| self.parse_null_at(pos))
+            .or_else(|| self.parse_date_at(pos))
+            .or_else(|| self.parse_number_at(pos))
+            .or_else(|| self.parse_tag_at(pos))
+    }
+
+    fn parse_link_at(&self, pos: usize) -> Option<(FieldValue, usize)> {
+        let (link, consumed) =
+            Outlink::parse_wikilink_prefix(self.source.from(pos)?)?;
+        Some((FieldValue::Link(link), self.source.advance(pos, consumed)))
+    }
+
+    fn parse_quoted_string_at(
+        &self,
+        pos: usize,
+    ) -> Option<(FieldValue, usize)> {
+        let rest = self.source.from(pos)?.strip_prefix('"')?;
+        let mut value = String::new();
+        let mut escaped = false;
+        for (offset, ch) in rest.char_indices() {
+            if escaped {
+                value.push(ch);
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == '"' {
+                return Some((
+                    FieldValue::String(value),
+                    self.source.advance(self.source.advance(pos, offset), 2),
+                ));
+            } else {
+                value.push(ch);
+            }
         }
-        let next = if s[separator..].starts_with(',') {
-            skip_whitespace(s, source.advance(separator, 1))
-        } else {
-            separator
-        };
-        if let Some(part_end) = parse_duration_part_end(s, next) {
-            end = part_end;
-        } else if separator == end {
-            return Some((FieldValue::Duration(s[pos..end].to_owned()), end));
-        } else {
+        None
+    }
+
+    fn parse_duration_at(&self, pos: usize) -> Option<(FieldValue, usize)> {
+        let mut end = self.parse_duration_part_end(pos)?;
+        loop {
+            let separator = self.skip_whitespace(end);
+            if separator == self.source.len() {
+                let raw = self.source.get(pos..end)?;
+                return Some((FieldValue::Duration(raw.to_owned()), end));
+            }
+            let next = if self.source.from(separator)?.starts_with(',') {
+                self.skip_whitespace(self.source.advance(separator, 1))
+            } else {
+                separator
+            };
+            if let Some(part_end) = self.parse_duration_part_end(next) {
+                end = part_end;
+            } else if separator == end {
+                let raw = self.source.get(pos..end)?;
+                return Some((FieldValue::Duration(raw.to_owned()), end));
+            } else {
+                return None;
+            }
+        }
+    }
+
+    fn parse_duration_part_end(&self, pos: usize) -> Option<usize> {
+        let number_end = self.parse_number_end(pos)?;
+        let unit_start = self.skip_whitespace(number_end);
+        if unit_start == self.source.len() {
             return None;
         }
+        let unit_end = self
+            .source
+            .from(unit_start)?
+            .char_indices()
+            .take_while(|(_, ch)| ch.is_ascii_alphabetic())
+            .map(|(offset, ch)| self.source.token_end(unit_start, offset, ch))
+            .last()?;
+        let unit = self.source.get(unit_start..unit_end)?;
+        is_duration_unit(unit).then_some(unit_end)
     }
-}
 
-fn parse_duration_part_end(s: &str, pos: usize) -> Option<usize> {
-    let source = ByteSource::new(s);
-    let number_end = parse_number_end(s, pos)?;
-    let unit_start = skip_whitespace(s, number_end);
-    if unit_start == s.len() {
-        return None;
+    fn parse_bool_at(&self, pos: usize) -> Option<(FieldValue, usize)> {
+        self.parse_keyword_at(pos, "true")
+            .map(|end| (FieldValue::Bool(true), end))
+            .or_else(|| {
+                self.parse_keyword_at(pos, "false")
+                    .map(|end| (FieldValue::Bool(false), end))
+            })
     }
-    let unit_end = source
-        .from(unit_start)?
-        .char_indices()
-        .take_while(|(_, ch)| ch.is_ascii_alphabetic())
-        .map(|(offset, ch)| source.token_end(unit_start, offset, ch))
-        .last()?;
-    is_duration_unit(&s[unit_start..unit_end]).then_some(unit_end)
+
+    fn parse_null_at(&self, pos: usize) -> Option<(FieldValue, usize)> {
+        self.parse_keyword_at(pos, "null").map(|end| (FieldValue::Null, end))
+    }
+
+    fn parse_keyword_at(&self, pos: usize, keyword: &str) -> Option<usize> {
+        let end = self.source.advance(pos, keyword.len());
+        let token = self.source.get(pos..end)?;
+        token.eq_ignore_ascii_case(keyword).then_some(())?;
+        self.is_atom_boundary(end).then_some(end)
+    }
+
+    fn parse_date_at(&self, pos: usize) -> Option<(FieldValue, usize)> {
+        let end = self.source.advance(pos, 10);
+        let date = self.source.get(pos..end)?;
+        (is_iso_date(date) && self.is_atom_boundary(end))
+            .then(|| (FieldValue::Date(date.to_owned()), end))
+    }
+
+    fn parse_number_at(&self, pos: usize) -> Option<(FieldValue, usize)> {
+        let end = self.parse_number_end(pos)?;
+        let raw = self.source.get(pos..end)?;
+        let num = raw.parse::<f64>().ok()?;
+        (num.is_finite() && self.is_atom_boundary(end))
+            .then_some((FieldValue::Number(num), end))
+    }
+
+    fn parse_number_end(&self, pos: usize) -> Option<usize> {
+        self.source
+            .from(pos)?
+            .char_indices()
+            .take_while(|(_, ch)| {
+                ch.is_ascii_digit() || matches!(ch, '+' | '-' | '.' | 'e' | 'E')
+            })
+            .map(|(offset, ch)| self.source.token_end(pos, offset, ch))
+            .last()
+    }
+
+    fn parse_tag_at(&self, pos: usize) -> Option<(FieldValue, usize)> {
+        let rest = self.source.from(pos)?.strip_prefix('#')?;
+        let mut chars = rest.chars();
+        chars.next().filter(|ch| ch.is_alphabetic())?;
+        let end = self
+            .source
+            .from(pos)?
+            .char_indices()
+            .skip(1)
+            .take_while(|(_, ch)| {
+                ch.is_alphanumeric() || matches!(ch, '_' | '/' | '-')
+            })
+            .map(|(offset, ch)| self.source.token_end(pos, offset, ch))
+            .last()
+            .unwrap_or_else(|| self.source.advance(pos, 1));
+        let raw = self.source.get(pos..end)?;
+        Some((FieldValue::String(raw.to_owned()), end))
+    }
+
+    fn is_atom_boundary(&self, pos: usize) -> bool {
+        self.source.from(pos).is_some_and(|source| {
+            source
+                .chars()
+                .next()
+                .is_none_or(|ch| ch.is_whitespace() || ch == ',')
+        })
+    }
+
+    fn skip_whitespace(&self, pos: usize) -> usize {
+        self.source
+            .from(pos)
+            .and_then(|rest| {
+                rest.char_indices()
+                    .find(|(_, ch)| !ch.is_whitespace())
+                    .map(|(offset, _)| self.source.advance(pos, offset))
+            })
+            .unwrap_or_else(|| self.source.len())
+    }
 }
 
 fn is_duration_unit(unit: &str) -> bool {
     DURATION_UNITS.iter().any(|candidate| unit.eq_ignore_ascii_case(candidate))
-}
-
-fn parse_bool_at(s: &str, pos: usize) -> Option<(FieldValue, usize)> {
-    parse_keyword_at(s, pos, "true")
-        .map(|end| (FieldValue::Bool(true), end))
-        .or_else(|| {
-            parse_keyword_at(s, pos, "false")
-                .map(|end| (FieldValue::Bool(false), end))
-        })
-}
-
-fn parse_null_at(s: &str, pos: usize) -> Option<(FieldValue, usize)> {
-    parse_keyword_at(s, pos, "null").map(|end| (FieldValue::Null, end))
-}
-
-fn parse_keyword_at(s: &str, pos: usize, keyword: &str) -> Option<usize> {
-    let source = ByteSource::new(s);
-    let end = source.advance(pos, keyword.len());
-    let token = source.get(pos..end)?;
-    token.eq_ignore_ascii_case(keyword).then_some(())?;
-    is_atom_boundary(s, end).then_some(end)
-}
-
-fn parse_date_at(s: &str, pos: usize) -> Option<(FieldValue, usize)> {
-    let source = ByteSource::new(s);
-    let end = source.advance(pos, 10);
-    let date = source.get(pos..end)?;
-    (is_iso_date(date) && is_atom_boundary(s, end))
-        .then(|| (FieldValue::Date(date.to_owned()), end))
-}
-
-fn parse_number_at(s: &str, pos: usize) -> Option<(FieldValue, usize)> {
-    let end = parse_number_end(s, pos)?;
-    let num = s[pos..end].parse::<f64>().ok()?;
-    (num.is_finite() && is_atom_boundary(s, end))
-        .then_some((FieldValue::Number(num), end))
-}
-
-fn parse_number_end(s: &str, pos: usize) -> Option<usize> {
-    let source = ByteSource::new(s);
-    source
-        .from(pos)?
-        .char_indices()
-        .take_while(|(_, ch)| {
-            ch.is_ascii_digit() || matches!(ch, '+' | '-' | '.' | 'e' | 'E')
-        })
-        .map(|(offset, ch)| source.token_end(pos, offset, ch))
-        .last()
-}
-
-fn parse_tag_at(s: &str, pos: usize) -> Option<(FieldValue, usize)> {
-    let source = ByteSource::new(s);
-    let rest = source.from(pos)?.strip_prefix('#')?;
-    let mut chars = rest.chars();
-    chars.next().filter(|ch| ch.is_alphabetic())?;
-    let end = source
-        .from(pos)?
-        .char_indices()
-        .skip(1)
-        .take_while(|(_, ch)| {
-            ch.is_alphanumeric() || matches!(ch, '_' | '/' | '-')
-        })
-        .map(|(offset, ch)| source.token_end(pos, offset, ch))
-        .last()
-        .unwrap_or_else(|| source.advance(pos, 1));
-    Some((FieldValue::String(s[pos..end].to_owned()), end))
-}
-
-fn is_atom_boundary(s: &str, pos: usize) -> bool {
-    ByteSource::new(s).from(pos).is_some_and(|source| {
-        source.chars().next().is_none_or(|ch| ch.is_whitespace() || ch == ',')
-    })
-}
-
-fn skip_whitespace(s: &str, pos: usize) -> usize {
-    let source = ByteSource::new(s);
-    source
-        .from(pos)
-        .and_then(|rest| {
-            rest.char_indices()
-                .find(|(_, ch)| !ch.is_whitespace())
-                .map(|(offset, _)| source.advance(pos, offset))
-        })
-        .unwrap_or_else(|| source.len())
 }
 
 #[cfg(test)]
