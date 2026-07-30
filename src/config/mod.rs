@@ -19,9 +19,9 @@
 )]
 
 pub(crate) use discovery::{DiscoveryError, DiscoveryScope, LOCAL_CONFIG_FILE};
-pub(crate) use domain::Config;
 #[cfg(test)]
 pub(crate) use file::{Discovered, LocalConfigFile};
+pub(crate) use model::Config;
 pub(crate) use raw::{RawConfig, RawTemplateConfig};
 pub(crate) use service::{ConfigLoadError, ConfigService};
 pub(crate) use store::ConfigStateError;
@@ -30,8 +30,8 @@ pub(crate) use trust::ConfigTrustStatus;
 pub(crate) use trust::TrustRequest;
 
 mod discovery;
-mod domain;
 mod file;
+mod model;
 mod raw;
 mod service;
 mod store;

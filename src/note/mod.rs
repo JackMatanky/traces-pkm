@@ -13,15 +13,14 @@
 )]
 
 mod byte;
-mod domain;
 mod lexer;
 mod links;
 mod lists;
 mod metadata;
+mod model;
 mod parser;
 mod tag;
 
-pub(crate) use domain::Note;
 pub(crate) use links::{LinkType, Outlink};
 pub(crate) use lists::{List, ListItem, TaskStatus};
 #[expect(
@@ -32,5 +31,6 @@ pub(crate) use metadata::{
     FieldValue, Frontmatter, InlineField, InlineFieldForm, MetadataField,
     RawFrontmatter,
 };
+pub(crate) use model::Note;
 pub(crate) use parser::parse_markdown;
 pub(crate) use tag::Tag;

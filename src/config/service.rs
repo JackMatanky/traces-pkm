@@ -13,11 +13,11 @@ use super::{
         DiscoveryAnchor, DiscoveryContext, DiscoveryEngine, DiscoveryError,
         DiscoveryOutcome, DiscoveryScope,
     },
-    domain::{Config, TemplateConfig},
     file::{
         ConfigFileError, Discovered as FileDiscovered, GlobalConfigFile,
         LocalConfigFile, Parsed, Tracked, TrustOutcome,
     },
+    model::{Config, TemplateConfig},
     raw::RawConfig,
     store::{ConfigStateError, ConfigStateStore},
     trust::{ConfigTrustStatus, TrustRequest, TrustRequests},
