@@ -191,139 +191,150 @@ fn load_config(service: &ConfigService) -> Result<Config, CliError> {
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
-
-    use pretty_assertions::assert_eq;
-
     use super::*;
 
-    /// Guards the `#[command(subcommand)]` wiring [`run`] depends on:
-    /// `trust::run`'s own tests exercise the trust logic once parsed, but
-    /// nothing else asserts that real `traces trust ...` argv actually
-    /// reaches the [`Commands::Trust`] variant through [`Cli`] at all.
-    #[test]
-    fn trust_argv_parses_to_the_trust_subcommand() {
-        let cli = Cli::try_parse_from(["traces", "trust", "some/path"])
-            .expect("parse trust argv");
+    mod parse {
+        use std::path::Path;
 
-        assert!(matches!(cli.command, Some(Commands::Trust(_))));
-    }
-    #[test]
-    fn untrust_argv_parses_to_the_untrust_subcommand() {
-        let cli = Cli::try_parse_from(["traces", "untrust", "some/path"])
-            .expect("parse untrust argv");
+        use pretty_assertions::assert_eq;
 
-        assert!(matches!(cli.command, Some(Commands::Untrust(_))));
-    }
+        use super::*;
 
-    #[test]
-    fn init_argv_parses_to_the_init_subcommand() {
-        let cli =
-            Cli::try_parse_from(["traces", "init"]).expect("parse init argv");
+        /// Guards the `#[command(subcommand)]` wiring [`run`] depends on:
+        /// `trust::run`'s own tests exercise the trust logic once parsed, but
+        /// nothing else asserts that real `traces trust ...` argv actually
+        /// reaches the [`Commands::Trust`] variant through [`Cli`] at all.
+        #[test]
+        fn trust_argv_maps_to_trust_subcommand() {
+            let cli = Cli::try_parse_from(["traces", "trust", "some/path"])
+                .expect("parse trust argv");
 
-        assert!(matches!(cli.command, Some(Commands::Init(_))));
-    }
+            assert!(matches!(cli.command, Some(Commands::Trust(_))));
+        }
+        #[test]
+        fn untrust_argv_maps_to_untrust_subcommand() {
+            let cli = Cli::try_parse_from(["traces", "untrust", "some/path"])
+                .expect("parse untrust argv");
 
-    #[test]
-    fn index_argv_parses_to_the_index_subcommand() {
-        let cli =
-            Cli::try_parse_from(["traces", "index"]).expect("parse index argv");
+            assert!(matches!(cli.command, Some(Commands::Untrust(_))));
+        }
 
-        assert!(matches!(cli.command, Some(Commands::Index(_))));
-    }
+        #[test]
+        fn init_argv_maps_to_init_subcommand() {
+            let cli = Cli::try_parse_from(["traces", "init"])
+                .expect("parse init argv");
 
-    #[test]
-    fn template_argv_parses_to_the_template_subcommand() {
-        let cli = Cli::try_parse_from(["traces", "template", "-i", "daily"])
-            .expect("parse template argv");
+            assert!(matches!(cli.command, Some(Commands::Init(_))));
+        }
 
-        assert!(matches!(
-            &cli.command,
-            Some(Commands::Template(args)) if args.name().and_then(Path::to_str) == Some("daily")
-        ));
-    }
-    #[test]
-    fn template_positional_argv_parses_to_the_template_subcommand() {
-        let cli = Cli::try_parse_from(["traces", "template", "daily"])
-            .expect("parse template positional argv");
+        #[test]
+        fn index_argv_maps_to_index_subcommand() {
+            let cli = Cli::try_parse_from(["traces", "index"])
+                .expect("parse index argv");
 
-        assert!(matches!(
-            &cli.command,
-            Some(Commands::Template(args)) if args.name().and_then(Path::to_str) == Some("daily")
-        ));
-    }
+            assert!(matches!(cli.command, Some(Commands::Index(_))));
+        }
 
-    #[test]
-    fn tmpl_alias_parses_to_the_template_subcommand() {
-        let cli = Cli::try_parse_from(["traces", "tmpl", "-i", "daily"])
-            .expect("parse tmpl argv");
+        #[test]
+        fn template_argv_maps_to_template_subcommand() {
+            let cli =
+                Cli::try_parse_from(["traces", "template", "-i", "daily"])
+                    .expect("parse template argv");
 
-        assert!(matches!(
-            &cli.command,
-            Some(Commands::Template(args)) if args.name().and_then(Path::to_str) == Some("daily")
-        ));
-    }
+            assert!(matches!(
+                &cli.command,
+                Some(Commands::Template(args))
+                    if args.name().and_then(Path::to_str) == Some("daily")
+            ));
+        }
 
-    #[test]
-    fn completion_alias_parses_to_the_completions_subcommand() {
-        let cli =
-            Cli::try_parse_from(["traces", "completion", "--shell", "zsh"])
-                .expect("parse completion alias argv");
+        #[test]
+        fn template_positional_argv_maps_to_template_subcommand() {
+            let cli = Cli::try_parse_from(["traces", "template", "daily"])
+                .expect("parse template positional argv");
 
-        assert!(matches!(&cli.command, Some(Commands::Completions(_))));
-    }
+            assert!(matches!(
+                &cli.command,
+                Some(Commands::Template(args))
+                    if args.name().and_then(Path::to_str) == Some("daily")
+            ));
+        }
 
-    #[test]
-    fn bare_input_flag_defaults_to_no_subcommand_dispatch() {
-        let cli = Cli::try_parse_from(["traces", "-i", "daily"])
-            .expect("parse default -i argv");
+        #[test]
+        fn tmpl_alias_maps_to_template_subcommand() {
+            let cli = Cli::try_parse_from(["traces", "tmpl", "-i", "daily"])
+                .expect("parse tmpl argv");
 
-        assert!(cli.command.is_none());
-        assert_eq!(cli.input, Some(Some(PathBuf::from("daily"))));
-    }
+            assert!(matches!(
+                &cli.command,
+                Some(Commands::Template(args))
+                    if args.name().and_then(Path::to_str) == Some("daily")
+            ));
+        }
 
-    #[test]
-    fn bare_input_flag_without_a_value_sets_input_to_some_none() {
-        let cli =
-            Cli::try_parse_from(["traces", "-i"]).expect("parse bare -i flag");
+        #[test]
+        fn completion_alias_maps_to_completions_subcommand() {
+            let cli =
+                Cli::try_parse_from(["traces", "completion", "--shell", "zsh"])
+                    .expect("parse completion alias argv");
 
-        assert!(cli.command.is_none());
-        assert_eq!(cli.input, Some(None));
-    }
+            assert!(matches!(&cli.command, Some(Commands::Completions(_))));
+        }
 
-    #[test]
-    fn no_args_parses_with_no_command_and_no_input() {
-        let cli = Cli::try_parse_from(["traces"]).expect("parse with no args");
+        #[test]
+        fn bare_input_flag_has_no_subcommand() {
+            let cli = Cli::try_parse_from(["traces", "-i", "daily"])
+                .expect("parse default -i argv");
 
-        assert!(cli.command.is_none());
-        assert_eq!(cli.input, None);
-    }
+            assert!(cli.command.is_none());
+            assert_eq!(cli.input, Some(Some(PathBuf::from("daily"))));
+        }
 
-    #[test]
-    fn top_level_input_alongside_a_subcommand_is_rejected() {
-        let result = Cli::try_parse_from(["traces", "init", "-i", "daily"]);
+        #[test]
+        fn bare_input_flag_without_value_sets_input_to_some_none() {
+            let cli = Cli::try_parse_from(["traces", "-i"])
+                .expect("parse bare -i flag");
 
-        assert!(result.is_err());
-    }
+            assert!(cli.command.is_none());
+            assert_eq!(cli.input, Some(None));
+        }
 
-    #[test]
-    fn template_list_flag_parses_with_no_name() {
-        let cli = Cli::try_parse_from(["traces", "template", "--list"])
-            .expect("parse template --list argv");
+        #[test]
+        fn no_args_has_no_command_and_no_input() {
+            let cli =
+                Cli::try_parse_from(["traces"]).expect("parse with no args");
 
-        assert!(matches!(
-            &cli.command,
-            Some(Commands::Template(args)) if args.list && args.name.is_none()
-        ));
-    }
+            assert!(cli.command.is_none());
+            assert_eq!(cli.input, None);
+        }
 
-    #[test]
-    fn template_list_flag_conflicts_with_input_name() {
-        let result = Cli::try_parse_from([
-            "traces", "template", "-i", "daily", "--list",
-        ]);
+        #[test]
+        fn rejects_input_alongside_a_subcommand() {
+            let result = Cli::try_parse_from(["traces", "init", "-i", "daily"]);
 
-        assert!(result.is_err());
+            assert!(result.is_err());
+        }
+
+        #[test]
+        fn template_list_flag_has_no_name() {
+            let cli = Cli::try_parse_from(["traces", "template", "--list"])
+                .expect("parse template --list argv");
+
+            assert!(matches!(
+                &cli.command,
+                Some(Commands::Template(args))
+                    if args.list && args.name.is_none()
+            ));
+        }
+
+        #[test]
+        fn template_list_flag_conflicts_with_input_name() {
+            let result = Cli::try_parse_from([
+                "traces", "template", "-i", "daily", "--list",
+            ]);
+
+            assert!(result.is_err());
+        }
     }
 
     mod dispatch_end_to_end {

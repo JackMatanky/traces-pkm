@@ -538,10 +538,6 @@ fn template_instantiate_help(source: &TemplateError) -> Box<dyn Display + '_> {
 
 #[cfg(test)]
 mod tests {
-    use std::io;
-
-    use pretty_assertions::assert_eq;
-
     use super::*;
 
     fn state_source() -> ConfigStateError {
@@ -551,637 +547,680 @@ mod tests {
         })
     }
 
-    #[test]
-    fn current_directory_error_has_a_code_and_help() {
-        let error = CliError::CurrentDirectory {
-            source: io::Error::other("boom"),
-        };
+    mod display {
+        use std::{io, path::PathBuf};
 
-        assert_eq!(error.to_string(), "failed to read the current directory");
-        assert_eq!(
-            error.code().map(|code| code.to_string()),
-            Some("traces::cli::current_directory_failed".to_owned())
-        );
-        assert!(error.source().is_some());
-    }
+        use pretty_assertions::assert_eq;
 
-    #[test]
-    fn trust_error_names_the_root_with_a_code_and_help() {
-        let root = PathBuf::from("/some/project");
-        let error = CliError::Trust {
-            root: root.clone(),
-            source: state_source(),
-        };
+        use super::{super::*, state_source};
 
-        assert_eq!(error.to_string(), "failed to trust /some/project");
-        assert_eq!(
-            error.code().map(|code| code.to_string()),
-            Some("traces::cli::trust::failed".to_owned())
-        );
-        assert_eq!(
-            error.help().map(|help| help.to_string()),
-            Some("check that /some/project exists and is readable".to_owned())
-        );
-        assert!(error.source().is_some());
-    }
-
-    #[test]
-    fn list_error_has_a_code_and_help_and_preserves_its_source() {
-        let error = CliError::TrustList {
-            source: state_source(),
-        };
-
-        assert_eq!(error.to_string(), "failed to list trusted directories");
-        assert_eq!(
-            error.code().map(|code| code.to_string()),
-            Some("traces::cli::trust::list_failed".to_owned())
-        );
-        assert_eq!(
-            error.help().map(|help| help.to_string()),
-            Some("check that the trust store is readable".to_owned())
-        );
-        assert!(error.source().is_some());
-    }
-
-    #[test]
-    fn clean_error_has_a_code_and_help_and_preserves_its_source() {
-        let error = CliError::TrustClean {
-            source: state_source(),
-        };
-
-        assert_eq!(error.to_string(), "failed to clean the trust store");
-        assert_eq!(
-            error.code().map(|code| code.to_string()),
-            Some("traces::cli::trust::clean_failed".to_owned())
-        );
-        assert_eq!(
-            error.help().map(|help| help.to_string()),
-            Some(
-                "check that the trust store is readable and writable"
-                    .to_owned()
-            )
-        );
-        assert!(error.source().is_some());
-    }
-
-    #[test]
-    fn index_error_names_the_root_with_a_code_and_help() {
-        let root = PathBuf::from("/some/project");
-        let error = CliError::Index {
-            root: root.clone(),
-            source: FileIndexError::Io {
-                path: root.join("notes"),
+        #[test]
+        fn current_directory() {
+            let error = CliError::CurrentDirectory {
                 source: io::Error::other("boom"),
-            },
-        };
+            };
 
-        assert_eq!(error.to_string(), "failed to index /some/project");
-        assert_eq!(
-            error.code().map(|code| code.to_string()),
-            Some("traces::cli::index::failed".to_owned())
-        );
-        assert_eq!(
-            error.help().map(|help| help.to_string()),
-            Some(
-                "check that /some/project is readable and writable".to_owned()
-            )
-        );
-        assert!(error.source().is_some());
-    }
+            assert_eq!(
+                error.to_string(),
+                "failed to read the current directory"
+            );
+            assert_eq!(
+                error.code().map(|code| code.to_string()),
+                Some("traces::cli::current_directory_failed".to_owned())
+            );
+            assert!(error.source().is_some());
+        }
 
-    #[test]
-    fn init_already_initialized_error_has_a_code_and_help() {
-        let root = PathBuf::from("/some/project");
-        let error = CliError::InitAlreadyInitialized {
-            root: root.clone(),
-        };
+        #[test]
+        fn trust() {
+            let root = PathBuf::from("/some/project");
+            let error = CliError::Trust {
+                root: root.clone(),
+                source: state_source(),
+            };
 
-        assert_eq!(error.to_string(), "/some/project is already initialised");
-        assert_eq!(
-            error.code().map(|code| code.to_string()),
-            Some("traces::cli::init::already_initialized".to_owned())
-        );
-        assert!(error.source().is_none());
-    }
-
-    #[test]
-    fn init_prompt_error_preserves_its_dialog_source() {
-        let error = CliError::InitPrompt {
-            source: DialogError::UserCancelled,
-        };
-
-        assert_eq!(
-            error.code().map(|code| code.to_string()),
-            Some("traces::cli::init::prompt_failed".to_owned())
-        );
-        assert_eq!(error.user_abort(), Some(UserAbort::Cancelled));
-    }
-
-    #[test]
-    fn template_instantiate_error_names_the_template_with_a_code_and_help() {
-        let name = PathBuf::from("daily");
-        let error = CliError::TemplateInstantiate {
-            name: name.clone(),
-            source: TemplateError::Read {
-                path: name.clone(),
-                source: io::Error::other("boom"),
-            },
-        };
-        assert_eq!(error.to_string(), "failed to instantiate template daily");
-        assert_eq!(
-            error.code().map(|code| code.to_string()),
-            Some("traces::cli::template::read_failed".to_owned())
-        );
-        assert!(error.source().is_some());
-    }
-
-    #[test]
-    fn template_instantiate_error_special_cases_output_file_already_exists() {
-        let name = PathBuf::from("daily");
-        let path = PathBuf::from("/project/daily.md");
-        let error = CliError::TemplateInstantiate {
-            name,
-            source: TemplateError::OutputFileAlreadyExists {
-                path,
-            },
-        };
-
-        assert_eq!(
-            error.code().map(|code| code.to_string()),
-            Some("traces::cli::template::output_exists".to_owned())
-        );
-        assert_eq!(
-            error.help().map(|help| help.to_string()),
-            Some("pass --force to overwrite".to_owned())
-        );
-    }
-
-    #[test]
-    fn template_instantiate_error_special_cases_output_path_escapes_root() {
-        let name = PathBuf::from("daily");
-        let path = PathBuf::from("/etc/passwd");
-        let error = CliError::TemplateInstantiate {
-            name,
-            source: TemplateError::OutputPathEscapesRoot {
-                path,
-            },
-        };
-
-        assert_eq!(
-            error.code().map(|code| code.to_string()),
-            Some("traces::cli::template::output_escapes_root".to_owned())
-        );
-        assert_eq!(
-            error.help().map(|help| help.to_string()),
-            Some(
-                "pass a path within the project — absolute paths and \"..\" \
-                 segments are not allowed"
-                    .to_owned()
-            )
-        );
-    }
-
-    #[test]
-    fn render_error_classifies_syntax_failures() {
-        let name = PathBuf::from("daily");
-        let path = PathBuf::from("/project/daily.md");
-        let error = CliError::TemplateInstantiate {
-            name,
-            source: TemplateError::Render {
-                path,
-                source: minijinja::Error::new(
-                    minijinja::ErrorKind::SyntaxError,
-                    "unexpected end of input",
-                ),
-            },
-        };
-
-        assert_eq!(
-            error.code().map(|code| code.to_string()),
-            Some("traces::cli::template::render_syntax_failed".to_owned())
-        );
-    }
-
-    #[test]
-    fn render_error_classifies_prompt_failures_from_their_dialog_source() {
-        let name = PathBuf::from("daily");
-        let path = PathBuf::from("/project/daily.md");
-        let error = CliError::TemplateInstantiate {
-            name,
-            source: TemplateError::Render {
-                path,
-                source: minijinja::Error::new(
-                    minijinja::ErrorKind::InvalidOperation,
-                    "dialog provider failed",
+            assert_eq!(error.to_string(), "failed to trust /some/project");
+            assert_eq!(
+                error.code().map(|code| code.to_string()),
+                Some("traces::cli::trust::failed".to_owned())
+            );
+            assert_eq!(
+                error.help().map(|help| help.to_string()),
+                Some(
+                    "check that /some/project exists and is readable"
+                        .to_owned()
                 )
-                .with_source(DialogError::NotInteractive),
-            },
-        };
+            );
+            assert!(error.source().is_some());
+        }
 
-        assert_eq!(
-            error.code().map(|code| code.to_string()),
-            Some("traces::cli::template::render_prompt_failed".to_owned())
-        );
-    }
+        #[test]
+        fn list() {
+            let error = CliError::TrustList {
+                source: state_source(),
+            };
 
-    #[test]
-    fn render_error_classifies_io_failures_from_their_source() {
-        let name = PathBuf::from("daily");
-        let path = PathBuf::from("/project/daily.md");
-        let error = CliError::TemplateInstantiate {
-            name,
-            source: TemplateError::Render {
-                path,
-                source: minijinja::Error::new(
-                    minijinja::ErrorKind::InvalidOperation,
-                    "failed to read included.md",
+            assert_eq!(error.to_string(), "failed to list trusted directories");
+            assert_eq!(
+                error.code().map(|code| code.to_string()),
+                Some("traces::cli::trust::list_failed".to_owned())
+            );
+            assert_eq!(
+                error.help().map(|help| help.to_string()),
+                Some("check that the trust store is readable".to_owned())
+            );
+            assert!(error.source().is_some());
+        }
+
+        #[test]
+        fn clean() {
+            let error = CliError::TrustClean {
+                source: state_source(),
+            };
+
+            assert_eq!(error.to_string(), "failed to clean the trust store");
+            assert_eq!(
+                error.code().map(|code| code.to_string()),
+                Some("traces::cli::trust::clean_failed".to_owned())
+            );
+            assert_eq!(
+                error.help().map(|help| help.to_string()),
+                Some(
+                    "check that the trust store is readable and writable"
+                        .to_owned()
                 )
-                .with_source(io::Error::other("boom")),
-            },
-        };
+            );
+            assert!(error.source().is_some());
+        }
 
-        assert_eq!(
-            error.code().map(|code| code.to_string()),
-            Some("traces::cli::template::render_io_failed".to_owned())
-        );
-    }
-
-    #[test]
-    fn render_error_falls_back_to_other_with_no_typed_source() {
-        let name = PathBuf::from("daily");
-        let path = PathBuf::from("/project/daily.md");
-        let error = CliError::TemplateInstantiate {
-            name,
-            source: TemplateError::Render {
-                path,
-                source: minijinja::Error::new(
-                    minijinja::ErrorKind::UnknownFunction,
-                    "unknown function foo",
-                ),
-            },
-        };
-
-        assert_eq!(
-            error.code().map(|code| code.to_string()),
-            Some("traces::cli::template::render_failed".to_owned())
-        );
-    }
-
-    #[test]
-    fn no_templates_error_has_a_code_and_help() {
-        let error = CliError::NoTemplates;
-
-        assert_eq!(error.to_string(), "no templates found");
-        assert_eq!(
-            error.code().map(|code| code.to_string()),
-            Some("traces::cli::template::no_templates".to_owned())
-        );
-        assert_eq!(
-            error.help().map(|help| help.to_string()),
-            Some(
-                "place template (.md) files in your template directory, or \
-                 run `traces init` to scaffold one"
-                    .to_owned()
-            )
-        );
-    }
-
-    #[test]
-    fn picker_error_has_a_code_help_and_preserves_its_source() {
-        let error = CliError::TemplatePicker {
-            source: DialogError::UserCancelled,
-        };
-
-        assert_eq!(error.to_string(), "template picker failed");
-        assert_eq!(
-            error.code().map(|code| code.to_string()),
-            Some("traces::cli::template::picker_failed".to_owned())
-        );
-        assert_eq!(
-            error.help().map(|help| help.to_string()),
-            Some(
-                "the picker prompt was cancelled or failed; try again, or \
-                 pass a name directly with `-i <name>`"
-                    .to_owned()
-            )
-        );
-        assert!(error.source().is_some());
-    }
-
-    #[test]
-    fn user_abort_is_recovered_from_a_template_picker_source_chain() {
-        let cancelled = CliError::TemplatePicker {
-            source: DialogError::UserCancelled,
-        };
-        let interrupted = CliError::TemplatePicker {
-            source: DialogError::UserInterrupted,
-        };
-
-        assert_eq!(cancelled.user_abort(), Some(UserAbort::Cancelled));
-        assert_eq!(interrupted.user_abort(), Some(UserAbort::Interrupted));
-    }
-
-    #[test]
-    fn no_command_error_has_a_code_and_help() {
-        let error = CliError::NoCommand;
-
-        assert_eq!(
-            error.to_string(),
-            "no template name given; pass -i <name> or run a subcommand"
-        );
-        assert_eq!(
-            error.code().map(|code| code.to_string()),
-            Some("traces::cli::no_command".to_owned())
-        );
-        assert!(error.help().is_some());
-    }
-
-    #[test]
-    fn trust_target_resolve_error_has_a_code_and_help() {
-        let error = CliError::TrustTargetResolve {
-            path: PathBuf::from("/some/path"),
-            source: DiscoveryError::LocalConfigAbsent {
-                cwd: PathBuf::from("/some/path"),
-            },
-        };
-
-        assert_eq!(
-            error.to_string(),
-            "failed to resolve trust target /some/path"
-        );
-        assert_eq!(
-            error.code().map(|code| code.to_string()),
-            Some("traces::cli::trust::target_resolve_failed".to_owned())
-        );
-        assert_eq!(
-            error.help().map(|help| help.to_string()),
-            Some(
-                "pass a project directory or .traces/config.toml; run `traces \
-                 init` first if no local config exists"
-                    .to_owned()
-            )
-        );
-        assert!(error.source().is_some());
-    }
-
-    #[test]
-    fn untrust_error_names_the_root_with_a_code_and_help() {
-        let root = PathBuf::from("/some/project");
-        let error = CliError::Untrust {
-            root: root.clone(),
-            source: ConfigStateError::Hash(crate::hash::HashError::Read {
-                path: PathBuf::from("/some/project/.traces/config.toml"),
-                source: io::Error::other("boom"),
-            }),
-        };
-
-        assert_eq!(error.to_string(), "failed to untrust /some/project");
-        assert_eq!(
-            error.code().map(|code| code.to_string()),
-            Some("traces::cli::trust::untrust_failed".to_owned())
-        );
-        assert_eq!(
-            error.help().map(|help| help.to_string()),
-            Some(
-                "check that /some/project exists and the trust store is \
-                 writable"
-                    .to_owned()
-            )
-        );
-        assert!(error.source().is_some());
-    }
-
-    #[test]
-    fn trust_show_error_names_the_root_with_a_code_and_help() {
-        let root = PathBuf::from("/some/project");
-        let error = CliError::TrustShow {
-            root: root.clone(),
-            source: ConfigStateError::Hash(crate::hash::HashError::Read {
-                path: PathBuf::from("/some/project/.traces/config.toml"),
-                source: io::Error::other("boom"),
-            }),
-        };
-
-        assert_eq!(
-            error.to_string(),
-            "failed to show trust status for /some/project"
-        );
-        assert_eq!(
-            error.code().map(|code| code.to_string()),
-            Some("traces::cli::trust::show_failed".to_owned())
-        );
-        assert_eq!(
-            error.help().map(|help| help.to_string()),
-            Some(
-                "check that /some/project exists and the trust store is \
-                 readable"
-                    .to_owned()
-            )
-        );
-        assert!(error.source().is_some());
-    }
-
-    #[test]
-    fn init_scaffold_error_names_the_root_with_a_code_and_help() {
-        let root = PathBuf::from("/some/project");
-        let error = CliError::InitScaffold {
-            root: root.clone(),
-            source: io::Error::other("boom"),
-        };
-
-        assert_eq!(
-            error.to_string(),
-            "failed to scaffold traces in /some/project"
-        );
-        assert_eq!(
-            error.code().map(|code| code.to_string()),
-            Some("traces::cli::init::scaffold_failed".to_owned())
-        );
-        assert_eq!(
-            error.help().map(|help| help.to_string()),
-            Some(
-                "check that the project directory is writable and try again"
-                    .to_owned()
-            )
-        );
-        assert!(error.source().is_some());
-    }
-
-    #[test]
-    fn init_write_config_error_names_the_root_with_a_code_and_help() {
-        let root = PathBuf::from("/some/project");
-        let error = CliError::InitWriteConfig {
-            root: root.clone(),
-            source: io::Error::other("boom"),
-        };
-
-        assert_eq!(
-            error.to_string(),
-            "failed to write config file in /some/project"
-        );
-        assert_eq!(
-            error.code().map(|code| code.to_string()),
-            Some("traces::cli::init::write_config_failed".to_owned())
-        );
-        assert_eq!(
-            error.help().map(|help| help.to_string()),
-            Some(
-                "check that the project directory is writable and try again"
-                    .to_owned()
-            )
-        );
-        assert!(error.source().is_some());
-    }
-
-    #[test]
-    fn template_instantiate_error_special_cases_output_path_unverifiable() {
-        let name = PathBuf::from("daily");
-        let path = PathBuf::from("/project/daily.md");
-        let error = CliError::TemplateInstantiate {
-            name,
-            source: TemplateError::OutputPathUnverifiable {
-                path,
-                source: io::Error::other("boom"),
-            },
-        };
-
-        assert_eq!(
-            error.code().map(|code| code.to_string()),
-            Some("traces::cli::template::output_path_unverifiable".to_owned())
-        );
-        assert_eq!(
-            error.help().map(|help| help.to_string()),
-            Some(
-                "check that the project root exists and is readable; a broken \
-                 symlink in the output path can also cause this"
-                    .to_owned()
-            )
-        );
-    }
-
-    #[test]
-    fn template_instantiate_error_special_cases_template_not_found() {
-        let name = PathBuf::from("missing");
-        let error = CliError::TemplateInstantiate {
-            name: name.clone(),
-            source: TemplateError::Resolve(
-                TemplatePathError::TemplateNotFound(name),
-            ),
-        };
-
-        assert_eq!(
-            error.code().map(|code| code.to_string()),
-            Some("traces::cli::template::not_found".to_owned())
-        );
-        assert_eq!(
-            error.help().map(|help| help.to_string()),
-            Some(
-                "choose a template from a configured Template Directory"
-                    .to_owned()
-            )
-        );
-    }
-
-    #[test]
-    fn template_instantiate_error_special_cases_ambiguous_template() {
-        let name = PathBuf::from("daily");
-        let error = CliError::TemplateInstantiate {
-            name: name.clone(),
-            source: TemplateError::Resolve(
-                TemplatePathError::AmbiguousTemplate {
-                    name,
-                    candidates: vec![
-                        PathBuf::from("daily.md"),
-                        PathBuf::from("daily.txt"),
-                    ],
+        #[test]
+        fn index() {
+            let root = PathBuf::from("/some/project");
+            let error = CliError::Index {
+                root: root.clone(),
+                source: FileIndexError::Io {
+                    path: root.join("notes"),
+                    source: io::Error::other("boom"),
                 },
-            ),
-        };
+            };
 
-        assert_eq!(
-            error.code().map(|code| code.to_string()),
-            Some("traces::cli::template::ambiguous".to_owned())
-        );
-        assert_eq!(
-            error.help().map(|help| help.to_string()),
-            Some(
-                "pass an exact template filename to choose one of the listed \
-                 candidates"
-                    .to_owned()
-            )
-        );
-    }
+            assert_eq!(error.to_string(), "failed to index /some/project");
+            assert_eq!(
+                error.code().map(|code| code.to_string()),
+                Some("traces::cli::index::failed".to_owned())
+            );
+            assert_eq!(
+                error.help().map(|help| help.to_string()),
+                Some(
+                    "check that /some/project is readable and writable"
+                        .to_owned()
+                )
+            );
+            assert!(error.source().is_some());
+        }
 
-    #[test]
-    fn template_instantiate_error_special_cases_directory_read_failure() {
-        let name = PathBuf::from("daily");
-        let error = CliError::TemplateInstantiate {
-            name: name.clone(),
-            source: TemplateError::Resolve(TemplatePathError::DirectoryRead {
-                directory: PathBuf::from("/templates"),
+        #[test]
+        fn init_already_initialized() {
+            let root = PathBuf::from("/some/project");
+            let error = CliError::InitAlreadyInitialized {
+                root: root.clone(),
+            };
+
+            assert_eq!(
+                error.to_string(),
+                "/some/project is already initialised"
+            );
+            assert_eq!(
+                error.code().map(|code| code.to_string()),
+                Some("traces::cli::init::already_initialized".to_owned())
+            );
+            assert!(error.source().is_none());
+        }
+
+        #[test]
+        fn init_prompt() {
+            let error = CliError::InitPrompt {
+                source: DialogError::UserCancelled,
+            };
+
+            assert_eq!(
+                error.code().map(|code| code.to_string()),
+                Some("traces::cli::init::prompt_failed".to_owned())
+            );
+            assert_eq!(error.user_abort(), Some(UserAbort::Cancelled));
+        }
+
+        #[test]
+        fn template_instantiate() {
+            let name = PathBuf::from("daily");
+            let error = CliError::TemplateInstantiate {
+                name: name.clone(),
+                source: TemplateError::Read {
+                    path: name.clone(),
+                    source: io::Error::other("boom"),
+                },
+            };
+            assert_eq!(
+                error.to_string(),
+                "failed to instantiate template daily"
+            );
+            assert_eq!(
+                error.code().map(|code| code.to_string()),
+                Some("traces::cli::template::read_failed".to_owned())
+            );
+            assert!(error.source().is_some());
+        }
+
+        #[test]
+        fn output_already_exists() {
+            let name = PathBuf::from("daily");
+            let path = PathBuf::from("/project/daily.md");
+            let error = CliError::TemplateInstantiate {
+                name,
+                source: TemplateError::OutputFileAlreadyExists {
+                    path,
+                },
+            };
+
+            assert_eq!(
+                error.code().map(|code| code.to_string()),
+                Some("traces::cli::template::output_exists".to_owned())
+            );
+            assert_eq!(
+                error.help().map(|help| help.to_string()),
+                Some("pass --force to overwrite".to_owned())
+            );
+        }
+
+        #[test]
+        fn output_escapes_root() {
+            let name = PathBuf::from("daily");
+            let path = PathBuf::from("/etc/passwd");
+            let error = CliError::TemplateInstantiate {
+                name,
+                source: TemplateError::OutputPathEscapesRoot {
+                    path,
+                },
+            };
+
+            assert_eq!(
+                error.code().map(|code| code.to_string()),
+                Some("traces::cli::template::output_escapes_root".to_owned())
+            );
+            assert_eq!(
+                error.help().map(|help| help.to_string()),
+                Some(
+                    "pass a path within the project — absolute paths and \
+                     \"..\" segments are not allowed"
+                        .to_owned()
+                )
+            );
+        }
+
+        #[test]
+        fn no_templates() {
+            let error = CliError::NoTemplates;
+
+            assert_eq!(error.to_string(), "no templates found");
+            assert_eq!(
+                error.code().map(|code| code.to_string()),
+                Some("traces::cli::template::no_templates".to_owned())
+            );
+            assert_eq!(
+                error.help().map(|help| help.to_string()),
+                Some(
+                    "place template (.md) files in your template directory, \
+                     or run `traces init` to scaffold one"
+                        .to_owned()
+                )
+            );
+        }
+
+        #[test]
+        fn picker() {
+            let error = CliError::TemplatePicker {
+                source: DialogError::UserCancelled,
+            };
+
+            assert_eq!(error.to_string(), "template picker failed");
+            assert_eq!(
+                error.code().map(|code| code.to_string()),
+                Some("traces::cli::template::picker_failed".to_owned())
+            );
+            assert_eq!(
+                error.help().map(|help| help.to_string()),
+                Some(
+                    "the picker prompt was cancelled or failed; try again, or \
+                     pass a name directly with `-i <name>`"
+                        .to_owned()
+                )
+            );
+            assert!(error.source().is_some());
+        }
+
+        #[test]
+        fn no_command() {
+            let error = CliError::NoCommand;
+
+            assert_eq!(
+                error.to_string(),
+                "no template name given; pass -i <name> or run a subcommand"
+            );
+            assert_eq!(
+                error.code().map(|code| code.to_string()),
+                Some("traces::cli::no_command".to_owned())
+            );
+            assert!(error.help().is_some());
+        }
+
+        #[test]
+        fn trust_target_resolve() {
+            let error = CliError::TrustTargetResolve {
+                path: PathBuf::from("/some/path"),
+                source: DiscoveryError::LocalConfigAbsent {
+                    cwd: PathBuf::from("/some/path"),
+                },
+            };
+
+            assert_eq!(
+                error.to_string(),
+                "failed to resolve trust target /some/path"
+            );
+            assert_eq!(
+                error.code().map(|code| code.to_string()),
+                Some("traces::cli::trust::target_resolve_failed".to_owned())
+            );
+            assert_eq!(
+                error.help().map(|help| help.to_string()),
+                Some(
+                    "pass a project directory or .traces/config.toml; run \
+                     `traces init` first if no local config exists"
+                        .to_owned()
+                )
+            );
+            assert!(error.source().is_some());
+        }
+
+        #[test]
+        fn untrust() {
+            let root = PathBuf::from("/some/project");
+            let error = CliError::Untrust {
+                root: root.clone(),
+                source: ConfigStateError::Hash(crate::hash::HashError::Read {
+                    path: PathBuf::from("/some/project/.traces/config.toml"),
+                    source: io::Error::other("boom"),
+                }),
+            };
+
+            assert_eq!(error.to_string(), "failed to untrust /some/project");
+            assert_eq!(
+                error.code().map(|code| code.to_string()),
+                Some("traces::cli::trust::untrust_failed".to_owned())
+            );
+            assert_eq!(
+                error.help().map(|help| help.to_string()),
+                Some(
+                    "check that /some/project exists and the trust store is \
+                     writable"
+                        .to_owned()
+                )
+            );
+            assert!(error.source().is_some());
+        }
+
+        #[test]
+        fn trust_show() {
+            let root = PathBuf::from("/some/project");
+            let error = CliError::TrustShow {
+                root: root.clone(),
+                source: ConfigStateError::Hash(crate::hash::HashError::Read {
+                    path: PathBuf::from("/some/project/.traces/config.toml"),
+                    source: io::Error::other("boom"),
+                }),
+            };
+
+            assert_eq!(
+                error.to_string(),
+                "failed to show trust status for /some/project"
+            );
+            assert_eq!(
+                error.code().map(|code| code.to_string()),
+                Some("traces::cli::trust::show_failed".to_owned())
+            );
+            assert_eq!(
+                error.help().map(|help| help.to_string()),
+                Some(
+                    "check that /some/project exists and the trust store is \
+                     readable"
+                        .to_owned()
+                )
+            );
+            assert!(error.source().is_some());
+        }
+
+        #[test]
+        fn init_scaffold() {
+            let root = PathBuf::from("/some/project");
+            let error = CliError::InitScaffold {
+                root: root.clone(),
                 source: io::Error::other("boom"),
-            }),
-        };
+            };
 
-        assert_eq!(
-            error.code().map(|code| code.to_string()),
-            Some("traces::cli::template::directory_read_failed".to_owned())
-        );
-        assert_eq!(
-            error.help().map(|help| help.to_string()),
-            Some(
-                "check that the configured Template Directory exists and is \
-                 readable"
-                    .to_owned()
-            )
-        );
-    }
+            assert_eq!(
+                error.to_string(),
+                "failed to scaffold traces in /some/project"
+            );
+            assert_eq!(
+                error.code().map(|code| code.to_string()),
+                Some("traces::cli::init::scaffold_failed".to_owned())
+            );
+            assert_eq!(
+                error.help().map(|help| help.to_string()),
+                Some(
+                    "check that the project directory is writable and try \
+                     again"
+                        .to_owned()
+                )
+            );
+            assert!(error.source().is_some());
+        }
 
-    #[test]
-    fn template_instantiate_error_special_cases_write_failure() {
-        let name = PathBuf::from("daily");
-        let path = PathBuf::from("/project/daily.md");
-        let error = CliError::TemplateInstantiate {
-            name,
-            source: TemplateError::Write {
-                path,
+        #[test]
+        fn init_write_config() {
+            let root = PathBuf::from("/some/project");
+            let error = CliError::InitWriteConfig {
+                root: root.clone(),
                 source: io::Error::other("boom"),
-            },
-        };
+            };
 
-        assert_eq!(
-            error.code().map(|code| code.to_string()),
-            Some("traces::cli::template::write_failed".to_owned())
-        );
-        assert_eq!(
-            error.help().map(|help| help.to_string()),
-            Some(
-                "check that the output path and its parent directory are \
-                 writable"
-                    .to_owned()
-            )
-        );
+            assert_eq!(
+                error.to_string(),
+                "failed to write config file in /some/project"
+            );
+            assert_eq!(
+                error.code().map(|code| code.to_string()),
+                Some("traces::cli::init::write_config_failed".to_owned())
+            );
+            assert_eq!(
+                error.help().map(|help| help.to_string()),
+                Some(
+                    "check that the project directory is writable and try \
+                     again"
+                        .to_owned()
+                )
+            );
+            assert!(error.source().is_some());
+        }
+
+        #[test]
+        fn output_path_unverifiable() {
+            let name = PathBuf::from("daily");
+            let path = PathBuf::from("/project/daily.md");
+            let error = CliError::TemplateInstantiate {
+                name,
+                source: TemplateError::OutputPathUnverifiable {
+                    path,
+                    source: io::Error::other("boom"),
+                },
+            };
+
+            assert_eq!(
+                error.code().map(|code| code.to_string()),
+                Some(
+                    "traces::cli::template::output_path_unverifiable"
+                        .to_owned()
+                )
+            );
+            assert_eq!(
+                error.help().map(|help| help.to_string()),
+                Some(
+                    "check that the project root exists and is readable; a \
+                     broken symlink in the output path can also cause this"
+                        .to_owned()
+                )
+            );
+        }
+
+        #[test]
+        fn template_not_found() {
+            let name = PathBuf::from("missing");
+            let error = CliError::TemplateInstantiate {
+                name: name.clone(),
+                source: TemplateError::Resolve(
+                    TemplatePathError::TemplateNotFound(name),
+                ),
+            };
+
+            assert_eq!(
+                error.code().map(|code| code.to_string()),
+                Some("traces::cli::template::not_found".to_owned())
+            );
+            assert_eq!(
+                error.help().map(|help| help.to_string()),
+                Some(
+                    "choose a template from a configured Template Directory"
+                        .to_owned()
+                )
+            );
+        }
+
+        #[test]
+        fn ambiguous_template() {
+            let name = PathBuf::from("daily");
+            let error = CliError::TemplateInstantiate {
+                name: name.clone(),
+                source: TemplateError::Resolve(
+                    TemplatePathError::AmbiguousTemplate {
+                        name,
+                        candidates: vec![
+                            PathBuf::from("daily.md"),
+                            PathBuf::from("daily.txt"),
+                        ],
+                    },
+                ),
+            };
+
+            assert_eq!(
+                error.code().map(|code| code.to_string()),
+                Some("traces::cli::template::ambiguous".to_owned())
+            );
+            assert_eq!(
+                error.help().map(|help| help.to_string()),
+                Some(
+                    "pass an exact template filename to choose one of the \
+                     listed candidates"
+                        .to_owned()
+                )
+            );
+        }
+
+        #[test]
+        fn directory_read_failure() {
+            let name = PathBuf::from("daily");
+            let error = CliError::TemplateInstantiate {
+                name: name.clone(),
+                source: TemplateError::Resolve(
+                    TemplatePathError::DirectoryRead {
+                        directory: PathBuf::from("/templates"),
+                        source: io::Error::other("boom"),
+                    },
+                ),
+            };
+
+            assert_eq!(
+                error.code().map(|code| code.to_string()),
+                Some("traces::cli::template::directory_read_failed".to_owned())
+            );
+            assert_eq!(
+                error.help().map(|help| help.to_string()),
+                Some(
+                    "check that the configured Template Directory exists and \
+                     is readable"
+                        .to_owned()
+                )
+            );
+        }
+
+        #[test]
+        fn write_failure() {
+            let name = PathBuf::from("daily");
+            let path = PathBuf::from("/project/daily.md");
+            let error = CliError::TemplateInstantiate {
+                name,
+                source: TemplateError::Write {
+                    path,
+                    source: io::Error::other("boom"),
+                },
+            };
+
+            assert_eq!(
+                error.code().map(|code| code.to_string()),
+                Some("traces::cli::template::write_failed".to_owned())
+            );
+            assert_eq!(
+                error.help().map(|help| help.to_string()),
+                Some(
+                    "check that the output path and its parent directory are \
+                     writable"
+                        .to_owned()
+                )
+            );
+        }
+
+        #[test]
+        fn invalid_identifier() {
+            let path = PathBuf::from("/etc/passwd");
+            let name = PathBuf::from("/etc/passwd");
+            let error = CliError::TemplateInstantiate {
+                name,
+                source: TemplateError::Resolve(TemplatePathError::Absolute(
+                    path,
+                )),
+            };
+
+            assert_eq!(
+                error.code().map(|code| code.to_string()),
+                Some("traces::cli::template::invalid_identifier".to_owned())
+            );
+            assert_eq!(
+                error.help().map(|help| help.to_string()),
+                Some(
+                    "pass a relative template identifier without \"..\" \
+                     segments"
+                        .to_owned()
+                )
+            );
+        }
     }
 
-    #[test]
-    fn template_instantiate_error_special_cases_invalid_identifier() {
-        let path = PathBuf::from("/etc/passwd");
-        let name = PathBuf::from("/etc/passwd");
-        let error = CliError::TemplateInstantiate {
-            name,
-            source: TemplateError::Resolve(TemplatePathError::Absolute(path)),
-        };
+    mod render {
+        use std::{io, path::PathBuf};
 
-        assert_eq!(
-            error.code().map(|code| code.to_string()),
-            Some("traces::cli::template::invalid_identifier".to_owned())
-        );
-        assert_eq!(
-            error.help().map(|help| help.to_string()),
-            Some(
-                "pass a relative template identifier without \"..\" segments"
-                    .to_owned()
-            )
-        );
+        use pretty_assertions::assert_eq;
+
+        use super::super::*;
+
+        #[test]
+        fn syntax_failure() {
+            let name = PathBuf::from("daily");
+            let path = PathBuf::from("/project/daily.md");
+            let error = CliError::TemplateInstantiate {
+                name,
+                source: TemplateError::Render {
+                    path,
+                    source: minijinja::Error::new(
+                        minijinja::ErrorKind::SyntaxError,
+                        "unexpected end of input",
+                    ),
+                },
+            };
+
+            assert_eq!(
+                error.code().map(|code| code.to_string()),
+                Some("traces::cli::template::render_syntax_failed".to_owned())
+            );
+        }
+
+        #[test]
+        fn prompt_failure() {
+            let name = PathBuf::from("daily");
+            let path = PathBuf::from("/project/daily.md");
+            let error = CliError::TemplateInstantiate {
+                name,
+                source: TemplateError::Render {
+                    path,
+                    source: minijinja::Error::new(
+                        minijinja::ErrorKind::InvalidOperation,
+                        "dialog provider failed",
+                    )
+                    .with_source(DialogError::NotInteractive),
+                },
+            };
+
+            assert_eq!(
+                error.code().map(|code| code.to_string()),
+                Some("traces::cli::template::render_prompt_failed".to_owned())
+            );
+        }
+
+        #[test]
+        fn io_failure() {
+            let name = PathBuf::from("daily");
+            let path = PathBuf::from("/project/daily.md");
+            let error = CliError::TemplateInstantiate {
+                name,
+                source: TemplateError::Render {
+                    path,
+                    source: minijinja::Error::new(
+                        minijinja::ErrorKind::InvalidOperation,
+                        "failed to read included.md",
+                    )
+                    .with_source(io::Error::other("boom")),
+                },
+            };
+
+            assert_eq!(
+                error.code().map(|code| code.to_string()),
+                Some("traces::cli::template::render_io_failed".to_owned())
+            );
+        }
+
+        #[test]
+        fn fallback_to_other() {
+            let name = PathBuf::from("daily");
+            let path = PathBuf::from("/project/daily.md");
+            let error = CliError::TemplateInstantiate {
+                name,
+                source: TemplateError::Render {
+                    path,
+                    source: minijinja::Error::new(
+                        minijinja::ErrorKind::UnknownFunction,
+                        "unknown function foo",
+                    ),
+                },
+            };
+
+            assert_eq!(
+                error.code().map(|code| code.to_string()),
+                Some("traces::cli::template::render_failed".to_owned())
+            );
+        }
+    }
+
+    mod user_abort {
+        use super::super::*;
+
+        #[test]
+        fn recovered_from_template_picker() {
+            let cancelled = CliError::TemplatePicker {
+                source: DialogError::UserCancelled,
+            };
+            let interrupted = CliError::TemplatePicker {
+                source: DialogError::UserInterrupted,
+            };
+
+            assert_eq!(cancelled.user_abort(), Some(UserAbort::Cancelled));
+            assert_eq!(interrupted.user_abort(), Some(UserAbort::Interrupted));
+        }
     }
 }

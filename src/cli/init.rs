@@ -149,10 +149,8 @@ impl Init {
 #[cfg(test)]
 mod tests {
 
-    use pretty_assertions::assert_eq;
-
     use super::*;
-    use crate::{CwdGuard, DialogError, cli::UserAbort};
+    use crate::DialogError;
 
     struct CancellingDialogProvider;
     impl DialogProvider for CancellingDialogProvider {
@@ -193,113 +191,130 @@ mod tests {
         }
     }
 
-    #[test]
-    fn run_leaves_no_traces_directory_when_the_prompt_is_cancelled() {
-        let root = tempfile::tempdir().expect("create temp dir");
-        let _guard = CwdGuard::enter(root.path());
+    mod scaffold {
+        use super::super::*;
 
-        let error = Init
-            .run(&CancellingDialogProvider)
-            .expect_err("cancelled prompt fails init");
+        #[test]
+        fn creates_traces_and_templates() {
+            let root = tempfile::tempdir().expect("create temp dir");
+            let traces = root.path().join(".traces");
 
-        assert_eq!(error.user_abort(), Some(UserAbort::Cancelled));
-        assert!(!root.path().join(".traces").exists());
+            Init::scaffold_directory(root.path()).expect("scaffold");
+
+            assert!(traces.is_dir());
+            assert!(traces.join("templates").is_dir());
+        }
+
+        #[test]
+        fn refuses_existing_traces_dir() {
+            let root = tempfile::tempdir().expect("create temp dir");
+            let traces = root.path().join(".traces");
+            fs::create_dir(&traces).expect("create .traces dir");
+
+            let err = Init::scaffold_directory(root.path())
+                .expect_err("existing .traces should fail");
+
+            assert!(
+                matches!(
+                    &err,
+                    CliError::InitAlreadyInitialized { root: failed_root }
+                        if failed_root == root.path()
+                ),
+                "expected InitAlreadyInitialized for {}, got {err:?}",
+                root.path().display()
+            );
+        }
     }
 
-    #[test]
-    fn scaffold_directory_creates_traces_and_templates() {
-        let root = tempfile::tempdir().expect("create temp dir");
-        let traces = root.path().join(".traces");
+    mod config {
+        use super::super::*;
 
-        Init::scaffold_directory(root.path()).expect("scaffold");
+        fn scaffold(root: &Path) {
+            Init::scaffold_directory(root).expect("scaffold");
+        }
 
-        assert!(traces.is_dir());
-        assert!(traces.join("templates").is_dir());
+        #[test]
+        fn produces_valid_toml() {
+            let root = tempfile::tempdir().expect("create temp dir");
+            scaffold(root.path());
+
+            Init::write_config_file(
+                root.path(),
+                Path::new("custom/templates"),
+                Path::new("notes"),
+            )
+            .expect("write config");
+
+            let config_path = root.path().join(".traces/config.toml");
+            assert!(config_path.is_file(), "config file exists");
+
+            let contents =
+                fs::read_to_string(&config_path).expect("read config");
+            let value: toml::Value =
+                toml::from_str(&contents).expect("parse toml");
+            let templates = value
+                .get("templates")
+                .and_then(toml::Value::as_table)
+                .expect("templates table");
+
+            assert_eq!(
+                templates.get("directory").and_then(toml::Value::as_str),
+                Some("custom/templates")
+            );
+            assert_eq!(
+                templates.get("output_dir").and_then(toml::Value::as_str),
+                Some("notes")
+            );
+        }
+
+        #[test]
+        fn preserves_default_values() {
+            let root = tempfile::tempdir().expect("create temp dir");
+            scaffold(root.path());
+
+            Init::write_config_file(
+                root.path(),
+                Path::new(DEFAULT_TEMPLATE_DIRECTORY),
+                Path::new(DEFAULT_OUTPUT_DIRECTORY),
+            )
+            .expect("write config with defaults");
+
+            let config_path = root.path().join(".traces/config.toml");
+            let contents =
+                fs::read_to_string(&config_path).expect("read config");
+            let value: toml::Value =
+                toml::from_str(&contents).expect("parse toml");
+            let templates = value
+                .get("templates")
+                .and_then(toml::Value::as_table)
+                .expect("templates table");
+
+            assert_eq!(
+                templates.get("directory").and_then(toml::Value::as_str),
+                Some(DEFAULT_TEMPLATE_DIRECTORY)
+            );
+            assert_eq!(
+                templates.get("output_dir").and_then(toml::Value::as_str),
+                Some(DEFAULT_OUTPUT_DIRECTORY)
+            );
+        }
     }
 
-    #[test]
-    fn scaffold_directory_refuses_existing_traces_dir() {
-        let root = tempfile::tempdir().expect("create temp dir");
-        let traces = root.path().join(".traces");
-        fs::create_dir(&traces).expect("create .traces dir");
+    mod run {
+        use super::{super::*, CancellingDialogProvider};
+        use crate::{CwdGuard, cli::UserAbort};
 
-        let err = Init::scaffold_directory(root.path())
-            .expect_err("existing .traces should fail");
+        #[test]
+        fn leaves_no_traces_directory_when_the_prompt_is_cancelled() {
+            let root = tempfile::tempdir().expect("create temp dir");
+            let _guard = CwdGuard::enter(root.path());
 
-        assert!(
-            matches!(
-                &err,
-                CliError::InitAlreadyInitialized { root: failed_root }
-                    if failed_root == root.path()
-            ),
-            "expected InitAlreadyInitialized for {}, got {err:?}",
-            root.path().display()
-        );
-    }
+            let error = Init
+                .run(&CancellingDialogProvider)
+                .expect_err("cancelled prompt fails init");
 
-    fn scaffold(root: &Path) {
-        Init::scaffold_directory(root).expect("scaffold");
-    }
-
-    #[test]
-    fn write_config_file_produces_valid_toml() {
-        let root = tempfile::tempdir().expect("create temp dir");
-        scaffold(root.path());
-
-        Init::write_config_file(
-            root.path(),
-            Path::new("custom/templates"),
-            Path::new("notes"),
-        )
-        .expect("write config");
-
-        let config_path = root.path().join(".traces/config.toml");
-        assert!(config_path.is_file(), "config file exists");
-
-        let contents = fs::read_to_string(&config_path).expect("read config");
-        let value: toml::Value = toml::from_str(&contents).expect("parse toml");
-        let templates = value
-            .get("templates")
-            .and_then(toml::Value::as_table)
-            .expect("templates table");
-
-        assert_eq!(
-            templates.get("directory").and_then(toml::Value::as_str),
-            Some("custom/templates")
-        );
-        assert_eq!(
-            templates.get("output_dir").and_then(toml::Value::as_str),
-            Some("notes")
-        );
-    }
-
-    #[test]
-    fn write_config_file_preserves_default_values() {
-        let root = tempfile::tempdir().expect("create temp dir");
-        scaffold(root.path());
-
-        Init::write_config_file(
-            root.path(),
-            Path::new(DEFAULT_TEMPLATE_DIRECTORY),
-            Path::new(DEFAULT_OUTPUT_DIRECTORY),
-        )
-        .expect("write config with defaults");
-
-        let config_path = root.path().join(".traces/config.toml");
-        let contents = fs::read_to_string(&config_path).expect("read config");
-        let value: toml::Value = toml::from_str(&contents).expect("parse toml");
-        let templates = value
-            .get("templates")
-            .and_then(toml::Value::as_table)
-            .expect("templates table");
-
-        assert_eq!(
-            templates.get("directory").and_then(toml::Value::as_str),
-            Some(DEFAULT_TEMPLATE_DIRECTORY)
-        );
-        assert_eq!(
-            templates.get("output_dir").and_then(toml::Value::as_str),
-            Some(DEFAULT_OUTPUT_DIRECTORY)
-        );
+            assert_eq!(error.user_abort(), Some(UserAbort::Cancelled));
+            assert!(!root.path().join(".traces").exists());
+        }
     }
 }

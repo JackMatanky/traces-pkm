@@ -222,14 +222,8 @@ impl Template {
 mod tests {
     use std::{fs, path::Path};
 
-    use pretty_assertions::assert_eq;
-
-    use super::{super::error::CliError, *};
-    use crate::{
-        CwdGuard,
-        cli::UserAbort,
-        config::{ConfigLoadError, Discovered, LocalConfigFile, TrustRequest},
-    };
+    use super::*;
+    use crate::config::{Discovered, LocalConfigFile, TrustRequest};
 
     fn service(temp: &Path) -> ConfigService {
         ConfigService::at(temp.join("tracked-store"), temp.join("trust-store"))
@@ -283,381 +277,412 @@ mod tests {
         (root, service)
     }
 
-    #[test]
-    fn run_writes_the_rendered_template_to_the_default_output_path() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let (root, service) = create_test_project(
-            temp.path(),
-            "{% for n in [1, 2] %}{{ n }}{% endfor %}",
-        );
-        let _guard = CwdGuard::enter(&root);
+    mod run {
+        use std::{fs, path::PathBuf, sync::Arc};
 
-        Template::new(PathBuf::from("daily"))
+        use pretty_assertions::assert_eq;
+
+        use super::{
+            super::*, create_config, create_test_project, preset_provider,
+            service,
+        };
+        use crate::{CwdGuard, cli::UserAbort, config::ConfigLoadError};
+
+        #[test]
+        fn writes_the_rendered_template_to_the_default_output_path() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let (root, service) = create_test_project(
+                temp.path(),
+                "{% for n in [1, 2] %}{{ n }}{% endfor %}",
+            );
+            let _guard = CwdGuard::enter(&root);
+
+            Template::new(PathBuf::from("daily"))
+                .run(&service, preset_provider())
+                .expect("run template command");
+
+            let written =
+                fs::read_to_string(root.join("daily.md")).expect("read output");
+            assert_eq!(written, "12");
+        }
+
+        #[test]
+        fn fails_when_project_root_is_not_trusted() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let root = temp.path().join("project");
+            fs::create_dir_all(&root).expect("create project dir");
+            create_config(&root, "templates");
+            fs::create_dir_all(root.join("templates"))
+                .expect("create templates dir");
+            let service = service(temp.path());
+            let _guard = CwdGuard::enter(&root);
+
+            let error = Template::new(PathBuf::from("daily"))
+                .run(&service, preset_provider())
+                .expect_err("untrusted root fails");
+
+            assert!(matches!(error, CliError::ConfigLoad {
+                source: ConfigLoadError::Build(_),
+                ..
+            }));
+        }
+
+        #[test]
+        fn fails_when_template_cannot_be_resolved() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let (root, service) = create_test_project(temp.path(), "");
+            let _guard = CwdGuard::enter(&root);
+
+            let error = Template::new(PathBuf::from("missing"))
+                .run(&service, preset_provider())
+                .expect_err("missing template fails");
+
+            assert!(matches!(error, CliError::TemplateInstantiate { .. }));
+        }
+
+        #[test]
+        fn with_list_does_not_render_or_write_anything() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let (root, service) = create_test_project(temp.path(), "content");
+            let _guard = CwdGuard::enter(&root);
+
+            Template {
+                name: None,
+                input: None,
+                list: true,
+                output: None,
+                force: false,
+                dry_run: false,
+                no_input: false,
+            }
+            .run(&service, preset_provider())
+            .expect("run with --list succeeds");
+
+            assert!(!root.join("daily.md").exists());
+        }
+
+        #[test]
+        fn with_list_and_no_available_templates_succeeds_with_no_output() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let (root, service) = create_test_project(temp.path(), "");
+            let _guard = CwdGuard::enter(&root);
+
+            // Unlike the interactive picker (which errors NoTemplates on an
+            // empty list), `--list` is a plain listing command: nothing to
+            // pick from isn't a failure, it's just an empty list.
+            Template {
+                name: None,
+                input: None,
+                list: true,
+                output: None,
+                force: false,
+                dry_run: false,
+                no_input: false,
+            }
+            .run(&service, preset_provider())
+            .expect("run with --list succeeds even when nothing is listed");
+        }
+
+        #[test]
+        fn writes_to_the_output_flag_path() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let (root, service) = create_test_project(temp.path(), "hello");
+            let _guard = CwdGuard::enter(&root);
+
+            Template {
+                name: Some(PathBuf::from("daily")),
+                input: None,
+                list: false,
+                output: Some(PathBuf::from("elsewhere.md")),
+                force: false,
+                dry_run: false,
+                no_input: false,
+            }
             .run(&service, preset_provider())
             .expect("run template command");
 
-        let written =
-            fs::read_to_string(root.join("daily.md")).expect("read output");
-        assert_eq!(written, "12");
-    }
+            let written = fs::read_to_string(root.join("elsewhere.md"))
+                .expect("read output");
+            assert_eq!(written, "hello");
+        }
 
-    #[test]
-    fn run_fails_when_project_root_is_not_trusted() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let root = temp.path().join("project");
-        fs::create_dir_all(&root).expect("create project dir");
-        create_config(&root, "templates");
-        fs::create_dir_all(root.join("templates"))
-            .expect("create templates dir");
-        let service = service(temp.path());
-        let _guard = CwdGuard::enter(&root);
+        #[test]
+        fn fails_when_output_already_exists_without_force() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let (root, service) = create_test_project(temp.path(), "new");
+            fs::write(root.join("daily.md"), "old")
+                .expect("seed existing output");
+            let _guard = CwdGuard::enter(&root);
 
-        let error = Template::new(PathBuf::from("daily"))
+            let error = Template::new(PathBuf::from("daily"))
+                .run(&service, preset_provider())
+                .expect_err("existing output without force fails");
+
+            assert!(matches!(error, CliError::TemplateInstantiate { .. }));
+            assert_eq!(
+                fs::read_to_string(root.join("daily.md")).expect("read output"),
+                "old"
+            );
+        }
+
+        #[test]
+        fn overwrites_existing_output_with_force() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let (root, service) = create_test_project(temp.path(), "new");
+            fs::write(root.join("daily.md"), "old")
+                .expect("seed existing output");
+            let _guard = CwdGuard::enter(&root);
+
+            Template {
+                name: Some(PathBuf::from("daily")),
+                input: None,
+                list: false,
+                output: None,
+                force: true,
+                dry_run: false,
+                no_input: false,
+            }
             .run(&service, preset_provider())
-            .expect_err("untrusted root fails");
+            .expect("force overwrites");
 
-        assert!(matches!(error, CliError::ConfigLoad {
-            source: ConfigLoadError::Build(_),
-            ..
-        }));
-    }
+            assert_eq!(
+                fs::read_to_string(root.join("daily.md")).expect("read output"),
+                "new"
+            );
+        }
 
-    #[test]
-    fn run_fails_when_template_cannot_be_resolved() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let (root, service) = create_test_project(temp.path(), "");
-        let _guard = CwdGuard::enter(&root);
+        #[test]
+        fn fails_when_the_output_flag_escapes_the_project_root() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let (root, service) = create_test_project(temp.path(), "hello");
+            let _guard = CwdGuard::enter(&root);
 
-        let error = Template::new(PathBuf::from("missing"))
+            let error = Template {
+                name: Some(PathBuf::from("daily")),
+                input: None,
+                list: false,
+                output: Some(PathBuf::from("../../escape.md")),
+                force: false,
+                dry_run: false,
+                no_input: false,
+            }
             .run(&service, preset_provider())
-            .expect_err("missing template fails");
+            .expect_err("escaping -o path fails");
 
-        assert!(matches!(error, CliError::TemplateInstantiate { .. }));
-    }
+            assert!(matches!(error, CliError::TemplateInstantiate { .. }));
+        }
 
-    #[test]
-    fn run_with_no_name_and_no_available_templates_fails_with_no_templates() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let (root, service) = create_test_project(temp.path(), "");
-        let _guard = CwdGuard::enter(&root);
-
-        let error = Template::interactive()
+        #[test]
+        fn dry_run_writes_nothing_even_when_output_already_exists() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let (root, service) = create_test_project(temp.path(), "new");
+            fs::write(root.join("daily.md"), "old")
+                .expect("seed existing output");
+            let _guard = CwdGuard::enter(&root);
+            Template {
+                name: Some(PathBuf::from("daily")),
+                input: None,
+                list: false,
+                output: None,
+                force: false,
+                dry_run: true,
+                no_input: false,
+            }
             .run(&service, preset_provider())
-            .expect_err("no templates to pick from");
+            .expect("dry run succeeds even though the output already exists");
 
-        assert!(matches!(error, CliError::NoTemplates));
-    }
-
-    #[test]
-    fn run_with_list_does_not_render_or_write_anything() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let (root, service) = create_test_project(temp.path(), "content");
-        let _guard = CwdGuard::enter(&root);
-
-        Template {
-            name: None,
-            input: None,
-            list: true,
-            output: None,
-            force: false,
-            dry_run: false,
-            no_input: false,
+            assert_eq!(
+                fs::read_to_string(root.join("daily.md")).expect("read output"),
+                "old"
+            );
         }
-        .run(&service, preset_provider())
-        .expect("run with --list succeeds");
 
-        assert!(!root.join("daily.md").exists());
-    }
+        #[test]
+        fn uses_the_injected_providers_queued_answer_by_default() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let (root, service) = create_test_project(
+                temp.path(),
+                "{{ ui.text_input(\"name\", \"anon\") }}",
+            );
+            let _guard = CwdGuard::enter(&root);
+            let provider: Arc<dyn DialogProvider> = Arc::new(
+                crate::PresetDialogProvider::new().with_text("claude"),
+            );
 
-    #[test]
-    fn run_with_list_and_no_available_templates_succeeds_with_no_output() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let (root, service) = create_test_project(temp.path(), "");
-        let _guard = CwdGuard::enter(&root);
+            Template::new(PathBuf::from("daily"))
+                .run(&service, provider)
+                .expect("run template command");
 
-        // Unlike the interactive picker (`Template::interactive`, which
-        // errors `NoTemplates` on an empty list), `--list` is a plain
-        // listing command: nothing to pick from isn't a failure, it's
-        // just an empty list.
-        Template {
-            name: None,
-            input: None,
-            list: true,
-            output: None,
-            force: false,
-            dry_run: false,
-            no_input: false,
+            assert_eq!(
+                fs::read_to_string(root.join("daily.md")).expect("read output"),
+                "claude"
+            );
         }
-        .run(&service, preset_provider())
-        .expect("run with --list succeeds even when nothing is listed");
-    }
 
-    #[test]
-    fn run_writes_to_the_output_flag_path() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let (root, service) = create_test_project(temp.path(), "hello");
-        let _guard = CwdGuard::enter(&root);
+        #[test]
+        fn no_input_ignores_the_injected_provider_and_uses_defaults() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let (root, service) = create_test_project(
+                temp.path(),
+                "{{ ui.text_input(\"name\", \"anon\") }}",
+            );
+            let _guard = CwdGuard::enter(&root);
+            // A provider whose queued answer must never be consulted once
+            // `--no-input` is set.
+            let provider: Arc<dyn DialogProvider> = Arc::new(
+                crate::PresetDialogProvider::new().with_text("claude"),
+            );
 
-        Template {
-            name: Some(PathBuf::from("daily")),
-            input: None,
-            list: false,
-            output: Some(PathBuf::from("elsewhere.md")),
-            force: false,
-            dry_run: false,
-            no_input: false,
+            Template {
+                name: Some(PathBuf::from("daily")),
+                input: None,
+                list: false,
+                output: None,
+                force: false,
+                dry_run: false,
+                no_input: true,
+            }
+            .run(&service, provider)
+            .expect("run template command");
+
+            assert_eq!(
+                fs::read_to_string(root.join("daily.md")).expect("read output"),
+                "anon"
+            );
         }
-        .run(&service, preset_provider())
-        .expect("run template command");
 
-        let written =
-            fs::read_to_string(root.join("elsewhere.md")).expect("read output");
-        assert_eq!(written, "hello");
-    }
+        #[test]
+        fn writes_nothing_when_a_ui_prompt_inside_render_is_cancelled() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let (root, service) = create_test_project(
+                temp.path(),
+                "{{ ui.confirm(\"Continue?\") }}",
+            );
+            let _guard = CwdGuard::enter(&root);
 
-    #[test]
-    fn run_fails_when_output_already_exists_without_force() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let (root, service) = create_test_project(temp.path(), "new");
-        fs::write(root.join("daily.md"), "old").expect("seed existing output");
-        let _guard = CwdGuard::enter(&root);
+            struct CancellingDialogProvider;
+            impl DialogProvider for CancellingDialogProvider {
+                fn is_interactive(&self) -> bool {
+                    true
+                }
 
-        let error = Template::new(PathBuf::from("daily"))
-            .run(&service, preset_provider())
-            .expect_err("existing output without force fails");
+                fn text(
+                    &self,
+                    _label: &str,
+                    _default: Option<&str>,
+                ) -> Result<String, DialogError> {
+                    Err(DialogError::UserCancelled)
+                }
 
-        assert!(matches!(error, CliError::TemplateInstantiate { .. }));
-        assert_eq!(
-            fs::read_to_string(root.join("daily.md")).expect("read output"),
-            "old"
-        );
-    }
+                fn confirm(
+                    &self,
+                    _label: &str,
+                    _default: Option<bool>,
+                ) -> Result<bool, DialogError> {
+                    Err(DialogError::UserCancelled)
+                }
 
-    #[test]
-    fn run_overwrites_existing_output_with_force() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let (root, service) = create_test_project(temp.path(), "new");
-        fs::write(root.join("daily.md"), "old").expect("seed existing output");
-        let _guard = CwdGuard::enter(&root);
+                fn select(
+                    &self,
+                    _label: &str,
+                    _items: &[String],
+                ) -> Result<usize, DialogError> {
+                    Err(DialogError::UserCancelled)
+                }
 
-        Template {
-            name: Some(PathBuf::from("daily")),
-            input: None,
-            list: false,
-            output: None,
-            force: true,
-            dry_run: false,
-            no_input: false,
+                fn multi_select(
+                    &self,
+                    _label: &str,
+                    _items: &[String],
+                ) -> Result<Vec<usize>, DialogError> {
+                    Err(DialogError::UserCancelled)
+                }
+            }
+
+            let provider: Arc<dyn DialogProvider> =
+                Arc::new(CancellingDialogProvider);
+
+            let error = Template::new(PathBuf::from("daily"))
+                .run(&service, provider)
+                .expect_err("cancelled ui.* prompt fails render");
+
+            assert_eq!(error.user_abort(), Some(UserAbort::Cancelled));
+            assert!(!root.join("daily.md").exists());
         }
-        .run(&service, preset_provider())
-        .expect("force overwrites");
-
-        assert_eq!(
-            fs::read_to_string(root.join("daily.md")).expect("read output"),
-            "new"
-        );
     }
 
-    #[test]
-    fn run_fails_when_the_output_flag_escapes_the_project_root() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let (root, service) = create_test_project(temp.path(), "hello");
-        let _guard = CwdGuard::enter(&root);
+    mod picker {
+        use std::{fs, sync::Arc};
 
-        let error = Template {
-            name: Some(PathBuf::from("daily")),
-            input: None,
-            list: false,
-            output: Some(PathBuf::from("../../escape.md")),
-            force: false,
-            dry_run: false,
-            no_input: false,
+        use pretty_assertions::assert_eq;
+
+        use super::{super::*, create_test_project, preset_provider};
+        use crate::CwdGuard;
+
+        #[test]
+        fn with_no_name_and_no_available_templates_fails_with_no_templates() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let (root, service) = create_test_project(temp.path(), "");
+            let _guard = CwdGuard::enter(&root);
+
+            let error = Template::interactive()
+                .run(&service, preset_provider())
+                .expect_err("no templates to pick from");
+
+            assert!(matches!(error, CliError::NoTemplates));
         }
-        .run(&service, preset_provider())
-        .expect_err("escaping -o path fails");
 
-        assert!(matches!(error, CliError::TemplateInstantiate { .. }));
-    }
+        #[test]
+        fn uses_provider_to_pick_template() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let (root, service) =
+                create_test_project(temp.path(), "hello interactive");
+            let _guard = CwdGuard::enter(&root);
+            let provider: Arc<dyn DialogProvider> =
+                Arc::new(crate::PresetDialogProvider::new().with_select(0));
 
-    #[test]
-    fn run_dry_run_writes_nothing_even_when_output_already_exists() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let (root, service) = create_test_project(temp.path(), "new");
-        fs::write(root.join("daily.md"), "old").expect("seed existing output");
-        let _guard = CwdGuard::enter(&root);
-        Template {
-            name: Some(PathBuf::from("daily")),
-            input: None,
-            list: false,
-            output: None,
-            force: false,
-            dry_run: true,
-            no_input: false,
+            Template::interactive()
+                .run(&service, provider)
+                .expect("run interactive template command");
+
+            assert_eq!(
+                fs::read_to_string(root.join("daily.md")).expect("read output"),
+                "hello interactive"
+            );
         }
-        .run(&service, preset_provider())
-        .expect("dry run succeeds even though the output already exists");
 
-        assert_eq!(
-            fs::read_to_string(root.join("daily.md")).expect("read output"),
-            "old"
-        );
+        #[test]
+        fn in_non_interactive_session_fails_with_picker_not_interactive() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let (root, service) = create_test_project(temp.path(), "hello");
+            let _guard = CwdGuard::enter(&root);
+
+            let error = Template::interactive()
+                .run(&service, preset_provider())
+                .expect_err("non-interactive picker fails");
+
+            assert!(matches!(error, CliError::TemplatePicker {
+                source: DialogError::NotInteractive
+            }));
+        }
     }
-    #[test]
-    fn dry_run_and_output_flags_conflict() {
+
+    mod parse {
         use clap::Parser as _;
 
         use crate::cli::Cli;
 
-        let result = Cli::try_parse_from([
-            "traces",
-            "template",
-            "daily",
-            "--dry-run",
-            "-o",
-            "out.md",
-        ]);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn run_uses_the_injected_providers_queued_answer_by_default() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let (root, service) = create_test_project(
-            temp.path(),
-            "{{ ui.text_input(\"name\", \"anon\") }}",
-        );
-        let _guard = CwdGuard::enter(&root);
-        let provider: Arc<dyn DialogProvider> =
-            Arc::new(crate::PresetDialogProvider::new().with_text("claude"));
-
-        Template::new(PathBuf::from("daily"))
-            .run(&service, provider)
-            .expect("run template command");
-
-        assert_eq!(
-            fs::read_to_string(root.join("daily.md")).expect("read output"),
-            "claude"
-        );
-    }
-
-    #[test]
-    fn run_no_input_ignores_the_injected_provider_and_uses_defaults() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let (root, service) = create_test_project(
-            temp.path(),
-            "{{ ui.text_input(\"name\", \"anon\") }}",
-        );
-        let _guard = CwdGuard::enter(&root);
-        // A provider whose queued answer must never be consulted once
-        // `--no-input` is set.
-        let provider: Arc<dyn DialogProvider> =
-            Arc::new(crate::PresetDialogProvider::new().with_text("claude"));
-
-        Template {
-            name: Some(PathBuf::from("daily")),
-            input: None,
-            list: false,
-            output: None,
-            force: false,
-            dry_run: false,
-            no_input: true,
+        #[test]
+        fn dry_run_and_output_flags_conflict() {
+            let result = Cli::try_parse_from([
+                "traces",
+                "template",
+                "daily",
+                "--dry-run",
+                "-o",
+                "out.md",
+            ]);
+            assert!(result.is_err());
         }
-        .run(&service, provider)
-        .expect("run template command");
-
-        assert_eq!(
-            fs::read_to_string(root.join("daily.md")).expect("read output"),
-            "anon"
-        );
-    }
-    #[test]
-    fn run_interactive_uses_provider_to_pick_template() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let (root, service) =
-            create_test_project(temp.path(), "hello interactive");
-        let _guard = CwdGuard::enter(&root);
-        let provider: Arc<dyn DialogProvider> =
-            Arc::new(crate::PresetDialogProvider::new().with_select(0));
-
-        Template::interactive()
-            .run(&service, provider)
-            .expect("run interactive template command");
-
-        assert_eq!(
-            fs::read_to_string(root.join("daily.md")).expect("read output"),
-            "hello interactive"
-        );
-    }
-
-    #[test]
-    fn run_interactive_in_non_interactive_session_fails_with_picker_not_interactive()
-     {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let (root, service) = create_test_project(temp.path(), "hello");
-        let _guard = CwdGuard::enter(&root);
-
-        let error = Template::interactive()
-            .run(&service, preset_provider())
-            .expect_err("non-interactive picker fails");
-
-        assert!(matches!(error, CliError::TemplatePicker {
-            source: DialogError::NotInteractive
-        }));
-    }
-
-    struct CancellingDialogProvider;
-    impl DialogProvider for CancellingDialogProvider {
-        fn is_interactive(&self) -> bool {
-            true
-        }
-
-        fn text(
-            &self,
-            _label: &str,
-            _default: Option<&str>,
-        ) -> Result<String, DialogError> {
-            Err(DialogError::UserCancelled)
-        }
-
-        fn confirm(
-            &self,
-            _label: &str,
-            _default: Option<bool>,
-        ) -> Result<bool, DialogError> {
-            Err(DialogError::UserCancelled)
-        }
-
-        fn select(
-            &self,
-            _label: &str,
-            _items: &[String],
-        ) -> Result<usize, DialogError> {
-            Err(DialogError::UserCancelled)
-        }
-
-        fn multi_select(
-            &self,
-            _label: &str,
-            _items: &[String],
-        ) -> Result<Vec<usize>, DialogError> {
-            Err(DialogError::UserCancelled)
-        }
-    }
-
-    #[test]
-    fn run_writes_nothing_when_a_ui_prompt_inside_render_is_cancelled() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let (root, service) =
-            create_test_project(temp.path(), "{{ ui.confirm(\"Continue?\") }}");
-        let _guard = CwdGuard::enter(&root);
-        let provider: Arc<dyn DialogProvider> =
-            Arc::new(CancellingDialogProvider);
-
-        let error = Template::new(PathBuf::from("daily"))
-            .run(&service, provider)
-            .expect_err("cancelled ui.* prompt fails render");
-
-        assert_eq!(error.user_abort(), Some(UserAbort::Cancelled));
-        assert!(!root.join("daily.md").exists());
     }
 }
