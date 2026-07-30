@@ -9,9 +9,9 @@
     not(test),
     expect(
         dead_code,
-        reason = "crate-internal API surface for FileIndex query source \
-                  selection, consumed by later tickets (#05 QueryOutcome \
-                  filtering)"
+        reason = "crate-internal API surface for FileIndex querying and \
+                  QueryOutcome transformations, consumed by later tickets \
+                  (#06 QueryOps template namespace, #08 CLI query commands)"
     )
 )]
 
@@ -29,7 +29,11 @@ pub(crate) use error::FileIndexError;
     reason = "domain types exported for index module callers"
 )]
 pub(crate) use file::{FileFormat, FileRecord, Timestamp};
-pub(crate) use query::{IndexRecord, QueryOutcome, Source};
+#[expect(
+    unused_imports,
+    reason = "domain types exported for index module callers"
+)]
+pub(crate) use query::{IndexRecord, QueryError, QueryOutcome, Source};
 use store::IndexStore;
 
 use crate::note::{Note, parse_markdown};

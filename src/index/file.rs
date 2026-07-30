@@ -182,6 +182,23 @@ impl Timestamp {
     pub(crate) fn now() -> Self {
         Self(Utc::now())
     }
+
+    /// Formats this timestamp as an RFC 3339 datetime string (e.g.
+    /// `"2026-07-29T14:30:00+00:00"`), for Dataview-style `ctime`/`mtime`
+    /// query field values.
+    #[inline]
+    #[must_use]
+    pub(crate) fn to_rfc3339(self) -> String {
+        self.0.to_rfc3339()
+    }
+
+    /// Formats this timestamp's date component (e.g. `"2026-07-29"`), for
+    /// Dataview-style `cdate`/`mdate` query field values.
+    #[inline]
+    #[must_use]
+    pub(crate) fn to_date_string(self) -> String {
+        self.0.format("%Y-%m-%d").to_string()
+    }
 }
 
 impl From<SystemTime> for Timestamp {
