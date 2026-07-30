@@ -369,6 +369,7 @@ impl<'a> IntoIterator for &'a QueryOutcome {
         self.records.iter()
     }
 }
+
 /// A query field path, resolved once per [`QueryOutcome`] transformation and
 /// then applied to every [`IndexRecord`].
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -379,28 +380,6 @@ enum FieldPath {
     Metadata(String),
     /// The Note's markdown tags, as a [`FieldValue::List`] of tag strings.
     Tags,
-}
-
-/// General `file.*` metadata accessors available to query field paths.
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-enum FileField {
-    /// [`FileRecord::path`].
-    Path,
-    /// [`FileRecord::name`].
-    Name,
-    /// [`FileRecord::folder`].
-    Folder,
-    /// [`FileRecord::size`].
-    Size,
-    /// [`FileRecord::created_at_or_modified`], as a datetime with no UTC
-    /// offset.
-    CreatedDateTime,
-    /// [`FileRecord::created_at_or_modified`], as a bare date.
-    CreatedDate,
-    /// [`FileRecord::modified_at`], as a datetime with no UTC offset.
-    ModifiedDateTime,
-    /// [`FileRecord::modified_at`], as a bare date.
-    ModifiedDate,
 }
 
 impl FieldPath {
@@ -434,6 +413,28 @@ impl FieldPath {
         }
         Ok(Self::Metadata(path.to_owned()))
     }
+}
+
+/// General `file.*` metadata accessors available to query field paths.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+enum FileField {
+    /// [`FileRecord::path`].
+    Path,
+    /// [`FileRecord::name`].
+    Name,
+    /// [`FileRecord::folder`].
+    Folder,
+    /// [`FileRecord::size`].
+    Size,
+    /// [`FileRecord::created_at_or_modified`], as a datetime with no UTC
+    /// offset.
+    CreatedDateTime,
+    /// [`FileRecord::created_at_or_modified`], as a bare date.
+    CreatedDate,
+    /// [`FileRecord::modified_at`], as a datetime with no UTC offset.
+    ModifiedDateTime,
+    /// [`FileRecord::modified_at`], as a bare date.
+    ModifiedDate,
 }
 
 impl FileField {
@@ -489,6 +490,59 @@ impl FileField {
                 FieldValue::Date(file.modified_at().to_date_string())
             }
         }
+    }
+}
+
+/// A parsed `.filter()` expression: a field path, a comparison operator,
+/// and the literal value to compare it against.
+///
+/// Names the shape [`QueryOutcome::filter`] parses once per call instead of
+/// threading an anonymous `(FieldPath, CompareOp, FieldValue)` triple
+/// through it.
+#[derive(Clone, Debug, PartialEq)]
+struct FilterExpr {
+    field: FieldPath,
+    op: CompareOp,
+    value: FieldValue,
+}
+
+impl FilterExpr {
+    /// Parses `"<field> <op> <value>"` — see [`QueryOutcome::filter`] for
+    /// the full grammar.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`QueryError::UnparsableFilterExpression`] if `expr` does not
+    /// match `<field> <op> <value>`, or [`QueryError::UnknownFieldPath`] if
+    /// its field path is malformed.
+    fn parse(expr: &str) -> Result<Self, QueryError> {
+        let invalid = || QueryError::UnparsableFilterExpression {
+            expr: expr.to_owned(),
+        };
+        let trimmed = expr.trim();
+        let op_start = trimmed
+            .find(|c: char| {
+                !(c.is_alphanumeric() || c == '_' || c == '.' || c == '-')
+            })
+            .ok_or_else(invalid)?;
+        let (field, rest) = trimmed.split_at(op_start);
+        let field = field.trim();
+        if field.is_empty() {
+            return Err(invalid());
+        }
+        let (op, rest) =
+            CompareOp::strip_prefix(rest.trim_start()).ok_or_else(invalid)?;
+        let value = parse_filter_literal(rest.trim()).ok_or_else(invalid)?;
+        Ok(Self {
+            field: FieldPath::parse(field)?,
+            op,
+            value,
+        })
+    }
+
+    /// Whether `record`'s resolved field satisfies this expression.
+    fn matches(&self, record: &IndexRecord) -> bool {
+        self.op.is_satisfied_by(&record.resolve(&self.field), &self.value)
     }
 }
 
@@ -554,59 +608,6 @@ impl CompareOp {
                 Some(Ordering::Greater | Ordering::Equal)
             ),
         }
-    }
-}
-
-/// A parsed `.filter()` expression: a field path, a comparison operator,
-/// and the literal value to compare it against.
-///
-/// Names the shape [`QueryOutcome::filter`] parses once per call instead of
-/// threading an anonymous `(FieldPath, CompareOp, FieldValue)` triple
-/// through it.
-#[derive(Clone, Debug, PartialEq)]
-struct FilterExpr {
-    field: FieldPath,
-    op: CompareOp,
-    value: FieldValue,
-}
-
-impl FilterExpr {
-    /// Parses `"<field> <op> <value>"` — see [`QueryOutcome::filter`] for
-    /// the full grammar.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`QueryError::UnparsableFilterExpression`] if `expr` does not
-    /// match `<field> <op> <value>`, or [`QueryError::UnknownFieldPath`] if
-    /// its field path is malformed.
-    fn parse(expr: &str) -> Result<Self, QueryError> {
-        let invalid = || QueryError::UnparsableFilterExpression {
-            expr: expr.to_owned(),
-        };
-        let trimmed = expr.trim();
-        let op_start = trimmed
-            .find(|c: char| {
-                !(c.is_alphanumeric() || c == '_' || c == '.' || c == '-')
-            })
-            .ok_or_else(invalid)?;
-        let (field, rest) = trimmed.split_at(op_start);
-        let field = field.trim();
-        if field.is_empty() {
-            return Err(invalid());
-        }
-        let (op, rest) =
-            CompareOp::strip_prefix(rest.trim_start()).ok_or_else(invalid)?;
-        let value = parse_filter_literal(rest.trim()).ok_or_else(invalid)?;
-        Ok(Self {
-            field: FieldPath::parse(field)?,
-            op,
-            value,
-        })
-    }
-
-    /// Whether `record`'s resolved field satisfies this expression.
-    fn matches(&self, record: &IndexRecord) -> bool {
-        self.op.is_satisfied_by(&record.resolve(&self.field), &self.value)
     }
 }
 
