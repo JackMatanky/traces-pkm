@@ -28,125 +28,6 @@ use sort::sort_key_cmp;
 use super::file::FileRecord;
 use crate::note::{FieldValue, Note};
 
-/// Selects which markdown Notes a page-level query includes.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) enum Source {
-    /// Every indexed markdown Note.
-    All,
-    /// Notes tagged with a markdown tag, or a sub-tag nested under it (e.g.
-    /// `#book` or `#projects`, which also matches `#projects/active`).
-    Tag(String),
-    /// Notes located in `folder` or a directory nested under it.
-    Folder(PathBuf),
-}
-
-impl Source {
-    /// Whether `file` and its parsed `note` belong to this source.
-    #[inline]
-    #[must_use]
-    pub(super) fn is_match(&self, file: &FileRecord, note: &Note) -> bool {
-        match self {
-            Self::All => true,
-            Self::Tag(tag) => {
-                note.tags().iter().any(|t| t.is_nested_under(tag))
-            }
-            Self::Folder(folder) => file.folder().starts_with(folder),
-        }
-    }
-}
-
-/// One page-level query result: a [`FileRecord`] paired with its [`Note`].
-///
-/// Exposes both `file.*` fields and Note Metadata (frontmatter, inline
-/// fields, tags) through one value for Template and CLI callers.
-#[derive(Clone, Debug, PartialEq)]
-pub(crate) struct IndexRecord {
-    file: FileRecord,
-    note: Note,
-    /// Overrides field resolution for exploded rows produced by
-    /// [`QueryOutcome::flatten`].
-    flattened: Vec<(FieldPath, FieldValue)>,
-}
-
-impl IndexRecord {
-    /// Pairs `file` with its parsed `note`.
-    pub(super) fn new(file: FileRecord, note: Note) -> Self {
-        Self {
-            file,
-            note,
-            flattened: Vec::new(),
-        }
-    }
-
-    /// The indexed file's general metadata.
-    #[inline]
-    #[must_use]
-    pub(crate) fn file(&self) -> &FileRecord {
-        &self.file
-    }
-
-    /// The indexed file's parsed Note Metadata.
-    #[inline]
-    #[must_use]
-    pub(crate) fn note(&self) -> &Note {
-        &self.note
-    }
-
-    /// Resolves `path` against this record's file and note metadata.
-    ///
-    /// Resolves `file.*` accessors, frontmatter fields, inline fields, and
-    /// `tags`. Frontmatter fields take precedence over an inline field with the
-    /// same key (see [`Note::fields`]). A well-formed path this record has no
-    /// value for (e.g. a frontmatter key it does not define) resolves to
-    /// [`FieldValue::Null`], not an error.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`QueryError::UnknownFieldPath`] if `path` is malformed; see
-    /// [`FieldPath::parse`].
-    #[inline]
-    pub(crate) fn field(&self, path: &str) -> Result<FieldValue, QueryError> {
-        Ok(self.resolve(&FieldPath::parse(path)?))
-    }
-
-    /// Resolves an already-parsed `path`, applying any [`Self::flattened`]
-    /// override.
-    fn resolve(&self, path: &FieldPath) -> FieldValue {
-        if let Some((_, value)) = self.flattened.iter().find(|(p, _)| p == path)
-        {
-            return value.clone();
-        }
-        match path {
-            FieldPath::File(field) => field.resolve(&self.file),
-            FieldPath::Tags => FieldValue::List(
-                self.note
-                    .tags()
-                    .iter()
-                    .map(|tag| FieldValue::String(tag.as_str().to_owned()))
-                    .collect(),
-            ),
-            FieldPath::Metadata(key) => self
-                .note
-                .fields()
-                .find(|field| field.key() == key)
-                .map_or(FieldValue::Null, |field| field.value().clone()),
-        }
-    }
-
-    /// Returns a copy of this record with `path` overridden to `value`.
-    ///
-    /// Used for exploded rows produced by [`QueryOutcome::flatten`].
-    fn with_flattened(mut self, path: FieldPath, value: FieldValue) -> Self {
-        if let Some(entry) = self.flattened.iter_mut().find(|(p, _)| p == &path)
-        {
-            entry.1 = value;
-        } else {
-            self.flattened.push((path, value));
-        }
-        self
-    }
-}
-
 /// Iterable, page-level collection of [`IndexRecord`] values returned by
 /// [`super::FileIndex::query`].
 ///
@@ -374,6 +255,125 @@ impl<'a> IntoIterator for &'a QueryOutcome {
     #[inline]
     fn into_iter(self) -> Self::IntoIter {
         self.records.iter()
+    }
+}
+
+/// One page-level query result: a [`FileRecord`] paired with its [`Note`].
+///
+/// Exposes both `file.*` fields and Note Metadata (frontmatter, inline
+/// fields, tags) through one value for Template and CLI callers.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct IndexRecord {
+    file: FileRecord,
+    note: Note,
+    /// Overrides field resolution for exploded rows produced by
+    /// [`QueryOutcome::flatten`].
+    flattened: Vec<(FieldPath, FieldValue)>,
+}
+
+impl IndexRecord {
+    /// Pairs `file` with its parsed `note`.
+    pub(super) fn new(file: FileRecord, note: Note) -> Self {
+        Self {
+            file,
+            note,
+            flattened: Vec::new(),
+        }
+    }
+
+    /// The indexed file's general metadata.
+    #[inline]
+    #[must_use]
+    pub(crate) fn file(&self) -> &FileRecord {
+        &self.file
+    }
+
+    /// The indexed file's parsed Note Metadata.
+    #[inline]
+    #[must_use]
+    pub(crate) fn note(&self) -> &Note {
+        &self.note
+    }
+
+    /// Resolves `path` against this record's file and note metadata.
+    ///
+    /// Resolves `file.*` accessors, frontmatter fields, inline fields, and
+    /// `tags`. Frontmatter fields take precedence over an inline field with the
+    /// same key (see [`Note::fields`]). A well-formed path this record has no
+    /// value for (e.g. a frontmatter key it does not define) resolves to
+    /// [`FieldValue::Null`], not an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`QueryError::UnknownFieldPath`] if `path` is malformed; see
+    /// [`FieldPath::parse`].
+    #[inline]
+    pub(crate) fn field(&self, path: &str) -> Result<FieldValue, QueryError> {
+        Ok(self.resolve(&FieldPath::parse(path)?))
+    }
+
+    /// Resolves an already-parsed `path`, applying any [`Self::flattened`]
+    /// override.
+    fn resolve(&self, path: &FieldPath) -> FieldValue {
+        if let Some((_, value)) = self.flattened.iter().find(|(p, _)| p == path)
+        {
+            return value.clone();
+        }
+        match path {
+            FieldPath::File(field) => field.resolve(&self.file),
+            FieldPath::Tags => FieldValue::List(
+                self.note
+                    .tags()
+                    .iter()
+                    .map(|tag| FieldValue::String(tag.as_str().to_owned()))
+                    .collect(),
+            ),
+            FieldPath::Metadata(key) => self
+                .note
+                .fields()
+                .find(|field| field.key() == key)
+                .map_or(FieldValue::Null, |field| field.value().clone()),
+        }
+    }
+
+    /// Returns a copy of this record with `path` overridden to `value`.
+    ///
+    /// Used for exploded rows produced by [`QueryOutcome::flatten`].
+    fn with_flattened(mut self, path: FieldPath, value: FieldValue) -> Self {
+        if let Some(entry) = self.flattened.iter_mut().find(|(p, _)| p == &path)
+        {
+            entry.1 = value;
+        } else {
+            self.flattened.push((path, value));
+        }
+        self
+    }
+}
+
+/// Selects which markdown Notes a page-level query includes.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum Source {
+    /// Every indexed markdown Note.
+    All,
+    /// Notes tagged with a markdown tag, or a sub-tag nested under it (e.g.
+    /// `#book` or `#projects`, which also matches `#projects/active`).
+    Tag(String),
+    /// Notes located in `folder` or a directory nested under it.
+    Folder(PathBuf),
+}
+
+impl Source {
+    /// Whether `file` and its parsed `note` belong to this source.
+    #[inline]
+    #[must_use]
+    pub(super) fn is_match(&self, file: &FileRecord, note: &Note) -> bool {
+        match self {
+            Self::All => true,
+            Self::Tag(tag) => {
+                note.tags().iter().any(|t| t.is_nested_under(tag))
+            }
+            Self::Folder(folder) => file.folder().starts_with(folder),
+        }
     }
 }
 
