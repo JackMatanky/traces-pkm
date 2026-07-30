@@ -106,3 +106,57 @@ impl LogicalOp {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn compare_op_strips_prefix() {
+        assert_eq!(
+            CompareOp::strip_prefix("== 5"),
+            Some((CompareOp::Eq, " 5"))
+        );
+        assert_eq!(
+            CompareOp::strip_prefix("!= 5"),
+            Some((CompareOp::Ne, " 5"))
+        );
+        assert_eq!(
+            CompareOp::strip_prefix(">= 5"),
+            Some((CompareOp::Ge, " 5"))
+        );
+        assert_eq!(
+            CompareOp::strip_prefix("<= 5"),
+            Some((CompareOp::Le, " 5"))
+        );
+        assert_eq!(CompareOp::strip_prefix("> 5"), Some((CompareOp::Gt, " 5")));
+        assert_eq!(CompareOp::strip_prefix("< 5"), Some((CompareOp::Lt, " 5")));
+        assert_eq!(CompareOp::strip_prefix("invalid"), None);
+    }
+
+    #[test]
+    fn compare_op_is_satisfied_by() {
+        let num_5 = FieldValue::Number(5.0);
+        let num_10 = FieldValue::Number(10.0);
+
+        assert!(CompareOp::Eq.is_satisfied_by(&num_5, &num_5));
+        assert!(!CompareOp::Eq.is_satisfied_by(&num_5, &num_10));
+
+        assert!(CompareOp::Ne.is_satisfied_by(&num_5, &num_10));
+        assert!(!CompareOp::Ne.is_satisfied_by(&num_5, &num_5));
+
+        assert!(CompareOp::Lt.is_satisfied_by(&num_5, &num_10));
+        assert!(!CompareOp::Lt.is_satisfied_by(&num_10, &num_5));
+
+        assert!(CompareOp::Le.is_satisfied_by(&num_5, &num_5));
+        assert!(CompareOp::Le.is_satisfied_by(&num_5, &num_10));
+
+        assert!(CompareOp::Gt.is_satisfied_by(&num_10, &num_5));
+        assert!(!CompareOp::Gt.is_satisfied_by(&num_5, &num_10));
+
+        assert!(CompareOp::Ge.is_satisfied_by(&num_5, &num_5));
+        assert!(CompareOp::Ge.is_satisfied_by(&num_10, &num_5));
+    }
+}

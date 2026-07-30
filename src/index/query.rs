@@ -14,7 +14,7 @@
 
 mod field;
 mod filter;
-mod operator;
+mod operators;
 mod sort;
 
 use std::path::PathBuf;

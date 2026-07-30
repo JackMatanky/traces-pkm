@@ -3,7 +3,7 @@
 use super::{
     IndexRecord, QueryError,
     field::FieldPath,
-    operator::{CompareOp, LogicalOp},
+    operators::{CompareOp, LogicalOp},
     sort::fields_equal,
 };
 use crate::note::FieldValue;
