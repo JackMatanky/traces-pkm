@@ -5,19 +5,26 @@
 #               build, and cache files
 # -----------------------------------------------------------------------------
 
-# -------------------- MacOS System Files -------------------- #
+# -------------------- Macos System Files --------------------- #
 DS_Store
 .DS_Store
 __MACOSX/
+._*
+.Spotlight-V100
+.Trashes
 
+# -------------------- Build & Compilation -------------------- #
 /target
 
-# Git worktrees
+# ----------------------- Git Worktrees ----------------------- #
 .worktrees/
 
-# Knowledge Graph
+# ---------------------- Knowledge Graph ---------------------- #
 .gitnexus
 
+# -------------------- Rust Docs MCP Cache -------------------- #
 .rust-docs/
+
+# --------------------- Gitingest Digests --------------------- #
 *digest.txt
 docs/refs/digests/
