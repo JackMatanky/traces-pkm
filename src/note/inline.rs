@@ -40,12 +40,13 @@ static TAG_RE: LazyLock<Regex> = LazyLock::new(|| {
 
 const TASK_SHORTHAND_DATE_LEN: usize = 10;
 const TASK_SHORTHAND_FIELDS: &[(&str, &str)] = &[
-    ("🗓️", "due"),
-    ("🗓", "due"),
-    ("➕", "created"),
-    ("🛫", "start"),
-    ("⏳", "scheduled"),
-    ("✅", "completion"),
+    ("\u{1F5D3}\u{FE0F}", "due"), /* 🗓️ due date (emoji presentation
+                                   * selector U+FE0F) */
+    ("\u{1F5D3}", "due"), // 🗓 due date (base text variant)
+    ("\u{2795}", "created"), // ➕ created date
+    ("\u{1F6EB}", "start"), // 🛫 start date
+    ("\u{23F3}", "scheduled"), // ⏳ scheduled date
+    ("\u{2705}", "completion"), // ✅ completion date
 ];
 const DURATION_UNITS: &[&str] = &[
     "year",
