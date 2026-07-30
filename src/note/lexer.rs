@@ -726,16 +726,14 @@ mod tests {
         #[test]
         fn parses_dataview_embed_link_value() {
             let fields = extract_inline_fields("[embed:: ![[hello]]]");
-
-            let FieldValue::Link(link) =
-                fields.first().expect("field present").value()
-            else {
-                panic!("expected link value");
-            };
-            assert_eq!(link.target(), "hello");
-            assert_eq!(link.text(), "hello");
-            assert_eq!(link.kind(), LinkType::Wikilink);
-            assert_eq!(link.is_embedded(), true);
+            assert!(matches!(
+                fields.first().expect("field present").value(),
+                FieldValue::Link(link) if
+                    link.target() == "hello" &&
+                    link.text() == "hello" &&
+                    link.kind() == LinkType::Wikilink &&
+                    link.is_embedded()
+            ));
         }
 
         #[rstest]

@@ -39,6 +39,11 @@ impl ByteSpan {
     /// Returns a [`Range`] for slicing source text.
     #[inline]
     #[must_use]
+    #[expect(
+        dead_code,
+        reason = "accessor symmetry with start/end — callers are welcome to \
+                  use start()..end() instead"
+    )]
     pub(crate) fn range(&self) -> Range<usize> {
         self.start..self.end
     }

@@ -18,6 +18,11 @@ use crate::{
 /// Command-line arguments for `traces template`.
 #[derive(Debug, Args)]
 #[command(group(ArgGroup::new("mode").args(["list"]).multiple(false)))]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "each bool is a clap arg for an independent flag; they are not \
+              related enough to collapse into a state-machine enum"
+)]
 pub(super) struct Template {
     /// Template name or path to instantiate positional argument.
     #[arg(value_name = "NAME", conflicts_with = "input")]

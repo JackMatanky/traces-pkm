@@ -629,6 +629,13 @@ mod tests {
         }
 
         #[test]
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "not async code — this is a test that waits for the \
+                      filesystem mtime to advance after rewriting a file with \
+                      the same byte length; tokio::time::sleep does not apply \
+                      here and filetime is not worth the dep"
+        )]
         fn reparses_a_note_when_modified_timestamp_changes_with_same_file_size()
         {
             let temp = tempfile::tempdir().expect("create temp dir");
@@ -866,7 +873,7 @@ mod tests {
                     .note()
                     .inline_fields()
                     .iter()
-                    .map(|f| f.key())
+                    .map(crate::note::InlineField::key)
                     .collect::<Vec<_>>(),
                 ["Genre"]
             );
