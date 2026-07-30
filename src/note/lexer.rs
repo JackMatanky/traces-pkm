@@ -1,8 +1,7 @@
 //! Dataview-compatible inline-field and Markdown tag lexer.
 //!
 //! Parses plain-text buffers produced by the Markdown parser. Those buffers
-//! already exclude fenced code blocks, indented code blocks, and inline code,
-//! so this lexer does not inspect [`super::CodeRegion`] ranges.
+//! already exclude fenced code blocks, indented code blocks, and inline code.
 
 use std::sync::LazyLock;
 

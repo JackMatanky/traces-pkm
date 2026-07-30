@@ -21,8 +21,8 @@ use pulldown_cmark::{
 };
 
 use super::{
-    CodeRegion, Frontmatter, InlineField, LinkType, List, ListItem, Note,
-    Outlink, RawFrontmatter, Tag, TaskStatus, lexer,
+    Frontmatter, InlineField, LinkType, List, ListItem, Note, Outlink,
+    RawFrontmatter, Tag, TaskStatus, lexer,
 };
 
 /// Parses Markdown source into a [`Note`].
@@ -64,8 +64,6 @@ struct ParserContext {
     /// `(target, kind, accumulating display text)` for the link currently
     /// being walked, if any.
     active_link: Option<(String, LinkType, String)>,
-    code_regions: Vec<CodeRegion>,
-    active_code_block_start: Option<usize>,
     lists: Vec<List>,
     list_stack: Vec<ListFrame>,
     item_stack: Vec<ItemFrame>,
@@ -77,15 +75,9 @@ struct ParserContext {
 impl ParserContext {
     /// Consumes the accumulated context into a [`Note`] at `path`.
     fn into_note(self, path: impl Into<PathBuf>) -> Note {
-        Note::new(
-            path,
-            self.frontmatter,
-            self.lists,
-            self.outlinks,
-            self.code_regions,
-        )
-        .with_inline_fields(self.inline_fields)
-        .with_tags(self.tags)
+        Note::new(path, self.frontmatter, self.lists, self.outlinks)
+            .with_inline_fields(self.inline_fields)
+            .with_tags(self.tags)
     }
 
     /// Dispatches one Markdown event to the matching handler.
@@ -170,23 +162,18 @@ impl ParserContext {
         }
     }
 
-    fn start_code_block(&mut self, range: Range<usize>) {
-        self.active_code_block_start = Some(range.start);
+    fn start_code_block(&mut self, _range: Range<usize>) {
         self.block = BlockContext::CodeBlock;
     }
 
-    fn end_code_block(&mut self, range: Range<usize>) {
-        if let Some(start) = self.active_code_block_start.take() {
-            self.code_regions.push(CodeRegion::new(start, range.end));
-        }
+    fn end_code_block(&mut self, _range: Range<usize>) {
         self.block = BlockContext::None;
     }
 
     /// Records an inline code span and keeps it out of metadata scanning.
     ///
     /// Inline code remains in list item display text.
-    fn inline_code(&mut self, text: &str, range: Range<usize>) {
-        self.code_regions.push(CodeRegion::new(range.start, range.end));
+    fn inline_code(&mut self, text: &str, _range: Range<usize>) {
         if let Some(item) = self.item_stack.last_mut() {
             item.text_buffer.push_str(text);
         }
@@ -394,7 +381,6 @@ mod tests {
             assert_eq!(note.frontmatter(), None);
             assert_eq!(note.lists().len(), 0);
             assert_eq!(note.outlinks().len(), 0);
-            assert_eq!(note.code_regions().len(), 0);
             assert_eq!(note.inline_fields().len(), 0);
             assert_eq!(note.tags().len(), 0);
         }
@@ -606,28 +592,6 @@ mod tests {
         }
 
         #[rstest]
-        #[case::inline_code_span(
-            "Text with `inline code` span.",
-            "`inline code`"
-        )]
-        #[case::fenced_code_block(
-            "```rust\nfn main() {}\n```",
-            "```rust\nfn main() {}\n```"
-        )]
-        #[case::indented_code_block(
-            "Paragraph text.\n\n    fn main() {}\n",
-            "fn main() {}\n"
-        )]
-        fn tracks_code_regions(
-            #[case] input: &str,
-            #[case] expected_snippet: &str,
-        ) {
-            let note = parse_markdown("note.md", input);
-
-            let region = note.code_regions().first().expect("code region");
-            assert_eq!(&input[region.range()], expected_snippet);
-        }
-
         #[test]
         fn preserves_soft_breaks_inside_list_item_text() {
             let note = parse_markdown("note.md", "- Wrapped\n  line");

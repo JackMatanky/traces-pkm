@@ -5,7 +5,6 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use super::{
-    code::CodeRegion,
     links::Outlink,
     lists::{List, ListItem},
     metadata::{Frontmatter, InlineField, MetadataField},
@@ -14,7 +13,7 @@ use super::{
 
 /// Parsed metadata and structure for one Markdown note.
 ///
-/// Stores frontmatter, lists, outlinks, code regions, inline fields, and tags.
+/// Stores frontmatter, lists, outlinks, inline fields, and tags.
 /// [`Self::tasks`] derives task items from stored lists instead of duplicating
 /// them.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
@@ -23,7 +22,6 @@ pub(crate) struct Note {
     frontmatter: Option<Frontmatter>,
     lists: Vec<List>,
     outlinks: Vec<Outlink>,
-    code_regions: Vec<CodeRegion>,
     inline_fields: Vec<InlineField>,
     tags: Vec<Tag>,
 }
@@ -40,7 +38,6 @@ impl Note {
     /// * `frontmatter` - Parsed YAML frontmatter, if present.
     /// * `lists` - Top-level body lists.
     /// * `outlinks` - Links extracted from Markdown and wikilink syntax.
-    /// * `code_regions` - Source ranges excluded from metadata scanning.
     #[inline]
     #[must_use]
     pub(crate) fn new(
@@ -48,14 +45,12 @@ impl Note {
         frontmatter: Option<Frontmatter>,
         lists: Vec<List>,
         outlinks: Vec<Outlink>,
-        code_regions: Vec<CodeRegion>,
     ) -> Self {
         Self {
             path: path.into(),
             frontmatter,
             lists,
             outlinks,
-            code_regions,
             inline_fields: Vec::new(),
             tags: Vec::new(),
         }
@@ -109,13 +104,6 @@ impl Note {
     #[must_use]
     pub(crate) fn outlinks(&self) -> &[Outlink] {
         &self.outlinks
-    }
-
-    /// Source byte ranges excluded from inline metadata scanning.
-    #[inline]
-    #[must_use]
-    pub(crate) fn code_regions(&self) -> &[CodeRegion] {
-        &self.code_regions
     }
 
     /// Dataview-compatible inline fields from text blocks and list items, in
@@ -182,38 +170,28 @@ mod tests {
             let frontmatter = Frontmatter::new(Vec::new());
             let list = List::new(false, vec![ListItem::new("item", None)]);
             let outlink = Outlink::new("target", "text", LinkType::Wikilink);
-            let code_region = CodeRegion::new(3, 7);
 
             let note = Note::new(
                 "notes/a.md",
                 Some(frontmatter.clone()),
                 vec![list.clone()],
                 vec![outlink.clone()],
-                vec![code_region],
             );
 
             assert_eq!(note.path(), Path::new("notes/a.md"));
             assert_eq!(note.frontmatter(), Some(&frontmatter));
             assert_eq!(note.lists(), [list]);
             assert_eq!(note.outlinks(), [outlink]);
-            assert_eq!(note.code_regions(), [code_region]);
         }
 
         #[test]
         fn constructs_note_with_no_frontmatter_and_empty_collections() {
-            let note = Note::new(
-                "notes/a.md",
-                None,
-                Vec::new(),
-                Vec::new(),
-                Vec::new(),
-            );
+            let note = Note::new("notes/a.md", None, Vec::new(), Vec::new());
 
             assert_eq!(note.path(), Path::new("notes/a.md"));
             assert_eq!(note.frontmatter(), None);
             assert_eq!(note.lists().len(), 0);
             assert_eq!(note.outlinks().len(), 0);
-            assert_eq!(note.code_regions().len(), 0);
         }
     }
 
@@ -230,28 +208,16 @@ mod tests {
                 InlineFieldForm::Body,
             );
 
-            let note = Note::new(
-                "notes/a.md",
-                None,
-                Vec::new(),
-                Vec::new(),
-                Vec::new(),
-            )
-            .with_inline_fields(vec![field.clone()]);
+            let note = Note::new("notes/a.md", None, Vec::new(), Vec::new())
+                .with_inline_fields(vec![field.clone()]);
 
             assert_eq!(note.inline_fields(), [field]);
         }
 
         #[test]
         fn with_tags_attaches_the_given_tags() {
-            let note = Note::new(
-                "notes/a.md",
-                None,
-                Vec::new(),
-                Vec::new(),
-                Vec::new(),
-            )
-            .with_tags(vec![Tag::new("#book")]);
+            let note = Note::new("notes/a.md", None, Vec::new(), Vec::new())
+                .with_tags(vec![Tag::new("#book")]);
 
             assert_eq!(note.tags(), [Tag::new("#book")]);
         }
@@ -264,13 +230,7 @@ mod tests {
 
         #[test]
         fn returns_empty_iterator_when_note_has_no_fields() {
-            let note = Note::new(
-                "notes/a.md",
-                None,
-                Vec::new(),
-                Vec::new(),
-                Vec::new(),
-            );
+            let note = Note::new("notes/a.md", None, Vec::new(), Vec::new());
 
             assert_eq!(note.fields().count(), 0);
         }
@@ -290,7 +250,6 @@ mod tests {
             let note = Note::new(
                 "notes/a.md",
                 Some(frontmatter),
-                Vec::new(),
                 Vec::new(),
                 Vec::new(),
             )
@@ -321,7 +280,6 @@ mod tests {
                 "notes/a.md",
                 None,
                 vec![List::new(false, vec![parent, plain])],
-                Vec::new(),
                 Vec::new(),
             );
 

@@ -13,7 +13,6 @@
 )]
 
 mod byte;
-mod code;
 mod domain;
 mod lexer;
 mod links;
@@ -22,7 +21,6 @@ mod metadata;
 mod parser;
 mod tag;
 
-pub(crate) use code::CodeRegion;
 pub(crate) use domain::Note;
 pub(crate) use links::{LinkType, Outlink};
 pub(crate) use lists::{List, ListItem, TaskStatus};
