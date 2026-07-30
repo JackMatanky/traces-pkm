@@ -12,8 +12,8 @@
 //! *transformations*: they take a piped date/time string. `date_format` is
 //! prefixed to avoid colliding with minijinja's built-in `format` filter.
 //!
-//! All date/time string parsing funnels through [`parse_date`]/
-//! [`parse_date_precise`], so every filter and test shares the same
+//! All date/time string parsing funnels through [`ParsedDate::parse`]/
+//! [`parse_date`], so every filter and test shares the same
 //! accepted formats: a full datetime is tried first, falling back to a
 //! bare `%Y-%m-%d` date at midnight.
 //!
@@ -32,19 +32,18 @@ use minijinja::{
     value::{Enumerator, Kwargs, Object, Value},
 };
 
-/// `date.now(format=...)`'s default format when the `format` kwarg is
-/// omitted — an ISO-8601-style date (`YYYY-MM-DD`).
-/// Also the default output shape [`format_precise`] uses for a
-/// date-only (no time component) input.
+/// `date.now(format=...)`'s default format when the `format` kwarg is omitted —
+/// an ISO-8601-style date (`YYYY-MM-DD`). Also the default output shape
+/// [`format_precise`] uses for a date-only (no time component) input.
 const DEFAULT_FORMAT: &str = "%Y-%m-%d";
 
 /// [`format_precise`]'s output shape for an input that carried a time
 /// component.
 const DEFAULT_DATETIME_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
 
-/// Formats [`parse_date_precise`] tries, in order, before falling back
-/// to a bare date — space-separated (`2026-07-23 14:30[:00]`) and
-/// `T`-separated ISO 8601 (with or without seconds/fractional seconds).
+/// Formats [`parse_date_precise`] tries, in order, before falling back to a
+/// bare date — space-separated (`2026-07-23 14:30[:00]`) and `T`-separated
+/// ISO 8601 (with or without seconds/fractional seconds).
 const DATETIME_FORMATS: &[&str] = &[
     "%Y-%m-%d %H:%M:%S",
     "%Y-%m-%d %H:%M",
@@ -56,6 +55,43 @@ const DATETIME_FORMATS: &[&str] = &[
 /// Method names `date` exposes, for [`DateOps::enumerate`].
 const METHODS: &[&str] =
     &["now", "today", "tomorrow", "yesterday", "from_timestamp"];
+
+/// A successfully parsed date/time string — the [`NaiveDateTime`] itself plus a
+/// flag indicating whether the original input carried a time component (as
+/// opposed to a bare `YYYY-MM-DD` date). Every arithmetic filter re-serializes
+/// at the same precision the input had via [`format_precise`], so piping a
+/// date-only string through a chain of filters never grows a fabricated
+/// `00:00:00`, and a datetime string never silently loses its time-of-day.
+struct ParsedDate {
+    datetime: NaiveDateTime,
+    has_time: bool,
+}
+
+impl ParsedDate {
+    /// Parses `s` as a date/time string. Tries each of [`DATETIME_FORMATS`] in
+    /// turn; on no match, falls back to a bare `%Y-%m-%d` date at midnight.
+    ///
+    /// # Errors
+    ///
+    /// [`ErrorKind::InvalidOperation`] if `s` matches neither a
+    /// [`DATETIME_FORMATS`] entry nor the bare `%Y-%m-%d` fallback.
+    fn parse(s: &str) -> Result<Self, Error> {
+        if let Some(datetime) = try_parse_datetime(s) {
+            return Ok(Self {
+                datetime,
+                has_time: true,
+            });
+        }
+        NaiveDate::parse_from_str(s, DEFAULT_FORMAT)
+            .ok()
+            .and_then(|date| date.and_hms_opt(0, 0, 0))
+            .map(|datetime| Self {
+                datetime,
+                has_time: false,
+            })
+            .ok_or_else(|| invalid_date_error(s))
+    }
+}
 
 /// Backs the `date` namespace object. Stateless — see the module docs.
 #[derive(Debug)]
@@ -226,41 +262,19 @@ fn try_parse_datetime(s: &str) -> Option<NaiveDateTime> {
         .find_map(|format| NaiveDateTime::parse_from_str(s, format).ok())
 }
 
-/// Parses `s` as a date/time string, reporting alongside it whether a
-/// genuine time component was found. Tries a full datetime first (see
-/// [`DATETIME_FORMATS`]); on no match, falls back to a bare `%Y-%m-%d`
-/// date at midnight. [`date_diff`] uses the `bool` to decide
-/// between integer-unit and sub-day-precision (`f64`) output — every
-/// other caller goes through [`parse_date`], which discards it.
-///
-/// # Errors
-///
-/// [`ErrorKind::InvalidOperation`] if `s` matches neither a
-/// [`DATETIME_FORMATS`] entry nor the bare `%Y-%m-%d` fallback.
-fn parse_date_precise(s: &str) -> Result<(NaiveDateTime, bool), Error> {
-    if let Some(datetime) = try_parse_datetime(s) {
-        return Ok((datetime, true));
-    }
-    NaiveDate::parse_from_str(s, DEFAULT_FORMAT)
-        .ok()
-        .and_then(|date| date.and_hms_opt(0, 0, 0))
-        .map(|datetime| (datetime, false))
-        .ok_or_else(|| invalid_date_error(s))
-}
-
 /// The shared date/time string parser every filter and test besides
-/// [`date_diff`] uses — see [`parse_date_precise`] for the
+/// [`date_diff`] uses — see [`ParsedDate::parse`] for the
 /// accepted formats and fallback behavior.
 ///
 /// # Errors
 ///
-/// Propagates [`parse_date_precise`]'s [`ErrorKind::InvalidOperation`].
+/// Propagates [`ParsedDate::parse`]'s [`ErrorKind::InvalidOperation`].
 fn parse_date(s: &str) -> Result<NaiveDateTime, Error> {
-    parse_date_precise(s).map(|(datetime, _has_time)| datetime)
+    ParsedDate::parse(s).map(|parsed| parsed.datetime)
 }
 
 /// Builds the error for a date/time string matching none of
-/// [`parse_date_precise`]'s accepted formats.
+/// [`ParsedDate::parse`]'s accepted formats.
 fn invalid_date_error(s: &str) -> Error {
     Error::new(ErrorKind::InvalidOperation, format!("invalid date {s:?}"))
 }
@@ -336,9 +350,9 @@ fn shift_date(
     value: &str,
     op: impl FnOnce(NaiveDateTime) -> Option<NaiveDateTime>,
 ) -> Result<String, Error> {
-    let (datetime, has_time) = parse_date_precise(value)?;
-    let shifted = op(datetime).ok_or_else(date_out_of_range_error)?;
-    format_precise(shifted, has_time)
+    let parsed = ParsedDate::parse(value)?;
+    let shifted = op(parsed.datetime).ok_or_else(date_out_of_range_error)?;
+    format_precise(shifted, parsed.has_time)
 }
 /// `{{ value | date_add(n, unit="days") }}` — adds `n` `unit`s to a piped
 /// date/time string (`unit` defaults to `"days"`, accepts `"years"`,
@@ -560,11 +574,11 @@ fn date_diff(value: &str, other: &str, kwargs: Kwargs) -> Result<Value, Error> {
     kwargs.assert_all_used()?;
     let unit = DateTimeUnit::parse(unit_str)
         .ok_or_else(|| unknown_unit_error(unit_str))?;
-    let (from, from_has_time) = parse_date_precise(value)?;
-    let (to, to_has_time) = parse_date_precise(other)?;
-    let delta = to.signed_duration_since(from);
+    let from = ParsedDate::parse(value)?;
+    let to = ParsedDate::parse(other)?;
+    let delta = to.datetime.signed_duration_since(from.datetime);
 
-    if from_has_time && to_has_time {
+    if from.has_time && to.has_time {
         #[expect(
             clippy::as_conversions,
             clippy::cast_precision_loss,

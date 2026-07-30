@@ -11,7 +11,7 @@
 //! minijinja's own `map`/`sort`/`groupby` filters derive theirs: an
 //! `attribute=` kwarg naming a (possibly dotted, e.g. `"address.city"`)
 //! path, defaulting to `"label"`, plus an optional `default=` kwarg for
-//! items missing that attribute. See [`label_items`].
+//! items missing that attribute. See [`SelectOptions::extract`].
 
 use std::sync::Arc;
 
@@ -26,12 +26,16 @@ use crate::{DialogError, DialogProvider};
 const METHODS: &[&str] = &["text_input", "select", "confirm", "multi_select"];
 
 /// The attribute path used to derive a display label when `select`/
-/// `multi_select` get no `attribute=` kwarg — see [`label_items`].
+/// `multi_select` get no `attribute=` kwarg — see [`SelectOptions::extract`].
 const DEFAULT_ATTRIBUTE: &str = "label";
 
 /// Display labels paired with the original [`Value`]s they were derived
-/// from, indexed identically — see [`label_items`].
-type LabeledItems = (Vec<String>, Vec<Value>);
+/// from, indexed identically — see [`SelectOptions::extract`].
+#[derive(Debug)]
+struct SelectOptions {
+    labels: Vec<String>,
+    values: Vec<Value>,
+}
 
 /// Backs the `ui` namespace object. Holds the interactive provider every
 /// method delegates to; [`super::super::service::TemplateService`] decides
@@ -96,11 +100,11 @@ impl Object for UiOps {
                           items: Value,
                           kwargs: Kwargs|
                           -> Result<Value, Error> {
-                        let (labels, values) = label_items(&items, &kwargs)?;
+                        let opts = SelectOptions::extract(&items, &kwargs)?;
                         let index = provider
-                            .select(label, &labels)
+                            .select(label, &opts.labels)
                             .map_err(dialog_error)?;
-                        recover_indexed_value(&values, index)
+                        recover_indexed_value(&opts.values, index)
                     },
                 ))
             }
@@ -111,13 +115,15 @@ impl Object for UiOps {
                           items: Value,
                           kwargs: Kwargs|
                           -> Result<Vec<Value>, Error> {
-                        let (labels, values) = label_items(&items, &kwargs)?;
+                        let opts = SelectOptions::extract(&items, &kwargs)?;
                         let indices = provider
-                            .multi_select(label, &labels)
+                            .multi_select(label, &opts.labels)
                             .map_err(dialog_error)?;
                         indices
                             .into_iter()
-                            .map(|index| recover_indexed_value(&values, index))
+                            .map(|index| {
+                                recover_indexed_value(&opts.values, index)
+                            })
                             .collect()
                     },
                 ))
@@ -144,52 +150,57 @@ fn dialog_error(source: DialogError) -> Error {
         .with_source(source)
 }
 
-/// Iterates `items`, pairing each element with a display label, while
-/// keeping the original [`Value`]s in a parallel [`Vec`] so
-/// [`DialogProvider::select`]/[`DialogProvider::multi_select`]'s
-/// index-based result (see `crate::dialog`'s module docs) can be mapped
-/// back to the item the user actually picked, not just its label.
-///
-/// The label itself comes from `kwargs`, mirroring minijinja's own
-/// `map`/`sort`/`groupby` filters:
-///
-/// - `attribute` (optional string, default [`DEFAULT_ATTRIBUTE`]): a
-///   dot-separated path (`"address.city"`) walked via [`get_path`] — numeric
-///   segments index by position, others look up an attribute.
-/// - `default` (optional [`Value`]): used, stringified, when an item's
-///   attribute is undefined. Without it, an item missing the attribute falls
-///   back to `item.to_string()` — this is what makes a plain `["a", "b", "c"]`
-///   array work with no `attribute=` at all: a string has no `"label"`
-///   attribute, so every item hits this fallback.
-/// - any other kwarg is rejected via [`Kwargs::assert_all_used`].
-///
-/// # Errors
-///
-/// Propagates any [`minijinja::Error`] `items.try_iter()`, [`get_path`], or
-/// an unknown/mistyped kwarg raises.
-fn label_items(items: &Value, kwargs: &Kwargs) -> Result<LabeledItems, Error> {
-    let attribute = kwargs.get::<Option<&str>>("attribute")?;
-    let default = kwargs.get::<Option<Value>>("default")?;
-    kwargs.assert_all_used()?;
-    let path = attribute.unwrap_or(DEFAULT_ATTRIBUTE);
+impl SelectOptions {
+    /// Iterates `items`, pairing each element with a display label, while
+    /// keeping the original [`Value`]s in a parallel [`Vec`] so
+    /// [`DialogProvider::select`]/[`DialogProvider::multi_select`]'s
+    /// index-based result (see `crate::dialog`'s module docs) can be mapped
+    /// back to the item the user actually picked, not just its label.
+    ///
+    /// The label itself comes from `kwargs`, mirroring minijinja's own
+    /// `map`/`sort`/`groupby` filters:
+    ///
+    /// - `attribute` (optional string, default [`DEFAULT_ATTRIBUTE`]): a
+    ///   dot-separated path (`"address.city"`) walked via [`get_path`] —
+    ///   numeric segments index by position, others look up an attribute.
+    /// - `default` (optional [`Value`]): used, stringified, when an item's
+    ///   attribute is undefined. Without it, an item missing the attribute
+    ///   falls back to `item.to_string()` — this is what makes a plain `["a",
+    ///   "b", "c"]` array work with no `attribute=` at all: a string has no
+    ///   `"label"` attribute, so every item hits this fallback.
+    /// - any other kwarg is rejected via [`Kwargs::assert_all_used`].
+    ///
+    /// # Errors
+    ///
+    /// Propagates any [`minijinja::Error`] `items.try_iter()`, [`get_path`], or
+    /// an unknown/mistyped kwarg raises.
+    fn extract(items: &Value, kwargs: &Kwargs) -> Result<Self, Error> {
+        let attribute = kwargs.get::<Option<&str>>("attribute")?;
+        let default = kwargs.get::<Option<Value>>("default")?;
+        kwargs.assert_all_used()?;
+        let path = attribute.unwrap_or(DEFAULT_ATTRIBUTE);
 
-    let capacity = items.len().unwrap_or(0);
-    let mut labels = Vec::with_capacity(capacity);
-    let mut values = Vec::with_capacity(capacity);
-    for item in items.try_iter()? {
-        let attribute_value = get_path(&item, path)?;
-        let label = if attribute_value.is_undefined() {
-            match &default {
-                Some(default) => default.to_string(),
-                None => item.to_string(),
-            }
-        } else {
-            attribute_value.to_string()
-        };
-        labels.push(label);
-        values.push(item);
+        let capacity = items.len().unwrap_or(0);
+        let mut labels = Vec::with_capacity(capacity);
+        let mut values = Vec::with_capacity(capacity);
+        for item in items.try_iter()? {
+            let attribute_value = get_path(&item, path)?;
+            let label = if attribute_value.is_undefined() {
+                match &default {
+                    Some(default) => default.to_string(),
+                    None => item.to_string(),
+                }
+            } else {
+                attribute_value.to_string()
+            };
+            labels.push(label);
+            values.push(item);
+        }
+        Ok(Self {
+            labels,
+            values,
+        })
     }
-    Ok((labels, values))
 }
 
 /// Walks a dot-separated attribute path on `item` — numeric segments
@@ -207,7 +218,7 @@ fn label_items(items: &Value, kwargs: &Kwargs) -> Result<LabeledItems, Error> {
 /// without this short-circuit a missing *intermediate* segment in a
 /// dotted path (e.g. `"address.city"` when `address` itself is absent)
 /// would surface as a hard [`minijinja::Error`] instead of falling
-/// through to [`label_items`]'s `default` handling.
+/// through to [`SelectOptions::extract`]'s `default` handling.
 ///
 /// # Errors
 ///
@@ -679,7 +690,7 @@ mod tests {
         }
     }
 
-    mod label_items {
+    mod select_options {
         use pretty_assertions::assert_eq;
 
         use super::*;
@@ -691,59 +702,59 @@ mod tests {
         }
 
         #[test]
-        fn label_items_defaults_to_the_label_attribute() {
+        fn defaults_to_the_label_attribute() {
             let items = Value::from(vec![
                 minijinja::context! { label => "US", value => 1 },
                 minijinja::context! { label => "GB", value => 44 },
             ]);
 
-            let (labels, _) =
-                label_items(&items, &kwargs([])).expect("label_items succeeds");
+            let opts = SelectOptions::extract(&items, &kwargs([]))
+                .expect("extract succeeds");
 
-            assert_eq!(labels, vec!["US".to_owned(), "GB".to_owned()]);
+            assert_eq!(opts.labels, vec!["US".to_owned(), "GB".to_owned()]);
         }
 
         #[test]
-        fn label_items_honors_a_custom_attribute() {
+        fn honors_a_custom_attribute() {
             let items = Value::from(vec![
                 minijinja::context! { name => "US", value => 1 },
                 minijinja::context! { name => "GB", value => 44 },
             ]);
 
-            let (labels, _) = label_items(
+            let opts = SelectOptions::extract(
                 &items,
                 &kwargs([("attribute", Value::from("name"))]),
             )
-            .expect("label_items succeeds");
+            .expect("extract succeeds");
 
-            assert_eq!(labels, vec!["US".to_owned(), "GB".to_owned()]);
+            assert_eq!(opts.labels, vec!["US".to_owned(), "GB".to_owned()]);
         }
 
         #[test]
-        fn label_items_walks_a_dotted_attribute_path() {
+        fn walks_a_dotted_attribute_path() {
             let items = Value::from(vec![
                 minijinja::context! { address => minijinja::context! { city => "NYC" } },
                 minijinja::context! { address => minijinja::context! { city => "LA" } },
             ]);
 
-            let (labels, _) = label_items(
+            let opts = SelectOptions::extract(
                 &items,
                 &kwargs([("attribute", Value::from("address.city"))]),
             )
-            .expect("label_items succeeds");
+            .expect("extract succeeds");
 
-            assert_eq!(labels, vec!["NYC".to_owned(), "LA".to_owned()]);
+            assert_eq!(opts.labels, vec!["NYC".to_owned(), "LA".to_owned()]);
         }
 
         #[test]
-        fn label_items_falls_back_to_default_for_a_dotted_path_missing_an_intermediate_segment()
+        fn falls_back_to_default_for_a_dotted_path_missing_an_intermediate_segment()
          {
             let items = Value::from(vec![
                 minijinja::context! { name => "no address here" },
                 minijinja::context! { address => minijinja::context! { city => "LA" } },
             ]);
 
-            let (labels, _) = label_items(
+            let opts = SelectOptions::extract(
                 &items,
                 &kwargs([
                     ("attribute", Value::from("address.city")),
@@ -752,34 +763,39 @@ mod tests {
             )
             .expect("a missing intermediate segment falls back to default");
 
-            assert_eq!(labels, vec!["Unknown".to_owned(), "LA".to_owned()]);
+            assert_eq!(opts.labels, vec![
+                "Unknown".to_owned(),
+                "LA".to_owned()
+            ]);
         }
 
         #[test]
-        fn label_items_falls_back_to_the_default_kwarg_when_attribute_is_missing()
-         {
+        fn falls_back_to_the_default_kwarg_when_attribute_is_missing() {
             let items = Value::from(vec![
                 minijinja::context! { value => 1 },
                 minijinja::context! { label => "GB", value => 44 },
             ]);
 
-            let (labels, _) = label_items(
+            let opts = SelectOptions::extract(
                 &items,
                 &kwargs([("default", Value::from("Unnamed"))]),
             )
-            .expect("label_items succeeds");
+            .expect("extract succeeds");
 
-            assert_eq!(labels, vec!["Unnamed".to_owned(), "GB".to_owned()]);
+            assert_eq!(opts.labels, vec![
+                "Unnamed".to_owned(),
+                "GB".to_owned()
+            ]);
         }
 
         #[test]
-        fn label_items_falls_back_to_item_to_string_without_a_default() {
+        fn falls_back_to_item_to_string_without_a_default() {
             let items = Value::from(vec![1_i64, 2, 3]);
 
-            let (labels, _) =
-                label_items(&items, &kwargs([])).expect("label_items succeeds");
+            let opts = SelectOptions::extract(&items, &kwargs([]))
+                .expect("extract succeeds");
 
-            assert_eq!(labels, vec![
+            assert_eq!(opts.labels, vec![
                 "1".to_owned(),
                 "2".to_owned(),
                 "3".to_owned()
@@ -787,46 +803,50 @@ mod tests {
         }
 
         #[test]
-        fn label_items_stringifies_a_non_string_attribute_value() {
+        fn stringifies_a_non_string_attribute_value() {
             let items = Value::from(vec![minijinja::context! { label => 42 }]);
 
-            let (labels, _) =
-                label_items(&items, &kwargs([])).expect("label_items succeeds");
+            let opts = SelectOptions::extract(&items, &kwargs([]))
+                .expect("extract succeeds");
 
-            assert_eq!(labels, vec!["42".to_owned()]);
+            assert_eq!(opts.labels, vec!["42".to_owned()]);
         }
 
         #[test]
-        fn label_items_rejects_an_unknown_kwarg() {
+        fn rejects_an_unknown_kwarg() {
             let items = Value::from(vec!["a"]);
 
-            let error =
-                label_items(&items, &kwargs([("bogus", Value::from(1))]))
-                    .expect_err("unknown kwarg fails");
+            let error = SelectOptions::extract(
+                &items,
+                &kwargs([("bogus", Value::from(1))]),
+            )
+            .expect_err("unknown kwarg fails");
 
             assert_eq!(error.kind(), ErrorKind::TooManyArguments);
         }
 
         #[test]
-        fn label_items_rejects_a_non_string_attribute_kwarg() {
+        fn rejects_a_non_string_attribute_kwarg() {
             let items = Value::from(vec!["a"]);
 
-            let error =
-                label_items(&items, &kwargs([("attribute", Value::from(1))]))
-                    .expect_err("a non-string attribute kwarg fails");
+            let error = SelectOptions::extract(
+                &items,
+                &kwargs([("attribute", Value::from(1))]),
+            )
+            .expect_err("a non-string attribute kwarg fails");
 
             assert_eq!(error.kind(), ErrorKind::InvalidOperation);
         }
 
         #[test]
-        fn label_items_returns_empty_vectors_for_empty_items() {
+        fn returns_empty_vectors_for_empty_items() {
             let items = Value::from(Vec::<String>::new());
 
-            let (labels, values) =
-                label_items(&items, &kwargs([])).expect("label_items succeeds");
+            let opts = SelectOptions::extract(&items, &kwargs([]))
+                .expect("extract succeeds");
 
-            assert_eq!(labels, Vec::<String>::new());
-            assert_eq!(values, Vec::<Value>::new());
+            assert_eq!(opts.labels, Vec::<String>::new());
+            assert_eq!(opts.values, Vec::<Value>::new());
         }
     }
 
