@@ -121,7 +121,8 @@ pub(crate) enum TemplatePathError {
     #[error("template path {0} must be relative, not absolute")]
     Absolute(PathBuf),
     /// `name` can't stay inside a directory: some component could escape it
-    /// (most notably `..`), or there's no [`Component::Normal`] component at
+    /// (most notably `..`), or there's no
+    /// [`std::path::Component::Normal`] component at
     /// all (an empty path, or a bare `.`).
     #[error("template path {0} is not a valid template identifier")]
     UnsafeComponent(PathBuf),
