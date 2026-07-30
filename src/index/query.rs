@@ -4,10 +4,6 @@
 //! pairs a [`FileRecord`] with its [`Note`] so callers can read both
 //! `file.*` fields and Note Metadata from one value. [`QueryOutcome`] is the
 //! iterable collection [`super::FileIndex::query`] returns.
-//!
-//! Covered by [`super`]'s tests through the [`super::FileIndex::query`] seam
-//! rather than in isolation here, per the project's `FileIndex` testing
-//! decisions.
 
 use std::path::PathBuf;
 
@@ -139,5 +135,136 @@ impl<'a> IntoIterator for &'a QueryOutcome {
     #[inline]
     fn into_iter(self) -> Self::IntoIter {
         self.records.iter()
+    }
+}
+#[cfg(test)]
+mod tests {
+    use std::{fs, path::Path};
+
+    use super::*;
+    use crate::index::FileIndex;
+
+    mod source_is_match {
+
+        use super::*;
+
+        #[test]
+        fn returns_true_for_all_source() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("a.md"), "# A").expect("write file");
+            let index = FileIndex::build(temp.path()).expect("build index");
+            let record = index.record(Path::new("a.md")).expect("record");
+            let note = index.note(Path::new("a.md")).expect("note");
+
+            assert!(Source::All.is_match(record, note));
+        }
+
+        #[test]
+        fn returns_true_when_note_has_matching_or_sub_tag() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("a.md"), "Tracked in #projects/active.")
+                .expect("write file");
+            let index = FileIndex::build(temp.path()).expect("build index");
+            let record = index.record(Path::new("a.md")).expect("record");
+            let note = index.note(Path::new("a.md")).expect("note");
+
+            assert!(Source::Tag("#projects".to_owned()).is_match(record, note));
+            assert!(!Source::Tag("#books".to_owned()).is_match(record, note));
+        }
+
+        #[test]
+        fn returns_true_when_file_is_under_folder_source() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::create_dir_all(temp.path().join("projects/active"))
+                .expect("mkdir");
+            fs::write(temp.path().join("projects/active/task.md"), "# Task")
+                .expect("write file");
+            let index = FileIndex::build(temp.path()).expect("build index");
+            let record = index
+                .record(Path::new("projects/active/task.md"))
+                .expect("record");
+            let note =
+                index.note(Path::new("projects/active/task.md")).expect("note");
+
+            assert!(
+                Source::Folder(PathBuf::from("projects"))
+                    .is_match(record, note)
+            );
+            assert!(
+                !Source::Folder(PathBuf::from("archive"))
+                    .is_match(record, note)
+            );
+        }
+    }
+
+    mod index_record {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn accessors_return_file_record_and_note() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("a.md"), "Filed under #tag.")
+                .expect("write file");
+            let index = FileIndex::build(temp.path()).expect("build index");
+            let file = index.record(Path::new("a.md")).expect("record").clone();
+            let note = index.note(Path::new("a.md")).expect("note").clone();
+
+            let record = IndexRecord::new(file.clone(), note.clone());
+
+            assert_eq!(record.file(), &file);
+            assert_eq!(record.note(), &note);
+        }
+    }
+
+    mod query_outcome {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn reports_len_and_is_empty() {
+            let empty = QueryOutcome::default();
+            assert!(empty.is_empty());
+            assert_eq!(empty.len(), 0);
+
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("a.md"), "# A").expect("write file");
+            let index = FileIndex::build(temp.path()).expect("build index");
+            let outcome = index.query(&Source::All);
+
+            assert!(!outcome.is_empty());
+            assert_eq!(outcome.len(), 1);
+        }
+
+        #[test]
+        fn get_returns_record_or_none() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("a.md"), "# A").expect("write file");
+            let index = FileIndex::build(temp.path()).expect("build index");
+            let outcome = index.query(&Source::All);
+
+            assert!(outcome.get(0).is_some());
+            assert_eq!(outcome.get(1), None);
+        }
+
+        #[test]
+        fn iter_and_into_iterator_yield_records() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("a.md"), "# A").expect("write file");
+            let index = FileIndex::build(temp.path()).expect("build index");
+            let outcome = index.query(&Source::All);
+
+            let via_iter: Vec<&IndexRecord> = outcome.iter().collect();
+            assert_eq!(via_iter.len(), 1);
+
+            let via_ref_into: Vec<&IndexRecord> =
+                (&outcome).into_iter().collect();
+            assert_eq!(via_ref_into.len(), 1);
+
+            let via_into: Vec<IndexRecord> = outcome.into_iter().collect();
+            assert_eq!(via_into.len(), 1);
+        }
     }
 }

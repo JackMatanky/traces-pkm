@@ -46,11 +46,16 @@ mod tests {
 
     use super::*;
 
-    #[test]
-    fn stores_the_given_text() {
-        let tag = Tag::new("#book");
+    mod constructor {
+        use pretty_assertions::assert_eq;
 
-        assert_eq!(tag.as_str(), "#book");
+        use super::*;
+        #[test]
+        fn stores_given_text_with_leading_hash() {
+            let tag = Tag::new("#book");
+
+            assert_eq!(tag.as_str(), "#book");
+        }
     }
 
     mod is_nested_under {
@@ -63,7 +68,7 @@ mod tests {
         #[case::direct_parent("#projects/active", "#projects")]
         #[case::grandparent("#projects/active/urgent", "#projects")]
         #[case::nested_query_target("#projects/active/sub", "#projects/active")]
-        fn true_for_the_tag_itself_or_an_ancestor(
+        fn returns_true_when_tag_matches_or_is_nested(
             #[case] tag: &str,
             #[case] query: &str,
         ) {
@@ -74,7 +79,7 @@ mod tests {
         #[case::unrelated_tag("#book", "#movie")]
         #[case::more_specific_than_the_tag("#projects", "#projects/active")]
         #[case::prefix_word_without_a_slash_boundary("#projects", "#project")]
-        fn false_for_unrelated_or_more_specific_queries(
+        fn returns_false_when_unrelated_or_more_specific(
             #[case] tag: &str,
             #[case] query: &str,
         ) {

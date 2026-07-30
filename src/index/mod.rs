@@ -736,7 +736,8 @@ mod tests {
         }
 
         #[test]
-        fn no_source_returns_every_note_and_excludes_non_markdown_files() {
+        fn returns_every_note_and_excludes_non_markdown_files_when_source_is_all()
+         {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("a.md"), "# A").expect("write a");
             fs::write(temp.path().join("b.md"), "# B").expect("write b");
@@ -760,7 +761,7 @@ mod tests {
         }
 
         #[test]
-        fn a_query_with_no_matches_returns_an_empty_outcome() {
+        fn returns_empty_outcome_when_no_notes_match() {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("readme.txt"), "text")
                 .expect("write txt");
@@ -773,7 +774,7 @@ mod tests {
         }
 
         #[test]
-        fn tag_source_matches_the_exact_tag() {
+        fn returns_matching_note_when_tag_source_is_exact() {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("book.md"), "Filed under #book.")
                 .expect("write book");
@@ -787,7 +788,7 @@ mod tests {
         }
 
         #[test]
-        fn tag_source_matches_sub_tags_nested_under_the_query() {
+        fn returns_matching_note_when_tag_source_is_nested() {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(
                 temp.path().join("project.md"),
@@ -808,7 +809,8 @@ mod tests {
         }
 
         #[test]
-        fn tag_source_does_not_match_a_more_specific_query_than_the_tag() {
+        fn returns_empty_outcome_when_tag_query_is_more_specific_than_note_tag()
+        {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("project.md"), "Tracked in #projects.")
                 .expect("write project");
@@ -821,7 +823,7 @@ mod tests {
         }
 
         #[test]
-        fn folder_source_returns_notes_at_and_under_the_requested_folder() {
+        fn returns_notes_at_and_under_folder_when_source_is_folder() {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::create_dir_all(temp.path().join("books/fiction"))
                 .expect("mkdir books/fiction");
@@ -842,7 +844,7 @@ mod tests {
         }
 
         #[test]
-        fn index_records_expose_file_and_note_metadata_fields() {
+        fn exposes_file_and_note_metadata_fields_in_query_outcome() {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(
                 temp.path().join("book.md"),
