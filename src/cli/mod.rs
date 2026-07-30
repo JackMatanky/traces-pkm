@@ -16,7 +16,7 @@ use clap::{Parser, Subcommand};
 pub use error::CliError;
 
 use crate::{
-    Cwd,
+    Cwd, DialogProvider,
     config::{Config, ConfigService},
 };
 
@@ -112,8 +112,8 @@ impl Cli {
     /// - [`CliError`] if command execution fails.
     fn run(
         self,
-        service: &crate::config::ConfigService,
-        provider: &Arc<dyn crate::DialogProvider>,
+        service: &ConfigService,
+        provider: Arc<dyn DialogProvider>,
     ) -> Result<CommandOutcome, CliError> {
         let result = match self.command {
             Some(command) => command.run(service, provider),
@@ -159,8 +159,8 @@ impl Commands {
     /// Routes a parsed subcommand to its handler.
     fn run(
         self,
-        service: &crate::config::ConfigService,
-        provider: &Arc<dyn crate::DialogProvider>,
+        service: &ConfigService,
+        provider: Arc<dyn DialogProvider>,
     ) -> Result<(), CliError> {
         match self {
             Self::Init(args) => args.run(provider.as_ref()),
@@ -184,9 +184,9 @@ impl Commands {
 /// - [`CliError`] if command execution fails.
 #[inline]
 pub fn run() -> Result<CommandOutcome, CliError> {
-    let provider: Arc<dyn crate::DialogProvider> =
+    let provider: Arc<dyn DialogProvider> =
         Arc::new(crate::TerminalDialogProvider::new());
-    Cli::parse().run(&crate::config::ConfigService::new(), &provider)
+    Cli::parse().run(&ConfigService::new(), provider)
 }
 
 #[cfg(test)]
@@ -365,9 +365,9 @@ mod tests {
                 .expect("trust project root");
             let _guard = CwdGuard::enter(&project);
 
-            let provider: Arc<dyn crate::DialogProvider> =
+            let provider: Arc<dyn DialogProvider> =
                 Arc::new(PresetDialogProvider::new());
-            cli.run(&service, &provider).expect("run succeeds");
+            cli.run(&service, provider).expect("run succeeds");
 
             fs::read_to_string(project.join("daily.md"))
                 .expect("read written output")
@@ -427,12 +427,12 @@ mod tests {
                 .trust(&TrustRequest::from(&config))
                 .expect("trust project root");
             let _guard = CwdGuard::enter(&root);
-            let provider: Arc<dyn crate::DialogProvider> =
+            let provider: Arc<dyn DialogProvider> =
                 Arc::new(PresetDialogProvider::new());
             let cli = Cli::try_parse_from(argv).expect("parse argv");
 
             let error = cli
-                .run(&service, &provider)
+                .run(&service, provider)
                 .expect_err("no templates to pick from");
 
             assert!(matches!(error, CliError::NoTemplates));

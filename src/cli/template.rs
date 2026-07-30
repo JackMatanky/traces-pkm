@@ -106,7 +106,7 @@ impl Template {
     pub(super) fn run(
         self,
         service: &ConfigService,
-        provider: &Arc<dyn DialogProvider>,
+        provider: Arc<dyn DialogProvider>,
     ) -> Result<(), CliError> {
         let config = super::load_config(service)?;
         if self.list {
@@ -116,7 +116,7 @@ impl Template {
         let effective_provider = self.resolve_provider(provider);
         let template_service =
             TemplateService::new(&config, Arc::clone(&effective_provider));
-        let name = self.resolve_name(&config, &effective_provider)?;
+        let name = self.resolve_name(&config, effective_provider.as_ref())?;
         let mode = WriteMode::from_flags(self.dry_run, self.force);
         let outcome = template_service
             .render_to_file(&name, self.output.as_deref(), mode)
@@ -142,12 +142,12 @@ impl Template {
     /// Returns the effective dialog provider given command-line flags.
     fn resolve_provider(
         &self,
-        provider: &Arc<dyn DialogProvider>,
+        provider: Arc<dyn DialogProvider>,
     ) -> Arc<dyn DialogProvider> {
         if self.no_input {
             Arc::new(PresetDialogProvider::new())
         } else {
-            Arc::clone(provider)
+            provider
         }
     }
 
@@ -155,7 +155,7 @@ impl Template {
     fn resolve_name(
         &self,
         config: &Config,
-        provider: &Arc<dyn DialogProvider>,
+        provider: &dyn DialogProvider,
     ) -> Result<PathBuf, CliError> {
         match self.name() {
             Some(name) => Ok(name.to_path_buf()),
@@ -187,7 +187,7 @@ impl Template {
     ///   non-interactive, or is cancelled.
     fn pick_template(
         config: &Config,
-        provider: &Arc<dyn DialogProvider>,
+        provider: &dyn DialogProvider,
     ) -> Result<PathBuf, CliError> {
         let available = TemplateService::list_available(config);
         if available.is_empty() {
@@ -275,7 +275,7 @@ mod tests {
         let _guard = CwdGuard::enter(&root);
 
         Template::new(PathBuf::from("daily"))
-            .run(&service, &preset_provider())
+            .run(&service, preset_provider())
             .expect("run template command");
 
         let written =
@@ -295,7 +295,7 @@ mod tests {
         let _guard = CwdGuard::enter(&root);
 
         let error = Template::new(PathBuf::from("daily"))
-            .run(&service, &preset_provider())
+            .run(&service, preset_provider())
             .expect_err("untrusted root fails");
 
         assert!(matches!(error, CliError::ConfigLoad {
@@ -317,7 +317,7 @@ mod tests {
         let _guard = CwdGuard::enter(&root);
 
         let error = Template::new(PathBuf::from("missing"))
-            .run(&service, &preset_provider())
+            .run(&service, preset_provider())
             .expect_err("missing template fails");
 
         assert!(matches!(error, CliError::TemplateInstantiate { .. }));
@@ -336,7 +336,7 @@ mod tests {
         let _guard = CwdGuard::enter(&root);
 
         let error = Template::interactive()
-            .run(&service, &preset_provider())
+            .run(&service, preset_provider())
             .expect_err("no templates to pick from");
 
         assert!(matches!(error, CliError::NoTemplates));
@@ -365,7 +365,7 @@ mod tests {
             dry_run: false,
             no_input: false,
         }
-        .run(&service, &preset_provider())
+        .run(&service, preset_provider())
         .expect("run with --list succeeds");
 
         assert!(!root.join("daily.md").exists());
@@ -396,7 +396,7 @@ mod tests {
             dry_run: false,
             no_input: false,
         }
-        .run(&service, &preset_provider())
+        .run(&service, preset_provider())
         .expect("run with --list succeeds even when nothing is listed");
     }
 
@@ -423,7 +423,7 @@ mod tests {
             dry_run: false,
             no_input: false,
         }
-        .run(&service, &preset_provider())
+        .run(&service, preset_provider())
         .expect("run template command");
 
         let written =
@@ -447,7 +447,7 @@ mod tests {
         let _guard = CwdGuard::enter(&root);
 
         let error = Template::new(PathBuf::from("daily"))
-            .run(&service, &preset_provider())
+            .run(&service, preset_provider())
             .expect_err("existing output without force fails");
 
         assert!(matches!(error, CliError::TemplateInstantiate { .. }));
@@ -481,7 +481,7 @@ mod tests {
             dry_run: false,
             no_input: false,
         }
-        .run(&service, &preset_provider())
+        .run(&service, preset_provider())
         .expect("force overwrites");
 
         assert_eq!(
@@ -513,7 +513,7 @@ mod tests {
             dry_run: false,
             no_input: false,
         }
-        .run(&service, &preset_provider())
+        .run(&service, preset_provider())
         .expect_err("escaping -o path fails");
 
         assert!(matches!(error, CliError::TemplateInstantiate { .. }));
@@ -542,7 +542,7 @@ mod tests {
             dry_run: true,
             no_input: false,
         }
-        .run(&service, &preset_provider())
+        .run(&service, preset_provider())
         .expect("dry run succeeds even though the output already exists");
 
         assert_eq!(
@@ -587,7 +587,7 @@ mod tests {
             Arc::new(crate::PresetDialogProvider::new().with_text("claude"));
 
         Template::new(PathBuf::from("daily"))
-            .run(&service, &provider)
+            .run(&service, provider)
             .expect("run template command");
 
         assert_eq!(
@@ -626,7 +626,7 @@ mod tests {
             dry_run: false,
             no_input: true,
         }
-        .run(&service, &provider)
+        .run(&service, provider)
         .expect("run template command");
 
         assert_eq!(
@@ -651,7 +651,7 @@ mod tests {
             Arc::new(crate::PresetDialogProvider::new().with_select(0));
 
         Template::interactive()
-            .run(&service, &provider)
+            .run(&service, provider)
             .expect("run interactive template command");
 
         assert_eq!(
@@ -676,7 +676,7 @@ mod tests {
         let _guard = CwdGuard::enter(&root);
 
         let error = Template::interactive()
-            .run(&service, &preset_provider())
+            .run(&service, preset_provider())
             .expect_err("non-interactive picker fails");
 
         assert!(matches!(error, CliError::TemplatePicker {
@@ -743,7 +743,7 @@ mod tests {
             Arc::new(CancellingDialogProvider);
 
         let error = Template::new(PathBuf::from("daily"))
-            .run(&service, &provider)
+            .run(&service, provider)
             .expect_err("cancelled ui.* prompt fails render");
 
         assert_eq!(error.user_abort(), Some(UserAbort::Cancelled));
