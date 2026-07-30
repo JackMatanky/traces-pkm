@@ -12,18 +12,48 @@
 
 ### Implementation Notes
 
-- **Field path resolution (`src/index/query.rs`)**:
+- **Module layout (`src/index/query.rs` + `src/index/query/`)**: Split into a
+  focused module tree rather than one large file, following
+  `08_ordering_discipline.md` (tour-of-the-API ordering: public API first,
+  helpers below) and `clippy.toml`'s `source-item-ordering`/
+  `module-item-order-groupings`:
+  - `src/index/query.rs` — module entrypoint. Defines `QueryOutcome` (the
+    primary API type) first, then `IndexRecord`, then `Source` last (source
+    selection is upstream of/subordinate to the query result types it feeds),
+    plus their `#[cfg(test)]` suites (`source_is_match`, `index_record`,
+    `limit`, `group_by`, `flatten`, `query_outcome`).
+  - `src/index/query/error.rs` — `QueryError` (mirrors `src/index/error.rs`
+    holding `FileIndexError`), with its own `Display` formatting tests.
+  - `src/index/query/field.rs` — `FieldPath`/`FileField` parsing and
+    resolution, with field-path tests.
+  - `src/index/query/filter.rs` — the `FilterExpr` AST, tokenizer
+    (`tokenize_filter_expr`/`FilterToken`), and recursive-descent parser
+    (`FilterParser`), with filter-expression tests.
+  - `src/index/query/operators.rs` — `CompareOp` and `LogicalOp` (extracted
+    out of `filter.rs` once it grew complex), with operator unit tests.
+  - `src/index/query/sort.rs` — `compare_field_values`, `fields_equal`,
+    `sort_key_cmp`, with sort-ordering tests.
+  - Test suites live beside the code they exercise rather than centralized in
+    one `mod tests` block, per module scope.
+- **Field path resolution (`src/index/query/field.rs`)**:
   - Added `IndexRecord::field(&self, path: &str) -> Result<FieldValue, QueryError>`, parsing `path` once into an internal `FieldPath` (`File(FileField)`, `Metadata(String)`, or `Tags`) and resolving it against `FileRecord`/`Note`.
   - `file.*` accessors: `path`, `name`, `folder`, `size`, plus Dataview-style `ctime`/`cdate`/`mtime`/`mdate` query field names (with `created_at`/`modified_at` as aliases for `ctime`/`mtime`). The internal `FileField` enum names these descriptively rather than tersely — `CreatedDateTime`/`CreatedDate`/`ModifiedDateTime`/`ModifiedDate` — while the query-facing field-path strings stay exactly as the spec names them.
   - Frontmatter/inline fields resolve by bare key through `Note::fields()` (frontmatter wins ties); `tags` resolves to a `FieldValue::List` of tag strings.
   - A record simply missing a well-formed field resolves to `FieldValue::Null`, not an error; only malformed paths (empty, unknown `file.*` accessor, unexpected `.` structure) return `QueryError::UnknownFieldPath`.
-- **`QueryOutcome::filter(expr)`** / **`QueryOutcome::r#where(expr)`**: `FilterExpr::parse` parses `"<field> <op> <value>"` (`==`, `!=`, `>=`, `<=`, `>`, `<`; value a quoted string, number, bool, or `null`/`Null`) into a named `FilterExpr { field, op, value }` (not an anonymous tuple), and `FilterExpr::matches(&IndexRecord)` applies it. `==`/`!=` normalize `String`/`Date`/`Duration` field kinds by text (`fields_equal`), matching the text-based ordering `compare_field_values` already used, so a quoted literal matches a `Date`-typed field like `file.mtime`. `QueryOutcome::r#where` provides a raw identifier alias delegating directly to `filter`.
-- **`QueryOutcome::sort(path, descending)`** / **`QueryOutcome::group_by(path)`**: share `sort_by_field`, a stable sort keyed by the resolved field value. `FieldValue::Null` sorts as the *minimum* value — leading ascending, trailing descending, like any other value — matching Dataview's own `compareValue`/`DataArray.sort` (confirmed against `docs/refs/digests/obsidian_blacksmithgu-obsidian-dataview-src-digest.txt`: Dataview sorts `null` first and just negates the whole comparator for `desc`, with no special-casing). `group_by` is the ascending case, clustering equal values so a consumer can detect group boundaries between adjacent records — also confirmed against the digest, which shows Dataview's own `groupBy` is implemented the same way (sort ascending, then group contiguous equal items).
+- **`QueryOutcome::filter(expr)`** / **`QueryOutcome::r#where(expr)`** (`src/index/query/filter.rs`): originally a flat `"<field> <op> <value>"` parser, later rewritten into a full recursive-descent `FilterExpr` AST supporting:
+  - **Comparisons**: `Binary { field, op: CompareOp, value }` for `==`, `!=`, `>=`, `<=`, `>`, `<`.
+  - **Functions**: `Function { name, field, args }` — currently `contains(field, value)`, checking list membership (with tag-prefix matching, e.g. `contains(tags, "#book")` matches `#book/fiction`) or substring containment on string-like fields.
+  - **Boolean logic and grouping**: `Logical { op: LogicalOp, exprs }` where `LogicalOp` is `And` (`AND`/`and`/`&&`), `Or` (`OR`/`or`/`||`), or `Not` (`NOT`/`not`/`!`), plus `( ... )` parenthesized grouping overriding default precedence (`NOT` binds tightest, then `AND`, then `OR`).
+  - **Literals**: double-quoted strings (with `\"` escape support), numbers, `true`/`false`, and `null`/`Null`.
+  - `==`/`!=` normalize `String`/`Date`/`Duration` field kinds by text (`fields_equal`), matching the text-based ordering `compare_field_values` already used, so a quoted literal matches a `Date`-typed field like `file.mtime`.
+  - `QueryOutcome::r#where` provides a raw identifier alias delegating directly to `filter`, satisfying the ticket's `where(...)` interface name (`where` itself is a Rust keyword).
+- **Operators (`src/index/query/operators.rs`)**: `CompareOp` (`Eq`/`Ne`/`Lt`/`Le`/`Gt`/`Ge`) owns `strip_prefix` (tokenizer operator matching) and `is_satisfied_by` (comparison evaluation); `LogicalOp` (`And`/`Or`/`Not`) owns `eval`, evaluating a `&[FilterExpr]` against a record (`all`/`any`/negated-first respectively). Extracted from `filter.rs` once that file grew complex enough to obscure the AST/parser structure.
+- **`QueryOutcome::sort(path, descending)`** / **`QueryOutcome::group_by(path)`** (`src/index/query/sort.rs`): share `sort_by_field`, a stable sort keyed by the resolved field value. `FieldValue::Null` sorts as the *minimum* value — leading ascending, trailing descending, like any other value — matching Dataview's own `compareValue`/`DataArray.sort` (confirmed against `docs/refs/digests/obsidian_blacksmithgu-obsidian-dataview-src-digest.txt`: Dataview sorts `null` first and just negates the whole comparator for `desc`, with no special-casing). `group_by` is the ascending case, clustering equal values so a consumer can detect group boundaries between adjacent records — also confirmed against the digest, which shows Dataview's own `groupBy` is implemented the same way (sort ascending, then group contiguous equal items).
 - **`QueryOutcome::limit(n: i64)`**: returns `Result`, rejecting negative/overflowing `n` with `QueryError::NegativeLimit` (the ticket's "invalid limit values" case).
-- **`QueryOutcome::flatten(path)`**: explodes a `FieldValue::List` field into one row per element via per-record `Vec<(FieldPath, FieldValue)>` overrides consulted first by field resolution; an empty list drops the row, a non-list value passes through unchanged. Supports chained `.flatten()` operations across multiple fields.
+- **`QueryOutcome::flatten(path)`**: explodes a `FieldValue::List` field into one row per element via per-record `Vec<(FieldPath, FieldValue)>` overrides consulted first by field resolution; an empty list drops the row, a non-list value passes through unchanged. The overrides are stored as a `Vec` (not a single `Option`) so that chained `.flatten()` calls across multiple distinct fields (e.g. `.flatten("authors").flatten("tags")`) each keep their own override instead of the second call clobbering the first, producing the full cross-product of exploded rows.
 - All transformation methods consume `self` and return a new `QueryOutcome`, so chaining never clones the record vector; `flatten` clones only the `n - 1` extra `IndexRecord`s a real explosion requires.
 - **`Timestamp` formatting (`src/index/file.rs`)**: split the original `to_rfc3339()` (jargon-named) into four self-describing methods — `to_offset_string()` (datetime with the UTC offset, e.g. `"...T14:30:05+00:00"`), `to_datetime_string()` (no offset, the one `file.ctime`/`file.mtime` actually resolve to, since the offset is always `+00:00` and only risks breaking a filter literal's exact-text match), `to_date_string()`, and `to_time_string()` (new, time-of-day only). Covered directly with fixed-timestamp unit tests in `mod formatting`.
-- **Verification**: full workspace test suite 948/948 passing (`cargo nextest run`), clippy clean (`cargo clippy --workspace --all-targets -- -D warnings`, ignoring a pre-existing unrelated `clippy::large_stack_arrays` false positive already present on `main`), `cargo doc --no-deps` clean.
+- **Verification**: full workspace test suite 952/952 passing (`cargo test --workspace` / `mise run test-all`), clippy clean (`cargo clippy --workspace -- -D warnings` / `mise run clippy`), `cargo doc --no-deps` clean (`mise run doc`), formatted (`mise run fmt`).
 
 ## Agent Brief
 
@@ -49,6 +79,13 @@
 - [x] `QueryOutcome` can flatten nested list-like metadata (e.g. list items or multi-value fields) into individual rows.
 - [x] Invalid transformation inputs produce clear errors rather than panics.
 - [x] Non-terminal transformation methods support method chaining on `QueryOutcome`.
+
+> **Post-completion follow-up (user-requested, beyond original grammar):**
+> `filter`/`r#where` expanded from flat `"<field> <op> <value>"` comparisons
+> into a full boolean expression grammar — `AND`/`OR`/`NOT`, parenthesized
+> grouping, and a `contains(field, value)` function — since the original
+> single-comparison grammar could not express compound conditions needed by
+> Template/CLI callers. See Implementation Notes above.
 
 **Out of scope:**
 - Registering the `QueryOps` minijinja namespace Object or pipeline terminal filters (belongs to #06).
