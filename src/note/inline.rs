@@ -39,14 +39,22 @@ static TAG_RE: LazyLock<Regex> = LazyLock::new(|| {
 });
 
 const TASK_SHORTHAND_DATE_LEN: usize = 10;
-const TASK_SHORTHAND_FIELDS: &[(&str, &str)] = &[
-    ("\u{1F5D3}\u{FE0F}", "due"), /* 🗓️ due date (emoji presentation
-                                   * selector U+FE0F) */
-    ("\u{1F5D3}", "due"), // 🗓 due date (base text variant)
-    ("\u{2795}", "created"), // ➕ created date
-    ("\u{1F6EB}", "start"), // 🛫 start date
-    ("\u{23F3}", "scheduled"), // ⏳ scheduled date
-    ("\u{2705}", "completion"), // ✅ completion date
+/// Dataview task emoji shorthand mappings to inline field keys.
+///
+/// Supported emoji shorthands:
+/// - `\u{1F5D3}\u{FE0F}` (`🗓️`): `due` (with variation selector `U+FE0F`)
+/// - `\u{1F5D3}` (`🗓`): `due` (base text variant)
+/// - `\u{2795}` (`➕`): `created`
+/// - `\u{1F6EB}` (`🛫`): `start`
+/// - `\u{23F3}` (`⏳`): `scheduled`
+/// - `\u{2705}` (`✅`): `completion`
+const TASK_EMOJI_FIELDS: &[(&str, &str)] = &[
+    ("\u{1F5D3}\u{FE0F}", "due"),
+    ("\u{1F5D3}", "due"),
+    ("\u{2795}", "created"),
+    ("\u{1F6EB}", "start"),
+    ("\u{23F3}", "scheduled"),
+    ("\u{2705}", "completion"),
 ];
 const DURATION_UNITS: &[&str] = &[
     "year",
@@ -270,7 +278,7 @@ impl<'a> InlineFieldLexer<'a> {
     }
 
     fn scan_task_shorthands(&mut self) {
-        for &(emoji, key) in TASK_SHORTHAND_FIELDS {
+        for &(emoji, key) in TASK_EMOJI_FIELDS {
             let mut next = 0;
             while let Some(start) = self.source.find_str_from(next, emoji) {
                 let value_start = self.source.advance(start, emoji.len());
