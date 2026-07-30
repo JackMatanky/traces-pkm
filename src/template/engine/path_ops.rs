@@ -90,7 +90,7 @@ impl PathOps {
     }
 }
 
-/// Resolves `path` against `root` via [`resolve_against_root`], then
+/// Resolves `path` against `root` via [`InspectTarget::resolve`], then
 /// answers `query` against the resolved target. A missing target
 /// answers `false` for every query.
 ///
@@ -102,9 +102,9 @@ impl PathOps {
 ///   resolved target's metadata fails for any reason other than "not found" —
 ///   permission denied, a broken symlink loop, etc.
 fn inspect(root: &Path, path: &str, query: PathQuery) -> Result<bool, Error> {
-    let resolved = resolve_against_root(root, path)
+    let target = InspectTarget::resolve(root, path)
         .map_err(|source| confine_error(path, source))?;
-    match std::fs::metadata(&resolved) {
+    match std::fs::metadata(target.as_ref()) {
         Ok(metadata) => Ok(match query {
             PathQuery::Exists => true,
             PathQuery::IsFile => metadata.is_file(),
@@ -115,27 +115,42 @@ fn inspect(root: &Path, path: &str, query: PathQuery) -> Result<bool, Error> {
     }
 }
 
-/// Resolves `path` against `root`: an absolute `path` is used as-is; a
-/// `path` naming `root` itself ([`is_root_reference`]) resolves directly to
-/// it; any other relative `path` is confined via
-/// [`RootConfinedPath::parse`] — the same seam [`super::file_ops`]'s
-/// `file.include()`/`file.write_to()` use, so a `..`/symlink escape is
-/// rejected identically across every path-taking template primitive.
-///
-/// # Errors
-///
-/// [`PathError::NotRelative`]/[`PathError::EscapesRoot`] if a relative
-/// `path` resolves outside `root`; [`PathError::Verify`] if confirming
-/// containment fails for another reason.
-fn resolve_against_root(root: &Path, path: &str) -> Result<PathBuf, PathError> {
-    let candidate = Path::new(path);
-    if candidate.is_absolute() {
-        Ok(candidate.to_owned())
-    } else if is_root_reference(candidate) {
-        Ok(root.to_owned())
-    } else {
-        RootConfinedPath::parse(root, candidate)
-            .map(RootConfinedPath::into_path_buf)
+/// A `path` test's argument, resolved against `root` and proven safe to
+/// pass to [`std::fs::metadata`] — constructible only via [`Self::resolve`],
+/// so [`inspect`] can never accidentally stat an unconfined candidate.
+struct InspectTarget(PathBuf);
+
+impl InspectTarget {
+    /// Resolves `path` against `root`: an absolute `path` is used as-is; a
+    /// `path` naming `root` itself ([`is_root_reference`]) resolves
+    /// directly to it; any other relative `path` is confined via
+    /// [`RootConfinedPath::parse`] — the same seam [`super::file_ops`]'s
+    /// `file.include()`/`file.write_to()` use, so a `..`/symlink escape is
+    /// rejected identically across every path-taking template primitive.
+    ///
+    /// # Errors
+    ///
+    /// [`PathError::NotRelative`]/[`PathError::EscapesRoot`] if a relative
+    /// `path` resolves outside `root`; [`PathError::Verify`] if confirming
+    /// containment fails for another reason.
+    fn resolve(root: &Path, path: &str) -> Result<Self, PathError> {
+        let candidate = Path::new(path);
+        if candidate.is_absolute() {
+            Ok(Self(candidate.to_owned()))
+        } else if is_root_reference(candidate) {
+            Ok(Self(root.to_owned()))
+        } else {
+            RootConfinedPath::parse(root, candidate)
+                .map(RootConfinedPath::into_path_buf)
+                .map(Self)
+        }
+    }
+}
+
+impl AsRef<Path> for InspectTarget {
+    #[inline]
+    fn as_ref(&self) -> &Path {
+        &self.0
     }
 }
 
