@@ -23,7 +23,13 @@ impl Index {
     /// - [`CliError::Index`] if scanning the project root or persisting the
     ///   `FileIndex` fails.
     #[inline]
-    pub(super) fn run(service: &ConfigService) -> Result<(), CliError> {
+    #[expect(
+        clippy::unused_self,
+        reason = "keeps the dispatch signature consistent with every other \
+                  command handler (all args.run(&self, service)) so the \
+                  Commands::run match arms are uniform"
+    )]
+    pub(super) fn run(&self, service: &ConfigService) -> Result<(), CliError> {
         let config = super::load_config(service)?;
         let root = config.root();
         let index_error = |source| CliError::Index {
@@ -107,7 +113,7 @@ mod tests {
                 .expect("write note");
             let _guard = CwdGuard::enter(&root);
 
-            Index::run(&service).expect("run index command");
+            Index.run(&service).expect("run index command");
 
             let loaded = FileIndex::load(&root).expect("load persisted index");
             let paths = record_paths(&loaded);
@@ -123,7 +129,7 @@ mod tests {
             create_trusted_project(&service, &root);
             fs::write(root.join("first.md"), "content").expect("write first");
             let _guard = CwdGuard::enter(&root);
-            Index::run(&service).expect("first index run");
+            Index.run(&service).expect("first index run");
 
             // Simulate a later invocation: load without rescanning.
             let reloaded =
@@ -140,11 +146,11 @@ mod tests {
             create_trusted_project(&service, &root);
             fs::write(root.join("stale.md"), "old").expect("write stale");
             let _guard = CwdGuard::enter(&root);
-            Index::run(&service).expect("first index run");
+            Index.run(&service).expect("first index run");
             fs::remove_file(root.join("stale.md")).expect("remove stale");
             fs::write(root.join("fresh.md"), "new").expect("write fresh");
 
-            Index::run(&service).expect("second index run");
+            Index.run(&service).expect("second index run");
 
             let loaded = FileIndex::load(&root).expect("load persisted index");
             let paths = record_paths(&loaded);
@@ -165,7 +171,7 @@ mod tests {
             let service = service(temp.path());
             let _guard = CwdGuard::enter(&root);
 
-            let error = Index::run(&service).expect_err("untrusted root fails");
+            let error = Index.run(&service).expect_err("untrusted root fails");
 
             assert!(matches!(error, CliError::ConfigLoad {
                 source: ConfigLoadError::Build(_),
@@ -203,8 +209,8 @@ mod tests {
             let _restore = RestorePermissions(&locked);
             let _guard = CwdGuard::enter(&root);
 
-            let error = Index::run(&service)
-                .expect_err("unreadable subdirectory fails");
+            let error =
+                Index.run(&service).expect_err("unreadable subdirectory fails");
 
             assert!(matches!(error, CliError::Index {
                 source: FileIndexError::Io { .. },

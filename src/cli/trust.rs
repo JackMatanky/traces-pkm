@@ -89,26 +89,6 @@ impl Trust {
         Ok(())
     }
 
-    /// Grants trust to the specified target directory or configuration.
-    ///
-    /// # Errors
-    ///
-    /// - [`CliError::TrustTargetResolve`] if resolving trust targets fails.
-    /// - [`CliError::Trust`] if updating the trust store fails.
-    fn trust(&self, service: &ConfigService) -> Result<(), CliError> {
-        self.for_each_subject(service, |subject: TrustRequest| {
-            let root = subject.root_path().to_path_buf();
-            if let Err(source) = service.trust(&subject) {
-                return Err(CliError::Trust {
-                    root,
-                    source,
-                });
-            }
-            eprintln!("trusted {}", root.display());
-            Ok(())
-        })
-    }
-
     /// Displays trust status for the target configuration.
     ///
     /// # Errors
@@ -135,6 +115,26 @@ impl Trust {
                 }
             })?;
             println!("{}\t{}", path.display(), state);
+            Ok(())
+        })
+    }
+
+    /// Grants trust to the specified target directory or configuration.
+    ///
+    /// # Errors
+    ///
+    /// - [`CliError::TrustTargetResolve`] if resolving trust targets fails.
+    /// - [`CliError::Trust`] if updating the trust store fails.
+    fn trust(&self, service: &ConfigService) -> Result<(), CliError> {
+        self.for_each_subject(service, |subject: TrustRequest| {
+            let root = subject.root_path().to_path_buf();
+            if let Err(source) = service.trust(&subject) {
+                return Err(CliError::Trust {
+                    root,
+                    source,
+                });
+            }
+            eprintln!("trusted {}", root.display());
             Ok(())
         })
     }

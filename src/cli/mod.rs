@@ -20,32 +20,6 @@ use crate::{
     config::{Config, ConfigService},
 };
 
-/// Reads the process current directory as a [`Cwd`].
-///
-/// # Errors
-///
-/// Returns [`CliError::CurrentDirectory`] if the current directory cannot be
-/// read.
-fn current_dir() -> Result<Cwd, CliError> {
-    Cwd::new().map_err(|source| CliError::CurrentDirectory {
-        source,
-    })
-}
-
-/// Reads the current directory and loads its effective configuration.
-///
-/// # Errors
-///
-/// - [`CliError::CurrentDirectory`] if the current directory cannot be read.
-/// - [`CliError::ConfigLoad`] if configuration discovery or loading fails.
-fn load_config(service: &ConfigService) -> Result<Config, CliError> {
-    let cwd = current_dir()?.into_inner();
-    service.load(&cwd).map_err(|source| CliError::ConfigLoad {
-        cwd,
-        source,
-    })
-}
-
 /// Outcome of a successful CLI command.
 ///
 /// Distinguishes normal completion from deliberate user cancellation or
@@ -166,7 +140,7 @@ impl Commands {
             Self::Init(args) => args.run(provider.as_ref()),
             Self::Trust(args) => args.run(service),
             Self::Untrust(args) => args.run(service),
-            Self::Index(_) => index::Index::run(service),
+            Self::Index(args) => args.run(service),
             Self::Template(args) => args.run(service, provider),
             Self::Completions(args) => args.run(service),
         }
@@ -187,6 +161,32 @@ pub fn run() -> Result<CommandOutcome, CliError> {
     let provider: Arc<dyn DialogProvider> =
         Arc::new(crate::TerminalDialogProvider::new());
     Cli::parse().run(&ConfigService::new(), provider)
+}
+
+/// Reads the process current directory as a [`Cwd`].
+///
+/// # Errors
+///
+/// Returns [`CliError::CurrentDirectory`] if the current directory cannot be
+/// read.
+fn current_dir() -> Result<Cwd, CliError> {
+    Cwd::new().map_err(|source| CliError::CurrentDirectory {
+        source,
+    })
+}
+
+/// Reads the current directory and loads its effective configuration.
+///
+/// # Errors
+///
+/// - [`CliError::CurrentDirectory`] if the current directory cannot be read.
+/// - [`CliError::ConfigLoad`] if configuration discovery or loading fails.
+fn load_config(service: &ConfigService) -> Result<Config, CliError> {
+    let cwd = current_dir()?.into_inner();
+    service.load(&cwd).map_err(|source| CliError::ConfigLoad {
+        cwd,
+        source,
+    })
 }
 
 #[cfg(test)]
