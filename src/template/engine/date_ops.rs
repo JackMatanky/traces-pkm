@@ -218,20 +218,6 @@ impl DateTimeUnit {
         }
     }
 
-    /// This unit's canonical (plural) name, for error messages — reported
-    /// even when the `unit=` kwarg used the singular form ([`Self::parse`]
-    /// accepts both).
-    const fn name(self) -> &'static str {
-        match self {
-            Self::Years => "years",
-            Self::Months => "months",
-            Self::Days => "days",
-            Self::Hours => "hours",
-            Self::Minutes => "minutes",
-            Self::Seconds => "seconds",
-        }
-    }
-
     /// This unit's length in whole seconds — [`date_diff`]'s divisor for
     /// both its sub-day (`f64`) and whole-unit (`i64`) output. `None` for
     /// [`Self::Years`]/[`Self::Months`], which vary in length (28–31 days,
@@ -547,21 +533,79 @@ fn weekday(value: &str) -> Result<u32, Error> {
     Ok(parse_date(value)?.weekday().num_days_from_monday())
 }
 
-/// `{{ value | date_diff(other, unit="days") }}` — the signed duration
+/// Whole calendar years from `from` to `to`, signed (negative when `to`
+/// precedes `from`). Delegates to chrono's own
+/// [`NaiveDate::years_since`], which is day-of-year aware — a year isn't
+/// "up" until `to`'s month/day reaches `from`'s — just made to accept
+/// either ordering.
+fn signed_years_since(from: NaiveDate, to: NaiveDate) -> i64 {
+    let (earlier, later, sign) = if to >= from {
+        (from, to, 1)
+    } else {
+        (to, from, -1)
+    };
+    #[expect(
+        clippy::expect_used,
+        reason = "earlier/later are ordered by construction just above, so \
+                  years_since's None case (base > self) is unreachable here"
+    )]
+    let years = later.years_since(earlier).expect(
+        "later >= earlier by construction, so years_since can't return None",
+    );
+    #[expect(
+        clippy::arithmetic_side_effects,
+        reason = "sign is always ±1 and years is bounded by NaiveDate's \
+                  representable range (~±262,000), so this multiply can't \
+                  overflow i64"
+    )]
+    let result = sign * i64::from(years);
+    result
+}
+
+/// Whole calendar months from `from` to `to`, signed — see
+/// [`signed_years_since`]. Chrono has no `months_since` equivalent, so
+/// this mirrors [`NaiveDate::years_since`]'s own algorithm at month
+/// granularity: total calendar months between the two dates, decremented
+/// by one when the day-of-month hasn't yet been reached (so a partial
+/// month never rounds up).
+fn signed_months_since(from: NaiveDate, to: NaiveDate) -> i64 {
+    let (earlier, later, sign) = if to >= from {
+        (from, to, 1)
+    } else {
+        (to, from, -1)
+    };
+    #[expect(
+        clippy::arithmetic_side_effects,
+        reason = "year/month/day are all bounded by NaiveDate's representable \
+                  range (~±262,000 years), so the year subtraction, ×12 month \
+                  conversion, day comparison, and sign multiply can't \
+                  overflow i64"
+    )]
+    let result = sign
+        * (i64::from(later.year() - earlier.year()) * 12
+            + i64::from(later.month())
+            - i64::from(earlier.month())
+            - i64::from(later.day() < earlier.day()));
+    result
+}
+
+/// `{{ value | date_diff(other, unit="days") }}` — the signed difference
 /// from the piped value to `other` (positive when `other` is later),
-/// expressed in `unit` (`"days"` default, `"hours"`, `"minutes"`, or
-/// `"seconds"`). Returns `f64` when both `value` and `other` carry a
-/// time component (sub-day precision is meaningful); otherwise an `i64`
-/// whole-unit count.
+/// expressed in `unit` (`"days"` default, `"years"`, `"months"`,
+/// `"hours"`, `"minutes"`, or `"seconds"`).
+///
+/// `"years"`/`"months"` are calendar counts — whole units elapsed,
+/// day-of-month aware (see [`signed_years_since`]/[`signed_months_since`]),
+/// always an `i64` regardless of whether `value`/`other` carry a time
+/// component. The remaining four units are fixed-duration: `f64` when
+/// both inputs carry a time component (sub-day precision is meaningful),
+/// otherwise an `i64` whole-unit count.
 ///
 /// # Errors
 ///
 /// - [`ErrorKind::InvalidOperation`] if `value` or `other` isn't a parseable
-///   date/time string (see [`ParsedDate::parse`]), `unit` isn't one of
-///   [`DateTimeUnit::parse`]'s six accepted names (see [`unit_kwarg`]), or
-///   `unit` names [`DateTimeUnit::Years`]/[`DateTimeUnit::Months`], which
-///   [`DateTimeUnit::diff_seconds`] doesn't support (see
-///   [`undiffable_unit_error`]).
+///   date/time string (see [`ParsedDate::parse`]) or `unit` isn't one of
+///   [`DateTimeUnit::parse`]'s six accepted names (see [`unit_kwarg`]).
 /// - [`ErrorKind::TooManyArguments`] if `kwargs` carries any key besides
 ///   `unit`.
 #[expect(
@@ -571,34 +615,59 @@ fn weekday(value: &str) -> Result<u32, Error> {
 )]
 fn date_diff(value: &str, other: &str, kwargs: Kwargs) -> Result<Value, Error> {
     let unit = unit_kwarg(&kwargs)?;
-    let unit_seconds =
-        unit.diff_seconds().ok_or_else(|| undiffable_unit_error(unit))?;
     let from = ParsedDate::parse(value)?;
     let to = ParsedDate::parse(other)?;
-    let delta = to.datetime.signed_duration_since(from.datetime);
 
-    if from.has_time && to.has_time {
-        #[expect(
-            clippy::as_conversions,
-            clippy::cast_precision_loss,
-            reason = "TimeDelta::num_seconds() is bounded by chrono's \
-                      NaiveDateTime range (~262,000 years, well under 2^52 \
-                      seconds), and unit_seconds is at most 86,400 — neither \
-                      cast loses precision in practice"
-        )]
-        let result = (delta.num_seconds() as f64
-            + f64::from(delta.subsec_nanos()) / 1e9)
-            / unit_seconds as f64;
-        Ok(Value::from(result))
-    } else {
-        #[expect(
-            clippy::arithmetic_side_effects,
-            reason = "unit_seconds is 86_400, 3_600, 60, or 1 \
-                      (DateTimeUnit::diff_seconds), never zero, so this \
-                      division never panics"
-        )]
-        let result = delta.num_seconds() / unit_seconds;
-        Ok(Value::from(result))
+    match unit {
+        DateTimeUnit::Years => Ok(Value::from(signed_years_since(
+            from.datetime.date(),
+            to.datetime.date(),
+        ))),
+        DateTimeUnit::Months => Ok(Value::from(signed_months_since(
+            from.datetime.date(),
+            to.datetime.date(),
+        ))),
+        DateTimeUnit::Days
+        | DateTimeUnit::Hours
+        | DateTimeUnit::Minutes
+        | DateTimeUnit::Seconds => {
+            #[expect(
+                clippy::expect_used,
+                reason = "this arm is reached only for Days/Hours/Minutes/ \
+                          Seconds, all of which DateTimeUnit::diff_seconds \
+                          maps to Some — None is only ever Years/Months, \
+                          handled by the arms above"
+            )]
+            let unit_seconds = unit.diff_seconds().expect(
+                "Days/Hours/Minutes/Seconds always have a fixed length",
+            );
+            let delta = to.datetime.signed_duration_since(from.datetime);
+
+            if from.has_time && to.has_time {
+                #[expect(
+                    clippy::as_conversions,
+                    clippy::cast_precision_loss,
+                    reason = "TimeDelta::num_seconds() is bounded by chrono's \
+                              NaiveDateTime range (~262,000 years, well under \
+                              2^52 seconds), and unit_seconds is at most \
+                              86,400 — neither cast loses precision in \
+                              practice"
+                )]
+                let result = (delta.num_seconds() as f64
+                    + f64::from(delta.subsec_nanos()) / 1e9)
+                    / unit_seconds as f64;
+                Ok(Value::from(result))
+            } else {
+                #[expect(
+                    clippy::arithmetic_side_effects,
+                    reason = "unit_seconds is 86_400, 3_600, 60, or 1 \
+                              (DateTimeUnit::diff_seconds), never zero, so \
+                              this division never panics"
+                )]
+                let result = delta.num_seconds() / unit_seconds;
+                Ok(Value::from(result))
+            }
+        }
     }
 }
 
@@ -697,21 +766,6 @@ fn unknown_unit_error(unit: &str) -> Error {
         format!(
             "unknown unit {unit:?} (expected \"years\", \"months\", \"days\", \
              \"hours\", \"minutes\", or \"seconds\")"
-        ),
-    )
-}
-
-/// Builds the error for [`date_diff`]'s `unit` kwarg naming a real
-/// [`DateTimeUnit`] that [`DateTimeUnit::diff_seconds`] doesn't support:
-/// [`DateTimeUnit::Years`]/[`DateTimeUnit::Months`] vary in length (28–31
-/// days, 365–366 days), so there's no fixed number of seconds to divide by.
-fn undiffable_unit_error(unit: DateTimeUnit) -> Error {
-    Error::new(
-        ErrorKind::InvalidOperation,
-        format!(
-            "date_diff doesn't support unit {:?} (expected \"days\", \
-             \"hours\", \"minutes\", or \"seconds\")",
-            unit.name()
         ),
     )
 }
@@ -1327,25 +1381,76 @@ mod tests {
         }
 
         #[rstest]
-        #[case::years("years")]
-        #[case::months("months")]
-        fn rejects_a_recognized_but_undiffable_unit_instead_of_panicking(
-            #[case] unit: &str,
+        #[case::exact_anniversary("2020-06-15", "2025-06-15", "5")]
+        #[case::before_anniversary_rounds_down("2020-06-15", "2025-06-14", "4")]
+        #[case::after_anniversary_rounds_up_to_the_next_whole_year(
+            "2020-06-15",
+            "2025-06-16",
+            "5"
+        )]
+        #[case::negative_when_other_precedes_the_piped_value(
+            "2025-06-15",
+            "2020-06-15",
+            "-5"
+        )]
+        fn computes_whole_calendar_years_between_dates(
+            #[case] value: &str,
+            #[case] other: &str,
+            #[case] expected: &str,
         ) {
-            let error = env()
+            let rendered = env()
                 .render_str(
-                    &format!(
-                        r#"{{{{ "2026-07-23" | date_diff("2026-07-24", unit="{unit}") }}}}"#
-                    ),
+                    r#"{{ value | date_diff(other, unit="years") }}"#,
+                    minijinja::context! { value, other },
+                )
+                .expect("render succeeds");
+
+            assert_eq!(rendered, expected);
+        }
+
+        #[rstest]
+        #[case::exact_month_boundary("2026-01-15", "2026-04-15", "3")]
+        #[case::before_day_of_month_rounds_down(
+            "2026-01-15",
+            "2026-04-14",
+            "2"
+        )]
+        #[case::after_day_of_month_rounds_up_to_the_next_whole_month(
+            "2026-01-15",
+            "2026-04-16",
+            "3"
+        )]
+        #[case::spans_a_year_boundary("2025-11-15", "2026-02-15", "3")]
+        #[case::negative_when_other_precedes_the_piped_value(
+            "2026-04-15",
+            "2026-01-15",
+            "-3"
+        )]
+        fn computes_whole_calendar_months_between_dates(
+            #[case] value: &str,
+            #[case] other: &str,
+            #[case] expected: &str,
+        ) {
+            let rendered = env()
+                .render_str(
+                    r#"{{ value | date_diff(other, unit="months") }}"#,
+                    minijinja::context! { value, other },
+                )
+                .expect("render succeeds");
+
+            assert_eq!(rendered, expected);
+        }
+
+        #[test]
+        fn years_and_months_ignore_the_time_of_day_component() {
+            let rendered = env()
+                .render_str(
+                    r#"{{ "2020-06-15 23:59:59" | date_diff("2025-06-15 00:00:00", unit="years") }}"#,
                     minijinja::context!(),
                 )
-                .expect_err("undiffable unit fails cleanly");
+                .expect("render succeeds");
 
-            assert_eq!(error.kind(), ErrorKind::InvalidOperation);
-            assert!(
-                error.to_string().contains("date_diff doesn't support"),
-                "expected an undiffable-unit message, got {error}"
-            );
+            assert_eq!(rendered, "5");
         }
     }
 
