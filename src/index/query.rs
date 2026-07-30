@@ -91,9 +91,9 @@ pub(crate) enum QueryError {
 pub(crate) struct IndexRecord {
     file: FileRecord,
     note: Note,
-    /// Overrides field resolution for one exploded row produced by
+    /// Overrides field resolution for exploded rows produced by
     /// [`QueryOutcome::flatten`].
-    flattened: Option<(FieldPath, FieldValue)>,
+    flattened: Vec<(FieldPath, FieldValue)>,
 }
 
 impl IndexRecord {
@@ -102,7 +102,7 @@ impl IndexRecord {
         Self {
             file,
             note,
-            flattened: None,
+            flattened: Vec::new(),
         }
     }
 
@@ -140,8 +140,7 @@ impl IndexRecord {
     /// Resolves an already-parsed `path`, applying any [`Self::flattened`]
     /// override.
     fn resolve(&self, path: &FieldPath) -> FieldValue {
-        if let Some((flattened_path, value)) = &self.flattened
-            && flattened_path == path
+        if let Some((_, value)) = self.flattened.iter().find(|(p, _)| p == path)
         {
             return value.clone();
         }
@@ -166,7 +165,12 @@ impl IndexRecord {
     ///
     /// Used for exploded rows produced by [`QueryOutcome::flatten`].
     fn with_flattened(mut self, path: FieldPath, value: FieldValue) -> Self {
-        self.flattened = Some((path, value));
+        if let Some(entry) = self.flattened.iter_mut().find(|(p, _)| p == &path)
+        {
+            entry.1 = value;
+        } else {
+            self.flattened.push((path, value));
+        }
         self
     }
 }
@@ -248,6 +252,20 @@ impl QueryOutcome {
             .filter(|record| expr.matches(record))
             .collect();
         Ok(Self::new(records))
+    }
+
+    /// Keeps only records matching the filter expression `expr`.
+    ///
+    /// Alias for [`Self::filter`] using raw identifier syntax (`r#where`).
+    /// See [`Self::filter`] for full syntax and matching rules.
+    ///
+    /// # Errors
+    ///
+    /// - [`QueryError::UnparsableFilterExpression`] if `expr` cannot be parsed
+    /// - [`QueryError::UnknownFieldPath`] if its field path is malformed
+    #[inline]
+    pub(crate) fn r#where(self, expr: &str) -> Result<Self, QueryError> {
+        self.filter(expr)
     }
 
     /// Orders records by `path`, ascending unless `descending` is set.
@@ -621,8 +639,8 @@ impl CompareOp {
 
 /// Parses a filter expression's literal value.
 ///
-/// Parses double-quoted strings, `true`/`false` booleans, or floating-point
-/// numbers.
+/// Parses double-quoted strings, `true`/`false` booleans, `null`/`Null`
+/// nulls, or floating-point numbers.
 fn parse_filter_literal(s: &str) -> Option<FieldValue> {
     if let Some(inner) = s.strip_prefix('"').and_then(|s| s.strip_suffix('"')) {
         return Some(FieldValue::String(inner.to_owned()));
@@ -630,6 +648,7 @@ fn parse_filter_literal(s: &str) -> Option<FieldValue> {
     match s {
         "true" => Some(FieldValue::Bool(true)),
         "false" => Some(FieldValue::Bool(false)),
+        "null" | "Null" => Some(FieldValue::Null),
         _ => s.parse::<f64>().ok().map(FieldValue::Number),
     }
 }
@@ -1054,6 +1073,30 @@ mod tests {
 
             assert_eq!(filtered.len(), 1);
         }
+
+        #[test]
+        fn filters_with_null_literal() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let outcome = rated_outcome(temp.path());
+
+            let with_null =
+                outcome.clone().filter("rating == null").expect("valid filter");
+            let without_null =
+                outcome.filter("rating != null").expect("valid filter");
+
+            assert_eq!(names(&with_null), ["unrated"]);
+            assert_eq!(names(&without_null), ["high", "low"]);
+        }
+
+        #[test]
+        fn r_where_alias_filters_records_identically_to_filter() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let outcome = rated_outcome(temp.path());
+
+            let filtered = outcome.r#where("rating >= 7").expect("valid where");
+
+            assert_eq!(names(&filtered), ["high"]);
+        }
     }
 
     mod sort {
@@ -1337,6 +1380,52 @@ mod tests {
                 filtered.get(0).expect("record").field("authors"),
                 Ok(FieldValue::String("Bob".to_owned()))
             );
+        }
+
+        #[test]
+        fn chains_multiple_flatten_calls_without_overwriting_prior_overrides() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let outcome = outcome_for(
+                temp.path(),
+                "---\nauthors:\n  - Alice\n  - Bob\n---\nFiled under #book \
+                 #read",
+            );
+
+            let flattened = outcome
+                .flatten("authors")
+                .expect("valid flatten")
+                .flatten("tags")
+                .expect("valid flatten");
+
+            // 2 authors * 2 tags = 4 rows
+            assert_eq!(flattened.len(), 4);
+            let pairs: Vec<(FieldValue, FieldValue)> = flattened
+                .iter()
+                .map(|record| {
+                    (
+                        record.field("authors").expect("valid authors"),
+                        record.field("tags").expect("valid tags"),
+                    )
+                })
+                .collect();
+            assert_eq!(pairs, [
+                (
+                    FieldValue::String("Alice".to_owned()),
+                    FieldValue::String("#book".to_owned())
+                ),
+                (
+                    FieldValue::String("Alice".to_owned()),
+                    FieldValue::String("#read".to_owned())
+                ),
+                (
+                    FieldValue::String("Bob".to_owned()),
+                    FieldValue::String("#book".to_owned())
+                ),
+                (
+                    FieldValue::String("Bob".to_owned()),
+                    FieldValue::String("#read".to_owned())
+                ),
+            ]);
         }
     }
 
