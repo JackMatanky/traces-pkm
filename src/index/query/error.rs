@@ -1,0 +1,78 @@
+//! Errors returned by field resolution and query outcome transformations.
+
+use thiserror::Error;
+
+/// Errors returned during field resolution or query transformations.
+///
+/// These report malformed *inputs* — an unparsable field path or filter
+/// expression. A well-formed field path that a given [`super::IndexRecord`]
+/// simply does not have a value for resolves to
+/// [`crate::note::FieldValue::Null`] instead of erroring.
+#[derive(Clone, Debug, Eq, PartialEq, Error)]
+pub(crate) enum QueryError {
+    /// A field path was empty, used an unknown `file.*` accessor, or had
+    /// unexpected `.` structure.
+    #[error(
+        "invalid field path {path:?}; expected `file.<field>` (path, name, \
+         folder, size, ctime, cdate, mtime, mdate) or a single frontmatter, \
+         inline field, or `tags` name"
+    )]
+    UnknownFieldPath {
+        /// The unparsable field path.
+        path: String,
+    },
+    /// A filter expression did not match `<field> <op> <value>`.
+    #[error(
+        "invalid filter expression {expr:?}; expected `<field> <op> <value>` \
+         with op one of ==, !=, >=, <=, >, < and value a quoted string, \
+         number, or boolean"
+    )]
+    UnparsableFilterExpression {
+        /// The unparsable filter expression.
+        expr: String,
+    },
+    /// A limit count was negative or exceeded platform [`usize`] bounds.
+    #[error("invalid limit {n}; expected a non-negative row count")]
+    NegativeLimit {
+        /// The rejected limit value.
+        n: i64,
+    },
+}
+
+#[cfg(test)]
+mod tests {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn query_error_display_formatting() {
+        let err = QueryError::UnknownFieldPath {
+            path: "file.bogus".to_owned(),
+        };
+        assert_eq!(
+            err.to_string(),
+            "invalid field path \"file.bogus\"; expected `file.<field>` \
+             (path, name, folder, size, ctime, cdate, mtime, mdate) or a \
+             single frontmatter, inline field, or `tags` name"
+        );
+
+        let err = QueryError::UnparsableFilterExpression {
+            expr: "rating >".to_owned(),
+        };
+        assert_eq!(
+            err.to_string(),
+            "invalid filter expression \"rating >\"; expected `<field> <op> \
+             <value>` with op one of ==, !=, >=, <=, >, < and value a quoted \
+             string, number, or boolean"
+        );
+
+        let err = QueryError::NegativeLimit {
+            n: -5,
+        };
+        assert_eq!(
+            err.to_string(),
+            "invalid limit -5; expected a non-negative row count"
+        );
+    }
+}

@@ -12,6 +12,7 @@
 //! - [`QueryError`]: Errors returned by field resolution and outcome
 //!   transformations.
 
+mod error;
 mod field;
 mod filter;
 mod operators;
@@ -19,10 +20,10 @@ mod sort;
 
 use std::path::PathBuf;
 
+pub(crate) use error::QueryError;
 use field::FieldPath;
 use filter::FilterExpr;
 use sort::sort_key_cmp;
-use thiserror::Error;
 
 use super::file::FileRecord;
 use crate::note::{FieldValue, Note};
@@ -52,43 +53,6 @@ impl Source {
             Self::Folder(folder) => file.folder().starts_with(folder),
         }
     }
-}
-
-/// Errors returned during field resolution or query transformations.
-///
-/// These report malformed *inputs* — an unparsable field path or filter
-/// expression. A well-formed field path that a given [`IndexRecord`] simply
-/// does not have a value for resolves to [`FieldValue::Null`] instead of
-/// erroring.
-#[derive(Clone, Debug, Eq, PartialEq, Error)]
-pub(crate) enum QueryError {
-    /// A field path was empty, used an unknown `file.*` accessor, or had
-    /// unexpected `.` structure.
-    #[error(
-        "invalid field path {path:?}; expected `file.<field>` (path, name, \
-         folder, size, ctime, cdate, mtime, mdate) or a single frontmatter, \
-         inline field, or `tags` name"
-    )]
-    UnknownFieldPath {
-        /// The unparsable field path.
-        path: String,
-    },
-    /// A filter expression did not match `<field> <op> <value>`.
-    #[error(
-        "invalid filter expression {expr:?}; expected `<field> <op> <value>` \
-         with op one of ==, !=, >=, <=, >, < and value a quoted string, \
-         number, or boolean"
-    )]
-    UnparsableFilterExpression {
-        /// The unparsable filter expression.
-        expr: String,
-    },
-    /// A limit count was negative or exceeded platform [`usize`] bounds.
-    #[error("invalid limit {n}; expected a non-negative row count")]
-    NegativeLimit {
-        /// The rejected limit value.
-        n: i64,
-    },
 }
 
 /// One page-level query result: a [`FileRecord`] paired with its [`Note`].
