@@ -29,6 +29,7 @@ impl Tag {
     /// matches Notes tagged `#projects/active` even though the tags are not
     /// textually equal. Matching stops at `/` boundaries, so `#project` does
     /// not spuriously match `#projects`.
+    #[inline]
     #[must_use]
     pub(crate) fn is_nested_under(&self, other: &str) -> bool {
         self.0 == other
@@ -61,6 +62,7 @@ mod tests {
         #[case::identical_tag("#projects/active", "#projects/active")]
         #[case::direct_parent("#projects/active", "#projects")]
         #[case::grandparent("#projects/active/urgent", "#projects")]
+        #[case::nested_query_target("#projects/active/sub", "#projects/active")]
         fn true_for_the_tag_itself_or_an_ancestor(
             #[case] tag: &str,
             #[case] query: &str,

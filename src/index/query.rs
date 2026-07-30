@@ -29,6 +29,8 @@ pub(crate) enum Source {
 
 impl Source {
     /// Whether `file` and its parsed `note` belong to this source.
+    #[inline]
+    #[must_use]
     pub(super) fn is_match(&self, file: &FileRecord, note: &Note) -> bool {
         match self {
             Self::All => true,
@@ -44,7 +46,7 @@ impl Source {
 ///
 /// Exposes both `file.*` fields and Note Metadata (frontmatter, inline
 /// fields, tags) through one value for Template and CLI callers.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct IndexRecord {
     file: FileRecord,
     note: Note,
@@ -79,7 +81,7 @@ impl IndexRecord {
 ///
 /// Ready for the filtering, ordering, and Template/CLI integration added by
 /// later tickets (#05 `QueryOutcome` filtering, #06 `QueryOps` namespace).
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct QueryOutcome {
     records: Vec<IndexRecord>,
 }
@@ -114,6 +116,7 @@ impl QueryOutcome {
     }
 
     /// Iterates over the contained [`IndexRecord`]s by reference.
+    #[inline]
     pub(crate) fn iter(&self) -> std::slice::Iter<'_, IndexRecord> {
         self.records.iter()
     }

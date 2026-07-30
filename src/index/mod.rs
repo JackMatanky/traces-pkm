@@ -179,6 +179,7 @@ impl FileIndex {
     ///
     /// O(log n) — [`Self::notes`] is kept sorted by path, so this binary
     /// searches rather than scanning.
+    #[inline]
     #[must_use]
     pub(crate) fn note(&self, path: &Path) -> Option<&Note> {
         self.notes
@@ -193,6 +194,7 @@ impl FileIndex {
     ///
     /// O(log n) — [`Self::records`] is kept sorted by path, so this binary
     /// searches rather than scanning.
+    #[inline]
     #[must_use]
     pub(crate) fn record(&self, path: &Path) -> Option<&FileRecord> {
         self.records
@@ -208,6 +210,11 @@ impl FileIndex {
     /// construction (both [`Self::build`] and [`Self::refresh`] add one for
     /// every parsed Note), so a Note found without one is skipped rather
     /// than causing a panic.
+    ///
+    /// # Performance
+    ///
+    /// O(n + m) — single-pass iterator merge-join across `records` and `notes`
+    /// without binary searching per note or redundant allocations.
     #[must_use]
     pub(crate) fn query(self, source: &Source) -> QueryOutcome {
         let Self {
@@ -619,6 +626,31 @@ mod tests {
                     .map(|note| note.tasks().count()),
                 Some(2)
             );
+        }
+
+        #[test]
+        fn reparses_a_note_when_modified_timestamp_changes_with_same_file_size()
+        {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("note.md"), "Status:: Draft")
+                .expect("write note");
+            FileIndex::build(temp.path())
+                .expect("build index")
+                .persist(temp.path())
+                .expect("persist index");
+
+            std::thread::sleep(std::time::Duration::from_millis(15));
+            fs::write(temp.path().join("note.md"), "Status:: Final")
+                .expect("rewrite note with same byte length");
+
+            let refreshed =
+                FileIndex::refresh(temp.path()).expect("refresh index");
+
+            let value = refreshed
+                .note(Path::new("note.md"))
+                .and_then(|n| n.inline_fields().first())
+                .and_then(|f| f.value().as_str());
+            assert_eq!(value, Some("Final"));
         }
 
         #[test]
