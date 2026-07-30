@@ -23,16 +23,6 @@ local hygiene = new Mapping<String, Step> {
     ["mixed-line-ending"] = Builtins.mixed_line_ending
 }
 
-local shell = new Mapping<String, Step> {
-    ["shfmt"] = (Builtins.shfmt) {
-        check = "shfmt -d -i 2 -ci {{files}}"
-        check_diff = "shfmt -d -i 2 -ci {{files}}"
-        fix = "shfmt -w -i 2 -ci {{files}}"
-    }
-
-    ["shellcheck"] = Builtins.shellcheck
-}
-
 local config = new Mapping<String, Step> {
     ["check-json"] = Builtins.jq
     ["check-yaml"] = Builtins.yamllint
@@ -82,7 +72,6 @@ local rust = new Mapping<String, Step> {
 
 local formatting =
     hygiene +
-    shell +
     config +
     new Mapping<String, Step> {
         ["cargo-fmt"] = rust["cargo-fmt"]

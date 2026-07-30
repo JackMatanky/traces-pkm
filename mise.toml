@@ -12,9 +12,6 @@ rust = { version = "nightly", profile = "default", components = [
 hk = "latest"
 taplo = "latest"
 gitleaks = "latest"
-shellcheck = "latest"
-shfmt = "latest"
-
 "cargo:cargo-deny" = "latest"
 "cargo:cargo-nextest" = "latest"
 "cargo:cargo-tarpaulin" = "latest"
