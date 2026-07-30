@@ -94,7 +94,10 @@ hooks {
     ["pre-commit"] {
         fix = true
         stash = "git"
-        steps = formatting + validation
+        steps = new Mapping<String, Step | Group> {
+            ["format"] = new Group { steps = formatting }
+            ["validate"] = new Group { steps = validation }
+        }
     }
 
     ["pre-push"] {
@@ -115,6 +118,11 @@ hooks {
     }
 
     ["check"] {
-        steps = formatting + validation + security + quality
+        steps = new Mapping<String, Step | Group> {
+            ["format"] = new Group { steps = formatting }
+            ["validate"] = new Group { steps = validation }
+            ["security"] = new Group { steps = security }
+            ["quality"] = new Group { steps = quality }
+        }
     }
 }

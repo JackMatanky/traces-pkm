@@ -142,3 +142,10 @@ impl<'a> SourceText<'a> {
         self.advance(self.advance(pos, offset), ch.len_utf8())
     }
 }
+
+impl AsRef<str> for SourceText<'_> {
+    #[inline]
+    fn as_ref(&self) -> &str {
+        self.0
+    }
+}
