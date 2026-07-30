@@ -1,14 +1,16 @@
-//! Page-level query source selection, field resolution, and
-//! filtering/ordering transformations over indexed markdown Notes.
+//! Page-level query source selection, field resolution, and outcome
+//! transformations.
 //!
-//! [`Source`] selects which Notes a page-level query includes. [`IndexRecord`]
-//! pairs a [`FileRecord`] with its [`Note`] and resolves `file.*` fields and
-//! Note Metadata (frontmatter, inline fields, tags) by path through
-//! [`IndexRecord::field`]. [`QueryOutcome`] is the iterable collection
-//! [`super::FileIndex::query`] returns; its [`QueryOutcome::filter`],
-//! [`QueryOutcome::sort`], [`QueryOutcome::limit`], [`QueryOutcome::group_by`],
-//! and [`QueryOutcome::flatten`] methods each consume a `QueryOutcome` and
-//! return a new, transformed one for method chaining.
+//! Main components:
+//! - [`Source`]: Selects which Notes a page-level query includes.
+//! - [`IndexRecord`]: Pairs a [`FileRecord`] with its parsed [`Note`] and
+//!   resolves fields by path.
+//! - [`QueryOutcome`]: Page-level query result collection supporting method
+//!   chaining ([`QueryOutcome::filter`], [`QueryOutcome::sort`],
+//!   [`QueryOutcome::limit`], [`QueryOutcome::group_by`],
+//!   [`QueryOutcome::flatten`]).
+//! - [`QueryError`]: Errors returned by field resolution and outcome
+//!   transformations.
 
 use std::{cmp::Ordering, path::PathBuf};
 
@@ -22,11 +24,10 @@ use crate::note::{FieldValue, Note};
 pub(crate) enum Source {
     /// Every indexed markdown Note.
     All,
-    /// Notes tagged with a markdown tag, or a sub-tag nested under it, e.g.
-    /// `#book` or `#projects` (which also matches `#projects/active`).
+    /// Notes tagged with a markdown tag, or a sub-tag nested under it (e.g.
+    /// `#book` or `#projects`, which also matches `#projects/active`).
     Tag(String),
-    /// Notes whose [`FileRecord::folder`] is the requested project-relative
-    /// folder, or a folder nested under it.
+    /// Notes located in `folder` or a directory nested under it.
     Folder(PathBuf),
 }
 
@@ -45,8 +46,7 @@ impl Source {
     }
 }
 
-/// Errors returned by [`IndexRecord`] field resolution and [`QueryOutcome`]
-/// transformation methods.
+/// Errors returned during field resolution or query transformations.
 ///
 /// These report malformed *inputs* — an unparsable field path or filter
 /// expression. A well-formed field path that a given [`IndexRecord`] simply
@@ -65,8 +65,7 @@ pub(crate) enum QueryError {
         /// The unparsable field path.
         path: String,
     },
-    /// A `.filter()`/`.where()` expression did not match
-    /// `<field> <op> <value>`.
+    /// A filter expression did not match `<field> <op> <value>`.
     #[error(
         "invalid filter expression {expr:?}; expected `<field> <op> <value>` \
          with op one of ==, !=, >=, <=, >, < and value a quoted string, \
@@ -76,8 +75,7 @@ pub(crate) enum QueryError {
         /// The unparsable filter expression.
         expr: String,
     },
-    /// A `.limit()` count was negative or otherwise did not fit in a
-    /// [`usize`] on this platform.
+    /// A limit count was negative or exceeded platform [`usize`] bounds.
     #[error("invalid limit {n}; expected a non-negative row count")]
     NegativeLimit {
         /// The rejected limit value.
@@ -93,9 +91,8 @@ pub(crate) enum QueryError {
 pub(crate) struct IndexRecord {
     file: FileRecord,
     note: Note,
-    /// Set by [`QueryOutcome::flatten`]: overrides resolution of one field
-    /// path with a single element taken from that field's original list
-    /// value.
+    /// Overrides field resolution for one exploded row produced by
+    /// [`QueryOutcome::flatten`].
     flattened: Option<(FieldPath, FieldValue)>,
 }
 
@@ -140,8 +137,8 @@ impl IndexRecord {
         Ok(self.resolve(&FieldPath::parse(path)?))
     }
 
-    /// Resolves an already-[parsed](FieldPath::parse) `path`, applying a
-    /// [`Self::flattened`] override first if one matches `path`.
+    /// Resolves an already-parsed `path`, applying any [`Self::flattened`]
+    /// override.
     fn resolve(&self, path: &FieldPath) -> FieldValue {
         if let Some((flattened_path, value)) = &self.flattened
             && flattened_path == path
@@ -165,9 +162,9 @@ impl IndexRecord {
         }
     }
 
-    /// Returns this record with `path` overridden to resolve to `value`, for
-    /// one exploded row produced by [`QueryOutcome::flatten`].
-    #[must_use]
+    /// Returns a copy of this record with `path` overridden to `value`.
+    ///
+    /// Used for exploded rows produced by [`QueryOutcome::flatten`].
     fn with_flattened(mut self, path: FieldPath, value: FieldValue) -> Self {
         self.flattened = Some((path, value));
         self
@@ -283,10 +280,11 @@ impl QueryOutcome {
         Ok(Self::new(self.records.into_iter().take(n).collect()))
     }
 
-    /// Orders records by `path`, ascending, clustering equal values so
-    /// consumers (a `{% for %}` loop or terminal renderer) can detect group
-    /// boundaries by comparing each record's resolved `path` value to the
-    /// previous one.
+    /// Orders records by `path` to cluster equal values for grouping.
+    ///
+    /// Sorts ascending so consumers (such as template loops or terminal
+    /// renderers) can detect group boundaries by comparing each record's
+    /// resolved `path` value to the previous record.
     ///
     /// # Errors
     ///
@@ -296,9 +294,10 @@ impl QueryOutcome {
         self.sort_by_field(path, false)
     }
 
-    /// Explodes each record's `path` field into one row per list element,
-    /// for fields that resolve to a [`FieldValue::List`] (frontmatter/inline
-    /// multi-value fields, or `tags`).
+    /// Explodes each record's `path` field into one row per list element.
+    ///
+    /// Applies to fields that resolve to a [`FieldValue::List`] (frontmatter
+    /// or inline multi-value fields, or `tags`).
     ///
     /// A record whose `path` value is an empty list contributes no rows. A
     /// record whose `path` value is not a list passes through unchanged. On
@@ -384,11 +383,10 @@ enum FieldPath {
 }
 
 impl FieldPath {
-    /// Parses a query field path.
+    /// Parses a query field path string into a [`FieldPath`].
     ///
-    /// `file.<field>` resolves one of the known [`FileField`] accessors.
-    /// `tags` resolves the Note's markdown tags. Any other single-segment
-    /// name resolves a frontmatter or inline field by key.
+    /// Resolves `file.<field>` accessors, `tags`, or frontmatter/inline field
+    /// keys.
     ///
     /// # Errors
     ///
@@ -508,14 +506,14 @@ struct FilterExpr {
 }
 
 impl FilterExpr {
-    /// Parses `"<field> <op> <value>"` — see [`QueryOutcome::filter`] for
-    /// the full grammar.
+    /// Parses a `"<field> <op> <value>"` filter expression string.
+    ///
+    /// See [`QueryOutcome::filter`] for the full grammar rules.
     ///
     /// # Errors
     ///
-    /// Returns [`QueryError::UnparsableFilterExpression`] if `expr` does not
-    /// match `<field> <op> <value>`, or [`QueryError::UnknownFieldPath`] if
-    /// its field path is malformed.
+    /// - [`QueryError::UnparsableFilterExpression`] if `expr` is malformed
+    /// - [`QueryError::UnknownFieldPath`] if its field path is malformed
     fn parse(expr: &str) -> Result<Self, QueryError> {
         let invalid = || QueryError::UnparsableFilterExpression {
             expr: expr.to_owned(),
@@ -565,9 +563,11 @@ enum CompareOp {
 }
 
 impl CompareOp {
-    /// Strips a leading comparison operator from `s`, returning it with the
-    /// remainder of `s` after it. Multi-character operators (`==`, `!=`,
-    /// `>=`, `<=`) are checked before their `>`/`<` prefixes.
+    /// Strips a leading comparison operator from `s`.
+    ///
+    /// Returns the operator and the remaining text after it. Multi-character
+    /// operators (`==`, `!=`, `>=`, `<=`) are checked before single-character
+    /// prefixes (`>`, `<`).
     fn strip_prefix(s: &str) -> Option<(Self, &str)> {
         const OPERATORS: [(&str, CompareOp); 6] = [
             ("==", CompareOp::Eq),
@@ -612,9 +612,10 @@ impl CompareOp {
     }
 }
 
-/// Parses a filter expression's literal value: a double-quoted string (no
-/// escape support — a literal `"` cannot appear in the value), a number, or
-/// `true`/`false`.
+/// Parses a filter expression's literal value.
+///
+/// Parses double-quoted strings, `true`/`false` booleans, or floating-point
+/// numbers.
 fn parse_filter_literal(s: &str) -> Option<FieldValue> {
     if let Some(inner) = s.strip_prefix('"').and_then(|s| s.strip_suffix('"')) {
         return Some(FieldValue::String(inner.to_owned()));
@@ -625,12 +626,11 @@ fn parse_filter_literal(s: &str) -> Option<FieldValue> {
         _ => s.parse::<f64>().ok().map(FieldValue::Number),
     }
 }
-
-/// Orders two resolved field values when they are the same comparable kind:
-/// numbers by magnitude; strings, dates, and durations lexicographically (via
-/// [`FieldValue::as_str`], so a string literal compares against a `Date` or
-/// `Duration` field the same way); booleans with `false < true`. Any other
-/// pairing, including differing kinds, has no ordering.
+/// Compares two resolved field values of the same comparable kind.
+///
+/// Orders numbers by magnitude, strings/dates/durations lexicographically, and
+/// booleans with `false < true`. Returns `None` for differing kinds or
+/// unorderable values.
 fn compare_field_values(a: &FieldValue, b: &FieldValue) -> Option<Ordering> {
     match (a, b) {
         (FieldValue::Number(x), FieldValue::Number(y)) => x.partial_cmp(y),
