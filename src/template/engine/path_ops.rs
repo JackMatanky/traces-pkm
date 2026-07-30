@@ -122,7 +122,7 @@ struct InspectTarget(PathBuf);
 
 impl InspectTarget {
     /// Resolves `path` against `root`: an absolute `path` is used as-is; a
-    /// `path` naming `root` itself ([`is_root_reference`]) resolves
+    /// `path` naming `root` itself ([`Self::is_root_reference`]) resolves
     /// directly to it; any other relative `path` is confined via
     /// [`RootConfinedPath::parse`] — the same seam [`super::file_ops`]'s
     /// `file.include()`/`file.write_to()` use, so a `..`/symlink escape is
@@ -137,13 +137,25 @@ impl InspectTarget {
         let candidate = Path::new(path);
         if candidate.is_absolute() {
             Ok(Self(candidate.to_owned()))
-        } else if is_root_reference(candidate) {
+        } else if Self::is_root_reference(candidate) {
             Ok(Self(root.to_owned()))
         } else {
             RootConfinedPath::parse(root, candidate)
                 .map(RootConfinedPath::into_path_buf)
                 .map(Self)
         }
+    }
+
+    /// True when `candidate`'s components are all [`Component::CurDir`]
+    /// (or it has none at all, e.g. an empty path) — i.e. it names `root`
+    /// itself and can't possibly escape it no matter how it's joined.
+    /// [`SafeRelativePath::parse`](crate::path::SafeRelativePath::parse)
+    /// rejects exactly this shape (no [`Component::Normal`] component)
+    /// since it's meaningless as a *file* to write or include; here it's
+    /// the legitimate "ask about root" case
+    /// `is_dir_path('.')`/`path_exists('')` rely on.
+    fn is_root_reference(candidate: &Path) -> bool {
+        candidate.components().all(|component| component == Component::CurDir)
     }
 }
 
@@ -152,18 +164,6 @@ impl AsRef<Path> for InspectTarget {
     fn as_ref(&self) -> &Path {
         &self.0
     }
-}
-
-/// True when `candidate`'s components are all [`Component::CurDir`] (or it
-/// has none at all, e.g. an empty path) — i.e. it names `root` itself and
-/// can't possibly escape it no matter how it's joined.
-/// [`SafeRelativePath::parse`](crate::path::SafeRelativePath::parse)
-/// rejects exactly this shape (no [`Component::Normal`] component) since
-/// it's meaningless as a *file* to write or include; here it's the
-/// legitimate "ask about root" case `is_dir_path('.')`/`path_exists('')`
-/// rely on.
-fn is_root_reference(candidate: &Path) -> bool {
-    candidate.components().all(|component| component == Component::CurDir)
 }
 
 /// Builds the error for a `path` argument that fails root confinement:
