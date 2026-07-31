@@ -76,21 +76,24 @@ pub(super) enum FileField {
     ModifiedDate,
 }
 
-/// Accessor name to [`FileField`] pairs [`FileField::parse`] accepts.
+/// `file.<field>` accessor names [`FileField::parse`] accepts, including
+/// every alias.
 ///
-/// The single source of truth for both parsing and [`FileField::names`], so
-/// the two can never list a different set of names.
-const ACCESSORS: &[(&str, FileField)] = &[
-    ("path", FileField::Path),
-    ("name", FileField::Name),
-    ("folder", FileField::Folder),
-    ("size", FileField::Size),
-    ("created_at", FileField::CreatedDateTime),
-    ("ctime", FileField::CreatedDateTime),
-    ("cdate", FileField::CreatedDate),
-    ("modified_at", FileField::ModifiedDateTime),
-    ("mtime", FileField::ModifiedDateTime),
-    ("mdate", FileField::ModifiedDate),
+/// Kept directly beside `parse`'s match arms below rather than derived from
+/// them, so a change to one is hard to miss noticing the other;
+/// `names_round_trip_through_parse` (in this module's tests) guards the
+/// "listed but unparsable" drift direction.
+const NAMES: &[&str] = &[
+    "path",
+    "name",
+    "folder",
+    "size",
+    "created_at",
+    "ctime",
+    "cdate",
+    "modified_at",
+    "mtime",
+    "mdate",
 ];
 
 impl FileField {
@@ -101,18 +104,24 @@ impl FileField {
     /// Returns [`QueryError::UnknownFieldPath`] if `name` is not a known
     /// accessor.
     pub(super) fn parse(name: &str) -> Result<Self, QueryError> {
-        ACCESSORS
-            .iter()
-            .find_map(|&(accessor, field)| (accessor == name).then_some(field))
-            .ok_or_else(|| QueryError::UnknownFieldPath {
+        match name {
+            "path" => Ok(Self::Path),
+            "name" => Ok(Self::Name),
+            "folder" => Ok(Self::Folder),
+            "size" => Ok(Self::Size),
+            "created_at" | "ctime" => Ok(Self::CreatedDateTime),
+            "cdate" => Ok(Self::CreatedDate),
+            "modified_at" | "mtime" => Ok(Self::ModifiedDateTime),
+            "mdate" => Ok(Self::ModifiedDate),
+            _ => Err(QueryError::UnknownFieldPath {
                 path: format!("file.{name}"),
-            })
+            }),
+        }
     }
 
-    /// Every accessor name [`Self::parse`] accepts, including aliases, in
-    /// [`ACCESSORS`]'s declared order.
+    /// Every accessor name [`Self::parse`] accepts, including aliases.
     pub(super) fn names() -> impl Iterator<Item = &'static str> {
-        ACCESSORS.iter().map(|&(name, _)| name)
+        NAMES.iter().copied()
     }
 
     /// Resolves this accessor against `file`.
