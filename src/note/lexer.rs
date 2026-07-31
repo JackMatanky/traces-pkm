@@ -1,7 +1,16 @@
 //! Dataview-compatible inline-field and Markdown tag lexer.
 //!
 //! Parses plain-text buffers produced by the Markdown parser. Those buffers
-//! already exclude fenced code blocks, indented code blocks, and inline code.
+//! already exclude fenced code blocks, indented code blocks, and inline
+//! code.
+//!
+//! Main components:
+//! - [`extract_inline_fields`] / [`extract_task_inline_fields`]: Extract
+//!   Dataview inline fields (`Key:: Value`, `[Key:: Value]`, `(Key:: Value)`)
+//!   from Markdown text; the latter also recognizes task emoji shorthand fields
+//!   (e.g. `🗓️2026-01-01`).
+//! - [`extract_tags`]: Extract Markdown tags (`#book`, `#projects/active`) from
+//!   Markdown text.
 
 use logos::{Filter, Lexer, Logos};
 
@@ -10,14 +19,20 @@ use super::{
     metadata::is_iso_date,
 };
 
-/// Extracts inline fields from `text` in byte-position order.
+/// Extracts Dataview inline fields (`Key:: Value`, `[Key:: Value]`,
+/// `(Key:: Value)`) from `text`, in the order they occur.
 ///
-/// `text` must already exclude code spans and blocks.
+/// `text` must already exclude code spans and blocks. Task emoji shorthand
+/// fields are not recognized; use [`extract_task_inline_fields`] for those.
 pub(super) fn extract_inline_fields(text: &str) -> Vec<InlineField> {
     extract_inline_fields_with_task_shorthands(text, TaskShorthands::Exclude)
 }
 
-/// Extracts inline fields and Dataview task emoji shorthand fields.
+/// Extracts Dataview inline fields, additionally recognizing task emoji
+/// shorthand fields (e.g. `🗓️2026-01-01`), from `text`, in the order they
+/// occur.
+///
+/// `text` must already exclude code spans and blocks.
 pub(super) fn extract_task_inline_fields(text: &str) -> Vec<InlineField> {
     extract_inline_fields_with_task_shorthands(text, TaskShorthands::Include)
 }
@@ -116,11 +131,11 @@ impl TaskShorthands {
 /// Tokens matched while extracting Dataview inline fields from free-form
 /// Markdown text.
 ///
-/// [`Self::Field`] carries every emitted [`InlineField`]; callbacks return
-/// [`Filter::Skip`] to discard a non-matching candidate (e.g. an unclosed
-/// wrapped field) and keep scanning. [`Self::Ignored`] is a catch-all,
-/// single-character skip for ordinary prose that matches none of the field
-/// patterns.
+/// - [`Self::Field`] carries every emitted [`InlineField`]; callbacks return
+///   [`Filter::Skip`] to discard a non-matching candidate (e.g. an unclosed
+///   wrapped field) and keep scanning.
+/// - [`Self::Ignored`] is a catch-all, single-character skip for ordinary prose
+///   that matches none of the field patterns.
 #[derive(logos::Logos, Debug, Clone, PartialEq)]
 #[logos(extras = TaskShorthands)]
 enum FieldToken {
@@ -138,9 +153,10 @@ enum FieldToken {
     Ignored,
 }
 
-/// Extracts the `Key::` prefix matched by [`FieldToken`]'s body-field
-/// pattern, then manually consumes the rest of the line as the field's raw
-/// value — mirroring the historical `(?m)^[ \t]*key::[ \t]*(.*)$` regex.
+/// Parses a bare inline field (`Key:: Value`) from the `Key::` prefix
+/// already matched by [`FieldToken`]'s body-field pattern, consuming the
+/// rest of the line as the raw value — equivalent to the regex
+/// `(?m)^[ \t]*key::[ \t]*(.*)$`.
 ///
 /// Logos has no look-behind support, so a line-start check replaces that
 /// regex's `^` anchor: the match is rejected (skipping only the matched
@@ -169,10 +185,10 @@ fn body_field_callback(lex: &mut Lexer<'_, FieldToken>) -> Filter<InlineField> {
 /// Parses a wrapped inline field (`[Key:: Value]` or `(Key:: Value)`)
 /// starting just after its already-consumed opening delimiter.
 ///
-/// Mirrors the historical `find_wrapped_field`/`find_separator`/
-/// `find_closing` walk: rejects (skipping only the opening delimiter) when
-/// there is no `::` separator, the key is empty or contains a bracket, or
-/// [`find_closing_delimiter`] finds no matching closing delimiter.
+/// Rejects, skipping only the opening delimiter, when:
+/// - there is no `::` separator before the text ends,
+/// - the key is empty or contains a bracket character, or
+/// - [`find_closing_delimiter`] finds no matching closing delimiter.
 fn wrapped_field_callback(
     lex: &mut Lexer<'_, FieldToken>,
     pair: BracketPair,
@@ -208,10 +224,10 @@ fn wrapped_field_callback(
 /// in `after_sep` (the wrapped field's value text, starting just after its
 /// `::` separator).
 ///
-/// Escaped delimiters (`\[`, `\]`, `\(`, `\)`) never close the field, and
-/// same-kind nesting inside the value (e.g. the inner `[value]` in
-/// `[key:: [value]]`) does not close it early — only a `pair.close` at
-/// zero nesting depth does.
+/// - Escaped delimiters (`\[`, `\]`, `\(`, `\)`) never close the field.
+/// - Same-kind nesting inside the value (e.g. the inner `[value]` in `[key::
+///   [value]]`) does not close it early; only a `pair.close` at zero nesting
+///   depth does.
 fn find_closing_delimiter(after_sep: &str, pair: BracketPair) -> Option<usize> {
     let mut nesting = 0usize;
     let mut escaped = false;
@@ -318,6 +334,11 @@ fn parse_inline_value_str(raw: &str) -> FieldValue {
     ValueParser::new(raw).parse()
 }
 
+/// Recursive-descent parser for Dataview inline-field value text.
+///
+/// [`Self::parse`] is the entry point: it tries a comma-separated list of
+/// atoms, then a single atom spanning the whole value, falling back to a
+/// raw [`FieldValue::String`] when neither matches.
 struct ValueParser<'a> {
     text: &'a str,
     source: SourceText<'a>,
@@ -332,6 +353,12 @@ impl<'a> ValueParser<'a> {
         }
     }
 
+    /// Parses the whole (already-trimmed) value text into a [`FieldValue`].
+    ///
+    /// Tries [`Self::parse_comma_list`] first, then a single
+    /// [`Self::parse_atom_at`] spanning the whole text, falling back to
+    /// [`FieldValue::String`] holding the raw text when neither matches.
+    /// Empty text parses as [`FieldValue::Null`].
     fn parse(&self) -> FieldValue {
         let trimmed = self.text.trim();
         if trimmed.is_empty() {
@@ -349,6 +376,11 @@ impl<'a> ValueParser<'a> {
         FieldValue::String(trimmed.to_owned())
     }
 
+    /// Parses one or more `,`-separated atoms starting at position `0`.
+    ///
+    /// Returns `None` unless the first atom is followed by a `,` — confirming
+    /// this is a list, not a single atom — and every subsequent atom parses
+    /// successfully. A trailing `,` followed only by whitespace ends the list.
     fn parse_comma_list(&self) -> Option<Vec<FieldValue>> {
         let (first, mut pos) = self.parse_atom_at(0)?;
         pos = self.skip_whitespace(pos);
@@ -374,6 +406,12 @@ impl<'a> ValueParser<'a> {
         }
     }
 
+    /// Parses a single atom at `pos` (after skipping leading whitespace),
+    /// trying each value kind in priority order: quoted string, wikilink,
+    /// duration, bool, null, ISO date, number, then tag.
+    ///
+    /// Returns the parsed value paired with the exclusive byte offset
+    /// following it, or `None` if no kind matches at `pos`.
     fn parse_atom_at(&self, pos: usize) -> Option<Atom> {
         let pos = self.skip_whitespace(pos);
         self.parse_quoted_string_at(pos)
@@ -386,12 +424,19 @@ impl<'a> ValueParser<'a> {
             .or_else(|| self.parse_tag_at(pos))
     }
 
+    /// Parses a Dataview wikilink or embed atom (`[[target]]`, `![[target]]`)
+    /// at `pos`.
     fn parse_link_at(&self, pos: usize) -> Option<Atom> {
         let (link, consumed) =
             Outlink::parse_wikilink_prefix(self.source.from(pos)?)?;
         Some((FieldValue::Link(link), self.source.advance(pos, consumed)))
     }
 
+    /// Parses a double-quoted string atom at `pos`. A backslash escapes the
+    /// following character verbatim, so `\"` includes a literal quote.
+    ///
+    /// Returns `None` if `pos` isn't a `"` or the string has no closing,
+    /// unescaped `"`.
     fn parse_quoted_string_at(&self, pos: usize) -> Option<Atom> {
         let rest = self.source.from(pos)?.strip_prefix('"')?;
         let mut value = String::new();
@@ -414,6 +459,13 @@ impl<'a> ValueParser<'a> {
         None
     }
 
+    /// Parses a Dataview duration atom at `pos` (e.g. `4h15m`,
+    /// `4 yrs, 6 wks`): one or more `<number><unit>` parts, each validated by
+    /// [`Self::parse_duration_part_end`] and optionally comma- and
+    /// whitespace-separated.
+    ///
+    /// Returns the raw matched text as [`FieldValue::Duration`], stopping
+    /// (without failing) at the first position that isn't a valid next part.
     fn parse_duration_at(&self, pos: usize) -> Option<Atom> {
         let mut end = self.parse_duration_part_end(pos)?;
         loop {
@@ -438,6 +490,9 @@ impl<'a> ValueParser<'a> {
         }
     }
 
+    /// Finds the end offset of one `<number><unit>` duration part at `pos`, or
+    /// `None` if `pos` isn't a number followed by a recognized
+    /// [`is_duration_unit`] unit.
     fn parse_duration_part_end(&self, pos: usize) -> Option<usize> {
         let number_end = self.parse_number_end(pos)?;
         let unit_start = self.skip_whitespace(number_end);
@@ -455,6 +510,7 @@ impl<'a> ValueParser<'a> {
         is_duration_unit(unit).then_some(unit_end)
     }
 
+    /// Parses a case-insensitive `true`/`false` keyword atom at `pos`.
     fn parse_bool_at(&self, pos: usize) -> Option<Atom> {
         self.parse_keyword_at(pos, "true")
             .map(|end| (FieldValue::Bool(true), end))
@@ -464,10 +520,14 @@ impl<'a> ValueParser<'a> {
             })
     }
 
+    /// Parses a case-insensitive `null` keyword atom at `pos`.
     fn parse_null_at(&self, pos: usize) -> Option<Atom> {
         self.parse_keyword_at(pos, "null").map(|end| (FieldValue::Null, end))
     }
 
+    /// Finds the end offset of `keyword` at `pos` if it matches
+    /// case-insensitively and the position immediately after it satisfies
+    /// [`Self::is_atom_boundary`].
     fn parse_keyword_at(&self, pos: usize, keyword: &str) -> Option<usize> {
         let end = self.source.advance(pos, keyword.len());
         let token = self.source.get(pos..end)?;
@@ -475,6 +535,7 @@ impl<'a> ValueParser<'a> {
         self.is_atom_boundary(end).then_some(end)
     }
 
+    /// Parses an ISO `YYYY-MM-DD` date atom at `pos`.
     fn parse_date_at(&self, pos: usize) -> Option<Atom> {
         let end = self.source.advance(pos, 10);
         let date = self.source.get(pos..end)?;
@@ -482,6 +543,7 @@ impl<'a> ValueParser<'a> {
             .then(|| (FieldValue::Date(date.to_owned()), end))
     }
 
+    /// Parses a finite `f64` number atom at `pos`.
     fn parse_number_at(&self, pos: usize) -> Option<Atom> {
         let end = self.parse_number_end(pos)?;
         let raw = self.source.get(pos..end)?;
@@ -490,6 +552,10 @@ impl<'a> ValueParser<'a> {
             .then_some((FieldValue::Number(num), end))
     }
 
+    /// Finds the end offset of a numeric token at `pos`: digits and the
+    /// characters `+-.eE`, without validating that they form a valid `f64` —
+    /// callers ([`Self::parse_number_at`], [`Self::parse_duration_part_end`])
+    /// check that separately.
     fn parse_number_end(&self, pos: usize) -> Option<usize> {
         self.source
             .from(pos)?
@@ -501,6 +567,11 @@ impl<'a> ValueParser<'a> {
             .last()
     }
 
+    /// Parses a `#tag`-shaped atom (`#book`, `#projects/active`) at `pos`.
+    ///
+    /// Requires `#` followed by an alphabetic character. The match is returned
+    /// as [`FieldValue::String`] holding the tag text, including the leading
+    /// `#` — there's no dedicated tag value kind.
     fn parse_tag_at(&self, pos: usize) -> Option<Atom> {
         let rest = self.source.from(pos)?.strip_prefix('#')?;
         let mut chars = rest.chars();
@@ -520,6 +591,9 @@ impl<'a> ValueParser<'a> {
         Some((FieldValue::String(raw.to_owned()), end))
     }
 
+    /// Whether `pos` is at the end of the text or immediately before
+    /// whitespace or a `,` — the position an atom must end at to avoid
+    /// greedily consuming into the next atom or trailing text.
     fn is_atom_boundary(&self, pos: usize) -> bool {
         self.source.from(pos).is_some_and(|source| {
             source
@@ -529,6 +603,8 @@ impl<'a> ValueParser<'a> {
         })
     }
 
+    /// Returns the offset of the first non-whitespace character at or after
+    /// `pos`, or the text's length if only whitespace remains.
     fn skip_whitespace(&self, pos: usize) -> usize {
         self.source
             .from(pos)
@@ -541,6 +617,8 @@ impl<'a> ValueParser<'a> {
     }
 }
 
+/// Whether `unit` is a recognized Dataview duration unit, matched
+/// case-insensitively against [`DURATION_UNITS`].
 fn is_duration_unit(unit: &str) -> bool {
     DURATION_UNITS.iter().any(|candidate| unit.eq_ignore_ascii_case(candidate))
 }
@@ -548,11 +626,11 @@ fn is_duration_unit(unit: &str) -> bool {
 /// Tokens matched while extracting Markdown tags (`#book`,
 /// `#projects/active`) from free-form text.
 ///
-/// [`Self::Tag`] carries every emitted [`Tag`]; [`tag_callback`] returns
-/// [`Filter::Skip`] to reject a `#` that fails the lookbehind or
-/// leading-letter check, consuming only the `#` so a rejected mid-word
-/// occurrence like `foo#bar` does not swallow the rest of the text.
-/// [`Self::Ignored`] is a catch-all, single-character skip for ordinary text.
+/// - [`Self::Tag`] carries every emitted [`Tag`]; [`tag_callback`] returns
+///   [`Filter::Skip`] to reject a `#` that fails the lookbehind or
+///   leading-letter check, consuming only the `#` so a rejected mid-word
+///   occurrence like `foo#bar` does not swallow the rest of the text.
+/// - [`Self::Ignored`] is a catch-all, single-character skip for ordinary text.
 #[derive(logos::Logos, Debug, Clone, PartialEq)]
 enum TagToken {
     #[token("#", tag_callback)]
