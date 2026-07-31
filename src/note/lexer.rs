@@ -3,58 +3,14 @@
 //! Parses plain-text buffers produced by the Markdown parser. Those buffers
 //! already exclude fenced code blocks, indented code blocks, and inline code.
 
-use std::sync::LazyLock;
-
-use regex::Regex;
+use logos::{Filter, Lexer, Logos};
 
 use super::{
-    FieldValue, InlineField, InlineFieldForm, Outlink, Tag,
-    byte::{ByteSpan, SourceText},
+    FieldValue, InlineField, InlineFieldForm, Outlink, Tag, cursor::SourceText,
     metadata::is_iso_date,
 };
 
-/// Matches full-line `Key:: Value` body fields.
-///
-/// Body fields require a single letter-led key without whitespace. Wrapped
-/// forms are delimiter-bounded and allow multi-word keys.
-#[expect(
-    clippy::expect_used,
-    reason = "static regex pattern is valid at compile time"
-)]
-static BODY_FIELD_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?m)^[ \t]*([A-Za-z][A-Za-z0-9_-]*)::[ \t]*(.*)$")
-        .expect("BODY_FIELD_RE pattern is valid")
-});
-
-/// Matches Markdown tag tokens such as `#book` and `#projects/active`.
-///
-/// [`extract_tags`] rejects mid-word occurrences like `foo#bar`.
-#[expect(
-    clippy::expect_used,
-    reason = "static regex pattern is valid at compile time"
-)]
-static TAG_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"#[[:alpha:]][[:alnum:]_/-]*").expect("TAG_RE pattern is valid")
-});
-
 const ISO_DATE_LEN: usize = 10;
-/// Dataview task emoji shorthand mappings to inline field keys.
-///
-/// Supported emoji shorthands:
-/// - `\u{1F5D3}\u{FE0F}` (`🗓️`): `due` (with variation selector `U+FE0F`)
-/// - `\u{1F5D3}` (`🗓`): `due` (base text variant)
-/// - `\u{2795}` (`➕`): `created`
-/// - `\u{1F6EB}` (`🛫`): `start`
-/// - `\u{23F3}` (`⏳`): `scheduled`
-/// - `\u{2705}` (`✅`): `completion`
-const TASK_EMOJI_FIELDS: &[(&str, &str)] = &[
-    ("\u{1F5D3}\u{FE0F}", "due"),
-    ("\u{1F5D3}", "due"),
-    ("\u{2795}", "created"),
-    ("\u{1F6EB}", "start"),
-    ("\u{23F3}", "scheduled"),
-    ("\u{2705}", "completion"),
-];
 const DURATION_UNITS: &[&str] = &[
     "year",
     "years",
@@ -110,14 +66,14 @@ fn extract_inline_fields_with_task_shorthands(
     text: &str,
     include_task_shorthands: bool,
 ) -> Vec<InlineField> {
-    let mut lexer = InlineFieldLexer::new(text);
-    lexer.scan_body_fields();
-    lexer.scan_wrapped_fields(BracketPair::VISIBLE);
-    lexer.scan_wrapped_fields(BracketPair::HIDDEN);
-    if include_task_shorthands {
-        lexer.scan_task_shorthands();
+    let lexer = FieldToken::lexer_with_extras(text, include_task_shorthands);
+    let mut fields = Vec::new();
+    for result in lexer {
+        if let Ok(FieldToken::Field(field)) = result {
+            fields.push(field);
+        }
     }
-    lexer.finish()
+    fields
 }
 
 /// Extracts Markdown tags from `text` in encounter order.
@@ -125,16 +81,68 @@ fn extract_inline_fields_with_task_shorthands(
 /// Tags keep their leading `#`. Mid-word occurrences like `foo#bar` are
 /// rejected.
 pub(super) fn extract_tags(text: &str) -> Vec<Tag> {
-    TAG_RE
-        .find_iter(text)
-        .filter(|found| {
-            text[..found.start()]
-                .chars()
-                .next_back()
-                .is_none_or(|c| !c.is_alphanumeric() && c != '_')
+    let lexer = TagToken::lexer(text);
+    let mut tags = Vec::new();
+    for result in lexer {
+        if let Ok(TagToken::Tag(tag)) = result {
+            tags.push(tag);
+        }
+    }
+    tags
+}
+
+/// Returns the character immediately before the current match's start
+/// (`None` if the match starts at the beginning of the source).
+///
+/// Shared by [`body_field_callback`] and [`tag_callback`], both of which
+/// need a look-behind check that logos' regex dialect can't express.
+fn char_before<'source, T>(lex: &Lexer<'source, T>) -> Option<char>
+where
+    T: Logos<'source, Source = str>,
+{
+    lex.source()
+        .get(..lex.span().start)
+        .and_then(|prefix| prefix.chars().next_back())
+}
+
+/// Tokens matched while extracting Markdown tags (`#book`,
+/// `#projects/active`) from free-form text.
+///
+/// [`Self::Tag`] carries every emitted [`Tag`]; [`tag_callback`] returns
+/// [`Filter::Skip`] to reject a `#` that fails the lookbehind or
+/// leading-letter check, consuming only the `#` so a rejected mid-word
+/// occurrence like `foo#bar` does not swallow the rest of the text.
+/// [`Self::Ignored`] is a catch-all, single-character skip for ordinary text.
+#[derive(logos::Logos, Debug, Clone, PartialEq)]
+enum TagToken {
+    #[token("#", tag_callback)]
+    Tag(Tag),
+    #[regex(r"[\s\S]", logos::skip, priority = 0)]
+    Ignored,
+}
+
+/// Parses a Markdown tag starting just after its already-consumed leading
+/// `#`. Rejects (skipping only the `#`) a `#` preceded by an alphanumeric
+/// or `_` character (mid-word, e.g. `foo#bar`) or not followed by an
+/// alphabetic character (e.g. `#1`).
+fn tag_callback(lex: &mut Lexer<'_, TagToken>) -> Filter<Tag> {
+    let preceded_by_word_char =
+        char_before(lex).is_some_and(|ch| ch.is_alphanumeric() || ch == '_');
+    if preceded_by_word_char {
+        return Filter::Skip;
+    }
+    let remainder = lex.remainder();
+    if !remainder.chars().next().is_some_and(char::is_alphabetic) {
+        return Filter::Skip;
+    }
+    let body_end = remainder
+        .char_indices()
+        .find(|&(_, ch)| {
+            !(ch.is_alphanumeric() || matches!(ch, '_' | '/' | '-'))
         })
-        .map(|found| Tag::new(found.as_str()))
-        .collect()
+        .map_or(remainder.len(), |(offset, _)| offset);
+    lex.bump(body_end);
+    Filter::Emit(Tag::new(lex.slice()))
 }
 
 /// Bracket delimiters and their corresponding [`InlineFieldForm`].
@@ -158,171 +166,155 @@ impl BracketPair {
     };
 }
 
-/// Candidate inline field match with its byte range in source text.
-struct FieldMatch {
-    range: ByteSpan,
-    field: InlineField,
+/// Tokens matched while extracting Dataview inline fields from free-form
+/// Markdown text.
+///
+/// [`Self::Field`] carries every emitted [`InlineField`]; callbacks return
+/// [`Filter::Skip`] to discard a non-matching candidate (e.g. an unclosed
+/// wrapped field) and keep scanning. [`Self::Ignored`] is a catch-all,
+/// single-character skip for ordinary prose that matches none of the field
+/// patterns.
+#[derive(logos::Logos, Debug, Clone, PartialEq)]
+#[logos(extras = bool)]
+enum FieldToken {
+    #[regex(r"[ \t]*[A-Za-z][A-Za-z0-9_-]*::", body_field_callback)]
+    #[token("[", |lex| wrapped_field_callback(lex, BracketPair::VISIBLE))]
+    #[token("(", |lex| wrapped_field_callback(lex, BracketPair::HIDDEN))]
+    #[token("\u{1F5D3}\u{FE0F}", |lex| task_field_callback(lex, "due"))]
+    #[token("\u{1F5D3}", |lex| task_field_callback(lex, "due"))]
+    #[token("\u{2795}", |lex| task_field_callback(lex, "created"))]
+    #[token("\u{1F6EB}", |lex| task_field_callback(lex, "start"))]
+    #[token("\u{23F3}", |lex| task_field_callback(lex, "scheduled"))]
+    #[token("\u{2705}", |lex| task_field_callback(lex, "completion"))]
+    Field(InlineField),
+    #[regex(r"[\s\S]", logos::skip, priority = 0)]
+    Ignored,
 }
 
-/// Stateful lexer for extracting [`InlineField`] candidates from Markdown text.
-struct InlineFieldLexer<'a> {
-    text: &'a str,
-    source: SourceText<'a>,
-    matches: Vec<FieldMatch>,
+/// Extracts the `Key::` prefix matched by [`FieldToken`]'s body-field
+/// pattern, then manually consumes the rest of the line as the field's raw
+/// value — mirroring the historical `(?m)^[ \t]*key::[ \t]*(.*)$` regex.
+///
+/// Logos has no look-behind support, so a line-start check replaces that
+/// regex's `^` anchor: the match is rejected (skipping only the matched
+/// `Key::` span, not the rest of the line) unless it starts right after a
+/// newline or at the start of the text.
+fn body_field_callback(lex: &mut Lexer<'_, FieldToken>) -> Filter<InlineField> {
+    let at_line_start = char_before(lex).is_none_or(|ch| ch == '\n');
+    if !at_line_start {
+        return Filter::Skip;
+    }
+    let slice = lex.slice();
+    let key_end = slice.len().saturating_sub(2); // Strip the trailing "::".
+    let key = slice.get(..key_end).unwrap_or_default().trim();
+    let remainder = lex.remainder();
+    let value_end = remainder.find('\n').unwrap_or(remainder.len());
+    let value = remainder.get(..value_end).unwrap_or_default().trim();
+    let field = InlineField::new(
+        key,
+        parse_inline_value_str(value),
+        InlineFieldForm::Body,
+    );
+    lex.bump(value_end);
+    Filter::Emit(field)
 }
 
-impl<'a> InlineFieldLexer<'a> {
-    #[inline]
-    fn new(text: &'a str) -> Self {
-        Self {
-            text,
-            source: SourceText::new(text),
-            matches: Vec::new(),
-        }
+/// Parses a wrapped inline field (`[Key:: Value]` or `(Key:: Value)`)
+/// starting just after its already-consumed opening delimiter.
+///
+/// Mirrors the historical `find_wrapped_field`/`find_separator`/
+/// `find_closing` walk: rejects (skipping only the opening delimiter) when
+/// there is no `::` separator, the key is empty or contains a bracket, or
+/// no matching closing delimiter is found. Escaped delimiters (`\[`, `\]`,
+/// `\(`, `\)`) and same-kind nesting inside the value do not close the
+/// field early.
+fn wrapped_field_callback(
+    lex: &mut Lexer<'_, FieldToken>,
+    pair: BracketPair,
+) -> Filter<InlineField> {
+    let remainder = lex.remainder();
+    let Some(sep) = remainder.find("::") else {
+        return Filter::Skip;
+    };
+    let key = remainder.get(..sep).unwrap_or_default().trim();
+    if key.is_empty()
+        || key.chars().any(|ch| matches!(ch, '[' | ']' | '(' | ')'))
+    {
+        return Filter::Skip;
     }
-
-    fn scan_body_fields(&mut self) {
-        for caps in BODY_FIELD_RE.captures_iter(self.text) {
-            let (Some(whole), Some(key), Some(value)) =
-                (caps.get(0), caps.get(1), caps.get(2))
-            else {
-                continue;
-            };
-            self.matches.push(FieldMatch {
-                range: ByteSpan::new(whole.start(), whole.end()),
-                field: InlineField::new(
-                    key.as_str().trim(),
-                    parse_inline_value_str(value.as_str()),
-                    InlineFieldForm::Body,
-                ),
-            });
+    let after_sep = remainder.get(sep.saturating_add(2)..).unwrap_or_default();
+    let mut nesting = 0usize;
+    let mut escaped = false;
+    let mut close = None;
+    for (offset, ch) in after_sep.char_indices() {
+        if ch == '\\' {
+            escaped = !escaped;
+            continue;
         }
-    }
-
-    fn scan_wrapped_fields(&mut self, pair: BracketPair) {
-        let mut next = 0;
-        while let Some(start) = self.source.find_char_from(next, pair.open) {
-            if let Some(field_match) = self.find_wrapped_field(start, pair) {
-                next = field_match.range.end();
-                self.matches.push(field_match);
-            } else {
-                next = self.source.advance_char(start, pair.open);
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if ch == pair.open {
+            nesting = nesting.saturating_add(1);
+        } else if ch == pair.close {
+            if nesting == 0 {
+                close = Some(offset);
+                break;
             }
+            nesting = nesting.saturating_sub(1);
+        } else {
+            // Other characters do not affect wrapper nesting.
         }
     }
+    let Some(close) = close else {
+        return Filter::Skip;
+    };
+    let value = after_sep.get(..close).unwrap_or_default().trim();
+    let consumed = sep
+        .saturating_add(2)
+        .saturating_add(close)
+        .saturating_add(pair.close.len_utf8());
+    lex.bump(consumed);
+    Filter::Emit(InlineField::new(
+        key,
+        parse_inline_value_str(value),
+        pair.form,
+    ))
+}
 
-    fn find_wrapped_field(
-        &self,
-        start: usize,
-        pair: BracketPair,
-    ) -> Option<FieldMatch> {
-        let (key, value_start) =
-            self.find_separator(self.source.advance_char(start, pair.open))?;
-        if key.is_empty()
-            || key.chars().any(|ch| matches!(ch, '[' | ']' | '(' | ')'))
-        {
-            return None;
-        }
-        let (value, end) = self.find_closing(value_start, pair)?;
-        Some(FieldMatch {
-            range: ByteSpan::new(start, end),
-            field: InlineField::new(
-                key,
-                parse_inline_value_str(value),
-                pair.form,
-            ),
-        })
+/// Parses a Dataview task emoji shorthand (e.g. `🗓️2026-01-01`) starting
+/// just after its already-consumed emoji token, emitting an inline field
+/// keyed by `key` when the following text — optional inline whitespace,
+/// then exactly [`ISO_DATE_LEN`] bytes — is a valid ISO date.
+///
+/// Always skips when `lex.extras` is `false`: [`extract_inline_fields`]
+/// disables task shorthands by lexing with `extras = false`.
+fn task_field_callback(
+    lex: &mut Lexer<'_, FieldToken>,
+    key: &'static str,
+) -> Filter<InlineField> {
+    if !lex.extras {
+        return Filter::Skip;
     }
-
-    fn find_separator(&self, start: usize) -> Option<(&'a str, usize)> {
-        let separator = self.source.find_str_from(start, "::")?;
-        Some((
-            self.source.get(start..separator)?.trim(),
-            self.source.advance(separator, 2),
-        ))
+    let remainder = lex.remainder();
+    let ws_end = remainder
+        .char_indices()
+        .find(|&(_, ch)| !matches!(ch, ' ' | '\t'))
+        .map_or(remainder.len(), |(offset, _)| offset);
+    let after_ws = remainder.get(ws_end..).unwrap_or_default();
+    let Some(candidate) = after_ws.get(..ISO_DATE_LEN) else {
+        return Filter::Skip;
+    };
+    if !is_iso_date(candidate) {
+        return Filter::Skip;
     }
-
-    fn find_closing(
-        &self,
-        start: usize,
-        pair: BracketPair,
-    ) -> Option<(&'a str, usize)> {
-        let mut nesting = 0usize;
-        let mut escaped = false;
-        for (offset, ch) in self.source.from(start)?.char_indices() {
-            if ch == '\\' {
-                escaped = !escaped;
-                continue;
-            }
-            if escaped {
-                escaped = false;
-                continue;
-            }
-            if ch == pair.open {
-                nesting = nesting.saturating_add(1);
-            } else if ch == pair.close {
-                if nesting == 0 {
-                    let end = self.source.advance(start, offset);
-                    return Some((
-                        self.source.get(start..end)?.trim(),
-                        self.source.advance_char(end, ch),
-                    ));
-                }
-                nesting = nesting.saturating_sub(1);
-            } else {
-                // Other characters do not affect wrapper nesting.
-            }
-        }
-        None
-    }
-
-    fn scan_task_shorthands(&mut self) {
-        for &(emoji, key) in TASK_EMOJI_FIELDS {
-            let mut next = 0;
-            while let Some(start) = self.source.find_str_from(next, emoji) {
-                let emoji_end = self.source.advance(start, emoji.len());
-                let date_start = self.skip_inline_whitespace(emoji_end);
-                let date_end = self.source.advance(date_start, ISO_DATE_LEN);
-                if let Some(value) = self.source.get(date_start..date_end)
-                    && is_iso_date(value)
-                {
-                    self.matches.push(FieldMatch {
-                        range: ByteSpan::new(start, date_end),
-                        field: InlineField::new(
-                            key,
-                            FieldValue::Date(value.to_owned()),
-                            InlineFieldForm::Body,
-                        ),
-                    });
-                }
-                next = emoji_end;
-            }
-        }
-    }
-
-    fn skip_inline_whitespace(&self, pos: usize) -> usize {
-        self.source
-            .from(pos)
-            .and_then(|rest| {
-                rest.char_indices()
-                    .find(|(_, ch)| !matches!(ch, ' ' | '\t'))
-                    .map(|(offset, _)| self.source.advance(pos, offset))
-            })
-            .unwrap_or_else(|| self.source.len())
-    }
-
-    fn finish(mut self) -> Vec<InlineField> {
-        self.matches.sort_by_key(|field| field.range.start());
-        let mut filtered = Vec::new();
-        let mut last_end = 0;
-        for field_match in self.matches {
-            if filtered.is_empty() || last_end <= field_match.range.start() {
-                last_end = field_match.range.end();
-                filtered.push(field_match.field);
-            }
-        }
-        filtered
-    }
+    lex.bump(ws_end.saturating_add(ISO_DATE_LEN));
+    Filter::Emit(InlineField::new(
+        key,
+        FieldValue::Date(candidate.to_owned()),
+        InlineFieldForm::Body,
+    ))
 }
 
 /// Parses raw inline value text into a [`FieldValue`].
@@ -903,6 +895,18 @@ mod tests {
 
             let keys: Vec<&str> = fields.iter().map(InlineField::key).collect();
             assert_eq!(keys, ["Status", "Reviewer", "Editor"]);
+        }
+
+        #[test]
+        fn body_field_value_swallows_a_nested_wrapped_field_look_alike() {
+            let fields = extract_inline_fields("Status:: Draft [Key:: Value]");
+
+            assert_eq!(fields.len(), 1);
+            assert_eq!(fields.first().map(InlineField::key), Some("Status"));
+            assert_eq!(
+                fields.first().and_then(|field| field.value().as_str()),
+                Some("Draft [Key:: Value]")
+            );
         }
     }
 

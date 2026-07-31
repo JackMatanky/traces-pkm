@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::byte::SourceText;
+use super::cursor::SourceText;
 
 /// Link syntax for an extracted [`Outlink`].
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]

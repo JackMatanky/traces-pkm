@@ -2,48 +2,6 @@
 
 use std::ops::Range;
 
-use serde::{Deserialize, Serialize};
-
-/// Byte offsets into a UTF-8 source string.
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
-pub(crate) struct ByteSpan {
-    start: usize,
-    end: usize,
-}
-
-impl ByteSpan {
-    /// Creates a range from start and end byte offsets.
-    #[inline]
-    #[must_use]
-    pub(crate) fn new(start: usize, end: usize) -> Self {
-        Self {
-            start,
-            end,
-        }
-    }
-
-    /// Start byte offset.
-    #[inline]
-    #[must_use]
-    pub(crate) fn start(&self) -> usize {
-        self.start
-    }
-
-    /// End byte offset.
-    #[inline]
-    #[must_use]
-    pub(crate) fn end(&self) -> usize {
-        self.end
-    }
-}
-
-impl From<ByteSpan> for Range<usize> {
-    #[inline]
-    fn from(span: ByteSpan) -> Self {
-        span.start..span.end
-    }
-}
-
 /// Borrowed UTF-8 source text with byte-offset helpers.
 pub(crate) struct SourceText<'a>(&'a str);
 
@@ -74,28 +32,6 @@ impl<'a> SourceText<'a> {
     #[must_use]
     pub(crate) fn get(&self, range: Range<usize>) -> Option<&'a str> {
         self.0.get(range)
-    }
-
-    /// Finds `needle` at or after `pos` and returns an absolute byte offset.
-    #[inline]
-    #[must_use]
-    pub(crate) fn find_char_from(
-        &self,
-        pos: usize,
-        needle: char,
-    ) -> Option<usize> {
-        self.from(pos)?.find(needle).map(|offset| self.advance(pos, offset))
-    }
-
-    /// Finds `needle` at or after `pos` and returns an absolute byte offset.
-    #[inline]
-    #[must_use]
-    pub(crate) fn find_str_from(
-        &self,
-        pos: usize,
-        needle: &str,
-    ) -> Option<usize> {
-        self.from(pos)?.find(needle).map(|offset| self.advance(pos, offset))
     }
 
     /// Returns whether the source at `pos` starts with `needle`.

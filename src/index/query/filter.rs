@@ -1,6 +1,6 @@
 //! Filter expression AST, tokenizer, and recursive descent parser.
 
-use std::{iter::Peekable, str::CharIndices};
+use logos::{Lexer, Logos};
 
 use super::{
     FieldPath, IndexRecord, QueryError,
@@ -145,22 +145,46 @@ fn tag_or_value_matches(item: &FieldValue, target: &FieldValue) -> bool {
 }
 
 /// Tokens parsed from a filter expression.
-#[derive(Clone, Debug, PartialEq)]
+///
+/// `AND`/`OR`/`NOT` and `true`/`false`/`null`/`Null` are matched directly
+/// by their own [`Self::And`]/[`Self::Or`]/[`Self::Not`]/[`Self::Literal`]
+/// token patterns — every spelling is visible right here. Only numbers
+/// can't be a fixed-literal pattern; those are lexed generically as
+/// [`Self::Ident`] and reclassified by [`reclassify_number`].
+#[derive(logos::Logos, Clone, Debug, PartialEq)]
+#[logos(skip r"[ \t\n\r\f]+")]
 enum FilterToken {
+    #[token("(")]
     LParen,
+    #[token(")")]
     RParen,
+    #[token(",")]
     Comma,
+    #[token("&&")]
+    #[token("and", ignore(case))]
     And,
+    #[token("||")]
+    #[token("or", ignore(case))]
     Or,
+    #[token("!")]
+    #[token("not", ignore(case))]
     Not,
+    #[token("==", |_| CompareOp::Eq)]
+    #[token("!=", |_| CompareOp::Ne)]
+    #[token(">=", |_| CompareOp::Ge)]
+    #[token("<=", |_| CompareOp::Le)]
+    #[token(">", |_| CompareOp::Gt)]
+    #[token("<", |_| CompareOp::Lt)]
     Op(CompareOp),
+    #[regex(r#""([^"\\]|\\.)*""#, string_callback)]
+    #[token("true", |_| FieldValue::Bool(true), priority = 3)]
+    #[token("false", |_| FieldValue::Bool(false), priority = 3)]
+    #[token("null", |_| FieldValue::Null, priority = 3)]
+    #[token("Null", |_| FieldValue::Null, priority = 3)]
     Literal(FieldValue),
+    #[regex(r#"[^\s()",=!<>&|]+"#, |lex| lex.slice().to_owned())]
     Ident(String),
 }
-
-/// Peekable character stream with byte offsets, threaded through the
-/// tokenizer's per-token-kind scanners.
-type Chars<'a> = Peekable<CharIndices<'a>>;
 
 /// Builds the "unparsable filter expression" error for the full `expr`.
 fn unparsable(expr: &str) -> QueryError {
@@ -170,137 +194,59 @@ fn unparsable(expr: &str) -> QueryError {
 }
 
 /// Tokenizes `expr` into a vector of [`FilterToken`]s.
-fn tokenize_filter_expr(expr: &str) -> Result<Vec<FilterToken>, QueryError> {
-    let mut tokens = Vec::new();
-    let mut chars = expr.char_indices().peekable();
-
-    while let Some(&(i, c)) = chars.peek() {
-        if c.is_whitespace() {
-            chars.next();
-            continue;
-        }
-        let token = match c {
-            '(' => {
-                chars.next();
-                FilterToken::LParen
-            }
-            ')' => {
-                chars.next();
-                FilterToken::RParen
-            }
-            ',' => {
-                chars.next();
-                FilterToken::Comma
-            }
-            '"' => scan_string_literal(expr, &mut chars)?,
-            '=' | '!' | '>' | '<' | '&' | '|' => {
-                scan_operator(expr, i, &mut chars)?
-            }
-            _ => scan_word(expr, i, &mut chars)?,
-        };
-        tokens.push(token);
-    }
-    Ok(tokens)
-}
-
-/// Scans a double-quoted string literal starting at the opening `"`.
 ///
-/// Supports `\`-escaped characters; consumes through the closing quote.
-fn scan_string_literal(
-    expr: &str,
-    chars: &mut Chars<'_>,
-) -> Result<FilterToken, QueryError> {
-    chars.next(); // Consume the opening quote.
-    let mut s = String::new();
-    while let Some((_, ch)) = chars.next() {
-        match ch {
-            '\\' => {
-                let escaped = chars
-                    .next()
-                    .map(|(_, esc)| esc)
-                    .ok_or_else(|| unparsable(expr))?;
-                s.push(escaped);
+/// Bare words that aren't a recognized keyword or literal token lex
+/// generically as [`FilterToken::Ident`] and are reclassified by
+/// [`reclassify_number`], since a numeric literal can't be matched by a
+/// fixed-literal pattern.
+fn tokenize_filter_expr(expr: &str) -> Result<Vec<FilterToken>, QueryError> {
+    let tokens: Vec<FilterToken> = FilterToken::lexer(expr)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|()| unparsable(expr))?;
+    Ok(tokens
+        .into_iter()
+        .map(|token| match token {
+            FilterToken::Ident(word) => reclassify_number(word),
+            other => other,
+        })
+        .collect())
+}
+
+/// Un-escapes a lexed double-quoted string literal's `lex.slice()` (the full
+/// `"..."` match, quotes included) into its [`FieldValue::String`] contents.
+///
+/// Every `\X` pair pushes `X` verbatim, matching Dataview's simple escaping
+/// (not full Rust-style escape-sequence interpretation).
+fn string_callback(lex: &mut Lexer<'_, FilterToken>) -> FieldValue {
+    let inner = lex
+        .slice()
+        .strip_prefix('"')
+        .and_then(|rest| rest.strip_suffix('"'))
+        .unwrap_or_default();
+    let mut value = String::new();
+    let mut chars = inner.chars();
+    while let Some(ch) = chars.next() {
+        if ch == '\\' {
+            if let Some(escaped) = chars.next() {
+                value.push(escaped);
             }
-            '"' => return Ok(FilterToken::Literal(FieldValue::String(s))),
-            _ => s.push(ch),
+        } else {
+            value.push(ch);
         }
     }
-    Err(unparsable(expr)) // Unterminated string.
+    FieldValue::String(value)
 }
 
-/// Scans an operator or logical symbol (`==`, `!=`, `&&`, `||`, `!`, ...)
-/// starting at byte offset `i`.
-fn scan_operator(
-    expr: &str,
-    i: usize,
-    chars: &mut Chars<'_>,
-) -> Result<FilterToken, QueryError> {
-    let rest = &expr[i..];
-    if let Some((op, stripped)) = CompareOp::strip_prefix(rest) {
-        let consumed = rest.len().saturating_sub(stripped.len());
-        for _ in 0..consumed {
-            chars.next();
-        }
-        return Ok(FilterToken::Op(op));
+/// Reclassifies a bare word lexed as [`FilterToken::Ident`] into a numeric
+/// literal when it parses as `f64`, leaving genuine field identifiers
+/// unchanged. Never hand-write an equivalent numeric regex here — `f64`'s
+/// parser already covers exponents, signs, and other edge cases a regex
+/// would have to duplicate.
+fn reclassify_number(word: String) -> FilterToken {
+    match word.parse::<f64>() {
+        Ok(num) => FilterToken::Literal(FieldValue::Number(num)),
+        Err(_) => FilterToken::Ident(word),
     }
-    if rest.starts_with("&&") {
-        chars.next();
-        chars.next();
-        return Ok(FilterToken::And);
-    }
-    if rest.starts_with("||") {
-        chars.next();
-        chars.next();
-        return Ok(FilterToken::Or);
-    }
-    if rest.starts_with('!') {
-        chars.next();
-        return Ok(FilterToken::Not);
-    }
-    Err(unparsable(expr))
-}
-
-/// Scans a bare word starting at byte offset `start`: a boolean-logic
-/// keyword (`AND`/`OR`/`NOT`), a literal (`true`/`false`/`null`/a number),
-/// or a field identifier.
-fn scan_word(
-    expr: &str,
-    start: usize,
-    chars: &mut Chars<'_>,
-) -> Result<FilterToken, QueryError> {
-    while let Some(&(_, ch)) = chars.peek() {
-        if ch.is_whitespace()
-            || matches!(
-                ch,
-                '(' | ')' | ',' | '"' | '=' | '!' | '>' | '<' | '&' | '|'
-            )
-        {
-            break;
-        }
-        chars.next();
-    }
-    let end = chars.peek().map_or(expr.len(), |&(k, _)| k);
-    let word = expr[start..end].trim();
-    if word.is_empty() {
-        return Err(unparsable(expr));
-    }
-    Ok(if word.eq_ignore_ascii_case("AND") {
-        FilterToken::And
-    } else if word.eq_ignore_ascii_case("OR") {
-        FilterToken::Or
-    } else if word.eq_ignore_ascii_case("NOT") {
-        FilterToken::Not
-    } else if word == "true" {
-        FilterToken::Literal(FieldValue::Bool(true))
-    } else if word == "false" {
-        FilterToken::Literal(FieldValue::Bool(false))
-    } else if word == "null" || word == "Null" {
-        FilterToken::Literal(FieldValue::Null)
-    } else if let Ok(num) = word.parse::<f64>() {
-        FilterToken::Literal(FieldValue::Number(num))
-    } else {
-        FilterToken::Ident(word.to_owned())
-    })
 }
 
 /// Recursive descent parser for [`FilterExpr`] ASTs.

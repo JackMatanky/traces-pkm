@@ -12,7 +12,7 @@
     )
 )]
 
-mod byte;
+mod cursor;
 mod lexer;
 mod links;
 mod lists;
