@@ -1,14 +1,6 @@
-//! Field path parsing and file metadata accessor resolution.
-//!
-//! [`FileRecord::field_names`] is implemented here, not in `index/file.rs`,
-//! for the same reason [`FileField`] lives here: the `file.*` accessor
-//! grammar (Dataview-style aliases, date/datetime formatting choices) is a
-//! query-DSL concern, not an intrinsic property of [`FileRecord`]. Keeping
-//! it here means `index/file.rs` stays free of the [`QueryError`]/
-//! [`FieldValue`] dependencies it would otherwise need only for this.
+//! Field path parsing and field metadata resolution.
 
-use super::{super::file::FileRecord, QueryError};
-use crate::note::FieldValue;
+use super::{super::file::FileField, QueryError};
 
 /// A query field path, resolved once per [`super::QueryOutcome`]
 /// transformation and then applied to every [`super::IndexRecord`].
@@ -18,7 +10,8 @@ pub(super) enum FieldPath {
     File(FileField),
     /// A frontmatter or inline field, looked up by key.
     Metadata(String),
-    /// The Note's markdown tags, as a [`FieldValue::List`] of tag strings.
+    /// The Note's markdown tags, as a
+    /// [`FieldValue::List`](crate::note::FieldValue::List) of tag strings.
     Tags,
 }
 
@@ -54,122 +47,6 @@ impl FieldPath {
     }
 }
 
-/// General `file.*` metadata accessors available to query field paths.
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub(super) enum FileField {
-    /// [`FileRecord::path`].
-    Path,
-    /// [`FileRecord::name`].
-    Name,
-    /// [`FileRecord::folder`].
-    Folder,
-    /// [`FileRecord::size`].
-    Size,
-    /// [`FileRecord::created_at_or_modified`], as a datetime with no UTC
-    /// offset.
-    CreatedDateTime,
-    /// [`FileRecord::created_at_or_modified`], as a bare date.
-    CreatedDate,
-    /// [`FileRecord::modified_at`], as a datetime with no UTC offset.
-    ModifiedDateTime,
-    /// [`FileRecord::modified_at`], as a bare date.
-    ModifiedDate,
-}
-
-/// `file.<field>` accessor names [`FileField::parse`] accepts, including
-/// every alias.
-///
-/// Kept directly beside `parse`'s match arms below rather than derived from
-/// them, so a change to one is hard to miss noticing the other;
-/// `names_round_trip_through_parse` (in this module's tests) guards the
-/// "listed but unparsable" drift direction.
-const NAMES: &[&str] = &[
-    "path",
-    "name",
-    "folder",
-    "size",
-    "created_at",
-    "ctime",
-    "cdate",
-    "modified_at",
-    "mtime",
-    "mdate",
-];
-
-impl FileField {
-    /// Parses a `file.<field>` accessor name (the part after `"file."`).
-    ///
-    /// # Errors
-    ///
-    /// Returns [`QueryError::UnknownFieldPath`] if `name` is not a known
-    /// accessor.
-    pub(super) fn parse(name: &str) -> Result<Self, QueryError> {
-        match name {
-            "path" => Ok(Self::Path),
-            "name" => Ok(Self::Name),
-            "folder" => Ok(Self::Folder),
-            "size" => Ok(Self::Size),
-            "created_at" | "ctime" => Ok(Self::CreatedDateTime),
-            "cdate" => Ok(Self::CreatedDate),
-            "modified_at" | "mtime" => Ok(Self::ModifiedDateTime),
-            "mdate" => Ok(Self::ModifiedDate),
-            _ => Err(QueryError::UnknownFieldPath {
-                path: format!("file.{name}"),
-            }),
-        }
-    }
-
-    /// Every accessor name [`Self::parse`] accepts, including aliases.
-    pub(super) fn names() -> impl Iterator<Item = &'static str> {
-        NAMES.iter().copied()
-    }
-
-    /// Resolves this accessor against `file`.
-    pub(super) fn resolve(self, file: &FileRecord) -> FieldValue {
-        match self {
-            Self::Path => {
-                FieldValue::String(file.path().to_string_lossy().into_owned())
-            }
-            Self::Name => FieldValue::String(file.name().as_str().to_owned()),
-            Self::Folder => {
-                FieldValue::String(file.folder().to_string_lossy().into_owned())
-            }
-            #[expect(
-                clippy::as_conversions,
-                clippy::cast_precision_loss,
-                reason = "file sizes stay well under 2^53 bytes for PKM-scale \
-                          projects, so f64 keeps exact byte counts"
-            )]
-            Self::Size => FieldValue::Number(file.size() as f64),
-            Self::CreatedDateTime => FieldValue::Date(
-                file.created_at_or_modified().to_datetime_string(),
-            ),
-            Self::CreatedDate => {
-                FieldValue::Date(file.created_at_or_modified().to_date_string())
-            }
-            Self::ModifiedDateTime => {
-                FieldValue::Date(file.modified_at().to_datetime_string())
-            }
-            Self::ModifiedDate => {
-                FieldValue::Date(file.modified_at().to_date_string())
-            }
-        }
-    }
-}
-
-impl FileRecord {
-    /// Every `file.<field>` accessor name query field paths accept,
-    /// including Dataview-style aliases (`ctime`, `cdate`, `mtime`,
-    /// `mdate`).
-    ///
-    /// Implemented here, not in `index/file.rs` — see this module's docs
-    /// for why.
-    #[inline]
-    pub(crate) fn field_names() -> impl Iterator<Item = &'static str> {
-        FileField::names()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::{fs, path::Path};
@@ -177,7 +54,7 @@ mod tests {
     use pretty_assertions::assert_eq;
     use rstest::rstest;
 
-    use super::{super::*, *};
+    use super::super::*;
     use crate::index::FileIndex;
 
     fn outcome_for_files(temp: &Path, files: &[(&str, &str)]) -> QueryOutcome {
@@ -319,12 +196,5 @@ mod tests {
                 path: path.to_owned()
             })
         );
-    }
-
-    #[test]
-    fn names_round_trip_through_parse() {
-        for name in FileField::names() {
-            assert!(FileField::parse(name).is_ok(), "{name} should parse");
-        }
     }
 }

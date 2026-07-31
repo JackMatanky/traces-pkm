@@ -50,7 +50,7 @@ use minijinja::{
 
 use crate::{
     index::{
-        FileIndex, FileIndexError, FileRecord, IndexRecord, QueryError,
+        FileField, FileIndex, FileIndexError, IndexRecord, QueryError,
         QueryOutcome, Source,
     },
     note::FieldValue,
@@ -248,7 +248,7 @@ impl Object for FileFields {
     }
 
     fn enumerate(self: &Arc<Self>) -> Enumerator {
-        Enumerator::Iter(Box::new(FileRecord::field_names().map(Value::from)))
+        Enumerator::Str(FileField::NAMES)
     }
 }
 
@@ -536,7 +536,7 @@ mod tests {
         }
 
         #[test]
-        fn file_enumerates_every_name_from_file_record() {
+        fn file_enumerates_every_name_from_file_field() {
             let temp = tempfile::tempdir().expect("create temp dir");
             write_note(temp.path(), "only.md", "# Only");
 
@@ -546,7 +546,8 @@ mod tests {
             )
             .expect("render succeeds");
 
-            let expected: String = FileRecord::field_names()
+            let expected: String = FileField::NAMES
+                .iter()
                 .map(|name| format!("{name},"))
                 .collect();
             assert_eq!(rendered, expected);

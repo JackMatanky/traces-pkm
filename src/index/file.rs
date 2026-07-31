@@ -2,6 +2,10 @@
 //!
 //! [`FileRecord`] stores root-relative identity, type classification, file
 //! timestamps, and size for every regular file under a project root.
+//! [`FileField`] parses and resolves `file.*` query accessor names
+//! (including Dataview-style aliases) against a [`FileRecord`] — kept here
+//! rather than in `index/query` so the accessor grammar sits directly
+//! beside the fields it describes.
 
 use std::{
     fs,
@@ -12,8 +16,11 @@ use std::{
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use super::error::FileIndexError;
-use crate::file_name::{BaseName, FileName};
+use super::{QueryError, error::FileIndexError};
+use crate::{
+    file_name::{BaseName, FileName},
+    note::FieldValue,
+};
 
 /// Metadata captured for one regular file under a project root.
 ///
@@ -133,6 +140,99 @@ impl FileRecord {
     #[must_use]
     pub(crate) fn size(&self) -> u64 {
         self.size
+    }
+}
+
+/// General `file.*` metadata accessors available to query field paths.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub(crate) enum FileField {
+    /// [`FileRecord::path`].
+    Path,
+    /// [`FileRecord::name`].
+    Name,
+    /// [`FileRecord::folder`].
+    Folder,
+    /// [`FileRecord::size`].
+    Size,
+    /// [`FileRecord::created_at_or_modified`], as a datetime with no UTC
+    /// offset.
+    CreatedDateTime,
+    /// [`FileRecord::created_at_or_modified`], as a bare date.
+    CreatedDate,
+    /// [`FileRecord::modified_at`], as a datetime with no UTC offset.
+    ModifiedDateTime,
+    /// [`FileRecord::modified_at`], as a bare date.
+    ModifiedDate,
+}
+
+impl FileField {
+    /// `file.<field>` accessor names [`Self::parse`] accepts, including
+    /// every alias.
+    pub(crate) const NAMES: &'static [&'static str] = &[
+        "path",
+        "name",
+        "folder",
+        "size",
+        "created_at",
+        "ctime",
+        "cdate",
+        "modified_at",
+        "mtime",
+        "mdate",
+    ];
+
+    /// Parses a `file.<field>` accessor name (the part after `"file."`).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`QueryError::UnknownFieldPath`] if `name` is not a known
+    /// accessor.
+    pub(crate) fn parse(name: &str) -> Result<Self, QueryError> {
+        match name {
+            "path" => Ok(Self::Path),
+            "name" => Ok(Self::Name),
+            "folder" => Ok(Self::Folder),
+            "size" => Ok(Self::Size),
+            "created_at" | "ctime" => Ok(Self::CreatedDateTime),
+            "cdate" => Ok(Self::CreatedDate),
+            "modified_at" | "mtime" => Ok(Self::ModifiedDateTime),
+            "mdate" => Ok(Self::ModifiedDate),
+            _ => Err(QueryError::UnknownFieldPath {
+                path: format!("file.{name}"),
+            }),
+        }
+    }
+
+    /// Resolves this accessor against `file`.
+    pub(crate) fn resolve(self, file: &FileRecord) -> FieldValue {
+        match self {
+            Self::Path => {
+                FieldValue::String(file.path().to_string_lossy().into_owned())
+            }
+            Self::Name => FieldValue::String(file.name().as_str().to_owned()),
+            Self::Folder => {
+                FieldValue::String(file.folder().to_string_lossy().into_owned())
+            }
+            #[expect(
+                clippy::as_conversions,
+                clippy::cast_precision_loss,
+                reason = "file sizes stay well under 2^53 bytes for PKM-scale \
+                          projects, so f64 keeps exact byte counts"
+            )]
+            Self::Size => FieldValue::Number(file.size() as f64),
+            Self::CreatedDateTime => FieldValue::Date(
+                file.created_at_or_modified().to_datetime_string(),
+            ),
+            Self::CreatedDate => {
+                FieldValue::Date(file.created_at_or_modified().to_date_string())
+            }
+            Self::ModifiedDateTime => {
+                FieldValue::Date(file.modified_at().to_datetime_string())
+            }
+            Self::ModifiedDate => {
+                FieldValue::Date(file.modified_at().to_date_string())
+            }
+        }
     }
 }
 
@@ -328,6 +428,17 @@ mod tests {
             assert_eq!(record.folder(), Path::new(""));
             assert_eq!(record.format(), FileFormat::Note);
             assert_eq!(record.size(), 2);
+        }
+    }
+
+    mod file_field {
+        use super::*;
+
+        #[test]
+        fn names_round_trip_through_parse() {
+            for name in FileField::NAMES {
+                assert!(FileField::parse(name).is_ok(), "{name} should parse");
+            }
         }
     }
 
