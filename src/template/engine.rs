@@ -2,14 +2,15 @@
 //! interface for [`super::service::TemplateService`].
 //!
 //! Most of what a template calls into during render lives in a submodule:
-//! [`date_ops`], [`file_ops`], [`num_ops`], [`path_ops`], [`str_ops`],
-//! [`ui_ops`]. The one exception is the standalone [`uuid`](fn@uuid) function,
-//! defined directly here.
+//! [`date_ops`], [`file_ops`], [`num_ops`], [`path_ops`], [`query_ops`],
+//! [`str_ops`], [`ui_ops`]. The one exception is the standalone
+//! [`uuid`](fn@uuid) function, defined directly here.
 
 mod date_ops;
 mod file_ops;
 mod num_ops;
 mod path_ops;
+mod query_ops;
 mod str_ops;
 mod ui_ops;
 
@@ -26,6 +27,7 @@ use self::{
     file_ops::{FileOps, WRITE_TO_KEY},
     num_ops::NumOps,
     path_ops::PathOps,
+    query_ops::QueryOps,
     str_ops::StrOps,
     ui_ops::UiOps,
 };
@@ -46,17 +48,18 @@ pub(super) struct TemplateEngine {
 
 impl TemplateEngine {
     /// Builds an engine backed by `loader`, registering every submodule's
-    /// custom functions ([`date_ops`], [`file_ops`], [`num_ops`], [`path_ops`],
-    /// [`str_ops`], [`ui_ops`] — see each module's own docs for what it
-    /// contributes) plus the standalone [`uuid`](fn@uuid) function.
+    /// custom functions ([`date_ops`], [`file_ops`], [`num_ops`],
+    /// [`path_ops`], [`query_ops`], [`str_ops`], [`ui_ops`] — see each
+    /// module's own docs for what it contributes) plus the standalone
+    /// [`uuid`](fn@uuid) function.
     ///
     /// # Arguments
     ///
     /// * `loader` - the [`TemplateLoader`] to wire into minijinja's
     ///   include/extends resolution and store for [`Self::resolve`]
     /// * `provider` - backend `ui.*` calls delegate to
-    /// * `root` - base directory `file.*` and the path-inspection group are
-    ///   confined to
+    /// * `root` - base directory `file.*`, `query.*`, and the path-inspection
+    ///   group are confined to
     #[inline]
     #[must_use]
     pub(super) fn new(
@@ -71,6 +74,7 @@ impl TemplateEngine {
         });
         let root = Arc::from(root);
         FileOps::new(Arc::clone(&root)).register(&mut env);
+        QueryOps::new(Arc::clone(&root)).register(&mut env);
         PathOps::new(root).register(&mut env);
         UiOps::new(provider).register(&mut env);
         DateOps.register(&mut env);
