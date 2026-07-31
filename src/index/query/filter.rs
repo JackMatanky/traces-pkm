@@ -3,8 +3,7 @@
 use std::{iter::Peekable, str::CharIndices};
 
 use super::{
-    IndexRecord, QueryError,
-    field::FieldPath,
+    FieldPath, IndexRecord, QueryError,
     operators::{CompareOp, LogicalOp},
     sort::fields_equal,
 };

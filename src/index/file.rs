@@ -5,7 +5,10 @@
 //! [`FileField`] parses and resolves `file.*` query accessor names
 //! (including Dataview-style aliases) against a [`FileRecord`] — kept here
 //! rather than in `index/query` so the accessor grammar sits directly
-//! beside the fields it describes.
+//! beside the fields it describes. [`FileField::parse`] reports "unknown
+//! name" as a plain `None`, not a [`super::QueryError`]: only the caller
+//! (which has the full `file.<field>` path) has enough context to build
+//! that error, so [`FileField::parse`] doesn't need to depend on it.
 
 use std::{
     fs,
@@ -16,7 +19,7 @@ use std::{
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use super::{QueryError, error::FileIndexError};
+use super::error::FileIndexError;
 use crate::{
     file_name::{BaseName, FileName},
     note::FieldValue,
@@ -32,7 +35,7 @@ pub(crate) struct FileRecord {
     name: BaseName,
     folder: PathBuf,
     format: FileFormat,
-    created: Option<Timestamp>,
+    created_at: Option<Timestamp>,
     modified_at: Timestamp,
     size: u64,
 }
@@ -60,7 +63,7 @@ impl FileRecord {
                     source,
                 }
             })?;
-        let created = metadata.created().map(Timestamp::from).ok();
+        let created_at = metadata.created().map(Timestamp::from).ok();
         let file_name =
             FileName::try_from(relative.as_path()).unwrap_or_default();
         let name = BaseName::from(&file_name);
@@ -73,7 +76,7 @@ impl FileRecord {
             name,
             folder,
             format,
-            created,
+            created_at,
             modified_at,
             size: metadata.len(),
         })
@@ -116,7 +119,7 @@ impl FileRecord {
     #[inline]
     #[must_use]
     pub(crate) fn created_at(&self) -> Option<Timestamp> {
-        self.created
+        self.created_at
     }
 
     /// Returns [`Self::created_at`] if available, falling back to
@@ -125,7 +128,7 @@ impl FileRecord {
     #[inline]
     #[must_use]
     pub(crate) fn created_at_or_modified(&self) -> Timestamp {
-        self.created.unwrap_or(self.modified_at)
+        self.created_at.unwrap_or(self.modified_at)
     }
 
     /// This file's last modification time.
@@ -168,7 +171,7 @@ pub(crate) enum FileField {
 impl FileField {
     /// `file.<field>` accessor names [`Self::parse`] accepts, including
     /// every alias.
-    pub(crate) const NAMES: &'static [&'static str] = &[
+    pub(crate) const ACCESSOR_NAMES: &'static [&'static str] = &[
         "path",
         "name",
         "folder",
@@ -183,23 +186,21 @@ impl FileField {
 
     /// Parses a `file.<field>` accessor name (the part after `"file."`).
     ///
-    /// # Errors
-    ///
-    /// Returns [`QueryError::UnknownFieldPath`] if `name` is not a known
-    /// accessor.
-    pub(crate) fn parse(name: &str) -> Result<Self, QueryError> {
+    /// Returns `None` if `name` is not a known accessor — there's only one
+    /// failure mode here, so callers building a richer error (e.g.
+    /// [`super::QueryError::UnknownFieldPath`], which needs the full
+    /// `file.<field>` path rather than just `name`) do so themselves.
+    pub(crate) fn parse(name: &str) -> Option<Self> {
         match name {
-            "path" => Ok(Self::Path),
-            "name" => Ok(Self::Name),
-            "folder" => Ok(Self::Folder),
-            "size" => Ok(Self::Size),
-            "created_at" | "ctime" => Ok(Self::CreatedDateTime),
-            "cdate" => Ok(Self::CreatedDate),
-            "modified_at" | "mtime" => Ok(Self::ModifiedDateTime),
-            "mdate" => Ok(Self::ModifiedDate),
-            _ => Err(QueryError::UnknownFieldPath {
-                path: format!("file.{name}"),
-            }),
+            "path" => Some(Self::Path),
+            "name" => Some(Self::Name),
+            "folder" => Some(Self::Folder),
+            "size" => Some(Self::Size),
+            "created_at" | "ctime" => Some(Self::CreatedDateTime),
+            "cdate" => Some(Self::CreatedDate),
+            "modified_at" | "mtime" => Some(Self::ModifiedDateTime),
+            "mdate" => Some(Self::ModifiedDate),
+            _ => None,
         }
     }
 
@@ -336,11 +337,11 @@ impl From<SystemTime> for Timestamp {
 mod tests {
     use super::*;
 
-    /// Builds a `FileRecord` with `created`/`modified_at` set directly, for
-    /// exercising timestamp accessor behavior without touching the
+    /// Builds a `FileRecord` with `created_at`/`modified_at` set directly,
+    /// for exercising timestamp accessor behavior without touching the
     /// filesystem.
     fn record_with(
-        created: Option<Timestamp>,
+        created_at: Option<Timestamp>,
         modified_at: Timestamp,
     ) -> FileRecord {
         FileRecord {
@@ -351,7 +352,7 @@ mod tests {
             ),
             folder: PathBuf::new(),
             format: FileFormat::Note,
-            created,
+            created_at,
             modified_at,
             size: 0,
         }
@@ -436,8 +437,11 @@ mod tests {
 
         #[test]
         fn names_round_trip_through_parse() {
-            for name in FileField::NAMES {
-                assert!(FileField::parse(name).is_ok(), "{name} should parse");
+            for name in FileField::ACCESSOR_NAMES {
+                assert!(
+                    FileField::parse(name).is_some(),
+                    "{name} should parse"
+                );
             }
         }
     }

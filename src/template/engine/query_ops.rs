@@ -248,7 +248,7 @@ impl Object for FileFields {
     }
 
     fn enumerate(self: &Arc<Self>) -> Enumerator {
-        Enumerator::Str(FileField::NAMES)
+        Enumerator::Str(FileField::ACCESSOR_NAMES)
     }
 }
 
@@ -546,7 +546,7 @@ mod tests {
             )
             .expect("render succeeds");
 
-            let expected: String = FileField::NAMES
+            let expected: String = FileField::ACCESSOR_NAMES
                 .iter()
                 .map(|name| format!("{name},"))
                 .collect();
