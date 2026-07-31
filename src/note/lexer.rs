@@ -10,63 +10,24 @@ use super::{
     metadata::is_iso_date,
 };
 
-const ISO_DATE_LEN: usize = 10;
-const DURATION_UNITS: &[&str] = &[
-    "year",
-    "years",
-    "yr",
-    "yrs",
-    "month",
-    "months",
-    "mo",
-    "mos",
-    "week",
-    "weeks",
-    "wk",
-    "wks",
-    "w",
-    "day",
-    "days",
-    "d",
-    "hour",
-    "hours",
-    "hr",
-    "hrs",
-    "h",
-    "minute",
-    "minutes",
-    "min",
-    "mins",
-    "m",
-    "second",
-    "seconds",
-    "sec",
-    "secs",
-    "s",
-    "millisecond",
-    "milliseconds",
-    "ms",
-];
-
 /// Extracts inline fields from `text` in byte-position order.
 ///
 /// `text` must already exclude code spans and blocks.
 pub(super) fn extract_inline_fields(text: &str) -> Vec<InlineField> {
-    extract_inline_fields_with_task_shorthands(text, false)
+    extract_inline_fields_with_task_shorthands(text, TaskShorthands::Exclude)
 }
 
 /// Extracts inline fields and Dataview task emoji shorthand fields.
 pub(super) fn extract_task_inline_fields(text: &str) -> Vec<InlineField> {
-    extract_inline_fields_with_task_shorthands(text, true)
+    extract_inline_fields_with_task_shorthands(text, TaskShorthands::Include)
 }
 
-/// Extracts inline fields from `text`, optionally including task emoji
-/// shorthands.
+/// Extracts inline fields from `text` in the given `shorthands` mode.
 fn extract_inline_fields_with_task_shorthands(
     text: &str,
-    include_task_shorthands: bool,
+    shorthands: TaskShorthands,
 ) -> Vec<InlineField> {
-    let lexer = FieldToken::lexer_with_extras(text, include_task_shorthands);
+    let lexer = FieldToken::lexer_with_extras(text, shorthands);
     let mut fields = Vec::new();
     for result in lexer {
         if let Ok(FieldToken::Field(field)) = result {
@@ -105,45 +66,7 @@ where
         .and_then(|prefix| prefix.chars().next_back())
 }
 
-/// Tokens matched while extracting Markdown tags (`#book`,
-/// `#projects/active`) from free-form text.
-///
-/// [`Self::Tag`] carries every emitted [`Tag`]; [`tag_callback`] returns
-/// [`Filter::Skip`] to reject a `#` that fails the lookbehind or
-/// leading-letter check, consuming only the `#` so a rejected mid-word
-/// occurrence like `foo#bar` does not swallow the rest of the text.
-/// [`Self::Ignored`] is a catch-all, single-character skip for ordinary text.
-#[derive(logos::Logos, Debug, Clone, PartialEq)]
-enum TagToken {
-    #[token("#", tag_callback)]
-    Tag(Tag),
-    #[regex(r"[\s\S]", logos::skip, priority = 0)]
-    Ignored,
-}
-
-/// Parses a Markdown tag starting just after its already-consumed leading
-/// `#`. Rejects (skipping only the `#`) a `#` preceded by an alphanumeric
-/// or `_` character (mid-word, e.g. `foo#bar`) or not followed by an
-/// alphabetic character (e.g. `#1`).
-fn tag_callback(lex: &mut Lexer<'_, TagToken>) -> Filter<Tag> {
-    let preceded_by_word_char =
-        char_before(lex).is_some_and(|ch| ch.is_alphanumeric() || ch == '_');
-    if preceded_by_word_char {
-        return Filter::Skip;
-    }
-    let remainder = lex.remainder();
-    if !remainder.chars().next().is_some_and(char::is_alphabetic) {
-        return Filter::Skip;
-    }
-    let body_end = remainder
-        .char_indices()
-        .find(|&(_, ch)| {
-            !(ch.is_alphanumeric() || matches!(ch, '_' | '/' | '-'))
-        })
-        .map_or(remainder.len(), |(offset, _)| offset);
-    lex.bump(body_end);
-    Filter::Emit(Tag::new(lex.slice()))
-}
+const ISO_DATE_LEN: usize = 10;
 
 /// Bracket delimiters and their corresponding [`InlineFieldForm`].
 #[derive(Copy, Clone, Debug)]
@@ -166,6 +89,30 @@ impl BracketPair {
     };
 }
 
+/// Whether task emoji shorthand fields (e.g. `🗓️2026-01-01`) participate in
+/// tokenization.
+///
+/// [`FieldToken`]'s logos `extras`: names the two modes
+/// [`extract_inline_fields`] and [`extract_task_inline_fields`] select, in
+/// place of a bare `bool` flag.
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
+enum TaskShorthands {
+    /// Task emoji shorthands are recognized.
+    Include,
+    /// Task emoji shorthands are ignored.
+    #[default]
+    Exclude,
+}
+
+impl TaskShorthands {
+    /// Whether this mode recognizes task emoji shorthands.
+    #[inline]
+    #[must_use]
+    fn is_included(self) -> bool {
+        matches!(self, Self::Include)
+    }
+}
+
 /// Tokens matched while extracting Dataview inline fields from free-form
 /// Markdown text.
 ///
@@ -175,7 +122,7 @@ impl BracketPair {
 /// single-character skip for ordinary prose that matches none of the field
 /// patterns.
 #[derive(logos::Logos, Debug, Clone, PartialEq)]
-#[logos(extras = bool)]
+#[logos(extras = TaskShorthands)]
 enum FieldToken {
     #[regex(r"[ \t]*[A-Za-z][A-Za-z0-9_-]*::", body_field_callback)]
     #[token("[", |lex| wrapped_field_callback(lex, BracketPair::VISIBLE))]
@@ -225,9 +172,7 @@ fn body_field_callback(lex: &mut Lexer<'_, FieldToken>) -> Filter<InlineField> {
 /// Mirrors the historical `find_wrapped_field`/`find_separator`/
 /// `find_closing` walk: rejects (skipping only the opening delimiter) when
 /// there is no `::` separator, the key is empty or contains a bracket, or
-/// no matching closing delimiter is found. Escaped delimiters (`\[`, `\]`,
-/// `\(`, `\)`) and same-kind nesting inside the value do not close the
-/// field early.
+/// [`find_closing_delimiter`] finds no matching closing delimiter.
 fn wrapped_field_callback(
     lex: &mut Lexer<'_, FieldToken>,
     pair: BracketPair,
@@ -243,31 +188,7 @@ fn wrapped_field_callback(
         return Filter::Skip;
     }
     let after_sep = remainder.get(sep.saturating_add(2)..).unwrap_or_default();
-    let mut nesting = 0usize;
-    let mut escaped = false;
-    let mut close = None;
-    for (offset, ch) in after_sep.char_indices() {
-        if ch == '\\' {
-            escaped = !escaped;
-            continue;
-        }
-        if escaped {
-            escaped = false;
-            continue;
-        }
-        if ch == pair.open {
-            nesting = nesting.saturating_add(1);
-        } else if ch == pair.close {
-            if nesting == 0 {
-                close = Some(offset);
-                break;
-            }
-            nesting = nesting.saturating_sub(1);
-        } else {
-            // Other characters do not affect wrapper nesting.
-        }
-    }
-    let Some(close) = close else {
+    let Some(close) = find_closing_delimiter(after_sep, pair) else {
         return Filter::Skip;
     };
     let value = after_sep.get(..close).unwrap_or_default().trim();
@@ -283,18 +204,52 @@ fn wrapped_field_callback(
     ))
 }
 
+/// Finds the byte offset of `pair`'s unescaped, unnested closing delimiter
+/// in `after_sep` (the wrapped field's value text, starting just after its
+/// `::` separator).
+///
+/// Escaped delimiters (`\[`, `\]`, `\(`, `\)`) never close the field, and
+/// same-kind nesting inside the value (e.g. the inner `[value]` in
+/// `[key:: [value]]`) does not close it early — only a `pair.close` at
+/// zero nesting depth does.
+fn find_closing_delimiter(after_sep: &str, pair: BracketPair) -> Option<usize> {
+    let mut nesting = 0usize;
+    let mut escaped = false;
+    for (offset, ch) in after_sep.char_indices() {
+        if ch == '\\' {
+            escaped = !escaped;
+            continue;
+        }
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if ch == pair.open {
+            nesting = nesting.saturating_add(1);
+        } else if ch == pair.close {
+            if nesting == 0 {
+                return Some(offset);
+            }
+            nesting = nesting.saturating_sub(1);
+        } else {
+            // Other characters do not affect wrapper nesting.
+        }
+    }
+    None
+}
+
 /// Parses a Dataview task emoji shorthand (e.g. `🗓️2026-01-01`) starting
 /// just after its already-consumed emoji token, emitting an inline field
 /// keyed by `key` when the following text — optional inline whitespace,
 /// then exactly [`ISO_DATE_LEN`] bytes — is a valid ISO date.
 ///
-/// Always skips when `lex.extras` is `false`: [`extract_inline_fields`]
-/// disables task shorthands by lexing with `extras = false`.
+/// Always skips when `lex.extras` is [`TaskShorthands::Exclude`]:
+/// [`extract_inline_fields`] lexes in that mode.
 fn task_field_callback(
     lex: &mut Lexer<'_, FieldToken>,
     key: &'static str,
 ) -> Filter<InlineField> {
-    if !lex.extras {
+    if !lex.extras.is_included() {
         return Filter::Skip;
     }
     let remainder = lex.remainder();
@@ -317,10 +272,52 @@ fn task_field_callback(
     ))
 }
 
+const DURATION_UNITS: &[&str] = &[
+    "year",
+    "years",
+    "yr",
+    "yrs",
+    "month",
+    "months",
+    "mo",
+    "mos",
+    "week",
+    "weeks",
+    "wk",
+    "wks",
+    "w",
+    "day",
+    "days",
+    "d",
+    "hour",
+    "hours",
+    "hr",
+    "hrs",
+    "h",
+    "minute",
+    "minutes",
+    "min",
+    "mins",
+    "m",
+    "second",
+    "seconds",
+    "sec",
+    "secs",
+    "s",
+    "millisecond",
+    "milliseconds",
+    "ms",
+];
+
+/// An atom parsed at some position: its value and the exclusive byte offset
+/// immediately following it.
+type Atom = (FieldValue, usize);
+
 /// Parses raw inline value text into a [`FieldValue`].
 fn parse_inline_value_str(raw: &str) -> FieldValue {
     ValueParser::new(raw).parse()
 }
+
 struct ValueParser<'a> {
     text: &'a str,
     source: SourceText<'a>,
@@ -377,7 +374,7 @@ impl<'a> ValueParser<'a> {
         }
     }
 
-    fn parse_atom_at(&self, pos: usize) -> Option<(FieldValue, usize)> {
+    fn parse_atom_at(&self, pos: usize) -> Option<Atom> {
         let pos = self.skip_whitespace(pos);
         self.parse_quoted_string_at(pos)
             .or_else(|| self.parse_link_at(pos))
@@ -389,16 +386,13 @@ impl<'a> ValueParser<'a> {
             .or_else(|| self.parse_tag_at(pos))
     }
 
-    fn parse_link_at(&self, pos: usize) -> Option<(FieldValue, usize)> {
+    fn parse_link_at(&self, pos: usize) -> Option<Atom> {
         let (link, consumed) =
             Outlink::parse_wikilink_prefix(self.source.from(pos)?)?;
         Some((FieldValue::Link(link), self.source.advance(pos, consumed)))
     }
 
-    fn parse_quoted_string_at(
-        &self,
-        pos: usize,
-    ) -> Option<(FieldValue, usize)> {
+    fn parse_quoted_string_at(&self, pos: usize) -> Option<Atom> {
         let rest = self.source.from(pos)?.strip_prefix('"')?;
         let mut value = String::new();
         let mut escaped = false;
@@ -420,7 +414,7 @@ impl<'a> ValueParser<'a> {
         None
     }
 
-    fn parse_duration_at(&self, pos: usize) -> Option<(FieldValue, usize)> {
+    fn parse_duration_at(&self, pos: usize) -> Option<Atom> {
         let mut end = self.parse_duration_part_end(pos)?;
         loop {
             let separator = self.skip_whitespace(end);
@@ -461,7 +455,7 @@ impl<'a> ValueParser<'a> {
         is_duration_unit(unit).then_some(unit_end)
     }
 
-    fn parse_bool_at(&self, pos: usize) -> Option<(FieldValue, usize)> {
+    fn parse_bool_at(&self, pos: usize) -> Option<Atom> {
         self.parse_keyword_at(pos, "true")
             .map(|end| (FieldValue::Bool(true), end))
             .or_else(|| {
@@ -470,7 +464,7 @@ impl<'a> ValueParser<'a> {
             })
     }
 
-    fn parse_null_at(&self, pos: usize) -> Option<(FieldValue, usize)> {
+    fn parse_null_at(&self, pos: usize) -> Option<Atom> {
         self.parse_keyword_at(pos, "null").map(|end| (FieldValue::Null, end))
     }
 
@@ -481,14 +475,14 @@ impl<'a> ValueParser<'a> {
         self.is_atom_boundary(end).then_some(end)
     }
 
-    fn parse_date_at(&self, pos: usize) -> Option<(FieldValue, usize)> {
+    fn parse_date_at(&self, pos: usize) -> Option<Atom> {
         let end = self.source.advance(pos, 10);
         let date = self.source.get(pos..end)?;
         (is_iso_date(date) && self.is_atom_boundary(end))
             .then(|| (FieldValue::Date(date.to_owned()), end))
     }
 
-    fn parse_number_at(&self, pos: usize) -> Option<(FieldValue, usize)> {
+    fn parse_number_at(&self, pos: usize) -> Option<Atom> {
         let end = self.parse_number_end(pos)?;
         let raw = self.source.get(pos..end)?;
         let num = raw.parse::<f64>().ok()?;
@@ -507,7 +501,7 @@ impl<'a> ValueParser<'a> {
             .last()
     }
 
-    fn parse_tag_at(&self, pos: usize) -> Option<(FieldValue, usize)> {
+    fn parse_tag_at(&self, pos: usize) -> Option<Atom> {
         let rest = self.source.from(pos)?.strip_prefix('#')?;
         let mut chars = rest.chars();
         chars.next().filter(|ch| ch.is_alphabetic())?;
@@ -551,6 +545,46 @@ fn is_duration_unit(unit: &str) -> bool {
     DURATION_UNITS.iter().any(|candidate| unit.eq_ignore_ascii_case(candidate))
 }
 
+/// Tokens matched while extracting Markdown tags (`#book`,
+/// `#projects/active`) from free-form text.
+///
+/// [`Self::Tag`] carries every emitted [`Tag`]; [`tag_callback`] returns
+/// [`Filter::Skip`] to reject a `#` that fails the lookbehind or
+/// leading-letter check, consuming only the `#` so a rejected mid-word
+/// occurrence like `foo#bar` does not swallow the rest of the text.
+/// [`Self::Ignored`] is a catch-all, single-character skip for ordinary text.
+#[derive(logos::Logos, Debug, Clone, PartialEq)]
+enum TagToken {
+    #[token("#", tag_callback)]
+    Tag(Tag),
+    #[regex(r"[\s\S]", logos::skip, priority = 0)]
+    Ignored,
+}
+
+/// Parses a Markdown tag starting just after its already-consumed leading
+/// `#`. Rejects (skipping only the `#`) a `#` preceded by an alphanumeric
+/// or `_` character (mid-word, e.g. `foo#bar`) or not followed by an
+/// alphabetic character (e.g. `#1`).
+fn tag_callback(lex: &mut Lexer<'_, TagToken>) -> Filter<Tag> {
+    let preceded_by_word_char =
+        char_before(lex).is_some_and(|ch| ch.is_alphanumeric() || ch == '_');
+    if preceded_by_word_char {
+        return Filter::Skip;
+    }
+    let remainder = lex.remainder();
+    if !remainder.chars().next().is_some_and(char::is_alphabetic) {
+        return Filter::Skip;
+    }
+    let body_end = remainder
+        .char_indices()
+        .find(|&(_, ch)| {
+            !(ch.is_alphanumeric() || matches!(ch, '_' | '/' | '-'))
+        })
+        .map_or(remainder.len(), |(offset, _)| offset);
+    lex.bump(body_end);
+    Filter::Emit(Tag::new(lex.slice()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -560,7 +594,7 @@ mod tests {
         use rstest::rstest;
 
         use super::*;
-        use crate::note::LinkType;
+        use crate::note::{FieldValue, InlineFieldForm, LinkType, Outlink};
 
         #[rstest]
         #[case::body(
@@ -915,6 +949,7 @@ mod tests {
         use rstest::rstest;
 
         use super::*;
+        use crate::note::Tag;
 
         #[rstest]
         #[case::standalone(
