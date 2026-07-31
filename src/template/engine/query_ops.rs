@@ -59,24 +59,6 @@ use crate::{
 /// Method names `query` exposes, for [`QueryOps::enumerate`].
 const METHODS: &[&str] = &["all", "from_tags", "from_folder"];
 
-/// `file.<field>` accessor names [`FileFields`] exposes.
-///
-/// Used by [`FileFields::enumerate`]. Covers every long-form and
-/// Dataview-style short alias [`IndexRecord::field`] accepts under a
-/// `"file."` prefix.
-const FILE_FIELD_NAMES: &[&str] = &[
-    "path",
-    "name",
-    "folder",
-    "size",
-    "created_at",
-    "ctime",
-    "cdate",
-    "modified_at",
-    "mtime",
-    "mdate",
-];
-
 /// Backs the `query` minijinja namespace object.
 ///
 /// Holds the trusted project root that every method refreshes a fresh
@@ -266,7 +248,9 @@ impl Object for FileFields {
     }
 
     fn enumerate(self: &Arc<Self>) -> Enumerator {
-        Enumerator::Str(FILE_FIELD_NAMES)
+        Enumerator::Iter(Box::new(
+            IndexRecord::file_field_names().map(Value::from),
+        ))
     }
 }
 
@@ -551,6 +535,23 @@ mod tests {
                     .expect("render succeeds");
 
             assert_eq!(rendered, "true");
+        }
+
+        #[test]
+        fn file_enumerates_every_name_from_index_record() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_note(temp.path(), "only.md", "# Only");
+
+            let rendered = render(
+                temp.path(),
+                "{% for key in query.all()[0].file %}{{ key }},{% endfor %}",
+            )
+            .expect("render succeeds");
+
+            let expected: String = IndexRecord::file_field_names()
+                .map(|name| format!("{name},"))
+                .collect();
+            assert_eq!(rendered, expected);
         }
     }
 

@@ -21,7 +21,7 @@ mod sort;
 use std::path::PathBuf;
 
 pub(crate) use error::QueryError;
-use field::FieldPath;
+use field::{FieldPath, FileField};
 use filter::FilterExpr;
 use sort::sort_key_cmp;
 
@@ -310,6 +310,13 @@ impl IndexRecord {
     #[inline]
     pub(crate) fn field(&self, path: &str) -> Result<FieldValue, QueryError> {
         Ok(self.resolve(&FieldPath::parse(path)?))
+    }
+
+    /// Every `file.<field>` accessor name [`Self::field`] accepts, including
+    /// Dataview-style aliases (`ctime`, `cdate`, `mtime`, `mdate`).
+    #[inline]
+    pub(crate) fn file_field_names() -> impl Iterator<Item = &'static str> {
+        FileField::names()
     }
 
     /// Resolves an already-parsed `path`, applying any [`Self::flattened`]

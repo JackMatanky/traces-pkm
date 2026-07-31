@@ -69,6 +69,23 @@ pub(super) enum FileField {
     ModifiedDate,
 }
 
+/// Accessor name to [`FileField`] pairs [`FileField::parse`] accepts.
+///
+/// The single source of truth for both parsing and [`FileField::names`], so
+/// the two can never list a different set of names.
+const ACCESSORS: &[(&str, FileField)] = &[
+    ("path", FileField::Path),
+    ("name", FileField::Name),
+    ("folder", FileField::Folder),
+    ("size", FileField::Size),
+    ("created_at", FileField::CreatedDateTime),
+    ("ctime", FileField::CreatedDateTime),
+    ("cdate", FileField::CreatedDate),
+    ("modified_at", FileField::ModifiedDateTime),
+    ("mtime", FileField::ModifiedDateTime),
+    ("mdate", FileField::ModifiedDate),
+];
+
 impl FileField {
     /// Parses a `file.<field>` accessor name (the part after `"file."`).
     ///
@@ -77,19 +94,18 @@ impl FileField {
     /// Returns [`QueryError::UnknownFieldPath`] if `name` is not a known
     /// accessor.
     pub(super) fn parse(name: &str) -> Result<Self, QueryError> {
-        match name {
-            "path" => Ok(Self::Path),
-            "name" => Ok(Self::Name),
-            "folder" => Ok(Self::Folder),
-            "size" => Ok(Self::Size),
-            "created_at" | "ctime" => Ok(Self::CreatedDateTime),
-            "cdate" => Ok(Self::CreatedDate),
-            "modified_at" | "mtime" => Ok(Self::ModifiedDateTime),
-            "mdate" => Ok(Self::ModifiedDate),
-            _ => Err(QueryError::UnknownFieldPath {
+        ACCESSORS
+            .iter()
+            .find_map(|&(accessor, field)| (accessor == name).then_some(field))
+            .ok_or_else(|| QueryError::UnknownFieldPath {
                 path: format!("file.{name}"),
-            }),
-        }
+            })
+    }
+
+    /// Every accessor name [`Self::parse`] accepts, including aliases, in
+    /// [`ACCESSORS`]'s declared order.
+    pub(super) fn names() -> impl Iterator<Item = &'static str> {
+        ACCESSORS.iter().map(|&(name, _)| name)
     }
 
     /// Resolves this accessor against `file`.
@@ -274,5 +290,12 @@ mod tests {
                 path: path.to_owned()
             })
         );
+    }
+
+    #[test]
+    fn names_round_trip_through_parse() {
+        for name in FileField::names() {
+            assert!(FileField::parse(name).is_ok(), "{name} should parse");
+        }
     }
 }
