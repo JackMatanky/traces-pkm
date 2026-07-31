@@ -21,7 +21,7 @@
 //! attribute path one segment at a time.
 //!
 //! Every [`FileIndex::refresh`]/[`QueryError`] failure surfaces as a
-//! `minijinja::Error` with a stable message and the original error
+//! [`minijinja::Error`] with a stable message and the original error
 //! preserved as [`std::error::Error::source`] — the same conversion
 //! pattern [`super::ui_ops`]'s `dialog_error` and [`super::file_ops`]'s
 //! `confine_error` use, so query failures carry template name/line/column
@@ -129,7 +129,9 @@ impl Object for QueryOps {
 ///
 /// # Errors
 ///
-/// Maps a [`FileIndexError`] to a [`minijinja::Error`] via [`index_error`].
+/// [`ErrorKind::InvalidOperation`] (via [`index_error`]) if refreshing the
+/// index fails — an I/O error scanning `root`, a redb error accessing the
+/// index database, or a TOML (de)serialization error on a stored record.
 fn query(root: &Path, source: &Source) -> Result<Value, Error> {
     let index = FileIndex::refresh(root).map_err(index_error)?;
     Ok(Value::from_object(index.query(source)))
@@ -174,9 +176,8 @@ impl Object for QueryOutcome {
     /// # Errors
     ///
     /// - [`ErrorKind::UnknownMethod`] for any other method name.
-    /// - A [`minijinja::Error`] (via [`query_error`]) if the method's own
-    ///   [`QueryError`] fires — an unparsable field path or filter expression,
-    ///   or a negative `.limit(...)`.
+    /// - [`ErrorKind::InvalidOperation`] (via [`query_error`]) if the field
+    ///   path or filter expression is unparsable, or `.limit(...)` is negative.
     fn call_method(
         self: &Arc<Self>,
         _state: &State<'_, '_>,
@@ -212,16 +213,14 @@ impl Object for QueryOutcome {
 }
 
 impl Object for IndexRecord {
-    /// Resolves `record.<key>` — `"file"` returns a [`FileFields`]
-    /// forwarding wrapper for `record.file.*`; every other key resolves
-    /// through [`IndexRecord::field`], the same frontmatter/inline-field/
-    /// tags lookup `.where()`/`.sort()` use. [`IndexRecord::field`]'s
-    /// `Err` case can't reach this from a template: minijinja splits a
-    /// dotted attribute path (`record.file.name`) into single segments
-    /// before calling [`Object::get_value`], so `key` here is always
-    /// dot-free and the only way `field` fails (malformed, dotted, or
-    /// empty input) can't occur. `Err` still maps to `None` (undefined),
-    /// matching how every other missing key resolves.
+    /// Resolves `record.<key>` (or `record["<key>"]`) — `"file"` returns a
+    /// [`FileFields`] forwarding wrapper for `record.file.*`; every other
+    /// key resolves through [`IndexRecord::field`], the same frontmatter/
+    /// inline-field/tags lookup `.where()`/`.sort()` use. A `key` that
+    /// `field` rejects (dotted, empty, or an unknown `file.*` accessor)
+    /// resolves to `None` here — same as any other missing attribute —
+    /// rather than surfacing [`QueryError::UnknownFieldPath`] as a render
+    /// error.
     fn get_value(self: &Arc<Self>, key: &Value) -> Option<Value> {
         let key = key.as_str()?;
         if key == "file" {
