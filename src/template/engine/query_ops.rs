@@ -23,11 +23,14 @@
 //! reuse the same [`FileIndex`]/[`QueryOutcome`]/[`IndexRecord`] types
 //! without pulling minijinja along.
 //!
-//! [`IndexRecord`] attribute resolution (`record.rating`, `record.file.name`)
-//! forwards to [`IndexRecord::field`], the same field resolver
-//! `.where()`/`.sort()` use, rather than a second lookup path. Only
-//! `record.file.*` needs a forwarding [`FileFields`] wrapper, since minijinja
-//! resolves a dotted attribute path one segment at a time.
+//! `record`'s non-`file` attributes (`record.rating`, `record.tags`, ...)
+//! forward to [`IndexRecord::field`], the same field resolver `.where()`/
+//! `.sort()` use. `record.file.*` needs a forwarding [`FileFields`]
+//! wrapper instead, since minijinja resolves a dotted attribute path one
+//! segment at a time; it calls [`FileField::parse`]/[`FileField::resolve`]
+//! directly rather than round-tripping through `IndexRecord::field`'s
+//! string-based `file.` prefix handling, which a single already-known
+//! segment doesn't need.
 //!
 //! # Error handling
 //!
@@ -232,19 +235,23 @@ impl Object for IndexRecord {
     }
 }
 
-/// Forwards `record.file.<field>` to [`IndexRecord::field`].
+/// Forwards `record.file.<field>` to
+/// [`FileField::parse`]/[`FileField::resolve`].
 ///
 /// A thin wrapper rather than a second lookup path, needed only because
 /// minijinja resolves a dotted attribute path one segment at a time:
 /// `record.file` must itself resolve to *something* before `.name` can be
-/// looked up on it. Rewrites the key to `"file.<field>"` before delegating.
+/// looked up on it. Calls the same [`FileField`] accessor pair
+/// [`IndexRecord::field`] uses for its `file.*` branch, skipping that
+/// method's string-based `file.` prefix handling, which doesn't apply here:
+/// `key` is already a single attribute segment, never a dotted path.
 #[derive(Debug)]
 struct FileFields(Arc<IndexRecord>);
 
 impl Object for FileFields {
     fn get_value(self: &Arc<Self>, key: &Value) -> Option<Value> {
-        let key = key.as_str()?;
-        self.0.field(&format!("file.{key}")).ok().map(field_value)
+        let field = FileField::parse(key.as_str()?)?;
+        Some(field_value(field.resolve(self.0.file())))
     }
 
     fn enumerate(self: &Arc<Self>) -> Enumerator {
