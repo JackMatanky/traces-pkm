@@ -81,6 +81,7 @@ where
         .and_then(|prefix| prefix.chars().next_back())
 }
 
+/// Byte length of an ISO `YYYY-MM-DD` date, e.g. `2026-01-01`.
 const ISO_DATE_LEN: usize = 10;
 
 /// Bracket delimiters and their corresponding [`InlineFieldForm`].
