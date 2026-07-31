@@ -1,4 +1,11 @@
 //! Field path parsing and file metadata accessor resolution.
+//!
+//! [`FileRecord::field_names`] is implemented here, not in `index/file.rs`,
+//! for the same reason [`FileField`] lives here: the `file.*` accessor
+//! grammar (Dataview-style aliases, date/datetime formatting choices) is a
+//! query-DSL concern, not an intrinsic property of [`FileRecord`]. Keeping
+//! it here means `index/file.rs` stays free of the [`QueryError`]/
+//! [`FieldValue`] dependencies it would otherwise need only for this.
 
 use super::{super::file::FileRecord, QueryError};
 use crate::note::FieldValue;
@@ -138,6 +145,19 @@ impl FileField {
                 FieldValue::Date(file.modified_at().to_date_string())
             }
         }
+    }
+}
+
+impl FileRecord {
+    /// Every `file.<field>` accessor name query field paths accept,
+    /// including Dataview-style aliases (`ctime`, `cdate`, `mtime`,
+    /// `mdate`).
+    ///
+    /// Implemented here, not in `index/file.rs` — see this module's docs
+    /// for why.
+    #[inline]
+    pub(crate) fn field_names() -> impl Iterator<Item = &'static str> {
+        FileField::names()
     }
 }
 
