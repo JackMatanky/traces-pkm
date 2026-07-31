@@ -546,10 +546,7 @@ mod tests {
             )
             .expect("render succeeds");
 
-            let expected: String = FileField::ACCESSOR_NAMES
-                .iter()
-                .map(|name| format!("{name},"))
-                .collect();
+            let expected = format!("{},", FileField::ACCESSOR_NAMES.join(","));
             assert_eq!(rendered, expected);
         }
     }
