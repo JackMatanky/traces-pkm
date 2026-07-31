@@ -1,29 +1,40 @@
-//! [`QueryOps`]: the `query` namespace object registered as a minijinja
-//! global by [`super::TemplateEngine`]. A template calls `query.all()`,
-//! `query.from_tags(tag)`, or `query.from_folder(folder)` during render to
-//! start a page-level query against a fresh [`FileIndex`] for the render's
-//! project root — mirroring [`Source`]'s three variants one-to-one. Each
-//! returns a [`QueryOutcome`] [`Value`], chainable with `.where(...)`/
-//! `.filter(...)`, `.sort(...)`, `.limit(...)`, `.group_by(...)`, and
-//! `.flatten(...)` — all implemented on [`QueryOutcome`] itself; this
-//! module only adds the minijinja [`Object`] wiring, not the
-//! transformation logic.
+//! The `query` minijinja namespace for querying the [`FileIndex`] from
+//! templates.
 //!
-//! [`QueryOutcome`] and [`IndexRecord`] gain their [`Object`] impls here
-//! rather than in [`crate::index`]: the index module stays free of any
-//! rendering-framework dependency, so a future CLI query command can
+//! [`QueryOps`] backs the `query` global registered by
+//! [`super::TemplateEngine`]. A template starts a page-level query with one
+//! of three methods, mirroring [`Source`]'s three variants one-to-one:
+//! - `query.all()` — every indexed Note.
+//! - `query.from_tags(tag)` — Notes tagged `tag`.
+//! - `query.from_folder(folder)` — Notes under `folder`.
+//!
+//! Each refreshes a fresh [`FileIndex`] for the render's project root and
+//! returns a [`QueryOutcome`] wrapped in a [`Value`]. The result chains
+//! with `.where(...)`/`.filter(...)`, `.sort(...)`, `.limit(...)`,
+//! `.group_by(...)`, and `.flatten(...)` — all implemented on
+//! [`QueryOutcome`] itself. This module only adds the minijinja
+//! [`Object`] wiring, not the transformation logic.
+//!
+//! # Why the `Object` impls live here
+//!
+//! [`QueryOutcome`] and [`IndexRecord`] gain their [`Object`] impls in this
+//! module rather than in [`crate::index`], keeping the index module free of
+//! any rendering-framework dependency — a future CLI query command can
 //! reuse the same [`FileIndex`]/[`QueryOutcome`]/[`IndexRecord`] types
-//! without pulling minijinja along. [`IndexRecord`] attribute resolution
-//! (`record.rating`, `record.file.name`) forwards to
-//! [`IndexRecord::field`] — the same field resolver `.where()`/`.sort()`
-//! use — rather than a second lookup path; only `record.file.*` needs a
-//! forwarding [`FileFields`] wrapper, since minijinja resolves a dotted
-//! attribute path one segment at a time.
+//! without pulling minijinja along.
+//!
+//! [`IndexRecord`] attribute resolution (`record.rating`, `record.file.name`)
+//! forwards to [`IndexRecord::field`], the same field resolver
+//! `.where()`/`.sort()` use, rather than a second lookup path. Only
+//! `record.file.*` needs a forwarding [`FileFields`] wrapper, since
+//! minijinja resolves a dotted attribute path one segment at a time.
+//!
+//! # Error handling
 //!
 //! Every [`FileIndex::refresh`]/[`QueryError`] failure surfaces as a
 //! [`minijinja::Error`] with a stable message and the original error
-//! preserved as [`std::error::Error::source`] — the same conversion
-//! pattern [`super::ui_ops`]'s `dialog_error` and [`super::file_ops`]'s
+//! preserved as [`std::error::Error::source`] — the same conversion pattern
+//! [`super::ui_ops`]'s `dialog_error` and [`super::file_ops`]'s
 //! `confine_error` use, so query failures carry template name/line/column
 //! like every other namespace's errors.
 
@@ -48,9 +59,11 @@ use crate::{
 /// Method names `query` exposes, for [`QueryOps::enumerate`].
 const METHODS: &[&str] = &["all", "from_tags", "from_folder"];
 
-/// `file.<field>` accessor names [`FileFields`] exposes, for
-/// [`FileFields::enumerate`] — every long-form and Dataview-style short
-/// alias [`IndexRecord::field`] accepts under a `"file."` prefix.
+/// `file.<field>` accessor names [`FileFields`] exposes.
+///
+/// Used by [`FileFields::enumerate`] — covers every long-form and
+/// Dataview-style short alias [`IndexRecord::field`] accepts under a
+/// `"file."` prefix.
 const FILE_FIELD_NAMES: &[&str] = &[
     "path",
     "name",
@@ -64,10 +77,11 @@ const FILE_FIELD_NAMES: &[&str] = &[
     "mdate",
 ];
 
-/// Backs the `query` namespace object. Holds the trusted project root
-/// every method refreshes a fresh [`FileIndex`] against before running
-/// its query — see [`super::TemplateEngine::new`] for where `root` comes
-/// from.
+/// Backs the `query` minijinja namespace object.
+///
+/// Holds the trusted project root every method refreshes a fresh
+/// [`FileIndex`] against before running its query — see
+/// [`super::TemplateEngine::new`] for where `root` comes from.
 #[derive(Debug)]
 pub(super) struct QueryOps {
     root: Arc<Path>,
@@ -124,8 +138,9 @@ impl Object for QueryOps {
     }
 }
 
-/// Refreshes the [`FileIndex`] for `root`, then runs `source` against it —
-/// shared by every `query.*` method.
+/// Refreshes the [`FileIndex`] for `root`, then runs `source` against it.
+///
+/// Shared by every `query.*` method.
 ///
 /// # Errors
 ///
@@ -137,16 +152,18 @@ fn query(root: &Path, source: &Source) -> Result<Value, Error> {
     Ok(Value::from_object(index.query(source)))
 }
 
-/// Maps a [`FileIndexError`] into a [`minijinja::Error`], keeping the
-/// original as [`source`](std::error::Error::source) — mirrors
+/// Maps a [`FileIndexError`] into a [`minijinja::Error`].
+///
+/// Keeps the original as [`source`](std::error::Error::source) — mirrors
 /// [`super::ui_ops`]'s `dialog_error`.
 fn index_error(source: FileIndexError) -> Error {
     Error::new(ErrorKind::InvalidOperation, "failed to refresh the file index")
         .with_source(source)
 }
 
-/// Maps a [`QueryError`] into a [`minijinja::Error`] — mirrors
-/// [`index_error`].
+/// Maps a [`QueryError`] into a [`minijinja::Error`].
+///
+/// Mirrors [`index_error`].
 fn query_error(source: QueryError) -> Error {
     Error::new(ErrorKind::InvalidOperation, "query failed").with_source(source)
 }
@@ -164,14 +181,16 @@ impl Object for QueryOutcome {
         Enumerator::Seq(self.len())
     }
 
-    /// Dispatches `.where`/`.filter`, `.sort`, `.limit`, `.group_by`, and
-    /// `.flatten` — every [`QueryOutcome`] transformation method,
-    /// consuming a clone of the current outcome and wrapping the result
-    /// back into a [`Value`] for further chaining. `where` and `filter`
-    /// both call [`QueryOutcome::filter`] directly; the Rust-side
-    /// `r#where` alias exists only for Rust callers, not template ones.
-    /// `.sort`'s `descending` argument defaults to `false` (ascending)
-    /// when omitted.
+    /// Dispatches every [`QueryOutcome`] transformation method by name.
+    ///
+    /// Handles `.where`/`.filter`, `.sort`, `.limit`, `.group_by`, and
+    /// `.flatten` — each consumes a clone of the current outcome and wraps
+    /// the result back into a [`Value`] for further chaining:
+    /// - `where`/`filter` both call [`QueryOutcome::filter`] directly; the
+    ///   Rust-side `r#where` alias exists only for Rust callers, not template
+    ///   ones.
+    /// - `sort`'s `descending` argument defaults to `false` (ascending) when
+    ///   omitted.
     ///
     /// # Errors
     ///
@@ -213,14 +232,15 @@ impl Object for QueryOutcome {
 }
 
 impl Object for IndexRecord {
-    /// Resolves `record.<key>` (or `record["<key>"]`) — `"file"` returns a
-    /// [`FileFields`] forwarding wrapper for `record.file.*`; every other
-    /// key resolves through [`IndexRecord::field`], the same frontmatter/
-    /// inline-field/tags lookup `.where()`/`.sort()` use. A `key` that
-    /// `field` rejects (dotted, empty, or an unknown `file.*` accessor)
-    /// resolves to `None` here — same as any other missing attribute —
-    /// rather than surfacing [`QueryError::UnknownFieldPath`] as a render
-    /// error.
+    /// Resolves `record.<key>` (or `record["<key>"]`).
+    ///
+    /// `"file"` returns a [`FileFields`] forwarding wrapper for
+    /// `record.file.*`; every other key resolves through
+    /// [`IndexRecord::field`], the same frontmatter/inline-field/tags
+    /// lookup `.where()`/`.sort()` use. A `key` that `field` rejects
+    /// (dotted, empty, or an unknown `file.*` accessor) resolves to `None`
+    /// here — same as any other missing attribute — rather than surfacing
+    /// [`QueryError::UnknownFieldPath`] as a render error.
     fn get_value(self: &Arc<Self>, key: &Value) -> Option<Value> {
         let key = key.as_str()?;
         if key == "file" {
@@ -230,11 +250,13 @@ impl Object for IndexRecord {
     }
 }
 
-/// Forwards `record.file.<field>` to [`IndexRecord::field`] as
-/// `"file.<field>"` — a thin wrapper rather than a second lookup path,
-/// needed only because minijinja resolves a dotted attribute path one
-/// segment at a time: `record.file` must itself resolve to *something*
-/// before `.name` can be looked up on it.
+/// Forwards `record.file.<field>` to [`IndexRecord::field`].
+///
+/// A thin wrapper rather than a second lookup path, needed only because
+/// minijinja resolves a dotted attribute path one segment at a time:
+/// `record.file` must itself resolve to *something* before `.name` can be
+/// looked up on it. Rewrites the key to `"file.<field>"` before
+/// delegating.
 #[derive(Debug)]
 struct FileFields(Arc<IndexRecord>);
 
@@ -251,12 +273,12 @@ impl Object for FileFields {
 
 /// Converts a resolved [`FieldValue`] into a minijinja [`Value`].
 ///
-/// [`FieldValue::Null`] becomes minijinja's `none` rather than
-/// `undefined`: [`IndexRecord::field`]'s own docs note that a
-/// well-formed path the record has no value for resolves to `Null`, not
-/// an error — that's a defined empty value, not a missing attribute.
-/// [`FieldValue::Link`] renders as its target path; Traces has no
-/// minijinja-facing link type yet.
+/// - [`FieldValue::Null`] becomes minijinja's `none` rather than `undefined`:
+///   [`IndexRecord::field`]'s own docs note that a well-formed path with no
+///   value resolves to `Null`, not an error — that's a defined empty value, not
+///   a missing attribute.
+/// - [`FieldValue::Link`] renders as its target path; Traces has no
+///   minijinja-facing link type yet.
 fn field_value(value: FieldValue) -> Value {
     match value {
         FieldValue::Null => Value::from(()),
