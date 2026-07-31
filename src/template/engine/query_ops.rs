@@ -2,41 +2,41 @@
 //! templates.
 //!
 //! [`QueryOps`] backs the `query` global registered by
-//! [`super::TemplateEngine`]. A template starts a page-level query with one
-//! of three methods, mirroring [`Source`]'s three variants one-to-one:
+//! [`super::TemplateEngine`]. A template starts a page-level query with one of
+//! three methods, mirroring [`Source`]'s three variants one-to-one:
 //! - `query.all()` — every indexed Note.
 //! - `query.from_tags(tag)` — Notes tagged `tag`.
 //! - `query.from_folder(folder)` — Notes under `folder`.
 //!
 //! Each refreshes a fresh [`FileIndex`] for the render's project root and
-//! returns a [`QueryOutcome`] wrapped in a [`Value`]. The result chains
-//! with `.where(...)`/`.filter(...)`, `.sort(...)`, `.limit(...)`,
-//! `.group_by(...)`, and `.flatten(...)` — all implemented on
-//! [`QueryOutcome`] itself. This module only adds the minijinja
-//! [`Object`] wiring, not the transformation logic.
+//! returns a [`QueryOutcome`] wrapped in a [`Value`]. The result chains with
+//! `.where(...)`/`.filter(...)`, `.sort(...)`, `.limit(...)`, `.group_by(...)`,
+//! and `.flatten(...)` — all implemented on [`QueryOutcome`] itself. This
+//! module only adds the minijinja [`Object`] wiring, not the transformation
+//! logic.
 //!
 //! # Why the `Object` impls live here
 //!
 //! [`QueryOutcome`] and [`IndexRecord`] gain their [`Object`] impls in this
-//! module rather than in [`crate::index`], keeping the index module free of
-//! any rendering-framework dependency — a future CLI query command can
-//! reuse the same [`FileIndex`]/[`QueryOutcome`]/[`IndexRecord`] types
-//! without pulling minijinja along.
+//! module rather than in [`crate::index`], keeping the index module free of any
+//! rendering-framework dependency — a future CLI query command can reuse the
+//! same [`FileIndex`]/[`QueryOutcome`]/[`IndexRecord`] types without pulling
+//! minijinja along.
 //!
 //! [`IndexRecord`] attribute resolution (`record.rating`, `record.file.name`)
 //! forwards to [`IndexRecord::field`], the same field resolver
 //! `.where()`/`.sort()` use, rather than a second lookup path. Only
-//! `record.file.*` needs a forwarding [`FileFields`] wrapper, since
-//! minijinja resolves a dotted attribute path one segment at a time.
+//! `record.file.*` needs a forwarding [`FileFields`] wrapper, since minijinja
+//! resolves a dotted attribute path one segment at a time.
 //!
 //! # Error handling
 //!
 //! Every [`FileIndex::refresh`]/[`QueryError`] failure surfaces as a
-//! [`minijinja::Error`] with a stable message and the original error
-//! preserved as [`std::error::Error::source`] — the same conversion pattern
-//! [`super::ui_ops`]'s `dialog_error` and [`super::file_ops`]'s
-//! `confine_error` use, so query failures carry template name/line/column
-//! like every other namespace's errors.
+//! [`minijinja::Error`] with a stable message and the original error preserved
+//! as [`std::error::Error::source`] — the same conversion pattern
+//! [`super::ui_ops`]'s `dialog_error` and [`super::file_ops`]'s `confine_error`
+//! use, so query failures carry template name/line/column like every other
+//! namespace's errors.
 
 use std::{
     path::{Path, PathBuf},
@@ -79,9 +79,9 @@ const FILE_FIELD_NAMES: &[&str] = &[
 
 /// Backs the `query` minijinja namespace object.
 ///
-/// Holds the trusted project root every method refreshes a fresh
-/// [`FileIndex`] against before running its query — see
-/// [`super::TemplateEngine::new`] for where `root` comes from.
+/// Holds the trusted project root every method refreshes a fresh [`FileIndex`]
+/// against before running its query — see [`super::TemplateEngine::new`] for
+/// where `root` comes from.
 #[derive(Debug)]
 pub(super) struct QueryOps {
     root: Arc<Path>,
@@ -236,10 +236,10 @@ impl Object for IndexRecord {
     ///
     /// `"file"` returns a [`FileFields`] forwarding wrapper for
     /// `record.file.*`; every other key resolves through
-    /// [`IndexRecord::field`], the same frontmatter/inline-field/tags
-    /// lookup `.where()`/`.sort()` use. A `key` that `field` rejects
-    /// (dotted, empty, or an unknown `file.*` accessor) resolves to `None`
-    /// here — same as any other missing attribute — rather than surfacing
+    /// [`IndexRecord::field`], the same frontmatter/inline-field/tags lookup
+    /// `.where()`/`.sort()` use. A `key` that `field` rejects (dotted, empty,
+    /// or an unknown `file.*` accessor) resolves to `None` here — same as any
+    /// other missing attribute — rather than surfacing
     /// [`QueryError::UnknownFieldPath`] as a render error.
     fn get_value(self: &Arc<Self>, key: &Value) -> Option<Value> {
         let key = key.as_str()?;
@@ -255,8 +255,7 @@ impl Object for IndexRecord {
 /// A thin wrapper rather than a second lookup path, needed only because
 /// minijinja resolves a dotted attribute path one segment at a time:
 /// `record.file` must itself resolve to *something* before `.name` can be
-/// looked up on it. Rewrites the key to `"file.<field>"` before
-/// delegating.
+/// looked up on it. Rewrites the key to `"file.<field>"` before delegating.
 #[derive(Debug)]
 struct FileFields(Arc<IndexRecord>);
 
