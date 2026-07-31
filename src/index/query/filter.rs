@@ -1,32 +1,40 @@
 //! Filter expression AST, tokenizer, and recursive descent parser.
+//!
+//! Main components:
+//! - [`FilterExpr`]: parsed AST for `.filter()`/`.where()` expressions, built
+//!   by [`FilterExpr::parse`] and evaluated by [`FilterExpr::matches`].
+//! - [`FilterToken`]: tokens lexed from a filter expression string by
+//!   [`tokenize_filter_expr`].
+//! - [`FilterParser`]: recursive descent parser turning those tokens into a
+//!   [`FilterExpr`].
+//! - [`FilterFunction`]: a recognized filter function call, e.g.
+//!   `contains(tags, "#book")`.
+
+use std::vec;
 
 use logos::{Lexer, Logos};
 
 use super::{
     FieldPath, IndexRecord, QueryError,
-    operators::{CompareOp, LogicalOp},
+    operators::{CompareOp, ComparisonExpr, LogicalExpr, LogicalOp},
     sort::fields_equal,
 };
 use crate::note::FieldValue;
 
-/// A parsed `.filter()` expression AST supporting comparisons, functions
-/// (e.g. `contains(tags, "#book")`), boolean logic (`AND`, `OR`, `NOT`), and
-/// nested parentheses.
+/// A parsed `.filter()`/`.where()` expression AST.
+///
+/// Built by [`Self::parse`] and evaluated against a record by
+/// [`Self::matches`]; see [`Self::parse`] for the supported syntax.
 #[derive(Clone, Debug, PartialEq)]
 pub(super) enum FilterExpr {
     /// `<field> <op> <value>` comparison.
-    Binary {
-        field: FieldPath,
-        op: CompareOp,
-        value: FieldValue,
-    },
+    Comparison(ComparisonExpr),
     /// A recognized function call, e.g. `contains(tags, "#book")`.
     Function(FilterFunction),
-    /// Logical `AND`, `OR`, or `NOT` combination of expressions.
-    Logical {
-        op: LogicalOp,
-        exprs: Vec<FilterExpr>,
-    },
+    /// `AND`/`OR` combination of two or more expressions.
+    Logical(LogicalExpr),
+    /// `NOT` negation of a single expression.
+    Not(Box<FilterExpr>),
 }
 
 impl FilterExpr {
@@ -49,9 +57,7 @@ impl FilterExpr {
         let mut parser = FilterParser::new(expr, tokens);
         let ast = parser.parse_expr()?;
         if parser.peek().is_some() {
-            return Err(QueryError::UnparsableFilterExpression {
-                expr: expr.to_owned(),
-            });
+            return Err(QueryError::unparsable_filter(expr));
         }
         Ok(ast)
     }
@@ -59,99 +65,24 @@ impl FilterExpr {
     /// Whether `record` satisfies this expression.
     pub(super) fn matches(&self, record: &IndexRecord) -> bool {
         match self {
-            Self::Binary {
-                field,
-                op,
-                value,
-            } => op.is_satisfied_by(&record.resolve(field), value),
+            Self::Comparison(cmp) => cmp.matches(record),
             Self::Function(function) => function.matches(record),
-            Self::Logical {
-                op,
-                exprs,
-            } => op.eval(exprs, record),
+            Self::Logical(logical) => logical.matches(record),
+            Self::Not(expr) => !expr.matches(record),
         }
     }
-}
-
-/// A recognized filter function call, e.g. `contains(tags, "#book")`.
-///
-/// Adding a function means adding a variant here, a name check in
-/// [`Self::build`], and matching logic in [`Self::matches`].
-#[derive(Clone, Debug, PartialEq)]
-pub(super) enum FilterFunction {
-    /// `contains(field, target)`: list membership (with tag-prefix
-    /// matching, e.g. `#book` matching `#book/fiction`) or string substring
-    /// containment.
-    Contains {
-        field: FieldPath,
-        target: FieldValue,
-    },
-}
-
-impl FilterFunction {
-    /// Builds the function call named `name`, if `name` names a known
-    /// function.
-    fn build(name: &str, field: FieldPath, target: FieldValue) -> Option<Self> {
-        if name.eq_ignore_ascii_case("contains") {
-            Some(Self::Contains {
-                field,
-                target,
-            })
-        } else {
-            None
-        }
-    }
-
-    /// Whether `record` satisfies this function call.
-    fn matches(&self, record: &IndexRecord) -> bool {
-        match self {
-            Self::Contains {
-                field,
-                target,
-            } => eval_contains(&record.resolve(field), target),
-        }
-    }
-}
-
-/// Evaluates `contains(field_val, target)` logic.
-///
-/// Lists match by equality or tag-prefix (e.g. `#book` matching
-/// `#book/fiction`); everything else falls back to substring containment on
-/// stringified values.
-fn eval_contains(field_val: &FieldValue, target: &FieldValue) -> bool {
-    match field_val {
-        FieldValue::List(items) => {
-            items.iter().any(|item| tag_or_value_matches(item, target))
-        }
-        _ => match (field_val.as_str(), target.as_str()) {
-            (Some(haystack), Some(needle)) => haystack.contains(needle),
-            _ => false,
-        },
-    }
-}
-
-/// Whether list element `item` matches `target`: exact equality, or (for
-/// tag-like strings) `item` equals `target` or nests under it as a sub-tag
-/// (e.g. `#book/fiction` under `#book`).
-fn tag_or_value_matches(item: &FieldValue, target: &FieldValue) -> bool {
-    if fields_equal(item, target) {
-        return true;
-    }
-    let (Some(item_str), Some(target_str)) = (item.as_str(), target.as_str())
-    else {
-        return false;
-    };
-    item_str.starts_with(target_str) || item_str.contains(target_str)
 }
 
 /// Tokens parsed from a filter expression.
 ///
-/// `AND`/`OR`/`NOT` and `true`/`false`/`null`/`Null` are matched directly
-/// by their own [`Self::And`]/[`Self::Or`]/[`Self::Not`]/[`Self::Literal`]
-/// token patterns — every spelling is visible right here. Only numbers
-/// can't be a fixed-literal pattern; those are lexed generically as
-/// [`Self::Ident`] and reclassified by [`reclassify_number`].
-#[derive(logos::Logos, Clone, Debug, PartialEq)]
+/// - `true`/`false`/`null`/`Null` are matched directly by their own
+///   [`Self::Literal`] token pattern — every spelling is visible right here.
+/// - [`Self::Op`] and [`Self::Logical`] delegate their spellings to
+///   [`CompareOp`] and [`LogicalOp`] respectively, so this enum never repeats
+///   operator semantics those types already own.
+/// - Numbers can't be matched by a fixed-literal pattern; they're lexed
+///   generically as [`Self::Ident`] and reclassified by [`Self::reclassify`].
+#[derive(Logos, Clone, Debug, PartialEq)]
 #[logos(skip r"[ \t\n\r\f]+")]
 enum FilterToken {
     #[token("(")]
@@ -160,21 +91,16 @@ enum FilterToken {
     RParen,
     #[token(",")]
     Comma,
-    #[token("&&")]
-    #[token("and", ignore(case))]
-    And,
-    #[token("||")]
-    #[token("or", ignore(case))]
-    Or,
+    #[regex(
+        "&&|and|\\|\\||or",
+        |lex| LogicalOp::try_from(lex.slice()),
+        ignore(case)
+    )]
+    Logical(LogicalOp),
     #[token("!")]
     #[token("not", ignore(case))]
     Not,
-    #[token("==", |_| CompareOp::Eq)]
-    #[token("!=", |_| CompareOp::Ne)]
-    #[token(">=", |_| CompareOp::Ge)]
-    #[token("<=", |_| CompareOp::Le)]
-    #[token(">", |_| CompareOp::Gt)]
-    #[token("<", |_| CompareOp::Lt)]
+    #[regex("==|!=|>=|<=|>|<", |lex| CompareOp::try_from(lex.slice()))]
     Op(CompareOp),
     #[regex(r#""([^"\\]|\\.)*""#, string_callback)]
     #[token("true", |_| FieldValue::Bool(true), priority = 3)]
@@ -186,10 +112,22 @@ enum FilterToken {
     Ident(String),
 }
 
-/// Builds the "unparsable filter expression" error for the full `expr`.
-fn unparsable(expr: &str) -> QueryError {
-    QueryError::UnparsableFilterExpression {
-        expr: expr.to_owned(),
+impl FilterToken {
+    /// Reclassifies an [`Self::Ident`] into a numeric [`Self::Literal`]
+    /// when it parses as `f64`, leaving genuine field identifiers and other
+    /// token kinds unchanged.
+    ///
+    /// Never hand-write an equivalent numeric regex in the derive above —
+    /// `f64`'s parser already covers exponents, signs, and other edge
+    /// cases a regex would have to duplicate.
+    fn reclassify(self) -> Self {
+        match self {
+            Self::Ident(word) => match word.parse::<f64>() {
+                Ok(num) => Self::Literal(FieldValue::Number(num)),
+                Err(_) => Self::Ident(word),
+            },
+            other => other,
+        }
     }
 }
 
@@ -197,19 +135,18 @@ fn unparsable(expr: &str) -> QueryError {
 ///
 /// Bare words that aren't a recognized keyword or literal token lex
 /// generically as [`FilterToken::Ident`] and are reclassified by
-/// [`reclassify_number`], since a numeric literal can't be matched by a
-/// fixed-literal pattern.
+/// [`FilterToken::reclassify`], since a numeric literal can't be matched by
+/// a fixed-literal pattern.
+///
+/// # Errors
+///
+/// - [`QueryError::UnparsableFilterExpression`] if `expr` contains a character
+///   sequence no token pattern matches
 fn tokenize_filter_expr(expr: &str) -> Result<Vec<FilterToken>, QueryError> {
-    let tokens: Vec<FilterToken> = FilterToken::lexer(expr)
+    FilterToken::lexer(expr)
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|()| unparsable(expr))?;
-    Ok(tokens
-        .into_iter()
-        .map(|token| match token {
-            FilterToken::Ident(word) => reclassify_number(word),
-            other => other,
-        })
-        .collect())
+        .map(|tokens| tokens.into_iter().map(FilterToken::reclassify).collect())
+        .map_err(|()| QueryError::unparsable_filter(expr))
 }
 
 /// Un-escapes a lexed double-quoted string literal's `lex.slice()` (the full
@@ -237,46 +174,34 @@ fn string_callback(lex: &mut Lexer<'_, FilterToken>) -> FieldValue {
     FieldValue::String(value)
 }
 
-/// Reclassifies a bare word lexed as [`FilterToken::Ident`] into a numeric
-/// literal when it parses as `f64`, leaving genuine field identifiers
-/// unchanged. Never hand-write an equivalent numeric regex here — `f64`'s
-/// parser already covers exponents, signs, and other edge cases a regex
-/// would have to duplicate.
-fn reclassify_number(word: String) -> FilterToken {
-    match word.parse::<f64>() {
-        Ok(num) => FilterToken::Literal(FieldValue::Number(num)),
-        Err(_) => FilterToken::Ident(word),
-    }
-}
-
 /// Recursive descent parser for [`FilterExpr`] ASTs.
 struct FilterParser<'a> {
     expr: &'a str,
-    tokens: Vec<FilterToken>,
-    pos: usize,
+    tokens: std::iter::Peekable<vec::IntoIter<FilterToken>>,
 }
 
 impl<'a> FilterParser<'a> {
     fn new(expr: &'a str, tokens: Vec<FilterToken>) -> Self {
         Self {
             expr,
-            tokens,
-            pos: 0,
+            tokens: tokens.into_iter().peekable(),
         }
     }
 
-    fn invalid(&self) -> QueryError {
-        unparsable(self.expr)
+    fn peek(&mut self) -> Option<&FilterToken> {
+        self.tokens.peek()
     }
 
-    fn peek(&self) -> Option<&FilterToken> {
-        self.tokens.get(self.pos)
+    fn parse_expr(&mut self) -> Result<FilterExpr, QueryError> {
+        self.parse_or()
+    }
+
+    fn invalid(&self) -> QueryError {
+        QueryError::unparsable_filter(self.expr)
     }
 
     fn next(&mut self) -> Option<FilterToken> {
-        let tok = self.tokens.get(self.pos).cloned()?;
-        self.pos = self.pos.saturating_add(1);
-        Some(tok)
+        self.tokens.next()
     }
 
     fn expect(&mut self, expected: FilterToken) -> Result<(), QueryError> {
@@ -287,38 +212,26 @@ impl<'a> FilterParser<'a> {
         }
     }
 
-    fn parse_expr(&mut self) -> Result<FilterExpr, QueryError> {
-        self.parse_or()
-    }
-
     fn parse_or(&mut self) -> Result<FilterExpr, QueryError> {
-        self.parse_logical_chain(
-            &FilterToken::Or,
-            LogicalOp::Or,
-            Self::parse_and,
-        )
+        self.parse_logical_chain(LogicalOp::Or, Self::parse_and)
     }
 
     fn parse_and(&mut self) -> Result<FilterExpr, QueryError> {
-        self.parse_logical_chain(
-            &FilterToken::And,
-            LogicalOp::And,
-            Self::parse_not,
-        )
+        self.parse_logical_chain(LogicalOp::And, Self::parse_not)
     }
 
-    /// Parses a left-associative chain of `term`s separated by `sep`,
-    /// combining more than one term into a [`FilterExpr::Logical`] under
-    /// `op`. A lone term passes through unwrapped.
+    /// Parses a left-associative chain of `term`s separated by `op`'s
+    /// token spelling, combining more than one term into a
+    /// [`FilterExpr::Logical`] under `op`. A lone term passes through
+    /// unwrapped.
     fn parse_logical_chain(
         &mut self,
-        sep: &FilterToken,
         op: LogicalOp,
         mut term: impl FnMut(&mut Self) -> Result<FilterExpr, QueryError>,
     ) -> Result<FilterExpr, QueryError> {
         let left = term(self)?;
         let mut arms = Vec::new();
-        while self.peek() == Some(sep) {
+        while self.peek() == Some(&FilterToken::Logical(op)) {
             self.next();
             let right = term(self)?;
             if arms.is_empty() {
@@ -329,10 +242,7 @@ impl<'a> FilterParser<'a> {
         if arms.is_empty() {
             Ok(left)
         } else {
-            Ok(FilterExpr::Logical {
-                op,
-                exprs: arms,
-            })
+            Ok(FilterExpr::Logical(LogicalExpr::new(op, arms)))
         }
     }
 
@@ -340,10 +250,7 @@ impl<'a> FilterParser<'a> {
         if self.peek() == Some(&FilterToken::Not) {
             self.next();
             let expr = self.parse_not()?;
-            Ok(FilterExpr::Logical {
-                op: LogicalOp::Not,
-                exprs: vec![expr],
-            })
+            Ok(FilterExpr::Not(Box::new(expr)))
         } else {
             self.parse_primary()
         }
@@ -405,13 +312,87 @@ impl<'a> FilterParser<'a> {
         };
         let field = FieldPath::parse(field_ident)?;
         let value = self.parse_literal_arg()?;
-        Ok(FilterExpr::Binary {
-            field,
-            op,
-            value,
-        })
+        Ok(FilterExpr::Comparison(ComparisonExpr::new(field, op, value)))
     }
 }
+
+/// A recognized filter function call, e.g. `contains(tags, "#book")`.
+///
+/// Adding a function means adding a variant here, a name check in
+/// [`Self::build`], and matching logic in [`Self::matches`].
+#[derive(Clone, Debug, PartialEq)]
+pub(super) enum FilterFunction {
+    /// `contains(field, target)`:
+    /// - List membership, with tag-prefix matching (e.g. `#book` matching
+    ///   `#book/fiction`).
+    /// - Substring containment, for every other field kind.
+    Contains {
+        field: FieldPath,
+        target: FieldValue,
+    },
+}
+
+impl FilterFunction {
+    /// Builds the function call named `name`, if it names a known function.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - Function name to match, case-insensitively
+    /// * `field` - Already-parsed field path for the built call
+    /// * `target` - Comparison/membership target for the built call
+    fn build(name: &str, field: FieldPath, target: FieldValue) -> Option<Self> {
+        if name.eq_ignore_ascii_case("contains") {
+            Some(Self::Contains {
+                field,
+                target,
+            })
+        } else {
+            None
+        }
+    }
+
+    /// Whether `record` satisfies this function call.
+    fn matches(&self, record: &IndexRecord) -> bool {
+        match self {
+            Self::Contains {
+                field,
+                target,
+            } => eval_contains(&record.resolve(field), target),
+        }
+    }
+}
+
+/// Evaluates `contains(field_val, target)` logic.
+///
+/// - Lists match by equality or tag-prefix (e.g. `#book` matching
+///   `#book/fiction`).
+/// - Everything else falls back to substring containment on stringified values.
+fn eval_contains(field_val: &FieldValue, target: &FieldValue) -> bool {
+    match field_val {
+        FieldValue::List(items) => {
+            items.iter().any(|item| tag_or_value_matches(item, target))
+        }
+        _ => match (field_val.as_str(), target.as_str()) {
+            (Some(haystack), Some(needle)) => haystack.contains(needle),
+            _ => false,
+        },
+    }
+}
+
+/// Whether list element `item` matches `target`: exact equality, or (for
+/// tag-like strings) `item` equals `target` or nests under it as a sub-tag
+/// (e.g. `#book/fiction` under `#book`).
+fn tag_or_value_matches(item: &FieldValue, target: &FieldValue) -> bool {
+    if fields_equal(item, target) {
+        return true;
+    }
+    let (Some(item_str), Some(target_str)) = (item.as_str(), target.as_str())
+    else {
+        return false;
+    };
+    item_str.starts_with(target_str) || item_str.contains(target_str)
+}
+
 #[cfg(test)]
 mod tests {
     use std::{fs, path::Path};
@@ -611,6 +592,43 @@ mod tests {
             .expect("valid filter");
 
         assert_eq!(names(&nested), ["high"]);
+    }
+
+    #[test]
+    fn logical_op_spellings_do_not_swallow_identifier_prefixes() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let outcome = outcome_for(temp.path(), "---\norder: 5\nandrew: 3\n---");
+
+        let lower = outcome
+            .clone()
+            .filter("order == 5 and andrew == 3")
+            .expect("valid filter: lowercase and");
+        assert_eq!(lower.len(), 1);
+
+        let symbolic_and = outcome
+            .clone()
+            .filter("order == 5 && andrew == 3")
+            .expect("valid filter: &&");
+        assert_eq!(symbolic_and.len(), 1);
+
+        let symbolic_or = outcome
+            .clone()
+            .filter("order == 999 || andrew == 3")
+            .expect("valid filter: ||");
+        assert_eq!(symbolic_or.len(), 1);
+
+        let lower_or = outcome
+            .clone()
+            .filter("order == 999 or andrew == 3")
+            .expect("valid filter: lowercase or");
+        assert_eq!(lower_or.len(), 1);
+
+        // Fields literally named `order`/`andrew` must resolve as whole
+        // identifiers, not get truncated by the Logical token's "or"/"and"
+        // prefix.
+        let ident_prefix =
+            outcome.filter("order == 5").expect("valid filter: bare field");
+        assert_eq!(ident_prefix.len(), 1);
     }
 
     #[test]

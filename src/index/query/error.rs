@@ -39,6 +39,19 @@ pub(crate) enum QueryError {
     },
 }
 
+impl QueryError {
+    /// Builds an [`Self::UnparsableFilterExpression`] for the full `expr`.
+    ///
+    /// Shared by [`super::filter`]'s tokenizer and parser, whose parse
+    /// errors always point at the entire expression rather than a
+    /// sub-span.
+    pub(in crate::index::query) fn unparsable_filter(expr: &str) -> Self {
+        Self::UnparsableFilterExpression {
+            expr: expr.to_owned(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use pretty_assertions::assert_eq;

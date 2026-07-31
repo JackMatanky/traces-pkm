@@ -1,7 +1,9 @@
-//! Comparison and logical operators for filter expressions.
+//! Comparison and logical operators for filter expressions, and the AST
+//! nodes ([`ComparisonExpr`], [`LogicalExpr`]) that pair each operator with
+//! its operands.
 
 use super::{
-    IndexRecord,
+    FieldPath, IndexRecord,
     filter::FilterExpr,
     sort::{compare_field_values, fields_equal},
 };
@@ -26,25 +28,6 @@ pub(super) enum CompareOp {
 }
 
 impl CompareOp {
-    /// Strips a leading comparison operator from `s`.
-    ///
-    /// Returns the operator and the remaining text after it. Multi-character
-    /// operators (`==`, `!=`, `>=`, `<=`) are checked before single-character
-    /// prefixes (`>`, `<`).
-    pub(super) fn strip_prefix(s: &str) -> Option<(Self, &str)> {
-        const OPERATORS: [(&str, CompareOp); 6] = [
-            ("==", CompareOp::Eq),
-            ("!=", CompareOp::Ne),
-            (">=", CompareOp::Ge),
-            ("<=", CompareOp::Le),
-            (">", CompareOp::Gt),
-            ("<", CompareOp::Lt),
-        ];
-        OPERATORS.into_iter().find_map(|(token, op)| {
-            s.strip_prefix(token).map(|rest| (op, rest))
-        })
-    }
-
     /// Whether `field` matches `literal` under this operator.
     ///
     /// `==`/`!=` are total: every value kind, including [`FieldValue::Null`],
@@ -80,16 +63,68 @@ impl CompareOp {
     }
 }
 
-/// A logical operator parsed from a [`super::QueryOutcome::filter`]
-/// expression.
+/// Parses an operator spelling matched by
+/// `FilterToken`'s tokenizer regex — the single
+/// source of truth for how a [`CompareOp`] spells itself, so the tokenizer
+/// never repeats operator semantics this type already owns.
+impl TryFrom<&str> for CompareOp {
+    type Error = ();
+
+    fn try_from(spelling: &str) -> Result<Self, Self::Error> {
+        match spelling {
+            "==" => Ok(Self::Eq),
+            "!=" => Ok(Self::Ne),
+            ">=" => Ok(Self::Ge),
+            "<=" => Ok(Self::Le),
+            ">" => Ok(Self::Gt),
+            "<" => Ok(Self::Lt),
+            _ => Err(()),
+        }
+    }
+}
+
+/// A `<field> <op> <value>` comparison — [`FilterExpr::Comparison`]'s
+/// payload.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct ComparisonExpr {
+    field: FieldPath,
+    op: CompareOp,
+    value: FieldValue,
+}
+
+impl ComparisonExpr {
+    /// Pairs `op` with the `field` it resolves from a record and the
+    /// literal `value` it compares that resolution against.
+    pub(super) fn new(
+        field: FieldPath,
+        op: CompareOp,
+        value: FieldValue,
+    ) -> Self {
+        Self {
+            field,
+            op,
+            value,
+        }
+    }
+
+    /// Whether `record` satisfies this comparison.
+    pub(super) fn matches(&self, record: &IndexRecord) -> bool {
+        self.op.is_satisfied_by(&record.resolve(&self.field), &self.value)
+    }
+}
+
+/// A logical `AND`/`OR` combinator joining two or more [`FilterExpr`]s.
+///
+/// `NOT` negates exactly one sub-expression — an arity `AND`/`OR` don't
+/// share — so it isn't a variant here; it's [`FilterExpr::Not`] instead,
+/// keeping every [`Self::And`]/[`Self::Or`] combination well-formed by
+/// construction.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(super) enum LogicalOp {
     /// `AND` / `and` / `&&`
     And,
     /// `OR` / `or` / `||`
     Or,
-    /// `NOT` / `not` / `!`
-    Not,
 }
 
 impl LogicalOp {
@@ -102,39 +137,55 @@ impl LogicalOp {
         match self {
             Self::And => exprs.iter().all(|e| e.matches(record)),
             Self::Or => exprs.iter().any(|e| e.matches(record)),
-            Self::Not => !exprs.first().is_some_and(|e| e.matches(record)),
         }
+    }
+}
+
+/// Parses a logical-combinator spelling matched by
+/// `FilterToken`'s tokenizer regex — the `and`/`or`
+/// word forms match case-insensitively, mirroring [`Self::And`]/[`Self::Or`]'s
+/// documented spellings; `&&`/`||` are compared verbatim (case has no effect
+/// on symbols).
+impl TryFrom<&str> for LogicalOp {
+    type Error = ();
+
+    fn try_from(spelling: &str) -> Result<Self, Self::Error> {
+        if spelling == "&&" || spelling.eq_ignore_ascii_case("and") {
+            Ok(Self::And)
+        } else if spelling == "||" || spelling.eq_ignore_ascii_case("or") {
+            Ok(Self::Or)
+        } else {
+            Err(())
+        }
+    }
+}
+
+/// An `AND`/`OR` combination of two or more expressions —
+/// [`FilterExpr::Logical`]'s payload.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct LogicalExpr {
+    op: LogicalOp,
+    exprs: Vec<FilterExpr>,
+}
+
+impl LogicalExpr {
+    /// Pairs `op` with the `exprs` it combines.
+    pub(super) fn new(op: LogicalOp, exprs: Vec<FilterExpr>) -> Self {
+        Self {
+            op,
+            exprs,
+        }
+    }
+
+    /// Whether `record` satisfies this combination.
+    pub(super) fn matches(&self, record: &IndexRecord) -> bool {
+        self.op.eval(&self.exprs, record)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use pretty_assertions::assert_eq;
-
     use super::*;
-
-    #[test]
-    fn compare_op_strips_prefix() {
-        assert_eq!(
-            CompareOp::strip_prefix("== 5"),
-            Some((CompareOp::Eq, " 5"))
-        );
-        assert_eq!(
-            CompareOp::strip_prefix("!= 5"),
-            Some((CompareOp::Ne, " 5"))
-        );
-        assert_eq!(
-            CompareOp::strip_prefix(">= 5"),
-            Some((CompareOp::Ge, " 5"))
-        );
-        assert_eq!(
-            CompareOp::strip_prefix("<= 5"),
-            Some((CompareOp::Le, " 5"))
-        );
-        assert_eq!(CompareOp::strip_prefix("> 5"), Some((CompareOp::Gt, " 5")));
-        assert_eq!(CompareOp::strip_prefix("< 5"), Some((CompareOp::Lt, " 5")));
-        assert_eq!(CompareOp::strip_prefix("invalid"), None);
-    }
 
     #[test]
     fn compare_op_is_satisfied_by() {
@@ -158,5 +209,27 @@ mod tests {
 
         assert!(CompareOp::Ge.is_satisfied_by(&num_5, &num_5));
         assert!(CompareOp::Ge.is_satisfied_by(&num_10, &num_5));
+    }
+
+    #[test]
+    fn compare_op_parses_every_spelling() {
+        assert_eq!(CompareOp::try_from("=="), Ok(CompareOp::Eq));
+        assert_eq!(CompareOp::try_from("!="), Ok(CompareOp::Ne));
+        assert_eq!(CompareOp::try_from(">="), Ok(CompareOp::Ge));
+        assert_eq!(CompareOp::try_from("<="), Ok(CompareOp::Le));
+        assert_eq!(CompareOp::try_from(">"), Ok(CompareOp::Gt));
+        assert_eq!(CompareOp::try_from("<"), Ok(CompareOp::Lt));
+        assert_eq!(CompareOp::try_from("invalid"), Err(()));
+    }
+
+    #[test]
+    fn logical_op_parses_every_spelling_case_insensitively() {
+        assert_eq!(LogicalOp::try_from("&&"), Ok(LogicalOp::And));
+        assert_eq!(LogicalOp::try_from("and"), Ok(LogicalOp::And));
+        assert_eq!(LogicalOp::try_from("AND"), Ok(LogicalOp::And));
+        assert_eq!(LogicalOp::try_from("||"), Ok(LogicalOp::Or));
+        assert_eq!(LogicalOp::try_from("or"), Ok(LogicalOp::Or));
+        assert_eq!(LogicalOp::try_from("OR"), Ok(LogicalOp::Or));
+        assert_eq!(LogicalOp::try_from("invalid"), Err(()));
     }
 }
