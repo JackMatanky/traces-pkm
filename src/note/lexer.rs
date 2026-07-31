@@ -136,7 +136,7 @@ impl TaskShorthands {
 ///   wrapped field) and keep scanning.
 /// - [`Self::Ignored`] is a catch-all, single-character skip for ordinary prose
 ///   that matches none of the field patterns.
-#[derive(logos::Logos, Debug, Clone, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Logos)]
 #[logos(extras = TaskShorthands)]
 enum FieldToken {
     #[regex(r"[ \t]*[A-Za-z][A-Za-z0-9_-]*::", body_field_callback)]
@@ -424,14 +424,6 @@ impl<'a> ValueParser<'a> {
             .or_else(|| self.parse_tag_at(pos))
     }
 
-    /// Parses a Dataview wikilink or embed atom (`[[target]]`, `![[target]]`)
-    /// at `pos`.
-    fn parse_link_at(&self, pos: usize) -> Option<Atom> {
-        let (link, consumed) =
-            Outlink::parse_wikilink_prefix(self.source.from(pos)?)?;
-        Some((FieldValue::Link(link), self.source.advance(pos, consumed)))
-    }
-
     /// Parses a double-quoted string atom at `pos`. A backslash escapes the
     /// following character verbatim, so `\"` includes a literal quote.
     ///
@@ -457,6 +449,14 @@ impl<'a> ValueParser<'a> {
             }
         }
         None
+    }
+
+    /// Parses a Dataview wikilink or embed atom (`[[target]]`, `![[target]]`)
+    /// at `pos`.
+    fn parse_link_at(&self, pos: usize) -> Option<Atom> {
+        let (link, consumed) =
+            Outlink::parse_wikilink_prefix(self.source.from(pos)?)?;
+        Some((FieldValue::Link(link), self.source.advance(pos, consumed)))
     }
 
     /// Parses a Dataview duration atom at `pos` (e.g. `4h15m`,
@@ -631,7 +631,7 @@ fn is_duration_unit(unit: &str) -> bool {
 ///   leading-letter check, consuming only the `#` so a rejected mid-word
 ///   occurrence like `foo#bar` does not swallow the rest of the text.
 /// - [`Self::Ignored`] is a catch-all, single-character skip for ordinary text.
-#[derive(logos::Logos, Debug, Clone, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Logos)]
 enum TagToken {
     #[token("#", tag_callback)]
     Tag(Tag),
