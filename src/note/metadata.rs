@@ -92,11 +92,8 @@ impl From<&RawFrontmatter> for Frontmatter {
         };
         let mut fields = Vec::with_capacity(map.len());
         for (k, v) in map {
-            let key = match k {
-                serde_yaml::Value::String(s) => s,
-                serde_yaml::Value::Number(n) => n.to_string(),
-                serde_yaml::Value::Bool(b) => b.to_string(),
-                _ => continue,
+            let Some(key) = yaml_key_to_string(k) else {
+                continue;
             };
             fields.push(MetadataField::new(key, FieldValue::from(v)));
         }
@@ -316,11 +313,8 @@ impl From<serde_yaml::Value> for FieldValue {
             serde_yaml::Value::Mapping(map) => {
                 let mut btree = BTreeMap::new();
                 for (k, v) in map {
-                    let key = match k {
-                        serde_yaml::Value::String(s) => s,
-                        serde_yaml::Value::Number(n) => n.to_string(),
-                        serde_yaml::Value::Bool(b) => b.to_string(),
-                        _ => continue,
+                    let Some(key) = yaml_key_to_string(k) else {
+                        continue;
                     };
                     btree.insert(key, Self::from(v));
                 }
@@ -328,6 +322,21 @@ impl From<serde_yaml::Value> for FieldValue {
             }
             serde_yaml::Value::Tagged(tagged) => Self::from(tagged.value),
         }
+    }
+}
+
+/// Coerces a YAML scalar `key` to its string representation for use as a
+/// [`MetadataField`]/[`FieldValue::Object`] key.
+///
+/// Returns `None` for a YAML value kind that can't stand as a key
+/// (`Null`, `Sequence`, `Mapping`, `Tagged`); callers skip that entry
+/// rather than failing the whole document.
+fn yaml_key_to_string(key: serde_yaml::Value) -> Option<String> {
+    match key {
+        serde_yaml::Value::String(s) => Some(s),
+        serde_yaml::Value::Number(n) => Some(n.to_string()),
+        serde_yaml::Value::Bool(b) => Some(b.to_string()),
+        _ => None,
     }
 }
 

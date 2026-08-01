@@ -130,8 +130,16 @@ impl Outlink {
     }
 }
 
-fn find_wikilink_close(s: &str) -> Option<usize> {
-    let source = SourceText::new(s);
+/// Finds the byte offset of the first unescaped character in `s` for
+/// which `is_close` returns `true`, treating a `\` as escaping the
+/// character that follows it.
+///
+/// Shared by [`find_wikilink_close`] and [`split_wikilink_text`], which
+/// need identical escape tracking with different terminal predicates.
+fn find_unescaped(
+    s: &str,
+    mut is_close: impl FnMut(usize, char) -> bool,
+) -> Option<usize> {
     let mut escaped = false;
     for (index, ch) in s.char_indices() {
         if ch == '\\' {
@@ -142,31 +150,26 @@ fn find_wikilink_close(s: &str) -> Option<usize> {
             escaped = false;
             continue;
         }
-        if ch == ']' && source.starts_with(source.advance_char(index, ch), "]")
-        {
+        if is_close(index, ch) {
             return Some(index);
         }
     }
     None
 }
 
+fn find_wikilink_close(s: &str) -> Option<usize> {
+    let source = SourceText::new(s);
+    find_unescaped(s, |index, ch| {
+        ch == ']' && source.starts_with(source.advance_char(index, ch), "]")
+    })
+}
+
 fn split_wikilink_text(s: &str) -> (&str, &str) {
     let source = SourceText::new(s);
-    let mut escaped = false;
-    for (index, ch) in s.char_indices() {
-        if ch == '\\' {
-            escaped = !escaped;
-            continue;
-        }
-        if escaped {
-            escaped = false;
-            continue;
-        }
-        if ch == '|' {
-            return (&s[..index], &s[source.advance_char(index, ch)..]);
-        }
+    match find_unescaped(s, |_, ch| ch == '|') {
+        Some(index) => (&s[..index], &s[source.advance_char(index, '|')..]),
+        None => (s, s),
     }
-    (s, s)
 }
 
 fn unescape_wikilink_part(s: &str) -> String {
