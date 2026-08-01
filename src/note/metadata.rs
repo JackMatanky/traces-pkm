@@ -115,10 +115,40 @@ pub(crate) enum InlineFieldForm {
     HiddenKey,
 }
 
+/// Field key shared by [`MetadataField`] and [`InlineField`] — the key half
+/// of a Dataview-compatible `Key:: Value` pair, distinct from the many other
+/// bare `String`s this module handles (list item text, link targets, tag
+/// text).
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+pub(crate) struct FieldKey(String);
+
+impl FieldKey {
+    /// Creates a field key from `text`.
+    #[inline]
+    #[must_use]
+    fn new(text: impl Into<String>) -> Self {
+        Self(text.into())
+    }
+
+    /// Field key text.
+    #[inline]
+    #[must_use]
+    pub(crate) fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl PartialEq<str> for FieldKey {
+    #[inline]
+    fn eq(&self, other: &str) -> bool {
+        self.0 == other
+    }
+}
+
 /// Key-value metadata from frontmatter or Markdown body text.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub(crate) struct MetadataField {
-    key: String,
+    key: FieldKey,
     value: FieldValue,
 }
 
@@ -128,7 +158,7 @@ impl MetadataField {
     #[must_use]
     pub(crate) fn new(key: impl Into<String>, value: FieldValue) -> Self {
         Self {
-            key: key.into(),
+            key: FieldKey::new(key),
             value,
         }
     }
@@ -136,7 +166,7 @@ impl MetadataField {
     /// Field key.
     #[inline]
     #[must_use]
-    pub(crate) fn key(&self) -> &str {
+    pub(crate) fn key(&self) -> &FieldKey {
         &self.key
     }
 
@@ -180,7 +210,7 @@ impl InlineField {
     /// Field key.
     #[inline]
     #[must_use]
-    pub(crate) fn key(&self) -> &str {
+    pub(crate) fn key(&self) -> &FieldKey {
         self.metadata.key()
     }
 

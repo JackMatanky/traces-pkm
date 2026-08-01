@@ -494,7 +494,7 @@ mod tests {
                 .frontmatter()
                 .into_iter()
                 .flat_map(Frontmatter::fields)
-                .map(|field| (field.key(), field.value()))
+                .map(|field| (field.key().as_str(), field.value()))
                 .collect();
             assert_eq!(fields.len(), 5);
             assert_eq!(
@@ -740,7 +740,7 @@ mod tests {
                 parse_markdown("note.md", "Status:: Draft\n\nAuthor:: Jane");
 
             let keys: Vec<&str> =
-                note.inline_fields().iter().map(InlineField::key).collect();
+                note.inline_fields().iter().map(|f| f.key().as_str()).collect();
             assert_eq!(keys, ["Status", "Author"]);
         }
 
@@ -874,12 +874,15 @@ mod tests {
 
             let fields = note.inline_fields();
             assert_eq!(fields.len(), 2);
-            assert_eq!(fields.first().map(InlineField::key), Some("due"));
+            assert_eq!(fields.first().map(|f| f.key().as_str()), Some("due"));
             assert_eq!(
                 fields.first().map(InlineField::value),
                 Some(&FieldValue::Date("2022-07-14".to_owned()))
             );
-            assert_eq!(fields.get(1).map(InlineField::key), Some("scheduled"));
+            assert_eq!(
+                fields.get(1).map(|f| f.key().as_str()),
+                Some("scheduled")
+            );
             assert_eq!(
                 fields.get(1).map(InlineField::value),
                 Some(&FieldValue::Date("2022-07-24".to_owned()))
@@ -959,7 +962,7 @@ mod tests {
             );
 
             let keys: Vec<&str> =
-                note.inline_fields().iter().map(InlineField::key).collect();
+                note.inline_fields().iter().map(|f| f.key().as_str()).collect();
             assert_eq!(keys, ["Status", "Priority"]);
         }
 
@@ -971,7 +974,7 @@ mod tests {
             );
 
             let keys: Vec<&str> =
-                note.inline_fields().iter().map(InlineField::key).collect();
+                note.inline_fields().iter().map(|f| f.key().as_str()).collect();
             assert_eq!(keys, ["Status", "Priority", "Reviewer"]);
         }
 
@@ -1038,7 +1041,7 @@ mod tests {
             );
 
             let keys: Vec<&str> =
-                note.inline_fields().iter().map(InlineField::key).collect();
+                note.inline_fields().iter().map(|f| f.key().as_str()).collect();
             assert_eq!(keys, ["Status", "Reviewer"]);
         }
 
@@ -1051,7 +1054,7 @@ mod tests {
             );
 
             let keys: Vec<&str> =
-                note.inline_fields().iter().map(InlineField::key).collect();
+                note.inline_fields().iter().map(|f| f.key().as_str()).collect();
             assert_eq!(keys, ["Reviewer", "Status"]);
         }
 

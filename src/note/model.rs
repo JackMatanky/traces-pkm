@@ -256,7 +256,7 @@ mod tests {
             .with_inline_fields(vec![inline_field]);
 
             let keys: Vec<&str> =
-                note.fields().map(MetadataField::key).collect();
+                note.fields().map(|field| field.key().as_str()).collect();
             assert_eq!(keys, ["title", "Status"]);
         }
     }

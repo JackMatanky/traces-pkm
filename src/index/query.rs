@@ -373,7 +373,7 @@ impl IndexRecord {
             FieldPath::Metadata(key) => self
                 .note
                 .fields()
-                .find(|field| field.key() == key)
+                .find(|field| field.key() == key.as_str())
                 .map_or(FieldValue::Null, |field| field.value().clone()),
         }
     }
