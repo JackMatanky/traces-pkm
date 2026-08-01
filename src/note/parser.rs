@@ -1,8 +1,8 @@
 //! Markdown event parser for [`Note`] records.
 //!
 //! [`parse_markdown`] walks the `pulldown-cmark` event stream once and stores
-//! state in [`ParserContext`]. Explicit stacks keep list nesting off the call
-//! stack.
+//! state in [`ParserContext`], which delegates list and list-item nesting to
+//! [`ListTracker`]. Explicit stacks keep list nesting off the call stack.
 //!
 //! Inline fields and tags come from parser-built plain-text buffers: one per
 //! top-level paragraph or heading, and one per list item. The buffers exclude
@@ -54,6 +54,10 @@ enum BlockContext {
     Text,
 }
 
+/// Inline fields and tags flushed from a closed list item's scan buffer,
+/// if it had any ([`ListTracker::flush_active_item_scan_buffer`]).
+type FlushedFields = Option<(Vec<InlineField>, Vec<Tag>)>;
+
 /// State accumulated while walking Markdown events for one note.
 #[derive(Default)]
 struct ParserContext {
@@ -63,22 +67,13 @@ struct ParserContext {
     outlinks: Vec<Outlink>,
     /// The link currently being walked, if any.
     active_link: Option<ActiveLink>,
-    lists: Vec<List>,
-    list_stack: Vec<ListFrame>,
-    item_stack: Vec<ItemFrame>,
+    list_nesting: ListTracker,
     body_buffer: String,
     inline_fields: Vec<InlineField>,
     tags: Vec<Tag>,
 }
 
 impl ParserContext {
-    /// Consumes the accumulated context into a [`Note`] at `path`.
-    fn into_note(self, path: impl Into<PathBuf>) -> Note {
-        Note::new(path, self.frontmatter, self.lists, self.outlinks)
-            .with_inline_fields(self.inline_fields)
-            .with_tags(self.tags)
-    }
-
     /// Dispatches one Markdown event to the matching handler.
     fn handle_event(&mut self, event: Event<'_>) {
         match event {
@@ -119,6 +114,18 @@ impl ParserContext {
             Event::SoftBreak | Event::HardBreak => self.push_break(),
             _ => {}
         }
+    }
+
+    /// Consumes the accumulated context into a [`Note`] at `path`.
+    fn into_note(self, path: impl Into<PathBuf>) -> Note {
+        Note::new(
+            path,
+            self.frontmatter,
+            self.list_nesting.lists,
+            self.outlinks,
+        )
+        .with_inline_fields(self.inline_fields)
+        .with_tags(self.tags)
     }
 
     fn start_metadata_block(&mut self) {
@@ -174,119 +181,14 @@ impl ParserContext {
         self.block = BlockContext::None;
     }
 
-    /// Records an inline code span and keeps it out of metadata scanning.
-    ///
-    /// Inline code remains in list item display text.
-    fn inline_code(&mut self, text: &str) {
-        if let Some(item) = self.item_stack.last_mut() {
-            item.push_code(text);
-        }
-    }
-
-    /// Pushes a list frame and flushes any active parent item scan buffer.
-    ///
-    /// Flushing before nested lists keeps parent metadata before child
-    /// metadata.
-    fn start_list(&mut self, is_ordered: bool) {
-        self.flush_item_scan_buffer();
-        self.list_stack.push(ListFrame {
-            is_ordered,
-            items: Vec::new(),
-        });
-    }
-
-    /// Lexes and clears the active list item's scan buffer.
-    ///
-    /// Called before nested lists and when the item closes so metadata
-    /// preserves document order.
-    fn flush_item_scan_buffer(&mut self) {
-        if let Some(item) = self.item_stack.last_mut()
-            && !item.scan_buffer.is_empty()
-        {
-            let text = mem::take(&mut item.scan_buffer);
-            let fields = if item.task_status.is_some() {
-                lexer::extract_task_inline_fields(&text)
-            } else {
-                lexer::extract_inline_fields(&text)
-            };
-            // Two independently owned copies, not a borrow-checker workaround:
-            // `item.fields` lets a task/list item resolve its own metadata
-            // (`ListItem::fields`), while `self.inline_fields` keeps the full
-            // document-order stream every page-level query already relies on.
-            // Both outlive this function inside different serialized structs,
-            // so neither can borrow from the other.
-            item.fields.extend(fields.clone());
-            self.inline_fields.extend(fields);
-            self.tags.extend(lexer::extract_tags(&text));
-        }
-    }
-
-    /// Closes the innermost list.
-    ///
-    /// A list nested inside an active item is stored under
-    /// [`ListItem::children`]. Otherwise it becomes a top-level [`Note::lists`]
-    /// entry.
-    fn end_list(&mut self) {
-        if let Some(frame) = self.list_stack.pop() {
-            let list = List::new(frame.is_ordered, frame.items);
-            if let Some(item) = self.item_stack.last_mut() {
-                item.children.push(list);
-            } else {
-                self.lists.push(list);
-            }
-        }
-    }
-
-    fn start_item(&mut self) {
-        self.item_stack.push(ItemFrame {
-            task_status: None,
-            text_buffer: String::new(),
-            scan_buffer: String::new(),
-            fields: Vec::new(),
-            children: Vec::new(),
-        });
-    }
-
-    /// Flushes and records the innermost list item.
-    fn end_item(&mut self) {
-        self.flush_item_scan_buffer();
-        if let Some(item_frame) = self.item_stack.pop() {
-            let item = ListItem::with_children(
-                item_frame.text_buffer,
-                item_frame.task_status,
-                item_frame.children,
-            )
-            .with_fields(item_frame.fields);
-            if let Some(list_frame) = self.list_stack.last_mut() {
-                list_frame.items.push(item);
-            }
-        }
-    }
-
-    fn set_task_status(&mut self, checked: bool) {
-        if let Some(item) = self.item_stack.last_mut() {
-            item.task_status = Some(if checked {
-                TaskStatus::Complete
-            } else {
-                TaskStatus::Incomplete
-            });
-        }
-    }
-
     /// Starts a paragraph or heading text block.
     ///
     /// Top-level text fills `body_buffer`. Text in list items is separated by
     /// newlines in that item's scan buffer.
     fn start_text_block(&mut self) {
         self.block = BlockContext::Text;
-        if self.item_stack.is_empty() {
+        if !self.list_nesting.start_nested_text_block() {
             self.body_buffer.clear();
-            return;
-        }
-        if let Some(item) = self.item_stack.last_mut()
-            && !item.scan_buffer.is_empty()
-        {
-            item.scan_buffer.push('\n');
         }
     }
 
@@ -295,12 +197,60 @@ impl ParserContext {
     /// Nested text blocks are handled through the active list item.
     fn end_text_block(&mut self) {
         self.block = BlockContext::None;
-        if self.item_stack.is_empty() {
+        if !self.list_nesting.is_item_active() {
             self.inline_fields
                 .extend(lexer::extract_inline_fields(&self.body_buffer));
             self.tags.extend(lexer::extract_tags(&self.body_buffer));
             self.body_buffer.clear();
         }
+    }
+
+    /// Records an inline code span and keeps it out of metadata scanning.
+    ///
+    /// Inline code remains in list item display text.
+    fn inline_code(&mut self, text: &str) {
+        self.list_nesting.inline_code(text);
+    }
+
+    /// Folds a flushed item's inline fields and tags into this context's
+    /// document-order streams, if any were flushed.
+    fn extend_from_flush(&mut self, flushed: FlushedFields) {
+        if let Some((fields, tags)) = flushed {
+            self.inline_fields.extend(fields);
+            self.tags.extend(tags);
+        }
+    }
+
+    /// Pushes a list frame and flushes any active parent item scan buffer.
+    ///
+    /// Flushing before nested lists keeps parent metadata before child
+    /// metadata.
+    fn start_list(&mut self, is_ordered: bool) {
+        let flushed = self.list_nesting.start_list(is_ordered);
+        self.extend_from_flush(flushed);
+    }
+
+    /// Closes the innermost list.
+    ///
+    /// A list nested inside an active item is stored under
+    /// [`ListItem::children`]. Otherwise it becomes a top-level [`Note::lists`]
+    /// entry.
+    fn end_list(&mut self) {
+        self.list_nesting.end_list();
+    }
+
+    fn start_item(&mut self) {
+        self.list_nesting.start_item();
+    }
+
+    /// Flushes and records the innermost list item.
+    fn end_item(&mut self) {
+        let flushed = self.list_nesting.end_item();
+        self.extend_from_flush(flushed);
+    }
+
+    fn set_task_status(&mut self, checked: bool) {
+        self.list_nesting.set_task_status(checked);
     }
 
     /// Appends text to every active output buffer.
@@ -315,8 +265,10 @@ impl ParserContext {
         if let Some(link) = self.active_link.as_mut() {
             link.text.push_str(text);
         }
-        if let Some(item) = self.item_stack.last_mut() {
-            item.push_text(text, self.block == BlockContext::CodeBlock);
+        if self
+            .list_nesting
+            .push_text(text, self.block == BlockContext::CodeBlock)
+        {
             return;
         }
         if self.block == BlockContext::Text {
@@ -330,8 +282,7 @@ impl ParserContext {
             self.metadata_buffer.push('\n');
             return;
         }
-        if let Some(item) = self.item_stack.last_mut() {
-            item.push_break();
+        if self.list_nesting.push_break() {
             return;
         }
         if self.block == BlockContext::Text {
@@ -344,8 +295,7 @@ impl ParserContext {
     /// Used to reconstruct Markdown link brackets for visible-key inline field
     /// scanning.
     fn push_scan_char(&mut self, ch: char) {
-        if let Some(item) = self.item_stack.last_mut() {
-            item.push_scan_char(ch);
+        if self.list_nesting.push_scan_char(ch) {
             return;
         }
         if self.block == BlockContext::Text {
@@ -371,6 +321,173 @@ impl ActiveLink {
     }
 }
 
+/// Nested list and list-item state accumulated while walking Markdown
+/// events for one note: completed top-level lists, and the stack of
+/// still-open list and item frames.
+#[derive(Default)]
+struct ListTracker {
+    lists: Vec<List>,
+    list_stack: Vec<ListFrame>,
+    item_stack: Vec<ItemFrame>,
+}
+
+impl ListTracker {
+    /// Starts a nested text block inside the active item, separating it
+    /// from prior scan-buffer content with a newline.
+    ///
+    /// Returns `true` if there is an active item (the caller must not
+    /// also treat this as a top-level text block); `false` otherwise.
+    fn start_nested_text_block(&mut self) -> bool {
+        let Some(item) = self.item_stack.last_mut() else {
+            return false;
+        };
+        if !item.scan_buffer.is_empty() {
+            item.scan_buffer.push('\n');
+        }
+        true
+    }
+
+    /// Returns `true` if there is an active list item.
+    fn is_item_active(&self) -> bool {
+        !self.item_stack.is_empty()
+    }
+
+    /// Records an inline code span on the active item's display text
+    /// only — inline code is excluded from inline field/tag scanning.
+    fn inline_code(&mut self, text: &str) {
+        if let Some(item) = self.item_stack.last_mut() {
+            item.push_code(text);
+        }
+    }
+
+    /// Lexes and clears the active list item's scan buffer, returning the
+    /// inline fields and tags it yielded (`None` if there is no active
+    /// item or its scan buffer is empty).
+    ///
+    /// Called before nested lists and when the item closes so metadata
+    /// preserves document order.
+    fn flush_active_item_scan_buffer(&mut self) -> FlushedFields {
+        let item = self.item_stack.last_mut()?;
+        if item.scan_buffer.is_empty() {
+            return None;
+        }
+        let text = mem::take(&mut item.scan_buffer);
+        let fields = if item.task_status.is_some() {
+            lexer::extract_task_inline_fields(&text)
+        } else {
+            lexer::extract_inline_fields(&text)
+        };
+        // Two independently owned copies, not a borrow-checker
+        // workaround: `item.fields` lets a task/list item resolve its
+        // own metadata (`ListItem::fields`), while the returned copy
+        // feeds the caller's document-order stream every page-level
+        // query already relies on. Both outlive this function inside
+        // different serialized structs, so neither can borrow from the
+        // other.
+        item.fields.extend(fields.clone());
+        let tags = lexer::extract_tags(&text);
+        Some((fields, tags))
+    }
+
+    /// Pushes a list frame, first flushing any active parent item's scan
+    /// buffer so parent metadata precedes child metadata. Returns the
+    /// flushed item's inline fields and tags, if any (see
+    /// [`Self::flush_active_item_scan_buffer`]).
+    fn start_list(&mut self, is_ordered: bool) -> FlushedFields {
+        let flushed = self.flush_active_item_scan_buffer();
+        self.list_stack.push(ListFrame {
+            is_ordered,
+            items: Vec::new(),
+        });
+        flushed
+    }
+
+    /// Closes the innermost list.
+    ///
+    /// A list nested inside an active item is stored under
+    /// [`ListItem::children`]. Otherwise it becomes a top-level
+    /// completed list.
+    fn end_list(&mut self) {
+        if let Some(frame) = self.list_stack.pop() {
+            let list = List::new(frame.is_ordered, frame.items);
+            if let Some(item) = self.item_stack.last_mut() {
+                item.children.push(list);
+            } else {
+                self.lists.push(list);
+            }
+        }
+    }
+
+    fn start_item(&mut self) {
+        self.item_stack.push(ItemFrame {
+            task_status: None,
+            text_buffer: String::new(),
+            scan_buffer: String::new(),
+            fields: Vec::new(),
+            children: Vec::new(),
+        });
+    }
+
+    /// Flushes and records the innermost list item. Returns the flushed
+    /// item's inline fields and tags, if any (see
+    /// [`Self::flush_active_item_scan_buffer`]).
+    fn end_item(&mut self) -> FlushedFields {
+        let flushed = self.flush_active_item_scan_buffer();
+        if let Some(item_frame) = self.item_stack.pop() {
+            let item = ListItem::with_children(
+                item_frame.text_buffer,
+                item_frame.task_status,
+                item_frame.children,
+            )
+            .with_fields(item_frame.fields);
+            if let Some(list_frame) = self.list_stack.last_mut() {
+                list_frame.items.push(item);
+            }
+        }
+        flushed
+    }
+
+    fn set_task_status(&mut self, checked: bool) {
+        if let Some(item) = self.item_stack.last_mut() {
+            item.task_status = Some(if checked {
+                TaskStatus::Complete
+            } else {
+                TaskStatus::Incomplete
+            });
+        }
+    }
+
+    /// Appends text to the active item's display text and scan buffer.
+    /// Returns `false` if there is no active item.
+    fn push_text(&mut self, text: &str, in_code_block: bool) -> bool {
+        let Some(item) = self.item_stack.last_mut() else {
+            return false;
+        };
+        item.push_text(text, in_code_block);
+        true
+    }
+
+    /// Appends a line break to the active item's buffers. Returns
+    /// `false` if there is no active item.
+    fn push_break(&mut self) -> bool {
+        let Some(item) = self.item_stack.last_mut() else {
+            return false;
+        };
+        item.push_break();
+        true
+    }
+
+    /// Pushes a literal character into the active item's scan buffer.
+    /// Returns `false` if there is no active item.
+    fn push_scan_char(&mut self, ch: char) -> bool {
+        let Some(item) = self.item_stack.last_mut() else {
+            return false;
+        };
+        item.push_scan_char(ch);
+        true
+    }
+}
+
 /// Active list frame on the parser stack.
 struct ListFrame {
     is_ordered: bool,
@@ -383,8 +500,8 @@ struct ItemFrame {
     text_buffer: String,
     /// Mirrors `text_buffer` but excludes code text.
     ///
-    /// [`ParserContext::flush_item_scan_buffer`] lexes this buffer for inline
-    /// fields and tags.
+    /// [`ListTracker::flush_active_item_scan_buffer`] lexes this buffer for
+    /// inline fields and tags.
     scan_buffer: String,
     /// Inline Fields lexed from this item's own text, kept separate from child
     /// items' fields so [`ListItem::fields`] resolves per-item, not per-list.
