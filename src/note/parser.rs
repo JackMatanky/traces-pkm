@@ -205,6 +205,13 @@ impl ParserContext {
             } else {
                 lexer::extract_inline_fields(&text)
             };
+            // Two independently owned copies, not a borrow-checker workaround:
+            // `item.fields` lets a task/list item resolve its own metadata
+            // (`ListItem::fields`), while `self.inline_fields` keeps the full
+            // document-order stream every page-level query already relies on.
+            // Both outlive this function inside different serialized structs,
+            // so neither can borrow from the other.
+            item.fields.extend(fields.clone());
             self.inline_fields.extend(fields);
             self.tags.extend(lexer::extract_tags(&text));
         }
@@ -231,6 +238,7 @@ impl ParserContext {
             task_status: None,
             text_buffer: String::new(),
             scan_buffer: String::new(),
+            fields: Vec::new(),
             children: Vec::new(),
         });
     }
@@ -243,7 +251,8 @@ impl ParserContext {
                 item_frame.text_buffer,
                 item_frame.task_status,
                 item_frame.children,
-            );
+            )
+            .with_fields(item_frame.fields);
             if let Some(list_frame) = self.list_stack.last_mut() {
                 list_frame.items.push(item);
             }
@@ -360,6 +369,9 @@ struct ItemFrame {
     /// [`ParserContext::flush_item_scan_buffer`] lexes this buffer for inline
     /// fields and tags.
     scan_buffer: String,
+    /// Inline Fields lexed from this item's own text, kept separate from child
+    /// items' fields so [`ListItem::fields`] resolves per-item, not per-list.
+    fields: Vec<InlineField>,
     children: Vec<List>,
 }
 
@@ -700,6 +712,69 @@ mod tests {
             assert_eq!(field.key(), "Status");
             assert_eq!(field.value().as_str(), Some("Draft"));
             assert_eq!(field.form(), InlineFieldForm::Body);
+        }
+
+        #[test]
+        fn scopes_a_list_item_field_to_that_item_and_not_its_siblings() {
+            let note = parse_markdown(
+                "note.md",
+                "- [ ] First task [priority:: high]\n- [ ] Second task \
+                 [priority:: low]",
+            );
+
+            let list = note.lists().first().expect("list present");
+            let mut items = list.items().iter();
+            let first = items.next().expect("first item present");
+            let second = items.next().expect("second item present");
+
+            let first_priority = first
+                .fields()
+                .iter()
+                .find(|field| field.key() == "priority")
+                .expect("first item field present");
+            assert_eq!(first_priority.value().as_str(), Some("high"));
+
+            let second_priority = second
+                .fields()
+                .iter()
+                .find(|field| field.key() == "priority")
+                .expect("second item field present");
+            assert_eq!(second_priority.value().as_str(), Some("low"));
+
+            // Both fields still surface on the page-level bag, unscoped.
+            assert_eq!(note.inline_fields().len(), 2);
+        }
+
+        #[test]
+        fn scopes_a_task_emoji_shorthand_field_to_its_own_item() {
+            let note = parse_markdown(
+                "note.md",
+                "- [ ] First task 🗓️2026-01-01\n- [ ] Second task 🗓️2026-02-02",
+            );
+
+            let list = note.lists().first().expect("list present");
+            let mut items = list.items().iter();
+            let first = items.next().expect("first item present");
+            let second = items.next().expect("second item present");
+
+            let first_due = first.fields().first().expect("first due field");
+            assert_eq!(first_due.key(), "due");
+            assert_eq!(first_due.value().as_str(), Some("2026-01-01"));
+
+            let second_due = second.fields().first().expect("second due field");
+            assert_eq!(second_due.value().as_str(), Some("2026-02-02"));
+        }
+
+        #[test]
+        fn plain_list_items_without_fields_have_no_scoped_fields() {
+            let note = parse_markdown("note.md", "- Plain item with no fields");
+
+            let item = note
+                .lists()
+                .first()
+                .and_then(|list| list.items().first())
+                .expect("item present");
+            assert!(item.fields().is_empty());
         }
 
         #[rstest]

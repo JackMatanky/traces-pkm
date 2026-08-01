@@ -2,6 +2,41 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::metadata::InlineField;
+
+/// Ordered or unordered Markdown list.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+pub(crate) struct List {
+    is_ordered: bool,
+    items: Vec<ListItem>,
+}
+
+impl List {
+    /// Creates a list from its ordering flag and direct items.
+    #[inline]
+    #[must_use]
+    pub(crate) fn new(is_ordered: bool, items: Vec<ListItem>) -> Self {
+        Self {
+            is_ordered,
+            items,
+        }
+    }
+
+    /// Returns `true` if this is an ordered list.
+    #[inline]
+    #[must_use]
+    pub(crate) fn is_ordered(&self) -> bool {
+        self.is_ordered
+    }
+
+    /// Direct child items in this list.
+    #[inline]
+    #[must_use]
+    pub(crate) fn items(&self) -> &[ListItem] {
+        &self.items
+    }
+}
+
 /// Completion state of a Markdown task list item.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub(crate) enum TaskStatus {
@@ -12,11 +47,12 @@ pub(crate) enum TaskStatus {
 }
 
 /// Markdown list item with optional task state and nested lists.
-#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub(crate) struct ListItem {
     text: String,
     task_status: Option<TaskStatus>,
     children: Vec<List>,
+    fields: Vec<InlineField>,
 }
 
 impl ListItem {
@@ -31,6 +67,7 @@ impl ListItem {
             text: text.into(),
             task_status,
             children: Vec::new(),
+            fields: Vec::new(),
         }
     }
 
@@ -52,6 +89,7 @@ impl ListItem {
             text: text.into(),
             task_status,
             children,
+            fields: Vec::new(),
         }
     }
 
@@ -89,38 +127,27 @@ impl ListItem {
     pub(crate) fn children(&self) -> &[List] {
         &self.children
     }
-}
 
-/// Ordered or unordered Markdown list.
-#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
-pub(crate) struct List {
-    is_ordered: bool,
-    items: Vec<ListItem>,
-}
-
-impl List {
-    /// Creates a list from its ordering flag and direct items.
+    /// Attaches Inline Fields parsed from this item's own text.
+    ///
+    /// Distinct from the page-level Inline Fields `Note::inline_fields`
+    /// collects — those also include this item's fields (backward
+    /// compatible with page-level queries), but only this per-item list
+    /// resolves a field to the specific task or list item that declared it.
     #[inline]
     #[must_use]
-    pub(crate) fn new(is_ordered: bool, items: Vec<ListItem>) -> Self {
-        Self {
-            is_ordered,
-            items,
-        }
+    pub(crate) fn with_fields(mut self, fields: Vec<InlineField>) -> Self {
+        self.fields = fields;
+        self
     }
 
-    /// Returns `true` if this is an ordered list.
+    /// Inline Fields parsed from this item's own text: `Key:: Value`,
+    /// `[Key:: Value]`, `(Key:: Value)`, and — for task items — Dataview
+    /// date shorthand emoji (`🗓️`/`➕`/`🛫`/`⏳`/`✅`).
     #[inline]
     #[must_use]
-    pub(crate) fn is_ordered(&self) -> bool {
-        self.is_ordered
-    }
-
-    /// Direct child items in this list.
-    #[inline]
-    #[must_use]
-    pub(crate) fn items(&self) -> &[ListItem] {
-        &self.items
+    pub(crate) fn fields(&self) -> &[InlineField] {
+        &self.fields
     }
 }
 
@@ -162,5 +189,27 @@ mod tests {
 
         assert_eq!(list.is_ordered(), true);
         assert_eq!(list.items(), [item]);
+    }
+
+    #[test]
+    fn stores_fields_when_attached_with_with_fields() {
+        use crate::note::{FieldValue, InlineFieldForm};
+
+        let field = InlineField::new(
+            "priority",
+            FieldValue::String("high".to_owned()),
+            InlineFieldForm::VisibleKey,
+        );
+        let item = ListItem::new("task item", Some(TaskStatus::Incomplete))
+            .with_fields(vec![field.clone()]);
+
+        assert_eq!(item.fields(), [field]);
+    }
+
+    #[test]
+    fn has_no_fields_by_default() {
+        let item = ListItem::new("plain item", None);
+
+        assert!(item.fields().is_empty());
     }
 }
