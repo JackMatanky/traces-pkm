@@ -1,26 +1,26 @@
-//! [`DateOps`]: the `date` namespace object registered as a minijinja
-//! global by [`super::TemplateEngine`], plus the flat `date_*`/`is_*`
-//! pipeline filters and tests it registers alongside it.
+//! [`DateOps`]: the `date` namespace object registered as a minijinja global by
+//! [`super::TemplateEngine`], plus the flat `date_*`/`is_*` pipeline filters
+//! and tests it registers alongside it.
 //!
-//! **Namespace functions** (`date.now()`, `date.today()`,
-//! `date.tomorrow()`, `date.yesterday()`, `date.from_timestamp(ts)`) are
-//! *generators*: no date argument, producing a formatted string from the
-//! current instant (or a timestamp). **Filters** (`date_format`,
-//! `timestamp`, `add_days`, `sub_days`, `add_months`, `sub_months`,
-//! `add_years`, `sub_years`, `start_of_month`, `end_of_month`, `weekday`,
-//! `date_diff`) and **tests** (`is_past`, `is_future`, `is_leap_year`) are
-//! *transformations*: they take a piped date/time string. `date_format` is
-//! prefixed to avoid colliding with minijinja's built-in `format` filter.
+//! **Namespace functions** (`date.now()`, `date.today()`, `date.tomorrow()`,
+//! `date.yesterday()`, `date.from_timestamp(ts)`) are *generators*: no date
+//! argument, producing a formatted string from the current instant (or a
+//! timestamp). **Filters** (`date_format`, `timestamp`, `add_days`, `sub_days`,
+//! `add_months`, `sub_months`, `add_years`, `sub_years`, `start_of_month`,
+//! `end_of_month`, `weekday`, `date_diff`) and **tests** (`is_past`,
+//! `is_future`, `is_leap_year`) are *transformations*: they take a piped
+//! date/time string. `date_format` is prefixed to avoid colliding with
+//! minijinja's built-in `format` filter.
 //!
 //! All date/time string parsing funnels through [`ParsedDate::parse`]/
-//! [`parse_date`], so every filter and test shares the same
-//! accepted formats: a full datetime is tried first, falling back to a
-//! bare `%Y-%m-%d` date at midnight.
+//! [`parse_date`], so every filter and test shares the same accepted formats: a
+//! full datetime is tried first, falling back to a bare `%Y-%m-%d` date at
+//! midnight.
 //!
-//! Every arithmetic filter re-serializes its result at the same precision
-//! its input had (see [`format_precise`]), so piping a date-only string
-//! through a chain of filters never grows a fabricated `00:00:00`, and a
-//! datetime string never silently loses its time-of-day.
+//! Every arithmetic filter re-serializes its result at the same precision its
+//! input had (see [`format_precise`]), so piping a date-only string through a
+//! chain of filters never grows a fabricated `00:00:00`, and a datetime string
+//! never silently loses its time-of-day.
 
 use std::{fmt::Write as _, sync::Arc};
 
@@ -61,10 +61,10 @@ const METHODS: &[&str] =
 pub(super) struct DateOps;
 
 impl DateOps {
-    /// Registers the `date` global plus every flat `date_*` filter and
-    /// `is_*` test this module owns. Filters/tests are added first —
-    /// they're zero-capture free functions, needing no `self` — then
-    /// `self` is consumed registering the `date` namespace object last.
+    /// Registers the `date` global plus every flat `date_*` filter and `is_*`
+    /// test this module owns. Filters/tests are added first — they're
+    /// zero-capture free functions, needing no `self` — then `self` is consumed
+    /// registering the `date` namespace object last.
     #[inline]
     pub(super) fn register(self, env: &mut Environment<'static>) {
         env.add_filter("date_format", date_format);
@@ -94,13 +94,12 @@ impl Object for DateOps {
             "now" => Some(Value::from_function(
                 |kwargs: Kwargs| -> Result<String, Error> {
                     let format = format_kwarg(&kwargs)?;
-                    // `write!` into a `String` propagates a formatting
-                    // failure as `Err`; `.to_string()` would instead
-                    // panic on the same input, since its blanket impl
-                    // `.expect()`s a successful `Display::fmt`, and
-                    // Chrono's `DelayedFormat` returns `Err` — not a
-                    // panic of its own — for an invalid specifier such
-                    // as `%Q`.
+                    // `write!` into a `String` propagates a formatting failure
+                    // as `Err`; `.to_string()` would instead panic on the same
+                    // input, since its blanket impl `.expect()`s a successful
+                    // `Display::fmt`, and Chrono's `DelayedFormat` returns
+                    // `Err` — not a panic of its own — for an invalid specifier
+                    // such as `%Q`.
                     format_with(Local::now().format(format), format)
                 },
             )),
