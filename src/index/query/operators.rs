@@ -1,6 +1,6 @@
-//! Comparison and logical operators for filter expressions, and the AST
-//! nodes ([`ComparisonExpr`], [`LogicalExpr`]) that pair each operator with
-//! its operands.
+//! Comparison and logical operators for filter expressions, and the AST nodes
+//! ([`ComparisonExpr`], [`LogicalExpr`]) that pair each operator with its
+//! operands.
 
 use super::{
     FieldPath, IndexRecord,
@@ -63,10 +63,9 @@ impl CompareOp {
     }
 }
 
-/// Parses an operator spelling matched by
-/// `FilterToken`'s tokenizer regex — the single
-/// source of truth for how a [`CompareOp`] spells itself, so the tokenizer
-/// never repeats operator semantics this type already owns.
+/// Parses an operator spelling matched by `FilterToken`'s tokenizer regex — the
+/// single source of truth for how a [`CompareOp`] spells itself, so the
+/// tokenizer never repeats operator semantics this type already owns.
 impl TryFrom<&str> for CompareOp {
     type Error = ();
 
@@ -83,8 +82,7 @@ impl TryFrom<&str> for CompareOp {
     }
 }
 
-/// A `<field> <op> <value>` comparison — [`FilterExpr::Comparison`]'s
-/// payload.
+/// A `<field> <op> <value>` comparison — [`FilterExpr::Comparison`]'s payload.
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct ComparisonExpr {
     field: FieldPath,
@@ -93,8 +91,8 @@ pub(super) struct ComparisonExpr {
 }
 
 impl ComparisonExpr {
-    /// Pairs `op` with the `field` it resolves from a record and the
-    /// literal `value` it compares that resolution against.
+    /// Pairs `op` with the `field` it resolves from a record and the literal
+    /// `value` it compares that resolution against.
     pub(super) fn new(
         field: FieldPath,
         op: CompareOp,
@@ -115,10 +113,9 @@ impl ComparisonExpr {
 
 /// A logical `AND`/`OR` combinator joining two or more [`FilterExpr`]s.
 ///
-/// `NOT` negates exactly one sub-expression — an arity `AND`/`OR` don't
-/// share — so it isn't a variant here; it's [`FilterExpr::Not`] instead,
-/// keeping every [`Self::And`]/[`Self::Or`] combination well-formed by
-/// construction.
+/// `NOT` negates exactly one sub-expression — an arity `AND`/`OR` don't share —
+/// so it isn't a variant here; it's [`FilterExpr::Not`] instead, keeping every
+/// [`Self::And`]/[`Self::Or`] combination well-formed by construction.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(super) enum LogicalOp {
     /// `AND` / `and` / `&&`
@@ -141,11 +138,10 @@ impl LogicalOp {
     }
 }
 
-/// Parses a logical-combinator spelling matched by
-/// `FilterToken`'s tokenizer regex — the `and`/`or`
-/// word forms match case-insensitively, mirroring [`Self::And`]/[`Self::Or`]'s
-/// documented spellings; `&&`/`||` are compared verbatim (case has no effect
-/// on symbols).
+/// Parses a logical-combinator spelling matched by `FilterToken`'s tokenizer
+/// regex — the `and`/`or` word forms match case-insensitively, mirroring
+/// [`Self::And`]/[`Self::Or`]'s documented spellings; `&&`/`||` are compared
+/// verbatim (case has no effect on symbols).
 impl TryFrom<&str> for LogicalOp {
     type Error = ();
 
