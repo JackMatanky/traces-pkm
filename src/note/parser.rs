@@ -61,9 +61,8 @@ struct ParserContext {
     block: BlockContext,
     metadata_buffer: String,
     outlinks: Vec<Outlink>,
-    /// `(target, kind, accumulating display text)` for the link currently
-    /// being walked, if any.
-    active_link: Option<(String, LinkType, String)>,
+    /// The link currently being walked, if any.
+    active_link: Option<ActiveLink>,
     lists: Vec<List>,
     list_stack: Vec<ListFrame>,
     item_stack: Vec<ItemFrame>,
@@ -149,12 +148,17 @@ impl ParserContext {
         if kind == LinkType::Markdown {
             self.push_scan_char('[');
         }
-        self.active_link = Some((dest_url.into_string(), kind, String::new()));
+        self.active_link = Some(ActiveLink::new(kind, dest_url.into_string()));
     }
 
     /// Records the active [`Outlink`] and closes any scan-buffer bracket.
     fn end_link(&mut self) {
-        if let Some((target, kind, text)) = self.active_link.take() {
+        if let Some(ActiveLink {
+            target,
+            kind,
+            text,
+        }) = self.active_link.take()
+        {
             if kind == LinkType::Markdown {
                 self.push_scan_char(']');
             }
@@ -175,7 +179,7 @@ impl ParserContext {
     /// Inline code remains in list item display text.
     fn inline_code(&mut self, text: &str, _range: Range<usize>) {
         if let Some(item) = self.item_stack.last_mut() {
-            item.text_buffer.push_str(text);
+            item.push_code(text);
         }
     }
 
@@ -308,14 +312,11 @@ impl ParserContext {
             self.metadata_buffer.push_str(text);
             return;
         }
-        if let Some((_, _, link_text)) = self.active_link.as_mut() {
-            link_text.push_str(text);
+        if let Some(link) = self.active_link.as_mut() {
+            link.text.push_str(text);
         }
         if let Some(item) = self.item_stack.last_mut() {
-            item.text_buffer.push_str(text);
-            if self.block != BlockContext::CodeBlock {
-                item.scan_buffer.push_str(text);
-            }
+            item.push_text(text, self.block == BlockContext::CodeBlock);
             return;
         }
         if self.block == BlockContext::Text {
@@ -330,8 +331,7 @@ impl ParserContext {
             return;
         }
         if let Some(item) = self.item_stack.last_mut() {
-            item.text_buffer.push('\n');
-            item.scan_buffer.push('\n');
+            item.push_break();
             return;
         }
         if self.block == BlockContext::Text {
@@ -345,11 +345,28 @@ impl ParserContext {
     /// scanning.
     fn push_scan_char(&mut self, ch: char) {
         if let Some(item) = self.item_stack.last_mut() {
-            item.scan_buffer.push(ch);
+            item.push_scan_char(ch);
             return;
         }
         if self.block == BlockContext::Text {
             self.body_buffer.push(ch);
+        }
+    }
+}
+
+/// Link currently being walked, accumulating its display text.
+struct ActiveLink {
+    target: String,
+    kind: LinkType,
+    text: String,
+}
+
+impl ActiveLink {
+    fn new(kind: LinkType, target: String) -> Self {
+        Self {
+            target,
+            kind,
+            text: String::new(),
         }
     }
 }
@@ -373,6 +390,37 @@ struct ItemFrame {
     /// items' fields so [`ListItem::fields`] resolves per-item, not per-list.
     fields: Vec<InlineField>,
     children: Vec<List>,
+}
+
+impl ItemFrame {
+    /// Appends text to the item's display text, and to its scan buffer
+    /// unless `in_code_block` is set.
+    fn push_text(&mut self, text: &str, in_code_block: bool) {
+        self.text_buffer.push_str(text);
+        if !in_code_block {
+            self.scan_buffer.push_str(text);
+        }
+    }
+
+    /// Appends a line break to both the display text and scan buffer.
+    fn push_break(&mut self) {
+        self.text_buffer.push('\n');
+        self.scan_buffer.push('\n');
+    }
+
+    /// Pushes a literal character into the scan buffer only.
+    ///
+    /// Used to reconstruct Markdown link brackets for visible-key inline
+    /// field scanning.
+    fn push_scan_char(&mut self, ch: char) {
+        self.scan_buffer.push(ch);
+    }
+
+    /// Appends inline code text to display text only — inline code is
+    /// excluded from inline field/tag scanning.
+    fn push_code(&mut self, text: &str) {
+        self.text_buffer.push_str(text);
+    }
 }
 
 #[cfg(test)]
