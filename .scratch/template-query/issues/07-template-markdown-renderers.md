@@ -2,7 +2,7 @@
 
 **What to build:** Templates can render QueryOutcome values as markdown tables, markdown lists, markdown task lists, and counts through terminal methods and pipeline filters. Template loops remain the escape hatch for custom value transformations.
 
-**Blocked by:** 06 — QueryOps Template Namespace
+**Blocked by:** 06 — QueryOps Template Namespace, 09 — Task-Level Queries
 
 **Status:** ready-for-agent
 

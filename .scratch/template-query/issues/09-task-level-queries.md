@@ -2,7 +2,7 @@
 
 **What to build:** Task-level queries operate on individual tasks instead of pages. The CLI and Template surfaces can query tasks while preserving task status and parent Note metadata.
 
-**Blocked by:** 05 — QueryOutcome Filtering and Ordering
+**Blocked by:** 03 — Dataview Inline Fields, Tags, and Frontmatter Key-Value Parsing, 05 — QueryOutcome Filtering and Ordering
 
 **Status:** ready-for-agent
 

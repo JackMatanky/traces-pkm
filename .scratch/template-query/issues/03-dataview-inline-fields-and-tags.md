@@ -330,6 +330,61 @@
     `pulldown-cmark` HTML events, so `[link:: <a href="Page">Value</a>]`
     is a Dataview-compatibility parser-seam gap unless later accepted as
     part of #03 scope.
+- **Task Item Field Scoping Follow-Up** (2026-07-31): Extended so
+  `Key:: Value`/emoji-shorthand fields parsed from a task or list item's
+  own text are *also* stored on that specific item, not only merged into
+  the page-level `Note::inline_fields()` bag. Prompted while triaging
+  `#07`/`#09`: `#09` (Task-Level Queries) needs to filter/sort on
+  per-task metadata (`priority`, `due`, etc.), which was previously
+  unresolvable — two tasks in one Note writing the same field key were
+  indistinguishable in the flat page-level list.
+  - **`ListItem`** (`src/note/lists.rs`) gained `fields: Vec<InlineField>`,
+    populated only through a new consuming builder `ListItem::with_fields`
+    (no constructor-arity growth) and read through
+    `ListItem::fields(&self) -> &[InlineField]` — mirrors the existing
+    `with_children`/`children()` pair and the `Note::with_inline_fields`
+    builder precedent above. `ListItem`/`List` dropped their `Eq` derive
+    (kept `PartialEq`), matching `Note`'s own derive set, since
+    `InlineField`/`FieldValue` were never `Eq` (an `f64` variant).
+  - **Parser** (`parser.rs`): `ItemFrame` gained a `fields` buffer.
+    `flush_item_scan_buffer` — which already lexes each item's scan
+    buffer into one `Vec<InlineField>` — now extends *both* `item.fields`
+    and the existing page-level `self.inline_fields` from that single
+    lexed result (one `.clone()` of the freshly computed `Vec`, not a
+    borrow-checker workaround: the two collections are independently
+    owned and persist inside different serialized structs — `ListItem`
+    for task-scoped resolution, `Note` for the page-level document-order
+    stream every existing query already relies on). Zero change to
+    lexing, ordering, or code-region exclusion — purely additive, every
+    document-order/exclusion test above still passes unmodified.
+  - **Backward compatible by construction**: this is additive only.
+    `Note::inline_fields()` is unchanged and still returns everything, in
+    the same document order, so every acceptance criterion and test
+    above (including the two document-order bugs fixed in the "Critical
+    Review Findings" pass) remains satisfied without modification.
+  - **Tests**: two new `ListItem` unit tests (`with_fields`/`fields`
+    round-trip, empty-by-default), three new parser integration tests
+    (fields scoped per sibling task item, task emoji shorthand scoped
+    per sibling task item, plain list items default to no fields).
+    `cargo nextest run`: 990/990 workspace tests pass (151/151 in
+    `note::`, every pre-existing test above unchanged). `cargo clippy
+    --lib --all-targets` clean on every touched file (two pre-existing
+    `clippy::shadow_unrelated` errors in `src/index/query/error.rs`
+    confirmed via `git stash` to predate this change, unrelated).
+  - **Scope**: this only makes per-task fields *resolvable* — it adds no
+    task-level query source, `FieldPath`, or `QueryOutcome` changes
+    (`#09`'s job), and no Obsidian-Tasks-plugin feature beyond the date
+    shorthands already lexed above (priority levels, recurrence rules,
+    dependency IDs, `onCompletion` remain out of scope, per `spec.md`'s
+    "Full Obsidian Tasks plugin compatibility in the first slice"
+    exclusion — writable today via `Key:: Value` once resolved per-task,
+    but no new emoji token or scoring logic was added).
+  - **Also fixed while triaging `#07`**: `#07`'s `Blocked by` gained `09`
+    (its task-list criterion needs `09`'s task-level `QueryOutcome`, not
+    just `06`), `#09`'s `Blocked by` gained this ticket (`03`), and
+    `ADR-0005`/`CONTEXT.md` both had `task_list` missing from their
+    terminal-methods enumeration (`table`/`list`/`count` only) despite
+    `spec.md` and `#07` already specifying it — corrected in both.
 
 
 ## Agent Brief
