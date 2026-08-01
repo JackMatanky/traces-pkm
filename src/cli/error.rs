@@ -18,7 +18,7 @@ use super::UserAbort;
 use crate::{
     DialogError,
     config::{ConfigLoadError, ConfigStateError, DiscoveryError},
-    index::FileIndexError,
+    index::{FileIndexError, QueryError},
     template::{TemplateError, TemplatePathError},
 };
 
@@ -27,10 +27,10 @@ use crate::{
 #[expect(
     private_interfaces,
     reason = "domain source types (ConfigLoadError, ConfigStateError, \
-              DiscoveryError, TemplateError, FileIndexError) stay pub(crate) \
-              — only construction and matching happens inside crate::cli, \
-              callers use CliError's Display/Diagnostic surface, never these \
-              types directly"
+              DiscoveryError, TemplateError, FileIndexError, QueryError) stay \
+              pub(crate) — only construction and matching happens inside \
+              crate::cli, callers use CliError's Display/Diagnostic surface, \
+              never these types directly"
 )]
 #[non_exhaustive]
 pub enum CliError {
@@ -151,6 +151,16 @@ pub enum CliError {
         /// Source `FileIndex` error.
         #[source]
         source: FileIndexError,
+    },
+    /// Running a task-level query under `root` failed: an unparsable field
+    /// path, filter expression, or negative limit.
+    #[error("failed to run query in {root}")]
+    Query {
+        /// The project root the query ran against.
+        root: PathBuf,
+        /// Source query error.
+        #[source]
+        source: QueryError,
     },
     /// Resolving, rendering, or writing `name` failed.
     #[error("failed to instantiate template {name}")]
@@ -289,6 +299,9 @@ impl Diagnostic for CliError {
             Self::Index {
                 ..
             } => "traces::cli::index::failed",
+            Self::Query {
+                ..
+            } => "traces::cli::query::failed",
             Self::TemplateInstantiate {
                 source,
                 ..
@@ -313,11 +326,7 @@ impl Diagnostic for CliError {
             Self::ConfigLoad {
                 cwd,
                 source: ConfigLoadError::Discovery(_),
-            } => Some(Box::new(format!(
-                "run `traces init` to scaffold local configuration, or check \
-                 that {} is readable",
-                cwd.display()
-            ))),
+            } => Some(config_discovery_help(cwd)),
             Self::ConfigLoad {
                 source: ConfigLoadError::Build(_),
                 ..
@@ -383,6 +392,9 @@ impl Diagnostic for CliError {
                 root,
                 ..
             } => Some(root_help(root, "is readable and writable")),
+            Self::Query {
+                ..
+            } => Some(query_help()),
             Self::TemplateInstantiate {
                 source,
                 ..
@@ -409,6 +421,24 @@ impl Diagnostic for CliError {
 /// {suffix}".
 fn root_help<'a>(root: &'a Path, suffix: &str) -> Box<dyn Display + 'a> {
     Box::new(format!("check that {} {suffix}", root.display()))
+}
+
+/// Returns diagnostic help text for [`CliError::ConfigLoad`] when discovery
+/// failed: "run `traces init` ..., or check that `cwd` is readable".
+fn config_discovery_help(cwd: &Path) -> Box<dyn Display + '_> {
+    Box::new(format!(
+        "run `traces init` to scaffold local configuration, or check that {} \
+         is readable",
+        cwd.display()
+    ))
+}
+
+/// Returns diagnostic help text for [`CliError::Query`].
+fn query_help() -> Box<dyn Display + 'static> {
+    Box::new(
+        "check the `--where` filter expression syntax and the field paths it \
+         references",
+    )
 }
 
 /// Returns the diagnostic code for [`TemplateError`].

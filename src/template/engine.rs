@@ -27,7 +27,7 @@ use self::{
     file_ops::{FileOps, WRITE_TO_KEY},
     num_ops::NumOps,
     path_ops::PathOps,
-    query_ops::QueryOps,
+    query_ops::{QueryOps, TaskOps},
     str_ops::StrOps,
     ui_ops::UiOps,
 };
@@ -58,8 +58,8 @@ impl TemplateEngine {
     /// * `loader` - the [`TemplateLoader`] to wire into minijinja's
     ///   include/extends resolution and store for [`Self::resolve`]
     /// * `provider` - backend `ui.*` calls delegate to
-    /// * `root` - base directory `file.*`, `query.*`, and the path-inspection
-    ///   group are confined to
+    /// * `root` - base directory `file.*`, `query.*`, `tasks.*`, and the
+    ///   path-inspection group are confined to
     #[inline]
     #[must_use]
     pub(super) fn new(
@@ -75,6 +75,7 @@ impl TemplateEngine {
         let root = Arc::from(root);
         FileOps::new(Arc::clone(&root)).register(&mut env);
         QueryOps::new(Arc::clone(&root)).register(&mut env);
+        TaskOps::new(Arc::clone(&root)).register(&mut env);
         PathOps::new(root).register(&mut env);
         UiOps::new(provider).register(&mut env);
         DateOps.register(&mut env);

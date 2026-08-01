@@ -10,12 +10,13 @@ use thiserror::Error;
 /// [`crate::note::FieldValue::Null`] instead of erroring.
 #[derive(Clone, Debug, Eq, PartialEq, Error)]
 pub(crate) enum QueryError {
-    /// A field path was empty, used an unknown `file.*` accessor, or had
-    /// unexpected `.` structure.
+    /// A field path was empty, used an unknown `file.*`/`task.*` accessor,
+    /// or had unexpected `.` structure.
     #[error(
         "invalid field path {path:?}; expected `file.<field>` (path, name, \
-         folder, size, ctime, cdate, mtime, mdate) or a single frontmatter, \
-         inline field, or `tags` name"
+         folder, size, ctime, cdate, mtime, mdate), `task.<field>` \
+         (completed, text), or a single frontmatter, inline field, or `tags` \
+         name"
     )]
     UnknownFieldPath {
         /// The unparsable field path.
@@ -66,8 +67,9 @@ mod tests {
         assert_eq!(
             err.to_string(),
             "invalid field path \"file.bogus\"; expected `file.<field>` \
-             (path, name, folder, size, ctime, cdate, mtime, mdate) or a \
-             single frontmatter, inline field, or `tags` name"
+             (path, name, folder, size, ctime, cdate, mtime, mdate), \
+             `task.<field>` (completed, text), or a single frontmatter, \
+             inline field, or `tags` name"
         );
 
         let err = QueryError::UnparsableFilterExpression {

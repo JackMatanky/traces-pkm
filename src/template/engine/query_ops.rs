@@ -1,5 +1,5 @@
-//! The `query` minijinja namespace for querying the [`FileIndex`] from
-//! templates.
+//! The `query` and `tasks` minijinja namespaces for querying the
+//! [`FileIndex`] from templates.
 //!
 //! [`QueryOps`] backs the `query` global registered by
 //! [`super::TemplateEngine`]. A template starts a page-level query with one of
@@ -8,29 +8,38 @@
 //! - `query.from_tags(tag)`: Notes tagged `tag`.
 //! - `query.from_folder(folder)`: Notes under `folder`.
 //!
-//! Each refreshes a fresh [`FileIndex`] for the render's project root and
-//! returns a [`QueryOutcome`] wrapped in a [`Value`]. The result chains with
-//! `.where(...)`/`.filter(...)`, `.sort(...)`, `.limit(...)`, `.group_by(...)`,
-//! and `.flatten(...)`, all implemented on [`QueryOutcome`] itself. This
-//! module only adds the minijinja [`Object`] wiring, not the transformation
-//! logic.
+//! [`TaskOps`] backs the parallel `tasks` global — the same three methods,
+//! but each row is one task item instead of one Note (via
+//! [`FileIndex::query_tasks`]), exposing `task.completed`/`task.text`
+//! alongside the parent Note's `file.*`, frontmatter, inline-field, and tag
+//! metadata.
+//!
+//! Each method refreshes a fresh [`FileIndex`] for the render's project root
+//! and returns a [`QueryOutcome`] wrapped in a [`Value`]. The result chains
+//! with `.where(...)`/`.filter(...)`, `.sort(...)`, `.limit(...)`,
+//! `.group_by(...)`, and `.flatten(...)`, all implemented on [`QueryOutcome`]
+//! itself. This module only adds the minijinja [`Object`] wiring, not the
+//! transformation logic.
 //!
 //! # Why the `Object` impls live here
 //!
 //! [`QueryOutcome`] and [`IndexRecord`] gain their [`Object`] impls in this
 //! module rather than in [`crate::index`], keeping the index module free of
-//! any rendering-framework dependency, so a future CLI query command can
-//! reuse the same [`FileIndex`]/[`QueryOutcome`]/[`IndexRecord`] types
-//! without pulling minijinja along.
+//! any rendering-framework dependency, so the CLI's `traces task` query
+//! command (`crate::cli::task`) can reuse the same
+//! [`FileIndex`]/[`QueryOutcome`]/[`IndexRecord`] types without pulling
+//! minijinja along.
 //!
-//! `record`'s non-`file` attributes (`record.rating`, `record.tags`, ...)
-//! forward to [`IndexRecord::field`], the same field resolver `.where()`/
-//! `.sort()` use. `record.file.*` needs a forwarding [`FileFields`]
-//! wrapper instead, since minijinja resolves a dotted attribute path one
-//! segment at a time; it calls [`FileField::parse`]/[`FileField::resolve`]
-//! directly rather than round-tripping through `IndexRecord::field`'s
-//! string-based `file.` prefix handling, which a single already-known
-//! segment doesn't need.
+//! `record`'s non-`file`/`task` attributes (`record.rating`, `record.tags`,
+//! ...) forward to [`IndexRecord::field`], the same field resolver
+//! `.where()`/`.sort()` use. `record.file.*` and `record.task.*` each need a
+//! forwarding wrapper instead ([`FileFields`], [`TaskFields`]), since
+//! minijinja resolves a dotted attribute path one segment at a time; they
+//! call [`FileField::parse`]/[`FileField::resolve`] and
+//! [`IndexRecord::task_completed`]/[`IndexRecord::task_text`] directly
+//! rather than round-tripping through [`IndexRecord::field`]'s string-based
+//! `file.`/`task.` prefix handling, which a single already-known segment
+//! doesn't need.
 //!
 //! # Error handling
 //!
@@ -123,6 +132,71 @@ impl Object for QueryOps {
     }
 }
 
+/// Method names `tasks` exposes, for [`TaskOps::enumerate`]. Same three
+/// source methods as [`QueryOps`]; only [`FileIndex::query_tasks`] differs.
+const TASK_METHODS: &[&str] = &["all", "from_tags", "from_folder"];
+
+/// Backs the `tasks` minijinja namespace object — the task-level parallel
+/// to [`QueryOps`]. See the module docs for how the two differ.
+#[derive(Debug)]
+pub(super) struct TaskOps {
+    root: Arc<Path>,
+}
+
+impl TaskOps {
+    /// Wraps `root` for template-facing dispatch.
+    #[inline]
+    #[must_use]
+    pub(super) const fn new(root: Arc<Path>) -> Self {
+        Self {
+            root,
+        }
+    }
+
+    /// Registers this object as the `tasks` global.
+    #[inline]
+    pub(super) fn register(self, env: &mut Environment<'static>) {
+        env.add_global("tasks", Value::from_object(self));
+    }
+}
+
+impl Object for TaskOps {
+    fn get_value(self: &Arc<Self>, key: &Value) -> Option<Value> {
+        match key.as_str()? {
+            "all" => {
+                let root = Arc::clone(&self.root);
+                Some(Value::from_function(move || -> Result<Value, Error> {
+                    query_tasks(&root, &Source::All)
+                }))
+            }
+            "from_tags" => {
+                let root = Arc::clone(&self.root);
+                Some(Value::from_function(
+                    move |tag: &str| -> Result<Value, Error> {
+                        query_tasks(&root, &Source::Tag(tag.to_owned()))
+                    },
+                ))
+            }
+            "from_folder" => {
+                let root = Arc::clone(&self.root);
+                Some(Value::from_function(
+                    move |folder: &str| -> Result<Value, Error> {
+                        query_tasks(
+                            &root,
+                            &Source::Folder(PathBuf::from(folder)),
+                        )
+                    },
+                ))
+            }
+            _ => None,
+        }
+    }
+
+    fn enumerate(self: &Arc<Self>) -> Enumerator {
+        Enumerator::Str(TASK_METHODS)
+    }
+}
+
 /// Refreshes the [`FileIndex`] for `root`, then runs `source` against it.
 ///
 /// Shared by every `query.*` method.
@@ -135,6 +209,22 @@ impl Object for QueryOps {
 fn query(root: &Path, source: &Source) -> Result<Value, Error> {
     let index = FileIndex::refresh(root).map_err(index_error)?;
     Ok(Value::from_object(index.query(source)))
+}
+
+/// Refreshes the [`FileIndex`] for `root`, then runs a task-level query for
+/// `source` against it.
+///
+/// Task-level parallel to [`query`] — the only difference is
+/// [`FileIndex::query_tasks`] instead of [`FileIndex::query`]. Shared by
+/// every `tasks.*` method.
+///
+/// # Errors
+///
+/// [`ErrorKind::InvalidOperation`] (via [`index_error`]) on the same
+/// failures as [`query`].
+fn query_tasks(root: &Path, source: &Source) -> Result<Value, Error> {
+    let index = FileIndex::refresh(root).map_err(index_error)?;
+    Ok(Value::from_object(index.query_tasks(source)))
 }
 
 /// Maps a [`FileIndexError`] into a [`minijinja::Error`].
@@ -228,10 +318,11 @@ impl Object for IndexRecord {
     /// [`QueryError::UnknownFieldPath`] as a render error.
     fn get_value(self: &Arc<Self>, key: &Value) -> Option<Value> {
         let key = key.as_str()?;
-        if key == "file" {
-            return Some(Value::from_object(FileFields(Arc::clone(self))));
+        match key {
+            "file" => Some(Value::from_object(FileFields(Arc::clone(self)))),
+            "task" => Some(Value::from_object(TaskFields(Arc::clone(self)))),
+            _ => self.field(key).ok().map(field_value),
         }
-        self.field(key).ok().map(field_value)
     }
 }
 
@@ -256,6 +347,36 @@ impl Object for FileFields {
 
     fn enumerate(self: &Arc<Self>) -> Enumerator {
         Enumerator::Str(FileField::ACCESSOR_NAMES)
+    }
+}
+
+/// Forwards `record.task.<field>` to
+/// [`IndexRecord::task_completed`]/[`IndexRecord::task_text`].
+///
+/// Mirrors [`FileFields`]: minijinja resolves a dotted attribute path one
+/// segment at a time, so `record.task` must itself resolve to something
+/// before `.completed`/`.text` can be looked up. On a page-level record
+/// (not built by [`FileIndex::query_tasks`]) both accessors resolve to
+/// minijinja's `none` — a defined empty value, not a missing attribute —
+/// matching [`field_value`]'s handling of [`FieldValue::Null`].
+#[derive(Debug)]
+struct TaskFields(Arc<IndexRecord>);
+
+impl Object for TaskFields {
+    fn get_value(self: &Arc<Self>, key: &Value) -> Option<Value> {
+        match key.as_str()? {
+            "completed" => Some(
+                self.0.task_completed().map_or(Value::from(()), Value::from),
+            ),
+            "text" => {
+                Some(self.0.task_text().map_or(Value::from(()), Value::from))
+            }
+            _ => None,
+        }
+    }
+
+    fn enumerate(self: &Arc<Self>) -> Enumerator {
+        Enumerator::Str(&["completed", "text"])
     }
 }
 
@@ -295,10 +416,12 @@ mod tests {
     use super::*;
     use crate::{DialogProvider, PresetDialogProvider};
 
-    /// A minimal [`Environment`] with `query` registered against `root`.
+    /// A minimal [`Environment`] with `query` and `tasks` registered
+    /// against `root`.
     fn env(root: &Path) -> Environment<'static> {
         let mut env = Environment::new();
         QueryOps::new(Arc::from(root)).register(&mut env);
+        TaskOps::new(Arc::from(root)).register(&mut env);
         env
     }
 
@@ -670,6 +793,163 @@ mod tests {
                 .render_str("{{ query.all() | length }}", minijinja::context!())
                 .expect("render succeeds");
             assert_eq!(second, "2");
+        }
+    }
+
+    mod task_ops {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn register_makes_tasks_reachable_through_a_real_environment() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_note(temp.path(), "todo.md", "- [ ] buy milk\n");
+
+            let rendered = render(temp.path(), "{{ tasks.all() | length }}")
+                .expect("render succeeds");
+
+            assert_eq!(rendered, "1");
+        }
+
+        #[test]
+        fn expands_one_note_with_two_tasks_into_two_rows_not_one() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_note(
+                temp.path(),
+                "todo.md",
+                "- [ ] buy milk\n- [x] pay rent\n",
+            );
+
+            // A page-level query over the same Note returns exactly one
+            // row; the task-level query must not collapse back to it.
+            let pages = render(temp.path(), "{{ query.all() | length }}")
+                .expect("render succeeds");
+            let tasks = render(temp.path(), "{{ tasks.all() | length }}")
+                .expect("render succeeds");
+
+            assert_eq!(pages, "1");
+            assert_eq!(tasks, "2");
+        }
+
+        #[test]
+        fn from_tags_keeps_only_matching_notes_tasks() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_note(temp.path(), "a.md", "#projects\n- [ ] project task\n");
+            write_note(temp.path(), "b.md", "#books\n- [ ] book task\n");
+
+            let rendered = render(
+                temp.path(),
+                r##"{% for t in tasks.from_tags("#projects") %}{{ t.task.text }}{% endfor %}"##,
+            )
+            .expect("render succeeds");
+
+            assert_eq!(rendered, "project task");
+        }
+
+        #[test]
+        fn from_folder_keeps_only_notes_under_the_folder_tasks() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::create_dir_all(temp.path().join("projects")).expect("mkdir");
+            write_note(temp.path(), "projects/a.md", "- [ ] project task\n");
+            write_note(temp.path(), "other.md", "- [ ] other task\n");
+
+            let rendered = render(
+                temp.path(),
+                r#"{% for t in tasks.from_folder("projects") %}{{ t.task.text }}{% endfor %}"#,
+            )
+            .expect("render succeeds");
+
+            assert_eq!(rendered, "project task");
+        }
+
+        #[test]
+        fn task_completed_and_task_text_resolve_per_row() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_note(
+                temp.path(),
+                "todo.md",
+                "- [ ] buy milk\n- [x] pay rent\n",
+            );
+
+            let rendered = render(
+                temp.path(),
+                "{% for t in tasks.all() %}{{ t.task.completed }}:{{ \
+                 t.task.text }} {% endfor %}",
+            )
+            .expect("render succeeds");
+
+            assert_eq!(rendered, "false:buy milk true:pay rent ");
+        }
+
+        #[test]
+        fn task_rows_retain_parent_note_metadata_for_filtering_and_display() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_note(
+                temp.path(),
+                "project.md",
+                "---\ntitle: Launch\n---\nFiled under #projects.\n\n- [ ] \
+                 ship it\n",
+            );
+
+            let rendered = render(
+                temp.path(),
+                "{% for t in tasks.all() %}{{ t.file.name }}|{{ t.title }}|{{ \
+                 t.tags | length }}{% endfor %}",
+            )
+            .expect("render succeeds");
+
+            assert_eq!(rendered, "project|Launch|1");
+        }
+
+        #[test]
+        fn where_filters_by_task_completion_not_by_note() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_note(
+                temp.path(),
+                "todo.md",
+                "- [ ] buy milk\n- [x] pay rent\n",
+            );
+
+            let rendered = render(
+                temp.path(),
+                r#"{% for t in tasks.all().where("task.completed == true") %}{{ t.task.text }}{% endfor %}"#,
+            )
+            .expect("render succeeds");
+
+            // The Note has one complete and one incomplete task: filtering
+            // must keep only the matching task row, not both of the one
+            // Note that has at least one match.
+            assert_eq!(rendered, "pay rent");
+        }
+
+        #[test]
+        fn task_completed_and_task_text_are_none_on_a_page_level_record() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_note(temp.path(), "note.md", "# No tasks here");
+
+            let rendered = render(
+                temp.path(),
+                "{{ query.all()[0].task.completed is none }}:{{ \
+                 query.all()[0].task.text is none }}",
+            )
+            .expect("render succeeds");
+
+            assert_eq!(rendered, "true:true");
+        }
+
+        #[test]
+        fn unparsable_filter_expression_surfaces_as_a_render_error() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_note(temp.path(), "todo.md", "- [ ] buy milk\n");
+
+            let error = render(
+                temp.path(),
+                r#"{{ tasks.all().filter("task.completed >") }}"#,
+            )
+            .expect_err("malformed filter expression should error");
+
+            assert!(error.to_string().contains("query failed"));
         }
     }
 }
