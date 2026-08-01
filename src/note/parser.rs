@@ -13,7 +13,7 @@
 //! visible-key inline field while [`ListItem::text`] remains plain display
 //! text.
 
-use std::{mem, ops::Range, path::PathBuf};
+use std::{mem, path::PathBuf};
 
 use pulldown_cmark::{
     CowStr, Event, LinkType as CmarkLinkType, Options, Parser, Tag as CmarkTag,
@@ -36,8 +36,8 @@ pub(crate) fn parse_markdown(path: impl Into<PathBuf>, src: &str) -> Note {
     opts.insert(Options::ENABLE_WIKILINKS);
 
     let mut ctx = ParserContext::default();
-    for (event, range) in Parser::new_ext(src, opts).into_offset_iter() {
-        ctx.handle_event(event, range);
+    for event in Parser::new_ext(src, opts) {
+        ctx.handle_event(event);
     }
     ctx.into_note(path)
 }
@@ -80,7 +80,7 @@ impl ParserContext {
     }
 
     /// Dispatches one Markdown event to the matching handler.
-    fn handle_event(&mut self, event: Event<'_>, range: Range<usize>) {
+    fn handle_event(&mut self, event: Event<'_>) {
         match event {
             Event::Start(CmarkTag::MetadataBlock(_)) => {
                 self.start_metadata_block();
@@ -93,9 +93,9 @@ impl ParserContext {
             }) => self.start_link(link_type, dest_url),
             Event::End(TagEnd::Link) => self.end_link(),
             Event::Start(CmarkTag::CodeBlock(_)) => {
-                self.start_code_block(range);
+                self.start_code_block();
             }
-            Event::End(TagEnd::CodeBlock) => self.end_code_block(range),
+            Event::End(TagEnd::CodeBlock) => self.end_code_block(),
             Event::Start(
                 CmarkTag::Paragraph
                 | CmarkTag::Heading {
@@ -107,7 +107,7 @@ impl ParserContext {
             Event::End(TagEnd::Paragraph | TagEnd::Heading(_)) => {
                 self.end_text_block();
             }
-            Event::Code(text) => self.inline_code(&text, range),
+            Event::Code(text) => self.inline_code(&text),
             Event::Start(CmarkTag::List(start_number)) => {
                 self.start_list(start_number.is_some());
             }
@@ -166,18 +166,18 @@ impl ParserContext {
         }
     }
 
-    fn start_code_block(&mut self, _range: Range<usize>) {
+    fn start_code_block(&mut self) {
         self.block = BlockContext::CodeBlock;
     }
 
-    fn end_code_block(&mut self, _range: Range<usize>) {
+    fn end_code_block(&mut self) {
         self.block = BlockContext::None;
     }
 
     /// Records an inline code span and keeps it out of metadata scanning.
     ///
     /// Inline code remains in list item display text.
-    fn inline_code(&mut self, text: &str, _range: Range<usize>) {
+    fn inline_code(&mut self, text: &str) {
         if let Some(item) = self.item_stack.last_mut() {
             item.push_code(text);
         }
