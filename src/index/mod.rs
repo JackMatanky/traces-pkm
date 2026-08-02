@@ -1,11 +1,15 @@
 //! File index for project files and parsed markdown notes.
 //!
 //! [`FileIndex`] keeps a sorted [`FileRecord`] for every regular file under a
-//! trusted project root. Markdown files also get parsed into [`Note`] records.
-//! Persistence is redb-backed through [`store`](mod@store), but callers only
-//! use the [`FileIndex::build`], [`FileIndex::refresh`],
-//! [`FileIndex::persist`], [`FileIndex::load`], [`FileIndex::query`],
-//! [`FileIndex::records`], and [`FileIndex::notes`] APIs.
+//! trusted project root. Markdown files also get parsed into [`Note`]
+//! records. Persistence is redb-backed through [`store`](mod@store), but
+//! callers only use these APIs:
+//! - [`FileIndex::build`], [`FileIndex::refresh`], [`FileIndex::persist`],
+//!   [`FileIndex::load`]: construct or persist the index.
+//! - [`FileIndex::query`], [`FileIndex::query_tasks`]: run a page-level or
+//!   task-level query.
+//! - [`FileIndex::records`], [`FileIndex::notes`]: inspect indexed data
+//!   directly.
 
 #![cfg_attr(
     not(test),
@@ -13,7 +17,7 @@
         dead_code,
         reason = "crate-internal API surface for FileIndex querying and \
                   QueryOutcome transformations, consumed by later tickets \
-                  (#06 QueryOps template namespace, #08 CLI query commands)"
+                  (#08 CLI query commands)"
     )
 )]
 
@@ -79,12 +83,13 @@ impl FileIndex {
     /// Refreshes the persisted index for `root` against current filesystem
     /// state.
     ///
-    /// Compares each current file's `(created_at, modified_at, size)` — via
-    /// [`FileRecord`] equality — against the previously persisted record.
-    /// Unchanged markdown Notes reuse their previously parsed [`Note`];
-    /// added or changed markdown Notes are reparsed. Deleted files are
-    /// dropped because they no longer appear in the scan. Returns the fresh
-    /// [`FileIndex`] and persists any changes.
+    /// Compares each current file's `(created_at, modified_at, size)`
+    /// against the previously persisted record ([`FileRecord`] equality):
+    /// - Unchanged markdown Notes reuse their previously parsed [`Note`].
+    /// - Added or changed markdown Notes are reparsed.
+    /// - Deleted files are dropped, since they no longer appear in the scan.
+    ///
+    /// Returns the fresh [`FileIndex`] and persists any changes.
     ///
     /// # Errors
     ///
@@ -179,7 +184,7 @@ impl FileIndex {
     ///
     /// # Performance
     ///
-    /// O(log n) — [`Self::notes`] is kept sorted by path, so this binary
+    /// O(log n): [`Self::notes`] is kept sorted by path, so this binary
     /// searches rather than scanning.
     #[inline]
     #[must_use]
@@ -194,7 +199,7 @@ impl FileIndex {
     ///
     /// # Performance
     ///
-    /// O(log n) — [`Self::records`] is kept sorted by path, so this binary
+    /// O(log n): [`Self::records`] is kept sorted by path, so this binary
     /// searches rather than scanning.
     #[inline]
     #[must_use]
@@ -215,37 +220,83 @@ impl FileIndex {
     ///
     /// # Performance
     ///
-    /// O(n + m) — single-pass iterator merge-join across `records` and `notes`
+    /// O(n + m): single-pass iterator merge-join across `records` and `notes`
     /// without binary searching per note or redundant allocations.
     #[must_use]
     pub(crate) fn query(self, source: &Source) -> QueryOutcome {
-        let Self {
-            records,
-            notes,
-        } = self;
-        let mut files = records.into_iter().peekable();
-
-        let matched = notes
-            .into_iter()
-            .filter_map(|note| {
-                while files.peek().is_some_and(|file| file.path() < note.path())
-                {
-                    files.next();
-                }
-                let file = files.next_if(|file| file.path() == note.path())?;
-                source
-                    .is_match(&file, &note)
-                    .then(|| IndexRecord::new(file, note))
-            })
+        let matched = matched_pairs(self.records, self.notes, source)
+            .map(|(file, note)| IndexRecord::new(file, note))
             .collect();
         QueryOutcome::new(matched)
     }
+
+    /// Executes a task-level query over `source`, consuming this index.
+    ///
+    /// Selects the same Notes [`Self::query`] would (via
+    /// [`Source::is_match`]), then expands each into one [`IndexRecord`] per
+    /// task item from [`Note::tasks`] instead of one record per Note: every
+    /// markdown task list item (`- [ ]`/`- [x]`) in a matched Note becomes
+    /// its own row. A Note with no tasks contributes no rows.
+    ///
+    /// Each row retains its parent Note's `file.*`, frontmatter,
+    /// inline-field, and tag metadata for filtering and display (via
+    /// [`IndexRecord::field`]), alongside [`IndexRecord::task_completed`]
+    /// and [`IndexRecord::task_text`].
+    ///
+    /// Call [`Self::refresh`] first so results reflect the current
+    /// filesystem, same as [`Self::query`].
+    ///
+    /// # Performance
+    ///
+    /// O(n + m + t) where `t` is the total number of task items across
+    /// matched Notes. This streams task iteration and pushes rows into one
+    /// output vector, avoiding a per-note row collection.
+    #[must_use]
+    pub(crate) fn query_tasks(self, source: &Source) -> QueryOutcome {
+        let mut matched = Vec::new();
+        for (file, note) in matched_pairs(self.records, self.notes, source) {
+            let base = IndexRecord::new(file, note);
+            for item in base.note().tasks() {
+                matched.push(
+                    base.clone()
+                        .with_task(item.is_completed(), item.text().to_owned()),
+                );
+            }
+        }
+        QueryOutcome::new(matched)
+    }
+}
+
+/// Merge-joins `records` and `notes` by path, yielding only the file/note
+/// pairs matching `source`. Shared by [`FileIndex::query`] and
+/// [`FileIndex::query_tasks`]. Both start from the same page-level
+/// selection; they differ only in what each matched pair becomes.
+///
+/// # Performance
+///
+/// O(n + m): single-pass iterator merge-join, no binary search or
+/// redundant allocation per note.
+fn matched_pairs(
+    records: Vec<FileRecord>,
+    notes: Vec<Note>,
+    source: &Source,
+) -> impl Iterator<Item = (FileRecord, Note)> + '_ {
+    let mut files = records.into_iter().peekable();
+    notes.into_iter().filter_map(move |note| {
+        while files.peek().is_some_and(|file| file.path() < note.path()) {
+            files.next();
+        }
+        let file = files.next_if(|file| file.path() == note.path())?;
+        source.is_match(&file, &note).then_some((file, note))
+    })
 }
 
 /// Reads and parses the markdown file for `record` into a [`Note`].
 ///
 /// Shared by [`FileIndex::build`] (parses every markdown file from scratch)
-/// and [`FileIndex::refresh`] (parses only added or changed markdown files).
+/// and [`FileIndex::refresh`] (parses only added or changed markdown
+/// files).
+///
 /// # Errors
 ///
 /// Returns [`FileIndexError::Io`] if the file cannot be read.
@@ -879,6 +930,164 @@ mod tests {
                 ["Genre"]
             );
             assert_eq!(record.note().tags(), [Tag::new("#book")]);
+        }
+    }
+
+    mod query_tasks {
+        use std::path::PathBuf;
+
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        /// `(completed, text)` pairs for every row in `outcome`, in order.
+        fn task_rows(outcome: &QueryOutcome) -> Vec<(Option<bool>, &str)> {
+            outcome
+                .iter()
+                .map(|record| {
+                    (
+                        record.task_completed(),
+                        record.task_text().unwrap_or_default(),
+                    )
+                })
+                .collect()
+        }
+
+        #[test]
+        fn expands_one_note_with_two_tasks_into_two_rows_not_one() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(
+                temp.path().join("todo.md"),
+                "- [ ] buy milk\n- [x] pay rent\n",
+            )
+            .expect("write note");
+            let index = FileIndex::build(temp.path()).expect("build index");
+
+            let outcome = index.query_tasks(&Source::All);
+
+            // A page-level query over the same Note returns exactly one row;
+            // the task-level query must not collapse back to that page row.
+            assert_eq!(outcome.len(), 2);
+            assert_eq!(task_rows(&outcome), [
+                (Some(false), "buy milk"),
+                (Some(true), "pay rent"),
+            ]);
+        }
+
+        #[test]
+        fn contributes_no_rows_when_note_has_no_tasks() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("no-tasks.md"), "Just prose, no tasks.")
+                .expect("write note");
+            fs::write(temp.path().join("todo.md"), "- [ ] buy milk\n")
+                .expect("write note");
+            let index = FileIndex::build(temp.path()).expect("build index");
+
+            let outcome = index.query_tasks(&Source::All);
+
+            assert_eq!(outcome.len(), 1);
+            assert_eq!(
+                outcome.iter().next().and_then(IndexRecord::task_text),
+                Some("buy milk")
+            );
+        }
+
+        #[test]
+        fn returns_empty_outcome_when_no_notes_match_source() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("readme.txt"), "text")
+                .expect("write txt");
+            let index = FileIndex::build(temp.path()).expect("build index");
+
+            let outcome = index.query_tasks(&Source::All);
+
+            assert!(outcome.is_empty());
+        }
+
+        #[test]
+        fn retains_parent_note_metadata_for_filtering_and_display() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(
+                temp.path().join("project.md"),
+                "---\ntitle: Launch\n---\nFiled under #projects.\n\n- [ ] \
+                 ship it\n",
+            )
+            .expect("write note");
+            let index = FileIndex::build(temp.path()).expect("build index");
+
+            let outcome = index.query_tasks(&Source::All);
+            let record = outcome.iter().next().expect("one task row");
+
+            assert_eq!(record.file().path(), Path::new("project.md"));
+            assert_eq!(
+                record.field("title"),
+                Ok(crate::note::FieldValue::String("Launch".to_owned()))
+            );
+            assert_eq!(
+                record.field("tags"),
+                Ok(crate::note::FieldValue::List(vec![
+                    crate::note::FieldValue::String("#projects".to_owned())
+                ]))
+            );
+        }
+
+        #[test]
+        fn returns_only_tasks_from_notes_matching_the_tag_source() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(
+                temp.path().join("a.md"),
+                "#projects\n- [ ] project task\n",
+            )
+            .expect("write a");
+            fs::write(temp.path().join("b.md"), "#books\n- [ ] book task\n")
+                .expect("write b");
+            let index = FileIndex::build(temp.path()).expect("build index");
+
+            let outcome =
+                index.query_tasks(&Source::Tag("#projects".to_owned()));
+
+            assert_eq!(task_rows(&outcome), [(Some(false), "project task")]);
+        }
+
+        #[test]
+        fn returns_only_tasks_from_notes_under_the_folder_source() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::create_dir_all(temp.path().join("projects")).expect("mkdir");
+            fs::write(
+                temp.path().join("projects/a.md"),
+                "- [ ] project task\n",
+            )
+            .expect("write a");
+            fs::write(temp.path().join("b.md"), "- [ ] other task\n")
+                .expect("write b");
+            let index = FileIndex::build(temp.path()).expect("build index");
+
+            let outcome =
+                index.query_tasks(&Source::Folder(PathBuf::from("projects")));
+
+            assert_eq!(task_rows(&outcome), [(Some(false), "project task")]);
+        }
+
+        #[test]
+        fn keeps_only_matching_tasks_not_the_whole_note_when_filtering_by_completion()
+         {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(
+                temp.path().join("todo.md"),
+                "- [ ] buy milk\n- [x] pay rent\n",
+            )
+            .expect("write note");
+            let index = FileIndex::build(temp.path()).expect("build index");
+
+            let outcome = index
+                .query_tasks(&Source::All)
+                .filter("task.completed == true")
+                .expect("valid filter");
+
+            // The Note has one complete and one incomplete task: filtering
+            // must keep only the matching task row, not both rows from the
+            // one Note that has at least one match.
+            assert_eq!(task_rows(&outcome), [(Some(true), "pay rent")]);
         }
     }
 }

@@ -6,6 +6,7 @@ mod completions;
 mod error;
 mod index;
 pub mod init;
+mod task;
 mod template;
 mod trust;
 mod untrust;
@@ -55,7 +56,7 @@ pub enum UserAbort {
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
-    /// Template name to instantiate — the default `traces -i <name>` dispatch,
+    /// Template name to instantiate: the default `traces -i <name>` dispatch,
     /// equivalent to `traces template -i <name>`. Pass with no value to
     /// trigger the interactive fuzzy picker instead.
     //
@@ -82,8 +83,8 @@ impl Cli {
     /// # Errors
     ///
     /// - [`CliError::NoCommand`] if neither a subcommand nor `-i`/`--input` was
-    ///   provided.
-    /// - [`CliError`] if command execution fails.
+    ///   provided
+    /// - [`CliError`] if command execution fails
     fn run(
         self,
         service: &ConfigService,
@@ -121,6 +122,8 @@ enum Commands {
     Untrust(untrust::Untrust),
     /// Build or rebuild the persisted `FileIndex`
     Index(index::Index),
+    /// Run a task-level query and print task output
+    Task(task::Task),
     /// Render a template and write it to disk
     #[command(alias = "tmpl")]
     Template(template::Template),
@@ -141,6 +144,7 @@ impl Commands {
             Self::Trust(args) => args.run(service),
             Self::Untrust(args) => args.run(service),
             Self::Index(args) => args.run(service),
+            Self::Task(args) => args.run(service),
             Self::Template(args) => args.run(service, provider),
             Self::Completions(args) => args.run(service),
         }
@@ -154,8 +158,8 @@ impl Commands {
 /// # Errors
 ///
 /// - [`CliError::NoCommand`] if neither a subcommand nor `-i`/`--input` was
-///   provided.
-/// - [`CliError`] if command execution fails.
+///   provided
+/// - [`CliError`] if command execution fails
 #[inline]
 pub fn run() -> Result<CommandOutcome, CliError> {
     let provider: Arc<dyn DialogProvider> =

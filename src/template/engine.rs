@@ -49,7 +49,7 @@ pub(super) struct TemplateEngine {
 impl TemplateEngine {
     /// Builds an engine backed by `loader`, registering every submodule's
     /// custom functions ([`date_ops`], [`file_ops`], [`num_ops`],
-    /// [`path_ops`], [`query_ops`], [`str_ops`], [`ui_ops`] — see each
+    /// [`path_ops`], [`query_ops`], [`str_ops`], [`ui_ops`]; see each
     /// module's own docs for what it contributes) plus the standalone
     /// [`uuid`](fn@uuid) function.
     ///
@@ -58,8 +58,8 @@ impl TemplateEngine {
     /// * `loader` - the [`TemplateLoader`] to wire into minijinja's
     ///   include/extends resolution and store for [`Self::resolve`]
     /// * `provider` - backend `ui.*` calls delegate to
-    /// * `root` - base directory `file.*`, `query.*`, and the path-inspection
-    ///   group are confined to
+    /// * `root` - base directory `file.*`, `query.*`, `tasks.*`, and the
+    ///   path-inspection group are confined to
     #[inline]
     #[must_use]
     pub(super) fn new(
@@ -74,7 +74,8 @@ impl TemplateEngine {
         });
         let root = Arc::from(root);
         FileOps::new(Arc::clone(&root)).register(&mut env);
-        QueryOps::new(Arc::clone(&root)).register(&mut env);
+        QueryOps::page(Arc::clone(&root)).register(&mut env);
+        QueryOps::task(Arc::clone(&root)).register(&mut env);
         PathOps::new(root).register(&mut env);
         UiOps::new(provider).register(&mut env);
         DateOps.register(&mut env);
@@ -159,7 +160,7 @@ mod tests {
         TemplateLoader::new(Some(path.to_path_buf()), None)
     }
 
-    /// A cheap, deterministic provider for tests that never exercise `ui.*` —
+    /// A cheap, deterministic provider for tests that never exercise `ui.*`;
     /// `TemplateEngine::new` requires one regardless.
     fn preset_provider() -> Arc<dyn DialogProvider> {
         Arc::new(crate::PresetDialogProvider::new())

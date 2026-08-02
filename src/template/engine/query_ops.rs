@@ -1,36 +1,47 @@
-//! The `query` minijinja namespace for querying the [`FileIndex`] from
-//! templates.
+//! The `query` and `tasks` minijinja namespaces for querying the
+//! [`FileIndex`] from templates.
 //!
-//! [`QueryOps`] backs the `query` global registered by
-//! [`super::TemplateEngine`]. A template starts a page-level query with one of
+//! Both are backed by [`QueryOps`], registered twice by
+//! [`super::TemplateEngine::new`]: [`QueryOps::page`] for the `query` global,
+//! [`QueryOps::task`] for the `tasks` global. Each starts a query with one of
 //! three methods, mirroring [`Source`]'s three variants one-to-one:
-//! - `query.all()`: every indexed Note.
-//! - `query.from_tags(tag)`: Notes tagged `tag`.
-//! - `query.from_folder(folder)`: Notes under `folder`.
+//! - `.all()`: every indexed Note.
+//! - `.from_tags(tag)`: Notes tagged `tag`.
+//! - `.from_folder(folder)`: Notes under `folder`.
 //!
-//! Each refreshes a fresh [`FileIndex`] for the render's project root and
-//! returns a [`QueryOutcome`] wrapped in a [`Value`]. The result chains with
-//! `.where(...)`/`.filter(...)`, `.sort(...)`, `.limit(...)`, `.group_by(...)`,
-//! and `.flatten(...)`, all implemented on [`QueryOutcome`] itself. This
-//! module only adds the minijinja [`Object`] wiring, not the transformation
-//! logic.
+//! `query`'s rows are one per Note; `tasks`'s rows are one per task item (via
+//! [`FileIndex::query_tasks`]), exposing `task.completed`/`task.text`
+//! alongside the parent Note's `file.*`, frontmatter, inline-field, and tag
+//! metadata.
+//!
+//! Each method refreshes a fresh [`FileIndex`] for the render's project root
+//! and returns a [`QueryOutcome`] wrapped in a [`Value`]. The result chains
+//! with `.where(...)`/`.filter(...)`, `.sort(...)`, `.limit(...)`,
+//! `.group_by(...)`, and `.flatten(...)`, all implemented on [`QueryOutcome`]
+//! itself. This module only adds the minijinja [`Object`] wiring, not the
+//! transformation logic.
 //!
 //! # Why the `Object` impls live here
 //!
 //! [`QueryOutcome`] and [`IndexRecord`] gain their [`Object`] impls in this
 //! module rather than in [`crate::index`], keeping the index module free of
-//! any rendering-framework dependency, so a future CLI query command can
-//! reuse the same [`FileIndex`]/[`QueryOutcome`]/[`IndexRecord`] types
-//! without pulling minijinja along.
+//! any rendering-framework dependency, so the CLI's `traces task` query
+//! command (`crate::cli::task`) can reuse the same
+//! [`FileIndex`]/[`QueryOutcome`]/[`IndexRecord`] types without pulling
+//! minijinja along.
 //!
-//! `record`'s non-`file` attributes (`record.rating`, `record.tags`, ...)
-//! forward to [`IndexRecord::field`], the same field resolver `.where()`/
-//! `.sort()` use. `record.file.*` needs a forwarding [`FileFields`]
-//! wrapper instead, since minijinja resolves a dotted attribute path one
-//! segment at a time; it calls [`FileField::parse`]/[`FileField::resolve`]
-//! directly rather than round-tripping through `IndexRecord::field`'s
-//! string-based `file.` prefix handling, which a single already-known
-//! segment doesn't need.
+//! # Attribute Resolution
+//!
+//! `record`'s non-`file`/`task` attributes (`record.rating`, `record.tags`,
+//! ...) forward to [`IndexRecord::field`], the same field resolver
+//! `.where()`/`.sort()` use. `record.file.*` and `record.task.*` each need a
+//! forwarding wrapper instead ([`FileFields`], [`TaskFields`]), since
+//! minijinja resolves a dotted attribute path one segment at a time; they
+//! call [`FileField::parse`]/[`FileField::resolve`] and
+//! [`IndexRecord::task_completed`]/[`IndexRecord::task_text`] directly
+//! rather than round-tripping through [`IndexRecord::field`]'s string-based
+//! `file.`/`task.` prefix handling, which a single already-known segment
+//! doesn't need.
 //!
 //! # Error handling
 //!
@@ -59,33 +70,65 @@ use crate::{
     note::FieldValue,
 };
 
-/// Method names `query` exposes, for [`QueryOps::enumerate`].
+/// Method names `query` and `tasks` each expose, for [`QueryOps::enumerate`].
 const METHODS: &[&str] = &["all", "from_tags", "from_folder"];
 
-/// Backs the `query` minijinja namespace object.
-///
-/// Holds the trusted project root that every method refreshes a fresh
-/// [`FileIndex`] against before running its query. See
-/// [`super::TemplateEngine::new`] for where `root` comes from.
+/// Backs both the `query` and `tasks` minijinja namespace objects: one
+/// instance per namespace, differing only in which global it registers as
+/// and which [`FileIndex`] method builds the [`QueryOutcome`]. See
+/// [`Self::page`]/[`Self::task`].
 #[derive(Debug)]
 pub(super) struct QueryOps {
     root: Arc<Path>,
+    /// The minijinja global this instance registers as.
+    name: &'static str,
+    /// [`FileIndex::query`] for `query`, [`FileIndex::query_tasks`] for
+    /// `tasks`.
+    query: fn(FileIndex, &Source) -> QueryOutcome,
 }
 
 impl QueryOps {
-    /// Wraps `root` for template-facing dispatch.
+    /// Wraps `root` for page-level dispatch under the `query` global.
     #[inline]
     #[must_use]
-    pub(super) const fn new(root: Arc<Path>) -> Self {
+    pub(super) const fn page(root: Arc<Path>) -> Self {
         Self {
             root,
+            name: "query",
+            query: FileIndex::query,
         }
     }
 
-    /// Registers this object as the `query` global.
+    /// Wraps `root` for task-level dispatch under the `tasks` global. Each
+    /// row is one task item instead of one Note; see the module docs.
+    #[inline]
+    #[must_use]
+    pub(super) const fn task(root: Arc<Path>) -> Self {
+        Self {
+            root,
+            name: "tasks",
+            query: FileIndex::query_tasks,
+        }
+    }
+
+    /// Registers this object as its `name` global (`query` or `tasks`).
     #[inline]
     pub(super) fn register(self, env: &mut Environment<'static>) {
-        env.add_global("query", Value::from_object(self));
+        let name = self.name;
+        env.add_global(name, Value::from_object(self));
+    }
+
+    /// Refreshes this namespace's [`FileIndex`], then runs its query
+    /// method for `source` against it.
+    ///
+    /// # Errors
+    ///
+    /// [`ErrorKind::InvalidOperation`] (via [`index_error`]) if refreshing the
+    /// index fails: an I/O error scanning `root`, a redb error accessing the
+    /// index database, or a TOML (de)serialization error on a stored record.
+    fn run(&self, source: &Source) -> Result<Value, Error> {
+        let index = FileIndex::refresh(&self.root).map_err(index_error)?;
+        Ok(Value::from_object((self.query)(index, source)))
     }
 }
 
@@ -93,24 +136,24 @@ impl Object for QueryOps {
     fn get_value(self: &Arc<Self>, key: &Value) -> Option<Value> {
         match key.as_str()? {
             "all" => {
-                let root = Arc::clone(&self.root);
+                let ops = Arc::clone(self);
                 Some(Value::from_function(move || -> Result<Value, Error> {
-                    query(&root, &Source::All)
+                    ops.run(&Source::All)
                 }))
             }
             "from_tags" => {
-                let root = Arc::clone(&self.root);
+                let ops = Arc::clone(self);
                 Some(Value::from_function(
                     move |tag: &str| -> Result<Value, Error> {
-                        query(&root, &Source::Tag(tag.to_owned()))
+                        ops.run(&Source::Tag(tag.to_owned()))
                     },
                 ))
             }
             "from_folder" => {
-                let root = Arc::clone(&self.root);
+                let ops = Arc::clone(self);
                 Some(Value::from_function(
                     move |folder: &str| -> Result<Value, Error> {
-                        query(&root, &Source::Folder(PathBuf::from(folder)))
+                        ops.run(&Source::Folder(PathBuf::from(folder)))
                     },
                 ))
             }
@@ -121,20 +164,6 @@ impl Object for QueryOps {
     fn enumerate(self: &Arc<Self>) -> Enumerator {
         Enumerator::Str(METHODS)
     }
-}
-
-/// Refreshes the [`FileIndex`] for `root`, then runs `source` against it.
-///
-/// Shared by every `query.*` method.
-///
-/// # Errors
-///
-/// [`ErrorKind::InvalidOperation`] (via [`index_error`]) if refreshing the
-/// index fails: an I/O error scanning `root`, a redb error accessing the
-/// index database, or a TOML (de)serialization error on a stored record.
-fn query(root: &Path, source: &Source) -> Result<Value, Error> {
-    let index = FileIndex::refresh(root).map_err(index_error)?;
-    Ok(Value::from_object(index.query(source)))
 }
 
 /// Maps a [`FileIndexError`] into a [`minijinja::Error`].
@@ -179,9 +208,9 @@ impl Object for QueryOutcome {
     ///
     /// # Errors
     ///
-    /// - [`ErrorKind::UnknownMethod`] for any other method name.
+    /// - [`ErrorKind::UnknownMethod`] for any other method name
     /// - [`ErrorKind::InvalidOperation`] (via [`query_error`]) if the field
-    ///   path or filter expression is unparsable, or `.limit(...)` is negative.
+    ///   path or filter expression is unparsable, or `.limit(...)` is negative
     fn call_method(
         self: &Arc<Self>,
         _state: &State<'_, '_>,
@@ -219,19 +248,21 @@ impl Object for QueryOutcome {
 impl Object for IndexRecord {
     /// Resolves `record.<key>` (or `record["<key>"]`).
     ///
-    /// `"file"` returns a [`FileFields`] forwarding wrapper for
-    /// `record.file.*`; every other key resolves through
-    /// [`IndexRecord::field`], the same frontmatter/inline-field/tags lookup
-    /// `.where()`/`.sort()` use. A `key` that `field` rejects (dotted, empty,
-    /// or an unknown `file.*` accessor) resolves to `None` here, the same as
-    /// any other missing attribute, rather than surfacing
-    /// [`QueryError::UnknownFieldPath`] as a render error.
+    /// `"file"` and `"task"` each return a forwarding wrapper
+    /// ([`FileFields`], [`TaskFields`]) for `record.file.*`/
+    /// `record.task.*`; every other key resolves through
+    /// [`IndexRecord::field`], the same frontmatter/inline-field/tags
+    /// lookup `.where()`/`.sort()` use. A `key` that `field` rejects
+    /// (dotted, empty, or an unknown `file.*`/`task.*` accessor) resolves
+    /// to `None` here, the same as any other missing attribute, rather
+    /// than surfacing [`QueryError::UnknownFieldPath`] as a render error.
     fn get_value(self: &Arc<Self>, key: &Value) -> Option<Value> {
         let key = key.as_str()?;
-        if key == "file" {
-            return Some(Value::from_object(FileFields(Arc::clone(self))));
+        match key {
+            "file" => Some(Value::from_object(FileFields(Arc::clone(self)))),
+            "task" => Some(Value::from_object(TaskFields(Arc::clone(self)))),
+            _ => self.field(key).ok().map(field_value),
         }
-        self.field(key).ok().map(field_value)
     }
 }
 
@@ -256,6 +287,38 @@ impl Object for FileFields {
 
     fn enumerate(self: &Arc<Self>) -> Enumerator {
         Enumerator::Str(FileField::ACCESSOR_NAMES)
+    }
+}
+
+/// Forwards `record.task.<field>` to
+/// [`IndexRecord::task_completed`]/[`IndexRecord::task_text`].
+///
+/// Mirrors [`FileFields`]: minijinja resolves a dotted attribute path one
+/// segment at a time, so `record.task` must itself resolve to something
+/// before `.completed`/`.text` can be looked up.
+///
+/// On a page-level record (not built by [`FileIndex::query_tasks`]) both
+/// accessors resolve to minijinja's `none`, a defined empty value rather
+/// than a missing attribute, matching [`field_value`]'s handling of
+/// [`FieldValue::Null`].
+#[derive(Debug)]
+struct TaskFields(Arc<IndexRecord>);
+
+impl Object for TaskFields {
+    fn get_value(self: &Arc<Self>, key: &Value) -> Option<Value> {
+        match key.as_str()? {
+            "completed" => Some(
+                self.0.task_completed().map_or(Value::from(()), Value::from),
+            ),
+            "text" => {
+                Some(self.0.task_text().map_or(Value::from(()), Value::from))
+            }
+            _ => None,
+        }
+    }
+
+    fn enumerate(self: &Arc<Self>) -> Enumerator {
+        Enumerator::Str(&["completed", "text"])
     }
 }
 
@@ -295,10 +358,12 @@ mod tests {
     use super::*;
     use crate::{DialogProvider, PresetDialogProvider};
 
-    /// A minimal [`Environment`] with `query` registered against `root`.
+    /// A minimal [`Environment`] with `query` and `tasks` registered
+    /// against `root`.
     fn env(root: &Path) -> Environment<'static> {
         let mut env = Environment::new();
-        QueryOps::new(Arc::from(root)).register(&mut env);
+        QueryOps::page(Arc::from(root)).register(&mut env);
+        QueryOps::task(Arc::from(root)).register(&mut env);
         env
     }
 
@@ -322,7 +387,7 @@ mod tests {
         #[test]
         fn returns_none_for_an_unknown_key() {
             let temp = tempfile::tempdir().expect("create temp dir");
-            let ops = Arc::new(QueryOps::new(Arc::from(temp.path())));
+            let ops = Arc::new(QueryOps::page(Arc::from(temp.path())));
 
             assert!(ops.get_value(&Value::from("unknown")).is_none());
         }
@@ -330,7 +395,7 @@ mod tests {
         #[test]
         fn returns_none_for_a_non_string_key() {
             let temp = tempfile::tempdir().expect("create temp dir");
-            let ops = Arc::new(QueryOps::new(Arc::from(temp.path())));
+            let ops = Arc::new(QueryOps::page(Arc::from(temp.path())));
 
             assert!(ops.get_value(&Value::from(1)).is_none());
         }
@@ -342,7 +407,7 @@ mod tests {
         #[test]
         fn lists_every_method() {
             let temp = tempfile::tempdir().expect("create temp dir");
-            let ops = Arc::new(QueryOps::new(Arc::from(temp.path())));
+            let ops = Arc::new(QueryOps::page(Arc::from(temp.path())));
 
             assert!(matches!(ops.enumerate(), Enumerator::Str(METHODS)));
         }
@@ -350,7 +415,7 @@ mod tests {
         #[test]
         fn every_enumerated_method_resolves_via_get_value() {
             let temp = tempfile::tempdir().expect("create temp dir");
-            let ops = Arc::new(QueryOps::new(Arc::from(temp.path())));
+            let ops = Arc::new(QueryOps::page(Arc::from(temp.path())));
 
             for method in METHODS {
                 assert!(
@@ -373,6 +438,17 @@ mod tests {
             write_note(temp.path(), "a.md", "# A");
 
             let rendered = render(temp.path(), "{{ query.all() | length }}")
+                .expect("render succeeds");
+
+            assert_eq!(rendered, "1");
+        }
+
+        #[test]
+        fn register_makes_tasks_reachable_through_a_real_environment() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_note(temp.path(), "todo.md", "- [ ] buy milk\n");
+
+            let rendered = render(temp.path(), "{{ tasks.all() | length }}")
                 .expect("render succeeds");
 
             assert_eq!(rendered, "1");
@@ -425,6 +501,37 @@ mod tests {
             .expect("render succeeds");
 
             assert_eq!(rendered, "dune");
+        }
+
+        #[test]
+        fn from_tags_keeps_only_matching_notes_tasks() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_note(temp.path(), "a.md", "#projects\n- [ ] project task\n");
+            write_note(temp.path(), "b.md", "#books\n- [ ] book task\n");
+
+            let rendered = render(
+                temp.path(),
+                r##"{% for t in tasks.from_tags("#projects") %}{{ t.task.text }}{% endfor %}"##,
+            )
+            .expect("render succeeds");
+
+            assert_eq!(rendered, "project task");
+        }
+
+        #[test]
+        fn from_folder_keeps_only_notes_under_the_folder_tasks() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::create_dir_all(temp.path().join("projects")).expect("mkdir");
+            write_note(temp.path(), "projects/a.md", "- [ ] project task\n");
+            write_note(temp.path(), "other.md", "- [ ] other task\n");
+
+            let rendered = render(
+                temp.path(),
+                r#"{% for t in tasks.from_folder("projects") %}{{ t.task.text }}{% endfor %}"#,
+            )
+            .expect("render succeeds");
+
+            assert_eq!(rendered, "project task");
         }
     }
 
@@ -492,6 +599,27 @@ mod tests {
 
             assert_eq!(rendered, "2");
         }
+
+        #[test]
+        fn where_filters_by_task_completion_not_by_note() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_note(
+                temp.path(),
+                "todo.md",
+                "- [ ] buy milk\n- [x] pay rent\n",
+            );
+
+            let rendered = render(
+                temp.path(),
+                r#"{% for t in tasks.all().where("task.completed == true") %}{{ t.task.text }}{% endfor %}"#,
+            )
+            .expect("render succeeds");
+
+            // The Note has one complete and one incomplete task: filtering
+            // must keep only the matching task row, not both of the one
+            // Note that has at least one match.
+            assert_eq!(rendered, "pay rent");
+        }
     }
 
     mod attribute_resolution {
@@ -555,6 +683,60 @@ mod tests {
 
             let expected = format!("{},", FileField::ACCESSOR_NAMES.join(","));
             assert_eq!(rendered, expected);
+        }
+
+        #[test]
+        fn task_completed_and_task_text_resolve_per_row() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_note(
+                temp.path(),
+                "todo.md",
+                "- [ ] buy milk\n- [x] pay rent\n",
+            );
+
+            let rendered = render(
+                temp.path(),
+                "{% for t in tasks.all() %}{{ t.task.completed }}:{{ \
+                 t.task.text }} {% endfor %}",
+            )
+            .expect("render succeeds");
+
+            assert_eq!(rendered, "false:buy milk true:pay rent ");
+        }
+
+        #[test]
+        fn task_rows_retain_parent_note_metadata_for_filtering_and_display() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_note(
+                temp.path(),
+                "project.md",
+                "---\ntitle: Launch\n---\nFiled under #projects.\n\n- [ ] \
+                 ship it\n",
+            );
+
+            let rendered = render(
+                temp.path(),
+                "{% for t in tasks.all() %}{{ t.file.name }}|{{ t.title }}|{{ \
+                 t.tags | length }}{% endfor %}",
+            )
+            .expect("render succeeds");
+
+            assert_eq!(rendered, "project|Launch|1");
+        }
+
+        #[test]
+        fn task_completed_and_task_text_are_none_on_a_page_level_record() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_note(temp.path(), "note.md", "# No tasks here");
+
+            let rendered = render(
+                temp.path(),
+                "{{ query.all()[0].task.completed is none }}:{{ \
+                 query.all()[0].task.text is none }}",
+            )
+            .expect("render succeeds");
+
+            assert_eq!(rendered, "true:true");
         }
     }
 
@@ -647,6 +829,49 @@ mod tests {
 
             assert!(error.to_string().contains("query failed"));
         }
+
+        #[test]
+        fn unparsable_filter_expression_on_tasks_surfaces_as_a_render_error() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_note(temp.path(), "todo.md", "- [ ] buy milk\n");
+
+            let error = render(
+                temp.path(),
+                r#"{{ tasks.all().filter("task.completed >") }}"#,
+            )
+            .expect_err("malformed filter expression should error");
+
+            assert!(error.to_string().contains("query failed"));
+        }
+
+        #[cfg(unix)]
+        #[test]
+        fn refresh_failure_surfaces_as_a_render_error_not_a_panic() {
+            use std::{os::unix::fs::PermissionsExt as _, path::Path};
+
+            struct RestorePermissions<'a>(&'a Path);
+
+            impl Drop for RestorePermissions<'_> {
+                fn drop(&mut self) {
+                    let _ = fs::set_permissions(
+                        self.0,
+                        fs::Permissions::from_mode(0o700),
+                    );
+                }
+            }
+
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let locked = temp.path().join("locked");
+            fs::create_dir(&locked).expect("create locked dir");
+            fs::set_permissions(&locked, fs::Permissions::from_mode(0o000))
+                .expect("revoke read permission");
+            let _restore = RestorePermissions(&locked);
+
+            let error = render(temp.path(), "{{ query.all() | length }}")
+                .expect_err("unreadable subdirectory should fail the refresh");
+
+            assert!(error.to_string().contains("failed to refresh"));
+        }
     }
 
     mod refresh {
@@ -670,6 +895,32 @@ mod tests {
                 .render_str("{{ query.all() | length }}", minijinja::context!())
                 .expect("render succeeds");
             assert_eq!(second, "2");
+        }
+    }
+
+    mod task_expansion {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn expands_one_note_with_two_tasks_into_two_rows_not_one() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_note(
+                temp.path(),
+                "todo.md",
+                "- [ ] buy milk\n- [x] pay rent\n",
+            );
+
+            // A page-level query over the same Note returns exactly one
+            // row; the task-level query must not collapse back to it.
+            let pages = render(temp.path(), "{{ query.all() | length }}")
+                .expect("render succeeds");
+            let tasks = render(temp.path(), "{{ tasks.all() | length }}")
+                .expect("render succeeds");
+
+            assert_eq!(pages, "1");
+            assert_eq!(tasks, "2");
         }
     }
 }

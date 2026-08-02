@@ -1,14 +1,16 @@
-//! Page-level query source selection, field resolution, and outcome
-//! transformations.
+//! Page-level and task-level query source selection, field resolution, and
+//! outcome transformations.
 //!
 //! Main components:
-//! - [`Source`]: Selects which Notes a page-level query includes.
+//! - [`Source`]: Selects which Notes a page-level or task-level query includes.
 //! - [`IndexRecord`]: Pairs a [`FileRecord`] with its parsed [`Note`] and
-//!   resolves fields by path.
-//! - [`QueryOutcome`]: Page-level query result collection supporting method
-//!   chaining ([`QueryOutcome::filter`], [`QueryOutcome::sort`],
+//!   resolves fields by path. Task-level rows (built by
+//!   [`super::FileIndex::query_tasks`]) are the same type with `task.*` fields
+//!   set, keeping their parent Note's metadata for filtering and display.
+//! - [`QueryOutcome`]: Query result collection supporting method chaining
+//!   ([`QueryOutcome::filter`], [`QueryOutcome::sort`],
 //!   [`QueryOutcome::limit`], [`QueryOutcome::group_by`],
-//!   [`QueryOutcome::flatten`]).
+//!   [`QueryOutcome::flatten`]), shared by page-level and task-level results.
 //! - [`QueryError`]: Errors returned by field resolution and outcome
 //!   transformations.
 
@@ -26,20 +28,26 @@ use sort::sort_key_cmp;
 use super::file::{FileField, FileRecord};
 use crate::note::{FieldValue, Note};
 
-/// Iterable, page-level collection of [`IndexRecord`] values returned by
-/// [`super::FileIndex::query`].
+/// Iterable collection of [`IndexRecord`] values returned by
+/// [`super::FileIndex::query`] (one row per Note) or
+/// [`super::FileIndex::query_tasks`] (one row per task item).
 ///
-/// [`Self::filter`], [`Self::sort`], [`Self::limit`], [`Self::group_by`],
-/// and [`Self::flatten`] each consume this outcome and return a new,
-/// transformed one, so calls chain naturally:
-/// `outcome.filter("rating > 7")?.sort("rating", true)?.limit(10)?`.
+/// Both kinds share this type and its transformation methods; nothing at the
+/// Rust type level distinguishes a page-level outcome from a task-level one, so
+/// a consumer expecting page rows (e.g. a future terminal renderer) must not
+/// assume every row came from [`super::FileIndex::query`].
+///
+/// [`Self::filter`], [`Self::sort`], [`Self::limit`], [`Self::group_by`], and
+/// [`Self::flatten`] each consume this outcome and return a new, transformed
+/// one, so calls chain naturally: `outcome.filter("rating > 7")?.sort("rating",
+/// true)?.limit(10)?`.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct QueryOutcome {
     records: Vec<IndexRecord>,
 }
 
 impl QueryOutcome {
-    /// Wraps `records` as a page-level query result.
+    /// Wraps `records` as a query result.
     pub(super) fn new(records: Vec<IndexRecord>) -> Self {
         Self {
             records,
@@ -133,8 +141,7 @@ impl QueryOutcome {
     /// Matches Dataview's sort semantics:
     /// - **Null Values**: Records missing `path` ([`FieldValue::Null`]) sort as
     ///   minimum values, so they lead ascending and trail descending.
-    /// - **Stability**: The sort is stable — equal or incomparable records
-    ///   preserve their original relative order.
+    /// - **Stability**: The sort is stable; equal or incomparable records
     ///
     /// # Errors
     ///
@@ -256,12 +263,41 @@ impl<'a> IntoIterator for &'a QueryOutcome {
     }
 }
 
+/// A `task.<field>` accessor, valid on task-level rows built by
+/// [`super::FileIndex::query_tasks`].
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub(super) enum TaskField {
+    /// Task completion state (`- [ ]` vs `- [x]`).
+    Completed,
+    /// Task item text.
+    Text,
+}
+
+impl TaskField {
+    /// Parses a `task.<field>` accessor name (the part after `"task."`).
+    ///
+    /// Returns `None` if `name` is not a known accessor. Mirrors
+    /// [`FileField::parse`]'s single failure mode; the caller building
+    /// [`QueryError::UnknownFieldPath`] already has the full `task.<field>`
+    /// path.
+    pub(super) fn parse(name: &str) -> Option<Self> {
+        match name {
+            "completed" => Some(Self::Completed),
+            "text" => Some(Self::Text),
+            _ => None,
+        }
+    }
+}
+
 /// A query field path, resolved once per [`QueryOutcome`] transformation
 /// and then applied to every [`IndexRecord`].
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) enum FieldPath {
     /// A `file.<field>` accessor.
     File(FileField),
+    /// A `task.<field>` accessor, resolving to [`FieldValue::Null`] on
+    /// page-level records.
+    Task(TaskField),
     /// A frontmatter or inline field, looked up by key.
     Metadata(String),
     /// The Note's markdown tags, as a [`FieldValue::List`] of tag strings.
@@ -271,13 +307,13 @@ pub(super) enum FieldPath {
 impl FieldPath {
     /// Parses a query field path string into a [`FieldPath`].
     ///
-    /// Resolves `file.<field>` accessors, `tags`, or frontmatter/inline
-    /// field keys.
+    /// Resolves `file.<field>` accessors, `task.<field>` accessors, `tags`,
+    /// or frontmatter/inline field keys.
     ///
     /// # Errors
     ///
     /// Returns [`QueryError::UnknownFieldPath`] if `path` is empty, uses an
-    /// unknown `file.*` accessor, or has unexpected `.` structure.
+    /// unknown `file.*`/`task.*` accessor, or has unexpected `.` structure.
     pub(super) fn parse(path: &str) -> Result<Self, QueryError> {
         let path = path.trim();
         let invalid = || QueryError::UnknownFieldPath {
@@ -290,7 +326,18 @@ impl FieldPath {
                 FileField::parse(field).map(Self::File).ok_or_else(invalid)
             };
         }
-        if path.is_empty() || path == "file" || path.contains('.') {
+        if let Some(field) = path.strip_prefix("task.") {
+            return if field.is_empty() || field.contains('.') {
+                Err(invalid())
+            } else {
+                TaskField::parse(field).map(Self::Task).ok_or_else(invalid)
+            };
+        }
+        if path.is_empty()
+            || path == "file"
+            || path == "task"
+            || path.contains('.')
+        {
             return Err(invalid());
         }
         if path == "tags" {
@@ -300,7 +347,9 @@ impl FieldPath {
     }
 }
 
-/// One page-level query result: a [`FileRecord`] paired with its [`Note`].
+/// One query result row: a [`FileRecord`] paired with its [`Note`]. A row
+/// built by [`super::FileIndex::query_tasks`] also carries one task item's
+/// fields.
 ///
 /// Exposes both `file.*` fields and Note Metadata (frontmatter, inline
 /// fields, tags) through one value for Template and CLI callers.
@@ -311,6 +360,21 @@ pub(crate) struct IndexRecord {
     /// Overrides field resolution for exploded rows produced by
     /// [`QueryOutcome::flatten`].
     flattened: Vec<(FieldPath, FieldValue)>,
+    /// This row's task fields, set by [`super::FileIndex::query_tasks`].
+    /// `None` for page-level records.
+    task: Option<TaskInfo>,
+}
+
+/// Per-task fields layered onto an [`IndexRecord`] by
+/// [`super::FileIndex::query_tasks`]. A task-level row keeps its parent Note's
+/// `file`/`note` fields for filtering and display, adding only these two.
+///
+/// Distinct from [`IndexRecord::flattened`], which overrides an *existing*
+/// field path rather than adding new ones.
+#[derive(Clone, Debug, PartialEq)]
+struct TaskInfo {
+    completed: bool,
+    text: String,
 }
 
 impl IndexRecord {
@@ -320,7 +384,43 @@ impl IndexRecord {
             file,
             note,
             flattened: Vec::new(),
+            task: None,
         }
+    }
+
+    /// Returns this record as one task row, with `task.completed` and
+    /// `task.text` set to `completed`/`text`.
+    ///
+    /// Used by [`super::FileIndex::query_tasks`] to turn one page-level
+    /// record into one row per task item, retaining the parent Note's
+    /// `file.*`, frontmatter, inline-field, and tag metadata for filtering
+    /// and display via [`Self::field`].
+    pub(super) fn with_task(
+        mut self,
+        completed: bool,
+        text: impl Into<String>,
+    ) -> Self {
+        self.task = Some(TaskInfo {
+            completed,
+            text: text.into(),
+        });
+        self
+    }
+
+    /// This row's task completion state, if it's a task-level row built by
+    /// [`super::FileIndex::query_tasks`]. `None` for page-level records.
+    #[inline]
+    #[must_use]
+    pub(crate) fn task_completed(&self) -> Option<bool> {
+        self.task.as_ref().map(|task| task.completed)
+    }
+
+    /// This row's task text, if it's a task-level row built by
+    /// [`super::FileIndex::query_tasks`]. `None` for page-level records.
+    #[inline]
+    #[must_use]
+    pub(crate) fn task_text(&self) -> Option<&str> {
+        self.task.as_ref().map(|task| task.text.as_str())
     }
 
     /// The indexed file's general metadata.
@@ -339,11 +439,13 @@ impl IndexRecord {
 
     /// Resolves `path` against this record's file and note metadata.
     ///
-    /// Resolves `file.*` accessors, frontmatter fields, inline fields, and
-    /// `tags`. Frontmatter fields take precedence over an inline field with the
-    /// same key (see [`Note::fields`]). A well-formed path this record has no
-    /// value for (e.g. a frontmatter key it does not define) resolves to
-    /// [`FieldValue::Null`], not an error.
+    /// Resolves `file.*` accessors, `task.*` accessors, frontmatter fields,
+    /// inline fields, and `tags`:
+    /// - Frontmatter fields take precedence over an inline field with the same
+    ///   key (see [`Note::fields`]).
+    /// - A well-formed path this record has no value for (e.g. a frontmatter
+    ///   key it does not define, or a `task.*` accessor on a page-level record)
+    ///   resolves to [`FieldValue::Null`], not an error.
     ///
     /// # Errors
     ///
@@ -363,6 +465,13 @@ impl IndexRecord {
         }
         match path {
             FieldPath::File(field) => field.resolve(&self.file),
+            FieldPath::Task(field) => self.task.as_ref().map_or(
+                FieldValue::Null,
+                |task| match field {
+                    TaskField::Completed => FieldValue::Bool(task.completed),
+                    TaskField::Text => FieldValue::String(task.text.clone()),
+                },
+            ),
             FieldPath::Tags => FieldValue::List(
                 self.note
                     .tags()
@@ -392,7 +501,7 @@ impl IndexRecord {
     }
 }
 
-/// Selects which markdown Notes a page-level query includes.
+/// Selects which markdown Notes a page-level or task-level query includes.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum Source {
     /// Every indexed markdown Note.
@@ -523,6 +632,35 @@ mod tests {
             assert_eq!(record.file(), &file);
             assert_eq!(record.note(), &note);
         }
+
+        #[test]
+        fn with_task_sets_task_completed_and_task_text() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("a.md"), "body").expect("write file");
+            let index = FileIndex::build(temp.path()).expect("build index");
+            let file = index.record(Path::new("a.md")).expect("record").clone();
+            let note = index.note(Path::new("a.md")).expect("note").clone();
+
+            let record =
+                IndexRecord::new(file, note).with_task(true, "Buy milk");
+
+            assert_eq!(record.task_completed(), Some(true));
+            assert_eq!(record.task_text(), Some("Buy milk"));
+        }
+
+        #[test]
+        fn task_accessors_return_none_for_page_level_records() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("a.md"), "body").expect("write file");
+            let index = FileIndex::build(temp.path()).expect("build index");
+            let file = index.record(Path::new("a.md")).expect("record").clone();
+            let note = index.note(Path::new("a.md")).expect("note").clone();
+
+            let record = IndexRecord::new(file, note);
+
+            assert_eq!(record.task_completed(), None);
+            assert_eq!(record.task_text(), None);
+        }
     }
 
     mod field_path {
@@ -650,6 +788,10 @@ mod tests {
         #[case::trailing_dot("file.")]
         #[case::unknown_file_accessor("file.bogus")]
         #[case::extra_file_segment("file.name.extra")]
+        #[case::bare_task("task")]
+        #[case::trailing_dot_task("task.")]
+        #[case::unknown_task_accessor("task.bogus")]
+        #[case::extra_task_segment("task.completed.extra")]
         #[case::dotted_metadata_path("a.b")]
         fn rejects_malformed_field_paths(#[case] path: &str) {
             let temp = tempfile::tempdir().expect("create temp dir");
@@ -662,6 +804,35 @@ mod tests {
                     path: path.to_owned()
                 })
             );
+        }
+
+        #[test]
+        fn resolves_task_completed_and_task_text_on_task_rows() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let record = outcome_for(temp.path(), "body")
+                .into_iter()
+                .next()
+                .expect("record")
+                .with_task(true, "Buy milk");
+
+            assert_eq!(
+                record.field("task.completed"),
+                Ok(FieldValue::Bool(true))
+            );
+            assert_eq!(
+                record.field("task.text"),
+                Ok(FieldValue::String("Buy milk".to_owned()))
+            );
+        }
+
+        #[test]
+        fn task_fields_resolve_to_null_on_page_level_records() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let outcome = outcome_for(temp.path(), "body");
+            let record = outcome.get(0).expect("record");
+
+            assert_eq!(record.field("task.completed"), Ok(FieldValue::Null));
+            assert_eq!(record.field("task.text"), Ok(FieldValue::Null));
         }
     }
 

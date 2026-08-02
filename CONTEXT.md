@@ -139,17 +139,17 @@ A `Key:: Value` pair embedded in a note's body using Dataview-compatible syntax:
 _Avoid_: metadata tag, embedded field
 
 ### QueryOutcome
-The type returned by a query — an iterable, indexable collection of `IndexRecord`s. Supports `len`, indexing by integer position, and iteration via `{% for %}`. Registered as a minijinja type so pipeline filters compose against it.
+The type returned by a page-level (`query`) or task-level (`tasks`) query: an iterable, indexable collection of `IndexRecord`s. Supports `len`, indexing by integer position, and iteration via `{% for %}`. Registered as a minijinja type so pipeline filters compose against it.
 _Avoid_: QueryResult, result set
 
 ### IndexRecord
-A single item inside a `QueryOutcome`: a Note with its implicit `file.*` fields and all indexed frontmatter/inline field metadata.
+A single item inside a `QueryOutcome`: a Note with its implicit `file.*` fields and all indexed frontmatter/inline field metadata. A task-level row (from `tasks.*`) is the same type with `task.completed`/`task.text` also set, retaining its parent Note's metadata.
 _Avoid_: QueryRow, page, record
 
 ### Pipeline Query
 A template-side query composed by chaining methods on the `query` namespace Object and the `QueryOutcome` values it returns. Non-terminal methods (`where`/`filter`, `sort`, `limit`, `group_by`, `flatten`) accept and return a `QueryOutcome`; terminal methods (`table`, `list`, `task_list`, `count`) accept a `QueryOutcome` and return a string. Terminal methods are also exposed as pipeline filters for template authors who prefer that syntax; non-terminal transformations are method calls only — there is no pipeline-filter form of `where`/`sort`/`limit`/`group_by`/`flatten`.
 
-`query` mirrors `Source`'s variants: `query.all()` selects every indexed Note, `query.from_tags(...)` and `query.from_folder(...)` start a page-level query from a tag or folder source. `tasks.from_tags(...)`/`tasks.from_folder(...)` is the parallel task-level namespace.
+`query` mirrors `Source`'s variants: `query.all()` selects every indexed Note, `query.from_tags(...)` and `query.from_folder(...)` start a page-level query from a tag or folder source. `tasks.all()`/`tasks.from_tags(...)`/`tasks.from_folder(...)` is the parallel task-level namespace: each matched Note's `- [ ]`/`- [x]` items become one row per task instead of one row per Note, exposing `task.completed` (bool) and `task.text` (string) alongside that Note's `file.*`, frontmatter, inline-field, and tag metadata.
 
 ```jinja
 {% for note in query.from_tags("#book").where("rating > 7").sort("rating", true) %}
@@ -161,16 +161,20 @@ A template-side query composed by chaining methods on the `query` namespace Obje
 {% set books = query.from_tags("#book") %}
 {% set idx = ui.select("Pick", books | map(attribute="file.name")) %}
 {{ books[idx].file.name }}
+
+{% for t in tasks.from_tags("#projects").where("task.completed == false") %}
+  - [ ] {{ t.task.text }} ({{ t.file.name }})
+{% endfor %}
 ```
 _Avoid_: DQL, dataview query
 
 ### CLI Query Commands
 
 #### list
-`traces list --from "#book" --where "rating > 7"` — page-level bullet list output.
+`traces list --from "#book" --where "rating > 7"`: page-level bullet list output.
 
 #### table
-`traces table "rating, author" --from "#book" --sort "rating" --desc` — page-level tabular output.
+`traces table "rating, author" --from "#book" --sort "rating" --desc`: page-level tabular output.
 
 #### task
-`traces task --from "#projects" --where "!completed"` — task-level output (operates on individual tasks, not pages).
+`traces task --from "#projects" --where "task.completed == false"`: task-level output (operates on individual tasks, not pages).
