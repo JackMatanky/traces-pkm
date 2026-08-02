@@ -12,7 +12,7 @@ pub(crate) struct List {
 }
 
 impl List {
-    /// Creates a list from its ordering flag and direct items.
+    /// Creates a list from `is_ordered` and its direct `items`.
     #[inline]
     #[must_use]
     pub(crate) fn new(is_ordered: bool, items: Vec<ListItem>) -> Self {
@@ -130,10 +130,10 @@ impl ListItem {
 
     /// Attaches Inline Fields parsed from this item's own text.
     ///
-    /// Distinct from the page-level Inline Fields `Note::inline_fields`
-    /// collects — those also include this item's fields (backward
-    /// compatible with page-level queries), but only this per-item list
-    /// resolves a field to the specific task or list item that declared it.
+    /// `Note::inline_fields` also includes these fields, for backward
+    /// compatibility with page-level queries. Only this per-item list,
+    /// however, resolves a field back to the specific task or list item
+    /// that declared it.
     #[inline]
     #[must_use]
     pub(crate) fn with_fields(mut self, fields: Vec<InlineField>) -> Self {
@@ -142,8 +142,8 @@ impl ListItem {
     }
 
     /// Inline Fields parsed from this item's own text: `Key:: Value`,
-    /// `[Key:: Value]`, `(Key:: Value)`, and — for task items — Dataview
-    /// date shorthand emoji (`🗓️`/`➕`/`🛫`/`⏳`/`✅`).
+    /// `[Key:: Value]`, and `(Key:: Value)` syntax, plus Dataview date
+    /// shorthand emoji (`🗓️`/`➕`/`🛫`/`⏳`/`✅`) for task items.
     #[inline]
     #[must_use]
     pub(crate) fn fields(&self) -> &[InlineField] {

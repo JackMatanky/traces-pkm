@@ -70,6 +70,11 @@ impl Frontmatter {
     }
 }
 
+/// Parses [`RawFrontmatter`] YAML text into [`MetadataField`] entries.
+///
+/// Empty frontmatter parses as [`Frontmatter::default`]. Malformed YAML or a
+/// non-mapping top-level value logs a warning and also falls back to
+/// [`Frontmatter::default`] rather than failing the whole note.
 impl From<&RawFrontmatter> for Frontmatter {
     fn from(raw: &RawFrontmatter) -> Self {
         if raw.is_empty() {
@@ -112,7 +117,7 @@ pub(crate) enum InlineFieldForm {
     HiddenKey,
 }
 
-/// Field key shared by [`MetadataField`] and [`InlineField`] — the key half
+/// Field key shared by [`MetadataField`] and [`InlineField`]: the key half
 /// of a Dataview-compatible `Key:: Value` pair, distinct from the many other
 /// bare `String`s this module handles (list item text, link targets, tag
 /// text).
@@ -265,7 +270,9 @@ impl FieldValue {
         matches!(self, Self::Null)
     }
 
-    /// Returns textual content for string-like values.
+    /// Returns the inner text for [`FieldValue::String`],
+    /// [`FieldValue::Date`], and [`FieldValue::Duration`] variants, or
+    /// `None` for any other kind.
     #[inline]
     #[must_use]
     pub(crate) fn as_str(&self) -> Option<&str> {
@@ -276,6 +283,14 @@ impl FieldValue {
     }
 }
 
+/// Converts a parsed YAML value into its [`FieldValue`] equivalent.
+///
+/// Plain strings are classified further: wikilink syntax becomes
+/// [`FieldValue::Link`], an ISO date prefix becomes [`FieldValue::Date`], and
+/// anything else stays [`FieldValue::String`]. A blank string becomes
+/// [`FieldValue::Null`], as does a number that fits neither `f64` nor `i64`.
+/// A [`serde_yaml::Value::Tagged`] value converts using its untagged inner
+/// value.
 impl From<serde_yaml::Value> for FieldValue {
     fn from(val: serde_yaml::Value) -> Self {
         match val {

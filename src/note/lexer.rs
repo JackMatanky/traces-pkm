@@ -156,7 +156,7 @@ enum FieldToken {
 
 /// Parses a bare inline field (`Key:: Value`) from the `Key::` prefix
 /// already matched by [`FieldToken`]'s body-field pattern, consuming the
-/// rest of the line as the raw value — equivalent to the regex
+/// rest of the line as the raw value, equivalent to the regex
 /// `(?m)^[ \t]*key::[ \t]*(.*)$`.
 ///
 /// Logos has no look-behind support, so a line-start check replaces that
@@ -257,8 +257,8 @@ fn find_closing_delimiter(after_sep: &str, pair: BracketPair) -> Option<usize> {
 
 /// Parses a Dataview task emoji shorthand (e.g. `🗓️2026-01-01`) starting
 /// just after its already-consumed emoji token, emitting an inline field
-/// keyed by `key` when the following text — optional inline whitespace,
-/// then exactly [`ISO_DATE_LEN`] bytes — is a valid ISO date.
+/// keyed by `key` when the following text (optional inline whitespace, then
+/// exactly [`ISO_DATE_LEN`] bytes) is a valid ISO date.
 ///
 /// Always skips when `lex.extras` is [`TaskShorthands::Exclude`]:
 /// [`extract_inline_fields`] lexes in that mode.
@@ -379,9 +379,10 @@ impl<'a> ValueParser<'a> {
 
     /// Parses one or more `,`-separated atoms starting at position `0`.
     ///
-    /// Returns `None` unless the first atom is followed by a `,` — confirming
-    /// this is a list, not a single atom — and every subsequent atom parses
-    /// successfully. A trailing `,` followed only by whitespace ends the list.
+    /// Returns `None` unless the first atom is followed by a `,`, confirming
+    /// this is a list and not a single atom, and every subsequent atom
+    /// parses successfully. A trailing `,` followed only by whitespace ends
+    /// the list.
     fn parse_comma_list(&self) -> Option<Vec<FieldValue>> {
         let (first, mut pos) = self.parse_atom_at(0)?;
         pos = self.skip_whitespace(pos);
@@ -554,8 +555,8 @@ impl<'a> ValueParser<'a> {
     }
 
     /// Finds the end offset of a numeric token at `pos`: digits and the
-    /// characters `+-.eE`, without validating that they form a valid `f64` —
-    /// callers ([`Self::parse_number_at`], [`Self::parse_duration_part_end`])
+    /// characters `+-.eE`, without validating that they form a valid `f64`.
+    /// Callers ([`Self::parse_number_at`], [`Self::parse_duration_part_end`])
     /// check that separately.
     fn parse_number_end(&self, pos: usize) -> Option<usize> {
         self.source
@@ -570,9 +571,9 @@ impl<'a> ValueParser<'a> {
 
     /// Parses a `#tag`-shaped atom (`#book`, `#projects/active`) at `pos`.
     ///
-    /// Requires `#` followed by an alphabetic character. The match is returned
-    /// as [`FieldValue::String`] holding the tag text, including the leading
-    /// `#` — there's no dedicated tag value kind.
+    /// Requires `#` followed by an alphabetic character. The match is
+    /// returned as [`FieldValue::String`] holding the tag text, including
+    /// the leading `#`, since there's no dedicated tag value kind.
     fn parse_tag_at(&self, pos: usize) -> Option<Atom> {
         let rest = self.source.from(pos)?.strip_prefix('#')?;
         let mut chars = rest.chars();
@@ -593,7 +594,7 @@ impl<'a> ValueParser<'a> {
     }
 
     /// Whether `pos` is at the end of the text or immediately before
-    /// whitespace or a `,` — the position an atom must end at to avoid
+    /// whitespace or a `,`: the position an atom must end at to avoid
     /// greedily consuming into the next atom or trailing text.
     fn is_atom_boundary(&self, pos: usize) -> bool {
         self.source.from(pos).is_some_and(|source| {

@@ -34,7 +34,7 @@ impl<'a> SourceText<'a> {
         self.0.get(range)
     }
 
-    /// Returns whether the source at `pos` starts with `needle`.
+    /// Returns `true` if the source at `pos` starts with `needle`.
     #[inline]
     #[must_use]
     pub(crate) fn starts_with(&self, pos: usize, needle: &str) -> bool {

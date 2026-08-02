@@ -352,8 +352,8 @@ impl ListTracker {
         !self.item_stack.is_empty()
     }
 
-    /// Records an inline code span on the active item's display text
-    /// only — inline code is excluded from inline field/tag scanning.
+    /// Records an inline code span on the active item's display text only.
+    /// Inline code is excluded from inline field/tag scanning.
     fn inline_code(&mut self, text: &str) {
         if let Some(item) = self.item_stack.last_mut() {
             item.push_code(text);
@@ -533,7 +533,7 @@ impl ItemFrame {
         self.scan_buffer.push(ch);
     }
 
-    /// Appends inline code text to display text only — inline code is
+    /// Appends inline code text to display text only. Inline code is
     /// excluded from inline field/tag scanning.
     fn push_code(&mut self, text: &str) {
         self.text_buffer.push_str(text);

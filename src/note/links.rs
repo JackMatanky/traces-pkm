@@ -52,7 +52,10 @@ impl Outlink {
         (consumed == s.len()).then_some(link)
     }
 
-    /// Parses an Obsidian wikilink prefix and returns its byte length.
+    /// Parses an Obsidian wikilink (`[[target|text]]` or `![[target|text]]`)
+    /// starting at the beginning of `s`, allowing trailing text after the
+    /// closing `]]`. Returns the parsed link paired with the number of bytes
+    /// it consumed from `s`.
     #[must_use]
     pub(crate) fn parse_wikilink_prefix(s: &str) -> Option<(Self, usize)> {
         let source = SourceText::new(s);
@@ -157,6 +160,9 @@ fn find_unescaped(
     None
 }
 
+/// Finds the byte offset of the first unescaped `]` in `s` that is
+/// immediately followed by a second `]`, marking the wikilink's closing
+/// `]]`.
 fn find_wikilink_close(s: &str) -> Option<usize> {
     let source = SourceText::new(s);
     find_unescaped(s, |index, ch| {
@@ -164,6 +170,9 @@ fn find_wikilink_close(s: &str) -> Option<usize> {
     })
 }
 
+/// Splits wikilink inner text at the first unescaped `|` into a
+/// `(target, alias)` pair, or `(s, s)` when there is no `|` separator, so
+/// callers can treat the alias as identical to the target.
 fn split_wikilink_text(s: &str) -> (&str, &str) {
     let source = SourceText::new(s);
     match find_unescaped(s, |_, ch| ch == '|') {
@@ -172,6 +181,11 @@ fn split_wikilink_text(s: &str) -> (&str, &str) {
     }
 }
 
+/// Un-escapes a wikilink target or alias segment.
+///
+/// A backslash escapes only `|`: `\|` becomes a literal `|` (the escape
+/// [`split_wikilink_text`] looks past when it locates the real separator).
+/// Every other backslash is copied through unchanged.
 fn unescape_wikilink_part(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut escaped = false;

@@ -21,7 +21,7 @@ impl Tag {
         &self.0
     }
 
-    /// Whether this tag is `other`, or a sub-tag nested under it.
+    /// Whether this tag equals `other`, or is a sub-tag nested under it.
     ///
     /// Mirrors Dataview's distinction between exact tags (`file.etags`) and
     /// unique tags including subtags (`file.tags`): `#projects/active` is
