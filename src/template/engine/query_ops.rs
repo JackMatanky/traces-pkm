@@ -208,9 +208,9 @@ impl Object for QueryOutcome {
     ///
     /// # Errors
     ///
-    /// - [`ErrorKind::UnknownMethod`] for any other method name.
+    /// - [`ErrorKind::UnknownMethod`] for any other method name
     /// - [`ErrorKind::InvalidOperation`] (via [`query_error`]) if the field
-    ///   path or filter expression is unparsable, or `.limit(...)` is negative.
+    ///   path or filter expression is unparsable, or `.limit(...)` is negative
     fn call_method(
         self: &Arc<Self>,
         _state: &State<'_, '_>,

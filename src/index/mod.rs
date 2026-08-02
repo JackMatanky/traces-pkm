@@ -83,12 +83,13 @@ impl FileIndex {
     /// Refreshes the persisted index for `root` against current filesystem
     /// state.
     ///
-    /// Compares each current file's `(created_at, modified_at, size)` — via
-    /// [`FileRecord`] equality — against the previously persisted record.
-    /// Unchanged markdown Notes reuse their previously parsed [`Note`];
-    /// added or changed markdown Notes are reparsed. Deleted files are
-    /// dropped because they no longer appear in the scan. Returns the fresh
-    /// [`FileIndex`] and persists any changes.
+    /// Compares each current file's `(created_at, modified_at, size)`
+    /// against the previously persisted record ([`FileRecord`] equality):
+    /// - Unchanged markdown Notes reuse their previously parsed [`Note`].
+    /// - Added or changed markdown Notes are reparsed.
+    /// - Deleted files are dropped, since they no longer appear in the scan.
+    ///
+    /// Returns the fresh [`FileIndex`] and persists any changes.
     ///
     /// # Errors
     ///
@@ -183,7 +184,7 @@ impl FileIndex {
     ///
     /// # Performance
     ///
-    /// O(log n) — [`Self::notes`] is kept sorted by path, so this binary
+    /// O(log n): [`Self::notes`] is kept sorted by path, so this binary
     /// searches rather than scanning.
     #[inline]
     #[must_use]
@@ -198,7 +199,7 @@ impl FileIndex {
     ///
     /// # Performance
     ///
-    /// O(log n) — [`Self::records`] is kept sorted by path, so this binary
+    /// O(log n): [`Self::records`] is kept sorted by path, so this binary
     /// searches rather than scanning.
     #[inline]
     #[must_use]
@@ -219,7 +220,7 @@ impl FileIndex {
     ///
     /// # Performance
     ///
-    /// O(n + m) — single-pass iterator merge-join across `records` and `notes`
+    /// O(n + m): single-pass iterator merge-join across `records` and `notes`
     /// without binary searching per note or redundant allocations.
     #[must_use]
     pub(crate) fn query(self, source: &Source) -> QueryOutcome {

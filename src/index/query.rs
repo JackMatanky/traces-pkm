@@ -141,8 +141,7 @@ impl QueryOutcome {
     /// Matches Dataview's sort semantics:
     /// - **Null Values**: Records missing `path` ([`FieldValue::Null`]) sort as
     ///   minimum values, so they lead ascending and trail descending.
-    /// - **Stability**: The sort is stable — equal or incomparable records
-    ///   preserve their original relative order.
+    /// - **Stability**: The sort is stable; equal or incomparable records
     ///
     /// # Errors
     ///

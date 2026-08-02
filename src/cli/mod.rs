@@ -56,7 +56,7 @@ pub enum UserAbort {
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
-    /// Template name to instantiate — the default `traces -i <name>` dispatch,
+    /// Template name to instantiate: the default `traces -i <name>` dispatch,
     /// equivalent to `traces template -i <name>`. Pass with no value to
     /// trigger the interactive fuzzy picker instead.
     //
@@ -83,8 +83,8 @@ impl Cli {
     /// # Errors
     ///
     /// - [`CliError::NoCommand`] if neither a subcommand nor `-i`/`--input` was
-    ///   provided.
-    /// - [`CliError`] if command execution fails.
+    ///   provided
+    /// - [`CliError`] if command execution fails
     fn run(
         self,
         service: &ConfigService,
@@ -158,8 +158,8 @@ impl Commands {
 /// # Errors
 ///
 /// - [`CliError::NoCommand`] if neither a subcommand nor `-i`/`--input` was
-///   provided.
-/// - [`CliError`] if command execution fails.
+///   provided
+/// - [`CliError`] if command execution fails
 #[inline]
 pub fn run() -> Result<CommandOutcome, CliError> {
     let provider: Arc<dyn DialogProvider> =

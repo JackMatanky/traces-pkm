@@ -49,7 +49,7 @@ pub(super) struct TemplateEngine {
 impl TemplateEngine {
     /// Builds an engine backed by `loader`, registering every submodule's
     /// custom functions ([`date_ops`], [`file_ops`], [`num_ops`],
-    /// [`path_ops`], [`query_ops`], [`str_ops`], [`ui_ops`] — see each
+    /// [`path_ops`], [`query_ops`], [`str_ops`], [`ui_ops`]; see each
     /// module's own docs for what it contributes) plus the standalone
     /// [`uuid`](fn@uuid) function.
     ///
@@ -160,7 +160,7 @@ mod tests {
         TemplateLoader::new(Some(path.to_path_buf()), None)
     }
 
-    /// A cheap, deterministic provider for tests that never exercise `ui.*` —
+    /// A cheap, deterministic provider for tests that never exercise `ui.*`;
     /// `TemplateEngine::new` requires one regardless.
     fn preset_provider() -> Arc<dyn DialogProvider> {
         Arc::new(crate::PresetDialogProvider::new())

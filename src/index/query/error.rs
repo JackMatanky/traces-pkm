@@ -4,7 +4,7 @@ use thiserror::Error;
 
 /// Errors returned during field resolution or query transformations.
 ///
-/// These report malformed *inputs* — an unparsable field path or filter
+/// These report malformed *inputs*: an unparsable field path or filter
 /// expression. A well-formed field path that a given [`super::IndexRecord`]
 /// simply does not have a value for resolves to
 /// [`crate::note::FieldValue::Null`] instead of erroring.

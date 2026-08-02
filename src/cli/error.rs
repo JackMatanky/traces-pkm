@@ -34,7 +34,7 @@ use crate::{
 )]
 #[non_exhaustive]
 pub enum CliError {
-    /// The process current directory could not be read — shared by every
+    /// The process current directory could not be read. Shared by every
     /// command that needs it (Config loading, trust target resolution,
     /// `init`).
     #[error("failed to read the current directory")]
@@ -43,7 +43,7 @@ pub enum CliError {
         #[source]
         source: io::Error,
     },
-    /// Configuration loading from `cwd` failed — shared by every command
+    /// Configuration loading from `cwd` failed. Shared by every command
     /// that needs the current configuration.
     #[error("failed to load configuration from {cwd}")]
     ConfigLoad {
@@ -176,7 +176,7 @@ pub enum CliError {
     /// directory.
     #[error("no templates found")]
     NoTemplates,
-    /// The interactive picker prompt itself failed — an I/O error, or the
+    /// The interactive picker prompt itself failed: an I/O error, or the
     /// user cancelled (Esc) or interrupted (Ctrl-C) it.
     #[error("template picker failed")]
     TemplatePicker {
@@ -209,7 +209,7 @@ impl CliError {
     }
 }
 
-/// Coarse classification of a Template `Render` failure — enough to give a
+/// Coarse classification of a Template `Render` failure: enough to give a
 /// stable diagnostic code and remediation without losing `error`'s retained
 /// location, detail, or source chain.
 ///

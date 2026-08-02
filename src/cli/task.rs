@@ -30,12 +30,11 @@ impl Task {
     ///
     /// # Errors
     ///
-    /// - [`CliError::CurrentDirectory`] if the current directory cannot be
-    ///   read.
+    /// - [`CliError::CurrentDirectory`] if the current directory cannot be read
     /// - [`CliError::ConfigLoad`] if loading configuration fails (including an
-    ///   untrusted project root).
-    /// - [`CliError::Index`] if refreshing the `FileIndex` fails.
-    /// - [`CliError::Query`] if `--where` is an unparsable filter expression.
+    ///   untrusted project root)
+    /// - [`CliError::Index`] if refreshing the `FileIndex` fails
+    /// - [`CliError::Query`] if `--where` is an unparsable filter expression
     #[expect(
         clippy::print_stdout,
         reason = "task rows are primary command output, not diagnostic text; \
@@ -64,8 +63,8 @@ impl Task {
     ///
     /// # Errors
     ///
-    /// - [`CliError::Index`] if refreshing the `FileIndex` fails.
-    /// - [`CliError::Query`] if `--where` is an unparsable filter expression.
+    /// - [`CliError::Index`] if refreshing the `FileIndex` fails
+    /// - [`CliError::Query`] if `--where` is an unparsable filter expression
     fn lines(&self, root: &Path) -> Result<Vec<String>, CliError> {
         let index =
             FileIndex::refresh(root).map_err(|source| CliError::Index {
