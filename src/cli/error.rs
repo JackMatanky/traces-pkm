@@ -1,8 +1,7 @@
-//! CLI-facing error types and diagnostic formatting.
+//! CLI-facing errors and diagnostic formatting.
 //!
-//! Defines [`CliError`], the single error presentation seam for all `traces`
-//! CLI commands, wrapping domain errors with user-facing diagnostics via
-//! [`miette::Diagnostic`].
+//! Defines [`CliError`], the presentation seam that turns domain failures into
+//! stable diagnostic codes, help text, and deliberate-abort detection.
 
 use std::{
     error::Error as StdError,
@@ -34,9 +33,10 @@ use crate::{
 )]
 #[non_exhaustive]
 pub enum CliError {
-    /// The process current directory could not be read. Shared by every
-    /// command that needs it (Config loading, trust target resolution,
-    /// `init`).
+    /// The process current directory could not be read.
+    ///
+    /// Shared by every command that needs configuration, trust target
+    /// resolution, or `init` scaffolding.
     #[error("failed to read the current directory")]
     CurrentDirectory {
         /// Source current-directory I/O error.
@@ -62,10 +62,10 @@ pub enum CliError {
         #[source]
         source: DiscoveryError,
     },
-    /// Trusting `root` failed (store I/O, or hashing its config file).
+    /// Trusting `root` failed while updating the store or hashing config.
     #[error("failed to trust {root}")]
     Trust {
-        /// The root that couldn't be trusted.
+        /// The root that could not be trusted.
         root: PathBuf,
         /// Source trust-store error.
         #[source]
@@ -143,7 +143,7 @@ pub enum CliError {
         #[source]
         source: io::Error,
     },
-    /// Building or persisting the `FileIndex` for `root` failed.
+    /// Building or persisting the file index for `root` failed.
     #[error("failed to index {root}")]
     Index {
         /// The project root being indexed.
@@ -209,13 +209,12 @@ impl CliError {
     }
 }
 
-/// Coarse classification of a Template `Render` failure: enough to give a
-/// stable diagnostic code and remediation without losing `error`'s retained
-/// location, detail, or source chain.
+/// Coarse category for a [`TemplateError::Render`] failure.
 ///
-/// Inspects [`minijinja::Error::kind`] and walks its retained source chain
-/// rather than parsing `Display` text, so the classification stays accurate
-/// as new Custom Functions are added without needing changes here.
+/// This is only detailed enough to choose a stable diagnostic code and help
+/// text. Classification inspects [`minijinja::Error::kind`] and the retained
+/// source chain instead of parsing display text, so new custom functions do not
+/// need to update string-matching logic here.
 enum RenderFailureKind {
     /// The template's own minijinja syntax is invalid.
     Syntax,
@@ -417,14 +416,14 @@ impl Diagnostic for CliError {
     }
 }
 
-/// Returns generic root-access diagnostic help text: "check that `root`
-/// {suffix}".
+/// Builds generic root-access diagnostic help text.
+///
+/// The rendered message is `check that <root> <suffix>`.
 fn root_help<'a>(root: &'a Path, suffix: &str) -> Box<dyn Display + 'a> {
     Box::new(format!("check that {} {suffix}", root.display()))
 }
 
-/// Returns diagnostic help text for [`CliError::ConfigLoad`] when discovery
-/// failed: "run `traces init` ..., or check that `cwd` is readable".
+/// Builds diagnostic help text for [`CliError::ConfigLoad`] discovery errors.
 fn config_discovery_help(cwd: &Path) -> Box<dyn Display + '_> {
     Box::new(format!(
         "run `traces init` to scaffold local configuration, or check that {} \
@@ -433,8 +432,7 @@ fn config_discovery_help(cwd: &Path) -> Box<dyn Display + '_> {
     ))
 }
 
-/// Returns diagnostic help text for [`CliError::Query`]: "check the
-/// `--where` filter expression syntax and the field paths it references".
+/// Builds diagnostic help text for [`CliError::Query`].
 fn query_help() -> Box<dyn Display + 'static> {
     Box::new(
         "check the `--where` filter expression syntax and the field paths it \
@@ -442,7 +440,7 @@ fn query_help() -> Box<dyn Display + 'static> {
     )
 }
 
-/// Returns the diagnostic code for [`TemplateError`].
+/// Selects the diagnostic code for a [`TemplateError`].
 fn template_instantiate_code(source: &TemplateError) -> &'static str {
     match source {
         TemplateError::Prompt(_) => {
@@ -492,7 +490,7 @@ fn template_instantiate_code(source: &TemplateError) -> &'static str {
     }
 }
 
-/// Returns the diagnostic help text for [`TemplateError`].
+/// Builds diagnostic help text for a [`TemplateError`].
 fn template_instantiate_help(source: &TemplateError) -> Box<dyn Display + '_> {
     match source {
         TemplateError::Prompt(_) => Box::new(

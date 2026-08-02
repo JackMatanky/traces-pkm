@@ -1,5 +1,7 @@
-//! Command handler for `traces index`: builds or rebuilds the persisted
-//! `FileIndex` for the trusted project root.
+//! Implements `traces index` persisted index rebuilds.
+//!
+//! The command scans the trusted project root and replaces its stored
+//! [`FileIndex`] with a fresh build.
 
 use clap::Args;
 
@@ -11,17 +13,19 @@ use crate::{config::ConfigService, index::FileIndex};
 pub(super) struct Index;
 
 impl Index {
-    /// Runs the `index` subcommand: scans the trusted project root and
-    /// persists a fresh `FileIndex`, replacing any previous contents.
+    /// Rebuilds the trusted project root's persisted [`FileIndex`].
+    ///
+    /// Scans the root, persists the fresh index, and reports the indexed file
+    /// count to stderr.
     ///
     /// # Errors
     ///
     /// - [`CliError::CurrentDirectory`] if the current directory cannot be
     ///   read.
-    /// - [`CliError::ConfigLoad`] if loading configuration fails (including an
-    ///   untrusted project root).
+    /// - [`CliError::ConfigLoad`] if loading configuration fails, including an
+    ///   untrusted project root.
     /// - [`CliError::Index`] if scanning the project root or persisting the
-    ///   `FileIndex` fails.
+    ///   [`FileIndex`] fails.
     #[inline]
     #[expect(
         clippy::unused_self,

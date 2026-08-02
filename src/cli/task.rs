@@ -1,5 +1,7 @@
-//! Command handler for `traces task`: runs a task-level query over the
-//! trusted project root and prints task output.
+//! Implements `traces task` task queries.
+//!
+//! The command refreshes the trusted project root's [`FileIndex`], filters
+//! task records, and prints matching tasks as Markdown checkbox lines.
 
 use std::path::{Path, PathBuf};
 
@@ -14,8 +16,8 @@ use crate::{
 /// Command-line arguments for `traces task`.
 #[derive(Debug, Args)]
 pub(super) struct Task {
-    /// Task source: a `#tag` (matching nested sub-tags) or a folder path.
-    /// Omit to query every indexed Note's tasks.
+    /// Task source: a `#tag` (including nested sub-tags) or a folder path.
+    /// Omit to query every indexed note's tasks.
     #[arg(long)]
     from: Option<String>,
     /// Filter expression narrowing results, e.g. `"task.completed == false"`.
@@ -24,17 +26,19 @@ pub(super) struct Task {
 }
 
 impl Task {
-    /// Runs the `task` subcommand: refreshes the trusted project root's
-    /// `FileIndex`, runs a task-level query over it, and prints one line per
-    /// matching task to stdout.
+    /// Refreshes the trusted project root's [`FileIndex`] and prints matching
+    /// tasks.
+    ///
+    /// Each matching task is written to stdout as a Markdown checkbox line.
     ///
     /// # Errors
     ///
-    /// - [`CliError::CurrentDirectory`] if the current directory cannot be read
-    /// - [`CliError::ConfigLoad`] if loading configuration fails (including an
-    ///   untrusted project root)
-    /// - [`CliError::Index`] if refreshing the `FileIndex` fails
-    /// - [`CliError::Query`] if `--where` is an unparsable filter expression
+    /// - [`CliError::CurrentDirectory`] if the current directory cannot be
+    ///   read.
+    /// - [`CliError::ConfigLoad`] if loading configuration fails, including an
+    ///   untrusted project root.
+    /// - [`CliError::Index`] if refreshing the [`FileIndex`] fails.
+    /// - [`CliError::Query`] if `--where` is an unparsable filter expression.
     #[expect(
         clippy::print_stdout,
         reason = "task rows are primary command output, not diagnostic text; \
@@ -53,18 +57,20 @@ impl Task {
         Ok(())
     }
 
-    /// Runs this task-level query against `root`'s `FileIndex` and renders
-    /// each matching task as a markdown checkbox line:
-    /// - `- [ ] <text> (<path>)` for an incomplete task
-    /// - `- [x] <text> (<path>)` for a complete task
+    /// Renders matching tasks from `root`'s [`FileIndex`].
+    ///
+    /// Each task becomes one Markdown checkbox line:
+    ///
+    /// - `- [ ] <text> (<path>)` for an incomplete task.
+    /// - `- [x] <text> (<path>)` for a complete task.
     ///
     /// Split from [`Self::run`] so tests can assert on rendered content
     /// without capturing process stdout.
     ///
     /// # Errors
     ///
-    /// - [`CliError::Index`] if refreshing the `FileIndex` fails
-    /// - [`CliError::Query`] if `--where` is an unparsable filter expression
+    /// - [`CliError::Index`] if refreshing the [`FileIndex`] fails.
+    /// - [`CliError::Query`] if `--where` is an unparsable filter expression.
     fn lines(&self, root: &Path) -> Result<Vec<String>, CliError> {
         let index =
             FileIndex::refresh(root).map_err(|source| CliError::Index {
@@ -96,8 +102,10 @@ impl Task {
             .collect())
     }
 
-    /// Builds the [`Source`] `--from` selects: a `#tag` if the value starts
-    /// with `#`, a folder path otherwise, or [`Source::All`] if omitted.
+    /// Builds the [`Source`] selected by `--from`.
+    ///
+    /// Values beginning with `#` become tag queries, other values become folder
+    /// queries, and omitted values become [`Source::All`].
     fn source(&self) -> Source {
         match self.from.as_deref() {
             None => Source::All,

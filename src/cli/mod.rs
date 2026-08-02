@@ -1,6 +1,7 @@
-//! Command-line interface for `traces`: argument parsing and command dispatch.
+//! CLI argument parsing, command dispatch, and user-facing diagnostics.
 //!
-//! Provides [`CliError`] for user-facing diagnostics and error formatting.
+//! This module owns the clap parser, routes parsed commands to their handlers,
+//! and exposes [`CliError`] as the CLI diagnostic boundary.
 
 mod completions;
 mod error;
@@ -56,14 +57,14 @@ pub enum UserAbort {
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
-    /// Template name to instantiate: the default `traces -i <name>` dispatch,
-    /// equivalent to `traces template -i <name>`. Pass with no value to
-    /// trigger the interactive fuzzy picker instead.
+    /// Optional template name for the default `traces -i <name>` dispatch.
+    ///
+    /// Passing `-i` with no value opens the interactive fuzzy picker.
     //
     // `Option<Option<_>>`, not `Option<PathBuf>`, so parsing can distinguish
     // "flag absent" (`None`, -> `CliError::NoCommand`) from "flag present, no
     // value" (`Some(None)`, -> the interactive picker) from "flag present,
-    // value given" (`Some(Some(name))`, -> the ordinary `-i <name>` dispatch) —
+    // value given" (`Some(Some(name))`, -> the ordinary `-i <name>` dispatch).
     // `Option<PathBuf>` alone collapses the first two into the same `None`.
     #[arg(short = 'i', long = "input", value_name = "NAME", num_args = 0..=1)]
     #[expect(
@@ -71,7 +72,7 @@ struct Cli {
         reason = "the three states are load-bearing: None (flag absent) is \
                   CliError::NoCommand, Some(None) (flag present, no value) is \
                   the interactive picker, Some(Some(name)) is the ordinary -i \
-                  <name> dispatch — Option<PathBuf> alone can't distinguish \
+                  <name> dispatch; Option<PathBuf> alone can't distinguish \
                   the first two"
     )]
     input: Option<Option<PathBuf>>,
@@ -83,8 +84,8 @@ impl Cli {
     /// # Errors
     ///
     /// - [`CliError::NoCommand`] if neither a subcommand nor `-i`/`--input` was
-    ///   provided
-    /// - [`CliError`] if command execution fails
+    ///   provided.
+    /// - [`CliError`] if command execution fails.
     fn run(
         self,
         service: &ConfigService,
@@ -114,20 +115,20 @@ impl Cli {
 /// Top-level `traces` subcommands.
 #[derive(Debug, Subcommand)]
 enum Commands {
-    /// Initialise local traces configuration
+    /// Initialise local traces configuration.
     Init(init::Init),
-    /// Manage trusted project roots
+    /// Manage trusted project roots.
     Trust(trust::Trust),
-    /// Revoke trust from project roots
+    /// Revoke trust from project roots.
     Untrust(untrust::Untrust),
-    /// Build or rebuild the persisted `FileIndex`
+    /// Build or rebuild the persisted [`FileIndex`](crate::index::FileIndex).
     Index(index::Index),
-    /// Run a task-level query and print task output
+    /// Run a task-level query and print task output.
     Task(task::Task),
-    /// Render a template and write it to disk
+    /// Render a template and write it to disk.
     #[command(alias = "tmpl")]
     Template(template::Template),
-    /// Generate shell completions, or list available template names
+    /// Generate shell completions or list available template names.
     #[command(alias = "completion")]
     Completions(completions::Completions),
 }
@@ -151,15 +152,15 @@ impl Commands {
     }
 }
 
-/// Main entry point: parses CLI arguments and runs the selected command.
+/// Parses process arguments and runs the selected command.
 ///
-/// Returns a [`CommandOutcome`] on success.
+/// Returns [`CommandOutcome`] on success.
 ///
 /// # Errors
 ///
 /// - [`CliError::NoCommand`] if neither a subcommand nor `-i`/`--input` was
-///   provided
-/// - [`CliError`] if command execution fails
+///   provided.
+/// - [`CliError`] if command execution fails.
 #[inline]
 pub fn run() -> Result<CommandOutcome, CliError> {
     let provider: Arc<dyn DialogProvider> =
@@ -171,8 +172,7 @@ pub fn run() -> Result<CommandOutcome, CliError> {
 ///
 /// # Errors
 ///
-/// Returns [`CliError::CurrentDirectory`] if the current directory cannot be
-/// read.
+/// - [`CliError::CurrentDirectory`] if the current directory cannot be read.
 fn current_dir() -> Result<Cwd, CliError> {
     Cwd::new().map_err(|source| CliError::CurrentDirectory {
         source,

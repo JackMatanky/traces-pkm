@@ -1,4 +1,4 @@
-//! Command handler for `traces trust`: manages local configuration trust state.
+//! Implements `traces trust` trust-store management.
 
 use std::path::PathBuf;
 
@@ -13,32 +13,33 @@ use crate::config::{ConfigService, DiscoveryScope, TrustRequest};
 pub(super) struct Trust {
     #[command(subcommand)]
     action: Option<TrustAction>,
-    /// Show resolved config trust status instead of changing it
+    /// Show resolved configuration trust status instead of changing it.
     #[arg(long)]
     show: bool,
-    /// Apply trust or show to descendant configs too
+    /// Apply trust or status checks to descendant configurations too.
     #[arg(long)]
     all: bool,
-    /// Directory or .traces/config.toml to trust (defaults to the current
-    /// directory)
+    /// Directory or `.traces/config.toml` to trust.
+    ///
+    /// Defaults to the current directory.
     path: Option<PathBuf>,
 }
 
 /// Nested `traces trust` subcommands.
 #[derive(Debug, Subcommand)]
 enum TrustAction {
-    /// List all trusted directories
+    /// List all trusted directories.
     List,
-    /// Remove stale trust entries
+    /// Remove stale trust entries.
     Clean,
 }
 
 impl Trust {
-    /// Runs the `trust` subcommand.
+    /// Runs the selected `trust` action.
     ///
     /// # Errors
     ///
-    /// Returns [`CliError`] if the dispatched trust action fails.
+    /// - [`CliError`] if the dispatched trust action fails.
     #[inline]
     pub(super) fn run(self, service: &ConfigService) -> Result<(), CliError> {
         match self.action {
@@ -53,12 +54,11 @@ impl Trust {
     ///
     /// # Errors
     ///
-    /// Returns [`CliError::TrustList`] if reading the trust store fails.
+    /// - [`CliError::TrustList`] if reading the trust store fails.
     #[expect(
         clippy::print_stdout,
         reason = "trust list's output is data meant to be piped, not \
-                  diagnostic text — see the print_stderr precedent this \
-                  mirrors"
+                  diagnostic text; see the print_stderr precedent this mirrors"
     )]
     fn list(service: &ConfigService) -> Result<(), CliError> {
         let roots: Vec<PathBuf> =
@@ -75,7 +75,7 @@ impl Trust {
     ///
     /// # Errors
     ///
-    /// Returns [`CliError::TrustClean`] if cleaning the trust store fails.
+    /// - [`CliError::TrustClean`] if cleaning the trust store fails.
     fn clean(service: &ConfigService) -> Result<(), CliError> {
         let removed = service.clean_trusted_store().map_err(|source| {
             CliError::TrustClean {
@@ -98,8 +98,7 @@ impl Trust {
     #[expect(
         clippy::print_stdout,
         reason = "trust --show's output is data meant to be piped, not \
-                  diagnostic text — see the print_stderr precedent this \
-                  mirrors"
+                  diagnostic text; see the print_stderr precedent this mirrors"
     )]
     fn show(&self, service: &ConfigService) -> Result<(), CliError> {
         self.for_each_subject(service, |subject: TrustRequest| {
@@ -139,7 +138,7 @@ impl Trust {
         })
     }
 
-    /// Applies a closure to every trust request resolved from arguments.
+    /// Applies `visit` to every trust request resolved from arguments.
     ///
     /// # Errors
     ///
@@ -197,9 +196,10 @@ mod tests {
 
         use super::super::*;
 
-        /// Wraps [`Trust`] in a minimal top-level parser so its
-        /// `args_conflicts_with_subcommands` disambiguation can be exercised
-        /// with [`Parser::try_parse_from`] — [`clap::Args`] types don't
+        /// Wraps [`Trust`] in a minimal top-level parser for clap tests.
+        ///
+        /// This allows [`Parser::try_parse_from`] to exercise
+        /// `args_conflicts_with_subcommands`, which [`clap::Args`] types do not
         /// parse standalone.
         #[derive(Debug, Parser)]
         pub(super) struct TestCli {

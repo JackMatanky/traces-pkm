@@ -1,4 +1,4 @@
-//! Command handler for `traces completions`: shell completions and template
+//! Implements `traces completions` shell-script generation and template
 //! listing.
 
 use clap::{ArgGroup, Args, CommandFactory as _};
@@ -48,7 +48,7 @@ impl Completions {
     #[expect(
         clippy::print_stdout,
         reason = "completion scripts are data meant to be sourced by the \
-                  shell, not diagnostic text — mirrors the dry-run precedent \
+                  shell, not diagnostic text; mirrors the dry-run precedent \
                   in crate::cli::template"
     )]
     fn print_script(shell: Shell) {
@@ -94,11 +94,11 @@ impl Completions {
     ///
     /// # Errors
     ///
-    /// See [`Self::template_names`].
+    /// - Any error returned by [`Self::template_names`].
     #[expect(
         clippy::print_stdout,
         reason = "template names are data meant to be consumed by shell \
-                  completion scripts, not diagnostic text — mirrors the \
+                  completion scripts, not diagnostic text; mirrors the \
                   dry-run precedent in crate::cli::template"
     )]
     fn list_templates(service: &ConfigService) -> Result<(), CliError> {

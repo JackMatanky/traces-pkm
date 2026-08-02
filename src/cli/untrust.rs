@@ -1,5 +1,4 @@
-//! Command handler for `traces untrust`: revokes trust from project
-//! configurations.
+//! Implements `traces untrust` trust revocation.
 
 use std::path::PathBuf;
 
@@ -11,16 +10,17 @@ use crate::config::{ConfigService, DiscoveryScope};
 /// Command-line arguments for `traces untrust`.
 #[derive(Debug, Args)]
 pub(super) struct Untrust {
-    /// Apply untrust to descendant configs too
+    /// Apply untrust to descendant configurations too.
     #[arg(long)]
     all: bool,
-    /// Directory or .traces/config.toml to untrust (defaults to the current
-    /// directory)
+    /// Directory or `.traces/config.toml` to untrust.
+    ///
+    /// Defaults to the current directory.
     path: Option<PathBuf>,
 }
 
 impl Untrust {
-    /// Runs the `untrust` subcommand.
+    /// Revokes trust from the specified target directory or configuration.
     ///
     /// # Errors
     ///

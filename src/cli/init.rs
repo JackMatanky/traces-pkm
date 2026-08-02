@@ -1,5 +1,7 @@
-//! Command handler for `traces init`: scaffolds local configuration and
-//! templates.
+//! Implements `traces init` project scaffolding.
+//!
+//! The command creates the local `.traces` directory, template directory, and
+//! initial configuration file from interactive input.
 
 use std::{
     fs,
@@ -49,11 +51,11 @@ impl Init {
         Ok(())
     }
 
-    /// Collects template configuration from the user interactively.
+    /// Collects template and output directories from the user.
     ///
     /// # Errors
     ///
-    /// Returns [`CliError::InitPrompt`] if prompt dialog fails.
+    /// - [`CliError::InitPrompt`] if either prompt fails.
     fn collect_config(
         provider: &dyn DialogProvider,
     ) -> Result<InitInput, CliError> {

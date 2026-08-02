@@ -1,5 +1,7 @@
-//! Command handler for `traces template` and `traces -i <name>`: renders
-//! templates to disk or stdout.
+//! Implements `traces template` and `traces -i <name>` rendering.
+//!
+//! The command resolves a template, renders it with the configured template
+//! service, and writes the result to disk or stdout.
 
 use std::{
     path::{Path, PathBuf},
@@ -24,10 +26,10 @@ use crate::{
               related enough to collapse into a state-machine enum"
 )]
 pub(super) struct Template {
-    /// Template name or path to instantiate positional argument.
+    /// Template name or path passed positionally.
     #[arg(value_name = "NAME", conflicts_with = "input")]
     pub(super) name: Option<PathBuf>,
-    /// Template name or path to instantiate via `-i`/`--input` flag.
+    /// Template name or path passed through `-i`/`--input`.
     #[arg(
         short = 'i',
         long = "input",
@@ -35,32 +37,34 @@ pub(super) struct Template {
         conflicts_with = "name"
     )]
     pub(super) input: Option<PathBuf>,
-    /// List every available template name, one per line, then exit — for a
-    /// quick look without the interactive picker.
+    /// List available template names and exit without rendering.
     #[arg(short = 'l', long, conflicts_with_all = ["name", "input"])]
     pub(super) list: bool,
-    /// Output path — overrides any `file.write_to()` call inside the template;
-    /// falls back to `write_to`, then the config-derived default.
+    /// Output path overriding any `file.write_to()` call inside the template.
+    ///
+    /// Falls back to the template-declared `write_to` path, then the
+    /// config-derived default.
     #[arg(short = 'o', long, value_name = "PATH")]
     pub(super) output: Option<PathBuf>,
     /// Overwrite the output path if it already exists.
     #[arg(short = 'f', long)]
     pub(super) force: bool,
-    /// Render to stdout and write nothing to disk. Skips the existence check
-    /// and conflicts with `-o`/`--output`.
+    /// Render to stdout and write nothing to disk.
+    ///
+    /// Skips the output-existence check and conflicts with `-o`/`--output`.
     #[arg(short = 'n', long, conflicts_with = "output")]
     pub(super) dry_run: bool,
-    /// Never prompt — every `ui.*` call returns its default (or an
-    /// empty/false/first-item response when it has none), regardless of
-    /// whether stdin is a terminal. For scripted or CI use; independent of
-    /// `--dry-run`.
+    /// Disable interactive prompts during template rendering.
+    ///
+    /// Every `ui.*` call returns its default. Calls without a default return
+    /// an empty, false, or first-item response. This is for scripted or CI
+    /// use and is independent of `--dry-run`.
     #[arg(long = "no-input")]
     pub(super) no_input: bool,
 }
 
 impl Template {
-    /// Constructs [`Template`] args for explicit name dispatch (`traces -i
-    /// <name>`).
+    /// Constructs [`Template`] args for `traces -i <name>` dispatch.
     pub(super) fn new(name: PathBuf) -> Self {
         Self {
             name: Some(name),
@@ -73,8 +77,7 @@ impl Template {
         }
     }
 
-    /// Constructs [`Template`] args for interactive fuzzy-picker dispatch
-    /// (`traces -i`).
+    /// Constructs [`Template`] args for interactive `traces -i` dispatch.
     pub(super) fn interactive() -> Self {
         Self {
             name: None,
@@ -87,8 +90,7 @@ impl Template {
         }
     }
 
-    /// Returns the specified template name, whether passed positionally or
-    /// via `-i`/`--input`.
+    /// Returns the template name passed positionally or through `-i`/`--input`.
     #[inline]
     #[must_use]
     pub(super) fn name(&self) -> Option<&Path> {
@@ -144,7 +146,7 @@ impl Template {
         }
     }
 
-    /// Returns the effective dialog provider given command-line flags.
+    /// Selects the dialog provider after applying `--no-input`.
     fn resolve_provider(
         &self,
         provider: Arc<dyn DialogProvider>,
@@ -156,7 +158,7 @@ impl Template {
         }
     }
 
-    /// Resolves the template name from arguments or interactive selection.
+    /// Resolves the template name from arguments or the interactive picker.
     fn resolve_name(
         &self,
         config: &Config,
@@ -168,7 +170,7 @@ impl Template {
         }
     }
 
-    /// Prints the rendered outcome to stdout or diagnostic log to stderr.
+    /// Prints preview content to stdout or a write diagnostic to stderr.
     #[expect(
         clippy::print_stdout,
         reason = "dry-run preview content is data meant to be piped, not \
@@ -242,8 +244,10 @@ mod tests {
             )
         }
 
-        /// A cheap, deterministic provider for tests that never exercise
-        /// `ui.*` — `Template::run` requires one regardless.
+        /// Cheap deterministic provider for tests that never exercise `ui.*`.
+        ///
+        /// [`Template::run`] requires a provider even when rendering does not
+        /// call any `ui.*` function.
         pub(super) fn preset_provider() -> Arc<dyn DialogProvider> {
             Arc::new(crate::PresetDialogProvider::new())
         }
