@@ -1,4 +1,4 @@
-//! Markdown and Obsidian link values extracted from notes.
+//! Markdown and Obsidian link targets extracted from notes.
 
 use serde::{Deserialize, Serialize};
 
@@ -23,13 +23,8 @@ pub(crate) struct Outlink {
 }
 
 impl Outlink {
-    /// Creates a non-embedded outlink.
-    ///
-    /// # Arguments
-    ///
-    /// * `target` - Link destination.
-    /// * `text` - Display text.
-    /// * `kind` - Markdown or wikilink syntax.
+    /// Creates a non-embedded outlink with `target`, display `text`, and
+    /// `kind`.
     #[inline]
     #[must_use]
     pub(crate) fn new(
@@ -52,10 +47,10 @@ impl Outlink {
         (consumed == s.len()).then_some(link)
     }
 
-    /// Parses an Obsidian wikilink (`[[target|text]]` or `![[target|text]]`)
-    /// starting at the beginning of `s`, allowing trailing text after the
-    /// closing `]]`. Returns the parsed link paired with the number of bytes
-    /// it consumed from `s`.
+    /// Parses an Obsidian wikilink prefix from the start of `s`.
+    ///
+    /// Allows trailing text after the closing `]]` and returns the parsed link
+    /// with the number of bytes consumed.
     #[must_use]
     pub(crate) fn parse_wikilink_prefix(s: &str) -> Option<(Self, usize)> {
         let source = SourceText::new(s);
@@ -90,7 +85,7 @@ impl Outlink {
         ))
     }
 
-    /// Link target.
+    /// Link destination.
     #[inline]
     #[must_use]
     pub(crate) fn target(&self) -> &str {
@@ -104,7 +99,7 @@ impl Outlink {
         &self.text
     }
 
-    /// Link syntax.
+    /// Syntax used by the source link.
     #[inline]
     #[must_use]
     pub(crate) fn kind(&self) -> LinkType {
@@ -181,11 +176,10 @@ fn split_wikilink_text(s: &str) -> (&str, &str) {
     }
 }
 
-/// Un-escapes a wikilink target or alias segment.
+/// Unescapes a wikilink target or alias segment.
 ///
-/// A backslash escapes only `|`: `\|` becomes a literal `|` (the escape
-/// [`split_wikilink_text`] looks past when it locates the real separator).
-/// Every other backslash is copied through unchanged.
+/// A backslash escapes only `|`: `\|` becomes a literal `|`. Every other
+/// backslash is copied through unchanged.
 fn unescape_wikilink_part(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut escaped = false;

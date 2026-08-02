@@ -1,4 +1,4 @@
-//! Parsed Markdown note model.
+//! Parsed Markdown note records.
 
 use std::path::{Path, PathBuf};
 
@@ -13,9 +13,9 @@ use super::{
 
 /// Parsed metadata and structure for one Markdown note.
 ///
-/// Stores frontmatter, lists, outlinks, inline fields, and tags.
-/// [`Self::tasks`] derives task items from stored lists instead of duplicating
-/// them.
+/// Stores page-level frontmatter, top-level lists, outgoing links, inline
+/// fields, and tags. [`Self::tasks`] derives task items from stored lists
+/// instead of duplicating them.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub(crate) struct Note {
     path: PathBuf,
@@ -27,17 +27,11 @@ pub(crate) struct Note {
 }
 
 impl Note {
-    /// Creates a [`Note`] without inline fields or tags.
+    /// Creates a note from parser-owned page components.
     ///
-    /// Attach inline fields and tags with [`Self::with_inline_fields`] and
-    /// [`Self::with_tags`] after parser-owned extraction finishes.
-    ///
-    /// # Arguments
-    ///
-    /// * `path` - Project-relative note path.
-    /// * `frontmatter` - Parsed YAML frontmatter, if present.
-    /// * `lists` - Top-level body lists.
-    /// * `outlinks` - Links extracted from Markdown and wikilink syntax.
+    /// The new note starts without inline fields or tags because those are
+    /// extracted after block parsing. Attach them with
+    /// [`Self::with_inline_fields`] and [`Self::with_tags`].
     #[inline]
     #[must_use]
     pub(crate) fn new(
@@ -75,7 +69,7 @@ impl Note {
         self
     }
 
-    /// Project-relative note path.
+    /// Project-relative path to this note.
     #[inline]
     #[must_use]
     pub(crate) fn path(&self) -> &Path {
@@ -114,7 +108,7 @@ impl Note {
         &self.inline_fields
     }
 
-    /// Iterates over frontmatter fields followed by body inline fields.
+    /// Iterates over frontmatter fields, then body inline fields.
     pub(crate) fn fields(&self) -> impl Iterator<Item = &MetadataField> {
         let empty: &[MetadataField] = &[];
         let frontmatter_fields =
@@ -132,7 +126,7 @@ impl Note {
         &self.tags
     }
 
-    /// Iterates lazily over task list items at every list depth.
+    /// Iterates over task list items at every list depth.
     pub(crate) fn tasks(&self) -> TaskIter<'_> {
         TaskIter::new(&self.lists)
     }
@@ -144,7 +138,7 @@ pub(crate) struct TaskIter<'a> {
 }
 
 impl<'a> TaskIter<'a> {
-    /// Starts iteration at the top-level `lists`, preserving document order.
+    /// Starts depth-first iteration from the top-level `lists`.
     fn new(lists: &'a [List]) -> Self {
         let mut stack = Vec::with_capacity(lists.len());
         stack.extend(lists.iter().rev().map(|list| list.items().iter()));

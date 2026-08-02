@@ -1,19 +1,19 @@
-//! Byte-offset helpers for parser-owned UTF-8 source text.
+//! UTF-8 byte-offset helpers for parser-owned source text.
 
 use std::ops::Range;
 
-/// Borrowed UTF-8 source text with byte-offset helpers.
+/// Borrowed parser input addressed by validated byte offsets.
 pub(crate) struct SourceText<'a>(&'a str);
 
 impl<'a> SourceText<'a> {
-    /// Wraps source text for byte-offset operations.
+    /// Creates byte-offset helpers for `source`.
     #[inline]
     #[must_use]
     pub(crate) fn new(source: &'a str) -> Self {
         Self(source)
     }
 
-    /// Source length in bytes.
+    /// Returns the source length in bytes.
     #[inline]
     #[must_use]
     pub(crate) fn len(&self) -> usize {
@@ -41,7 +41,7 @@ impl<'a> SourceText<'a> {
         self.from(pos).is_some_and(|source| source.starts_with(needle))
     }
 
-    /// Adds `bytes` to `pos`.
+    /// Returns `pos` advanced by `bytes`.
     #[inline]
     #[must_use]
     #[expect(
@@ -60,13 +60,10 @@ impl<'a> SourceText<'a> {
         self.advance(pos, ch.len_utf8())
     }
 
-    /// Returns the end offset for a token ending with `ch`.
+    /// Returns the byte offset just after a token-ending character.
     ///
-    /// # Arguments
-    ///
-    /// * `pos` - Token start offset.
-    /// * `offset` - Character offset within the token.
-    /// * `ch` - Final token character.
+    /// `pos` is the token start, `offset` is the character offset within that
+    /// token, and `ch` is the token's final character.
     #[inline]
     #[must_use]
     pub(crate) fn token_end(

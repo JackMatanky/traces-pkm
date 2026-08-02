@@ -1,16 +1,17 @@
-//! Dataview-compatible inline-field and Markdown tag lexer.
+//! Dataview inline-field and Markdown tag lexer.
 //!
-//! Parses plain-text buffers produced by the Markdown parser. Those buffers
-//! already exclude fenced code blocks, indented code blocks, and inline
+//! This module scans plain-text buffers produced by the Markdown parser. Those
+//! buffers already exclude fenced code blocks, indented code blocks, and inline
 //! code.
 //!
-//! Main components:
-//! - [`extract_inline_fields`] / [`extract_task_inline_fields`]: Extract
-//!   Dataview inline fields (`Key:: Value`, `[Key:: Value]`, `(Key:: Value)`)
-//!   from Markdown text; the latter also recognizes task emoji shorthand fields
-//!   (e.g. `🗓️2026-01-01`).
-//! - [`extract_tags`]: Extract Markdown tags (`#book`, `#projects/active`) from
-//!   Markdown text.
+//! # Main Functions
+//!
+//! - [`extract_inline_fields`] extracts `Key:: Value`, `[Key:: Value]`, and
+//!   `(Key:: Value)` body metadata.
+//! - [`extract_task_inline_fields`] also recognizes task emoji shorthand
+//!   fields, such as `🗓️2026-01-01`.
+//! - [`extract_tags`] extracts Markdown tags such as `#book` and
+//!   `#projects/active`.
 
 use logos::{Filter, Lexer, Logos};
 
@@ -19,20 +20,20 @@ use super::{
     metadata::is_iso_date,
 };
 
-/// Extracts Dataview inline fields (`Key:: Value`, `[Key:: Value]`,
-/// `(Key:: Value)`) from `text`, in the order they occur.
+/// Extracts Dataview inline fields from `text` in encounter order.
 ///
-/// `text` must already exclude code spans and blocks. Task emoji shorthand
-/// fields are not recognized; use [`extract_task_inline_fields`] for those.
+/// Recognizes `Key:: Value`, `[Key:: Value]`, and `(Key:: Value)`. `text` must
+/// already exclude code spans and blocks. Use [`extract_task_inline_fields`]
+/// when task emoji shorthand fields should be recognized.
 pub(super) fn extract_inline_fields(text: &str) -> Vec<InlineField> {
     extract_inline_fields_with_task_shorthands(text, TaskShorthands::Exclude)
 }
 
-/// Extracts Dataview inline fields, additionally recognizing task emoji
-/// shorthand fields (e.g. `🗓️2026-01-01`), from `text`, in the order they
-/// occur.
+/// Extracts Dataview inline fields and task emoji shorthand fields from `text`.
 ///
-/// `text` must already exclude code spans and blocks.
+/// Recognizes `Key:: Value`, `[Key:: Value]`, `(Key:: Value)`, and task
+/// shorthand fields such as `🗓️2026-01-01`. `text` must already exclude code
+/// spans and blocks.
 pub(super) fn extract_task_inline_fields(text: &str) -> Vec<InlineField> {
     extract_inline_fields_with_task_shorthands(text, TaskShorthands::Include)
 }
@@ -67,11 +68,11 @@ pub(super) fn extract_tags(text: &str) -> Vec<Tag> {
     tags
 }
 
-/// Returns the character immediately before the current match's start
-/// (`None` if the match starts at the beginning of the source).
+/// Returns the character immediately before the current match.
 ///
-/// Shared by [`body_field_callback`] and [`tag_callback`], both of which
-/// need a look-behind check that logos' regex dialect can't express.
+/// Returns `None` if the match starts at the beginning of the source. Shared by
+/// [`body_field_callback`] and [`tag_callback`], both of which need a
+/// look-behind check that logos' regex dialect cannot express.
 fn char_before<'source, T>(lex: &Lexer<'source, T>) -> Option<char>
 where
     T: Logos<'source, Source = str>,
@@ -81,7 +82,7 @@ where
         .and_then(|prefix| prefix.chars().next_back())
 }
 
-/// Byte length of an ISO `YYYY-MM-DD` date, e.g. `2026-01-01`.
+/// Byte length of an ISO `YYYY-MM-DD` date, such as `2026-01-01`.
 const ISO_DATE_LEN: usize = 10;
 
 /// Bracket delimiters and their corresponding [`InlineFieldForm`].
@@ -105,12 +106,11 @@ impl BracketPair {
     };
 }
 
-/// Whether task emoji shorthand fields (e.g. `🗓️2026-01-01`) participate in
-/// tokenization.
+/// Field-token mode for Dataview task emoji shorthands.
 ///
-/// [`FieldToken`]'s logos `extras`: names the two modes
-/// [`extract_inline_fields`] and [`extract_task_inline_fields`] select, in
-/// place of a bare `bool` flag.
+/// Used as [`FieldToken`]'s logos `extras` value so [`extract_inline_fields`]
+/// and [`extract_task_inline_fields`] choose their lexer behavior without
+/// passing a bare `bool`.
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
 enum TaskShorthands {
     /// Task emoji shorthands are recognized.
@@ -129,14 +129,14 @@ impl TaskShorthands {
     }
 }
 
-/// Tokens matched while extracting Dataview inline fields from free-form
-/// Markdown text.
+/// Token stream for Dataview inline fields in free-form Markdown text.
 ///
-/// - [`Self::Field`] carries every emitted [`InlineField`]; callbacks return
-///   [`Filter::Skip`] to discard a non-matching candidate (e.g. an unclosed
-///   wrapped field) and keep scanning.
-/// - [`Self::Ignored`] is a catch-all, single-character skip for ordinary prose
-///   that matches none of the field patterns.
+/// - [`Self::Field`] carries an emitted [`InlineField`].
+/// - [`Self::Ignored`] skips ordinary prose that matches none of the field
+///   patterns.
+///
+/// Callbacks return [`Filter::Skip`] to discard non-matching candidates, such
+/// as unclosed wrapped fields, and keep scanning.
 #[derive(Clone, Debug, PartialEq, Logos)]
 #[logos(extras = TaskShorthands)]
 enum FieldToken {
@@ -221,14 +221,13 @@ fn wrapped_field_callback(
     ))
 }
 
-/// Finds the byte offset of `pair`'s unescaped, unnested closing delimiter
-/// in `after_sep` (the wrapped field's value text, starting just after its
-/// `::` separator).
+/// Finds `pair`'s closing delimiter in wrapped field value text.
+///
+/// `after_sep` starts immediately after the wrapped field's `::` separator.
 ///
 /// - Escaped delimiters (`\[`, `\]`, `\(`, `\)`) never close the field.
-/// - Same-kind nesting inside the value (e.g. the inner `[value]` in `[key::
-///   [value]]`) does not close it early; only a `pair.close` at zero nesting
-///   depth does.
+/// - Same-kind nesting inside the value, such as `[value]` in `[key::
+///   [value]]`, does not close it early.
 fn find_closing_delimiter(after_sep: &str, pair: BracketPair) -> Option<usize> {
     let mut nesting = 0usize;
     let mut escaped = false;
@@ -255,13 +254,13 @@ fn find_closing_delimiter(after_sep: &str, pair: BracketPair) -> Option<usize> {
     None
 }
 
-/// Parses a Dataview task emoji shorthand (e.g. `🗓️2026-01-01`) starting
-/// just after its already-consumed emoji token, emitting an inline field
-/// keyed by `key` when the following text (optional inline whitespace, then
-/// exactly [`ISO_DATE_LEN`] bytes) is a valid ISO date.
+/// Parses a Dataview task emoji shorthand into an inline field.
 ///
-/// Always skips when `lex.extras` is [`TaskShorthands::Exclude`]:
-/// [`extract_inline_fields`] lexes in that mode.
+/// Starts after the already-consumed emoji token and emits a field keyed by
+/// `key` when the following text is optional inline whitespace plus exactly
+/// [`ISO_DATE_LEN`] bytes forming a valid ISO date.
+///
+/// Always skips when `lex.extras` is [`TaskShorthands::Exclude`].
 fn task_field_callback(
     lex: &mut Lexer<'_, FieldToken>,
     key: &'static str,
@@ -426,11 +425,11 @@ impl<'a> ValueParser<'a> {
             .or_else(|| self.parse_tag_at(pos))
     }
 
-    /// Parses a double-quoted string atom at `pos`. A backslash escapes the
-    /// following character verbatim, so `\"` includes a literal quote.
+    /// Parses a double-quoted string atom at `pos`.
     ///
-    /// Returns `None` if `pos` isn't a `"` or the string has no closing,
-    /// unescaped `"`.
+    /// A backslash escapes the following character verbatim, so `\"` includes
+    /// a literal quote. Returns `None` if `pos` is not a `"` or the string has
+    /// no closing, unescaped `"`.
     fn parse_quoted_string_at(&self, pos: usize) -> Option<Atom> {
         let rest = self.source.from(pos)?.strip_prefix('"')?;
         let mut value = String::new();
@@ -461,13 +460,13 @@ impl<'a> ValueParser<'a> {
         Some((FieldValue::Link(link), self.source.advance(pos, consumed)))
     }
 
-    /// Parses a Dataview duration atom at `pos` (e.g. `4h15m`,
-    /// `4 yrs, 6 wks`): one or more `<number><unit>` parts, each validated by
-    /// [`Self::parse_duration_part_end`] and optionally comma- and
-    /// whitespace-separated.
+    /// Parses a Dataview duration atom at `pos`.
     ///
-    /// Returns the raw matched text as [`FieldValue::Duration`], stopping
-    /// (without failing) at the first position that isn't a valid next part.
+    /// Recognizes one or more `<number><unit>` parts, such as `4h15m` or
+    /// `4 yrs, 6 wks`. Parts are validated by
+    /// [`Self::parse_duration_part_end`] and may be comma- and
+    /// whitespace-separated. Returns the raw matched text as
+    /// [`FieldValue::Duration`].
     fn parse_duration_at(&self, pos: usize) -> Option<Atom> {
         let mut end = self.parse_duration_part_end(pos)?;
         loop {
@@ -492,8 +491,9 @@ impl<'a> ValueParser<'a> {
         }
     }
 
-    /// Finds the end offset of one `<number><unit>` duration part at `pos`, or
-    /// `None` if `pos` isn't a number followed by a recognized
+    /// Finds the end offset of one `<number><unit>` duration part at `pos`.
+    ///
+    /// Returns `None` if `pos` is not a number followed by a recognized
     /// [`is_duration_unit`] unit.
     fn parse_duration_part_end(&self, pos: usize) -> Option<usize> {
         let number_end = self.parse_number_end(pos)?;
@@ -625,14 +625,13 @@ fn is_duration_unit(unit: &str) -> bool {
     DURATION_UNITS.iter().any(|candidate| unit.eq_ignore_ascii_case(candidate))
 }
 
-/// Tokens matched while extracting Markdown tags (`#book`,
-/// `#projects/active`) from free-form text.
+/// Token stream for Markdown tags in free-form text.
 ///
-/// - [`Self::Tag`] carries every emitted [`Tag`]; [`tag_callback`] returns
-///   [`Filter::Skip`] to reject a `#` that fails the lookbehind or
-///   leading-letter check, consuming only the `#` so a rejected mid-word
-///   occurrence like `foo#bar` does not swallow the rest of the text.
-/// - [`Self::Ignored`] is a catch-all, single-character skip for ordinary text.
+/// - [`Self::Tag`] carries an emitted [`Tag`].
+/// - [`Self::Ignored`] skips ordinary text.
+///
+/// [`tag_callback`] returns [`Filter::Skip`] to reject non-tag `#` characters
+/// without swallowing the rest of the text.
 #[derive(Clone, Debug, PartialEq, Logos)]
 enum TagToken {
     #[token("#", tag_callback)]
@@ -641,10 +640,10 @@ enum TagToken {
     Ignored,
 }
 
-/// Parses a Markdown tag starting just after its already-consumed leading
-/// `#`. Rejects (skipping only the `#`) a `#` preceded by an alphanumeric
-/// or `_` character (mid-word, e.g. `foo#bar`) or not followed by an
-/// alphabetic character (e.g. `#1`).
+/// Parses a Markdown tag after its already-consumed leading `#`.
+///
+/// Rejects a mid-word `#`, such as `foo#bar`, and a `#` not followed by an
+/// alphabetic character, such as `#1`.
 fn tag_callback(lex: &mut Lexer<'_, TagToken>) -> Filter<Tag> {
     let preceded_by_word_char =
         char_before(lex).is_some_and(|ch| ch.is_alphanumeric() || ch == '_');

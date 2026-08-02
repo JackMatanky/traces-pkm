@@ -1,8 +1,8 @@
-//! Markdown tags extracted from note text.
+//! Markdown tag values extracted from note text.
 
 use serde::{Deserialize, Serialize};
 
-/// Markdown tag including its leading `#`.
+/// Markdown tag value, including its leading `#`.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub(crate) struct Tag(String);
 
@@ -14,21 +14,19 @@ impl Tag {
         Self(text.into())
     }
 
-    /// Full tag text, including the leading `#`.
+    /// Tag text, including the leading `#`.
     #[inline]
     #[must_use]
     pub(crate) fn as_str(&self) -> &str {
         &self.0
     }
 
-    /// Whether this tag equals `other`, or is a sub-tag nested under it.
+    /// Returns `true` if this tag equals `other` or is nested below it.
     ///
     /// Mirrors Dataview's distinction between exact tags (`file.etags`) and
-    /// unique tags including subtags (`file.tags`): `#projects/active` is
-    /// nested under `#projects`, so a tag-source query for `#projects`
-    /// matches Notes tagged `#projects/active` even though the tags are not
-    /// textually equal. Matching stops at `/` boundaries, so `#project` does
-    /// not spuriously match `#projects`.
+    /// unique tags including subtags (`file.tags`). A query for `#projects`
+    /// matches `#projects/active`, but `#project` does not match `#projects`
+    /// because nesting must start at a `/` boundary.
     #[inline]
     #[must_use]
     pub(crate) fn is_nested_under(&self, other: &str) -> bool {

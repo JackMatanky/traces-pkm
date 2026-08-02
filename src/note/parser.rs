@@ -1,17 +1,17 @@
 //! Markdown event parser for [`Note`] records.
 //!
-//! [`parse_markdown`] walks the `pulldown-cmark` event stream once and stores
-//! state in [`ParserContext`], which delegates list and list-item nesting to
-//! [`ListTracker`]. Explicit stacks keep list nesting off the call stack.
+//! [`parse_markdown`] walks the `pulldown-cmark` event stream once. Parser
+//! state lives in [`ParserContext`], while [`ListTracker`] handles explicit
+//! list and list-item stacks so nested Markdown never recurses through the
+//! call stack.
 //!
-//! Inline fields and tags come from parser-built plain-text buffers: one per
-//! top-level paragraph or heading, and one per list item. The buffers exclude
-//! fenced code blocks, indented code blocks, and inline code.
+//! Inline fields and tags are lexed from parser-built plain-text buffers: one
+//! per top-level paragraph or heading, and one per list item. The buffers
+//! exclude fenced code blocks, indented code blocks, and inline code.
 //!
 //! Standard Markdown link text is copied into the surrounding scan buffer with
-//! literal `[` and `]` delimiters so `[Key:: Value](url)` is detected as a
-//! visible-key inline field while [`ListItem::text`] remains plain display
-//! text.
+//! literal `[` and `]` delimiters. That lets `[Key:: Value](url)` become a
+//! visible-key inline field while [`ListItem::text`] remains display text.
 
 use std::{mem, path::PathBuf};
 
@@ -54,8 +54,7 @@ enum BlockContext {
     Text,
 }
 
-/// Inline fields and tags flushed from a closed list item's scan buffer,
-/// if it had any ([`ListTracker::flush_active_item_scan_buffer`]).
+/// Inline fields and tags flushed from a closed list item's scan buffer.
 type FlushedFields = Option<(Vec<InlineField>, Vec<Tag>)>;
 
 /// State accumulated while walking Markdown events for one note.
@@ -321,9 +320,10 @@ impl ActiveLink {
     }
 }
 
-/// Nested list and list-item state accumulated while walking Markdown
-/// events for one note: completed top-level lists, and the stack of
-/// still-open list and item frames.
+/// Nested list and list-item state for one Markdown event stream.
+///
+/// Completed top-level lists live in `lists`; still-open lists and items live
+/// on explicit stacks.
 #[derive(Default)]
 struct ListTracker {
     lists: Vec<List>,
@@ -332,11 +332,11 @@ struct ListTracker {
 }
 
 impl ListTracker {
-    /// Starts a nested text block inside the active item, separating it
-    /// from prior scan-buffer content with a newline.
+    /// Starts a nested text block inside the active item.
     ///
-    /// Returns `true` if there is an active item (the caller must not
-    /// also treat this as a top-level text block); `false` otherwise.
+    /// Separates it from prior scan-buffer content with a newline. Returns
+    /// `false` if no list item is active, allowing the caller to treat the
+    /// block as top-level text.
     fn start_nested_text_block(&mut self) -> bool {
         let Some(item) = self.item_stack.last_mut() else {
             return false;
@@ -360,12 +360,11 @@ impl ListTracker {
         }
     }
 
-    /// Lexes and clears the active list item's scan buffer, returning the
-    /// inline fields and tags it yielded (`None` if there is no active
-    /// item or its scan buffer is empty).
+    /// Lexes and clears the active list item's scan buffer.
     ///
-    /// Called before nested lists and when the item closes so metadata
-    /// preserves document order.
+    /// Returns the inline fields and tags yielded by that buffer, or `None` if
+    /// no item is active or the buffer is empty. Called before nested lists and
+    /// when an item closes so metadata preserves document order.
     fn flush_active_item_scan_buffer(&mut self) -> FlushedFields {
         let item = self.item_stack.last_mut()?;
         if item.scan_buffer.is_empty() {
@@ -389,10 +388,9 @@ impl ListTracker {
         Some((fields, tags))
     }
 
-    /// Pushes a list frame, first flushing any active parent item's scan
-    /// buffer so parent metadata precedes child metadata. Returns the
-    /// flushed item's inline fields and tags, if any (see
-    /// [`Self::flush_active_item_scan_buffer`]).
+    /// Pushes a list frame and flushes any active parent item metadata.
+    ///
+    /// Returns the flushed inline fields and tags, if any.
     fn start_list(&mut self, is_ordered: bool) -> FlushedFields {
         let flushed = self.flush_active_item_scan_buffer();
         self.list_stack.push(ListFrame {
@@ -428,9 +426,9 @@ impl ListTracker {
         });
     }
 
-    /// Flushes and records the innermost list item. Returns the flushed
-    /// item's inline fields and tags, if any (see
-    /// [`Self::flush_active_item_scan_buffer`]).
+    /// Flushes and records the innermost list item.
+    ///
+    /// Returns the flushed inline fields and tags, if any.
     fn end_item(&mut self) -> FlushedFields {
         let flushed = self.flush_active_item_scan_buffer();
         if let Some(item_frame) = self.item_stack.pop() {
@@ -458,6 +456,7 @@ impl ListTracker {
     }
 
     /// Appends text to the active item's display text and scan buffer.
+    ///
     /// Returns `false` if there is no active item.
     fn push_text(&mut self, text: &str, in_code_block: bool) -> bool {
         let Some(item) = self.item_stack.last_mut() else {
@@ -467,8 +466,9 @@ impl ListTracker {
         true
     }
 
-    /// Appends a line break to the active item's buffers. Returns
-    /// `false` if there is no active item.
+    /// Appends a line break to the active item's buffers.
+    ///
+    /// Returns `false` if there is no active item.
     fn push_break(&mut self) -> bool {
         let Some(item) = self.item_stack.last_mut() else {
             return false;
@@ -478,6 +478,7 @@ impl ListTracker {
     }
 
     /// Pushes a literal character into the active item's scan buffer.
+    ///
     /// Returns `false` if there is no active item.
     fn push_scan_char(&mut self, ch: char) -> bool {
         let Some(item) = self.item_stack.last_mut() else {
@@ -503,15 +504,16 @@ struct ItemFrame {
     /// [`ListTracker::flush_active_item_scan_buffer`] lexes this buffer for
     /// inline fields and tags.
     scan_buffer: String,
-    /// Inline Fields lexed from this item's own text, kept separate from child
-    /// items' fields so [`ListItem::fields`] resolves per-item, not per-list.
+    /// Inline fields lexed from this item's own text.
+    ///
+    /// Kept separate from child items' fields so [`ListItem::fields`] resolves
+    /// per-item, not per-list.
     fields: Vec<InlineField>,
     children: Vec<List>,
 }
 
 impl ItemFrame {
-    /// Appends text to the item's display text, and to its scan buffer
-    /// unless `in_code_block` is set.
+    /// Appends text to display text and, outside code blocks, the scan buffer.
     fn push_text(&mut self, text: &str, in_code_block: bool) {
         self.text_buffer.push_str(text);
         if !in_code_block {
@@ -533,8 +535,9 @@ impl ItemFrame {
         self.scan_buffer.push(ch);
     }
 
-    /// Appends inline code text to display text only. Inline code is
-    /// excluded from inline field/tag scanning.
+    /// Appends inline code text to display text only.
+    ///
+    /// Inline code is excluded from inline field and tag scanning.
     fn push_code(&mut self, text: &str) {
         self.text_buffer.push_str(text);
     }

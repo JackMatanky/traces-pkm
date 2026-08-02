@@ -1,4 +1,4 @@
-//! Markdown list and task-list structures.
+//! Markdown list, list item, and task-list structures.
 
 use serde::{Deserialize, Serialize};
 
@@ -12,7 +12,7 @@ pub(crate) struct List {
 }
 
 impl List {
-    /// Creates a list from `is_ordered` and its direct `items`.
+    /// Creates a list from its ordering flag and direct child items.
     #[inline]
     #[must_use]
     pub(crate) fn new(is_ordered: bool, items: Vec<ListItem>) -> Self {
@@ -40,13 +40,11 @@ impl List {
 /// Completion state of a Markdown task list item.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub(crate) enum TaskStatus {
-    /// Unchecked task item.
     Incomplete,
-    /// Checked task item.
     Complete,
 }
 
-/// Markdown list item with optional task state and nested lists.
+/// Markdown list item with optional task state, child lists, and item fields.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub(crate) struct ListItem {
     text: String,
@@ -73,11 +71,8 @@ impl ListItem {
 
     /// Creates a list item with nested child lists.
     ///
-    /// # Arguments
-    ///
-    /// * `text` - Plain item text.
-    /// * `task_status` - Task completion state, if this item is a task.
-    /// * `children` - Nested lists under this item.
+    /// The item starts with no inline fields. Attach fields parsed from the
+    /// item's own text with [`Self::with_fields`].
     #[inline]
     #[must_use]
     pub(crate) fn with_children(
@@ -128,12 +123,11 @@ impl ListItem {
         &self.children
     }
 
-    /// Attaches Inline Fields parsed from this item's own text.
+    /// Attaches inline fields parsed from this item's own text.
     ///
-    /// `Note::inline_fields` also includes these fields, for backward
-    /// compatibility with page-level queries. Only this per-item list,
-    /// however, resolves a field back to the specific task or list item
-    /// that declared it.
+    /// [`Note::inline_fields`](crate::note::Note::inline_fields) also includes
+    /// these fields for page-level queries. This per-item list preserves the
+    /// field-to-item relationship for task and list queries.
     #[inline]
     #[must_use]
     pub(crate) fn with_fields(mut self, fields: Vec<InlineField>) -> Self {
@@ -141,9 +135,10 @@ impl ListItem {
         self
     }
 
-    /// Inline Fields parsed from this item's own text: `Key:: Value`,
-    /// `[Key:: Value]`, and `(Key:: Value)` syntax, plus Dataview date
-    /// shorthand emoji (`🗓️`/`➕`/`🛫`/`⏳`/`✅`) for task items.
+    /// Inline fields parsed from this item's own text.
+    ///
+    /// Task items also recognize Dataview date shorthand emoji such as `🗓️`,
+    /// `➕`, `🛫`, `⏳`, and `✅`.
     #[inline]
     #[must_use]
     pub(crate) fn fields(&self) -> &[InlineField] {

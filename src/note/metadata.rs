@@ -1,8 +1,8 @@
-//! Frontmatter and Dataview-compatible inline metadata values.
+//! Frontmatter and Dataview-compatible metadata values.
 //!
-//! [`RawFrontmatter`] stores source YAML. [`Frontmatter`] and
-//! [`MetadataField`] store parsed key-value pairs. [`InlineField`] records the
-//! [`InlineFieldForm`] used in Markdown body text.
+//! [`RawFrontmatter`] preserves source YAML. [`Frontmatter`] stores parsed YAML
+//! key-value pairs. [`InlineField`] records body metadata together with the
+//! [`InlineFieldForm`] that produced it.
 
 use std::collections::BTreeMap;
 
@@ -39,7 +39,7 @@ impl RawFrontmatter {
     }
 }
 
-/// Structured key-value metadata parsed from [`RawFrontmatter`].
+/// Structured frontmatter fields parsed from [`RawFrontmatter`].
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub(crate) struct Frontmatter {
     fields: Vec<MetadataField>,
@@ -70,11 +70,10 @@ impl Frontmatter {
     }
 }
 
-/// Parses [`RawFrontmatter`] YAML text into [`MetadataField`] entries.
+/// Converts raw YAML frontmatter into structured fields.
 ///
-/// Empty frontmatter parses as [`Frontmatter::default`]. Malformed YAML or a
-/// non-mapping top-level value logs a warning and also falls back to
-/// [`Frontmatter::default`] rather than failing the whole note.
+/// Empty, malformed, or non-mapping frontmatter becomes
+/// [`Frontmatter::default`] after logging parse failures.
 impl From<&RawFrontmatter> for Frontmatter {
     fn from(raw: &RawFrontmatter) -> Self {
         if raw.is_empty() {
@@ -117,10 +116,10 @@ pub(crate) enum InlineFieldForm {
     HiddenKey,
 }
 
-/// Field key shared by [`MetadataField`] and [`InlineField`]: the key half
-/// of a Dataview-compatible `Key:: Value` pair, distinct from the many other
-/// bare `String`s this module handles (list item text, link targets, tag
-/// text).
+/// Dataview field key shared by frontmatter and inline fields.
+///
+/// Distinguishes metadata keys from other note text such as list item content,
+/// link targets, and tags.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub(crate) struct FieldKey(String);
 
@@ -189,13 +188,7 @@ pub(crate) struct InlineField {
 }
 
 impl InlineField {
-    /// Creates an inline field.
-    ///
-    /// # Arguments
-    ///
-    /// * `key` - Field key.
-    /// * `value` - Field value.
-    /// * `form` - Inline field syntax.
+    /// Creates an inline field from its key, value, and source syntax.
     #[inline]
     #[must_use]
     pub(crate) fn new(
@@ -238,7 +231,7 @@ impl InlineField {
     }
 }
 
-/// Dataview-compatible metadata value.
+/// Dataview-compatible metadata value parsed from YAML or inline text.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub(crate) enum FieldValue {
     /// Empty or missing value.
@@ -283,14 +276,11 @@ impl FieldValue {
     }
 }
 
-/// Converts a parsed YAML value into its [`FieldValue`] equivalent.
+/// Converts YAML scalars, sequences, mappings, and tags into metadata values.
 ///
 /// Plain strings are classified further: wikilink syntax becomes
 /// [`FieldValue::Link`], an ISO date prefix becomes [`FieldValue::Date`], and
-/// anything else stays [`FieldValue::String`]. A blank string becomes
-/// [`FieldValue::Null`], as does a number that fits neither `f64` nor `i64`.
-/// A [`serde_yaml::Value::Tagged`] value converts using its untagged inner
-/// value.
+/// anything else stays [`FieldValue::String`].
 impl From<serde_yaml::Value> for FieldValue {
     fn from(val: serde_yaml::Value) -> Self {
         match val {
@@ -340,12 +330,11 @@ impl From<serde_yaml::Value> for FieldValue {
     }
 }
 
-/// Coerces a YAML scalar `key` to its string representation for use as a
-/// [`MetadataField`]/[`FieldValue::Object`] key.
+/// Coerces a YAML scalar key into a metadata object key.
 ///
-/// Returns `None` for a YAML value kind that can't stand as a key
-/// (`Null`, `Sequence`, `Mapping`, `Tagged`); callers skip that entry
-/// rather than failing the whole document.
+/// Returns `None` for YAML values that cannot stand as keys: `Null`,
+/// `Sequence`, `Mapping`, and `Tagged`. Callers skip those entries rather than
+/// failing the whole document.
 fn yaml_key_to_string(key: serde_yaml::Value) -> Option<String> {
     match key {
         serde_yaml::Value::String(s) => Some(s),

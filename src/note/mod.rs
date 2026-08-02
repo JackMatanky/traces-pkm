@@ -1,18 +1,20 @@
 //! Markdown note domain model and parser.
 //!
-//! Converts Markdown source into a [`Note`] via [`parse_markdown`], and
-//! stores its parsed frontmatter, lists, outgoing links, inline fields, and
-//! tags.
+//! [`parse_markdown`] converts Markdown source into a [`Note`] containing the
+//! frontmatter, lists, outgoing links, inline fields, and tags used by the
+//! index and query layers.
 //!
-//! Main types:
-//! - [`Note`]: Parsed note structure.
-//! - [`List`] / [`ListItem`] / [`TaskStatus`]: Markdown lists and task items.
-//! - [`Outlink`] / [`LinkType`]: Markdown and Obsidian links.
-//! - [`Frontmatter`] / [`RawFrontmatter`]: YAML frontmatter.
-//! - [`InlineField`] / [`InlineFieldForm`]: Dataview-style inline metadata.
-//! - [`MetadataField`] / [`FieldValue`]: Key-value pairs shared by frontmatter
-//!   and inline fields.
-//! - [`Tag`]: Markdown tags.
+//! # Main Types
+//!
+//! - [`Note`] stores the parsed note.
+//! - [`List`], [`ListItem`], and [`TaskStatus`] represent Markdown lists and
+//!   task items.
+//! - [`Outlink`] and [`LinkType`] represent Markdown links and Obsidian
+//!   wikilinks.
+//! - [`Frontmatter`] and [`RawFrontmatter`] preserve YAML metadata.
+//! - [`InlineField`], [`InlineFieldForm`], [`MetadataField`], and
+//!   [`FieldValue`] represent Dataview-compatible metadata.
+//! - [`Tag`] stores Markdown tags.
 #![cfg_attr(
     not(test),
     expect(
