@@ -28,7 +28,7 @@ use self::{
     file::{FileOps, WRITE_TO_KEY},
     num::NumOps,
     path::PathOps,
-    query::{QueryOps, register_filters as register_query_filters},
+    query::QueryOps,
     string::StrOps,
     ui::UiOps,
 };
@@ -77,7 +77,7 @@ impl TemplateEngine {
         FileOps::new(Arc::clone(&root)).register(&mut env);
         QueryOps::page(Arc::clone(&root)).register(&mut env);
         QueryOps::task(Arc::clone(&root)).register(&mut env);
-        register_query_filters(&mut env);
+        QueryOps::register_terminal_filters(&mut env);
         PathOps::new(root).register(&mut env);
         UiOps::new(provider).register(&mut env);
         DateOps.register(&mut env);

@@ -1,13 +1,9 @@
 //! Registers the `query` and `tasks` namespaces for templates.
 //!
 //! Both namespaces are backed by [`QueryOps`], registered twice by
-//! [`super::TemplateEngine::new`]:
-//!
-//! - [`QueryOps::page`] creates the `query` global.
-//! - [`QueryOps::task`] creates the `tasks` global.
-//!
-//! Each namespace starts a query with one of three methods, matching
-//! [`Source`]'s variants:
+//! [`super::TemplateEngine::new`]: [`QueryOps::page`] creates the `query`
+//! global, [`QueryOps::task`] creates the `tasks` global. Each namespace
+//! starts a query with one of three methods, matching [`Source`]'s variants:
 //!
 //! - `.all()`: every indexed Note.
 //! - `.from_tags(tag)`: Notes tagged `tag`.
@@ -19,53 +15,37 @@
 //! metadata.
 //!
 //! Each method refreshes a fresh [`FileIndex`] for the render's project root
-//! and returns a [`QueryOutcome`] wrapped in a [`Value`]. Template callers can
+//! and returns a [`QueryOutcome`] wrapped in a [`Value`]. Template callers
 //! chain `.where(...)`/`.filter(...)`, `.sort(...)`, `.limit(...)`,
-//! `.group_by(...)`, and `.flatten(...)`; the transformation logic lives on
-//! [`QueryOutcome`]. This module only supplies the minijinja [`Object`] wiring.
+//! `.group_by(...)`, and `.flatten(...)` — the transformation logic lives on
+//! [`QueryOutcome`] itself; this module only supplies the minijinja
+//! [`Object`] wiring. [`QueryOutcome::table`], [`QueryOutcome::list`],
+//! [`QueryOutcome::task_list`], and `.len()`'s `count` alias are terminal
+//! instead: they render final markdown/scalar output and end a chain rather
+//! than continue it. Per ADR-0005, each is reachable both as a `call_method`
+//! (`outcome.table(["Name"], ["file.name"])`) and as a pipeline filter
+//! registered once by [`QueryOps::register_terminal_filters`]
+//! (`outcome | table(["Name"], ["file.name"])`) — both forms call the same
+//! [`QueryOutcome`] method.
 //!
-//! # Terminal Rendering
-//!
-//! [`QueryOutcome::table`], [`QueryOutcome::list`],
-//! [`QueryOutcome::task_list`], and `.len()`'s `count` alias each render final
-//! markdown/scalar output instead of another [`QueryOutcome`], so they end a
-//! chain rather than continue it. Every one of these is reachable two ways, per
-//! ADR-0005:
-//!
-//! - As a `call_method` on the value: `outcome.table(["Name"], ["file.name"])`.
-//! - As a pipeline filter, registered once by [`register_filters`]: `outcome |
-//!   table(["Name"], ["file.name"])`.
-//!
-//! Both forms call the same [`QueryOutcome`] method; this module only adds the
-//! two minijinja-facing entry points.
-//!
-//! # Object Boundaries
-//!
-//! [`QueryOutcome`] and [`IndexRecord`] get their [`Object`] impls here instead
-//! of in [`crate::index`]. That keeps the index module independent from
-//! minijinja, so `traces task` can reuse [`FileIndex`], [`QueryOutcome`], and
-//! [`IndexRecord`] without pulling in rendering concerns.
-//!
-//! # Attribute Resolution
-//!
-//! `record` attributes other than `file` and `task` forward to
-//! [`IndexRecord::field`], the same resolver `.where()` and `.sort()` use.
-//! `record.file.*` and `record.task.*` use forwarding wrappers instead
-//! ([`FileFields`] and [`TaskFields`]) because minijinja resolves dotted
-//! attribute paths one segment at a time. The wrappers call
-//! [`FileField::parse`]/[`FileField::resolve`] and
+//! [`QueryOutcome`] and [`IndexRecord`] get their [`Object`] impls here
+//! instead of in [`crate::index`], keeping that module independent from
+//! minijinja so `traces task` can reuse [`FileIndex`], [`QueryOutcome`], and
+//! [`IndexRecord`] without pulling in rendering concerns. `record` attributes
+//! other than `file` and `task` forward to [`IndexRecord::field`], the same
+//! resolver `.where()` and `.sort()` use; `record.file.*` and `record.task.*`
+//! use forwarding wrappers ([`FileFields`] and [`TaskFields`]) instead, since
+//! minijinja resolves a dotted attribute path one segment at a time — the
+//! wrappers call [`FileField::parse`]/[`FileField::resolve`] and
 //! [`IndexRecord::task_completed`]/[`IndexRecord::task_text`] directly,
-//! skipping string-prefix handling once the `file` or `task` segment is already
-//! known.
-//!
-//! # Error Handling
+//! skipping the string-prefix handling [`IndexRecord::field`] needs once the
+//! `file`/`task` segment is already known.
 //!
 //! [`FileIndex::refresh`] and [`QueryError`] failures become
 //! [`minijinja::Error`] values with stable messages and the original error
-//! preserved as [`std::error::Error::source`]. This mirrors
-//! [`super::ui`]'s `dialog_error` and [`super::error::confine_error`], so query
-//! failures carry template name, line, and column context like the other
-//! namespaces.
+//! preserved as [`std::error::Error::source`], mirroring [`super::ui`]'s
+//! `dialog_error` and [`super::error::confine_error`], so query failures carry
+//! template name, line, and column context like every other namespace.
 
 use std::{
     path::{Path, PathBuf},
@@ -131,6 +111,20 @@ impl QueryOps {
     pub(super) fn register(self, env: &mut Environment<'static>) {
         let name = self.name;
         env.add_global(name, Value::from_object(self));
+    }
+
+    /// Registers `table`, `list`, `task_list`, and `count` as pipeline
+    /// filters: `outcome | table(["Name"], ["file.name"])`, mirroring the
+    /// call-method form `outcome.table(["Name"], ["file.name"])` documented
+    /// on [`Object::call_method`] for [`QueryOutcome`]. Registered once, not
+    /// per instance — these filters carry no state and apply to any
+    /// [`QueryOutcome`] regardless of which namespace produced it.
+    #[inline]
+    pub(super) fn register_terminal_filters(env: &mut Environment<'static>) {
+        env.add_filter("table", table_filter);
+        env.add_filter("list", list_filter);
+        env.add_filter("task_list", task_list_filter);
+        env.add_filter("count", count_filter);
     }
 
     /// Refreshes the render's [`FileIndex`], then runs this namespace's query
@@ -296,18 +290,6 @@ impl Object for QueryOutcome {
         };
         transformed.map(Value::from_object).map_err(query_error)
     }
-}
-
-/// Registers `table`, `list`, `task_list`, and `count` as pipeline filters:
-/// `outcome | table(["Name"], ["file.name"])`, mirroring the call-method form
-/// `outcome.table(["Name"], ["file.name"])` documented on
-/// [`Object::call_method`] for [`QueryOutcome`]. Registered once — filters
-/// carry no state — unlike [`QueryOps`], which is registered per namespace.
-pub(super) fn register_filters(env: &mut Environment<'static>) {
-    env.add_filter("table", table_filter);
-    env.add_filter("list", list_filter);
-    env.add_filter("task_list", task_list_filter);
-    env.add_filter("count", count_filter);
 }
 
 /// `outcome | table(...)` filter body. See [`QueryOutcome::table`].
@@ -480,7 +462,7 @@ mod tests {
         let mut env = Environment::new();
         QueryOps::page(Arc::from(root)).register(&mut env);
         QueryOps::task(Arc::from(root)).register(&mut env);
-        register_filters(&mut env);
+        QueryOps::register_terminal_filters(&mut env);
         env
     }
 

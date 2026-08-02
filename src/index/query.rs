@@ -28,6 +28,7 @@ use std::path::PathBuf;
 
 pub(crate) use error::QueryError;
 pub(crate) use field::FileField;
+use field::{FieldPath, TaskField};
 use filter::FilterExpr;
 use sort::sort_key_cmp;
 
@@ -385,90 +386,6 @@ impl<'a> IntoIterator for &'a QueryOutcome {
     #[inline]
     fn into_iter(self) -> Self::IntoIter {
         self.records.iter()
-    }
-}
-
-/// A `task.<field>` accessor, valid on task-level rows built by
-/// [`super::FileIndex::query_tasks`].
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub(super) enum TaskField {
-    /// Task completion state (`- [ ]` vs `- [x]`).
-    Completed,
-    /// Task item text.
-    Text,
-}
-
-impl TaskField {
-    /// Parses a `task.<field>` accessor name (the part after `"task."`).
-    ///
-    /// Returns `None` if `name` is not a known accessor. Mirrors
-    /// [`FileField::parse`]'s single failure mode; the caller building
-    /// [`QueryError::UnknownFieldPath`] already has the full `task.<field>`
-    /// path.
-    pub(super) fn parse(name: &str) -> Option<Self> {
-        match name {
-            "completed" => Some(Self::Completed),
-            "text" => Some(Self::Text),
-            _ => None,
-        }
-    }
-}
-
-/// A query field path, resolved once per [`QueryOutcome`] transformation
-/// and then applied to every [`IndexRecord`].
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) enum FieldPath {
-    /// A `file.<field>` accessor.
-    File(FileField),
-    /// A `task.<field>` accessor, resolving to [`FieldValue::Null`] on
-    /// page-level records.
-    Task(TaskField),
-    /// A frontmatter or inline field, looked up by key.
-    Metadata(String),
-    /// The Note's markdown tags, as a [`FieldValue::List`] of tag strings.
-    Tags,
-}
-
-impl FieldPath {
-    /// Parses a query field path string into a [`FieldPath`].
-    ///
-    /// Resolves `file.<field>` accessors, `task.<field>` accessors, `tags`,
-    /// or frontmatter/inline field keys.
-    ///
-    /// # Errors
-    ///
-    /// - [`QueryError::UnknownFieldPath`] if `path` is empty, uses an unknown
-    ///   `file.*`/`task.*` accessor, or has unexpected `.` structure.
-    pub(super) fn parse(path: &str) -> Result<Self, QueryError> {
-        let path = path.trim();
-        let invalid = || QueryError::UnknownFieldPath {
-            path: path.to_owned(),
-        };
-        if let Some(field) = path.strip_prefix("file.") {
-            return if field.is_empty() || field.contains('.') {
-                Err(invalid())
-            } else {
-                FileField::parse(field).map(Self::File).ok_or_else(invalid)
-            };
-        }
-        if let Some(field) = path.strip_prefix("task.") {
-            return if field.is_empty() || field.contains('.') {
-                Err(invalid())
-            } else {
-                TaskField::parse(field).map(Self::Task).ok_or_else(invalid)
-            };
-        }
-        if path.is_empty()
-            || path == "file"
-            || path == "task"
-            || path.contains('.')
-        {
-            return Err(invalid());
-        }
-        if path == "tags" {
-            return Ok(Self::Tags);
-        }
-        Ok(Self::Metadata(path.to_owned()))
     }
 }
 
