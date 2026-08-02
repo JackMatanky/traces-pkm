@@ -28,8 +28,13 @@ use sort::sort_key_cmp;
 use super::file::{FileField, FileRecord};
 use crate::note::{FieldValue, Note};
 
-/// Iterable, page-level collection of [`IndexRecord`] values returned by
-/// [`super::FileIndex::query`].
+/// Iterable collection of [`IndexRecord`] values returned by
+/// [`super::FileIndex::query`] (one row per Note) or
+/// [`super::FileIndex::query_tasks`] (one row per task item). Both share this
+/// type and its transformation methods; nothing at the Rust type level
+/// distinguishes a page-level outcome from a task-level one, so a consumer
+/// expecting page rows (e.g. a future terminal renderer) must not assume
+/// every row came from [`super::FileIndex::query`].
 ///
 /// [`Self::filter`], [`Self::sort`], [`Self::limit`], [`Self::group_by`],
 /// and [`Self::flatten`] each consume this outcome and return a new,
@@ -41,7 +46,7 @@ pub(crate) struct QueryOutcome {
 }
 
 impl QueryOutcome {
-    /// Wraps `records` as a page-level query result.
+    /// Wraps `records` as a query result.
     pub(super) fn new(records: Vec<IndexRecord>) -> Self {
         Self {
             records,
@@ -342,7 +347,9 @@ impl FieldPath {
     }
 }
 
-/// One page-level query result: a [`FileRecord`] paired with its [`Note`].
+/// One query result row: a [`FileRecord`] paired with its [`Note`], and —
+/// when built by [`super::FileIndex::query_tasks`] — one task item's fields
+/// too.
 ///
 /// Exposes both `file.*` fields and Note Metadata (frontmatter, inline
 /// fields, tags) through one value for Template and CLI callers.
@@ -492,7 +499,7 @@ impl IndexRecord {
     }
 }
 
-/// Selects which markdown Notes a page-level query includes.
+/// Selects which markdown Notes a page-level or task-level query includes.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum Source {
     /// Every indexed markdown Note.

@@ -1,15 +1,15 @@
 //! The `query` and `tasks` minijinja namespaces for querying the
 //! [`FileIndex`] from templates.
 //!
-//! [`QueryOps`] backs the `query` global registered by
-//! [`super::TemplateEngine`]. A template starts a page-level query with one of
+//! Both are backed by [`QueryOps`], registered twice by
+//! [`super::TemplateEngine::new`]: [`QueryOps::page`] for the `query` global,
+//! [`QueryOps::task`] for the `tasks` global. Each starts a query with one of
 //! three methods, mirroring [`Source`]'s three variants one-to-one:
-//! - `query.all()`: every indexed Note.
-//! - `query.from_tags(tag)`: Notes tagged `tag`.
-//! - `query.from_folder(folder)`: Notes under `folder`.
+//! - `.all()`: every indexed Note.
+//! - `.from_tags(tag)`: Notes tagged `tag`.
+//! - `.from_folder(folder)`: Notes under `folder`.
 //!
-//! [`TaskOps`] backs the parallel `tasks` global — the same three methods,
-//! but each row is one task item instead of one Note (via
+//! `query`'s rows are one per Note; `tasks`'s rows are one per task item (via
 //! [`FileIndex::query_tasks`]), exposing `task.completed`/`task.text`
 //! alongside the parent Note's `file.*`, frontmatter, inline-field, and tag
 //! metadata.
@@ -68,33 +68,65 @@ use crate::{
     note::FieldValue,
 };
 
-/// Method names `query` exposes, for [`QueryOps::enumerate`].
+/// Method names `query` and `tasks` each expose, for [`QueryOps::enumerate`].
 const METHODS: &[&str] = &["all", "from_tags", "from_folder"];
 
-/// Backs the `query` minijinja namespace object.
-///
-/// Holds the trusted project root that every method refreshes a fresh
-/// [`FileIndex`] against before running its query. See
-/// [`super::TemplateEngine::new`] for where `root` comes from.
+/// Backs both the `query` and `tasks` minijinja namespace objects — one
+/// instance per namespace, differing only in which global it registers as
+/// and which [`FileIndex`] method builds the [`QueryOutcome`]. See
+/// [`Self::page`]/[`Self::task`].
 #[derive(Debug)]
 pub(super) struct QueryOps {
     root: Arc<Path>,
+    /// The minijinja global this instance registers as.
+    name: &'static str,
+    /// [`FileIndex::query`] for `query`, [`FileIndex::query_tasks`] for
+    /// `tasks`.
+    query: fn(FileIndex, &Source) -> QueryOutcome,
 }
 
 impl QueryOps {
-    /// Wraps `root` for template-facing dispatch.
+    /// Wraps `root` for page-level dispatch under the `query` global.
     #[inline]
     #[must_use]
-    pub(super) const fn new(root: Arc<Path>) -> Self {
+    pub(super) const fn page(root: Arc<Path>) -> Self {
         Self {
             root,
+            name: "query",
+            query: FileIndex::query,
         }
     }
 
-    /// Registers this object as the `query` global.
+    /// Wraps `root` for task-level dispatch under the `tasks` global — each
+    /// row is one task item instead of one Note. See the module docs.
+    #[inline]
+    #[must_use]
+    pub(super) const fn task(root: Arc<Path>) -> Self {
+        Self {
+            root,
+            name: "tasks",
+            query: FileIndex::query_tasks,
+        }
+    }
+
+    /// Registers this object as its `name` global (`query` or `tasks`).
     #[inline]
     pub(super) fn register(self, env: &mut Environment<'static>) {
-        env.add_global("query", Value::from_object(self));
+        let name = self.name;
+        env.add_global(name, Value::from_object(self));
+    }
+
+    /// Refreshes the [`FileIndex`] for `root`, then runs this namespace's
+    /// query method for `source` against it.
+    ///
+    /// # Errors
+    ///
+    /// [`ErrorKind::InvalidOperation`] (via [`index_error`]) if refreshing the
+    /// index fails: an I/O error scanning `root`, a redb error accessing the
+    /// index database, or a TOML (de)serialization error on a stored record.
+    fn run(&self, source: &Source) -> Result<Value, Error> {
+        let index = FileIndex::refresh(&self.root).map_err(index_error)?;
+        Ok(Value::from_object((self.query)(index, source)))
     }
 }
 
@@ -102,24 +134,24 @@ impl Object for QueryOps {
     fn get_value(self: &Arc<Self>, key: &Value) -> Option<Value> {
         match key.as_str()? {
             "all" => {
-                let root = Arc::clone(&self.root);
+                let ops = Arc::clone(self);
                 Some(Value::from_function(move || -> Result<Value, Error> {
-                    query(&root, &Source::All)
+                    ops.run(&Source::All)
                 }))
             }
             "from_tags" => {
-                let root = Arc::clone(&self.root);
+                let ops = Arc::clone(self);
                 Some(Value::from_function(
                     move |tag: &str| -> Result<Value, Error> {
-                        query(&root, &Source::Tag(tag.to_owned()))
+                        ops.run(&Source::Tag(tag.to_owned()))
                     },
                 ))
             }
             "from_folder" => {
-                let root = Arc::clone(&self.root);
+                let ops = Arc::clone(self);
                 Some(Value::from_function(
                     move |folder: &str| -> Result<Value, Error> {
-                        query(&root, &Source::Folder(PathBuf::from(folder)))
+                        ops.run(&Source::Folder(PathBuf::from(folder)))
                     },
                 ))
             }
@@ -130,101 +162,6 @@ impl Object for QueryOps {
     fn enumerate(self: &Arc<Self>) -> Enumerator {
         Enumerator::Str(METHODS)
     }
-}
-
-/// Method names `tasks` exposes, for [`TaskOps::enumerate`]. Same three
-/// source methods as [`QueryOps`]; only [`FileIndex::query_tasks`] differs.
-const TASK_METHODS: &[&str] = &["all", "from_tags", "from_folder"];
-
-/// Backs the `tasks` minijinja namespace object — the task-level parallel
-/// to [`QueryOps`]. See the module docs for how the two differ.
-#[derive(Debug)]
-pub(super) struct TaskOps {
-    root: Arc<Path>,
-}
-
-impl TaskOps {
-    /// Wraps `root` for template-facing dispatch.
-    #[inline]
-    #[must_use]
-    pub(super) const fn new(root: Arc<Path>) -> Self {
-        Self {
-            root,
-        }
-    }
-
-    /// Registers this object as the `tasks` global.
-    #[inline]
-    pub(super) fn register(self, env: &mut Environment<'static>) {
-        env.add_global("tasks", Value::from_object(self));
-    }
-}
-
-impl Object for TaskOps {
-    fn get_value(self: &Arc<Self>, key: &Value) -> Option<Value> {
-        match key.as_str()? {
-            "all" => {
-                let root = Arc::clone(&self.root);
-                Some(Value::from_function(move || -> Result<Value, Error> {
-                    query_tasks(&root, &Source::All)
-                }))
-            }
-            "from_tags" => {
-                let root = Arc::clone(&self.root);
-                Some(Value::from_function(
-                    move |tag: &str| -> Result<Value, Error> {
-                        query_tasks(&root, &Source::Tag(tag.to_owned()))
-                    },
-                ))
-            }
-            "from_folder" => {
-                let root = Arc::clone(&self.root);
-                Some(Value::from_function(
-                    move |folder: &str| -> Result<Value, Error> {
-                        query_tasks(
-                            &root,
-                            &Source::Folder(PathBuf::from(folder)),
-                        )
-                    },
-                ))
-            }
-            _ => None,
-        }
-    }
-
-    fn enumerate(self: &Arc<Self>) -> Enumerator {
-        Enumerator::Str(TASK_METHODS)
-    }
-}
-
-/// Refreshes the [`FileIndex`] for `root`, then runs `source` against it.
-///
-/// Shared by every `query.*` method.
-///
-/// # Errors
-///
-/// [`ErrorKind::InvalidOperation`] (via [`index_error`]) if refreshing the
-/// index fails: an I/O error scanning `root`, a redb error accessing the
-/// index database, or a TOML (de)serialization error on a stored record.
-fn query(root: &Path, source: &Source) -> Result<Value, Error> {
-    let index = FileIndex::refresh(root).map_err(index_error)?;
-    Ok(Value::from_object(index.query(source)))
-}
-
-/// Refreshes the [`FileIndex`] for `root`, then runs a task-level query for
-/// `source` against it.
-///
-/// Task-level parallel to [`query`] — the only difference is
-/// [`FileIndex::query_tasks`] instead of [`FileIndex::query`]. Shared by
-/// every `tasks.*` method.
-///
-/// # Errors
-///
-/// [`ErrorKind::InvalidOperation`] (via [`index_error`]) on the same
-/// failures as [`query`].
-fn query_tasks(root: &Path, source: &Source) -> Result<Value, Error> {
-    let index = FileIndex::refresh(root).map_err(index_error)?;
-    Ok(Value::from_object(index.query_tasks(source)))
 }
 
 /// Maps a [`FileIndexError`] into a [`minijinja::Error`].
@@ -420,8 +357,8 @@ mod tests {
     /// against `root`.
     fn env(root: &Path) -> Environment<'static> {
         let mut env = Environment::new();
-        QueryOps::new(Arc::from(root)).register(&mut env);
-        TaskOps::new(Arc::from(root)).register(&mut env);
+        QueryOps::page(Arc::from(root)).register(&mut env);
+        QueryOps::task(Arc::from(root)).register(&mut env);
         env
     }
 
@@ -445,7 +382,7 @@ mod tests {
         #[test]
         fn returns_none_for_an_unknown_key() {
             let temp = tempfile::tempdir().expect("create temp dir");
-            let ops = Arc::new(QueryOps::new(Arc::from(temp.path())));
+            let ops = Arc::new(QueryOps::page(Arc::from(temp.path())));
 
             assert!(ops.get_value(&Value::from("unknown")).is_none());
         }
@@ -453,7 +390,7 @@ mod tests {
         #[test]
         fn returns_none_for_a_non_string_key() {
             let temp = tempfile::tempdir().expect("create temp dir");
-            let ops = Arc::new(QueryOps::new(Arc::from(temp.path())));
+            let ops = Arc::new(QueryOps::page(Arc::from(temp.path())));
 
             assert!(ops.get_value(&Value::from(1)).is_none());
         }
@@ -465,7 +402,7 @@ mod tests {
         #[test]
         fn lists_every_method() {
             let temp = tempfile::tempdir().expect("create temp dir");
-            let ops = Arc::new(QueryOps::new(Arc::from(temp.path())));
+            let ops = Arc::new(QueryOps::page(Arc::from(temp.path())));
 
             assert!(matches!(ops.enumerate(), Enumerator::Str(METHODS)));
         }
@@ -473,7 +410,7 @@ mod tests {
         #[test]
         fn every_enumerated_method_resolves_via_get_value() {
             let temp = tempfile::tempdir().expect("create temp dir");
-            let ops = Arc::new(QueryOps::new(Arc::from(temp.path())));
+            let ops = Arc::new(QueryOps::page(Arc::from(temp.path())));
 
             for method in METHODS {
                 assert!(

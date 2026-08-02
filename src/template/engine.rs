@@ -27,7 +27,7 @@ use self::{
     file_ops::{FileOps, WRITE_TO_KEY},
     num_ops::NumOps,
     path_ops::PathOps,
-    query_ops::{QueryOps, TaskOps},
+    query_ops::QueryOps,
     str_ops::StrOps,
     ui_ops::UiOps,
 };
@@ -74,8 +74,8 @@ impl TemplateEngine {
         });
         let root = Arc::from(root);
         FileOps::new(Arc::clone(&root)).register(&mut env);
-        QueryOps::new(Arc::clone(&root)).register(&mut env);
-        TaskOps::new(Arc::clone(&root)).register(&mut env);
+        QueryOps::page(Arc::clone(&root)).register(&mut env);
+        QueryOps::task(Arc::clone(&root)).register(&mut env);
         PathOps::new(root).register(&mut env);
         UiOps::new(provider).register(&mut env);
         DateOps.register(&mut env);

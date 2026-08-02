@@ -139,11 +139,11 @@ A `Key:: Value` pair embedded in a note's body using Dataview-compatible syntax:
 _Avoid_: metadata tag, embedded field
 
 ### QueryOutcome
-The type returned by a query — an iterable, indexable collection of `IndexRecord`s. Supports `len`, indexing by integer position, and iteration via `{% for %}`. Registered as a minijinja type so pipeline filters compose against it.
+The type returned by a page-level (`query`) or task-level (`tasks`) query — an iterable, indexable collection of `IndexRecord`s. Supports `len`, indexing by integer position, and iteration via `{% for %}`. Registered as a minijinja type so pipeline filters compose against it.
 _Avoid_: QueryResult, result set
 
 ### IndexRecord
-A single item inside a `QueryOutcome`: a Note with its implicit `file.*` fields and all indexed frontmatter/inline field metadata.
+A single item inside a `QueryOutcome`: a Note with its implicit `file.*` fields and all indexed frontmatter/inline field metadata. A task-level row (from `tasks.*`) is the same type with `task.completed`/`task.text` also set, retaining its parent Note's metadata.
 _Avoid_: QueryRow, page, record
 
 ### Pipeline Query
