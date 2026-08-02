@@ -165,10 +165,10 @@ impl FileFormat {
     }
 }
 
-/// Timestamp associated with indexed file metadata.
+/// UTC timestamp stored with indexed file metadata.
 ///
-/// Wraps [`DateTime<Utc>`] so file timestamps have one formatting and ordering
-/// type instead of leaking storage-library or filesystem clock types.
+/// Wraps [`DateTime<Utc>`] so index code uses one formatting and ordering type
+/// instead of leaking filesystem clock details.
 #[derive(
     Copy, Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Deserialize, Serialize,
 )]
@@ -196,8 +196,8 @@ impl Timestamp {
     /// Formats this timestamp as a date and time without a UTC offset.
     ///
     /// Produces values like `"2026-07-29T14:30:00"` for Dataview-style
-    /// `ctime`/`mtime` query field values without an offset suffix to break
-    /// filter literal text matching.
+    /// `ctime`/`mtime` field values, where offset text would break literal
+    /// filter matching.
     #[inline]
     #[must_use]
     pub(crate) fn to_datetime_string(self) -> String {

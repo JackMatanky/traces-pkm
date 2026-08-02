@@ -1,10 +1,9 @@
 //! Query source selection, field resolution, and outcome transformations.
 //!
-//! The query layer supports both page-level results from
-//! [`super::FileIndex::query`] and task-level rows from
-//! [`super::FileIndex::query_tasks`].
+//! This module powers page-level results from [`super::FileIndex::query`] and
+//! task-level rows from [`super::FileIndex::query_tasks`].
 //!
-//! # Main Components
+//! # Main types
 //!
 //! - [`Source`] selects which Notes a query includes.
 //! - [`IndexRecord`] pairs a [`FileRecord`] with its parsed [`Note`] and
@@ -30,12 +29,11 @@ use sort::sort_key_cmp;
 use super::file::FileRecord;
 use crate::note::{FieldValue, Note};
 
-/// Iterable collection of [`IndexRecord`] values returned by
-/// [`super::FileIndex::query`] or [`super::FileIndex::query_tasks`].
+/// Ordered collection of [`IndexRecord`] rows produced by an index query.
 ///
 /// Page-level outcomes contain one row per Note. Task-level outcomes contain
-/// one row per task item. Both share this type, so consumers must not assume a
-/// row came from [`super::FileIndex::query`] unless they control the source.
+/// one row per task item. Consumers should not assume which shape they have
+/// unless they control the query source.
 ///
 /// Transformation methods consume and return [`QueryOutcome`], so calls chain
 /// naturally: `outcome.filter("rating > 7")?.sort("rating", true)?.limit(10)?`.
@@ -81,33 +79,29 @@ impl QueryOutcome {
 
     /// Keeps only records matching the filter expression `expr`.
     ///
-    /// `expr` can be a comparison such as `"rating > 7"`, a function call such
-    /// as `"contains(tags, \"#book\")"`, or a boolean combination using `AND`,
-    /// `OR`, `NOT`, and nested parentheses `( ... )`.
-    ///
-    /// # Matching Rules
-    ///
-    /// - **Operators**: `==`, `!=`, `>=`, `<=`, `>`, `<`.
-    /// - **Functions**: `contains(field, value)` checks list membership, tag
-    ///   prefix matches like `#book` matching `#book/fiction`, or string
-    ///   substring containment.
-    /// - **Boolean Logic**: `AND` / `and` / `&&`, `OR` / `or` / `||`, `NOT` /
+    /// Supported forms:
+    /// - Comparisons: `<field> <op> <value>` with `==`, `!=`, `>=`, `<=`, `>`,
+    ///   or `<`.
+    /// - Functions: `contains(field, value)` checks list membership, tag prefix
+    ///   matches like `#book` matching `#book/fiction`, or string substring
+    ///   containment.
+    /// - Boolean logic: `AND` / `and` / `&&`, `OR` / `or` / `||`, and `NOT` /
     ///   `not` / `!`.
-    /// - **Parentheses**: `( ... )` overrides standard operator precedence.
-    /// - **Literals**: Double-quoted strings with `\"` escape support, numbers,
+    /// - Parentheses: `( ... )` overrides standard operator precedence.
+    /// - Literals: double-quoted strings with `\"` escape support, numbers,
     ///   `true`/`false`, or `null`/`Null`.
-    /// - **Text Normalization**: `==` and `!=` treat `String`, `Date`, and
+    /// - Text normalization: `==` and `!=` treat `String`, `Date`, and
     ///   `Duration` values as textually comparable. For example, `"2026-07-29"`
     ///   matches a `Date` field with equal text.
-    /// - **Type Mismatches**: Other cross-kind comparisons, such as comparing a
+    /// - Type mismatches: other cross-kind comparisons, such as comparing a
     ///   number to a string, never match under any operator except `!=`.
-    /// - **Null Values**: Records missing the field (`Null`) never match `==`
-    ///   or ordering operators, but do match `!=`.
+    /// - Null values: records missing the field (`Null`) never match `==` or
+    ///   ordering operators, but do match `!=`.
     ///
     /// # Errors
     ///
-    /// - [`QueryError::UnparsableFilterExpression`] if `expr` cannot be parsed
-    /// - [`QueryError::UnknownFieldPath`] if its field path is malformed
+    /// - [`QueryError::UnparsableFilterExpression`] if `expr` cannot be parsed.
+    /// - [`QueryError::UnknownFieldPath`] if its field path is malformed.
     pub(crate) fn filter(self, expr: &str) -> Result<Self, QueryError> {
         let expr = FilterExpr::parse(expr)?;
         let records = self
@@ -135,10 +129,9 @@ impl QueryOutcome {
     /// Orders records by `path`, ascending unless `descending` is set.
     ///
     /// Matches Dataview's sort semantics:
-    /// - **Null Values**: Records missing `path` ([`FieldValue::Null`]) sort as
+    /// - Null values: records missing `path` ([`FieldValue::Null`]) sort as
     ///   minimum values, so they lead ascending and trail descending.
-    /// - **Stability**: Equal or incomparable records keep their relative
-    ///   order.
+    /// - Stability: equal or incomparable records keep their relative order.
     ///
     /// # Errors
     ///
@@ -184,15 +177,12 @@ impl QueryOutcome {
     /// Explodes each record's `path` field into one row per list element.
     ///
     /// Behavioral details:
-    /// - **Target Fields**: Applies to fields resolving to [`FieldValue::List`]
-    ///   (frontmatter lists, inline list fields, or `tags`).
-    /// - **Non-List Fields**: Records with scalar values pass through
-    ///   unchanged.
-    /// - **Empty Lists**: Records with empty list values contribute no rows to
-    ///   the outcome.
-    /// - **Row Resolution**: On exploded rows, `path` resolves to that row's
-    ///   single element, while all other fields resolve from the original
-    ///   record.
+    /// - Target fields: applies to fields resolving to [`FieldValue::List`],
+    ///   including frontmatter lists, inline list fields, and `tags`.
+    /// - Non-list fields: records with scalar values pass through unchanged.
+    /// - Empty lists: records with empty list values contribute no rows.
+    /// - Row resolution: on exploded rows, `path` resolves to that row's single
+    ///   element while all other fields resolve from the original record.
     ///
     /// # Errors
     ///
@@ -344,12 +334,11 @@ impl FieldPath {
     }
 }
 
-/// One query result row: a [`FileRecord`] paired with its [`Note`]. A row
-/// built by [`super::FileIndex::query_tasks`] also carries one task item's
-/// fields.
+/// Query row pairing a [`FileRecord`] with parsed [`Note`] metadata.
 ///
-/// Exposes both `file.*` fields and Note Metadata (frontmatter, inline
-/// fields, tags) through one value for Template and CLI callers.
+/// Task-level rows also carry one task item's fields. Each row resolves
+/// `file.*`, `task.*`, frontmatter, inline fields, and tags for Template and
+/// CLI callers.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct IndexRecord {
     file: FileRecord,
@@ -404,7 +393,7 @@ impl IndexRecord {
         self
     }
 
-    /// This row's task completion state, if it's a task-level row built by
+    /// This row's task completion state, if it is a task-level row built by
     /// [`super::FileIndex::query_tasks`]. `None` for page-level records.
     #[inline]
     #[must_use]
@@ -412,7 +401,7 @@ impl IndexRecord {
         self.task.as_ref().map(|task| task.completed)
     }
 
-    /// This row's task text, if it's a task-level row built by
+    /// This row's task text, if it is a task-level row built by
     /// [`super::FileIndex::query_tasks`]. `None` for page-level records.
     #[inline]
     #[must_use]
@@ -438,15 +427,15 @@ impl IndexRecord {
     ///
     /// Resolves `file.*` accessors, `task.*` accessors, frontmatter fields,
     /// inline fields, and `tags`:
-    /// - Frontmatter fields take precedence over an inline field with the same
-    ///   key (see [`Note::fields`]).
+    /// - Frontmatter fields take precedence over inline fields with the same
+    ///   key. See [`Note::fields`].
     /// - A well-formed path this record has no value for, such as a missing
     ///   frontmatter key or a `task.*` accessor on a page-level record,
-    ///   resolves to [`FieldValue::Null`], not an error.
+    ///   resolves to [`FieldValue::Null`] instead of erroring.
     ///
     /// # Errors
     ///
-    /// Returns [`QueryError::UnknownFieldPath`] if `path` is malformed; see
+    /// Returns [`QueryError::UnknownFieldPath`] if `path` is malformed. See
     /// [`FieldPath::parse`].
     #[inline]
     pub(crate) fn field(&self, path: &str) -> Result<FieldValue, QueryError> {

@@ -1,9 +1,9 @@
-//! `file.*` query field accessors.
+//! `file.*` accessor parsing and resolution for query field paths.
 
 use super::super::file::FileRecord;
 use crate::note::FieldValue;
 
-/// General `file.*` metadata accessors available to query field paths.
+/// Query `file.*` accessors backed by [`FileRecord`] metadata.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(crate) enum FileField {
     /// [`FileRecord::path`].
@@ -60,7 +60,7 @@ impl FileField {
         }
     }
 
-    /// Resolves this accessor against `file`.
+    /// Returns this accessor's value for `file`.
     pub(crate) fn resolve(self, file: &FileRecord) -> FieldValue {
         match self {
             Self::Path => {

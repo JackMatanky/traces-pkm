@@ -101,7 +101,8 @@ impl IndexStore {
     ///
     /// - [`FileIndexError::Store`] if the table cannot be read
     /// - [`FileIndexError::Corrupt`] if stored bytes are not valid UTF-8
-    /// - [`FileIndexError::Deserialize`] if stored text is not valid UTF-8/TOML
+    /// - [`FileIndexError::Deserialize`] if stored text is not valid UTF-8 or
+    ///   TOML
     pub(super) fn load_all(&self) -> Result<IndexSnapshot, FileIndexError> {
         let read_txn =
             self.db.begin_read().map_err(|source| self.store_error(source))?;
@@ -335,8 +336,8 @@ mod tests {
             use std::os::unix::fs::PermissionsExt as _;
 
             /// Restores a locked directory's permissions on drop, even if
-            /// the test panics - otherwise a `0o500` root blocks the
-            /// tempdir's own cleanup.
+            /// the test panics. Otherwise a `0o500` root blocks the tempdir's
+            /// own cleanup.
             struct RestorePermissions<'a>(&'a Path);
 
             impl Drop for RestorePermissions<'_> {

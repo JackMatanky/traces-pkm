@@ -1,4 +1,4 @@
-//! Dataview-compatible value comparison and sort ordering.
+//! Dataview-compatible equality and ordering for resolved field values.
 
 use std::cmp::Ordering;
 
@@ -37,11 +37,11 @@ pub(super) fn fields_equal(a: &FieldValue, b: &FieldValue) -> bool {
 /// [`super::QueryOutcome::group_by`].
 ///
 /// Matches Dataview's `compareValue` semantics:
-/// - **Null Values**: [`FieldValue::Null`] acts as the minimum value.
-/// - **Direction**: `descending` reverses the entire comparator uniformly (so
-///   `Null` leads ascending and trails descending).
-/// - **Non-Null Ordering**: Ordered by [`compare_field_values`], falling back
-///   to [`Ordering::Equal`] to maintain stable relative order for incomparable
+/// - Null values: [`FieldValue::Null`] acts as the minimum value.
+/// - Direction: `descending` reverses the comparator uniformly, so `Null` leads
+///   ascending and trails descending.
+/// - Non-null ordering: ordered by [`compare_field_values`], falling back to
+///   [`Ordering::Equal`] to preserve stable relative order for incomparable
 ///   kinds.
 pub(super) fn sort_key_cmp(
     a: &FieldValue,

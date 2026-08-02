@@ -148,7 +148,7 @@ mod tests {
             use std::os::unix::fs::PermissionsExt as _;
 
             /// Restores a locked directory's permissions on drop, even if
-            /// the test panics - otherwise a `0o000` directory blocks the
+            /// the test panics. Otherwise a `0o000` directory blocks the
             /// tempdir's own cleanup.
             struct RestorePermissions<'a>(&'a Path);
 

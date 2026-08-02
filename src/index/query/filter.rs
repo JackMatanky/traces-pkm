@@ -1,14 +1,14 @@
-//! Filter expression AST, tokenizer, and recursive descent parser.
+//! Filter expression parsing and evaluation.
 //!
-//! # Main Components
+//! # Main types
 //!
 //! - [`FilterExpr`] is the parsed AST for `.filter()` and `.where()`
 //!   expressions.
-//! - [`FilterToken`] is the token stream produced from a filter expression
-//!   string by [`tokenize_filter_expr`].
+//! - [`FilterToken`] is the token stream produced from a filter expression by
+//!   [`tokenize_filter_expr`].
 //! - [`FilterParser`] turns tokens into a [`FilterExpr`].
-//! - [`FilterFunction`] represents a recognized function call such as
-//!   `contains(tags, "#book")`.
+//! - [`FilterFunction`] represents recognized calls such as `contains(tags,
+//!   "#book")`.
 
 use std::vec;
 
@@ -41,17 +41,17 @@ impl FilterExpr {
     /// Parses a filter expression string into a [`FilterExpr`] AST.
     ///
     /// Supports:
-    /// - **Comparisons**: `<field> <op> <value>` (`==`, `!=`, `>=`, `<=`, `>`,
-    ///   `<`)
-    /// - **Functions**: `contains(field, value)`
-    /// - **Boolean Logic**: `AND` / `and` / `&&`, `OR` / `or` / `||`, `NOT` /
-    ///   `not` / `!`
-    /// - **Parentheses**: `( ... )`
+    /// - Comparisons: `<field> <op> <value>` with `==`, `!=`, `>=`, `<=`, `>`,
+    ///   or `<`.
+    /// - Functions: `contains(field, value)`.
+    /// - Boolean logic: `AND` / `and` / `&&`, `OR` / `or` / `||`, and `NOT` /
+    ///   `not` / `!`.
+    /// - Parentheses: `( ... )`.
     ///
     /// # Errors
     ///
-    /// - [`QueryError::UnparsableFilterExpression`] if `expr` is malformed
-    /// - [`QueryError::UnknownFieldPath`] if a field path is malformed
+    /// - [`QueryError::UnparsableFilterExpression`] if `expr` is malformed.
+    /// - [`QueryError::UnknownFieldPath`] if a field path is malformed.
     pub(super) fn parse(expr: &str) -> Result<Self, QueryError> {
         let tokens = tokenize_filter_expr(expr)?;
         let mut parser = FilterParser::new(expr, tokens);
@@ -148,11 +148,11 @@ fn tokenize_filter_expr(expr: &str) -> Result<Vec<FilterToken>, QueryError> {
         .map_err(|()| QueryError::unparsable_filter(expr))
 }
 
-/// Un-escapes a lexed double-quoted string literal's `lex.slice()` (the full
-/// `"..."` match, quotes included) into its [`FieldValue::String`] contents.
+/// Unescapes a lexed double-quoted string literal into a
+/// [`FieldValue::String`].
 ///
 /// Every `\X` pair pushes `X` verbatim, matching Dataview's simple escaping
-/// (not full Rust-style escape-sequence interpretation).
+/// instead of Rust-style escape sequences.
 fn string_callback(lex: &mut Lexer<'_, FilterToken>) -> FieldValue {
     let inner = lex
         .slice()
@@ -337,9 +337,9 @@ impl FilterFunction {
     ///
     /// # Arguments
     ///
-    /// * `name` - Function name to match, case-insensitively
-    /// * `field` - Already-parsed field path for the built call
-    /// * `target` - Comparison/membership target for the built call
+    /// - `name`: function name to match, case-insensitively.
+    /// - `field`: already-parsed field path for the built call.
+    /// - `target`: comparison or membership target for the built call.
     fn build(name: &str, field: FieldPath, target: FieldValue) -> Option<Self> {
         if name.eq_ignore_ascii_case("contains") {
             Some(Self::Contains {
@@ -362,7 +362,7 @@ impl FilterFunction {
     }
 }
 
-/// Evaluates `contains(field_val, target)` logic.
+/// Evaluates a `contains(field_val, target)` call.
 ///
 /// - Lists match by exact value or tag prefix, such as `#book` matching
 ///   `#book/fiction`.

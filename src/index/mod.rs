@@ -1,18 +1,18 @@
-//! File index for project files and parsed markdown notes.
+//! Project file index and markdown Note query support.
 //!
-//! [`FileIndex`] keeps a sorted [`FileRecord`] for every regular file under a
-//! trusted project root. Markdown files also get parsed into [`Note`] records.
-//! Persistence is redb-backed through [`store`](mod@store); callers use the
-//! higher-level index API instead of touching storage directly.
+//! [`FileIndex`] stores a sorted [`FileRecord`] for every regular file under a
+//! trusted project root. Markdown files also get parsed into [`Note`] metadata.
+//! Persistence lives in [`store`](mod@store); callers use [`FileIndex`]'s
+//! methods instead of redb tables.
 //!
-//! # Main APIs
+//! # Main entry points
 //!
 //! - [`FileIndex::build`], [`FileIndex::refresh`], [`FileIndex::persist`], and
-//!   [`FileIndex::load`] construct or persist the index.
+//!   [`FileIndex::load`] build, refresh, save, and reload the index.
 //! - [`FileIndex::query`] and [`FileIndex::query_tasks`] run page-level and
 //!   task-level queries.
-//! - [`FileIndex::records`] and [`FileIndex::notes`] expose indexed data for
-//!   direct inspection.
+//! - [`FileIndex::records`] and [`FileIndex::notes`] expose sorted indexed
+//!   records for direct inspection.
 
 #![cfg_attr(
     not(test),
@@ -48,10 +48,10 @@ use crate::note::{Note, parse_markdown};
 /// Project-relative path of the persisted [`FileIndex`] database.
 const INDEX_FILE: &str = ".traces/index.redb";
 
-/// Persisted cache of file metadata and parsed markdown note metadata.
+/// Persisted cache of file records and parsed Note metadata.
 ///
-/// Every indexed file has a [`FileRecord`]. Markdown files also have a
-/// [`Note`], available through [`Self::notes`] or [`Self::note`].
+/// Every regular file contributes a [`FileRecord`]. Markdown files also
+/// contribute a [`Note`], accessible through [`Self::notes`] or [`Self::note`].
 #[derive(Clone, Debug)]
 pub(crate) struct FileIndex {
     records: Vec<FileRecord>,
@@ -88,22 +88,24 @@ impl FileIndex {
     /// Refreshes the persisted index for `root` against current filesystem
     /// state.
     ///
-    /// Compares each current file's `(created_at, modified_at, size)`
-    /// against the previously persisted record ([`FileRecord`] equality):
-    /// - Unchanged markdown Notes reuse their previously parsed [`Note`].
-    /// - Added or changed markdown Notes are reparsed.
-    /// - Deleted files are dropped, since they no longer appear in the scan.
+    /// Re-scans `root` and compares each current file's `(created_at,
+    /// modified_at, size)` tuple against the previously persisted
+    /// [`FileRecord`]:
+    /// - Unchanged markdown Notes reuse their parsed [`Note`].
+    /// - Added or changed markdown Notes are parsed from disk.
+    /// - Deleted files disappear because they are absent from the fresh scan.
     ///
-    /// Returns the fresh [`FileIndex`] and persists any changes.
+    /// Returns the fresh [`FileIndex`] and persists it only when contents
+    /// changed.
     ///
     /// # Errors
     ///
     /// - [`FileIndexError::Io`] if a directory cannot be read, a file's
-    ///   metadata cannot be inspected, or a markdown file cannot be read
+    ///   metadata cannot be inspected, or a markdown file cannot be read.
     /// - [`FileIndexError::Store`], [`FileIndexError::Corrupt`], or
-    ///   [`FileIndexError::Deserialize`] if the previously persisted index
-    ///   cannot be loaded
-    /// - [`FileIndexError::Serialize`] if persisting the refreshed index fails
+    ///   [`FileIndexError::Deserialize`] if the previous index cannot be
+    ///   loaded.
+    /// - [`FileIndexError::Serialize`] if the refreshed index cannot be stored.
     pub(crate) fn refresh(root: &Path) -> Result<Self, FileIndexError> {
         let previous = Self::load(root)?;
         let records = scan::scan_root(root)?;
@@ -237,25 +239,22 @@ impl FileIndex {
 
     /// Executes a task-level query over `source`, consuming this index.
     ///
-    /// Selects the same Notes [`Self::query`] would (via
-    /// [`Source::is_match`]), then expands each into one [`IndexRecord`] per
-    /// task item from [`Note::tasks`] instead of one record per Note: every
-    /// markdown task list item (`- [ ]`/`- [x]`) in a matched Note becomes
-    /// its own row. A Note with no tasks contributes no rows.
+    /// Selects the same Notes as [`Self::query`], then expands each matched
+    /// Note into one [`IndexRecord`] per markdown task item (`- [ ]` or
+    /// `- [x]`). Notes without tasks contribute no rows.
     ///
-    /// Each row retains its parent Note's `file.*`, frontmatter,
-    /// inline-field, and tag metadata for filtering and display (via
-    /// [`IndexRecord::field`]), alongside [`IndexRecord::task_completed`]
-    /// and [`IndexRecord::task_text`].
+    /// Each task row keeps its parent Note's `file.*`, frontmatter,
+    /// inline-field, and tag metadata for filtering and display through
+    /// [`IndexRecord::field`]. It also exposes
+    /// [`IndexRecord::task_completed`] and [`IndexRecord::task_text`].
     ///
-    /// Call [`Self::refresh`] first so results reflect the current
-    /// filesystem, same as [`Self::query`].
+    /// Call [`Self::refresh`] first so results reflect the current filesystem.
     ///
     /// # Performance
     ///
-    /// O(n + m + t) where `t` is the total number of task items across
-    /// matched Notes. This streams task iteration and pushes rows into one
-    /// output vector, avoiding a per-note row collection.
+    /// O(n + m + t), where `t` is the total number of task items across
+    /// matched Notes. Task iteration streams into one output vector without a
+    /// per-note row collection.
     #[must_use]
     pub(crate) fn query_tasks(self, source: &Source) -> QueryOutcome {
         let mut matched = Vec::new();
@@ -688,10 +687,10 @@ mod tests {
         #[test]
         #[expect(
             clippy::disallowed_methods,
-            reason = "not async code — this is a test that waits for the \
-                      filesystem mtime to advance after rewriting a file with \
-                      the same byte length; tokio::time::sleep does not apply \
-                      here and filetime is not worth the dep"
+            reason = "not async code; this test waits for the filesystem \
+                      mtime to advance after rewriting a file with the same \
+                      byte length; tokio::time::sleep does not apply here and \
+                      filetime is not worth the dep"
         )]
         fn reparses_a_note_when_modified_timestamp_changes_with_same_file_size()
         {
