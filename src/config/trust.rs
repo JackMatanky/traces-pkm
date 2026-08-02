@@ -1,8 +1,11 @@
-//! Trust request and status types for config administration.
+//! Trust request and status model.
 //!
-//! [`TrustRequest`] names either a workspace root or a specific local config
-//! file. [`WorkspaceTrustStatus`] tracks root trust; [`ConfigTrustStatus`]
-//! adds config-file baseline states used to detect stale trust.
+//! # Concepts
+//!
+//! - [`TrustRequest`] names either a workspace root or one local config file.
+//! - [`WorkspaceTrustStatus`] describes root trust.
+//! - [`ConfigTrustStatus`] adds config-baseline states used to detect stale
+//!   local config files.
 
 use std::{
     fmt::{self, Display, Formatter},
@@ -11,7 +14,7 @@ use std::{
 
 use super::file::{Discovered, LocalConfigFile, Tracked};
 
-/// Request for a trust operation.
+/// Target of a trust or untrust operation.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum TrustRequest {
     /// Trust a workspace root without binding to a config file.
@@ -80,7 +83,7 @@ impl From<&LocalConfigFile<Tracked>> for TrustRequest {
     }
 }
 
-/// Trust requests resolved from a discovery operation.
+/// Trust requests resolved from one discovery operation.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct TrustRequests(Box<[TrustRequest]>);
 
@@ -115,7 +118,7 @@ pub(crate) enum WorkspaceTrustStatus {
     Untrusted,
 }
 
-/// Trust state for a config file inside a workspace.
+/// Trust state for a config file relative to its workspace root.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(crate) enum ConfigTrustStatus {
     /// The workspace root is trusted and, when a baseline hash exists,

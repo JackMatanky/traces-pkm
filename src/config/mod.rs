@@ -1,11 +1,16 @@
-//! Configuration discovery, tracking, loading, and trust.
+//! Configuration loading and trust boundary.
 //!
-//! [`ConfigService`] discovers config files from a working directory, tracks
-//! candidates as best-effort bookkeeping, checks local trust state, and merges
-//! global config before local `.traces/config.toml` so local values win.
+//! This module is the config seam used by the rest of the crate. It exports
+//! [`ConfigService`] for operations and [`Config`] for read-only resolved
+//! settings; submodules keep discovery, lifecycle, raw TOML, and trust-state
+//! details separate.
 //!
-//! Read-only domain types expose the resolved project root, template
-//! directories, and output directory to `cli` and `template`.
+//! # Load Pipeline
+//!
+//! - Discover local and global TOML files from a filesystem anchor.
+//! - Track discovered local configs as best-effort state.
+//! - Reject untrusted or stale local config content before parsing.
+//! - Merge global config before local config so local values win.
 
 #![cfg_attr(
     not(test),

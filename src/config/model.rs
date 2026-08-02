@@ -1,17 +1,18 @@
-//! Resolved configuration consumed by CLI and template code.
+//! Resolved config model for consumers.
 //!
-//! [`Config`] exposes the project root and template settings after discovery,
-//! trust checks, and config merging. [`TemplateConfig`] keeps local and global
-//! template directories separate so `crate::template` can resolve local first.
+//! # Main Types
+//!
+//! - [`Config`] exposes the project root, template directories, and output
+//!   directory after discovery, trust checks, and merging.
+//! - [`TemplateConfig`] preserves local and global template directories so
+//!   template lookup can stay local-first.
 
 use std::path::{Path, PathBuf};
 
-/// Merged configuration ready for consumers.
+/// Merged local/global configuration ready for consumers.
 #[derive(Clone, Debug)]
 pub(crate) struct Config {
-    /// Project root directory.
     root: PathBuf,
-    /// Template directories and output path from merged config.
     templates: TemplateConfig,
 }
 
@@ -26,21 +27,21 @@ impl Config {
         }
     }
 
-    /// The project root directory.
+    /// Project root directory used as the local resolution base.
     #[inline]
     #[must_use]
     pub(crate) fn root(&self) -> &Path {
         &self.root
     }
 
-    /// The local template directory, if set.
+    /// Local template directory, if one was configured.
     #[inline]
     #[must_use]
     pub(crate) fn local_template_dir(&self) -> Option<&Path> {
         self.templates.local()
     }
 
-    /// The global template directory, if set.
+    /// Global template directory, if one was configured.
     #[inline]
     #[must_use]
     pub(crate) fn global_template_dir(&self) -> Option<&Path> {
@@ -80,15 +81,12 @@ impl Config {
 
 /// Template directories and output path from merged config.
 ///
-/// Keeps local and global directories separately; resolution (try local first,
-/// fall back to global) lives in `crate::template`.
+/// Keeps local and global directories separate so template lookup can preserve
+/// local-first precedence without re-reading config files.
 #[derive(Clone, Debug)]
 pub(super) struct TemplateConfig {
-    /// Local project template directory (from `.traces/config.toml`).
     local: Option<PathBuf>,
-    /// Global template directory (from `~/.config/traces/config.toml`).
     global: Option<PathBuf>,
-    /// Configured `output_dir`, or the config root when absent.
     output: PathBuf,
 }
 

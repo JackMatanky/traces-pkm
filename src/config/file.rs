@@ -1,8 +1,14 @@
-//! Config file source and lifecycle state.
+//! Typed config-file lifecycle states.
 //!
-//! Encodes local/global source and discovered/tracked/trusted/parsed lifecycle
-//! states in [`ConfigFile`]'s type parameters. Local files pass through trust
-//! verification before parsing; global files parse directly from disk.
+//! [`ConfigFile`] pairs a config path with source and lifecycle markers so the
+//! loader can express valid transitions in types.
+//!
+//! # Lifecycle
+//!
+//! - [`Discovered`] means the path exists but has not been tracked or trusted.
+//! - [`Tracked`] means local discovery recorded the path as best-effort state.
+//! - [`Trusted`] carries local TOML content verified against a trust baseline.
+//! - [`Parsed`] carries TOML decoded into [`RawConfig`].
 
 use std::path::{Path, PathBuf};
 
@@ -20,36 +26,36 @@ use super::{
     trust::ConfigTrustStatus,
 };
 
-/// Errors constructing or transitioning config-file lifecycle values.
+/// Errors raised while validating config paths, trust state, or TOML content.
 #[derive(Debug, Error)]
 pub(crate) enum ConfigFileError {
     /// The path is not a local `.traces/config.toml` file.
     #[error("unsupported local config file {path}")]
     UnsupportedLocalConfigFile {
-        /// Unsupported path.
+        /// Rejected local config path.
         path: PathBuf,
     },
     /// The path is not a supported global `config.toml` file.
     #[error("unsupported global config file {path}")]
     UnsupportedGlobalConfigFile {
-        /// Unsupported path.
+        /// Rejected global config path.
         path: PathBuf,
     },
     /// The config file could not be read or parsed.
     #[error("failed to load config file {path}")]
     Read {
-        /// Config file path.
+        /// File that failed to load.
         path: PathBuf,
-        /// Source figment error.
+        /// TOML provider error from `figment`.
         #[source]
         source: Box<figment::Error>,
     },
-    /// The trust check itself failed.
+    /// Trust verification failed before the file could be parsed.
     #[error("failed to check trust for {root}")]
     TrustCheckFailed {
-        /// The project root whose trust check failed.
+        /// Workspace root being checked.
         root: PathBuf,
-        /// Source trust error.
+        /// Underlying trust-store or hash error.
         source: Box<ConfigStateError>,
     },
 }
@@ -70,18 +76,16 @@ pub(crate) struct Discovered;
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(crate) struct Tracked;
 
-/// A local config file whose root passed the trust gate.
+/// Local config content verified against a trust baseline.
 ///
-/// Carries the content read while verifying the trust hash. [`Parsed`]'s local
-/// conversion reuses this content instead of reading the file from disk again,
-/// closing the TOCTOU window a second, independent read would open between the
-/// trust check and parsing.
+/// Carries the exact content read during trust checking. Parsing reuses this
+/// string so a second filesystem read cannot race the trusted content.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct Trusted {
     content: String,
 }
 
-/// A config file parsed into raw config data.
+/// Raw config data parsed from one validated config file.
 #[derive(Clone, Debug)]
 pub(super) struct Parsed {
     raw: RawConfig,
@@ -140,7 +144,7 @@ pub(crate) type LocalConfigFile<State> = ConfigFile<IsLocal, State>;
 /// A global user config file.
 pub(crate) type GlobalConfigFile<State> = ConfigFile<IsGlobal, State>;
 
-/// Config file with lifecycle state and source encoded in its type.
+/// Config file path plus source and lifecycle state.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct ConfigFile<Source, State> {
     root: PathBuf,
@@ -150,14 +154,14 @@ pub(crate) struct ConfigFile<Source, State> {
 }
 
 impl<Source, State> ConfigFile<Source, State> {
-    /// The config root.
+    /// Root directory used for path resolution.
     #[inline]
     #[must_use]
     pub(crate) fn root(&self) -> &Path {
         &self.root
     }
 
-    /// The config file path.
+    /// Filesystem path to the config file.
     #[inline]
     #[must_use]
     pub(crate) fn path(&self) -> &Path {
@@ -173,7 +177,7 @@ impl<Source, State> ConfigFile<Source, State> {
         }
     }
 
-    /// Transitions the config file into a new lifecycle state.
+    /// Moves the config file into the next lifecycle state.
     fn transition_to<NextState>(
         self,
         next_state: NextState,
@@ -240,7 +244,7 @@ impl GlobalConfigFile<Discovered> {
     }
 }
 
-/// The outcome of checking a tracked config file's trust status.
+/// Result of checking whether a tracked config file may be parsed.
 pub(crate) enum TrustOutcome {
     /// The file is trusted and ready to be parsed.
     Trusted(LocalConfigFile<Trusted>),

@@ -1,9 +1,16 @@
-//! Discovers config files before loading or parsing.
+//! Config-file discovery before trust checks and parsing.
 //!
-//! Walks from a filesystem anchor toward parent directories, gathering local
-//! and global candidates as typed config-file values. [`DiscoveryOutcome`]
-//! carries those candidates into the config builder pipeline without exposing
-//! mutable discovery state.
+//! This module turns a filesystem anchor into typed config-file candidates
+//! without reading TOML content.
+//!
+//! # Discovery Modes
+//!
+//! - [`DiscoveryScope::Full`] selects local and global candidates for loading.
+//! - [`DiscoveryScope::NearestLocal`] resolves one trust target.
+//! - [`DiscoveryScope::LocalSubtree`] resolves descendant trust targets.
+//!
+//! [`DiscoveryOutcome`] is the handoff to the builder pipeline, keeping
+//! traversal state private and downstream inputs typed.
 
 use std::{
     fs, io,
@@ -18,17 +25,16 @@ use super::{
 };
 use crate::dirs;
 
-/// The local project config file's path, relative to a project root.
+/// Relative path to a local project config file.
 ///
 /// Re-exported at [`super::LOCAL_CONFIG_FILE`] for `crate::cli::trust`.
 pub(crate) const LOCAL_CONFIG_FILE: &str = ".traces/config.toml";
 const GLOBAL_CONFIG_FILE: &str = "traces/config.toml";
 
-/// Errors during config file discovery (file-walking, not read/parse).
+/// Errors raised while finding candidate config files.
 #[derive(Debug, Error)]
 pub(crate) enum DiscoveryError {
-    /// No local `.traces/config.toml` was found in any ancestor
-    /// directory.
+    /// No local `.traces/config.toml` was found in any ancestor directory.
     #[error("no local config found from {cwd}")]
     LocalConfigAbsent {
         /// The working directory from which discovery started.
@@ -70,7 +76,7 @@ pub(crate) enum DiscoveryContextError {
     },
 }
 
-/// Input to [`DiscoveryEngine::process`].
+/// Validated scope and filesystem anchor for one discovery run.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct DiscoveryContext {
     kind: DiscoveryScope,
@@ -150,11 +156,11 @@ type OutcomeParts = (
     Box<[GlobalConfigFile<Discovered>]>,
 );
 
-/// Opaque discovery result consumed by the config builder pipeline.
+/// Config-file candidates handed to the builder pipeline.
 ///
-/// Carries the discovery kind, the original filesystem anchor, and config
-/// files found on disk. Fields stay private, so callers pass this token through
-/// unchanged or parse it into validated downstream input.
+/// Carries the discovery kind, original filesystem anchor, and files found on
+/// disk. Fields stay private so callers pass this token through unchanged or
+/// parse it into validated downstream input.
 #[derive(Clone, Debug)]
 pub(crate) struct DiscoveryOutcome {
     kind: DiscoveryScope,
@@ -227,7 +233,7 @@ impl DiscoveryOutcome {
     }
 }
 
-/// Stateless discovery orchestrator.
+/// Routes discovery requests to the matching filesystem traversal.
 #[derive(Copy, Clone, Debug, Default)]
 pub(crate) struct DiscoveryEngine;
 
@@ -260,11 +266,13 @@ impl DiscoveryEngine {
 
     /// Resolves trust requests from one user-supplied filesystem path.
     ///
-    /// File paths resolve to that local config. Directory paths resolve to
-    /// the nearest local config, falling back to a root-only request when
-    /// none is found and `scope` is
-    /// [`NearestLocal`](DiscoveryScope::NearestLocal). Subtree discovery
-    /// yields discovered config requests only.
+    /// Resolution rules:
+    /// - file paths resolve to that local config;
+    /// - directories with [`NearestLocal`](DiscoveryScope::NearestLocal)
+    ///   resolve to the nearest local config, falling back to a root-only
+    ///   request when none is found;
+    /// - directories with [`LocalSubtree`](DiscoveryScope::LocalSubtree) yield
+    ///   discovered config requests only.
     ///
     /// # Errors
     ///

@@ -1,8 +1,13 @@
-//! Loads config files into a merged [`Config`].
+//! Config loading and trust service.
 //!
-//! [`ConfigService`] owns full discovery, best-effort tracking, trust checks,
-//! TOML parsing, and local-over-global merging. Trust administration delegates
-//! to [`super::store::ConfigStateStore`].
+//! [`ConfigService`] is the operational entry point for config work.
+//!
+//! # Operations
+//!
+//! - Loading discovers candidates, records local sightings, checks trust,
+//!   parses TOML, and merges global config before local config.
+//! - Trust administration resolves subjects and delegates durable state to
+//!   [`super::store::ConfigStateStore`].
 
 use std::path::{Path, PathBuf};
 
@@ -24,7 +29,7 @@ use super::{
     trust::{ConfigTrustStatus, TrustRequest, TrustRequests},
 };
 
-/// Errors from the full config loading pipeline.
+/// Errors from the full config-loading pipeline.
 #[derive(Debug, Error)]
 pub(crate) enum ConfigLoadError {
     /// Discovery failed before any config could be loaded.
@@ -35,7 +40,7 @@ pub(crate) enum ConfigLoadError {
     Build(#[from] ConfigBuilderError),
 }
 
-/// Errors that can occur while building a [`Config`].
+/// Errors raised while building a [`Config`] from discovered files.
 #[derive(Debug, Error)]
 pub(crate) enum ConfigBuilderError {
     /// Discovery output was not valid builder input.
@@ -87,9 +92,10 @@ pub(crate) enum ConfigBuilderInputError {
     },
 }
 
-/// Selected files after applying full-load precedence: one local config
-/// selected by the deepest discovered root that contains the discovery anchor,
-/// plus an optional global config merged before local.
+/// Files selected for full config loading.
+///
+/// The deepest local config containing the discovery anchor is selected, then
+/// the optional global config is merged before it.
 #[derive(Debug)]
 struct ConfigBuilderInput {
     /// Selected local config; this is merged after `global`.
@@ -134,11 +140,11 @@ impl TryFrom<DiscoveryOutcome> for ConfigBuilderInput {
     }
 }
 
-/// Entry point for discovering and building configuration.
+/// Service boundary for config loading and trust-admin commands.
 ///
-/// Keeps filesystem discovery ([`Self::load`]) separate from the
-/// tracking/trust/parse/merge internals. Holds the state store shared by the
-/// build pipeline and trust-admin methods.
+/// Holds the shared state store while keeping filesystem discovery
+/// ([`Self::load`]) separate from trust operations such as [`Self::trust`] and
+/// [`Self::untrust`].
 #[derive(Clone, Debug)]
 pub(crate) struct ConfigService {
     state: ConfigStateStore,
@@ -333,8 +339,8 @@ impl ConfigService {
         }
     }
 
-    /// Removes trust for `subject`'s workspace root, including any content-hash
-    /// companion. Returns the number of root entries removed.
+    /// Removes trust for `subject`'s workspace root and returns how many root
+    /// entries were removed.
     ///
     /// # Errors
     ///
@@ -360,8 +366,8 @@ impl ConfigService {
         self.state.list_tracked_configs()
     }
 
-    /// Removes dangling tracked-config entries (target deleted or moved).
-    /// Returns the number of entries removed.
+    /// Removes dangling tracked-config entries and returns how many entries
+    /// were removed.
     ///
     /// # Errors
     ///
@@ -387,9 +393,9 @@ impl ConfigService {
         self.state.list_trusted_workspaces()
     }
 
-    /// Removes dangling trust entries (target root deleted or moved), including
-    /// each removed entry's content-hash companion. Returns the number of root
-    /// entries removed.
+    /// Removes dangling trust entries and their content-hash companions.
+    ///
+    /// Returns the number of root entries removed.
     ///
     /// # Errors
     ///

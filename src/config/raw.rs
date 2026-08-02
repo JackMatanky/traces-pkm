@@ -1,16 +1,20 @@
-//! TOML-facing config shapes before path resolution.
+//! Deserialization shapes for config TOML.
 //!
-//! These types match the on-disk schema exactly and deny unknown fields, so the
-//! builder can deserialize local and global layers before it resolves paths
-//! against each config root.
+//! These serde types match the on-disk schema and deny unknown fields.
+//!
+//! # Boundary
+//!
+//! This module preserves TOML values exactly as configured. Path resolution and
+//! local-over-global precedence are applied later by the builder pipeline.
 
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-/// Raw (unresolved) configuration data deserialized from TOML.
+/// Raw configuration data deserialized from TOML.
 ///
-/// Shared by both local and global config layers.
+/// Shared by local and global config layers before merge precedence or path
+/// resolution is applied.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct RawConfig {
@@ -19,15 +23,15 @@ pub(crate) struct RawConfig {
     pub(crate) templates: RawTemplateConfig,
 }
 
-/// Raw `[templates]` table.
+/// Raw `[templates]` table exactly as written in TOML.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct RawTemplateConfig {
-    /// Template directory as configured; joined against the config file's root
-    /// to resolve an absolute path.
+    /// Template directory as configured, before joining against the config
+    /// file's root.
     pub(crate) directory: Option<PathBuf>,
-    /// Output directory for rendered templates, used verbatim (relative or
-    /// absolute) when set. Falls back to the config root when absent.
+    /// Output directory for rendered templates. Relative values stay relative;
+    /// absent values fall back to the config root.
     #[serde(default)]
     pub(crate) output_dir: Option<PathBuf>,
 }
