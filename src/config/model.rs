@@ -85,11 +85,11 @@ impl Config {
 #[derive(Clone, Debug)]
 pub(super) struct TemplateConfig {
     /// Local project template directory (from `.traces/config.toml`).
-    pub(super) local: Option<PathBuf>,
+    local: Option<PathBuf>,
     /// Global template directory (from `~/.config/traces/config.toml`).
-    pub(super) global: Option<PathBuf>,
+    global: Option<PathBuf>,
     /// Configured `output_dir`, or the config root when absent.
-    pub(super) output: PathBuf,
+    output: PathBuf,
 }
 
 impl TemplateConfig {

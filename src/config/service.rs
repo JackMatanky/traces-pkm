@@ -265,11 +265,10 @@ impl ConfigService {
             .output_dir
             .unwrap_or_else(|| root.clone());
 
-        Ok(Config::new(root, TemplateConfig {
-            local: local_dir,
-            global: global_dir,
-            output,
-        }))
+        Ok(Config::new(
+            root,
+            TemplateConfig::new(local_dir, global_dir, output),
+        ))
     }
 
     /// Resolves trust subjects from one user-supplied filesystem path.
