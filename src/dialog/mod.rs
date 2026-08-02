@@ -1,22 +1,20 @@
-//! Abstracted interactive input via [`DialogProvider`].
+//! Object-safe dialog prompts for interactive and preset input.
 //!
-//! [`DialogProvider`] is an object-safe trait so consumers can hold a
-//! `&dyn DialogProvider` chosen at runtime. The default implementation
-//! ([`TerminalDialogProvider`]) delegates to `inquire` for real user
-//! interaction. [`PresetDialogProvider`] returns pre-configured responses with
-//! zero I/O — used in tests and non-interactive/MCP mode.
+//! [`DialogProvider`] is the seam between template rendering and user input.
+//! The two built-in providers cover the supported runtime modes:
 //!
-//! # Selection by position
+//! - [`TerminalDialogProvider`] delegates to `inquire` for real terminal
+//!   interaction.
+//! - [`PresetDialogProvider`] replays preconfigured responses for tests and
+//!   non-interactive MCP execution.
+//!
+//! # Selection By Position
 //!
 //! [`select`](DialogProvider::select) and
-//! [`multi_select`](DialogProvider::multi_select) return **indices** into the
-//! `items` slice, not the chosen strings themselves. This lets the caller
-//! recover a non-string value (by indexing into a parallel list with the
-//! result) and disambiguates duplicate labels. The primary consumer
-//! (`TemplateService`) inspects a template's input array: for a plain array
-//! of strings it indexes back into that array; for an array of objects it
-//! maps each to a label, calls `select`, and recovers the chosen object by
-//! the same index.
+//! [`multi_select`](DialogProvider::multi_select) return indices into the
+//! `items` slice, not copied labels. Index-based selection lets callers recover
+//! non-string values from a parallel list and keeps duplicate labels
+//! distinguishable.
 mod error;
 mod preset;
 mod terminal;
@@ -25,12 +23,11 @@ pub use error::DialogError;
 pub use preset::PresetDialogProvider;
 pub use terminal::TerminalDialogProvider;
 
-/// Interactive input, abstracted behind a seam.
+/// Provider contract for dialog prompts.
 ///
-/// Object-safe: consumers hold a `&dyn DialogProvider`. `Send + Sync` so an
-/// `Arc<dyn DialogProvider>` can be captured into `TemplateService`'s
-/// thread-safe minijinja closures. Deliberately not `+ Debug`, so
-/// implementors aren't forced to derive it.
+/// The trait is object-safe so callers can hold a `&dyn DialogProvider` chosen
+/// at runtime. It is also [`Send`] and [`Sync`] so shared providers can be
+/// captured by thread-safe template-rendering closures.
 pub trait DialogProvider: Send + Sync {
     /// Whether this provider can perform interactive prompting.
     ///
@@ -59,7 +56,7 @@ pub trait DialogProvider: Send + Sync {
     ///
     /// # Errors
     ///
-    /// Returns any [`DialogError`] variant.
+    /// Returns [`DialogError`] when the provider cannot complete the prompt.
     fn confirm(
         &self,
         label: &str,
@@ -84,7 +81,7 @@ pub trait DialogProvider: Send + Sync {
     ///
     /// # Errors
     ///
-    /// Returns any [`DialogError`] variant.
+    /// Returns [`DialogError`] when the provider cannot complete the prompt.
     fn multi_select(
         &self,
         label: &str,
@@ -111,8 +108,9 @@ pub trait DialogProvider: Send + Sync {
     ///
     /// # Errors
     ///
-    /// [`EmptySelectionInput`](DialogError::EmptySelectionInput) when `items`
-    /// is empty. Otherwise any [`DialogError`] variant.
+    /// Returns [`DialogError::EmptySelectionInput`] when `items` is empty.
+    /// Returns another [`DialogError`] when the provider cannot complete the
+    /// prompt.
     fn select(
         &self,
         label: &str,
@@ -137,7 +135,7 @@ pub trait DialogProvider: Send + Sync {
     ///
     /// # Errors
     ///
-    /// Returns any [`DialogError`] variant.
+    /// Returns [`DialogError`] when the provider cannot complete the prompt.
     fn text(
         &self,
         label: &str,

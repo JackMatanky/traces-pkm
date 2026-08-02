@@ -1,8 +1,8 @@
-//! Preset responses for the [`DialogProvider`] trait.
+//! Preset-backed [`DialogProvider`] for deterministic prompts.
 //!
-//! [`PresetDialogProvider`] records answers ahead of time and replays them
-//! FIFO, falling back to the call site's `default` once empty. Useful for
-//! tests and non-interactive/MCP mode.
+//! [`PresetDialogProvider`] stores responses in FIFO queues. Each prompt pops
+//! one queued answer, then falls back to the call site's default when its queue
+//! is empty.
 
 use std::{
     collections::VecDeque,
@@ -11,31 +11,30 @@ use std::{
 
 use super::{DialogError, DialogProvider};
 
-/// Lock a mutex, recovering the guard if the lock was poisoned.
+/// Locks a mutex and recovers the guard after poisoning.
 #[inline]
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     m.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-/// Access a mutex's data directly, recovering from poison.
+/// Returns direct mutable access to mutex-protected data.
 ///
-/// For use only where the caller already has exclusive (`&mut`) access to
-/// the [`Mutex`] — e.g. a consuming builder method — where the lock itself
-/// is redundant.
+/// Used by consuming builder methods that already own `&mut self`, where
+/// taking a runtime lock would add no safety.
 #[inline]
 fn get_mut<T>(m: &mut Mutex<T>) -> &mut T {
     m.get_mut().unwrap_or_else(PoisonError::into_inner)
 }
 
-/// A deterministic [`DialogProvider`] that replays preset responses.
+/// Deterministic [`DialogProvider`] that replays queued responses.
 ///
-/// Queue answers with [`with_text`](Self::with_text) /
-/// [`with_confirm`](Self::with_confirm); each call pops the next value.  Once
-/// the queue is empty the provider falls back to the `default` supplied at
-/// the call site (or a sensible hard-coded default).
+/// Queue answers with builder methods such as [`with_text`](Self::with_text)
+/// and [`with_confirm`](Self::with_confirm). Each dialog call consumes one
+/// queued value, then falls back to the prompt's default or the provider's
+/// hard-coded fallback.
 ///
-/// Useful in tests and non-interactive / MCP mode where answers are supplied
-/// up front instead of typed at a terminal.
+/// This provider is used where prompts must not touch the terminal: tests,
+/// automation, and MCP execution.
 ///
 /// # Examples
 ///
@@ -56,19 +55,19 @@ pub struct PresetDialogProvider {
 }
 
 impl PresetDialogProvider {
-    /// Create a [`PresetDialogProvider`] with an empty response queue.
+    /// Creates a [`PresetDialogProvider`] with no queued responses.
     ///
-    /// Every [`DialogProvider`] call falls through to its `default` parameter
-    /// (or a sensible hard-coded default).
+    /// Dialog calls fall through to their `default` parameter, or to the
+    /// provider's hard-coded fallback when no default is available.
     #[inline]
     #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Queue a response for the next [`DialogProvider::text`] call.
+    /// Queues a response for the next [`DialogProvider::text`] call.
     ///
-    /// Responses are consumed first-in-first-out.  Once the queue is empty,
+    /// Text responses are consumed first-in-first-out. When the queue is empty,
     /// [`text`](DialogProvider::text) falls back to the `default` parameter.
     ///
     /// # Examples
@@ -109,11 +108,11 @@ impl PresetDialogProvider {
 
     /// Queue a chosen index for the next [`DialogProvider::select`] call.
     ///
-    /// The queued index isn't validated until [`DialogProvider::select`]
-    /// consumes it — an index at or beyond the prompted items' length then
-    /// returns [`DialogError::InvalidConfiguration`] instead of an
-    /// out-of-range `usize`, mirroring how the real prompt can never return
-    /// an invalid choice.
+    /// The queued index is validated only when [`DialogProvider::select`]
+    /// consumes it. An index at or beyond the prompted items' length returns
+    /// [`DialogError::InvalidConfiguration`] instead of an out-of-range
+    /// `usize`, mirroring how the real prompt can never return an invalid
+    /// choice.
     ///
     /// # Examples
     ///
@@ -132,7 +131,8 @@ impl PresetDialogProvider {
         self
     }
 
-    /// Queue chosen indices for the next [`DialogProvider::multi_select`] call.
+    /// Queues chosen indices for the next [`DialogProvider::multi_select`]
+    /// call.
     ///
     /// # Examples
     ///
@@ -194,14 +194,13 @@ impl DialogProvider for PresetDialogProvider {
             .unwrap_or_else(|| default.unwrap_or(false)))
     }
 
-    /// Returns the next queued index, or `0` when the queue is empty.
+    /// Returns the next queued index, or `0` when no index is queued.
     ///
     /// # Errors
     ///
     /// Returns [`DialogError::EmptySelectionInput`] when `items` is empty.
     /// Returns [`DialogError::InvalidConfiguration`] when the queued index is
-    /// out of range for `items` — [`Self::with_select`] doesn't validate
-    /// against a specific prompt's item count at queue time.
+    /// outside the bounds of `items`.
     #[inline]
     fn select(
         &self,

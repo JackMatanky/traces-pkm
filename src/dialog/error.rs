@@ -1,32 +1,33 @@
-//! Error types for the dialog subsystem.
+//! Error model for interactive dialog prompts.
 //!
-//! The primary type is [`DialogError`], which wraps failures from the
-//! underlying dialog backend ([`inquire`]) and from I/O operations.
-//! [`From`] impls for [`std::io::Error`] and [`inquire::InquireError`] let
-//! the `?` operator convert into [`DialogError`] automatically, preserving
-//! the source chain so callers can walk it.
+//! [`DialogError`] groups prompt failures by caller-visible outcome:
+//!
+//! - user cancellation or interruption;
+//! - invalid prompt configuration;
+//! - unavailable interactive input;
+//! - I/O or backend failures with preserved sources.
 
-/// Errors returned by [`DialogProvider`](super::DialogProvider) methods.
+/// Error returned by [`DialogProvider`](super::DialogProvider) methods.
 ///
-/// Categorised into user-initiated cancellation, input validation, I/O
-/// failures, backend errors, and non-TTY conditions.
+/// Variants distinguish user-controlled exits from configuration mistakes and
+/// backend failures so CLI code can choose the right diagnostic.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum DialogError {
-    /// A single-selection prompt received an empty list of options.
+    /// A single-selection prompt received no options.
     ///
-    /// [`select`](super::DialogProvider::select) cannot return an item when
-    /// there is nothing to choose from. Contrast with
-    /// [`multi_select`](super::DialogProvider::multi_select), which accepts
-    /// an empty list and returns an empty [`Vec`].
+    /// [`select`](super::DialogProvider::select) cannot return an item without
+    /// at least one choice.
+    /// [`multi_select`](super::DialogProvider::multi_select) accepts an
+    /// empty list and returns an empty [`Vec`].
     #[error("cannot select from an empty list")]
     EmptySelectionInput,
 
-    /// The dialog was cancelled by the user (e.g. pressing Esc).
+    /// The user cancelled the dialog, for example by pressing Esc.
     #[error("dialog user cancelled the operation")]
     UserCancelled,
 
-    /// The dialog was interrupted by the user (e.g. pressing Ctrl-C).
+    /// The user interrupted the dialog, for example by pressing Ctrl-C.
     #[error("dialog user interrupted the operation")]
     UserInterrupted,
 
@@ -36,12 +37,12 @@ pub enum DialogError {
     #[error("invalid dialog configuration: {0}")]
     InvalidConfiguration(String),
 
-    /// The I/O medium does not support interactive dialog.
+    /// The input stream does not support interactive prompts.
     ///
-    /// Returned when the backend reports that stdin is not a terminal and
-    /// the caller did not provide fallback defaults.  Should not occur when
-    /// using [`TerminalDialogProvider`](super::TerminalDialogProvider) — its
-    /// TTY guard catches this condition before invoking the backend.
+    /// Returned when the backend reports that stdin is not a terminal and the
+    /// caller did not provide fallback defaults. This should not occur when
+    /// using [`TerminalDialogProvider`](super::TerminalDialogProvider) because
+    /// its TTY guard catches this condition before invoking the backend.
     #[error("interactive dialog not available, stdin is not a terminal")]
     NotInteractive,
 
@@ -61,9 +62,6 @@ pub enum DialogError {
     BackendFailure(#[source] Box<dyn std::error::Error + Send + Sync>),
 }
 
-/// Converts an [`std::io::Error`] into [`DialogError::Io`].
-///
-/// Enables `?` on [`std::io::Result`] inside dialog code.
 impl From<std::io::Error> for DialogError {
     #[inline]
     fn from(err: std::io::Error) -> Self {
@@ -71,11 +69,6 @@ impl From<std::io::Error> for DialogError {
     }
 }
 
-/// Maps each [`inquire::InquireError`] variant to the corresponding
-/// [`DialogError`] variant.
-///
-/// Enables `?` on results from the [`inquire`] backend so errors are
-/// transparent to callers.
 impl From<inquire::InquireError> for DialogError {
     #[inline]
     fn from(err: inquire::InquireError) -> Self {

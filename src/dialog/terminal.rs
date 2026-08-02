@@ -1,25 +1,25 @@
-//! Terminal-backed [`DialogProvider`] — interactive prompts via `inquire`.
+//! Terminal-backed [`DialogProvider`] for interactive prompts.
 
 use super::{DialogError, DialogProvider};
 
-/// [`DialogProvider`] that prompts the user through the terminal.
+/// [`DialogProvider`] that prompts through an interactive terminal.
 ///
-/// Backed by [`inquire`](https://docs.rs/inquire). Falls back to defaults in
-/// non-TTY contexts (CI, piping, scripts, dry-run):
+/// This provider delegates to [`inquire`](https://docs.rs/inquire) when stdin
+/// is a TTY. In non-TTY contexts such as CI, pipes, scripts, and dry runs, it
+/// returns fallback values instead of blocking:
 ///
-/// | method                                         | with default        | without default   |
-/// | ---------------------------------------------- | ------------------- | ----------------- |
-/// | [`text`](DialogProvider::text)                 | returns the default | returns `""`      |
-/// | [`confirm`](DialogProvider::confirm)           | returns the default | returns `false`   |
-/// | [`select`](DialogProvider::select)             | returns index `0`   | returns index `0` |
-/// | [`multi_select`](DialogProvider::multi_select) | —                   | returns `[]`      |
+/// | method                                         | fallback            |
+/// | ---------------------------------------------- | ------------------- |
+/// | [`text`](DialogProvider::text)                 | default or `""`     |
+/// | [`confirm`](DialogProvider::confirm)           | default or `false`  |
+/// | [`select`](DialogProvider::select)             | index `0`           |
+/// | [`multi_select`](DialogProvider::multi_select) | empty [`Vec`]       |
 ///
-/// ## Empty-item edge case
+/// # Empty Selection
 ///
-/// [`select`](DialogProvider::select) short-circuits **before** the TTY check
-/// when `items` is empty, returning
-/// [`EmptySelectionInput`](DialogError::EmptySelectionInput) regardless of
-/// TTY status.
+/// [`select`](DialogProvider::select) checks for empty `items` before the TTY
+/// guard and returns [`DialogError::EmptySelectionInput`] in every runtime
+/// mode.
 ///
 /// # Examples
 ///
@@ -36,7 +36,7 @@ use super::{DialogError, DialogProvider};
 pub struct TerminalDialogProvider;
 
 impl TerminalDialogProvider {
-    /// Create a [`TerminalDialogProvider`] with default configuration.
+    /// Creates a [`TerminalDialogProvider`] with default prompt behavior.
     #[inline]
     #[must_use]
     pub fn new() -> Self {
