@@ -1,16 +1,14 @@
-//! Concrete directory paths for configuration and persistent state.
+//! Concrete directories for configuration and persistent state.
 //!
-//! Application-specific paths:
+//! `TRACES_STATE_DIR` overrides the platform state directory on every
+//! supported operating system.
 //!
 //! | Export              | Resolved path                       | Purpose                          |
 //! | ------------------- | ----------------------------------- | -------------------------------- |
 //! | [`CONFIG_HOME`]     | Platform config parent directory    | Global configuration parent      |
 //! | [`TRACKED_CONFIGS`] | `$TRACES_STATE_DIR/tracked-configs` | Config-tracking store            |
 //! | [`TRUSTED_CONFIGS`] | `$TRACES_STATE_DIR/trusted-configs` | Trust store                      |
-//! | [`StateDirRoot`]    | —                                   | Private-constructor path newtype |
-//!
-//! `TRACES_STATE_DIR` overrides the platform default on every supported
-//! operating system.
+//! | [`StateDirRoot`]    | n/a                                 | Private-constructor path newtype |
 
 use std::{
     ffi::OsString,
@@ -21,7 +19,7 @@ use std::{
 
 const APP_NAME: &str = "traces";
 
-/// State-directory-rooted store path.
+/// Store directory rooted under the application state directory.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct StateDirRoot(PathBuf);
 
@@ -55,7 +53,7 @@ impl AsRef<Path> for StateDirRoot {
     }
 }
 
-/// The user's home directory.
+/// User home directory on Unix.
 ///
 /// - Override: `$HOME`
 /// - Default: `/`
@@ -63,7 +61,7 @@ impl AsRef<Path> for StateDirRoot {
 static HOME: LazyLock<PathBuf> =
     LazyLock::new(|| var_path("HOME").unwrap_or_else(|| PathBuf::from("/")));
 
-/// The user's home directory.
+/// User home directory on Windows.
 ///
 /// - Override: `%USERPROFILE%`  (then `%HOMEDRIVE%``%HOMEPATH%`)
 /// - Default: `C:\`
@@ -84,7 +82,7 @@ static HOME: LazyLock<PathBuf> = LazyLock::new(|| {
 static HOME: LazyLock<PathBuf> =
     LazyLock::new(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("test"));
 
-/// The platform-native global configuration parent directory.
+/// Global configuration parent directory on Unix.
 ///
 /// - Override: `$XDG_CONFIG_HOME`
 /// - Default: `$HOME/.config`
@@ -93,7 +91,7 @@ pub(crate) static CONFIG_HOME: LazyLock<PathBuf> = LazyLock::new(|| {
     var_path("XDG_CONFIG_HOME").unwrap_or_else(|| HOME.join(".config"))
 });
 
-/// The platform-native global configuration parent directory.
+/// Global configuration parent directory on macOS.
 ///
 /// - Override: `$XDG_CONFIG_HOME`
 /// - Default: `~/Library/Application Support`
@@ -103,7 +101,7 @@ pub(crate) static CONFIG_HOME: LazyLock<PathBuf> = LazyLock::new(|| {
         .unwrap_or_else(|| HOME.join("Library").join("Application Support"))
 });
 
-/// The platform-native global configuration parent directory.
+/// Global configuration parent directory on Windows.
 ///
 /// - Override: `%APPDATA%`
 /// - Default: `C:\Users\<user>\AppData\Roaming`
@@ -112,7 +110,7 @@ pub(crate) static CONFIG_HOME: LazyLock<PathBuf> = LazyLock::new(|| {
     var_path("APPDATA").unwrap_or_else(|| HOME.join("AppData").join("Roaming"))
 });
 
-/// The platform-native persistent-state parent directory.
+/// Persistent-state parent directory on Unix.
 ///
 /// - Override: `$XDG_STATE_HOME`
 /// - Default: `$HOME/.local/state`
@@ -122,7 +120,7 @@ static STATE_HOME: LazyLock<PathBuf> = LazyLock::new(|| {
         .unwrap_or_else(|| HOME.join(".local").join("state"))
 });
 
-/// The platform-native persistent-state parent directory.
+/// Persistent-state parent directory on macOS.
 ///
 /// - Override: `$XDG_STATE_HOME`
 /// - Default: `~/Library/Application Support`
@@ -132,7 +130,7 @@ static STATE_HOME: LazyLock<PathBuf> = LazyLock::new(|| {
         .unwrap_or_else(|| HOME.join("Library").join("Application Support"))
 });
 
-/// The platform-native persistent-state parent directory.
+/// Persistent-state parent directory on Windows.
 ///
 /// - Override: `%LOCALAPPDATA%`
 /// - Default: `C:\Users\<user>\AppData\Local`
@@ -142,32 +140,30 @@ static STATE_HOME: LazyLock<PathBuf> = LazyLock::new(|| {
         .unwrap_or_else(|| HOME.join("AppData").join("Local"))
 });
 
-/// The application-specific persistent-state directory.
+/// Application-specific persistent-state directory.
 ///
 /// Override via `$TRACES_STATE_DIR`; defaults to [`STATE_HOME`]`/traces`.
 static TRACES_STATE_DIR: LazyLock<PathBuf> = LazyLock::new(|| {
     var_path("TRACES_STATE_DIR").unwrap_or_else(|| STATE_HOME.join(APP_NAME))
 });
 
-/// The config-tracking store directory.
+/// Config-tracking store directory.
 ///
-/// Resolves to `$TRACES_STATE_DIR/tracked-configs`.
-///
-/// Contains BLAKE3-keyed symbolic links, or path-bearing files where symbolic
-/// links are unavailable, recording every config file [`ConfigService`] has
-/// loaded.
+/// Resolves to `$TRACES_STATE_DIR/tracked-configs`. Contains BLAKE3-keyed
+/// symbolic links, or path-bearing files where symbolic links are unavailable,
+/// for every config file [`ConfigService`] has loaded.
 ///
 /// [`ConfigService`]: crate::config::ConfigService
 pub(crate) static TRACKED_CONFIGS: LazyLock<StateDirRoot> =
     LazyLock::new(|| StateDirRoot::new("tracked-configs"));
 
-/// The trust store directory.
+/// Trust store directory.
 ///
-/// Resolves to `$TRACES_STATE_DIR/trusted-configs`.
+/// Resolves to `$TRACES_STATE_DIR/trusted-configs`. Contains BLAKE3-keyed
+/// symbolic links, or path-bearing files where symbolic links are unavailable,
+/// for every workspace [`ConfigStateStore`] has marked trusted.
 ///
-/// Contains BLAKE3-keyed symbolic links, or path-bearing files where symbolic
-/// links are unavailable, recording every workspace `ConfigStateStore` has
-/// marked as safe to load configs and instantiate templates from.
+/// [`ConfigStateStore`]: crate::config::store::ConfigStateStore
 pub(crate) static TRUSTED_CONFIGS: LazyLock<StateDirRoot> =
     LazyLock::new(|| StateDirRoot::new("trusted-configs"));
 

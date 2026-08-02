@@ -1,4 +1,8 @@
-//! Traces: template-driven personal knowledge management.
+//! Template-driven personal knowledge management.
+//!
+//! The library owns CLI dispatch, configuration discovery and trust checks,
+//! note indexing, template loading, rendering, and root-confined filesystem
+//! writes.
 
 mod config;
 mod cwd;

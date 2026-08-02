@@ -1,15 +1,15 @@
-//! Centralised access to the process current working directory.
+//! Centralized access to the process current working directory.
 //!
-//! `env::current_dir()` is in `disallowed-methods` (see `clippy.toml`).
-//! This module is the single place in the crate that calls it, so the ban
-//! is enforced everywhere else.
+//! [`Cwd`] is the only production wrapper around [`env::current_dir`]. The
+//! direct call is disallowed elsewhere by `clippy.toml`, keeping cwd access
+//! auditable at this boundary.
 
 use std::{
     env, io,
     path::{Path, PathBuf},
 };
 
-/// The process current working directory, read at construction time.
+/// Process current working directory captured at construction time.
 #[derive(Clone, Debug)]
 pub(crate) struct Cwd(PathBuf);
 
@@ -29,7 +29,7 @@ impl Cwd {
         env::current_dir().map(Self)
     }
 
-    /// Consume the wrapper and return the inner `PathBuf`.
+    /// Consumes the wrapper and returns the inner [`PathBuf`].
     #[inline]
     #[must_use]
     pub(crate) fn into_inner(self) -> PathBuf {
@@ -44,18 +44,18 @@ impl AsRef<Path> for Cwd {
     }
 }
 
-/// Serializes every [`CwdGuard`]-mediated test: the process cwd is global
-/// state, so concurrent changes race, and a dropped `tempfile::TempDir` can
-/// yank the directory out from under a thread still inside it. Held for a
-/// `CwdGuard`'s whole lifetime.
+/// Serializes every [`CwdGuard`]-mediated test.
+///
+/// The process cwd is global state, so concurrent changes race. A dropped
+/// `tempfile::TempDir` can also remove the directory underneath another test.
+/// The lock is held for a [`CwdGuard`]'s whole lifetime.
 #[cfg(test)]
 static CWD_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-/// Scoped RAII guard that enters a directory and restores the original on
-/// drop.
+/// Scoped guard that enters a directory and restores the original on drop.
 ///
-/// Tests that need to change the working directory should use this instead
-/// of calling `env::set_current_dir` directly.
+/// Tests that change the working directory should use this instead of calling
+/// [`env::set_current_dir`] directly.
 #[cfg(test)]
 pub(crate) struct CwdGuard {
     original: PathBuf,

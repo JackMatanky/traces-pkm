@@ -1,8 +1,8 @@
-//! BLAKE3-based hashing: file content hashing ([`Blake3FileHash`]) and path
-//! string hashing ([`Blake3PathHash`]).
+//! BLAKE3 hashing for file contents and canonicalized paths.
 //!
-//! [`HashError`] is `thiserror`-only, no `miette::Diagnostic`: callers wrap
-//! it in their own domain error before it reaches anything CLI-facing.
+//! [`Blake3FileHash`] hashes file contents. [`Blake3PathHash`] hashes path
+//! bytes for state-store filenames. [`HashError`] stays domain-local so callers
+//! can wrap it in their own user-facing diagnostics.
 
 use std::{
     fmt::{self, Display, Formatter},
@@ -26,9 +26,11 @@ pub(crate) enum HashError {
     },
 }
 
-/// The BLAKE3 hash of a file's *contents*.
+/// BLAKE3 hash of a file's contents.
 ///
-/// Distinct from [`Blake3PathHash`], which hashes a path string.
+/// Distinct from [`Blake3PathHash`], which hashes path bytes. Prefer hashing
+/// already-loaded content when the caller has it; hashing from a path and then
+/// reading that same path again opens a TOCTOU window between reads.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(crate) struct Blake3FileHash(blake3::Hash);
 
@@ -37,8 +39,8 @@ impl TryFrom<&Path> for Blake3FileHash {
 
     /// Computes the BLAKE3 hash of `path`'s current contents.
     ///
-    /// Reads `path` fully into memory before hashing — acceptable for the
-    /// small template/config files this crate hashes, not a streaming read.
+    /// Reads `path` fully into memory before hashing. This is acceptable for
+    /// the small template and config files this crate hashes.
     ///
     /// # Errors
     ///
@@ -54,12 +56,6 @@ impl TryFrom<&Path> for Blake3FileHash {
 }
 
 impl From<&str> for Blake3FileHash {
-    /// Computes the BLAKE3 hash of `content` already read into memory.
-    ///
-    /// Prefer this over hashing from a `&Path` (`TryFrom<&Path>`)
-    /// whenever the caller already holds the file's content in hand —
-    /// hashing from a path and then reading that same path again for use
-    /// opens a TOCTOU window between the two reads.
     #[inline]
     fn from(content: &str) -> Self {
         Self(blake3::hash(content.as_bytes()))
@@ -73,21 +69,18 @@ impl Display for Blake3FileHash {
     }
 }
 
-/// The BLAKE3 hex hash of a path string (not its contents).
+/// BLAKE3 hex hash of a path string.
 ///
-/// Used as a hash-keyed store filename (see
-/// [`crate::FileStateStore`]). Callers that need canonical keys
-/// must canonicalize before constructing this value.
+/// Used as a hash-keyed store filename by [`crate::FileStateStore`]. Callers
+/// that need canonical keys must canonicalize before constructing this value.
 ///
-/// Stores the hex digest as a fixed-size byte array rather than a heap
-/// `String` — BLAKE3's hex encoding is always exactly 64 ASCII bytes, so a
-/// stack array avoids an allocation this type constructs often (once per
-/// tracked/trusted store entry).
+/// Stores the hex digest as a fixed-size byte array instead of a heap
+/// [`String`]. BLAKE3 hex encoding is always exactly 64 ASCII bytes, so a stack
+/// array avoids an allocation on store-entry construction.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(crate) struct Blake3PathHash([u8; 64]);
 
 impl From<&Path> for Blake3PathHash {
-    /// Hashes `path`'s bytes to a hex string.
     #[inline]
     fn from(path: &Path) -> Self {
         let hash = blake3::hash(path.as_os_str().as_encoded_bytes());
@@ -98,7 +91,7 @@ impl From<&Path> for Blake3PathHash {
 }
 
 impl Blake3PathHash {
-    /// The hash string to use as a store entry filename.
+    /// Returns the hash string used as a store entry filename.
     #[inline]
     #[must_use]
     #[expect(

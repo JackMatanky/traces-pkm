@@ -1,32 +1,31 @@
-//! [`FileName`]/[`BaseName`]: a file's full name and its extension-stripped
-//! stem, as two distinct types instead of interchangeable strings.
+//! File-name newtypes shared by the index and template layers.
 //!
-//! Not specific to any one subsystem - the index's `FileRecord` is the
-//! first consumer, but anything reasoning about a file's name or extension
-//! (e.g. `template::engine::path_ops`'s `basename`/`extension` filters)
-//! shares these instead of reinventing stem/extension parsing.
+//! [`FileName`] keeps the final path component exactly as written, including
+//! any extension. [`BaseName`] stores the same name with the extension
+//! stripped. Keeping them distinct avoids passing interchangeable strings
+//! through code that needs different stem and extension semantics.
 
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-/// A file's full name, including any extension (e.g. `"todo.md"`) - the
-/// last component of a path. Distinct from [`BaseName`], which strips the
-/// extension.
+/// File's final path component, including any extension.
+///
+/// For `todo.md`, this stores `todo.md`. Use [`BaseName`] when the extension
+/// should be stripped.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct FileName(String);
 
 impl FileName {
-    /// This name's extension, if any (e.g. `"md"` for `"todo.md"`).
+    /// Returns this name's extension, if any.
     #[must_use]
     pub(crate) fn extension(&self) -> Option<&str> {
         Path::new(&self.0).extension().and_then(|ext| ext.to_str())
     }
 }
 
-/// `path` has no final component to name a file with (e.g. `/`, `..`, or an
-/// empty path).
+/// Error returned when a path has no final component.
 #[derive(Debug, Error)]
 #[error("path has no file name")]
 pub(crate) struct MissingFileName;
@@ -34,10 +33,12 @@ pub(crate) struct MissingFileName;
 impl TryFrom<&Path> for FileName {
     type Error = MissingFileName;
 
+    /// Builds a [`FileName`] from `path`'s final component.
+    ///
     /// # Errors
     ///
-    /// Returns [`MissingFileName`] if `path` has no final component (e.g.
-    /// `/`, `..`, or an empty path).
+    /// Returns [`MissingFileName`] if `path` has no final component, such as
+    /// `/`, `..`, or an empty path.
     fn try_from(path: &Path) -> Result<Self, Self::Error> {
         path.file_name()
             .map(|name| Self(name.to_string_lossy().into_owned()))
@@ -45,13 +46,15 @@ impl TryFrom<&Path> for FileName {
     }
 }
 
-/// A file's name with any extension stripped (e.g. `"todo"` for
-/// `"todo.md"`). Distinct from [`FileName`], which keeps the extension.
+/// File name with any extension stripped.
+///
+/// For `todo.md`, this stores `todo`. Dotfiles such as `.gitignore` keep their
+/// full text as the stem.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct BaseName(String);
 
 impl BaseName {
-    /// This name as a plain string slice.
+    /// Returns this name as a string slice.
     #[inline]
     #[must_use]
     pub(crate) fn as_str(&self) -> &str {
@@ -60,10 +63,6 @@ impl BaseName {
 }
 
 impl From<&FileName> for BaseName {
-    /// Strips `name`'s extension, if any. Always succeeds: a name with no
-    /// extension (or a dotfile like `.gitignore`, where the leading dot
-    /// isn't treated as an extension separator) keeps its full text as the
-    /// stem.
     fn from(name: &FileName) -> Self {
         Self(
             Path::new(&name.0)

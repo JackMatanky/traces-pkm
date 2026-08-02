@@ -1,6 +1,7 @@
-//! Binary entry point: parses CLI arguments and dispatches to
-//! [`traces_pkm::cli::run`]. Logic lives in the lib crate (see
-//! `src/lib.rs`); this stays minimal (`proj-lib-main-split`).
+//! Binary entry point for the `traces` CLI.
+//!
+//! Argument parsing and command dispatch live in [`traces_pkm::cli::run`].
+//! This file only maps the top-level outcome to a process exit code.
 
 use std::process::ExitCode;
 
@@ -10,12 +11,10 @@ fn main() -> ExitCode {
     exit_code(traces_pkm::cli::run())
 }
 
-/// Maps a top-level [`cli::run`](traces_pkm::cli::run) result to the
-/// process exit code.
+/// Maps the top-level CLI result to the process exit code.
 ///
-/// Escape completes the command (exit `0`); Ctrl-C interrupts it (exit
-/// `130`, the POSIX convention for SIGINT); any other failure is a
-/// diagnostic reported to stderr (exit `1`).
+/// Escape exits successfully. Ctrl-C exits with `130`, the POSIX convention
+/// for SIGINT. Any other failure is reported to stderr and exits with `1`.
 fn exit_code(
     result: Result<CommandOutcome, traces_pkm::cli::CliError>,
 ) -> ExitCode {
