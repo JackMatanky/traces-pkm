@@ -6,15 +6,15 @@
 //!
 //! # Main Types
 //!
-//! - [`Note`] stores the parsed note.
-//! - [`List`], [`ListItem`], and [`TaskStatus`] represent Markdown lists and
+//! - [`Note`] - Stores the parsed note.
+//! - [`List`], [`ListItem`], and [`TaskStatus`] - Represent Markdown lists and
 //!   task items.
-//! - [`Outlink`] and [`LinkType`] represent Markdown links and Obsidian
+//! - [`Outlink`] and [`LinkType`] - Represent Markdown links and Obsidian
 //!   wikilinks.
-//! - [`Frontmatter`] and [`RawFrontmatter`] preserve YAML metadata.
+//! - [`Frontmatter`] and [`RawFrontmatter`] - Preserve YAML metadata.
 //! - [`InlineField`], [`InlineFieldForm`], [`MetadataField`], and
-//!   [`FieldValue`] represent Dataview-compatible metadata.
-//! - [`Tag`] stores Markdown tags.
+//!   [`FieldValue`] - Represent Dataview-compatible metadata.
+//! - [`Tag`] - Stores Markdown tags.
 #![cfg_attr(
     not(test),
     expect(

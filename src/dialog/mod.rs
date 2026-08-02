@@ -56,7 +56,7 @@ pub trait DialogProvider: Send + Sync {
     ///
     /// # Errors
     ///
-    /// Returns [`DialogError`] when the provider cannot complete the prompt.
+    /// - [`DialogError`] if the provider cannot complete the prompt.
     fn confirm(
         &self,
         label: &str,
@@ -81,7 +81,7 @@ pub trait DialogProvider: Send + Sync {
     ///
     /// # Errors
     ///
-    /// Returns [`DialogError`] when the provider cannot complete the prompt.
+    /// - [`DialogError`] if the provider cannot complete the prompt.
     fn multi_select(
         &self,
         label: &str,
@@ -108,9 +108,8 @@ pub trait DialogProvider: Send + Sync {
     ///
     /// # Errors
     ///
-    /// Returns [`DialogError::EmptySelectionInput`] when `items` is empty.
-    /// Returns another [`DialogError`] when the provider cannot complete the
-    /// prompt.
+    /// - [`DialogError::EmptySelectionInput`] if `items` is empty.
+    /// - [`DialogError`] if the provider cannot complete the prompt.
     fn select(
         &self,
         label: &str,
@@ -135,7 +134,7 @@ pub trait DialogProvider: Send + Sync {
     ///
     /// # Errors
     ///
-    /// Returns [`DialogError`] when the provider cannot complete the prompt.
+    /// - [`DialogError`] if the provider cannot complete the prompt.
     fn text(
         &self,
         label: &str,

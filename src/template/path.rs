@@ -1,11 +1,11 @@
 //! Template paths validate and label path-shaped values in the template
 //! pipeline.
 //!
-//! [`TemplatePath`] is built only by
-//! [`TemplateLoader`](super::loader::TemplateLoader)'s search, immediately
-//! after confirming the file exists — nothing later in the pipeline
-//! re-verifies it. [`DeclaredOutputPath`] labels the raw `file.write_to()`
-//! candidate before [`writer`](super::writer) resolves it.
+//! [`TemplatePath`] is built by
+//! [`TemplateLoader`](super::loader::TemplateLoader)'s search immediately
+//! after confirming the file exists. Nothing later in the pipeline re-verifies
+//! it. [`DeclaredOutputPath`] labels the raw `file.write_to()` candidate before
+//! [`writer`](super::writer) resolves it.
 
 use std::{
     fs, io,

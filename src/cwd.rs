@@ -18,8 +18,8 @@ impl Cwd {
     ///
     /// # Errors
     ///
-    /// Returns an [`io::Error`] when the current directory does not exist
-    /// or cannot be accessed.
+    /// - [`io::Error`] if the current directory does not exist or cannot be
+    ///   accessed.
     #[inline]
     #[expect(
         clippy::disallowed_methods,

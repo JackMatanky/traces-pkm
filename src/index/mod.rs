@@ -5,13 +5,13 @@
 //! Persistence lives in [`store`](mod@store); callers use [`FileIndex`]'s
 //! methods instead of redb tables.
 //!
-//! # Main entry points
+//! # Main Entry Points
 //!
 //! - [`FileIndex::build`], [`FileIndex::refresh`], [`FileIndex::persist`], and
-//!   [`FileIndex::load`] build, refresh, save, and reload the index.
-//! - [`FileIndex::query`] and [`FileIndex::query_tasks`] run page-level and
+//!   [`FileIndex::load`] - Build, refresh, save, and reload the index.
+//! - [`FileIndex::query`] and [`FileIndex::query_tasks`] - Run page-level and
 //!   task-level queries.
-//! - [`FileIndex::records`] and [`FileIndex::notes`] expose sorted indexed
+//! - [`FileIndex::records`] and [`FileIndex::notes`] - Expose sorted indexed
 //!   records for direct inspection.
 
 #![cfg_attr(
@@ -66,8 +66,8 @@ impl FileIndex {
     ///
     /// # Errors
     ///
-    /// Returns [`FileIndexError::Io`] if a directory cannot be read, a file's
-    /// metadata cannot be inspected, or a markdown file cannot be read.
+    /// - [`FileIndexError::Io`] if a directory cannot be read, a file's
+    ///   metadata cannot be inspected, or a markdown file cannot be read.
     pub(crate) fn build(root: &Path) -> Result<Self, FileIndexError> {
         let records = scan::scan_root(root)?;
         let mut notes = Vec::new();
@@ -303,7 +303,7 @@ fn matched_pairs(
 ///
 /// # Errors
 ///
-/// Returns [`FileIndexError::Io`] if the file cannot be read.
+/// - [`FileIndexError::Io`] if the file cannot be read.
 fn parse_note_file(
     root: &Path,
     record: &FileRecord,

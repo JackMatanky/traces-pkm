@@ -38,8 +38,7 @@ impl FileRecord {
     ///
     /// # Errors
     ///
-    /// Returns [`FileIndexError::Io`] if the file's modification time cannot
-    /// be read.
+    /// - [`FileIndexError::Io`] if the file's modification time cannot be read.
     pub(super) fn from_metadata(
         path: &Path,
         root: &Path,
@@ -111,7 +110,7 @@ impl FileRecord {
         self.created_at
     }
 
-    /// Returns [`Self::created_at`] if available, falling back to
+    /// Uses [`Self::created_at`] when available, falling back to
     /// [`Self::modified_at`] when creation time is unsupported on the host
     /// OS/filesystem.
     #[inline]

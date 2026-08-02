@@ -1,14 +1,12 @@
 //! Filter expression parsing and evaluation.
 //!
-//! # Main types
+//! # Main Types
 //!
-//! - [`FilterExpr`] is the parsed AST for `.filter()` and `.where()`
-//!   expressions.
-//! - [`FilterToken`] is the token stream produced from a filter expression by
+//! - [`FilterExpr`] - Parsed AST for `.filter()` and `.where()` expressions.
+//! - [`FilterToken`] - Token stream produced from a filter expression by
 //!   [`tokenize_filter_expr`].
-//! - [`FilterParser`] turns tokens into a [`FilterExpr`].
-//! - [`FilterFunction`] represents recognized calls such as `contains(tags,
-//!   "#book")`.
+//! - [`FilterParser`] - Turns tokens into a [`FilterExpr`].
+//! - [`FilterFunction`] - Recognized calls such as `contains(tags, "#book")`.
 
 use std::vec;
 

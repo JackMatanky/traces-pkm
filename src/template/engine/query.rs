@@ -21,7 +21,7 @@
 //! itself. This module only adds the minijinja [`Object`] wiring, not the
 //! transformation logic.
 //!
-//! # Why the `Object` impls live here
+//! # Why the [`Object`] Impls Live Here
 //!
 //! [`QueryOutcome`] and [`IndexRecord`] gain their [`Object`] impls in this
 //! module rather than in [`crate::index`], keeping the index module free of
@@ -43,7 +43,7 @@
 //! `file.`/`task.` prefix handling, which a single already-known segment
 //! doesn't need.
 //!
-//! # Error handling
+//! # Error Handling
 //!
 //! Every [`FileIndex::refresh`]/[`QueryError`] failure surfaces as a
 //! [`minijinja::Error`] with a stable message and the original error

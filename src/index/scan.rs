@@ -13,8 +13,8 @@ use super::{INDEX_FILE, error::FileIndexError, file::FileRecord};
 ///
 /// # Errors
 ///
-/// Returns [`FileIndexError::Io`] if a directory cannot be read or a file's
-/// metadata cannot be inspected.
+/// - [`FileIndexError::Io`] if a directory cannot be read or a file's metadata
+///   cannot be inspected.
 pub(super) fn scan_root(
     root: &Path,
 ) -> Result<Vec<FileRecord>, FileIndexError> {

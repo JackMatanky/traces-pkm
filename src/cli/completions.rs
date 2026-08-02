@@ -28,7 +28,7 @@ pub(super) struct Completions {
 }
 
 impl Completions {
-    /// Runs the `completions` subcommand.
+    /// Runs `traces completions`.
     ///
     /// # Errors
     ///

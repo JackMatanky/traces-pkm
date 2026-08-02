@@ -10,11 +10,12 @@
 //!
 //! An invalid name (absolute, `..`, or no real segment such as an empty name
 //! or bare `.`) fails validation before any directory is searched, returning
-//! [`TemplatePathError::Absolute`] or [`TemplatePathError::UnsafeComponent`] —
-//! distinct from [`TemplatePathError::TemplateNotFound`], which [`Self::find`]
-//! returns only after every directory was searched and none matched.
+//! [`TemplatePathError::Absolute`] or [`TemplatePathError::UnsafeComponent`].
+//! This is distinct from [`TemplatePathError::TemplateNotFound`], which
+//! [`Self::find`] returns only after every directory was searched and none
+//! matched.
 //!
-//! # Why not `minijinja::path_loader`
+//! # Why Not `minijinja::path_loader`
 //!
 //! [`TemplateLoader::load`] backs minijinja's `{% include %}`/`{% extends %}`
 //! loader callback, wired through

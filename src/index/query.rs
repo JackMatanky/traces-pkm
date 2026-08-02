@@ -3,15 +3,15 @@
 //! This module powers page-level results from [`super::FileIndex::query`] and
 //! task-level rows from [`super::FileIndex::query_tasks`].
 //!
-//! # Main types
+//! # Main Types
 //!
-//! - [`Source`] selects which Notes a query includes.
-//! - [`IndexRecord`] pairs a [`FileRecord`] with its parsed [`Note`] and
+//! - [`Source`] - Selects which Notes a query includes.
+//! - [`IndexRecord`] - Pairs a [`FileRecord`] with its parsed [`Note`] and
 //!   resolves `file.*`, `task.*`, metadata, and tag fields.
-//! - [`QueryOutcome`] stores result rows and applies chained transformations:
+//! - [`QueryOutcome`] - Stores result rows and applies chained transformations:
 //!   [`QueryOutcome::filter`], [`QueryOutcome::sort`], [`QueryOutcome::limit`],
 //!   [`QueryOutcome::group_by`], and [`QueryOutcome::flatten`].
-//! - [`QueryError`] reports malformed field paths and query expressions.
+//! - [`QueryError`] - Reports malformed field paths and query expressions.
 
 mod error;
 mod field;
@@ -135,7 +135,7 @@ impl QueryOutcome {
     ///
     /// # Errors
     ///
-    /// Returns [`QueryError::UnknownFieldPath`] if `path` is malformed.
+    /// - [`QueryError::UnknownFieldPath`] if `path` is malformed.
     #[inline]
     pub(crate) fn sort(
         self,
@@ -149,8 +149,8 @@ impl QueryOutcome {
     ///
     /// # Errors
     ///
-    /// Returns [`QueryError::NegativeLimit`] if `n` is negative or does not
-    /// fit in a [`usize`] on this platform.
+    /// - [`QueryError::NegativeLimit`] if `n` is negative or does not fit in a
+    ///   [`usize`] on this platform.
     pub(crate) fn limit(self, n: i64) -> Result<Self, QueryError> {
         let n = usize::try_from(n).map_err(|_source| {
             QueryError::NegativeLimit {
@@ -168,7 +168,7 @@ impl QueryOutcome {
     ///
     /// # Errors
     ///
-    /// Returns [`QueryError::UnknownFieldPath`] if `path` is malformed.
+    /// - [`QueryError::UnknownFieldPath`] if `path` is malformed.
     #[inline]
     pub(crate) fn group_by(self, path: &str) -> Result<Self, QueryError> {
         self.sort_by_field(path, false)
@@ -186,7 +186,7 @@ impl QueryOutcome {
     ///
     /// # Errors
     ///
-    /// Returns [`QueryError::UnknownFieldPath`] if `path` is malformed.
+    /// - [`QueryError::UnknownFieldPath`] if `path` is malformed.
     pub(crate) fn flatten(self, path: &str) -> Result<Self, QueryError> {
         let field_path = FieldPath::parse(path)?;
         let mut records = Vec::with_capacity(self.records.len());
@@ -299,8 +299,8 @@ impl FieldPath {
     ///
     /// # Errors
     ///
-    /// Returns [`QueryError::UnknownFieldPath`] if `path` is empty, uses an
-    /// unknown `file.*`/`task.*` accessor, or has unexpected `.` structure.
+    /// - [`QueryError::UnknownFieldPath`] if `path` is empty, uses an unknown
+    ///   `file.*`/`task.*` accessor, or has unexpected `.` structure.
     pub(super) fn parse(path: &str) -> Result<Self, QueryError> {
         let path = path.trim();
         let invalid = || QueryError::UnknownFieldPath {
@@ -435,8 +435,8 @@ impl IndexRecord {
     ///
     /// # Errors
     ///
-    /// Returns [`QueryError::UnknownFieldPath`] if `path` is malformed. See
-    /// [`FieldPath::parse`].
+    /// - [`QueryError::UnknownFieldPath`] if `path` is malformed. See
+    ///   [`FieldPath::parse`].
     #[inline]
     pub(crate) fn field(&self, path: &str) -> Result<FieldValue, QueryError> {
         Ok(self.resolve(&FieldPath::parse(path)?))

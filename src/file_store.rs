@@ -139,8 +139,8 @@ impl FileStateStore {
     ///
     /// # Errors
     ///
-    /// Returns [`FileStateStoreError`] if `target` cannot be canonicalized,
-    /// the store root cannot be created, or the entry cannot be written.
+    /// - [`FileStateStoreError`] if `target` cannot be canonicalized, the store
+    ///   root cannot be created, or the entry cannot be written.
     #[inline]
     pub(crate) fn record(
         &self,
@@ -177,8 +177,8 @@ impl FileStateStore {
     ///
     /// # Errors
     ///
-    /// Returns [`FileStateStoreError`] if `target` cannot be canonicalized or
-    /// the entry's existence cannot be checked.
+    /// - [`FileStateStoreError`] if `target` cannot be canonicalized or the
+    ///   entry's existence cannot be checked.
     #[inline]
     pub(crate) fn contains(
         &self,
@@ -200,8 +200,7 @@ impl FileStateStore {
     ///
     /// # Errors
     ///
-    /// Returns [`FileStateStoreError`] if the store root exists but cannot be
-    /// read.
+    /// - [`FileStateStoreError`] if the store root exists but cannot be read.
     #[inline]
     pub(crate) fn list_all(&self) -> Result<Vec<PathBuf>, FileStateStoreError> {
         if !self.root.is_dir() {
@@ -225,8 +224,8 @@ impl FileStateStore {
     ///
     /// # Errors
     ///
-    /// Returns [`FileStateStoreError`] if the store root cannot be read, a
-    /// stale entry cannot be removed, or a companion cannot be removed.
+    /// - [`FileStateStoreError`] if the store root cannot be read, a stale
+    ///   entry cannot be removed, or a companion cannot be removed.
     #[inline]
     pub(crate) fn clean(
         &self,
@@ -259,8 +258,8 @@ impl FileStateStore {
     ///
     /// # Errors
     ///
-    /// Returns [`FileStateStoreError`] if `target` cannot be canonicalized or
-    /// the companion cannot be written.
+    /// - [`FileStateStoreError`] if `target` cannot be canonicalized or the
+    ///   companion cannot be written.
     #[inline]
     pub(crate) fn write_companion(
         &self,
@@ -285,8 +284,8 @@ impl FileStateStore {
     ///
     /// # Errors
     ///
-    /// Returns [`FileStateStoreError`] if `target` cannot be canonicalized or
-    /// the companion cannot be read.
+    /// - [`FileStateStoreError`] if `target` cannot be canonicalized or the
+    ///   companion cannot be read.
     #[inline]
     pub(crate) fn read_companion(
         &self,
@@ -313,8 +312,8 @@ impl FileStateStore {
     ///
     /// # Errors
     ///
-    /// Returns [`FileStateStoreError`] if `target` cannot be canonicalized, the
-    /// root entry cannot be removed, or a companion cannot be removed.
+    /// - [`FileStateStoreError`] if `target` cannot be canonicalized, the root
+    ///   entry cannot be removed, or a companion cannot be removed.
     #[inline]
     pub(crate) fn remove_with_companions(
         &self,
@@ -353,8 +352,8 @@ impl FileStateStore {
     ///
     /// # Errors
     ///
-    /// Returns [`FileStateStoreError`] if the store root cannot be read or a
-    /// stale entry cannot be removed.
+    /// - [`FileStateStoreError`] if the store root cannot be read or a stale
+    ///   entry cannot be removed.
     fn clean_reporting(&self) -> Result<Vec<PathBuf>, FileStateStoreError> {
         if !self.root.is_dir() {
             return Ok(Vec::new());
@@ -404,8 +403,8 @@ fn recorded_target(entry: &Path) -> Option<PathBuf> {
 ///
 /// # Errors
 ///
-/// Returns [`FileStateStoreError`] if `root` cannot be read or any child entry
-/// cannot be inspected.
+/// - [`FileStateStoreError`] if `root` cannot be read or any child entry cannot
+///   be inspected.
 fn read_dir_entries(root: &Path) -> Result<Vec<PathBuf>, FileStateStoreError> {
     fs::read_dir(root)
         .map_err(|source| FileStateStoreError::StoreIo {

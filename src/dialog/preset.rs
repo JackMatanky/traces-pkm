@@ -198,9 +198,9 @@ impl DialogProvider for PresetDialogProvider {
     ///
     /// # Errors
     ///
-    /// Returns [`DialogError::EmptySelectionInput`] when `items` is empty.
-    /// Returns [`DialogError::InvalidConfiguration`] when the queued index is
-    /// outside the bounds of `items`.
+    /// - [`DialogError::EmptySelectionInput`] if `items` is empty.
+    /// - [`DialogError::InvalidConfiguration`] if the queued index is outside
+    ///   the bounds of `items`.
     #[inline]
     fn select(
         &self,

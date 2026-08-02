@@ -73,7 +73,7 @@ impl SafeRelativePath {
     ///
     /// # Errors
     ///
-    /// Returns [`PathError::NotRelative`] if any check fails.
+    /// - [`PathError::NotRelative`] if any check fails.
     pub(crate) fn parse(candidate: &Path) -> Result<Self, PathError> {
         if candidate.is_absolute() {
             return Err(PathError::NotRelative);

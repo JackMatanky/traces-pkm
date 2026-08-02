@@ -39,7 +39,7 @@ enum TrustAction {
 }
 
 impl Trust {
-    /// Runs the selected `trust` action.
+    /// Runs `traces trust` with the selected trust action.
     ///
     /// # Errors
     ///

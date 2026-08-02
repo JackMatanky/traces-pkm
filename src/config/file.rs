@@ -255,8 +255,8 @@ pub(crate) enum TrustOutcome {
 impl LocalConfigFile<Tracked> {
     /// Verifies the trust status of this tracked config file.
     ///
-    /// Returns [`TrustOutcome::Trusted`] if the file is fully trusted.
-    /// Returns [`TrustOutcome::Halted`] if trust is absent or stale, allowing
+    /// Yields [`TrustOutcome::Trusted`] for a fully trusted file.
+    /// Yields [`TrustOutcome::Halted`] when trust is absent or stale, allowing
     /// the caller to prompt the user.
     ///
     /// # Errors

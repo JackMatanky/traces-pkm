@@ -37,8 +37,8 @@ impl TryFrom<&Path> for FileName {
     ///
     /// # Errors
     ///
-    /// Returns [`MissingFileName`] if `path` has no final component, such as
-    /// `/`, `..`, or an empty path.
+    /// - [`MissingFileName`] if `path` has no final component, such as `/`,
+    ///   `..`, or an empty path.
     fn try_from(path: &Path) -> Result<Self, Self::Error> {
         path.file_name()
             .map(|name| Self(name.to_string_lossy().into_owned()))

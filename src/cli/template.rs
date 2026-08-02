@@ -101,7 +101,7 @@ impl Template {
         self.name.as_deref().or(self.input.as_deref())
     }
 
-    /// Runs the `template` subcommand.
+    /// Runs `traces template` or default `traces -i` template dispatch.
     ///
     /// # Errors
     ///

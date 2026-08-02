@@ -27,10 +27,10 @@ pub(super) struct Task {
 }
 
 impl Task {
-    /// Refreshes the trusted project root's [`FileIndex`] and prints matching
-    /// tasks.
+    /// Runs `traces task` for the trusted project root.
     ///
-    /// Each matching task is written to stdout as a Markdown checkbox line.
+    /// Refreshes the root's [`FileIndex`] and writes each matching task to
+    /// stdout as a Markdown checkbox line.
     ///
     /// # Errors
     ///

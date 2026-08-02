@@ -14,10 +14,10 @@ use crate::{config::ConfigService, index::FileIndex};
 pub(super) struct Index;
 
 impl Index {
-    /// Rebuilds the trusted project root's persisted [`FileIndex`].
+    /// Runs `traces index` for the trusted project root.
     ///
-    /// Scans the root, persists the fresh index, and reports the indexed file
-    /// count to stderr.
+    /// Scans the root, persists the fresh [`FileIndex`], and reports the
+    /// indexed file count to stderr.
     ///
     /// # Errors
     ///

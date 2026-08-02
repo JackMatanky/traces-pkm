@@ -2,9 +2,9 @@
 //!
 //! # Main Types
 //!
-//! - [`Config`] exposes the project root, template directories, and output
+//! - [`Config`] - Exposes the project root, template directories, and output
 //!   directory after discovery, trust checks, and merging.
-//! - [`TemplateConfig`] preserves local and global template directories so
+//! - [`TemplateConfig`] - Preserves local and global template directories so
 //!   template lookup can stay local-first.
 
 use std::path::{Path, PathBuf};

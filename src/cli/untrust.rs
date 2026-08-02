@@ -23,7 +23,7 @@ pub(super) struct Untrust {
 }
 
 impl Untrust {
-    /// Revokes trust from the specified target directory or configuration.
+    /// Runs `traces untrust` for the selected target directory or config.
     ///
     /// # Errors
     ///

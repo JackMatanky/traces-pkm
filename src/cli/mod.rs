@@ -157,9 +157,9 @@ impl Commands {
     }
 }
 
-/// Parses process arguments and runs the selected command.
+/// Parses process arguments and runs the selected `traces` command.
 ///
-/// Returns [`CommandOutcome`] on success.
+/// On success, yields the top-level [`CommandOutcome`].
 ///
 /// # Errors
 ///
