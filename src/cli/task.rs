@@ -1,7 +1,8 @@
-//! Implements `traces task` task queries.
+//! Task query command.
 //!
-//! The command refreshes the trusted project root's [`FileIndex`], filters
-//! task records, and prints matching tasks as Markdown checkbox lines.
+//! Handles `traces task` by refreshing the trusted root's [`FileIndex`],
+//! selecting a source scope, applying the optional filter, and printing
+//! matching tasks as Markdown checkbox lines.
 
 use std::path::{Path, PathBuf};
 

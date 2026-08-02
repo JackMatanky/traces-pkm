@@ -1,7 +1,8 @@
-//! CLI argument parsing, command dispatch, and user-facing diagnostics.
+//! CLI entry point and dispatch.
 //!
-//! This module owns the clap parser, routes parsed commands to their handlers,
-//! and exposes [`CliError`] as the CLI diagnostic boundary.
+//! Owns the clap parser, default `-i` template dispatch, command routing, and
+//! [`CliError`] export. Submodules contain command-specific behavior so this
+//! module stays limited to argument flow and shared helpers.
 
 mod completions;
 mod error;
@@ -115,7 +116,7 @@ impl Cli {
 /// Top-level `traces` subcommands.
 #[derive(Debug, Subcommand)]
 enum Commands {
-    /// Initialise local traces configuration.
+    /// Initialize local traces configuration.
     Init(init::Init),
     /// Manage trusted project roots.
     Trust(trust::Trust),
@@ -135,6 +136,10 @@ enum Commands {
 
 impl Commands {
     /// Routes a parsed subcommand to its handler.
+    ///
+    /// # Errors
+    ///
+    /// - Any [`CliError`] returned by the selected subcommand.
     fn run(
         self,
         service: &ConfigService,

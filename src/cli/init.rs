@@ -1,7 +1,8 @@
-//! Implements `traces init` project scaffolding.
+//! Local project scaffold command.
 //!
-//! The command creates the local `.traces` directory, template directory, and
-//! initial configuration file from interactive input.
+//! Handles `traces init` by collecting template and output directories,
+//! creating `.traces/` plus its template directory, and writing the initial
+//! local config.
 
 use std::{
     fs,

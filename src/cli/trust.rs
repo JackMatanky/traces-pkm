@@ -1,4 +1,8 @@
-//! Implements `traces trust` trust-store management.
+//! Trust-store mutation and inspection.
+//!
+//! Handles `traces trust` by resolving a directory or `.traces/config.toml` to
+//! trust subjects, then listing, cleaning, showing, or recording trusted
+//! workspace roots.
 
 use std::path::PathBuf;
 

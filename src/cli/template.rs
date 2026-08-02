@@ -1,7 +1,8 @@
-//! Implements `traces template` and `traces -i <name>` rendering.
+//! Template rendering command.
 //!
-//! The command resolves a template, renders it with the configured template
-//! service, and writes the result to disk or stdout.
+//! Handles `traces template` and default `traces -i` dispatch by resolving a
+//! template name, choosing interactive or preset prompt handling, rendering
+//! with [`TemplateService`], and writing or previewing the result.
 
 use std::{
     path::{Path, PathBuf},
@@ -146,7 +147,7 @@ impl Template {
         }
     }
 
-    /// Selects the dialog provider after applying `--no-input`.
+    /// Selects the dialog provider used during rendering.
     fn resolve_provider(
         &self,
         provider: Arc<dyn DialogProvider>,
@@ -159,6 +160,16 @@ impl Template {
     }
 
     /// Resolves the template name from arguments or the interactive picker.
+    ///
+    /// Returns the explicit name when present; otherwise asks `provider` to
+    /// choose from templates available in `config`.
+    ///
+    /// # Errors
+    ///
+    /// - [`CliError::NoTemplates`] if interactive selection is required and no
+    ///   templates are available.
+    /// - [`CliError::TemplatePicker`] if the picker is unavailable, fails, or
+    ///   is cancelled.
     fn resolve_name(
         &self,
         config: &Config,

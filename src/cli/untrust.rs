@@ -1,4 +1,7 @@
-//! Implements `traces untrust` trust revocation.
+//! Trust-store revocation.
+//!
+//! Handles `traces untrust` by resolving a directory or `.traces/config.toml`
+//! to trust subjects and removing their roots from the store.
 
 use std::path::PathBuf;
 

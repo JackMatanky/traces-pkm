@@ -1,7 +1,8 @@
-//! CLI-facing errors and diagnostic formatting.
+//! CLI diagnostic boundary.
 //!
-//! Defines [`CliError`], the presentation seam that turns domain failures into
-//! stable diagnostic codes, help text, and deliberate-abort detection.
+//! Owns [`CliError`] and the mapping from domain failures to stable diagnostic
+//! codes, help text, and deliberate user-abort detection. Command modules
+//! return this type instead of exposing lower-level errors.
 
 use std::{
     error::Error as StdError,

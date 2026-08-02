@@ -1,5 +1,8 @@
-//! Implements `traces completions` shell-script generation and template
-//! listing.
+//! Shell completion generation and template-name listing.
+//!
+//! Serves `traces completions` by either emitting a static script for a
+//! supported shell or loading config to print template names for dynamic
+//! completion.
 
 use clap::{ArgGroup, Args, CommandFactory as _};
 use clap_complete::{Shell, generate};
@@ -94,7 +97,9 @@ impl Completions {
     ///
     /// # Errors
     ///
-    /// - Any error returned by [`Self::template_names`].
+    /// - [`CliError::CurrentDirectory`] if the current directory cannot be
+    ///   read.
+    /// - [`CliError::ConfigLoad`] if configuration discovery or loading fails.
     #[expect(
         clippy::print_stdout,
         reason = "template names are data meant to be consumed by shell \

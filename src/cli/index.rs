@@ -1,7 +1,8 @@
-//! Implements `traces index` persisted index rebuilds.
+//! Persisted index rebuild command.
 //!
-//! The command scans the trusted project root and replaces its stored
-//! [`FileIndex`] with a fresh build.
+//! Handles `traces index` by loading the trusted project root, refreshing its
+//! [`FileIndex`], and replacing the stored index. Task queries live in the task
+//! command module.
 
 use clap::Args;
 
