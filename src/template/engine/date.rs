@@ -483,6 +483,11 @@ fn date_shift_unit(
 
 /// `{{ value | add_days(n) }}` is a convenience shortcut for
 /// `{{ value | date_add(n, unit="days") }}`.
+///
+/// # Errors
+///
+/// - [`ErrorKind::InvalidOperation`] if `value` is not parseable or arithmetic
+///   overflows chrono's representable range.
 fn add_days(value: &str, n: u64) -> Result<String, Error> {
     let n_i64 = i64::try_from(n).map_err(|_| date_out_of_range_error())?;
     date_shift_unit(value, n_i64, DateTimeUnit::Days)
@@ -490,6 +495,11 @@ fn add_days(value: &str, n: u64) -> Result<String, Error> {
 
 /// `{{ value | sub_days(n) }}` is a convenience shortcut for
 /// `{{ value | date_sub(n, unit="days") }}`.
+///
+/// # Errors
+///
+/// - [`ErrorKind::InvalidOperation`] if `value` is not parseable or arithmetic
+///   overflows chrono's representable range.
 fn sub_days(value: &str, n: u64) -> Result<String, Error> {
     let n_i64 = i64::try_from(n).map_err(|_| date_out_of_range_error())?;
     let n_i64 = n_i64.checked_neg().ok_or_else(date_out_of_range_error)?;
@@ -498,12 +508,22 @@ fn sub_days(value: &str, n: u64) -> Result<String, Error> {
 
 /// `{{ value | add_months(n) }}` is a convenience shortcut for
 /// `{{ value | date_add(n, unit="months") }}`.
+///
+/// # Errors
+///
+/// - [`ErrorKind::InvalidOperation`] if `value` is not parseable or arithmetic
+///   overflows chrono's representable range.
 fn add_months(value: &str, n: u32) -> Result<String, Error> {
     date_shift_unit(value, i64::from(n), DateTimeUnit::Months)
 }
 
 /// `{{ value | sub_months(n) }}` is a convenience shortcut for
 /// `{{ value | date_sub(n, unit="months") }}`.
+///
+/// # Errors
+///
+/// - [`ErrorKind::InvalidOperation`] if `value` is not parseable or arithmetic
+///   overflows chrono's representable range.
 fn sub_months(value: &str, n: u32) -> Result<String, Error> {
     let n_i64 =
         i64::from(n).checked_neg().ok_or_else(date_out_of_range_error)?;
@@ -512,22 +532,36 @@ fn sub_months(value: &str, n: u32) -> Result<String, Error> {
 
 /// `{{ value | add_years(n) }}` is a convenience shortcut for
 /// `{{ value | date_add(n, unit="years") }}`.
+///
+/// # Errors
+///
+/// - [`ErrorKind::InvalidOperation`] if `value` is not parseable or arithmetic
+///   overflows chrono's representable range.
 fn add_years(value: &str, n: u32) -> Result<String, Error> {
     date_shift_unit(value, i64::from(n), DateTimeUnit::Years)
 }
 
 /// `{{ value | sub_years(n) }}` is a convenience shortcut for
 /// `{{ value | date_sub(n, unit="years") }}`.
+///
+/// # Errors
+///
+/// - [`ErrorKind::InvalidOperation`] if `value` is not parseable or arithmetic
+///   overflows chrono's representable range.
 fn sub_years(value: &str, n: u32) -> Result<String, Error> {
     let n_i64 =
         i64::from(n).checked_neg().ok_or_else(date_out_of_range_error)?;
     date_shift_unit(value, n_i64, DateTimeUnit::Years)
 }
 
-/// [`ErrorKind::InvalidOperation`] if `value` is not a parseable date/time
-/// string; see [`ParsedDate::parse`]. The `with_day(1)` call underneath cannot
-/// itself fail because day 1 exists in every month, but stays behind
-/// [`date_out_of_range_error`] since it is a fallible API.
+/// `{{ value | start_of_month }}` returns the first day of the input month.
+///
+/// # Errors
+///
+/// - [`ErrorKind::InvalidOperation`] if `value` is not a parseable date/time
+///   string; see [`ParsedDate::parse`].
+/// - [`ErrorKind::InvalidOperation`] if the first day of the month is outside
+///   chrono's representable range; see [`date_out_of_range_error`].
 fn start_of_month(value: &str) -> Result<String, Error> {
     shift_date(value, |dt| dt.with_day(1))
 }

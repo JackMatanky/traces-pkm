@@ -221,6 +221,13 @@ impl<'a> FilterParser<'a> {
     /// token spelling, combining more than one term into a
     /// [`FilterExpr::Logical`] under `op`. A lone term passes through
     /// unwrapped.
+    ///
+    /// # Errors
+    ///
+    /// - [`QueryError::UnparsableFilterExpression`] if a right-hand term or
+    ///   delimiter is invalid.
+    /// - [`QueryError::UnknownFieldPath`] if a nested term uses a malformed
+    ///   field path.
     fn parse_logical_chain(
         &mut self,
         op: LogicalOp,
@@ -283,6 +290,12 @@ impl<'a> FilterParser<'a> {
     /// Parses a function call's `(field, target)` argument list starting at
     /// the opening `(`, dispatching on `name` to build the matching
     /// [`FilterFunction`].
+    ///
+    /// # Errors
+    ///
+    /// - [`QueryError::UnparsableFilterExpression`] if the call is malformed or
+    ///   `name` does not match a known filter function.
+    /// - [`QueryError::UnknownFieldPath`] if the field argument is malformed.
     fn parse_function_call(
         &mut self,
         name: &str,
@@ -300,6 +313,12 @@ impl<'a> FilterParser<'a> {
 
     /// Parses a `<field> <op> <value>` comparison starting after the
     /// already-consumed `field_ident` token.
+    ///
+    /// # Errors
+    ///
+    /// - [`QueryError::UnparsableFilterExpression`] if the operator or literal
+    ///   value is missing or invalid.
+    /// - [`QueryError::UnknownFieldPath`] if `field_ident` is malformed.
     fn parse_comparison(
         &mut self,
         field_ident: &str,

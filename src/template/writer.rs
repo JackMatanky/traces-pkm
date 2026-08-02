@@ -305,6 +305,13 @@ impl<'a> TemplateWriteTarget<'a> {
 
 /// Writes `content` to `path` under `policy`, creating parent directories
 /// first if needed.
+///
+/// # Errors
+///
+/// - [`TemplateError::Write`] if parent directory creation or content writing
+///   fails.
+/// - [`TemplateError::OutputFileAlreadyExists`] if [`CommitPolicy::CreateNew`]
+///   rejects an existing file through [`CommitPolicy::create_file`].
 fn commit(
     path: &Path,
     content: &str,

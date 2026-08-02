@@ -119,6 +119,10 @@ impl TemplatePath {
     }
 
     /// Reads this resolved template's source from disk.
+    ///
+    /// # Errors
+    ///
+    /// - [`io::Error`] if the resolved template file cannot be read.
     pub(super) fn read(&self) -> io::Result<String> {
         fs::read_to_string(self.absolute())
     }

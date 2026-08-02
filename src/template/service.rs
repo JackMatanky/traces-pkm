@@ -169,6 +169,10 @@ impl<'a> TemplateService<'a> {
 
     /// Reads the resolved template's source from disk, mapping I/O
     /// failure to [`TemplateError::Read`].
+    ///
+    /// # Errors
+    ///
+    /// - [`TemplateError::Read`] if the resolved template cannot be read.
     fn read_template(resolved: &TemplatePath) -> Result<String, TemplateError> {
         resolved.read().map_err(|source| TemplateError::Read {
             path: resolved.absolute(),
@@ -178,6 +182,10 @@ impl<'a> TemplateService<'a> {
 
     /// Renders `source` through the engine. `path` is only used to name the
     /// template in a [`TemplateError::Render`], not read again.
+    ///
+    /// # Errors
+    ///
+    /// - [`TemplateError::Render`] if minijinja cannot render `source`.
     fn render_template(
         &self,
         source: &str,

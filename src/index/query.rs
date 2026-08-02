@@ -212,6 +212,10 @@ impl QueryOutcome {
     /// Shared implementation for [`Self::sort`] and [`Self::group_by`]: a
     /// stable sort by `path`'s resolved value, treating [`FieldValue::Null`]
     /// as the minimum value.
+    ///
+    /// # Errors
+    ///
+    /// - [`QueryError::UnknownFieldPath`] if `path` is malformed.
     fn sort_by_field(
         self,
         path: &str,
