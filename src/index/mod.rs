@@ -37,8 +37,10 @@ pub(crate) use error::FileIndexError;
     unused_imports,
     reason = "domain types exported for index module callers"
 )]
-pub(crate) use file::{FileField, FileFormat, FileRecord, Timestamp};
-pub(crate) use query::{IndexRecord, QueryError, QueryOutcome, Source};
+pub(crate) use file::{FileFormat, FileRecord, Timestamp};
+pub(crate) use query::{
+    FileField, IndexRecord, QueryError, QueryOutcome, Source,
+};
 use store::IndexStore;
 
 use crate::note::{Note, parse_markdown};

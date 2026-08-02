@@ -15,6 +15,7 @@
 //! - [`QueryError`] reports malformed field paths and query expressions.
 
 mod error;
+mod field;
 mod filter;
 mod operators;
 mod sort;
@@ -22,10 +23,11 @@ mod sort;
 use std::path::PathBuf;
 
 pub(crate) use error::QueryError;
+pub(crate) use field::FileField;
 use filter::FilterExpr;
 use sort::sort_key_cmp;
 
-use super::file::{FileField, FileRecord};
+use super::file::FileRecord;
 use crate::note::{FieldValue, Note};
 
 /// Iterable collection of [`IndexRecord`] values returned by
