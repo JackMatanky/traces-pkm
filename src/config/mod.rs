@@ -21,6 +21,14 @@
     )
 )]
 
+mod discovery;
+mod file;
+mod model;
+mod raw;
+mod service;
+mod store;
+mod trust;
+
 pub(crate) use discovery::{DiscoveryError, DiscoveryScope, LOCAL_CONFIG_FILE};
 #[cfg(test)]
 pub(crate) use file::{Discovered, LocalConfigFile};
@@ -33,11 +41,3 @@ pub(crate) use store::ConfigStateError;
 #[cfg(test)]
 pub(crate) use trust::ConfigTrustStatus;
 pub(crate) use trust::TrustRequest;
-
-mod discovery;
-mod file;
-mod model;
-mod raw;
-mod service;
-mod store;
-mod trust;
