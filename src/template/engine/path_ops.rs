@@ -24,6 +24,7 @@ use std::{
 
 use minijinja::{Environment, Error, ErrorKind};
 
+use super::confine_error;
 use crate::{
     file_name::{BaseName, FileName},
     path::{PathError, RootConfinedPath},
@@ -170,34 +171,6 @@ impl AsRef<Path> for InspectTarget {
     fn as_ref(&self) -> &Path {
         &self.0
     }
-}
-
-/// Builds the error for a `path` argument that fails root confinement.
-///
-/// Unsafe lexical paths and symlink escapes
-/// ([`PathError::NotRelative`]/[`PathError::EscapesRoot`]) share the "escapes
-/// the project root" message because template authors see both as the same
-/// failure. [`PathError::Verify`] gets its own message because that case is not
-/// known to escape, only unconfirmed because the root or an ancestor could not
-/// be canonicalized.
-fn confine_error(path: &str, source: PathError) -> Error {
-    source.fold_confinement(
-        || {
-            Error::new(
-                ErrorKind::InvalidOperation,
-                format!("path {path} escapes the project root"),
-            )
-        },
-        |inner| {
-            Error::new(
-                ErrorKind::InvalidOperation,
-                format!(
-                    "failed to verify path {path} is inside the project root"
-                ),
-            )
-            .with_source(inner)
-        },
-    )
 }
 
 /// Builds the [`ErrorKind::InvalidOperation`] error for an I/O failure other

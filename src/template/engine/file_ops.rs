@@ -23,7 +23,8 @@ use minijinja::{
     value::{Enumerator, Object, Value},
 };
 
-use crate::path::{PathError, RootConfinedPath};
+use super::confine_error;
+use crate::path::RootConfinedPath;
 
 /// The key `write_to` stashes its path under via [`State::set_temp`];
 /// [`super::TemplateEngine::render`] reads it back under the same
@@ -90,37 +91,6 @@ impl Object for FileOps {
     fn enumerate(self: &Arc<Self>) -> Enumerator {
         Enumerator::Str(METHODS)
     }
-}
-
-/// Builds the `file.include()` error for a `path` that fails confinement.
-///
-/// Unsafe lexical paths and symlink escapes
-/// ([`PathError::NotRelative`]/[`PathError::EscapesRoot`]) share the "escapes
-/// the project root" message because template authors see both as the same
-/// failure. [`PathError::Verify`] gets its own message because that case is not
-/// known to escape, only unconfirmed because the root or an ancestor could not
-/// be canonicalized.
-fn confine_error(path: &str, source: PathError) -> Error {
-    source.fold_confinement(
-        || escapes_root(path),
-        |source| {
-            Error::new(
-                ErrorKind::InvalidOperation,
-                format!(
-                    "failed to verify path {path} is inside the project root"
-                ),
-            )
-            .with_source(source)
-        },
-    )
-}
-
-/// Builds the `file.include()` error for a `path` that escapes `root`.
-fn escapes_root(path: &str) -> Error {
-    Error::new(
-        ErrorKind::InvalidOperation,
-        format!("path {path} escapes the project root"),
-    )
 }
 
 /// Builds the `file.include()` error for an I/O failure reading the
