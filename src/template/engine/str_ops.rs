@@ -1,39 +1,42 @@
-//! [`StrOps`]: registers the string filters — the five case-conversion
-//! filters (`snake_case`, `kebab_case`, `camel_case`, `pascal_case`,
-//! `title_case`), plus manipulation, truncation, inspection, and regex
-//! filters (`trim_prefix`, `trim_suffix`, `truncate`, `truncate_words`,
-//! `word_count`, `repeat`, `regex_replace`, `regex_match`) — a template
-//! applies each as `{{ value | snake_case }}`. Each filter is a plain
-//! function registered once via [`Environment::add_filter`]; none carry
-//! shared state, so there is no [`Object`](minijinja::value::Object) to
-//! dispatch through.
+//! Registers string filters for templates.
 //!
-//! The case-conversion filters are thin wrappers around
-//! [`convert_case`]'s [`Casing`](convert_case::Casing) trait —
-//! [`Casing::to_case`](convert_case::Casing::to_case) does the
-//! actual conversion; this module only picks which [`Case`] each
-//! filter name maps to. The remaining stdlib-backed filters wrap
-//! `str::strip_prefix`/`strip_suffix`/`repeat`/`split_whitespace`
-//! directly.
+//! [`StrOps`] adds the five case-conversion filters (`snake_case`,
+//! `kebab_case`, `camel_case`, `pascal_case`, `title_case`) plus manipulation,
+//! truncation, inspection, and regex filters (`trim_prefix`, `trim_suffix`,
+//! `truncate`, `truncate_words`, `word_count`, `repeat`, `regex_replace`,
+//! `regex_match`). A template applies each as `{{ value | snake_case }}`.
 //!
-//! `regex_replace`/`regex_match` compile their pattern fresh on every
-//! call via [`Regex::new`] rather than caching it.
+//! Each filter is a plain function registered once through
+//! [`Environment::add_filter`]. None carry shared state, so there is no
+//! [`Object`](minijinja::value::Object) dispatch.
+//!
+//! The case-conversion filters are thin wrappers around [`convert_case`]'s
+//! [`Casing`](convert_case::Casing) trait.
+//! [`Casing::to_case`](convert_case::Casing::to_case) does the actual
+//! conversion; this module only maps each filter name to a [`Case`]. The
+//! remaining stdlib-backed filters wrap `str::strip_prefix`/`strip_suffix`/
+//! `repeat`/`split_whitespace` directly.
+//!
+//! `regex_replace` and `regex_match` compile their pattern fresh on every call
+//! via [`Regex::new`] rather than caching it.
 
 use convert_case::{Case, Casing as _};
 use minijinja::{Environment, Error, ErrorKind, value::Kwargs};
 use regex::Regex;
 
-/// Unit struct backing [`Self::register`] — carries no state, since
-/// these filters take no shared dependency.
+/// Unit struct backing [`Self::register`].
+///
+/// Carries no state because these filters take no shared dependency.
 pub(super) struct StrOps;
 
 impl StrOps {
-    /// Registers all thirteen filters: the five case-conversion
-    /// filters, then the eight manipulation/truncation/inspection/regex
-    /// filters described in this module's docs. An associated
-    /// function, not a method — `clippy::unused_self` denies a `&self`
-    /// receiver that goes unused, and this struct carries no state to
-    /// use.
+    /// Registers all thirteen filters.
+    ///
+    /// Adds the five case-conversion filters, then the eight
+    /// manipulation/truncation/inspection/regex filters described in the module
+    /// docs. This is an associated function, not a method, because the struct
+    /// carries no state and `clippy::unused_self` denies an unused `&self`
+    /// receiver.
     #[inline]
     pub(super) fn register(env: &mut Environment<'static>) {
         env.add_filter("snake_case", |value: &str| value.to_case(Case::Snake));
@@ -61,16 +64,17 @@ fn trim_prefix(value: &str, prefix: &str) -> String {
     value.strip_prefix(prefix).unwrap_or(value).to_owned()
 }
 
-/// `trim_suffix(suffix)` filter body — mirrors [`trim_prefix`] via
+/// `trim_suffix(suffix)` filter body. Mirrors [`trim_prefix`] via
 /// [`str::strip_suffix`].
 fn trim_suffix(value: &str, suffix: &str) -> String {
     value.strip_suffix(suffix).unwrap_or(value).to_owned()
 }
 
-/// `truncate(length, ellipsis="...")` filter body: truncates by
-/// character count (not byte count, so multi-byte UTF-8 input isn't
-/// split mid-character), keeping the total output length — including
-/// the ellipsis — within `length`. A no-op when `value` already fits.
+/// `truncate(length, ellipsis="...")` filter body.
+///
+/// Truncates by character count, not byte count, so multi-byte UTF-8 input is
+/// not split mid-character. Keeps the total output length, including the
+/// ellipsis, within `length`. A no-op when `value` already fits.
 ///
 /// # Errors
 ///
@@ -107,13 +111,13 @@ fn truncate(
     Ok(format!("{kept}{ellipsis}"))
 }
 
-/// `truncate_words(count, ellipsis="...")` filter body: truncates by
-/// whitespace-separated word count rather than character count — see
-/// [`truncate`] for the character-count variant. A single pass over
-/// [`str::split_whitespace`]: the same iterator both builds the kept
-/// words and, via one trailing `next()`, checks whether a word was
-/// left out, so no intermediate `Vec` is collected just to measure the
-/// word count.
+/// `truncate_words(count, ellipsis="...")` filter body.
+///
+/// Truncates by whitespace-separated word count rather than character count;
+/// see [`truncate`] for the character-count variant. Uses a single pass over
+/// [`str::split_whitespace`]: the same iterator both builds the kept words and,
+/// via one trailing `next()`, checks whether a word was left out. No
+/// intermediate [`Vec`] is collected just to measure the word count.
 ///
 /// # Errors
 ///
@@ -164,10 +168,11 @@ fn word_count(value: &str) -> usize {
     value.split_whitespace().count()
 }
 
-/// Extracts the shared `ellipsis="..."` kwarg for [`truncate`]/
-/// [`truncate_words`], defaulting to `"..."`, and rejects any other
-/// kwarg via [`Kwargs::assert_all_used`] — the one place both filters
-/// decide how their optional `ellipsis=` argument is read.
+/// Extracts the shared `ellipsis="..."` kwarg for [`truncate`] and
+/// [`truncate_words`].
+///
+/// Defaults to `"..."` and rejects any other kwarg via
+/// [`Kwargs::assert_all_used`].
 ///
 /// # Errors
 ///
@@ -180,11 +185,12 @@ fn ellipsis_kwarg(kwargs: &Kwargs) -> Result<&str, Error> {
     Ok(ellipsis)
 }
 
-/// `regex_replace(pattern, replacement)` filter body: replaces every
-/// non-overlapping match of `pattern` with `replacement`, which may
-/// reference capture groups as `$1`/`$2` — [`Regex::replace_all`]'s own
-/// replacement syntax. The pattern is compiled fresh on every call via
-/// [`Regex::new`] rather than cached.
+/// `regex_replace(pattern, replacement)` filter body.
+///
+/// Replaces every non-overlapping match of `pattern` with `replacement`, which
+/// may reference capture groups as `$1`/`$2` using
+/// [`Regex::replace_all`]'s replacement syntax. The pattern is compiled fresh
+/// on every call via [`Regex::new`] rather than cached.
 ///
 /// # Errors
 ///
@@ -237,8 +243,9 @@ mod tests {
         env
     }
 
-    /// Renders `template` against a single `value` binding — the
-    /// shared shape every new-filter test below uses, since each
+    /// Renders `template` against a single `value` binding.
+    ///
+    /// This is the shared shape every new-filter test below uses, since each
     /// filter takes one string input plus literal arguments baked into
     /// `template` itself.
     fn render(
@@ -301,13 +308,13 @@ mod tests {
         assert_eq!(rendered, expected);
     }
 
-    /// Boundary rows the two behavior tables above don't reach: an empty
-    /// string (across all five filters — the input most likely to expose
-    /// a panic), a single word with no delimiter to split on, Unicode
-    /// input, digits, and punctuation. One representative filter per
-    /// non-empty boundary kind, since `convert_case`'s splitting logic is
-    /// shared across all five `Case` targets — see `str_ops.rs`'s module
-    /// docs.
+    /// Boundary rows the two behavior tables above do not reach.
+    ///
+    /// Covers an empty string across all five filters, the input most likely to
+    /// expose a panic, plus a single word with no delimiter, Unicode input,
+    /// digits, and punctuation. One representative filter per non-empty
+    /// boundary kind is enough because `convert_case`'s splitting logic is
+    /// shared across all five [`Case`] targets.
     #[rstest]
     #[case::snake_case_with_empty_input("snake_case", "", "")]
     #[case::kebab_case_with_empty_input("kebab_case", "", "")]

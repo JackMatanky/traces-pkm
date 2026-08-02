@@ -1,20 +1,20 @@
-//! [`FileOps`]: the `file` namespace object registered as a minijinja
-//! global by [`super::TemplateEngine`]. A template calls
-//! `file.write_to("path")` during render to declare its own output path —
-//! mirrors Templater's `tp.file.move()` — or `file.include("path")` to
-//! read and inline another file, resolved against
+//! Registers `file.*` helpers for templates.
+//!
+//! [`FileOps`] is the `file` namespace object registered as a minijinja global
+//! by [`super::TemplateEngine`]. A template calls `file.write_to("path")` to
+//! declare its own output path, mirroring Templater's `tp.file.move()`, or
+//! `file.include("path")` to read and inline another file resolved against
 //! [`Config::root`](crate::config::Config::root).
 //!
-//! `write_to` stashes its argument in minijinja's per-render
-//! [`State::set_temp`] rather than a struct field, so it needs no reset
-//! between renders; [`super::TemplateEngine::render`] reads it back after
-//! render completes.
+//! `write_to` stores its argument in minijinja's per-render
+//! [`State::set_temp`], so it needs no reset between renders;
+//! [`super::TemplateEngine::render`] reads it back after render completes.
 //!
 //! `file.include()` confines its `path` argument to `root` via
-//! [`crate::path::RootConfinedPath::parse`] — the same seam
+//! [`crate::path::RootConfinedPath::parse`], the same seam
 //! [`super::super::writer::TemplateWriteTarget::confine`] uses for
-//! `-o`/`file.write_to()` candidates, so a symlink escape is rejected
-//! identically on both the read and the write side.
+//! `-o`/`file.write_to()` candidates. Symlink escapes are rejected identically
+//! on the read and write sides.
 
 use std::{path::Path, sync::Arc};
 
@@ -33,10 +33,11 @@ pub(super) const WRITE_TO_KEY: &str = "file.write_to";
 /// Method names `file` exposes, for [`FileOps::enumerate`].
 const METHODS: &[&str] = &["write_to", "include"];
 
-/// Backs the `file` namespace object. Holds the project root
-/// `file.include()` confines its `path` argument to — `write_to` needs
-/// no equivalent state; see the module docs for where its captured
-/// value actually lives.
+/// Backs the `file` namespace object.
+///
+/// Holds the project root `file.include()` confines its `path` argument to.
+/// `write_to` needs no equivalent state; see the module docs for where its
+/// captured value lives.
 #[derive(Debug)]
 pub(super) struct FileOps {
     root: Arc<Path>,
@@ -91,13 +92,14 @@ impl Object for FileOps {
     }
 }
 
-/// Builds the `file.include()` error for a `path` that fails
-/// confinement: unsafe lexically, or escaping `root` once symlinks
-/// resolve ([`PathError::NotRelative`]/[`PathError::EscapesRoot`]) get
-/// the same "escapes the project root" message — from the template
-/// author's perspective both are just that. [`PathError::Verify`] gets
-/// its own message, since that case isn't known to escape, only
-/// unconfirmed (root or an ancestor couldn't be canonicalized).
+/// Builds the `file.include()` error for a `path` that fails confinement.
+///
+/// Unsafe lexical paths and symlink escapes
+/// ([`PathError::NotRelative`]/[`PathError::EscapesRoot`]) share the "escapes
+/// the project root" message because template authors see both as the same
+/// failure. [`PathError::Verify`] gets its own message because that case is not
+/// known to escape, only unconfirmed because the root or an ancestor could not
+/// be canonicalized.
 fn confine_error(path: &str, source: PathError) -> Error {
     match source {
         PathError::NotRelative | PathError::EscapesRoot => escapes_root(path),

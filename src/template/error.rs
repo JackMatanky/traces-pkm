@@ -1,8 +1,8 @@
-//! Errors from the resolve -> read -> render -> write pipeline behind
-//! [`super::TemplateService::render_to_file`].
+//! Error types for the template resolve, read, render, and write pipeline.
 //!
-//! `thiserror`-only, no `miette::Diagnostic` — `crate::cli::error` is
-//! where user-facing help text and error codes get added.
+//! These errors stay presentation-neutral: `thiserror` records the failing
+//! stage and source error, while `crate::cli::error` adds user-facing help text
+//! and diagnostic codes.
 
 use std::{io, path::PathBuf};
 
@@ -11,13 +11,13 @@ use thiserror::Error;
 use super::path::TemplatePathError;
 use crate::DialogError;
 
-/// One variant per pipeline stage, so a caller can tell which stage
-/// failed without inspecting the wrapped source error.
+/// One variant per pipeline stage, so a caller can tell which stage failed
+/// without inspecting the wrapped source error.
 #[derive(Debug, Error)]
 pub(crate) enum TemplateError {
-    /// `name` failed to resolve to a file. Transparent:
-    /// [`TemplatePathError`]'s own [`Display`](std::fmt::Display)
-    /// already names the template and what went wrong.
+    /// `name` failed to resolve to a file. Transparent: [`TemplatePathError`]'s
+    /// own [`Display`](std::fmt::Display) already names the template and what
+    /// went wrong.
     #[error(transparent)]
     Resolve(#[from] TemplatePathError),
 
@@ -38,20 +38,19 @@ pub(crate) enum TemplateError {
         path: PathBuf,
     },
 
-    /// `path` — from `file.write_to()` or `-o` — is absolute or
-    /// contains a `..` component, so it would write outside the
-    /// project root.
+    /// `path` comes from `file.write_to()` or `-o` and is absolute or contains
+    /// a `..` component, so it would write outside the project root.
     #[error("output path {path} escapes the project root")]
     OutputPathEscapesRoot {
         /// The rejected candidate, exactly as given.
         path: PathBuf,
     },
 
-    /// `path` — from `file.write_to()` or `-o` — could not be verified
-    /// as staying inside the project root: canonicalizing the root or
-    /// the path's existing ancestor failed for a reason other than not
-    /// existing (permission denied, a broken symlink loop). Fails
-    /// closed rather than writing an unverified path.
+    /// `path` comes from `file.write_to()` or `-o` and could not be verified as
+    /// staying inside the project root. Canonicalizing the root or the path's
+    /// existing ancestor failed for a reason other than nonexistence
+    /// (permission denied, a broken symlink loop). The pipeline fails closed
+    /// rather than writing an unverified path.
     #[error("failed to verify output path {path} is inside the project root")]
     OutputPathUnverifiable {
         /// The candidate that could not be verified.

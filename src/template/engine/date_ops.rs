@@ -1,26 +1,25 @@
-//! [`DateOps`]: the `date` namespace object registered as a minijinja global by
-//! [`super::TemplateEngine`], plus the flat `date_*`/`is_*` pipeline filters
-//! and tests it registers alongside it.
+//! Registers date/time helpers for templates.
 //!
-//! **Namespace functions** (`date.now()`, `date.today()`, `date.tomorrow()`,
-//! `date.yesterday()`, `date.from_timestamp(ts)`) are *generators*: no date
-//! argument, producing a formatted string from the current instant (or a
-//! timestamp). **Filters** (`date_format`, `timestamp`, `add_days`, `sub_days`,
-//! `add_months`, `sub_months`, `add_years`, `sub_years`, `start_of_month`,
-//! `end_of_month`, `weekday`, `date_diff`) and **tests** (`is_past`,
-//! `is_future`, `is_leap_year`) are *transformations*: they take a piped
-//! date/time string. `date_format` is prefixed to avoid colliding with
-//! minijinja's built-in `format` filter.
+//! [`DateOps`] provides the `date` namespace object registered as a minijinja
+//! global by [`super::TemplateEngine`]. It also registers the flat `date_*`
+//! filters and `is_*` tests used in pipelines.
 //!
-//! All date/time string parsing funnels through [`ParsedDate::parse`]/
-//! [`parse_date`], so every filter and test shares the same accepted formats: a
-//! full datetime is tried first, falling back to a bare `%Y-%m-%d` date at
-//! midnight.
+//! Template-facing operations split into three groups:
 //!
-//! Every arithmetic filter re-serializes its result at the same precision its
-//! input had (see [`format_precise`]), so piping a date-only string through a
-//! chain of filters never grows a fabricated `00:00:00`, and a datetime string
-//! never silently loses its time-of-day.
+//! - Namespace generators: `date.now()`, `date.today()`, `date.tomorrow()`,
+//!   `date.yesterday()`, and `date.from_timestamp(ts)` produce formatted
+//!   strings from the current instant, current date, or a Unix timestamp.
+//! - Filters: `date_format`, `timestamp`, `date_add`, `date_sub`, `add_days`,
+//!   `sub_days`, `add_months`, `sub_months`, `add_years`, `sub_years`,
+//!   `start_of_month`, `end_of_month`, `weekday`, and `date_diff` transform a
+//!   piped date/time string. `date_format` is prefixed to avoid minijinja's
+//!   built-in `format` filter.
+//! - Tests: `is_past`, `is_future`, and `is_leap_year` inspect a piped value.
+//!
+//! Date/time string parsing funnels through [`ParsedDate::parse`] and
+//! [`parse_date`]. A full datetime is tried first, falling back to a bare
+//! `%Y-%m-%d` date at midnight. Arithmetic filters re-serialize at the input's
+//! original precision via [`format_precise`].
 
 use std::{fmt::Write as _, sync::Arc};
 
@@ -32,18 +31,21 @@ use minijinja::{
     value::{Enumerator, Kwargs, Object, Value},
 };
 
-/// `date.now(format=...)`'s default format when the `format` kwarg is omitted —
-/// an ISO-8601-style date (`YYYY-MM-DD`). Also the default output shape
-/// [`format_precise`] uses for a date-only (no time component) input.
+/// `date.now(format=...)`'s default format when the `format` kwarg is omitted.
+///
+/// This is an ISO-8601-style date (`YYYY-MM-DD`) and also the default output
+/// shape [`format_precise`] uses for a date-only input.
 const DEFAULT_FORMAT: &str = "%Y-%m-%d";
 
 /// [`format_precise`]'s output shape for an input that carried a time
 /// component.
 const DEFAULT_DATETIME_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
 
-/// Formats [`ParsedDate::parse`] tries, in order, before falling back to a
-/// bare date — space-separated (`2026-07-23 14:30[:00]`) and `T`-separated
-/// ISO 8601 (with or without seconds/fractional seconds).
+/// Formats [`ParsedDate::parse`] tries, in order, before falling back to a bare
+/// date.
+///
+/// Covers space-separated (`2026-07-23 14:30[:00]`) and `T`-separated ISO 8601
+/// inputs, with or without seconds/fractional seconds.
 const DATETIME_FORMATS: &[&str] = &[
     "%Y-%m-%d %H:%M:%S",
     "%Y-%m-%d %H:%M",
@@ -56,15 +58,17 @@ const DATETIME_FORMATS: &[&str] = &[
 const METHODS: &[&str] =
     &["now", "today", "tomorrow", "yesterday", "from_timestamp"];
 
-/// Backs the `date` namespace object. Stateless — see the module docs.
+/// Backs the `date` namespace object. Stateless; see the module docs.
 #[derive(Debug)]
 pub(super) struct DateOps;
 
 impl DateOps {
     /// Registers the `date` global plus every flat `date_*` filter and `is_*`
-    /// test this module owns. Filters/tests are added first — they're
-    /// zero-capture free functions, needing no `self` — then `self` is consumed
-    /// registering the `date` namespace object last.
+    /// test this module owns.
+    ///
+    /// Filters/tests are added first because they are zero-capture free
+    /// functions and need no `self`; then `self` is consumed registering the
+    /// `date` namespace object last.
     #[inline]
     pub(super) fn register(self, env: &mut Environment<'static>) {
         env.add_filter("date_format", date_format);
@@ -150,12 +154,11 @@ impl Object for DateOps {
     }
 }
 
-/// A successfully parsed date/time string — the [`NaiveDateTime`] itself plus a
-/// flag indicating whether the original input carried a time component (as
-/// opposed to a bare `YYYY-MM-DD` date). Every arithmetic filter re-serializes
-/// at the same precision the input had via [`format_precise`], so piping a
-/// date-only string through a chain of filters never grows a fabricated
-/// `00:00:00`, and a datetime string never silently loses its time-of-day.
+/// A successfully parsed date/time string.
+///
+/// Stores the [`NaiveDateTime`] plus whether the original input carried a time
+/// component rather than a bare `YYYY-MM-DD` date. Every arithmetic filter
+/// re-serializes at the same precision via [`format_precise`].
 struct ParsedDate {
     datetime: NaiveDateTime,
     has_time: bool,
@@ -188,8 +191,9 @@ impl ParsedDate {
 }
 
 /// The date/time unit parsed from a `unit="..."` kwarg across the `date`
-/// namespace filters ([`date_add`], [`date_sub`], [`date_diff`]) — the
-/// same "small enum over a piped string" pattern
+/// namespace filters ([`date_add`], [`date_sub`], [`date_diff`]).
+///
+/// This is the same "small enum over a piped string" pattern
 /// [`path_ops::PathQuery`](super::path_ops) uses for its I/O tests.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum DateTimeUnit {
@@ -217,10 +221,10 @@ impl DateTimeUnit {
         }
     }
 
-    /// This unit's length in whole seconds — [`date_diff`]'s divisor for
-    /// both its sub-day (`f64`) and whole-unit (`i64`) output. `None` for
-    /// [`Self::Years`]/[`Self::Months`], which vary in length (28–31 days,
-    /// 365–366 days) and so aren't a fixed number of seconds.
+    /// This unit's length in whole seconds for [`date_diff`].
+    ///
+    /// `None` for [`Self::Years`] and [`Self::Months`], which vary in length
+    /// (28-31 days, 365-366 days) and are not fixed numbers of seconds.
     const fn diff_seconds(self) -> Option<i64> {
         match self {
             Self::Days => Some(86_400),
@@ -234,9 +238,11 @@ impl DateTimeUnit {
 
 /// Extracts the shared `format="..."` kwarg every `date.*` namespace
 /// method takes, defaulting to [`DEFAULT_FORMAT`], and rejects any
-/// other kwarg via [`Kwargs::assert_all_used`] — the one place all
-/// five `now`/`today`/`tomorrow`/`yesterday`/`from_timestamp` closures
-/// decide how their optional `format=` argument is read.
+/// other kwarg via [`Kwargs::assert_all_used`].
+///
+/// This is the one place all five
+/// `now`/`today`/`tomorrow`/`yesterday`/`from_timestamp` closures decide how
+/// their optional `format=` argument is read.
 ///
 /// # Errors
 ///
@@ -252,7 +258,7 @@ fn format_kwarg(kwargs: &Kwargs) -> Result<&str, Error> {
 
 /// Extracts the shared `unit="..."` kwarg [`date_add`], [`date_sub`], and
 /// [`date_diff`] all take, defaulting to `"days"`, and rejects any other
-/// kwarg via [`Kwargs::assert_all_used`] — mirrors [`format_kwarg`] for the
+/// kwarg via [`Kwargs::assert_all_used`], mirroring [`format_kwarg`] for the
 /// `date.*` namespace methods' `format=` kwarg.
 ///
 /// # Errors
@@ -267,13 +273,13 @@ fn unit_kwarg(kwargs: &Kwargs) -> Result<DateTimeUnit, Error> {
     DateTimeUnit::parse(unit_str).ok_or_else(|| unknown_unit_error(unit_str))
 }
 
-/// Formats `formattable` — anything chrono's `.format(fmt)` produces
-/// (a `DelayedFormat`, from a `NaiveDate`/`NaiveDateTime`/`DateTime<_>`)
-/// — writing through [`std::fmt::Write`] rather than `.to_string()`: the
-/// latter's blanket impl `.expect()`s a successful `Display::fmt`, but
-/// `DelayedFormat` returns `Err` (not a panic of its own) for an invalid
-/// strftime specifier such as `%Q`, so writing directly is what turns
-/// that into a normal [`minijinja::Error`] instead of a panic.
+/// Formats `formattable`, anything chrono's `.format(fmt)` produces
+/// (`DelayedFormat` from a `NaiveDate`, `NaiveDateTime`, or `DateTime<_>`).
+///
+/// Writes through [`std::fmt::Write`] rather than `.to_string()`: the latter's
+/// blanket impl `.expect()`s a successful `Display::fmt`, but `DelayedFormat`
+/// returns `Err` for an invalid strftime specifier such as `%Q`. Writing
+/// directly turns that into a normal [`minijinja::Error`] instead of a panic.
 ///
 /// # Errors
 ///
@@ -293,13 +299,12 @@ fn format_with(
     Ok(rendered)
 }
 
-/// Re-serializes `dt` at the precision `has_time` reports —
-/// [`DEFAULT_DATETIME_FORMAT`] when the original input carried a time
-/// component, [`DEFAULT_FORMAT`] (bare date) otherwise. Every arithmetic
-/// filter (`add_days`, `end_of_month`, etc.) uses this for its output,
-/// so the output shape mirrors the input shape: a date-only string
-/// piped through never grows a fabricated `00:00:00`, and a datetime
-/// string piped through never silently loses its time-of-day.
+/// Re-serializes `dt` at the precision `has_time` reports.
+///
+/// Uses [`DEFAULT_DATETIME_FORMAT`] when the original input carried a time
+/// component, [`DEFAULT_FORMAT`] otherwise. Every arithmetic filter uses this
+/// for its output, so a date-only string never grows a fabricated `00:00:00`,
+/// and a datetime string never silently loses its time-of-day.
 ///
 /// # Errors
 ///
@@ -324,8 +329,8 @@ fn try_parse_datetime(s: &str) -> Option<NaiveDateTime> {
 }
 
 /// The shared date/time string parser every filter and test besides
-/// [`date_diff`] uses — see [`ParsedDate::parse`] for the
-/// accepted formats and fallback behavior.
+/// [`date_diff`] uses. See [`ParsedDate::parse`] for the accepted formats and
+/// fallback behavior.
 ///
 /// # Errors
 ///
@@ -334,10 +339,11 @@ fn parse_date(s: &str) -> Result<NaiveDateTime, Error> {
     ParsedDate::parse(s).map(|parsed| parsed.datetime)
 }
 
-/// `{{ value | date_format(format_string) }}` — re-formats a piped
-/// date/time string with an arbitrary strftime specifier. Prefixed
-/// (not just `format`) to avoid colliding with minijinja's built-in
-/// `format` filter, which is printf-style and unrelated to dates.
+/// `{{ value | date_format(format_string) }}` re-formats a piped date/time
+/// string with an arbitrary strftime specifier.
+///
+/// Prefixed as `date_format`, not just `format`, to avoid colliding with
+/// minijinja's built-in printf-style `format` filter.
 ///
 /// # Errors
 ///
@@ -349,13 +355,13 @@ fn date_format(value: &str, format: &str) -> Result<String, Error> {
     format_with(datetime.format(format), format)
 }
 
-/// `{{ value | timestamp }}` — converts a piped date/time string to
-/// Unix seconds, treating a naive (timezone-less) input as UTC.
+/// `{{ value | timestamp }}` converts a piped date/time string to Unix seconds,
+/// treating a naive (timezone-less) input as UTC.
 ///
 /// # Errors
 ///
-/// [`ErrorKind::InvalidOperation`] if `value` isn't a parseable
-/// date/time string — see [`parse_date`].
+/// [`ErrorKind::InvalidOperation`] if `value` is not a parseable date/time
+/// string; see [`parse_date`].
 fn timestamp(value: &str) -> Result<i64, Error> {
     Ok(parse_date(value)?.and_utc().timestamp())
 }
@@ -376,9 +382,11 @@ fn shift_date(
     format_precise(shifted, parsed.has_time)
 }
 
-/// `{{ value | date_add(n, unit="days") }}` — adds `n` `unit`s to a piped
-/// date/time string (`unit` defaults to `"days"`, accepts `"years"`,
-/// `"months"`, `"days"`, `"hours"`, `"minutes"`, `"seconds"`).
+/// `{{ value | date_add(n, unit="days") }}` adds `n` `unit`s to a piped
+/// date/time string.
+///
+/// `unit` defaults to `"days"` and accepts `"years"`, `"months"`, `"days"`,
+/// `"hours"`, `"minutes"`, and `"seconds"`.
 ///
 /// # Errors
 ///
@@ -394,8 +402,8 @@ fn date_add(value: &str, n: i64, kwargs: Kwargs) -> Result<String, Error> {
     date_shift_unit(value, n, unit_kwarg(&kwargs)?)
 }
 
-/// `{{ value | date_sub(n, unit="days") }}` — subtracts `n` `unit`s from a
-/// piped date/time string (see [`date_add`]).
+/// `{{ value | date_sub(n, unit="days") }}` subtracts `n` `unit`s from a piped
+/// date/time string. See [`date_add`].
 ///
 /// # Errors
 ///
@@ -456,53 +464,53 @@ fn date_shift_unit(
     })
 }
 
-/// `{{ value | add_days(n) }}` — convenience shortcut for `{{ value |
-/// date_add(n, unit="days") }}`.
+/// `{{ value | add_days(n) }}` is a convenience shortcut for
+/// `{{ value | date_add(n, unit="days") }}`.
 fn add_days(value: &str, n: u64) -> Result<String, Error> {
     let n_i64 = i64::try_from(n).map_err(|_| date_out_of_range_error())?;
     date_shift_unit(value, n_i64, DateTimeUnit::Days)
 }
 
-/// `{{ value | sub_days(n) }}` — convenience shortcut for `{{ value |
-/// date_sub(n, unit="days") }}`.
+/// `{{ value | sub_days(n) }}` is a convenience shortcut for
+/// `{{ value | date_sub(n, unit="days") }}`.
 fn sub_days(value: &str, n: u64) -> Result<String, Error> {
     let n_i64 = i64::try_from(n).map_err(|_| date_out_of_range_error())?;
     let n_i64 = n_i64.checked_neg().ok_or_else(date_out_of_range_error)?;
     date_shift_unit(value, n_i64, DateTimeUnit::Days)
 }
 
-/// `{{ value | add_months(n) }}` — convenience shortcut for `{{ value |
-/// date_add(n, unit="months") }}`.
+/// `{{ value | add_months(n) }}` is a convenience shortcut for
+/// `{{ value | date_add(n, unit="months") }}`.
 fn add_months(value: &str, n: u32) -> Result<String, Error> {
     date_shift_unit(value, i64::from(n), DateTimeUnit::Months)
 }
 
-/// `{{ value | sub_months(n) }}` — convenience shortcut for `{{ value |
-/// date_sub(n, unit="months") }}`.
+/// `{{ value | sub_months(n) }}` is a convenience shortcut for
+/// `{{ value | date_sub(n, unit="months") }}`.
 fn sub_months(value: &str, n: u32) -> Result<String, Error> {
     let n_i64 =
         i64::from(n).checked_neg().ok_or_else(date_out_of_range_error)?;
     date_shift_unit(value, n_i64, DateTimeUnit::Months)
 }
 
-/// `{{ value | add_years(n) }}` — convenience shortcut for `{{ value |
-/// date_add(n, unit="years") }}`.
+/// `{{ value | add_years(n) }}` is a convenience shortcut for
+/// `{{ value | date_add(n, unit="years") }}`.
 fn add_years(value: &str, n: u32) -> Result<String, Error> {
     date_shift_unit(value, i64::from(n), DateTimeUnit::Years)
 }
 
-/// `{{ value | sub_years(n) }}` — convenience shortcut for `{{ value |
-/// date_sub(n, unit="years") }}`.
+/// `{{ value | sub_years(n) }}` is a convenience shortcut for
+/// `{{ value | date_sub(n, unit="years") }}`.
 fn sub_years(value: &str, n: u32) -> Result<String, Error> {
     let n_i64 =
         i64::from(n).checked_neg().ok_or_else(date_out_of_range_error)?;
     date_shift_unit(value, n_i64, DateTimeUnit::Years)
 }
 
-/// [`ErrorKind::InvalidOperation`] if `value` isn't a parseable
-/// date/time string — see [`ParsedDate::parse`]. The `with_day(1)`
-/// call underneath can't itself fail (day 1 exists in every month), but
-/// stays behind [`date_out_of_range_error`] since it's a fallible API.
+/// [`ErrorKind::InvalidOperation`] if `value` is not a parseable date/time
+/// string; see [`ParsedDate::parse`]. The `with_day(1)` call underneath cannot
+/// itself fail because day 1 exists in every month, but stays behind
+/// [`date_out_of_range_error`] since it is a fallible API.
 fn start_of_month(value: &str) -> Result<String, Error> {
     shift_date(value, |dt| dt.with_day(1))
 }
@@ -519,24 +527,25 @@ fn end_of_month(value: &str) -> Result<String, Error> {
     shift_date(value, |dt| dt.with_day(u32::from(dt.num_days_in_month())))
 }
 
-/// `{{ value | weekday }}` — `0` for Monday through `6` for Sunday
-/// (chrono's own
-/// [`Weekday::number_from_sunday`](chrono::Weekday::number_from_sunday)
-/// is Sunday-first, so this filter remaps to Monday-first order).
+/// `{{ value | weekday }}` returns `0` for Monday through `6` for Sunday.
+///
+/// Chrono's own
+/// [`Weekday::number_from_sunday`](chrono::Weekday::number_from_sunday) is
+/// Sunday-first, so this filter remaps to Monday-first order.
 ///
 /// # Errors
 ///
-/// [`ErrorKind::InvalidOperation`] if `value` isn't a parseable
-/// date/time string — see [`parse_date`].
+/// [`ErrorKind::InvalidOperation`] if `value` is not a parseable date/time
+/// string; see [`parse_date`].
 fn weekday(value: &str) -> Result<u32, Error> {
     Ok(parse_date(value)?.weekday().num_days_from_monday())
 }
 
-/// Whole calendar years from `from` to `to`, signed (negative when `to`
-/// precedes `from`). Delegates to chrono's own
-/// [`NaiveDate::years_since`], which is day-of-year aware — a year isn't
-/// "up" until `to`'s month/day reaches `from`'s — just made to accept
-/// either ordering.
+/// Whole calendar years from `from` to `to`, signed.
+///
+/// Delegates to chrono's [`NaiveDate::years_since`], which is day-of-year
+/// aware: a year is not "up" until `to`'s month/day reaches `from`'s. This
+/// wrapper just accepts either ordering.
 fn signed_years_since(from: NaiveDate, to: NaiveDate) -> i64 {
     let (earlier, later, sign) = if to >= from {
         (from, to, 1)
@@ -561,12 +570,13 @@ fn signed_years_since(from: NaiveDate, to: NaiveDate) -> i64 {
     result
 }
 
-/// Whole calendar months from `from` to `to`, signed — see
-/// [`signed_years_since`]. Chrono has no `months_since` equivalent, so
-/// this mirrors [`NaiveDate::years_since`]'s own algorithm at month
-/// granularity: total calendar months between the two dates, decremented
-/// by one when the day-of-month hasn't yet been reached (so a partial
-/// month never rounds up).
+/// Whole calendar months from `from` to `to`, signed. See
+/// [`signed_years_since`].
+///
+/// Chrono has no `months_since` equivalent, so this mirrors
+/// [`NaiveDate::years_since`]'s algorithm at month granularity: total calendar
+/// months between the dates, decremented by one when the day-of-month has not
+/// yet been reached.
 fn signed_months_since(from: NaiveDate, to: NaiveDate) -> i64 {
     let (earlier, later, sign) = if to >= from {
         (from, to, 1)
@@ -588,17 +598,15 @@ fn signed_months_since(from: NaiveDate, to: NaiveDate) -> i64 {
     result
 }
 
-/// `{{ value | date_diff(other, unit="days") }}` — the signed difference
-/// from the piped value to `other` (positive when `other` is later),
-/// expressed in `unit` (`"days"` default, `"years"`, `"months"`,
-/// `"hours"`, `"minutes"`, or `"seconds"`).
+/// `{{ value | date_diff(other, unit="days") }}` returns the signed difference
+/// from the piped value to `other`, positive when `other` is later.
 ///
-/// `"years"`/`"months"` are calendar counts — whole units elapsed,
-/// day-of-month aware (see [`signed_years_since`]/[`signed_months_since`]),
-/// always an `i64` regardless of whether `value`/`other` carry a time
-/// component. The remaining four units are fixed-duration: `f64` when
-/// both inputs carry a time component (sub-day precision is meaningful),
-/// otherwise an `i64` whole-unit count.
+/// The `unit` kwarg defaults to `"days"` and accepts `"years"`, `"months"`,
+/// `"hours"`, `"minutes"`, or `"seconds"`. `"years"`/`"months"` are calendar
+/// counts: whole units elapsed, day-of-month aware (see
+/// [`signed_years_since`]/[`signed_months_since`]), always an `i64` regardless
+/// of input precision. The remaining units are fixed-duration: `f64` when both
+/// inputs carry a time component, otherwise an `i64` whole-unit count.
 ///
 /// # Errors
 ///
@@ -670,30 +678,31 @@ fn date_diff(value: &str, other: &str, kwargs: Kwargs) -> Result<Value, Error> {
     }
 }
 
-/// `{% if value is is_past %}` — `true` when the piped date/time string
-/// is before now (UTC; a naive input is treated as UTC, matching
-/// [`timestamp`]).
+/// `{% if value is is_past %}` returns `true` when the piped date/time string
+/// is before now.
+///
+/// A naive input is treated as UTC, matching [`timestamp`].
 ///
 /// # Errors
 ///
-/// [`ErrorKind::InvalidOperation`] if `value` isn't a parseable
-/// date/time string — see [`parse_date`].
+/// [`ErrorKind::InvalidOperation`] if `value` is not a parseable date/time
+/// string; see [`parse_date`].
 fn is_past(value: &str) -> Result<bool, Error> {
     Ok(parse_date(value)?.and_utc() < Utc::now())
 }
 
-/// `{% if value is is_future %}` — see [`is_past`].
+/// `{% if value is is_future %}` mirrors [`is_past`] for future instants.
 ///
 /// # Errors
 ///
-/// [`ErrorKind::InvalidOperation`] if `value` isn't a parseable
-/// date/time string — see [`parse_date`].
+/// [`ErrorKind::InvalidOperation`] if `value` is not a parseable date/time
+/// string; see [`parse_date`].
 fn is_future(value: &str) -> Result<bool, Error> {
     Ok(parse_date(value)?.and_utc() > Utc::now())
 }
 
-/// `{% if value is is_leap_year %}` — accepts either an integer year
-/// (`2024 is is_leap_year`) or a date/time string, checked via
+/// `{% if value is is_leap_year %}` accepts either an integer year
+/// (`2024 is is_leap_year`) or a date/time string checked through
 /// [`parse_date`].
 ///
 /// # Errors
@@ -744,11 +753,12 @@ fn invalid_timestamp_error(unix_ts: i64) -> Error {
     )
 }
 
-/// Builds the error for date arithmetic (`add_days`, `add_years`,
-/// `date.tomorrow()`, etc.) that overflows chrono's representable date
-/// range — reached only at the extremes (multi-millennia offsets), but
-/// every `checked_*` chrono call this module makes can return `None`,
-/// and this module never `.unwrap()`s one.
+/// Builds the error for date arithmetic that overflows chrono's representable
+/// date range.
+///
+/// This is reached only at the extremes, such as multi-millennia offsets, but
+/// every `checked_*` chrono call this module makes can return `None`, and this
+/// module never `.unwrap()`s one.
 fn date_out_of_range_error() -> Error {
     Error::new(
         ErrorKind::InvalidOperation,
@@ -756,9 +766,10 @@ fn date_out_of_range_error() -> Error {
     )
 }
 
-/// Builds the error for a `unit="..."` kwarg naming something other than
-/// one of [`DateTimeUnit::parse`]'s six accepted unit names — shared by
-/// [`date_add`], [`date_sub`], and [`date_diff`] via [`unit_kwarg`].
+/// Builds the error for a `unit="..."` kwarg naming anything outside
+/// [`DateTimeUnit::parse`]'s six accepted unit names.
+///
+/// Shared by [`date_add`], [`date_sub`], and [`date_diff`] via [`unit_kwarg`].
 fn unknown_unit_error(unit: &str) -> Error {
     Error::new(
         ErrorKind::InvalidOperation,
@@ -802,8 +813,8 @@ mod tests {
 
         use super::*;
 
-        /// Asserts the shape (fixed length, all-ASCII-digit-or-hyphen), not
-        /// a literal value — see the issue's determinism guidance for
+        /// Asserts the shape (fixed length, all-ASCII-digit-or-hyphen), not a
+        /// literal value. See the issue's determinism guidance for
         /// `date.now()`.
         #[test]
         fn now_formats_with_the_default_format_when_no_kwarg_is_given() {
@@ -846,7 +857,7 @@ mod tests {
 
         /// Regression: Chrono's `DelayedFormat::fmt` returns `Err` for an
         /// invalid specifier like `%Q`, and `String::to_string()`'s blanket
-        /// impl panics on that `Err` — writing through `fmt::Write`
+        /// impl panics on that `Err`. Writing through `fmt::Write`
         /// directly instead must surface it as a normal render error.
         #[test]
         fn now_returns_an_error_instead_of_panicking_on_an_invalid_format() {

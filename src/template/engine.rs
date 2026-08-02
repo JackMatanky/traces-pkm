@@ -1,10 +1,10 @@
-//! [`TemplateEngine`]: minijinja construction and rendering behind one small
-//! interface for [`super::service::TemplateService`].
+//! Builds and runs the minijinja environment used by [`TemplateService`].
 //!
-//! Most of what a template calls into during render lives in a submodule:
-//! [`date_ops`], [`file_ops`], [`num_ops`], [`path_ops`], [`query_ops`],
-//! [`str_ops`], [`ui_ops`]. The one exception is the standalone
-//! [`uuid`](fn@uuid) function, defined directly here.
+//! Most template-facing helpers live in submodules: [`date_ops`], [`file_ops`],
+//! [`num_ops`], [`path_ops`], [`query_ops`], [`str_ops`], and [`ui_ops`]. The
+//! standalone [`uuid`](fn@uuid) function is defined here.
+//!
+//! [`TemplateService`]: super::service::TemplateService
 
 mod date_ops;
 mod file_ops;
@@ -48,10 +48,9 @@ pub(super) struct TemplateEngine {
 
 impl TemplateEngine {
     /// Builds an engine backed by `loader`, registering every submodule's
-    /// custom functions ([`date_ops`], [`file_ops`], [`num_ops`],
-    /// [`path_ops`], [`query_ops`], [`str_ops`], [`ui_ops`]; see each
-    /// module's own docs for what it contributes) plus the standalone
-    /// [`uuid`](fn@uuid) function.
+    /// custom functions ([`date_ops`], [`file_ops`], [`num_ops`], [`path_ops`],
+    /// [`query_ops`], [`str_ops`], [`ui_ops`]; see each module's own docs for
+    /// what it contributes) plus the standalone [`uuid`](fn@uuid) function.
     ///
     /// # Arguments
     ///

@@ -1,10 +1,8 @@
-//! [`TemplateService`]: the resolve -> render -> write pipeline for one
-//! [`Config`], driven through [`TemplateEngine`] and
-//! [`TemplateWriter`]. [`TemplateService::render_to_file`] is the
-//! single public entry point; it reads as a short top-to-bottom
-//! sequence of small private steps (resolve, read, render), then
-//! delegates the whole write-or-preview decision to
-//! [`TemplateWriter::write`].
+//! Coordinates the template resolve, render, and write pipeline.
+//!
+//! [`TemplateService`] owns the short top-to-bottom sequence for one
+//! [`Config`]: resolve through [`TemplateEngine`], read the source, render it,
+//! then delegate the write-or-preview decision to [`TemplateWriter::write`].
 
 use std::{
     path::{Path, PathBuf},
@@ -29,11 +27,11 @@ pub(crate) struct TemplateService<'a> {
     provider: Arc<dyn DialogProvider>,
 }
 
-/// The result of [`TemplateService::render`]: rendered content plus
-/// enough of the resolved template's identity for
-/// [`TemplateService::write`] to finish the job without rendering
-/// `name` a second time — which would re-run any `ui.*` prompts
-/// inside it.
+/// The result of [`TemplateService::render`].
+///
+/// Carries rendered content plus the resolved template identity
+/// [`TemplateService::write`] needs to finish the job without rendering `name`
+/// a second time. A second render would re-run any `ui.*` prompts inside it.
 #[derive(Debug)]
 pub(crate) struct RenderedTemplate {
     resolved: TemplatePath,
@@ -43,11 +41,11 @@ pub(crate) struct RenderedTemplate {
 
 impl<'a> TemplateService<'a> {
     /// Builds a service for `config`, backed by a [`TemplateEngine`].
-    /// `provider` is the interactive provider every `ui.*` call
-    /// delegates to, including under `WriteMode::DryRun` —
-    /// `WriteMode` only decides whether output gets written, never
-    /// whether `ui.*` prompts. `--no-input` is implemented by
-    /// choosing which `provider` to pass in, not by `WriteMode`.
+    ///
+    /// `provider` receives every `ui.*` call, including under
+    /// [`WriteMode::DryRun`]. [`WriteMode`] controls whether output is written,
+    /// never whether prompts run. `--no-input` is implemented by choosing which
+    /// `provider` to pass in.
     #[inline]
     #[must_use]
     pub(crate) fn new(
@@ -64,24 +62,25 @@ impl<'a> TemplateService<'a> {
         }
     }
 
-    /// Lists available template names for `config` — every top-level
-    /// `.md` file's stem in the local directory, then the global
-    /// directory (local duplicates excluded). Associated function,
-    /// not a method: listing candidate names needs only the
-    /// configured directories, not a rendering engine or dialog
-    /// provider, so the interactive picker can call it before
-    /// building a full [`Self`].
+    /// Lists available template names for `config`.
+    ///
+    /// Returns every top-level `.md` file stem in the local directory, then the
+    /// global directory with local duplicates excluded. This is an associated
+    /// function because listing candidates needs only configured directories,
+    /// not a rendering engine or dialog provider, so the interactive picker can
+    /// call it before building a full [`Self`].
     #[inline]
     #[must_use]
     pub(crate) fn list_available(config: &Config) -> Vec<String> {
         TemplateLoader::from(config).list_available()
     }
 
-    /// Resolves `name` and renders it — the read/render half of
-    /// [`Self::render_to_file`], split out so a caller can inspect the
-    /// render before deciding where it writes, without rendering
-    /// twice — a second render would re-run any `ui.*` prompts inside
-    /// the template.
+    /// Resolves `name` and renders it.
+    ///
+    /// This is the read/render half of [`Self::render_to_file`], split out so a
+    /// caller can inspect the render before deciding where it writes. Avoiding
+    /// a second render also avoids re-running any `ui.*` prompts inside the
+    /// template.
     ///
     /// # Errors
     ///
@@ -107,19 +106,26 @@ impl<'a> TemplateService<'a> {
         })
     }
 
-    /// Writes (or, under [`WriteMode::DryRun`], previews) an already
-    /// [`Self::render`]ed template via [`TemplateWriter::write`],
-    /// using an output path resolved by precedence: `output` (`-o`),
-    /// then `rendered`'s declared `file.write_to()`, then
+    /// Writes or previews an already [`Self::render`]ed template.
+    ///
+    /// The output path is resolved by precedence: `output` (`-o`), then the
+    /// rendered template's `file.write_to()` declaration, then
     /// [`Self::default_output_path`].
     ///
     /// # Errors
     ///
-    /// | Error | When |
-    /// |---|---|
-    /// | [`TemplateError::OutputPathEscapesRoot`] | `file.write_to()` or `-o` names an absolute or `..`-containing path — never returned for [`WriteMode::DryRun`] |
-    /// | [`TemplateError::OutputFileAlreadyExists`] | the output path exists and `mode` is [`WriteMode::Commit`] with [`CommitPolicy::CreateNew`](super::writer::CommitPolicy::CreateNew) — checked atomically by [`fs::File::create_new`](std::fs::File::create_new), not a separate `exists()` call, so there's no race between the check and the write; never returned for [`WriteMode::DryRun`] |
-    /// | [`TemplateError::Write`] | the output, or its parent directory, can't be written |
+    /// - [`TemplateError::OutputPathEscapesRoot`] if `file.write_to()` or `-o`
+    ///   names an absolute or `..`-containing path. Never returned for
+    ///   [`WriteMode::DryRun`].
+    /// - [`TemplateError::OutputFileAlreadyExists`] if the output path exists
+    ///   and `mode` is [`WriteMode::Commit`] with
+    ///   [`CommitPolicy::CreateNew`](super::writer::CommitPolicy::CreateNew).
+    ///   This is checked atomically by
+    ///   [`fs::File::create_new`](std::fs::File::create_new), not by a separate
+    ///   `exists()` call, so there is no race between the check and write.
+    ///   Never returned for [`WriteMode::DryRun`].
+    /// - [`TemplateError::Write`] if the output, or its parent directory,
+    ///   cannot be written.
     #[inline]
     pub(crate) fn write(
         &self,
@@ -137,10 +143,10 @@ impl<'a> TemplateService<'a> {
         TemplateWriter::write(resolved_path, rendered.content, mode)
     }
 
-    /// Resolves `name`, renders it, then writes (or previews under
-    /// [`WriteMode::DryRun`]) the result — [`Self::render`] followed
-    /// by [`Self::write`], for callers that don't need to inspect the
-    /// render before deciding where it lands.
+    /// Resolves `name`, renders it, then writes or previews the result.
+    ///
+    /// Equivalent to [`Self::render`] followed by [`Self::write`], for callers
+    /// that do not need to inspect the render before deciding where it lands.
     ///
     /// # Arguments
     ///
@@ -171,8 +177,8 @@ impl<'a> TemplateService<'a> {
         })
     }
 
-    /// Renders `source` through the engine — `path` is only used to
-    /// name the template in a [`TemplateError::Render`], not read again.
+    /// Renders `source` through the engine. `path` is only used to name the
+    /// template in a [`TemplateError::Render`], not read again.
     fn render_template(
         &self,
         source: &str,
@@ -213,15 +219,16 @@ mod tests {
         path
     }
 
-    /// A cheap, deterministic provider for tests that never exercise
-    /// `ui.*` — `TemplateService::new` requires one regardless.
+    /// A cheap, deterministic provider for tests that never exercise `ui.*`.
+    /// [`TemplateService::new`] requires one regardless.
     fn preset_provider() -> Arc<dyn DialogProvider> {
         Arc::new(PresetDialogProvider::new())
     }
 
-    /// Extracts the written path from a [`WriteOutcome::Written`] —
+    /// Extracts the written path from a [`WriteOutcome::Written`].
+    ///
     /// `.expect()`s when `render_to_file` unexpectedly returned
-    /// [`WriteOutcome::Previewed`] (never true for `dry_run: false`).
+    /// [`WriteOutcome::Previewed`], which is never true for `dry_run: false`.
     fn written_path(outcome: WriteOutcome) -> PathBuf {
         let written = match outcome {
             WriteOutcome::Written(path) => Some(path),

@@ -1,13 +1,15 @@
+//! Writes rendered template content or returns it for preview.
+//!
 //! [`TemplateWriter::write`] applies one [`WriteMode`] to rendered content:
 //! [`WriteMode::DryRun`] returns [`WriteOutcome::Previewed`] without touching
-//! disk; [`WriteMode::Commit`] writes `content` to `path` and returns
+//! disk, while [`WriteMode::Commit`] writes `content` to `path` and returns
 //! [`WriteOutcome::Written`].
 //!
-//! [`TemplateWriteTarget`] gathers a render's output-destination candidates —
-//! the `-o` flag (`requested`) and whatever `file.write_to()` captured
-//! (`declared`) — and resolves them by precedence: `requested` over `declared`
-//! over a caller-supplied default. `requested`/`declared` are runtime values,
-//! confined to [`Config::root`](crate::config::Config::root) via
+//! [`TemplateWriteTarget`] gathers output-destination candidates from `-o`
+//! (`requested`) and `file.write_to()` (`declared`), then resolves them by
+//! precedence: `requested`, `declared`, caller-supplied default.
+//! `requested`/`declared` are runtime values confined to
+//! [`Config::root`](crate::config::Config::root) via
 //! [`crate::path::RootConfinedPath::parse`]. The default comes from an already
 //! trust-gated [`Config::output_dir`](crate::config::Config::output_dir) and
 //! passes through unchecked instead ([`TemplateWriteTarget::trusted`]).
@@ -23,9 +25,11 @@ use crate::{
     DialogError, DialogProvider,
     path::{PathError, RootConfinedPath},
 };
-/// Applies one [`WriteMode`] to rendered content. [`Self::write`] is the only
-/// entry point. A stateless unit struct — groups `write`/`commit`/`preview` as
-/// one interface instead of three free functions.
+/// Applies one [`WriteMode`] to rendered content.
+///
+/// [`Self::write`] is the only entry point. This stateless unit struct groups
+/// `write`, `commit`, and `preview` as one interface instead of three free
+/// functions.
 pub(super) struct TemplateWriter;
 
 impl TemplateWriter {
@@ -55,7 +59,7 @@ impl TemplateWriter {
         Ok(WriteOutcome::Written(path))
     }
 
-    /// Wraps `content` as [`WriteOutcome::Previewed`] — the
+    /// Wraps `content` as [`WriteOutcome::Previewed`], the
     /// [`WriteMode::DryRun`] leaf of [`Self::write`].
     fn preview(content: String) -> WriteOutcome {
         WriteOutcome::Previewed(content)
@@ -93,14 +97,16 @@ impl TemplateWriter {
     }
 }
 
-/// How [`TemplateWriter::write`] should treat rendered content — the domain
-/// meaning behind `--force`/`--dry-run`, as a type instead of two independent
-/// `bool`s. `pub(crate)` since `crate::cli::template` constructs it directly.
-/// [`CommitPolicy`] nests inside [`Self::Commit`] so [`TemplateWriter::commit`]
-/// only ever sees a policy that implies "write."
+/// How [`TemplateWriter::write`] should treat rendered content.
+///
+/// This is the domain meaning behind `--force` and `--dry-run`, as a type
+/// instead of two independent `bool`s. `pub(crate)` since
+/// `crate::cli::template` constructs it directly. [`CommitPolicy`] nests inside
+/// [`Self::Commit`] so [`TemplateWriter::commit`] only sees a policy that
+/// implies "write."
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(crate) enum WriteMode {
-    /// Render only, the `--dry-run` mode — [`TemplateWriter::write`] returns
+    /// Render only. [`TemplateWriter::write`] returns
     /// [`WriteOutcome::Previewed`] without touching disk.
     DryRun,
     /// Write to disk under this [`CommitPolicy`].
@@ -121,15 +127,16 @@ impl WriteMode {
     }
 }
 
-/// How [`TemplateWriter::commit`] should treat an existing target —
-/// [`WriteMode::Commit`]'s payload. `pub(crate)` like [`WriteMode`], though
-/// only this file names it directly.
+/// How [`TemplateWriter::commit`] should treat an existing target.
+///
+/// This is [`WriteMode::Commit`]'s payload. It is `pub(crate)` like
+/// [`WriteMode`], though only this file names it directly.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(crate) enum CommitPolicy {
     /// Fail with [`TemplateError::OutputFileAlreadyExists`] if the target
     /// already exists. The default, safe mode.
     CreateNew,
-    /// Truncate and overwrite the target unconditionally — the `--force` mode.
+    /// Truncate and overwrite the target unconditionally, matching `--force`.
     Overwrite,
 }
 
@@ -146,10 +153,11 @@ impl CommitPolicy {
         }
     }
 
-    /// Creates `path` per this policy: [`Self::CreateNew`] uses
-    /// [`fs::File::create_new`] (atomic — no separate `exists()` check,
-    /// avoiding a race); [`Self::Overwrite`] uses [`fs::File::create`],
-    /// truncating unconditionally.
+    /// Creates `path` per this policy.
+    ///
+    /// [`Self::CreateNew`] uses [`fs::File::create_new`], which is atomic and
+    /// needs no separate `exists()` check. [`Self::Overwrite`] uses
+    /// [`fs::File::create`], truncating unconditionally.
     ///
     /// # Errors
     ///
@@ -178,22 +186,23 @@ impl CommitPolicy {
     }
 }
 
-/// What [`TemplateWriter::write`] did with `content`: wrote it to disk, or —
-/// under [`WriteMode::DryRun`] — handed it back unwritten.
+/// What [`TemplateWriter::write`] did with `content`: wrote it to disk, or
+/// handed it back unwritten under [`WriteMode::DryRun`].
 #[derive(Debug, Eq, PartialEq)]
 pub(crate) enum WriteOutcome {
     /// Written to disk at this path.
     Written(PathBuf),
-    /// [`WriteMode::DryRun`]: the content, for the caller to print —
-    /// nothing written to disk.
+    /// [`WriteMode::DryRun`]: the content for the caller to print, with nothing
+    /// written to disk.
     Previewed(String),
 }
 
-/// Where a render's output goes. Gathers the `-o` candidate (`requested`) and
-/// whatever `file.write_to()` captured (`declared`); [`Self::target_path`]
-/// applies the precedence policy — `requested` over `declared` over a
-/// caller-supplied default — confining `requested`/`declared` to `root` via
-/// [`Self::confine`]. See the module docs.
+/// Where a render's output goes.
+///
+/// Gathers the `-o` candidate (`requested`) and whatever `file.write_to()`
+/// captured (`declared`). [`Self::target_path`] applies the precedence policy,
+/// `requested` over `declared` over a caller-supplied default, confining
+/// `requested`/`declared` to `root` via [`Self::confine`].
 #[derive(Debug)]
 pub(super) struct TemplateWriteTarget<'a> {
     root: &'a Path,
@@ -311,8 +320,8 @@ impl<'a> TemplateWriteTarget<'a> {
         }
     }
 
-    /// Confines `candidate` — a runtime `-o`/`file.write_to()` value — to
-    /// `root` via [`RootConfinedPath::parse`]. See the module docs.
+    /// Confines `candidate`, a runtime `-o`/`file.write_to()` value, to `root`
+    /// via [`RootConfinedPath::parse`]. See the module docs.
     ///
     /// # Errors
     ///
@@ -341,8 +350,9 @@ impl<'a> TemplateWriteTarget<'a> {
             })
     }
 
-    /// Joins `candidate` onto `root` when relative, without validating it — for
-    /// the already trust-gated
+    /// Joins `candidate` onto `root` when relative, without validating it.
+    ///
+    /// Used for the already trust-gated
     /// [`Config::output_dir`](crate::config::Config::output_dir), which may
     /// legitimately be absolute. See the module docs.
     #[inline]
@@ -360,9 +370,11 @@ impl<'a> TemplateWriteTarget<'a> {
 mod tests {
     use super::*;
 
-    /// A real, canonicalized temp directory — macOS's temp dir is itself
-    /// reached through a symlink (`/tmp` -> `/private/tmp`), so tests asserting
-    /// an exact output path need an already-canonical root.
+    /// A real, canonicalized temp directory.
+    ///
+    /// macOS's temp dir is itself reached through a symlink (`/tmp` to
+    /// `/private/tmp`), so tests asserting an exact output path need an
+    /// already-canonical root.
     fn canonical_root() -> (tempfile::TempDir, PathBuf) {
         let temp = tempfile::tempdir().expect("create temp dir");
         let root = temp.path().canonicalize().expect("canonicalize temp root");

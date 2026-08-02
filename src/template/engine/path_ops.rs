@@ -1,19 +1,19 @@
-//! [`PathOps`] registers path-inspection **tests** and **filters** on a
-//! minijinja [`Environment`]: `path_exists`, `is_file_path`, `is_dir_path`
-//! as [`Environment::add_test`] tests (`{{ value is path_exists }}`), and
-//! `path_filename`, `path_basename`, `path_extension`, `path_parent` as
-//! [`Environment::add_filter`] filters (`{{ value | path_basename }}`).
+//! Registers path-inspection tests and filters for templates.
+//!
+//! [`PathOps`] adds three minijinja [`Environment::add_test`] tests:
+//! `path_exists`, `is_file_path`, and `is_dir_path`, used as
+//! `{{ value is path_exists }}`. It also adds four
+//! [`Environment::add_filter`] filters: `path_filename`, `path_basename`,
+//! `path_extension`, and `path_parent`, used as `{{ value | path_basename }}`.
 //!
 //! The three I/O tests resolve a relative `path` against
-//! [`Config::root`](crate::config::Config::root) (an absolute `path` is
-//! used as-is) and distinguish "doesn't exist" from a genuine I/O failure:
-//! reading [`std::fs::metadata`] directly, rather than calling
-//! [`Path::exists`]/[`Path::is_file`]/[`Path::is_dir`] (which fold every
-//! error into `false`), so a permission error surfaces as a
-//! [`minijinja::Error`] instead of misreporting "doesn't exist".
+//! [`Config::root`](crate::config::Config::root); an absolute `path` is used
+//! as-is. They read [`std::fs::metadata`] directly instead of calling
+//! [`Path::exists`], [`Path::is_file`], or [`Path::is_dir`], which fold every
+//! error into `false`. Permission errors therefore surface as
+//! [`minijinja::Error`] instead of misreporting "does not exist".
 //!
-//! The four filters are pure string transformations over
-//! [`std::path::Path`] — no I/O, no `root` dependency.
+//! The four filters are pure string transformations over [`std::path::Path`].
 
 use std::{
     ffi::OsStr,
@@ -37,10 +37,11 @@ enum PathQuery {
     IsDir,
 }
 
-/// Backs the path-inspection test/filter group. Holds the project root
-/// the three I/O tests resolve a relative `path` argument against — the
-/// four pure string filters carry no state and are registered as plain
-/// functions.
+/// Backs the path-inspection test/filter group.
+///
+/// Holds the project root the three I/O tests resolve a relative `path`
+/// argument against. The four pure string filters carry no state and are
+/// registered as plain functions.
 #[derive(Debug)]
 pub(super) struct PathOps {
     root: Arc<Path>,
@@ -69,14 +70,13 @@ impl PathOps {
         env.add_filter("path_parent", parent);
     }
 
-    /// Registers a single boolean I/O test under `name` via
-    /// [`Environment::add_test`], wiring its closure through
-    /// [`inspect`] with the given `query` — the shared body behind
-    /// `path_exists`/`is_file_path`/`is_dir_path` in [`Self::register`].
-    /// Clones `root` into the closure since
+    /// Registers a single boolean I/O test under `name`.
+    ///
+    /// The closure calls [`inspect`] with the given `query`, the shared body
+    /// behind `path_exists`, `is_file_path`, and `is_dir_path` in
+    /// [`Self::register`]. It clones `root` into the closure because
     /// [`Value::from_function`](minijinja::value::Value::from_function)'s
-    /// closures must be `Send + Sync + 'static` and can't borrow
-    /// `&self`.
+    /// closures must be `Send + Sync + 'static` and cannot borrow `&self`.
     fn register_test(
         &self,
         env: &mut Environment<'static>,
@@ -97,10 +97,10 @@ impl PathOps {
 /// # Errors
 ///
 /// - [`ErrorKind::InvalidOperation`] (via [`confine_error`]) if a relative
-///   `path` traverses outside `root` — `..` or a symlink escape.
+///   `path` traverses outside `root`, through `..` or a symlink escape.
 /// - [`ErrorKind::InvalidOperation`] (via [`inspect_error`]) if reading the
-///   resolved target's metadata fails for any reason other than "not found" —
-///   permission denied, a broken symlink loop, etc.
+///   resolved target's metadata fails for any reason other than "not found",
+///   such as permission denied or a broken symlink loop.
 fn inspect(root: &Path, path: &str, query: PathQuery) -> Result<bool, Error> {
     let target = InspectTarget::resolve(root, path)
         .map_err(|source| confine_error(path, source))?;
@@ -115,18 +115,22 @@ fn inspect(root: &Path, path: &str, query: PathQuery) -> Result<bool, Error> {
     }
 }
 
-/// A `path` test's argument, resolved against `root` and proven safe to
-/// pass to [`std::fs::metadata`] — constructible only via [`Self::resolve`],
-/// so [`inspect`] can never accidentally stat an unconfined candidate.
+/// A `path` test's argument, resolved against `root` and proven safe for
+/// [`std::fs::metadata`].
+///
+/// Constructible only through [`Self::resolve`], so [`inspect`] can never
+/// accidentally stat an unconfined candidate.
 struct InspectTarget(PathBuf);
 
 impl InspectTarget {
-    /// Resolves `path` against `root`: an absolute `path` is used as-is; a
-    /// `path` naming `root` itself ([`Self::is_root_reference`]) resolves
-    /// directly to it; any other relative `path` is confined via
-    /// [`RootConfinedPath::parse`] — the same seam [`super::file_ops`]'s
-    /// `file.include()`/`file.write_to()` use, so a `..`/symlink escape is
-    /// rejected identically across every path-taking template primitive.
+    /// Resolves `path` against `root`.
+    ///
+    /// An absolute `path` is used as-is. A `path` naming `root` itself
+    /// ([`Self::is_root_reference`]) resolves directly to it. Any other
+    /// relative `path` is confined via [`RootConfinedPath::parse`], the same
+    /// seam [`super::file_ops`]'s `file.include()`/`file.write_to()` use,
+    /// so a `..`/symlink escape is rejected identically across every
+    /// path-taking template primitive.
     ///
     /// # Errors
     ///
@@ -146,13 +150,14 @@ impl InspectTarget {
         }
     }
 
-    /// True when `candidate`'s components are all [`Component::CurDir`]
-    /// (or it has none at all, e.g. an empty path) — i.e. it names `root`
-    /// itself and can't possibly escape it no matter how it's joined.
+    /// True when `candidate` names `root` itself.
+    ///
+    /// That means every component is [`Component::CurDir`], or there are no
+    /// components at all, as in an empty path. This cannot escape no matter how
+    /// it is joined.
     /// [`SafeRelativePath::parse`](crate::path::SafeRelativePath::parse)
-    /// rejects exactly this shape (no [`Component::Normal`] component)
-    /// since it's meaningless as a *file* to write or include; here it's
-    /// the legitimate "ask about root" case
+    /// rejects this shape because it is meaningless as a file to write or
+    /// include; here it is the legitimate "ask about root" case
     /// `is_dir_path('.')`/`path_exists('')` rely on.
     fn is_root_reference(candidate: &Path) -> bool {
         candidate.components().all(|component| component == Component::CurDir)
@@ -166,13 +171,14 @@ impl AsRef<Path> for InspectTarget {
     }
 }
 
-/// Builds the error for a `path` argument that fails root confinement:
-/// unsafe lexically, or escaping `root` once symlinks resolve
-/// ([`PathError::NotRelative`]/[`PathError::EscapesRoot`]) get the same
-/// "escapes the project root" message — from the template author's
-/// perspective both are just that. [`PathError::Verify`] gets its own
-/// message, since that case isn't known to escape, only unconfirmed (root
-/// or an ancestor couldn't be canonicalized).
+/// Builds the error for a `path` argument that fails root confinement.
+///
+/// Unsafe lexical paths and symlink escapes
+/// ([`PathError::NotRelative`]/[`PathError::EscapesRoot`]) share the "escapes
+/// the project root" message because template authors see both as the same
+/// failure. [`PathError::Verify`] gets its own message because that case is not
+/// known to escape, only unconfirmed because the root or an ancestor could not
+/// be canonicalized.
 fn confine_error(path: &str, source: PathError) -> Error {
     match source {
         PathError::NotRelative | PathError::EscapesRoot => Error::new(
@@ -187,19 +193,20 @@ fn confine_error(path: &str, source: PathError) -> Error {
     }
 }
 
-/// Builds the [`ErrorKind::InvalidOperation`] error for an I/O failure
-/// other than "not found" while inspecting `path` — permission denied,
-/// a broken symlink loop, etc.
+/// Builds the [`ErrorKind::InvalidOperation`] error for an I/O failure other
+/// than "not found" while inspecting `path`, such as permission denied or a
+/// broken symlink loop.
 fn inspect_error(path: &str, source: io::Error) -> Error {
     Error::new(ErrorKind::InvalidOperation, format!("failed to inspect {path}"))
         .with_source(source)
 }
 
-/// Converts an optional path component — an [`OsStr`], as returned by
-/// [`Path::file_name`]/[`Path::file_stem`]/[`Path::extension`], or a
-/// [`Path`], as returned by [`Path::parent`] — to an owned `String` via
-/// [`OsStr::to_string_lossy`], or an empty string when there's no
-/// component. The shared tail of all four pure string filters below.
+/// Converts an optional path component to an owned `String`.
+///
+/// Accepts an [`OsStr`] from [`Path::file_name`], [`Path::file_stem`], or
+/// [`Path::extension`], and a [`Path`] from [`Path::parent`]. Returns an empty
+/// string when there is no component. This is the shared tail of the four pure
+/// string filters below.
 fn component_or_empty(component: Option<impl AsRef<OsStr>>) -> String {
     component
         .map(|component| component.as_ref().to_string_lossy().into_owned())
@@ -230,9 +237,9 @@ fn extension(path: &str) -> String {
         .unwrap_or_default()
 }
 
-/// `path_parent`: the path with its final component removed (e.g.
-/// `"/foo/bar/main.rs"` -> `"/foo/bar"`), or an empty string when `path`
-/// has no parent (e.g. `""`, `"/"`, a single bare name).
+/// `path_parent`: the path with its final component removed, for example
+/// `"/foo/bar/main.rs"` becomes `"/foo/bar"`. Returns an empty string when
+/// `path` has no parent, for example `""`, `"/"`, or a single bare name.
 fn parent(path: &str) -> String {
     component_or_empty(Path::new(path).parent())
 }
@@ -251,9 +258,11 @@ mod tests {
         env
     }
 
-    /// Renders `{{ value is test }}` — the `is`/`is not` syntax
-    /// minijinja tests use ([`Environment::add_test`]), unlike filters'
-    /// `|` syntax ([`Environment::add_filter`]).
+    /// Renders `{{ value is test }}`.
+    ///
+    /// That is the `is`/`is not` syntax minijinja tests use
+    /// ([`Environment::add_test`]), unlike filters' `|` syntax
+    /// ([`Environment::add_filter`]).
     fn check(root: &Path, test: &str, input: &str) -> String {
         let template = format!("{{{{ value is {test} }}}}");
         env(root)

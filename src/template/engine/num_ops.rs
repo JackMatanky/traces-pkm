@@ -1,29 +1,31 @@
-//! [`NumOps`]: registers the numeric filters — `ceil`, `floor`, `sqrt`,
-//! `num_format` — a template applies as `{{ value | ceil }}`. Like
-//! [`StrOps`](super::str_ops::StrOps), these are plain filter functions
-//! registered once each via [`Environment::add_filter`], not dispatched
-//! through an [`Object`](minijinja::value::Object) — there's no shared
-//! state to carry.
+//! Registers numeric filters for templates.
 //!
-//! `num_format` is prefixed (rather than plain `format`) to avoid
-//! colliding with minijinja's own built-in `format` filter.
+//! [`NumOps`] adds `ceil`, `floor`, `sqrt`, and `num_format`, used as
+//! `{{ value | ceil }}`. Like [`StrOps`](super::str_ops::StrOps), these are
+//! plain filter functions registered once each through
+//! [`Environment::add_filter`], not dispatched through an
+//! [`Object`](minijinja::value::Object), because there is no shared state to
+//! carry.
 //!
-//! Each filter argument is declared `f64` directly: minijinja's
-//! [`ArgType`](minijinja::value::ArgType) impl for `f64` converts an
-//! integer or float [`Value`](minijinja::value::Value) automatically and
-//! raises minijinja's own argument-type error on anything else, so these
-//! bodies only need the numeric operation itself.
+//! `num_format` is prefixed rather than named `format` to avoid minijinja's own
+//! built-in `format` filter.
+//!
+//! Each filter argument is declared `f64` directly. minijinja's
+//! [`ArgType`](minijinja::value::ArgType) implementation for `f64` converts an
+//! integer or float [`Value`](minijinja::value::Value) automatically and raises
+//! minijinja's argument-type error on anything else.
 
 use minijinja::{Environment, Error, ErrorKind};
 
-/// Unit struct backing [`Self::register`] — no state, same rationale as
+/// Unit struct backing [`Self::register`]. It carries no state, matching
 /// [`StrOps`](super::str_ops::StrOps).
 pub(super) struct NumOps;
 
 impl NumOps {
-    /// Registers all four numeric filters. An associated function, not a
-    /// method — `clippy::unused_self` denies a `&self` receiver that
-    /// goes unused, and this struct carries no state to use.
+    /// Registers all four numeric filters.
+    ///
+    /// This is an associated function, not a method, because the struct carries
+    /// no state and `clippy::unused_self` denies an unused `&self` receiver.
     #[inline]
     pub(super) fn register(env: &mut Environment<'static>) {
         env.add_filter("ceil", |value: f64| value.ceil());

@@ -1,30 +1,30 @@
-//! The `-i <name>` -> rendered `.md` note pipeline: resolve a template
-//! name against configured directories, render it with minijinja, and
-//! write the result to disk. [`TemplateService`] is the single entry
-//! point, called by `crate::cli::template`; everything else here exists
-//! to make that one call safe and correct.
+//! Template rendering resolves a configured template name, renders it, and
+//! writes a Markdown note.
 //!
-//! - [`path`][]: [`TemplatePath`](path::TemplatePath) tracks a name's journey
-//!   from raw `-i` argument to a file proven to exist, with
-//!   [`TemplatePathError`](path::TemplatePathError) as the single error type
-//!   for every way that journey can fail.
+//! [`TemplateService`] is the entry point used by `crate::cli::template`.
+//! The supporting modules keep each pipeline stage small:
+//!
+//! - [`path`][]: [`TemplatePath`](path::TemplatePath) tracks a raw `-i`
+//!   argument until it is a file proven to exist, with
+//!   [`TemplatePathError`](path::TemplatePathError) covering validation and
+//!   search failures.
 //! - [`loader`][]: [`TemplateLoader`](loader::TemplateLoader) searches the
-//!   configured directories through
+//!   configured template directories through
 //!   [`TemplateLoader::find`](loader::TemplateLoader::find), used for both
 //!   top-level `-i` resolution and `{% include %}`/`{% extends %}` loading.
 //! - [`engine`][]: wraps minijinja's [`Environment`](minijinja::Environment),
-//!   registering the `file`, `ui`, and `date` namespace objects and the string
-//!   filters a template calls into during render.
+//!   registering the template-facing `file`, `ui`, `date`, query, path,
+//!   numeric, and string helpers.
 //! - [`writer`][]: resolves a render's output path by precedence
-//!   ([`TemplateWriteTarget`](writer::TemplateWriteTarget)) and writes it under
-//!   a [`WriteMode`]
-//!   ([`TemplateWriter::write`](writer::TemplateWriter::write)).
+//!   ([`TemplateWriteTarget`](writer::TemplateWriteTarget)) and applies a
+//!   [`WriteMode`] through
+//!   [`TemplateWriter::write`](writer::TemplateWriter::write).
 //! - [`service`][]: [`TemplateService`] chains resolve, render, and write into
-//!   that one call.
+//!   the single CLI-facing call.
 //!
 //! Everything below `service` is `pub(super)` at most, except three
-//! re-exports consumed by `crate::cli`: [`TemplateError`], [`WriteMode`],
-//! and [`WriteOutcome`].
+//! re-exports consumed by `crate::cli`: [`TemplateError`], [`WriteMode`], and
+//! [`WriteOutcome`].
 
 mod engine;
 mod error;

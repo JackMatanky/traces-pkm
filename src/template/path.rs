@@ -1,7 +1,7 @@
-//! [`TemplatePath`]: a template identifier resolved against configured
-//! directories, proven to exist on disk and safe to read.
+//! Template paths validate and resolve template identifiers.
 //!
-//! [`TemplatePathError`] covers every way validation or search can fail.
+//! [`TemplatePath`] is proven safe to read and known to exist on disk.
+//! [`TemplatePathError`] covers validation and search failures.
 
 use std::{
     fs, io,
@@ -26,10 +26,11 @@ pub(super) struct TemplatePath {
 
 impl TemplatePath {
     /// Creates a resolved [`TemplatePath`] from an already-validated relative
-    /// path and its source directory. `path` must come from [`Self::parse`]
-    /// (or another [`SafeRelativePath`] proven safe the same way) — this is
-    /// the only constructor, so a [`TemplatePath`] can never wrap an
-    /// unvalidated path.
+    /// path and its source directory.
+    ///
+    /// `path` must come from [`Self::parse`] or another [`SafeRelativePath`]
+    /// proven safe the same way. Since this is the only constructor, a
+    /// [`TemplatePath`] can never wrap an unvalidated path.
     #[inline]
     #[must_use]
     pub(super) fn new(path: SafeRelativePath, source_dir: PathBuf) -> Self {
@@ -39,11 +40,12 @@ impl TemplatePath {
         }
     }
 
-    /// Validates `path`'s components via [`SafeRelativePath::parse`] — no
-    /// filesystem access, purely a check on the path's shape. Re-derives which
-    /// of the two rejection reasons applies, since
+    /// Validates `path`'s components via [`SafeRelativePath::parse`].
+    ///
+    /// This performs no filesystem access, only a path-shape check. It
+    /// re-derives which rejection reason applies because
     /// [`SafeRelativePath::parse`]'s single
-    /// [`PathError`](crate::path::PathError) doesn't distinguish them.
+    /// [`PathError`](crate::path::PathError) does not distinguish them.
     ///
     /// # Errors
     ///
@@ -64,15 +66,15 @@ impl TemplatePath {
         })
     }
 
-    /// This candidate with its extension stripped and directory segments kept:
-    /// `"folder/daily.md"` -> `"folder/daily"`.
+    /// This candidate with its extension stripped and directory segments kept,
+    /// for example `"folder/daily.md"` becomes `"folder/daily"`.
     #[inline]
     #[must_use]
     pub(super) fn name(&self) -> PathBuf {
         self.path.as_ref().with_extension("")
     }
 
-    /// Whether this candidate carries an extension: `"daily.md"` -> `true`.
+    /// Whether this candidate carries an extension, for example `"daily.md"`.
     #[inline]
     #[must_use]
     #[cfg_attr(
@@ -129,7 +131,7 @@ pub(crate) enum TemplatePathError {
     /// More than one file in a Template Directory matched the name.
     #[error("template name \"{name}\" matched multiple files: {candidates:?}")]
     AmbiguousTemplate {
-        /// The identifier the User requested.
+        /// The identifier the user requested.
         name: PathBuf,
         /// Matching paths relative to the Template Directory.
         candidates: Vec<PathBuf>,
