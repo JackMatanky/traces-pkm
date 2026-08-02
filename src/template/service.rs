@@ -1,8 +1,9 @@
 //! Coordinates the template resolve, render, and write pipeline.
 //!
 //! [`TemplateService`] owns the short top-to-bottom sequence for one
-//! [`Config`]: resolve through [`TemplateEngine`], read the source, render it,
-//! then delegate the write-or-preview decision to [`TemplateWriter::write`].
+//! [`Config`]: resolve through its own [`TemplateLoader`], read the source,
+//! render it through [`TemplateEngine`], then delegate the write-or-preview
+//! decision to [`writer::commit`](writer::commit).
 
 use std::{
     path::{Path, PathBuf},
@@ -14,15 +15,17 @@ use super::{
     error::TemplateError,
     loader::TemplateLoader,
     path::TemplatePath,
-    writer::{TemplateWriteTarget, TemplateWriter, WriteMode, WriteOutcome},
+    writer::{self, TemplateWriteTarget, WriteMode, WriteOutcome},
 };
 use crate::{DialogProvider, config::Config};
 
 /// Entry point for resolving, rendering, and writing one template.
 ///
-/// Holds a borrowed [`Config`] and the [`TemplateEngine`] built from it.
+/// Holds a borrowed [`Config`], its own [`TemplateLoader`], and the
+/// [`TemplateEngine`] built from it.
 pub(crate) struct TemplateService<'a> {
     config: &'a Config,
+    loader: TemplateLoader,
     engine: TemplateEngine,
     provider: Arc<dyn DialogProvider>,
 }
@@ -54,9 +57,10 @@ impl<'a> TemplateService<'a> {
     ) -> Self {
         let loader = TemplateLoader::from(config);
         let engine =
-            TemplateEngine::new(loader, Arc::clone(&provider), config.root());
+            TemplateEngine::new(&loader, Arc::clone(&provider), config.root());
         Self {
             config,
+            loader,
             engine,
             provider,
         }
@@ -93,7 +97,7 @@ impl<'a> TemplateService<'a> {
         &self,
         name: &Path,
     ) -> Result<RenderedTemplate, TemplateError> {
-        let resolved = self.engine.resolve(name)?;
+        let resolved = self.loader.find(name)?;
         let resolved_path = resolved.absolute();
         let template_source = Self::read_template(&resolved)?;
         let rendered =
@@ -107,9 +111,11 @@ impl<'a> TemplateService<'a> {
 
     /// Writes or previews an already [`Self::render`]ed template.
     ///
-    /// The output path is resolved by precedence: `output` (`-o`), then the
+    /// [`WriteMode::DryRun`] returns [`WriteOutcome::Previewed`] immediately,
+    /// without computing or confining an output path. [`WriteMode::Commit`]
+    /// resolves the output path by precedence: `output` (`-o`), then the
     /// rendered template's `file.write_to()` declaration, then
-    /// [`Self::default_output_path`].
+    /// [`Self::default_output_path`], then writes.
     ///
     /// # Errors
     ///
@@ -132,14 +138,18 @@ impl<'a> TemplateService<'a> {
         output: Option<&Path>,
         mode: WriteMode,
     ) -> Result<WriteOutcome, TemplateError> {
+        let WriteMode::Commit(policy) = mode else {
+            return Ok(WriteOutcome::Previewed(rendered.content));
+        };
         let target = TemplateWriteTarget::new(self.config.root())
             .with_requested(output)
             .with_declared(rendered.declared);
         let resolved_path =
-            target.resolve(mode, self.provider.as_ref(), || {
+            target.resolve(policy, self.provider.as_ref(), || {
                 self.default_output_path(&rendered.resolved)
             })?;
-        TemplateWriter::write(resolved_path, rendered.content, mode)
+        writer::commit(&resolved_path, &rendered.content, policy)?;
+        Ok(WriteOutcome::Written(resolved_path))
     }
 
     /// Resolves `name`, renders it, then writes or previews the result.

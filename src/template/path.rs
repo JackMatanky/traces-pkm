@@ -1,7 +1,10 @@
 //! Template paths validate and resolve template identifiers.
 //!
-//! [`TemplatePath`] is proven safe to read and known to exist on disk.
-//! [`TemplatePathError`] covers validation and search failures.
+//! [`TemplatePath`] is built only by
+//! [`TemplateLoader`](super::loader::TemplateLoader)'s search, immediately
+//! after confirming the file exists — nothing later in the pipeline
+//! re-verifies it. [`TemplatePathError`] covers validation and search
+//! failures.
 
 use std::{
     fs, io,
@@ -25,64 +28,39 @@ pub(super) struct TemplatePath {
 }
 
 impl TemplatePath {
-    /// Creates a resolved [`TemplatePath`] from an already-validated relative
-    /// path and its source directory.
-    ///
-    /// `path` must come from [`Self::parse`] or another [`SafeRelativePath`]
-    /// proven safe the same way. Since this is the only constructor, a
-    /// [`TemplatePath`] can never wrap an unvalidated path.
+    /// Creates a [`TemplatePath`] proven to exist by
+    /// [`TemplateLoader`](super::loader::TemplateLoader)'s search: called
+    /// only from
+    /// [`TemplateLoader::find_path_in`](super::loader::TemplateLoader::find_path_in)
+    /// and
+    /// [`TemplateLoader::find_name_in`](super::loader::TemplateLoader::find_name_in),
+    /// immediately after each confirms the file exists. Nothing later in the
+    /// pipeline re-verifies it.
     #[inline]
     #[must_use]
-    pub(super) fn new(path: SafeRelativePath, source_dir: PathBuf) -> Self {
+    pub(super) fn verified(
+        path: SafeRelativePath,
+        source_dir: PathBuf,
+    ) -> Self {
         Self {
             path,
             source_dir,
         }
     }
 
-    /// Validates `path`'s components via [`SafeRelativePath::parse`].
-    ///
-    /// This performs no filesystem access, only a path-shape check. It
-    /// re-derives which rejection reason applies because
-    /// [`SafeRelativePath::parse`]'s single
-    /// [`PathError`](crate::path::PathError) does not distinguish them.
-    ///
-    /// # Errors
-    ///
-    /// - [`TemplatePathError::Absolute`] if `path` is absolute.
-    /// - [`TemplatePathError::UnsafeComponent`] for `..`, any component that is
-    ///   not a plain name or `.`, or a path with no [`Component::Normal`].
-    ///
-    /// [`Component::Normal`]: std::path::Component::Normal
-    pub(super) fn parse(
-        path: &Path,
-    ) -> Result<SafeRelativePath, TemplatePathError> {
-        SafeRelativePath::parse(path).map_err(|_| {
-            if path.is_absolute() {
-                TemplatePathError::Absolute(path.to_path_buf())
-            } else {
-                TemplatePathError::UnsafeComponent(path.to_path_buf())
-            }
-        })
-    }
-
-    /// This candidate with its extension stripped and directory segments kept,
-    /// for example `"folder/daily.md"` becomes `"folder/daily"`.
-    #[inline]
+    /// Test-only fixture constructor, bypassing the existence guarantee
+    /// [`Self::verified`] documents. Production code must go through
+    /// [`TemplateLoader::find`](super::loader::TemplateLoader::find).
+    #[cfg(test)]
     #[must_use]
-    pub(super) fn name(&self) -> PathBuf {
-        self.path.as_ref().with_extension("")
-    }
-
-    /// Whether this candidate carries an extension, for example `"daily.md"`.
-    #[inline]
-    #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "tested in has_extension unit tests")
-    )]
-    pub(super) fn has_extension(&self) -> bool {
-        self.path.as_ref().extension().is_some()
+    pub(super) fn for_test(
+        path: SafeRelativePath,
+        source_dir: PathBuf,
+    ) -> Self {
+        Self {
+            path,
+            source_dir,
+        }
     }
 
     /// Builds the absolute path on demand: `source_dir` joined with `path`.
@@ -92,12 +70,12 @@ impl TemplatePath {
         self.source_dir.join(self.path.as_ref())
     }
 
-    /// The default output filename: [`Self::name`] with extension forced to
-    /// `md`.
+    /// The default output filename: this candidate with its extension forced
+    /// to `md`, directory segments kept.
     #[inline]
     #[must_use]
     pub(super) fn default_output_filename(&self) -> PathBuf {
-        self.name().with_extension(DEFAULT_EXTENSION)
+        self.path.as_ref().with_extension(DEFAULT_EXTENSION)
     }
 
     /// Reads this resolved template's source from disk.
@@ -110,6 +88,35 @@ impl AsRef<Path> for TemplatePath {
     fn as_ref(&self) -> &Path {
         self.path.as_ref()
     }
+}
+
+/// Validates `path`'s components via [`SafeRelativePath::parse`], re-deriving
+/// which rejection reason applies since [`SafeRelativePath::parse`]'s single
+/// [`PathError`](crate::path::PathError) does not distinguish them.
+///
+/// This performs no filesystem access, only a path-shape check. Used by
+/// [`TemplateLoader::find`](super::loader::TemplateLoader::find) to validate a
+/// raw name before searching, and by
+/// [`TemplateLoader::find_name_in`](super::loader::TemplateLoader::find_name_in)
+/// to re-validate a stem-matched hit.
+///
+/// # Errors
+///
+/// - [`TemplatePathError::Absolute`] if `path` is absolute.
+/// - [`TemplatePathError::UnsafeComponent`] for `..`, any component that is not
+///   a plain name or `.`, or a path with no [`Component::Normal`].
+///
+/// [`Component::Normal`]: std::path::Component::Normal
+pub(super) fn validate_template_name(
+    path: &Path,
+) -> Result<SafeRelativePath, TemplatePathError> {
+    SafeRelativePath::parse(path).map_err(|_| {
+        if path.is_absolute() {
+            TemplatePathError::Absolute(path.to_path_buf())
+        } else {
+            TemplatePathError::UnsafeComponent(path.to_path_buf())
+        }
+    })
 }
 
 /// Every way producing a [`TemplatePath`] can fail: validation
@@ -156,8 +163,8 @@ mod tests {
 
     fn validated(name: &str) -> TemplatePath {
         let rel =
-            TemplatePath::parse(Path::new(name)).expect("valid candidate");
-        TemplatePath::new(rel, PathBuf::from("/dir"))
+            validate_template_name(Path::new(name)).expect("valid candidate");
+        TemplatePath::for_test(rel, PathBuf::from("/dir"))
     }
 
     fn write_file(dir: &Path, name: &str) -> PathBuf {
@@ -207,7 +214,7 @@ mod tests {
             // happens — parse() never reads the filesystem, so this
             // never touches whatever real file may or may not exist at
             // this well-known path.
-            let error = TemplatePath::parse(Path::new("/etc/passwd"))
+            let error = validate_template_name(Path::new("/etc/passwd"))
                 .expect_err("absolute path is rejected");
 
             assert!(matches!(error, TemplatePathError::Absolute(_)));
@@ -219,61 +226,10 @@ mod tests {
         #[case::empty_path("")]
         #[case::bare_current_dir(".")]
         fn rejects_unsafe_components(#[case] input: &str) {
-            let error = TemplatePath::parse(Path::new(input))
+            let error = validate_template_name(Path::new(input))
                 .expect_err("unsafe component is rejected");
 
             assert!(matches!(error, TemplatePathError::UnsafeComponent(_)));
-        }
-    }
-
-    mod name {
-        use pretty_assertions::assert_eq;
-
-        use super::*;
-
-        #[test]
-        fn strips_only_the_extension_keeping_directory_segments() {
-            assert_eq!(
-                validated("folder/report.md").name(),
-                Path::new("folder/report")
-            );
-        }
-
-        #[test]
-        fn strips_the_extension_from_a_flat_path_with_no_directory() {
-            assert_eq!(validated("daily.md").name(), Path::new("daily"));
-        }
-
-        #[test]
-        fn is_unchanged_for_an_extensionless_path() {
-            assert_eq!(validated("daily").name(), Path::new("daily"));
-        }
-
-        #[test]
-        fn keeps_the_leading_dot_of_a_dot_prefixed_file() {
-            assert_eq!(validated(".draft.md").name(), Path::new(".draft"));
-        }
-    }
-
-    mod has_extension {
-        use super::*;
-
-        #[test]
-        fn is_true_when_a_dot_extension_is_present() {
-            assert!(validated("daily.md").has_extension());
-        }
-
-        #[test]
-        fn is_false_for_a_bare_name() {
-            assert!(!validated("daily").has_extension());
-        }
-
-        #[test]
-        fn is_false_for_a_dot_prefixed_file_without_a_real_extension() {
-            // ".draft" is a dotfile, not an extension: Path::extension()
-            // treats a lone leading dot as part of the file stem, the
-            // same convention `name()` relies on to keep it intact.
-            assert!(!validated(".draft").has_extension());
         }
     }
 
@@ -285,8 +241,8 @@ mod tests {
         fn found(dir: &Path, name: &str) -> TemplatePath {
             let path = write_file(dir, name);
             let rel = path.strip_prefix(dir).expect("relative path");
-            TemplatePath::new(
-                TemplatePath::parse(rel).expect("relative path is safe"),
+            TemplatePath::for_test(
+                validate_template_name(rel).expect("relative path is safe"),
                 dir.to_path_buf(),
             )
         }
@@ -322,8 +278,8 @@ mod tests {
         fn found(dir: &Path, name: &str) -> TemplatePath {
             let path = write_file(dir, name);
             let rel = path.strip_prefix(dir).expect("relative path");
-            TemplatePath::new(
-                TemplatePath::parse(rel).expect("relative path is safe"),
+            TemplatePath::for_test(
+                validate_template_name(rel).expect("relative path is safe"),
                 dir.to_path_buf(),
             )
         }

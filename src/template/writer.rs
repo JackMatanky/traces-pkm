@@ -1,9 +1,11 @@
-//! Writes rendered template content or returns it for preview.
+//! Writes rendered template content to disk.
 //!
-//! [`TemplateWriter::write`] applies one [`WriteMode`] to rendered content:
-//! [`WriteMode::DryRun`] returns [`WriteOutcome::Previewed`] without touching
-//! disk, while [`WriteMode::Commit`] writes `content` to `path` and returns
-//! [`WriteOutcome::Written`].
+//! [`commit`] writes `content` to `path` under a [`CommitPolicy`].
+//! [`WriteMode`] is defined here and converted from CLI flags via
+//! [`WriteMode::from_flags`], but
+//! [`TemplateService::write`](super::service::TemplateService::write) is the
+//! only place that matches on it — [`commit`] and
+//! [`TemplateWriteTarget::resolve`] work with [`CommitPolicy`] directly.
 //!
 //! [`TemplateWriteTarget`] gathers output-destination candidates from `-o`
 //! (`requested`) and `file.write_to()` (`declared`), then resolves them by
@@ -21,92 +23,47 @@ use std::{
 };
 
 use super::error::TemplateError;
-use crate::{
-    DialogError, DialogProvider,
-    path::{PathError, RootConfinedPath},
-};
-/// Applies one [`WriteMode`] to rendered content.
+use crate::{DialogError, DialogProvider, path::RootConfinedPath};
+/// Writes `content` to `path` under `policy`, creating parent directories
+/// first if needed.
 ///
-/// [`Self::write`] is the only entry point. This stateless unit struct groups
-/// `write`, `commit`, and `preview` as one interface instead of three free
-/// functions.
-pub(super) struct TemplateWriter;
-
-impl TemplateWriter {
-    /// Applies `mode` to `content` at `path`. Under [`WriteMode::DryRun`],
-    /// returns [`WriteOutcome::Previewed`] without touching disk. Under
-    /// [`WriteMode::Commit`], writes `content` to `path` under the
-    /// [`CommitPolicy`] ([`Self::commit`]), returning
-    /// [`WriteOutcome::Written`].
-    ///
-    /// # Errors
-    ///
-    /// - [`TemplateError::Write`] if `path` or its parent directory cannot be
-    ///   written. Never returned for [`WriteMode::DryRun`].
-    /// - [`TemplateError::OutputFileAlreadyExists`] if `path` already exists
-    ///   under [`CommitPolicy::CreateNew`]. Never returned for
-    ///   [`WriteMode::DryRun`].
-    pub(super) fn write(
-        path: PathBuf,
-        content: String,
-        mode: WriteMode,
-    ) -> Result<WriteOutcome, TemplateError> {
-        let WriteMode::Commit(policy) = mode else {
-            return Ok(Self::preview(content));
-        };
-        Self::commit(&path, &content, policy)?;
-        Ok(WriteOutcome::Written(path))
+/// # Errors
+///
+/// - [`TemplateError::Write`] if the parent directory or file cannot be
+///   written.
+/// - [`TemplateError::OutputFileAlreadyExists`] if `path` already exists under
+///   [`CommitPolicy::CreateNew`].
+pub(super) fn commit(
+    path: &Path,
+    content: &str,
+    policy: CommitPolicy,
+) -> Result<(), TemplateError> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|source| TemplateError::Write {
+            path: path.to_path_buf(),
+            source,
+        })?;
     }
-
-    /// Wraps `content` as [`WriteOutcome::Previewed`], the
-    /// [`WriteMode::DryRun`] leaf of [`Self::write`].
-    fn preview(content: String) -> WriteOutcome {
-        WriteOutcome::Previewed(content)
-    }
-
-    /// Writes `content` to `path` under `policy`, creating parent directories
-    /// first if needed.
-    ///
-    /// # Errors
-    ///
-    /// - [`TemplateError::Write`] if the parent directory or file cannot be
-    ///   written.
-    /// - [`TemplateError::OutputFileAlreadyExists`] if `path` already exists
-    ///   under [`CommitPolicy::CreateNew`].
-    fn commit(
-        path: &Path,
-        content: &str,
-        policy: CommitPolicy,
-    ) -> Result<(), TemplateError> {
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).map_err(|source| {
-                TemplateError::Write {
-                    path: path.to_path_buf(),
-                    source,
-                }
-            })?;
-        }
-        let mut file = policy.create_file(path)?;
-        file.write_all(content.as_bytes()).map_err(|source| {
-            TemplateError::Write {
-                path: path.to_path_buf(),
-                source,
-            }
-        })
-    }
+    let mut file = policy.create_file(path)?;
+    file.write_all(content.as_bytes()).map_err(|source| TemplateError::Write {
+        path: path.to_path_buf(),
+        source,
+    })
 }
 
-/// How [`TemplateWriter::write`] should treat rendered content.
+/// How [`TemplateService::write`](super::service::TemplateService::write)
+/// should treat rendered content.
 ///
 /// This is the domain meaning behind `--force` and `--dry-run`, as a type
 /// instead of two independent `bool`s. `pub(crate)` since
-/// `crate::cli::template` constructs it directly. [`CommitPolicy`] nests inside
-/// [`Self::Commit`] so [`TemplateWriter::commit`] only sees a policy that
-/// implies "write."
+/// `crate::cli::template` constructs it directly. [`CommitPolicy`] nests
+/// inside [`Self::Commit`] so [`commit`] only sees a policy that implies
+/// "write."
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(crate) enum WriteMode {
-    /// Render only. [`TemplateWriter::write`] returns
-    /// [`WriteOutcome::Previewed`] without touching disk.
+    /// Render only.
+    /// [`TemplateService::write`](super::service::TemplateService::write)
+    /// returns [`WriteOutcome::Previewed`] without touching disk.
     DryRun,
     /// Write to disk under this [`CommitPolicy`].
     Commit(CommitPolicy),
@@ -126,10 +83,11 @@ impl WriteMode {
     }
 }
 
-/// How [`TemplateWriter::commit`] should treat an existing target.
+/// How [`commit`] should treat an existing target.
 ///
-/// This is [`WriteMode::Commit`]'s payload. It is `pub(crate)` like
-/// [`WriteMode`], though only this file names it directly.
+/// This is [`WriteMode::Commit`]'s payload, unwrapped once by
+/// [`TemplateService::write`](super::service::TemplateService::write) and
+/// threaded through as [`CommitPolicy`] from there on.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(crate) enum CommitPolicy {
     /// Fail with [`TemplateError::OutputFileAlreadyExists`] if the target
@@ -185,8 +143,9 @@ impl CommitPolicy {
     }
 }
 
-/// What [`TemplateWriter::write`] did with `content`: wrote it to disk, or
-/// handed it back unwritten under [`WriteMode::DryRun`].
+/// What [`TemplateService::write`](super::service::TemplateService::write)
+/// did with rendered content: wrote it to disk, or handed it back unwritten
+/// under [`WriteMode::DryRun`].
 #[derive(Debug, Eq, PartialEq)]
 pub(crate) enum WriteOutcome {
     /// Written to disk at this path.
@@ -259,11 +218,11 @@ impl<'a> TemplateWriteTarget<'a> {
         }
     }
 
-    /// Resolves the output destination under `mode`:
+    /// Resolves the output destination for `policy`:
     /// 1. Evaluates precedence (`requested` > `declared` > `default`).
     /// 2. Confines non-default candidates to `root`.
-    /// 3. Under `Commit(CreateNew)`, if `-o` wasn't passed, `provider` is
-    ///    interactive, and the path exists, prompts for a root-relative
+    /// 3. Under [`CommitPolicy::CreateNew`], if `-o` wasn't passed, `provider`
+    ///    is interactive, and the path exists, prompts for a root-relative
     ///    alternative until a valid, non-colliding path is given.
     ///
     /// # Errors
@@ -276,14 +235,10 @@ impl<'a> TemplateWriteTarget<'a> {
     ///   fails.
     pub(super) fn resolve(
         &self,
-        mode: WriteMode,
+        policy: CommitPolicy,
         provider: &dyn DialogProvider,
         default: impl FnOnce() -> PathBuf,
     ) -> Result<PathBuf, TemplateError> {
-        let WriteMode::Commit(policy) = mode else {
-            return Ok(PathBuf::new());
-        };
-
         let initial_path = self.target_path(default)?;
 
         if policy == CommitPolicy::Overwrite
@@ -334,18 +289,16 @@ impl<'a> TemplateWriteTarget<'a> {
     ) -> Result<PathBuf, TemplateError> {
         RootConfinedPath::parse(root, candidate)
             .map(RootConfinedPath::into_path_buf)
-            .map_err(|source| match source {
-                PathError::NotRelative | PathError::EscapesRoot => {
-                    TemplateError::OutputPathEscapesRoot {
+            .map_err(|source| {
+                source.fold_confinement(
+                    || TemplateError::OutputPathEscapesRoot {
                         path: candidate.to_path_buf(),
-                    }
-                }
-                PathError::Verify(source) => {
-                    TemplateError::OutputPathUnverifiable {
+                    },
+                    |source| TemplateError::OutputPathUnverifiable {
                         path: candidate.to_path_buf(),
                         source,
-                    }
-                }
+                    },
+                )
             })
     }
 
@@ -687,11 +640,9 @@ mod tests {
 
             let target = TemplateWriteTarget::new(root);
             let resolved = target
-                .resolve(
-                    WriteMode::Commit(CommitPolicy::CreateNew),
-                    provider.as_ref(),
-                    || root.join("daily.md"),
-                )
+                .resolve(CommitPolicy::CreateNew, provider.as_ref(), || {
+                    root.join("daily.md")
+                })
                 .expect("resolves to alternative path after reprompting");
 
             assert_eq!(resolved, root.join("alt.md"));
@@ -746,7 +697,7 @@ mod tests {
 
             let error = TemplateWriteTarget::new(root)
                 .resolve(
-                    WriteMode::Commit(CommitPolicy::CreateNew),
+                    CommitPolicy::CreateNew,
                     &CancellingDialogProvider,
                     || root.join("daily.md"),
                 )
@@ -772,11 +723,9 @@ mod tests {
             let target = TemplateWriteTarget::new(root)
                 .with_requested(Some(Path::new("explicit.md")));
             let resolved = target
-                .resolve(
-                    WriteMode::Commit(CommitPolicy::CreateNew),
-                    provider.as_ref(),
-                    || root.join("default.md"),
-                )
+                .resolve(CommitPolicy::CreateNew, provider.as_ref(), || {
+                    root.join("default.md")
+                })
                 .expect("requested path bypasses prompt");
 
             assert_eq!(resolved, root.join("explicit.md"));
@@ -928,95 +877,6 @@ mod tests {
         }
     }
 
-    mod write {
-        use pretty_assertions::assert_eq;
-
-        use super::*;
-
-        #[test]
-        fn dry_run_returns_previewed_without_choosing_a_target() {
-            let root = tempfile::tempdir().expect("create temp dir");
-
-            let outcome = TemplateWriter::write(
-                root.path().join("unused.md"),
-                "hello".to_owned(),
-                WriteMode::DryRun,
-            )
-            .expect("dry run preview");
-
-            assert_eq!(outcome, WriteOutcome::Previewed("hello".to_owned()));
-            assert!(!root.path().join("unused.md").exists());
-        }
-
-        #[test]
-        fn create_new_writes_content_and_returns_written() {
-            let root = tempfile::tempdir().expect("create temp dir");
-            let path = root.path().join("note.md");
-
-            let outcome = TemplateWriter::write(
-                path.clone(),
-                "hello".to_owned(),
-                WriteMode::Commit(CommitPolicy::CreateNew),
-            )
-            .expect("writes new file");
-
-            assert_eq!(outcome, WriteOutcome::Written(path.clone()));
-            assert_eq!(fs::read_to_string(&path).expect("read"), "hello");
-        }
-
-        #[test]
-        fn output_overrides_the_default() {
-            let root = tempfile::tempdir().expect("create temp dir");
-            let override_path = root.path().join("elsewhere.md");
-
-            let outcome = TemplateWriter::write(
-                override_path.clone(),
-                "hi".to_owned(),
-                WriteMode::Commit(CommitPolicy::CreateNew),
-            )
-            .expect("writes to override path");
-
-            assert_eq!(outcome, WriteOutcome::Written(override_path.clone()));
-            assert_eq!(fs::read_to_string(&override_path).expect("read"), "hi");
-        }
-
-        #[test]
-        fn create_new_fails_when_the_target_already_exists() {
-            let root = tempfile::tempdir().expect("create temp dir");
-            let path = root.path().join("note.md");
-            fs::write(&path, "old").expect("seed existing file");
-
-            let error = TemplateWriter::write(
-                path.clone(),
-                "new".to_owned(),
-                WriteMode::Commit(CommitPolicy::CreateNew),
-            )
-            .expect_err("existing target fails under CreateNew");
-
-            assert!(matches!(
-                error,
-                TemplateError::OutputFileAlreadyExists { .. }
-            ));
-        }
-
-        #[test]
-        fn overwrite_truncates_an_existing_file() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            let file_path = temp.path().join("note.md");
-            fs::write(&file_path, "old").expect("seed existing file");
-
-            let outcome = TemplateWriter::write(
-                file_path.clone(),
-                "new".to_owned(),
-                WriteMode::Commit(CommitPolicy::Overwrite),
-            )
-            .expect("overwrite mode truncates the existing target");
-
-            assert_eq!(outcome, WriteOutcome::Written(file_path.clone()));
-            assert_eq!(fs::read_to_string(&file_path).expect("read"), "new");
-        }
-    }
-
     mod commit {
         use pretty_assertions::assert_eq;
 
@@ -1027,7 +887,7 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             let path = temp.path().join("note.md");
 
-            TemplateWriter::commit(&path, "hello", CommitPolicy::CreateNew)
+            commit(&path, "hello", CommitPolicy::CreateNew)
                 .expect("creates new file");
 
             assert_eq!(fs::read_to_string(&path).expect("read"), "hello");
@@ -1039,7 +899,7 @@ mod tests {
             let path = temp.path().join("note.md");
             fs::write(&path, "old").expect("seed existing file");
 
-            TemplateWriter::commit(&path, "new", CommitPolicy::Overwrite)
+            commit(&path, "new", CommitPolicy::Overwrite)
                 .expect("force overwrites");
 
             assert_eq!(fs::read_to_string(&path).expect("read"), "new");
@@ -1050,7 +910,7 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             let path = temp.path().join("nested/deep/note.md");
 
-            TemplateWriter::commit(&path, "hello", CommitPolicy::CreateNew)
+            commit(&path, "hello", CommitPolicy::CreateNew)
                 .expect("creates parent dirs and file");
 
             assert_eq!(fs::read_to_string(&path).expect("read"), "hello");

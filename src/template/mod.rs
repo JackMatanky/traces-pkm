@@ -16,15 +16,13 @@
 //!   registering the template-facing `file`, `ui`, `date`, query, path,
 //!   numeric, and string helpers.
 //! - [`writer`][]: resolves a render's output path by precedence
-//!   ([`TemplateWriteTarget`](writer::TemplateWriteTarget)) and applies a
-//!   [`WriteMode`] through
-//!   [`TemplateWriter::write`](writer::TemplateWriter::write).
+//!   ([`TemplateWriteTarget`](writer::TemplateWriteTarget)) and commits it
+//!   through [`writer::commit`](writer::commit).
 //! - [`service`][]: [`TemplateService`] chains resolve, render, and write into
 //!   the single CLI-facing call.
 //!
-//! Everything below `service` is `pub(super)` at most, except three
-//! re-exports consumed by `crate::cli`: [`TemplateError`], [`WriteMode`], and
-//! [`WriteOutcome`].
+//! Everything below `service` is `pub(super)` at most, except the
+//! `pub(crate)` re-exports below, consumed by `crate::cli`.
 
 mod engine;
 mod error;

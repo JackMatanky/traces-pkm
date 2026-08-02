@@ -31,19 +31,20 @@ use self::{
     str_ops::StrOps,
     ui_ops::UiOps,
 };
-use super::{
-    loader::TemplateLoader,
-    path::{TemplatePath, TemplatePathError},
-};
+use super::loader::TemplateLoader;
 use crate::DialogProvider;
 
-/// Resolves template names and renders their source. The same
-/// [`TemplateLoader`] configuration backs both `-i` resolution
-/// ([`Self::resolve`]) and `{% include %}`/`{% extends %}` loading, so the two
-/// can never disagree about which directory wins.
+/// Renders template source through minijinja, backed by `loader`'s
+/// `{% include %}`/`{% extends %}` resolution.
+///
+/// [`TemplateService`] keeps its own [`TemplateLoader`] clone for `-i`
+/// resolution, built from the same [`Config`](crate::config::Config) as the
+/// clone wired in here, so the two can never disagree about which directory
+/// wins.
+///
+/// [`TemplateService`]: super::service::TemplateService
 pub(super) struct TemplateEngine {
     env: Environment<'static>,
-    loader: TemplateLoader,
 }
 
 impl TemplateEngine {
@@ -55,14 +56,14 @@ impl TemplateEngine {
     /// # Arguments
     ///
     /// * `loader` - the [`TemplateLoader`] to wire into minijinja's
-    ///   include/extends resolution and store for [`Self::resolve`]
+    ///   include/extends resolution; cloned once into the closure, not retained
     /// * `provider` - backend `ui.*` calls delegate to
     /// * `root` - base directory `file.*`, `query.*`, `tasks.*`, and the
     ///   path-inspection group are confined to
     #[inline]
     #[must_use]
     pub(super) fn new(
-        loader: TemplateLoader,
+        loader: &TemplateLoader,
         provider: Arc<dyn DialogProvider>,
         root: &Path,
     ) -> Self {
@@ -83,26 +84,7 @@ impl TemplateEngine {
         env.add_function("uuid", uuid);
         Self {
             env,
-            loader,
         }
-    }
-
-    /// Resolves `name` to a file that actually exists. Delegates directly to
-    /// [`TemplateLoader::find`], searching the configured directories
-    /// local-then-global.
-    ///
-    /// # Errors
-    ///
-    /// - [`TemplatePathError::AmbiguousTemplate`] when `name`'s stem matches
-    ///   more than one file within a single directory
-    /// - [`TemplatePathError::TemplateNotFound`] when `name` fails validation
-    ///   or no directory has a match
-    #[inline]
-    pub(super) fn resolve(
-        &self,
-        name: &Path,
-    ) -> Result<TemplatePath, TemplatePathError> {
-        self.loader.find(name)
     }
 
     /// Compiles and renders `source` with an empty template context, then reads
@@ -174,7 +156,7 @@ mod tests {
         fn evaluates_minijinja_syntax() {
             let temp = tempfile::tempdir().expect("create temp dir");
             let engine = TemplateEngine::new(
-                loader_from_dir(temp.path()),
+                &loader_from_dir(temp.path()),
                 preset_provider(),
                 temp.path(),
             );
@@ -192,7 +174,7 @@ mod tests {
             fs::write(temp.path().join("partial.md"), "included")
                 .expect("write partial");
             let engine = TemplateEngine::new(
-                loader_from_dir(temp.path()),
+                &loader_from_dir(temp.path()),
                 preset_provider(),
                 temp.path(),
             );
@@ -211,7 +193,7 @@ mod tests {
             fs::create_dir_all(&dir).expect("create dotted template dir");
             fs::write(dir.join("daily.md"), "hello").expect("write template");
             let engine = TemplateEngine::new(
-                loader_from_dir(&dir),
+                &loader_from_dir(&dir),
                 preset_provider(),
                 temp.path(),
             );
@@ -228,7 +210,7 @@ mod tests {
             fs::write(temp.path().join(".draft.md"), "secret")
                 .expect("write template");
             let engine = TemplateEngine::new(
-                loader_from_dir(temp.path()),
+                &loader_from_dir(temp.path()),
                 preset_provider(),
                 temp.path(),
             );
@@ -250,7 +232,7 @@ mod tests {
             fs::write(global_dir.join("shared.md"), "from global")
                 .expect("write template");
             let engine = TemplateEngine::new(
-                TemplateLoader::new(Some(local_dir), Some(global_dir)),
+                &TemplateLoader::new(Some(local_dir), Some(global_dir)),
                 preset_provider(),
                 temp.path(),
             );
@@ -268,7 +250,7 @@ mod tests {
             fs::write(temp.path().join("daily.md"), "hello")
                 .expect("write template");
             let engine = TemplateEngine::new(
-                loader_from_dir(temp.path()),
+                &loader_from_dir(temp.path()),
                 preset_provider(),
                 temp.path(),
             );
@@ -286,7 +268,7 @@ mod tests {
             fs::write(temp.path().join("main.rs"), "fn main() {}")
                 .expect("write fixture");
             let engine = TemplateEngine::new(
-                loader_from_dir(temp.path()),
+                &loader_from_dir(temp.path()),
                 preset_provider(),
                 temp.path(),
             );
@@ -308,29 +290,6 @@ mod tests {
         }
     }
 
-    mod resolve {
-        use pretty_assertions::assert_eq;
-
-        use super::*;
-
-        #[test]
-        fn delegates_to_the_loader() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            let file = temp.path().join("daily.md");
-            fs::write(&file, "content").expect("write template");
-            let engine = TemplateEngine::new(
-                loader_from_dir(temp.path()),
-                preset_provider(),
-                temp.path(),
-            );
-
-            let found =
-                engine.resolve(Path::new("daily")).expect("resolve succeeds");
-
-            assert_eq!(found.absolute(), file);
-        }
-    }
-
     mod write_to {
         use pretty_assertions::assert_eq;
 
@@ -340,7 +299,7 @@ mod tests {
         fn is_none_when_the_template_never_calls_it() {
             let temp = tempfile::tempdir().expect("create temp dir");
             let engine = TemplateEngine::new(
-                loader_from_dir(temp.path()),
+                &loader_from_dir(temp.path()),
                 preset_provider(),
                 temp.path(),
             );
@@ -355,7 +314,7 @@ mod tests {
         fn captures_a_write_to_call() {
             let temp = tempfile::tempdir().expect("create temp dir");
             let engine = TemplateEngine::new(
-                loader_from_dir(temp.path()),
+                &loader_from_dir(temp.path()),
                 preset_provider(),
                 temp.path(),
             );
@@ -374,7 +333,7 @@ mod tests {
         fn does_not_leak_between_renders() {
             let temp = tempfile::tempdir().expect("create temp dir");
             let engine = TemplateEngine::new(
-                loader_from_dir(temp.path()),
+                &loader_from_dir(temp.path()),
                 preset_provider(),
                 temp.path(),
             );
@@ -392,7 +351,7 @@ mod tests {
         fn calling_an_unknown_file_method_fails() {
             let temp = tempfile::tempdir().expect("create temp dir");
             let engine = TemplateEngine::new(
-                loader_from_dir(temp.path()),
+                &loader_from_dir(temp.path()),
                 preset_provider(),
                 temp.path(),
             );
@@ -421,7 +380,7 @@ mod tests {
             fs::write(temp.path().join("snippet.md"), "inlined")
                 .expect("write fixture");
             let engine = TemplateEngine::new(
-                loader_from_dir(temp.path()),
+                &loader_from_dir(temp.path()),
                 preset_provider(),
                 temp.path(),
             );
@@ -437,7 +396,7 @@ mod tests {
         fn ui_confirm_is_reachable() {
             let temp = tempfile::tempdir().expect("create temp dir");
             let engine = TemplateEngine::new(
-                loader_from_dir(temp.path()),
+                &loader_from_dir(temp.path()),
                 preset_provider(),
                 temp.path(),
             );
@@ -453,7 +412,7 @@ mod tests {
         fn date_now_is_reachable() {
             let temp = tempfile::tempdir().expect("create temp dir");
             let engine = TemplateEngine::new(
-                loader_from_dir(temp.path()),
+                &loader_from_dir(temp.path()),
                 preset_provider(),
                 temp.path(),
             );
@@ -469,7 +428,7 @@ mod tests {
         fn uuid_function_returns_a_valid_v4_uuid() {
             let temp = tempfile::tempdir().expect("create temp dir");
             let engine = TemplateEngine::new(
-                loader_from_dir(temp.path()),
+                &loader_from_dir(temp.path()),
                 preset_provider(),
                 temp.path(),
             );
@@ -486,7 +445,7 @@ mod tests {
         fn case_filters_are_reachable() {
             let temp = tempfile::tempdir().expect("create temp dir");
             let engine = TemplateEngine::new(
-                loader_from_dir(temp.path()),
+                &loader_from_dir(temp.path()),
                 preset_provider(),
                 temp.path(),
             );
@@ -502,7 +461,7 @@ mod tests {
         fn numeric_filters_are_reachable() {
             let temp = tempfile::tempdir().expect("create temp dir");
             let engine = TemplateEngine::new(
-                loader_from_dir(temp.path()),
+                &loader_from_dir(temp.path()),
                 preset_provider(),
                 temp.path(),
             );

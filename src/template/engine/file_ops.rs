@@ -101,14 +101,18 @@ impl Object for FileOps {
 /// known to escape, only unconfirmed because the root or an ancestor could not
 /// be canonicalized.
 fn confine_error(path: &str, source: PathError) -> Error {
-    match source {
-        PathError::NotRelative | PathError::EscapesRoot => escapes_root(path),
-        PathError::Verify(source) => Error::new(
-            ErrorKind::InvalidOperation,
-            format!("failed to verify path {path} is inside the project root"),
-        )
-        .with_source(source),
-    }
+    source.fold_confinement(
+        || escapes_root(path),
+        |source| {
+            Error::new(
+                ErrorKind::InvalidOperation,
+                format!(
+                    "failed to verify path {path} is inside the project root"
+                ),
+            )
+            .with_source(source)
+        },
+    )
 }
 
 /// Builds the `file.include()` error for a `path` that escapes `root`.

@@ -40,6 +40,28 @@ pub(crate) enum PathError {
     Verify(#[source] io::Error),
 }
 
+impl PathError {
+    /// Routes a confinement failure to one of two outcomes: `escape` for
+    /// [`Self::NotRelative`]/[`Self::EscapesRoot`], `unverifiable` for
+    /// [`Self::Verify`] (with its [`io::Error`] recovered).
+    ///
+    /// Every root-confinement call site across the crate treats the first two
+    /// variants as one user-facing failure and [`Self::Verify`] as a separate,
+    /// unconfirmed one; this is the single place that grouping lives, instead
+    /// of each call site re-deriving it.
+    #[must_use]
+    pub(crate) fn fold_confinement<T>(
+        self,
+        escape: impl FnOnce() -> T,
+        unverifiable: impl FnOnce(io::Error) -> T,
+    ) -> T {
+        match self {
+            Self::NotRelative | Self::EscapesRoot => escape(),
+            Self::Verify(source) => unverifiable(source),
+        }
+    }
+}
+
 /// Relative path proven safe by its components alone.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct SafeRelativePath(PathBuf);

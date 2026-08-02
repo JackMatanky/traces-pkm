@@ -3,14 +3,15 @@
 //! [`TemplateLoader::find`] is the single resolution path for both top-level
 //! `-i <name>` and minijinja `{% include %}`/`{% extends %}` loading. It
 //! validates the raw name with
-//! [`TemplatePath::parse`](super::path::TemplatePath::parse), then searches
-//! [`TemplateLoader::directories`] in local-before-global order via
+//! [`validate_template_name`](super::path::validate_template_name), then
+//! searches [`TemplateLoader::directories`] in local-before-global order via
 //! [`TemplateLoader::find_path_in`] and [`TemplateLoader::find_name_in`].
 //!
-//! Invalid names (absolute paths, `..`, or no real segment such as an empty
-//! name or bare `.`) report the same [`TemplatePathError::TemplateNotFound`] as
-//! an ordinary miss. Template authors do not need a separate
-//! typo-versus-invalid distinction.
+//! An invalid name (absolute, `..`, or no real segment such as an empty name
+//! or bare `.`) fails validation before any directory is searched, returning
+//! [`TemplatePathError::Absolute`] or [`TemplatePathError::UnsafeComponent`] —
+//! distinct from [`TemplatePathError::TemplateNotFound`], which [`Self::find`]
+//! returns only after every directory was searched and none matched.
 //!
 //! # Why not `minijinja::path_loader`
 //!
@@ -30,7 +31,7 @@ use std::{
 
 use minijinja::{Error, ErrorKind};
 
-use super::path::{TemplatePath, TemplatePathError};
+use super::path::{TemplatePath, TemplatePathError, validate_template_name};
 use crate::{config::Config, path::SafeRelativePath};
 
 /// A template search path: at most one local directory and at most one global
@@ -79,14 +80,14 @@ impl TemplateLoader {
         &self,
         name: &Path,
     ) -> Result<TemplatePath, TemplatePathError> {
-        let validated = TemplatePath::parse(name)?;
+        let validated = validate_template_name(name)?;
 
         for dir in self.directories() {
-            if let Some(path) = Self::find_path_in(dir, &validated) {
-                return Ok(TemplatePath::new(path, dir.to_path_buf()));
+            if let Some(template) = Self::find_path_in(dir, &validated) {
+                return Ok(template);
             }
-            if let Some(path) = Self::find_name_in(dir, &validated)? {
-                return Ok(TemplatePath::new(path, dir.to_path_buf()));
+            if let Some(template) = Self::find_name_in(dir, &validated)? {
+                return Ok(template);
             }
         }
 
@@ -108,8 +109,7 @@ impl TemplateLoader {
     }
 
     /// The exact-match rule: if `dir.join(path)` names a real file, returns
-    /// `path` unchanged (relative to `dir`, for [`TemplatePath::new`] to
-    /// rejoin).
+    /// the [`TemplatePath`] rooted at `dir`.
     ///
     /// Uses [`fs::symlink_metadata`] rather than
     /// [`Path::is_file`](std::path::Path::is_file), matching
@@ -117,10 +117,10 @@ impl TemplateLoader {
     fn find_path_in(
         dir: &Path,
         path: &SafeRelativePath,
-    ) -> Option<SafeRelativePath> {
+    ) -> Option<TemplatePath> {
         fs::symlink_metadata(dir.join(path.as_ref()))
             .is_ok_and(|metadata| metadata.is_file())
-            .then(|| path.clone())
+            .then(|| TemplatePath::verified(path.clone(), dir.to_path_buf()))
     }
 
     /// The stem-match rule, skipped when `path` already has an extension.
@@ -139,7 +139,7 @@ impl TemplateLoader {
     fn find_name_in(
         dir: &Path,
         path: &SafeRelativePath,
-    ) -> Result<Option<SafeRelativePath>, TemplatePathError> {
+    ) -> Result<Option<TemplatePath>, TemplatePathError> {
         let path = path.as_ref();
         if path.extension().is_some() {
             return Ok(None);
@@ -185,7 +185,10 @@ impl TemplateLoader {
         hits.sort_unstable();
         match hits.as_slice() {
             [] => Ok(None),
-            [hit] => Ok(Some(TemplatePath::parse(hit)?)),
+            [hit] => Ok(Some(TemplatePath::verified(
+                validate_template_name(hit)?,
+                dir.to_path_buf(),
+            ))),
             _ => Err(TemplatePathError::AmbiguousTemplate {
                 name: path.to_path_buf(),
                 candidates: hits,

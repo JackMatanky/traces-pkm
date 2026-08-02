@@ -181,17 +181,23 @@ impl AsRef<Path> for InspectTarget {
 /// known to escape, only unconfirmed because the root or an ancestor could not
 /// be canonicalized.
 fn confine_error(path: &str, source: PathError) -> Error {
-    match source {
-        PathError::NotRelative | PathError::EscapesRoot => Error::new(
-            ErrorKind::InvalidOperation,
-            format!("path {path} escapes the project root"),
-        ),
-        PathError::Verify(inner) => Error::new(
-            ErrorKind::InvalidOperation,
-            format!("failed to verify path {path} is inside the project root"),
-        )
-        .with_source(inner),
-    }
+    source.fold_confinement(
+        || {
+            Error::new(
+                ErrorKind::InvalidOperation,
+                format!("path {path} escapes the project root"),
+            )
+        },
+        |inner| {
+            Error::new(
+                ErrorKind::InvalidOperation,
+                format!(
+                    "failed to verify path {path} is inside the project root"
+                ),
+            )
+            .with_source(inner)
+        },
+    )
 }
 
 /// Builds the [`ErrorKind::InvalidOperation`] error for an I/O failure other
