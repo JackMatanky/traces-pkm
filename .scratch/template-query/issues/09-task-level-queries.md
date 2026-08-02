@@ -35,11 +35,12 @@
   same "well-formed path, no value" contract every other field already
   documents.
 - **`FileIndex::query_tasks`** (`src/index/mod.rs`): selects the same Notes
-  `FileIndex::query` would (via `Source::is_match`, shared through a new
-  `matched_pairs` helper extracted from both), then expands each matched
-  Note into one `IndexRecord` per `Note::tasks()` item instead of one
-  record per Note. `query()` was refactored onto the same `matched_pairs`
-  helper to remove the duplicated merge-join it previously inlined.
+  `FileIndex::query` would (via `Source::is_match`, shared through
+  `matched_pairs`), then expands each matched Note into one `IndexRecord` per
+  `Note::tasks()` item instead of one record per Note. Follow-up Rust review
+  refactored `Note::tasks()` to a lazy depth-first `TaskIter` and changed
+  `query_tasks` to push into one output vector directly, avoiding the old
+  eager task-reference collection and per-note row collection.
 - **`traces task` CLI** (`src/cli/task.rs`, new): `--from <#tag|folder>`
   (omitted = every task) and `--where <expr>` flags, refreshes the
   `FileIndex`, prints one markdown checkbox line per task to stdout,
@@ -64,16 +65,19 @@
   `filtering_by_task_completion_keeps_only_matching_tasks_not_the_whole_note`,
   mirrored at the CLI (`src/cli/task.rs`) and template
   (`src/template/engine/query_ops.rs`) seams.
-- **Verification**: `mise run fmt`, `mise run clippy` (`-D warnings`),
-  `cargo clippy --workspace --tests --all-features -- -D warnings` (three
-  pre-existing unrelated lint failures in `src/index/query/error.rs`'s
-  test module and one large-stack-array error confirmed present on `main`
-  too, not introduced here), `cargo doc --no-deps --document-private-items`
-  (one pre-existing unrelated warning at `src/template/mod.rs:9`, not
-  introduced here), `mise run test` (cargo nextest) — **1019/1019 passing**.
-  Smoke-tested the built binary directly: `traces task`,
+- **Rust review follow-ups**: after the original implementation, a
+  rust-skills/rust-unit-testing review added missing CLI/index/template test
+  cases, reorganized template task tests into the existing concern-based
+  modules, split `QueryError` display tests to satisfy strict test-target
+  Clippy, removed an unused nested test import, and made task iteration lazy.
+- **Verification**: current branch verification is clean with
+  `mise run fmt`, `mise run check`, `mise run clippy`, `mise run doc`, and
+  `mise run test` (**1024/1024 passing**). Also verified the stricter
+  nightly/mise lint surface with
+  `MISE_EXPERIMENTAL=1 mise exec -- cargo clippy --workspace --tests --all-features -- -D warnings`.
+  Smoke-tested earlier during implementation: `traces task`,
   `traces task --from "#tag" --where "task.completed == false"`, and a
-  rendered `{% for t in tasks.all() %}...{% endfor %}` template all behave
+  rendered `{% for t in tasks.all() %}...{% endfor %}` template all behaved
   as expected end to end.
 - **Out of scope, deliberately not touched**: `table`/`list`/`task_list`/
   `count` terminal renderers and their pipeline-filter forms (#07, which
@@ -81,4 +85,5 @@
   table` CLI commands (#08, unrelated and not yet built on `main`).
 
 **Implementation**: `.worktrees/09-task-level-queries`, branch
-`template-query/09-task-level-queries`, commit `0b407ac`.
+`template-query/09-task-level-queries`. Original feature commit: `0b407ac`.
+Review/test cleanup: `db484b0`. Rust best-practice refactor: `b0f417d`.
