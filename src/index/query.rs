@@ -1256,6 +1256,65 @@ mod tests {
                 })
             );
         }
+
+        #[test]
+        fn renders_a_bool_field_as_true_or_false() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let outcome = outcome_for(temp.path(), "---\nactive: true\n---");
+
+            let list = outcome.list("active").expect("valid list");
+
+            assert_eq!(list, "- true\n");
+        }
+
+        #[test]
+        fn renders_a_missing_field_as_an_empty_bullet() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let outcome = outcome_for(temp.path(), "body, no frontmatter");
+
+            let list = outcome.list("no_such_field").expect("valid list");
+
+            assert_eq!(list, "- \n");
+        }
+
+        #[test]
+        fn renders_a_wikilink_field_as_its_target_path() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let outcome = outcome_for(
+                temp.path(),
+                "---\nlink: \"[[Project Alpha|Alpha]]\"\n---",
+            );
+
+            let list = outcome.list("link").expect("valid list");
+
+            assert_eq!(list, "- Project Alpha\n");
+        }
+
+        #[test]
+        fn renders_an_unflattened_list_field_joined_by_comma_space() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let outcome = outcome_for(
+                temp.path(),
+                "---\nauthors:\n  - Alice\n  - Bob\n---",
+            );
+
+            let list = outcome.list("authors").expect("valid list");
+
+            assert_eq!(list, "- Alice, Bob\n");
+        }
+
+        #[test]
+        fn renders_an_object_field_as_key_value_pairs_joined_by_comma_space() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let outcome = outcome_for(
+                temp.path(),
+                "---\nmeta:\n  city: NYC\n  zip: 10001\n---",
+            );
+
+            let list = outcome.list("meta").expect("valid list");
+
+            assert_eq!(list, "- city: NYC, zip: 10001\n");
+        }
     }
 
     mod task_list {

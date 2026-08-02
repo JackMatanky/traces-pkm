@@ -229,6 +229,7 @@ mod tests {
 
     mod field_path {
         use pretty_assertions::assert_eq;
+        use rstest::rstest;
 
         use super::*;
 
@@ -261,32 +262,22 @@ mod tests {
             );
         }
 
-        #[test]
-        fn rejects_an_unknown_file_accessor() {
+        #[rstest]
+        #[case::empty("")]
+        #[case::bare_file("file")]
+        #[case::trailing_dot("file.")]
+        #[case::unknown_file_accessor("file.bogus")]
+        #[case::extra_file_segment("file.name.extra")]
+        #[case::bare_task("task")]
+        #[case::trailing_dot_task("task.")]
+        #[case::unknown_task_accessor("task.bogus")]
+        #[case::extra_task_segment("task.completed.extra")]
+        #[case::dotted_metadata_path("a.b")]
+        fn rejects_malformed_paths(#[case] path: &str) {
             assert_eq!(
-                FieldPath::parse("file.bogus"),
+                FieldPath::parse(path),
                 Err(QueryError::UnknownFieldPath {
-                    path: "file.bogus".to_owned()
-                })
-            );
-        }
-
-        #[test]
-        fn rejects_an_unknown_task_accessor() {
-            assert_eq!(
-                FieldPath::parse("task.bogus"),
-                Err(QueryError::UnknownFieldPath {
-                    path: "task.bogus".to_owned()
-                })
-            );
-        }
-
-        #[test]
-        fn rejects_a_dotted_metadata_path() {
-            assert_eq!(
-                FieldPath::parse("a.b"),
-                Err(QueryError::UnknownFieldPath {
-                    path: "a.b".to_owned()
+                    path: path.to_owned()
                 })
             );
         }

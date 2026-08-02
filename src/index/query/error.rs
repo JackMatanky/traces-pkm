@@ -76,14 +76,15 @@ impl QueryError {
 
 #[cfg(test)]
 mod tests {
+    use pretty_assertions::assert_eq;
+
     use super::*;
 
     fn assert_display(error: &QueryError, expected: &str) {
-        let actual = error.to_string();
-        assert!(
-            actual == expected,
-            "unexpected QueryError display\nactual: {actual}\nexpected: \
-             {expected}"
+        assert_eq!(
+            error.to_string(),
+            expected,
+            "unexpected QueryError display"
         );
     }
 
