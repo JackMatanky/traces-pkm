@@ -139,7 +139,7 @@ A `Key:: Value` pair embedded in a note's body using Dataview-compatible syntax:
 _Avoid_: metadata tag, embedded field
 
 ### QueryOutcome
-The type returned by a page-level (`query`) or task-level (`tasks`) query — an iterable, indexable collection of `IndexRecord`s. Supports `len`, indexing by integer position, and iteration via `{% for %}`. Registered as a minijinja type so pipeline filters compose against it.
+The type returned by a page-level (`query`) or task-level (`tasks`) query: an iterable, indexable collection of `IndexRecord`s. Supports `len`, indexing by integer position, and iteration via `{% for %}`. Registered as a minijinja type so pipeline filters compose against it.
 _Avoid_: QueryResult, result set
 
 ### IndexRecord
@@ -171,10 +171,10 @@ _Avoid_: DQL, dataview query
 ### CLI Query Commands
 
 #### list
-`traces list --from "#book" --where "rating > 7"` — page-level bullet list output.
+`traces list --from "#book" --where "rating > 7"`: page-level bullet list output.
 
 #### table
-`traces table "rating, author" --from "#book" --sort "rating" --desc` — page-level tabular output.
+`traces table "rating, author" --from "#book" --sort "rating" --desc`: page-level tabular output.
 
 #### task
-`traces task --from "#projects" --where "task.completed == false"` — task-level output (operates on individual tasks, not pages).
+`traces task --from "#projects" --where "task.completed == false"`: task-level output (operates on individual tasks, not pages).

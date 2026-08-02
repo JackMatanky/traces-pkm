@@ -38,7 +38,7 @@ impl Task {
     /// - [`CliError::Query`] if `--where` is an unparsable filter expression.
     #[expect(
         clippy::print_stdout,
-        reason = "task rows are primary command output, not diagnostic text — \
+        reason = "task rows are primary command output, not diagnostic text; \
                   mirrors the dry-run precedent in crate::cli::template and \
                   crate::cli::completions"
     )]

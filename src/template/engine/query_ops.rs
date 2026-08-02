@@ -73,7 +73,7 @@ use crate::{
 /// Method names `query` and `tasks` each expose, for [`QueryOps::enumerate`].
 const METHODS: &[&str] = &["all", "from_tags", "from_folder"];
 
-/// Backs both the `query` and `tasks` minijinja namespace objects — one
+/// Backs both the `query` and `tasks` minijinja namespace objects: one
 /// instance per namespace, differing only in which global it registers as
 /// and which [`FileIndex`] method builds the [`QueryOutcome`]. See
 /// [`Self::page`]/[`Self::task`].
@@ -99,8 +99,8 @@ impl QueryOps {
         }
     }
 
-    /// Wraps `root` for task-level dispatch under the `tasks` global — each
-    /// row is one task item instead of one Note. See the module docs.
+    /// Wraps `root` for task-level dispatch under the `tasks` global. Each
+    /// row is one task item instead of one Note; see the module docs.
     #[inline]
     #[must_use]
     pub(super) const fn task(root: Arc<Path>) -> Self {
@@ -298,8 +298,8 @@ impl Object for FileFields {
 /// before `.completed`/`.text` can be looked up.
 ///
 /// On a page-level record (not built by [`FileIndex::query_tasks`]) both
-/// accessors resolve to minijinja's `none` — a defined empty value, not a
-/// missing attribute — matching [`field_value`]'s handling of
+/// accessors resolve to minijinja's `none`, a defined empty value rather
+/// than a missing attribute, matching [`field_value`]'s handling of
 /// [`FieldValue::Null`].
 #[derive(Debug)]
 struct TaskFields(Arc<IndexRecord>);

@@ -5,10 +5,10 @@
 //! records. Persistence is redb-backed through [`store`](mod@store), but
 //! callers only use these APIs:
 //! - [`FileIndex::build`], [`FileIndex::refresh`], [`FileIndex::persist`],
-//!   [`FileIndex::load`] — construct or persist the index.
-//! - [`FileIndex::query`], [`FileIndex::query_tasks`] — run a page-level or
+//!   [`FileIndex::load`]: construct or persist the index.
+//! - [`FileIndex::query`], [`FileIndex::query_tasks`]: run a page-level or
 //!   task-level query.
-//! - [`FileIndex::records`], [`FileIndex::notes`] — inspect indexed data
+//! - [`FileIndex::records`], [`FileIndex::notes`]: inspect indexed data
 //!   directly.
 
 #![cfg_attr(
@@ -248,8 +248,8 @@ impl FileIndex {
     /// # Performance
     ///
     /// O(n + m + t) where `t` is the total number of task items across
-    /// matched Notes — one [`IndexRecord`] clone per task item, since each
-    /// row needs its own owned copy of the parent Note's metadata.
+    /// matched Notes. One [`IndexRecord`] clone happens per task item, since
+    /// each row needs its own owned copy of the parent Note's metadata.
     #[must_use]
     pub(crate) fn query_tasks(self, source: &Source) -> QueryOutcome {
         let matched = matched_pairs(self.records, self.notes, source)
@@ -272,12 +272,12 @@ impl FileIndex {
 
 /// Merge-joins `records` and `notes` by path, yielding only the file/note
 /// pairs matching `source`. Shared by [`FileIndex::query`] and
-/// [`FileIndex::query_tasks`] — both start from the same page-level
+/// [`FileIndex::query_tasks`]. Both start from the same page-level
 /// selection; they differ only in what each matched pair becomes.
 ///
 /// # Performance
 ///
-/// O(n + m) — single-pass iterator merge-join, no binary search or
+/// O(n + m): single-pass iterator merge-join, no binary search or
 /// redundant allocation per note.
 fn matched_pairs(
     records: Vec<FileRecord>,

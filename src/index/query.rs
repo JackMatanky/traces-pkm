@@ -277,7 +277,7 @@ pub(super) enum TaskField {
 impl TaskField {
     /// Parses a `task.<field>` accessor name (the part after `"task."`).
     ///
-    /// Returns `None` if `name` is not a known accessor — mirrors
+    /// Returns `None` if `name` is not a known accessor. Mirrors
     /// [`FileField::parse`]'s single failure mode; the caller building
     /// [`QueryError::UnknownFieldPath`] already has the full `task.<field>`
     /// path.
@@ -348,9 +348,9 @@ impl FieldPath {
     }
 }
 
-/// One query result row: a [`FileRecord`] paired with its [`Note`], and —
-/// when built by [`super::FileIndex::query_tasks`] — one task item's fields
-/// too.
+/// One query result row: a [`FileRecord`] paired with its [`Note`]. A row
+/// built by [`super::FileIndex::query_tasks`] also carries one task item's
+/// fields.
 ///
 /// Exposes both `file.*` fields and Note Metadata (frontmatter, inline
 /// fields, tags) through one value for Template and CLI callers.

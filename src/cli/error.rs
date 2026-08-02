@@ -28,8 +28,8 @@ use crate::{
     private_interfaces,
     reason = "domain source types (ConfigLoadError, ConfigStateError, \
               DiscoveryError, TemplateError, FileIndexError, QueryError) stay \
-              pub(crate) — only construction and matching happens inside \
-              crate::cli, callers use CliError's Display/Diagnostic surface, \
+              pub(crate). Only construction and matching happens inside \
+              crate::cli; callers use CliError's Display/Diagnostic surface, \
               never these types directly"
 )]
 #[non_exhaustive]
