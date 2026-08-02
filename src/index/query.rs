@@ -30,16 +30,17 @@ use crate::note::{FieldValue, Note};
 
 /// Iterable collection of [`IndexRecord`] values returned by
 /// [`super::FileIndex::query`] (one row per Note) or
-/// [`super::FileIndex::query_tasks`] (one row per task item). Both share this
-/// type and its transformation methods; nothing at the Rust type level
-/// distinguishes a page-level outcome from a task-level one, so a consumer
-/// expecting page rows (e.g. a future terminal renderer) must not assume
-/// every row came from [`super::FileIndex::query`].
+/// [`super::FileIndex::query_tasks`] (one row per task item).
 ///
-/// [`Self::filter`], [`Self::sort`], [`Self::limit`], [`Self::group_by`],
-/// and [`Self::flatten`] each consume this outcome and return a new,
-/// transformed one, so calls chain naturally:
-/// `outcome.filter("rating > 7")?.sort("rating", true)?.limit(10)?`.
+/// Both kinds share this type and its transformation methods; nothing at the
+/// Rust type level distinguishes a page-level outcome from a task-level one, so
+/// a consumer expecting page rows (e.g. a future terminal renderer) must not
+/// assume every row came from [`super::FileIndex::query`].
+///
+/// [`Self::filter`], [`Self::sort`], [`Self::limit`], [`Self::group_by`], and
+/// [`Self::flatten`] each consume this outcome and return a new, transformed
+/// one, so calls chain naturally: `outcome.filter("rating > 7")?.sort("rating",
+/// true)?.limit(10)?`.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct QueryOutcome {
     records: Vec<IndexRecord>,
@@ -366,10 +367,11 @@ pub(crate) struct IndexRecord {
 }
 
 /// Per-task fields layered onto an [`IndexRecord`] by
-/// [`super::FileIndex::query_tasks`]. A task-level row keeps its parent
-/// Note's `file`/`note` fields for filtering and display, adding only these
-/// two — distinct from [`IndexRecord::flattened`], which overrides an
-/// *existing* field path rather than adding new ones.
+/// [`super::FileIndex::query_tasks`]. A task-level row keeps its parent Note's
+/// `file`/`note` fields for filtering and display, adding only these two.
+///
+/// Distinct from [`IndexRecord::flattened`], which overrides an *existing*
+/// field path rather than adding new ones.
 #[derive(Clone, Debug, PartialEq)]
 struct TaskInfo {
     completed: bool,
@@ -439,11 +441,12 @@ impl IndexRecord {
     /// Resolves `path` against this record's file and note metadata.
     ///
     /// Resolves `file.*` accessors, `task.*` accessors, frontmatter fields,
-    /// inline fields, and `tags`. Frontmatter fields take precedence over an
-    /// inline field with the same key (see [`Note::fields`]). A well-formed
-    /// path this record has no value for (e.g. a frontmatter key it does not
-    /// define, or a `task.*` accessor on a page-level record) resolves to
-    /// [`FieldValue::Null`], not an error.
+    /// inline fields, and `tags`:
+    /// - Frontmatter fields take precedence over an inline field with the same
+    ///   key (see [`Note::fields`]).
+    /// - A well-formed path this record has no value for (e.g. a frontmatter
+    ///   key it does not define, or a `task.*` accessor on a page-level record)
+    ///   resolves to [`FieldValue::Null`], not an error.
     ///
     /// # Errors
     ///

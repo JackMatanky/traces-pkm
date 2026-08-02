@@ -55,9 +55,9 @@ impl Task {
     }
 
     /// Runs this task-level query against `root`'s `FileIndex` and renders
-    /// each matching task as a markdown checkbox line: `- [ ] <text>
-    /// (<path>)` for incomplete tasks, `- [x] <text> (<path>)` for complete
-    /// ones.
+    /// each matching task as a markdown checkbox line:
+    /// - `- [ ] <text> (<path>)` for an incomplete task
+    /// - `- [x] <text> (<path>)` for a complete task
     ///
     /// Split from [`Self::run`] so tests can assert on rendered content
     /// without capturing process stdout.

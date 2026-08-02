@@ -1,12 +1,15 @@
 //! File index for project files and parsed markdown notes.
 //!
 //! [`FileIndex`] keeps a sorted [`FileRecord`] for every regular file under a
-//! trusted project root. Markdown files also get parsed into [`Note`] records.
-//! Persistence is redb-backed through [`store`](mod@store), but callers only
-//! use the [`FileIndex::build`], [`FileIndex::refresh`],
-//! [`FileIndex::persist`], [`FileIndex::load`], [`FileIndex::query`],
-//! [`FileIndex::query_tasks`], [`FileIndex::records`], and [`FileIndex::notes`]
-//! APIs.
+//! trusted project root. Markdown files also get parsed into [`Note`]
+//! records. Persistence is redb-backed through [`store`](mod@store), but
+//! callers only use these APIs:
+//! - [`FileIndex::build`], [`FileIndex::refresh`], [`FileIndex::persist`],
+//!   [`FileIndex::load`] — construct or persist the index.
+//! - [`FileIndex::query`], [`FileIndex::query_tasks`] — run a page-level or
+//!   task-level query.
+//! - [`FileIndex::records`], [`FileIndex::notes`] — inspect indexed data
+//!   directly.
 
 #![cfg_attr(
     not(test),
@@ -228,14 +231,17 @@ impl FileIndex {
 
     /// Executes a task-level query over `source`, consuming this index.
     ///
-    /// Selects the same Notes [`Self::query`] would (via [`Source::is_match`]),
-    /// then expands each into one [`IndexRecord`] per task item from
-    /// [`Note::tasks`] instead of one record per Note — every markdown task
-    /// list item (`- [ ]`/`- [x]`) in a matched Note becomes its own row,
-    /// retaining that Note's `file.*`, frontmatter, inline-field, and tag
-    /// metadata for filtering and display (via [`IndexRecord::field`]),
-    /// alongside [`IndexRecord::task_completed`] and
-    /// [`IndexRecord::task_text`]. A Note with no tasks contributes no rows.
+    /// Selects the same Notes [`Self::query`] would (via
+    /// [`Source::is_match`]), then expands each into one [`IndexRecord`] per
+    /// task item from [`Note::tasks`] instead of one record per Note: every
+    /// markdown task list item (`- [ ]`/`- [x]`) in a matched Note becomes
+    /// its own row. A Note with no tasks contributes no rows.
+    ///
+    /// Each row retains its parent Note's `file.*`, frontmatter,
+    /// inline-field, and tag metadata for filtering and display (via
+    /// [`IndexRecord::field`]), alongside [`IndexRecord::task_completed`]
+    /// and [`IndexRecord::task_text`].
+    ///
     /// Call [`Self::refresh`] first so results reflect the current
     /// filesystem, same as [`Self::query`].
     ///
@@ -291,7 +297,9 @@ fn matched_pairs(
 /// Reads and parses the markdown file for `record` into a [`Note`].
 ///
 /// Shared by [`FileIndex::build`] (parses every markdown file from scratch)
-/// and [`FileIndex::refresh`] (parses only added or changed markdown files).
+/// and [`FileIndex::refresh`] (parses only added or changed markdown
+/// files).
+///
 /// # Errors
 ///
 /// Returns [`FileIndexError::Io`] if the file cannot be read.

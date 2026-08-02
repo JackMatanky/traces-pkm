@@ -30,6 +30,8 @@
 //! [`FileIndex`]/[`QueryOutcome`]/[`IndexRecord`] types without pulling
 //! minijinja along.
 //!
+//! # Attribute Resolution
+//!
 //! `record`'s non-`file`/`task` attributes (`record.rating`, `record.tags`,
 //! ...) forward to [`IndexRecord::field`], the same field resolver
 //! `.where()`/`.sort()` use. `record.file.*` and `record.task.*` each need a
@@ -116,8 +118,8 @@ impl QueryOps {
         env.add_global(name, Value::from_object(self));
     }
 
-    /// Refreshes the [`FileIndex`] for `root`, then runs this namespace's
-    /// query method for `source` against it.
+    /// Refreshes this namespace's [`FileIndex`], then runs its query
+    /// method for `source` against it.
     ///
     /// # Errors
     ///
@@ -246,13 +248,14 @@ impl Object for QueryOutcome {
 impl Object for IndexRecord {
     /// Resolves `record.<key>` (or `record["<key>"]`).
     ///
-    /// `"file"` returns a [`FileFields`] forwarding wrapper for
-    /// `record.file.*`; every other key resolves through
-    /// [`IndexRecord::field`], the same frontmatter/inline-field/tags lookup
-    /// `.where()`/`.sort()` use. A `key` that `field` rejects (dotted, empty,
-    /// or an unknown `file.*` accessor) resolves to `None` here, the same as
-    /// any other missing attribute, rather than surfacing
-    /// [`QueryError::UnknownFieldPath`] as a render error.
+    /// `"file"` and `"task"` each return a forwarding wrapper
+    /// ([`FileFields`], [`TaskFields`]) for `record.file.*`/
+    /// `record.task.*`; every other key resolves through
+    /// [`IndexRecord::field`], the same frontmatter/inline-field/tags
+    /// lookup `.where()`/`.sort()` use. A `key` that `field` rejects
+    /// (dotted, empty, or an unknown `file.*`/`task.*` accessor) resolves
+    /// to `None` here, the same as any other missing attribute, rather
+    /// than surfacing [`QueryError::UnknownFieldPath`] as a render error.
     fn get_value(self: &Arc<Self>, key: &Value) -> Option<Value> {
         let key = key.as_str()?;
         match key {
@@ -292,10 +295,12 @@ impl Object for FileFields {
 ///
 /// Mirrors [`FileFields`]: minijinja resolves a dotted attribute path one
 /// segment at a time, so `record.task` must itself resolve to something
-/// before `.completed`/`.text` can be looked up. On a page-level record
-/// (not built by [`FileIndex::query_tasks`]) both accessors resolve to
-/// minijinja's `none` — a defined empty value, not a missing attribute —
-/// matching [`field_value`]'s handling of [`FieldValue::Null`].
+/// before `.completed`/`.text` can be looked up.
+///
+/// On a page-level record (not built by [`FileIndex::query_tasks`]) both
+/// accessors resolve to minijinja's `none` — a defined empty value, not a
+/// missing attribute — matching [`field_value`]'s handling of
+/// [`FieldValue::Null`].
 #[derive(Debug)]
 struct TaskFields(Arc<IndexRecord>);
 

@@ -433,7 +433,8 @@ fn config_discovery_help(cwd: &Path) -> Box<dyn Display + '_> {
     ))
 }
 
-/// Returns diagnostic help text for [`CliError::Query`].
+/// Returns diagnostic help text for [`CliError::Query`]: "check the
+/// `--where` filter expression syntax and the field paths it references".
 fn query_help() -> Box<dyn Display + 'static> {
     Box::new(
         "check the `--where` filter expression syntax and the field paths it \
