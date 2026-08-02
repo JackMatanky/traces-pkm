@@ -1,3 +1,4 @@
+#:tombi schema.strict = false
 # -----------------------------------------------------------------------------
 # Filename:    traces-pkm/mise.toml
 # Docs:        https://mise.jdx.dev/
@@ -20,6 +21,7 @@ gitleaks = "latest"
 "cargo:wasm-pack" = "latest"
 "cargo:https://github.com/snowmead/rust-docs-mcp" = { version = "branch:main", crate = "rust-docs-mcp" }
 "cargo:adrs" = { version = "latest", install_env = { RUSTUP_TOOLCHAIN = "nightly" } }
+"cargo:ryl" = { version = "latest", install_env = { RUSTUP_TOOLCHAIN = "nightly" } }
 
 [env]
 HK_MISE = "1"

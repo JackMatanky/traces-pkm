@@ -1,5 +1,5 @@
-amends "package://github.com/jdx/hk/releases/download/v1.52.0/hk@1.52.0#/Config.pkl"
-import "package://github.com/jdx/hk/releases/download/v1.52.0/hk@1.52.0#/Builtins.pkl"
+amends "package://github.com/jdx/hk/releases/download/v1.54.0/hk@1.54.0#/Config.pkl"
+import "package://github.com/jdx/hk/releases/download/v1.54.0/hk@1.54.0#/Builtins.pkl"
 
 fail_fast = false
 jobs = 0
@@ -25,8 +25,13 @@ local hygiene = new Mapping<String, Step> {
 
 local config = new Mapping<String, Step> {
     ["check-json"] = Builtins.jq
-    ["check-yaml"] = Builtins.yamllint
-    ["tombi-format"] = Builtins.tombi_format
+    ["check-yaml"] = (Builtins.ryl) {
+        check = "ryl --diff --config-data 'extends: default' {{ files }}"
+        fix = "ryl --fix --config-data 'extends: default' {{ files }}"
+    }
+    ["tombi-format"] = (Builtins.tombi_format) {
+        check = "tombi format --quiet --check {{ files }}"
+    }
     ["tombi"] = Builtins.tombi
 }
 
