@@ -49,9 +49,9 @@ impl TemplatePath {
     ///
     /// # Errors
     ///
-    /// Returns [`TemplatePathError::Absolute`] when `path` is absolute.
-    /// Returns [`TemplatePathError::UnsafeComponent`] for `..`, any component
-    /// that isn't a plain name or `.`, or a path with no [`Component::Normal`].
+    /// - [`TemplatePathError::Absolute`] if `path` is absolute.
+    /// - [`TemplatePathError::UnsafeComponent`] for `..`, any component that is
+    ///   not a plain name or `.`, or a path with no [`Component::Normal`].
     ///
     /// [`Component::Normal`]: std::path::Component::Normal
     pub(super) fn parse(

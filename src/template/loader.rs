@@ -69,12 +69,12 @@ impl TemplateLoader {
     ///
     /// # Errors
     ///
-    /// - [`TemplatePathError::AmbiguousTemplate`] when `name`'s stem matches
-    ///   more than one file within a single Template Directory
-    /// - [`TemplatePathError::TemplateNotFound`] when no Template Directory has
-    ///   a match
+    /// - [`TemplatePathError::AmbiguousTemplate`] if `name`'s stem matches more
+    ///   than one file within a single template directory.
+    /// - [`TemplatePathError::TemplateNotFound`] if no template directory has a
+    ///   match.
     /// - [`TemplatePathError::Absolute`] or
-    ///   [`TemplatePathError::UnsafeComponent`] when `name` is invalid
+    ///   [`TemplatePathError::UnsafeComponent`] if `name` is invalid.
     pub(super) fn find(
         &self,
         name: &Path,
@@ -134,8 +134,8 @@ impl TemplateLoader {
     ///
     /// # Errors
     ///
-    /// Returns [`TemplatePathError::AmbiguousTemplate`] when more than one file
-    /// in the search directory shares the stem.
+    /// - [`TemplatePathError::AmbiguousTemplate`] if more than one file in the
+    ///   search directory shares the stem.
     fn find_name_in(
         dir: &Path,
         path: &SafeRelativePath,
@@ -201,13 +201,14 @@ impl TemplateLoader {
     ///
     /// A missing include becomes `Ok(None)`, which lets minijinja honour
     /// `ignore missing`. Invalid identifiers, ambiguity, and inaccessible
-    /// Template Directories are hard failures so template authors can repair
+    /// template directories are hard failures so template authors can repair
     /// the actual cause.
     ///
     /// # Errors
     ///
-    /// Returns [`minijinja::Error`] for a non-absence resolution failure or
-    /// when a resolved file cannot be read.
+    /// - [`minijinja::Error`] if resolving `name` fails for anything except
+    ///   absence.
+    /// - [`minijinja::Error`] if the resolved file cannot be read.
     pub(super) fn load(&self, name: &str) -> Result<Option<String>, Error> {
         let found = match self.find(Path::new(name)) {
             Ok(found) => found,

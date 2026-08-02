@@ -78,10 +78,9 @@ fn trim_suffix(value: &str, suffix: &str) -> String {
 ///
 /// # Errors
 ///
-/// Propagates [`ellipsis_kwarg`]'s errors: [`ErrorKind::InvalidOperation`]
-/// if `ellipsis` is present but not a string, or
-/// [`ErrorKind::TooManyArguments`] if `kwargs` has any key besides
-/// `ellipsis`.
+/// - [`ErrorKind::InvalidOperation`] if `ellipsis` is present but not a string.
+/// - [`ErrorKind::TooManyArguments`] if `kwargs` has any key besides
+///   `ellipsis`.
 #[expect(
     clippy::needless_pass_by_value,
     reason = "Kwargs::assert_all_used consumes self by value; &Kwargs \
@@ -121,10 +120,9 @@ fn truncate(
 ///
 /// # Errors
 ///
-/// Propagates [`ellipsis_kwarg`]'s errors: [`ErrorKind::InvalidOperation`]
-/// if `ellipsis` is present but not a string, or
-/// [`ErrorKind::TooManyArguments`] if `kwargs` has any key besides
-/// `ellipsis`.
+/// - [`ErrorKind::InvalidOperation`] if `ellipsis` is present but not a string.
+/// - [`ErrorKind::TooManyArguments`] if `kwargs` has any key besides
+///   `ellipsis`.
 #[expect(
     clippy::needless_pass_by_value,
     reason = "Kwargs::assert_all_used consumes self by value; &Kwargs \
@@ -194,8 +192,8 @@ fn ellipsis_kwarg(kwargs: &Kwargs) -> Result<&str, Error> {
 ///
 /// # Errors
 ///
-/// Returns [`ErrorKind::InvalidOperation`] if `pattern` is not a valid
-/// regex (see [`regex_compile_error`]).
+/// - [`ErrorKind::InvalidOperation`] if `pattern` is not a valid regex; see
+///   [`regex_compile_error`].
 fn regex_replace(
     value: &str,
     pattern: &str,
@@ -211,8 +209,8 @@ fn regex_replace(
 ///
 /// # Errors
 ///
-/// Returns [`ErrorKind::InvalidOperation`] if `pattern` is not a valid
-/// regex (see [`regex_compile_error`]).
+/// - [`ErrorKind::InvalidOperation`] if `pattern` is not a valid regex; see
+///   [`regex_compile_error`].
 fn regex_match(value: &str, pattern: &str) -> Result<bool, Error> {
     let re = Regex::new(pattern)
         .map_err(|source| regex_compile_error(pattern, source))?;

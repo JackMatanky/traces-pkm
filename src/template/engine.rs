@@ -112,9 +112,9 @@ impl TemplateEngine {
     ///
     /// # Errors
     ///
-    /// Returns [`minijinja::Error`] when:
-    /// - `source` fails to parse
-    /// - a referenced `{% include %}`/`{% extends %}` fails to load or render
+    /// - [`minijinja::Error`] if `source` fails to parse.
+    /// - [`minijinja::Error`] if a referenced `{% include %}` or `{% extends
+    ///   %}` template fails to load or render.
     #[inline]
     pub(super) fn render(&self, source: &str) -> Result<RenderOutput, Error> {
         let captured = self

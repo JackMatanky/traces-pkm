@@ -170,8 +170,8 @@ impl ParsedDate {
     ///
     /// # Errors
     ///
-    /// [`ErrorKind::InvalidOperation`] if `s` matches neither a
-    /// [`DATETIME_FORMATS`] entry nor the bare `%Y-%m-%d` fallback.
+    /// - [`ErrorKind::InvalidOperation`] if `s` matches neither a
+    ///   [`DATETIME_FORMATS`] entry nor the bare `%Y-%m-%d` fallback.
     fn parse(s: &str) -> Result<Self, Error> {
         if let Some(datetime) = try_parse_datetime(s) {
             return Ok(Self {
@@ -246,7 +246,8 @@ impl DateTimeUnit {
 ///
 /// # Errors
 ///
-/// - [`ErrorKind::InvalidOperation`] if `format` is present but isn't a string.
+/// - [`ErrorKind::InvalidOperation`] if `format` is present but is not a
+///   string.
 /// - [`ErrorKind::TooManyArguments`] if `kwargs` carries any key besides
 ///   `format`.
 fn format_kwarg(kwargs: &Kwargs) -> Result<&str, Error> {
@@ -263,7 +264,7 @@ fn format_kwarg(kwargs: &Kwargs) -> Result<&str, Error> {
 ///
 /// # Errors
 ///
-/// - [`ErrorKind::InvalidOperation`] if `unit` doesn't name one of
+/// - [`ErrorKind::InvalidOperation`] if `unit` is not one of
 ///   [`DateTimeUnit::parse`]'s six accepted units.
 /// - [`ErrorKind::TooManyArguments`] if `kwargs` carries any key besides
 ///   `unit`.
@@ -283,8 +284,8 @@ fn unit_kwarg(kwargs: &Kwargs) -> Result<DateTimeUnit, Error> {
 ///
 /// # Errors
 ///
-/// [`ErrorKind::InvalidOperation`] if `format` isn't a strftime
-/// specifier `formattable` can render (e.g. `%Q`).
+/// - [`ErrorKind::InvalidOperation`] if `format` is not a strftime specifier
+///   `formattable` can render, for example `%Q`.
 fn format_with(
     formattable: impl std::fmt::Display,
     format: &str,
@@ -308,10 +309,9 @@ fn format_with(
 ///
 /// # Errors
 ///
-/// Propagates [`format_with`]'s [`ErrorKind::InvalidOperation`]; in
-/// practice unreachable here, since `format` is always
-/// [`DEFAULT_FORMAT`] or [`DEFAULT_DATETIME_FORMAT`], both valid
-/// strftime specifiers.
+/// - [`ErrorKind::InvalidOperation`] if formatting unexpectedly fails. This is
+///   unreachable in practice because the format is always [`DEFAULT_FORMAT`] or
+///   [`DEFAULT_DATETIME_FORMAT`], both valid strftime specifiers.
 fn format_precise(dt: NaiveDateTime, has_time: bool) -> Result<String, Error> {
     let format = if has_time {
         DEFAULT_DATETIME_FORMAT
@@ -334,7 +334,8 @@ fn try_parse_datetime(s: &str) -> Option<NaiveDateTime> {
 ///
 /// # Errors
 ///
-/// Propagates [`ParsedDate::parse`]'s [`ErrorKind::InvalidOperation`].
+/// - [`ErrorKind::InvalidOperation`] if `s` is not a parseable date/time
+///   string.
 fn parse_date(s: &str) -> Result<NaiveDateTime, Error> {
     ParsedDate::parse(s).map(|parsed| parsed.datetime)
 }
@@ -347,9 +348,10 @@ fn parse_date(s: &str) -> Result<NaiveDateTime, Error> {
 ///
 /// # Errors
 ///
-/// [`ErrorKind::InvalidOperation`] if `value` isn't a parseable
-/// date/time string (see [`parse_date`]) or `format` isn't a valid
-/// strftime specifier (see [`format_with`]).
+/// - [`ErrorKind::InvalidOperation`] if `value` is not a parseable date/time
+///   string; see [`parse_date`].
+/// - [`ErrorKind::InvalidOperation`] if `format` is not a valid strftime
+///   specifier; see [`format_with`].
 fn date_format(value: &str, format: &str) -> Result<String, Error> {
     let datetime = parse_date(value)?;
     format_with(datetime.format(format), format)
@@ -360,8 +362,8 @@ fn date_format(value: &str, format: &str) -> Result<String, Error> {
 ///
 /// # Errors
 ///
-/// [`ErrorKind::InvalidOperation`] if `value` is not a parseable date/time
-/// string; see [`parse_date`].
+/// - [`ErrorKind::InvalidOperation`] if `value` is not a parseable date/time
+///   string; see [`parse_date`].
 fn timestamp(value: &str) -> Result<i64, Error> {
     Ok(parse_date(value)?.and_utc().timestamp())
 }
@@ -371,8 +373,9 @@ fn timestamp(value: &str) -> Result<i64, Error> {
 ///
 /// # Errors
 ///
-/// [`ErrorKind::InvalidOperation`] if `value` isn't parseable or `op`
-/// returns `None` (arithmetic overflow).
+/// - [`ErrorKind::InvalidOperation`] if `value` is not parseable.
+/// - [`ErrorKind::InvalidOperation`] if `op` returns `None`, indicating
+///   arithmetic overflow.
 fn shift_date(
     value: &str,
     op: impl FnOnce(NaiveDateTime) -> Option<NaiveDateTime>,
@@ -390,9 +393,9 @@ fn shift_date(
 ///
 /// # Errors
 ///
-/// [`ErrorKind::InvalidOperation`] if `value` isn't a parseable date/time
-/// string, `unit` isn't an accepted unit name, or the shift overflows chrono's
-/// representable range.
+/// - [`ErrorKind::InvalidOperation`] if `value` is not a parseable date/time
+///   string, `unit` is not an accepted unit name, or the shift overflows
+///   chrono's representable range.
 #[expect(
     clippy::needless_pass_by_value,
     reason = "minijinja's Function trait extracts a filter's trailing Kwargs \
@@ -407,7 +410,7 @@ fn date_add(value: &str, n: i64, kwargs: Kwargs) -> Result<String, Error> {
 ///
 /// # Errors
 ///
-/// See [`date_add`].
+/// - Any error returned by [`date_add`].
 #[expect(
     clippy::needless_pass_by_value,
     reason = "minijinja's Function trait extracts a filter's trailing Kwargs \
@@ -519,10 +522,10 @@ fn start_of_month(value: &str) -> Result<String, Error> {
 ///
 /// # Errors
 ///
-/// [`ErrorKind::InvalidOperation`] if `value` isn't a parseable
-/// date/time string (see [`ParsedDate::parse`]) or the resulting
-/// last-of-month day is out of chrono's representable range (see
-/// [`date_out_of_range_error`]).
+/// - [`ErrorKind::InvalidOperation`] if `value` is not a parseable date/time
+///   string; see [`ParsedDate::parse`].
+/// - [`ErrorKind::InvalidOperation`] if the last day of the month is outside
+///   chrono's representable range; see [`date_out_of_range_error`].
 fn end_of_month(value: &str) -> Result<String, Error> {
     shift_date(value, |dt| dt.with_day(u32::from(dt.num_days_in_month())))
 }
@@ -535,8 +538,8 @@ fn end_of_month(value: &str) -> Result<String, Error> {
 ///
 /// # Errors
 ///
-/// [`ErrorKind::InvalidOperation`] if `value` is not a parseable date/time
-/// string; see [`parse_date`].
+/// - [`ErrorKind::InvalidOperation`] if `value` is not a parseable date/time
+///   string; see [`parse_date`].
 fn weekday(value: &str) -> Result<u32, Error> {
     Ok(parse_date(value)?.weekday().num_days_from_monday())
 }
@@ -610,8 +613,8 @@ fn signed_months_since(from: NaiveDate, to: NaiveDate) -> i64 {
 ///
 /// # Errors
 ///
-/// - [`ErrorKind::InvalidOperation`] if `value` or `other` isn't a parseable
-///   date/time string (see [`ParsedDate::parse`]) or `unit` isn't one of
+/// - [`ErrorKind::InvalidOperation`] if `value` or `other` is not a parseable
+///   date/time string (see [`ParsedDate::parse`]) or `unit` is not one of
 ///   [`DateTimeUnit::parse`]'s six accepted names (see [`unit_kwarg`]).
 /// - [`ErrorKind::TooManyArguments`] if `kwargs` carries any key besides
 ///   `unit`.
@@ -685,8 +688,8 @@ fn date_diff(value: &str, other: &str, kwargs: Kwargs) -> Result<Value, Error> {
 ///
 /// # Errors
 ///
-/// [`ErrorKind::InvalidOperation`] if `value` is not a parseable date/time
-/// string; see [`parse_date`].
+/// - [`ErrorKind::InvalidOperation`] if `value` is not a parseable date/time
+///   string; see [`parse_date`].
 fn is_past(value: &str) -> Result<bool, Error> {
     Ok(parse_date(value)?.and_utc() < Utc::now())
 }
@@ -695,8 +698,8 @@ fn is_past(value: &str) -> Result<bool, Error> {
 ///
 /// # Errors
 ///
-/// [`ErrorKind::InvalidOperation`] if `value` is not a parseable date/time
-/// string; see [`parse_date`].
+/// - [`ErrorKind::InvalidOperation`] if `value` is not a parseable date/time
+///   string; see [`parse_date`].
 fn is_future(value: &str) -> Result<bool, Error> {
     Ok(parse_date(value)?.and_utc() > Utc::now())
 }
@@ -707,10 +710,11 @@ fn is_future(value: &str) -> Result<bool, Error> {
 ///
 /// # Errors
 ///
-/// [`ErrorKind::InvalidOperation`] (via [`leap_year_input_error`]) if
-/// `value` is neither an integer year representable as [`i32`] nor a
-/// parseable date/time string (see [`parse_date`]), or the year is out
-/// of [`NaiveDate`]'s representable range.
+/// - [`ErrorKind::InvalidOperation`] (via [`leap_year_input_error`]) if `value`
+///   is neither an integer year representable as [`i32`] nor a parseable
+///   date/time string; see [`parse_date`].
+/// - [`ErrorKind::InvalidOperation`] if the year is outside [`NaiveDate`]'s
+///   representable range.
 fn is_leap_year(value: &Value) -> Result<bool, Error> {
     let year = if let Some(year) = value.as_i64() {
         i32::try_from(year)

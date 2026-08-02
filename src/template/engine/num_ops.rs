@@ -44,7 +44,7 @@ impl NumOps {
 ///
 /// # Errors
 ///
-/// Returns [`ErrorKind::InvalidOperation`] if `value` is negative.
+/// - [`ErrorKind::InvalidOperation`] if `value` is negative.
 fn sqrt(value: f64) -> Result<f64, Error> {
     if value < 0.0 {
         return Err(Error::new(

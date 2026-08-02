@@ -161,8 +161,11 @@ impl SelectOptions {
     ///
     /// # Errors
     ///
-    /// Propagates any [`minijinja::Error`] `items.try_iter()`, [`get_path`], or
-    /// an unknown/mistyped kwarg raises.
+    /// - [`minijinja::Error`] if `items.try_iter()` cannot iterate `items`.
+    /// - [`minijinja::Error`] if [`get_path`] fails while reading an
+    ///   `attribute=` path.
+    /// - [`minijinja::Error`] if `kwargs` contains an unknown key or a kwarg
+    ///   has the wrong type.
     fn extract(items: &Value, kwargs: &Kwargs) -> Result<Self, Error> {
         let attribute = kwargs.get::<Option<&str>>("attribute")?;
         let default = kwargs.get::<Option<Value>>("default")?;
@@ -223,10 +226,10 @@ fn dialog_error(source: DialogError) -> Error {
 ///
 /// # Errors
 ///
-/// In practice this never errors because the short-circuit above means
-/// [`Value::get_attr`] and [`Value::get_item_by_index`] are never called on an
-/// undefined value, the only case either returns `Err`. Kept as a `Result`
-/// because both are themselves fallible APIs.
+/// - [`minijinja::Error`] if [`Value::get_attr`] or
+///   [`Value::get_item_by_index`] fails for a defined intermediate value.
+///
+/// Missing attributes are not errors; they resolve to [`Value::UNDEFINED`].
 fn get_path(item: &Value, path: &str) -> Result<Value, Error> {
     let mut current = item.clone();
     for part in path.split('.') {
@@ -250,8 +253,7 @@ fn get_path(item: &Value, path: &str) -> Result<Value, Error> {
 ///
 /// # Errors
 ///
-/// Returns [`ErrorKind::InvalidOperation`] if `index` is out of bounds for
-/// `values`.
+/// - [`ErrorKind::InvalidOperation`] if `index` is out of bounds for `values`.
 fn recover_indexed_value(
     values: &[Value],
     index: usize,

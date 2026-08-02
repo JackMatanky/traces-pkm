@@ -84,11 +84,10 @@ impl<'a> TemplateService<'a> {
     ///
     /// # Errors
     ///
-    /// Returns [`TemplateError::Resolve`] when `name` doesn't resolve
-    /// to a file. Returns [`TemplateError::Read`] when the resolved
-    /// template can't be read. Returns [`TemplateError::Render`] when
-    /// the template's source is invalid, or a `ui.*`/`file.*` call
-    /// inside it fails.
+    /// - [`TemplateError::Resolve`] if `name` does not resolve to a file.
+    /// - [`TemplateError::Read`] if the resolved template cannot be read.
+    /// - [`TemplateError::Render`] if the template source is invalid or a
+    ///   `ui.*`/`file.*` call inside it fails.
     #[inline]
     pub(crate) fn render(
         &self,
@@ -157,7 +156,8 @@ impl<'a> TemplateService<'a> {
     ///
     /// # Errors
     ///
-    /// See [`Self::render`] and [`Self::write`].
+    /// - Any error returned by [`Self::render`].
+    /// - Any error returned by [`Self::write`].
     #[inline]
     pub(crate) fn render_to_file(
         &self,

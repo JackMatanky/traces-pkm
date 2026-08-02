@@ -123,9 +123,10 @@ impl QueryOps {
     ///
     /// # Errors
     ///
-    /// [`ErrorKind::InvalidOperation`] (via [`index_error`]) if refreshing the
-    /// index fails: an I/O error scanning `root`, a redb error accessing the
-    /// index database, or a TOML (de)serialization error on a stored record.
+    /// - [`ErrorKind::InvalidOperation`] (via [`index_error`]) if refreshing
+    ///   the index fails: an I/O error scanning `root`, a redb error accessing
+    ///   the index database, or a TOML (de)serialization error on a stored
+    ///   record.
     fn run(&self, source: &Source) -> Result<Value, Error> {
         let index = FileIndex::refresh(&self.root).map_err(index_error)?;
         Ok(Value::from_object((self.query)(index, source)))
