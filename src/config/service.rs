@@ -1,7 +1,8 @@
-//! Service-owned config loading: full discovery selects files, then this
-//! module tracks, trust-checks, parses, and merges them into a [`Config`].
-//! Tracking and trust administration live in
-//! [`super::store::ConfigStateStore`].
+//! Loads config files into a merged [`Config`].
+//!
+//! [`ConfigService`] owns full discovery, best-effort tracking, trust checks,
+//! TOML parsing, and local-over-global merging. Trust administration delegates
+//! to [`super::store::ConfigStateStore`].
 
 use std::path::{Path, PathBuf};
 
@@ -86,9 +87,9 @@ pub(crate) enum ConfigBuilderInputError {
     },
 }
 
-/// Selected files after applying full-load precedence:
-/// one local config selected by the deepest discovered root that contains the
-/// discovery anchor, plus an optional global config merged before local.
+/// Selected files after applying full-load precedence: one local config
+/// selected by the deepest discovered root that contains the discovery anchor,
+/// plus an optional global config merged before local.
 #[derive(Debug)]
 struct ConfigBuilderInput {
     /// Selected local config; this is merged after `global`.
@@ -136,8 +137,8 @@ impl TryFrom<DiscoveryOutcome> for ConfigBuilderInput {
 /// Entry point for discovering and building configuration.
 ///
 /// Keeps filesystem discovery ([`Self::load`]) separate from the
-/// tracking/trust/parse/merge internals. Holds the state store shared by
-/// the build pipeline and trust-admin methods.
+/// tracking/trust/parse/merge internals. Holds the state store shared by the
+/// build pipeline and trust-admin methods.
 #[derive(Clone, Debug)]
 pub(crate) struct ConfigService {
     state: ConfigStateStore,
@@ -155,8 +156,10 @@ impl ConfigService {
     }
 
     /// Creates a service backed by explicit tracked-config and trust-store
-    /// roots. Test-only — lets `crate::cli::trust`'s tests build an
-    /// isolated service without touching real OS state directories.
+    /// roots.
+    ///
+    /// Test-only constructor for `crate::cli::trust` tests that need isolated
+    /// stores instead of real OS state directories.
     #[cfg(test)]
     #[must_use]
     pub(crate) fn at(tracked_root: PathBuf, trusted_root: PathBuf) -> Self {
@@ -181,8 +184,7 @@ impl ConfigService {
 
     /// Discovers config files from `cwd`.
     ///
-    /// The local project config is required; the global config is
-    /// optional.
+    /// The local project config is required; the global config is optional.
     ///
     /// # Errors
     ///
@@ -198,26 +200,27 @@ impl ConfigService {
         DiscoveryEngine.process(ctx)
     }
 
-    /// Builds a [`Config`] from discovered candidates: selects the local and
-    /// optional global config per [`ConfigBuilderInput`]'s precedence rule,
-    /// tracks and trust-checks the local config, then parses and merges it
-    /// against the optional global config into the resolved output
-    /// directory.
+    /// Builds a [`Config`] from discovered candidates.
     ///
-    /// Recording the candidate in the tracking store is best-effort — a
-    /// write failure does not fail the build. The local candidate's root is
-    /// then checked against the trust store before parsing; a global
-    /// candidate is never checked.
+    /// Selects the local and optional global config per
+    /// [`ConfigBuilderInput`]'s precedence rule, tracks and trust-checks the
+    /// local config, then parses and merges it against the optional global
+    /// config into the resolved output directory.
     ///
-    /// A single linear pipeline — this is the only call site, so a staged
-    /// typestate builder would buy no real ordering safety.
+    /// Recording the candidate in the tracking store is best-effort; a write
+    /// failure does not fail the build. The local candidate's root is checked
+    /// against the trust store before parsing; a global candidate is never
+    /// checked.
+    ///
+    /// The pipeline is intentionally linear. This is the only call site, so a
+    /// staged typestate builder would not add useful ordering safety.
     ///
     /// # Errors
     ///
-    /// - [`ConfigBuilderError::Input`] when discovery output isn't valid
+    /// - [`ConfigBuilderError::Input`] when discovery output is not valid
     ///   builder input
-    /// - [`ConfigBuilderError::Untrusted`] when the local config's workspace
-    ///   isn't trusted, is missing its baseline hash, or is stale
+    /// - [`ConfigBuilderError::Untrusted`] when the local config's workspace is
+    ///   not trusted, is missing its baseline hash, or is stale
     /// - [`ConfigBuilderError::ConfigFile`] when a selected config file fails
     ///   path validation, tracking/trust transition, or parsing
     /// - [`ConfigBuilderError::Merge`] when the merged local/global config
@@ -276,7 +279,8 @@ impl ConfigService {
     /// - [`DiscoveryError::PathInaccessible`] when discovery cannot inspect the
     ///   path
     /// - [`DiscoveryError::Context`] when `scope` is
-    ///   [`Full`](DiscoveryScope::Full), which trust resolution doesn't support
+    ///   [`Full`](DiscoveryScope::Full), which trust resolution does not
+    ///   support
     /// - [`DiscoveryError::ConfigFile`] when a config-file anchor is invalid
     /// - [`DiscoveryError::LocalConfigAbsent`] when
     ///   [`LocalSubtree`](DiscoveryScope::LocalSubtree) discovery has no local
@@ -384,9 +388,9 @@ impl ConfigService {
         self.state.list_trusted_workspaces()
     }
 
-    /// Removes dangling trust entries (target root deleted or moved),
-    /// including each removed entry's content-hash companion. Returns the
-    /// number of root entries removed.
+    /// Removes dangling trust entries (target root deleted or moved), including
+    /// each removed entry's content-hash companion. Returns the number of root
+    /// entries removed.
     ///
     /// # Errors
     ///
@@ -1010,11 +1014,11 @@ mod tests {
         }
     }
 
-    /// Tests for [`ConfigBuilderInput`]'s discovery-output selection and
-    /// [`ConfigService::build`]'s tracking/trust/parse/merge pipeline.
-    /// Migrated from the standalone `builder` module; kept as its own
-    /// `Fixture` since it needs `local`/`global` candidate helpers the
-    /// outer test [`Fixture`](super::Fixture) doesn't.
+    /// Tests discovery-output selection and the build pipeline.
+    ///
+    /// Migrated from the standalone `builder` module and kept as a separate
+    /// fixture because it needs local/global candidate helpers the outer test
+    /// [`Fixture`](super::Fixture) does not.
     mod builder {
         use super::*;
 

@@ -1,4 +1,8 @@
-//! Config types deserialized directly from TOML, before path resolution.
+//! TOML-facing config shapes before path resolution.
+//!
+//! These types match the on-disk schema exactly and deny unknown fields, so the
+//! builder can deserialize local and global layers before it resolves paths
+//! against each config root.
 
 use std::path::PathBuf;
 
@@ -19,8 +23,8 @@ pub(crate) struct RawConfig {
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct RawTemplateConfig {
-    /// Template directory as configured; joined against the config file's
-    /// root to resolve an absolute path.
+    /// Template directory as configured; joined against the config file's root
+    /// to resolve an absolute path.
     pub(crate) directory: Option<PathBuf>,
     /// Output directory for rendered templates, used verbatim (relative or
     /// absolute) when set. Falls back to the config root when absent.

@@ -1,4 +1,8 @@
-//! Trust domain logic and requests.
+//! Trust request and status types for config administration.
+//!
+//! [`TrustRequest`] names either a workspace root or a specific local config
+//! file. [`WorkspaceTrustStatus`] tracks root trust; [`ConfigTrustStatus`]
+//! adds config-file baseline states used to detect stale trust.
 
 use std::{
     fmt::{self, Display, Formatter},
@@ -128,11 +132,6 @@ pub(crate) enum ConfigTrustStatus {
 }
 
 impl Display for ConfigTrustStatus {
-    /// Formats for `trust --show`'s one-word status column.
-    ///
-    /// [`Self::MissingBaseline`] and [`Self::Stale`] both mean "needs
-    /// re-trusting" from the user's perspective, so they share a display
-    /// string; callers needing the distinction match the enum directly.
     #[inline]
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
@@ -144,9 +143,6 @@ impl Display for ConfigTrustStatus {
 }
 
 impl From<WorkspaceTrustStatus> for ConfigTrustStatus {
-    /// A root-only trust check never has baseline-hash state to report, so
-    /// [`Self::MissingBaseline`]/[`Self::Stale`] can't arise here — only
-    /// [`Self::Trusted`]/[`Self::Untrusted`] are reachable.
     #[inline]
     fn from(status: WorkspaceTrustStatus) -> Self {
         match status {

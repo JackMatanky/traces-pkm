@@ -1,4 +1,8 @@
-//! Unified config tracking and trust state.
+//! Persistent state for config tracking and trust.
+//!
+//! [`ConfigStateStore`] wraps two [`FileStateStore`]s: one for config files
+//! discovered during loads, and one for trusted workspace roots plus config
+//! content baselines.
 
 use std::{
     fs,
@@ -27,22 +31,23 @@ pub(crate) enum ConfigStateError {
     Hash(#[from] HashError),
 }
 
-/// Outcome of checking a config file's trust status, carrying its
-/// already-read content only when [`Self::Trusted`] — content and "is
-/// trusted" can't disagree by construction, unlike pairing a status with a
-/// separate `Option<String>`.
+/// Result of checking whether a config file may be parsed.
+///
+/// Only [`Self::Trusted`] carries already-read content. The enum keeps the
+/// content and trust decision together so callers cannot accidentally pair a
+/// trusted status with missing content.
 #[derive(Debug, Eq, PartialEq)]
 pub(crate) enum ConfigTrustCheck {
     /// The workspace root is not trusted.
     Untrusted,
-    /// The workspace root is trusted and a baseline hash exists, but the
-    /// config file's current content no longer matches it.
+    /// The workspace root is trusted and a baseline hash exists, but the config
+    /// file's current content no longer matches it.
     Stale,
     /// The workspace root is trusted, but no content-hash baseline was ever
     /// recorded for this config file.
     MissingBaseline,
-    /// The workspace root is trusted and the config file's content matches
-    /// its baseline hash. Carries the content read while verifying it.
+    /// The workspace root is trusted and the config file's content matches its
+    /// baseline hash. Carries the content read while verifying it.
     Trusted(String),
 }
 
@@ -65,9 +70,9 @@ const COMPANION_SUFFIX: &str = ".hash";
 /// Backing store for config tracking and trust records.
 ///
 /// Wraps two independent hash-keyed [`FileStateStore`]s: `tracked` records
-/// config files discovery has seen (best-effort bookkeeping); `trusted`
-/// records workspace roots the user has explicitly trusted, plus each
-/// trusted config file's content-hash baseline used to detect drift.
+/// config files discovery has seen (best-effort bookkeeping); `trusted` records
+/// workspace roots the user has explicitly trusted, plus each trusted config
+/// file's content-hash baseline used to detect drift.
 #[derive(Clone, Debug)]
 pub(crate) struct ConfigStateStore {
     tracked: FileStateStore,
@@ -177,18 +182,15 @@ impl ConfigStateStore {
             .map(|check| check.status())
     }
 
-    /// Checks a config file's trust status, threading its content through
-    /// when trusted.
+    /// Checks config-file trust and returns content only when trusted.
     ///
-    /// Requires both `root` and `config_path` directly (rather than a
-    /// [`TrustRequest`], which may be root-only) so a trusted result always
-    /// carries content — [`ConfigTrustCheck::Trusted`] has no
-    /// "trusted but no content" state to defend against.
+    /// Requires both `root` and `config_path` directly. A root-only
+    /// [`TrustRequest`] has no config path, while a trusted config-file result
+    /// must always carry content.
     ///
-    /// Hashes content read directly into memory rather than hashing from
-    /// `config_path` and letting the caller re-read that same path
-    /// separately to parse it — a second, independent read would open a
-    /// TOCTOU window between the trust check and the file's actual use.
+    /// Reads content once into memory and hashes that buffer before returning
+    /// it for parsing. A second independent read would open a TOCTOU window
+    /// between the trust check and the file's actual use.
     ///
     /// # Errors
     ///

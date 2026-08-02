@@ -1,8 +1,9 @@
-//! Typestate-driven config file discovery.
+//! Discovers config files before loading or parsing.
 //!
-//! Walks up the directory tree from a cwd path, collecting candidate
-//! config files before any reading or parsing occurs. Produces a
-//! [`DiscoveryOutcome`] token consumed by the config builder pipeline.
+//! Walks from a filesystem anchor toward parent directories, gathering local
+//! and global candidates as typed config-file values. [`DiscoveryOutcome`]
+//! carries those candidates into the config builder pipeline without exposing
+//! mutable discovery state.
 
 use std::{
     fs, io,
@@ -53,7 +54,7 @@ pub(crate) enum DiscoveryError {
 /// Errors constructing a discovery context.
 #[derive(Debug, Error)]
 pub(crate) enum DiscoveryContextError {
-    /// This discovery kind does not support file-rooted discovery.
+    /// Rejects file-rooted discovery for directory-only scopes.
     #[error("{kind:?} discovery cannot be anchored at file {path}")]
     UnsupportedFileAnchor {
         /// Discovery kind.
@@ -77,14 +78,14 @@ pub(crate) struct DiscoveryContext {
 }
 
 impl DiscoveryContext {
-    /// Creates a discovery context after validating kind/anchor combinations.
+    /// Creates a discovery context after validating kind and anchor.
     ///
     /// # Errors
     ///
     /// - [`DiscoveryContextError::UnsupportedFileAnchor`] when `kind` is
-    ///   [`Full`](DiscoveryScope::Full) and `anchor` is a file — full loading
-    ///   is always directory-rooted; focused local discovery may root at either
-    ///   a directory or a concrete local config file
+    ///   [`Full`](DiscoveryScope::Full) and `anchor` is a file; full loading is
+    ///   always directory-rooted, while focused local discovery may root at
+    ///   either a directory or a concrete local config file
     #[inline]
     pub(crate) fn new(
         kind: DiscoveryScope,
@@ -152,8 +153,8 @@ type OutcomeParts = (
 /// Opaque discovery result consumed by the config builder pipeline.
 ///
 /// Carries the discovery kind, the original filesystem anchor, and config
-/// files found on disk. Fields are private — callers pass this token through
-/// unchanged or parse it into a validated downstream input.
+/// files found on disk. Fields stay private, so callers pass this token through
+/// unchanged or parse it into validated downstream input.
 #[derive(Clone, Debug)]
 pub(crate) struct DiscoveryOutcome {
     kind: DiscoveryScope,
@@ -270,7 +271,8 @@ impl DiscoveryEngine {
     /// - [`DiscoveryError::PathInaccessible`] when discovery cannot inspect a
     ///   filesystem path
     /// - [`DiscoveryError::Context`] when `scope` is
-    ///   [`Full`](DiscoveryScope::Full), which trust resolution doesn't support
+    ///   [`Full`](DiscoveryScope::Full), which trust resolution does not
+    ///   support
     /// - [`DiscoveryError::ConfigFile`] when a config-file anchor is invalid
     /// - [`DiscoveryError::LocalConfigAbsent`] when
     ///   [`LocalSubtree`](DiscoveryScope::LocalSubtree) discovery has no local
@@ -292,7 +294,7 @@ impl DiscoveryEngine {
             // that will be created); fall back to the given path. Any other
             // error (permission denied, symlink loop) is unexpected for a
             // trust operation, where the canonical path is the workspace
-            // identity — propagate it instead of silently trusting a
+            // identity. Propagate it instead of silently trusting a
             // possibly-different, non-canonical path.
             Err(source) if source.kind() == io::ErrorKind::NotFound => {
                 path.to_path_buf()

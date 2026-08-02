@@ -1,4 +1,8 @@
-//! Config file lifecycle states and source metadata.
+//! Config file source and lifecycle state.
+//!
+//! Encodes local/global source and discovered/tracked/trusted/parsed lifecycle
+//! states in [`ConfigFile`]'s type parameters. Local files pass through trust
+//! verification before parsing; global files parse directly from disk.
 
 use std::path::{Path, PathBuf};
 
@@ -68,10 +72,10 @@ pub(crate) struct Tracked;
 
 /// A local config file whose root passed the trust gate.
 ///
-/// Carries the content read while verifying the trust hash. [`Parsed`]'s
-/// local conversion reuses this content instead of reading the file from
-/// disk again, closing the TOCTOU window a second, independent read would
-/// open between the trust check and parsing.
+/// Carries the content read while verifying the trust hash. [`Parsed`]'s local
+/// conversion reuses this content instead of reading the file from disk again,
+/// closing the TOCTOU window a second, independent read would open between the
+/// trust check and parsing.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct Trusted {
     content: String,
@@ -86,8 +90,8 @@ pub(super) struct Parsed {
 impl Parsed {
     /// Parses `path`'s content directly from disk.
     ///
-    /// Used for global config, which has no trust gate and thus no risk of
-    /// a second, independent read racing the first.
+    /// Used for global config, which has no trust gate and thus no risk of a
+    /// second, independent read racing the first.
     ///
     /// # Errors
     ///
@@ -105,12 +109,11 @@ impl Parsed {
         })
     }
 
-    /// Parses already-read `content` for `path` (used only for error
-    /// context).
+    /// Parses already-read `content` for `path`.
     ///
-    /// Used for local config, whose content was already read once while
-    /// verifying trust — reusing it here avoids a second, independent read
-    /// of the same path that a fresh [`Self::read`] call would require.
+    /// `path` is used only for error context. Local config content was read
+    /// while verifying trust, so this avoids a second independent read through
+    /// [`Self::read`].
     ///
     /// # Errors
     ///
@@ -249,8 +252,8 @@ impl LocalConfigFile<Tracked> {
     /// Verifies the trust status of this tracked config file.
     ///
     /// Returns [`TrustOutcome::Trusted`] if the file is fully trusted.
-    /// Returns [`TrustOutcome::Halted`] if trust is absent or stale,
-    /// allowing the caller to prompt the user.
+    /// Returns [`TrustOutcome::Halted`] if trust is absent or stale, allowing
+    /// the caller to prompt the user.
     ///
     /// # Errors
     ///
@@ -308,9 +311,9 @@ impl<Source> ConfigFile<Source, Parsed> {
 
     /// The template directory resolved against this config file's root.
     ///
-    /// For a local config the root is the project root; for a global config
-    /// the root is the global config directory (`~/.config/traces`). Absent
-    /// means no template directory was configured in this layer.
+    /// For a local config the root is the project root; for a global config the
+    /// root is the global config directory (`~/.config/traces`). Absent means
+    /// no template directory was configured in this layer.
     #[inline]
     #[must_use]
     pub(super) fn resolved_template_dir(&self) -> Option<PathBuf> {

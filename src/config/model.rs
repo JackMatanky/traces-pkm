@@ -1,4 +1,8 @@
-//! Domain types: resolved `Config` and `TemplateConfig`.
+//! Resolved configuration consumed by CLI and template code.
+//!
+//! [`Config`] exposes the project root and template settings after discovery,
+//! trust checks, and config merging. [`TemplateConfig`] keeps local and global
+//! template directories separate so `crate::template` can resolve local first.
 
 use std::path::{Path, PathBuf};
 
@@ -46,23 +50,19 @@ impl Config {
     /// The configured output directory, or [`root`](Self::root) when not
     /// configured.
     ///
-    /// May be relative (preserved unresolved from the config file) or
-    /// absolute (the [`root`](Self::root) fallback); callers needing an
-    /// absolute path resolve a relative result against
-    /// [`root`](Self::root) themselves.
+    /// May be relative (preserved unresolved from the config file) or absolute
+    /// (the [`root`](Self::root) fallback); callers needing an absolute path
+    /// resolve a relative result against [`root`](Self::root) themselves.
     #[inline]
     #[must_use]
     pub(crate) fn output_dir(&self) -> &Path {
         self.templates.output()
     }
 
-    /// Test-only constructor that builds a [`Self`] directly, bypassing
-    /// discovery, trust-gating, and the builder pipeline.
+    /// Builds config directly for tests that do not exercise discovery.
     ///
-    /// TODO(remove): once `template::`'s tests build real TOML fixtures and
-    /// go through [`super::service::ConfigService::at`] directly (see
-    /// `cli::template::tests::create_config`), delete this and its
-    /// `#[cfg(test)]` gate.
+    /// Prefer [`super::service::ConfigService::at`] and TOML fixtures for
+    /// integration-style tests that need the real loading pipeline.
     #[cfg(test)]
     #[must_use]
     pub(crate) fn for_test(
@@ -80,8 +80,8 @@ impl Config {
 
 /// Template directories and output path from merged config.
 ///
-/// Keeps local and global directories separately; resolution (try local
-/// first, fall back to global) lives in `crate::template`.
+/// Keeps local and global directories separately; resolution (try local first,
+/// fall back to global) lives in `crate::template`.
 #[derive(Clone, Debug)]
 pub(super) struct TemplateConfig {
     /// Local project template directory (from `.traces/config.toml`).

@@ -1,13 +1,11 @@
 //! Configuration discovery, tracking, loading, and trust.
 //!
-//! Discovers config files by walking up the directory tree from a working
-//! directory, tracks candidates as best-effort bookkeeping, then merges the
-//! user's global config before local `.traces/config.toml` so local values
-//! win. Entry point: [`ConfigService`]; also exposes read-only config
-//! domain types. Template resolution against these directories is
-//! `crate::template`'s concern.
+//! [`ConfigService`] discovers config files from a working directory, tracks
+//! candidates as best-effort bookkeeping, checks local trust state, and merges
+//! global config before local `.traces/config.toml` so local values win.
 //!
-//! `pub(crate)`: only `cli` and `template` consume it.
+//! Read-only domain types expose the resolved project root, template
+//! directories, and output directory to `cli` and `template`.
 
 #![cfg_attr(
     not(test),
