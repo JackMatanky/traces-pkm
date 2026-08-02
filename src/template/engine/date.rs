@@ -102,7 +102,7 @@ impl Object for DateOps {
                     // as `Err`; `.to_string()` would instead panic on the same
                     // input, since its blanket impl `.expect()`s a successful
                     // `Display::fmt`, and Chrono's `DelayedFormat` returns
-                    // `Err` — not a panic of its own — for an invalid specifier
+                    // `Err`, not a panic of its own, for an invalid specifier
                     // such as `%Q`.
                     format_with(Local::now().format(format), format)
                 },
@@ -206,11 +206,9 @@ impl ParsedDate {
     }
 }
 
-/// The date/time unit parsed from a `unit="..."` kwarg across the `date`
-/// namespace filters ([`date_add`], [`date_sub`], [`date_diff`]).
+/// Date/time unit parsed from a `unit="..."` kwarg.
 ///
-/// This is the same "small enum over a piped string" pattern
-/// [`path::PathQuery`](super::path) uses for its I/O tests.
+/// Used by [`date_add`], [`date_sub`], and [`date_diff`].
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum DateTimeUnit {
     Years,
@@ -420,11 +418,13 @@ fn date_add(value: &str, n: i64, kwargs: Kwargs) -> Result<String, Error> {
 }
 
 /// `{{ value | date_sub(n, unit="days") }}` subtracts `n` `unit`s from a piped
-/// date/time string. See [`date_add`].
+/// date/time string.
 ///
 /// # Errors
 ///
-/// - Any error returned by [`date_add`].
+/// - [`ErrorKind::InvalidOperation`] if `value` is not a parseable date/time
+///   string, `unit` is not an accepted unit name, `n` is [`i64::MIN`], or the
+///   shift overflows chrono's representable range.
 #[expect(
     clippy::needless_pass_by_value,
     reason = "minijinja's Function trait extracts a filter's trailing Kwargs \
@@ -566,7 +566,7 @@ fn start_of_month(value: &str) -> Result<String, Error> {
     shift_date(value, |dt| dt.with_day(1))
 }
 
-/// `{{ value | end_of_month }}`
+/// `{{ value | end_of_month }}` returns the last day of the input month.
 ///
 /// # Errors
 ///
@@ -693,7 +693,7 @@ fn date_diff(value: &str, other: &str, kwargs: Kwargs) -> Result<Value, Error> {
                 clippy::expect_used,
                 reason = "this arm is reached only for Days/Hours/Minutes/ \
                           Seconds, all of which DateTimeUnit::diff_seconds \
-                          maps to Some — None is only ever Years/Months, \
+                          maps to Some; None is only ever Years/Months, \
                           handled by the arms above"
             )]
             let unit_seconds = unit.diff_seconds().expect(
@@ -710,7 +710,7 @@ fn date_diff(value: &str, other: &str, kwargs: Kwargs) -> Result<Value, Error> {
                     reason = "TimeDelta::num_seconds() is bounded by chrono's \
                               NaiveDateTime range (~262,000 years, well under \
                               2^52 seconds), and unit_seconds is at most \
-                              86,400 — neither cast loses precision in \
+                              86,400, so neither cast loses precision in \
                               practice"
                 )]
                 let result = (delta.num_seconds() as f64
@@ -867,9 +867,10 @@ mod tests {
 
         use super::*;
 
-        /// Asserts the shape (fixed length, all-ASCII-digit-or-hyphen), not a
-        /// literal value. See the issue's determinism guidance for
-        /// `date.now()`.
+        /// Asserts the rendered shape, not the current date.
+        ///
+        /// The clock makes the literal value nondeterministic, but the default
+        /// format still has a stable `YYYY-MM-DD` shape.
         #[test]
         fn now_formats_with_the_default_format_when_no_kwarg_is_given() {
             let rendered = env()
@@ -944,12 +945,12 @@ mod tests {
         }
     }
 
-    /// `today`/`tomorrow`/`yesterday` can't assert a literal value
-    /// without mocking the clock (same determinism constraint as `now`),
-    /// but their relationship to each other IS deterministic: whatever
-    /// `today()` renders, `tomorrow()`/`yesterday()` must be exactly one
-    /// calendar day ahead/behind it, modulo the vanishingly rare case of
-    /// a midnight rollover between the two calls.
+    /// `today`/`tomorrow`/`yesterday` share the same nondeterministic clock,
+    /// but their relative dates are deterministic within one render window.
+    ///
+    /// Whatever `today()` returns, `tomorrow()` and `yesterday()` should be one
+    /// calendar day ahead and behind it, except for a midnight rollover between
+    /// calls.
     mod today_tomorrow_yesterday {
         use pretty_assertions::assert_eq;
         use rstest::rstest;

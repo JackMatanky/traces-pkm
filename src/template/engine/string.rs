@@ -1,42 +1,34 @@
 //! Registers string filters for templates.
 //!
-//! [`StrOps`] adds the five case-conversion filters (`snake_case`,
-//! `kebab_case`, `camel_case`, `pascal_case`, `title_case`) plus manipulation,
-//! truncation, inspection, and regex filters (`trim_prefix`, `trim_suffix`,
-//! `truncate`, `truncate_words`, `word_count`, `repeat`, `regex_replace`,
-//! `regex_match`). A template applies each as `{{ value | snake_case }}`.
+//! [`StrOps`] adds thirteen stateless filters:
 //!
-//! Each filter is a plain function registered once through
+//! - Case conversion: `snake_case`, `kebab_case`, `camel_case`, `pascal_case`,
+//!   and `title_case`.
+//! - Manipulation: `trim_prefix`, `trim_suffix`, `truncate`, `truncate_words`,
+//!   `word_count`, and `repeat`.
+//! - Regex helpers: `regex_replace` and `regex_match`.
+//!
+//! Each filter is a plain function registered through
 //! [`Environment::add_filter`]. None carry shared state, so there is no
 //! [`Object`](minijinja::value::Object) dispatch.
 //!
-//! The case-conversion filters are thin wrappers around [`convert_case`]'s
-//! [`Casing`](convert_case::Casing) trait.
-//! [`Casing::to_case`](convert_case::Casing::to_case) does the actual
-//! conversion; this module only maps each filter name to a [`Case`]. The
-//! remaining stdlib-backed filters wrap `str::strip_prefix`/`strip_suffix`/
-//! `repeat`/`split_whitespace` directly.
-//!
-//! `regex_replace` and `regex_match` compile their pattern fresh on every call
-//! via [`Regex::new`] rather than caching it.
+//! Case conversion delegates to [`convert_case`]'s
+//! [`Casing::to_case`](convert_case::Casing::to_case). The stdlib-backed
+//! filters wrap `str::strip_prefix`, `str::strip_suffix`, `str::repeat`, and
+//! [`str::split_whitespace`] directly. `regex_replace` and `regex_match`
+//! compile their pattern fresh on every call via [`Regex::new`].
 
 use convert_case::{Case, Casing as _};
 use minijinja::{Environment, Error, ErrorKind, value::Kwargs};
 use regex::Regex;
 
-/// Unit struct backing [`Self::register`].
-///
-/// Carries no state because these filters take no shared dependency.
+/// Registration namespace for the stateless string filters.
 pub(super) struct StrOps;
 
 impl StrOps {
-    /// Registers all thirteen filters.
+    /// Registers the string filters with `env`.
     ///
-    /// Adds the five case-conversion filters, then the eight
-    /// manipulation/truncation/inspection/regex filters described in the module
-    /// docs. This is an associated function, not a method, because the struct
-    /// carries no state and `clippy::unused_self` denies an unused `&self`
-    /// receiver.
+    /// This is an associated function because [`StrOps`] carries no state.
     #[inline]
     pub(super) fn register(env: &mut Environment<'static>) {
         env.add_filter("snake_case", |value: &str| value.to_case(Case::Snake));
@@ -97,8 +89,8 @@ fn truncate(
         return Ok(value.to_owned());
     }
 
-    // The ellipsis alone doesn't fit within `length` — there's no room
-    // for any of `value`, so return the ellipsis itself truncated to
+    // The ellipsis alone doesn't fit within `length`, leaving no room
+    // for `value`; return the ellipsis itself truncated to
     // `length` rather than underflowing `length - ellipsis_len`.
     let ellipsis_len = ellipsis.chars().count();
     if ellipsis_len >= length {
@@ -146,7 +138,7 @@ fn truncate_words(
 
     // `words` already yielded its first `count` items above; if it's
     // now exhausted, every word fit within `count` and no truncation
-    // happened — return `value` unchanged, preserving its original
+    // happened, so return `value` unchanged, preserving its original
     // whitespace rather than the single-space-joined `kept` buffer.
     if words.next().is_none() {
         return Ok(value.to_owned());
@@ -243,9 +235,8 @@ mod tests {
 
     /// Renders `template` against a single `value` binding.
     ///
-    /// This is the shared shape every new-filter test below uses, since each
-    /// filter takes one string input plus literal arguments baked into
-    /// `template` itself.
+    /// Used by filters whose only dynamic input is the piped string; literal
+    /// filter arguments stay embedded in `template`.
     fn render(
         env: &Environment<'static>,
         template: &str,
@@ -255,8 +246,8 @@ mod tests {
             .expect("template renders")
     }
 
-    /// Renders `template` against a single `value` binding, expecting
-    /// render to fail, and returns the resulting [`Error`].
+    /// Renders `template` against `value` and returns the expected render
+    /// error.
     fn render_err(
         env: &Environment<'static>,
         template: &str,

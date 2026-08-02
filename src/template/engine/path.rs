@@ -1,19 +1,26 @@
-//! Registers path-inspection tests and filters for templates.
+//! Registers path tests and filters for templates.
 //!
 //! [`PathOps`] adds three minijinja [`Environment::add_test`] tests:
-//! `path_exists`, `is_file_path`, and `is_dir_path`, used as
-//! `{{ value is path_exists }}`. It also adds four
-//! [`Environment::add_filter`] filters: `path_filename`, `path_basename`,
-//! `path_extension`, and `path_parent`, used as `{{ value | path_basename }}`.
 //!
-//! The three I/O tests resolve a relative `path` against
-//! [`Config::root`](crate::config::Config::root); an absolute `path` is used
-//! as-is. They read [`std::fs::metadata`] directly instead of calling
-//! [`Path::exists`], [`Path::is_file`], or [`Path::is_dir`], which fold every
-//! error into `false`. Permission errors therefore surface as
-//! [`minijinja::Error`] instead of misreporting "does not exist".
+//! - `path_exists`
+//! - `is_file_path`
+//! - `is_dir_path`
 //!
-//! The four filters are pure string transformations over [`std::path::Path`].
+//! It also adds four [`Environment::add_filter`] filters:
+//!
+//! - `path_filename`
+//! - `path_basename`
+//! - `path_extension`
+//! - `path_parent`
+//!
+//! The I/O tests resolve relative paths against
+//! [`Config::root`](crate::config::Config::root) and use absolute paths as-is.
+//! They call [`std::fs::metadata`] directly instead of [`Path::exists`],
+//! [`Path::is_file`], or [`Path::is_dir`], which collapse every I/O error into
+//! `false`. Permission errors therefore surface as [`minijinja::Error`] instead
+//! of being misreported as "does not exist".
+//!
+//! The filters are pure string transformations over [`std::path::Path`].
 
 use std::{
     ffi::OsStr,
@@ -30,7 +37,7 @@ use crate::{
     path::{PathError, RootConfinedPath},
 };
 
-/// Which fact an I/O test is asking [`inspect`] to answer.
+/// Filesystem fact selected by a path I/O test.
 #[derive(Clone, Copy)]
 enum PathQuery {
     Exists,
@@ -38,19 +45,17 @@ enum PathQuery {
     IsDir,
 }
 
-/// Backs the path-inspection test/filter group.
+/// Backs the path test and filter group.
 ///
-/// Holds the project root the three I/O tests resolve a relative `path`
-/// argument against. The four pure string filters carry no state and are
-/// registered as plain functions.
+/// Holds the project root used by the three I/O tests. The four string filters
+/// carry no state and are registered as plain functions.
 #[derive(Debug)]
 pub(super) struct PathOps {
     root: Arc<Path>,
 }
 
 impl PathOps {
-    /// Wraps `root` for the I/O filters to resolve relative paths
-    /// against.
+    /// Creates a path helper group rooted at `root`.
     #[inline]
     #[must_use]
     pub(super) fn new(root: Arc<Path>) -> Self {
@@ -59,7 +64,7 @@ impl PathOps {
         }
     }
 
-    /// Registers all 7 path-inspection tests and filters.
+    /// Registers the path tests and filters.
     #[inline]
     pub(super) fn register(self, env: &mut Environment<'static>) {
         self.register_test(env, "path_exists", PathQuery::Exists);
@@ -71,13 +76,12 @@ impl PathOps {
         env.add_filter("path_parent", parent);
     }
 
-    /// Registers a single boolean I/O test under `name`.
+    /// Registers one boolean I/O test under `name`.
     ///
-    /// The closure calls [`inspect`] with the given `query`, the shared body
-    /// behind `path_exists`, `is_file_path`, and `is_dir_path` in
-    /// [`Self::register`]. It clones `root` into the closure because
-    /// [`Value::from_function`](minijinja::value::Value::from_function)'s
-    /// closures must be `Send + Sync + 'static` and cannot borrow `&self`.
+    /// The closure calls [`inspect`], the shared implementation behind
+    /// `path_exists`, `is_file_path`, and `is_dir_path`. It clones `root`
+    /// because [`Value::from_function`](minijinja::value::Value::from_function)
+    /// requires a `Send + Sync + 'static` closure.
     fn register_test(
         &self,
         env: &mut Environment<'static>,
@@ -126,19 +130,18 @@ struct InspectTarget(PathBuf);
 impl InspectTarget {
     /// Resolves `path` against `root`.
     ///
-    /// An absolute `path` is used as-is. A `path` naming `root` itself
-    /// ([`Self::is_root_reference`]) resolves directly to it. Any other
-    /// relative `path` is confined via [`RootConfinedPath::parse`], the same
-    /// seam [`super::file`]'s `file.include()`/`file.write_to()` use,
-    /// so a `..`/symlink escape is rejected identically across every
-    /// path-taking template primitive.
+    /// Absolute paths are used as-is. A path naming `root` itself
+    /// ([`Self::is_root_reference`]) resolves directly to it. Every other
+    /// relative path is confined via [`RootConfinedPath::parse`], the same seam
+    /// [`super::file`] uses for `file.include()` and `file.write_to()` paths.
+    /// Parent traversals and symlink escapes are therefore rejected
+    /// consistently across template primitives.
     ///
     /// # Errors
     ///
     /// - [`PathError::NotRelative`] or [`PathError::EscapesRoot`] if a relative
     ///   `path` resolves outside `root`.
-    /// - [`PathError::Verify`] if confirming containment fails for another
-    ///   reason.
+    /// - [`PathError::Verify`] if containment cannot be confirmed.
     fn resolve(root: &Path, path: &str) -> Result<Self, PathError> {
         let candidate = Path::new(path);
         if candidate.is_absolute() {

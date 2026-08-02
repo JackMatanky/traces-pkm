@@ -1,31 +1,30 @@
 //! Registers numeric filters for templates.
 //!
-//! [`NumOps`] adds `ceil`, `floor`, `sqrt`, and `num_format`, used as
-//! `{{ value | ceil }}`. Like [`StrOps`](super::string::StrOps), these are
-//! plain filter functions registered once each through
-//! [`Environment::add_filter`], not dispatched through an
-//! [`Object`](minijinja::value::Object), because there is no shared state to
-//! carry.
+//! [`NumOps`] adds four stateless filters:
 //!
-//! `num_format` is prefixed rather than named `format` to avoid minijinja's own
-//! built-in `format` filter.
+//! - `ceil`
+//! - `floor`
+//! - `sqrt`
+//! - `num_format`
 //!
-//! Each filter argument is declared `f64` directly. minijinja's
-//! [`ArgType`](minijinja::value::ArgType) implementation for `f64` converts an
-//! integer or float [`Value`](minijinja::value::Value) automatically and raises
-//! minijinja's argument-type error on anything else.
+//! Each filter is a plain function registered through
+//! [`Environment::add_filter`], not an [`Object`](minijinja::value::Object),
+//! because no filter carries shared state. `num_format` is prefixed rather than
+//! named `format` to avoid minijinja's built-in `format` filter.
+//!
+//! minijinja converts integer and float [`Value`](minijinja::value::Value)
+//! arguments into `f64` and raises its normal argument-type error for anything
+//! else.
 
 use minijinja::{Environment, Error, ErrorKind};
 
-/// Unit struct backing [`Self::register`]. It carries no state, matching
-/// [`StrOps`](super::string::StrOps).
+/// Registration namespace for the stateless numeric filters.
 pub(super) struct NumOps;
 
 impl NumOps {
-    /// Registers all four numeric filters.
+    /// Registers the numeric filters with `env`.
     ///
-    /// This is an associated function, not a method, because the struct carries
-    /// no state and `clippy::unused_self` denies an unused `&self` receiver.
+    /// This is an associated function because [`NumOps`] carries no state.
     #[inline]
     pub(super) fn register(env: &mut Environment<'static>) {
         env.add_filter("ceil", |value: f64| value.ceil());
@@ -35,12 +34,11 @@ impl NumOps {
     }
 }
 
-/// `sqrt` filter body: [`f64::sqrt`] returns `NaN` on negative input
-/// rather than erroring, so this checks the value itself and raises a
-/// [`minijinja::Error`] instead of letting a silent `NaN` reach the
-/// template output. `-0.0 < 0.0` is `false` under IEEE 754, so `-0.0`
-/// (unlike any other negative value) correctly falls through to
-/// [`f64::sqrt`] rather than erroring.
+/// `sqrt` returns the square root of `value`.
+///
+/// [`f64::sqrt`] returns `NaN` for negative input, so this filter rejects
+/// negative values and returns a template error instead of rendering `NaN`.
+/// `-0.0` is allowed because `-0.0 < 0.0` is false under IEEE 754.
 ///
 /// # Errors
 ///
@@ -55,9 +53,8 @@ fn sqrt(value: f64) -> Result<f64, Error> {
     Ok(value.sqrt())
 }
 
-/// `num_format(decimals)` filter body: formats `value` to exactly
-/// `decimals` decimal places via Rust's own `{:.N$}` precision
-/// formatting, which already rounds half-to-even on the trailing digit.
+/// `num_format(decimals)` formats `value` with exactly `decimals` decimal
+/// places via Rust's `{:.N$}` precision formatting.
 fn num_format(value: f64, decimals: usize) -> String {
     format!("{value:.decimals$}")
 }

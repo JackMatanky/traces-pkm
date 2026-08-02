@@ -1,56 +1,56 @@
-//! The `query` and `tasks` minijinja namespaces for querying the
-//! [`FileIndex`] from templates.
+//! Registers the `query` and `tasks` namespaces for templates.
 //!
-//! Both are backed by [`QueryOps`], registered twice by
-//! [`super::TemplateEngine::new`]: [`QueryOps::page`] for the `query` global,
-//! [`QueryOps::task`] for the `tasks` global. Each starts a query with one of
-//! three methods, mirroring [`Source`]'s three variants one-to-one:
+//! Both namespaces are backed by [`QueryOps`], registered twice by
+//! [`super::TemplateEngine::new`]:
+//!
+//! - [`QueryOps::page`] creates the `query` global.
+//! - [`QueryOps::task`] creates the `tasks` global.
+//!
+//! Each namespace starts a query with one of three methods, matching
+//! [`Source`]'s variants:
+//!
 //! - `.all()`: every indexed Note.
 //! - `.from_tags(tag)`: Notes tagged `tag`.
 //! - `.from_folder(folder)`: Notes under `folder`.
 //!
-//! `query`'s rows are one per Note; `tasks`'s rows are one per task item (via
-//! [`FileIndex::query_tasks`]), exposing `task.completed`/`task.text`
+//! `query` returns one row per Note. `tasks` returns one row per task item via
+//! [`FileIndex::query_tasks`], exposing `task.completed` and `task.text`
 //! alongside the parent Note's `file.*`, frontmatter, inline-field, and tag
 //! metadata.
 //!
 //! Each method refreshes a fresh [`FileIndex`] for the render's project root
-//! and returns a [`QueryOutcome`] wrapped in a [`Value`]. The result chains
-//! with `.where(...)`/`.filter(...)`, `.sort(...)`, `.limit(...)`,
-//! `.group_by(...)`, and `.flatten(...)`, all implemented on [`QueryOutcome`]
-//! itself. This module only adds the minijinja [`Object`] wiring, not the
-//! transformation logic.
+//! and returns a [`QueryOutcome`] wrapped in a [`Value`]. Template callers can
+//! chain `.where(...)`/`.filter(...)`, `.sort(...)`, `.limit(...)`,
+//! `.group_by(...)`, and `.flatten(...)`; the transformation logic lives on
+//! [`QueryOutcome`]. This module only supplies the minijinja [`Object`] wiring.
 //!
-//! # Why the [`Object`] Impls Live Here
+//! # Object Boundaries
 //!
-//! [`QueryOutcome`] and [`IndexRecord`] gain their [`Object`] impls in this
-//! module rather than in [`crate::index`], keeping the index module free of
-//! any rendering-framework dependency, so the CLI's `traces task` query
-//! command (`crate::cli::task`) can reuse the same
-//! [`FileIndex`]/[`QueryOutcome`]/[`IndexRecord`] types without pulling
-//! minijinja along.
+//! [`QueryOutcome`] and [`IndexRecord`] get their [`Object`] impls here instead
+//! of in [`crate::index`]. That keeps the index module independent from
+//! minijinja, so `traces task` can reuse [`FileIndex`], [`QueryOutcome`], and
+//! [`IndexRecord`] without pulling in rendering concerns.
 //!
 //! # Attribute Resolution
 //!
-//! `record`'s non-`file`/`task` attributes (`record.rating`, `record.tags`,
-//! ...) forward to [`IndexRecord::field`], the same field resolver
-//! `.where()`/`.sort()` use. `record.file.*` and `record.task.*` each need a
-//! forwarding wrapper instead ([`FileFields`], [`TaskFields`]), since
-//! minijinja resolves a dotted attribute path one segment at a time; they
-//! call [`FileField::parse`]/[`FileField::resolve`] and
-//! [`IndexRecord::task_completed`]/[`IndexRecord::task_text`] directly
-//! rather than round-tripping through [`IndexRecord::field`]'s string-based
-//! `file.`/`task.` prefix handling, which a single already-known segment
-//! doesn't need.
+//! `record` attributes other than `file` and `task` forward to
+//! [`IndexRecord::field`], the same resolver `.where()` and `.sort()` use.
+//! `record.file.*` and `record.task.*` use forwarding wrappers instead
+//! ([`FileFields`] and [`TaskFields`]) because minijinja resolves dotted
+//! attribute paths one segment at a time. The wrappers call
+//! [`FileField::parse`]/[`FileField::resolve`] and
+//! [`IndexRecord::task_completed`]/[`IndexRecord::task_text`] directly,
+//! skipping string-prefix handling once the `file` or `task` segment is already
+//! known.
 //!
 //! # Error Handling
 //!
-//! Every [`FileIndex::refresh`]/[`QueryError`] failure surfaces as a
-//! [`minijinja::Error`] with a stable message and the original error
-//! preserved as [`std::error::Error::source`]. This mirrors the conversion
-//! pattern [`super::ui`]'s `dialog_error` and [`super::file`]'s
-//! `confine_error` use, so query failures carry template name/line/column
-//! like every other namespace's errors.
+//! [`FileIndex::refresh`] and [`QueryError`] failures become
+//! [`minijinja::Error`] values with stable messages and the original error
+//! preserved as [`std::error::Error::source`]. This mirrors
+//! [`super::ui`]'s `dialog_error` and [`super::error::confine_error`], so query
+//! failures carry template name, line, and column context like the other
+//! namespaces.
 
 use std::{
     path::{Path, PathBuf},
@@ -118,15 +118,14 @@ impl QueryOps {
         env.add_global(name, Value::from_object(self));
     }
 
-    /// Refreshes this namespace's [`FileIndex`], then runs its query
-    /// method for `source` against it.
+    /// Refreshes the render's [`FileIndex`], then runs this namespace's query
+    /// method for `source`.
     ///
     /// # Errors
     ///
-    /// - [`ErrorKind::InvalidOperation`] (via [`index_error`]) if refreshing
-    ///   the index fails: an I/O error scanning `root`, a redb error accessing
-    ///   the index database, or a TOML (de)serialization error on a stored
-    ///   record.
+    /// - [`ErrorKind::InvalidOperation`] via [`index_error`] if refreshing the
+    ///   index fails, including I/O errors while scanning `root`, database
+    ///   access errors, and TOML (de)serialization errors on stored records.
     fn run(&self, source: &Source) -> Result<Value, Error> {
         let index = FileIndex::refresh(&self.root).map_err(index_error)?;
         Ok(Value::from_object((self.query)(index, source)))
@@ -169,7 +168,7 @@ impl Object for QueryOps {
 
 /// Maps a [`FileIndexError`] into a [`minijinja::Error`].
 ///
-/// Keeps the original as [`source`](std::error::Error::source), mirroring
+/// Keeps the original error as [`source`](std::error::Error::source), matching
 /// [`super::ui`]'s `dialog_error`.
 fn index_error(source: FileIndexError) -> Error {
     Error::new(ErrorKind::InvalidOperation, "failed to refresh the file index")
@@ -178,7 +177,7 @@ fn index_error(source: FileIndexError) -> Error {
 
 /// Maps a [`QueryError`] into a [`minijinja::Error`].
 ///
-/// Mirrors [`index_error`].
+/// Keeps the original error as [`source`](std::error::Error::source).
 fn query_error(source: QueryError) -> Error {
     Error::new(ErrorKind::InvalidOperation, "query failed").with_source(source)
 }
@@ -196,22 +195,22 @@ impl Object for QueryOutcome {
         Enumerator::Seq(self.len())
     }
 
-    /// Dispatches every [`QueryOutcome`] transformation method by name.
+    /// Dispatches [`QueryOutcome`] transformation methods by template name.
     ///
     /// Handles `.where`/`.filter`, `.sort`, `.limit`, `.group_by`, and
-    /// `.flatten`. Each consumes a clone of the current outcome and wraps the
-    /// result back into a [`Value`] for further chaining:
-    /// - `where`/`filter` both call [`QueryOutcome::filter`] directly; the
-    ///   Rust-side `r#where` alias exists only for Rust callers, not template
-    ///   ones.
-    /// - `sort`'s `descending` argument defaults to `false` (ascending) when
-    ///   omitted.
+    /// `.flatten`. Each call consumes a clone of the current outcome and wraps
+    /// the transformed result in a [`Value`] for further chaining:
+    ///
+    /// - `where` and `filter` both call [`QueryOutcome::filter`]. The Rust-side
+    ///   `r#where` alias exists only for Rust callers.
+    /// - `sort` defaults to ascending order when the optional `descending`
+    ///   argument is omitted.
     ///
     /// # Errors
     ///
-    /// - [`ErrorKind::UnknownMethod`] for any other method name
-    /// - [`ErrorKind::InvalidOperation`] (via [`query_error`]) if the field
-    ///   path or filter expression is unparsable, or `.limit(...)` is negative
+    /// - [`ErrorKind::UnknownMethod`] for any other method name.
+    /// - [`ErrorKind::InvalidOperation`] via [`query_error`] if a field path or
+    ///   filter expression is unparsable, or if `.limit(...)` is negative.
     fn call_method(
         self: &Arc<Self>,
         _state: &State<'_, '_>,
@@ -247,16 +246,16 @@ impl Object for QueryOutcome {
 }
 
 impl Object for IndexRecord {
-    /// Resolves `record.<key>` (or `record["<key>"]`).
+    /// Resolves `record.<key>` or `record["<key>"]`.
     ///
-    /// `"file"` and `"task"` each return a forwarding wrapper
-    /// ([`FileFields`], [`TaskFields`]) for `record.file.*`/
-    /// `record.task.*`; every other key resolves through
-    /// [`IndexRecord::field`], the same frontmatter/inline-field/tags
-    /// lookup `.where()`/`.sort()` use. A `key` that `field` rejects
-    /// (dotted, empty, or an unknown `file.*`/`task.*` accessor) resolves
-    /// to `None` here, the same as any other missing attribute, rather
-    /// than surfacing [`QueryError::UnknownFieldPath`] as a render error.
+    /// `"file"` and `"task"` return forwarding wrappers ([`FileFields`] and
+    /// [`TaskFields`]) for `record.file.*` and `record.task.*`. Every other key
+    /// resolves through [`IndexRecord::field`], the same frontmatter,
+    /// inline-field, and tag lookup used by `.where()` and `.sort()`.
+    ///
+    /// A rejected key, such as a dotted, empty, or unknown `file.*`/`task.*`
+    /// accessor, resolves to `None` like any other missing attribute instead of
+    /// surfacing [`QueryError::UnknownFieldPath`] as a render error.
     fn get_value(self: &Arc<Self>, key: &Value) -> Option<Value> {
         let key = key.as_str()?;
         match key {

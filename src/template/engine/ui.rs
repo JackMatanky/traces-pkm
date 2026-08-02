@@ -1,19 +1,22 @@
 //! Registers interactive `ui.*` helpers for templates.
 //!
 //! [`UiOps`] is the `ui` namespace object registered as a minijinja global by
-//! [`super::TemplateEngine`]. A template calls `ui.text_input(label)`,
-//! `ui.select(label, items)`, `ui.confirm(label)`, or
-//! `ui.multi_select(label, items)` during render to gather interactive input.
-//! Each call delegates to the shared [`DialogProvider`] the engine was built
-//! with: a real [`TerminalDialogProvider`](crate::TerminalDialogProvider) for a
-//! live render, or a defaults-only
+//! [`super::TemplateEngine`]. It exposes four methods:
+//!
+//! - `ui.text_input(label)`
+//! - `ui.select(label, items)`
+//! - `ui.confirm(label)`
+//! - `ui.multi_select(label, items)`
+//!
+//! Each call delegates to the shared [`DialogProvider`] used to build the
+//! engine: a real [`TerminalDialogProvider`](crate::TerminalDialogProvider) for
+//! live renders, or a defaults-only
 //! [`PresetDialogProvider`](crate::PresetDialogProvider) under `--no-input`.
 //!
-//! `select` and `multi_select` derive each item's display label like
-//! minijinja's own `map`, `sort`, and `groupby` filters: an `attribute=` kwarg
-//! names a possibly dotted path, defaulting to `"label"`, plus an optional
-//! `default=` kwarg for items missing that attribute. See
-//! [`SelectOptions::extract`].
+//! `select` and `multi_select` derive display labels like minijinja's `map`,
+//! `sort`, and `groupby` filters. An optional `attribute=` kwarg names a dotted
+//! path, defaulting to `"label"`, and `default=` supplies the label for items
+//! missing that attribute. See [`SelectOptions::extract`].
 
 use std::sync::Arc;
 
@@ -31,9 +34,10 @@ const METHODS: &[&str] = &["text_input", "select", "confirm", "multi_select"];
 /// `multi_select` get no `attribute=` kwarg. See [`SelectOptions::extract`].
 const DEFAULT_ATTRIBUTE: &str = "label";
 
-/// Backs the `ui` namespace object. Holds the interactive provider every
-/// method delegates to; [`super::super::service::TemplateService`] decides
-/// which concrete provider that is.
+/// Backs the `ui` namespace object.
+///
+/// Holds the interactive provider selected by
+/// [`TemplateService`](super::super::service::TemplateService).
 pub(super) struct UiOps {
     provider: Arc<dyn DialogProvider>,
 }
@@ -145,23 +149,22 @@ struct SelectOptions {
 }
 
 impl SelectOptions {
-    /// Iterates `items`, pairing each element with a display label and keeping
-    /// the original [`Value`] beside it so
-    /// [`DialogProvider::select`]/[`DialogProvider::multi_select`]'s
-    /// index-based result (see `crate::dialog`'s module docs) can be mapped
-    /// back to the item the user actually picked, not just its label.
+    /// Prepares selectable `items` for [`DialogProvider`].
     ///
-    /// The label itself comes from `kwargs`, mirroring minijinja's own
-    /// `map`/`sort`/`groupby` filters:
+    /// Keeps each original [`Value`] beside its display label so
+    /// [`DialogProvider::select`] and [`DialogProvider::multi_select`] can map
+    /// an index result back to the item the user picked.
     ///
-    /// - `attribute` (optional string, default [`DEFAULT_ATTRIBUTE`]): a
-    ///   dot-separated path (`"address.city"`) walked via [`get_path`]. Numeric
-    ///   segments index by position, and other segments look up an attribute.
-    /// - `default` (optional [`Value`]): used, stringified, when an item's
-    ///   attribute is undefined. Without it, an item missing the attribute
-    ///   falls back to `item.to_string()`. This is what makes a plain `["a",
-    ///   "b", "c"]` array work with no `attribute=` at all: a string has no
-    ///   `"label"` attribute, so every item hits this fallback.
+    /// Labels come from `kwargs`, following minijinja's `map`/`sort`/`groupby`
+    /// convention:
+    ///
+    /// - `attribute` (optional string, default [`DEFAULT_ATTRIBUTE`]): dotted
+    ///   path such as `"address.city"`, walked via [`get_path`]. Numeric
+    ///   segments index by position; other segments read attributes.
+    /// - `default` (optional [`Value`]): stringified when an item's attribute
+    ///   is undefined. Without it, missing attributes fall back to
+    ///   `item.to_string()`, which lets plain arrays such as `["a", "b"]` work
+    ///   without `attribute=`.
     /// - any other kwarg is rejected via [`Kwargs::assert_all_used`].
     ///
     /// # Errors
@@ -217,14 +220,12 @@ impl SelectOptions {
     }
 }
 
-/// Maps a [`DialogError`] into a [`minijinja::Error`], preserving the dialog
-/// error as [`source`](std::error::Error::source).
+/// Maps a [`DialogError`] into a [`minijinja::Error`].
 ///
-/// The detail is a stable, generic message rather than `source.to_string()`.
-/// minijinja's [`Error`](minijinja::Error) display already renders
-/// `"{kind}: {detail}"`, and this crate's user-facing error reporting walks
-/// `.source()` and prints each level. Reusing the dialog error's message here
-/// would print the same message twice in such a chain.
+/// The original dialog error is preserved as
+/// [`source`](std::error::Error::source). The minijinja message stays generic
+/// so crate-level error reporting can print the source chain without repeating
+/// the same user-facing message twice.
 fn dialog_error(source: DialogError) -> Error {
     Error::new(ErrorKind::InvalidOperation, "dialog provider failed")
         .with_source(source)
@@ -233,25 +234,20 @@ fn dialog_error(source: DialogError) -> Error {
 /// Walks a dot-separated attribute path on `item`.
 ///
 /// Numeric segments index by position via [`Value::get_item_by_index`]; other
-/// segments look up an attribute via [`Value::get_attr`]. This mirrors
-/// minijinja's crate-private `Value::get_path`, which backs the `attribute=`
-/// kwarg on its `map`, `sort`, and `groupby` filters.
+/// segments read attributes via [`Value::get_attr`]. This mirrors minijinja's
+/// crate-private `Value::get_path`, which backs the `attribute=` kwarg on its
+/// `map`, `sort`, and `groupby` filters.
 ///
-/// A missing path segment is not an error.
-///
-/// It resolves to [`Value::UNDEFINED`], same as minijinja's own attribute
-/// lookups. Once a segment resolves to `UNDEFINED`, every later segment is
-/// skipped instead of looked up. Without this short-circuit, a missing
-/// intermediate segment in a dotted path such as `"address.city"` would surface
-/// as a hard [`minijinja::Error`] instead of falling through to
+/// Missing attributes are not errors. They resolve to [`Value::UNDEFINED`], the
+/// same value minijinja returns for a missing attribute lookup. Once a segment
+/// is undefined, later segments are skipped instead of looked up, so a missing
+/// intermediate segment such as `"address.city"` falls through to
 /// [`SelectOptions::extract`]'s `default` handling.
 ///
 /// # Errors
 ///
 /// - [`minijinja::Error`] if [`Value::get_attr`] or
 ///   [`Value::get_item_by_index`] fails for a defined intermediate value.
-///
-/// Missing attributes are not errors; they resolve to [`Value::UNDEFINED`].
 fn get_path(item: &Value, path: &str) -> Result<Value, Error> {
     let mut current = item.clone();
     for part in path.split('.') {
