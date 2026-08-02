@@ -1,10 +1,11 @@
 //! Template loading searches local and global template directories.
 //!
-//! [`TemplateLoader::find`] is the single resolution path for both top-level
-//! `-i <name>` and minijinja `{% include %}`/`{% extends %}` loading. It
-//! validates the raw name with
-//! [`validate_template_name`](super::path::validate_template_name), then
-//! searches [`TemplateLoader::directories`] in local-before-global order via
+//! [`TemplateLoader::find`] is the single resolution path for validated
+//! top-level `-i <path>` and minijinja `{% include %}`/`{% extends %}` inputs.
+//! Its caller must pass a
+//! [`TemplatePathInput`](super::path::TemplatePathInput), which proves the raw
+//! path was validated before search. It then searches
+//! [`TemplateLoader::directories`] in local-before-global order via
 //! [`TemplateLoader::find_path_in`] and [`TemplateLoader::find_name_in`].
 //!
 //! An invalid name (absolute, `..`, or no real segment such as an empty name
@@ -31,8 +32,8 @@ use std::{
 
 use minijinja::{Error, ErrorKind};
 
-use super::path::{TemplatePath, TemplatePathError, validate_template_name};
-use crate::{config::Config, path::SafeRelativePath};
+use super::path::{TemplatePath, TemplatePathError, TemplatePathInput};
+use crate::config::Config;
 
 /// A template search path: at most one local directory and at most one global
 /// directory, searched local-first.
@@ -63,10 +64,11 @@ impl TemplateLoader {
         }
     }
 
-    /// Validates `name`, then searches local and global directories in order.
+    /// Searches local and global directories for a validated template path
+    /// input.
     ///
     /// This is the path both top-level `-i` resolution and
-    /// `{% include %}`/`{% extends %}` loading run through.
+    /// `{% include %}`/`{% extends %}` loading run through after validation.
     ///
     /// # Errors
     ///
@@ -74,24 +76,20 @@ impl TemplateLoader {
     ///   than one file within a single template directory.
     /// - [`TemplatePathError::TemplateNotFound`] if no template directory has a
     ///   match.
-    /// - [`TemplatePathError::Absolute`] or
-    ///   [`TemplatePathError::UnsafeComponent`] if `name` is invalid.
     pub(super) fn find(
         &self,
-        name: &Path,
+        name: &TemplatePathInput,
     ) -> Result<TemplatePath, TemplatePathError> {
-        let validated = validate_template_name(name)?;
-
         for dir in self.directories() {
-            if let Some(template) = Self::find_path_in(dir, &validated) {
+            if let Some(template) = Self::find_path_in(dir, name) {
                 return Ok(template);
             }
-            if let Some(template) = Self::find_name_in(dir, &validated)? {
+            if let Some(template) = Self::find_name_in(dir, name)? {
                 return Ok(template);
             }
         }
 
-        Err(TemplatePathError::TemplateNotFound(name.to_path_buf()))
+        Err(TemplatePathError::TemplateNotFound(name.as_ref().to_path_buf()))
     }
 
     /// The directories to search, local then global, deduped when the two paths
@@ -116,11 +114,11 @@ impl TemplateLoader {
     /// [`Self::find_name_in`]: a symlink never counts as a match.
     fn find_path_in(
         dir: &Path,
-        path: &SafeRelativePath,
+        name: &TemplatePathInput,
     ) -> Option<TemplatePath> {
-        fs::symlink_metadata(dir.join(path.as_ref()))
+        fs::symlink_metadata(dir.join(name.as_ref()))
             .is_ok_and(|metadata| metadata.is_file())
-            .then(|| TemplatePath::verified(path.clone(), dir.to_path_buf()))
+            .then(|| TemplatePath::verified(name.clone(), dir.to_path_buf()))
     }
 
     /// The stem-match rule, skipped when `path` already has an extension.
@@ -138,9 +136,9 @@ impl TemplateLoader {
     ///   search directory shares the stem.
     fn find_name_in(
         dir: &Path,
-        path: &SafeRelativePath,
+        name: &TemplatePathInput,
     ) -> Result<Option<TemplatePath>, TemplatePathError> {
-        let path = path.as_ref();
+        let path = name.as_ref();
         if path.extension().is_some() {
             return Ok(None);
         }
@@ -173,12 +171,13 @@ impl TemplateLoader {
                     source,
                 }
             })?;
-            let name = entry.file_name();
-            if file_type.is_file() && Path::new(&name).file_stem() == Some(key)
+            let file_name = entry.file_name();
+            if file_type.is_file()
+                && Path::new(&file_name).file_stem() == Some(key)
             {
                 hits.push(subdir.map_or_else(
-                    || PathBuf::from(&name),
-                    |parent| parent.join(&name),
+                    || PathBuf::from(&file_name),
+                    |parent| parent.join(&file_name),
                 ));
             }
         }
@@ -186,7 +185,7 @@ impl TemplateLoader {
         match hits.as_slice() {
             [] => Ok(None),
             [hit] => Ok(Some(TemplatePath::verified(
-                validate_template_name(hit)?,
+                TemplatePathInput::parse(hit)?,
                 dir.to_path_buf(),
             ))),
             _ => Err(TemplatePathError::AmbiguousTemplate {
@@ -213,7 +212,9 @@ impl TemplateLoader {
     ///   absence.
     /// - [`minijinja::Error`] if the resolved file cannot be read.
     pub(super) fn load(&self, name: &str) -> Result<Option<String>, Error> {
-        let found = match self.find(Path::new(name)) {
+        let found = match TemplatePathInput::parse(Path::new(name))
+            .and_then(|input| self.find(&input))
+        {
             Ok(found) => found,
             Err(TemplatePathError::TemplateNotFound(_)) => return Ok(None),
             Err(error) => {
@@ -312,6 +313,10 @@ mod tests {
         path
     }
 
+    fn input(path: &str) -> TemplatePathInput {
+        TemplatePathInput::parse(Path::new(path)).expect("valid template input")
+    }
+
     mod find {
         use pretty_assertions::assert_eq;
 
@@ -324,7 +329,7 @@ mod tests {
             let loader =
                 TemplateLoader::new(Some(temp.path().to_path_buf()), None);
 
-            let found = loader.find(Path::new("daily")).expect("find succeeds");
+            let found = loader.find(&input("daily")).expect("find succeeds");
 
             assert_eq!(found.absolute(), file);
         }
@@ -337,7 +342,7 @@ mod tests {
                 TemplateLoader::new(Some(temp.path().to_path_buf()), None);
 
             let found =
-                loader.find(Path::new("daily.md")).expect("find exact match");
+                loader.find(&input("daily.md")).expect("find exact match");
 
             assert_eq!(found.absolute(), file);
         }
@@ -347,43 +352,30 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             // A file that exists on disk, outside any template directory.
             let outside_file = write_file(temp.path(), "secret.md");
-            let local_dir = temp.path().join("templates");
-            fs::create_dir_all(&local_dir).expect("create local templates");
-            let loader = TemplateLoader::new(Some(local_dir), None);
+            let error = TemplatePathInput::parse(&outside_file)
+                .expect_err("absolute path is rejected before loader search");
 
-            // Resolution never reads outside the configured template
-            // directories, so an absolute path to a real file must still
-            // miss — not be treated as "found by exact path".
-            assert!(matches!(
-                loader.find(&outside_file),
-                Err(TemplatePathError::Absolute(_))
-            ));
+            assert!(matches!(error, TemplatePathError::Absolute(_)));
         }
 
         #[test]
         fn rejects_parent_traversal_even_when_the_file_exists() {
             let temp = tempfile::tempdir().expect("create temp dir");
             write_file(temp.path(), "secret.md");
-            let local_dir = temp.path().join("templates");
-            fs::create_dir_all(&local_dir).expect("create local templates");
-            let loader = TemplateLoader::new(Some(local_dir), None);
+            let error = TemplatePathInput::parse(Path::new("../secret.md"))
+                .expect_err(
+                    "parent traversal is rejected before loader search",
+                );
 
-            assert!(matches!(
-                loader.find(Path::new("../secret.md")),
-                Err(TemplatePathError::UnsafeComponent(_))
-            ));
+            assert!(matches!(error, TemplatePathError::UnsafeComponent(_)));
         }
 
         #[test]
         fn rejects_an_empty_name() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            let loader =
-                TemplateLoader::new(Some(temp.path().to_path_buf()), None);
+            let error = TemplatePathInput::parse(Path::new(""))
+                .expect_err("empty input is rejected before loader search");
 
-            assert!(matches!(
-                loader.find(Path::new("")),
-                Err(TemplatePathError::UnsafeComponent(_))
-            ));
+            assert!(matches!(error, TemplatePathError::UnsafeComponent(_)));
         }
 
         #[test]
@@ -395,7 +387,7 @@ mod tests {
                 TemplateLoader::new(Some(temp.path().to_path_buf()), None);
 
             let found =
-                loader.find(Path::new("notes/daily")).expect("find succeeds");
+                loader.find(&input("notes/daily")).expect("find succeeds");
 
             assert_eq!(found.absolute(), file);
         }
@@ -407,7 +399,7 @@ mod tests {
                 TemplateLoader::new(Some(temp.path().to_path_buf()), None);
 
             assert!(matches!(
-                loader.find(Path::new("notes/daily")),
+                loader.find(&input("notes/daily")),
                 Err(TemplatePathError::TemplateNotFound(_))
             ));
         }
@@ -420,7 +412,7 @@ mod tests {
                 TemplateLoader::new(Some(temp.path().to_path_buf()), None);
 
             assert!(matches!(
-                loader.find(Path::new("daily.md")),
+                loader.find(&input("daily.md")),
                 Err(TemplatePathError::TemplateNotFound(_))
             ));
         }
@@ -435,9 +427,8 @@ mod tests {
             let loader =
                 TemplateLoader::new(Some(temp.path().to_path_buf()), None);
 
-            let error = loader
-                .find(Path::new("daily"))
-                .expect_err("ambiguous stem match");
+            let error =
+                loader.find(&input("daily")).expect_err("ambiguous stem match");
             assert!(
                 matches!(
                     &error,
@@ -461,7 +452,7 @@ mod tests {
             let loader =
                 TemplateLoader::new(Some(temp.path().to_path_buf()), None);
 
-            let found = loader.find(Path::new("daily")).expect("find succeeds");
+            let found = loader.find(&input("daily")).expect("find succeeds");
 
             assert_eq!(found.absolute(), file);
         }
@@ -475,7 +466,7 @@ mod tests {
             write_file(&global_dir, "daily");
             let loader = TemplateLoader::new(Some(local_dir), Some(global_dir));
 
-            let found = loader.find(Path::new("daily")).expect("find succeeds");
+            let found = loader.find(&input("daily")).expect("find succeeds");
 
             assert_eq!(found.absolute(), local_file);
         }
@@ -489,7 +480,7 @@ mod tests {
             let file = write_file(&global_dir, "daily.md");
             let loader = TemplateLoader::new(Some(local_dir), Some(global_dir));
 
-            let found = loader.find(Path::new("daily")).expect("find succeeds");
+            let found = loader.find(&input("daily")).expect("find succeeds");
 
             assert_eq!(found.absolute(), file);
         }
@@ -503,8 +494,7 @@ mod tests {
             let file = write_file(&global_dir, "daily.md");
             let loader = TemplateLoader::new(Some(local_dir), Some(global_dir));
 
-            let found =
-                loader.find(Path::new("daily.md")).expect("find succeeds");
+            let found = loader.find(&input("daily.md")).expect("find succeeds");
 
             assert_eq!(found.absolute(), file);
         }
@@ -519,7 +509,7 @@ mod tests {
             let loader = TemplateLoader::new(Some(local_dir), Some(global_dir));
 
             assert!(matches!(
-                loader.find(Path::new("missing")),
+                loader.find(&input("missing")),
                 Err(TemplatePathError::TemplateNotFound(_))
             ));
         }
@@ -544,7 +534,7 @@ mod tests {
             let loader = TemplateLoader::new(Some(dir.clone()), Some(dir));
 
             assert!(matches!(
-                loader.find(Path::new("missing")),
+                loader.find(&input("missing")),
                 Err(TemplatePathError::TemplateNotFound(_))
             ));
         }
@@ -563,7 +553,7 @@ mod tests {
             let loader = TemplateLoader::new(Some(local_dir), None);
 
             assert!(matches!(
-                loader.find(Path::new("daily.md")),
+                loader.find(&input("daily.md")),
                 Err(TemplatePathError::TemplateNotFound(_))
             ));
         }
@@ -582,7 +572,7 @@ mod tests {
             let loader = TemplateLoader::new(Some(local_dir), None);
 
             assert!(matches!(
-                loader.find(Path::new("daily")),
+                loader.find(&input("daily")),
                 Err(TemplatePathError::TemplateNotFound(_))
             ));
         }
@@ -745,7 +735,7 @@ mod tests {
             );
             let loader = TemplateLoader::from(&config);
 
-            let found = loader.find(Path::new("daily")).expect("find succeeds");
+            let found = loader.find(&input("daily")).expect("find succeeds");
 
             assert_eq!(found.absolute(), file);
         }
@@ -766,7 +756,7 @@ mod tests {
             );
             let loader = TemplateLoader::from(&config);
 
-            let found = loader.find(Path::new("daily")).expect("find succeeds");
+            let found = loader.find(&input("daily")).expect("find succeeds");
 
             assert_eq!(found.absolute(), file);
         }
@@ -786,7 +776,7 @@ mod tests {
             );
             let loader = TemplateLoader::from(&config);
 
-            let found = loader.find(Path::new("daily")).expect("find succeeds");
+            let found = loader.find(&input("daily")).expect("find succeeds");
 
             assert_eq!(found.absolute(), local_file);
         }

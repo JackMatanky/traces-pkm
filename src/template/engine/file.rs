@@ -12,7 +12,7 @@
 //!
 //! `file.include()` confines its `path` argument to `root` via
 //! [`crate::path::RootConfinedPath::parse`], the same seam
-//! [`super::super::writer::TemplateWriteTarget::confine`] uses for
+//! [`TemplateWriteTarget`](super::super::writer::TemplateWriteTarget) uses for
 //! `-o`/`file.write_to()` candidates. Symlink escapes are rejected identically
 //! on the read and write sides.
 
@@ -23,7 +23,7 @@ use minijinja::{
     value::{Enumerator, Object, Value},
 };
 
-use super::confine_error;
+use super::error::confine_error;
 use crate::path::RootConfinedPath;
 
 /// The key `write_to` stashes its path under via [`State::set_temp`];

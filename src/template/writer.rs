@@ -1,20 +1,18 @@
 //! Writes rendered template content to disk.
 //!
-//! [`commit`] writes `content` to `path` under a [`CommitPolicy`].
-//! [`WriteMode`] is defined here and converted from CLI flags via
-//! [`WriteMode::from_flags`], but
+//! [`TemplateWriteTarget::write`] resolves a render's output path and writes
+//! `content` under a [`CommitPolicy`]. [`WriteMode`] is defined here and
+//! converted from CLI flags via [`WriteMode::from_flags`], but
 //! [`TemplateService::write`](super::service::TemplateService::write) is the
-//! only place that matches on it — [`commit`] and
-//! [`TemplateWriteTarget::resolve`] work with [`CommitPolicy`] directly.
+//! only place that matches on it.
 //!
 //! [`TemplateWriteTarget`] gathers output-destination candidates from `-o`
-//! (`requested`) and `file.write_to()` (`declared`), then resolves them by
-//! precedence: `requested`, `declared`, caller-supplied default.
+//! (`requested`) and `file.write_to()` ([`DeclaredOutputPath`]), then resolves
+//! them by precedence: `requested`, `declared`, caller-supplied default.
 //! `requested`/`declared` are runtime values confined to
 //! [`Config::root`](crate::config::Config::root) via
 //! [`crate::path::RootConfinedPath::parse`]. The default comes from an already
-//! trust-gated [`Config::output_dir`](crate::config::Config::output_dir) and
-//! passes through unchecked instead ([`TemplateWriteTarget::trusted`]).
+//! trust-gated [`Config::output_dir`](crate::config::Config::output_dir).
 
 use std::{
     fs,
@@ -22,43 +20,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use super::error::TemplateError;
+use super::{error::TemplateError, path::DeclaredOutputPath};
 use crate::{DialogError, DialogProvider, path::RootConfinedPath};
-/// Writes `content` to `path` under `policy`, creating parent directories
-/// first if needed.
-///
-/// # Errors
-///
-/// - [`TemplateError::Write`] if the parent directory or file cannot be
-///   written.
-/// - [`TemplateError::OutputFileAlreadyExists`] if `path` already exists under
-///   [`CommitPolicy::CreateNew`].
-pub(super) fn commit(
-    path: &Path,
-    content: &str,
-    policy: CommitPolicy,
-) -> Result<(), TemplateError> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|source| TemplateError::Write {
-            path: path.to_path_buf(),
-            source,
-        })?;
-    }
-    let mut file = policy.create_file(path)?;
-    file.write_all(content.as_bytes()).map_err(|source| TemplateError::Write {
-        path: path.to_path_buf(),
-        source,
-    })
-}
 
-/// How [`TemplateService::write`](super::service::TemplateService::write)
-/// should treat rendered content.
-///
-/// This is the domain meaning behind `--force` and `--dry-run`, as a type
-/// instead of two independent `bool`s. `pub(crate)` since
-/// `crate::cli::template` constructs it directly. [`CommitPolicy`] nests
-/// inside [`Self::Commit`] so [`commit`] only sees a policy that implies
-/// "write."
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(crate) enum WriteMode {
     /// Render only.
@@ -83,11 +47,10 @@ impl WriteMode {
     }
 }
 
-/// How [`commit`] should treat an existing target.
+/// How a disk write should treat an existing target.
 ///
-/// This is [`WriteMode::Commit`]'s payload, unwrapped once by
-/// [`TemplateService::write`](super::service::TemplateService::write) and
-/// threaded through as [`CommitPolicy`] from there on.
+/// This is [`WriteMode::Commit`]'s payload, produced once from CLI flags and
+/// then threaded through output resolution and the final write.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(crate) enum CommitPolicy {
     /// Fail with [`TemplateError::OutputFileAlreadyExists`] if the target
@@ -165,7 +128,7 @@ pub(crate) enum WriteOutcome {
 pub(super) struct TemplateWriteTarget<'a> {
     root: &'a Path,
     requested: Option<&'a Path>,
-    declared: Option<PathBuf>,
+    declared: Option<DeclaredOutputPath>,
 }
 
 impl<'a> TemplateWriteTarget<'a> {
@@ -194,9 +157,28 @@ impl<'a> TemplateWriteTarget<'a> {
     /// Sets the `file.write_to()` candidate.
     #[inline]
     #[must_use]
-    pub(super) fn with_declared(mut self, declared: Option<PathBuf>) -> Self {
+    pub(super) fn with_declared(
+        mut self,
+        declared: Option<DeclaredOutputPath>,
+    ) -> Self {
         self.declared = declared;
         self
+    }
+
+    /// Resolves the output destination, then writes `content` there.
+    ///
+    /// Keeps raw file writes private to this module: callers can only write via
+    /// a path produced by [`Self::resolve`].
+    pub(super) fn write(
+        &self,
+        content: &str,
+        policy: CommitPolicy,
+        provider: &dyn DialogProvider,
+        default: impl FnOnce() -> PathBuf,
+    ) -> Result<PathBuf, TemplateError> {
+        let path = self.resolve(policy, provider, default)?;
+        commit(&path, content, policy)?;
+        Ok(path)
     }
 
     /// Resolves the candidate by precedence (`requested` > `declared` >
@@ -212,9 +194,12 @@ impl<'a> TemplateWriteTarget<'a> {
         &self,
         default: impl FnOnce() -> PathBuf,
     ) -> Result<PathBuf, TemplateError> {
-        match self.requested.or(self.declared.as_deref()) {
+        match self
+            .requested
+            .or_else(|| self.declared.as_ref().map(DeclaredOutputPath::as_path))
+        {
             Some(candidate) => Self::confine(self.root, candidate),
-            None => Ok(default()),
+            None => Ok(Self::trusted(self.root, default())),
         }
     }
 
@@ -316,6 +301,26 @@ impl<'a> TemplateWriteTarget<'a> {
             root.join(candidate)
         }
     }
+}
+
+/// Writes `content` to `path` under `policy`, creating parent directories
+/// first if needed.
+fn commit(
+    path: &Path,
+    content: &str,
+    policy: CommitPolicy,
+) -> Result<(), TemplateError> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|source| TemplateError::Write {
+            path: path.to_path_buf(),
+            source,
+        })?;
+    }
+    let mut file = policy.create_file(path)?;
+    file.write_all(content.as_bytes()).map_err(|source| TemplateError::Write {
+        path: path.to_path_buf(),
+        source,
+    })
 }
 
 #[cfg(test)]
@@ -494,7 +499,9 @@ mod tests {
             let (_temp, root) = canonical_root();
             let target = TemplateWriteTarget::new(&root)
                 .with_requested(Some(Path::new("requested.md")))
-                .with_declared(Some(PathBuf::from("declared.md")));
+                .with_declared(Some(DeclaredOutputPath::new(PathBuf::from(
+                    "declared.md",
+                ))));
 
             let path = target
                 .target_path(|| root.join("default.md"))
@@ -506,8 +513,9 @@ mod tests {
         #[test]
         fn prefers_declared_over_default_when_requested_is_unset() {
             let (_temp, root) = canonical_root();
-            let target = TemplateWriteTarget::new(&root)
-                .with_declared(Some(PathBuf::from("declared.md")));
+            let target = TemplateWriteTarget::new(&root).with_declared(Some(
+                DeclaredOutputPath::new(PathBuf::from("declared.md")),
+            ));
 
             let path = target
                 .target_path(|| root.join("default.md"))
@@ -553,8 +561,9 @@ mod tests {
         #[test]
         fn skips_computing_default_when_declared_is_set() {
             let (_temp, root) = canonical_root();
-            let target = TemplateWriteTarget::new(&root)
-                .with_declared(Some(PathBuf::from("declared.md")));
+            let target = TemplateWriteTarget::new(&root).with_declared(Some(
+                DeclaredOutputPath::new(PathBuf::from("declared.md")),
+            ));
             let default_called = Cell::new(false);
 
             target
@@ -573,7 +582,9 @@ mod tests {
             let root = Path::new("/vault");
             let target = TemplateWriteTarget::new(root)
                 .with_requested(Some(Path::new("../../escape.md")))
-                .with_declared(Some(PathBuf::from("declared.md")));
+                .with_declared(Some(DeclaredOutputPath::new(PathBuf::from(
+                    "declared.md",
+                ))));
 
             let error = target
                 .target_path(|| root.join("default.md"))
@@ -588,8 +599,9 @@ mod tests {
         #[test]
         fn rejects_an_escaping_declared_candidate_when_requested_is_unset() {
             let root = Path::new("/vault");
-            let target = TemplateWriteTarget::new(root)
-                .with_declared(Some(PathBuf::from("../../escape.md")));
+            let target = TemplateWriteTarget::new(root).with_declared(Some(
+                DeclaredOutputPath::new(PathBuf::from("../../escape.md")),
+            ));
 
             let error = target
                 .target_path(|| root.join("default.md"))

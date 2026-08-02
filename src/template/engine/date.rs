@@ -154,14 +154,30 @@ impl Object for DateOps {
     }
 }
 
+/// Whether the input carried only a date or a date plus time.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DatePrecision {
+    Date,
+    DateTime,
+}
+
+impl DatePrecision {
+    const fn format(self) -> &'static str {
+        match self {
+            Self::Date => DEFAULT_FORMAT,
+            Self::DateTime => DEFAULT_DATETIME_FORMAT,
+        }
+    }
+}
+
 /// A successfully parsed date/time string.
 ///
-/// Stores the [`NaiveDateTime`] plus whether the original input carried a time
-/// component rather than a bare `YYYY-MM-DD` date. Every arithmetic filter
-/// re-serializes at the same precision via [`format_precise`].
+/// Stores the [`NaiveDateTime`] plus the original input precision. Every
+/// arithmetic filter re-serializes at the same precision via
+/// [`format_precise`].
 struct ParsedDate {
     datetime: NaiveDateTime,
-    has_time: bool,
+    precision: DatePrecision,
 }
 
 impl ParsedDate {
@@ -176,7 +192,7 @@ impl ParsedDate {
         if let Some(datetime) = try_parse_datetime(s) {
             return Ok(Self {
                 datetime,
-                has_time: true,
+                precision: DatePrecision::DateTime,
             });
         }
         NaiveDate::parse_from_str(s, DEFAULT_FORMAT)
@@ -184,7 +200,7 @@ impl ParsedDate {
             .and_then(|date| date.and_hms_opt(0, 0, 0))
             .map(|datetime| Self {
                 datetime,
-                has_time: false,
+                precision: DatePrecision::Date,
             })
             .ok_or_else(|| invalid_date_error(s))
     }
@@ -194,7 +210,7 @@ impl ParsedDate {
 /// namespace filters ([`date_add`], [`date_sub`], [`date_diff`]).
 ///
 /// This is the same "small enum over a piped string" pattern
-/// [`path_ops::PathQuery`](super::path_ops) uses for its I/O tests.
+/// [`inspect::PathQuery`](super::inspect) uses for its I/O tests.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum DateTimeUnit {
     Years,
@@ -300,7 +316,7 @@ fn format_with(
     Ok(rendered)
 }
 
-/// Re-serializes `dt` at the precision `has_time` reports.
+/// Re-serializes `dt` at the given `precision`.
 ///
 /// Uses [`DEFAULT_DATETIME_FORMAT`] when the original input carried a time
 /// component, [`DEFAULT_FORMAT`] otherwise. Every arithmetic filter uses this
@@ -312,13 +328,11 @@ fn format_with(
 /// - [`ErrorKind::InvalidOperation`] if formatting unexpectedly fails. This is
 ///   unreachable in practice because the format is always [`DEFAULT_FORMAT`] or
 ///   [`DEFAULT_DATETIME_FORMAT`], both valid strftime specifiers.
-fn format_precise(dt: NaiveDateTime, has_time: bool) -> Result<String, Error> {
-    let format = if has_time {
-        DEFAULT_DATETIME_FORMAT
-    } else {
-        DEFAULT_FORMAT
-    };
-    format_with(dt.format(format), format)
+fn format_precise(
+    dt: NaiveDateTime,
+    precision: DatePrecision,
+) -> Result<String, Error> {
+    format_with(dt.format(precision.format()), precision.format())
 }
 
 /// Tries each of [`DATETIME_FORMATS`] in turn; `None` if none match.
@@ -382,7 +396,7 @@ fn shift_date(
 ) -> Result<String, Error> {
     let parsed = ParsedDate::parse(value)?;
     let shifted = op(parsed.datetime).ok_or_else(date_out_of_range_error)?;
-    format_precise(shifted, parsed.has_time)
+    format_precise(shifted, parsed.precision)
 }
 
 /// `{{ value | date_add(n, unit="days") }}` adds `n` `unit`s to a piped
@@ -653,7 +667,9 @@ fn date_diff(value: &str, other: &str, kwargs: Kwargs) -> Result<Value, Error> {
             );
             let delta = to.datetime.signed_duration_since(from.datetime);
 
-            if from.has_time && to.has_time {
+            if from.precision == DatePrecision::DateTime
+                && to.precision == DatePrecision::DateTime
+            {
                 #[expect(
                     clippy::as_conversions,
                     clippy::cast_precision_loss,

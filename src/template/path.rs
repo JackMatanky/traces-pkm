@@ -1,10 +1,11 @@
-//! Template paths validate and resolve template identifiers.
+//! Template paths validate and label path-shaped values in the template
+//! pipeline.
 //!
 //! [`TemplatePath`] is built only by
 //! [`TemplateLoader`](super::loader::TemplateLoader)'s search, immediately
 //! after confirming the file exists — nothing later in the pipeline
-//! re-verifies it. [`TemplatePathError`] covers validation and search
-//! failures.
+//! re-verifies it. [`DeclaredOutputPath`] labels the raw `file.write_to()`
+//! candidate before [`writer`](super::writer) resolves it.
 
 use std::{
     fs, io,
@@ -19,11 +20,50 @@ use crate::path::SafeRelativePath;
 /// `-o`/`file.write_to()` override.
 const DEFAULT_EXTENSION: &str = "md";
 
+/// A validated but unresolved template path input.
+///
+/// Constructed only through [`Self::parse`], so unvalidated paths cannot reach
+/// template resolution. It guarantees the input path is relative, non-empty,
+/// and unable to escape through `..`; it does not prove the template exists.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct TemplatePathInput(SafeRelativePath);
+
+impl TemplatePathInput {
+    /// Parses `path` as a template path input.
+    ///
+    /// This performs no filesystem access, only a path-shape check. Used by
+    /// the CLI boundary before rendering and by
+    /// [`TemplateLoader::load`](super::loader::TemplateLoader::load) before
+    /// resolving minijinja includes.
+    ///
+    /// # Errors
+    ///
+    /// - [`TemplatePathError::Absolute`] if `path` is absolute.
+    /// - [`TemplatePathError::UnsafeComponent`] for `..`, any component that is
+    ///   not a plain name or `.`, or a path with no
+    ///   [`Component::Normal`](std::path::Component::Normal).
+    pub(crate) fn parse(path: &Path) -> Result<Self, TemplatePathError> {
+        SafeRelativePath::parse(path).map(Self).map_err(|_| {
+            if path.is_absolute() {
+                TemplatePathError::Absolute(path.to_path_buf())
+            } else {
+                TemplatePathError::UnsafeComponent(path.to_path_buf())
+            }
+        })
+    }
+}
+
+impl AsRef<Path> for TemplatePathInput {
+    fn as_ref(&self) -> &Path {
+        self.0.as_ref()
+    }
+}
+
 /// A validated template path resolved against a template directory, proven to
 /// exist on disk.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct TemplatePath {
-    path: SafeRelativePath,
+    input: TemplatePathInput,
     source_dir: PathBuf,
 }
 
@@ -39,11 +79,11 @@ impl TemplatePath {
     #[inline]
     #[must_use]
     pub(super) fn verified(
-        path: SafeRelativePath,
+        input: TemplatePathInput,
         source_dir: PathBuf,
     ) -> Self {
         Self {
-            path,
+            input,
             source_dir,
         }
     }
@@ -54,20 +94,20 @@ impl TemplatePath {
     #[cfg(test)]
     #[must_use]
     pub(super) fn for_test(
-        path: SafeRelativePath,
+        input: TemplatePathInput,
         source_dir: PathBuf,
     ) -> Self {
         Self {
-            path,
+            input,
             source_dir,
         }
     }
 
-    /// Builds the absolute path on demand: `source_dir` joined with `path`.
+    /// Builds the absolute path on demand: `source_dir` joined with `input`.
     #[inline]
     #[must_use]
     pub(super) fn absolute(&self) -> PathBuf {
-        self.source_dir.join(self.path.as_ref())
+        self.source_dir.join(self.input.as_ref())
     }
 
     /// The default output filename: this candidate with its extension forced
@@ -75,7 +115,7 @@ impl TemplatePath {
     #[inline]
     #[must_use]
     pub(super) fn default_output_filename(&self) -> PathBuf {
-        self.path.as_ref().with_extension(DEFAULT_EXTENSION)
+        self.input.as_ref().with_extension(DEFAULT_EXTENSION)
     }
 
     /// Reads this resolved template's source from disk.
@@ -86,37 +126,26 @@ impl TemplatePath {
 
 impl AsRef<Path> for TemplatePath {
     fn as_ref(&self) -> &Path {
-        self.path.as_ref()
+        self.input.as_ref()
     }
 }
 
-/// Validates `path`'s components via [`SafeRelativePath::parse`], re-deriving
-/// which rejection reason applies since [`SafeRelativePath::parse`]'s single
-/// [`PathError`](crate::path::PathError) does not distinguish them.
-///
-/// This performs no filesystem access, only a path-shape check. Used by
-/// [`TemplateLoader::find`](super::loader::TemplateLoader::find) to validate a
-/// raw name before searching, and by
-/// [`TemplateLoader::find_name_in`](super::loader::TemplateLoader::find_name_in)
-/// to re-validate a stem-matched hit.
-///
-/// # Errors
-///
-/// - [`TemplatePathError::Absolute`] if `path` is absolute.
-/// - [`TemplatePathError::UnsafeComponent`] for `..`, any component that is not
-///   a plain name or `.`, or a path with no [`Component::Normal`].
-///
-/// [`Component::Normal`]: std::path::Component::Normal
-pub(super) fn validate_template_name(
-    path: &Path,
-) -> Result<SafeRelativePath, TemplatePathError> {
-    SafeRelativePath::parse(path).map_err(|_| {
-        if path.is_absolute() {
-            TemplatePathError::Absolute(path.to_path_buf())
-        } else {
-            TemplatePathError::UnsafeComponent(path.to_path_buf())
-        }
-    })
+/// A raw `file.write_to()` path declared by the template during rendering.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct DeclaredOutputPath(PathBuf);
+
+impl DeclaredOutputPath {
+    #[inline]
+    #[must_use]
+    pub(super) fn new(path: PathBuf) -> Self {
+        Self(path)
+    }
+
+    #[inline]
+    #[must_use]
+    pub(super) fn as_path(&self) -> &Path {
+        &self.0
+    }
 }
 
 /// Every way producing a [`TemplatePath`] can fail: validation
@@ -162,9 +191,9 @@ mod tests {
     use super::*;
 
     fn validated(name: &str) -> TemplatePath {
-        let rel =
-            validate_template_name(Path::new(name)).expect("valid candidate");
-        TemplatePath::for_test(rel, PathBuf::from("/dir"))
+        let name =
+            TemplatePathInput::parse(Path::new(name)).expect("valid candidate");
+        TemplatePath::for_test(name, PathBuf::from("/dir"))
     }
 
     fn write_file(dir: &Path, name: &str) -> PathBuf {
@@ -214,7 +243,7 @@ mod tests {
             // happens — parse() never reads the filesystem, so this
             // never touches whatever real file may or may not exist at
             // this well-known path.
-            let error = validate_template_name(Path::new("/etc/passwd"))
+            let error = TemplatePathInput::parse(Path::new("/etc/passwd"))
                 .expect_err("absolute path is rejected");
 
             assert!(matches!(error, TemplatePathError::Absolute(_)));
@@ -226,7 +255,7 @@ mod tests {
         #[case::empty_path("")]
         #[case::bare_current_dir(".")]
         fn rejects_unsafe_components(#[case] input: &str) {
-            let error = validate_template_name(Path::new(input))
+            let error = TemplatePathInput::parse(Path::new(input))
                 .expect_err("unsafe component is rejected");
 
             assert!(matches!(error, TemplatePathError::UnsafeComponent(_)));
@@ -242,7 +271,7 @@ mod tests {
             let path = write_file(dir, name);
             let rel = path.strip_prefix(dir).expect("relative path");
             TemplatePath::for_test(
-                validate_template_name(rel).expect("relative path is safe"),
+                TemplatePathInput::parse(rel).expect("relative path is safe"),
                 dir.to_path_buf(),
             )
         }
@@ -279,7 +308,7 @@ mod tests {
             let path = write_file(dir, name);
             let rel = path.strip_prefix(dir).expect("relative path");
             TemplatePath::for_test(
-                validate_template_name(rel).expect("relative path is safe"),
+                TemplatePathInput::parse(rel).expect("relative path is safe"),
                 dir.to_path_buf(),
             )
         }

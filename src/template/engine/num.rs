@@ -1,7 +1,7 @@
 //! Registers numeric filters for templates.
 //!
 //! [`NumOps`] adds `ceil`, `floor`, `sqrt`, and `num_format`, used as
-//! `{{ value | ceil }}`. Like [`StrOps`](super::str_ops::StrOps), these are
+//! `{{ value | ceil }}`. Like [`StrOps`](super::string::StrOps), these are
 //! plain filter functions registered once each through
 //! [`Environment::add_filter`], not dispatched through an
 //! [`Object`](minijinja::value::Object), because there is no shared state to
@@ -18,7 +18,7 @@
 use minijinja::{Environment, Error, ErrorKind};
 
 /// Unit struct backing [`Self::register`]. It carries no state, matching
-/// [`StrOps`](super::str_ops::StrOps).
+/// [`StrOps`](super::string::StrOps).
 pub(super) struct NumOps;
 
 impl NumOps {

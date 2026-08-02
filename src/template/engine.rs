@@ -1,66 +1,39 @@
 //! Builds and runs the minijinja environment used by [`TemplateService`].
 //!
-//! Most template-facing helpers live in submodules: [`date_ops`], [`file_ops`],
-//! [`num_ops`], [`path_ops`], [`query_ops`], [`str_ops`], and [`ui_ops`]. The
+//! Most template-facing helpers live in submodules: [`date`], [`file`],
+//! [`inspect`], [`num`], [`query`], [`string`], and [`ui`]. The
 //! standalone [`uuid`](fn@uuid) function is defined here.
 //!
 //! [`TemplateService`]: super::service::TemplateService
 
-mod date_ops;
-mod file_ops;
-mod num_ops;
-mod path_ops;
-mod query_ops;
-mod str_ops;
-mod ui_ops;
+mod date;
+mod error;
+mod file;
+mod inspect;
+mod num;
+mod query;
+mod string;
+mod ui;
 
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
 
-use minijinja::{Environment, Error, ErrorKind};
+use minijinja::{Environment, Error};
 use uuid::Uuid;
 
 use self::{
-    date_ops::DateOps,
-    file_ops::{FileOps, WRITE_TO_KEY},
-    num_ops::NumOps,
-    path_ops::PathOps,
-    query_ops::QueryOps,
-    str_ops::StrOps,
-    ui_ops::UiOps,
+    date::DateOps,
+    file::{FileOps, WRITE_TO_KEY},
+    inspect::PathOps,
+    num::NumOps,
+    query::QueryOps,
+    string::StrOps,
+    ui::UiOps,
 };
-use super::loader::TemplateLoader;
-use crate::{DialogProvider, path::PathError};
-
-/// Builds the error for a template `path` argument that fails root confinement.
-///
-/// Unsafe lexical paths and symlink escapes
-/// ([`PathError::NotRelative`]/[`PathError::EscapesRoot`]) share the "escapes
-/// the project root" message because template authors see both as the same
-/// failure. [`PathError::Verify`] gets its own message because that case is not
-/// known to escape, only unconfirmed because the root or an ancestor could not
-/// be canonicalized.
-fn confine_error(path: &str, source: PathError) -> Error {
-    source.fold_confinement(
-        || {
-            Error::new(
-                ErrorKind::InvalidOperation,
-                format!("path {path} escapes the project root"),
-            )
-        },
-        |inner| {
-            Error::new(
-                ErrorKind::InvalidOperation,
-                format!(
-                    "failed to verify path {path} is inside the project root"
-                ),
-            )
-            .with_source(inner)
-        },
-    )
-}
+use super::{loader::TemplateLoader, path::DeclaredOutputPath};
+use crate::DialogProvider;
 
 /// Renders template source through minijinja, backed by `loader`'s
 /// `{% include %}`/`{% extends %}` resolution.
@@ -77,9 +50,9 @@ pub(super) struct TemplateEngine {
 
 impl TemplateEngine {
     /// Builds an engine backed by `loader`, registering every submodule's
-    /// custom functions ([`date_ops`], [`file_ops`], [`num_ops`], [`path_ops`],
-    /// [`query_ops`], [`str_ops`], [`ui_ops`]; see each module's own docs for
-    /// what it contributes) plus the standalone [`uuid`](fn@uuid) function.
+    /// custom functions ([`date`], [`file`], [`inspect`], [`num`], [`query`],
+    /// [`string`], [`ui`]; see each module's own docs for what it contributes)
+    /// plus the standalone [`uuid`](fn@uuid) function.
     ///
     /// # Arguments
     ///
@@ -134,7 +107,8 @@ impl TemplateEngine {
         let write_to = captured
             .state()
             .get_temp(WRITE_TO_KEY)
-            .and_then(|value| value.as_str().map(PathBuf::from));
+            .and_then(|value| value.as_str().map(PathBuf::from))
+            .map(DeclaredOutputPath::new);
         Ok(RenderOutput {
             content: captured.into_output(),
             write_to,
@@ -149,7 +123,7 @@ pub(super) struct RenderOutput {
     /// The rendered template content.
     pub(super) content: String,
     /// The path `file.write_to()` set, if the template called it.
-    pub(super) write_to: Option<PathBuf>,
+    pub(super) write_to: Option<DeclaredOutputPath>,
 }
 
 /// Generates a random UUID v4, formatted per RFC 4122
@@ -353,7 +327,7 @@ mod tests {
 
             assert_eq!(
                 rendered.write_to,
-                Some(PathBuf::from("notes/daily.md"))
+                Some(DeclaredOutputPath::new(PathBuf::from("notes/daily.md")))
             );
         }
 
@@ -395,8 +369,7 @@ mod tests {
     /// Wiring tests for `05-includes-and-utility-functions`: each new
     /// namespace/filter/function is reachable through a real
     /// [`TemplateEngine`]. Exhaustive per-feature behavior lives in each
-    /// collaborator's own tests (`file_ops`, `date_ops`, `str_ops`,
-    /// `ui_ops`).
+    /// collaborator's own tests (`file`, `date`, `string`, `ui`).
     mod utilities {
         use pretty_assertions::assert_eq;
 

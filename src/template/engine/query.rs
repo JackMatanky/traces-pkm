@@ -48,7 +48,7 @@
 //! Every [`FileIndex::refresh`]/[`QueryError`] failure surfaces as a
 //! [`minijinja::Error`] with a stable message and the original error
 //! preserved as [`std::error::Error::source`]. This mirrors the conversion
-//! pattern [`super::ui_ops`]'s `dialog_error` and [`super::file_ops`]'s
+//! pattern [`super::ui`]'s `dialog_error` and [`super::file`]'s
 //! `confine_error` use, so query failures carry template name/line/column
 //! like every other namespace's errors.
 
@@ -170,7 +170,7 @@ impl Object for QueryOps {
 /// Maps a [`FileIndexError`] into a [`minijinja::Error`].
 ///
 /// Keeps the original as [`source`](std::error::Error::source), mirroring
-/// [`super::ui_ops`]'s `dialog_error`.
+/// [`super::ui`]'s `dialog_error`.
 fn index_error(source: FileIndexError) -> Error {
     Error::new(ErrorKind::InvalidOperation, "failed to refresh the file index")
         .with_source(source)
@@ -755,7 +755,7 @@ mod tests {
             let mut env = env(temp.path());
             let provider: Arc<dyn DialogProvider> =
                 Arc::new(PresetDialogProvider::new().with_select(1));
-            crate::template::engine::ui_ops::UiOps::new(provider)
+            crate::template::engine::ui::UiOps::new(provider)
                 .register(&mut env);
 
             let rendered = env
@@ -778,7 +778,7 @@ mod tests {
             let provider: Arc<dyn DialogProvider> = Arc::new(
                 PresetDialogProvider::new().with_multi_select(vec![0, 1]),
             );
-            crate::template::engine::ui_ops::UiOps::new(provider)
+            crate::template::engine::ui::UiOps::new(provider)
                 .register(&mut env);
 
             let rendered = env

@@ -24,7 +24,7 @@ use std::{
 
 use minijinja::{Environment, Error, ErrorKind};
 
-use super::confine_error;
+use super::error::confine_error;
 use crate::{
     file_name::{BaseName, FileName},
     path::{PathError, RootConfinedPath},
@@ -129,7 +129,7 @@ impl InspectTarget {
     /// An absolute `path` is used as-is. A `path` naming `root` itself
     /// ([`Self::is_root_reference`]) resolves directly to it. Any other
     /// relative `path` is confined via [`RootConfinedPath::parse`], the same
-    /// seam [`super::file_ops`]'s `file.include()`/`file.write_to()` use,
+    /// seam [`super::file`]'s `file.include()`/`file.write_to()` use,
     /// so a `..`/symlink escape is rejected identically across every
     /// path-taking template primitive.
     ///

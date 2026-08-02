@@ -15,7 +15,10 @@ use super::error::CliError;
 use crate::{
     DialogError, DialogProvider, PresetDialogProvider,
     config::{Config, ConfigService},
-    template::{TemplateService, WriteMode, WriteOutcome},
+    template::{
+        TemplateError, TemplatePathInput, TemplateService, WriteMode,
+        WriteOutcome,
+    },
 };
 
 /// Command-line arguments for `traces template`.
@@ -124,10 +127,11 @@ impl Template {
         let effective_provider = self.resolve_provider(provider);
         let template_service =
             TemplateService::new(&config, Arc::clone(&effective_provider));
-        let name = self.resolve_name(&config, effective_provider.as_ref())?;
+        let input = self.resolve_name(&config, effective_provider.as_ref())?;
+        let name = input.as_ref().to_path_buf();
         let mode = WriteMode::from_flags(self.dry_run, self.force);
         let outcome = template_service
-            .render_to_file(&name, self.output.as_deref(), mode)
+            .render_to_file(&input, self.output.as_deref(), mode)
             .map_err(|source| CliError::TemplateInstantiate {
                 name,
                 source,
@@ -174,11 +178,20 @@ impl Template {
         &self,
         config: &Config,
         provider: &dyn DialogProvider,
-    ) -> Result<PathBuf, CliError> {
+    ) -> Result<TemplatePathInput, CliError> {
         match self.name() {
-            Some(name) => Ok(name.to_path_buf()),
+            Some(name) => Self::parse_input(name),
             None => Self::pick_template(config, provider),
         }
+    }
+
+    fn parse_input(name: &Path) -> Result<TemplatePathInput, CliError> {
+        TemplatePathInput::parse(name).map_err(|source| {
+            CliError::TemplateInstantiate {
+                name: name.to_path_buf(),
+                source: TemplateError::Resolve(source),
+            }
+        })
     }
 
     /// Prints preview content to stdout or a write diagnostic to stderr.
@@ -206,7 +219,7 @@ impl Template {
     fn pick_template(
         config: &Config,
         provider: &dyn DialogProvider,
-    ) -> Result<PathBuf, CliError> {
+    ) -> Result<TemplatePathInput, CliError> {
         let available = TemplateService::list_available(config);
         if available.is_empty() {
             return Err(CliError::NoTemplates);
@@ -227,7 +240,7 @@ impl Template {
             .map_err(|source| CliError::TemplatePicker {
                 source,
             })?;
-        Ok(PathBuf::from(chosen))
+        Self::parse_input(Path::new(chosen))
     }
 }
 

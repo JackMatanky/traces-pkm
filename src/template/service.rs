@@ -2,8 +2,8 @@
 //!
 //! [`TemplateService`] owns the short top-to-bottom sequence for one
 //! [`Config`]: resolve through its own [`TemplateLoader`], read the source,
-//! render it through [`TemplateEngine`], then delegate the write-or-preview
-//! decision to [`writer::commit`](writer::commit).
+//! render it through [`TemplateEngine`], then delegate output resolution and
+//! disk writes to [`TemplateWriteTarget`](super::writer::TemplateWriteTarget).
 
 use std::{
     path::{Path, PathBuf},
@@ -14,8 +14,8 @@ use super::{
     engine::{RenderOutput, TemplateEngine},
     error::TemplateError,
     loader::TemplateLoader,
-    path::TemplatePath,
-    writer::{self, TemplateWriteTarget, WriteMode, WriteOutcome},
+    path::{DeclaredOutputPath, TemplatePath, TemplatePathInput},
+    writer::{TemplateWriteTarget, WriteMode, WriteOutcome},
 };
 use crate::{DialogProvider, config::Config};
 
@@ -28,18 +28,6 @@ pub(crate) struct TemplateService<'a> {
     loader: TemplateLoader,
     engine: TemplateEngine,
     provider: Arc<dyn DialogProvider>,
-}
-
-/// The result of [`TemplateService::render`].
-///
-/// Carries rendered content plus the resolved template identity
-/// [`TemplateService::write`] needs to finish the job without rendering `name`
-/// a second time. A second render would re-run any `ui.*` prompts inside it.
-#[derive(Debug)]
-pub(crate) struct RenderedTemplate {
-    resolved: TemplatePath,
-    content: String,
-    declared: Option<PathBuf>,
 }
 
 impl<'a> TemplateService<'a> {
@@ -79,6 +67,32 @@ impl<'a> TemplateService<'a> {
         TemplateLoader::from(config).list_available()
     }
 
+    /// Resolves `name`, renders it, then writes or previews the result.
+    ///
+    /// Equivalent to [`Self::render`] followed by [`Self::write`], for callers
+    /// that do not need to inspect the render before deciding where it lands.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - template identifier passed to [`Self::render`]
+    /// * `output` - explicit `-o` override; highest write-target precedence
+    /// * `mode` - [`WriteMode::Commit`] writes to disk, [`WriteMode::DryRun`]
+    ///   returns the rendered content untouched
+    ///
+    /// # Errors
+    ///
+    /// - Any error returned by [`Self::render`].
+    /// - Any error returned by [`Self::write`].
+    #[inline]
+    pub(crate) fn render_to_file(
+        &self,
+        name: &TemplatePathInput,
+        output: Option<&Path>,
+        mode: WriteMode,
+    ) -> Result<WriteOutcome, TemplateError> {
+        self.write(self.render(name)?, output, mode)
+    }
+
     /// Resolves `name` and renders it.
     ///
     /// This is the read/render half of [`Self::render_to_file`], split out so a
@@ -95,7 +109,7 @@ impl<'a> TemplateService<'a> {
     #[inline]
     pub(crate) fn render(
         &self,
-        name: &Path,
+        name: &TemplatePathInput,
     ) -> Result<RenderedTemplate, TemplateError> {
         let resolved = self.loader.find(name)?;
         let resolved_path = resolved.absolute();
@@ -144,38 +158,13 @@ impl<'a> TemplateService<'a> {
         let target = TemplateWriteTarget::new(self.config.root())
             .with_requested(output)
             .with_declared(rendered.declared);
-        let resolved_path =
-            target.resolve(policy, self.provider.as_ref(), || {
-                self.default_output_path(&rendered.resolved)
-            })?;
-        writer::commit(&resolved_path, &rendered.content, policy)?;
+        let resolved_path = target.write(
+            &rendered.content,
+            policy,
+            self.provider.as_ref(),
+            || self.default_output_path(&rendered.resolved),
+        )?;
         Ok(WriteOutcome::Written(resolved_path))
-    }
-
-    /// Resolves `name`, renders it, then writes or previews the result.
-    ///
-    /// Equivalent to [`Self::render`] followed by [`Self::write`], for callers
-    /// that do not need to inspect the render before deciding where it lands.
-    ///
-    /// # Arguments
-    ///
-    /// * `name` - template identifier passed to [`Self::render`]
-    /// * `output` - explicit `-o` override; highest write-target precedence
-    /// * `mode` - [`WriteMode::Commit`] writes to disk, [`WriteMode::DryRun`]
-    ///   returns the rendered content untouched
-    ///
-    /// # Errors
-    ///
-    /// - Any error returned by [`Self::render`].
-    /// - Any error returned by [`Self::write`].
-    #[inline]
-    pub(crate) fn render_to_file(
-        &self,
-        name: &Path,
-        output: Option<&Path>,
-        mode: WriteMode,
-    ) -> Result<WriteOutcome, TemplateError> {
-        self.write(self.render(name)?, output, mode)
     }
 
     /// Reads the resolved template's source from disk, mapping I/O
@@ -208,10 +197,20 @@ impl<'a> TemplateService<'a> {
     /// private `confine` helper: `output_dir` is a trusted config
     /// value, not a runtime candidate.
     fn default_output_path(&self, resolved: &TemplatePath) -> PathBuf {
-        let candidate =
-            self.config.output_dir().join(resolved.default_output_filename());
-        TemplateWriteTarget::trusted(self.config.root(), candidate)
+        self.config.output_dir().join(resolved.default_output_filename())
     }
+}
+
+/// The result of [`TemplateService::render`].
+///
+/// Carries rendered content plus the resolved template identity
+/// [`TemplateService::write`] needs to finish the job without rendering `name`
+/// a second time. A second render would re-run any `ui.*` prompts inside it.
+#[derive(Debug)]
+pub(crate) struct RenderedTemplate {
+    resolved: TemplatePath,
+    content: String,
+    declared: Option<DeclaredOutputPath>,
 }
 
 #[cfg(test)]
@@ -227,6 +226,10 @@ mod tests {
         fs::create_dir_all(parent).expect("create template parent");
         fs::write(&path, content).expect("write template");
         path
+    }
+
+    fn input(path: &str) -> TemplatePathInput {
+        TemplatePathInput::parse(Path::new(path)).expect("valid template input")
     }
 
     /// A cheap, deterministic provider for tests that never exercise `ui.*`.
@@ -272,7 +275,7 @@ mod tests {
 
             let outcome = service
                 .render_to_file(
-                    Path::new("daily"),
+                    &input("daily"),
                     None,
                     WriteMode::Commit(CommitPolicy::CreateNew),
                 )
@@ -299,7 +302,7 @@ mod tests {
 
             let outcome = service
                 .render_to_file(
-                    Path::new("daily"),
+                    &input("daily"),
                     None,
                     WriteMode::Commit(CommitPolicy::CreateNew),
                 )
@@ -326,7 +329,7 @@ mod tests {
 
             let outcome = service
                 .render_to_file(
-                    Path::new("nested/report.md"),
+                    &input("nested/report.md"),
                     None,
                     WriteMode::Commit(CommitPolicy::CreateNew),
                 )
@@ -360,7 +363,7 @@ mod tests {
             assert_eq!(
                 service
                     .render_to_file(
-                        Path::new("notes/daily"),
+                        &input("notes/daily"),
                         None,
                         WriteMode::Commit(CommitPolicy::CreateNew)
                     )
@@ -370,7 +373,7 @@ mod tests {
             assert_eq!(
                 service
                     .render_to_file(
-                        Path::new("notes/daily.md"),
+                        &input("notes/daily.md"),
                         None,
                         WriteMode::Commit(CommitPolicy::Overwrite)
                     )
@@ -392,7 +395,7 @@ mod tests {
 
             let error = service
                 .render_to_file(
-                    Path::new("missing"),
+                    &input("missing"),
                     None,
                     WriteMode::Commit(CommitPolicy::CreateNew),
                 )
@@ -421,7 +424,7 @@ mod tests {
 
             let error = service
                 .render_to_file(
-                    Path::new("daily"),
+                    &input("daily"),
                     None,
                     WriteMode::Commit(CommitPolicy::CreateNew),
                 )
@@ -445,7 +448,7 @@ mod tests {
 
             let error = service
                 .render_to_file(
-                    Path::new("broken"),
+                    &input("broken"),
                     None,
                     WriteMode::Commit(CommitPolicy::CreateNew),
                 )
@@ -475,7 +478,7 @@ mod tests {
 
             let error = service
                 .render_to_file(
-                    Path::new("daily"),
+                    &input("daily"),
                     None,
                     WriteMode::Commit(CommitPolicy::CreateNew),
                 )
@@ -500,7 +503,7 @@ mod tests {
 
             let outcome = service
                 .render_to_file(
-                    Path::new("daily"),
+                    &input("daily"),
                     None,
                     WriteMode::Commit(CommitPolicy::CreateNew),
                 )
@@ -529,7 +532,7 @@ mod tests {
 
             let outcome = service
                 .render_to_file(
-                    Path::new("daily"),
+                    &input("daily"),
                     Some(override_path),
                     WriteMode::Commit(CommitPolicy::CreateNew),
                 )
@@ -559,7 +562,7 @@ mod tests {
 
             let error = service
                 .render_to_file(
-                    Path::new("daily"),
+                    &input("daily"),
                     Some(&outside),
                     WriteMode::Commit(CommitPolicy::CreateNew),
                 )
@@ -587,7 +590,7 @@ mod tests {
 
             let error = service
                 .render_to_file(
-                    Path::new("daily"),
+                    &input("daily"),
                     Some(traversal),
                     WriteMode::Commit(CommitPolicy::CreateNew),
                 )
@@ -618,7 +621,7 @@ mod tests {
 
             let error = service
                 .render_to_file(
-                    Path::new("daily"),
+                    &input("daily"),
                     None,
                     WriteMode::Commit(CommitPolicy::CreateNew),
                 )
@@ -656,7 +659,7 @@ mod tests {
 
             let error = service
                 .render_to_file(
-                    Path::new("daily"),
+                    &input("daily"),
                     None,
                     WriteMode::Commit(CommitPolicy::CreateNew),
                 )
@@ -694,7 +697,7 @@ mod tests {
 
             let outcome = service
                 .render_to_file(
-                    Path::new("daily"),
+                    &input("daily"),
                     Some(cli_override),
                     WriteMode::Commit(CommitPolicy::CreateNew),
                 )
@@ -725,7 +728,7 @@ mod tests {
 
             let outcome = service
                 .render_to_file(
-                    Path::new("daily"),
+                    &input("daily"),
                     None,
                     WriteMode::Commit(CommitPolicy::CreateNew),
                 )
@@ -754,7 +757,7 @@ mod tests {
 
             let error = service
                 .render_to_file(
-                    Path::new("daily"),
+                    &input("daily"),
                     None,
                     WriteMode::Commit(CommitPolicy::CreateNew),
                 )
@@ -787,7 +790,7 @@ mod tests {
 
             let outcome = service
                 .render_to_file(
-                    Path::new("daily"),
+                    &input("daily"),
                     None,
                     WriteMode::Commit(CommitPolicy::Overwrite),
                 )
@@ -817,7 +820,7 @@ mod tests {
             let service = TemplateService::new(&config, preset_provider());
 
             let outcome = service
-                .render_to_file(Path::new("daily"), None, WriteMode::DryRun)
+                .render_to_file(&input("daily"), None, WriteMode::DryRun)
                 .expect("dry run never checks existence, so it never fails");
 
             assert_eq!(outcome, WriteOutcome::Previewed("2".to_owned()));
@@ -843,7 +846,7 @@ mod tests {
 
             let outcome = service
                 .render_to_file(
-                    Path::new("daily"),
+                    &input("daily"),
                     Some(escaping),
                     WriteMode::DryRun,
                 )
@@ -885,7 +888,7 @@ mod tests {
 
             let outcome = service
                 .render_to_file(
-                    Path::new("daily"),
+                    &input("daily"),
                     None,
                     WriteMode::Commit(CommitPolicy::CreateNew),
                 )
@@ -929,7 +932,7 @@ mod tests {
 
             let outcome = service
                 .render_to_file(
-                    Path::new("daily"),
+                    &input("daily"),
                     None,
                     WriteMode::Commit(CommitPolicy::CreateNew),
                 )
@@ -945,7 +948,7 @@ mod tests {
         #[test]
         fn ui_select_and_multi_select_honor_a_custom_attribute() {
             // `default`'s exact fallback content is unit-tested directly
-            // against `label_items` (see `ui_ops.rs`) — nothing about it
+            // against `label_items` (see `ui.rs`) — nothing about it
             // is observable through a render, since it only affects the
             // label text passed to the provider, not the recovered item.
             let temp = tempfile::tempdir().expect("create temp dir");
@@ -974,7 +977,7 @@ mod tests {
 
             let outcome = service
                 .render_to_file(
-                    Path::new("daily"),
+                    &input("daily"),
                     None,
                     WriteMode::Commit(CommitPolicy::CreateNew),
                 )
@@ -1012,7 +1015,7 @@ mod tests {
             let service = TemplateService::new(&config, provider);
 
             let outcome = service
-                .render_to_file(Path::new("daily"), None, WriteMode::DryRun)
+                .render_to_file(&input("daily"), None, WriteMode::DryRun)
                 .expect("render_to_file");
 
             assert_eq!(outcome, WriteOutcome::Previewed("claude".to_owned()));
@@ -1037,7 +1040,7 @@ mod tests {
             );
             let service = TemplateService::new(&config, preset_provider());
 
-            let rendered = service.render(Path::new("daily")).expect("render");
+            let rendered = service.render(&input("daily")).expect("render");
 
             assert_eq!(rendered.content, "hello 2");
             assert_eq!(rendered.declared, None);
@@ -1060,11 +1063,13 @@ mod tests {
             );
             let service = TemplateService::new(&config, preset_provider());
 
-            let rendered = service.render(Path::new("daily")).expect("render");
+            let rendered = service.render(&input("daily")).expect("render");
 
             assert_eq!(
                 rendered.declared,
-                Some(PathBuf::from("from-template.md"))
+                Some(DeclaredOutputPath::new(PathBuf::from(
+                    "from-template.md"
+                )))
             );
         }
 
@@ -1080,7 +1085,7 @@ mod tests {
             let service = TemplateService::new(&config, preset_provider());
 
             let error = service
-                .render(Path::new("missing"))
+                .render(&input("missing"))
                 .expect_err("missing template fails");
 
             assert!(matches!(error, TemplateError::Resolve(_)));

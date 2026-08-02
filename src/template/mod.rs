@@ -4,10 +4,11 @@
 //! [`TemplateService`] is the entry point used by `crate::cli::template`.
 //! The supporting modules keep each pipeline stage small:
 //!
-//! - [`path`][]: [`TemplatePath`](path::TemplatePath) tracks a raw `-i`
-//!   argument until it is a file proven to exist, with
-//!   [`TemplatePathError`](path::TemplatePathError) covering validation and
-//!   search failures.
+//! - [`path`][]: [`TemplatePathInput`](path::TemplatePathInput) validates raw
+//!   template path inputs before they reach rendering,
+//!   [`TemplatePath`](path::TemplatePath) tracks a found file proven to exist,
+//!   and [`DeclaredOutputPath`](path::DeclaredOutputPath) labels a raw
+//!   `file.write_to()` candidate before writing.
 //! - [`loader`][]: [`TemplateLoader`](loader::TemplateLoader) searches the
 //!   configured template directories through
 //!   [`TemplateLoader::find`](loader::TemplateLoader::find), used for both
@@ -15,9 +16,8 @@
 //! - [`engine`][]: wraps minijinja's [`Environment`](minijinja::Environment),
 //!   registering the template-facing `file`, `ui`, `date`, query, path,
 //!   numeric, and string helpers.
-//! - [`writer`][]: resolves a render's output path by precedence
-//!   ([`TemplateWriteTarget`](writer::TemplateWriteTarget)) and commits it
-//!   through [`writer::commit`](writer::commit).
+//! - [`writer`][]: resolves a render's output path by precedence and writes it
+//!   through [`TemplateWriteTarget::write`](writer::TemplateWriteTarget::write).
 //! - [`service`][]: [`TemplateService`] chains resolve, render, and write into
 //!   the single CLI-facing call.
 //!
@@ -32,6 +32,6 @@ mod service;
 mod writer;
 
 pub(crate) use error::TemplateError;
-pub(crate) use path::TemplatePathError;
+pub(crate) use path::{TemplatePathError, TemplatePathInput};
 pub(crate) use service::TemplateService;
 pub(crate) use writer::{WriteMode, WriteOutcome};

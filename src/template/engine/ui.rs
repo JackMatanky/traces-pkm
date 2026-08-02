@@ -95,10 +95,11 @@ impl Object for UiOps {
                           kwargs: Kwargs|
                           -> Result<Value, Error> {
                         let opts = SelectOptions::extract(&items, &kwargs)?;
+                        let labels = opts.labels();
                         let index = provider
-                            .select(label, &opts.labels)
+                            .select(label, &labels)
                             .map_err(dialog_error)?;
-                        recover_indexed_value(&opts.values, index)
+                        opts.recover(index)
                     },
                 ))
             }
@@ -110,14 +111,13 @@ impl Object for UiOps {
                           kwargs: Kwargs|
                           -> Result<Vec<Value>, Error> {
                         let opts = SelectOptions::extract(&items, &kwargs)?;
+                        let labels = opts.labels();
                         let indices = provider
-                            .multi_select(label, &opts.labels)
+                            .multi_select(label, &labels)
                             .map_err(dialog_error)?;
                         indices
                             .into_iter()
-                            .map(|index| {
-                                recover_indexed_value(&opts.values, index)
-                            })
+                            .map(|index| opts.recover(index))
                             .collect()
                     },
                 ))
@@ -131,17 +131,22 @@ impl Object for UiOps {
     }
 }
 
-/// Display labels paired with the original [`Value`]s they were derived from,
-/// indexed identically. See [`SelectOptions::extract`].
+/// A display label paired with the original [`Value`] it was derived from.
+#[derive(Debug)]
+struct SelectItem {
+    label: String,
+    value: Value,
+}
+
+/// Selectable items prepared for [`DialogProvider`].
 #[derive(Debug)]
 struct SelectOptions {
-    labels: Vec<String>,
-    values: Vec<Value>,
+    items: Vec<SelectItem>,
 }
 
 impl SelectOptions {
-    /// Iterates `items`, pairing each element with a display label, while
-    /// keeping the original [`Value`]s in a parallel [`Vec`] so
+    /// Iterates `items`, pairing each element with a display label and keeping
+    /// the original [`Value`] beside it so
     /// [`DialogProvider::select`]/[`DialogProvider::multi_select`]'s
     /// index-based result (see `crate::dialog`'s module docs) can be mapped
     /// back to the item the user actually picked, not just its label.
@@ -173,8 +178,7 @@ impl SelectOptions {
         let path = attribute.unwrap_or(DEFAULT_ATTRIBUTE);
 
         let capacity = items.len().unwrap_or(0);
-        let mut labels = Vec::with_capacity(capacity);
-        let mut values = Vec::with_capacity(capacity);
+        let mut prepared = Vec::with_capacity(capacity);
         for item in items.try_iter()? {
             let attribute_value = get_path(&item, path)?;
             let label = if attribute_value.is_undefined() {
@@ -185,12 +189,30 @@ impl SelectOptions {
             } else {
                 attribute_value.to_string()
             };
-            labels.push(label);
-            values.push(item);
+            prepared.push(SelectItem {
+                label,
+                value: item,
+            });
         }
         Ok(Self {
-            labels,
-            values,
+            items: prepared,
+        })
+    }
+
+    fn labels(&self) -> Vec<String> {
+        let mut labels = Vec::with_capacity(self.items.len());
+        for item in &self.items {
+            labels.push(item.label.clone());
+        }
+        labels
+    }
+
+    fn recover(&self, index: usize) -> Result<Value, Error> {
+        self.items.get(index).map(|item| item.value.clone()).ok_or_else(|| {
+            Error::new(
+                ErrorKind::InvalidOperation,
+                "dialog provider returned an index outside the item list",
+            )
         })
     }
 }
@@ -242,28 +264,6 @@ fn get_path(item: &Value, path: &str) -> Result<Value, Error> {
         };
     }
     Ok(current)
-}
-
-/// Recovers `values[index]`, mapping an out-of-range index to a
-/// [`minijinja::Error`] instead of panicking.
-///
-/// Out-of-range indexes are never expected from a well-behaved
-/// [`DialogProvider`], since it always returns an index into the slice it was
-/// given.
-///
-/// # Errors
-///
-/// - [`ErrorKind::InvalidOperation`] if `index` is out of bounds for `values`.
-fn recover_indexed_value(
-    values: &[Value],
-    index: usize,
-) -> Result<Value, Error> {
-    values.get(index).cloned().ok_or_else(|| {
-        Error::new(
-            ErrorKind::InvalidOperation,
-            "dialog provider returned an index outside the item list",
-        )
-    })
 }
 
 #[cfg(test)]
@@ -717,7 +717,7 @@ mod tests {
             let opts = SelectOptions::extract(&items, &kwargs([]))
                 .expect("extract succeeds");
 
-            assert_eq!(opts.labels, vec!["US".to_owned(), "GB".to_owned()]);
+            assert_eq!(opts.labels(), vec!["US".to_owned(), "GB".to_owned()]);
         }
 
         #[test]
@@ -733,7 +733,7 @@ mod tests {
             )
             .expect("extract succeeds");
 
-            assert_eq!(opts.labels, vec!["US".to_owned(), "GB".to_owned()]);
+            assert_eq!(opts.labels(), vec!["US".to_owned(), "GB".to_owned()]);
         }
 
         #[test]
@@ -749,7 +749,7 @@ mod tests {
             )
             .expect("extract succeeds");
 
-            assert_eq!(opts.labels, vec!["NYC".to_owned(), "LA".to_owned()]);
+            assert_eq!(opts.labels(), vec!["NYC".to_owned(), "LA".to_owned()]);
         }
 
         #[test]
@@ -769,7 +769,7 @@ mod tests {
             )
             .expect("a missing intermediate segment falls back to default");
 
-            assert_eq!(opts.labels, vec![
+            assert_eq!(opts.labels(), vec![
                 "Unknown".to_owned(),
                 "LA".to_owned()
             ]);
@@ -788,7 +788,7 @@ mod tests {
             )
             .expect("extract succeeds");
 
-            assert_eq!(opts.labels, vec![
+            assert_eq!(opts.labels(), vec![
                 "Unnamed".to_owned(),
                 "GB".to_owned()
             ]);
@@ -801,7 +801,7 @@ mod tests {
             let opts = SelectOptions::extract(&items, &kwargs([]))
                 .expect("extract succeeds");
 
-            assert_eq!(opts.labels, vec![
+            assert_eq!(opts.labels(), vec![
                 "1".to_owned(),
                 "2".to_owned(),
                 "3".to_owned()
@@ -815,7 +815,7 @@ mod tests {
             let opts = SelectOptions::extract(&items, &kwargs([]))
                 .expect("extract succeeds");
 
-            assert_eq!(opts.labels, vec!["42".to_owned()]);
+            assert_eq!(opts.labels(), vec!["42".to_owned()]);
         }
 
         #[test]
@@ -851,8 +851,8 @@ mod tests {
             let opts = SelectOptions::extract(&items, &kwargs([]))
                 .expect("extract succeeds");
 
-            assert_eq!(opts.labels, Vec::<String>::new());
-            assert_eq!(opts.values, Vec::<Value>::new());
+            assert_eq!(opts.labels(), Vec::<String>::new());
+            assert_eq!(opts.items.len(), 0);
         }
     }
 
