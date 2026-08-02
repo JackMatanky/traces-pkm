@@ -979,7 +979,7 @@ mod tests {
         }
 
         #[test]
-        fn notes_without_tasks_contribute_no_rows() {
+        fn contributes_no_rows_when_note_has_no_tasks() {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("no-tasks.md"), "Just prose, no tasks.")
                 .expect("write note");
@@ -994,6 +994,18 @@ mod tests {
                 outcome.iter().next().and_then(IndexRecord::task_text),
                 Some("buy milk")
             );
+        }
+
+        #[test]
+        fn returns_empty_outcome_when_no_notes_match_source() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("readme.txt"), "text")
+                .expect("write txt");
+            let index = FileIndex::build(temp.path()).expect("build index");
+
+            let outcome = index.query_tasks(&Source::All);
+
+            assert!(outcome.is_empty());
         }
 
         #[test]
@@ -1024,7 +1036,7 @@ mod tests {
         }
 
         #[test]
-        fn source_selects_which_notes_contribute_tasks() {
+        fn returns_only_tasks_from_notes_matching_the_tag_source() {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(
                 temp.path().join("a.md"),
@@ -1042,7 +1054,7 @@ mod tests {
         }
 
         #[test]
-        fn folder_source_selects_which_notes_contribute_tasks() {
+        fn returns_only_tasks_from_notes_under_the_folder_source() {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::create_dir_all(temp.path().join("projects")).expect("mkdir");
             fs::write(
@@ -1061,7 +1073,7 @@ mod tests {
         }
 
         #[test]
-        fn filtering_by_task_completion_keeps_only_matching_tasks_not_the_whole_note()
+        fn keeps_only_matching_tasks_not_the_whole_note_when_filtering_by_completion()
          {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(

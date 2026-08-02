@@ -442,6 +442,17 @@ mod tests {
 
             assert_eq!(rendered, "1");
         }
+
+        #[test]
+        fn register_makes_tasks_reachable_through_a_real_environment() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_note(temp.path(), "todo.md", "- [ ] buy milk\n");
+
+            let rendered = render(temp.path(), "{{ tasks.all() | length }}")
+                .expect("render succeeds");
+
+            assert_eq!(rendered, "1");
+        }
     }
 
     mod source_selection {
@@ -490,6 +501,37 @@ mod tests {
             .expect("render succeeds");
 
             assert_eq!(rendered, "dune");
+        }
+
+        #[test]
+        fn from_tags_keeps_only_matching_notes_tasks() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_note(temp.path(), "a.md", "#projects\n- [ ] project task\n");
+            write_note(temp.path(), "b.md", "#books\n- [ ] book task\n");
+
+            let rendered = render(
+                temp.path(),
+                r##"{% for t in tasks.from_tags("#projects") %}{{ t.task.text }}{% endfor %}"##,
+            )
+            .expect("render succeeds");
+
+            assert_eq!(rendered, "project task");
+        }
+
+        #[test]
+        fn from_folder_keeps_only_notes_under_the_folder_tasks() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::create_dir_all(temp.path().join("projects")).expect("mkdir");
+            write_note(temp.path(), "projects/a.md", "- [ ] project task\n");
+            write_note(temp.path(), "other.md", "- [ ] other task\n");
+
+            let rendered = render(
+                temp.path(),
+                r#"{% for t in tasks.from_folder("projects") %}{{ t.task.text }}{% endfor %}"#,
+            )
+            .expect("render succeeds");
+
+            assert_eq!(rendered, "project task");
         }
     }
 
@@ -557,6 +599,27 @@ mod tests {
 
             assert_eq!(rendered, "2");
         }
+
+        #[test]
+        fn where_filters_by_task_completion_not_by_note() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_note(
+                temp.path(),
+                "todo.md",
+                "- [ ] buy milk\n- [x] pay rent\n",
+            );
+
+            let rendered = render(
+                temp.path(),
+                r#"{% for t in tasks.all().where("task.completed == true") %}{{ t.task.text }}{% endfor %}"#,
+            )
+            .expect("render succeeds");
+
+            // The Note has one complete and one incomplete task: filtering
+            // must keep only the matching task row, not both of the one
+            // Note that has at least one match.
+            assert_eq!(rendered, "pay rent");
+        }
     }
 
     mod attribute_resolution {
@@ -620,6 +683,60 @@ mod tests {
 
             let expected = format!("{},", FileField::ACCESSOR_NAMES.join(","));
             assert_eq!(rendered, expected);
+        }
+
+        #[test]
+        fn task_completed_and_task_text_resolve_per_row() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_note(
+                temp.path(),
+                "todo.md",
+                "- [ ] buy milk\n- [x] pay rent\n",
+            );
+
+            let rendered = render(
+                temp.path(),
+                "{% for t in tasks.all() %}{{ t.task.completed }}:{{ \
+                 t.task.text }} {% endfor %}",
+            )
+            .expect("render succeeds");
+
+            assert_eq!(rendered, "false:buy milk true:pay rent ");
+        }
+
+        #[test]
+        fn task_rows_retain_parent_note_metadata_for_filtering_and_display() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_note(
+                temp.path(),
+                "project.md",
+                "---\ntitle: Launch\n---\nFiled under #projects.\n\n- [ ] \
+                 ship it\n",
+            );
+
+            let rendered = render(
+                temp.path(),
+                "{% for t in tasks.all() %}{{ t.file.name }}|{{ t.title }}|{{ \
+                 t.tags | length }}{% endfor %}",
+            )
+            .expect("render succeeds");
+
+            assert_eq!(rendered, "project|Launch|1");
+        }
+
+        #[test]
+        fn task_completed_and_task_text_are_none_on_a_page_level_record() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_note(temp.path(), "note.md", "# No tasks here");
+
+            let rendered = render(
+                temp.path(),
+                "{{ query.all()[0].task.completed is none }}:{{ \
+                 query.all()[0].task.text is none }}",
+            )
+            .expect("render succeeds");
+
+            assert_eq!(rendered, "true:true");
         }
     }
 
@@ -712,6 +829,49 @@ mod tests {
 
             assert!(error.to_string().contains("query failed"));
         }
+
+        #[test]
+        fn unparsable_filter_expression_on_tasks_surfaces_as_a_render_error() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_note(temp.path(), "todo.md", "- [ ] buy milk\n");
+
+            let error = render(
+                temp.path(),
+                r#"{{ tasks.all().filter("task.completed >") }}"#,
+            )
+            .expect_err("malformed filter expression should error");
+
+            assert!(error.to_string().contains("query failed"));
+        }
+
+        #[cfg(unix)]
+        #[test]
+        fn refresh_failure_surfaces_as_a_render_error_not_a_panic() {
+            use std::{os::unix::fs::PermissionsExt as _, path::Path};
+
+            struct RestorePermissions<'a>(&'a Path);
+
+            impl Drop for RestorePermissions<'_> {
+                fn drop(&mut self) {
+                    let _ = fs::set_permissions(
+                        self.0,
+                        fs::Permissions::from_mode(0o700),
+                    );
+                }
+            }
+
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let locked = temp.path().join("locked");
+            fs::create_dir(&locked).expect("create locked dir");
+            fs::set_permissions(&locked, fs::Permissions::from_mode(0o000))
+                .expect("revoke read permission");
+            let _restore = RestorePermissions(&locked);
+
+            let error = render(temp.path(), "{{ query.all() | length }}")
+                .expect_err("unreadable subdirectory should fail the refresh");
+
+            assert!(error.to_string().contains("failed to refresh"));
+        }
     }
 
     mod refresh {
@@ -738,21 +898,10 @@ mod tests {
         }
     }
 
-    mod task_ops {
+    mod task_expansion {
         use pretty_assertions::assert_eq;
 
         use super::*;
-
-        #[test]
-        fn register_makes_tasks_reachable_through_a_real_environment() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            write_note(temp.path(), "todo.md", "- [ ] buy milk\n");
-
-            let rendered = render(temp.path(), "{{ tasks.all() | length }}")
-                .expect("render succeeds");
-
-            assert_eq!(rendered, "1");
-        }
 
         #[test]
         fn expands_one_note_with_two_tasks_into_two_rows_not_one() {
@@ -772,126 +921,6 @@ mod tests {
 
             assert_eq!(pages, "1");
             assert_eq!(tasks, "2");
-        }
-
-        #[test]
-        fn from_tags_keeps_only_matching_notes_tasks() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            write_note(temp.path(), "a.md", "#projects\n- [ ] project task\n");
-            write_note(temp.path(), "b.md", "#books\n- [ ] book task\n");
-
-            let rendered = render(
-                temp.path(),
-                r##"{% for t in tasks.from_tags("#projects") %}{{ t.task.text }}{% endfor %}"##,
-            )
-            .expect("render succeeds");
-
-            assert_eq!(rendered, "project task");
-        }
-
-        #[test]
-        fn from_folder_keeps_only_notes_under_the_folder_tasks() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            fs::create_dir_all(temp.path().join("projects")).expect("mkdir");
-            write_note(temp.path(), "projects/a.md", "- [ ] project task\n");
-            write_note(temp.path(), "other.md", "- [ ] other task\n");
-
-            let rendered = render(
-                temp.path(),
-                r#"{% for t in tasks.from_folder("projects") %}{{ t.task.text }}{% endfor %}"#,
-            )
-            .expect("render succeeds");
-
-            assert_eq!(rendered, "project task");
-        }
-
-        #[test]
-        fn task_completed_and_task_text_resolve_per_row() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            write_note(
-                temp.path(),
-                "todo.md",
-                "- [ ] buy milk\n- [x] pay rent\n",
-            );
-
-            let rendered = render(
-                temp.path(),
-                "{% for t in tasks.all() %}{{ t.task.completed }}:{{ \
-                 t.task.text }} {% endfor %}",
-            )
-            .expect("render succeeds");
-
-            assert_eq!(rendered, "false:buy milk true:pay rent ");
-        }
-
-        #[test]
-        fn task_rows_retain_parent_note_metadata_for_filtering_and_display() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            write_note(
-                temp.path(),
-                "project.md",
-                "---\ntitle: Launch\n---\nFiled under #projects.\n\n- [ ] \
-                 ship it\n",
-            );
-
-            let rendered = render(
-                temp.path(),
-                "{% for t in tasks.all() %}{{ t.file.name }}|{{ t.title }}|{{ \
-                 t.tags | length }}{% endfor %}",
-            )
-            .expect("render succeeds");
-
-            assert_eq!(rendered, "project|Launch|1");
-        }
-
-        #[test]
-        fn where_filters_by_task_completion_not_by_note() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            write_note(
-                temp.path(),
-                "todo.md",
-                "- [ ] buy milk\n- [x] pay rent\n",
-            );
-
-            let rendered = render(
-                temp.path(),
-                r#"{% for t in tasks.all().where("task.completed == true") %}{{ t.task.text }}{% endfor %}"#,
-            )
-            .expect("render succeeds");
-
-            // The Note has one complete and one incomplete task: filtering
-            // must keep only the matching task row, not both of the one
-            // Note that has at least one match.
-            assert_eq!(rendered, "pay rent");
-        }
-
-        #[test]
-        fn task_completed_and_task_text_are_none_on_a_page_level_record() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            write_note(temp.path(), "note.md", "# No tasks here");
-
-            let rendered = render(
-                temp.path(),
-                "{{ query.all()[0].task.completed is none }}:{{ \
-                 query.all()[0].task.text is none }}",
-            )
-            .expect("render succeeds");
-
-            assert_eq!(rendered, "true:true");
-        }
-
-        #[test]
-        fn unparsable_filter_expression_surfaces_as_a_render_error() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            write_note(temp.path(), "todo.md", "- [ ] buy milk\n");
-
-            let error = render(
-                temp.path(),
-                r#"{{ tasks.all().filter("task.completed >") }}"#,
-            )
-            .expect_err("malformed filter expression should error");
-
-            assert!(error.to_string().contains("query failed"));
         }
     }
 }

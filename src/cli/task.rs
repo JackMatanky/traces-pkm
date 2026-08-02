@@ -190,6 +190,27 @@ mod tests {
         }
 
         #[test]
+        fn from_folder_selects_only_matching_notes_tasks() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::create_dir_all(temp.path().join("projects")).expect("mkdir");
+            fs::write(
+                temp.path().join("projects/a.md"),
+                "- [ ] project task\n",
+            )
+            .expect("write projects/a.md");
+            fs::write(temp.path().join("b.md"), "- [ ] other task\n")
+                .expect("write b.md");
+            let task = Task {
+                from: Some("projects".to_owned()),
+                filter: None,
+            };
+
+            let lines = task.lines(temp.path()).expect("valid query");
+
+            assert_eq!(lines, ["- [ ] project task (projects/a.md)"]);
+        }
+
+        #[test]
         fn where_filters_by_task_completion_not_by_note() {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(
