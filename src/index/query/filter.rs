@@ -1,13 +1,13 @@
 //! Filter expression AST, tokenizer, and recursive descent parser.
 //!
-//! Main components:
-//! - [`FilterExpr`]: parsed AST for `.filter()`/`.where()` expressions, built
-//!   by [`FilterExpr::parse`] and evaluated by [`FilterExpr::matches`].
-//! - [`FilterToken`]: tokens lexed from a filter expression string by
-//!   [`tokenize_filter_expr`].
-//! - [`FilterParser`]: recursive descent parser turning those tokens into a
-//!   [`FilterExpr`].
-//! - [`FilterFunction`]: a recognized filter function call, e.g.
+//! # Main Components
+//!
+//! - [`FilterExpr`] is the parsed AST for `.filter()` and `.where()`
+//!   expressions.
+//! - [`FilterToken`] is the token stream produced from a filter expression
+//!   string by [`tokenize_filter_expr`].
+//! - [`FilterParser`] turns tokens into a [`FilterExpr`].
+//! - [`FilterFunction`] represents a recognized function call such as
 //!   `contains(tags, "#book")`.
 
 use std::vec;
@@ -29,7 +29,7 @@ use crate::note::FieldValue;
 pub(super) enum FilterExpr {
     /// `<field> <op> <value>` comparison.
     Comparison(ComparisonExpr),
-    /// A recognized function call, e.g. `contains(tags, "#book")`.
+    /// Recognized function call, such as `contains(tags, "#book")`.
     Function(FilterFunction),
     /// `AND`/`OR` combination of two or more expressions.
     Logical(LogicalExpr),
@@ -76,12 +76,12 @@ impl FilterExpr {
 /// Tokens parsed from a filter expression.
 ///
 /// - `true`/`false`/`null`/`Null` are matched directly by their own
-///   [`Self::Literal`] token pattern — every spelling is visible right here.
+///   [`Self::Literal`] token pattern, so every spelling is visible here.
 /// - [`Self::Op`] and [`Self::Logical`] delegate their spellings to
 ///   [`CompareOp`] and [`LogicalOp`] respectively, so this enum never repeats
 ///   operator semantics those types already own.
-/// - Numbers can't be matched by a fixed-literal pattern; they're lexed
-///   generically as [`Self::Ident`] and reclassified by [`Self::reclassify`].
+/// - Numbers cannot be matched by a fixed-literal pattern; they lex as
+///   [`Self::Ident`] and are reclassified by [`Self::reclassify`].
 #[derive(Logos, Clone, Debug, PartialEq)]
 #[logos(skip r"[ \t\n\r\f]+")]
 enum FilterToken {
@@ -113,13 +113,12 @@ enum FilterToken {
 }
 
 impl FilterToken {
-    /// Reclassifies an [`Self::Ident`] into a numeric [`Self::Literal`]
-    /// when it parses as `f64`, leaving genuine field identifiers and other
-    /// token kinds unchanged.
+    /// Reclassifies numeric identifiers into [`Self::Literal`] values.
     ///
-    /// Never hand-write an equivalent numeric regex in the derive above —
-    /// `f64`'s parser already covers exponents, signs, and other edge
-    /// cases a regex would have to duplicate.
+    /// Identifiers that parse as [`f64`] become numeric literals. Genuine field
+    /// identifiers and other token kinds pass through unchanged. This relies on
+    /// `f64`'s parser instead of duplicating support for exponents, signs, and
+    /// edge cases in a regex.
     fn reclassify(self) -> Self {
         match self {
             Self::Ident(word) => match word.parse::<f64>() {
@@ -133,10 +132,10 @@ impl FilterToken {
 
 /// Tokenizes `expr` into a vector of [`FilterToken`]s.
 ///
-/// Bare words that aren't a recognized keyword or literal token lex
-/// generically as [`FilterToken::Ident`] and are reclassified by
-/// [`FilterToken::reclassify`], since a numeric literal can't be matched by
-/// a fixed-literal pattern.
+/// Bare words that are not recognized keywords or literal tokens lex as
+/// [`FilterToken::Ident`] and are reclassified by
+/// [`FilterToken::reclassify`], since numeric literals cannot be matched by a
+/// fixed-literal pattern.
 ///
 /// # Errors
 ///
@@ -316,16 +315,17 @@ impl<'a> FilterParser<'a> {
     }
 }
 
-/// A recognized filter function call, e.g. `contains(tags, "#book")`.
+/// Recognized filter function call.
 ///
 /// Adding a function means adding a variant here, a name check in
 /// [`Self::build`], and matching logic in [`Self::matches`].
 #[derive(Clone, Debug, PartialEq)]
 pub(super) enum FilterFunction {
-    /// `contains(field, target)`:
-    /// - List membership, with tag-prefix matching (e.g. `#book` matching
-    ///   `#book/fiction`).
-    /// - Substring containment, for every other field kind.
+    /// `contains(field, target)`.
+    ///
+    /// - Lists match by exact value or tag prefix, such as `#book` matching
+    ///   `#book/fiction`.
+    /// - Other field kinds fall back to substring containment.
     Contains {
         field: FieldPath,
         target: FieldValue,
@@ -364,9 +364,10 @@ impl FilterFunction {
 
 /// Evaluates `contains(field_val, target)` logic.
 ///
-/// - Lists match by equality or tag-prefix (e.g. `#book` matching
-///   `#book/fiction`).
-/// - Everything else falls back to substring containment on stringified values.
+/// - Lists match by exact value or tag prefix, such as `#book` matching
+///   `#book/fiction`.
+/// - Other field kinds fall back to substring containment on stringified
+///   values.
 fn eval_contains(field_val: &FieldValue, target: &FieldValue) -> bool {
     match field_val {
         FieldValue::List(items) => {
@@ -379,9 +380,11 @@ fn eval_contains(field_val: &FieldValue, target: &FieldValue) -> bool {
     }
 }
 
-/// Whether list element `item` matches `target`: exact equality, or (for
-/// tag-like strings) `item` equals `target` or nests under it as a sub-tag
-/// (e.g. `#book/fiction` under `#book`).
+/// Whether list element `item` matches `target`.
+///
+/// Matches by exact equality. Tag-like strings also match when `item` equals
+/// `target` or nests under it as a sub-tag, such as `#book/fiction` under
+/// `#book`.
 fn tag_or_value_matches(item: &FieldValue, target: &FieldValue) -> bool {
     if fields_equal(item, target) {
         return true;

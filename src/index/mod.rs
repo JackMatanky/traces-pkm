@@ -1,15 +1,18 @@
 //! File index for project files and parsed markdown notes.
 //!
 //! [`FileIndex`] keeps a sorted [`FileRecord`] for every regular file under a
-//! trusted project root. Markdown files also get parsed into [`Note`]
-//! records. Persistence is redb-backed through [`store`](mod@store), but
-//! callers only use these APIs:
-//! - [`FileIndex::build`], [`FileIndex::refresh`], [`FileIndex::persist`],
-//!   [`FileIndex::load`]: construct or persist the index.
-//! - [`FileIndex::query`], [`FileIndex::query_tasks`]: run a page-level or
-//!   task-level query.
-//! - [`FileIndex::records`], [`FileIndex::notes`]: inspect indexed data
-//!   directly.
+//! trusted project root. Markdown files also get parsed into [`Note`] records.
+//! Persistence is redb-backed through [`store`](mod@store); callers use the
+//! higher-level index API instead of touching storage directly.
+//!
+//! # Main APIs
+//!
+//! - [`FileIndex::build`], [`FileIndex::refresh`], [`FileIndex::persist`], and
+//!   [`FileIndex::load`] construct or persist the index.
+//! - [`FileIndex::query`] and [`FileIndex::query_tasks`] run page-level and
+//!   task-level queries.
+//! - [`FileIndex::records`] and [`FileIndex::notes`] expose indexed data for
+//!   direct inspection.
 
 #![cfg_attr(
     not(test),
@@ -155,8 +158,8 @@ impl FileIndex {
     /// # Errors
     ///
     /// - [`FileIndexError::Store`] if the database cannot be read
-    /// - [`FileIndexError::Corrupt`] if stored bytes aren't valid UTF-8
-    /// - [`FileIndexError::Deserialize`] if stored text isn't a valid record
+    /// - [`FileIndexError::Corrupt`] if stored bytes are not valid UTF-8
+    /// - [`FileIndexError::Deserialize`] if stored text is not a valid record
     #[inline]
     pub(crate) fn load(root: &Path) -> Result<Self, FileIndexError> {
         let (records, notes) = IndexStore::open(root)?.load_all()?;

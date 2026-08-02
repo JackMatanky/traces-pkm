@@ -1,6 +1,6 @@
-//! Comparison and logical operators for filter expressions, and the AST nodes
-//! ([`ComparisonExpr`], [`LogicalExpr`]) that pair each operator with its
-//! operands.
+//! Filter comparison and logical operators.
+//!
+//! [`ComparisonExpr`] and [`LogicalExpr`] pair each operator with its operands.
 
 use super::{
     FieldPath, IndexRecord,
@@ -9,7 +9,7 @@ use super::{
 };
 use crate::note::FieldValue;
 
-/// A comparison operator parsed from a [`super::QueryOutcome::filter`]
+/// Comparison operator parsed from a [`super::QueryOutcome::filter`]
 /// expression.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(super) enum CompareOp {
@@ -30,11 +30,10 @@ pub(super) enum CompareOp {
 impl CompareOp {
     /// Whether `field` matches `literal` under this operator.
     ///
-    /// `==`/`!=` are total: every value kind, including [`FieldValue::Null`],
-    /// compares. They use [`fields_equal`], not raw [`FieldValue`] equality, so
-    /// a `String`, `Date`, or `Duration` field matches a same-text literal of
-    /// any of those three kinds — the same cross-kind text normalization
-    /// [`compare_field_values`] applies to the ordering operators below.
+    /// `==` and `!=` are total: every value kind, including
+    /// [`FieldValue::Null`], compares. They use [`fields_equal`], not raw
+    /// [`FieldValue`] equality, so a `String`, `Date`, or `Duration` field
+    /// matches a same-text literal of any of those three kinds.
     pub(super) fn is_satisfied_by(
         self,
         field: &FieldValue,
@@ -63,9 +62,6 @@ impl CompareOp {
     }
 }
 
-/// Parses an operator spelling matched by `FilterToken`'s tokenizer regex — the
-/// single source of truth for how a [`CompareOp`] spells itself, so the
-/// tokenizer never repeats operator semantics this type already owns.
 impl TryFrom<&str> for CompareOp {
     type Error = ();
 
@@ -82,7 +78,7 @@ impl TryFrom<&str> for CompareOp {
     }
 }
 
-/// A `<field> <op> <value>` comparison — [`FilterExpr::Comparison`]'s payload.
+/// Payload for a [`FilterExpr::Comparison`] node.
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct ComparisonExpr {
     field: FieldPath,
@@ -111,11 +107,10 @@ impl ComparisonExpr {
     }
 }
 
-/// A logical `AND`/`OR` combinator joining two or more [`FilterExpr`]s.
+/// Logical `AND`/`OR` combinator for two or more [`FilterExpr`]s.
 ///
-/// `NOT` negates exactly one sub-expression — an arity `AND`/`OR` don't share —
-/// so it isn't a variant here; it's [`FilterExpr::Not`] instead, keeping every
-/// [`Self::And`]/[`Self::Or`] combination well-formed by construction.
+/// `NOT` negates exactly one sub-expression, so it stays in
+/// [`FilterExpr::Not`] instead of sharing this multi-expression operator.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(super) enum LogicalOp {
     /// `AND` / `and` / `&&`
@@ -138,10 +133,6 @@ impl LogicalOp {
     }
 }
 
-/// Parses a logical-combinator spelling matched by `FilterToken`'s tokenizer
-/// regex — the `and`/`or` word forms match case-insensitively, mirroring
-/// [`Self::And`]/[`Self::Or`]'s documented spellings; `&&`/`||` are compared
-/// verbatim (case has no effect on symbols).
 impl TryFrom<&str> for LogicalOp {
     type Error = ();
 
@@ -156,8 +147,7 @@ impl TryFrom<&str> for LogicalOp {
     }
 }
 
-/// An `AND`/`OR` combination of two or more expressions —
-/// [`FilterExpr::Logical`]'s payload.
+/// Payload for a [`FilterExpr::Logical`] node.
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct LogicalExpr {
     op: LogicalOp,

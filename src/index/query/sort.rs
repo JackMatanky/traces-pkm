@@ -26,9 +26,9 @@ pub(super) fn compare_field_values(
 /// Whether `a` and `b` represent the same value for `.filter()`'s `==`/`!=`.
 ///
 /// Falls back to [`compare_field_values`] returning [`Ordering::Equal`] when
-/// [`FieldValue`]'s own structural equality says no — the same cross-kind text
-/// normalization that lets a `String` literal match a `Date`/`Duration` field
-/// for the ordering operators.
+/// [`FieldValue`]'s own structural equality says no. This is the same
+/// cross-kind text normalization that lets a `String` literal match a
+/// `Date`/`Duration` field for the ordering operators.
 pub(super) fn fields_equal(a: &FieldValue, b: &FieldValue) -> bool {
     a == b || compare_field_values(a, b) == Some(Ordering::Equal)
 }

@@ -1,14 +1,13 @@
-//! File metadata captured by the index.
+//! File metadata and `file.*` accessors captured by the index.
 //!
-//! [`FileRecord`] stores root-relative identity, type classification, file
+//! [`FileRecord`] stores project-relative identity, type classification,
 //! timestamps, and size for every regular file under a project root.
-//! [`FileField`] parses and resolves `file.*` query accessor names
-//! (including Dataview-style aliases) against a [`FileRecord`] — kept here
-//! rather than in `index/query` so the accessor grammar sits directly
-//! beside the fields it describes. [`FileField::parse`] reports "unknown
-//! name" as a plain `None`, not a [`super::QueryError`]: only the caller
-//! (which has the full `file.<field>` path) has enough context to build
-//! that error, so [`FileField::parse`] doesn't need to depend on it.
+//!
+//! [`FileField`] owns the `file.*` accessor grammar, including Dataview-style
+//! aliases. Keeping it beside [`FileRecord`] lets accessor parsing and field
+//! resolution share the same source of truth. [`FileField::parse`] returns
+//! `None` for unknown names so callers with the full `file.<field>` path can
+//! construct [`super::QueryError::UnknownFieldPath`] themselves.
 
 use std::{
     fs,
@@ -111,11 +110,10 @@ impl FileRecord {
         self.format
     }
 
-    /// This file's creation time, as reported by the filesystem — `None` if
-    /// unsupported on the host OS or filesystem.
+    /// Filesystem creation timestamp, if the host reports one.
     ///
-    /// See [`Self::created_at_or_modified`] for a convenience accessor that
-    /// falls back to [`Self::modified_at`].
+    /// Use [`Self::created_at_or_modified`] when unsupported creation times
+    /// should fall back to [`Self::modified_at`].
     #[inline]
     #[must_use]
     pub(crate) fn created_at(&self) -> Option<Timestamp> {
@@ -184,12 +182,11 @@ impl FileField {
         "mdate",
     ];
 
-    /// Parses a `file.<field>` accessor name (the part after `"file."`).
+    /// Parses a `file.<field>` accessor name.
     ///
-    /// Returns `None` if `name` is not a known accessor — there's only one
-    /// failure mode here, so callers building a richer error (e.g.
-    /// [`super::QueryError::UnknownFieldPath`], which needs the full
-    /// `file.<field>` path rather than just `name`) do so themselves.
+    /// Returns `None` when `name` is unknown. Callers build
+    /// [`super::QueryError::UnknownFieldPath`] themselves because they still
+    /// have the full `file.<field>` path.
     pub(crate) fn parse(name: &str) -> Option<Self> {
         match name {
             "path" => Some(Self::Path),
@@ -243,9 +240,9 @@ impl FileField {
 /// to their [`FileRecord`]. Other files only keep general file metadata.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub(crate) enum FileFormat {
-    /// A markdown Note (`.md` or `.markdown` extension).
+    /// Markdown file parsed into a [`Note`](crate::note::Note).
     Note,
-    /// Any other file.
+    /// Regular non-markdown file.
     Other,
 }
 
@@ -286,10 +283,9 @@ impl Timestamp {
 
     /// Formats this timestamp as an RFC 3339 date and time with a UTC offset.
     ///
-    /// Produces `"YYYY-MM-DDTHH:MM:SS+00:00"` (e.g.
-    /// `"2026-07-29T14:30:00+00:00"`). The offset is always `+00:00` —
-    /// [`Timestamp`] is always UTC — so prefer [`Self::to_datetime_string`]
-    /// unless the offset itself matters.
+    /// Produces values like `"2026-07-29T14:30:00+00:00"`. The offset is always
+    /// `+00:00` because [`Timestamp`] is always UTC, so prefer
+    /// [`Self::to_datetime_string`] unless the offset itself matters.
     #[inline]
     #[must_use]
     pub(crate) fn to_offset_string(self) -> String {
@@ -298,9 +294,9 @@ impl Timestamp {
 
     /// Formats this timestamp as a date and time without a UTC offset.
     ///
-    /// Produces `"YYYY-MM-DDTHH:MM:SS"` (e.g. `"2026-07-29T14:30:00"`), for
-    /// Dataview-style `ctime`/`mtime` query field values without an offset
-    /// suffix to break filter literal text matching.
+    /// Produces values like `"2026-07-29T14:30:00"` for Dataview-style
+    /// `ctime`/`mtime` query field values without an offset suffix to break
+    /// filter literal text matching.
     #[inline]
     #[must_use]
     pub(crate) fn to_datetime_string(self) -> String {
@@ -309,8 +305,8 @@ impl Timestamp {
 
     /// Formats this timestamp as a bare date without time or offset.
     ///
-    /// Produces `"YYYY-MM-DD"` (e.g. `"2026-07-29"`), for Dataview-style
-    /// `cdate`/`mdate` query field values.
+    /// Produces values like `"2026-07-29"` for Dataview-style `cdate`/`mdate`
+    /// query field values.
     #[inline]
     #[must_use]
     pub(crate) fn to_date_string(self) -> String {
@@ -319,7 +315,7 @@ impl Timestamp {
 
     /// Formats this timestamp as a bare time-of-day component without a date.
     ///
-    /// Produces `"HH:MM:SS"` (e.g. `"14:30:00"`).
+    /// Produces values like `"14:30:00"`.
     #[inline]
     #[must_use]
     pub(crate) fn to_time_string(self) -> String {

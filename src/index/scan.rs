@@ -1,4 +1,4 @@
-//! Filesystem scan that builds [`FileRecord`]s for regular project files.
+//! Filesystem scan for regular project files.
 
 use std::path::Path;
 
@@ -9,7 +9,7 @@ use super::{INDEX_FILE, error::FileIndexError, file::FileRecord};
 /// Recursively scans `root` for regular files and returns sorted records.
 ///
 /// Skips `.git` directories, the index database itself, and symlinks. Symlink
-/// support can be added later if PKM projects need linked note trees.
+/// support can be added when PKM projects need linked note trees.
 ///
 /// # Errors
 ///

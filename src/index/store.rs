@@ -1,8 +1,8 @@
 //! Redb persistence for [`FileRecord`] and [`Note`] records.
 //!
-//! Handles database transactions and table definitions for index storage.
-//! Callers of [`super::FileIndex`] use its high-level methods rather than
-//! interacting with [`IndexStore`] or redb tables directly.
+//! [`IndexStore`] owns table definitions and transactions for the persisted
+//! index database. Callers use [`super::FileIndex`] methods instead of
+//! interacting with redb tables directly.
 
 use std::{
     fs,
@@ -19,11 +19,11 @@ use serde::{Serialize, de::DeserializeOwned};
 use super::{INDEX_FILE, error::FileIndexError, file::FileRecord};
 use crate::note::Note;
 
-/// Path → TOML-encoded [`FileRecord`] bytes.
+/// TOML-encoded [`FileRecord`] bytes keyed by project-relative path.
 const FILE_RECORDS: TableDefinition<&str, &[u8]> =
     TableDefinition::new("file_records");
 
-/// Path → TOML-encoded [`Note`] bytes.
+/// TOML-encoded [`Note`] bytes keyed by project-relative path.
 const NOTES: TableDefinition<&str, &[u8]> = TableDefinition::new("notes");
 
 /// Atomically read snapshot of persisted [`FileRecord`] and [`Note`] records,
@@ -100,8 +100,8 @@ impl IndexStore {
     /// # Errors
     ///
     /// - [`FileIndexError::Store`] if the table cannot be read
-    /// - [`FileIndexError::Corrupt`] if stored bytes aren't valid UTF-8
-    /// - [`FileIndexError::Deserialize`] if stored text isn't valid UTF-8/TOML
+    /// - [`FileIndexError::Corrupt`] if stored bytes are not valid UTF-8
+    /// - [`FileIndexError::Deserialize`] if stored text is not valid UTF-8/TOML
     pub(super) fn load_all(&self) -> Result<IndexSnapshot, FileIndexError> {
         let read_txn =
             self.db.begin_read().map_err(|source| self.store_error(source))?;
@@ -154,8 +154,8 @@ impl IndexStore {
     /// # Errors
     ///
     /// - [`FileIndexError::Store`] if the table cannot be read
-    /// - [`FileIndexError::Corrupt`] if stored bytes aren't valid UTF-8
-    /// - [`FileIndexError::Deserialize`] if stored text isn't valid TOML
+    /// - [`FileIndexError::Corrupt`] if stored bytes are not valid UTF-8
+    /// - [`FileIndexError::Deserialize`] if stored text is not valid TOML
     fn load_table<T: DeserializeOwned>(
         &self,
         read_txn: &ReadTransaction,

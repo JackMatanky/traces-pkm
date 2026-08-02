@@ -1,5 +1,7 @@
-//! Errors returned while scanning, persisting, or loading a
-//! [`super::FileIndex`].
+//! Errors from index scanning, persistence, and loading.
+//!
+//! [`FileIndexError`] preserves path context for filesystem, redb, UTF-8, and
+//! TOML failures so CLI diagnostics can name the affected record or database.
 
 use std::{io, path::PathBuf, str::Utf8Error};
 
@@ -7,8 +9,8 @@ use thiserror::Error;
 
 /// Error type for [`super::FileIndex`] operations.
 ///
-/// [`Self::Io`] comes from filesystem scans and index-directory setup. The
-/// remaining variants come from redb persistence and TOML record encoding.
+/// Variants distinguish filesystem access, database storage, record
+/// corruption, and TOML encoding failures.
 #[derive(Debug, Error)]
 pub(crate) enum FileIndexError {
     /// A filesystem operation failed during a scan or directory setup.
@@ -28,9 +30,10 @@ pub(crate) enum FileIndexError {
     Store {
         /// The index database file.
         path: PathBuf,
-        /// Source redb error, boxed to keep this enum (and `CliError`, which
-        /// wraps it) small — `redb::Error` is a large, many-variant enum, and
-        /// `Store` is by far the rarest path here.
+        /// Source redb error, boxed to keep this enum and `CliError` small.
+        ///
+        /// `redb::Error` is a large, many-variant enum, and `Store` is by far
+        /// the rarest path here.
         #[source]
         source: Box<redb::Error>,
     },
@@ -64,10 +67,11 @@ pub(crate) enum FileIndexError {
     Deserialize {
         /// The record's project-relative path (its key in the index database).
         path: PathBuf,
-        /// Source TOML deserialization error, boxed to keep this enum (and
-        /// `CliError`, which wraps it) small — `toml::de::Error` carries a
-        /// full parse diagnostic and is large relative to the other variants
-        /// here.
+        /// Source TOML deserialization error, boxed to keep this enum and
+        /// `CliError` small.
+        ///
+        /// `toml::de::Error` carries a full parse diagnostic and is large
+        /// relative to the other variants here.
         #[source]
         source: Box<toml::de::Error>,
     },

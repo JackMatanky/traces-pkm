@@ -1,18 +1,18 @@
-//! Page-level and task-level query source selection, field resolution, and
-//! outcome transformations.
+//! Query source selection, field resolution, and outcome transformations.
 //!
-//! Main components:
-//! - [`Source`]: Selects which Notes a page-level or task-level query includes.
-//! - [`IndexRecord`]: Pairs a [`FileRecord`] with its parsed [`Note`] and
-//!   resolves fields by path. Task-level rows (built by
-//!   [`super::FileIndex::query_tasks`]) are the same type with `task.*` fields
-//!   set, keeping their parent Note's metadata for filtering and display.
-//! - [`QueryOutcome`]: Query result collection supporting method chaining
-//!   ([`QueryOutcome::filter`], [`QueryOutcome::sort`],
-//!   [`QueryOutcome::limit`], [`QueryOutcome::group_by`],
-//!   [`QueryOutcome::flatten`]), shared by page-level and task-level results.
-//! - [`QueryError`]: Errors returned by field resolution and outcome
-//!   transformations.
+//! The query layer supports both page-level results from
+//! [`super::FileIndex::query`] and task-level rows from
+//! [`super::FileIndex::query_tasks`].
+//!
+//! # Main Components
+//!
+//! - [`Source`] selects which Notes a query includes.
+//! - [`IndexRecord`] pairs a [`FileRecord`] with its parsed [`Note`] and
+//!   resolves `file.*`, `task.*`, metadata, and tag fields.
+//! - [`QueryOutcome`] stores result rows and applies chained transformations:
+//!   [`QueryOutcome::filter`], [`QueryOutcome::sort`], [`QueryOutcome::limit`],
+//!   [`QueryOutcome::group_by`], and [`QueryOutcome::flatten`].
+//! - [`QueryError`] reports malformed field paths and query expressions.
 
 mod error;
 mod filter;
@@ -29,18 +29,14 @@ use super::file::{FileField, FileRecord};
 use crate::note::{FieldValue, Note};
 
 /// Iterable collection of [`IndexRecord`] values returned by
-/// [`super::FileIndex::query`] (one row per Note) or
-/// [`super::FileIndex::query_tasks`] (one row per task item).
+/// [`super::FileIndex::query`] or [`super::FileIndex::query_tasks`].
 ///
-/// Both kinds share this type and its transformation methods; nothing at the
-/// Rust type level distinguishes a page-level outcome from a task-level one, so
-/// a consumer expecting page rows (e.g. a future terminal renderer) must not
-/// assume every row came from [`super::FileIndex::query`].
+/// Page-level outcomes contain one row per Note. Task-level outcomes contain
+/// one row per task item. Both share this type, so consumers must not assume a
+/// row came from [`super::FileIndex::query`] unless they control the source.
 ///
-/// [`Self::filter`], [`Self::sort`], [`Self::limit`], [`Self::group_by`], and
-/// [`Self::flatten`] each consume this outcome and return a new, transformed
-/// one, so calls chain naturally: `outcome.filter("rating > 7")?.sort("rating",
-/// true)?.limit(10)?`.
+/// Transformation methods consume and return [`QueryOutcome`], so calls chain
+/// naturally: `outcome.filter("rating > 7")?.sort("rating", true)?.limit(10)?`.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct QueryOutcome {
     records: Vec<IndexRecord>,
@@ -83,28 +79,26 @@ impl QueryOutcome {
 
     /// Keeps only records matching the filter expression `expr`.
     ///
-    /// `expr` can be a binary comparison (e.g. `"rating > 7"` or `"status ==
-    /// \"done\""`), a function call (e.g. `"contains(tags, \"#book\")"`),
-    /// or a boolean combination using `AND`, `OR`, `NOT`, and nested
-    /// parentheses `( ... )`.
+    /// `expr` can be a comparison such as `"rating > 7"`, a function call such
+    /// as `"contains(tags, \"#book\")"`, or a boolean combination using `AND`,
+    /// `OR`, `NOT`, and nested parentheses `( ... )`.
     ///
     /// # Matching Rules
     ///
     /// - **Operators**: `==`, `!=`, `>=`, `<=`, `>`, `<`.
-    /// - **Functions**: `contains(field, value)` checks whether a list field
-    ///   contains `value` (or a tag prefix like `#book` matching
-    ///   `#book/fiction`) or whether a string field contains `value` as a
-    ///   substring.
+    /// - **Functions**: `contains(field, value)` checks list membership, tag
+    ///   prefix matches like `#book` matching `#book/fiction`, or string
+    ///   substring containment.
     /// - **Boolean Logic**: `AND` / `and` / `&&`, `OR` / `or` / `||`, `NOT` /
     ///   `not` / `!`.
     /// - **Parentheses**: `( ... )` overrides standard operator precedence.
-    /// - **Literals**: Double-quoted strings (with escape support `\"`),
-    ///   numbers, `true`/`false`, or `null`/`Null`.
+    /// - **Literals**: Double-quoted strings with `\"` escape support, numbers,
+    ///   `true`/`false`, or `null`/`Null`.
     /// - **Text Normalization**: `==` and `!=` treat `String`, `Date`, and
-    ///   `Duration` values as textually comparable (e.g. `"2026-07-29"` matches
-    ///   a `Date` field with equal text).
-    /// - **Type Mismatches**: Other cross-kind comparisons (e.g. comparing a
-    ///   number to a string) never match under any operator except `!=`.
+    ///   `Duration` values as textually comparable. For example, `"2026-07-29"`
+    ///   matches a `Date` field with equal text.
+    /// - **Type Mismatches**: Other cross-kind comparisons, such as comparing a
+    ///   number to a string, never match under any operator except `!=`.
     /// - **Null Values**: Records missing the field (`Null`) never match `==`
     ///   or ordering operators, but do match `!=`.
     ///
@@ -141,7 +135,8 @@ impl QueryOutcome {
     /// Matches Dataview's sort semantics:
     /// - **Null Values**: Records missing `path` ([`FieldValue::Null`]) sort as
     ///   minimum values, so they lead ascending and trail descending.
-    /// - **Stability**: The sort is stable; equal or incomparable records
+    /// - **Stability**: Equal or incomparable records keep their relative
+    ///   order.
     ///
     /// # Errors
     ///
@@ -443,8 +438,8 @@ impl IndexRecord {
     /// inline fields, and `tags`:
     /// - Frontmatter fields take precedence over an inline field with the same
     ///   key (see [`Note::fields`]).
-    /// - A well-formed path this record has no value for (e.g. a frontmatter
-    ///   key it does not define, or a `task.*` accessor on a page-level record)
+    /// - A well-formed path this record has no value for, such as a missing
+    ///   frontmatter key or a `task.*` accessor on a page-level record,
     ///   resolves to [`FieldValue::Null`], not an error.
     ///
     /// # Errors
@@ -506,8 +501,8 @@ impl IndexRecord {
 pub(crate) enum Source {
     /// Every indexed markdown Note.
     All,
-    /// Notes tagged with a markdown tag, or a sub-tag nested under it (e.g.
-    /// `#book` or `#projects`, which also matches `#projects/active`).
+    /// Notes tagged with a markdown tag, or a sub-tag nested under it. For
+    /// example, `#projects` also matches `#projects/active`.
     Tag(String),
     /// Notes located in `folder` or a directory nested under it.
     Folder(PathBuf),
