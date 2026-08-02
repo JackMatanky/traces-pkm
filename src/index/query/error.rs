@@ -38,6 +38,27 @@ pub(crate) enum QueryError {
         /// The rejected limit value.
         n: i64,
     },
+    /// [`super::QueryOutcome::task_list`] was called on records with no
+    /// `task.*` fields — page-level records built by
+    /// [`super::super::FileIndex::query`] rather than task-level records from
+    /// [`super::super::FileIndex::query_tasks`].
+    #[error(
+        "task_list requires task-level records from the `tasks` namespace; \
+         got page-level records with no task fields"
+    )]
+    TaskListOnPageRecords,
+    /// [`super::QueryOutcome::table`]'s `headers` and `columns` had different
+    /// lengths.
+    #[error(
+        "table headers ({headers}) and columns ({columns}) must have the same \
+         length"
+    )]
+    TableColumnMismatch {
+        /// Number of entries in `headers`.
+        headers: usize,
+        /// Number of entries in `columns`.
+        columns: usize,
+    },
 }
 
 impl QueryError {
@@ -104,6 +125,26 @@ mod tests {
         assert_display(
             &error,
             "invalid limit -5; expected a non-negative row count",
+        );
+    }
+
+    #[test]
+    fn task_list_on_page_records_formats_display_message() {
+        assert_display(
+            &QueryError::TaskListOnPageRecords,
+            "task_list requires task-level records from the `tasks` \
+             namespace; got page-level records with no task fields",
+        );
+    }
+
+    #[test]
+    fn table_column_mismatch_formats_display_message() {
+        assert_display(
+            &QueryError::TableColumnMismatch {
+                headers: 2,
+                columns: 1,
+            },
+            "table headers (2) and columns (1) must have the same length",
         );
     }
 }

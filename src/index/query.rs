@@ -8,9 +8,14 @@
 //! - [`Source`] - Selects which Notes a query includes.
 //! - [`IndexRecord`] - Pairs a [`FileRecord`] with its parsed [`Note`] and
 //!   resolves `file.*`, `task.*`, metadata, and tag fields.
-//! - [`QueryOutcome`] - Stores result rows and applies chained transformations:
-//!   [`QueryOutcome::filter`], [`QueryOutcome::sort`], [`QueryOutcome::limit`],
-//!   [`QueryOutcome::group_by`], and [`QueryOutcome::flatten`].
+//! - [`QueryOutcome`] - Stores result rows, applies chained transformations
+//!   ([`QueryOutcome::filter`], [`QueryOutcome::sort`],
+//!   [`QueryOutcome::limit`], [`QueryOutcome::group_by`],
+//!   [`QueryOutcome::flatten`]), and renders terminal markdown output
+//!   ([`QueryOutcome::table`], [`QueryOutcome::list`],
+//!   [`QueryOutcome::task_list`]). Terminal renderers are plain Rust methods
+//!   with no minijinja dependency, so both the `query`/`tasks` template
+//!   namespaces and future CLI query commands can reuse them.
 //! - [`QueryError`] - Reports malformed field paths and query expressions.
 
 mod error;
@@ -207,6 +212,87 @@ impl QueryOutcome {
         Ok(Self::new(records))
     }
 
+    /// Renders these records as a GitHub-flavored markdown table with one
+    /// column per entry, pairing each `headers` label with the field path at
+    /// the same position in `columns`.
+    ///
+    /// Cell values render like [`Self::list`], except pipe characters (`|`)
+    /// are escaped and newlines are collapsed to spaces so no cell value can
+    /// corrupt the table's row structure.
+    ///
+    /// # Errors
+    ///
+    /// - [`QueryError::TableColumnMismatch`] if `headers` and `columns` have
+    ///   different lengths.
+    /// - [`QueryError::UnknownFieldPath`] if any entry of `columns` is
+    ///   malformed.
+    pub(crate) fn table(
+        &self,
+        headers: &[&str],
+        columns: &[&str],
+    ) -> Result<String, QueryError> {
+        if headers.len() != columns.len() {
+            return Err(QueryError::TableColumnMismatch {
+                headers: headers.len(),
+                columns: columns.len(),
+            });
+        }
+        let paths = columns
+            .iter()
+            .map(|column| FieldPath::parse(column))
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut out = markdown_row(headers.iter().copied());
+        out.push_str(&markdown_row(headers.iter().map(|_| "---")));
+        for record in &self.records {
+            out.push_str(&markdown_row(
+                paths.iter().map(|path| table_cell_text(&record.resolve(path))),
+            ));
+        }
+        Ok(out)
+    }
+
+    /// Renders these records as a markdown bullet list, one item per record,
+    /// using the resolved value of `path`.
+    ///
+    /// # Errors
+    ///
+    /// - [`QueryError::UnknownFieldPath`] if `path` is malformed.
+    pub(crate) fn list(&self, path: &str) -> Result<String, QueryError> {
+        let field_path = FieldPath::parse(path)?;
+        let mut out = String::new();
+        for record in &self.records {
+            out.push_str("- ");
+            out.push_str(&field_text(&record.resolve(&field_path)));
+            out.push('\n');
+        }
+        Ok(out)
+    }
+
+    /// Renders these records as a markdown task list (`- [ ]`/`- [x]`), one
+    /// item per task-level record's `task.completed`/`task.text`.
+    ///
+    /// # Errors
+    ///
+    /// - [`QueryError::TaskListOnPageRecords`] if any record has no task fields
+    ///   — built by [`super::FileIndex::query`] rather than
+    ///   [`super::FileIndex::query_tasks`].
+    pub(crate) fn task_list(&self) -> Result<String, QueryError> {
+        let mut out = String::new();
+        for record in &self.records {
+            let Some(completed) = record.task_completed() else {
+                return Err(QueryError::TaskListOnPageRecords);
+            };
+            out.push_str(if completed {
+                "- [x] "
+            } else {
+                "- [ ] "
+            });
+            out.push_str(record.task_text().unwrap_or_default());
+            out.push('\n');
+        }
+        Ok(out)
+    }
+
     /// Sorts records by the resolved value of `path`.
     ///
     /// Shared implementation for [`Self::sort`] and [`Self::group_by`]: a
@@ -232,6 +318,54 @@ impl QueryOutcome {
         });
         Ok(Self::new(records))
     }
+}
+
+/// Joins `cells` into one markdown table row: `| c1 | c2 | ... |`, newline
+/// included. Shared by [`QueryOutcome::table`]'s header, separator, and data
+/// rows.
+fn markdown_row(cells: impl IntoIterator<Item = impl AsRef<str>>) -> String {
+    let mut row = String::from("|");
+    for cell in cells {
+        row.push(' ');
+        row.push_str(cell.as_ref());
+        row.push_str(" |");
+    }
+    row.push('\n');
+    row
+}
+
+/// Converts a resolved [`FieldValue`] to plain text for [`QueryOutcome::list`]
+/// and [`QueryOutcome::table`] cells.
+///
+/// [`FieldValue::Null`] renders as an empty string. [`FieldValue::Link`]
+/// renders as its target path; Traces has no separate link display yet.
+/// [`FieldValue::List`] and [`FieldValue::Object`] flatten recursively,
+/// joined by `", "`.
+fn field_text(value: &FieldValue) -> String {
+    match value {
+        FieldValue::Null => String::new(),
+        FieldValue::Bool(b) => b.to_string(),
+        FieldValue::Number(n) => n.to_string(),
+        FieldValue::String(s)
+        | FieldValue::Date(s)
+        | FieldValue::Duration(s) => s.clone(),
+        FieldValue::Link(link) => link.target().to_owned(),
+        FieldValue::List(items) => {
+            items.iter().map(field_text).collect::<Vec<_>>().join(", ")
+        }
+        FieldValue::Object(fields) => fields
+            .iter()
+            .map(|(key, field)| format!("{key}: {}", field_text(field)))
+            .collect::<Vec<_>>()
+            .join(", "),
+    }
+}
+
+/// [`field_text`], with pipe characters escaped and newlines collapsed to
+/// spaces so a cell value cannot corrupt [`QueryOutcome::table`]'s row
+/// structure.
+fn table_cell_text(value: &FieldValue) -> String {
+    field_text(value).replace('\n', " ").replace('|', "\\|")
 }
 
 impl IntoIterator for QueryOutcome {
@@ -1070,6 +1204,182 @@ mod tests {
                     FieldValue::String("#read".to_owned())
                 ),
             ]);
+        }
+    }
+
+    mod table {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn renders_header_separator_and_one_row_per_record() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let outcome = outcome_for_files(temp.path(), &[
+                ("a.md", "---\nrating: 5\n---"),
+                ("b.md", "---\nrating: 3\n---"),
+            ]);
+
+            let table = outcome
+                .table(&["Name", "Rating"], &["file.name", "rating"])
+                .expect("valid table");
+
+            let lines: Vec<&str> = table.lines().collect();
+            assert_eq!(lines.len(), 4); // header + separator + 2 rows
+            assert_eq!(lines.first(), Some(&"| Name | Rating |"));
+            assert_eq!(lines.get(1), Some(&"| --- | --- |"));
+            assert!(lines.iter().skip(2).any(|line| line.contains('5')));
+            assert!(lines.iter().skip(2).any(|line| line.contains('3')));
+        }
+
+        #[test]
+        fn renders_no_data_rows_for_an_empty_outcome() {
+            let table = QueryOutcome::default()
+                .table(&["Name"], &["file.name"])
+                .expect("valid table");
+
+            assert_eq!(table, "| Name |\n| --- |\n");
+        }
+
+        #[test]
+        fn escapes_pipe_characters_so_cell_values_cannot_break_table_rows() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let outcome =
+                outcome_for(temp.path(), "---\ntitle: \"A | B\"\n---");
+
+            let table =
+                outcome.table(&["Title"], &["title"]).expect("valid table");
+
+            assert_eq!(table.lines().count(), 3);
+            assert!(table.contains("A \\| B"));
+        }
+
+        #[test]
+        fn collapses_newlines_in_cell_values_to_keep_one_row_per_record() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let outcome = outcome_for(
+                temp.path(),
+                "---\nnotes: |\n  line one\n  line two\n---",
+            );
+
+            let table =
+                outcome.table(&["Notes"], &["notes"]).expect("valid table");
+
+            // A literal newline inside the cell value must not split into a
+            // second table row: header + separator + exactly one data row.
+            assert_eq!(table.lines().count(), 3);
+        }
+
+        #[test]
+        fn rejects_malformed_field_path() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let outcome = outcome_for(temp.path(), "body");
+
+            assert_eq!(
+                outcome.table(&["Name"], &["file.bogus"]),
+                Err(QueryError::UnknownFieldPath {
+                    path: "file.bogus".to_owned()
+                })
+            );
+        }
+
+        #[test]
+        fn rejects_a_headers_columns_length_mismatch() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let outcome = outcome_for(temp.path(), "body");
+
+            assert_eq!(
+                outcome.table(&["Name", "Rating"], &["file.name"]),
+                Err(QueryError::TableColumnMismatch {
+                    headers: 2,
+                    columns: 1,
+                })
+            );
+        }
+    }
+
+    mod list {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn renders_one_bullet_per_record() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let outcome = outcome_for_files(temp.path(), &[
+                ("a.md", "---\nrating: 5\n---"),
+                ("b.md", "---\nrating: 3\n---"),
+            ]);
+
+            let list = outcome.list("rating").expect("valid list");
+
+            assert_eq!(list.lines().count(), 2);
+            assert!(list.lines().all(|line| line.starts_with("- ")));
+            assert!(list.contains('5'));
+            assert!(list.contains('3'));
+        }
+
+        #[test]
+        fn renders_an_empty_string_for_an_empty_outcome() {
+            let list =
+                QueryOutcome::default().list("rating").expect("valid list");
+
+            assert_eq!(list, "");
+        }
+
+        #[test]
+        fn rejects_malformed_field_path() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let outcome = outcome_for(temp.path(), "body");
+
+            assert_eq!(
+                outcome.list("file.bogus"),
+                Err(QueryError::UnknownFieldPath {
+                    path: "file.bogus".to_owned()
+                })
+            );
+        }
+    }
+
+    mod task_list {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn renders_a_checkbox_per_task_matching_completion_state() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(
+                temp.path().join("a.md"),
+                "- [ ] Buy milk\n- [x] Walk dog\n",
+            )
+            .expect("write file");
+            let outcome = FileIndex::build(temp.path())
+                .expect("build index")
+                .query_tasks(&Source::All);
+
+            let rendered = outcome.task_list().expect("valid task_list");
+
+            assert_eq!(rendered, "- [ ] Buy milk\n- [x] Walk dog\n");
+        }
+
+        #[test]
+        fn renders_an_empty_string_for_an_empty_outcome() {
+            let rendered =
+                QueryOutcome::default().task_list().expect("valid task_list");
+
+            assert_eq!(rendered, "");
+        }
+
+        #[test]
+        fn rejects_page_level_records_with_no_task_fields() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let outcome = outcome_for(temp.path(), "# Just a Note");
+
+            assert_eq!(
+                outcome.task_list(),
+                Err(QueryError::TaskListOnPageRecords)
+            );
         }
     }
 
