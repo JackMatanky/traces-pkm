@@ -210,7 +210,7 @@ impl ParsedDate {
 /// namespace filters ([`date_add`], [`date_sub`], [`date_diff`]).
 ///
 /// This is the same "small enum over a piped string" pattern
-/// [`inspect::PathQuery`](super::inspect) uses for its I/O tests.
+/// [`path::PathQuery`](super::path) uses for its I/O tests.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum DateTimeUnit {
     Years,

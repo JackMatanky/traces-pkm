@@ -1,7 +1,7 @@
 //! Builds and runs the minijinja environment used by [`TemplateService`].
 //!
 //! Most template-facing helpers live in submodules: [`date`], [`file`],
-//! [`inspect`], [`num`], [`query`], [`string`], and [`ui`]. The
+//! [`path`], [`num`], [`query`], [`string`], and [`ui`]. The
 //! standalone [`uuid`](fn@uuid) function is defined here.
 //!
 //! [`TemplateService`]: super::service::TemplateService
@@ -9,8 +9,8 @@
 mod date;
 mod error;
 mod file;
-mod inspect;
 mod num;
+mod path;
 mod query;
 mod string;
 mod ui;
@@ -26,8 +26,8 @@ use uuid::Uuid;
 use self::{
     date::DateOps,
     file::{FileOps, WRITE_TO_KEY},
-    inspect::PathOps,
     num::NumOps,
+    path::PathOps,
     query::QueryOps,
     string::StrOps,
     ui::UiOps,
@@ -50,7 +50,7 @@ pub(super) struct TemplateEngine {
 
 impl TemplateEngine {
     /// Builds an engine backed by `loader`, registering every submodule's
-    /// custom functions ([`date`], [`file`], [`inspect`], [`num`], [`query`],
+    /// custom functions ([`date`], [`file`], [`path`], [`num`], [`query`],
     /// [`string`], [`ui`]; see each module's own docs for what it contributes)
     /// plus the standalone [`uuid`](fn@uuid) function.
     ///
