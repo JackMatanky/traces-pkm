@@ -132,25 +132,45 @@ impl Note {
         &self.tags
     }
 
-    /// Iterates over task list items at every list depth.
-    pub(crate) fn tasks(&self) -> impl Iterator<Item = &ListItem> {
-        let mut tasks = Vec::new();
-        for list in &self.lists {
-            collect_tasks_recursive(list, &mut tasks);
-        }
-        tasks.into_iter()
+    /// Iterates lazily over task list items at every list depth.
+    pub(crate) fn tasks(&self) -> TaskIter<'_> {
+        TaskIter::new(&self.lists)
     }
 }
 
-/// Appends task items from `list` and descendant lists to `acc`.
-fn collect_tasks_recursive<'a>(list: &'a List, acc: &mut Vec<&'a ListItem>) {
-    for item in list.items() {
-        if item.is_task() {
-            acc.push(item);
+/// Depth-first iterator over task list items in a [`Note`].
+pub(crate) struct TaskIter<'a> {
+    stack: Vec<std::slice::Iter<'a, ListItem>>,
+}
+
+impl<'a> TaskIter<'a> {
+    /// Starts iteration at the top-level `lists`, preserving document order.
+    fn new(lists: &'a [List]) -> Self {
+        let mut stack = Vec::with_capacity(lists.len());
+        stack.extend(lists.iter().rev().map(|list| list.items().iter()));
+        Self {
+            stack,
         }
-        for child_list in item.children() {
-            collect_tasks_recursive(child_list, acc);
+    }
+}
+
+impl<'a> Iterator for TaskIter<'a> {
+    type Item = &'a ListItem;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        while let Some(items) = self.stack.last_mut() {
+            let Some(item) = items.next() else {
+                self.stack.pop();
+                continue;
+            };
+            self.stack.extend(
+                item.children().iter().rev().map(|list| list.items().iter()),
+            );
+            if item.is_task() {
+                return Some(item);
+            }
         }
+        None
     }
 }
 

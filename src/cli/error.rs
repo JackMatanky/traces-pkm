@@ -591,7 +591,7 @@ mod tests {
         use pretty_assertions::assert_eq;
         use serde::ser::Error as SerdeError;
 
-        use super::{super::*, *};
+        use super::*;
 
         #[test]
         fn current_directory() {

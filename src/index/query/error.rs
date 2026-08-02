@@ -55,39 +55,55 @@ impl QueryError {
 
 #[cfg(test)]
 mod tests {
-    use pretty_assertions::assert_eq;
-
     use super::*;
 
+    fn assert_display(error: &QueryError, expected: &str) {
+        let actual = error.to_string();
+        assert!(
+            actual == expected,
+            "unexpected QueryError display\nactual: {actual}\nexpected: \
+             {expected}"
+        );
+    }
+
     #[test]
-    fn query_error_display_formatting() {
-        let err = QueryError::UnknownFieldPath {
+    fn unknown_field_path_formats_display_message() {
+        let error = QueryError::UnknownFieldPath {
             path: "file.bogus".to_owned(),
         };
-        assert_eq!(
-            err.to_string(),
+
+        assert_display(
+            &error,
             "invalid field path \"file.bogus\"; expected `file.<field>` \
              (path, name, folder, size, ctime, cdate, mtime, mdate), \
              `task.<field>` (completed, text), or a single frontmatter, \
-             inline field, or `tags` name"
+             inline field, or `tags` name",
         );
+    }
 
-        let err = QueryError::UnparsableFilterExpression {
+    #[test]
+    fn unparsable_filter_expression_formats_display_message() {
+        let error = QueryError::UnparsableFilterExpression {
             expr: "rating >".to_owned(),
         };
-        assert_eq!(
-            err.to_string(),
+
+        assert_display(
+            &error,
             "invalid filter expression \"rating >\"; expected `<field> <op> \
              <value>` with op one of ==, !=, >=, <=, >, < and value a quoted \
-             string, number, or boolean"
+             string, number, or boolean",
         );
+    }
 
-        let err = QueryError::NegativeLimit {
+    #[test]
+    fn negative_limit_formats_display_message() {
+        let error = QueryError::NegativeLimit {
             n: -5,
         };
-        assert_eq!(
-            err.to_string(),
-            "invalid limit -5; expected a non-negative row count"
+
+        assert_display(
+            &error,
+            "invalid limit -5; expected a non-negative row count",
         );
     }
 }

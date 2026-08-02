@@ -249,24 +249,20 @@ impl FileIndex {
     /// # Performance
     ///
     /// O(n + m + t) where `t` is the total number of task items across
-    /// matched Notes. One [`IndexRecord`] clone happens per task item, since
-    /// each row needs its own owned copy of the parent Note's metadata.
+    /// matched Notes. This streams task iteration and pushes rows into one
+    /// output vector, avoiding a per-note row collection.
     #[must_use]
     pub(crate) fn query_tasks(self, source: &Source) -> QueryOutcome {
-        let matched = matched_pairs(self.records, self.notes, source)
-            .flat_map(|(file, note)| {
-                let base = IndexRecord::new(file, note);
-                base.note()
-                    .tasks()
-                    .map(|item| {
-                        base.clone().with_task(
-                            item.is_completed(),
-                            item.text().to_owned(),
-                        )
-                    })
-                    .collect::<Vec<_>>()
-            })
-            .collect();
+        let mut matched = Vec::new();
+        for (file, note) in matched_pairs(self.records, self.notes, source) {
+            let base = IndexRecord::new(file, note);
+            for item in base.note().tasks() {
+                matched.push(
+                    base.clone()
+                        .with_task(item.is_completed(), item.text().to_owned()),
+                );
+            }
+        }
         QueryOutcome::new(matched)
     }
 }
