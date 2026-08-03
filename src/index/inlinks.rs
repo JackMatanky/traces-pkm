@@ -14,6 +14,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use super::find_by_path;
 use crate::note::{LinkTarget, Note};
 
 /// Target-keyed inbound link edges: every Note path to the paths of every
@@ -132,20 +133,6 @@ fn resolve_target<'a>(
     let stem =
         candidate.file_stem().and_then(|s| s.to_str()).unwrap_or(path_part);
     find_unique_by_stem(notes, stem).map(Target)
-}
-
-/// Binary-searches path-sorted `notes` for an exact path match.
-///
-/// Shared with [`super::FileIndex::note`], which does the same lookup once
-/// a [`FileIndex`](super::FileIndex) exists; this free-function form is for
-/// [`resolve_target`], which only has a bare `&[Note]` slice to search
-/// during [`super::FileIndex::build`].
-pub(super) fn find_by_path<'a>(
-    notes: &'a [Note],
-    path: &Path,
-) -> Option<&'a Note> {
-    let idx = notes.binary_search_by(|note| note.path().cmp(path)).ok()?;
-    notes.get(idx)
 }
 
 /// Finds the one Note whose file stem equals `stem`, or `None` if zero or

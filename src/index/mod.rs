@@ -229,7 +229,7 @@ impl FileIndex {
     #[inline]
     #[must_use]
     pub(crate) fn note(&self, path: &Path) -> Option<&Note> {
-        inlinks::find_by_path(&self.notes, path)
+        find_by_path(&self.notes, path)
     }
 
     /// Returns the [`FileRecord`] for the file at `path`, if indexed.
@@ -316,6 +316,17 @@ impl FileIndex {
         }
         QueryOutcome::new(matched)
     }
+}
+
+/// Binary-searches path-sorted `notes` for an exact path match.
+///
+/// Shared by [`Self::note`], which does this lookup once `self` exists,
+/// and the [`inlinks`](mod@inlinks) submodule, which needs the same
+/// search over a bare `&[Note]` slice while resolving link targets
+/// during [`Self::build`]/[`Self::refresh`].
+fn find_by_path<'a>(notes: &'a [Note], path: &Path) -> Option<&'a Note> {
+    let idx = notes.binary_search_by(|note| note.path().cmp(path)).ok()?;
+    notes.get(idx)
 }
 
 /// Merge-joins `records` and `notes` by path, yielding only the file/note
