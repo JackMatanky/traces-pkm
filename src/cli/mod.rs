@@ -391,9 +391,7 @@ mod tests {
                     "--order",
                     value,
                 ])
-                .unwrap_or_else(|error| {
-                    panic!("parse table argv with --order {value}: {error}")
-                });
+                .expect("parse table argv with a valid --order value");
 
                 assert!(matches!(cli.command, Some(Commands::Table(_))));
             }
