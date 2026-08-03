@@ -16,6 +16,11 @@ use std::{
 
 use crate::note::Note;
 
+/// Target-keyed inbound link edges: every Note path to the paths of every
+/// Note whose outlinks resolve to it. Returned by [`derive_inlinks`] and
+/// the type persisted/reloaded by [`super::store`].
+pub(super) type InlinkMap = HashMap<PathBuf, Vec<PathBuf>>;
+
 /// Derives inbound links for every indexed Note from its peers' outlinks.
 ///
 /// For each outlink in each Note, resolves the link target against `notes`
@@ -36,7 +41,7 @@ use crate::note::Note;
 /// that falls through to stem matching (the wikilink-by-name case) costs
 /// O(n) instead, since [`find_unique_by_stem`] scans every indexed Note;
 /// worst case across `l` such outlinks is O(l·n).
-pub(super) fn derive_inlinks(notes: &[Note]) -> HashMap<PathBuf, Vec<PathBuf>> {
+pub(super) fn derive_inlinks(notes: &[Note]) -> InlinkMap {
     let mut edges: HashMap<&Path, BTreeSet<&Path>> = HashMap::new();
     for source in notes {
         for outlink in source.outlinks() {
@@ -78,13 +83,13 @@ fn resolve_target<'a>(notes: &'a [Note], target: &str) -> Option<&'a Path> {
         return None;
     }
     let candidate = Path::new(path_part);
-    if let Some(path) = find_by_path(notes, candidate) {
-        return Some(path);
+    if let Some(note) = find_by_path(notes, candidate) {
+        return Some(note.path());
     }
     if candidate.extension().is_none() {
         let with_extension = candidate.with_extension("md");
-        if let Some(path) = find_by_path(notes, &with_extension) {
-            return Some(path);
+        if let Some(note) = find_by_path(notes, &with_extension) {
+            return Some(note.path());
         }
     }
     let stem =
@@ -93,9 +98,17 @@ fn resolve_target<'a>(notes: &'a [Note], target: &str) -> Option<&'a Path> {
 }
 
 /// Binary-searches path-sorted `notes` for an exact path match.
-fn find_by_path<'a>(notes: &'a [Note], path: &Path) -> Option<&'a Path> {
+///
+/// Shared with [`super::FileIndex::note`], which does the same lookup once
+/// a [`FileIndex`](super::FileIndex) exists; this free-function form is for
+/// [`resolve_target`], which only has a bare `&[Note]` slice to search
+/// during [`super::FileIndex::build`].
+pub(super) fn find_by_path<'a>(
+    notes: &'a [Note],
+    path: &Path,
+) -> Option<&'a Note> {
     let idx = notes.binary_search_by(|note| note.path().cmp(path)).ok()?;
-    notes.get(idx).map(Note::path)
+    notes.get(idx)
 }
 
 /// Finds the one Note whose file stem equals `stem`, or `None` if zero or

@@ -18,7 +18,9 @@ use redb::{
 };
 use serde::{Serialize, de::DeserializeOwned};
 
-use super::{INDEX_FILE, error::FileIndexError, file::FileRecord};
+use super::{
+    INDEX_FILE, error::FileIndexError, file::FileRecord, inlinks::InlinkMap,
+};
 use crate::note::Note;
 
 /// TOML-encoded [`FileRecord`] bytes keyed by project-relative path.
@@ -37,8 +39,7 @@ const LINKS: MultimapTableDefinition<&str, &str> =
 /// Atomically read snapshot of persisted [`FileRecord`] and [`Note`]
 /// records (sorted by path) plus derived inlink edges (target-keyed,
 /// unordered).
-type IndexSnapshot =
-    (Vec<FileRecord>, Vec<Note>, HashMap<PathBuf, Vec<PathBuf>>);
+type IndexSnapshot = (Vec<FileRecord>, Vec<Note>, InlinkMap);
 
 /// Redb-backed handle to one project root's index database.
 #[derive(Debug)]
@@ -93,7 +94,7 @@ impl IndexStore {
         &self,
         records: &[FileRecord],
         notes: &[Note],
-        links: &HashMap<PathBuf, Vec<PathBuf>>,
+        links: &InlinkMap,
     ) -> Result<(), FileIndexError> {
         let write_txn =
             self.db.begin_write().map_err(|source| self.store_error(source))?;
@@ -179,7 +180,7 @@ impl IndexStore {
     fn store_links(
         &self,
         write_txn: &WriteTransaction,
-        links: &HashMap<PathBuf, Vec<PathBuf>>,
+        links: &InlinkMap,
     ) -> Result<(), FileIndexError> {
         let mut table = write_txn
             .open_multimap_table(LINKS)
@@ -256,7 +257,7 @@ impl IndexStore {
     fn load_links(
         &self,
         read_txn: &ReadTransaction,
-    ) -> Result<HashMap<PathBuf, Vec<PathBuf>>, FileIndexError> {
+    ) -> Result<InlinkMap, FileIndexError> {
         let table = match read_txn.open_multimap_table(LINKS) {
             Ok(table) => table,
             Err(redb::TableError::TableDoesNotExist(_)) => {

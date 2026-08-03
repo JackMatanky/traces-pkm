@@ -33,11 +33,7 @@ mod query;
 mod scan;
 mod store;
 
-use std::{
-    collections::HashMap,
-    fs,
-    path::{Path, PathBuf},
-};
+use std::{fs, path::Path};
 
 pub(crate) use error::FileIndexError;
 #[expect(
@@ -45,7 +41,7 @@ pub(crate) use error::FileIndexError;
     reason = "domain types exported for index module callers"
 )]
 pub(crate) use file::{FileFormat, FileRecord, Timestamp};
-use inlinks::derive_inlinks;
+use inlinks::{InlinkMap, derive_inlinks};
 pub(crate) use query::{
     FileField, IndexRecord, QueryError, QueryOutcome, SortOrder, Source,
 };
@@ -68,7 +64,7 @@ pub(crate) struct FileIndex {
     /// Inbound links, keyed by target path; see [`inlinks::derive_inlinks`].
     /// Recomputed in full whenever [`Self::refresh`] finds changed content,
     /// otherwise reused unchanged from the last persisted computation.
-    inlinks: HashMap<PathBuf, Vec<PathBuf>>,
+    inlinks: InlinkMap,
 }
 
 impl FileIndex {
@@ -233,10 +229,7 @@ impl FileIndex {
     #[inline]
     #[must_use]
     pub(crate) fn note(&self, path: &Path) -> Option<&Note> {
-        self.notes
-            .binary_search_by(|n| n.path().cmp(path))
-            .ok()
-            .and_then(|idx| self.notes.get(idx))
+        inlinks::find_by_path(&self.notes, path)
     }
 
     /// Returns the [`FileRecord`] for the file at `path`, if indexed.
