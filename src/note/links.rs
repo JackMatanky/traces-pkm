@@ -1,4 +1,8 @@
 //! Markdown and Obsidian link targets extracted from notes.
+//!
+//! [`Link`] pairs a raw target string with its [`LinkType`] (Markdown or
+//! wikilink syntax); [`LinkTarget`] splits that raw target into its path and
+//! heading-anchor parts for resolution against indexed Notes.
 
 use serde::{Deserialize, Serialize};
 
@@ -23,7 +27,7 @@ pub(crate) struct Link {
 }
 
 impl Link {
-    /// Creates a non-embedded outlink with `target`, display `text`, and
+    /// Creates a non-embedded [`Link`] with `target`, display `text`, and
     /// `kind`.
     #[inline]
     #[must_use]
@@ -148,10 +152,13 @@ impl Link {
 
 /// The parts a [`Link`]'s raw target text splits into at its first `#`.
 ///
-/// Obsidian and Markdown links can point to a Note, to a heading anchor
-/// within one, or (for an in-page link like `[[#Heading]]`) to an anchor
-/// with no Note path at all — three mutually exclusive shapes, not an
-/// optional path paired with an optional anchor.
+/// Obsidian and Markdown links can point to three mutually exclusive shapes,
+/// not an optional path paired with an optional anchor:
+///
+/// - A Note, by path ([`Self::Path`]).
+/// - A heading anchor within a Note ([`Self::PathWithAnchor`]).
+/// - An in-page anchor with no Note path at all, such as `[[#Heading]]`
+///   ([`Self::AnchorOnly`]).
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(crate) enum LinkTarget<'a> {
     /// A path with no `#` suffix.
@@ -183,38 +190,36 @@ impl<'a> LinkTarget<'a> {
         }
     }
 
-    /// Whether this target has a non-empty path segment — `false` for
-    /// [`Self::AnchorOnly`] and for the degenerate case of an entirely
-    /// empty target. Corresponds to whether an exact-path lookup is worth
-    /// attempting at all.
+    /// Whether this target has a non-empty path segment: `false` for
+    /// [`Self::AnchorOnly`] and for the degenerate case of an entirely empty
+    /// target. Corresponds to whether an exact-path lookup is worth attempting
+    /// at all.
     #[must_use]
     pub(crate) fn has_path(self) -> bool {
         self.path().is_some_and(|path| !path.is_empty())
     }
 
-    /// Whether this target's path segment is a bare name with no
-    /// directory prefix, such as `Project Alpha` rather than
-    /// `archive/Project Alpha` — the shape Obsidian's wikilink-by-name
-    /// search resolves.
+    /// Whether this target's path segment is a bare name with no directory
+    /// prefix, such as `Project Alpha` rather than `archive/Project Alpha`, the
+    /// shape Obsidian's wikilink-by-name search resolves.
     ///
-    /// `false` for [`Self::AnchorOnly`] (no path at all) and for a path
-    /// with an explicit directory component: an explicit path that fails
-    /// to match exactly stays unresolved rather than falling back to a
-    /// whole-index name search that could match an unrelated Note
-    /// elsewhere. Corresponds to whether a whole-index stem search is
-    /// eligible as a fallback.
+    /// `false` for [`Self::AnchorOnly`] (no path at all) and for a path with an
+    /// explicit directory component: an explicit path that fails to match
+    /// exactly stays unresolved rather than falling back to a whole-index name
+    /// search that could match an unrelated Note elsewhere. Corresponds to
+    /// whether a whole-index stem search is eligible as a fallback.
     #[must_use]
     pub(crate) fn is_basename(self) -> bool {
         self.has_path() && self.path().is_some_and(|path| !path.contains('/'))
     }
 }
 
-/// Finds the byte offset of the first unescaped character in `s` for
-/// which `is_close` returns `true`, treating a `\` as escaping the
-/// character that follows it.
+/// Finds the byte offset of the first unescaped character in `s` for which
+/// `is_close` returns `true`, treating a `\` as escaping the character that
+/// follows it.
 ///
-/// Shared by [`find_wikilink_close`] and [`split_wikilink_text`], which
-/// need identical escape tracking with different terminal predicates.
+/// Shared by [`find_wikilink_close`] and [`split_wikilink_text`], which need
+/// identical escape tracking with different terminal predicates.
 fn find_unescaped(
     s: &str,
     mut is_close: impl FnMut(usize, char) -> bool,
@@ -236,9 +241,8 @@ fn find_unescaped(
     None
 }
 
-/// Finds the byte offset of the first unescaped `]` in `s` that is
-/// immediately followed by a second `]`, marking the wikilink's closing
-/// `]]`.
+/// Finds the byte offset of the first unescaped `]` in `s` that is immediately
+/// followed by a second `]`, marking the wikilink's closing `]]`.
 fn find_wikilink_close(s: &str) -> Option<usize> {
     let source = SourceText::new(s);
     find_unescaped(s, |index, ch| {
@@ -246,9 +250,9 @@ fn find_wikilink_close(s: &str) -> Option<usize> {
     })
 }
 
-/// Splits wikilink inner text at the first unescaped `|` into a
-/// `(target, alias)` pair, or `(s, s)` when there is no `|` separator, so
-/// callers can treat the alias as identical to the target.
+/// Splits wikilink inner text at the first unescaped `|` into a `(target,
+/// alias)` pair, or `(s, s)` when there is no `|` separator, so callers can
+/// treat the alias as identical to the target.
 fn split_wikilink_text(s: &str) -> (&str, &str) {
     let source = SourceText::new(s);
     match find_unescaped(s, |_, ch| ch == '|') {

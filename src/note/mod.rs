@@ -9,8 +9,8 @@
 //! - [`Note`] - Stores the parsed note.
 //! - [`List`], [`ListItem`], and [`TaskStatus`] - Represent Markdown lists and
 //!   task items.
-//! - [`Link`] and [`LinkType`] - Represent Markdown links and Obsidian
-//!   wikilinks.
+//! - [`Link`], [`LinkType`], and [`LinkTarget`] - Represent Markdown links,
+//!   Obsidian wikilinks, and a link's split path/anchor target.
 //! - [`Frontmatter`] and [`RawFrontmatter`] - Preserve YAML metadata.
 //! - [`InlineField`], [`InlineFieldForm`], [`MetadataField`], and
 //!   [`FieldValue`] - Represent Dataview-compatible metadata.

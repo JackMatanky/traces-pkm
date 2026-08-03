@@ -66,7 +66,7 @@ pub(super) fn derive_inlinks(notes: &[Note]) -> InlinkMap {
 /// A resolved link target: the path of the Note an outlink points to.
 ///
 /// Distinct from [`Source`] so [`derive_inlinks`]'s `edges` map can't
-/// accidentally record an edge in the wrong direction — both wrap the same
+/// accidentally record an edge in the wrong direction: both wrap the same
 /// `&Path` representation, so nothing but the type system would catch a
 /// swapped `edges.entry(source).or_default().insert(target)`.
 #[derive(Copy, Clone, Debug, Eq, Hash, PartialEq)]
@@ -78,8 +78,8 @@ impl Target<'_> {
     }
 }
 
-/// A Note that links *to* a [`Target`]: the path recorded as an inbound
-/// edge. See [`Target`] for why this is a separate type.
+/// A Note that links *to* a [`Target`]: the path recorded as an inbound edge.
+/// See [`Target`] for why this is a separate type.
 #[derive(Copy, Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 struct Source<'a>(&'a Path);
 
@@ -96,19 +96,21 @@ impl Source<'_> {
 /// 2. The same path with a `.md` extension appended, when `target` has no
 ///    extension of its own (Markdown-style links that omit the extension).
 /// 3. A unique match on file stem across every indexed Note (Obsidian
-///    wikilink-by-name resolution) — only when [`LinkTarget::is_basename`] says
-///    `target`'s path has no directory prefix. A qualified path (such as
-///    `archive/foo`) that fails the first two attempts resolves to `None`
-///    rather than falling back to a whole-index name search that could match an
-///    unrelated same-named Note elsewhere.
+///    wikilink-by-name resolution), attempted only when
+///    [`LinkTarget::is_basename`] says `target`'s path has no directory prefix.
+///    A qualified path (such as `archive/foo`) that fails the first two
+///    attempts resolves to `None` rather than falling back to a whole-index
+///    name search that could match an unrelated same-named Note elsewhere.
 ///
-/// `target`'s anchor half, if any, plays no part in resolution — only the
-/// path segment is matched, so a link into a heading still resolves to the
-/// Note that owns it.
+/// `target`'s anchor half, if any, plays no part in resolution: only the path
+/// segment is matched, so a link into a heading still resolves to the Note that
+/// owns it.
 ///
-/// ponytail: no note-directory-relative resolution (`../sibling.md`) and no
-/// Obsidian shortest-unique-path search across ambiguous folders. Upgrade
-/// if real vaults need either.
+/// This does not resolve note-directory-relative paths (`../sibling.md`);
+/// add that if real vaults need it. An ambiguous wikilink stem shared by
+/// Notes in different folders resolves to `None` here rather than
+/// picking the nearest match by Obsidian's shortest-unique-path rule;
+/// that upgrade is tracked by #11.
 fn resolve_target<'a>(
     notes: &'a [Note],
     target: LinkTarget<'_>,
@@ -135,8 +137,8 @@ fn resolve_target<'a>(
     find_unique_by_stem(notes, stem).map(Target)
 }
 
-/// Finds the one Note whose file stem equals `stem`, or `None` if zero or
-/// more than one Note matches.
+/// Finds the one Note whose file stem equals `stem`, or `None` if zero or more
+/// than one Note matches.
 fn find_unique_by_stem<'a>(notes: &'a [Note], stem: &str) -> Option<&'a Path> {
     let mut matches = notes.iter().filter(|note| {
         note.path().file_stem().and_then(|s| s.to_str()) == Some(stem)
