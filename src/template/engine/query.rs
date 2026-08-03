@@ -2,50 +2,66 @@
 //!
 //! Both namespaces are backed by [`QueryOps`], registered twice by
 //! [`super::TemplateEngine::new`]: [`QueryOps::page`] creates the `query`
-//! global, [`QueryOps::task`] creates the `tasks` global. Each namespace
-//! starts a query with one of three methods, matching [`Source`]'s variants:
+//! global and [`QueryOps::task`] creates the `tasks` global. Each namespace
+//! starts a query with one of three methods, matching [`Source`]'s
+//! variants:
 //!
 //! - `.all()`: every indexed Note.
 //! - `.from_tags(tag)`: Notes tagged `tag`.
 //! - `.from_folder(folder)`: Notes under `folder`.
 //!
-//! `query` returns one row per Note. `tasks` returns one row per task item via
-//! [`FileIndex::query_tasks`], exposing `task.completed` and `task.text`
-//! alongside the parent Note's `file.*`, frontmatter, inline-field, and tag
-//! metadata.
+//! Each method refreshes a fresh [`FileIndex`] for the render's project
+//! root and returns a [`QueryOutcome`] wrapped in a [`Value`].
 //!
-//! Each method refreshes a fresh [`FileIndex`] for the render's project root
-//! and returns a [`QueryOutcome`] wrapped in a [`Value`]. Template callers
-//! chain `.where(...)`/`.filter(...)`, `.sort(...)`, `.limit(...)`,
-//! `.group_by(...)`, and `.flatten(...)` — the transformation logic lives on
-//! [`QueryOutcome`] itself; this module only supplies the minijinja
-//! [`Object`] wiring. [`QueryOutcome::table`], [`QueryOutcome::list`],
-//! [`QueryOutcome::task_list`], and `.len()`'s `count` alias are terminal
-//! instead: they render final markdown/scalar output and end a chain rather
-//! than continue it. Per ADR-0005, each is reachable both as a `call_method`
-//! (`outcome.table(["Name"], ["file.name"])`) and as a pipeline filter
+//! # Row Shape
+//!
+//! `query` returns one row per Note. `tasks` returns one row per task item
+//! via [`FileIndex::query_tasks`], exposing `task.completed` and
+//! `task.text` alongside the parent Note's `file.*`, frontmatter,
+//! inline-field, and tag metadata.
+//!
+//! # Chaining and Terminal Methods
+//!
+//! Template callers chain `.where(...)`/`.filter(...)`, `.sort(...)`,
+//! `.limit(...)`, `.group_by(...)`, and `.flatten(...)`. The
+//! transformation logic lives on [`QueryOutcome`] itself; this module only
+//! supplies the minijinja [`Object`] wiring.
+//!
+//! [`QueryOutcome::table`], [`QueryOutcome::list`],
+//! [`QueryOutcome::task_list`], and `count` (an alias for
+//! [`QueryOutcome::len`]) are terminal instead: they render final
+//! markdown/scalar output and end a chain rather than continue it. Per
+//! ADR-0005, each is reachable both as a `call_method`
+//! (`outcome.table(["Name"], ["file.name"])`) and as a pipeline filter,
 //! registered once by [`QueryOps::register_terminal_filters`]
-//! (`outcome | table(["Name"], ["file.name"])`) — both forms call the same
+//! (`outcome | table(["Name"], ["file.name"])`). Both forms call the same
 //! [`QueryOutcome`] method.
+//!
+//! # Object Wiring
 //!
 //! [`QueryOutcome`] and [`IndexRecord`] get their [`Object`] impls here
 //! instead of in [`crate::index`], keeping that module independent from
-//! minijinja so `traces task` can reuse [`FileIndex`], [`QueryOutcome`], and
-//! [`IndexRecord`] without pulling in rendering concerns. `record` attributes
-//! other than `file` and `task` forward to [`IndexRecord::field`], the same
-//! resolver `.where()` and `.sort()` use; `record.file.*` and `record.task.*`
-//! use forwarding wrappers ([`FileFields`] and [`TaskFields`]) instead, since
-//! minijinja resolves a dotted attribute path one segment at a time — the
-//! wrappers call [`FileField::parse`]/[`FileField::resolve`] and
+//! minijinja so `traces task` can reuse [`FileIndex`], [`QueryOutcome`],
+//! and [`IndexRecord`] without pulling in rendering concerns.
+//!
+//! `record` attributes other than `file` and `task` forward to
+//! [`IndexRecord::field`], the same resolver `.where()` and `.sort()` use.
+//! `record.file.*` and `record.task.*` use forwarding wrappers
+//! ([`FileFields`] and [`TaskFields`]) instead: minijinja resolves a
+//! dotted attribute path one segment at a time, so the wrappers call
+//! [`FileField::parse`]/[`FileField::resolve`] and
 //! [`IndexRecord::task_completed`]/[`IndexRecord::task_text`] directly,
-//! skipping the string-prefix handling [`IndexRecord::field`] needs once the
-//! `file`/`task` segment is already known.
+//! skipping the string-prefix handling [`IndexRecord::field`] needs once
+//! the `file`/`task` segment is already known.
+//!
+//! # Errors
 //!
 //! [`FileIndex::refresh`] and [`QueryError`] failures become
 //! [`minijinja::Error`] values with stable messages and the original error
 //! preserved as [`std::error::Error::source`], mirroring [`super::ui`]'s
-//! `dialog_error` and [`super::error::confine_error`], so query failures carry
-//! template name, line, and column context like every other namespace.
+//! `dialog_error` and [`super::error::confine_error`]. Query failures
+//! carry template name, line, and column context like every other
+//! namespace.
 
 use std::{
     path::{Path, PathBuf},
@@ -117,7 +133,7 @@ impl QueryOps {
     /// filters: `outcome | table(["Name"], ["file.name"])`, mirroring the
     /// call-method form `outcome.table(["Name"], ["file.name"])` documented
     /// on [`Object::call_method`] for [`QueryOutcome`]. Registered once, not
-    /// per instance — these filters carry no state and apply to any
+    /// per instance: these filters carry no state and apply to any
     /// [`QueryOutcome`] regardless of which namespace produced it.
     #[inline]
     pub(super) fn register_terminal_filters(env: &mut Environment<'static>) {
@@ -206,8 +222,9 @@ impl Object for QueryOutcome {
 
     /// Dispatches [`QueryOutcome`] methods by template name.
     ///
-    /// Terminal methods — `table`, `list`, `task_list`, `count` — render final
-    /// output and return early, without touching the non-terminal chain below:
+    /// The terminal methods `table`, `list`, `task_list`, and `count`
+    /// render final output and return early, without touching the
+    /// non-terminal chain below:
     ///
     /// - `table(headers, columns)` and `list(path)` call
     ///   [`QueryOutcome::table`] and [`QueryOutcome::list`]; all take field
@@ -299,7 +316,7 @@ impl Object for QueryOutcome {
 ///
 /// - minijinja's `Function` trait (backing filters) requires each parameter
 ///   type to implement `ArgType` for every lifetime, which a borrowed
-///   `Vec<&str>` cannot satisfy — only its owned `String` form can.
+///   `Vec<&str>` cannot satisfy; only its owned `String` form can.
 /// - Even [`Object::call_method`]'s [`from_args`], which has no such
 ///   constraint, cannot borrow a `Vec<&str>` out of a list-literal argument
 ///   value: minijinja reports "type conversion is not legal in this situation

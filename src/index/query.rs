@@ -274,9 +274,9 @@ impl QueryOutcome {
     ///
     /// # Errors
     ///
-    /// - [`QueryError::TaskListOnPageRecords`] if any record has no task fields
-    ///   — built by [`super::FileIndex::query`] rather than
-    ///   [`super::FileIndex::query_tasks`].
+    /// - [`QueryError::TaskListOnPageRecords`] if any record has no task
+    ///   fields, meaning it was built by [`super::FileIndex::query`] rather
+    ///   than [`super::FileIndex::query_tasks`].
     pub(crate) fn task_list(&self) -> Result<String, QueryError> {
         let mut out = String::new();
         for record in &self.records {
@@ -471,7 +471,7 @@ impl IndexRecord {
         &self.file
     }
 
-    /// The indexed file's parsed Note Metadata.
+    /// The indexed file's parsed [`Note`] metadata.
     #[inline]
     #[must_use]
     pub(crate) fn note(&self) -> &Note {

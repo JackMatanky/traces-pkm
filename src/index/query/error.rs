@@ -39,9 +39,9 @@ pub(crate) enum QueryError {
         n: i64,
     },
     /// [`super::QueryOutcome::task_list`] was called on records with no
-    /// `task.*` fields — page-level records built by
-    /// [`super::super::FileIndex::query`] rather than task-level records from
-    /// [`super::super::FileIndex::query_tasks`].
+    /// `task.*` fields, meaning page-level records built by
+    /// [`super::super::FileIndex::query`] rather than task-level records
+    /// from [`super::super::FileIndex::query_tasks`].
     #[error(
         "task_list requires task-level records from the `tasks` namespace; \
          got page-level records with no task fields"
