@@ -27,11 +27,13 @@ use crate::note::Note;
 ///
 /// # Performance
 ///
-/// O(l log n), where `l` is the total outlink count across `notes` and `n`
-/// is `notes.len()`: resolving each outlink binary-searches or linear-scans
-/// the path-sorted slice `notes` (already sorted by
-/// [`super::FileIndex::build`]/[`super::FileIndex::refresh`]/
-/// [`super::FileIndex::load`]).
+/// O(l log n) when every outlink resolves by exact path (the common
+/// Markdown-link case): each lookup binary-searches the path-sorted slice
+/// `notes` (already sorted by [`super::FileIndex::build`]/
+/// [`super::FileIndex::refresh`]/[`super::FileIndex::load`]). An outlink
+/// that falls through to stem matching (the wikilink-by-name case) costs
+/// O(n) instead, since [`find_unique_by_stem`] scans every indexed Note;
+/// worst case across `l` such outlinks is O(l·n).
 pub(super) fn derive_inlinks(
     notes: &[Note],
 ) -> BTreeMap<PathBuf, Vec<PathBuf>> {

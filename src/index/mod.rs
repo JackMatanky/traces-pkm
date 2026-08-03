@@ -673,6 +673,8 @@ mod tests {
     }
 
     mod refresh {
+        use std::path::PathBuf;
+
         use pretty_assertions::assert_eq;
 
         use super::*;
@@ -795,6 +797,44 @@ mod tests {
 
             assert_eq!(target.file().path(), Path::new("target.md"));
             assert!(target.inlinks().is_empty());
+        }
+
+        #[test]
+        fn moves_an_inbound_edge_when_the_linking_notes_outlink_target_changes()
+        {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("old-target.md"), "# Old")
+                .expect("write old target");
+            fs::write(temp.path().join("new-target.md"), "# New")
+                .expect("write new target");
+            fs::write(temp.path().join("linker.md"), "[[old-target]]")
+                .expect("write linker");
+            FileIndex::build(temp.path())
+                .expect("build index")
+                .persist(temp.path())
+                .expect("persist index");
+
+            fs::write(temp.path().join("linker.md"), "[[new-target]]")
+                .expect("repoint linker");
+
+            let refreshed =
+                FileIndex::refresh(temp.path()).expect("refresh index");
+            let outcome = refreshed.query(&Source::All);
+            let old_target = outcome
+                .iter()
+                .find(|record| {
+                    record.file().path() == Path::new("old-target.md")
+                })
+                .expect("old target record");
+            let new_target = outcome
+                .iter()
+                .find(|record| {
+                    record.file().path() == Path::new("new-target.md")
+                })
+                .expect("new target record");
+
+            assert!(old_target.inlinks().is_empty());
+            assert_eq!(new_target.inlinks(), [PathBuf::from("linker.md")]);
         }
 
         #[test]
