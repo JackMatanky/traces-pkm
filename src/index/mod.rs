@@ -4,7 +4,7 @@
 //! trusted project root. Markdown files also get parsed into [`Note`] metadata.
 //! Persistence lives in [`store`](mod@store); callers use [`FileIndex`]'s
 //! methods instead of redb tables. Inbound links between Notes are derived
-//! from outlinks on every query; see [`inlinks`](mod@inlinks).
+//! from outlinks and persisted alongside them; see [`inlinks`](mod@inlinks).
 //!
 //! # Main Entry Points
 //!
@@ -33,7 +33,11 @@ mod query;
 mod scan;
 mod store;
 
-use std::{fs, path::Path};
+use std::{
+    collections::BTreeMap,
+    fs,
+    path::{Path, PathBuf},
+};
 
 pub(crate) use error::FileIndexError;
 #[expect(
@@ -52,7 +56,8 @@ use crate::note::{Note, parse_markdown};
 /// Project-relative path of the persisted [`FileIndex`] database.
 const INDEX_FILE: &str = ".traces/index.redb";
 
-/// Persisted cache of file records and parsed Note metadata.
+/// Persisted cache of file records, parsed Note metadata, and derived
+/// inbound links.
 ///
 /// Every regular file contributes a [`FileRecord`]. Markdown files also
 /// contribute a [`Note`], accessible through [`Self::notes`] or [`Self::note`].
@@ -60,6 +65,10 @@ const INDEX_FILE: &str = ".traces/index.redb";
 pub(crate) struct FileIndex {
     records: Vec<FileRecord>,
     notes: Vec<Note>,
+    /// Inbound links, keyed by target path; see [`inlinks::derive_inlinks`].
+    /// Recomputed in full whenever [`Self::refresh`] finds changed content,
+    /// otherwise reused unchanged from the last persisted computation.
+    inlinks: BTreeMap<PathBuf, Vec<PathBuf>>,
 }
 
 impl FileIndex {
@@ -82,10 +91,12 @@ impl FileIndex {
             }
         }
         notes.sort_by(|a, b| a.path().cmp(b.path()));
+        let inlinks = derive_inlinks(&notes);
 
         Ok(Self {
             records,
             notes,
+            inlinks,
         })
     }
 
@@ -98,6 +109,16 @@ impl FileIndex {
     /// - Unchanged markdown Notes reuse their parsed [`Note`].
     /// - Added or changed markdown Notes are parsed from disk.
     /// - Deleted files disappear because they are absent from the fresh scan.
+    ///
+    /// Derived inlinks are recomputed in full only when something changed
+    /// (any added, changed, or deleted file or Note) and reused unchanged
+    /// from the previously persisted computation otherwise. A full
+    /// recompute — not a per-note patch — is required for correctness: link
+    /// target resolution considers every indexed Note (see
+    /// [`inlinks::derive_inlinks`]), so an unedited Note's *resolved* target
+    /// can still change when an unrelated Note is added or removed
+    /// elsewhere in the index (for example, a wikilink that was ambiguous
+    /// becomes resolvable once one of the ambiguous candidates is deleted).
     ///
     /// Returns the fresh [`FileIndex`] and persists it only when contents
     /// changed.
@@ -132,12 +153,18 @@ impl FileIndex {
         }
         notes.sort_by(|a, b| a.path().cmp(b.path()));
 
+        let dirty = records != previous.records || notes != previous.notes;
+        let inlinks = if dirty {
+            derive_inlinks(&notes)
+        } else {
+            previous.inlinks
+        };
+
         let index = Self {
             records,
             notes,
+            inlinks,
         };
-        let dirty =
-            index.records != previous.records || index.notes != previous.notes;
         if dirty {
             index.persist(root)?;
         }
@@ -146,7 +173,8 @@ impl FileIndex {
 
     /// Persists this index to `root`, replacing any existing index contents.
     ///
-    /// Both [`FileRecord`] and [`Note`] records are written atomically.
+    /// [`FileRecord`], [`Note`], and derived inlink records are all written
+    /// atomically.
     ///
     /// # Errors
     ///
@@ -156,7 +184,11 @@ impl FileIndex {
     /// - [`FileIndexError::Serialize`] if a record cannot be encoded.
     #[inline]
     pub(crate) fn persist(&self, root: &Path) -> Result<(), FileIndexError> {
-        IndexStore::open(root)?.replace_all(&self.records, &self.notes)
+        IndexStore::open(root)?.replace_all(
+            &self.records,
+            &self.notes,
+            &self.inlinks,
+        )
     }
 
     /// Loads the index previously persisted for `root`.
@@ -170,10 +202,11 @@ impl FileIndex {
     /// - [`FileIndexError::Deserialize`] if stored text is not a valid record.
     #[inline]
     pub(crate) fn load(root: &Path) -> Result<Self, FileIndexError> {
-        let (records, notes) = IndexStore::open(root)?.load_all()?;
+        let (records, notes, inlinks) = IndexStore::open(root)?.load_all()?;
         Ok(Self {
             records,
             notes,
+            inlinks,
         })
     }
 
@@ -235,14 +268,18 @@ impl FileIndex {
     ///
     /// # Performance
     ///
-    /// O(n + m + l): [`inlinks::derive_inlinks`] resolves `l` total outlinks
-    /// once up front, then the single-pass iterator merge-join across
-    /// `records` and `notes` looks each matched Note's inlinks up by moving
-    /// them out of the derived map instead of cloning.
+    /// O(n + m): [`Self::refresh`]/[`Self::load`] already produced
+    /// `self.inlinks`, so this is just the single-pass iterator merge-join
+    /// across `records` and `notes`, looking each matched Note's inlinks up
+    /// by moving them out of the map instead of cloning.
     #[must_use]
     pub(crate) fn query(self, source: &Source) -> QueryOutcome {
-        let mut inlinks = derive_inlinks(&self.notes);
-        let matched = matched_pairs(self.records, self.notes, source)
+        let Self {
+            records,
+            notes,
+            mut inlinks,
+        } = self;
+        let matched = matched_pairs(records, notes, source)
             .map(|(file, note)| {
                 let links = inlinks.remove(file.path()).unwrap_or_default();
                 IndexRecord::new(file, note).with_inlinks(links)
@@ -266,15 +303,19 @@ impl FileIndex {
     ///
     /// # Performance
     ///
-    /// O(n + m + t + l), where `t` is the total number of task items across
-    /// matched Notes and `l` is the total outlink count resolved by
-    /// [`inlinks::derive_inlinks`]. Task iteration streams into one output
-    /// vector without a per-note row collection.
+    /// O(n + m + t), where `t` is the total number of task items across
+    /// matched Notes. [`Self::refresh`]/[`Self::load`] already produced
+    /// `self.inlinks`. Task iteration streams into one output vector without
+    /// a per-note row collection.
     #[must_use]
     pub(crate) fn query_tasks(self, source: &Source) -> QueryOutcome {
-        let mut inlinks = derive_inlinks(&self.notes);
+        let Self {
+            records,
+            notes,
+            mut inlinks,
+        } = self;
         let mut matched = Vec::new();
-        for (file, note) in matched_pairs(self.records, self.notes, source) {
+        for (file, note) in matched_pairs(records, notes, source) {
             let links = inlinks.remove(file.path()).unwrap_or_default();
             let base = IndexRecord::new(file, note).with_inlinks(links);
             for item in base.note().tasks() {
@@ -865,6 +906,74 @@ mod tests {
                 FileIndex::refresh(temp.path()).expect("refresh index");
 
             assert_eq!(refreshed.notes().len(), 1);
+        }
+
+        #[test]
+        fn refresh_with_no_filesystem_changes_reuses_persisted_inlinks() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("target.md"), "# Target")
+                .expect("write target");
+            fs::write(temp.path().join("linker.md"), "[[target]]")
+                .expect("write linker");
+            FileIndex::build(temp.path())
+                .expect("build index")
+                .persist(temp.path())
+                .expect("persist index");
+
+            // Nothing on disk changes between this and the prior build, so
+            // `refresh` must take the `!dirty` path: reuse the persisted
+            // inlinks rather than recomputing (and, since nothing changed,
+            // skip re-persisting too).
+            let refreshed =
+                FileIndex::refresh(temp.path()).expect("refresh index");
+            let outcome = refreshed.query(&Source::All);
+            let target = outcome
+                .iter()
+                .find(|record| record.file().path() == Path::new("target.md"))
+                .expect("target record");
+
+            assert_eq!(target.inlinks(), [PathBuf::from("linker.md")]);
+        }
+
+        #[test]
+        fn resolves_an_unedited_notes_ambiguous_wikilink_once_an_unrelated_note_is_deleted()
+         {
+            // `a.md`'s own bytes never change in this test. Its `[[foo]]`
+            // link starts ambiguous (two Notes named `foo`) and later
+            // becomes resolvable purely because a *different* Note is
+            // deleted. `refresh`'s per-file staleness check would mark
+            // `a.md` "unchanged, reused" and skip re-parsing it — proving
+            // inlinks must come from a full recompute over every indexed
+            // Note (gated on whether *anything* changed), not a patch
+            // limited to the notes `refresh` actually re-parsed.
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::create_dir_all(temp.path().join("notes")).expect("mkdir notes");
+            fs::create_dir_all(temp.path().join("archive"))
+                .expect("mkdir archive");
+            fs::write(temp.path().join("notes/foo.md"), "# Foo")
+                .expect("write notes/foo.md");
+            fs::write(temp.path().join("archive/foo.md"), "# Old Foo")
+                .expect("write archive/foo.md");
+            fs::write(temp.path().join("a.md"), "[[foo]]").expect("write a");
+            FileIndex::build(temp.path())
+                .expect("build index")
+                .persist(temp.path())
+                .expect("persist index");
+
+            fs::remove_file(temp.path().join("archive/foo.md"))
+                .expect("delete archive/foo.md");
+
+            let refreshed =
+                FileIndex::refresh(temp.path()).expect("refresh index");
+            let outcome = refreshed.query(&Source::All);
+            let target = outcome
+                .iter()
+                .find(|record| {
+                    record.file().path() == Path::new("notes/foo.md")
+                })
+                .expect("notes/foo.md record");
+
+            assert_eq!(target.inlinks(), [PathBuf::from("a.md")]);
         }
     }
 

@@ -149,7 +149,7 @@ The rich indexed data for markdown files only, layered on top of the File Record
 _Avoid_: page data, document info
 
 ### Inlink
-A Note's inbound links, derived by resolving every indexed Note's outgoing Markdown links and wikilinks against every other indexed Note's path, in a post-processing pass over Note Metadata. Recomputed on every query from the current outlinks rather than persisted, so it never goes stale relative to the FileIndex. Exposed to Templates and CLI as the `inlinks` field, alongside `tags`.
+A Note's inbound links, derived by resolving every indexed Note's outgoing Markdown links and wikilinks against every other indexed Note's path, in a post-processing pass over Note Metadata. Persisted alongside FileRecord/Note data and recomputed in full only when the index changes on refresh (never patched per-Note, since one Note's resolved target can depend on every other indexed Note); reused unchanged from the last persisted computation otherwise, so it never goes stale relative to the FileIndex. Exposed to Templates and CLI as the `inlinks` field, alongside `tags`.
 _Avoid_: backlink, incoming link
 
 ### Inline Field

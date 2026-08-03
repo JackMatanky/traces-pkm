@@ -1,11 +1,13 @@
 //! Derived inbound links, computed from indexed outlinks.
 //!
 //! [`derive_inlinks`] runs as a post-processing pass over already-parsed
-//! [`Note`] outlinks: nothing about an inlink is persisted. Recomputing from
-//! the notes already held in memory is cheap enough that
-//! [`super::FileIndex::query`] and [`super::FileIndex::query_tasks`] just
-//! rebuild the map on every call, so there is no separate derived-data table
-//! to keep in sync with `notes` on refresh.
+//! [`Note`] outlinks. It is a full recompute over every indexed Note, never
+//! a per-note patch, because resolving one Note's outlink can depend on
+//! every *other* indexed Note (see [`resolve_target`]'s stem-matching
+//! tier). [`super::FileIndex::build`] and [`super::FileIndex::refresh`] (the
+//! latter only when something changed) call this once and persist the
+//! result; [`super::FileIndex::query`]/[`super::FileIndex::query_tasks`]
+//! read the already-computed map instead of calling it.
 
 use std::{
     collections::{BTreeMap, BTreeSet},
