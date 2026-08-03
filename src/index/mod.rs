@@ -34,7 +34,7 @@ mod scan;
 mod store;
 
 use std::{
-    collections::BTreeMap,
+    collections::HashMap,
     fs,
     path::{Path, PathBuf},
 };
@@ -68,7 +68,7 @@ pub(crate) struct FileIndex {
     /// Inbound links, keyed by target path; see [`inlinks::derive_inlinks`].
     /// Recomputed in full whenever [`Self::refresh`] finds changed content,
     /// otherwise reused unchanged from the last persisted computation.
-    inlinks: BTreeMap<PathBuf, Vec<PathBuf>>,
+    inlinks: HashMap<PathBuf, Vec<PathBuf>>,
 }
 
 impl FileIndex {

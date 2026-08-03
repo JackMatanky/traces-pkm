@@ -5,7 +5,7 @@
 //! interacting with redb tables directly.
 
 use std::{
-    collections::BTreeMap,
+    collections::HashMap,
     fs,
     path::{Path, PathBuf},
     str,
@@ -34,10 +34,11 @@ const NOTES: TableDefinition<&str, &[u8]> = TableDefinition::new("notes");
 const LINKS: MultimapTableDefinition<&str, &str> =
     MultimapTableDefinition::new("links");
 
-/// Atomically read snapshot of persisted [`FileRecord`], [`Note`], and
-/// derived inlink records, sorted by path.
+/// Atomically read snapshot of persisted [`FileRecord`] and [`Note`]
+/// records (sorted by path) plus derived inlink edges (target-keyed,
+/// unordered).
 type IndexSnapshot =
-    (Vec<FileRecord>, Vec<Note>, BTreeMap<PathBuf, Vec<PathBuf>>);
+    (Vec<FileRecord>, Vec<Note>, HashMap<PathBuf, Vec<PathBuf>>);
 
 /// Redb-backed handle to one project root's index database.
 #[derive(Debug)]
@@ -92,7 +93,7 @@ impl IndexStore {
         &self,
         records: &[FileRecord],
         notes: &[Note],
-        links: &BTreeMap<PathBuf, Vec<PathBuf>>,
+        links: &HashMap<PathBuf, Vec<PathBuf>>,
     ) -> Result<(), FileIndexError> {
         let write_txn =
             self.db.begin_write().map_err(|source| self.store_error(source))?;
@@ -111,8 +112,8 @@ impl IndexStore {
         write_txn.commit().map_err(|source| self.store_error(source))
     }
 
-    /// Loads every stored [`FileRecord`], [`Note`], and derived inlink edge,
-    /// sorted by path.
+    /// Loads every stored [`FileRecord`] and [`Note`] (sorted by path) and
+    /// every derived inlink edge (target-keyed, unordered).
     ///
     /// # Errors
     ///
@@ -178,7 +179,7 @@ impl IndexStore {
     fn store_links(
         &self,
         write_txn: &WriteTransaction,
-        links: &BTreeMap<PathBuf, Vec<PathBuf>>,
+        links: &HashMap<PathBuf, Vec<PathBuf>>,
     ) -> Result<(), FileIndexError> {
         let mut table = write_txn
             .open_multimap_table(LINKS)
@@ -255,15 +256,15 @@ impl IndexStore {
     fn load_links(
         &self,
         read_txn: &ReadTransaction,
-    ) -> Result<BTreeMap<PathBuf, Vec<PathBuf>>, FileIndexError> {
+    ) -> Result<HashMap<PathBuf, Vec<PathBuf>>, FileIndexError> {
         let table = match read_txn.open_multimap_table(LINKS) {
             Ok(table) => table,
             Err(redb::TableError::TableDoesNotExist(_)) => {
-                return Ok(BTreeMap::new());
+                return Ok(HashMap::new());
             }
             Err(source) => return Err(self.store_error(source)),
         };
-        let mut links = BTreeMap::new();
+        let mut links = HashMap::new();
         for entry in table.iter().map_err(|source| self.store_error(source))? {
             let (target, sources) =
                 entry.map_err(|source| self.store_error(source))?;
@@ -324,7 +325,7 @@ mod tests {
             let store = IndexStore::open(temp.path()).expect("open store");
 
             store
-                .replace_all(&records, &notes, &BTreeMap::new())
+                .replace_all(&records, &notes, &HashMap::new())
                 .expect("persist records");
             let (loaded_records, loaded_notes, _) =
                 store.load_all().expect("load records");
@@ -337,7 +338,7 @@ mod tests {
         fn replace_all_then_load_all_round_trips_links() {
             let temp = tempfile::tempdir().expect("create temp dir");
             let store = IndexStore::open(temp.path()).expect("open store");
-            let links = BTreeMap::from([
+            let links = HashMap::from([
                 (PathBuf::from("target.md"), vec![
                     PathBuf::from("a.md"),
                     PathBuf::from("b.md"),
@@ -356,7 +357,7 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             let store = IndexStore::open(temp.path()).expect("open store");
             let stale_links =
-                BTreeMap::from([(PathBuf::from("target.md"), vec![
+                HashMap::from([(PathBuf::from("target.md"), vec![
                     PathBuf::from("a.md"),
                 ])]);
             store
@@ -364,7 +365,7 @@ mod tests {
                 .expect("persist stale links");
 
             store
-                .replace_all(&[], &[], &BTreeMap::new())
+                .replace_all(&[], &[], &HashMap::new())
                 .expect("persist empty links");
             let (_, _, loaded_links) = store.load_all().expect("load links");
 
@@ -379,7 +380,7 @@ mod tests {
             let stale = scan_root(temp.path()).expect("scan stale");
             let store = IndexStore::open(temp.path()).expect("open store");
             store
-                .replace_all(&stale, &[], &BTreeMap::new())
+                .replace_all(&stale, &[], &HashMap::new())
                 .expect("persist stale");
             fs::remove_file(temp.path().join("stale.md"))
                 .expect("remove stale");
@@ -388,7 +389,7 @@ mod tests {
             let fresh = scan_root(temp.path()).expect("scan fresh");
 
             store
-                .replace_all(&fresh, &[], &BTreeMap::new())
+                .replace_all(&fresh, &[], &HashMap::new())
                 .expect("persist fresh");
             let (loaded_records, loaded_notes, _) =
                 store.load_all().expect("load records");
@@ -403,7 +404,7 @@ mod tests {
             let store = IndexStore::open(temp.path()).expect("open store");
 
             store
-                .replace_all(&[], &[], &BTreeMap::new())
+                .replace_all(&[], &[], &HashMap::new())
                 .expect("persist an empty record set");
             let (loaded_records, loaded_notes, _) =
                 store.load_all().expect("load records");
@@ -421,7 +422,7 @@ mod tests {
             let store = IndexStore::open(temp.path()).expect("open store");
 
             store
-                .replace_all(&records, &[], &BTreeMap::new())
+                .replace_all(&records, &[], &HashMap::new())
                 .expect("persist records");
             let (loaded_records, ..) = store.load_all().expect("load records");
 
@@ -439,7 +440,7 @@ mod tests {
             let records = scan_root(temp.path()).expect("scan root");
             let store = IndexStore::open(temp.path()).expect("open store");
             store
-                .replace_all(&records, &[], &BTreeMap::new())
+                .replace_all(&records, &[], &HashMap::new())
                 .expect("persist records");
 
             let (loaded_records, ..) = store.load_all().expect("load records");

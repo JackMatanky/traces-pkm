@@ -10,7 +10,7 @@
 //! read the already-computed map instead of calling it.
 
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeSet, HashMap},
     path::{Path, PathBuf},
 };
 
@@ -36,10 +36,8 @@ use crate::note::Note;
 /// that falls through to stem matching (the wikilink-by-name case) costs
 /// O(n) instead, since [`find_unique_by_stem`] scans every indexed Note;
 /// worst case across `l` such outlinks is O(l·n).
-pub(super) fn derive_inlinks(
-    notes: &[Note],
-) -> BTreeMap<PathBuf, Vec<PathBuf>> {
-    let mut edges: BTreeMap<&Path, BTreeSet<&Path>> = BTreeMap::new();
+pub(super) fn derive_inlinks(notes: &[Note]) -> HashMap<PathBuf, Vec<PathBuf>> {
+    let mut edges: HashMap<&Path, BTreeSet<&Path>> = HashMap::new();
     for source in notes {
         for outlink in source.outlinks() {
             if let Some(target) = resolve_target(notes, outlink.target()) {
