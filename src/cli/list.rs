@@ -153,7 +153,7 @@ mod tests {
         use pretty_assertions::assert_eq;
 
         use super::*;
-        use crate::index::QueryError;
+        use crate::index::{FileIndexError, QueryError};
 
         #[test]
         fn renders_a_bullet_per_page_path_in_sorted_order() {
@@ -315,6 +315,45 @@ mod tests {
 
             assert!(matches!(error, CliError::Query {
                 source: QueryError::UnparsableFilterExpression { .. },
+                ..
+            }));
+        }
+
+        #[cfg(unix)]
+        #[test]
+        fn wraps_refresh_failure_as_a_cli_index_error() {
+            use std::os::unix::fs::PermissionsExt as _;
+
+            struct RestorePermissions<'a>(&'a Path);
+
+            impl Drop for RestorePermissions<'_> {
+                fn drop(&mut self) {
+                    let _ = fs::set_permissions(
+                        self.0,
+                        fs::Permissions::from_mode(0o700),
+                    );
+                }
+            }
+
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let locked = temp.path().join("locked");
+            fs::create_dir(&locked).expect("create locked dir");
+            fs::set_permissions(&locked, fs::Permissions::from_mode(0o000))
+                .expect("revoke read permission");
+            let _restore = RestorePermissions(&locked);
+            let list = List {
+                from: None,
+                filter: None,
+                sort: None,
+                order: SortOrder::Ascending,
+            };
+
+            let error = list
+                .render(temp.path())
+                .expect_err("unreadable subdirectory fails");
+
+            assert!(matches!(error, CliError::Index {
+                source: FileIndexError::Io { .. },
                 ..
             }));
         }

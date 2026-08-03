@@ -674,28 +674,25 @@ mod tests {
 
     mod source_from_flag {
         use pretty_assertions::assert_eq;
+        use rstest::rstest;
 
         use super::*;
 
-        #[test]
-        fn none_selects_all() {
-            assert_eq!(Source::from_flag(None), Source::All);
-        }
-
-        #[test]
-        fn a_hash_prefixed_value_selects_tag() {
-            assert_eq!(
-                Source::from_flag(Some("#projects")),
-                Source::Tag("#projects".to_owned())
-            );
-        }
-
-        #[test]
-        fn any_other_value_selects_folder() {
-            assert_eq!(
-                Source::from_flag(Some("books")),
-                Source::Folder(PathBuf::from("books"))
-            );
+        #[rstest]
+        #[case::none_selects_all(None, Source::All)]
+        #[case::hash_prefix_selects_tag(
+            Some("#projects"),
+            Source::Tag("#projects".to_owned())
+        )]
+        #[case::other_value_selects_folder(
+            Some("books"),
+            Source::Folder(PathBuf::from("books"))
+        )]
+        fn selects_the_expected_source_variant(
+            #[case] flag: Option<&str>,
+            #[case] expected: Source,
+        ) {
+            assert_eq!(Source::from_flag(flag), expected);
         }
     }
 
