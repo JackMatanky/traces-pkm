@@ -381,38 +381,6 @@ mod tests {
         }
 
         #[test]
-        fn table_order_flag_accepts_the_shortened_asc_and_desc_values() {
-            for value in ["asc", "desc"] {
-                let cli = Cli::try_parse_from([
-                    "traces",
-                    "table",
-                    "--column",
-                    "file.path",
-                    "--order",
-                    value,
-                ])
-                .expect("parse table argv with a valid --order value");
-
-                assert!(matches!(cli.command, Some(Commands::Table(_))));
-            }
-        }
-
-        #[test]
-        fn table_order_flag_rejects_the_unshortened_ascending_spelling() {
-            let error = Cli::try_parse_from([
-                "traces",
-                "table",
-                "--column",
-                "file.path",
-                "--order",
-                "ascending",
-            ])
-            .expect_err("--order only accepts the shortened asc/desc values");
-
-            assert_eq!(error.kind(), clap::error::ErrorKind::InvalidValue);
-        }
-
-        #[test]
         fn template_argv_maps_to_template_subcommand() {
             let cli =
                 Cli::try_parse_from(["traces", "template", "-i", "daily"])

@@ -434,6 +434,110 @@ mod tests {
         }
     }
 
+    mod argv {
+        use clap::Parser as _;
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+        use crate::cli::{Cli, Commands};
+
+        /// Extracts the parsed `Table` args from `cli`.
+        ///
+        /// A dedicated `Option`-returning match so the "this is the Table
+        /// subcommand" invariant is asserted through the same `.expect()`
+        /// idiom as the rest of this suite, not a manual `panic!`/
+        /// `unreachable!`/`assert!(false, ..)` (all denied by this crate's
+        /// clippy lint policy, including inside test code).
+        fn table_args(cli: &Cli) -> &Table {
+            match &cli.command {
+                Some(Commands::Table(table)) => Some(table),
+                _ => None,
+            }
+            .expect("expected the Table subcommand")
+        }
+
+        #[test]
+        fn parses_from_where_sort_order_and_column_flags() {
+            let cli = Cli::try_parse_from([
+                "traces",
+                "table",
+                "--from",
+                "#tag",
+                "--where",
+                "rating > 5",
+                "--sort",
+                "rating",
+                "--order",
+                "desc",
+                "--column",
+                "file.path",
+                "--column",
+                "rating",
+            ])
+            .expect("parse table argv");
+
+            let table = table_args(&cli);
+
+            assert_eq!(table.from.as_deref(), Some("#tag"));
+            assert_eq!(table.filter.as_deref(), Some("rating > 5"));
+            assert_eq!(table.sort.as_deref(), Some("rating"));
+            assert_eq!(table.order, SortOrder::Descending);
+            assert_eq!(table.columns, ["file.path", "rating"]);
+        }
+
+        #[test]
+        fn defaults_from_where_sort_to_none_and_order_to_ascending() {
+            let cli = Cli::try_parse_from([
+                "traces",
+                "table",
+                "--column",
+                "file.path",
+            ])
+            .expect("parse table argv");
+
+            let table = table_args(&cli);
+
+            assert_eq!(table.from, None);
+            assert_eq!(table.filter, None);
+            assert_eq!(table.sort, None);
+            assert_eq!(table.order, SortOrder::Ascending);
+        }
+
+        #[test]
+        fn order_flag_accepts_the_shortened_asc_and_desc_values() {
+            for (value, expected) in
+                [("asc", SortOrder::Ascending), ("desc", SortOrder::Descending)]
+            {
+                let cli = Cli::try_parse_from([
+                    "traces",
+                    "table",
+                    "--column",
+                    "file.path",
+                    "--order",
+                    value,
+                ])
+                .expect("parse table argv");
+
+                assert_eq!(table_args(&cli).order, expected);
+            }
+        }
+
+        #[test]
+        fn order_flag_rejects_the_unshortened_ascending_spelling() {
+            let error = Cli::try_parse_from([
+                "traces",
+                "table",
+                "--column",
+                "file.path",
+                "--order",
+                "ascending",
+            ])
+            .expect_err("--order only accepts the shortened asc/desc values");
+
+            assert_eq!(error.kind(), clap::error::ErrorKind::InvalidValue);
+        }
+    }
+
     mod run {
         use std::fs;
 

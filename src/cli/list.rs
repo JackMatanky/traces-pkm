@@ -359,6 +359,90 @@ mod tests {
         }
     }
 
+    mod argv {
+        use clap::Parser as _;
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+        use crate::cli::{Cli, Commands};
+
+        /// Extracts the parsed `List` args from `cli`.
+        ///
+        /// A dedicated `Option`-returning match so the "this is the List
+        /// subcommand" invariant is asserted through the same `.expect()`
+        /// idiom as the rest of this suite, not a manual `panic!`/
+        /// `unreachable!`/`assert!(false, ..)` (all denied by this crate's
+        /// clippy lint policy, including inside test code).
+        fn list_args(cli: &Cli) -> &List {
+            match &cli.command {
+                Some(Commands::List(list)) => Some(list),
+                _ => None,
+            }
+            .expect("expected the List subcommand")
+        }
+
+        #[test]
+        fn parses_from_where_sort_and_order_flags() {
+            let cli = Cli::try_parse_from([
+                "traces",
+                "list",
+                "--from",
+                "#tag",
+                "--where",
+                "rating > 5",
+                "--sort",
+                "rating",
+                "--order",
+                "desc",
+            ])
+            .expect("parse list argv");
+
+            let list = list_args(&cli);
+
+            assert_eq!(list.from.as_deref(), Some("#tag"));
+            assert_eq!(list.filter.as_deref(), Some("rating > 5"));
+            assert_eq!(list.sort.as_deref(), Some("rating"));
+            assert_eq!(list.order, SortOrder::Descending);
+        }
+
+        #[test]
+        fn defaults_from_where_sort_to_none_and_order_to_ascending() {
+            let cli = Cli::try_parse_from(["traces", "list"])
+                .expect("parse list argv");
+
+            let list = list_args(&cli);
+
+            assert_eq!(list.from, None);
+            assert_eq!(list.filter, None);
+            assert_eq!(list.sort, None);
+            assert_eq!(list.order, SortOrder::Ascending);
+        }
+
+        #[test]
+        fn order_flag_accepts_the_shortened_asc_and_desc_values() {
+            for (value, expected) in
+                [("asc", SortOrder::Ascending), ("desc", SortOrder::Descending)]
+            {
+                let cli =
+                    Cli::try_parse_from(["traces", "list", "--order", value])
+                        .expect("parse list argv");
+
+                assert_eq!(list_args(&cli).order, expected);
+            }
+        }
+
+        #[test]
+        fn order_flag_rejects_the_unshortened_ascending_spelling() {
+            let error =
+                Cli::try_parse_from(["traces", "list", "--order", "ascending"])
+                    .expect_err(
+                        "--order only accepts the shortened asc/desc values",
+                    );
+
+            assert_eq!(error.kind(), clap::error::ErrorKind::InvalidValue);
+        }
+    }
+
     mod run {
         use std::fs;
 
