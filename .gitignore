@@ -25,6 +25,9 @@ __MACOSX/
 # -------------------- Rust Docs MCP Cache -------------------- #
 .rust-docs/
 
+# ------------------------ Lint Caches ------------------------ #
+.ruff_cache/
+
 # --------------------- Gitingest Digests --------------------- #
 *digest.txt
 docs/refs/digests/
