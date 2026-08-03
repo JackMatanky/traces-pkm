@@ -154,15 +154,15 @@ enum FieldToken {
     Ignored,
 }
 
-/// Parses a bare inline field (`Key:: Value`) from the `Key::` prefix
-/// already matched by [`FieldToken`]'s body-field pattern, consuming the
-/// rest of the line as the raw value, equivalent to the regex
-/// `(?m)^[ \t]*key::[ \t]*(.*)$`.
+/// Parses a bare inline field (`Key:: Value`) from the `Key::` prefix already
+/// matched by [`FieldToken`]'s body-field pattern, consuming the rest of the
+/// line as the raw value, equivalent to the regex:
+/// `(?m)^[ \t]*key::[\t]*(.*)$`.
 ///
 /// Logos has no look-behind support, so a line-start check replaces that
-/// regex's `^` anchor. The match is rejected, skipping only the matched
-/// `Key::` span rather than the rest of the line, unless it starts right
-/// after a newline or at the start of the text.
+/// regex's `^` anchor. The match is rejected, skipping only the matched `Key::`
+/// span rather than the rest of the line, unless it starts right after a
+/// newline or at the start of the text.
 fn body_field_callback(lex: &mut Lexer<'_, FieldToken>) -> Filter<InlineField> {
     let at_line_start = char_before(lex).is_none_or(|ch| ch == '\n');
     if !at_line_start {
@@ -183,8 +183,8 @@ fn body_field_callback(lex: &mut Lexer<'_, FieldToken>) -> Filter<InlineField> {
     Filter::Emit(field)
 }
 
-/// Parses a wrapped inline field (`[Key:: Value]` or `(Key:: Value)`)
-/// starting just after its already-consumed opening delimiter.
+/// Parses a wrapped inline field (`[Key:: Value]` or `(Key:: Value)`) starting
+/// just after its already-consumed opening delimiter.
 ///
 /// Rejects, skipping only the opening delimiter, when:
 /// - there is no `::` separator before the text ends,
