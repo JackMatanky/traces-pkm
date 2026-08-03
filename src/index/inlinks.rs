@@ -21,32 +21,6 @@ use crate::note::{LinkTarget, Note};
 /// the type persisted/reloaded by [`super::store`].
 pub(super) type InlinkMap = HashMap<PathBuf, Vec<PathBuf>>;
 
-/// A resolved link target: the path of the Note an outlink points to.
-///
-/// Distinct from [`Source`] so [`derive_inlinks`]'s `edges` map can't
-/// accidentally record an edge in the wrong direction — both wrap the same
-/// `&Path` representation, so nothing but the type system would catch a
-/// swapped `edges.entry(source).or_default().insert(target)`.
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
-struct Target<'a>(&'a Path);
-
-impl Target<'_> {
-    fn to_path_buf(self) -> PathBuf {
-        self.0.to_path_buf()
-    }
-}
-
-/// A Note that links *to* a [`Target`]: the path recorded as an inbound
-/// edge. See [`Target`] for why this is a separate type.
-#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
-struct Source<'a>(&'a Path);
-
-impl Source<'_> {
-    fn to_path_buf(self) -> PathBuf {
-        self.0.to_path_buf()
-    }
-}
-
 /// Derives inbound links for every indexed Note from its peers' outlinks.
 ///
 /// For each outlink in each Note, resolves the link target against `notes`
@@ -86,6 +60,32 @@ pub(super) fn derive_inlinks(notes: &[Note]) -> InlinkMap {
             )
         })
         .collect()
+}
+
+/// A resolved link target: the path of the Note an outlink points to.
+///
+/// Distinct from [`Source`] so [`derive_inlinks`]'s `edges` map can't
+/// accidentally record an edge in the wrong direction — both wrap the same
+/// `&Path` representation, so nothing but the type system would catch a
+/// swapped `edges.entry(source).or_default().insert(target)`.
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+struct Target<'a>(&'a Path);
+
+impl Target<'_> {
+    fn to_path_buf(self) -> PathBuf {
+        self.0.to_path_buf()
+    }
+}
+
+/// A Note that links *to* a [`Target`]: the path recorded as an inbound
+/// edge. See [`Target`] for why this is a separate type.
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+struct Source<'a>(&'a Path);
+
+impl Source<'_> {
+    fn to_path_buf(self) -> PathBuf {
+        self.0.to_path_buf()
+    }
 }
 
 /// Resolves an already-split [`LinkTarget`] to an indexed Note's path.
