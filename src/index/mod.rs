@@ -936,9 +936,12 @@ mod tests {
                 .expect("persist index");
 
             // Nothing on disk changes between this and the prior build, so
-            // `refresh` must take the `!dirty` path: reuse the persisted
-            // inlinks rather than recomputing (and, since nothing changed,
-            // skip re-persisting too).
+            // `refresh` takes the `!dirty` path and reuses the persisted
+            // inlinks rather than recomputing. Reuse and a would-be
+            // recompute produce identical values here (nothing changed),
+            // so this test can't distinguish the two by output alone; it
+            // guards against inlinks going missing or stale across a
+            // no-op refresh.
             let refreshed =
                 FileIndex::refresh(temp.path()).expect("refresh index");
             let outcome = refreshed.query(&Source::All);

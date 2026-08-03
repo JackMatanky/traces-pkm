@@ -375,6 +375,7 @@ mod tests {
         false
     )]
     #[case::anchor_only(LinkTarget::AnchorOnly("Heading"), false, false)]
+    #[case::empty_path(LinkTarget::Path(""), false, false)]
     fn link_target_has_path_and_is_basename_classify_the_path_segment(
         #[case] target: LinkTarget<'_>,
         #[case] expected_has_path: bool,

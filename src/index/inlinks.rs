@@ -241,6 +241,16 @@ mod tests {
         }
 
         #[test]
+        fn returns_none_for_a_basename_matching_no_indexed_note() {
+            let notes = [parse_markdown("other.md", "# Other")];
+
+            assert_eq!(
+                resolve_target(&notes, LinkTarget::Path("nonexistent")),
+                None
+            );
+        }
+
+        #[test]
         fn returns_none_for_an_unresolvable_target() {
             let notes = [parse_markdown("other.md", "# Other")];
 
