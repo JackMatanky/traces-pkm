@@ -205,7 +205,7 @@ impl<'a> LinkTarget<'a> {
     /// eligible as a fallback.
     #[must_use]
     pub(crate) fn is_basename(self) -> bool {
-        self.path().is_some_and(|path| !path.is_empty() && !path.contains('/'))
+        self.has_path() && self.path().is_some_and(|path| !path.contains('/'))
     }
 }
 
