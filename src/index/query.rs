@@ -30,6 +30,7 @@ pub(crate) use error::QueryError;
 pub(crate) use field::FileField;
 use field::{FieldPath, TaskField};
 use filter::FilterExpr;
+pub(crate) use sort::SortOrder;
 use sort::sort_key_cmp;
 
 use super::file::FileRecord;
@@ -125,8 +126,8 @@ impl QueryOutcome {
     ///
     /// # Errors
     ///
-    /// - [`QueryError::UnparsableFilterExpression`] if `expr` cannot be parsed
-    /// - [`QueryError::UnknownFieldPath`] if its field path is malformed
+    /// - [`QueryError::UnparsableFilterExpression`] if `expr` cannot be parsed.
+    /// - [`QueryError::UnknownFieldPath`] if its field path is malformed.
     #[inline]
     pub(crate) fn r#where(self, expr: &str) -> Result<Self, QueryError> {
         self.filter(expr)
@@ -215,11 +216,15 @@ impl QueryOutcome {
 
     /// Renders these records as a GitHub-flavored markdown table with one
     /// column per entry, pairing each `headers` label with the field path at
-    /// the same position in `columns`.
+    /// the same position in `columns`. Columns are aligned to their widest
+    /// cell (via `comfy-table`'s
+    /// [`ASCII_MARKDOWN`](comfy_table::presets::ASCII_MARKDOWN) preset) so
+    /// rows line up visually in a terminal.
     ///
-    /// Cell values render like [`Self::list`], except pipe characters (`|`)
-    /// are escaped and newlines are collapsed to spaces so no cell value can
-    /// corrupt the table's row structure.
+    /// Header and cell text render like [`Self::list`], except pipe
+    /// characters (`|`) are escaped and newlines are collapsed to spaces so
+    /// neither a header nor a cell value can corrupt the table's row
+    /// structure.
     ///
     /// # Errors
     ///
@@ -242,13 +247,17 @@ impl QueryOutcome {
             .iter()
             .map(|column| FieldPath::parse(column))
             .collect::<Result<Vec<_>, _>>()?;
-        let mut out = markdown_row(headers.iter().copied());
-        out.push_str(&markdown_row(headers.iter().map(|_| "---")));
+        let mut table = comfy_table::Table::new();
+        table.load_preset(comfy_table::presets::ASCII_MARKDOWN);
+        table
+            .set_header(headers.iter().map(|header| escape_table_text(header)));
         for record in &self.records {
-            out.push_str(&markdown_row(
+            table.add_row(
                 paths.iter().map(|path| table_cell_text(&record.resolve(path))),
-            ));
+            );
         }
+        let mut out = table.to_string();
+        out.push('\n');
         Ok(out)
     }
 
@@ -321,18 +330,24 @@ impl QueryOutcome {
     }
 }
 
-/// Joins `cells` into one markdown table row: `| c1 | c2 | ... |`, newline
-/// included. Shared by [`QueryOutcome::table`]'s header, separator, and data
-/// rows.
-fn markdown_row(cells: impl IntoIterator<Item = impl AsRef<str>>) -> String {
-    let mut row = String::from("|");
-    for cell in cells {
-        row.push(' ');
-        row.push_str(cell.as_ref());
-        row.push_str(" |");
+impl IntoIterator for QueryOutcome {
+    type IntoIter = std::vec::IntoIter<Self::Item>;
+    type Item = IndexRecord;
+
+    #[inline]
+    fn into_iter(self) -> Self::IntoIter {
+        self.records.into_iter()
     }
-    row.push('\n');
-    row
+}
+
+impl<'a> IntoIterator for &'a QueryOutcome {
+    type IntoIter = std::slice::Iter<'a, IndexRecord>;
+    type Item = &'a IndexRecord;
+
+    #[inline]
+    fn into_iter(self) -> Self::IntoIter {
+        self.records.iter()
+    }
 }
 
 /// Converts a resolved [`FieldValue`] to plain text for [`QueryOutcome::list`]
@@ -362,31 +377,17 @@ fn field_text(value: &FieldValue) -> String {
     }
 }
 
-/// [`field_text`], with pipe characters escaped and newlines collapsed to
-/// spaces so a cell value cannot corrupt [`QueryOutcome::table`]'s row
-/// structure.
+/// Escapes `|` and collapses newlines to spaces so `text` cannot corrupt
+/// [`QueryOutcome::table`]'s `| cell | cell |` row structure. Applied to
+/// both header labels and cell values.
+fn escape_table_text(text: &str) -> String {
+    text.replace('\n', " ").replace('|', "\\|")
+}
+
+/// [`field_text`], escaped with [`escape_table_text`] so a cell value
+/// cannot corrupt [`QueryOutcome::table`]'s row structure.
 fn table_cell_text(value: &FieldValue) -> String {
-    field_text(value).replace('\n', " ").replace('|', "\\|")
-}
-
-impl IntoIterator for QueryOutcome {
-    type IntoIter = std::vec::IntoIter<Self::Item>;
-    type Item = IndexRecord;
-
-    #[inline]
-    fn into_iter(self) -> Self::IntoIter {
-        self.records.into_iter()
-    }
-}
-
-impl<'a> IntoIterator for &'a QueryOutcome {
-    type IntoIter = std::slice::Iter<'a, IndexRecord>;
-    type Item = &'a IndexRecord;
-
-    #[inline]
-    fn into_iter(self) -> Self::IntoIter {
-        self.records.iter()
-    }
+    escape_table_text(&field_text(value))
 }
 
 /// Query row pairing a [`FileRecord`] with parsed [`Note`] metadata.
@@ -555,6 +556,23 @@ pub(crate) enum Source {
 }
 
 impl Source {
+    /// Builds a [`Source`] from a `--from`-style CLI flag value.
+    ///
+    /// `None` (the flag omitted) selects [`Self::All`]. A value starting
+    /// with `#` selects [`Self::Tag`] (including nested sub-tags: `#book`
+    /// also matches `#book/fiction`). Any other value selects
+    /// [`Self::Folder`].
+    #[must_use]
+    pub(crate) fn from_flag(flag: Option<&str>) -> Self {
+        match flag {
+            None => Self::All,
+            Some(value) if value.starts_with('#') => {
+                Self::Tag(value.to_owned())
+            }
+            Some(value) => Self::Folder(PathBuf::from(value)),
+        }
+    }
+
     /// Whether `file` and its parsed `note` belong to this source.
     #[inline]
     #[must_use]
@@ -651,6 +669,30 @@ mod tests {
                 !Source::Folder(PathBuf::from("archive"))
                     .is_match(record, note)
             );
+        }
+    }
+
+    mod source_from_flag {
+        use pretty_assertions::assert_eq;
+        use rstest::rstest;
+
+        use super::*;
+
+        #[rstest]
+        #[case::none_selects_all(None, Source::All)]
+        #[case::hash_prefix_selects_tag(
+            Some("#projects"),
+            Source::Tag("#projects".to_owned())
+        )]
+        #[case::other_value_selects_folder(
+            Some("books"),
+            Source::Folder(PathBuf::from("books"))
+        )]
+        fn selects_the_expected_source_variant(
+            #[case] flag: Option<&str>,
+            #[case] expected: Source,
+        ) {
+            assert_eq!(Source::from_flag(flag), expected);
         }
     }
 
@@ -1144,7 +1186,7 @@ mod tests {
             let lines: Vec<&str> = table.lines().collect();
             assert_eq!(lines.len(), 4); // header + separator + 2 rows
             assert_eq!(lines.first(), Some(&"| Name | Rating |"));
-            assert_eq!(lines.get(1), Some(&"| --- | --- |"));
+            assert_eq!(lines.get(1), Some(&"|------|--------|"));
             assert!(lines.iter().skip(2).any(|line| line.contains('5')));
             assert!(lines.iter().skip(2).any(|line| line.contains('3')));
         }
@@ -1155,7 +1197,7 @@ mod tests {
                 .table(&["Name"], &["file.name"])
                 .expect("valid table");
 
-            assert_eq!(table, "| Name |\n| --- |\n");
+            assert_eq!(table, "| Name |\n|------|\n");
         }
 
         #[test]
@@ -1169,6 +1211,15 @@ mod tests {
 
             assert_eq!(table.lines().count(), 3);
             assert!(table.contains("A \\| B"));
+        }
+
+        #[test]
+        fn escapes_pipe_characters_in_headers_the_same_way_as_cell_values() {
+            let table = QueryOutcome::default()
+                .table(&["A|B"], &["file.name"])
+                .expect("valid table");
+
+            assert_eq!(table, "| A\\|B |\n|------|\n");
         }
 
         #[test]

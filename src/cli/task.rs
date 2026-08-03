@@ -4,7 +4,7 @@
 //! selecting a source scope, applying the optional filter, and printing
 //! matching tasks as Markdown checkbox lines.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use clap::Args;
 
@@ -78,7 +78,8 @@ impl Task {
                 root: root.to_path_buf(),
                 source,
             })?;
-        let mut outcome = index.query_tasks(&self.source());
+        let mut outcome =
+            index.query_tasks(&Source::from_flag(self.from.as_deref()));
         if let Some(expr) = self.filter.as_deref() {
             outcome =
                 outcome.filter(expr).map_err(|source| CliError::Query {
@@ -101,18 +102,6 @@ impl Task {
                 )
             })
             .collect())
-    }
-
-    /// Builds the [`Source`] selected by `--from`.
-    ///
-    /// Values beginning with `#` become tag queries, other values become folder
-    /// queries, and omitted values become [`Source::All`].
-    fn source(&self) -> Source {
-        match self.from.as_deref() {
-            None => Source::All,
-            Some(from) if from.starts_with('#') => Source::Tag(from.to_owned()),
-            Some(from) => Source::Folder(PathBuf::from(from)),
-        }
     }
 }
 
