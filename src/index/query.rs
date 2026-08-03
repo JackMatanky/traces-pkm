@@ -126,8 +126,8 @@ impl QueryOutcome {
     ///
     /// # Errors
     ///
-    /// - [`QueryError::UnparsableFilterExpression`] if `expr` cannot be parsed
-    /// - [`QueryError::UnknownFieldPath`] if its field path is malformed
+    /// - [`QueryError::UnparsableFilterExpression`] if `expr` cannot be parsed.
+    /// - [`QueryError::UnknownFieldPath`] if its field path is malformed.
     #[inline]
     pub(crate) fn r#where(self, expr: &str) -> Result<Self, QueryError> {
         self.filter(expr)
@@ -559,7 +559,7 @@ impl Source {
     /// Builds a [`Source`] from a `--from`-style CLI flag value.
     ///
     /// `None` (the flag omitted) selects [`Self::All`]. A value starting
-    /// with `#` selects [`Self::Tag`] (including nested sub-tags — `#book`
+    /// with `#` selects [`Self::Tag`] (including nested sub-tags: `#book`
     /// also matches `#book/fiction`). Any other value selects
     /// [`Self::Folder`].
     #[must_use]
