@@ -64,16 +64,17 @@ description = "Run clippy with deny warnings"
 run = "cargo clippy --workspace -- -D warnings"
 
 [tasks.doc]
-description = "Build documentation"
+description = "Build documentation (warnings as errors)"
 run = "cargo doc --no-deps"
+env = { RUSTDOCFLAGS = "-D warnings" }
 
 [tasks.audit]
 description = "Run cargo deny audit"
 run = "cargo deny check"
 
-[tasks.ci]
-description = "Full CI pipeline"
-depends = ["check", "clippy", "test", "audit"]
+[tasks.verify]
+description = "Full verification gate: format, lint, clippy, tests, doctests, audit"
+depends = ["fmt", "lint", "clippy", "test-all", "audit"]
 
 [tasks.coverage]
 description = "Code coverage with tarpaulin"

@@ -25,7 +25,7 @@ This project uses **mise** for tool versioning and task management. Use the Mise
 
 - **MUST check available tasks** using `mise://tasks` before assuming how to build, test, or lint the project.
 - **MUST verify tool versions** using `mise://tools` if you encounter environment-specific issues.
-- **ALWAYS prefer `run_task`** for executing project commands (build, test, fmt) instead of raw shell commands when a task exists.
+- **ALWAYS `mise://tasks` first, then `run_task`.** Before any `cargo`/`hk`/`gitleaks`/build/test/lint/fmt command, check `mise://tasks` and run the matching task via `run_task` — only drop to a raw shell command when no task covers it.
 
 ## Never Do
 
