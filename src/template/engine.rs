@@ -77,6 +77,7 @@ impl TemplateEngine {
         FileOps::new(Arc::clone(&root)).register(&mut env);
         QueryOps::page(Arc::clone(&root)).register(&mut env);
         QueryOps::task(Arc::clone(&root)).register(&mut env);
+        QueryOps::register_terminal_filters(&mut env);
         PathOps::new(root).register(&mut env);
         UiOps::new(provider).register(&mut env);
         DateOps.register(&mut env);

@@ -1,56 +1,67 @@
 //! Registers the `query` and `tasks` namespaces for templates.
 //!
 //! Both namespaces are backed by [`QueryOps`], registered twice by
-//! [`super::TemplateEngine::new`]:
-//!
-//! - [`QueryOps::page`] creates the `query` global.
-//! - [`QueryOps::task`] creates the `tasks` global.
-//!
-//! Each namespace starts a query with one of three methods, matching
-//! [`Source`]'s variants:
+//! [`super::TemplateEngine::new`]: [`QueryOps::page`] creates the `query`
+//! global and [`QueryOps::task`] creates the `tasks` global. Each namespace
+//! starts a query with one of three methods, matching [`Source`]'s
+//! variants:
 //!
 //! - `.all()`: every indexed Note.
 //! - `.from_tags(tag)`: Notes tagged `tag`.
 //! - `.from_folder(folder)`: Notes under `folder`.
 //!
-//! `query` returns one row per Note. `tasks` returns one row per task item via
-//! [`FileIndex::query_tasks`], exposing `task.completed` and `task.text`
-//! alongside the parent Note's `file.*`, frontmatter, inline-field, and tag
-//! metadata.
+//! Each method refreshes a fresh [`FileIndex`] for the render's project
+//! root and returns a [`QueryOutcome`] wrapped in a [`Value`].
 //!
-//! Each method refreshes a fresh [`FileIndex`] for the render's project root
-//! and returns a [`QueryOutcome`] wrapped in a [`Value`]. Template callers can
-//! chain `.where(...)`/`.filter(...)`, `.sort(...)`, `.limit(...)`,
-//! `.group_by(...)`, and `.flatten(...)`; the transformation logic lives on
-//! [`QueryOutcome`]. This module only supplies the minijinja [`Object`] wiring.
+//! # Row Shape
 //!
-//! # Object Boundaries
+//! `query` returns one row per Note. `tasks` returns one row per task item
+//! via [`FileIndex::query_tasks`], exposing `task.completed` and
+//! `task.text` alongside the parent Note's `file.*`, frontmatter,
+//! inline-field, and tag metadata.
 //!
-//! [`QueryOutcome`] and [`IndexRecord`] get their [`Object`] impls here instead
-//! of in [`crate::index`]. That keeps the index module independent from
-//! minijinja, so `traces task` can reuse [`FileIndex`], [`QueryOutcome`], and
-//! [`IndexRecord`] without pulling in rendering concerns.
+//! # Chaining and Terminal Methods
 //!
-//! # Attribute Resolution
+//! Template callers chain `.where(...)`/`.filter(...)`, `.sort(...)`,
+//! `.limit(...)`, `.group_by(...)`, and `.flatten(...)`. The
+//! transformation logic lives on [`QueryOutcome`] itself; this module only
+//! supplies the minijinja [`Object`] wiring.
+//!
+//! [`QueryOutcome::table`], [`QueryOutcome::list`],
+//! [`QueryOutcome::task_list`], and `count` (an alias for
+//! [`QueryOutcome::len`]) are terminal instead: they render final
+//! markdown/scalar output and end a chain rather than continue it. Per
+//! ADR-0005, each is reachable both as a `call_method`
+//! (`outcome.table(["Name"], ["file.name"])`) and as a pipeline filter,
+//! registered once by [`QueryOps::register_terminal_filters`]
+//! (`outcome | table(["Name"], ["file.name"])`). Both forms call the same
+//! [`QueryOutcome`] method.
+//!
+//! # Object Wiring
+//!
+//! [`QueryOutcome`] and [`IndexRecord`] get their [`Object`] impls here
+//! instead of in [`crate::index`], keeping that module independent from
+//! minijinja so `traces task` can reuse [`FileIndex`], [`QueryOutcome`],
+//! and [`IndexRecord`] without pulling in rendering concerns.
 //!
 //! `record` attributes other than `file` and `task` forward to
 //! [`IndexRecord::field`], the same resolver `.where()` and `.sort()` use.
-//! `record.file.*` and `record.task.*` use forwarding wrappers instead
-//! ([`FileFields`] and [`TaskFields`]) because minijinja resolves dotted
-//! attribute paths one segment at a time. The wrappers call
+//! `record.file.*` and `record.task.*` use forwarding wrappers
+//! ([`FileFields`] and [`TaskFields`]) instead: minijinja resolves a
+//! dotted attribute path one segment at a time, so the wrappers call
 //! [`FileField::parse`]/[`FileField::resolve`] and
 //! [`IndexRecord::task_completed`]/[`IndexRecord::task_text`] directly,
-//! skipping string-prefix handling once the `file` or `task` segment is already
-//! known.
+//! skipping the string-prefix handling [`IndexRecord::field`] needs once
+//! the `file`/`task` segment is already known.
 //!
-//! # Error Handling
+//! # Errors
 //!
 //! [`FileIndex::refresh`] and [`QueryError`] failures become
 //! [`minijinja::Error`] values with stable messages and the original error
-//! preserved as [`std::error::Error::source`]. This mirrors
-//! [`super::ui`]'s `dialog_error` and [`super::error::confine_error`], so query
-//! failures carry template name, line, and column context like the other
-//! namespaces.
+//! preserved as [`std::error::Error::source`], mirroring [`super::ui`]'s
+//! `dialog_error` and [`super::error::confine_error`]. Query failures
+//! carry template name, line, and column context like every other
+//! namespace.
 
 use std::{
     path::{Path, PathBuf},
@@ -116,6 +127,20 @@ impl QueryOps {
     pub(super) fn register(self, env: &mut Environment<'static>) {
         let name = self.name;
         env.add_global(name, Value::from_object(self));
+    }
+
+    /// Registers `table`, `list`, `task_list`, and `count` as pipeline
+    /// filters: `outcome | table(["Name"], ["file.name"])`, mirroring the
+    /// call-method form `outcome.table(["Name"], ["file.name"])` documented
+    /// on [`Object::call_method`] for [`QueryOutcome`]. Registered once, not
+    /// per instance: these filters carry no state and apply to any
+    /// [`QueryOutcome`] regardless of which namespace produced it.
+    #[inline]
+    pub(super) fn register_terminal_filters(env: &mut Environment<'static>) {
+        env.add_filter("table", table_filter);
+        env.add_filter("list", list_filter);
+        env.add_filter("task_list", task_list_filter);
+        env.add_filter("count", count_filter);
     }
 
     /// Refreshes the render's [`FileIndex`], then runs this namespace's query
@@ -195,11 +220,24 @@ impl Object for QueryOutcome {
         Enumerator::Seq(self.len())
     }
 
-    /// Dispatches [`QueryOutcome`] transformation methods by template name.
+    /// Dispatches [`QueryOutcome`] methods by template name.
     ///
-    /// Handles `.where`/`.filter`, `.sort`, `.limit`, `.group_by`, and
-    /// `.flatten`. Each call consumes a clone of the current outcome and wraps
-    /// the transformed result in a [`Value`] for further chaining:
+    /// The terminal methods `table`, `list`, `task_list`, and `count`
+    /// render final output and return early, without touching the
+    /// non-terminal chain below:
+    ///
+    /// - `table(headers, columns)` and `list(path)` call
+    ///   [`QueryOutcome::table`] and [`QueryOutcome::list`]; all take field
+    ///   path strings (or, for `table`'s `headers`, display labels), not
+    ///   further [`QueryOutcome`] arguments.
+    /// - `task_list()` calls [`QueryOutcome::task_list`], taking no arguments.
+    /// - `count()` takes no arguments and returns [`QueryOutcome::len`]
+    ///   directly; it cannot fail, unlike the other three.
+    ///
+    /// Every other name falls through to the non-terminal chain: `.where`/
+    /// `.filter`, `.sort`, `.limit`, `.group_by`, and `.flatten`. Each of
+    /// those calls consumes a clone of the current outcome and wraps the
+    /// transformed result in a [`Value`] for further chaining:
     ///
     /// - `where` and `filter` both call [`QueryOutcome::filter`]. The Rust-side
     ///   `r#where` alias exists only for Rust callers.
@@ -209,14 +247,40 @@ impl Object for QueryOutcome {
     /// # Errors
     ///
     /// - [`ErrorKind::UnknownMethod`] for any other method name.
+    /// - [`ErrorKind::TooManyArguments`]/[`ErrorKind::MissingArgument`] if a
+    ///   method's arguments don't match its expected shape.
     /// - [`ErrorKind::InvalidOperation`] via [`query_error`] if a field path or
-    ///   filter expression is unparsable, or if `.limit(...)` is negative.
+    ///   filter expression is unparsable, `.limit(...)` is negative, or
+    ///   `.task_list()` runs on records with no `task.*` fields.
     fn call_method(
         self: &Arc<Self>,
         _state: &State<'_, '_>,
         method: &str,
         args: &[Value],
     ) -> Result<Value, Error> {
+        match method {
+            "table" => {
+                let (headers, columns): (Vec<String>, Vec<String>) =
+                    from_args(args)?;
+                return self
+                    .table(&as_str_slice(&headers), &as_str_slice(&columns))
+                    .map(Value::from)
+                    .map_err(query_error);
+            }
+            "list" => {
+                let (path,): (&str,) = from_args(args)?;
+                return self.list(path).map(Value::from).map_err(query_error);
+            }
+            "task_list" => {
+                from_args::<()>(args)?;
+                return self.task_list().map(Value::from).map_err(query_error);
+            }
+            "count" => {
+                from_args::<()>(args)?;
+                return Ok(Value::from(self.len()));
+            }
+            _ => {}
+        }
         let outcome = self.as_ref().clone();
         let transformed = match method {
             "filter" | "where" => {
@@ -243,6 +307,57 @@ impl Object for QueryOutcome {
         };
         transformed.map(Value::from_object).map_err(query_error)
     }
+}
+
+/// `outcome | table(...)` filter body. See [`QueryOutcome::table`].
+///
+/// Takes owned `Vec<String>` for `headers`/`columns` rather than borrowed
+/// `Vec<&str>`. Two reasons stack here:
+///
+/// - minijinja's `Function` trait (backing filters) requires each parameter
+///   type to implement `ArgType` for every lifetime, which a borrowed
+///   `Vec<&str>` cannot satisfy; only its owned `String` form can.
+/// - Even [`Object::call_method`]'s [`from_args`], which has no such
+///   constraint, cannot borrow a `Vec<&str>` out of a list-literal argument
+///   value: minijinja reports "type conversion is not legal in this situation
+///   (implicit borrow)". Both entry points build owned `Vec<String>` first and
+///   borrow from that.
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "minijinja's Function trait dictates the by-value Vec<String> \
+              signature; the body only needs to borrow each entry"
+)]
+fn table_filter(
+    outcome: &QueryOutcome,
+    headers: Vec<String>,
+    columns: Vec<String>,
+) -> Result<String, Error> {
+    let headers = as_str_slice(&headers);
+    let columns = as_str_slice(&columns);
+    outcome.table(&headers, &columns).map_err(query_error)
+}
+
+/// Borrows each entry of `values` as `&str`. Shared by
+/// [`Object::call_method`]'s `"table"` branch and [`table_filter`]: both must
+/// build an owned `Vec<String>` first (see [`table_filter`]'s docs for why),
+/// then borrow a `&[&str]` slice from it to call [`QueryOutcome::table`].
+fn as_str_slice(values: &[String]) -> Vec<&str> {
+    values.iter().map(String::as_str).collect()
+}
+
+/// `outcome | list(path)` filter body. See [`QueryOutcome::list`].
+fn list_filter(outcome: &QueryOutcome, path: &str) -> Result<String, Error> {
+    outcome.list(path).map_err(query_error)
+}
+
+/// `outcome | task_list` filter body. See [`QueryOutcome::task_list`].
+fn task_list_filter(outcome: &QueryOutcome) -> Result<String, Error> {
+    outcome.task_list().map_err(query_error)
+}
+
+/// `outcome | count` filter body: the number of records in `outcome`.
+fn count_filter(outcome: &QueryOutcome) -> usize {
+    outcome.len()
 }
 
 impl Object for IndexRecord {
@@ -358,12 +473,13 @@ mod tests {
     use super::*;
     use crate::{DialogProvider, PresetDialogProvider};
 
-    /// A minimal [`Environment`] with `query` and `tasks` registered
-    /// against `root`.
+    /// A minimal [`Environment`] with `query` and `tasks` registered against
+    /// `root`, plus the `table`/`list`/`task_list`/`count` pipeline filters.
     fn env(root: &Path) -> Environment<'static> {
         let mut env = Environment::new();
         QueryOps::page(Arc::from(root)).register(&mut env);
         QueryOps::task(Arc::from(root)).register(&mut env);
+        QueryOps::register_terminal_filters(&mut env);
         env
     }
 
@@ -622,6 +738,134 @@ mod tests {
         }
     }
 
+    mod terminal_rendering {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn table_call_method_and_filter_forms_render_identically() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_note(temp.path(), "a.md", "---\nrating: 9\n---");
+            write_note(temp.path(), "b.md", "---\nrating: 2\n---");
+
+            let via_method = render(
+                temp.path(),
+                r#"{{ query.all().sort("file.name", false).table(["Name", "Rating"], ["file.name", "rating"]) }}"#,
+            )
+            .expect("render succeeds");
+            let via_filter = render(
+                temp.path(),
+                r#"{{ query.all().sort("file.name", false) | table(["Name", "Rating"], ["file.name", "rating"]) }}"#,
+            )
+            .expect("render succeeds");
+
+            assert_eq!(via_method, via_filter);
+            assert_eq!(
+                via_method,
+                "| Name | Rating |\n| --- | --- |\n| a | 9 |\n| b | 2 |\n"
+            );
+        }
+
+        #[test]
+        fn list_call_method_and_filter_forms_render_identically() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_note(temp.path(), "a.md", "---\nrating: 9\n---");
+            write_note(temp.path(), "b.md", "---\nrating: 2\n---");
+
+            let via_method = render(
+                temp.path(),
+                r#"{{ query.all().sort("file.name", false).list("rating") }}"#,
+            )
+            .expect("render succeeds");
+            let via_filter = render(
+                temp.path(),
+                r#"{{ query.all().sort("file.name", false) | list("rating") }}"#,
+            )
+            .expect("render succeeds");
+
+            assert_eq!(via_method, via_filter);
+            assert_eq!(via_method, "- 9\n- 2\n");
+        }
+
+        #[test]
+        fn task_list_call_method_and_filter_forms_render_identically() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_note(
+                temp.path(),
+                "todo.md",
+                "- [ ] buy milk\n- [x] pay rent\n",
+            );
+
+            let via_method =
+                render(temp.path(), "{{ tasks.all().task_list() }}")
+                    .expect("render succeeds");
+            let via_filter =
+                render(temp.path(), "{{ tasks.all() | task_list }}")
+                    .expect("render succeeds");
+
+            assert_eq!(via_method, via_filter);
+            assert_eq!(via_method, "- [ ] buy milk\n- [x] pay rent\n");
+        }
+
+        #[test]
+        fn count_call_method_and_filter_forms_render_identically() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_note(temp.path(), "a.md", "# A");
+            write_note(temp.path(), "b.md", "# B");
+
+            let via_method = render(temp.path(), "{{ query.all().count() }}")
+                .expect("render succeeds");
+            let via_filter = render(temp.path(), "{{ query.all() | count }}")
+                .expect("render succeeds");
+
+            assert_eq!(via_method, via_filter);
+            assert_eq!(via_method, "2");
+        }
+
+        #[test]
+        fn table_takes_empty_lists_as_a_header_with_no_data_columns() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_note(temp.path(), "note.md", "# Note");
+
+            // Chaining `{% for %}` after a terminal renderer is meaningless;
+            // this only proves empty headers/columns lists do not panic.
+            let rendered =
+                render(temp.path(), "{{ query.all().table([], []) }}")
+                    .expect("render succeeds");
+
+            assert_eq!(rendered, "|\n|\n|\n");
+        }
+    }
+
+    mod for_loop_escape_hatch {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        /// `table`/`list` accept field path strings, not minijinja
+        /// expressions (spec: "Terminal table/list helpers accept field path
+        /// strings, not arbitrary minijinja expression strings"), so
+        /// `file.name | upper` has no terminal-renderer form. A `{% for %}`
+        /// loop remains the escape hatch that gives template authors the
+        /// full filter pipeline per value.
+        #[test]
+        fn for_loop_applies_a_minijinja_filter_terminal_renderers_cannot_express()
+         {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_note(temp.path(), "note.md", "# Note");
+
+            let rendered = render(
+                temp.path(),
+                "{% for n in query.all() %}{{ n.file.name | upper }}{% endfor \
+                 %}",
+            )
+            .expect("render succeeds");
+
+            assert_eq!(rendered, "NOTE");
+        }
+    }
+
     mod attribute_resolution {
         use pretty_assertions::assert_eq;
 
@@ -840,6 +1084,31 @@ mod tests {
                 r#"{{ tasks.all().filter("task.completed >") }}"#,
             )
             .expect_err("malformed filter expression should error");
+
+            assert!(error.to_string().contains("query failed"));
+        }
+
+        #[test]
+        fn task_list_on_page_level_records_surfaces_as_a_render_error() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_note(temp.path(), "note.md", "# Note");
+
+            let error = render(temp.path(), "{{ query.all().task_list() }}")
+                .expect_err("task_list on page-level records should error");
+
+            assert!(error.to_string().contains("query failed"));
+        }
+
+        #[test]
+        fn table_headers_columns_length_mismatch_surfaces_as_a_render_error() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_note(temp.path(), "note.md", "# Note");
+
+            let error = render(
+                temp.path(),
+                r#"{{ query.all().table(["Name", "Rating"], ["file.name"]) }}"#,
+            )
+            .expect_err("mismatched headers/columns length should error");
 
             assert!(error.to_string().contains("query failed"));
         }
