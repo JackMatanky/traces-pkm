@@ -1,8 +1,8 @@
-# 11 — End-to-End Polish and Diagnostics
+# 12 — End-to-End Polish and Diagnostics
 
 **What to build:** Query failures surface clear diagnostics across Template and CLI usage, and the common workflows from the spec are covered end-to-end before review.
 
-**Blocked by:** 07 — Template Markdown Renderers; 08 — CLI Page Query Commands; 09 — Task-Level Queries; 10 — Derived Inlinks
+**Blocked by:** 07 — Template Markdown Renderers; 08 — CLI Page Query Commands; 09 — Task-Level Queries; 10 — Derived Inlinks; 11 — Obsidian Wikilink Ambiguity Resolution
 
 **Status:** ready-for-agent
 
