@@ -160,9 +160,9 @@ enum FieldToken {
 /// `(?m)^[ \t]*key::[ \t]*(.*)$`.
 ///
 /// Logos has no look-behind support, so a line-start check replaces that
-/// regex's `^` anchor: the match is rejected (skipping only the matched
-/// `Key::` span, not the rest of the line) unless it starts right after a
-/// newline or at the start of the text.
+/// regex's `^` anchor. The match is rejected, skipping only the matched
+/// `Key::` span rather than the rest of the line, unless it starts right
+/// after a newline or at the start of the text.
 fn body_field_callback(lex: &mut Lexer<'_, FieldToken>) -> Filter<InlineField> {
     let at_line_start = char_before(lex).is_none_or(|ch| ch == '\n');
     if !at_line_start {

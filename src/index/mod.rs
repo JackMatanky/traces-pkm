@@ -107,14 +107,15 @@ impl FileIndex {
     /// - Deleted files disappear because they are absent from the fresh scan.
     ///
     /// Derived inlinks are recomputed in full only when something changed
-    /// (any added, changed, or deleted file or Note) and reused unchanged
-    /// from the previously persisted computation otherwise. A full
-    /// recompute (not a per-note patch) is required for correctness: link
-    /// target resolution considers every indexed Note (see
+    /// (any added, changed, or deleted file or Note); otherwise the
+    /// previously persisted computation is reused unchanged.
+    ///
+    /// A full recompute, not a per-note patch, is required for correctness:
+    /// link target resolution considers every indexed Note (see
     /// [`inlinks::derive_inlinks`]), so an unedited Note's *resolved* target
     /// can still change when an unrelated Note is added or removed
-    /// elsewhere in the index (for example, a wikilink that was ambiguous
-    /// becomes resolvable once one of the ambiguous candidates is deleted).
+    /// elsewhere in the index. For example, a wikilink that was ambiguous
+    /// becomes resolvable once one of the ambiguous candidates is deleted.
     ///
     /// Returns the fresh [`FileIndex`] and persists it only when contents
     /// changed.

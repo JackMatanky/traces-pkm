@@ -36,9 +36,8 @@ const NOTES: TableDefinition<&str, &[u8]> = TableDefinition::new("notes");
 const LINKS: MultimapTableDefinition<&str, &str> =
     MultimapTableDefinition::new("links");
 
-/// Atomically read snapshot of persisted [`FileRecord`] and [`Note`]
-/// records (sorted by path) plus derived inlink edges (target-keyed,
-/// unordered).
+/// Atomically read snapshot of persisted [`FileRecord`] and [`Note`] records
+/// (sorted by path) plus derived inlink edges (target-keyed, unordered).
 type IndexSnapshot = (Vec<FileRecord>, Vec<Note>, InlinkMap);
 
 /// Redb-backed handle to one project root's index database.
@@ -55,8 +54,8 @@ impl IndexStore {
     /// # Errors
     ///
     /// - [`FileIndexError::Io`] if the database's parent directory cannot be
-    ///   created
-    /// - [`FileIndexError::Store`] if the database file cannot be opened
+    ///   created.
+    /// - [`FileIndexError::Store`] if the database file cannot be opened.
     pub(super) fn open(root: &Path) -> Result<Self, FileIndexError> {
         let path = root.join(INDEX_FILE);
         if let Some(parent) = path.parent() {
@@ -79,8 +78,8 @@ impl IndexStore {
         })
     }
 
-    /// Atomically replaces every stored [`FileRecord`], [`Note`], and
-    /// derived inlink edge.
+    /// Atomically replaces every stored [`FileRecord`], [`Note`], and derived
+    /// inlink edge.
     ///
     /// All three redb tables are cleared and rewritten in one write
     /// transaction, so readers never observe one table refreshed while
@@ -88,8 +87,8 @@ impl IndexStore {
     ///
     /// # Errors
     ///
-    /// - [`FileIndexError::Store`] if the transaction fails
-    /// - [`FileIndexError::Serialize`] if a record cannot be TOML-encoded
+    /// - [`FileIndexError::Store`] if the transaction fails.
+    /// - [`FileIndexError::Serialize`] if a record cannot be TOML-encoded.
     pub(super) fn replace_all(
         &self,
         records: &[FileRecord],
@@ -118,10 +117,10 @@ impl IndexStore {
     ///
     /// # Errors
     ///
-    /// - [`FileIndexError::Store`] if a table cannot be read
-    /// - [`FileIndexError::Corrupt`] if stored bytes are not valid UTF-8
+    /// - [`FileIndexError::Store`] if a table cannot be read.
+    /// - [`FileIndexError::Corrupt`] if stored bytes are not valid UTF-8.
     /// - [`FileIndexError::Deserialize`] if stored text is not valid UTF-8 or
-    ///   TOML
+    ///   TOML.
     pub(super) fn load_all(&self) -> Result<IndexSnapshot, FileIndexError> {
         let read_txn =
             self.db.begin_read().map_err(|source| self.store_error(source))?;
@@ -139,8 +138,8 @@ impl IndexStore {
     ///
     /// # Errors
     ///
-    /// - [`FileIndexError::Store`] if the table cannot be opened or written
-    /// - [`FileIndexError::Serialize`] if an item cannot be TOML-encoded
+    /// - [`FileIndexError::Store`] if the table cannot be opened or written.
+    /// - [`FileIndexError::Serialize`] if an item cannot be TOML-encoded.
     fn store_table<T: Serialize>(
         &self,
         write_txn: &WriteTransaction,
@@ -176,7 +175,7 @@ impl IndexStore {
     ///
     /// # Errors
     ///
-    /// - [`FileIndexError::Store`] if the table cannot be opened or written
+    /// - [`FileIndexError::Store`] if the table cannot be opened or written.
     fn store_links(
         &self,
         write_txn: &WriteTransaction,
@@ -203,9 +202,9 @@ impl IndexStore {
     ///
     /// # Errors
     ///
-    /// - [`FileIndexError::Store`] if the table cannot be read
-    /// - [`FileIndexError::Corrupt`] if stored bytes are not valid UTF-8
-    /// - [`FileIndexError::Deserialize`] if stored text is not valid TOML
+    /// - [`FileIndexError::Store`] if the table cannot be read.
+    /// - [`FileIndexError::Corrupt`] if stored bytes are not valid UTF-8.
+    /// - [`FileIndexError::Deserialize`] if stored text is not valid TOML.
     fn load_table<T: DeserializeOwned>(
         &self,
         read_txn: &ReadTransaction,
@@ -253,7 +252,7 @@ impl IndexStore {
     ///
     /// # Errors
     ///
-    /// - [`FileIndexError::Store`] if the table cannot be read
+    /// - [`FileIndexError::Store`] if the table cannot be read.
     fn load_links(
         &self,
         read_txn: &ReadTransaction,
@@ -472,7 +471,7 @@ mod tests {
             use std::os::unix::fs::PermissionsExt as _;
 
             /// Restores a locked directory's permissions on drop, even if
-            /// the test panics. Otherwise a `0o500` root blocks the tempdir's
+            /// the test panics. Otherwise, a `0o500` root blocks the tempdir's
             /// own cleanup.
             struct RestorePermissions<'a>(&'a Path);
 

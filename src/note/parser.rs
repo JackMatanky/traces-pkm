@@ -232,8 +232,8 @@ impl ParserContext {
     /// Closes the innermost list.
     ///
     /// A list nested inside an active item is stored under
-    /// [`ListItem::children`]. Otherwise it becomes a top-level [`Note::lists`]
-    /// entry.
+    /// [`ListItem::children`]. Otherwise, it becomes a top-level
+    /// [`Note::lists`] entry.
     fn end_list(&mut self) {
         self.list_nesting.end_list();
     }
@@ -403,8 +403,8 @@ impl ListTracker {
     /// Closes the innermost list.
     ///
     /// A list nested inside an active item is stored under
-    /// [`ListItem::children`]. Otherwise it becomes a top-level
-    /// completed list.
+    /// [`ListItem::children`]. Otherwise, it becomes a top-level completed
+    /// list.
     fn end_list(&mut self) {
         if let Some(frame) = self.list_stack.pop() {
             let list = List::new(frame.is_ordered, frame.items);

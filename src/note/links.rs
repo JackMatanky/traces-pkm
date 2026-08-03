@@ -200,14 +200,15 @@ impl<'a> LinkTarget<'a> {
     }
 
     /// Whether this target's path segment is a bare name with no directory
-    /// prefix, such as `Project Alpha` rather than `archive/Project Alpha`, the
-    /// shape Obsidian's wikilink-by-name search resolves.
-    ///
-    /// `false` for [`Self::AnchorOnly`] (no path at all) and for a path with an
-    /// explicit directory component: an explicit path that fails to match
-    /// exactly stays unresolved rather than falling back to a whole-index name
-    /// search that could match an unrelated Note elsewhere. Corresponds to
+    /// prefix, such as `Project Alpha` rather than `archive/Project Alpha`:
+    /// the shape Obsidian's wikilink-by-name search resolves. Corresponds to
     /// whether a whole-index stem search is eligible as a fallback.
+    ///
+    /// `false` in two cases:
+    /// - [`Self::AnchorOnly`], which has no path at all.
+    /// - A path with an explicit directory component. Such a path that fails to
+    ///   match exactly stays unresolved rather than falling back to a
+    ///   whole-index name search that could match an unrelated Note elsewhere.
     #[must_use]
     pub(crate) fn is_basename(self) -> bool {
         self.has_path() && self.path().is_some_and(|path| !path.contains('/'))

@@ -138,7 +138,7 @@ impl FilterToken {
 /// # Errors
 ///
 /// - [`QueryError::UnparsableFilterExpression`] if `expr` contains a character
-///   sequence no token pattern matches
+///   sequence no token pattern matches.
 fn tokenize_filter_expr(expr: &str) -> Result<Vec<FilterToken>, QueryError> {
     FilterToken::lexer(expr)
         .collect::<Result<Vec<_>, _>>()
@@ -217,10 +217,9 @@ impl<'a> FilterParser<'a> {
         self.parse_logical_chain(LogicalOp::And, Self::parse_not)
     }
 
-    /// Parses a left-associative chain of `term`s separated by `op`'s
-    /// token spelling, combining more than one term into a
-    /// [`FilterExpr::Logical`] under `op`. A lone term passes through
-    /// unwrapped.
+    /// Parses a left-associative chain of `term`s separated by `op`'s token
+    /// spelling, combining more than one term into a [`FilterExpr::Logical`]
+    /// under `op`. A lone term passes through unwrapped.
     ///
     /// # Errors
     ///
@@ -287,8 +286,8 @@ impl<'a> FilterParser<'a> {
         }
     }
 
-    /// Parses a function call's `(field, target)` argument list starting at
-    /// the opening `(`, dispatching on `name` to build the matching
+    /// Parses a function call's `(field, target)` argument list starting at the
+    /// opening `(`, dispatching on `name` to build the matching
     /// [`FilterFunction`].
     ///
     /// # Errors
@@ -354,9 +353,9 @@ impl FilterFunction {
     ///
     /// # Arguments
     ///
-    /// - `name`: function name to match, case-insensitively.
-    /// - `field`: already-parsed field path for the built call.
-    /// - `target`: comparison or membership target for the built call.
+    /// * `name` - Function name to match, case-insensitively.
+    /// * `field` - Already-parsed field path for the built call.
+    /// * `target` - Comparison or membership target for the built call.
     fn build(name: &str, field: FieldPath, target: FieldValue) -> Option<Self> {
         if name.eq_ignore_ascii_case("contains") {
             Some(Self::Contains {

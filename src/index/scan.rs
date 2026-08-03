@@ -41,8 +41,8 @@ pub(super) fn scan_root(
 
 /// Wraps a [`walkdir::Error`] with path context as a [`FileIndexError::Io`].
 ///
-/// Falls back to `root` if the underlying error provides no path (such as
-/// rare symlink loop errors).
+/// Falls back to `root` if the underlying error provides no path (such as rare
+/// symlink loop errors).
 fn io_error(root: &Path, source: walkdir::Error) -> FileIndexError {
     let path = source.path().unwrap_or(root).to_path_buf();
     FileIndexError::Io {
@@ -148,7 +148,7 @@ mod tests {
             use std::os::unix::fs::PermissionsExt as _;
 
             /// Restores a locked directory's permissions on drop, even if
-            /// the test panics. Otherwise a `0o000` directory blocks the
+            /// the test panics. Otherwise, a `0o000` directory blocks the
             /// tempdir's own cleanup.
             struct RestorePermissions<'a>(&'a Path);
 
