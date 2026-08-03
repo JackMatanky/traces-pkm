@@ -167,5 +167,5 @@ Expose secondary CLI query commands as top-level commands: `traces list`, `trace
   metadata/frontmatter field filtering (`rating > 7`, etc.) is QueryOutcome's
   `.where()`/`.filter()` (#05), not a source. A future File Class feature
   modeled on Obsidian's Metadata Menu plugin is the concrete candidate for
-  extending `Source` further (`Source::FileClass`) — see
-  `issues/12-file-class-query-source-metadata-menu.md`.
+  extending `Source` further (`Source::FileClass`) — now speced separately in
+  `.scratch/metadata-schemas/spec.md` (`query.from_class`).

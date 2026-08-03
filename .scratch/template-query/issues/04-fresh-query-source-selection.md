@@ -29,7 +29,7 @@
   - Added tests in `mod refresh` and `mod query` in `src/index/mod.rs` asserting observable note outcomes after creation, modification (content, timestamp), deletion, no-source, tag/nested-tag, folder prefix, and metadata field access.
 
 - **Future Extensions Backlog**:
-  - Recorded `.scratch/template-query/issues/12-file-class-query-source-metadata-menu.md` to document future Obsidian `Metadata Menu` File Class query source extensions (`Source::FileClass`).
+  - Future Obsidian `Metadata Menu` File Class query source extensions (`Source::FileClass`) are now speced in `.scratch/metadata-schemas/spec.md` (`query.from_class`).
 
 - **Verification**:
   - Workspace test suite: 857/857 tests pass (`cargo nextest run`).
