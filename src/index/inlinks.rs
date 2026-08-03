@@ -95,8 +95,11 @@ pub(super) fn derive_inlinks(notes: &[Note]) -> InlinkMap {
 /// 2. The same path with a `.md` extension appended, when `target` has no
 ///    extension of its own (Markdown-style links that omit the extension).
 /// 3. A unique match on file stem across every indexed Note (Obsidian
-///    wikilink-by-name resolution). An ambiguous stem match resolves to `None`
-///    rather than guessing which Note was meant.
+///    wikilink-by-name resolution) — only when [`LinkTarget::is_basename`] says
+///    `target`'s path has no directory prefix. A qualified path (such as
+///    `archive/foo`) that fails the first two attempts resolves to `None`
+///    rather than falling back to a whole-index name search that could match an
+///    unrelated same-named Note elsewhere.
 ///
 /// `target`'s anchor half, if any, plays no part in resolution — only the
 /// path segment is matched, so a link into a heading still resolves to the
@@ -109,7 +112,10 @@ fn resolve_target<'a>(
     notes: &'a [Note],
     target: LinkTarget<'_>,
 ) -> Option<Target<'a>> {
-    let path_part = target.path().filter(|path| !path.is_empty())?;
+    if !target.has_path() {
+        return None;
+    }
+    let path_part = target.path()?;
     let candidate = Path::new(path_part);
     if let Some(note) = find_by_path(notes, candidate) {
         return Some(Target(note.path()));
@@ -119,6 +125,9 @@ fn resolve_target<'a>(
         if let Some(note) = find_by_path(notes, &with_extension) {
             return Some(Target(note.path()));
         }
+    }
+    if !target.is_basename() {
+        return None;
     }
     let stem =
         candidate.file_stem().and_then(|s| s.to_str()).unwrap_or(path_part);
@@ -198,6 +207,24 @@ mod tests {
             assert_eq!(
                 resolve_target(&notes, LinkTarget::Path("Project Alpha")),
                 Some(Target(Path::new("notes/Project Alpha.md")))
+            );
+        }
+
+        #[test]
+        fn returns_none_for_an_unmatched_qualified_path_without_a_stem_fallback()
+         {
+            // "notes/foo" has an explicit directory prefix and matches no
+            // indexed path exactly. It must resolve to `None`, not fall
+            // back to a whole-index stem search that would otherwise match
+            // the unrelated `archive/foo.md`.
+            let notes = [
+                parse_markdown("archive/foo.md", "# Archived"),
+                parse_markdown("notes/bar.md", "# Bar"),
+            ];
+
+            assert_eq!(
+                resolve_target(&notes, LinkTarget::Path("notes/foo")),
+                None
             );
         }
 

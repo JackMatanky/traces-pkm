@@ -182,6 +182,31 @@ impl<'a> LinkTarget<'a> {
             Self::Path(_) => None,
         }
     }
+
+    /// Whether this target has a non-empty path segment — `false` for
+    /// [`Self::AnchorOnly`] and for the degenerate case of an entirely
+    /// empty target. Corresponds to whether an exact-path lookup is worth
+    /// attempting at all.
+    #[must_use]
+    pub(crate) fn has_path(self) -> bool {
+        self.path().is_some_and(|path| !path.is_empty())
+    }
+
+    /// Whether this target's path segment is a bare name with no
+    /// directory prefix, such as `Project Alpha` rather than
+    /// `archive/Project Alpha` — the shape Obsidian's wikilink-by-name
+    /// search resolves.
+    ///
+    /// `false` for [`Self::AnchorOnly`] (no path at all) and for a path
+    /// with an explicit directory component: an explicit path that fails
+    /// to match exactly stays unresolved rather than falling back to a
+    /// whole-index name search that could match an unrelated Note
+    /// elsewhere. Corresponds to whether a whole-index stem search is
+    /// eligible as a fallback.
+    #[must_use]
+    pub(crate) fn is_basename(self) -> bool {
+        self.path().is_some_and(|path| !path.is_empty() && !path.contains('/'))
+    }
 }
 
 /// Finds the byte offset of the first unescaped character in `s` for
@@ -330,6 +355,29 @@ mod tests {
     ) {
         assert_eq!(target.path(), expected_path);
         assert_eq!(target.anchor(), expected_anchor);
+    }
+
+    #[rstest]
+    #[case::bare_name(LinkTarget::Path("a.md"), true, true)]
+    #[case::qualified_path(LinkTarget::Path("archive/a.md"), true, false)]
+    #[case::bare_name_with_anchor(
+        LinkTarget::PathWithAnchor("a.md", "Heading"),
+        true,
+        true
+    )]
+    #[case::qualified_path_with_anchor(
+        LinkTarget::PathWithAnchor("archive/a.md", "Heading"),
+        true,
+        false
+    )]
+    #[case::anchor_only(LinkTarget::AnchorOnly("Heading"), false, false)]
+    fn link_target_has_path_and_is_basename_classify_the_path_segment(
+        #[case] target: LinkTarget<'_>,
+        #[case] expected_has_path: bool,
+        #[case] expected_is_basename: bool,
+    ) {
+        assert_eq!(target.has_path(), expected_has_path);
+        assert_eq!(target.is_basename(), expected_is_basename);
     }
 
     #[rstest]
