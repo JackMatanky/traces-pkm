@@ -2,7 +2,7 @@
 //!
 //! [`FieldPath`] is the unified accessor a query field path string resolves
 //! to: a `file.<field>` accessor ([`FileField`]), a `task.<field>` accessor
-//! ([`TaskField`]), a frontmatter/inline field key, or `tags`.
+//! ([`TaskField`]), `tags`, `inlinks`, or a frontmatter/inline field key.
 
 use super::{super::file::FileRecord, error::QueryError};
 use crate::note::FieldValue;

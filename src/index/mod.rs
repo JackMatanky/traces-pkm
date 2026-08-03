@@ -113,7 +113,7 @@ impl FileIndex {
     /// Derived inlinks are recomputed in full only when something changed
     /// (any added, changed, or deleted file or Note) and reused unchanged
     /// from the previously persisted computation otherwise. A full
-    /// recompute — not a per-note patch — is required for correctness: link
+    /// recompute (not a per-note patch) is required for correctness: link
     /// target resolution considers every indexed Note (see
     /// [`inlinks::derive_inlinks`]), so an unedited Note's *resolved* target
     /// can still change when an unrelated Note is added or removed
