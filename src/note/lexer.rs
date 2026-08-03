@@ -16,7 +16,7 @@
 use logos::{Filter, Lexer, Logos};
 
 use super::{
-    FieldValue, InlineField, InlineFieldForm, Outlink, Tag, cursor::SourceText,
+    FieldValue, InlineField, InlineFieldForm, Link, Tag, cursor::SourceText,
     metadata::is_iso_date,
 };
 
@@ -456,7 +456,7 @@ impl<'a> ValueParser<'a> {
     /// at `pos`.
     fn parse_link_at(&self, pos: usize) -> Option<Atom> {
         let (link, consumed) =
-            Outlink::parse_wikilink_prefix(self.source.from(pos)?)?;
+            Link::parse_wikilink_prefix(self.source.from(pos)?)?;
         Some((FieldValue::Link(link), self.source.advance(pos, consumed)))
     }
 
@@ -673,7 +673,7 @@ mod tests {
         use rstest::rstest;
 
         use super::*;
-        use crate::note::{FieldValue, InlineFieldForm, LinkType, Outlink};
+        use crate::note::{FieldValue, InlineFieldForm, Link, LinkType};
 
         #[rstest]
         #[case::body(
@@ -795,7 +795,7 @@ mod tests {
 
             assert_eq!(
                 fields.first().map(InlineField::value),
-                Some(&FieldValue::Link(Outlink::new(
+                Some(&FieldValue::Link(Link::new(
                     "test",
                     "test",
                     LinkType::Wikilink
@@ -810,7 +810,7 @@ mod tests {
 
             assert_eq!(
                 fields.first().map(InlineField::value),
-                Some(&FieldValue::Link(Outlink::new(
+                Some(&FieldValue::Link(Link::new(
                     "yes, no, and maybe",
                     "yes, no, and maybe",
                     LinkType::Wikilink
@@ -845,7 +845,7 @@ mod tests {
         #[rstest]
         #[case::trailing_comma(
             "[links:: [[test]],]",
-            FieldValue::List(vec![FieldValue::Link(Outlink::new(
+            FieldValue::List(vec![FieldValue::Link(Link::new(
                 "test",
                 "test",
                 LinkType::Wikilink
@@ -854,12 +854,12 @@ mod tests {
         #[case::links(
             "[links:: [[test]], [[test2]]]",
             FieldValue::List(vec![
-                FieldValue::Link(Outlink::new(
+                FieldValue::Link(Link::new(
                     "test",
                     "test",
                     LinkType::Wikilink
                 )),
-                FieldValue::Link(Outlink::new(
+                FieldValue::Link(Link::new(
                     "test2",
                     "test2",
                     LinkType::Wikilink

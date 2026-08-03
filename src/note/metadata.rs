@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use tracing::warn;
 use yaml_serde as serde_yaml;
 
-use super::Outlink;
+use super::Link;
 
 /// Raw YAML frontmatter block from a Markdown note.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
@@ -247,7 +247,7 @@ pub(crate) enum FieldValue {
     /// Dataview duration literal in source spelling.
     Duration(String),
     /// Link value.
-    Link(Outlink),
+    Link(Link),
     /// Ordered list value stored in a [`Vec`].
     List(Vec<FieldValue>),
     /// Keyed object value stored in a deterministically ordered [`BTreeMap`].
@@ -304,7 +304,7 @@ impl From<serde_yaml::Value> for FieldValue {
                 let trimmed = s.trim();
                 if trimmed.is_empty() {
                     Self::Null
-                } else if let Some(link) = Outlink::parse_wikilink(trimmed) {
+                } else if let Some(link) = Link::parse_wikilink(trimmed) {
                     Self::Link(link)
                 } else if is_iso_date(trimmed) {
                     Self::Date(s)
@@ -445,7 +445,7 @@ mod tests {
                 FieldValue::from(yaml),
                 FieldValue::Object(BTreeMap::from([(
                     "link".to_owned(),
-                    FieldValue::Link(Outlink::new(
+                    FieldValue::Link(Link::new(
                         "Project Alpha",
                         "Alpha",
                         LinkType::Wikilink

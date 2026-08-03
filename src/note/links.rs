@@ -1,10 +1,14 @@
 //! Markdown and Obsidian link targets extracted from notes.
+//!
+//! [`Link`] pairs a raw target string with its [`LinkType`] (Markdown or
+//! wikilink syntax); [`LinkTarget`] splits that raw target into its path and
+//! heading-anchor parts for resolution against indexed Notes.
 
 use serde::{Deserialize, Serialize};
 
 use super::cursor::SourceText;
 
-/// Link syntax for an extracted [`Outlink`].
+/// Link syntax for an extracted [`Link`].
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub(crate) enum LinkType {
     /// Standard Markdown `[text](target)` link.
@@ -15,15 +19,15 @@ pub(crate) enum LinkType {
 
 /// Outgoing Markdown link or Obsidian wikilink.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
-pub(crate) struct Outlink {
+pub(crate) struct Link {
     target: String,
     text: String,
     kind: LinkType,
     embedded: bool,
 }
 
-impl Outlink {
-    /// Creates a non-embedded outlink with `target`, display `text`, and
+impl Link {
+    /// Creates a non-embedded [`Link`] with `target`, display `text`, and
     /// `kind`.
     #[inline]
     #[must_use]
@@ -92,6 +96,24 @@ impl Outlink {
         &self.target
     }
 
+    /// Splits this link's raw target text into [`LinkTarget`] parts at its
+    /// first `#`, trimming surrounding whitespace from each part.
+    #[must_use]
+    pub(crate) fn target_parts(&self) -> LinkTarget<'_> {
+        match self.target.split_once('#') {
+            Some((path, anchor)) => {
+                let path = path.trim();
+                let anchor = anchor.trim();
+                if path.is_empty() {
+                    LinkTarget::AnchorOnly(anchor)
+                } else {
+                    LinkTarget::PathWithAnchor(path, anchor)
+                }
+            }
+            None => LinkTarget::Path(self.target.trim()),
+        }
+    }
+
     /// Display text, or alias text for a wikilink.
     #[inline]
     #[must_use]
@@ -128,12 +150,76 @@ impl Outlink {
     }
 }
 
-/// Finds the byte offset of the first unescaped character in `s` for
-/// which `is_close` returns `true`, treating a `\` as escaping the
-/// character that follows it.
+/// The parts a [`Link`]'s raw target text splits into at its first `#`.
 ///
-/// Shared by [`find_wikilink_close`] and [`split_wikilink_text`], which
-/// need identical escape tracking with different terminal predicates.
+/// Obsidian and Markdown links can point to three mutually exclusive shapes,
+/// not an optional path paired with an optional anchor:
+///
+/// - A Note, by path ([`Self::Path`]).
+/// - A heading anchor within a Note ([`Self::PathWithAnchor`]).
+/// - An in-page anchor with no Note path at all, such as `[[#Heading]]`
+///   ([`Self::AnchorOnly`]).
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub(crate) enum LinkTarget<'a> {
+    /// A path with no `#` suffix.
+    Path(&'a str),
+    /// A path followed by a `#heading` anchor.
+    PathWithAnchor(&'a str, &'a str),
+    /// An in-page anchor with no path segment, such as `[[#Heading]]`.
+    AnchorOnly(&'a str),
+}
+
+impl<'a> LinkTarget<'a> {
+    /// This target's path segment, or `None` for [`Self::AnchorOnly`].
+    #[must_use]
+    pub(crate) fn path(self) -> Option<&'a str> {
+        match self {
+            Self::Path(path) | Self::PathWithAnchor(path, _) => Some(path),
+            Self::AnchorOnly(_) => None,
+        }
+    }
+
+    /// This target's `#heading` anchor, or `None` when it has none.
+    #[must_use]
+    pub(crate) fn anchor(self) -> Option<&'a str> {
+        match self {
+            Self::PathWithAnchor(_, anchor) | Self::AnchorOnly(anchor) => {
+                Some(anchor)
+            }
+            Self::Path(_) => None,
+        }
+    }
+
+    /// Whether this target has a non-empty path segment: `false` for
+    /// [`Self::AnchorOnly`] and for the degenerate case of an entirely empty
+    /// target. Corresponds to whether an exact-path lookup is worth attempting
+    /// at all.
+    #[must_use]
+    pub(crate) fn has_path(self) -> bool {
+        self.path().is_some_and(|path| !path.is_empty())
+    }
+
+    /// Whether this target's path segment is a bare name with no directory
+    /// prefix, such as `Project Alpha` rather than `archive/Project Alpha`, the
+    /// shape Obsidian's wikilink-by-name search resolves.
+    ///
+    /// `false` for [`Self::AnchorOnly`] (no path at all) and for a path with an
+    /// explicit directory component: an explicit path that fails to match
+    /// exactly stays unresolved rather than falling back to a whole-index name
+    /// search that could match an unrelated Note elsewhere. Corresponds to
+    /// whether a whole-index stem search is eligible as a fallback.
+    #[must_use]
+    pub(crate) fn is_basename(self) -> bool {
+        self.has_path() && self.path().is_some_and(|path| !path.contains('/'))
+    }
+}
+
+/// Finds the byte offset of the first unescaped character in `s` for which
+/// `is_close` returns `true`, treating a `\` as escaping the character that
+/// follows it.
+///
+/// Shared by [`find_wikilink_close`] and [`split_wikilink_text`], which need
+/// identical escape tracking with different terminal predicates.
 fn find_unescaped(
     s: &str,
     mut is_close: impl FnMut(usize, char) -> bool,
@@ -155,9 +241,8 @@ fn find_unescaped(
     None
 }
 
-/// Finds the byte offset of the first unescaped `]` in `s` that is
-/// immediately followed by a second `]`, marking the wikilink's closing
-/// `]]`.
+/// Finds the byte offset of the first unescaped `]` in `s` that is immediately
+/// followed by a second `]`, marking the wikilink's closing `]]`.
 fn find_wikilink_close(s: &str) -> Option<usize> {
     let source = SourceText::new(s);
     find_unescaped(s, |index, ch| {
@@ -165,9 +250,9 @@ fn find_wikilink_close(s: &str) -> Option<usize> {
     })
 }
 
-/// Splits wikilink inner text at the first unescaped `|` into a
-/// `(target, alias)` pair, or `(s, s)` when there is no `|` separator, so
-/// callers can treat the alias as identical to the target.
+/// Splits wikilink inner text at the first unescaped `|` into a `(target,
+/// alias)` pair, or `(s, s)` when there is no `|` separator, so callers can
+/// treat the alias as identical to the target.
 fn split_wikilink_text(s: &str) -> (&str, &str) {
     let source = SourceText::new(s);
     match find_unescaped(s, |_, ch| ch == '|') {
@@ -225,12 +310,79 @@ mod tests {
         #[case] expected_wikilink: bool,
         #[case] expected_markdown: bool,
     ) {
-        let link = Outlink::new(target, text, kind);
+        let link = Link::new(target, text, kind);
         assert_eq!(link.target(), target);
         assert_eq!(link.text(), text);
         assert_eq!(link.kind(), kind);
         assert_eq!(link.is_wikilink(), expected_wikilink);
         assert_eq!(link.is_markdown(), expected_markdown);
+    }
+
+    #[rstest]
+    #[case::plain_path("notes/other.md", LinkTarget::Path("notes/other.md"))]
+    #[case::path_with_anchor(
+        "other#Some Heading",
+        LinkTarget::PathWithAnchor("other", "Some Heading")
+    )]
+    #[case::anchor_only(
+        "#Some Heading",
+        LinkTarget::AnchorOnly("Some Heading")
+    )]
+    #[case::trims_whitespace_around_parts(
+        " other # Some Heading ",
+        LinkTarget::PathWithAnchor("other", "Some Heading")
+    )]
+    fn target_parts_splits_the_raw_target_at_the_first_hash(
+        #[case] target: &str,
+        #[case] expected: LinkTarget<'_>,
+    ) {
+        let link = Link::new(target, "text", LinkType::Markdown);
+        assert_eq!(link.target_parts(), expected);
+    }
+
+    #[rstest]
+    #[case::plain_path(LinkTarget::Path("a.md"), Some("a.md"), None)]
+    #[case::path_with_anchor(
+        LinkTarget::PathWithAnchor("a.md", "Heading"),
+        Some("a.md"),
+        Some("Heading")
+    )]
+    #[case::anchor_only(
+        LinkTarget::AnchorOnly("Heading"),
+        None,
+        Some("Heading")
+    )]
+    fn link_target_path_and_anchor_report_the_matching_parts(
+        #[case] target: LinkTarget<'_>,
+        #[case] expected_path: Option<&str>,
+        #[case] expected_anchor: Option<&str>,
+    ) {
+        assert_eq!(target.path(), expected_path);
+        assert_eq!(target.anchor(), expected_anchor);
+    }
+
+    #[rstest]
+    #[case::bare_name(LinkTarget::Path("a.md"), true, true)]
+    #[case::qualified_path(LinkTarget::Path("archive/a.md"), true, false)]
+    #[case::bare_name_with_anchor(
+        LinkTarget::PathWithAnchor("a.md", "Heading"),
+        true,
+        true
+    )]
+    #[case::qualified_path_with_anchor(
+        LinkTarget::PathWithAnchor("archive/a.md", "Heading"),
+        true,
+        false
+    )]
+    #[case::anchor_only(LinkTarget::AnchorOnly("Heading"), false, false)]
+    #[case::empty_path(LinkTarget::Path(""), false, false)]
+    fn link_target_has_path_and_is_basename_classify_the_path_segment(
+        #[case] target: LinkTarget<'_>,
+        #[case] expected_has_path: bool,
+        #[case] expected_is_basename: bool,
+    ) {
+        assert_eq!(target.has_path(), expected_has_path);
+        assert_eq!(target.is_basename(), expected_is_basename);
     }
 
     #[rstest]
@@ -243,7 +395,7 @@ mod tests {
         #[case] expected_target: &str,
         #[case] expected_text: &str,
     ) {
-        let link = Outlink::parse_wikilink(raw).expect("valid wikilink");
+        let link = Link::parse_wikilink(raw).expect("valid wikilink");
 
         assert_eq!(link.target(), expected_target);
         assert_eq!(link.text(), expected_text);
@@ -252,7 +404,7 @@ mod tests {
 
     #[test]
     fn parses_embedded_wikilink_values() {
-        let link = Outlink::parse_wikilink("![[hello]]")
+        let link = Link::parse_wikilink("![[hello]]")
             .expect("valid embedded wikilink");
 
         assert_eq!(link.target(), "hello");
@@ -263,7 +415,7 @@ mod tests {
 
     #[test]
     fn parses_escaped_pipe_in_wikilink_target() {
-        let link = Outlink::parse_wikilink(r"[[Hello \| There]]")
+        let link = Link::parse_wikilink(r"[[Hello \| There]]")
             .expect("valid wikilink");
 
         assert_eq!(link.target(), "Hello | There");
@@ -276,6 +428,6 @@ mod tests {
     #[case::empty_target("[[]]")]
     #[case::blank_target("[[ | alias]]")]
     fn rejects_invalid_wikilink_values(#[case] raw: &str) {
-        assert_eq!(Outlink::parse_wikilink(raw), None);
+        assert_eq!(Link::parse_wikilink(raw), None);
     }
 }
