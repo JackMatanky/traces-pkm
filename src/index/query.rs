@@ -330,6 +330,26 @@ impl QueryOutcome {
     }
 }
 
+impl IntoIterator for QueryOutcome {
+    type IntoIter = std::vec::IntoIter<Self::Item>;
+    type Item = IndexRecord;
+
+    #[inline]
+    fn into_iter(self) -> Self::IntoIter {
+        self.records.into_iter()
+    }
+}
+
+impl<'a> IntoIterator for &'a QueryOutcome {
+    type IntoIter = std::slice::Iter<'a, IndexRecord>;
+    type Item = &'a IndexRecord;
+
+    #[inline]
+    fn into_iter(self) -> Self::IntoIter {
+        self.records.iter()
+    }
+}
+
 /// Converts a resolved [`FieldValue`] to plain text for [`QueryOutcome::list`]
 /// and [`QueryOutcome::table`] cells.
 ///
@@ -368,26 +388,6 @@ fn escape_table_text(text: &str) -> String {
 /// cannot corrupt [`QueryOutcome::table`]'s row structure.
 fn table_cell_text(value: &FieldValue) -> String {
     escape_table_text(&field_text(value))
-}
-
-impl IntoIterator for QueryOutcome {
-    type IntoIter = std::vec::IntoIter<Self::Item>;
-    type Item = IndexRecord;
-
-    #[inline]
-    fn into_iter(self) -> Self::IntoIter {
-        self.records.into_iter()
-    }
-}
-
-impl<'a> IntoIterator for &'a QueryOutcome {
-    type IntoIter = std::slice::Iter<'a, IndexRecord>;
-    type Item = &'a IndexRecord;
-
-    #[inline]
-    fn into_iter(self) -> Self::IntoIter {
-        self.records.iter()
-    }
 }
 
 /// Query row pairing a [`FileRecord`] with parsed [`Note`] metadata.
