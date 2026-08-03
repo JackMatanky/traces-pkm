@@ -1,13 +1,13 @@
 //! Derived inbound links, computed from indexed outlinks.
 //!
 //! [`derive_inlinks`] runs as a post-processing pass over already-parsed
-//! [`Note`] outlinks. It is a full recompute over every indexed Note, never
-//! a per-note patch, because resolving one Note's outlink can depend on
-//! every *other* indexed Note (see [`resolve_target`]'s stem-matching
-//! tier). [`super::FileIndex::build`] and [`super::FileIndex::refresh`] (the
-//! latter only when something changed) call this once and persist the
-//! result; [`super::FileIndex::query`]/[`super::FileIndex::query_tasks`]
-//! read the already-computed map instead of calling it.
+//! [`Note`] outlinks. It is a full recompute over every indexed Note, never a
+//! per-note patch, because resolving one Note's outlink can depend on every
+//! *other* indexed Note (see [`resolve_target`]'s stem-matching tier).
+//! [`super::FileIndex::build`] and [`super::FileIndex::refresh`] (the latter
+//! only when something changed) call this once and persist the result;
+//! [`super::FileIndex::query`]/[`super::FileIndex::query_tasks`] read the
+//! already-computed map instead of calling it.
 
 use std::{
     collections::{BTreeSet, HashMap},
@@ -20,6 +20,32 @@ use crate::note::Note;
 /// Note whose outlinks resolve to it. Returned by [`derive_inlinks`] and
 /// the type persisted/reloaded by [`super::store`].
 pub(super) type InlinkMap = HashMap<PathBuf, Vec<PathBuf>>;
+
+/// A resolved link target: the path of the Note an outlink points to.
+///
+/// Distinct from [`Source`] so [`derive_inlinks`]'s `edges` map can't
+/// accidentally record an edge in the wrong direction — both wrap the same
+/// `&Path` representation, so nothing but the type system would catch a
+/// swapped `edges.entry(source).or_default().insert(target)`.
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+struct Target<'a>(&'a Path);
+
+impl Target<'_> {
+    fn to_path_buf(self) -> PathBuf {
+        self.0.to_path_buf()
+    }
+}
+
+/// A Note that links *to* a [`Target`]: the path recorded as an inbound
+/// edge. See [`Target`] for why this is a separate type.
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+struct Source<'a>(&'a Path);
+
+impl Source<'_> {
+    fn to_path_buf(self) -> PathBuf {
+        self.0.to_path_buf()
+    }
+}
 
 /// Derives inbound links for every indexed Note from its peers' outlinks.
 ///
@@ -42,11 +68,11 @@ pub(super) type InlinkMap = HashMap<PathBuf, Vec<PathBuf>>;
 /// O(n) instead, since [`find_unique_by_stem`] scans every indexed Note;
 /// worst case across `l` such outlinks is O(l·n).
 pub(super) fn derive_inlinks(notes: &[Note]) -> InlinkMap {
-    let mut edges: HashMap<&Path, BTreeSet<&Path>> = HashMap::new();
+    let mut edges: HashMap<Target<'_>, BTreeSet<Source<'_>>> = HashMap::new();
     for source in notes {
         for outlink in source.outlinks() {
             if let Some(target) = resolve_target(notes, outlink.target()) {
-                edges.entry(target).or_default().insert(source.path());
+                edges.entry(target).or_default().insert(Source(source.path()));
             }
         }
     }
@@ -55,7 +81,7 @@ pub(super) fn derive_inlinks(notes: &[Note]) -> InlinkMap {
         .map(|(target, sources)| {
             (
                 target.to_path_buf(),
-                sources.into_iter().map(Path::to_path_buf).collect(),
+                sources.into_iter().map(Source::to_path_buf).collect(),
             )
         })
         .collect()
@@ -77,24 +103,24 @@ pub(super) fn derive_inlinks(notes: &[Note]) -> InlinkMap {
 /// ponytail: no note-directory-relative resolution (`../sibling.md`) and no
 /// Obsidian shortest-unique-path search across ambiguous folders. Upgrade
 /// if real vaults need either.
-fn resolve_target<'a>(notes: &'a [Note], target: &str) -> Option<&'a Path> {
+fn resolve_target<'a>(notes: &'a [Note], target: &str) -> Option<Target<'a>> {
     let path_part = target.split('#').next().unwrap_or(target).trim();
     if path_part.is_empty() {
         return None;
     }
     let candidate = Path::new(path_part);
     if let Some(note) = find_by_path(notes, candidate) {
-        return Some(note.path());
+        return Some(Target(note.path()));
     }
     if candidate.extension().is_none() {
         let with_extension = candidate.with_extension("md");
         if let Some(note) = find_by_path(notes, &with_extension) {
-            return Some(note.path());
+            return Some(Target(note.path()));
         }
     }
     let stem =
         candidate.file_stem().and_then(|s| s.to_str()).unwrap_or(path_part);
-    find_unique_by_stem(notes, stem)
+    find_unique_by_stem(notes, stem).map(Target)
 }
 
 /// Binary-searches path-sorted `notes` for an exact path match.
@@ -146,7 +172,7 @@ mod tests {
 
             assert_eq!(
                 resolve_target(&notes, "notes/other.md"),
-                Some(Path::new("notes/other.md"))
+                Some(Target(Path::new("notes/other.md")))
             );
         }
 
@@ -156,7 +182,7 @@ mod tests {
 
             assert_eq!(
                 resolve_target(&notes, "other"),
-                Some(Path::new("other.md"))
+                Some(Target(Path::new("other.md")))
             );
         }
 
@@ -169,7 +195,7 @@ mod tests {
 
             assert_eq!(
                 resolve_target(&notes, "Project Alpha"),
-                Some(Path::new("notes/Project Alpha.md"))
+                Some(Target(Path::new("notes/Project Alpha.md")))
             );
         }
 
@@ -179,7 +205,7 @@ mod tests {
 
             assert_eq!(
                 resolve_target(&notes, "other#Some Heading"),
-                Some(Path::new("other.md"))
+                Some(Target(Path::new("other.md")))
             );
         }
 
