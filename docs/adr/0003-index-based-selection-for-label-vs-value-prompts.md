@@ -3,6 +3,11 @@ number: 3
 title: Index-based selection for label-vs-value prompts
 status: proposed
 date: 2026-07-08
+links:
+  - target: 6
+    kind: relatesto
+  - target: 7
+    kind: relatesto
 ---
 
 # Index-based selection for label-vs-value prompts

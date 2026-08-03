@@ -41,7 +41,7 @@ A user-configurable directory containing template files. Local (project-level, `
 _Avoid_: Templates folder, template location
 
 ### Config File
-TOML files at two levels. Local (`.traces/config.toml`) and global (`~/.config/traces/config.toml`). Only the `[templates]` table is defined for MVP:
+TOML files at two levels. Local (`.traces/config.toml`) and global (`~/.config/traces/config.toml`). The `[templates]`, `[schemas]`, and `[frontmatter]` tables are defined:
 
 ```toml
 [templates]
@@ -50,6 +50,20 @@ TOML files at two levels. Local (`.traces/config.toml`) and global (`~/.config/t
 
 # Local only: overrides default output directory (defaults to cwd)
 # output_dir = ""
+
+[schemas]
+# Frontmatter key naming a note's File Class (default: class)
+# class_field = "class"
+
+# Directory containing Schema files (default: .traces/schemas/)
+# directory = ""
+
+[frontmatter]
+# Frontmatter keys for canonical metadata roles
+# title        = "title"
+# aliases      = "aliases"   # read for file-field display labels
+# date_created = { name = "date_created", format = "%Y-%m-%d" }
+# date_modified = { name = "date_modified", format = "%Y-%m-%d" }
 ```
 
 ### Dry-run
@@ -137,6 +151,46 @@ _Avoid_: page data, document info
 ### Inline Field
 A `Key:: Value` pair embedded in a note's body using Dataview-compatible syntax: `Key:: Value` (start of line), `[Key:: Value]` (inline with visible key), or `(Key:: Value)` (inline with hidden key). Parsed from body text and list items, not from code blocks or inline code.
 _Avoid_: metadata tag, embedded field
+
+### File Class
+The classification of a note, read from the frontmatter key named by `[schemas] class_field` (default `class`). A note may carry several File Classes; each value names a Schema. Analogous to Metadata Menu's fileClass.
+_Avoid_: note type, kind, tag
+
+### Schema
+A TOML file in `.traces/schemas/<name>.toml` defining the Field Definitions that govern notes of a File Class. The filesystem is the registry — the filename stem is the schema name.
+_Avoid_: field preset, schema definition file, template schema
+
+### Global Schema
+The reserved schema `global.toml` — a File Class no note may hold — providing a shared pool of Field Definitions referenceable from any Schema via `$ref`. Its fields can never be required: a `required = true` there is ignored with a warn log, though a referencing Schema may mark the referenced field required locally. Mirrors Metadata Menu's global fileClass.
+_Avoid_: preset fields, shared fields
+
+### Field Definition
+A named entry in a Schema describing one field: a `type` (`input`, `select`, `boolean`, `number`, `date`, `file`) with type-specific options, plus optional `required` and `multi` flags. For `file` fields the options are an AND-composed filter over the FileIndex (`folders`, `ext`, `class`).
+_Avoid_: property, field setting, column
+
+### Extends
+A Schema-level array of parent Schema names. A class that extends another is that class: it inherits the parent's Field Definitions and matches class queries for the parent transitively. Cycles and missing targets are hard validation errors.
+_Avoid_: inherits, parents
+
+### Excludes
+A Schema-level array of field names dropped from inherited Field Definitions during resolution.
+_Avoid_: skip, ignore
+
+### Field Resolution
+Merging a Schema's own Field Definitions with those of its Extends parents. Kahn's topological sort linearizes the class DAG (cycles are errors); own fields override all parents; among parents the first-listed wins; per-class Excludes drop fields by name; `$ref` supplies a base definition for partial override.
+_Avoid_: inheritance, field merging
+
+### $ref
+A key in a Field Definition pointing at another definition used as its base: `#global/<field>` or `#<ancestor-schema>/<field>`. Local keys in the same definition override the base's. Acyclic by construction — refs point up the Extends DAG or to the Global Schema.
+_Avoid_: reference, field alias
+
+### schema namespace
+The minijinja global exposing Schemas to templates. `schema.get("book")` binds a Schema; `book.field("status")` returns its selectable values — plain strings, or label/value pairs for `file` fields (label from the `[frontmatter]` aliases key, else filename stem; value is the path). Unknown schema or field names are errors; a non-list field type returns `None`. Schemas supply values only — templates choose the interactive function themselves.
+_Avoid_: schema api, metadata menu function
+
+#### from_class
+A page-level query source, `query.from_class("book")` or `query.from_class(["book", "movie"])`, selecting notes whose File Class matches any listed name with Extends is-a matching applied. A class with no Schema degrades to exact match with a warning.
+_Avoid_: from_schema, class source
 
 ### QueryOutcome
 The type returned by a page-level (`query`) or task-level (`tasks`) query: an iterable, indexable collection of `IndexRecord`s. Supports `len`, indexing by integer position, and iteration via `{% for %}`. Registered as a minijinja type so pipeline filters compose against it.

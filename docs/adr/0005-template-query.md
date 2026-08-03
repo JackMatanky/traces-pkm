@@ -3,6 +3,11 @@ number: 5
 title: redb Index with QueryOps Namespace and Pipeline Terminal Filters
 date: 2026-07-27
 status: accepted
+links:
+  - target: 6
+    kind: relatesto
+  - target: 7
+    kind: relatesto
 ---
 
 # 5. redb Index with QueryOps Namespace and Pipeline Terminal Filters

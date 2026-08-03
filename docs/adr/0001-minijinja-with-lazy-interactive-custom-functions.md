@@ -3,6 +3,11 @@ number: 1
 title: Minijinja with Lazy Interactive Custom Functions
 status: accepted
 date: 2026-07-07
+links:
+  - target: 6
+    kind: relatesto
+  - target: 7
+    kind: relatesto
 ---
 
 # Minijinja with Lazy Interactive Custom Functions
