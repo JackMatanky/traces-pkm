@@ -36,7 +36,7 @@ With more than one parent, resolution must define a deterministic winner when pa
 
 ## Decision Outcome
 
-Class hierarchies use `extends` (array of parent schema names) and `excludes` (array of field names). `extends` means is-a: a child class inherits parent Field Definitions and matches class queries for its parents transitively. Field resolution linearizes the class DAG with Kahn's topological sort; cycles and missing extends targets are hard validation errors. Own fields override all parents; among parents the first-listed wins.
+Class hierarchies use `extends` (array of parent schema names) and `excludes` (array of field names). `extends` means is-a: a child class inherits parent Field Definitions and matches class queries for its parents transitively. Field resolution linearizes the class DAG with Kahn's topological sort; cycles are hard errors, while a missing extends target degrades to exact match with a warning. Own fields override all parents; among parents the first-listed wins.
 
 Partial field override uses a bounded `$ref` key — `#global/<field>` or `#<ancestor-schema>/<field>` — where local keys in the same definition override the base's; refs point up the extends DAG or to the Global Schema so they are acyclic by construction. A reserved `global.toml` schema acts as a shared, never-required reference pool (Metadata Menu's global fileClass): `global` is forbidden as a note class value, its fields cannot be required (a stray `required = true` is ignored with a warn log), but a referencing schema may mark the field required locally.
 
@@ -59,7 +59,7 @@ Bad, because:
 
 ### Confirmation
 
-Resolution is a pure function of the schema set — Kahn's sort and `$ref` resolution are unit-testable with no vault. Tests assert: transitive is-a matching (a sci-fi note matches a book class query); first-listed-wins among parents; own-fields-override-parents; `excludes` dropping inherited fields; cycles and missing extends targets hard-error; a `$ref` to global and to an ancestor resolves with local-key overrides; a stray `required = true` in `global.toml` is ignored with a warn log while a referencing schema's local `required` holds.
+Resolution is a pure function of the schema set — Kahn's sort and `$ref` resolution are unit-testable with no vault. Tests assert: transitive is-a matching (a sci-fi note matches a book class query); first-listed-wins among parents; own-fields-override-parents; `excludes` dropping inherited fields; cycles hard-error; a missing extends target degrades to exact match with a warning; a `$ref` to global and to an ancestor resolves with local-key overrides; a stray `required = true` in `global.toml` is ignored with a warn log while a referencing schema's local `required` holds.
 
 ## Pros and Cons of the Options
 
