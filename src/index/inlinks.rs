@@ -68,7 +68,7 @@ pub(super) fn derive_inlinks(notes: &[Note]) -> InlinkMap {
 /// accidentally record an edge in the wrong direction — both wrap the same
 /// `&Path` representation, so nothing but the type system would catch a
 /// swapped `edges.entry(source).or_default().insert(target)`.
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+#[derive(Copy, Clone, Debug, Eq, Hash, PartialEq)]
 struct Target<'a>(&'a Path);
 
 impl Target<'_> {
@@ -79,7 +79,7 @@ impl Target<'_> {
 
 /// A Note that links *to* a [`Target`]: the path recorded as an inbound
 /// edge. See [`Target`] for why this is a separate type.
-#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[derive(Copy, Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 struct Source<'a>(&'a Path);
 
 impl Source<'_> {
