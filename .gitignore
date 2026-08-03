@@ -28,3 +28,7 @@ __MACOSX/
 # --------------------- Gitingest Digests --------------------- #
 *digest.txt
 docs/refs/digests/
+
+# -------------------------- Claude --------------------------- #
+.claude/
+CLAUDE.md
