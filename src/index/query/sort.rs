@@ -4,6 +4,34 @@ use std::cmp::Ordering;
 
 use crate::note::FieldValue;
 
+/// Sort direction for [`super::QueryOutcome::sort`] and CLI `--order` flags.
+///
+/// Rust and Template callers (`.sort(path, descending: bool)`, matching
+/// Dataview's boolean convention) keep using [`Self::is_descending`] to
+/// bridge to the existing `bool`-based comparator below. CLI commands use
+/// this type directly as a `clap::ValueEnum` so `--order` accepts the
+/// shortened `asc`/`desc` values instead of duplicating an equivalent enum
+/// per command.
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq, clap::ValueEnum)]
+pub(crate) enum SortOrder {
+    /// Ascending order (the default).
+    #[default]
+    #[value(name = "asc")]
+    Ascending,
+    /// Descending order.
+    #[value(name = "desc")]
+    Descending,
+}
+
+impl SortOrder {
+    /// Whether this order is [`Self::Descending`].
+    #[inline]
+    #[must_use]
+    pub(crate) const fn is_descending(self) -> bool {
+        matches!(self, Self::Descending)
+    }
+}
+
 /// Compares two resolved field values of the same comparable kind.
 ///
 /// Orders numbers by magnitude, strings/dates/durations lexicographically, and
@@ -33,34 +61,6 @@ pub(super) fn fields_equal(a: &FieldValue, b: &FieldValue) -> bool {
     a == b || compare_field_values(a, b) == Some(Ordering::Equal)
 }
 
-/// Sort direction for [`super::QueryOutcome::sort`] and CLI `--order` flags.
-///
-/// Rust and Template callers (`.sort(path, descending: bool)`, matching
-/// Dataview's boolean convention) keep using [`Self::is_descending`] to
-/// bridge to the existing `bool`-based comparator below. CLI commands use
-/// this type directly as a `clap::ValueEnum` so `--order` accepts the
-/// shortened `asc`/`desc` values instead of duplicating an equivalent enum
-/// per command.
-#[derive(Copy, Clone, Debug, Default, Eq, PartialEq, clap::ValueEnum)]
-pub(crate) enum SortOrder {
-    /// Ascending order (the default).
-    #[default]
-    #[value(name = "asc")]
-    Ascending,
-    /// Descending order.
-    #[value(name = "desc")]
-    Descending,
-}
-
-impl SortOrder {
-    /// Whether this order is [`Self::Descending`].
-    #[inline]
-    #[must_use]
-    pub(crate) const fn is_descending(self) -> bool {
-        matches!(self, Self::Descending)
-    }
-}
-
 /// Total order for [`super::QueryOutcome::sort`] and
 /// [`super::QueryOutcome::group_by`].
 ///
@@ -88,6 +88,7 @@ pub(super) fn sort_key_cmp(
         ord
     }
 }
+
 #[cfg(test)]
 mod tests {
     use std::{fs, path::Path};
