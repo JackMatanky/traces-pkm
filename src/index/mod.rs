@@ -909,7 +909,7 @@ mod tests {
         }
 
         #[test]
-        fn refresh_with_no_filesystem_changes_reuses_persisted_inlinks() {
+        fn reuses_persisted_inlinks_when_nothing_on_disk_changed() {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("target.md"), "# Target")
                 .expect("write target");
@@ -1168,7 +1168,8 @@ mod tests {
         }
 
         #[test]
-        fn duplicate_outlinks_and_a_self_link_do_not_corrupt_inlinks() {
+        fn preserves_a_targets_inlinks_when_a_source_has_duplicate_outlinks_to_it()
+         {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("target.md"), "# Target")
                 .expect("write target");
@@ -1177,7 +1178,6 @@ mod tests {
                 "[[target]] and [[target]] again",
             )
             .expect("write a");
-            fs::write(temp.path().join("b.md"), "[[b]]").expect("write b");
             let index = FileIndex::build(temp.path()).expect("build index");
 
             let outcome = index.query(&Source::All);
@@ -1185,12 +1185,22 @@ mod tests {
                 .iter()
                 .find(|record| record.file().path() == Path::new("target.md"))
                 .expect("target record");
+
+            assert_eq!(target.inlinks(), [PathBuf::from("a.md")]);
+        }
+
+        #[test]
+        fn preserves_a_self_linking_notes_own_inlink() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("b.md"), "[[b]]").expect("write b");
+            let index = FileIndex::build(temp.path()).expect("build index");
+
+            let outcome = index.query(&Source::All);
             let source = outcome
                 .iter()
                 .find(|record| record.file().path() == Path::new("b.md"))
                 .expect("self-linking record");
 
-            assert_eq!(target.inlinks(), [PathBuf::from("a.md")]);
             assert_eq!(source.inlinks(), [PathBuf::from("b.md")]);
         }
     }
@@ -1294,7 +1304,7 @@ mod tests {
         }
 
         #[test]
-        fn task_rows_retain_the_parent_notes_inlinks() {
+        fn retains_the_parent_notes_inlinks() {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("target.md"), "- [ ] ship it\n")
                 .expect("write target");

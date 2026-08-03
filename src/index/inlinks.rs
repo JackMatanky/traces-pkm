@@ -186,9 +186,16 @@ mod tests {
 
             assert_eq!(resolve_target(&notes, "https://example.com"), None);
         }
+
+        #[test]
+        fn returns_none_for_a_fragment_only_target() {
+            let notes = [parse_markdown("other.md", "# Other")];
+
+            assert_eq!(resolve_target(&notes, "#Some Heading"), None);
+        }
     }
 
-    mod derive_inlinks_tests {
+    mod derive_inlinks {
         use pretty_assertions::assert_eq;
 
         use super::*;
