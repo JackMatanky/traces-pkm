@@ -7,7 +7,7 @@
 //!
 //! - [`Source`] - Selects which Notes a query includes.
 //! - [`IndexRecord`] - Pairs a [`FileRecord`] with its parsed [`Note`] and
-//!   resolves `file.*`, `task.*`, metadata, and tag fields.
+//!   resolves `file.*`, `task.*`, metadata, tag, and inlinks fields.
 //! - [`QueryOutcome`] - Stores result rows, applies chained transformations
 //!   ([`QueryOutcome::filter`], [`QueryOutcome::sort`],
 //!   [`QueryOutcome::limit`], [`QueryOutcome::group_by`],
@@ -393,8 +393,8 @@ fn table_cell_text(value: &FieldValue) -> String {
 /// Query row pairing a [`FileRecord`] with parsed [`Note`] metadata.
 ///
 /// Task-level rows also carry one task item's fields. Each row resolves
-/// `file.*`, `task.*`, frontmatter, inline fields, and tags for Template and
-/// CLI callers.
+/// `file.*`, `task.*`, frontmatter, inline fields, tags, and derived
+/// inlinks for Template and CLI callers.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct IndexRecord {
     file: FileRecord,
@@ -405,6 +405,12 @@ pub(crate) struct IndexRecord {
     /// This row's task fields, set by [`super::FileIndex::query_tasks`].
     /// `None` for page-level records.
     task: Option<TaskInfo>,
+    /// Project-relative paths of Notes whose outlinks resolve to this row's
+    /// Note, set by
+    /// [`super::FileIndex::query`]/[`super::FileIndex::query_tasks`]
+    /// from [`super::inlinks::derive_inlinks`]. Empty for a Note nothing
+    /// links to.
+    inlinks: Vec<PathBuf>,
 }
 
 /// Per-task fields layered onto an [`IndexRecord`] by
@@ -427,6 +433,7 @@ impl IndexRecord {
             note,
             flattened: Vec::new(),
             task: None,
+            inlinks: Vec::new(),
         }
     }
 
@@ -446,6 +453,17 @@ impl IndexRecord {
             completed,
             text: text.into(),
         });
+        self
+    }
+
+    /// Attaches `inlinks`, the project-relative paths of Notes whose
+    /// outlinks resolve to this row's Note.
+    ///
+    /// Set by [`super::FileIndex::query`] and
+    /// [`super::FileIndex::query_tasks`] from
+    /// [`super::inlinks::derive_inlinks`].
+    pub(super) fn with_inlinks(mut self, inlinks: Vec<PathBuf>) -> Self {
+        self.inlinks = inlinks;
         self
     }
 
@@ -479,10 +497,18 @@ impl IndexRecord {
         &self.note
     }
 
+    /// Project-relative paths of Notes whose outlinks resolve to this row's
+    /// Note. Empty for a Note nothing links to.
+    #[inline]
+    #[must_use]
+    pub(crate) fn inlinks(&self) -> &[PathBuf] {
+        &self.inlinks
+    }
+
     /// Resolves `path` against this record's file and note metadata.
     ///
     /// Resolves `file.*` accessors, `task.*` accessors, frontmatter fields,
-    /// inline fields, and `tags`:
+    /// inline fields, `tags`, and `inlinks`:
     /// - Frontmatter fields take precedence over inline fields with the same
     ///   key. See [`Note::fields`].
     /// - A well-formed path this record has no value for, such as a missing
@@ -519,6 +545,16 @@ impl IndexRecord {
                     .tags()
                     .iter()
                     .map(|tag| FieldValue::String(tag.as_str().to_owned()))
+                    .collect(),
+            ),
+            FieldPath::Inlinks => FieldValue::List(
+                self.inlinks
+                    .iter()
+                    .map(|linking_note| {
+                        FieldValue::String(
+                            linking_note.to_string_lossy().into_owned(),
+                        )
+                    })
                     .collect(),
             ),
             FieldPath::Metadata(key) => self
@@ -744,6 +780,20 @@ mod tests {
             assert_eq!(record.task_completed(), None);
             assert_eq!(record.task_text(), None);
         }
+
+        #[test]
+        fn with_inlinks_sets_the_inlinks_accessor() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("a.md"), "body").expect("write file");
+            let index = FileIndex::build(temp.path()).expect("build index");
+            let file = index.record(Path::new("a.md")).expect("record").clone();
+            let note = index.note(Path::new("a.md")).expect("note").clone();
+
+            let record = IndexRecord::new(file, note)
+                .with_inlinks(vec![PathBuf::from("b.md")]);
+
+            assert_eq!(record.inlinks(), [PathBuf::from("b.md")]);
+        }
     }
 
     mod field_path {
@@ -854,6 +904,37 @@ mod tests {
                     FieldValue::String("#read".to_owned()),
                 ]))
             );
+        }
+
+        #[test]
+        fn resolves_inlinks_as_a_list_of_linking_note_paths() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let outcome = outcome_for_files(temp.path(), &[
+                ("target.md", "# Target"),
+                ("a.md", "[[target]]"),
+                ("b.md", "[[target]]"),
+            ]);
+            let record = outcome
+                .iter()
+                .find(|record| record.file().path() == Path::new("target.md"))
+                .expect("target record");
+
+            assert_eq!(
+                record.field("inlinks"),
+                Ok(FieldValue::List(vec![
+                    FieldValue::String("a.md".to_owned()),
+                    FieldValue::String("b.md".to_owned()),
+                ]))
+            );
+        }
+
+        #[test]
+        fn resolves_inlinks_as_an_empty_list_when_nothing_links_to_the_note() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let outcome = outcome_for(temp.path(), "No inbound links here.");
+            let record = outcome.get(0).expect("record");
+
+            assert_eq!(record.field("inlinks"), Ok(FieldValue::List(vec![])));
         }
 
         #[test]

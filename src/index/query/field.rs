@@ -137,13 +137,18 @@ pub(super) enum FieldPath {
     Metadata(String),
     /// The Note's markdown tags, as a [`FieldValue::List`] of tag strings.
     Tags,
+    /// Notes whose outlinks resolve to this Note, as a [`FieldValue::List`]
+    /// of project-relative path strings. Derived by
+    /// [`super::super::inlinks::derive_inlinks`], not stored on the Note
+    /// itself.
+    Inlinks,
 }
 
 impl FieldPath {
     /// Parses a query field path string into a [`FieldPath`].
     ///
     /// Resolves `file.<field>` accessors, `task.<field>` accessors, `tags`,
-    /// or frontmatter/inline field keys.
+    /// `inlinks`, or frontmatter/inline field keys.
     ///
     /// # Errors
     ///
@@ -177,6 +182,9 @@ impl FieldPath {
         }
         if path == "tags" {
             return Ok(Self::Tags);
+        }
+        if path == "inlinks" {
+            return Ok(Self::Inlinks);
         }
         Ok(Self::Metadata(path.to_owned()))
     }
@@ -252,6 +260,11 @@ mod tests {
         #[test]
         fn parses_tags_as_the_tags_variant() {
             assert_eq!(FieldPath::parse("tags"), Ok(FieldPath::Tags));
+        }
+
+        #[test]
+        fn parses_inlinks_as_the_inlinks_variant() {
+            assert_eq!(FieldPath::parse("inlinks"), Ok(FieldPath::Inlinks));
         }
 
         #[test]

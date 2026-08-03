@@ -3,7 +3,8 @@
 //! [`FileIndex`] stores a sorted [`FileRecord`] for every regular file under a
 //! trusted project root. Markdown files also get parsed into [`Note`] metadata.
 //! Persistence lives in [`store`](mod@store); callers use [`FileIndex`]'s
-//! methods instead of redb tables.
+//! methods instead of redb tables. Inbound links between Notes are derived
+//! from outlinks on every query; see [`inlinks`](mod@inlinks).
 //!
 //! # Main Entry Points
 //!
@@ -27,6 +28,7 @@
 
 mod error;
 mod file;
+mod inlinks;
 mod query;
 mod scan;
 mod store;
@@ -39,6 +41,7 @@ pub(crate) use error::FileIndexError;
     reason = "domain types exported for index module callers"
 )]
 pub(crate) use file::{FileFormat, FileRecord, Timestamp};
+use inlinks::derive_inlinks;
 pub(crate) use query::{
     FileField, IndexRecord, QueryError, QueryOutcome, SortOrder, Source,
 };
@@ -226,14 +229,24 @@ impl FileIndex {
     /// every parsed Note), so a Note found without one is skipped rather
     /// than causing a panic.
     ///
+    /// Every matched row's [`IndexRecord::inlinks`] reflects every indexed
+    /// Note, not just Notes matching `source`: a Note outside `source` can
+    /// still link to one inside it.
+    ///
     /// # Performance
     ///
-    /// O(n + m): single-pass iterator merge-join across `records` and `notes`
-    /// without binary searching per note or redundant allocations.
+    /// O(n + m + l): [`inlinks::derive_inlinks`] resolves `l` total outlinks
+    /// once up front, then the single-pass iterator merge-join across
+    /// `records` and `notes` looks each matched Note's inlinks up by moving
+    /// them out of the derived map instead of cloning.
     #[must_use]
     pub(crate) fn query(self, source: &Source) -> QueryOutcome {
+        let mut inlinks = derive_inlinks(&self.notes);
         let matched = matched_pairs(self.records, self.notes, source)
-            .map(|(file, note)| IndexRecord::new(file, note))
+            .map(|(file, note)| {
+                let links = inlinks.remove(file.path()).unwrap_or_default();
+                IndexRecord::new(file, note).with_inlinks(links)
+            })
             .collect();
         QueryOutcome::new(matched)
     }
@@ -245,22 +258,25 @@ impl FileIndex {
     /// `- [x]`). Notes without tasks contribute no rows.
     ///
     /// Each task row keeps its parent Note's `file.*`, frontmatter,
-    /// inline-field, and tag metadata for filtering and display through
-    /// [`IndexRecord::field`]. It also exposes
+    /// inline-field, tag, and inlinks metadata for filtering and display
+    /// through [`IndexRecord::field`]. It also exposes
     /// [`IndexRecord::task_completed`] and [`IndexRecord::task_text`].
     ///
     /// Call [`Self::refresh`] first so results reflect the current filesystem.
     ///
     /// # Performance
     ///
-    /// O(n + m + t), where `t` is the total number of task items across
-    /// matched Notes. Task iteration streams into one output vector without a
-    /// per-note row collection.
+    /// O(n + m + t + l), where `t` is the total number of task items across
+    /// matched Notes and `l` is the total outlink count resolved by
+    /// [`inlinks::derive_inlinks`]. Task iteration streams into one output
+    /// vector without a per-note row collection.
     #[must_use]
     pub(crate) fn query_tasks(self, source: &Source) -> QueryOutcome {
+        let mut inlinks = derive_inlinks(&self.notes);
         let mut matched = Vec::new();
         for (file, note) in matched_pairs(self.records, self.notes, source) {
-            let base = IndexRecord::new(file, note);
+            let links = inlinks.remove(file.path()).unwrap_or_default();
+            let base = IndexRecord::new(file, note).with_inlinks(links);
             for item in base.note().tasks() {
                 matched.push(
                     base.clone()
@@ -757,6 +773,31 @@ mod tests {
         }
 
         #[test]
+        fn removes_an_inbound_edge_after_the_linking_note_is_deleted_and_refreshed()
+         {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("target.md"), "# Target")
+                .expect("write target");
+            fs::write(temp.path().join("linker.md"), "[[target]]")
+                .expect("write linker");
+            FileIndex::build(temp.path())
+                .expect("build index")
+                .persist(temp.path())
+                .expect("persist index");
+
+            fs::remove_file(temp.path().join("linker.md"))
+                .expect("delete linker");
+
+            let refreshed =
+                FileIndex::refresh(temp.path()).expect("refresh index");
+            let outcome = refreshed.query(&Source::All);
+            let target = outcome.iter().next().expect("target record");
+
+            assert_eq!(target.file().path(), Path::new("target.md"));
+            assert!(target.inlinks().is_empty());
+        }
+
+        #[test]
         fn persists_changes_so_a_later_load_observes_them() {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("note.md"), "# Draft")
@@ -936,6 +977,73 @@ mod tests {
             );
             assert_eq!(record.note().tags(), [Tag::new("#book")]);
         }
+
+        #[test]
+        fn derives_inlinks_from_multiple_notes_linking_to_the_same_target() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("target.md"), "# Target")
+                .expect("write target");
+            fs::write(temp.path().join("a.md"), "[[target]]").expect("write a");
+            fs::write(temp.path().join("b.md"), "[[target]]").expect("write b");
+            let index = FileIndex::build(temp.path()).expect("build index");
+
+            let outcome = index.query(&Source::All);
+            let target = outcome
+                .iter()
+                .find(|record| record.file().path() == Path::new("target.md"))
+                .expect("target record");
+
+            assert_eq!(target.inlinks(), [
+                PathBuf::from("a.md"),
+                PathBuf::from("b.md")
+            ]);
+        }
+
+        #[test]
+        fn includes_a_linking_note_outside_the_source_in_the_targets_inlinks() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("target.md"), "#book\n")
+                .expect("write target");
+            fs::write(temp.path().join("linker.md"), "[[target]]")
+                .expect("write linker");
+            let index = FileIndex::build(temp.path()).expect("build index");
+
+            // `linker.md` has no `#book` tag, so it is excluded from this
+            // tag-scoped query; its outlink to `target.md` must still show
+            // up in the target's inlinks.
+            let outcome = index.query(&Source::Tag("#book".to_owned()));
+            let target = outcome.iter().next().expect("target record");
+
+            assert_eq!(target.file().path(), Path::new("target.md"));
+            assert_eq!(target.inlinks(), [PathBuf::from("linker.md")]);
+        }
+
+        #[test]
+        fn duplicate_outlinks_and_a_self_link_do_not_corrupt_inlinks() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("target.md"), "# Target")
+                .expect("write target");
+            fs::write(
+                temp.path().join("a.md"),
+                "[[target]] and [[target]] again",
+            )
+            .expect("write a");
+            fs::write(temp.path().join("b.md"), "[[b]]").expect("write b");
+            let index = FileIndex::build(temp.path()).expect("build index");
+
+            let outcome = index.query(&Source::All);
+            let target = outcome
+                .iter()
+                .find(|record| record.file().path() == Path::new("target.md"))
+                .expect("target record");
+            let source = outcome
+                .iter()
+                .find(|record| record.file().path() == Path::new("b.md"))
+                .expect("self-linking record");
+
+            assert_eq!(target.inlinks(), [PathBuf::from("a.md")]);
+            assert_eq!(source.inlinks(), [PathBuf::from("b.md")]);
+        }
     }
 
     mod query_tasks {
@@ -1034,6 +1142,22 @@ mod tests {
                     crate::note::FieldValue::String("#projects".to_owned())
                 ]))
             );
+        }
+
+        #[test]
+        fn task_rows_retain_the_parent_notes_inlinks() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("target.md"), "- [ ] ship it\n")
+                .expect("write target");
+            fs::write(temp.path().join("linker.md"), "[[target]]")
+                .expect("write linker");
+            let index = FileIndex::build(temp.path()).expect("build index");
+
+            let outcome = index.query_tasks(&Source::All);
+            let task = outcome.iter().next().expect("one task row");
+
+            assert_eq!(task.file().path(), Path::new("target.md"));
+            assert_eq!(task.inlinks(), [PathBuf::from("linker.md")]);
         }
 
         #[test]

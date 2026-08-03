@@ -148,6 +148,10 @@ _Avoid_: file metadata, fs entry
 The rich indexed data for markdown files only, layered on top of the File Record: frontmatter fields, inline fields (`Key:: Value`), tags, tasks, lists, and links.
 _Avoid_: page data, document info
 
+### Inlink
+A Note's inbound links, derived by resolving every indexed Note's outgoing Markdown links and wikilinks against every other indexed Note's path, in a post-processing pass over Note Metadata. Recomputed on every query from the current outlinks rather than persisted, so it never goes stale relative to the FileIndex. Exposed to Templates and CLI as the `inlinks` field, alongside `tags`.
+_Avoid_: backlink, incoming link
+
 ### Inline Field
 A `Key:: Value` pair embedded in a note's body using Dataview-compatible syntax: `Key:: Value` (start of line), `[Key:: Value]` (inline with visible key), or `(Key:: Value)` (inline with hidden key). Parsed from body text and list items, not from code blocks or inline code.
 _Avoid_: metadata tag, embedded field
