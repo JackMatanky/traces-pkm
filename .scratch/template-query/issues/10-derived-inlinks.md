@@ -118,7 +118,7 @@ every CLI invocation where `refresh` found nothing changed. Since
   alongside `file_records`/`notes` in the same write transaction, and
   read back by `load_all` via `ReadableMultimapTable::iter` (values
   already sorted per key, no per-key `Vec` deserialize needed).
-- **`FileIndex`** gained an `inlinks: BTreeMap<PathBuf, Vec<PathBuf>>`
+- **`FileIndex`** gained an `inlinks: HashMap<PathBuf, Vec<PathBuf>>`
   field. `build()` computes it once; `refresh()` recomputes it in full
   only when `dirty`, otherwise moves `previous.inlinks` over unchanged;
   `persist()`/`load()` round-trip it through the new table.
@@ -136,7 +136,7 @@ every CLI invocation where `refresh` found nothing changed. Since
   changed) — never partially patched.
 - **Tests added**: `store.rs` — links round-trip and drop-on-replace.
   `mod.rs` —
-  `refresh_with_no_filesystem_changes_reuses_persisted_inlinks` (proves
+  `reuses_persisted_inlinks_when_nothing_on_disk_changed` (proves
   the `!dirty` reuse path preserves data) and
   `resolves_an_unedited_notes_ambiguous_wikilink_once_an_unrelated_note_is_deleted`
   (the regression test for the correctness hazard above: an untouched
