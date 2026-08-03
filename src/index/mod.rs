@@ -273,10 +273,7 @@ impl FileIndex {
             mut inlinks,
         } = self;
         let matched = matched_pairs(records, notes, source)
-            .map(|(file, note)| {
-                let links = inlinks.remove(file.path()).unwrap_or_default();
-                IndexRecord::new(file, note).with_inlinks(links)
-            })
+            .map(|(file, note)| record_with_inlinks(file, note, &mut inlinks))
             .collect();
         QueryOutcome::new(matched)
     }
@@ -309,8 +306,7 @@ impl FileIndex {
         } = self;
         let mut matched = Vec::new();
         for (file, note) in matched_pairs(records, notes, source) {
-            let links = inlinks.remove(file.path()).unwrap_or_default();
-            let base = IndexRecord::new(file, note).with_inlinks(links);
+            let base = record_with_inlinks(file, note, &mut inlinks);
             for item in base.note().tasks() {
                 matched.push(
                     base.clone()
@@ -344,6 +340,21 @@ fn matched_pairs(
         let file = files.next_if(|file| file.path() == note.path())?;
         source.is_match(&file, &note).then_some((file, note))
     })
+}
+
+/// Pairs `file` with its parsed `note` and looks up `file`'s inbound links
+/// out of `inlinks`, so each Note's derived links are moved into its row
+/// instead of cloned.
+///
+/// Shared by [`FileIndex::query`] and [`FileIndex::query_tasks`], which
+/// each look this up once per matched Note.
+fn record_with_inlinks(
+    file: FileRecord,
+    note: Note,
+    inlinks: &mut InlinkMap,
+) -> IndexRecord {
+    let links = inlinks.remove(file.path()).unwrap_or_default();
+    IndexRecord::new(file, note).with_inlinks(links)
 }
 
 /// Reads and parses the markdown file for `record` into a [`Note`].
