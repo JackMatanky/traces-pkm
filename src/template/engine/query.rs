@@ -763,7 +763,7 @@ mod tests {
             assert_eq!(via_method, via_filter);
             assert_eq!(
                 via_method,
-                "| Name | Rating |\n| --- | --- |\n| a | 9 |\n| b | 2 |\n"
+                "| Name | Rating |\n|------|--------|\n| a    | 9      |\n| b    | 2      |\n"
             );
         }
 
@@ -833,8 +833,7 @@ mod tests {
             let rendered =
                 render(temp.path(), "{{ query.all().table([], []) }}")
                     .expect("render succeeds");
-
-            assert_eq!(rendered, "|\n|\n|\n");
+            assert_eq!(rendered, "||\n");
         }
     }
 

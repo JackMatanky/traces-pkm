@@ -33,6 +33,34 @@ pub(super) fn fields_equal(a: &FieldValue, b: &FieldValue) -> bool {
     a == b || compare_field_values(a, b) == Some(Ordering::Equal)
 }
 
+/// Sort direction for [`super::QueryOutcome::sort`] and CLI `--order` flags.
+///
+/// Rust and Template callers (`.sort(path, descending: bool)`, matching
+/// Dataview's boolean convention) keep using [`Self::is_descending`] to
+/// bridge to the existing `bool`-based comparator below. CLI commands use
+/// this type directly as a `clap::ValueEnum` so `--order` accepts the
+/// shortened `asc`/`desc` values instead of duplicating an equivalent enum
+/// per command.
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq, clap::ValueEnum)]
+pub(crate) enum SortOrder {
+    /// Ascending order (the default).
+    #[default]
+    #[value(name = "asc")]
+    Ascending,
+    /// Descending order.
+    #[value(name = "desc")]
+    Descending,
+}
+
+impl SortOrder {
+    /// Whether this order is [`Self::Descending`].
+    #[inline]
+    #[must_use]
+    pub(crate) const fn is_descending(self) -> bool {
+        matches!(self, Self::Descending)
+    }
+}
+
 /// Total order for [`super::QueryOutcome::sort`] and
 /// [`super::QueryOutcome::group_by`].
 ///
@@ -155,5 +183,22 @@ mod tests {
                 path: "file.bogus".to_owned()
             })
         );
+    }
+
+    mod sort_order {
+        use pretty_assertions::assert_eq;
+
+        use super::super::SortOrder;
+
+        #[test]
+        fn default_is_ascending() {
+            assert_eq!(SortOrder::default(), SortOrder::Ascending);
+        }
+
+        #[test]
+        fn only_descending_is_descending() {
+            assert!(!SortOrder::Ascending.is_descending());
+            assert!(SortOrder::Descending.is_descending());
+        }
     }
 }

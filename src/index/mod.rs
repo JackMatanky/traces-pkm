@@ -19,8 +19,9 @@
     expect(
         dead_code,
         reason = "crate-internal API surface for FileIndex querying and \
-                  QueryOutcome transformations, consumed by later tickets \
-                  (#08 CLI query commands)"
+                  QueryOutcome transformations: some accessors and the \
+                  QueryOutcome::r#where alias are exposed for Rust callers \
+                  and not yet consumed by CLI or Template wiring"
     )
 )]
 
@@ -39,7 +40,7 @@ pub(crate) use error::FileIndexError;
 )]
 pub(crate) use file::{FileFormat, FileRecord, Timestamp};
 pub(crate) use query::{
-    FileField, IndexRecord, QueryError, QueryOutcome, Source,
+    FileField, IndexRecord, QueryError, QueryOutcome, SortOrder, Source,
 };
 use store::IndexStore;
 

@@ -8,6 +8,8 @@ mod completions;
 mod error;
 mod index;
 pub mod init;
+mod list;
+mod table;
 mod task;
 mod template;
 mod trust;
@@ -124,6 +126,10 @@ enum Commands {
     Untrust(untrust::Untrust),
     /// Build or rebuild the persisted [`FileIndex`](crate::index::FileIndex).
     Index(index::Index),
+    /// Run a page-level query and print list output.
+    List(list::List),
+    /// Run a page-level query and print tabular output.
+    Table(table::Table),
     /// Run a task-level query and print task output.
     Task(task::Task),
     /// Render a template and write it to disk.
@@ -150,6 +156,8 @@ impl Commands {
             Self::Trust(args) => args.run(service),
             Self::Untrust(args) => args.run(service),
             Self::Index(args) => args.run(service),
+            Self::List(args) => args.run(service),
+            Self::Table(args) => args.run(service),
             Self::Task(args) => args.run(service),
             Self::Template(args) => args.run(service, provider),
             Self::Completions(args) => args.run(service),
@@ -338,6 +346,72 @@ mod tests {
                 .expect("parse index argv");
 
             assert!(matches!(cli.command, Some(Commands::Index(_))));
+        }
+
+        #[test]
+        fn list_argv_maps_to_list_subcommand() {
+            let cli = Cli::try_parse_from(["traces", "list"])
+                .expect("parse list argv");
+
+            assert!(matches!(cli.command, Some(Commands::List(_))));
+        }
+
+        #[test]
+        fn table_argv_maps_to_table_subcommand() {
+            let cli = Cli::try_parse_from([
+                "traces",
+                "table",
+                "--column",
+                "file.path",
+            ])
+            .expect("parse table argv");
+
+            assert!(matches!(cli.command, Some(Commands::Table(_))));
+        }
+
+        #[test]
+        fn table_argv_without_a_column_flag_fails_to_parse() {
+            let error = Cli::try_parse_from(["traces", "table"])
+                .expect_err("table requires at least one --column");
+
+            assert_eq!(
+                error.kind(),
+                clap::error::ErrorKind::MissingRequiredArgument
+            );
+        }
+
+        #[test]
+        fn table_order_flag_accepts_the_shortened_asc_and_desc_values() {
+            for value in ["asc", "desc"] {
+                let cli = Cli::try_parse_from([
+                    "traces",
+                    "table",
+                    "--column",
+                    "file.path",
+                    "--order",
+                    value,
+                ])
+                .unwrap_or_else(|error| {
+                    panic!("parse table argv with --order {value}: {error}")
+                });
+
+                assert!(matches!(cli.command, Some(Commands::Table(_))));
+            }
+        }
+
+        #[test]
+        fn table_order_flag_rejects_the_unshortened_ascending_spelling() {
+            let error = Cli::try_parse_from([
+                "traces",
+                "table",
+                "--column",
+                "file.path",
+                "--order",
+                "ascending",
+            ])
+            .expect_err("--order only accepts the shortened asc/desc values");
+
+            assert_eq!(error.kind(), clap::error::ErrorKind::InvalidValue);
         }
 
         #[test]
