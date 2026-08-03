@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use super::{
-    links::Outlink,
+    links::Link,
     lists::{List, ListItem},
     metadata::{Frontmatter, InlineField, MetadataField},
     tag::Tag,
@@ -21,7 +21,7 @@ pub(crate) struct Note {
     path: PathBuf,
     frontmatter: Option<Frontmatter>,
     lists: Vec<List>,
-    outlinks: Vec<Outlink>,
+    outlinks: Vec<Link>,
     inline_fields: Vec<InlineField>,
     tags: Vec<Tag>,
 }
@@ -38,7 +38,7 @@ impl Note {
         path: impl Into<PathBuf>,
         frontmatter: Option<Frontmatter>,
         lists: Vec<List>,
-        outlinks: Vec<Outlink>,
+        outlinks: Vec<Link>,
     ) -> Self {
         Self {
             path: path.into(),
@@ -96,7 +96,7 @@ impl Note {
     /// Outgoing links extracted from Markdown and wikilink syntax.
     #[inline]
     #[must_use]
-    pub(crate) fn outlinks(&self) -> &[Outlink] {
+    pub(crate) fn outlinks(&self) -> &[Link] {
         &self.outlinks
     }
 
@@ -183,7 +183,7 @@ mod tests {
         fn constructs_note_with_the_given_path_and_parts() {
             let frontmatter = Frontmatter::new(Vec::new());
             let list = List::new(false, vec![ListItem::new("item", None)]);
-            let outlink = Outlink::new("target", "text", LinkType::Wikilink);
+            let outlink = Link::new("target", "text", LinkType::Wikilink);
 
             let note = Note::new(
                 "notes/a.md",

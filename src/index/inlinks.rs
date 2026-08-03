@@ -14,7 +14,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::note::Note;
+use crate::note::{LinkTarget, Note};
 
 /// Target-keyed inbound link edges: every Note path to the paths of every
 /// Note whose outlinks resolve to it. Returned by [`derive_inlinks`] and
@@ -71,7 +71,8 @@ pub(super) fn derive_inlinks(notes: &[Note]) -> InlinkMap {
     let mut edges: HashMap<Target<'_>, BTreeSet<Source<'_>>> = HashMap::new();
     for source in notes {
         for outlink in source.outlinks() {
-            if let Some(target) = resolve_target(notes, outlink.target()) {
+            if let Some(target) = resolve_target(notes, outlink.target_parts())
+            {
                 edges.entry(target).or_default().insert(Source(source.path()));
             }
         }
@@ -87,7 +88,7 @@ pub(super) fn derive_inlinks(notes: &[Note]) -> InlinkMap {
         .collect()
 }
 
-/// Resolves an outlink's raw `target` text to an indexed Note's path.
+/// Resolves an already-split [`LinkTarget`] to an indexed Note's path.
 ///
 /// Tries, in order:
 /// 1. An exact project-relative path match (Markdown-style links).
@@ -97,17 +98,18 @@ pub(super) fn derive_inlinks(notes: &[Note]) -> InlinkMap {
 ///    wikilink-by-name resolution). An ambiguous stem match resolves to `None`
 ///    rather than guessing which Note was meant.
 ///
-/// Any `#fragment` heading suffix is stripped before matching, so a link
-/// into a heading still resolves to the Note that owns it.
+/// `target`'s anchor half, if any, plays no part in resolution — only the
+/// path segment is matched, so a link into a heading still resolves to the
+/// Note that owns it.
 ///
 /// ponytail: no note-directory-relative resolution (`../sibling.md`) and no
 /// Obsidian shortest-unique-path search across ambiguous folders. Upgrade
 /// if real vaults need either.
-fn resolve_target<'a>(notes: &'a [Note], target: &str) -> Option<Target<'a>> {
-    let path_part = target.split('#').next().unwrap_or(target).trim();
-    if path_part.is_empty() {
-        return None;
-    }
+fn resolve_target<'a>(
+    notes: &'a [Note],
+    target: LinkTarget<'_>,
+) -> Option<Target<'a>> {
+    let path_part = target.path().filter(|path| !path.is_empty())?;
     let candidate = Path::new(path_part);
     if let Some(note) = find_by_path(notes, candidate) {
         return Some(Target(note.path()));
@@ -171,7 +173,7 @@ mod tests {
             let notes = [parse_markdown("notes/other.md", "# Other")];
 
             assert_eq!(
-                resolve_target(&notes, "notes/other.md"),
+                resolve_target(&notes, LinkTarget::Path("notes/other.md")),
                 Some(Target(Path::new("notes/other.md")))
             );
         }
@@ -181,7 +183,7 @@ mod tests {
             let notes = [parse_markdown("other.md", "# Other")];
 
             assert_eq!(
-                resolve_target(&notes, "other"),
+                resolve_target(&notes, LinkTarget::Path("other")),
                 Some(Target(Path::new("other.md")))
             );
         }
@@ -194,17 +196,20 @@ mod tests {
             ];
 
             assert_eq!(
-                resolve_target(&notes, "Project Alpha"),
+                resolve_target(&notes, LinkTarget::Path("Project Alpha")),
                 Some(Target(Path::new("notes/Project Alpha.md")))
             );
         }
 
         #[test]
-        fn strips_a_heading_fragment_before_matching() {
+        fn resolves_a_path_with_an_anchor_by_its_path_segment() {
             let notes = [parse_markdown("other.md", "# Other")];
 
             assert_eq!(
-                resolve_target(&notes, "other#Some Heading"),
+                resolve_target(
+                    &notes,
+                    LinkTarget::PathWithAnchor("other", "Some Heading")
+                ),
                 Some(Target(Path::new("other.md")))
             );
         }
@@ -216,21 +221,27 @@ mod tests {
                 parse_markdown("b/note.md", "# B"),
             ];
 
-            assert_eq!(resolve_target(&notes, "note"), None);
+            assert_eq!(resolve_target(&notes, LinkTarget::Path("note")), None);
         }
 
         #[test]
         fn returns_none_for_an_unresolvable_target() {
             let notes = [parse_markdown("other.md", "# Other")];
 
-            assert_eq!(resolve_target(&notes, "https://example.com"), None);
+            assert_eq!(
+                resolve_target(&notes, LinkTarget::Path("https://example.com")),
+                None
+            );
         }
 
         #[test]
-        fn returns_none_for_a_fragment_only_target() {
+        fn returns_none_for_an_anchor_only_target() {
             let notes = [parse_markdown("other.md", "# Other")];
 
-            assert_eq!(resolve_target(&notes, "#Some Heading"), None);
+            assert_eq!(
+                resolve_target(&notes, LinkTarget::AnchorOnly("Some Heading")),
+                None
+            );
         }
     }
 

@@ -9,7 +9,7 @@
 //! - [`Note`] - Stores the parsed note.
 //! - [`List`], [`ListItem`], and [`TaskStatus`] - Represent Markdown lists and
 //!   task items.
-//! - [`Outlink`] and [`LinkType`] - Represent Markdown links and Obsidian
+//! - [`Link`] and [`LinkType`] - Represent Markdown links and Obsidian
 //!   wikilinks.
 //! - [`Frontmatter`] and [`RawFrontmatter`] - Preserve YAML metadata.
 //! - [`InlineField`], [`InlineFieldForm`], [`MetadataField`], and
@@ -33,7 +33,7 @@ mod model;
 mod parser;
 mod tag;
 
-pub(crate) use links::{LinkType, Outlink};
+pub(crate) use links::{Link, LinkTarget, LinkType};
 pub(crate) use lists::{List, ListItem, TaskStatus};
 #[expect(
     unused_imports,

@@ -21,7 +21,7 @@ use pulldown_cmark::{
 };
 
 use super::{
-    Frontmatter, InlineField, LinkType, List, ListItem, Note, Outlink,
+    Frontmatter, InlineField, Link, LinkType, List, ListItem, Note,
     RawFrontmatter, Tag, TaskStatus, lexer,
 };
 
@@ -63,7 +63,7 @@ struct ParserContext {
     frontmatter: Option<Frontmatter>,
     block: BlockContext,
     metadata_buffer: String,
-    outlinks: Vec<Outlink>,
+    outlinks: Vec<Link>,
     /// The link currently being walked, if any.
     active_link: Option<ActiveLink>,
     list_nesting: ListTracker,
@@ -157,7 +157,7 @@ impl ParserContext {
         self.active_link = Some(ActiveLink::new(kind, dest_url.into_string()));
     }
 
-    /// Records the active [`Outlink`] and closes any scan-buffer bracket.
+    /// Records the active [`Link`] and closes any scan-buffer bracket.
     fn end_link(&mut self) {
         if let Some(ActiveLink {
             target,
@@ -168,7 +168,7 @@ impl ParserContext {
             if kind == LinkType::Markdown {
                 self.push_scan_char(']');
             }
-            self.outlinks.push(Outlink::new(target, text, kind));
+            self.outlinks.push(Link::new(target, text, kind));
         }
     }
 
@@ -650,7 +650,7 @@ mod tests {
                 .expect("related field");
             assert_eq!(
                 field.value(),
-                &FieldValue::Link(Outlink::new(
+                &FieldValue::Link(Link::new(
                     "Project Alpha",
                     "Alpha",
                     LinkType::Wikilink

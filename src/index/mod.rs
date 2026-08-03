@@ -490,8 +490,8 @@ mod tests {
 
         use super::*;
         use crate::note::{
-            FieldValue, Frontmatter, InlineField, InlineFieldForm, LinkType,
-            Outlink, Tag,
+            FieldValue, Frontmatter, InlineField, InlineFieldForm, Link,
+            LinkType, Tag,
         };
 
         #[test]
@@ -514,7 +514,7 @@ mod tests {
                 loaded.note(Path::new("note.md")).expect("loaded note");
             assert_eq!(loaded_note.outlinks().len(), 1);
             assert_eq!(
-                loaded_note.outlinks().first().map(Outlink::target),
+                loaded_note.outlinks().first().map(Link::target),
                 Some("other_note")
             );
             assert_eq!(loaded_note.tasks().count(), 1);
@@ -542,7 +542,7 @@ mod tests {
                 .expect("related field");
             assert_eq!(
                 field.value(),
-                &FieldValue::Link(Outlink::new(
+                &FieldValue::Link(Link::new(
                     "Project Alpha",
                     "Alpha",
                     LinkType::Wikilink

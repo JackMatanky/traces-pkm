@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use super::cursor::SourceText;
 
-/// Link syntax for an extracted [`Outlink`].
+/// Link syntax for an extracted [`Link`].
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub(crate) enum LinkType {
     /// Standard Markdown `[text](target)` link.
@@ -15,14 +15,14 @@ pub(crate) enum LinkType {
 
 /// Outgoing Markdown link or Obsidian wikilink.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
-pub(crate) struct Outlink {
+pub(crate) struct Link {
     target: String,
     text: String,
     kind: LinkType,
     embedded: bool,
 }
 
-impl Outlink {
+impl Link {
     /// Creates a non-embedded outlink with `target`, display `text`, and
     /// `kind`.
     #[inline]
@@ -92,6 +92,24 @@ impl Outlink {
         &self.target
     }
 
+    /// Splits this link's raw target text into [`LinkTarget`] parts at its
+    /// first `#`, trimming surrounding whitespace from each part.
+    #[must_use]
+    pub(crate) fn target_parts(&self) -> LinkTarget<'_> {
+        match self.target.split_once('#') {
+            Some((path, anchor)) => {
+                let path = path.trim();
+                let anchor = anchor.trim();
+                if path.is_empty() {
+                    LinkTarget::AnchorOnly(anchor)
+                } else {
+                    LinkTarget::PathWithAnchor(path, anchor)
+                }
+            }
+            None => LinkTarget::Path(self.target.trim()),
+        }
+    }
+
     /// Display text, or alias text for a wikilink.
     #[inline]
     #[must_use]
@@ -125,6 +143,44 @@ impl Outlink {
     #[must_use]
     pub(crate) fn is_embedded(&self) -> bool {
         self.embedded
+    }
+}
+
+/// The parts a [`Link`]'s raw target text splits into at its first `#`.
+///
+/// Obsidian and Markdown links can point to a Note, to a heading anchor
+/// within one, or (for an in-page link like `[[#Heading]]`) to an anchor
+/// with no Note path at all — three mutually exclusive shapes, not an
+/// optional path paired with an optional anchor.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub(crate) enum LinkTarget<'a> {
+    /// A path with no `#` suffix.
+    Path(&'a str),
+    /// A path followed by a `#heading` anchor.
+    PathWithAnchor(&'a str, &'a str),
+    /// An in-page anchor with no path segment, such as `[[#Heading]]`.
+    AnchorOnly(&'a str),
+}
+
+impl<'a> LinkTarget<'a> {
+    /// This target's path segment, or `None` for [`Self::AnchorOnly`].
+    #[must_use]
+    pub(crate) fn path(self) -> Option<&'a str> {
+        match self {
+            Self::Path(path) | Self::PathWithAnchor(path, _) => Some(path),
+            Self::AnchorOnly(_) => None,
+        }
+    }
+
+    /// This target's `#heading` anchor, or `None` when it has none.
+    #[must_use]
+    pub(crate) fn anchor(self) -> Option<&'a str> {
+        match self {
+            Self::PathWithAnchor(_, anchor) | Self::AnchorOnly(anchor) => {
+                Some(anchor)
+            }
+            Self::Path(_) => None,
+        }
     }
 }
 
@@ -225,12 +281,55 @@ mod tests {
         #[case] expected_wikilink: bool,
         #[case] expected_markdown: bool,
     ) {
-        let link = Outlink::new(target, text, kind);
+        let link = Link::new(target, text, kind);
         assert_eq!(link.target(), target);
         assert_eq!(link.text(), text);
         assert_eq!(link.kind(), kind);
         assert_eq!(link.is_wikilink(), expected_wikilink);
         assert_eq!(link.is_markdown(), expected_markdown);
+    }
+
+    #[rstest]
+    #[case::plain_path("notes/other.md", LinkTarget::Path("notes/other.md"))]
+    #[case::path_with_anchor(
+        "other#Some Heading",
+        LinkTarget::PathWithAnchor("other", "Some Heading")
+    )]
+    #[case::anchor_only(
+        "#Some Heading",
+        LinkTarget::AnchorOnly("Some Heading")
+    )]
+    #[case::trims_whitespace_around_parts(
+        " other # Some Heading ",
+        LinkTarget::PathWithAnchor("other", "Some Heading")
+    )]
+    fn target_parts_splits_the_raw_target_at_the_first_hash(
+        #[case] target: &str,
+        #[case] expected: LinkTarget<'_>,
+    ) {
+        let link = Link::new(target, "text", LinkType::Markdown);
+        assert_eq!(link.target_parts(), expected);
+    }
+
+    #[rstest]
+    #[case::plain_path(LinkTarget::Path("a.md"), Some("a.md"), None)]
+    #[case::path_with_anchor(
+        LinkTarget::PathWithAnchor("a.md", "Heading"),
+        Some("a.md"),
+        Some("Heading")
+    )]
+    #[case::anchor_only(
+        LinkTarget::AnchorOnly("Heading"),
+        None,
+        Some("Heading")
+    )]
+    fn link_target_path_and_anchor_report_the_matching_parts(
+        #[case] target: LinkTarget<'_>,
+        #[case] expected_path: Option<&str>,
+        #[case] expected_anchor: Option<&str>,
+    ) {
+        assert_eq!(target.path(), expected_path);
+        assert_eq!(target.anchor(), expected_anchor);
     }
 
     #[rstest]
@@ -243,7 +342,7 @@ mod tests {
         #[case] expected_target: &str,
         #[case] expected_text: &str,
     ) {
-        let link = Outlink::parse_wikilink(raw).expect("valid wikilink");
+        let link = Link::parse_wikilink(raw).expect("valid wikilink");
 
         assert_eq!(link.target(), expected_target);
         assert_eq!(link.text(), expected_text);
@@ -252,7 +351,7 @@ mod tests {
 
     #[test]
     fn parses_embedded_wikilink_values() {
-        let link = Outlink::parse_wikilink("![[hello]]")
+        let link = Link::parse_wikilink("![[hello]]")
             .expect("valid embedded wikilink");
 
         assert_eq!(link.target(), "hello");
@@ -263,7 +362,7 @@ mod tests {
 
     #[test]
     fn parses_escaped_pipe_in_wikilink_target() {
-        let link = Outlink::parse_wikilink(r"[[Hello \| There]]")
+        let link = Link::parse_wikilink(r"[[Hello \| There]]")
             .expect("valid wikilink");
 
         assert_eq!(link.target(), "Hello | There");
@@ -276,6 +375,6 @@ mod tests {
     #[case::empty_target("[[]]")]
     #[case::blank_target("[[ | alias]]")]
     fn rejects_invalid_wikilink_values(#[case] raw: &str) {
-        assert_eq!(Outlink::parse_wikilink(raw), None);
+        assert_eq!(Link::parse_wikilink(raw), None);
     }
 }
