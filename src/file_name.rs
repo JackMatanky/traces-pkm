@@ -14,7 +14,7 @@ use thiserror::Error;
 ///
 /// For `todo.md`, this stores `todo.md`. Use [`BaseName`] when the extension
 /// should be stripped.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct FileName(String);
 
 impl FileName {
