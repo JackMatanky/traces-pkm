@@ -11,7 +11,7 @@ use clap::Args;
 use super::error::CliError;
 use crate::{
     config::ConfigService,
-    index::{FileIndex, Source},
+    index::{FileIndex, QuerySource},
 };
 
 /// Command-line arguments for `traces task`.
@@ -79,7 +79,7 @@ impl Task {
                 source,
             })?;
         let mut outcome =
-            index.query_tasks(&Source::from_flag(self.from.as_deref()));
+            index.query_tasks(&QuerySource::from_flag(self.from.as_deref()));
         if let Some(expr) = self.filter.as_deref() {
             outcome =
                 outcome.filter(expr).map_err(|source| CliError::Query {

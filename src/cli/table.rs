@@ -11,7 +11,7 @@ use clap::Args;
 use super::error::CliError;
 use crate::{
     config::ConfigService,
-    index::{FileIndex, QueryError, SortOrder, Source},
+    index::{FileIndex, QueryError, QuerySource, SortOrder},
 };
 
 /// Command-line arguments for `traces table`.
@@ -84,7 +84,8 @@ impl Table {
                 root: root.to_path_buf(),
                 source,
             })?;
-        let mut outcome = index.query(&Source::from_flag(self.from.as_deref()));
+        let mut outcome =
+            index.query(&QuerySource::from_flag(self.from.as_deref()));
         if let Some(expr) = self.filter.as_deref() {
             outcome = outcome
                 .filter(expr)

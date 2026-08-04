@@ -91,7 +91,11 @@ pub(super) fn sort_key_cmp(
 /// Wraps a resolved [`FieldValue`] so [`slice::sort_by_cached_key`] can order
 /// by it via [`sort_key_cmp`].
 ///
-/// [`FieldValue`] itself has no [`Ord`]: comparing it needs `descending` and [`sort_key_cmp`]'s Null-as-minimum/cross-kind fallback rules, which don't fit a context-free [`Ord`] impl on [`FieldValue`] directly. This type exists only to give [`super::QueryOutcome::sort_by_field`] one, scoped to a single sort call.
+/// [`FieldValue`] itself has no [`Ord`]: comparing it needs `descending` and
+/// [`sort_key_cmp`]'s Null-as-minimum/cross-kind fallback rules, which don't
+/// fit a context-free [`Ord`] impl on [`FieldValue`] directly. This type
+/// exists only to give [`super::QueryOutcome::sort_by_field`] one, scoped to
+/// a single sort call.
 pub(super) struct SortKey {
     pub(super) value: FieldValue,
     pub(super) descending: bool,
@@ -130,7 +134,7 @@ mod tests {
         for (name, content) in files {
             fs::write(temp.join(name), content).expect("write note");
         }
-        FileIndex::build(temp).expect("build index").query(&Source::All)
+        FileIndex::build(temp).expect("build index").query(&QuerySource::All)
     }
 
     fn outcome_for(temp: &Path, content: &str) -> QueryOutcome {

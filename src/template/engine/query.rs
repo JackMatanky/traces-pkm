@@ -3,7 +3,8 @@
 //! Both namespaces are backed by [`QueryOps`], registered twice by
 //! [`super::TemplateEngine::new`]: [`QueryOps::page`] creates the `query`
 //! global and [`QueryOps::task`] creates the `tasks` global. Each namespace
-//! starts a query with one of three methods, matching [`Source`]'s variants:
+//! starts a query with one of three methods, matching [`QuerySource`]'s
+//! variants:
 //!
 //! - `.all()`: every indexed Note.
 //! - `.from_tags(tag)`: Notes tagged `tag`.
@@ -74,7 +75,7 @@ use minijinja::{
 use crate::{
     index::{
         FileField, FileIndex, FileIndexError, IndexRecord, QueryError,
-        QueryOutcome, Source,
+        QueryOutcome, QuerySource,
     },
     note::FieldValue,
 };
@@ -93,40 +94,6 @@ const METHODS: &[&str] = &["all", "from_tags", "from_folder"];
 /// independent renders on a reused [`Environment`]/[`super::TemplateEngine`].
 const INDEX_CACHE_KEY: &str = "query.index_cache";
 
-/// Wraps [`FileIndex`] only so it can round-trip through [`State`]'s temp
-/// storage via [`Value::from_object`]/[`Value::downcast_object_ref`]. Never
-/// exposed to templates: no global registers it, unlike
-/// [`IndexRecord`]/[`QueryOutcome`].
-#[derive(Debug)]
-struct CachedIndex(FileIndex);
-
-impl Object for CachedIndex {}
-
-/// Returns the render's cached [`FileIndex`], refreshing and caching it in
-/// `state`'s temp storage first if not already cached this render.
-///
-/// # Errors
-///
-/// - Any error [`FileIndex::refresh`] returns.
-fn cached_refresh(
-    state: &State,
-    root: &Path,
-) -> Result<FileIndex, FileIndexError> {
-    if let Some(index) = state.get_temp(INDEX_CACHE_KEY).and_then(|value| {
-        value
-            .downcast_object_ref::<CachedIndex>()
-            .map(|cached| cached.0.clone())
-    }) {
-        return Ok(index);
-    }
-    let index = FileIndex::refresh(root)?;
-    state.set_temp(
-        INDEX_CACHE_KEY,
-        Value::from_object(CachedIndex(index.clone())),
-    );
-    Ok(index)
-}
-
 /// Backs both the `query` and `tasks` minijinja namespace objects: one instance
 /// per namespace, differing only in which global it registers as and which
 /// [`FileIndex`] method builds the [`QueryOutcome`]. See
@@ -138,7 +105,7 @@ pub(super) struct QueryOps {
     name: &'static str,
     /// [`FileIndex::query`] for `query`, [`FileIndex::query_tasks`] for
     /// `tasks`.
-    query: fn(FileIndex, &Source) -> QueryOutcome,
+    query: fn(FileIndex, &QuerySource) -> QueryOutcome,
 }
 
 impl QueryOps {
@@ -195,7 +162,7 @@ impl QueryOps {
     /// - [`ErrorKind::InvalidOperation`] via [`index_error`] if refreshing the
     ///   index fails, including I/O errors while scanning `root`, database
     ///   access errors, and TOML (de)serialization errors on stored records.
-    fn run(&self, state: &State, source: &Source) -> Result<Value, Error> {
+    fn run(&self, state: &State, source: &QuerySource) -> Result<Value, Error> {
         let index = cached_refresh(state, &self.root).map_err(index_error)?;
         Ok(Value::from_object((self.query)(index, source)))
     }
@@ -208,7 +175,7 @@ impl Object for QueryOps {
                 let ops = Arc::clone(self);
                 Some(Value::from_function(
                     move |state: &State| -> Result<Value, Error> {
-                        ops.run(state, &Source::All)
+                        ops.run(state, &QuerySource::All)
                     },
                 ))
             }
@@ -216,7 +183,7 @@ impl Object for QueryOps {
                 let ops = Arc::clone(self);
                 Some(Value::from_function(
                     move |state: &State, tag: &str| -> Result<Value, Error> {
-                        ops.run(state, &Source::Tag(tag.to_owned()))
+                        ops.run(state, &QuerySource::Tag(tag.to_owned()))
                     },
                 ))
             }
@@ -226,7 +193,10 @@ impl Object for QueryOps {
                     move |state: &State,
                           folder: &str|
                           -> Result<Value, Error> {
-                        ops.run(state, &Source::Folder(PathBuf::from(folder)))
+                        ops.run(
+                            state,
+                            &QuerySource::Folder(PathBuf::from(folder)),
+                        )
                     },
                 ))
             }
@@ -237,6 +207,40 @@ impl Object for QueryOps {
     fn enumerate(self: &Arc<Self>) -> Enumerator {
         Enumerator::Str(METHODS)
     }
+}
+
+/// Wraps [`FileIndex`] only so it can round-trip through [`State`]'s temp
+/// storage via [`Value::from_object`]/[`Value::downcast_object_ref`]. Never
+/// exposed to templates: no global registers it, unlike
+/// [`IndexRecord`]/[`QueryOutcome`].
+#[derive(Debug)]
+struct CachedIndex(FileIndex);
+
+impl Object for CachedIndex {}
+
+/// Returns the render's cached [`FileIndex`], refreshing and caching it in
+/// `state`'s temp storage first if not already cached this render.
+///
+/// # Errors
+///
+/// - Any error [`FileIndex::refresh`] returns.
+fn cached_refresh(
+    state: &State,
+    root: &Path,
+) -> Result<FileIndex, FileIndexError> {
+    if let Some(index) = state.get_temp(INDEX_CACHE_KEY).and_then(|value| {
+        value
+            .downcast_object_ref::<CachedIndex>()
+            .map(|cached| cached.0.clone())
+    }) {
+        return Ok(index);
+    }
+    let index = FileIndex::refresh(root)?;
+    state.set_temp(
+        INDEX_CACHE_KEY,
+        Value::from_object(CachedIndex(index.clone())),
+    );
+    Ok(index)
 }
 
 /// Maps a [`FileIndexError`] into a [`minijinja::Error`].

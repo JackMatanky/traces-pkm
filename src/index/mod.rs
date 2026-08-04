@@ -43,7 +43,7 @@ pub(crate) use error::FileIndexError;
 pub(crate) use file::{FileFormat, FileRecord, Timestamp};
 use inlinks::{InlinkMap, derive_inlinks};
 pub(crate) use query::{
-    FileField, IndexRecord, QueryError, QueryOutcome, SortOrder, Source,
+    FileField, IndexRecord, QueryError, QueryOutcome, QuerySource, SortOrder,
 };
 use store::IndexStore;
 
@@ -206,6 +206,83 @@ impl FileIndex {
         })
     }
 
+    /// Executes a page-level query over `source`, consuming this index.
+    ///
+    /// Call [`Self::refresh`] first so results reflect the current filesystem.
+    /// Every markdown Note has a matching [`FileRecord`] by construction (both
+    /// [`Self::build`] and [`Self::refresh`] add one for every parsed Note), so
+    /// a Note found without one is skipped rather than causing a panic.
+    ///
+    /// Every matched row's [`IndexRecord::inlinks`] reflects every indexed
+    /// Note, not just Notes matching `source`: a Note outside `source` can
+    /// still link to one inside it.
+    ///
+    /// # Performance
+    ///
+    /// O(n + m): [`Self::refresh`]/[`Self::load`] already produced
+    /// `self.inlinks`, so this is just the single-pass iterator merge-join
+    /// across `records` and `notes`, looking each matched Note's inlinks up by
+    /// moving them out of the map instead of cloning.
+    #[must_use]
+    pub(crate) fn query(self, source: &QuerySource) -> QueryOutcome {
+        let Self {
+            records,
+            notes,
+            mut inlinks,
+        } = self;
+        let matched = matched_pairs(records, notes, source)
+            .map(|(file, note)| record_with_inlinks(file, note, &mut inlinks))
+            .collect();
+        QueryOutcome::new(matched)
+    }
+
+    /// Executes a task-level query over `source`, consuming this index.
+    ///
+    /// Selects the same Notes as [`Self::query`], then expands each matched
+    /// Note into one [`IndexRecord`] per markdown task item (`- [ ]` or `-
+    /// [x]`). Notes without tasks contribute no rows.
+    ///
+    /// Each task row keeps its parent Note's `file.*`, frontmatter,
+    /// inline-field, tag, and inlinks metadata for filtering and display
+    /// through [`IndexRecord::field`]. It also exposes
+    /// [`IndexRecord::task_completed`] and [`IndexRecord::task_text`].
+    ///
+    /// Call [`Self::refresh`] first so results reflect the current filesystem.
+    ///
+    /// # Performance
+    ///
+    /// O(n + m + t), where `t` is the total number of task items across matched
+    /// Notes. [`Self::refresh`]/[`Self::load`] already produced `self.inlinks`.
+    /// Each Note's task items are collected into a small `(bool, String)`
+    /// buffer once, so its last row can move the shared [`IndexRecord`] base
+    /// instead of cloning it (mirroring [`query::QueryOutcome::flatten`]'s
+    /// last-item handling); every earlier row still clones the base.
+    #[must_use]
+    pub(crate) fn query_tasks(self, source: &QuerySource) -> QueryOutcome {
+        let Self {
+            records,
+            notes,
+            mut inlinks,
+        } = self;
+        let mut matched = Vec::new();
+        for (file, note) in matched_pairs(records, notes, source) {
+            let base = record_with_inlinks(file, note, &mut inlinks);
+            let mut tasks: Vec<(bool, String)> = base
+                .note()
+                .tasks()
+                .map(|item| (item.is_completed(), item.text().to_owned()))
+                .collect();
+            let Some((completed, text)) = tasks.pop() else {
+                continue; // No tasks: this Note contributes no rows.
+            };
+            matched.extend(
+                tasks.into_iter().map(|(c, t)| base.clone().with_task(c, t)),
+            );
+            matched.push(base.with_task(completed, text));
+        }
+        QueryOutcome::new(matched)
+    }
+
     /// Indexed [`FileRecord`]s, sorted by path.
     #[inline]
     #[must_use]
@@ -246,94 +323,28 @@ impl FileIndex {
             .ok()
             .and_then(|idx| self.records.get(idx))
     }
-
-    /// Executes a page-level query over `source`, consuming this index.
-    ///
-    /// Call [`Self::refresh`] first so results reflect the current filesystem.
-    /// Every markdown Note has a matching [`FileRecord`] by construction (both
-    /// [`Self::build`] and [`Self::refresh`] add one for every parsed Note), so
-    /// a Note found without one is skipped rather than causing a panic.
-    ///
-    /// Every matched row's [`IndexRecord::inlinks`] reflects every indexed
-    /// Note, not just Notes matching `source`: a Note outside `source` can
-    /// still link to one inside it.
-    ///
-    /// # Performance
-    ///
-    /// O(n + m): [`Self::refresh`]/[`Self::load`] already produced
-    /// `self.inlinks`, so this is just the single-pass iterator merge-join
-    /// across `records` and `notes`, looking each matched Note's inlinks up by
-    /// moving them out of the map instead of cloning.
-    #[must_use]
-    pub(crate) fn query(self, source: &Source) -> QueryOutcome {
-        let Self {
-            records,
-            notes,
-            mut inlinks,
-        } = self;
-        let matched = matched_pairs(records, notes, source)
-            .map(|(file, note)| record_with_inlinks(file, note, &mut inlinks))
-            .collect();
-        QueryOutcome::new(matched)
-    }
-
-    /// Executes a task-level query over `source`, consuming this index.
-    ///
-    /// Selects the same Notes as [`Self::query`], then expands each matched
-    /// Note into one [`IndexRecord`] per markdown task item (`- [ ]` or `-
-    /// [x]`). Notes without tasks contribute no rows.
-    ///
-    /// Each task row keeps its parent Note's `file.*`, frontmatter,
-    /// inline-field, tag, and inlinks metadata for filtering and display
-    /// through [`IndexRecord::field`]. It also exposes
-    /// [`IndexRecord::task_completed`] and [`IndexRecord::task_text`].
-    ///
-    /// Call [`Self::refresh`] first so results reflect the current filesystem.
-    ///
-    /// # Performance
-    ///
-    /// O(n + m + t), where `t` is the total number of task items across matched
-    /// Notes. [`Self::refresh`]/[`Self::load`] already produced `self.inlinks`.
-    /// Each Note's task items are collected into a small `(bool, String)`
-    /// buffer once, so its last row can move the shared [`IndexRecord`] base
-    /// instead of cloning it (mirroring [`query::QueryOutcome::flatten`]'s
-    /// last-item handling); every earlier row still clones the base.
-    #[must_use]
-    pub(crate) fn query_tasks(self, source: &Source) -> QueryOutcome {
-        let Self {
-            records,
-            notes,
-            mut inlinks,
-        } = self;
-        let mut matched = Vec::new();
-        for (file, note) in matched_pairs(records, notes, source) {
-            let base = record_with_inlinks(file, note, &mut inlinks);
-            let mut tasks: Vec<(bool, String)> = base
-                .note()
-                .tasks()
-                .map(|item| (item.is_completed(), item.text().to_owned()))
-                .collect();
-            let Some((completed, text)) = tasks.pop() else {
-                continue; // No tasks: this Note contributes no rows.
-            };
-            matched.extend(
-                tasks.into_iter().map(|(c, t)| base.clone().with_task(c, t)),
-            );
-            matched.push(base.with_task(completed, text));
-        }
-        QueryOutcome::new(matched)
-    }
 }
 
-/// Binary-searches path-sorted `notes` for an exact path match.
+/// Reads and parses the markdown file for `record` into a [`Note`].
 ///
-/// Shared by [`FileIndex::note`], which does this lookup once `self` exists,
-/// and the [`inlinks`](mod@inlinks) submodule, which needs the same search over
-/// a bare `&[Note]` slice while resolving link targets during
-/// [`FileIndex::build`]/[`FileIndex::refresh`].
-fn find_by_path<'a>(notes: &'a [Note], path: &Path) -> Option<&'a Note> {
-    let idx = notes.binary_search_by(|note| note.path().cmp(path)).ok()?;
-    notes.get(idx)
+/// Shared by [`FileIndex::build`] (parses every markdown file from scratch) and
+/// [`FileIndex::refresh`] (parses only added or changed markdown files).
+///
+/// # Errors
+///
+/// - [`FileIndexError::Io`] if the file cannot be read.
+fn parse_note_file(
+    root: &Path,
+    record: &FileRecord,
+) -> Result<Note, FileIndexError> {
+    let full_path = root.join(record.path());
+    let content = fs::read_to_string(&full_path).map_err(|source| {
+        FileIndexError::Io {
+            path: full_path,
+            source,
+        }
+    })?;
+    Ok(parse_markdown(record.path(), &content))
 }
 
 /// Merge-joins `records` and `notes` by path, yielding only the file/note pairs
@@ -348,7 +359,7 @@ fn find_by_path<'a>(notes: &'a [Note], path: &Path) -> Option<&'a Note> {
 fn matched_pairs(
     records: Vec<FileRecord>,
     notes: Vec<Note>,
-    source: &Source,
+    source: &QuerySource,
 ) -> impl Iterator<Item = (FileRecord, Note)> + '_ {
     let mut files = records.into_iter().peekable();
     notes.into_iter().filter_map(move |note| {
@@ -375,26 +386,15 @@ fn record_with_inlinks(
     IndexRecord::new(file, note).with_inlinks(links)
 }
 
-/// Reads and parses the markdown file for `record` into a [`Note`].
+/// Binary-searches path-sorted `notes` for an exact path match.
 ///
-/// Shared by [`FileIndex::build`] (parses every markdown file from scratch) and
-/// [`FileIndex::refresh`] (parses only added or changed markdown files).
-///
-/// # Errors
-///
-/// - [`FileIndexError::Io`] if the file cannot be read.
-fn parse_note_file(
-    root: &Path,
-    record: &FileRecord,
-) -> Result<Note, FileIndexError> {
-    let full_path = root.join(record.path());
-    let content = fs::read_to_string(&full_path).map_err(|source| {
-        FileIndexError::Io {
-            path: full_path,
-            source,
-        }
-    })?;
-    Ok(parse_markdown(record.path(), &content))
+/// Shared by [`FileIndex::note`], which does this lookup once `self` exists,
+/// and the [`inlinks`](mod@inlinks) submodule, which needs the same search over
+/// a bare `&[Note]` slice while resolving link targets during
+/// [`FileIndex::build`]/[`FileIndex::refresh`].
+fn find_by_path<'a>(notes: &'a [Note], path: &Path) -> Option<&'a Note> {
+    let idx = notes.binary_search_by(|note| note.path().cmp(path)).ok()?;
+    notes.get(idx)
 }
 
 #[cfg(test)]
@@ -854,7 +854,7 @@ mod tests {
 
             let refreshed =
                 FileIndex::refresh(temp.path()).expect("refresh index");
-            let outcome = refreshed.query(&Source::All);
+            let outcome = refreshed.query(&QuerySource::All);
             let target = outcome.iter().next().expect("target record");
 
             assert_eq!(target.file().path(), Path::new("target.md"));
@@ -881,7 +881,7 @@ mod tests {
 
             let refreshed =
                 FileIndex::refresh(temp.path()).expect("refresh index");
-            let outcome = refreshed.query(&Source::All);
+            let outcome = refreshed.query(&QuerySource::All);
             let old_target = outcome
                 .iter()
                 .find(|record| {
@@ -950,7 +950,7 @@ mod tests {
             // no-op refresh.
             let refreshed =
                 FileIndex::refresh(temp.path()).expect("refresh index");
-            let outcome = refreshed.query(&Source::All);
+            let outcome = refreshed.query(&QuerySource::All);
             let target = outcome
                 .iter()
                 .find(|record| record.file().path() == Path::new("target.md"))
@@ -989,7 +989,7 @@ mod tests {
 
             let refreshed =
                 FileIndex::refresh(temp.path()).expect("refresh index");
-            let outcome = refreshed.query(&Source::All);
+            let outcome = refreshed.query(&QuerySource::All);
             let target = outcome
                 .iter()
                 .find(|record| {
@@ -1023,7 +1023,7 @@ mod tests {
                 .expect("write txt");
             let index = FileIndex::build(temp.path()).expect("build index");
 
-            let outcome = index.query(&Source::All);
+            let outcome = index.query(&QuerySource::All);
 
             assert_eq!(outcome.len(), 2);
             assert!(!outcome.is_empty());
@@ -1045,7 +1045,7 @@ mod tests {
                 .expect("write txt");
             let index = FileIndex::build(temp.path()).expect("build index");
 
-            let outcome = index.query(&Source::All);
+            let outcome = index.query(&QuerySource::All);
 
             assert!(outcome.is_empty());
             assert_eq!(outcome.len(), 0);
@@ -1060,7 +1060,7 @@ mod tests {
                 .expect("write other");
             let index = FileIndex::build(temp.path()).expect("build index");
 
-            let outcome = index.query(&Source::Tag("#book".to_owned()));
+            let outcome = index.query(&QuerySource::Tag("#book".to_owned()));
 
             assert_eq!(note_paths(&outcome), [Path::new("book.md")]);
         }
@@ -1079,8 +1079,8 @@ mod tests {
 
             let exact = index
                 .clone()
-                .query(&Source::Tag("#projects/active".to_owned()));
-            let parent = index.query(&Source::Tag("#projects".to_owned()));
+                .query(&QuerySource::Tag("#projects/active".to_owned()));
+            let parent = index.query(&QuerySource::Tag("#projects".to_owned()));
 
             assert_eq!(note_paths(&exact), [Path::new("project.md")]);
             assert_eq!(note_paths(&parent), [Path::new("project.md")]);
@@ -1095,7 +1095,7 @@ mod tests {
             let index = FileIndex::build(temp.path()).expect("build index");
 
             let outcome =
-                index.query(&Source::Tag("#projects/active".to_owned()));
+                index.query(&QuerySource::Tag("#projects/active".to_owned()));
 
             assert!(outcome.is_empty());
         }
@@ -1113,7 +1113,8 @@ mod tests {
                 .expect("write other");
             let index = FileIndex::build(temp.path()).expect("build index");
 
-            let outcome = index.query(&Source::Folder(PathBuf::from("books")));
+            let outcome =
+                index.query(&QuerySource::Folder(PathBuf::from("books")));
 
             assert_eq!(note_paths(&outcome), [
                 Path::new("books/dune.md"),
@@ -1131,7 +1132,7 @@ mod tests {
             .expect("write note");
             let index = FileIndex::build(temp.path()).expect("build index");
 
-            let outcome = index.query(&Source::All);
+            let outcome = index.query(&QuerySource::All);
             let record = outcome.iter().next().expect("one record");
 
             assert_eq!(record.file().path(), Path::new("book.md"));
@@ -1160,7 +1161,7 @@ mod tests {
             fs::write(temp.path().join("b.md"), "[[target]]").expect("write b");
             let index = FileIndex::build(temp.path()).expect("build index");
 
-            let outcome = index.query(&Source::All);
+            let outcome = index.query(&QuerySource::All);
             let target = outcome
                 .iter()
                 .find(|record| record.file().path() == Path::new("target.md"))
@@ -1184,7 +1185,7 @@ mod tests {
             // `linker.md` has no `#book` tag, so it is excluded from this
             // tag-scoped query; its outlink to `target.md` must still show
             // up in the target's inlinks.
-            let outcome = index.query(&Source::Tag("#book".to_owned()));
+            let outcome = index.query(&QuerySource::Tag("#book".to_owned()));
             let target = outcome.iter().next().expect("target record");
 
             assert_eq!(target.file().path(), Path::new("target.md"));
@@ -1204,7 +1205,7 @@ mod tests {
             .expect("write a");
             let index = FileIndex::build(temp.path()).expect("build index");
 
-            let outcome = index.query(&Source::All);
+            let outcome = index.query(&QuerySource::All);
             let target = outcome
                 .iter()
                 .find(|record| record.file().path() == Path::new("target.md"))
@@ -1219,7 +1220,7 @@ mod tests {
             fs::write(temp.path().join("b.md"), "[[b]]").expect("write b");
             let index = FileIndex::build(temp.path()).expect("build index");
 
-            let outcome = index.query(&Source::All);
+            let outcome = index.query(&QuerySource::All);
             let source = outcome
                 .iter()
                 .find(|record| record.file().path() == Path::new("b.md"))
@@ -1259,7 +1260,7 @@ mod tests {
             .expect("write note");
             let index = FileIndex::build(temp.path()).expect("build index");
 
-            let outcome = index.query_tasks(&Source::All);
+            let outcome = index.query_tasks(&QuerySource::All);
 
             // A page-level query over the same Note returns exactly one row;
             // the task-level query must not collapse back to that page row.
@@ -1279,7 +1280,7 @@ mod tests {
                 .expect("write note");
             let index = FileIndex::build(temp.path()).expect("build index");
 
-            let outcome = index.query_tasks(&Source::All);
+            let outcome = index.query_tasks(&QuerySource::All);
 
             assert_eq!(outcome.len(), 1);
             assert_eq!(
@@ -1295,7 +1296,7 @@ mod tests {
                 .expect("write txt");
             let index = FileIndex::build(temp.path()).expect("build index");
 
-            let outcome = index.query_tasks(&Source::All);
+            let outcome = index.query_tasks(&QuerySource::All);
 
             assert!(outcome.is_empty());
         }
@@ -1311,7 +1312,7 @@ mod tests {
             .expect("write note");
             let index = FileIndex::build(temp.path()).expect("build index");
 
-            let outcome = index.query_tasks(&Source::All);
+            let outcome = index.query_tasks(&QuerySource::All);
             let record = outcome.iter().next().expect("one task row");
 
             assert_eq!(record.file().path(), Path::new("project.md"));
@@ -1336,7 +1337,7 @@ mod tests {
                 .expect("write linker");
             let index = FileIndex::build(temp.path()).expect("build index");
 
-            let outcome = index.query_tasks(&Source::All);
+            let outcome = index.query_tasks(&QuerySource::All);
             let task = outcome.iter().next().expect("one task row");
 
             assert_eq!(task.file().path(), Path::new("target.md"));
@@ -1356,7 +1357,7 @@ mod tests {
             let index = FileIndex::build(temp.path()).expect("build index");
 
             let outcome =
-                index.query_tasks(&Source::Tag("#projects".to_owned()));
+                index.query_tasks(&QuerySource::Tag("#projects".to_owned()));
 
             assert_eq!(task_rows(&outcome), [(Some(false), "project task")]);
         }
@@ -1374,8 +1375,8 @@ mod tests {
                 .expect("write b");
             let index = FileIndex::build(temp.path()).expect("build index");
 
-            let outcome =
-                index.query_tasks(&Source::Folder(PathBuf::from("projects")));
+            let outcome = index
+                .query_tasks(&QuerySource::Folder(PathBuf::from("projects")));
 
             assert_eq!(task_rows(&outcome), [(Some(false), "project task")]);
         }
@@ -1392,7 +1393,7 @@ mod tests {
             let index = FileIndex::build(temp.path()).expect("build index");
 
             let outcome = index
-                .query_tasks(&Source::All)
+                .query_tasks(&QuerySource::All)
                 .filter("task.completed == true")
                 .expect("valid filter");
 

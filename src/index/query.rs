@@ -5,7 +5,7 @@
 //!
 //! # Main Types
 //!
-//! - [`Source`] - Selects which Notes a query includes.
+//! - [`QuerySource`] - Selects which Notes a query includes.
 //! - [`IndexRecord`] - Pairs a [`FileRecord`] with its parsed [`Note`] and
 //!   resolves `file.*`, `task.*`, metadata, tag, and inlinks fields.
 //! - [`QueryOutcome`] - Stores result rows, applies chained transformations
@@ -35,6 +35,236 @@ pub(crate) use sort::SortOrder;
 
 use super::file::FileRecord;
 use crate::note::{FieldValue, Note};
+
+/// Selects which markdown Notes a page-level or task-level query includes.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum QuerySource {
+    /// Every indexed markdown Note.
+    All,
+    /// Notes tagged with a markdown tag, or a sub-tag nested under it. For
+    /// example, `#projects` also matches `#projects/active`.
+    Tag(String),
+    /// Notes located in `folder` or a directory nested under it.
+    Folder(PathBuf),
+}
+
+impl QuerySource {
+    /// Builds a [`QuerySource`] from a `--from`-style CLI flag value.
+    ///
+    /// `None` (the flag omitted) selects [`Self::All`]. A value starting with
+    /// `#` selects [`Self::Tag`] (including nested sub-tags: `#book` also
+    /// matches `#book/fiction`). Any other value selects [`Self::Folder`].
+    #[must_use]
+    pub(crate) fn from_flag(flag: Option<&str>) -> Self {
+        match flag {
+            None => Self::All,
+            Some(value) if value.starts_with('#') => {
+                Self::Tag(value.to_owned())
+            }
+            Some(value) => Self::Folder(PathBuf::from(value)),
+        }
+    }
+
+    /// Whether `file` and its parsed `note` belong to this source.
+    #[inline]
+    #[must_use]
+    pub(super) fn is_match(&self, file: &FileRecord, note: &Note) -> bool {
+        match self {
+            Self::All => true,
+            Self::Tag(tag) => {
+                note.tags().iter().any(|t| t.is_nested_under(tag))
+            }
+            Self::Folder(folder) => file.folder().starts_with(folder),
+        }
+    }
+}
+
+/// Query row pairing a [`FileRecord`] with parsed [`Note`] metadata.
+///
+/// Task-level rows also carry one task item's fields. Each row resolves
+/// `file.*`, `task.*`, frontmatter, inline fields, tags, and derived inlinks
+/// for Template and CLI callers.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct IndexRecord {
+    file: FileRecord,
+    note: Note,
+    /// Overrides field resolution for exploded rows produced by
+    /// [`QueryOutcome::flatten`].
+    flattened: Vec<(FieldPath, FieldValue)>,
+    /// This row's task fields, set by [`super::FileIndex::query_tasks`].
+    /// `None` for page-level records.
+    task: Option<TaskInfo>,
+    /// Project-relative paths of Notes whose outlinks resolve to this row's
+    /// Note, set by
+    /// [`super::FileIndex::query`]/[`super::FileIndex::query_tasks`] from
+    /// [`super::inlinks::derive_inlinks`]. Empty for a Note nothing links to.
+    inlinks: Vec<PathBuf>,
+}
+
+/// Per-task fields layered onto an [`IndexRecord`] by
+/// [`super::FileIndex::query_tasks`]. A task-level row keeps its parent Note's
+/// `file`/`note` fields for filtering and display, adding only these two.
+///
+/// Distinct from [`IndexRecord::flattened`], which overrides an *existing*
+/// field path rather than adding new ones.
+#[derive(Clone, Debug, PartialEq)]
+struct TaskInfo {
+    completed: bool,
+    text: String,
+}
+
+impl IndexRecord {
+    /// Pairs `file` with its parsed `note`.
+    pub(super) fn new(file: FileRecord, note: Note) -> Self {
+        Self {
+            file,
+            note,
+            flattened: Vec::new(),
+            task: None,
+            inlinks: Vec::new(),
+        }
+    }
+
+    /// Returns this record as one task row, with `task.completed` and
+    /// `task.text` set to `completed`/`text`.
+    ///
+    /// Used by [`super::FileIndex::query_tasks`] to turn one page-level record
+    /// into one row per task item, retaining the parent Note's `file.*`,
+    /// frontmatter, inline-field, and tag metadata for filtering and display
+    /// via [`Self::field`].
+    pub(super) fn with_task(
+        mut self,
+        completed: bool,
+        text: impl Into<String>,
+    ) -> Self {
+        self.task = Some(TaskInfo {
+            completed,
+            text: text.into(),
+        });
+        self
+    }
+
+    /// Attaches `inlinks`, the project-relative paths of Notes whose outlinks
+    /// resolve to this row's Note.
+    ///
+    /// Set by [`super::FileIndex::query`] and [`super::FileIndex::query_tasks`]
+    /// from [`super::inlinks::derive_inlinks`].
+    pub(super) fn with_inlinks(mut self, inlinks: Vec<PathBuf>) -> Self {
+        self.inlinks = inlinks;
+        self
+    }
+
+    /// This row's task completion state, if it is a task-level row built by
+    /// [`super::FileIndex::query_tasks`]. `None` for page-level records.
+    #[inline]
+    #[must_use]
+    pub(crate) fn task_completed(&self) -> Option<bool> {
+        self.task.as_ref().map(|task| task.completed)
+    }
+
+    /// This row's task text, if it is a task-level row built by
+    /// [`super::FileIndex::query_tasks`]. `None` for page-level records.
+    #[inline]
+    #[must_use]
+    pub(crate) fn task_text(&self) -> Option<&str> {
+        self.task.as_ref().map(|task| task.text.as_str())
+    }
+
+    /// The indexed file's general metadata.
+    #[inline]
+    #[must_use]
+    pub(crate) fn file(&self) -> &FileRecord {
+        &self.file
+    }
+
+    /// The indexed file's parsed [`Note`] metadata.
+    #[inline]
+    #[must_use]
+    pub(crate) fn note(&self) -> &Note {
+        &self.note
+    }
+
+    /// Project-relative paths of Notes whose outlinks resolve to this row's
+    /// Note. Empty for a Note nothing links to.
+    #[inline]
+    #[must_use]
+    pub(crate) fn inlinks(&self) -> &[PathBuf] {
+        &self.inlinks
+    }
+
+    /// Resolves `path` against this record's file and note metadata.
+    ///
+    /// Resolves `file.*` accessors, `task.*` accessors, frontmatter fields,
+    /// inline fields, `tags`, and `inlinks`:
+    /// - Frontmatter fields take precedence over inline fields with the same
+    ///   key. See [`Note::fields`].
+    /// - A well-formed path this record has no value for, such as a missing
+    ///   frontmatter key or a `task.*` accessor on a page-level record,
+    ///   resolves to [`FieldValue::Null`] instead of erroring.
+    ///
+    /// # Errors
+    ///
+    /// - [`QueryError::UnknownFieldPath`] if `path` is malformed. See
+    ///   [`FieldPath::parse`].
+    #[inline]
+    pub(crate) fn field(&self, path: &str) -> Result<FieldValue, QueryError> {
+        Ok(self.resolve(&FieldPath::parse(path)?))
+    }
+
+    /// Resolves an already-parsed `path`, applying any [`Self::flattened`]
+    /// override.
+    fn resolve(&self, path: &FieldPath) -> FieldValue {
+        if let Some((_, value)) = self.flattened.iter().find(|(p, _)| p == path)
+        {
+            return value.clone();
+        }
+        match path {
+            FieldPath::File(field) => field.resolve(&self.file),
+            FieldPath::Task(field) => self.task.as_ref().map_or(
+                FieldValue::Null,
+                |task| match field {
+                    TaskField::Completed => FieldValue::Bool(task.completed),
+                    TaskField::Text => FieldValue::String(task.text.clone()),
+                },
+            ),
+            FieldPath::Tags => FieldValue::List(
+                self.note
+                    .tags()
+                    .iter()
+                    .map(|tag| FieldValue::String(tag.as_str().to_owned()))
+                    .collect(),
+            ),
+            FieldPath::Inlinks => FieldValue::List(
+                self.inlinks
+                    .iter()
+                    .map(|linking_note| {
+                        FieldValue::String(
+                            linking_note.to_string_lossy().into_owned(),
+                        )
+                    })
+                    .collect(),
+            ),
+            FieldPath::Metadata(key) => self
+                .note
+                .fields()
+                .find(|field| field.key() == key.as_str())
+                .map_or(FieldValue::Null, |field| field.value().clone()),
+        }
+    }
+
+    /// Returns a copy of this record with `path` overridden to `value`.
+    ///
+    /// Used for exploded rows produced by [`QueryOutcome::flatten`].
+    fn with_flattened(mut self, path: FieldPath, value: FieldValue) -> Self {
+        if let Some(entry) = self.flattened.iter_mut().find(|(p, _)| p == &path)
+        {
+            entry.1 = value;
+        } else {
+            self.flattened.push((path, value));
+        }
+        self
+    }
+}
 
 /// Ordered collection of [`IndexRecord`] rows produced by an index query.
 ///
@@ -392,236 +622,6 @@ fn table_cell_text(value: &FieldValue) -> String {
     escape_table_text(&field_text(value))
 }
 
-/// Query row pairing a [`FileRecord`] with parsed [`Note`] metadata.
-///
-/// Task-level rows also carry one task item's fields. Each row resolves
-/// `file.*`, `task.*`, frontmatter, inline fields, tags, and derived inlinks
-/// for Template and CLI callers.
-#[derive(Clone, Debug, PartialEq)]
-pub(crate) struct IndexRecord {
-    file: FileRecord,
-    note: Note,
-    /// Overrides field resolution for exploded rows produced by
-    /// [`QueryOutcome::flatten`].
-    flattened: Vec<(FieldPath, FieldValue)>,
-    /// This row's task fields, set by [`super::FileIndex::query_tasks`].
-    /// `None` for page-level records.
-    task: Option<TaskInfo>,
-    /// Project-relative paths of Notes whose outlinks resolve to this row's
-    /// Note, set by
-    /// [`super::FileIndex::query`]/[`super::FileIndex::query_tasks`] from
-    /// [`super::inlinks::derive_inlinks`]. Empty for a Note nothing links to.
-    inlinks: Vec<PathBuf>,
-}
-
-/// Per-task fields layered onto an [`IndexRecord`] by
-/// [`super::FileIndex::query_tasks`]. A task-level row keeps its parent Note's
-/// `file`/`note` fields for filtering and display, adding only these two.
-///
-/// Distinct from [`IndexRecord::flattened`], which overrides an *existing*
-/// field path rather than adding new ones.
-#[derive(Clone, Debug, PartialEq)]
-struct TaskInfo {
-    completed: bool,
-    text: String,
-}
-
-impl IndexRecord {
-    /// Pairs `file` with its parsed `note`.
-    pub(super) fn new(file: FileRecord, note: Note) -> Self {
-        Self {
-            file,
-            note,
-            flattened: Vec::new(),
-            task: None,
-            inlinks: Vec::new(),
-        }
-    }
-
-    /// Returns this record as one task row, with `task.completed` and
-    /// `task.text` set to `completed`/`text`.
-    ///
-    /// Used by [`super::FileIndex::query_tasks`] to turn one page-level record
-    /// into one row per task item, retaining the parent Note's `file.*`,
-    /// frontmatter, inline-field, and tag metadata for filtering and display
-    /// via [`Self::field`].
-    pub(super) fn with_task(
-        mut self,
-        completed: bool,
-        text: impl Into<String>,
-    ) -> Self {
-        self.task = Some(TaskInfo {
-            completed,
-            text: text.into(),
-        });
-        self
-    }
-
-    /// Attaches `inlinks`, the project-relative paths of Notes whose outlinks
-    /// resolve to this row's Note.
-    ///
-    /// Set by [`super::FileIndex::query`] and [`super::FileIndex::query_tasks`]
-    /// from [`super::inlinks::derive_inlinks`].
-    pub(super) fn with_inlinks(mut self, inlinks: Vec<PathBuf>) -> Self {
-        self.inlinks = inlinks;
-        self
-    }
-
-    /// This row's task completion state, if it is a task-level row built by
-    /// [`super::FileIndex::query_tasks`]. `None` for page-level records.
-    #[inline]
-    #[must_use]
-    pub(crate) fn task_completed(&self) -> Option<bool> {
-        self.task.as_ref().map(|task| task.completed)
-    }
-
-    /// This row's task text, if it is a task-level row built by
-    /// [`super::FileIndex::query_tasks`]. `None` for page-level records.
-    #[inline]
-    #[must_use]
-    pub(crate) fn task_text(&self) -> Option<&str> {
-        self.task.as_ref().map(|task| task.text.as_str())
-    }
-
-    /// The indexed file's general metadata.
-    #[inline]
-    #[must_use]
-    pub(crate) fn file(&self) -> &FileRecord {
-        &self.file
-    }
-
-    /// The indexed file's parsed [`Note`] metadata.
-    #[inline]
-    #[must_use]
-    pub(crate) fn note(&self) -> &Note {
-        &self.note
-    }
-
-    /// Project-relative paths of Notes whose outlinks resolve to this row's
-    /// Note. Empty for a Note nothing links to.
-    #[inline]
-    #[must_use]
-    pub(crate) fn inlinks(&self) -> &[PathBuf] {
-        &self.inlinks
-    }
-
-    /// Resolves `path` against this record's file and note metadata.
-    ///
-    /// Resolves `file.*` accessors, `task.*` accessors, frontmatter fields,
-    /// inline fields, `tags`, and `inlinks`:
-    /// - Frontmatter fields take precedence over inline fields with the same
-    ///   key. See [`Note::fields`].
-    /// - A well-formed path this record has no value for, such as a missing
-    ///   frontmatter key or a `task.*` accessor on a page-level record,
-    ///   resolves to [`FieldValue::Null`] instead of erroring.
-    ///
-    /// # Errors
-    ///
-    /// - [`QueryError::UnknownFieldPath`] if `path` is malformed. See
-    ///   [`FieldPath::parse`].
-    #[inline]
-    pub(crate) fn field(&self, path: &str) -> Result<FieldValue, QueryError> {
-        Ok(self.resolve(&FieldPath::parse(path)?))
-    }
-
-    /// Resolves an already-parsed `path`, applying any [`Self::flattened`]
-    /// override.
-    fn resolve(&self, path: &FieldPath) -> FieldValue {
-        if let Some((_, value)) = self.flattened.iter().find(|(p, _)| p == path)
-        {
-            return value.clone();
-        }
-        match path {
-            FieldPath::File(field) => field.resolve(&self.file),
-            FieldPath::Task(field) => self.task.as_ref().map_or(
-                FieldValue::Null,
-                |task| match field {
-                    TaskField::Completed => FieldValue::Bool(task.completed),
-                    TaskField::Text => FieldValue::String(task.text.clone()),
-                },
-            ),
-            FieldPath::Tags => FieldValue::List(
-                self.note
-                    .tags()
-                    .iter()
-                    .map(|tag| FieldValue::String(tag.as_str().to_owned()))
-                    .collect(),
-            ),
-            FieldPath::Inlinks => FieldValue::List(
-                self.inlinks
-                    .iter()
-                    .map(|linking_note| {
-                        FieldValue::String(
-                            linking_note.to_string_lossy().into_owned(),
-                        )
-                    })
-                    .collect(),
-            ),
-            FieldPath::Metadata(key) => self
-                .note
-                .fields()
-                .find(|field| field.key() == key.as_str())
-                .map_or(FieldValue::Null, |field| field.value().clone()),
-        }
-    }
-
-    /// Returns a copy of this record with `path` overridden to `value`.
-    ///
-    /// Used for exploded rows produced by [`QueryOutcome::flatten`].
-    fn with_flattened(mut self, path: FieldPath, value: FieldValue) -> Self {
-        if let Some(entry) = self.flattened.iter_mut().find(|(p, _)| p == &path)
-        {
-            entry.1 = value;
-        } else {
-            self.flattened.push((path, value));
-        }
-        self
-    }
-}
-
-/// Selects which markdown Notes a page-level or task-level query includes.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) enum Source {
-    /// Every indexed markdown Note.
-    All,
-    /// Notes tagged with a markdown tag, or a sub-tag nested under it. For
-    /// example, `#projects` also matches `#projects/active`.
-    Tag(String),
-    /// Notes located in `folder` or a directory nested under it.
-    Folder(PathBuf),
-}
-
-impl Source {
-    /// Builds a [`Source`] from a `--from`-style CLI flag value.
-    ///
-    /// `None` (the flag omitted) selects [`Self::All`]. A value starting with
-    /// `#` selects [`Self::Tag`] (including nested sub-tags: `#book` also
-    /// matches `#book/fiction`). Any other value selects [`Self::Folder`].
-    #[must_use]
-    pub(crate) fn from_flag(flag: Option<&str>) -> Self {
-        match flag {
-            None => Self::All,
-            Some(value) if value.starts_with('#') => {
-                Self::Tag(value.to_owned())
-            }
-            Some(value) => Self::Folder(PathBuf::from(value)),
-        }
-    }
-
-    /// Whether `file` and its parsed `note` belong to this source.
-    #[inline]
-    #[must_use]
-    pub(super) fn is_match(&self, file: &FileRecord, note: &Note) -> bool {
-        match self {
-            Self::All => true,
-            Self::Tag(tag) => {
-                note.tags().iter().any(|t| t.is_nested_under(tag))
-            }
-            Self::Folder(folder) => file.folder().starts_with(folder),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::{fs, path::Path};
@@ -643,7 +643,9 @@ mod tests {
             for (name, content) in files {
                 fs::write(temp.join(name), content).expect("write note");
             }
-            FileIndex::build(temp).expect("build index").query(&Source::All)
+            FileIndex::build(temp)
+                .expect("build index")
+                .query(&QuerySource::All)
         }
 
         /// Builds a single-record [`QueryOutcome`] from one markdown Note's
@@ -666,7 +668,7 @@ mod tests {
             let record = index.record(Path::new("a.md")).expect("record");
             let note = index.note(Path::new("a.md")).expect("note");
 
-            assert!(Source::All.is_match(record, note));
+            assert!(QuerySource::All.is_match(record, note));
         }
 
         #[test]
@@ -678,8 +680,12 @@ mod tests {
             let record = index.record(Path::new("a.md")).expect("record");
             let note = index.note(Path::new("a.md")).expect("note");
 
-            assert!(Source::Tag("#projects".to_owned()).is_match(record, note));
-            assert!(!Source::Tag("#books".to_owned()).is_match(record, note));
+            assert!(
+                QuerySource::Tag("#projects".to_owned()).is_match(record, note)
+            );
+            assert!(
+                !QuerySource::Tag("#books".to_owned()).is_match(record, note)
+            );
         }
 
         #[test]
@@ -697,11 +703,11 @@ mod tests {
                 index.note(Path::new("projects/active/task.md")).expect("note");
 
             assert!(
-                Source::Folder(PathBuf::from("projects"))
+                QuerySource::Folder(PathBuf::from("projects"))
                     .is_match(record, note)
             );
             assert!(
-                !Source::Folder(PathBuf::from("archive"))
+                !QuerySource::Folder(PathBuf::from("archive"))
                     .is_match(record, note)
             );
         }
@@ -714,20 +720,20 @@ mod tests {
         use super::*;
 
         #[rstest]
-        #[case::none_selects_all(None, Source::All)]
+        #[case::none_selects_all(None, QuerySource::All)]
         #[case::hash_prefix_selects_tag(
             Some("#projects"),
-            Source::Tag("#projects".to_owned())
+            QuerySource::Tag("#projects".to_owned())
         )]
         #[case::other_value_selects_folder(
             Some("books"),
-            Source::Folder(PathBuf::from("books"))
+            QuerySource::Folder(PathBuf::from("books"))
         )]
         fn selects_the_expected_source_variant(
             #[case] flag: Option<&str>,
-            #[case] expected: Source,
+            #[case] expected: QuerySource,
         ) {
-            assert_eq!(Source::from_flag(flag), expected);
+            assert_eq!(QuerySource::from_flag(flag), expected);
         }
     }
 
@@ -1463,7 +1469,7 @@ mod tests {
             .expect("write file");
             let outcome = FileIndex::build(temp.path())
                 .expect("build index")
-                .query_tasks(&Source::All);
+                .query_tasks(&QuerySource::All);
 
             let rendered = outcome.task_list().expect("valid task_list");
 
@@ -1504,7 +1510,7 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("a.md"), "# A").expect("write file");
             let index = FileIndex::build(temp.path()).expect("build index");
-            let outcome = index.query(&Source::All);
+            let outcome = index.query(&QuerySource::All);
 
             assert!(!outcome.is_empty());
             assert_eq!(outcome.len(), 1);
@@ -1515,7 +1521,7 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("a.md"), "# A").expect("write file");
             let index = FileIndex::build(temp.path()).expect("build index");
-            let outcome = index.query(&Source::All);
+            let outcome = index.query(&QuerySource::All);
 
             assert!(outcome.get(0).is_some());
             assert_eq!(outcome.get(1), None);
@@ -1526,7 +1532,7 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("a.md"), "# A").expect("write file");
             let index = FileIndex::build(temp.path()).expect("build index");
-            let outcome = index.query(&Source::All);
+            let outcome = index.query(&QuerySource::All);
 
             let via_iter: Vec<&IndexRecord> = outcome.iter().collect();
             assert_eq!(via_iter.len(), 1);

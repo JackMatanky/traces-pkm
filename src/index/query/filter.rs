@@ -426,7 +426,7 @@ mod tests {
         for (name, content) in files {
             fs::write(temp.join(name), content).expect("write note");
         }
-        FileIndex::build(temp).expect("build index").query(&Source::All)
+        FileIndex::build(temp).expect("build index").query(&QuerySource::All)
     }
 
     fn outcome_for(temp: &Path, content: &str) -> QueryOutcome {
