@@ -367,6 +367,22 @@ mod tests {
         }
 
         #[test]
+        fn resolves_an_ambiguous_self_referential_stem_to_itself() {
+            // "a.md" and "b/a.md" share stem "a"; linking from "a.md" itself
+            // makes "a.md" the unique nearest candidate (distance 0, same
+            // folder as itself) over "b/a.md" (distance 1).
+            let notes = [
+                parse_markdown("a.md", "# Self"),
+                parse_markdown("b/a.md", "# Other"),
+            ];
+
+            assert_eq!(
+                resolve(&notes, "a.md", LinkTarget::Path("a")),
+                Some(Target(Path::new("a.md")))
+            );
+        }
+
+        #[test]
         fn returns_none_for_an_ambiguous_stem_match_at_equal_distance() {
             // Both candidates are one folder away from the root-level
             // linking Note, so proximity itself cannot break the tie.
