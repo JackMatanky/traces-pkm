@@ -1218,6 +1218,42 @@ mod tests {
         }
     }
 
+    mod caching {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn tasks_reuses_the_index_query_cached_in_the_same_render() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_note(temp.path(), "a.md", "# A");
+            let page_ops = Arc::new(QueryOps::page(Arc::from(temp.path())));
+            let task_ops = Arc::new(QueryOps::task(Arc::from(temp.path())));
+            let page_all = page_ops
+                .get_value(&Value::from("all"))
+                .expect("all is a known method");
+            let task_all = task_ops
+                .get_value(&Value::from("all"))
+                .expect("all is a known method");
+            let env = Environment::new();
+            let state = env.empty_state();
+
+            // Populates state's cached FileIndex; both namespaces dispatch
+            // through the same INDEX_CACHE_KEY.
+            page_all.call(&state, &[]).expect("query.all succeeds");
+            // Written after the index was cached: a cache-sharing tasks.all()
+            // call must not observe this new task.
+            write_note(temp.path(), "todo.md", "- [ ] buy milk\n");
+            let tasks = task_all.call(&state, &[]).expect("tasks.all succeeds");
+
+            let count = tasks
+                .downcast_object_ref::<QueryOutcome>()
+                .expect("value wraps a QueryOutcome")
+                .len();
+            assert_eq!(count, 0);
+        }
+    }
+
     mod task_expansion {
         use pretty_assertions::assert_eq;
 
