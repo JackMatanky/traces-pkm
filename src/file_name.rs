@@ -1,19 +1,21 @@
 //! File-name newtypes shared by the index and template layers.
 //!
-//! [`FileName`] keeps the final path component exactly as written, including
-//! any extension. [`BaseName`] stores the same name with the extension
-//! stripped. [`BaseNameRef`] is [`BaseName`]'s borrowed counterpart, mirroring
-//! the `&str`/`String` split, for callers that only need a stem for one
-//! comparison or hash lookup. Keeping these distinct avoids passing
-//! interchangeable strings through code that needs different stem, extension,
-//! or ownership semantics.
+//! - [`FileName`] keeps the final path component exactly as written, including
+//!   any extension.
+//! - [`BaseName`] stores the same name with the extension stripped.
+//! - [`BaseNameRef`] is [`BaseName`]'s borrowed counterpart, mirroring the
+//!   `&str`/`String` split, for callers that only need a stem for one
+//!   comparison or hash lookup.
+//!
+//! Keeping these types distinct avoids passing interchangeable strings through
+//! code that needs different stem, extension, or ownership semantics.
 
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-/// File's final path component, including any extension.
+/// A file's final path component, including any extension.
 ///
 /// For `todo.md`, this stores `todo.md`. Use [`BaseName`] when the extension
 /// should be stripped.
@@ -49,7 +51,7 @@ impl TryFrom<&Path> for FileName {
     }
 }
 
-/// File name with any extension stripped.
+/// A file name with any extension stripped.
 ///
 /// For `todo.md`, this stores `todo`. Dotfiles such as `.gitignore` keep their
 /// full text as the stem.
@@ -76,12 +78,12 @@ impl From<&FileName> for BaseName {
     }
 }
 
-/// Borrowed counterpart to [`BaseName`]: a file stem borrowed from a
-/// [`Path`] instead of owned, mirroring the `&str`/`String` split.
+/// Borrowed counterpart to [`BaseName`]: a file stem borrowed from a [`Path`]
+/// instead of owned, mirroring the `&str`/`String` split.
 ///
 /// Use this instead of [`BaseName`] where a stem is only needed for one
-/// comparison or hash lookup — such as the wikilink stem index in
-/// [`inlinks`](crate::index::inlinks) — so resolving many candidates doesn't
+/// comparison or hash lookup, such as the wikilink stem index in
+/// [`inlinks`](crate::index::inlinks), so resolving many candidates doesn't
 /// allocate a [`BaseName`] per candidate.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub(crate) struct BaseNameRef<'a>(&'a str);

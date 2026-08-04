@@ -4,10 +4,11 @@
 //! [`Note`] outlinks. It is a full recompute over every indexed Note, never a
 //! per-note patch, because resolving one Note's outlink can depend on every
 //! *other* indexed Note (see [`resolve_target`]'s stem-matching tier).
-//! [`super::FileIndex::build`] and [`super::FileIndex::refresh`] (the latter
-//! only when something changed) call this once and persist the result;
-//! [`super::FileIndex::query`]/[`super::FileIndex::query_tasks`] read the
-//! already-computed map instead of calling it.
+//!
+//! - [`super::FileIndex::build`] and [`super::FileIndex::refresh`] (the latter
+//!   only when something changed) call this once and persist the result.
+//! - [`super::FileIndex::query`] and [`super::FileIndex::query_tasks`] read the
+//!   already-computed map instead of calling it.
 
 use std::{
     collections::{BTreeSet, HashMap},
@@ -20,31 +21,32 @@ use crate::{
     note::{LinkTarget, Note},
 };
 
-/// Target-keyed inbound link edges: every Note path to the paths of every
-/// Note whose outlinks resolve to it. Returned by [`derive_inlinks`] and
-/// the type persisted/reloaded by [`super::store`].
+/// Target-keyed inbound link edges: maps every Note path to the paths of every
+/// Note whose outlinks resolve to it. Returned by [`derive_inlinks`]; persisted
+/// and reloaded by [`super::store`].
 pub(super) type InlinkMap = HashMap<PathBuf, Vec<PathBuf>>;
 
 /// Derives inbound links for every indexed Note from its peers' outlinks.
 ///
-/// For each outlink in each Note, resolves the link target against `notes`
-/// (see [`resolve_target`]) and records an inbound edge from the linking
-/// Note to the resolved target Note. Unresolvable targets (external URLs,
-/// links to non-Notes, or links with no matching Note) contribute no edge.
+/// For each outlink in each Note, resolves the link target against `notes` (see
+/// [`resolve_target`]) and records an inbound edge from the linking Note to the
+/// resolved target Note. Unresolvable targets (external URLs, links to
+/// non-Notes, or links with no matching Note) contribute no edge.
 ///
 /// Duplicate outlinks to the same target within one Note, and self-links,
-/// collapse to a single edge rather than duplicating or otherwise
-/// corrupting the result: edges are deduplicated `(target, source)` pairs.
+/// collapse to a single edge rather than duplicating or otherwise corrupting
+/// the result: edges are deduplicated `(target, source)` pairs.
 ///
 /// # Performance
 ///
-/// O(n) to build the stem index (see [`build_stem_index`]) once, plus O(l log
-/// n) total for `l` outlinks: exact-path resolution binary-searches the
-/// path-sorted slice `notes` (already sorted by [`super::FileIndex::build`]/
-/// [`super::FileIndex::refresh`]/[`super::FileIndex::load`]), and the
-/// wikilink-by-name fallback tier looks its stem up in the index — O(1)
-/// average — then scans only that stem's candidates (not all of `notes`) to
-/// break ties by proximity.
+/// - O(n) to build the stem index once (see [`build_stem_index`]).
+/// - O(l log n) total for `l` outlinks: exact-path resolution binary-searches
+///   the path-sorted slice `notes` (already sorted by
+///   [`super::FileIndex::build`]/[`super::FileIndex::refresh`]/
+///   [`super::FileIndex::load`]).
+/// - The wikilink-by-name fallback tier looks its stem up in the index in O(1)
+///   average time, then scans only that stem's candidates (not all of `notes`)
+///   to break ties by proximity.
 pub(super) fn derive_inlinks(notes: &[Note]) -> InlinkMap {
     let stem_index = build_stem_index(notes);
     let mut edges: HashMap<Target<'_>, BTreeSet<Source<'_>>> = HashMap::new();
@@ -74,9 +76,9 @@ pub(super) fn derive_inlinks(notes: &[Note]) -> InlinkMap {
 /// Maps every indexed Note's file stem to the paths of every Note sharing it.
 ///
 /// Built once per [`derive_inlinks`] call and threaded through
-/// [`resolve_target`]/[`find_nearest_by_stem`], replacing a rescan of `notes`
-/// per unresolved wikilink outlink with an O(1)-average lookup plus a scan
-/// bounded by the matched stem's own candidate count.
+/// [`resolve_target`] and [`find_nearest_by_stem`]. Replaces a rescan of
+/// `notes` per unresolved wikilink outlink with an O(1)-average lookup, plus a
+/// scan bounded by the matched stem's own candidate count.
 fn build_stem_index(notes: &[Note]) -> HashMap<BaseNameRef<'_>, Vec<&Path>> {
     let mut index: HashMap<BaseNameRef<'_>, Vec<&Path>> =
         HashMap::with_capacity(notes.len());
@@ -92,8 +94,8 @@ fn build_stem_index(notes: &[Note]) -> HashMap<BaseNameRef<'_>, Vec<&Path>> {
 ///
 /// Distinct from [`Source`] so [`derive_inlinks`]'s `edges` map can't
 /// accidentally record an edge in the wrong direction: both wrap the same
-/// `&Path` representation, so nothing but the type system would catch a
-/// swapped `edges.entry(source).or_default().insert(target)`.
+/// `&Path` representation, so nothing but the type system would catch a swapped
+/// `edges.entry(source).or_default().insert(target)`.
 #[derive(Copy, Clone, Debug, Eq, Hash, PartialEq)]
 struct Target<'a>(&'a Path);
 
@@ -104,6 +106,7 @@ impl Target<'_> {
 }
 
 /// A Note that links *to* a [`Target`]: the path recorded as an inbound edge.
+///
 /// See [`Target`] for why this is a separate type.
 #[derive(Copy, Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 struct Source<'a>(&'a Path);
@@ -117,18 +120,19 @@ impl Source<'_> {
 /// Resolves an already-split [`LinkTarget`] to an indexed Note's path.
 ///
 /// Tries, in order:
+///
 /// 1. An exact project-relative path match (Markdown-style links).
 /// 2. The same path with a `.md` extension appended, when `target` has no
 ///    extension of its own (Markdown-style links that omit the extension).
 /// 3. The Note nearest `from` among every indexed Note sharing `target`'s file
 ///    stem (Obsidian wikilink-by-name resolution), attempted only when
 ///    [`LinkTarget::is_basename`] says `target`'s path has no directory prefix.
-///    A qualified path (such as `archive/foo`) that fails the first two
-///    attempts resolves to `None` rather than falling back to a whole-index
-///    name search that could match an unrelated same-named Note elsewhere.
-///    Ambiguity among same-stem candidates resolves by
-///    [`find_nearest_by_stem`]'s proximity rule; a genuine tie still resolves
-///    to `None` rather than guessing.
+///
+/// A qualified path (such as `archive/foo`) that fails the first two attempts
+/// resolves to `None` rather than falling back to a whole-index name search
+/// that could match an unrelated same-named Note elsewhere. Ambiguity among
+/// same-stem candidates resolves by [`find_nearest_by_stem`]'s proximity rule;
+/// a genuine tie still resolves to `None` rather than guessing.
 ///
 /// # Arguments
 ///
@@ -144,8 +148,8 @@ impl Source<'_> {
 /// segment is matched, so a link into a heading still resolves to the Note that
 /// owns it.
 ///
-/// This does not resolve note-directory-relative paths (`../sibling.md`);
-/// add that if real vaults need it.
+/// This does not resolve note-directory-relative paths (`../sibling.md`); add
+/// that if real vaults need it.
 fn resolve_target<'a>(
     notes: &'a [Note],
     stem_index: &HashMap<BaseNameRef<'a>, Vec<&'a Path>>,
@@ -178,9 +182,9 @@ fn resolve_target<'a>(
 /// Obsidian's shortest-unique-path rule.
 ///
 /// A single candidate resolves outright. Two or more resolve to whichever has
-/// the smallest [`folder_distance`] from `from`; a genuine tie — no single
-/// nearest candidate — resolves to `None` rather than guessing. Zero
-/// candidates also resolve to `None`.
+/// the smallest [`folder_distance`] from `from`; a genuine tie (no single
+/// nearest candidate) resolves to `None` rather than guessing. Zero candidates
+/// also resolve to `None`.
 ///
 /// # Arguments
 ///
@@ -211,18 +215,19 @@ fn find_nearest_by_stem<'a>(
 
 /// Path-segment distance between `a`'s and `b`'s containing folders: steps up
 /// from `a`'s folder to its nearest shared ancestor with `b`'s folder, plus
-/// steps back down to `b`'s folder. Files in the same folder are distance
-/// `0`. This is [`resolve_target`]'s proximity tie-break for ambiguous
-/// wikilink stem matches.
+/// steps back down to `b`'s folder. Files in the same folder are distance `0`.
+/// This is [`resolve_target`]'s proximity tie-break for ambiguous wikilink stem
+/// matches.
 ///
 /// Reads folder placement straight from each Note's own `path()` rather than
-/// joining [`super::FileRecord`]'s precomputed `folder`/`name` fields:
+/// joining [`super::FileRecord`]'s precomputed `folder`/`name` fields.
 /// `Note::path()` already encodes the full project-relative location, so
-/// `Path::parent()`/`components()` gives the same folder data `FileRecord`
-/// would, without pulling a second, independently-sorted collection into a
-/// resolution pass that only ever needed `&[Note]`. See
-/// [`super::matched_pairs`] for where `FileRecord` and `Note` actually do
-/// need joining (page-level query output), which this pass is not.
+/// `Path::parent()` and `components()` give the same folder data
+/// `FileRecord` would, without pulling a second, independently sorted
+/// collection into a resolution pass that only ever needed `&[Note]`.
+///
+/// See [`super::matched_pairs`] for where `FileRecord` and `Note` do need
+/// joining (page-level query output); this pass is not that case.
 fn folder_distance(a: &Path, b: &Path) -> usize {
     let a_folder = a.parent().unwrap_or_else(|| Path::new(""));
     let b_folder = b.parent().unwrap_or_else(|| Path::new(""));
