@@ -6,14 +6,14 @@
 
 **Category:** enhancement
 
-**Status:** ready-for-agent
+**Status:** completed
 
-- [ ] Decide whether `Note` embeds or references its `FileRecord` (or just `folder`/`name`), or whether link resolution instead takes `&[FileRecord]` alongside `&[Note]`, so `resolve_target`/`find_unique_by_stem` can see folder placement without re-deriving it from `Path`.
-- [ ] Add `BaseNameRef`, a borrowed counterpart to `BaseName` (mirroring the `&str`/`String` split), so stem comparisons in the resolution fallback path don't need an owned `BaseName` per candidate.
-- [ ] Build a stem→candidate-paths index once per `derive_inlinks` call and thread it through `resolve_target`, replacing `find_unique_by_stem`'s O(n) rescan-per-unresolved-wikilink (fixes the documented O(l·n) worst case) and giving the proximity rule its same-stem candidate list in a single O(n) pass.
-- [ ] An ambiguous wikilink stem match resolves via Obsidian's shortest-unique-path proximity rule (nearest common ancestor / fewest path segments from the linking Note) instead of unconditionally resolving to `None`.
-- [ ] Ambiguity proximity itself cannot break (equal-distance candidates) still resolves to `None` rather than guessing.
-- [ ] Existing `resolve_target`/`find_unique_by_stem` tests in `inlinks.rs` covering "ambiguous stem match resolves to None" are extended to cover proximity-resolved cases and the still-ambiguous equal-distance case.
+- [x] Decide whether `Note` embeds or references its `FileRecord` (or just `folder`/`name`), or whether link resolution instead takes `&[FileRecord]` alongside `&[Note]`, so `resolve_target`/`find_unique_by_stem` can see folder placement without re-deriving it from `Path`.
+- [x] Add `BaseNameRef`, a borrowed counterpart to `BaseName` (mirroring the `&str`/`String` split), so stem comparisons in the resolution fallback path don't need an owned `BaseName` per candidate.
+- [x] Build a stem→candidate-paths index once per `derive_inlinks` call and thread it through `resolve_target`, replacing `find_unique_by_stem`'s O(n) rescan-per-unresolved-wikilink (fixes the documented O(l·n) worst case) and giving the proximity rule its same-stem candidate list in a single O(n) pass.
+- [x] An ambiguous wikilink stem match resolves via Obsidian's shortest-unique-path proximity rule (nearest common ancestor / fewest path segments from the linking Note) instead of unconditionally resolving to `None`.
+- [x] Ambiguity proximity itself cannot break (equal-distance candidates) still resolves to `None` rather than guessing.
+- [x] Existing `resolve_target`/`find_unique_by_stem` tests in `inlinks.rs` covering "ambiguous stem match resolves to None" are extended to cover proximity-resolved cases and the still-ambiguous equal-distance case.
 
 ## Comments
 
@@ -73,3 +73,27 @@ When a wikilink's stem matches more than one indexed Note, resolution picks the 
 - Note-directory-relative resolution (`../sibling.md`) — a separate, already-flagged `ponytail:` gap in the same function, not part of this ticket unless naturally subsumed.
 - Any change to outlink extraction (`note/links.rs`) or to Markdown-style (non-wikilink) link resolution, which already resolves unambiguously by path.
 - Full Dataview/Obsidian parity beyond wikilink stem ambiguity (e.g. alias resolution, block references).
+
+### Resolution
+
+**Note/FileRecord decision:** neither embedding nor threading `&[FileRecord]`.
+`Note::path()` already encodes full project-relative folder placement;
+`folder_distance` (`inlinks.rs`) reads it directly via `Path::parent()`/
+`components()`, which is exactly the data `FileRecord::folder`/`name` would
+supply, without pulling a second, independently-sorted collection into a
+resolution pass that only ever needed `&[Note]`. Justified in `folder_distance`'s
+doc comment, which points at `matched_pairs` (`index/mod.rs`) as the actual seam
+where `FileRecord` and `Note` need joining (page-level query output) — this pass
+isn't that.
+
+`BaseNameRef<'a>` added to `file_name.rs`, borrowed via `Path::file_stem()`,
+`Borrow<str>`-compatible for `HashMap` lookups. `build_stem_index` builds a
+`HashMap<BaseNameRef<'_>, Vec<&Path>>` once per `derive_inlinks` call
+(`HashMap::with_capacity(notes.len())`), replacing the O(n) per-outlink
+rescan. `find_nearest_by_stem` resolves ambiguity by `folder_distance`
+(shared-ancestor path-segment distance from the linking Note); a genuine tie
+at the minimum distance still resolves to `None`.
+
+Tests: `resolve_target` proximity-resolved and equal-distance-tie cases;
+`derive_inlinks` end-to-end nearest-note resolution; `BaseNameRef` unit tests
+in `file_name.rs`.
