@@ -210,7 +210,11 @@ fn find_nearest_by_stem<'a>(
             }
         }
     }
-    (!tied).then(|| nearest.map(|(_, path)| path)).flatten()
+    if tied {
+        None
+    } else {
+        nearest.map(|(_, path)| path)
+    }
 }
 
 /// Path-segment distance between `a`'s and `b`'s containing folders: steps up
