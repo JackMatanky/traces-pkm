@@ -24,6 +24,11 @@ gitleaks = "latest"
 "cargo:adrs" = { version = "latest", install_env = { RUSTUP_TOOLCHAIN = "nightly" } }
 "cargo:ryl" = { version = "latest", install_env = { RUSTUP_TOOLCHAIN = "nightly" } }
 
+[settings]
+# Pin resolved "latest" tool versions (hk, taplo, gitleaks, cargo:* subcommands)
+# into mise.lock so installs are reproducible across machines and CI.
+lockfile = true
+
 [env]
 HK_MISE = "1"
 ADR_DIRECTORY = "docs/adr/"
@@ -37,9 +42,16 @@ alias = "c"
 description = "Debug build"
 run = "cargo build"
 alias = "b"
+sources = ["src/**/*.rs", "Cargo.toml", "Cargo.lock"]
+outputs = ["target/debug/traces-pkm"]
 
+# Scoping: extra args pass straight through to nextest (no usage spec = unvalidated passthrough).
+#   mise run test -- <name-substring>     filter by test/module path, e.g. index::query
+#   mise run test -- --test <file>        run one integration test file, e.g. init_cli (tests/init_cli.rs)
+#   mise run test -- --bin <name> / --lib run one binary's tests / library unit tests only
+#   mise run test -- -E '<filterset>'     full nextest filterset DSL (https://nexte.st/docs/filtersets)
 [tasks.test]
-description = "Run tests with nextest"
+description = "Run tests with nextest (pass -- <nextest args> to scope by name, module, file, or filterset)"
 run = "cargo nextest run"
 depends = ["check"]
 alias = "t"
@@ -50,6 +62,7 @@ run = "cargo test --workspace"
 
 [tasks.lint]
 description = "Run all hk linters"
+alias = "l"
 run = "hk check"
 
 [tasks.fix]
@@ -58,16 +71,28 @@ run = "hk fix"
 
 [tasks.fmt]
 description = "Format all Rust code (nightly)"
+alias = "f"
 run = "cargo fmt --all"
 
 [tasks.clippy]
 description = "Run clippy with deny warnings"
-run = "cargo clippy --workspace -- -D warnings"
+usage = 'flag "-f --fix" help="Auto-apply fixes (--fix --allow-dirty --allow-staged)"'
+run = '''
+#!/usr/bin/env bash
+set -euo pipefail
+args=(--workspace)
+if [ "${usage_fix:-}" = "true" ]; then
+  args+=(--fix --allow-dirty --allow-staged)
+fi
+cargo clippy "${args[@]}" -- -D warnings
+'''
 
 [tasks.doc]
 description = "Build documentation (warnings as errors)"
 run = "cargo doc --no-deps"
 env = { RUSTDOCFLAGS = "-D warnings" }
+sources = ["src/**/*.rs", "Cargo.toml"]
+outputs = ["target/doc"]
 
 [tasks.audit]
 description = "Run cargo deny audit"
@@ -75,6 +100,7 @@ run = "cargo deny check"
 
 [tasks.verify]
 description = "Full verification gate: format, lint, clippy, tests, doctests, audit"
+alias = "v"
 depends = ["fmt", "lint", "clippy", "test-all", "audit"]
 
 [tasks.coverage]
@@ -97,6 +123,8 @@ run = "hk install --mise"
 description = "Release build"
 run = "cargo build --release"
 alias = "r"
+sources = ["src/**/*.rs", "Cargo.toml", "Cargo.lock"]
+outputs = ["target/release/traces-pkm"]
 
 [hooks]
 postinstall = "hk install --mise"
