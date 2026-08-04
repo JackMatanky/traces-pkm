@@ -8,7 +8,6 @@ use std::{
     collections::HashMap,
     fs,
     path::{Path, PathBuf},
-    str,
 };
 
 use redb::{
@@ -23,11 +22,11 @@ use super::{
 };
 use crate::note::Note;
 
-/// TOML-encoded [`FileRecord`] bytes keyed by project-relative path.
+/// Postcard-encoded [`FileRecord`] bytes keyed by project-relative path.
 const FILE_RECORDS: TableDefinition<&str, &[u8]> =
     TableDefinition::new("file_records");
 
-/// TOML-encoded [`Note`] bytes keyed by project-relative path.
+/// Postcard-encoded [`Note`] bytes keyed by project-relative path.
 const NOTES: TableDefinition<&str, &[u8]> = TableDefinition::new("notes");
 
 /// Derived inbound-link edges: target path to every linking source path.
@@ -88,7 +87,7 @@ impl IndexStore {
     /// # Errors
     ///
     /// - [`FileIndexError::Store`] if the transaction fails.
-    /// - [`FileIndexError::Serialize`] if a record cannot be TOML-encoded.
+    /// - [`FileIndexError::Serialize`] if a record cannot be encoded.
     pub(super) fn replace_all(
         &self,
         records: &[FileRecord],
@@ -118,9 +117,8 @@ impl IndexStore {
     /// # Errors
     ///
     /// - [`FileIndexError::Store`] if a table cannot be read.
-    /// - [`FileIndexError::Corrupt`] if stored bytes are not valid UTF-8.
-    /// - [`FileIndexError::Deserialize`] if stored text is not valid UTF-8 or
-    ///   TOML.
+    /// - [`FileIndexError::Deserialize`] if stored bytes are not a valid
+    ///   record.
     pub(super) fn load_all(&self) -> Result<IndexSnapshot, FileIndexError> {
         let read_txn =
             self.db.begin_read().map_err(|source| self.store_error(source))?;
@@ -131,7 +129,7 @@ impl IndexStore {
         Ok((records, notes, links))
     }
 
-    /// Serializes `items` as TOML into `table`, keyed by `path_of`.
+    /// Serializes `items` with postcard into `table`, keyed by `path_of`.
     ///
     /// [`Self::replace_all`] uses this helper for both the `file_records` and
     /// `notes` tables instead of duplicating the serialize-and-insert loop.
@@ -139,7 +137,7 @@ impl IndexStore {
     /// # Errors
     ///
     /// - [`FileIndexError::Store`] if the table cannot be opened or written.
-    /// - [`FileIndexError::Serialize`] if an item cannot be TOML-encoded.
+    /// - [`FileIndexError::Serialize`] if an item cannot be encoded.
     fn store_table<T: Serialize>(
         &self,
         write_txn: &WriteTransaction,
@@ -153,14 +151,14 @@ impl IndexStore {
         for item in items {
             let path = path_of(item);
             let key = path.to_string_lossy();
-            let value = toml::to_string(item).map_err(|source| {
+            let value = postcard::to_allocvec(item).map_err(|source| {
                 FileIndexError::Serialize {
                     path: path.to_path_buf(),
                     source,
                 }
             })?;
             table
-                .insert(&*key, value.as_bytes())
+                .insert(&*key, value.as_slice())
                 .map_err(|source| self.store_error(source))?;
         }
         Ok(())
@@ -195,7 +193,7 @@ impl IndexStore {
         Ok(())
     }
 
-    /// Deserializes every TOML value in `table` and sorts the records.
+    /// Deserializes every postcard value in `table` and sorts the records.
     ///
     /// [`Self::load_all`] uses this helper for both the `file_records` and
     /// `notes` tables instead of duplicating the decode-and-sort loop.
@@ -203,8 +201,8 @@ impl IndexStore {
     /// # Errors
     ///
     /// - [`FileIndexError::Store`] if the table cannot be read.
-    /// - [`FileIndexError::Corrupt`] if stored bytes are not valid UTF-8.
-    /// - [`FileIndexError::Deserialize`] if stored text is not valid TOML.
+    /// - [`FileIndexError::Deserialize`] if stored bytes are not a valid
+    ///   encoding.
     fn load_table<T: DeserializeOwned>(
         &self,
         read_txn: &ReadTransaction,
@@ -220,19 +218,12 @@ impl IndexStore {
                     let (key, value) =
                         entry.map_err(|source| self.store_error(source))?;
                     let path = PathBuf::from(key.value());
-                    let text =
-                        str::from_utf8(value.value()).map_err(|source| {
-                            FileIndexError::Corrupt {
-                                path: path.clone(),
-                                source,
-                            }
-                        })?;
-                    items.push(toml::from_str(text).map_err(|source| {
-                        FileIndexError::Deserialize {
+                    items.push(postcard::from_bytes(value.value()).map_err(
+                        |source| FileIndexError::Deserialize {
                             path,
-                            source: Box::new(source),
-                        }
-                    })?);
+                            source,
+                        },
+                    )?);
                 }
                 items
             }
@@ -315,12 +306,14 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(
                 temp.path().join("note.md"),
-                "---\ntitle: Hello\n---\n- [ ] task",
+                "---\ntitle: Hello\n---\nPriority:: 5\n- [ ] task",
             )
             .expect("write note");
             let records = scan_root(temp.path()).expect("scan root");
-            let note =
-                parse_markdown("note.md", "---\ntitle: Hello\n---\n- [ ] task");
+            let note = parse_markdown(
+                "note.md",
+                "---\ntitle: Hello\n---\nPriority:: 5\n- [ ] task",
+            );
             let notes = vec![note];
             let store = IndexStore::open(temp.path()).expect("open store");
 
@@ -517,39 +510,49 @@ mod tests {
             write_txn.commit().expect("commit raw insert");
         }
 
-        #[test]
-        fn returns_corrupt_when_stored_bytes_are_not_utf8() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            let store = IndexStore::open(temp.path()).expect("open store");
-            write_raw_value(&store, FILE_RECORDS, "bad.md", &[0xFF, 0xFE]);
-
-            let error =
-                store.load_all().expect_err("non-UTF8 bytes fail to load");
-
-            assert!(matches!(
-                &error,
-                FileIndexError::Corrupt { path, .. } if path == Path::new("bad.md")
-            ));
-        }
-
         #[rstest]
         #[case::file_records(FILE_RECORDS)]
         #[case::notes(NOTES)]
-        fn returns_deserialize_error_when_stored_text_is_not_valid_toml(
+        fn returns_deserialize_error_when_stored_bytes_are_invalid(
             #[case] table_def: TableDefinition<&str, &[u8]>,
         ) {
             let temp = tempfile::tempdir().expect("create temp dir");
             let store = IndexStore::open(temp.path()).expect("open store");
-            write_raw_value(&store, table_def, "bad.md", b"not valid toml {{{");
+            write_raw_value(&store, table_def, "bad.md", &[0xFF, 0xFE]);
 
             let error =
-                store.load_all().expect_err("invalid TOML text fails to load");
+                store.load_all().expect_err("invalid bytes fail to load");
 
             assert!(matches!(
                 &error,
-                FileIndexError::Deserialize { path, .. }
-                    if path == Path::new("bad.md")
+                FileIndexError::Deserialize { path, .. } if path == Path::new("bad.md")
             ));
+        }
+
+        #[test]
+        fn persists_records_as_postcard_bytes_not_toml_text() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("note.md"), "content")
+                .expect("write note");
+            let records = scan_root(temp.path()).expect("scan root");
+            let store = IndexStore::open(temp.path()).expect("open store");
+            store
+                .replace_all(&records, &[], &HashMap::new())
+                .expect("persist records");
+
+            let read_txn = store.db.begin_read().expect("begin read txn");
+            let table = read_txn.open_table(FILE_RECORDS).expect("open table");
+            let raw = table
+                .get("note.md")
+                .expect("read raw value")
+                .expect("value present");
+            let raw_bytes = raw.value().to_vec();
+
+            assert!(postcard::from_bytes::<FileRecord>(&raw_bytes).is_ok());
+            let decodes_as_toml = str::from_utf8(&raw_bytes)
+                .ok()
+                .and_then(|text| toml::from_str::<FileRecord>(text).ok());
+            assert!(decodes_as_toml.is_none());
         }
     }
 }

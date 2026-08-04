@@ -13,7 +13,7 @@ use yaml_serde as serde_yaml;
 use super::Link;
 
 /// Raw YAML frontmatter block from a Markdown note.
-#[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct RawFrontmatter(String);
 
 impl RawFrontmatter {
@@ -182,7 +182,6 @@ impl MetadataField {
 /// Dataview-compatible inline field with its source syntax.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub(crate) struct InlineField {
-    #[serde(flatten)]
     metadata: MetadataField,
     form: InlineFieldForm,
 }
@@ -500,6 +499,27 @@ mod tests {
                 &FieldValue::String("Jane Doe".to_owned())
             );
             assert_eq!(field.form(), form);
+        }
+
+        #[rstest]
+        #[case::body(InlineFieldForm::Body)]
+        #[case::visible_key(InlineFieldForm::VisibleKey)]
+        #[case::hidden_key(InlineFieldForm::HiddenKey)]
+        fn round_trips_through_postcard_encoding(
+            #[case] form: InlineFieldForm,
+        ) {
+            let field = InlineField::new(
+                "Author",
+                FieldValue::String("Jane Doe".to_owned()),
+                form,
+            );
+
+            let bytes =
+                postcard::to_allocvec(&field).expect("encode inline field");
+            let decoded: InlineField =
+                postcard::from_bytes(&bytes).expect("decode inline field");
+
+            assert_eq!(decoded, field);
         }
     }
 }

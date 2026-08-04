@@ -124,9 +124,8 @@ impl FileIndex {
     ///
     /// - [`FileIndexError::Io`] if a directory cannot be read, a file's
     ///   metadata cannot be inspected, or a markdown file cannot be read.
-    /// - [`FileIndexError::Store`], [`FileIndexError::Corrupt`], or
-    ///   [`FileIndexError::Deserialize`] if the previous index cannot be
-    ///   loaded.
+    /// - [`FileIndexError::Store`] or [`FileIndexError::Deserialize`] if the
+    ///   previous index cannot be loaded.
     /// - [`FileIndexError::Serialize`] if the refreshed index cannot be stored.
     pub(crate) fn refresh(root: &Path) -> Result<Self, FileIndexError> {
         let previous = Self::load(root)?;
@@ -195,8 +194,8 @@ impl FileIndex {
     /// # Errors
     ///
     /// - [`FileIndexError::Store`] if the database cannot be read.
-    /// - [`FileIndexError::Corrupt`] if stored bytes are not valid UTF-8.
-    /// - [`FileIndexError::Deserialize`] if stored text is not a valid record.
+    /// - [`FileIndexError::Deserialize`] if stored bytes are not a valid
+    ///   record.
     #[inline]
     pub(crate) fn load(root: &Path) -> Result<Self, FileIndexError> {
         let (records, notes, inlinks) = IndexStore::open(root)?.load_all()?;
