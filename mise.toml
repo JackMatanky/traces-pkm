@@ -9,6 +9,7 @@
 rust = { version = "nightly", profile = "default", components = [
   "rust-src",
   "rustfmt",
+  "rust-analyzer",
 ] }
 hk = "latest"
 taplo = "latest"

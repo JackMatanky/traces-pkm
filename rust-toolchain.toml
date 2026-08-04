@@ -1,0 +1,11 @@
+# -----------------------------------------------------------------------------
+# Filename:    rust-toolchain.toml
+# Docs:        https://rust-lang.github.io/rustup/overrides.html#the-toolchain-file
+# Description: Pins the Rust toolchain version and components for the workspace
+#              to ensure deterministic builds and formatting.
+# -----------------------------------------------------------------------------
+
+[toolchain]
+channel = "nightly"
+profile = "default"
+components = ["rust-src", "rustfmt", "rust-analyzer"]
