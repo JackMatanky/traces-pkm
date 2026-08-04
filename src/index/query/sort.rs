@@ -7,11 +7,10 @@ use crate::note::FieldValue;
 /// Sort direction for [`super::QueryOutcome::sort`] and CLI `--order` flags.
 ///
 /// Rust and Template callers (`.sort(path, descending: bool)`, matching
-/// Dataview's boolean convention) keep using [`Self::is_descending`] to
-/// bridge to the existing `bool`-based comparator below. CLI commands use
-/// this type directly as a `clap::ValueEnum` so `--order` accepts the
-/// shortened `asc`/`desc` values instead of duplicating an equivalent enum
-/// per command.
+/// Dataview's boolean convention) keep using [`Self::is_descending`] to bridge
+/// to the existing `bool`-based comparator below. CLI commands use this type
+/// directly as a `clap::ValueEnum` so `--order` accepts the shortened
+/// `asc`/`desc` values instead of duplicating an equivalent enum per command.
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq, clap::ValueEnum)]
 pub(crate) enum SortOrder {
     /// Ascending order (the default).
@@ -86,6 +85,35 @@ pub(super) fn sort_key_cmp(
         ord.reverse()
     } else {
         ord
+    }
+}
+
+/// Wraps a resolved [`FieldValue`] so [`slice::sort_by_cached_key`] can order
+/// by it via [`sort_key_cmp`].
+///
+/// [`FieldValue`] itself has no [`Ord`]: comparing it needs `descending` and [`sort_key_cmp`]'s Null-as-minimum/cross-kind fallback rules, which don't fit a context-free [`Ord`] impl on [`FieldValue`] directly. This type exists only to give [`super::QueryOutcome::sort_by_field`] one, scoped to a single sort call.
+pub(super) struct SortKey {
+    pub(super) value: FieldValue,
+    pub(super) descending: bool,
+}
+
+impl PartialEq for SortKey {
+    fn eq(&self, other: &Self) -> bool {
+        self.cmp(other) == Ordering::Equal
+    }
+}
+
+impl Eq for SortKey {}
+
+impl PartialOrd for SortKey {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for SortKey {
+    fn cmp(&self, other: &Self) -> Ordering {
+        sort_key_cmp(&self.value, &other.value, self.descending)
     }
 }
 

@@ -3,29 +3,28 @@
 //! Both namespaces are backed by [`QueryOps`], registered twice by
 //! [`super::TemplateEngine::new`]: [`QueryOps::page`] creates the `query`
 //! global and [`QueryOps::task`] creates the `tasks` global. Each namespace
-//! starts a query with one of three methods, matching [`Source`]'s
-//! variants:
+//! starts a query with one of three methods, matching [`Source`]'s variants:
 //!
 //! - `.all()`: every indexed Note.
 //! - `.from_tags(tag)`: Notes tagged `tag`.
 //! - `.from_folder(folder)`: Notes under `folder`.
 //!
-//! Each method refreshes a fresh [`FileIndex`] for the render's project
-//! root and returns a [`QueryOutcome`] wrapped in a [`Value`].
+//! Each method refreshes a fresh [`FileIndex`] for the render's project root
+//! and returns a [`QueryOutcome`] wrapped in a [`Value`].
 //!
 //! # Row Shape
 //!
-//! `query` returns one row per Note. `tasks` returns one row per task item
-//! via [`FileIndex::query_tasks`], exposing `task.completed` and
-//! `task.text` alongside the parent Note's `file.*`, frontmatter,
-//! inline-field, and tag metadata.
+//! `query` returns one row per Note. `tasks` returns one row per task item via
+//! [`FileIndex::query_tasks`], exposing `task.completed` and `task.text`
+//! alongside the parent Note's `file.*`, frontmatter, inline-field, and tag
+//! metadata.
 //!
 //! # Chaining and Terminal Methods
 //!
 //! Template callers chain `.where(...)`/`.filter(...)`, `.sort(...)`,
-//! `.limit(...)`, `.group_by(...)`, and `.flatten(...)`. The
-//! transformation logic lives on [`QueryOutcome`] itself; this module only
-//! supplies the minijinja [`Object`] wiring.
+//! `.limit(...)`, `.group_by(...)`, and `.flatten(...)`. The transformation
+//! logic lives on [`QueryOutcome`] itself; this module only supplies the
+//! minijinja [`Object`] wiring.
 //!
 //! [`QueryOutcome::table`], [`QueryOutcome::list`],
 //! [`QueryOutcome::task_list`], and `count` (an alias for
@@ -33,35 +32,34 @@
 //! markdown/scalar output and end a chain rather than continue it. Per
 //! ADR-0005, each is reachable both as a `call_method`
 //! (`outcome.table(["Name"], ["file.name"])`) and as a pipeline filter,
-//! registered once by [`QueryOps::register_terminal_filters`]
-//! (`outcome | table(["Name"], ["file.name"])`). Both forms call the same
-//! [`QueryOutcome`] method.
+//! registered once by [`QueryOps::register_terminal_filters`] (`outcome |
+//! table(["Name"], ["file.name"])`). Both forms call the same [`QueryOutcome`]
+//! method.
 //!
 //! # Object Wiring
 //!
-//! [`QueryOutcome`] and [`IndexRecord`] get their [`Object`] impls here
-//! instead of in [`crate::index`], keeping that module independent from
-//! minijinja so `traces task` can reuse [`FileIndex`], [`QueryOutcome`],
-//! and [`IndexRecord`] without pulling in rendering concerns.
+//! [`QueryOutcome`] and [`IndexRecord`] get their [`Object`] impls here instead
+//! of in [`crate::index`], keeping that module independent from minijinja so
+//! `traces task` can reuse [`FileIndex`], [`QueryOutcome`], and [`IndexRecord`]
+//! without pulling in rendering concerns.
 //!
 //! `record` attributes other than `file` and `task` forward to
 //! [`IndexRecord::field`], the same resolver `.where()` and `.sort()` use.
-//! `record.file.*` and `record.task.*` use forwarding wrappers
-//! ([`FileFields`] and [`TaskFields`]) instead: minijinja resolves a
-//! dotted attribute path one segment at a time, so the wrappers call
+//! `record.file.*` and `record.task.*` use forwarding wrappers ([`FileFields`]
+//! and [`TaskFields`]) instead: minijinja resolves a dotted attribute path one
+//! segment at a time, so the wrappers call
 //! [`FileField::parse`]/[`FileField::resolve`] and
 //! [`IndexRecord::task_completed`]/[`IndexRecord::task_text`] directly,
-//! skipping the string-prefix handling [`IndexRecord::field`] needs once
-//! the `file`/`task` segment is already known.
+//! skipping the string-prefix handling [`IndexRecord::field`] needs once the
+//! `file`/`task` segment is already known.
 //!
 //! # Errors
 //!
 //! [`FileIndex::refresh`] and [`QueryError`] failures become
 //! [`minijinja::Error`] values with stable messages and the original error
 //! preserved as [`std::error::Error::source`], mirroring [`super::ui`]'s
-//! `dialog_error` and [`super::error::confine_error`]. Query failures
-//! carry template name, line, and column context like every other
-//! namespace.
+//! `dialog_error` and [`super::error::confine_error`]. Query failures carry
+//! template name, line, and column context like every other namespace.
 
 use std::{
     path::{Path, PathBuf},
@@ -84,9 +82,54 @@ use crate::{
 /// Method names `query` and `tasks` each expose, for [`QueryOps::enumerate`].
 const METHODS: &[&str] = &["all", "from_tags", "from_folder"];
 
-/// Backs both the `query` and `tasks` minijinja namespace objects: one
-/// instance per namespace, differing only in which global it registers as
-/// and which [`FileIndex`] method builds the [`QueryOutcome`]. See
+/// The [`State::set_temp`] key used to cache one refreshed [`FileIndex`] for
+/// the current render.
+///
+/// Shared by the `query` and `tasks` namespaces (both dispatch through
+/// [`QueryOps::run`]) so a render calling into both pays for one
+/// [`FileIndex::refresh`] instead of one per query call. `State`'s temp storage
+/// is scoped to one render, including `{% include %}`s, and resets for the
+/// next. A cache field on [`QueryOps`] itself would wrongly persist across
+/// independent renders on a reused [`Environment`]/[`super::TemplateEngine`].
+const INDEX_CACHE_KEY: &str = "query.index_cache";
+
+/// Wraps [`FileIndex`] only so it can round-trip through [`State`]'s temp
+/// storage via [`Value::from_object`]/[`Value::downcast_object_ref`]. Never
+/// exposed to templates: no global registers it, unlike
+/// [`IndexRecord`]/[`QueryOutcome`].
+#[derive(Debug)]
+struct CachedIndex(FileIndex);
+
+impl Object for CachedIndex {}
+
+/// Returns the render's cached [`FileIndex`], refreshing and caching it in
+/// `state`'s temp storage first if not already cached this render.
+///
+/// # Errors
+///
+/// - Any error [`FileIndex::refresh`] returns.
+fn cached_refresh(
+    state: &State,
+    root: &Path,
+) -> Result<FileIndex, FileIndexError> {
+    if let Some(index) = state.get_temp(INDEX_CACHE_KEY).and_then(|value| {
+        value
+            .downcast_object_ref::<CachedIndex>()
+            .map(|cached| cached.0.clone())
+    }) {
+        return Ok(index);
+    }
+    let index = FileIndex::refresh(root)?;
+    state.set_temp(
+        INDEX_CACHE_KEY,
+        Value::from_object(CachedIndex(index.clone())),
+    );
+    Ok(index)
+}
+
+/// Backs both the `query` and `tasks` minijinja namespace objects: one instance
+/// per namespace, differing only in which global it registers as and which
+/// [`FileIndex`] method builds the [`QueryOutcome`]. See
 /// [`Self::page`]/[`Self::task`].
 #[derive(Debug)]
 pub(super) struct QueryOps {
@@ -110,8 +153,8 @@ impl QueryOps {
         }
     }
 
-    /// Wraps `root` for task-level dispatch under the `tasks` global. Each
-    /// row is one task item instead of one Note; see the module docs.
+    /// Wraps `root` for task-level dispatch under the `tasks` global. Each row
+    /// is one task item instead of one Note; see the module docs.
     #[inline]
     #[must_use]
     pub(super) const fn task(root: Arc<Path>) -> Self {
@@ -129,12 +172,12 @@ impl QueryOps {
         env.add_global(name, Value::from_object(self));
     }
 
-    /// Registers `table`, `list`, `task_list`, and `count` as pipeline
-    /// filters: `outcome | table(["Name"], ["file.name"])`, mirroring the
-    /// call-method form `outcome.table(["Name"], ["file.name"])` documented
-    /// on [`Object::call_method`] for [`QueryOutcome`]. Registered once, not
-    /// per instance: these filters carry no state and apply to any
-    /// [`QueryOutcome`] regardless of which namespace produced it.
+    /// Registers `table`, `list`, `task_list`, and `count` as pipeline filters:
+    /// `outcome | table(["Name"], ["file.name"])`, mirroring the call-method
+    /// form `outcome.table(["Name"], ["file.name"])` documented on
+    /// [`Object::call_method`] for [`QueryOutcome`]. Registered once, not per
+    /// instance: these filters carry no state and apply to any [`QueryOutcome`]
+    /// regardless of which namespace produced it.
     #[inline]
     pub(super) fn register_terminal_filters(env: &mut Environment<'static>) {
         env.add_filter("table", table_filter);
@@ -143,16 +186,17 @@ impl QueryOps {
         env.add_filter("count", count_filter);
     }
 
-    /// Refreshes the render's [`FileIndex`], then runs this namespace's query
-    /// method for `source`.
+    /// Runs this namespace's query method for `source` against `state`'s
+    /// cached [`FileIndex`], refreshing it first if not already cached this
+    /// render. See [`INDEX_CACHE_KEY`].
     ///
     /// # Errors
     ///
     /// - [`ErrorKind::InvalidOperation`] via [`index_error`] if refreshing the
     ///   index fails, including I/O errors while scanning `root`, database
     ///   access errors, and TOML (de)serialization errors on stored records.
-    fn run(&self, source: &Source) -> Result<Value, Error> {
-        let index = FileIndex::refresh(&self.root).map_err(index_error)?;
+    fn run(&self, state: &State, source: &Source) -> Result<Value, Error> {
+        let index = cached_refresh(state, &self.root).map_err(index_error)?;
         Ok(Value::from_object((self.query)(index, source)))
     }
 }
@@ -162,23 +206,27 @@ impl Object for QueryOps {
         match key.as_str()? {
             "all" => {
                 let ops = Arc::clone(self);
-                Some(Value::from_function(move || -> Result<Value, Error> {
-                    ops.run(&Source::All)
-                }))
+                Some(Value::from_function(
+                    move |state: &State| -> Result<Value, Error> {
+                        ops.run(state, &Source::All)
+                    },
+                ))
             }
             "from_tags" => {
                 let ops = Arc::clone(self);
                 Some(Value::from_function(
-                    move |tag: &str| -> Result<Value, Error> {
-                        ops.run(&Source::Tag(tag.to_owned()))
+                    move |state: &State, tag: &str| -> Result<Value, Error> {
+                        ops.run(state, &Source::Tag(tag.to_owned()))
                     },
                 ))
             }
             "from_folder" => {
                 let ops = Arc::clone(self);
                 Some(Value::from_function(
-                    move |folder: &str| -> Result<Value, Error> {
-                        ops.run(&Source::Folder(PathBuf::from(folder)))
+                    move |state: &State,
+                          folder: &str|
+                          -> Result<Value, Error> {
+                        ops.run(state, &Source::Folder(PathBuf::from(folder)))
                     },
                 ))
             }
@@ -222,9 +270,9 @@ impl Object for QueryOutcome {
 
     /// Dispatches [`QueryOutcome`] methods by template name.
     ///
-    /// The terminal methods `table`, `list`, `task_list`, and `count`
-    /// render final output and return early, without touching the
-    /// non-terminal chain below:
+    /// The terminal methods `table`, `list`, `task_list`, and `count` render
+    /// final output and return early, without touching the non-terminal chain
+    /// below:
     ///
     /// - `table(headers, columns)` and `list(path)` call
     ///   [`QueryOutcome::table`] and [`QueryOutcome::list`]; all take field

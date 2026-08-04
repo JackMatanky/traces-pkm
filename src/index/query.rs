@@ -30,8 +30,8 @@ pub(crate) use error::QueryError;
 pub(crate) use field::FileField;
 use field::{FieldPath, TaskField};
 use filter::FilterExpr;
+use sort::SortKey;
 pub(crate) use sort::SortOrder;
-use sort::sort_key_cmp;
 
 use super::file::FileRecord;
 use crate::note::{FieldValue, Note};
@@ -216,15 +216,14 @@ impl QueryOutcome {
 
     /// Renders these records as a GitHub-flavored markdown table with one
     /// column per entry, pairing each `headers` label with the field path at
-    /// the same position in `columns`. Columns are aligned to their widest
-    /// cell (via `comfy-table`'s
-    /// [`ASCII_MARKDOWN`](comfy_table::presets::ASCII_MARKDOWN) preset) so
-    /// rows line up visually in a terminal.
+    /// the same position in `columns`. Columns are aligned to their widest cell
+    /// (via `comfy-table`'s
+    /// [`ASCII_MARKDOWN`](comfy_table::presets::ASCII_MARKDOWN) preset) so rows
+    /// line up visually in a terminal.
     ///
-    /// Header and cell text render like [`Self::list`], except pipe
-    /// characters (`|`) are escaped and newlines are collapsed to spaces so
-    /// neither a header nor a cell value can corrupt the table's row
-    /// structure.
+    /// Header and cell text render like [`Self::list`], except pipe characters
+    /// (`|`) are escaped and newlines are collapsed to spaces so neither a
+    /// header nor a cell value can corrupt the table's row structure.
     ///
     /// # Errors
     ///
@@ -309,6 +308,12 @@ impl QueryOutcome {
     /// stable sort by `path`'s resolved value, treating [`FieldValue::Null`]
     /// as the minimum value.
     ///
+    /// # Performance
+    ///
+    /// O(n): [`slice::sort_by_cached_key`] resolves `path` against each record
+    /// exactly once and caches the result, instead of re-resolving on every
+    /// comparison a plain `sort_by` closure would make.
+    ///
     /// # Errors
     ///
     /// - [`QueryError::UnknownFieldPath`] if `path` is malformed.
@@ -319,12 +324,9 @@ impl QueryOutcome {
     ) -> Result<Self, QueryError> {
         let field_path = FieldPath::parse(path)?;
         let mut records = self.records;
-        records.sort_by(|a, b| {
-            sort_key_cmp(
-                &a.resolve(&field_path),
-                &b.resolve(&field_path),
-                descending,
-            )
+        records.sort_by_cached_key(|record| SortKey {
+            value: record.resolve(&field_path),
+            descending,
         });
         Ok(Self::new(records))
     }
@@ -378,14 +380,14 @@ fn field_text(value: &FieldValue) -> String {
 }
 
 /// Escapes `|` and collapses newlines to spaces so `text` cannot corrupt
-/// [`QueryOutcome::table`]'s `| cell | cell |` row structure. Applied to
-/// both header labels and cell values.
+/// [`QueryOutcome::table`]'s `| cell | cell |` row structure. Applied to both
+/// header labels and cell values.
 fn escape_table_text(text: &str) -> String {
     text.replace('\n', " ").replace('|', "\\|")
 }
 
-/// [`field_text`], escaped with [`escape_table_text`] so a cell value
-/// cannot corrupt [`QueryOutcome::table`]'s row structure.
+/// [`field_text`], escaped with [`escape_table_text`] so a cell value cannot
+/// corrupt [`QueryOutcome::table`]'s row structure.
 fn table_cell_text(value: &FieldValue) -> String {
     escape_table_text(&field_text(value))
 }
@@ -393,8 +395,8 @@ fn table_cell_text(value: &FieldValue) -> String {
 /// Query row pairing a [`FileRecord`] with parsed [`Note`] metadata.
 ///
 /// Task-level rows also carry one task item's fields. Each row resolves
-/// `file.*`, `task.*`, frontmatter, inline fields, tags, and derived
-/// inlinks for Template and CLI callers.
+/// `file.*`, `task.*`, frontmatter, inline fields, tags, and derived inlinks
+/// for Template and CLI callers.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct IndexRecord {
     file: FileRecord,
@@ -407,9 +409,8 @@ pub(crate) struct IndexRecord {
     task: Option<TaskInfo>,
     /// Project-relative paths of Notes whose outlinks resolve to this row's
     /// Note, set by
-    /// [`super::FileIndex::query`]/[`super::FileIndex::query_tasks`]
-    /// from [`super::inlinks::derive_inlinks`]. Empty for a Note nothing
-    /// links to.
+    /// [`super::FileIndex::query`]/[`super::FileIndex::query_tasks`] from
+    /// [`super::inlinks::derive_inlinks`]. Empty for a Note nothing links to.
     inlinks: Vec<PathBuf>,
 }
 
@@ -440,10 +441,10 @@ impl IndexRecord {
     /// Returns this record as one task row, with `task.completed` and
     /// `task.text` set to `completed`/`text`.
     ///
-    /// Used by [`super::FileIndex::query_tasks`] to turn one page-level
-    /// record into one row per task item, retaining the parent Note's
-    /// `file.*`, frontmatter, inline-field, and tag metadata for filtering
-    /// and display via [`Self::field`].
+    /// Used by [`super::FileIndex::query_tasks`] to turn one page-level record
+    /// into one row per task item, retaining the parent Note's `file.*`,
+    /// frontmatter, inline-field, and tag metadata for filtering and display
+    /// via [`Self::field`].
     pub(super) fn with_task(
         mut self,
         completed: bool,
@@ -456,12 +457,11 @@ impl IndexRecord {
         self
     }
 
-    /// Attaches `inlinks`, the project-relative paths of Notes whose
-    /// outlinks resolve to this row's Note.
+    /// Attaches `inlinks`, the project-relative paths of Notes whose outlinks
+    /// resolve to this row's Note.
     ///
-    /// Set by [`super::FileIndex::query`] and
-    /// [`super::FileIndex::query_tasks`] from
-    /// [`super::inlinks::derive_inlinks`].
+    /// Set by [`super::FileIndex::query`] and [`super::FileIndex::query_tasks`]
+    /// from [`super::inlinks::derive_inlinks`].
     pub(super) fn with_inlinks(mut self, inlinks: Vec<PathBuf>) -> Self {
         self.inlinks = inlinks;
         self
@@ -594,10 +594,9 @@ pub(crate) enum Source {
 impl Source {
     /// Builds a [`Source`] from a `--from`-style CLI flag value.
     ///
-    /// `None` (the flag omitted) selects [`Self::All`]. A value starting
-    /// with `#` selects [`Self::Tag`] (including nested sub-tags: `#book`
-    /// also matches `#book/fiction`). Any other value selects
-    /// [`Self::Folder`].
+    /// `None` (the flag omitted) selects [`Self::All`]. A value starting with
+    /// `#` selects [`Self::Tag`] (including nested sub-tags: `#book` also
+    /// matches `#book/fiction`). Any other value selects [`Self::Folder`].
     #[must_use]
     pub(crate) fn from_flag(flag: Option<&str>) -> Self {
         match flag {

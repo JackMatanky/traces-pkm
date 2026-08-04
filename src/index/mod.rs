@@ -106,16 +106,16 @@ impl FileIndex {
     /// - Added or changed markdown Notes are parsed from disk.
     /// - Deleted files disappear because they are absent from the fresh scan.
     ///
-    /// Derived inlinks are recomputed in full only when something changed
-    /// (any added, changed, or deleted file or Note); otherwise the
-    /// previously persisted computation is reused unchanged.
+    /// Derived inlinks are recomputed in full only when something changed (any
+    /// added, changed, or deleted file or Note); otherwise the previously
+    /// persisted computation is reused unchanged.
     ///
-    /// A full recompute, not a per-note patch, is required for correctness:
-    /// link target resolution considers every indexed Note (see
+    /// A full recompute, not a per-note patch, is required for correctness.
+    /// Link target resolution considers every indexed Note (see
     /// [`inlinks::derive_inlinks`]), so an unedited Note's *resolved* target
-    /// can still change when an unrelated Note is added or removed
-    /// elsewhere in the index. For example, a wikilink that was ambiguous
-    /// becomes resolvable once one of the ambiguous candidates is deleted.
+    /// can still change when an unrelated Note is added or removed elsewhere in
+    /// the index. For example, a wikilink that was ambiguous becomes resolvable
+    /// once one of the ambiguous candidates is deleted.
     ///
     /// Returns the fresh [`FileIndex`] and persists it only when contents
     /// changed.
@@ -249,11 +249,10 @@ impl FileIndex {
 
     /// Executes a page-level query over `source`, consuming this index.
     ///
-    /// Call [`Self::refresh`] first so results reflect the current
-    /// filesystem. Every markdown Note has a matching [`FileRecord`] by
-    /// construction (both [`Self::build`] and [`Self::refresh`] add one for
-    /// every parsed Note), so a Note found without one is skipped rather
-    /// than causing a panic.
+    /// Call [`Self::refresh`] first so results reflect the current filesystem.
+    /// Every markdown Note has a matching [`FileRecord`] by construction (both
+    /// [`Self::build`] and [`Self::refresh`] add one for every parsed Note), so
+    /// a Note found without one is skipped rather than causing a panic.
     ///
     /// Every matched row's [`IndexRecord::inlinks`] reflects every indexed
     /// Note, not just Notes matching `source`: a Note outside `source` can
@@ -263,8 +262,8 @@ impl FileIndex {
     ///
     /// O(n + m): [`Self::refresh`]/[`Self::load`] already produced
     /// `self.inlinks`, so this is just the single-pass iterator merge-join
-    /// across `records` and `notes`, looking each matched Note's inlinks up
-    /// by moving them out of the map instead of cloning.
+    /// across `records` and `notes`, looking each matched Note's inlinks up by
+    /// moving them out of the map instead of cloning.
     #[must_use]
     pub(crate) fn query(self, source: &Source) -> QueryOutcome {
         let Self {
@@ -281,8 +280,8 @@ impl FileIndex {
     /// Executes a task-level query over `source`, consuming this index.
     ///
     /// Selects the same Notes as [`Self::query`], then expands each matched
-    /// Note into one [`IndexRecord`] per markdown task item (`- [ ]` or
-    /// `- [x]`). Notes without tasks contribute no rows.
+    /// Note into one [`IndexRecord`] per markdown task item (`- [ ]` or `-
+    /// [x]`). Notes without tasks contribute no rows.
     ///
     /// Each task row keeps its parent Note's `file.*`, frontmatter,
     /// inline-field, tag, and inlinks metadata for filtering and display
@@ -293,10 +292,12 @@ impl FileIndex {
     ///
     /// # Performance
     ///
-    /// O(n + m + t), where `t` is the total number of task items across
-    /// matched Notes. [`Self::refresh`]/[`Self::load`] already produced
-    /// `self.inlinks`. Task iteration streams into one output vector without
-    /// a per-note row collection.
+    /// O(n + m + t), where `t` is the total number of task items across matched
+    /// Notes. [`Self::refresh`]/[`Self::load`] already produced `self.inlinks`.
+    /// Each Note's task items are collected into a small `(bool, String)`
+    /// buffer once, so its last row can move the shared [`IndexRecord`] base
+    /// instead of cloning it (mirroring [`query::QueryOutcome::flatten`]'s
+    /// last-item handling); every earlier row still clones the base.
     #[must_use]
     pub(crate) fn query_tasks(self, source: &Source) -> QueryOutcome {
         let Self {
@@ -307,12 +308,18 @@ impl FileIndex {
         let mut matched = Vec::new();
         for (file, note) in matched_pairs(records, notes, source) {
             let base = record_with_inlinks(file, note, &mut inlinks);
-            for item in base.note().tasks() {
-                matched.push(
-                    base.clone()
-                        .with_task(item.is_completed(), item.text().to_owned()),
-                );
-            }
+            let mut tasks: Vec<(bool, String)> = base
+                .note()
+                .tasks()
+                .map(|item| (item.is_completed(), item.text().to_owned()))
+                .collect();
+            let Some((completed, text)) = tasks.pop() else {
+                continue; // No tasks: this Note contributes no rows.
+            };
+            matched.extend(
+                tasks.into_iter().map(|(c, t)| base.clone().with_task(c, t)),
+            );
+            matched.push(base.with_task(completed, text));
         }
         QueryOutcome::new(matched)
     }
@@ -320,24 +327,24 @@ impl FileIndex {
 
 /// Binary-searches path-sorted `notes` for an exact path match.
 ///
-/// Shared by [`Self::note`], which does this lookup once `self` exists,
-/// and the [`inlinks`](mod@inlinks) submodule, which needs the same
-/// search over a bare `&[Note]` slice while resolving link targets
-/// during [`Self::build`]/[`Self::refresh`].
+/// Shared by [`FileIndex::note`], which does this lookup once `self` exists,
+/// and the [`inlinks`](mod@inlinks) submodule, which needs the same search over
+/// a bare `&[Note]` slice while resolving link targets during
+/// [`FileIndex::build`]/[`FileIndex::refresh`].
 fn find_by_path<'a>(notes: &'a [Note], path: &Path) -> Option<&'a Note> {
     let idx = notes.binary_search_by(|note| note.path().cmp(path)).ok()?;
     notes.get(idx)
 }
 
-/// Merge-joins `records` and `notes` by path, yielding only the file/note
-/// pairs matching `source`. Shared by [`FileIndex::query`] and
-/// [`FileIndex::query_tasks`]. Both start from the same page-level
-/// selection; they differ only in what each matched pair becomes.
+/// Merge-joins `records` and `notes` by path, yielding only the file/note pairs
+/// matching `source`. Shared by [`FileIndex::query`] and
+/// [`FileIndex::query_tasks`]. Both start from the same page-level selection;
+/// they differ only in what each matched pair becomes.
 ///
 /// # Performance
 ///
-/// O(n + m): single-pass iterator merge-join, no binary search or
-/// redundant allocation per note.
+/// O(n + m): single-pass iterator merge-join, no binary search or redundant
+/// allocation per note.
 fn matched_pairs(
     records: Vec<FileRecord>,
     notes: Vec<Note>,
@@ -353,12 +360,12 @@ fn matched_pairs(
     })
 }
 
-/// Pairs `file` with its parsed `note` and looks up `file`'s inbound links
-/// out of `inlinks`, so each Note's derived links are moved into its row
-/// instead of cloned.
+/// Pairs `file` with its parsed `note` and looks up `file`'s inbound links out
+/// of `inlinks`, so each Note's derived links are moved into its row instead of
+/// cloned.
 ///
-/// Shared by [`FileIndex::query`] and [`FileIndex::query_tasks`], which
-/// each look this up once per matched Note.
+/// Shared by [`FileIndex::query`] and [`FileIndex::query_tasks`], which each
+/// look this up once per matched Note.
 fn record_with_inlinks(
     file: FileRecord,
     note: Note,
@@ -370,9 +377,8 @@ fn record_with_inlinks(
 
 /// Reads and parses the markdown file for `record` into a [`Note`].
 ///
-/// Shared by [`FileIndex::build`] (parses every markdown file from scratch)
-/// and [`FileIndex::refresh`] (parses only added or changed markdown
-/// files).
+/// Shared by [`FileIndex::build`] (parses every markdown file from scratch) and
+/// [`FileIndex::refresh`] (parses only added or changed markdown files).
 ///
 /// # Errors
 ///
