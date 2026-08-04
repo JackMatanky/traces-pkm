@@ -33,17 +33,17 @@ lockfile = true
 HK_MISE = "1"
 ADR_DIRECTORY = "docs/adr/"
 
-[tasks.check]
-description = "Fast compilation check"
-run = "cargo check --workspace"
-alias = "c"
-
 [tasks.build]
 description = "Debug build"
 run = "cargo build"
 alias = "b"
 sources = ["src/**/*.rs", "Cargo.toml", "Cargo.lock"]
 outputs = ["target/debug/traces-pkm"]
+
+[tasks.check]
+description = "Fast compilation check"
+run = "cargo check --workspace"
+alias = "c"
 
 # Scoping: extra args pass straight through to nextest (no usage spec = unvalidated passthrough).
 #   mise run test -- <name-substring>     filter by test/module path, e.g. index::query
@@ -87,13 +87,6 @@ fi
 cargo clippy "${args[@]}" -- -D warnings
 '''
 
-[tasks.doc]
-description = "Build documentation (warnings as errors)"
-run = "cargo doc --no-deps"
-env = { RUSTDOCFLAGS = "-D warnings" }
-sources = ["src/**/*.rs", "Cargo.toml"]
-outputs = ["target/doc"]
-
 [tasks.audit]
 description = "Run cargo deny audit"
 run = "cargo deny check"
@@ -114,6 +107,13 @@ run = "cargo clean"
 [tasks.watch]
 description = "Watch and auto-check on changes"
 run = "cargo watch -x check -x test"
+
+[tasks.doc]
+description = "Build documentation (warnings as errors)"
+run = "cargo doc --no-deps"
+env = { RUSTDOCFLAGS = "-D warnings" }
+sources = ["src/**/*.rs", "Cargo.toml"]
+outputs = ["target/doc"]
 
 [tasks.setup]
 description = "Install git hooks via hk"

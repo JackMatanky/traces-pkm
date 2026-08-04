@@ -27,6 +27,19 @@ This project uses **mise** for tool versioning and task management. Use the Mise
 - **MUST verify tool versions** using `mise://tools` if you encounter environment-specific issues.
 - **ALWAYS `mise://tasks` first, then `run_task`.** Before any `cargo`/`hk`/`gitleaks`/build/test/lint/fmt command, check `mise://tasks` and run the matching task via `run_task` — only drop to a raw shell command when no task covers it.
 
+## Tasks
+
+High-value tasks — reach for these before anything else in `mise://tasks`:
+
+| Task | Alias | Use for |
+| --- | --- | --- |
+| `check` | `c` | Fastest compile signal — run after every edit |
+| `test` | `t` | Prove it works; scope with `-- --lib <module>`, `-- --test <file>`, or a name substring instead of the full suite |
+| `clippy` | — | Deny-warnings lint gate; `--fix` auto-applies fixes |
+| `fmt` | `f` | Format before diffing/committing |
+| `fix` | — | Auto-fix hygiene/formatting `hk` catches (not Rust-only); `-- --unstaged` scopes to files just edited |
+| `verify` | `v` | Full gate (fmt→lint→clippy→test-all→audit) — run before yielding/committing non-trivial changes |
+
 ## Never Do
 
 - NEVER run a shell command that has an equivalent `mise` task (check `mise://tasks`).
