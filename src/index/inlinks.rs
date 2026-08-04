@@ -410,8 +410,8 @@ mod tests {
             // "report.txt" has its own extension, so tier 2 (appending
             // `.md`) is skipped rather than trying "report.txt.md". It is
             // still a bare basename, so tier 3 falls back to a stem match
-            // on "report" — `is_basename` doesn't require an extensionless
-            // target.
+            // on "report" (`is_basename` doesn't require an extensionless
+            // target).
             let notes = [parse_markdown("notes/report.md", "# Report")];
 
             assert_eq!(
