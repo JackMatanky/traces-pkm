@@ -187,5 +187,16 @@ mod tests {
 
             assert_eq!(a, b);
         }
+
+        #[test]
+        #[cfg(unix)]
+        fn returns_none_when_the_stem_is_not_valid_utf8() {
+            use std::{ffi::OsStr, os::unix::ffi::OsStrExt};
+
+            let invalid = OsStr::from_bytes(&[0x66, 0x6f, 0x80, 0x6f]); // "fo\x80o"
+            let path = Path::new(invalid);
+
+            assert_eq!(BaseNameRef::from_path(path), None);
+        }
     }
 }

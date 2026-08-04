@@ -373,12 +373,45 @@ mod tests {
         }
 
         #[test]
+        fn resolves_to_the_nearer_candidate_despite_a_farther_tie() {
+            // "far/a" and "far/b" tie with each other (distance 3 from the
+            // linking Note) and are indexed *before* "near/note.md" (distance
+            // 0), so recording the tie and then finding a strictly closer
+            // candidate must reset the tie rather than sticking at `None`.
+            let notes = [
+                parse_markdown("far/a/note.md", "# Far A"),
+                parse_markdown("far/b/note.md", "# Far B"),
+                parse_markdown("near/note.md", "# Near"),
+            ];
+
+            assert_eq!(
+                resolve(&notes, "near/linking.md", LinkTarget::Path("note")),
+                Some(Target(Path::new("near/note.md")))
+            );
+        }
+
+        #[test]
         fn returns_none_for_a_basename_matching_no_indexed_note() {
             let notes = [parse_markdown("other.md", "# Other")];
 
             assert_eq!(
                 resolve(&notes, "linking.md", LinkTarget::Path("nonexistent")),
                 None
+            );
+        }
+
+        #[test]
+        fn resolves_a_basename_with_an_extension_by_its_stem() {
+            // "report.txt" has its own extension, so tier 2 (appending
+            // `.md`) is skipped rather than trying "report.txt.md". It is
+            // still a bare basename, so tier 3 falls back to a stem match
+            // on "report" — `is_basename` doesn't require an extensionless
+            // target.
+            let notes = [parse_markdown("notes/report.md", "# Report")];
+
+            assert_eq!(
+                resolve(&notes, "linking.md", LinkTarget::Path("report.txt")),
+                Some(Target(Path::new("notes/report.md")))
             );
         }
 
