@@ -10,6 +10,9 @@
 //!
 //! - [`FileIndex::build`], [`FileIndex::refresh`], [`FileIndex::persist`], and
 //!   [`FileIndex::load`] - Build, refresh, save, and reload the index.
+//!   Rendering caches one refresh per render instead of calling `refresh`
+//!   per query; see
+//!   [`template::engine::query::cached_refresh`](crate::template::engine::query::cached_refresh).
 //! - [`FileIndex::query`] and [`FileIndex::query_tasks`] - Run page-level and
 //!   task-level queries.
 //! - [`FileIndex::records`] and [`FileIndex::notes`] - Expose sorted indexed

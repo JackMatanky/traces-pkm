@@ -10,8 +10,9 @@
 //! - `.from_tags(tag)`: Notes tagged `tag`.
 //! - `.from_folder(folder)`: Notes under `folder`.
 //!
-//! Each method refreshes a fresh [`FileIndex`] for the render's project root
-//! and returns a [`QueryOutcome`] wrapped in a [`Value`].
+//! Each method reuses the render's cached [`FileIndex`], refreshing it once
+//! per render (see [`cached_refresh`]), and returns a [`QueryOutcome`]
+//! wrapped in a [`Value`].
 //!
 //! # Row Shape
 //!
