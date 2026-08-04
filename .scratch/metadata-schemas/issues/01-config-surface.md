@@ -6,6 +6,8 @@
 
 **Status:** ready-for-agent
 
+**Category:** enhancement
+
 - [ ] `[schemas] class_field` (default `class`) and `[schemas] directory` (default `.traces/schemas/`) parse and round-trip through the resolved config model.
 - [ ] `[frontmatter] title` and `[frontmatter] aliases` parse as key names.
 - [ ] `[frontmatter] date_created` and `[frontmatter] date_modified` parse as `{name, format}` objects.
@@ -21,9 +23,6 @@ Foundational config surface (spec User Stories 24, 25; Implementation Decisions 
 
 ## Agent Brief
 
-**Category:** enhancement
-**Summary:** Add `[schemas]` and `[frontmatter]` config tables to the resolved config model, optional with defaults, with unknown-field denial.
-
 **Current behavior:**
 The config service resolves `[templates]` (directory, output_dir) from local and global layers and exposes `Config` with root/template accessors. There is no `[schemas]` or `[frontmatter]` table; nothing in config knows about File Classes, a schemas directory, or frontmatter key names for title/aliases/dates.
 
@@ -34,14 +33,6 @@ The config service resolves `[templates]` (directory, output_dir) from local and
 - New raw TOML shapes mirroring `RawTemplateConfig`, deny unknown fields.
 - New accessors on the resolved `Config` for the schemas directory (default `.traces/schemas/`), the class field name (default `class`), and the frontmatter key names.
 - Config merge/discovery treats these as additive; nothing about existing behavior changes.
-
-**Acceptance criteria:**
-- [ ] `[schemas] class_field` (default `class`) and `[schemas] directory` (default `.traces/schemas/`) parse and round-trip through the resolved config model.
-- [ ] `[frontmatter] title` and `[frontmatter] aliases` parse as key names.
-- [ ] `[frontmatter] date_created` and `[frontmatter] date_modified` parse as `{name, format}` objects.
-- [ ] All five keys are optional with defaults; a config file omitting them behaves identically to one with none set.
-- [ ] Unknown keys in `[schemas]` or `[frontmatter]` are rejected at config parse time.
-- [ ] Config-service tests cover the parse, defaults, and unknown-key denial through the existing config fixture pattern.
 
 **Out of scope:**
 - Any consumer of these values — the schemas directory, class field, or frontmatter keys are not read yet (later tickets).
