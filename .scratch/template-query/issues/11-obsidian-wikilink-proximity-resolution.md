@@ -97,3 +97,68 @@ at the minimum distance still resolves to `None`.
 Tests: `resolve_target` proximity-resolved and equal-distance-tie cases;
 `derive_inlinks` end-to-end nearest-note resolution; `BaseNameRef` unit tests
 in `file_name.rs`.
+
+### Adversarial Review
+
+Re-audited the merged implementation against every checklist item and the
+broader systems it touches (`FileIndex::build`/`refresh`/`load`/`persist`,
+`store.rs`'s redb `LINKS` table, `query.rs`'s `IndexRecord::inlinks`, and
+`template/loader.rs`'s separate stem-resolution path), not just the diff.
+
+**Correctness, fuzz-verified beyond manual proof:**
+- `find_nearest_by_stem`'s tie-break reduce checked against a brute-force
+  `min()` + `count(min) > 1` reference over 200,000 random distance-list
+  trials (lengths 0–8, dense collisions) — 0 mismatches. The reduce's
+  "strictly-nearer candidate resets the tie flag" behavior (needed when a
+  farther tie is recorded before a later, closer, unique candidate) holds for
+  arbitrary candidate counts, not just the 2–3 cases in the unit tests.
+- `folder_distance` checked against a brute-force longest-common-prefix
+  distance over 50,000 random path-component trials, plus an explicit
+  symmetry check (`d(a,b) == d(b,a)`) — 0 mismatches both ways. Edge cases
+  traced by hand: root-level files (empty parent → 0 components, no panic),
+  same folder (distance 0), one folder a subfolder of the other (distance 1,
+  correct direction).
+
+**Systemic checks (no issues found):**
+- `FileIndex::refresh`'s `dirty = records != previous.records || notes !=
+  previous.notes` (`mod.rs`) already catches every add/remove/modify as a
+  full-collection comparison, so it correctly forces a full `derive_inlinks`
+  recompute whenever the candidate set proximity resolution depends on could
+  have changed — no incremental-staleness bug from adding the proximity tier.
+- `InlinkMap`'s persisted shape (`store.rs`'s `LINKS` redb table) is
+  unaffected by *how* an edge was resolved; no migration needed.
+- No `rayon`/`par_iter` exists anywhere in the crate (grepped), so
+  single-threaded `derive_inlinks` matches the codebase's existing style —
+  not a missed parallelism opportunity.
+- `note/links.rs`'s wikilink parser strips the `|alias` portion before
+  `target_parts()` runs, so `resolve_target` never sees alias text feeding
+  into stem resolution.
+- `template/loader.rs::find_name_in`'s simpler "ambiguous → reject" stem
+  resolution intentionally diverges from this ticket's proximity rule
+  (different domains: template-file lookup vs. wikilink resolution), per the
+  ticket's own Discussion section — not a maintenance-drift risk.
+- Noted, not fixed (pre-existing, not scoped to this ticket): `store.rs` has
+  no schema/algorithm version stamp, so a vault indexed before this feature
+  shipped keeps serving pre-proximity-resolved inlinks via `load()` until an
+  unrelated file change next triggers `dirty`. This is a property of the
+  whole `FileIndex` caching design (any `derive_inlinks` algorithm change has
+  it), not a defect introduced here.
+
+**Findings fixed in place:**
+- `find_nearest_by_stem`'s return was `(!tied).then(||
+  nearest.map(|(_, path)| path)).flatten()` — an `Option<Option<T>>` built
+  and immediately flattened for no reason. Simplified to a plain `if tied {
+  None } else { nearest.map(|(_, path)| path) }`. No behavior change.
+  (`a3780b9`)
+- Coverage gap: a linking Note whose own stem is ambiguous with another
+  indexed Note (e.g. `a.md` linking `[[a]]` while `b/a.md` also exists)
+  resolves to itself (distance 0, same folder as itself, uniquely nearest) —
+  correct Obsidian semantics, but no test exercised this path through
+  `find_nearest_by_stem` (the existing self-link test only covered the
+  unique-stem tier). Added
+  `resolve_target::resolves_an_ambiguous_self_referential_stem_to_itself`.
+  (`4b05a2f`)
+
+Full suite green throughout: 1152/1152 (`mise run test`), `mise run clippy`
+clean (workspace, deny-warnings), `hk` pre-commit hooks clean on both
+commits.
