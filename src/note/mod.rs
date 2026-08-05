@@ -13,7 +13,7 @@
 //!   Obsidian wikilinks, and a link's split path/anchor target.
 //! - [`Frontmatter`] and [`RawFrontmatter`] - Preserve YAML metadata.
 //! - [`InlineField`], [`InlineFieldForm`], and [`FieldValue`] - Represent
-//!   Dataview-compatible metadata.
+//!   inline-field metadata parsed from note body text.
 //! - [`Tag`] - Stores Markdown tags.
 mod cursor;
 mod lexer;

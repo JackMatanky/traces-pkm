@@ -372,9 +372,10 @@ impl QueryOutcome {
     /// Filters records matching `expr`, serving as an alias for
     /// [`Self::filter`].
     ///
-    /// Uses Rust raw identifier syntax (`r#where`) to match Dataview's
-    /// `.where()` API. Refer to [`Self::filter`] for full syntax details and
-    /// matching behavior.
+    /// Uses Rust raw identifier syntax (`r#where`) because `where` is a
+    /// reserved keyword; `where` is this query API's name for the same
+    /// operation as `filter`. Refer to [`Self::filter`] for full syntax
+    /// details and matching behavior.
     ///
     /// # Errors
     ///
@@ -403,7 +404,7 @@ impl QueryOutcome {
 
     /// Sorts records by the field at `path` in ascending or descending order.
     ///
-    /// Adheres to Dataview sorting behavior:
+    /// Sort semantics:
     /// - Null handling: records with [`FieldValue::Null`] at `path` sort as
     ///   minimum values (leading in ascending order, trailing in descending
     ///   order).

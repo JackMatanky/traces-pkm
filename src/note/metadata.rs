@@ -1,4 +1,4 @@
-//! Frontmatter and Dataview-compatible metadata values.
+//! Frontmatter and inline-field metadata values.
 //!
 //! [`RawFrontmatter`] preserves source YAML. [`Frontmatter`] stores parsed YAML
 //! key-value pairs. [`InlineField`] records body metadata together with the
@@ -117,7 +117,8 @@ impl From<&RawFrontmatter> for Frontmatter {
     }
 }
 
-/// Represents Dataview-compatible inline field syntax.
+/// Distinguishes an inline field's source syntax: bare, bracket-wrapped, or
+/// paren-wrapped.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub(crate) enum InlineFieldForm {
     /// `Key:: Value`, filling an entire line.
@@ -128,7 +129,7 @@ pub(crate) enum InlineFieldForm {
     HiddenKey,
 }
 
-/// Represents a Dataview field key shared by frontmatter and inline fields.
+/// Represents a metadata key shared by frontmatter and inline fields.
 ///
 /// Distinguishes metadata keys from other note text such as list item content,
 /// link targets, and tags.
@@ -199,7 +200,7 @@ impl MetadataField {
     }
 }
 
-/// Represents a Dataview-compatible inline field with its source syntax.
+/// Represents a `Key:: Value` inline field with its source syntax.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub(crate) struct InlineField {
     metadata: MetadataField,
@@ -274,7 +275,7 @@ impl InlineField {
     }
 }
 
-/// Represents a Dataview-compatible metadata value parsed from YAML or inline
+/// Represents a metadata value parsed from YAML frontmatter or inline field
 /// text.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub(crate) enum FieldValue {
@@ -288,7 +289,7 @@ pub(crate) enum FieldValue {
     String(String),
     /// ISO date string.
     Date(String),
-    /// Dataview duration literal in source spelling.
+    /// Duration literal in source spelling, such as `4h15m` or `4 yrs, 6 wks`.
     Duration(String),
     /// Link value.
     Link(Link),

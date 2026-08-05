@@ -226,9 +226,9 @@ impl Timestamp {
 
     /// Formats this timestamp as a date and time without a UTC offset.
     ///
-    /// Produces values like `"2026-07-29T14:30:00"` for Dataview-style
-    /// `ctime`/`mtime` field values, where offset text would break literal
-    /// filter matching.
+    /// Produces values like `"2026-07-29T14:30:00"` for the `ctime`/`mtime`
+    /// query field values, where offset text would break literal filter
+    /// matching.
     #[inline]
     #[must_use]
     pub(crate) fn to_datetime_string(self) -> String {
@@ -237,8 +237,8 @@ impl Timestamp {
 
     /// Formats this timestamp as a bare date without time or offset.
     ///
-    /// Produces values like `"2026-07-29"` for Dataview-style `cdate`/`mdate`
-    /// query field values.
+    /// Produces values like `"2026-07-29"` for the `cdate`/`mdate` query
+    /// field values.
     #[inline]
     #[must_use]
     pub(crate) fn to_date_string(self) -> String {

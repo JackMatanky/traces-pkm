@@ -1,4 +1,4 @@
-//! Dataview inline-field and Markdown tag lexer.
+//! Inline-field and Markdown tag lexer.
 //!
 //! Scans plain-text buffers produced by the Markdown parser. Those buffers
 //! already exclude fenced code blocks, indented code blocks, and inline code.
@@ -19,7 +19,7 @@ use super::{
     metadata::is_iso_date,
 };
 
-/// Extracts Dataview inline fields from `text` in encounter order.
+/// Extracts inline fields from `text` in encounter order.
 ///
 /// Recognizes `Key:: Value`, `[Key:: Value]`, and `(Key:: Value)`. `text` must
 /// already exclude code spans and blocks. Use [`extract_task_inline_fields`]
@@ -28,7 +28,7 @@ pub(super) fn extract_inline_fields(text: &str) -> Vec<InlineField> {
     extract_inline_fields_with_task_shorthands(text, TaskShorthands::Exclude)
 }
 
-/// Extracts Dataview inline fields and task emoji shorthand fields from `text`.
+/// Extracts inline fields and task emoji shorthand fields from `text`.
 ///
 /// Recognizes `Key:: Value`, `[Key:: Value]`, `(Key:: Value)`, and task
 /// shorthand fields such as `🗓️2026-01-01`. `text` must already exclude code
@@ -105,7 +105,8 @@ impl BracketPair {
     };
 }
 
-/// Field-token mode for Dataview task emoji shorthands.
+/// Field-token mode controlling whether task emoji shorthand fields are
+/// recognized.
 ///
 /// Used as [`FieldToken`]'s logos `extras` value so [`extract_inline_fields`]
 /// and [`extract_task_inline_fields`] choose their lexer behavior without
@@ -128,7 +129,7 @@ impl TaskShorthands {
     }
 }
 
-/// Token stream for Dataview inline fields in free-form Markdown text.
+/// Token stream for inline fields in free-form Markdown text.
 ///
 /// - [`Self::Field`] carries an emitted [`InlineField`].
 /// - [`Self::Ignored`] skips ordinary prose that matches none of the field
@@ -253,7 +254,7 @@ fn find_closing_delimiter(after_sep: &str, pair: BracketPair) -> Option<usize> {
     None
 }
 
-/// Parses a Dataview task emoji shorthand into an inline field.
+/// Parses a task emoji shorthand into an inline field.
 ///
 /// Starts after the already-consumed emoji token and emits a field keyed by
 /// `key` when the following text is optional inline whitespace plus exactly
@@ -333,7 +334,7 @@ fn parse_inline_value_str(raw: &str) -> FieldValue {
     ValueParser::new(raw).parse()
 }
 
-/// Recursive-descent parser for Dataview inline-field value text.
+/// Recursive-descent parser for inline-field value text.
 ///
 /// [`Self::parse`] is the entry point: it tries a comma-separated list of
 /// atoms, then a single atom spanning the whole value, falling back to a
@@ -451,15 +452,15 @@ impl<'a> ValueParser<'a> {
         None
     }
 
-    /// Parses a Dataview wikilink or embed atom (`[[target]]`, `![[target]]`)
-    /// at `pos`.
+    /// Parses a wikilink or embed atom (`[[target]]`, `![[target]]`) at
+    /// `pos`.
     fn parse_link_at(&self, pos: usize) -> Option<Atom> {
         let (link, consumed) =
             Link::parse_wikilink_prefix(self.source.from(pos)?)?;
         Some((FieldValue::Link(link), self.source.advance(pos, consumed)))
     }
 
-    /// Parses a Dataview duration atom at `pos`.
+    /// Parses a duration atom at `pos`.
     ///
     /// Recognizes one or more `<number><unit>` parts, such as `4h15m` or
     /// `4 yrs, 6 wks`. Parts are validated by
@@ -618,8 +619,8 @@ impl<'a> ValueParser<'a> {
     }
 }
 
-/// Whether `unit` is a recognized Dataview duration unit, matched
-/// case-insensitively against [`DURATION_UNITS`].
+/// Whether `unit` is a recognized duration unit, matched case-insensitively
+/// against [`DURATION_UNITS`].
 fn is_duration_unit(unit: &str) -> bool {
     DURATION_UNITS.iter().any(|candidate| unit.eq_ignore_ascii_case(candidate))
 }

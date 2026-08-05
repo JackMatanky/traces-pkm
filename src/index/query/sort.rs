@@ -1,5 +1,5 @@
-//! Provides Dataview-compatible equality and ordering for resolved
-//! [`FieldValue`] instances.
+//! Equality and ordering for resolved [`FieldValue`] instances, used by
+//! query filtering, sorting, and grouping.
 
 use std::cmp::Ordering;
 
@@ -8,9 +8,9 @@ use crate::note::FieldValue;
 /// Defines the sort direction for [`super::QueryOutcome::sort`] and CLI
 /// `--order` flags.
 ///
-/// Rust and Template callers matching Dataview's boolean convention
-/// (`.sort(path, descending: bool)`) use [`Self::is_descending`] to bridge to
-/// the `bool`-based comparator. CLI commands use this type directly as a
+/// [`super::QueryOutcome::sort`]'s Rust and Template-facing signature takes
+/// a plain `descending: bool`; [`Self::is_descending`] bridges this enum to
+/// that bool for internal reuse. CLI commands use this type directly as a
 /// [`clap::ValueEnum`], enabling `--order` to accept `asc` or `desc` without
 /// per-command enum duplication.
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq, clap::ValueEnum)]
@@ -76,8 +76,7 @@ pub(super) fn fields_equal(a: &FieldValue, b: &FieldValue) -> bool {
 /// * `b` - Second field value to compare.
 /// * `descending` - Whether to reverse the comparison result.
 ///
-/// Returns the [`Ordering`] of `a` relative to `b` according to Dataview's
-/// `compareValue` semantics:
+/// Returns the [`Ordering`] of `a` relative to `b`:
 /// - Null values: [`FieldValue::Null`] acts as the minimum value.
 /// - Direction: `descending` reverses the comparator uniformly, so
 ///   [`FieldValue::Null`] leads ascending and trails descending.

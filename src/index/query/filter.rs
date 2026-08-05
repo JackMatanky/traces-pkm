@@ -148,8 +148,9 @@ fn tokenize_filter_expr(expr: &str) -> Result<Vec<FilterToken>, QueryError> {
 /// Unescapes a lexed double-quoted string literal into a
 /// [`FieldValue::String`].
 ///
-/// Every `\X` pair pushes `X` verbatim, matching Dataview's simple escaping
-/// instead of Rust-style escape sequences.
+/// Every `\X` pair pushes `X` verbatim: `\"` becomes `"` and `\\` becomes
+/// `\`, but there is no escape table beyond that — `\n` produces the letter
+/// `n`, not a newline.
 fn string_callback(lex: &mut Lexer<'_, FilterToken>) -> FieldValue {
     let inner = lex
         .slice()

@@ -164,8 +164,8 @@ impl ListItem {
 
     /// Returns the inline fields parsed from this item's own text.
     ///
-    /// Task items also recognize Dataview date shorthand emoji such as `🗓️`,
-    /// `➕`, `🛫`, `⏳`, and `✅`.
+    /// Task items also recognize date shorthand emoji such as `🗓️`, `➕`,
+    /// `🛫`, `⏳`, and `✅`.
     #[inline]
     #[must_use]
     #[cfg_attr(

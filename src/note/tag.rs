@@ -23,10 +23,10 @@ impl Tag {
 
     /// Returns `true` if this tag equals `other` or is nested below it.
     ///
-    /// Mirrors Dataview's distinction between exact tags (`file.etags`) and
-    /// unique tags including subtags (`file.tags`). A query for `#projects`
-    /// matches `#projects/active`, but `#project` does not match `#projects`
-    /// because nesting must start at a `/` boundary.
+    /// A tag matches itself exactly, or matches a longer tag nested below it
+    /// at a `/` boundary: `#projects` matches `#projects/active`, but
+    /// `#project` does not match `#projects` because nesting must start at
+    /// `/`, not merely share a prefix.
     #[inline]
     #[must_use]
     pub(crate) fn is_nested_under(&self, other: &str) -> bool {

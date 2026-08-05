@@ -117,8 +117,8 @@ impl Note {
         &self.outlinks
     }
 
-    /// Returns Dataview-compatible inline fields from text blocks and list
-    /// items, in document order.
+    /// Returns inline fields parsed from text blocks and list items, in
+    /// document order.
     #[inline]
     #[must_use]
     #[cfg_attr(
