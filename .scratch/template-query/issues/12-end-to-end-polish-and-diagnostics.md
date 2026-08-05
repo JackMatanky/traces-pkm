@@ -132,3 +132,37 @@ process-level suite that spawns the compiled `traces` binary via
   coverage without being asked); combined-flag matrices for `table`/`task`
   (`--where` + `--sort` + `--from` together) beyond what's already covered
   per-command in-crate.
+
+**Follow-up (2026-08-05):** Adversarial review (`/code-review`-style, spec +
+design axes, run against `6a2a2a6`) found the render diagnostic's column
+half (AC1 / spec user story #48, "fix the exact Template line and
+column") was functionally correct but untested: `cli/error.rs`'s `mod
+render` tests all hand-construct `minijinja::Error::new(...)` directly,
+so `.range()`/`.template_source()` are always `None` there and none of
+them touch `render_error_location`/`line_column` or assert on `.help()`.
+The one test that did check location text
+(`query_workflows::template_render_errors_...`) only asserted a
+`"report.md:2"` *prefix*, which a silently-dropped column would still
+satisfy. `tests/cli_e2e.rs`'s own comment additionally claimed dedicated
+`render_error_location` unit tests existed in `cli/error.rs` when they
+did not. Closed by commit `b65e91e`, same branch/worktree:
+
+- Added `cli::error::tests::location`: 8 `rstest` cases for `line_column`
+  (line/offset edge cases, including multi-byte-char column counting) and
+  one test rendering through a real `minijinja::Environment` asserting
+  the exact `"greet.md:2:4"` location string.
+- Tightened `query_workflows::template_render_errors_...`'s assertion to
+  the exact `"report.md:2:15"` string.
+- Added `index::query::field::tests::accessor_matching`: direct unit
+  tests for `edit_distance`/`closest_accessor` (previously only
+  exercised indirectly via `FieldPath::parse`'s error-path tests).
+- Fixed the false claim in `tests/cli_e2e.rs`'s comment.
+- Verified the new tests are load-bearing: temporarily forced
+  `render_error_location`'s `column` to `None`, confirmed both the new
+  unit test and the tightened `query_workflows` assertion fail, then
+  reverted.
+- Full gate re-verified: `cargo check --all-targets`, `cargo clippy
+  --all-targets -- -D warnings`, `cargo fmt --check`, `hk check`, `cargo
+  doc --no-deps --document-private-items -D warnings`, `cargo test
+  --workspace` (1178 lib + 4 bin + 10 e2e + 1 init_cli + 10 doctests, up
+  from 1158 lib tests — the +20 new tests above).
