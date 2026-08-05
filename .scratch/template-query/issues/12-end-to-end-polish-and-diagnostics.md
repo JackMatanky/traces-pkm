@@ -6,14 +6,14 @@
 
 **Category:** enhancement
 
-**Status:** ready-for-agent
+**Status:** completed
 
-- [ ] Template query errors identify the failing Template context (name, line/column).
-- [ ] CLI query errors explain what failed and what the User can do next (e.g. "unrecognized field 'foo' — did you mean 'file.name'?" or "filter expression parse failed at position 5").
-- [ ] End-to-end tests cover indexing, Template QueryOps usage, page CLI queries, task CLI queries, and inlink behavior.
-- [ ] At least one test exercises error paths (bad field name, unparsable filter) end-to-end from CLI through rendered output.
-- [ ] Common workflows from the spec (user stories 49-56) are demonstrated through runnable tests.
-- [ ] No implementation ticket leaves redb internals exposed to Template or CLI callers.
+- [x] Template query errors identify the failing Template context (name, line/column).
+- [x] CLI query errors explain what failed and what the User can do next (e.g. "unrecognized field 'foo' — did you mean 'file.name'?" or "filter expression parse failed at position 5").
+- [x] End-to-end tests cover indexing, Template QueryOps usage, page CLI queries, task CLI queries, and inlink behavior.
+- [x] At least one test exercises error paths (bad field name, unparsable filter) end-to-end from CLI through rendered output.
+- [x] Common workflows from the spec (user stories 49-56) are demonstrated through runnable tests.
+- [x] No implementation ticket leaves redb internals exposed to Template or CLI callers.
 
 ## Comments
 
@@ -49,3 +49,40 @@ Query failures surface as raw minijinja render errors (templates) or `CliError::
 - Rich terminal rendering beyond minimum useful output.
 - Dataview Query Language parser or calendar queries.
 - Changes to upstream tickets (#07-#11) — this ticket consumes their merged state.
+
+
+**Resolved (2026-08-05):** Implemented on `feat/query-e2e-diagnostics` (commit `092d355`), worktree `.worktrees/query-e2e-diagnostics`.
+
+- Template render errors now carry the real template name and line, via
+  `TemplateEngine::render(source, name)` threading the resolved path into
+  `template_from_named_str` instead of minijinja's anonymous default
+  (`<string>`). `cli/error.rs` additionally computes a `name:line[:col]`
+  location from minijinja's debug span (`Environment::set_debug`, already a
+  default-on minijinja feature) and appends it to the render-failure help
+  text.
+- `QueryError::UnknownFieldPath` gained a `suggestion: Option<String>` field:
+  a "did you mean `file.name`?"-style hint for `file.*`/`task.*` accessor
+  typos, matched with a small hand-rolled Levenshtein distance helper
+  against the two fixed accessor-name lists (no crate added — the candidate
+  set is ten names). Frontmatter/inline-field keys are arbitrary per-project
+  data with no fixed list to suggest against, so they keep the existing
+  "expected forms" message unchanged.
+- The AC 2 example "filter expression parse failed at position 5" (a byte
+  offset) was deliberately not built: `UnparsableFilterExpression`'s
+  existing message already states the full expected `<field> <op> <value>`
+  grammar, which is more actionable than a bare offset, and threading spans
+  through the whole recursive-descent filter parser for that alone was
+  judged disproportionate to the ask.
+- Added `cli::mod::tests::query_workflows`: one shared seeded project
+  (frontmatter, `#book` tags, a task, a wikilink) exercised through
+  `traces index`/`list`/`table`/`task` via real `Cli::run` dispatch, a
+  Template-QueryOps-vs-`FileIndex` parity check, derived-inlink queries from
+  both CLI-equivalent and Template paths, and two diagnostics tests (bad
+  `--sort`/`--where` field paths, and a malformed template query) asserting
+  on the actual `CliError` diagnostic text.
+- Re-verified criterion 6: `redb` still has zero hits under `src/template/`
+  and `src/cli/`.
+- Full gate green: `cargo check --all-targets`, `cargo test --workspace`
+  (1158 tests), `cargo clippy --workspace --all-targets -- -D warnings`,
+  `cargo fmt --check`, `cargo doc --document-private-items -D warnings`,
+  `hk check`, `cargo deny check`.
