@@ -13,12 +13,11 @@
 //! - `path_extension`
 //! - `path_parent`
 //!
-//! The I/O tests resolve relative paths against
-//! [`Config::root`] and use absolute paths as-is.
-//! They call [`std::fs::metadata`] directly instead of [`Path::exists`],
-//! [`Path::is_file`], or [`Path::is_dir`], which collapse every I/O error into
-//! `false`. Permission errors therefore surface as [`minijinja::Error`] instead
-//! of being misreported as "does not exist".
+//! The I/O tests resolve relative paths against [`Config::root`] and use
+//! absolute paths as-is. They call [`std::fs::metadata`] directly instead of
+//! [`Path::exists`], [`Path::is_file`], or [`Path::is_dir`], which collapse
+//! every I/O error into `false`. Permission errors therefore surface as
+//! [`minijinja::Error`] instead of being misreported as "does not exist".
 //!
 //! The filters are pure string transformations over [`std::path::Path`].
 //!
@@ -143,8 +142,9 @@ impl InspectTarget {
     ///
     /// # Errors
     ///
-    /// - [`PathError::NotRelative`] or [`PathError::EscapesRoot`] if a relative
-    ///   `path` resolves outside `root`.
+    /// - [`PathError::Absolute`], [`PathError::UnsafeComponent`], or
+    ///   [`PathError::EscapesRoot`] if a relative `path` resolves outside
+    ///   `root`.
     /// - [`PathError::Verify`] if containment cannot be confirmed.
     fn resolve(root: &Path, path: &str) -> Result<Self, PathError> {
         let candidate = Path::new(path);
@@ -163,11 +163,9 @@ impl InspectTarget {
     ///
     /// That means every component is [`Component::CurDir`], or there are no
     /// components at all, as in an empty path. This cannot escape no matter how
-    /// it is joined.
-    /// [`SafeRelativePath::parse`]
-    /// rejects this shape because it is meaningless as a file to write or
-    /// include; here it is the legitimate "ask about root" case
-    /// `is_dir_path('.')`/`path_exists('')` rely on.
+    /// it is joined. [`SafeRelativePath::parse`] rejects this shape because it
+    /// is meaningless as a file to write or include; here it is the legitimate
+    /// "ask about root" case `is_dir_path('.')`/`path_exists('')` rely on.
     ///
     /// [`SafeRelativePath::parse`]: crate::path::SafeRelativePath::parse
     fn is_root_reference(candidate: &Path) -> bool {

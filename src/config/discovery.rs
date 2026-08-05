@@ -52,14 +52,6 @@ pub(crate) enum DiscoveryError {
     /// A discovered config file path/source combination was invalid.
     #[error(transparent)]
     ConfigFile(#[from] ConfigFileError),
-    /// Discovery context construction failed.
-    #[error(transparent)]
-    Context(#[from] DiscoveryContextError),
-}
-
-/// Errors constructing a discovery context.
-#[derive(Debug, Error)]
-pub(crate) enum DiscoveryContextError {
     /// Rejects file-rooted discovery for directory-only scopes.
     #[error("{kind:?} discovery cannot be anchored at file {path}")]
     UnsupportedFileAnchor {
@@ -88,21 +80,21 @@ impl DiscoveryContext {
     ///
     /// # Errors
     ///
-    /// - [`DiscoveryContextError::UnsupportedFileAnchor`] when `kind` is
-    ///   [`Full`] and `anchor` is a file; full loading is always
-    ///   directory-rooted, while focused local discovery may root at either a
-    ///   directory or a concrete local config file
+    /// - [`DiscoveryError::UnsupportedFileAnchor`] when `kind` is [`Full`] and
+    ///   `anchor` is a file; full loading is always directory-rooted, while
+    ///   focused local discovery may root at either a directory or a concrete
+    ///   local config file
     ///
     /// [`Full`]: DiscoveryScope::Full
     #[inline]
     pub(crate) fn new(
         kind: DiscoveryScope,
         anchor: DiscoveryAnchor,
-    ) -> Result<Self, DiscoveryContextError> {
+    ) -> Result<Self, DiscoveryError> {
         if matches!(kind, DiscoveryScope::Full)
             && let DiscoveryAnchor::File(path) = &anchor
         {
-            return Err(DiscoveryContextError::UnsupportedFileAnchor {
+            return Err(DiscoveryError::UnsupportedFileAnchor {
                 kind,
                 path: path.clone(),
             });
@@ -279,8 +271,8 @@ impl DiscoveryEngine {
     ///
     /// - [`DiscoveryError::PathInaccessible`] when discovery cannot inspect a
     ///   filesystem path
-    /// - [`DiscoveryError::Context`] when `scope` is [`Full`], which trust
-    ///   resolution does not support
+    /// - [`DiscoveryError::UnsupportedTrustScope`] when `scope` is [`Full`],
+    ///   which trust resolution does not support
     /// - [`DiscoveryError::ConfigFile`] when a config-file anchor is invalid
     /// - [`DiscoveryError::LocalConfigAbsent`] when [`LocalSubtree`] discovery
     ///   has no local root to walk from
@@ -322,10 +314,9 @@ impl DiscoveryEngine {
             DiscoveryScope::NearestLocal => true,
             DiscoveryScope::LocalSubtree => false,
             DiscoveryScope::Full => {
-                return Err(DiscoveryContextError::UnsupportedTrustScope {
+                return Err(DiscoveryError::UnsupportedTrustScope {
                     scope,
-                }
-                .into());
+                });
             }
         };
 
@@ -371,11 +362,10 @@ impl DiscoveryEngine {
         let cwd = match anchor {
             DiscoveryAnchor::Directory(cwd) => cwd,
             DiscoveryAnchor::File(path) => {
-                return Err(DiscoveryContextError::UnsupportedFileAnchor {
+                return Err(DiscoveryError::UnsupportedFileAnchor {
                     kind: DiscoveryScope::Full,
                     path,
-                }
-                .into());
+                });
             }
         };
         let local = Self::nearest_local_from_dir(&cwd)?;
@@ -574,7 +564,7 @@ mod tests {
             // Assert
             assert!(matches!(
                 result,
-                Err(DiscoveryContextError::UnsupportedFileAnchor {
+                Err(DiscoveryError::UnsupportedFileAnchor {
                     kind: DiscoveryScope::Full,
                     path: error_path
                 }) if error_path == path
@@ -699,9 +689,7 @@ mod tests {
             // Assert
             assert!(matches!(
                 result,
-                Err(DiscoveryError::Context(
-                    DiscoveryContextError::UnsupportedTrustScope { .. }
-                ))
+                Err(DiscoveryError::UnsupportedTrustScope { .. })
             ));
         }
 

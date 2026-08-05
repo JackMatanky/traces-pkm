@@ -108,6 +108,7 @@ mod tests {
     mod index {
         use std::{fs, path::Path};
 
+        use miette::Diagnostic;
         use pretty_assertions::assert_eq;
 
         use super::*;
@@ -191,6 +192,10 @@ mod tests {
                 source: ConfigLoadError::Build(_),
                 ..
             }));
+            assert_eq!(
+                error.code().map(|code| code.to_string()),
+                Some("traces::cli::config_build_untrusted".to_owned())
+            );
         }
 
         #[cfg(unix)]

@@ -43,33 +43,6 @@ pub(crate) enum ConfigLoadError {
 /// Errors raised while building a [`Config`] from discovered files.
 #[derive(Debug, Error)]
 pub(crate) enum ConfigBuilderError {
-    /// Discovery output was not valid builder input.
-    #[error(transparent)]
-    Input(#[from] ConfigBuilderInputError),
-    /// Config file lifecycle validation failed.
-    #[error(transparent)]
-    ConfigFile(#[from] ConfigFileError),
-    /// Config file trust validation halted, requiring user action.
-    #[error("config file is untrusted: {status:?}")]
-    Untrusted {
-        /// The halted config file.
-        file: LocalConfigFile<Tracked>,
-        /// The trust status that caused the halt.
-        status: ConfigTrustStatus,
-    },
-    /// The merged local/global config could not be re-extracted to resolve the
-    /// effective output directory.
-    #[error("failed to merge local and global config")]
-    Merge {
-        /// Source figment error.
-        #[source]
-        source: Box<figment::Error>,
-    },
-}
-
-/// Errors while parsing discovery output into builder input.
-#[derive(Debug, Error)]
-pub(crate) enum ConfigBuilderInputError {
     /// Only full discovery output can feed config loading.
     #[error(
         "config builder input requires full discovery output, got {actual:?}"
@@ -90,6 +63,25 @@ pub(crate) enum ConfigBuilderInputError {
         /// Discovery anchor path that no local config contained.
         anchor: PathBuf,
     },
+    /// Config file trust validation halted, requiring user action.
+    #[error("config file is untrusted: {status:?}")]
+    Untrusted {
+        /// The halted config file.
+        file: LocalConfigFile<Tracked>,
+        /// The trust status that caused the halt.
+        status: ConfigTrustStatus,
+    },
+    /// The merged local/global config could not be re-extracted to resolve the
+    /// effective output directory.
+    #[error("failed to merge local and global config")]
+    Merge {
+        /// Source figment error.
+        #[source]
+        source: Box<figment::Error>,
+    },
+    /// Config file lifecycle validation failed.
+    #[error(transparent)]
+    ConfigFile(#[from] ConfigFileError),
 }
 
 /// Files selected for full config loading.
@@ -105,21 +97,21 @@ struct ConfigBuilderInput {
 }
 
 impl TryFrom<DiscoveryOutcome> for ConfigBuilderInput {
-    type Error = ConfigBuilderInputError;
+    type Error = ConfigBuilderError;
 
     #[inline]
     fn try_from(outcome: DiscoveryOutcome) -> Result<Self, Self::Error> {
         let (kind, anchor, discovered_locals, discovered_globals) =
             outcome.into_parts();
         if kind != DiscoveryScope::Full {
-            return Err(ConfigBuilderInputError::WrongDiscoveryKindForBuild {
+            return Err(ConfigBuilderError::WrongDiscoveryKindForBuild {
                 actual: kind,
             });
         }
 
         let discovered_locals = discovered_locals.into_vec();
         if discovered_locals.is_empty() {
-            return Err(ConfigBuilderInputError::FullDiscoveryWithoutLocal);
+            return Err(ConfigBuilderError::FullDiscoveryWithoutLocal);
         }
 
         let anchor_path = anchor.path().to_path_buf();
@@ -127,11 +119,9 @@ impl TryFrom<DiscoveryOutcome> for ConfigBuilderInput {
             .into_iter()
             .filter(|file| anchor_path.starts_with(file.root()))
             .max_by_key(|file| file.root().components().count())
-            .ok_or(
-                ConfigBuilderInputError::FullDiscoveryWithoutAnchorLocal {
-                    anchor: anchor_path,
-                },
-            )?;
+            .ok_or(ConfigBuilderError::FullDiscoveryWithoutAnchorLocal {
+                anchor: anchor_path,
+            })?;
         let global = discovered_globals.into_vec().into_iter().next();
         Ok(Self {
             local,
@@ -223,8 +213,10 @@ impl ConfigService {
     ///
     /// # Errors
     ///
-    /// - [`ConfigBuilderError::Input`] when discovery output is not valid
-    ///   builder input
+    /// - [`ConfigBuilderError::WrongDiscoveryKindForBuild`],
+    ///   [`ConfigBuilderError::FullDiscoveryWithoutLocal`], or
+    ///   [`ConfigBuilderError::FullDiscoveryWithoutAnchorLocal`] when discovery
+    ///   output is not valid builder input
     /// - [`ConfigBuilderError::Untrusted`] when the local config's workspace is
     ///   not trusted, is missing its baseline hash, or is stale
     /// - [`ConfigBuilderError::ConfigFile`] when a selected config file fails
@@ -1122,7 +1114,7 @@ mod tests {
 
                 assert!(matches!(
                     error,
-                    ConfigBuilderInputError::WrongDiscoveryKindForBuild {
+                    ConfigBuilderError::WrongDiscoveryKindForBuild {
                         actual: DiscoveryScope::NearestLocal
                     }
                 ));
@@ -1144,7 +1136,7 @@ mod tests {
 
                 assert!(matches!(
                     error,
-                    ConfigBuilderInputError::FullDiscoveryWithoutLocal
+                    ConfigBuilderError::FullDiscoveryWithoutLocal
                 ));
             }
 
@@ -1165,7 +1157,7 @@ mod tests {
 
                 assert!(matches!(
                     error,
-                    ConfigBuilderInputError::FullDiscoveryWithoutAnchorLocal { anchor: error_anchor }
+                    ConfigBuilderError::FullDiscoveryWithoutAnchorLocal { anchor: error_anchor }
                         if error_anchor == anchor
                 ));
             }

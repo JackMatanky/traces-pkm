@@ -217,7 +217,7 @@ impl ConfigStateStore {
             return Ok(ConfigTrustCheck::MissingBaseline);
         };
         let content = fs::read_to_string(config_path).map_err(|source| {
-            ConfigStateError::Hash(HashError::Read {
+            ConfigStateError::Hash(HashError {
                 path: config_path.to_path_buf(),
                 source,
             })

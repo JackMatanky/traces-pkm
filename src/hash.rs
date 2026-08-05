@@ -12,18 +12,15 @@ use std::{
 
 use thiserror::Error;
 
-/// Errors from hashing file contents.
+/// Error returned when a file's contents could not be read for hashing.
 #[derive(Debug, Error)]
-pub(crate) enum HashError {
-    /// The file's contents could not be read.
-    #[error("failed to read {path} for hashing")]
-    Read {
-        /// Path that could not be read.
-        path: PathBuf,
-        /// Source I/O error.
-        #[source]
-        source: io::Error,
-    },
+#[error("failed to read {path} for hashing")]
+pub(crate) struct HashError {
+    /// Path that could not be read.
+    pub(crate) path: PathBuf,
+    /// Source I/O error.
+    #[source]
+    pub(crate) source: io::Error,
 }
 
 /// BLAKE3 hash of a file's contents.
@@ -44,10 +41,10 @@ impl TryFrom<&Path> for Blake3FileHash {
     ///
     /// # Errors
     ///
-    /// - [`HashError::Read`] when `path` cannot be read.
+    /// - [`HashError`] when `path` cannot be read.
     #[inline]
     fn try_from(path: &Path) -> Result<Self, HashError> {
-        let contents = fs::read(path).map_err(|source| HashError::Read {
+        let contents = fs::read(path).map_err(|source| HashError {
             path: path.to_path_buf(),
             source,
         })?;
@@ -163,7 +160,7 @@ mod tests {
             let result = Blake3FileHash::try_from(path.as_path());
 
             // Assert
-            assert!(matches!(result, Err(HashError::Read { .. })));
+            assert!(matches!(result, Err(HashError { .. })));
         }
 
         #[test]

@@ -30,12 +30,10 @@ mod trust;
 
 pub(crate) use discovery::{DiscoveryError, DiscoveryScope, LOCAL_CONFIG_FILE};
 #[cfg(test)]
-pub(crate) use file::{Discovered, LocalConfigFile};
+pub(crate) use file::{ConfigFileError, Discovered, LocalConfigFile};
 pub(crate) use model::Config;
 pub(crate) use raw::{RawConfig, RawTemplateConfig};
-#[cfg(test)]
-pub(crate) use service::{ConfigBuilderError, ConfigBuilderInputError};
-pub(crate) use service::{ConfigLoadError, ConfigService};
+pub(crate) use service::{ConfigBuilderError, ConfigLoadError, ConfigService};
 pub(crate) use store::ConfigStateError;
 #[cfg(test)]
 pub(crate) use trust::ConfigTrustStatus;

@@ -17,7 +17,9 @@ use thiserror::Error;
 use super::UserAbort;
 use crate::{
     DialogError,
-    config::{ConfigLoadError, ConfigStateError, DiscoveryError},
+    config::{
+        ConfigBuilderError, ConfigLoadError, ConfigStateError, DiscoveryError,
+    },
     index::{FileIndexError, QueryError},
     template::{TemplateError, TemplatePathError},
 };
@@ -263,9 +265,37 @@ impl Diagnostic for CliError {
                 ..
             } => "traces::cli::config_discovery_failed",
             Self::ConfigLoad {
-                source: ConfigLoadError::Build(_),
+                source:
+                    ConfigLoadError::Build(
+                        ConfigBuilderError::WrongDiscoveryKindForBuild {
+                            ..
+                        }
+                        | ConfigBuilderError::FullDiscoveryWithoutLocal
+                        | ConfigBuilderError::FullDiscoveryWithoutAnchorLocal {
+                            ..
+                        },
+                    ),
                 ..
-            } => "traces::cli::config_build_failed",
+            } => "traces::cli::config_build_invariant_failed",
+            Self::ConfigLoad {
+                source:
+                    ConfigLoadError::Build(ConfigBuilderError::Untrusted {
+                        ..
+                    }),
+                ..
+            } => "traces::cli::config_build_untrusted",
+            Self::ConfigLoad {
+                source:
+                    ConfigLoadError::Build(ConfigBuilderError::ConfigFile(_)),
+                ..
+            } => "traces::cli::config_build_config_file_failed",
+            Self::ConfigLoad {
+                source:
+                    ConfigLoadError::Build(ConfigBuilderError::Merge {
+                        ..
+                    }),
+                ..
+            } => "traces::cli::config_build_merge_failed",
             Self::TrustTargetResolve {
                 ..
             } => "traces::cli::trust::target_resolve_failed",
@@ -331,11 +361,9 @@ impl Diagnostic for CliError {
                 source: ConfigLoadError::Discovery(_),
             } => Some(config_discovery_help(cwd)),
             Self::ConfigLoad {
-                source: ConfigLoadError::Build(_),
+                source: ConfigLoadError::Build(source),
                 ..
-            } => Some(Box::new(
-                "run `traces trust` to trust this project root, then try again",
-            )),
+            } => Some(config_build_help(source)),
             Self::TrustTargetResolve {
                 ..
             } => Some(Box::new(
@@ -434,6 +462,37 @@ fn config_discovery_help(cwd: &Path) -> Box<dyn Display + '_> {
          is readable",
         cwd.display()
     ))
+}
+
+/// Builds diagnostic help text for a [`ConfigBuilderError`].
+fn config_build_help(source: &ConfigBuilderError) -> Box<dyn Display + '_> {
+    match source {
+        ConfigBuilderError::WrongDiscoveryKindForBuild {
+            ..
+        }
+        | ConfigBuilderError::FullDiscoveryWithoutLocal
+        | ConfigBuilderError::FullDiscoveryWithoutAnchorLocal {
+            ..
+        } => Box::new(
+            "this is an internal error — config discovery produced output the \
+             builder could not consume; please file a bug report",
+        ),
+        ConfigBuilderError::Untrusted {
+            ..
+        } => Box::new(
+            "run `traces trust` to trust this project root, then try again",
+        ),
+        ConfigBuilderError::ConfigFile(_) => Box::new(
+            "check that the config file contains valid TOML and its structure \
+             matches the expected schema",
+        ),
+        ConfigBuilderError::Merge {
+            ..
+        } => Box::new(
+            "this is an internal error — the local and global config could \
+             not be merged to resolve the output directory",
+        ),
+    }
 }
 
 /// Builds diagnostic help text for [`CliError::Query`].
@@ -620,7 +679,7 @@ mod tests {
         use super::*;
 
         pub(super) fn state_source() -> ConfigStateError {
-            ConfigStateError::Hash(crate::hash::HashError::Read {
+            ConfigStateError::Hash(crate::hash::HashError {
                 path: PathBuf::from("/some/project/.traces/config.toml"),
                 source: io::Error::other("boom"),
             })
@@ -685,16 +744,14 @@ mod tests {
         }
 
         #[test]
-        fn config_load_build() {
+        fn config_load_build_wrong_discovery_kind() {
             let cwd = PathBuf::from("/some/project");
             let error = CliError::ConfigLoad {
                 cwd: cwd.clone(),
                 source: ConfigLoadError::Build(
-                    crate::config::ConfigBuilderError::Input(
-                        crate::config::ConfigBuilderInputError::WrongDiscoveryKindForBuild {
-                            actual: crate::config::DiscoveryScope::NearestLocal,
-                        },
-                    ),
+                    crate::config::ConfigBuilderError::WrongDiscoveryKindForBuild {
+                        actual: crate::config::DiscoveryScope::NearestLocal,
+                    },
                 ),
             };
 
@@ -704,17 +761,70 @@ mod tests {
             );
             assert_eq!(
                 error.code().map(|code| code.to_string()),
-                Some("traces::cli::config_build_failed".to_owned())
+                Some("traces::cli::config_build_invariant_failed".to_owned())
             );
             assert_eq!(
                 error.help().map(|help| help.to_string()),
                 Some(
-                    "run `traces trust` to trust this project root, then try \
-                     again"
+                    "this is an internal error — config discovery produced \
+                     output the builder could not consume; please file a bug \
+                     report"
                         .to_owned()
                 )
             );
             assert!(error.source().is_some());
+        }
+
+        #[test]
+        fn config_load_build_config_file() {
+            let cwd = PathBuf::from("/some/project");
+            let error = CliError::ConfigLoad {
+                cwd: cwd.clone(),
+                source: ConfigLoadError::Build(crate::config::ConfigBuilderError::ConfigFile(
+                    crate::config::ConfigFileError::UnsupportedLocalConfigFile {
+                        path: PathBuf::from("/some/project/config.toml"),
+                    },
+                )),
+            };
+
+            assert_eq!(
+                error.code().map(|code| code.to_string()),
+                Some("traces::cli::config_build_config_file_failed".to_owned())
+            );
+            assert_eq!(
+                error.help().map(|help| help.to_string()),
+                Some(
+                    "check that the config file contains valid TOML and its \
+                     structure matches the expected schema"
+                        .to_owned()
+                )
+            );
+        }
+
+        #[test]
+        fn config_load_build_merge() {
+            let cwd = PathBuf::from("/some/project");
+            let error = CliError::ConfigLoad {
+                cwd: cwd.clone(),
+                source: ConfigLoadError::Build(
+                    crate::config::ConfigBuilderError::Merge {
+                        source: Box::new(figment::Error::from("merge boom")),
+                    },
+                ),
+            };
+
+            assert_eq!(
+                error.code().map(|code| code.to_string()),
+                Some("traces::cli::config_build_merge_failed".to_owned())
+            );
+            assert_eq!(
+                error.help().map(|help| help.to_string()),
+                Some(
+                    "this is an internal error — the local and global config \
+                     could not be merged to resolve the output directory"
+                        .to_owned()
+                )
+            );
         }
 
         #[test]
@@ -1000,7 +1110,7 @@ mod tests {
             let root = PathBuf::from("/some/project");
             let error = CliError::Untrust {
                 root: root.clone(),
-                source: ConfigStateError::Hash(crate::hash::HashError::Read {
+                source: ConfigStateError::Hash(crate::hash::HashError {
                     path: PathBuf::from("/some/project/.traces/config.toml"),
                     source: io::Error::other("boom"),
                 }),
@@ -1027,7 +1137,7 @@ mod tests {
             let root = PathBuf::from("/some/project");
             let error = CliError::TrustShow {
                 root: root.clone(),
-                source: ConfigStateError::Hash(crate::hash::HashError::Read {
+                source: ConfigStateError::Hash(crate::hash::HashError {
                     path: PathBuf::from("/some/project/.traces/config.toml"),
                     source: io::Error::other("boom"),
                 }),

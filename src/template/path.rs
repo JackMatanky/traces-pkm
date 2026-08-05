@@ -16,7 +16,7 @@ use std::{
 
 use thiserror::Error;
 
-use crate::path::SafeRelativePath;
+use crate::path::{PathError, SafeRelativePath};
 
 /// The extension every rendered note gets by default, absent an explicit
 /// `-o`/`file.write_to()` override.
@@ -46,10 +46,13 @@ impl TemplatePathInput {
     /// [`TemplateLoader::load`]: super::loader::TemplateLoader::load
     /// [`Component::Normal`]: std::path::Component::Normal
     pub(crate) fn parse(path: &Path) -> Result<Self, TemplatePathError> {
-        SafeRelativePath::parse(path).map(Self).map_err(|_| {
-            if path.is_absolute() {
+        SafeRelativePath::parse(path).map(Self).map_err(|error| match error {
+            PathError::Absolute => {
                 TemplatePathError::Absolute(path.to_path_buf())
-            } else {
+            }
+            PathError::UnsafeComponent
+            | PathError::EscapesRoot
+            | PathError::Verify(_) => {
                 TemplatePathError::UnsafeComponent(path.to_path_buf())
             }
         })

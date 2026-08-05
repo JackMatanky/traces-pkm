@@ -226,7 +226,7 @@ mod trust_and_diagnostics {
         assert!(!list.is_success());
         assert!(list.stdout.is_empty(), "stdout: {}", list.stdout);
         assert!(
-            list.stderr.contains("traces::cli::config_build_failed"),
+            list.stderr.contains("traces::cli::config_build_untrusted"),
             "stderr: {}",
             list.stderr
         );

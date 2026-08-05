@@ -27,10 +27,16 @@ use thiserror::Error;
 /// Error returned by safe relative path and root confinement parsing.
 #[derive(Debug, Error)]
 pub(crate) enum PathError {
-    /// Absolute, contains `..`, contains a component other than a plain name or
+    /// The candidate is absolute.
+    #[error("path is absolute, expected a relative path")]
+    Absolute,
+    /// The candidate contains `..`, a component that is not a plain name or
     /// `.`, or has no plain-name component at all.
-    #[error("path is absolute or contains an unsafe component")]
-    NotRelative,
+    #[error(
+        "path contains an unsafe component (such as `..`) or has no named \
+         component"
+    )]
+    UnsafeComponent,
     /// The candidate's existing ancestor resolves outside `root`.
     #[error("path escapes the root directory")]
     EscapesRoot,
@@ -42,8 +48,8 @@ pub(crate) enum PathError {
 
 impl PathError {
     /// Routes a confinement failure to one of two outcomes: `escape` for
-    /// [`Self::NotRelative`]/[`Self::EscapesRoot`], `unverifiable` for
-    /// [`Self::Verify`] (with its [`io::Error`] recovered).
+    /// [`Self::Absolute`]/[`Self::UnsafeComponent`]/[`Self::EscapesRoot`],
+    /// `unverifiable` for [`Self::Verify`] (with its [`io::Error`] recovered).
     ///
     /// Every root-confinement call site across the crate treats the first two
     /// variants as one user-facing failure and [`Self::Verify`] as a separate,
@@ -56,7 +62,9 @@ impl PathError {
         unverifiable: impl FnOnce(io::Error) -> T,
     ) -> T {
         match self {
-            Self::NotRelative | Self::EscapesRoot => escape(),
+            Self::Absolute | Self::UnsafeComponent | Self::EscapesRoot => {
+                escape()
+            }
             Self::Verify(source) => unverifiable(source),
         }
     }
@@ -73,10 +81,13 @@ impl SafeRelativePath {
     ///
     /// # Errors
     ///
-    /// - [`PathError::NotRelative`] if any check fails.
+    /// - [`PathError::Absolute`] if `candidate` is absolute.
+    /// - [`PathError::UnsafeComponent`] if `candidate` contains `..`, a
+    ///   component that is not a plain name or `.`, or has no plain-name
+    ///   component at all.
     pub(crate) fn parse(candidate: &Path) -> Result<Self, PathError> {
         if candidate.is_absolute() {
-            return Err(PathError::NotRelative);
+            return Err(PathError::Absolute);
         }
         let mut has_normal_component = false;
         let is_safe = candidate.components().all(|component| match component {
@@ -88,7 +99,7 @@ impl SafeRelativePath {
             _ => false,
         });
         if !is_safe || !has_normal_component {
-            return Err(PathError::NotRelative);
+            return Err(PathError::UnsafeComponent);
         }
         Ok(Self(candidate.to_path_buf()))
     }
@@ -117,8 +128,8 @@ impl RootConfinedPath {
     ///
     /// # Errors
     ///
-    /// - [`PathError::NotRelative`] if `candidate` fails
-    ///   [`SafeRelativePath::parse`]
+    /// - [`PathError::Absolute`] or [`PathError::UnsafeComponent`] if
+    ///   `candidate` fails [`SafeRelativePath::parse`]
     /// - [`PathError::EscapesRoot`] if the ancestor resolves outside `root`
     /// - [`PathError::Verify`] if canonicalizing `root` or the ancestor fails
     pub(crate) fn parse(
@@ -181,7 +192,7 @@ mod tests {
             let error = SafeRelativePath::parse(Path::new("/etc/passwd"))
                 .expect_err("absolute path is rejected");
 
-            assert!(matches!(error, PathError::NotRelative));
+            assert!(matches!(error, PathError::Absolute));
         }
 
         #[test]
@@ -189,7 +200,7 @@ mod tests {
             let error = SafeRelativePath::parse(Path::new("../escape.md"))
                 .expect_err("`..` is rejected");
 
-            assert!(matches!(error, PathError::NotRelative));
+            assert!(matches!(error, PathError::UnsafeComponent));
         }
 
         #[test]
@@ -197,7 +208,7 @@ mod tests {
             let error = SafeRelativePath::parse(Path::new(""))
                 .expect_err("empty path has no Normal component");
 
-            assert!(matches!(error, PathError::NotRelative));
+            assert!(matches!(error, PathError::UnsafeComponent));
         }
 
         #[test]
@@ -205,7 +216,7 @@ mod tests {
             let error = SafeRelativePath::parse(Path::new("."))
                 .expect_err("bare `.` has no Normal component");
 
-            assert!(matches!(error, PathError::NotRelative));
+            assert!(matches!(error, PathError::UnsafeComponent));
         }
 
         #[test]
@@ -259,7 +270,7 @@ mod tests {
                 RootConfinedPath::parse(temp.path(), Path::new("../escape.md"))
                     .expect_err("`..` is rejected");
 
-            assert!(matches!(error, PathError::NotRelative));
+            assert!(matches!(error, PathError::UnsafeComponent));
         }
 
         #[cfg(unix)]
