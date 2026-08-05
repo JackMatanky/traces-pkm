@@ -25,7 +25,7 @@ mod filter;
 mod operators;
 mod sort;
 
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::Arc};
 
 pub(crate) use error::QueryError;
 pub(crate) use field::FileField;
@@ -89,7 +89,11 @@ impl QuerySource {
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct IndexRecord {
     file: FileRecord,
-    note: Note,
+    /// Reference-counted, not owned outright: exploding one Note into
+    /// several rows (see [`super::FileIndex::query_tasks`] and
+    /// [`QueryOutcome::flatten`]) shares this field across every row instead
+    /// of deep-cloning frontmatter, links, tags, and lists per row.
+    note: Arc<Note>,
     /// Overrides field resolution for exploded rows produced by
     /// [`QueryOutcome::flatten`].
     flattened: Vec<(FieldPath, FieldValue)>,
@@ -102,25 +106,12 @@ pub(crate) struct IndexRecord {
     inlinks: Vec<PathBuf>,
 }
 
-/// Represents per-task fields layered onto an [`IndexRecord`] by
-/// [`super::FileIndex::query_tasks`].
-///
-/// Task-level rows retain parent [`Note`] file and metadata fields for
-/// filtering and display while attaching task completion and text attributes.
-/// This is distinct from [`IndexRecord::flattened`], which overrides existing
-/// field paths rather than adding new ones.
-#[derive(Clone, Debug, PartialEq)]
-struct TaskInfo {
-    completed: bool,
-    text: String,
-}
-
 impl IndexRecord {
     /// Creates a new [`IndexRecord`] pairing `file` with its parsed `note`.
     pub(super) fn new(file: FileRecord, note: Note) -> Self {
         Self {
             file,
-            note,
+            note: Arc::new(note),
             flattened: Vec::new(),
             task: None,
             inlinks: Vec::new(),
@@ -179,7 +170,7 @@ impl IndexRecord {
     #[inline]
     #[must_use]
     pub(crate) fn note(&self) -> &Note {
-        &self.note
+        self.note.as_ref()
     }
 
     /// Returns project-relative paths of Notes linking to this record's Note,
@@ -273,6 +264,19 @@ impl IndexRecord {
         }
         self
     }
+}
+
+/// Represents per-task fields layered onto an [`IndexRecord`] by
+/// [`super::FileIndex::query_tasks`].
+///
+/// Task-level rows retain parent [`Note`] file and metadata fields for
+/// filtering and display while attaching task completion and text attributes.
+/// This is distinct from [`IndexRecord::flattened`], which overrides existing
+/// field paths rather than adding new ones.
+#[derive(Clone, Debug, PartialEq)]
+struct TaskInfo {
+    completed: bool,
+    text: String,
 }
 
 /// Represents an ordered collection of [`IndexRecord`] rows produced by an

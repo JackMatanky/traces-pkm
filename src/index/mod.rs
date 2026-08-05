@@ -241,12 +241,17 @@ impl FileIndex {
     ///
     /// # Performance
     ///
-    /// O(n + m + t), where `t` is the total number of task items across matched
-    /// Notes. [`Self::refresh`]/[`Self::load`] already produced `self.inlinks`.
-    /// Each Note's task items are collected into a small `(bool, String)`
-    /// buffer once, so its last row can move the shared [`IndexRecord`] base
-    /// instead of cloning it (mirroring [`query::QueryOutcome::flatten`]'s
-    /// last-item handling); every earlier row still clones the base.
+    /// - O(n + m + t), where `t` is the total task-item count across matched
+    ///   Notes. [`Self::refresh`]/[`Self::load`] already produced
+    ///   `self.inlinks`.
+    /// - Each Note's task items are collected into a small `(bool, String)`
+    ///   buffer once, so its last row moves the shared [`IndexRecord`] base
+    ///   instead of cloning it (mirroring [`query::QueryOutcome::flatten`]'s
+    ///   last-item handling).
+    /// - Every earlier row still clones the base, but that clone is O(1):
+    ///   [`IndexRecord`]'s `note` field is an [`Arc`], not a deep clone.
+    ///
+    /// [`Arc`]: std::sync::Arc
     #[must_use]
     pub(crate) fn query_tasks(self, source: &QuerySource) -> QueryOutcome {
         let Self {
