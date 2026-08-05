@@ -136,8 +136,8 @@ impl FileRecord {
 
 /// Coarse file classification used by the two-tier index.
 ///
-/// Markdown notes get parsed [`Note`] metadata in addition
-/// to their [`FileRecord`]. Other files only keep general file metadata.
+/// Markdown notes get parsed [`Note`] metadata in addition to their
+/// [`FileRecord`]. Other files only keep general file metadata.
 ///
 /// [`Note`]: crate::note::Note
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
@@ -237,9 +237,8 @@ impl From<SystemTime> for Timestamp {
 mod tests {
     use super::*;
 
-    /// Builds a `FileRecord` with `created_at`/`modified_at` set directly,
-    /// for exercising timestamp accessor behavior without touching the
-    /// filesystem.
+    /// Builds a `FileRecord` with `created_at`/`modified_at` set directly, for
+    /// exercising timestamp accessor behavior without touching the filesystem.
     fn record_with(
         created_at: Option<Timestamp>,
         modified_at: Timestamp,

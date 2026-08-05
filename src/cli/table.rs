@@ -66,11 +66,11 @@ impl Table {
         Ok(())
     }
 
-    /// Renders matching pages from `root`'s [`FileIndex`] as a Markdown
-    /// table, alongside the matched row count.
+    /// Renders matching pages from `root`'s [`FileIndex`] as a Markdown table,
+    /// alongside the matched row count.
     ///
-    /// Split from [`Self::run`] so tests can assert on rendered content
-    /// without capturing process stdout.
+    /// Split from [`Self::run`] so tests can assert on rendered content without
+    /// capturing process stdout.
     ///
     /// # Errors
     ///
@@ -99,9 +99,9 @@ impl Table {
         let count = outcome.len();
         let columns =
             self.columns.iter().map(String::as_str).collect::<Vec<_>>();
-        // `QueryOutcome::table` escapes both headers and cell values, so
-        // a `--column` value doubling as its header stays row-safe without
-        // the CLI escaping it a second time.
+        // `QueryOutcome::table` escapes both headers and cell values, so a
+        // `--column` value doubling as its header stays row-safe without the
+        // CLI escaping it a second time.
         let rendered = outcome
             .table(&columns, &columns)
             .map_err(|source| query_error(root, source))?;
@@ -111,8 +111,8 @@ impl Table {
 
 /// Wraps a [`QueryError`] as a [`CliError::Query`] against `root`.
 ///
-/// Shared by every `outcome.*` call in [`Table::render`] so each call site
-/// is a single `.map_err(|source| query_error(root, source))?`.
+/// Shared by every `outcome.*` call in [`Table::render`] so each call site is a
+/// single `.map_err(|source| query_error(root, source))?`.
 fn query_error(root: &Path, source: QueryError) -> CliError {
     CliError::Query {
         root: root.to_path_buf(),

@@ -1,8 +1,8 @@
 //! Template rendering resolves a configured template name, renders it, and
 //! writes a Markdown note.
 //!
-//! [`TemplateService`] is the entry point used by `crate::cli::template`.
-//! The supporting modules keep each pipeline stage small:
+//! [`TemplateService`] is the entry point used by `crate::cli::template`. The
+//! supporting modules keep each pipeline stage small:
 //!
 //! - [`path`][]: [`TemplatePathInput`] validates raw template path inputs
 //!   before they reach rendering, [`TemplatePath`] tracks a found file proven
@@ -19,8 +19,8 @@
 //! - [`service`][]: [`TemplateService`] chains resolve, render, and write into
 //!   the single CLI-facing call.
 //!
-//! Everything below `service` is `pub(super)` at most, except the
-//! `pub(crate)` re-exports below, consumed by `crate::cli`.
+//! Everything below `service` is `pub(super)` at most, except the `pub(crate)`
+//! re-exports below, consumed by `crate::cli`.
 //!
 //! [`TemplatePath`]: path::TemplatePath
 //! [`DeclaredOutputPath`]: path::DeclaredOutputPath

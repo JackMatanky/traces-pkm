@@ -48,12 +48,12 @@ impl Config {
         self.templates.global()
     }
 
-    /// Returns the configured output directory, or [`root`] when
-    /// not configured.
+    /// Returns the configured output directory, or [`root`] when not
+    /// configured.
     ///
     /// May be relative (preserved unresolved from the config file) or absolute
-    /// (the [`root`] fallback); callers needing an absolute path
-    /// resolve a relative result against [`root`] themselves.
+    /// (the [`root`] fallback); callers needing an absolute path resolve a
+    /// relative result against [`root`] themselves.
     ///
     /// [`root`]: Self::root
     #[inline]

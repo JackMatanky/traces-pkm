@@ -61,8 +61,8 @@ pub(super) struct Template {
     /// Disable interactive prompts during template rendering.
     ///
     /// Every `ui.*` call returns its default. Calls without a default return
-    /// an empty, false, or first-item response. This is for scripted or CI
-    /// use and is independent of `--dry-run`.
+    /// an empty, false, or first-item response. This is for scripted or CI use
+    /// and is independent of `--dry-run`.
     #[arg(long = "no-input")]
     pub(super) no_input: bool,
 }

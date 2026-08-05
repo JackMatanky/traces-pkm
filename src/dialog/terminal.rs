@@ -8,18 +8,17 @@ use super::{DialogError, DialogProvider};
 /// is a TTY. In non-TTY contexts such as CI, pipes, scripts, and dry runs, it
 /// returns fallback values instead of blocking:
 ///
-/// | method                                         | fallback            |
-/// | ---------------------------------------------- | ------------------- |
-/// | [`text`]                 | default or `""`     |
-/// | [`confirm`]           | default or `false`  |
-/// | [`select`]             | index `0`           |
-/// | [`multi_select`] | empty [`Vec`]       |
+/// | method           | fallback           |
+/// | ---------------- | ------------------ |
+/// | [`text`]         | default or `""`    |
+/// | [`confirm`]      | default or `false` |
+/// | [`select`]       | index `0`          |
+/// | [`multi_select`] | empty [`Vec`]      |
 ///
 /// # Empty Selection
 ///
-/// [`select`] checks for empty `items` before the TTY
-/// guard and returns [`DialogError::EmptySelectionInput`] in every runtime
-/// mode.
+/// [`select`] checks for empty `items` before the TTY guard and returns
+/// [`DialogError::EmptySelectionInput`] in every runtime mode.
 ///
 /// # Examples
 ///

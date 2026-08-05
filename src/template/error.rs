@@ -16,8 +16,7 @@ use crate::DialogError;
 #[derive(Debug, Error)]
 pub(crate) enum TemplateError {
     /// `name` failed to resolve to a file. Transparent: [`TemplatePathError`]'s
-    /// own [`Display`] already names the template and what
-    /// went wrong.
+    /// own [`Display`] already names the template and what went wrong.
     ///
     /// [`Display`]: std::fmt::Display
     #[error(transparent)]

@@ -1,9 +1,8 @@
 //! Configuration loading and trust boundary.
 //!
-//! The config seam used by the rest of the crate: exports [`ConfigService`]
-//! for operations and [`Config`] for read-only resolved settings, while
-//! submodules keep discovery, lifecycle, raw TOML, and trust-state details
-//! separate.
+//! The config seam used by the rest of the crate: exports [`ConfigService`] for
+//! operations and [`Config`] for read-only resolved settings, while submodules
+//! keep discovery, lifecycle, raw TOML, and trust-state details separate.
 //!
 //! # Load Pipeline
 //!

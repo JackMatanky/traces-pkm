@@ -1,9 +1,14 @@
-//! Coordinates the template resolve, render, and write pipeline.
+//! Coordinates template resolution, rendering, and file output.
 //!
-//! [`TemplateService`] owns the short top-to-bottom sequence for one
-//! [`Config`]: resolve through its own [`TemplateLoader`], read the source,
-//! render it through [`TemplateEngine`], then delegate output resolution and
-//! disk writes to [`TemplateWriteTarget`].
+//! [`TemplateService`] manages the top-to-bottom pipeline for a [`Config`]:
+//!
+//! - Resolves template input paths via [`TemplateLoader`].
+//! - Reads template source files from disk.
+//! - Renders template source through [`TemplateEngine`], using the resolved
+//!   absolute path as the template name so error context reports the true file
+//!   and line number.
+//! - Delegates output path resolution and disk writes to
+//!   [`TemplateWriteTarget`].
 
 use std::{
     path::{Path, PathBuf},
@@ -21,8 +26,8 @@ use crate::{DialogProvider, config::Config};
 
 /// Entry point for resolving, rendering, and writing one template.
 ///
-/// Holds a borrowed [`Config`], its own [`TemplateLoader`], and the
-/// [`TemplateEngine`] built from it.
+/// Holds a borrowed [`Config`], an internal [`TemplateLoader`], and a
+/// [`TemplateEngine`] constructed from the configuration.
 pub(crate) struct TemplateService<'a> {
     config: &'a Config,
     loader: TemplateLoader,
@@ -31,12 +36,12 @@ pub(crate) struct TemplateService<'a> {
 }
 
 impl<'a> TemplateService<'a> {
-    /// Builds a service for `config`, backed by a [`TemplateEngine`].
+    /// Constructs a new [`TemplateService`] for `config`.
     ///
-    /// `provider` receives every `ui.*` call, including under
-    /// [`WriteMode::DryRun`]. [`WriteMode`] controls whether output is written,
-    /// never whether prompts run. `--no-input` is implemented by choosing which
-    /// `provider` to pass in.
+    /// The `provider` receives all interactive `ui.*` prompt calls, including
+    /// under [`WriteMode::DryRun`]. The [`WriteMode`] controls whether output
+    /// files are written to disk, not whether prompts execute. Callers enforce
+    /// non-interactive execution by choosing an appropriate [`DialogProvider`].
     #[inline]
     #[must_use]
     pub(crate) fn new(
@@ -54,35 +59,38 @@ impl<'a> TemplateService<'a> {
         }
     }
 
-    /// Lists available template names for `config`.
+    /// Lists available template names configured in `config`.
     ///
-    /// Returns every top-level `.md` file stem in the local directory, then the
-    /// global directory with local duplicates excluded. This is an associated
-    /// function because listing candidates needs only configured directories,
-    /// not a rendering engine or dialog provider, so the interactive picker can
-    /// call it before building a full [`Self`].
+    /// Returns all top-level `.md` file stems from the local template directory
+    /// followed by the global template directory, excluding local duplicates.
+    ///
+    /// This is an associated function requiring only [`Config`], allowing
+    /// candidates to be listed before constructing a full
+    /// [`TemplateService`].
     #[inline]
     #[must_use]
     pub(crate) fn list_available(config: &Config) -> Vec<String> {
         TemplateLoader::from(config).list_available()
     }
 
-    /// Resolves `name`, renders it, then writes or previews the result.
+    /// Resolves, renders, and outputs a template in a single pass.
     ///
-    /// Equivalent to [`Self::render`] followed by [`Self::write`], for callers
-    /// that do not need to inspect the render before deciding where it lands.
+    /// Combines [`Self::render`] and [`Self::write`] for callers that do not
+    /// need to inspect the intermediate [`RenderedTemplate`] before writing.
     ///
     /// # Arguments
     ///
-    /// * `name` - template identifier passed to [`Self::render`]
-    /// * `output` - explicit `-o` override; highest write-target precedence
-    /// * `mode` - [`WriteMode::Commit`] writes to disk, [`WriteMode::DryRun`]
-    ///   returns the rendered content untouched
+    /// * `name` - Template identifier to resolve and render.
+    /// * `output` - Optional explicit output file path override.
+    /// * `mode` - Execution mode controlling whether output is previewed or
+    ///   written to disk.
     ///
     /// # Errors
     ///
-    /// - Any error returned by [`Self::render`].
-    /// - Any error returned by [`Self::write`].
+    /// - Any [`TemplateError`] produced during resolution or rendering by
+    ///   [`Self::render`].
+    /// - Any [`TemplateError`] produced during path resolution or file writing
+    ///   by [`Self::write`].
     #[inline]
     pub(crate) fn render_to_file(
         &self,
@@ -93,19 +101,29 @@ impl<'a> TemplateService<'a> {
         self.write(self.render(name)?, output, mode)
     }
 
-    /// Resolves `name` and renders it.
+    /// Resolves `name` and renders its source into a [`RenderedTemplate`].
     ///
-    /// This is the read/render half of [`Self::render_to_file`], split out so a
-    /// caller can inspect the render before deciding where it writes. Avoiding
-    /// a second render also avoids re-running any `ui.*` prompts inside the
-    /// template.
+    /// Performs the resolution and rendering steps of [`Self::render_to_file`],
+    /// allowing callers to inspect rendered content before invoking
+    /// [`Self::write`]. Separating render from write prevents re-executing
+    /// interactive `ui.*` prompt calls if the rendered result is evaluated
+    /// multiple times.
+    ///
+    /// Passes the resolved template's absolute file path to [`TemplateEngine`]
+    /// as the template name. If rendering fails, error context
+    /// ([`minijinja::Error::name`]) reports the true file path and line number
+    /// instead of a generic placeholder.
     ///
     /// # Errors
     ///
-    /// - [`TemplateError::Resolve`] if `name` does not resolve to a file.
-    /// - [`TemplateError::Read`] if the resolved template cannot be read.
-    /// - [`TemplateError::Render`] if the template source is invalid or a
-    ///   `ui.*`/`file.*` call inside it fails.
+    /// - [`Resolve`] if `name` does not resolve to an existing template file.
+    /// - [`Read`] if the resolved template file cannot be read from disk.
+    /// - [`Render`] if template syntax is invalid, rendering fails, or a `ui.*`
+    ///   or `file.*` prompt call fails.
+    ///
+    /// [`Resolve`]: TemplateError::Resolve
+    /// [`Read`]: TemplateError::Read
+    /// [`Render`]: TemplateError::Render
     #[inline]
     pub(crate) fn render(
         &self,
@@ -123,29 +141,42 @@ impl<'a> TemplateService<'a> {
         })
     }
 
-    /// Writes or previews an already [`Self::render`]ed template.
+    /// Writes or previews a [`RenderedTemplate`].
     ///
-    /// [`WriteMode::DryRun`] returns [`WriteOutcome::Previewed`] immediately,
-    /// without computing or confining an output path. [`WriteMode::Commit`]
-    /// resolves the output path by precedence: `output` (`-o`), then the
-    /// rendered template's `file.write_to()` declaration, then
-    /// [`Self::default_output_path`], then writes.
+    /// When `mode` is [`WriteMode::DryRun`], returns
+    /// [`WriteOutcome::Previewed`] immediately without resolving an output
+    /// path. When `mode` is [`WriteMode::Commit`], resolves the output target
+    /// path according to the following precedence:
+    ///
+    /// 1. Explicit `output` path override.
+    /// 2. Declared output path from the template's `file.write_to()` call.
+    /// 3. Default output path returned by [`Self::default_output_path`].
+    ///
+    /// Output file existence is checked atomically during creation via
+    /// [`std::fs::File::create_new`].
+    ///
+    /// # Arguments
+    ///
+    /// * `rendered` - Rendered template produced by [`Self::render`].
+    /// * `output` - Optional explicit output file path override.
+    /// * `mode` - Execution mode controlling whether output is previewed or
+    ///   written to disk.
     ///
     /// # Errors
     ///
-    /// - [`TemplateError::OutputPathEscapesRoot`] if `file.write_to()` or `-o`
-    ///   names an absolute or `..`-containing path. Never returned for
+    /// - [`OutputPathEscapesRoot`] if a declared `file.write_to()` or explicit
+    ///   `output` path escapes the workspace root. Never returned for
     ///   [`WriteMode::DryRun`].
-    /// - [`TemplateError::OutputFileAlreadyExists`] if the output path exists
-    ///   and `mode` is [`WriteMode::Commit`] with [`CommitPolicy::CreateNew`].
-    ///   This is checked atomically by [`fs::File::create_new`], not by a
-    ///   separate `exists()` call, so there is no race between the check and
-    ///   write. Never returned for [`WriteMode::DryRun`].
-    /// - [`TemplateError::Write`] if the output, or its parent directory,
-    ///   cannot be written.
+    /// - [`OutputFileAlreadyExists`] if the target output file exists and
+    ///   `mode` specifies [`CommitPolicy::CreateNew`]. Never returned for
+    ///   [`WriteMode::DryRun`].
+    /// - [`Write`] if creating parent directories or writing to the target file
+    ///   fails.
     ///
+    /// [`OutputPathEscapesRoot`]: TemplateError::OutputPathEscapesRoot
+    /// [`OutputFileAlreadyExists`]: TemplateError::OutputFileAlreadyExists
+    /// [`Write`]: TemplateError::Write
     /// [`CommitPolicy::CreateNew`]: super::writer::CommitPolicy::CreateNew
-    /// [`fs::File::create_new`]: std::fs::File::create_new
     #[inline]
     pub(crate) fn write(
         &self,
@@ -168,12 +199,16 @@ impl<'a> TemplateService<'a> {
         Ok(WriteOutcome::Written(resolved_path))
     }
 
-    /// Reads the resolved template's source from disk, mapping I/O
-    /// failure to [`TemplateError::Read`].
+    /// Reads the source text of a resolved template from disk.
+    ///
+    /// Reads the file at `resolved` into a string, mapping I/O failures to
+    /// [`TemplateError::Read`].
     ///
     /// # Errors
     ///
-    /// - [`TemplateError::Read`] if the resolved template cannot be read.
+    /// - [`Read`] if reading the template file fails.
+    ///
+    /// [`Read`]: TemplateError::Read
     fn read_template(resolved: &TemplatePath) -> Result<String, TemplateError> {
         resolved.read().map_err(|source| TemplateError::Read {
             path: resolved.absolute(),
@@ -181,41 +216,52 @@ impl<'a> TemplateService<'a> {
         })
     }
 
-    /// Renders `source` through the engine.
+    /// Renders template `source` using `path` as the template name for error
+    /// reporting.
     ///
-    /// `path` is only used to name the template in a [`TemplateError::Render`],
-    /// not read again.
+    /// Passes `path` as the template identifier to [`TemplateEngine`] so that
+    /// syntax errors and prompt failures report the absolute path and line
+    /// number of `path` instead of the default `<string>` placeholder. The file
+    /// at `path` is only used to name the render template and is not read
+    /// again.
+    ///
     /// # Errors
     ///
-    /// - [`TemplateError::Render`] if minijinja cannot render `source`.
+    /// - [`Render`] if template evaluation or an internal helper call fails.
+    ///
+    /// [`Render`]: TemplateError::Render
     fn render_template(
         &self,
         source: &str,
         path: &Path,
     ) -> Result<RenderOutput, TemplateError> {
-        self.engine.render(source).map_err(|source| TemplateError::Render {
-            path: path.to_path_buf(),
-            source,
+        self.engine.render(source, &path.to_string_lossy()).map_err(|source| {
+            TemplateError::Render {
+                path: path.to_path_buf(),
+                source,
+            }
         })
     }
 
-    /// Returns the default output path by joining [`Config::output_dir`] with
-    /// the resolved template's default output filename
-    /// ([`TemplatePath::default_output_filename`]), so two directories'
-    /// same-named templates don't collide.
+    /// Computes the default output path for a resolved template.
     ///
-    /// Uses [`TemplateWriteTarget::trusted`], not the private `confine` helper:
-    /// `output_dir` is a trusted config value, not a runtime candidate.
+    /// Joins [`Config::output_dir`] with the default output filename from
+    /// `resolved` ([`TemplatePath::default_output_filename`]), preventing
+    /// templates with identical stems in different directories from colliding.
+    /// Treats [`Config::output_dir`] as a trusted base directory rather than an
+    /// untrusted user path.
     fn default_output_path(&self, resolved: &TemplatePath) -> PathBuf {
         self.config.output_dir().join(resolved.default_output_filename())
     }
 }
 
-/// The result of [`TemplateService::render`].
+/// Represents the result of [`TemplateService::render`].
 ///
-/// Carries rendered content plus the resolved template identity
-/// [`TemplateService::write`] needs to finish the job without rendering `name`
-/// a second time. A second render would re-run any `ui.*` prompts inside it.
+/// Carries rendered content, resolved [`TemplatePath`] metadata, and any output
+/// path declared via `file.write_to()`. Passing this structure to
+/// [`TemplateService::write`] finishes the output phase without rendering the
+/// template a second time, avoiding re-execution of interactive `ui.*` prompt
+/// calls.
 #[derive(Debug)]
 pub(crate) struct RenderedTemplate {
     resolved: TemplatePath,
@@ -242,16 +288,20 @@ mod tests {
         TemplatePathInput::parse(Path::new(path)).expect("valid template input")
     }
 
-    /// Creates a cheap, deterministic provider for tests that never exercise
-    /// `ui.*`. [`TemplateService::new`] requires one regardless.
+    /// Creates a deterministic [`DialogProvider`] for test cases that do not
+    /// trigger prompts.
+    ///
+    /// Supplies the mandatory [`DialogProvider`] required by
+    /// [`TemplateService::new`].
     fn preset_provider() -> Arc<dyn DialogProvider> {
         Arc::new(PresetDialogProvider::new())
     }
 
-    /// Extracts the written path from a [`WriteOutcome::Written`].
+    /// Extracts the written [`PathBuf`] from a [`WriteOutcome::Written`].
     ///
-    /// `.expect()`s when `render_to_file` unexpectedly returned
-    /// [`WriteOutcome::Previewed`], which is never true for `dry_run: false`.
+    /// # Panics
+    ///
+    /// Panics if `outcome` is [`WriteOutcome::Previewed`].
     fn written_path(outcome: WriteOutcome) -> PathBuf {
         let written = match outcome {
             WriteOutcome::Written(path) => Some(path),
@@ -465,6 +515,39 @@ mod tests {
                 .expect_err("invalid syntax fails to render");
 
             assert!(matches!(error, TemplateError::Render { .. }));
+        }
+
+        #[test]
+        fn render_errors_name_the_real_template_and_line_not_string() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let local_dir = temp.path().join("templates");
+            let template_path = write_file(
+                &local_dir,
+                "broken-query.md",
+                "line one\n{{ query.all().sort(\"nope.bad\") }}\n",
+            );
+            let config = Config::for_test(
+                temp.path().to_path_buf(),
+                Some(local_dir),
+                None,
+                temp.path().to_path_buf(),
+            );
+            let service = TemplateService::new(&config, preset_provider());
+
+            let error = service
+                .render_to_file(
+                    &input("broken-query"),
+                    None,
+                    WriteMode::Commit(CommitPolicy::CreateNew),
+                )
+                .expect_err("malformed sort field path fails to render");
+
+            assert!(matches!(
+                &error,
+                TemplateError::Render { source, .. }
+                    if source.name() == Some(template_path.to_string_lossy().as_ref())
+                        && source.line() == Some(2)
+            ));
         }
 
         #[test]

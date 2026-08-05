@@ -6,14 +6,14 @@
 
 **Category:** enhancement
 
-**Status:** ready-for-agent
+**Status:** completed
 
-- [ ] Template query errors identify the failing Template context (name, line/column).
-- [ ] CLI query errors explain what failed and what the User can do next (e.g. "unrecognized field 'foo' — did you mean 'file.name'?" or "filter expression parse failed at position 5").
-- [ ] End-to-end tests cover indexing, Template QueryOps usage, page CLI queries, task CLI queries, and inlink behavior.
-- [ ] At least one test exercises error paths (bad field name, unparsable filter) end-to-end from CLI through rendered output.
-- [ ] Common workflows from the spec (user stories 49-56) are demonstrated through runnable tests.
-- [ ] No implementation ticket leaves redb internals exposed to Template or CLI callers.
+- [x] Template query errors identify the failing Template context (name, line/column).
+- [x] CLI query errors explain what failed and what the User can do next (e.g. "unrecognized field 'foo' — did you mean 'file.name'?" or "filter expression parse failed at position 5").
+- [x] End-to-end tests cover indexing, Template QueryOps usage, page CLI queries, task CLI queries, and inlink behavior.
+- [x] At least one test exercises error paths (bad field name, unparsable filter) end-to-end from CLI through rendered output.
+- [x] Common workflows from the spec (user stories 49-56) are demonstrated through runnable tests.
+- [x] No implementation ticket leaves redb internals exposed to Template or CLI callers.
 
 ## Comments
 
@@ -49,3 +49,120 @@ Query failures surface as raw minijinja render errors (templates) or `CliError::
 - Rich terminal rendering beyond minimum useful output.
 - Dataview Query Language parser or calendar queries.
 - Changes to upstream tickets (#07-#11) — this ticket consumes their merged state.
+
+
+**Resolved (2026-08-05):** Implemented on `feat/query-e2e-diagnostics` (commit `092d355`), worktree `.worktrees/query-e2e-diagnostics`.
+
+- Template render errors now carry the real template name and line, via
+  `TemplateEngine::render(source, name)` threading the resolved path into
+  `template_from_named_str` instead of minijinja's anonymous default
+  (`<string>`). `cli/error.rs` additionally computes a `name:line[:col]`
+  location from minijinja's debug span (`Environment::set_debug`, already a
+  default-on minijinja feature) and appends it to the render-failure help
+  text.
+- `QueryError::UnknownFieldPath` gained a `suggestion: Option<String>` field:
+  a "did you mean `file.name`?"-style hint for `file.*`/`task.*` accessor
+  typos, matched with a small hand-rolled Levenshtein distance helper
+  against the two fixed accessor-name lists (no crate added — the candidate
+  set is ten names). Frontmatter/inline-field keys are arbitrary per-project
+  data with no fixed list to suggest against, so they keep the existing
+  "expected forms" message unchanged.
+- The AC 2 example "filter expression parse failed at position 5" (a byte
+  offset) was deliberately not built: `UnparsableFilterExpression`'s
+  existing message already states the full expected `<field> <op> <value>`
+  grammar, which is more actionable than a bare offset, and threading spans
+  through the whole recursive-descent filter parser for that alone was
+  judged disproportionate to the ask.
+- Added `cli::mod::tests::query_workflows`: one shared seeded project
+  (frontmatter, `#book` tags, a task, a wikilink) exercised through
+  `traces index`/`list`/`table`/`task` via real `Cli::run` dispatch, a
+  Template-QueryOps-vs-`FileIndex` parity check, derived-inlink queries from
+  both CLI-equivalent and Template paths, and two diagnostics tests (bad
+  `--sort`/`--where` field paths, and a malformed template query) asserting
+  on the actual `CliError` diagnostic text.
+- Re-verified criterion 6: `redb` still has zero hits under `src/template/`
+  and `src/cli/`.
+- Full gate green: `cargo check --all-targets`, `cargo test --workspace`
+  (1158 tests), `cargo clippy --workspace --all-targets -- -D warnings`,
+  `cargo fmt --check`, `cargo doc --document-private-items -D warnings`,
+  `hk check`, `cargo deny check`.
+
+**Follow-up (2026-08-05):** Code review (`/code-review`, standards + spec
+axes, run against `092d355`) surfaced one real gap: `AC3`/`AC5`'s
+"page/task CLI queries" and "end-to-end tests" coverage was only
+in-process (`Cli::try_parse_from(...).run(...)`) — `list`/`table`/`task`
+print their primary output directly to stdout (`print!`, see each
+command's `render`/`lines` docs) rather than returning it, so no
+in-process test could assert on what a User actually sees. Closed by
+adding `tests/cli_e2e.rs` (commit `d63a78c`, same branch/worktree): a
+process-level suite that spawns the compiled `traces` binary via
+`Command::new(env!("CARGO_BIN_EXE_traces-pkm"))`.
+
+- Isolation: two environment variables set only on the spawned child —
+  `TRACES_STATE_DIR` (trust/tracked-config stores, `src/dirs.rs`'s existing
+  override) and `XDG_CONFIG_HOME` (global config/template discovery). Both
+  overrides already existed for other purposes; no library code changed to
+  support this, and no new `pub` surface was added anywhere in the crate.
+- Scope: non-interactive commands only (`trust`, `index`, `list`, `table`,
+  `task`, `template -i ... --dry-run --no-input`, `completions`). `init` has
+  no non-interactive mode (always prompts via the injected
+  `DialogProvider`) and stays covered by the pre-existing
+  `tests/init_cli.rs`, which drives it with a `PresetDialogProvider`
+  instead of a real TTY.
+- 10 tests: trust+index happy path, untrusted-root diagnostic, did-you-mean
+  field-typo suggestion, unparsable-filter grammar, `list`/`table`/`task`
+  real stdout content, `template --dry-run` real stdout content (writes
+  nothing to disk), template render-error diagnostic code, and
+  `completions`.
+- Two things only this suite could catch, both fixed during authoring:
+  miette line-wraps long diagnostic causal chains with a `│`
+  continuation glyph that can land mid-path with no original whitespace
+  there, so reconstructed wrapped text is unreliable — assertions stick to
+  diagnostic codes (always their own short line) and primary stdout
+  content instead. `FileIndex` indexes the `templates/` directory itself,
+  so an unscoped `query.all()` inside a template counts the template file
+  alongside project notes — the dry-run fixture scopes its query to a
+  `notes/` subfolder to avoid an off-by-one.
+- Full gate re-verified after this addition: `cargo check --all-targets`,
+  `cargo test --workspace` (1158 lib + 10 e2e + 1 init_cli + 10 doctests,
+  all pass), `cargo clippy --workspace --all-targets -- -D warnings`,
+  `cargo fmt --check`, `hk check`, `cargo deny check` — all clean.
+- Explicitly not done: trimming `query_workflows`'s now-partially-redundant
+  dispatch-only assertions (flagged, not actioned — reduces existing
+  coverage without being asked); combined-flag matrices for `table`/`task`
+  (`--where` + `--sort` + `--from` together) beyond what's already covered
+  per-command in-crate.
+
+**Follow-up (2026-08-05):** Adversarial review (`/code-review`-style, spec +
+design axes, run against `6a2a2a6`) found the render diagnostic's column
+half (AC1 / spec user story #48, "fix the exact Template line and
+column") was functionally correct but untested: `cli/error.rs`'s `mod
+render` tests all hand-construct `minijinja::Error::new(...)` directly,
+so `.range()`/`.template_source()` are always `None` there and none of
+them touch `render_error_location`/`line_column` or assert on `.help()`.
+The one test that did check location text
+(`query_workflows::template_render_errors_...`) only asserted a
+`"report.md:2"` *prefix*, which a silently-dropped column would still
+satisfy. `tests/cli_e2e.rs`'s own comment additionally claimed dedicated
+`render_error_location` unit tests existed in `cli/error.rs` when they
+did not. Closed by commit `b65e91e`, same branch/worktree:
+
+- Added `cli::error::tests::location`: 8 `rstest` cases for `line_column`
+  (line/offset edge cases, including multi-byte-char column counting) and
+  one test rendering through a real `minijinja::Environment` asserting
+  the exact `"greet.md:2:4"` location string.
+- Tightened `query_workflows::template_render_errors_...`'s assertion to
+  the exact `"report.md:2:15"` string.
+- Added `index::query::field::tests::accessor_matching`: direct unit
+  tests for `edit_distance`/`closest_accessor` (previously only
+  exercised indirectly via `FieldPath::parse`'s error-path tests).
+- Fixed the false claim in `tests/cli_e2e.rs`'s comment.
+- Verified the new tests are load-bearing: temporarily forced
+  `render_error_location`'s `column` to `None`, confirmed both the new
+  unit test and the tightened `query_workflows` assertion fail, then
+  reverted.
+- Full gate re-verified: `cargo check --all-targets`, `cargo clippy
+  --all-targets -- -D warnings`, `cargo fmt --check`, `hk check`, `cargo
+  doc --no-deps --document-private-items -D warnings`, `cargo test
+  --workspace` (1178 lib + 4 bin + 10 e2e + 1 init_cli + 10 doctests, up
+  from 1158 lib tests — the +20 new tests above).

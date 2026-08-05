@@ -3,14 +3,12 @@
 //! [`TemplateWriteTarget::write`] resolves a render's output path and writes
 //! `content` under a [`CommitPolicy`]. [`WriteMode`] is defined here and
 //! converted from CLI flags via [`WriteMode::from_flags`], but
-//! [`TemplateService::write`] is the
-//! only place that matches on it.
+//! [`TemplateService::write`] is the only place that matches on it.
 //!
 //! [`TemplateWriteTarget`] gathers output-destination candidates from `-o`
 //! (`requested`) and `file.write_to()` ([`DeclaredOutputPath`]), then resolves
 //! them by precedence: `requested`, `declared`, caller-supplied default.
-//! `requested`/`declared` are runtime values confined to
-//! [`Config::root`] via
+//! `requested`/`declared` are runtime values confined to [`Config::root`] via
 //! [`crate::path::RootConfinedPath::parse`]. The default comes from an already
 //! trust-gated [`Config::output_dir`].
 //!
@@ -29,9 +27,8 @@ use crate::{DialogError, DialogProvider, path::RootConfinedPath};
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(crate) enum WriteMode {
-    /// Render only.
-    /// [`TemplateService::write`]
-    /// returns [`WriteOutcome::Previewed`] without touching disk.
+    /// Render only. [`TemplateService::write`] returns
+    /// [`WriteOutcome::Previewed`] without touching disk.
     ///
     /// [`TemplateService::write`]: super::service::TemplateService::write
     DryRun,
@@ -112,9 +109,8 @@ impl CommitPolicy {
     }
 }
 
-/// What [`TemplateService::write`]
-/// did with rendered content: wrote it to disk, or handed it back unwritten
-/// under [`WriteMode::DryRun`].
+/// What [`TemplateService::write`] did with rendered content: wrote it to disk,
+/// or handed it back unwritten under [`WriteMode::DryRun`].
 ///
 /// [`TemplateService::write`]: super::service::TemplateService::write
 #[derive(Debug, Eq, PartialEq)]
@@ -297,8 +293,7 @@ impl<'a> TemplateWriteTarget<'a> {
 
     /// Joins `candidate` onto `root` when relative, without validating it.
     ///
-    /// Used for the already trust-gated
-    /// [`Config::output_dir`], which may
+    /// Used for the already trust-gated [`Config::output_dir`], which may
     /// legitimately be absolute. See the module docs.
     ///
     /// [`Config::output_dir`]: crate::config::Config::output_dir

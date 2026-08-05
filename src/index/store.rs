@@ -81,8 +81,8 @@ impl IndexStore {
     /// inlink edge.
     ///
     /// All three redb tables are cleared and rewritten in one write
-    /// transaction, so readers never observe one table refreshed while
-    /// another remains stale.
+    /// transaction, so readers never observe one table refreshed while another
+    /// remains stale.
     ///
     /// # Errors
     ///
@@ -234,8 +234,8 @@ impl IndexStore {
         Ok(items)
     }
 
-    /// Deserializes every `target -> sources` edge from the `links`
-    /// multimap table.
+    /// Deserializes every `target -> sources` edge from the `links` multimap
+    /// table.
     ///
     /// [`Self::load_all`] uses this instead of [`Self::load_table`] because
     /// [`redb::ReadableMultimapTable::iter`] already yields each key's values

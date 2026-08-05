@@ -10,11 +10,9 @@
 //!
 //! # Selection By Position
 //!
-//! [`select`] and
-//! [`multi_select`] return indices into the
-//! `items` slice, not copied labels. Index-based selection lets callers recover
-//! non-string values from a parallel list and keeps duplicate labels
-//! distinguishable.
+//! [`select`] and [`multi_select`] return indices into the `items` slice, not
+//! copied labels. Index-based selection lets callers recover non-string values
+//! from a parallel list and keeps duplicate labels distinguishable.
 //!
 //! [`select`]: DialogProvider::select
 //! [`multi_select`]: DialogProvider::multi_select
@@ -68,8 +66,8 @@ pub trait DialogProvider: Send + Sync {
 
     /// Prompt the user to pick any number of items, returning their indices.
     ///
-    /// The multi-selection counterpart to [`select`]. An empty
-    /// `items` slice yields an empty [`Vec`] (not an error).
+    /// The multi-selection counterpart to [`select`]. An empty `items` slice
+    /// yields an empty [`Vec`] (not an error).
     ///
     /// # Examples
     ///

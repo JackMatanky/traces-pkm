@@ -19,8 +19,8 @@ fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 
 /// Returns direct mutable access to mutex-protected data.
 ///
-/// Used by consuming builder methods that already own `&mut self`, where
-/// taking a runtime lock would add no safety.
+/// Used by consuming builder methods that already own `&mut self`, where taking
+/// a runtime lock would add no safety.
 #[inline]
 fn get_mut<T>(m: &mut Mutex<T>) -> &mut T {
     m.get_mut().unwrap_or_else(PoisonError::into_inner)
@@ -28,10 +28,9 @@ fn get_mut<T>(m: &mut Mutex<T>) -> &mut T {
 
 /// Deterministic [`DialogProvider`] that replays queued responses.
 ///
-/// Queue answers with builder methods such as [`with_text`]
-/// and [`with_confirm`]. Each dialog call consumes one
-/// queued value, then falls back to the prompt's default or the provider's
-/// hard-coded fallback.
+/// Queue answers with builder methods such as [`with_text`] and
+/// [`with_confirm`]. Each dialog call consumes one queued value, then falls
+/// back to the prompt's default or the provider's hard-coded fallback.
 ///
 /// This provider is used where prompts must not touch the terminal: tests,
 /// automation, and MCP execution.

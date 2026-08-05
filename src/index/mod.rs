@@ -2,9 +2,9 @@
 //!
 //! [`FileIndex`] stores a sorted [`FileRecord`] for every regular file under a
 //! trusted project root. Markdown files also get parsed into [`Note`] metadata.
-//! Persistence lives in [`store`]; callers use [`FileIndex`]'s
-//! methods instead of redb tables. Inbound links between Notes are derived
-//! from outlinks and persisted alongside them; see [`inlinks`].
+//! Persistence lives in [`store`]; callers use [`FileIndex`]'s methods instead
+//! of redb tables. Inbound links between Notes are derived from outlinks and
+//! persisted alongside them; see [`inlinks`].
 //!
 //! # Main Entry Points
 //!

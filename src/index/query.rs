@@ -1,22 +1,23 @@
-//! Query source selection, field resolution, and outcome transformations.
+//! Selects query sources, resolves record fields, and transforms query
+//! outcomes.
 //!
 //! This module powers page-level results from [`super::FileIndex::query`] and
 //! task-level rows from [`super::FileIndex::query_tasks`].
 //!
 //! # Main Types
 //!
-//! - [`QuerySource`] - Selects which Notes a query includes.
-//! - [`IndexRecord`] - Pairs a [`FileRecord`] with its parsed [`Note`] and
-//!   resolves `file.*`, `task.*`, metadata, tag, and inlinks fields.
-//! - [`QueryOutcome`] - Stores result rows, applies chained transformations
+//! - [`QuerySource`]: Selects which Notes a query includes.
+//! - [`IndexRecord`]: Pairs a [`FileRecord`] with its parsed [`Note`] and
+//!   resolves `file.*`, `task.*`, frontmatter, tag, and inlinks fields.
+//! - [`QueryOutcome`]: Stores result rows, applies chained transformations
 //!   ([`QueryOutcome::filter`], [`QueryOutcome::sort`],
 //!   [`QueryOutcome::limit`], [`QueryOutcome::group_by`],
-//!   [`QueryOutcome::flatten`]), and renders terminal markdown output
+//!   [`QueryOutcome::flatten`]), and renders terminal Markdown output
 //!   ([`QueryOutcome::table`], [`QueryOutcome::list`],
 //!   [`QueryOutcome::task_list`]). Terminal renderers are plain Rust methods
-//!   with no minijinja dependency, so both the `query`/`tasks` template
-//!   namespaces and future CLI query commands can reuse them.
-//! - [`QueryError`] - Reports malformed field paths and query expressions.
+//!   with no minijinja dependency, enabling reuse across template namespaces
+//!   and CLI query commands.
+//! - [`QueryError`]: Reports malformed field paths and query expressions.
 
 mod error;
 mod field;
@@ -36,24 +37,24 @@ pub(crate) use sort::SortOrder;
 use super::file::FileRecord;
 use crate::note::{FieldValue, Note};
 
-/// Selects which markdown Notes a page-level or task-level query includes.
+/// Selects which Markdown Notes a page-level or task-level query includes.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum QuerySource {
-    /// Every indexed markdown Note.
+    /// Includes every indexed Markdown Note.
     All,
-    /// Notes tagged with a markdown tag, or a sub-tag nested under it. For
-    /// example, `#projects` also matches `#projects/active`.
+    /// Includes Notes tagged with `tag` or a sub-tag nested under it (for
+    /// example, `#projects` also matches `#projects/active`).
     Tag(String),
-    /// Notes located in `folder` or a directory nested under it.
+    /// Includes Notes located in `folder` or a directory nested under it.
     Folder(PathBuf),
 }
 
 impl QuerySource {
     /// Builds a [`QuerySource`] from a `--from`-style CLI flag value.
     ///
-    /// `None` (the flag omitted) selects [`Self::All`]. A value starting with
-    /// `#` selects [`Self::Tag`] (including nested sub-tags: `#book` also
-    /// matches `#book/fiction`). Any other value selects [`Self::Folder`].
+    /// Passing `None` selects [`Self::All`]. A string starting with `#` selects
+    /// [`Self::Tag`] (matching nested sub-tags such as `#book/fiction` for
+    /// `#book`), while any other string selects [`Self::Folder`].
     #[must_use]
     pub(crate) fn from_flag(flag: Option<&str>) -> Self {
         match flag {
@@ -65,7 +66,7 @@ impl QuerySource {
         }
     }
 
-    /// Whether `file` and its parsed `note` belong to this source.
+    /// Returns `true` if `file` and its parsed `note` belong to this source.
     #[inline]
     #[must_use]
     pub(super) fn is_match(&self, file: &FileRecord, note: &Note) -> bool {
@@ -79,11 +80,12 @@ impl QuerySource {
     }
 }
 
-/// Query row pairing a [`FileRecord`] with parsed [`Note`] metadata.
+/// Represents a query row pairing a [`FileRecord`] with parsed [`Note`]
+/// metadata.
 ///
-/// Task-level rows also carry one task item's fields. Each row resolves
+/// Task-level rows also carry fields for a single task item. Each row resolves
 /// `file.*`, `task.*`, frontmatter, inline fields, tags, and derived inlinks
-/// for Template and CLI callers.
+/// for template rendering and CLI output.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct IndexRecord {
     file: FileRecord,
@@ -91,22 +93,22 @@ pub(crate) struct IndexRecord {
     /// Overrides field resolution for exploded rows produced by
     /// [`QueryOutcome::flatten`].
     flattened: Vec<(FieldPath, FieldValue)>,
-    /// This row's task fields, set by [`super::FileIndex::query_tasks`].
+    /// Stores per-task fields set by [`super::FileIndex::query_tasks`], or
     /// `None` for page-level records.
     task: Option<TaskInfo>,
-    /// Project-relative paths of Notes whose outlinks resolve to this row's
-    /// Note, set by
-    /// [`super::FileIndex::query`]/[`super::FileIndex::query_tasks`] from
-    /// [`super::inlinks::derive_inlinks`]. Empty for a Note nothing links to.
+    /// Stores project-relative paths of Notes whose outlinks resolve to this
+    /// row's Note, set by [`super::FileIndex::query`] and
+    /// [`super::FileIndex::query_tasks`].
     inlinks: Vec<PathBuf>,
 }
 
-/// Per-task fields layered onto an [`IndexRecord`] by
-/// [`super::FileIndex::query_tasks`]. A task-level row keeps its parent Note's
-/// `file`/`note` fields for filtering and display, adding only these two.
+/// Represents per-task fields layered onto an [`IndexRecord`] by
+/// [`super::FileIndex::query_tasks`].
 ///
-/// Distinct from [`IndexRecord::flattened`], which overrides an *existing*
-/// field path rather than adding new ones.
+/// Task-level rows retain parent [`Note`] file and metadata fields for
+/// filtering and display while attaching task completion and text attributes.
+/// This is distinct from [`IndexRecord::flattened`], which overrides existing
+/// field paths rather than adding new ones.
 #[derive(Clone, Debug, PartialEq)]
 struct TaskInfo {
     completed: bool,
@@ -114,7 +116,7 @@ struct TaskInfo {
 }
 
 impl IndexRecord {
-    /// Pairs `file` with its parsed `note`.
+    /// Creates a new [`IndexRecord`] pairing `file` with its parsed `note`.
     pub(super) fn new(file: FileRecord, note: Note) -> Self {
         Self {
             file,
@@ -125,13 +127,12 @@ impl IndexRecord {
         }
     }
 
-    /// Returns this record as one task row, with `task.completed` and
-    /// `task.text` set to `completed`/`text`.
+    /// Converts this record into a task-level row with specified completion
+    /// state and text.
     ///
-    /// Used by [`super::FileIndex::query_tasks`] to turn one page-level record
-    /// into one row per task item, retaining the parent Note's `file.*`,
-    /// frontmatter, inline-field, and tag metadata for filtering and display
-    /// via [`Self::field`].
+    /// Used by [`super::FileIndex::query_tasks`] to turn a page-level record
+    /// into one row per task item while retaining parent Note metadata for
+    /// filtering and display via [`Self::field`].
     pub(super) fn with_task(
         mut self,
         completed: bool,
@@ -144,76 +145,72 @@ impl IndexRecord {
         self
     }
 
-    /// Attaches `inlinks`, the project-relative paths of Notes whose outlinks
-    /// resolve to this row's Note.
-    ///
-    /// Set by [`super::FileIndex::query`] and [`super::FileIndex::query_tasks`]
-    /// from [`super::inlinks::derive_inlinks`].
+    /// Attaches project-relative paths of Notes whose outlinks resolve to this
+    /// record's Note.
     pub(super) fn with_inlinks(mut self, inlinks: Vec<PathBuf>) -> Self {
         self.inlinks = inlinks;
         self
     }
 
-    /// Returns this row's task completion state, if it is a task-level row
-    /// built by [`super::FileIndex::query_tasks`]. `None` for page-level
-    /// records.
+    /// Returns task completion state if this is a task-level record, or `None`
+    /// for page-level records.
     #[inline]
     #[must_use]
     pub(crate) fn task_completed(&self) -> Option<bool> {
         self.task.as_ref().map(|task| task.completed)
     }
 
-    /// Returns this row's task text, if it is a task-level row built by
-    /// [`super::FileIndex::query_tasks`]. `None` for page-level records.
+    /// Returns task text if this is a task-level record, or `None` for
+    /// page-level records.
     #[inline]
     #[must_use]
     pub(crate) fn task_text(&self) -> Option<&str> {
         self.task.as_ref().map(|task| task.text.as_str())
     }
 
-    /// Returns the indexed file's general metadata.
+    /// Returns general metadata for the indexed file.
     #[inline]
     #[must_use]
     pub(crate) fn file(&self) -> &FileRecord {
         &self.file
     }
 
-    /// Returns the indexed file's parsed [`Note`] metadata.
+    /// Returns parsed [`Note`] metadata for the indexed file.
     #[inline]
     #[must_use]
     pub(crate) fn note(&self) -> &Note {
         &self.note
     }
 
-    /// Returns project-relative paths of Notes whose outlinks resolve to this
-    /// row's Note. Empty for a Note nothing links to.
+    /// Returns project-relative paths of Notes linking to this record's Note,
+    /// or an empty slice if unlinked.
     #[inline]
     #[must_use]
     pub(crate) fn inlinks(&self) -> &[PathBuf] {
         &self.inlinks
     }
 
-    /// Resolves `path` against this record's file and note metadata.
+    /// Resolves a field path string against this record's metadata.
     ///
     /// Resolves `file.*` accessors, `task.*` accessors, frontmatter fields,
-    /// inline fields, `tags`, and `inlinks`:
-    /// - Frontmatter fields take precedence over inline fields with the same
-    ///   key. See [`Note::fields`].
-    /// - A well-formed path this record has no value for, such as a missing
-    ///   frontmatter key or a `task.*` accessor on a page-level record,
-    ///   resolves to [`FieldValue::Null`] instead of erroring.
+    /// inline fields, `tags`, and `inlinks`. Resolution rules include:
+    /// - Frontmatter fields take precedence over inline fields sharing the same
+    ///   key (see [`Note::fields`]).
+    /// - Well-formed paths without values (such as a missing key or a `task.*`
+    ///   accessor on a page-level record) resolve to [`FieldValue::Null`].
     ///
     /// # Errors
     ///
-    /// - [`QueryError::UnknownFieldPath`] if `path` is malformed. See
-    ///   [`FieldPath::parse`].
+    /// - [`UnknownFieldPath`] if `path` cannot be parsed as a valid field path.
+    ///
+    /// [`UnknownFieldPath`]: QueryError::UnknownFieldPath
     #[inline]
     pub(crate) fn field(&self, path: &str) -> Result<FieldValue, QueryError> {
         Ok(self.resolve(&FieldPath::parse(path)?))
     }
 
-    /// Resolves an already-parsed `path`, applying any [`Self::flattened`]
-    /// override.
+    /// Resolves a parsed [`FieldPath`], applying any [`Self::flattened`]
+    /// overrides.
     fn resolve(&self, path: &FieldPath) -> FieldValue {
         if let Some((_, value)) = self.flattened.iter().find(|(p, _)| p == path)
         {
@@ -253,9 +250,8 @@ impl IndexRecord {
         }
     }
 
-    /// Returns a copy of this record with `path` overridden to `value`.
-    ///
-    /// Used for exploded rows produced by [`QueryOutcome::flatten`].
+    /// Returns a copy of this record with `path` overridden to `value` for
+    /// exploded [`QueryOutcome::flatten`] rows.
     fn with_flattened(mut self, path: FieldPath, value: FieldValue) -> Self {
         if let Some(entry) = self.flattened.iter_mut().find(|(p, _)| p == &path)
         {
@@ -267,79 +263,82 @@ impl IndexRecord {
     }
 }
 
-/// Ordered collection of [`IndexRecord`] rows produced by an index query.
+/// Represents an ordered collection of [`IndexRecord`] rows produced by an
+/// index query.
 ///
-/// Page-level outcomes contain one row per Note. Task-level outcomes contain
-/// one row per task item. Consumers should not assume which shape they have
-/// unless they control the query source.
-///
-/// Transformation methods consume and return [`QueryOutcome`], so calls chain
-/// naturally: `outcome.filter("rating > 7")?.sort("rating", true)?.limit(10)?`.
+/// Page-level outcomes contain one row per Note, while task-level outcomes
+/// contain one row per task item. Transformation methods consume and return a
+/// [`QueryOutcome`], enabling method chaining such as `outcome.filter("rating >
+/// 7")?.sort("rating", true)?.limit(10)?`.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct QueryOutcome {
     records: Vec<IndexRecord>,
 }
 
 impl QueryOutcome {
-    /// Wraps `records` as a query result.
+    /// Wraps `records` into a new [`QueryOutcome`].
     pub(super) fn new(records: Vec<IndexRecord>) -> Self {
         Self {
             records,
         }
     }
 
-    /// The number of [`IndexRecord`]s in this outcome.
+    /// Returns the number of [`IndexRecord`] rows in this outcome.
     #[inline]
     #[must_use]
     pub(crate) fn len(&self) -> usize {
         self.records.len()
     }
 
-    /// Whether this outcome has no [`IndexRecord`]s.
+    /// Returns `true` if this outcome contains no [`IndexRecord`] rows.
     #[inline]
     #[must_use]
     pub(crate) fn is_empty(&self) -> bool {
         self.records.is_empty()
     }
 
-    /// The [`IndexRecord`] at `index`, if present.
+    /// Returns a reference to the [`IndexRecord`] at `index`, or `None` if out
+    /// of bounds.
     #[inline]
     #[must_use]
     pub(crate) fn get(&self, index: usize) -> Option<&IndexRecord> {
         self.records.get(index)
     }
 
-    /// Iterates over the contained [`IndexRecord`]s by reference.
+    /// Returns an iterator over references to the contained [`IndexRecord`]
+    /// rows.
     #[inline]
     pub(crate) fn iter(&self) -> std::slice::Iter<'_, IndexRecord> {
         self.records.iter()
     }
 
-    /// Keeps only records matching the filter expression `expr`.
+    /// Retains only records matching the filter expression `expr`.
     ///
-    /// Supported forms:
+    /// Expression syntax supports:
     /// - Comparisons: `<field> <op> <value>` with `==`, `!=`, `>=`, `<=`, `>`,
     ///   or `<`.
-    /// - Functions: `contains(field, value)` checks list membership, tag prefix
-    ///   matches like `#book` matching `#book/fiction`, or string substring
+    /// - Functions: `contains(field, value)` checks list membership, tag
+    ///   hierarchy (for example `#book` matching `#book/fiction`), or substring
     ///   containment.
-    /// - Boolean logic: `AND` / `and` / `&&`, `OR` / `or` / `||`, and `NOT` /
-    ///   `not` / `!`.
-    /// - Parentheses: `( ... )` overrides standard operator precedence.
-    /// - Literals: double-quoted strings with `\"` escape support, numbers,
-    ///   `true`/`false`, or `null`/`Null`.
-    /// - Text normalization: `==` and `!=` treat `String`, `Date`, and
-    ///   `Duration` values as textually comparable. For example, `"2026-07-29"`
-    ///   matches a `Date` field with equal text.
-    /// - Type mismatches: other cross-kind comparisons, such as comparing a
-    ///   number to a string, never match under any operator except `!=`.
-    /// - Null values: records missing the field (`Null`) never match `==` or
-    ///   ordering operators, but do match `!=`.
+    /// - Logical operators: `AND` / `and` / `&&`, `OR` / `or` / `||`, and `NOT`
+    ///   / `not` / `!`.
+    /// - Grouping: `( ... )` overrides default operator precedence.
+    /// - Literals: quoted strings with `"` escapes, numbers, booleans
+    ///   (`true`/`false`), and `null`/`Null`.
+    /// - Text normalization: `==` and `!=` compare `String`, `Date`, and
+    ///   `Duration` values by text.
+    /// - Type mismatches: mismatched data types never match except under `!=`.
+    /// - Null handling: records missing a field (`Null`) fail equality and
+    ///   ordering checks, but match `!=`.
     ///
     /// # Errors
     ///
-    /// - [`QueryError::UnparsableFilterExpression`] if `expr` cannot be parsed.
-    /// - [`QueryError::UnknownFieldPath`] if its field path is malformed.
+    /// - [`UnparsableFilterExpression`] if `expr` cannot be parsed.
+    /// - [`UnknownFieldPath`] if a field path referenced in `expr` is
+    ///   malformed.
+    ///
+    /// [`UnparsableFilterExpression`]: QueryError::UnparsableFilterExpression
+    /// [`UnknownFieldPath`]: QueryError::UnknownFieldPath
     pub(crate) fn filter(self, expr: &str) -> Result<Self, QueryError> {
         let expr = FilterExpr::parse(expr)?;
         let records = self
@@ -350,30 +349,40 @@ impl QueryOutcome {
         Ok(Self::new(records))
     }
 
-    /// Keeps only records matching the filter expression `expr`.
+    /// Filters records matching `expr`, serving as an alias for
+    /// [`Self::filter`].
     ///
-    /// Alias for [`Self::filter`] using raw identifier syntax (`r#where`).
-    /// See [`Self::filter`] for full syntax and matching rules.
+    /// Uses Rust raw identifier syntax (`r#where`) to match Dataview's
+    /// `.where()` API. Refer to [`Self::filter`] for full syntax details and
+    /// matching behavior.
     ///
     /// # Errors
     ///
-    /// - [`QueryError::UnparsableFilterExpression`] if `expr` cannot be parsed.
-    /// - [`QueryError::UnknownFieldPath`] if its field path is malformed.
+    /// - [`UnparsableFilterExpression`] if `expr` cannot be parsed.
+    /// - [`UnknownFieldPath`] if a field path referenced in `expr` is
+    ///   malformed.
+    ///
+    /// [`UnparsableFilterExpression`]: QueryError::UnparsableFilterExpression
+    /// [`UnknownFieldPath`]: QueryError::UnknownFieldPath
     #[inline]
     pub(crate) fn r#where(self, expr: &str) -> Result<Self, QueryError> {
         self.filter(expr)
     }
 
-    /// Orders records by `path`, ascending unless `descending` is set.
+    /// Sorts records by the field at `path` in ascending or descending order.
     ///
-    /// Matches Dataview's sort semantics:
-    /// - Null values: records missing `path` ([`FieldValue::Null`]) sort as
-    ///   minimum values, so they lead ascending and trail descending.
-    /// - Stability: equal or incomparable records keep their relative order.
+    /// Adheres to Dataview sorting behavior:
+    /// - Null handling: records with [`FieldValue::Null`] at `path` sort as
+    ///   minimum values (leading in ascending order, trailing in descending
+    ///   order).
+    /// - Stability: records with equal or incomparable keys preserve their
+    ///   original relative order.
     ///
     /// # Errors
     ///
-    /// - [`QueryError::UnknownFieldPath`] if `path` is malformed.
+    /// - [`UnknownFieldPath`] if `path` cannot be parsed as a valid field path.
+    ///
+    /// [`UnknownFieldPath`]: QueryError::UnknownFieldPath
     #[inline]
     pub(crate) fn sort(
         self,
@@ -383,12 +392,14 @@ impl QueryOutcome {
         self.sort_by_field(path, descending)
     }
 
-    /// Keeps at most `n` leading records.
+    /// Truncates the outcome to retain at most `n` leading records.
     ///
     /// # Errors
     ///
-    /// - [`QueryError::NegativeLimit`] if `n` is negative or does not fit in a
-    ///   [`usize`] on this platform.
+    /// - [`NegativeLimit`] if `n` is negative or exceeds platform pointer width
+    ///   limits.
+    ///
+    /// [`NegativeLimit`]: QueryError::NegativeLimit
     pub(crate) fn limit(self, n: i64) -> Result<Self, QueryError> {
         let n = usize::try_from(n).map_err(|_source| {
             QueryError::NegativeLimit {
@@ -398,33 +409,38 @@ impl QueryOutcome {
         Ok(Self::new(self.records.into_iter().take(n).collect()))
     }
 
-    /// Orders records by `path` to cluster equal values for grouping.
+    /// Groups records by sorting them ascending on the field at `path`.
     ///
-    /// Sorts ascending so consumers (such as template loops or terminal
-    /// renderers) can detect group boundaries by comparing each record's
-    /// resolved `path` value to the previous record.
+    /// Groups records by field value so template loops or terminal renderers
+    /// can detect group transitions by comparing adjacent records.
     ///
     /// # Errors
     ///
-    /// - [`QueryError::UnknownFieldPath`] if `path` is malformed.
+    /// - [`UnknownFieldPath`] if `path` cannot be parsed as a valid field path.
+    ///
+    /// [`UnknownFieldPath`]: QueryError::UnknownFieldPath
     #[inline]
     pub(crate) fn group_by(self, path: &str) -> Result<Self, QueryError> {
         self.sort_by_field(path, false)
     }
 
-    /// Explodes each record's `path` field into one row per list element.
+    /// Explodes records containing a list at `path` into one row per list
+    /// element.
     ///
-    /// Behavioral details:
-    /// - Target fields: applies to fields resolving to [`FieldValue::List`],
-    ///   including frontmatter lists, inline list fields, and `tags`.
-    /// - Non-list fields: records with scalar values pass through unchanged.
-    /// - Empty lists: records with empty list values contribute no rows.
-    /// - Row resolution: on exploded rows, `path` resolves to that row's single
-    ///   element while all other fields resolve from the original record.
+    /// Behavior rules:
+    /// - List fields: applies to fields resolving to [`FieldValue::List`] (such
+    ///   as frontmatter lists, inline list fields, or `tags`).
+    /// - Non-list fields: records with scalar values pass through unmodified.
+    /// - Empty lists: records with empty list values yield no rows in the
+    ///   output.
+    /// - Field resolution: exploded rows resolve `path` to the individual list
+    ///   element, retaining all other fields from the source record.
     ///
     /// # Errors
     ///
-    /// - [`QueryError::UnknownFieldPath`] if `path` is malformed.
+    /// - [`UnknownFieldPath`] if `path` cannot be parsed as a valid field path.
+    ///
+    /// [`UnknownFieldPath`]: QueryError::UnknownFieldPath
     pub(crate) fn flatten(self, path: &str) -> Result<Self, QueryError> {
         let field_path = FieldPath::parse(path)?;
         let mut records = Vec::with_capacity(self.records.len());
@@ -445,25 +461,24 @@ impl QueryOutcome {
         Ok(Self::new(records))
     }
 
-    /// Renders these records as a GitHub-flavored markdown table with one
-    /// column per entry, pairing each `headers` label with the field path at
-    /// the same position in `columns`. Columns are aligned to their widest cell
-    /// (via `comfy-table`'s
-    /// [`ASCII_MARKDOWN`] preset) so rows
-    /// line up visually in a terminal.
+    /// Renders records as a Markdown table matching headers to corresponding
+    /// column field paths.
     ///
-    /// Header and cell text render like [`Self::list`], except pipe characters
-    /// (`|`) are escaped and newlines are collapsed to spaces so neither a
-    /// header nor a cell value can corrupt the table's row structure.
+    /// Pairs each `headers` label with the field path at the identical index in
+    /// `columns`. Table formatting uses `comfy-table`'s [`ASCII_MARKDOWN`]
+    /// preset to align column widths. Pipe characters (`|`) are escaped and
+    /// newlines collapse into spaces to prevent table layout corruption.
     ///
     /// # Errors
     ///
-    /// - [`QueryError::TableColumnMismatch`] if `headers` and `columns` have
-    ///   different lengths.
-    /// - [`QueryError::UnknownFieldPath`] if any entry of `columns` is
+    /// - [`TableColumnMismatch`] if `headers` and `columns` slices differ in
+    ///   length.
+    /// - [`UnknownFieldPath`] if any field path string in `columns` is
     ///   malformed.
     ///
     /// [`ASCII_MARKDOWN`]: comfy_table::presets::ASCII_MARKDOWN
+    /// [`TableColumnMismatch`]: QueryError::TableColumnMismatch
+    /// [`UnknownFieldPath`]: QueryError::UnknownFieldPath
     pub(crate) fn table(
         &self,
         headers: &[&str],
@@ -493,12 +508,14 @@ impl QueryOutcome {
         Ok(out)
     }
 
-    /// Renders these records as a markdown bullet list, one item per record,
-    /// using the resolved value of `path`.
+    /// Renders records as a Markdown bullet list formatting the resolved field
+    /// value at `path`.
     ///
     /// # Errors
     ///
-    /// - [`QueryError::UnknownFieldPath`] if `path` is malformed.
+    /// - [`UnknownFieldPath`] if `path` cannot be parsed as a valid field path.
+    ///
+    /// [`UnknownFieldPath`]: QueryError::UnknownFieldPath
     pub(crate) fn list(&self, path: &str) -> Result<String, QueryError> {
         let field_path = FieldPath::parse(path)?;
         let mut out = String::new();
@@ -510,14 +527,17 @@ impl QueryOutcome {
         Ok(out)
     }
 
-    /// Renders these records as a markdown task list (`- [ ]`/`- [x]`), one
-    /// item per task-level record's `task.completed`/`task.text`.
+    /// Renders task-level records as a Markdown task list (`- [ ]` or `- [x]`).
+    ///
+    /// Renders each record using its task completion state and text fields.
     ///
     /// # Errors
     ///
-    /// - [`QueryError::TaskListOnPageRecords`] if any record has no task
-    ///   fields, meaning it was built by [`super::FileIndex::query`] rather
-    ///   than [`super::FileIndex::query_tasks`].
+    /// - [`TaskListOnPageRecords`] if any record lacks task fields (built by
+    ///   [`super::FileIndex::query`] instead of
+    ///   [`super::FileIndex::query_tasks`]).
+    ///
+    /// [`TaskListOnPageRecords`]: QueryError::TaskListOnPageRecords
     pub(crate) fn task_list(&self) -> Result<String, QueryError> {
         let mut out = String::new();
         for record in &self.records {
@@ -535,21 +555,22 @@ impl QueryOutcome {
         Ok(out)
     }
 
-    /// Sorts records by the resolved value of `path`.
+    /// Sorts records stably by the resolved value of `path`.
     ///
-    /// Shared implementation for [`Self::sort`] and [`Self::group_by`]: a
-    /// stable sort by `path`'s resolved value, treating [`FieldValue::Null`]
-    /// as the minimum value.
+    /// Provides shared sorting logic for [`Self::sort`] and [`Self::group_by`],
+    /// treating [`FieldValue::Null`] as the minimum value.
     ///
     /// # Performance
     ///
-    /// O(n): [`slice::sort_by_cached_key`] resolves `path` against each record
-    /// exactly once and caches the result, instead of re-resolving on every
-    /// comparison a plain `sort_by` closure would make.
+    /// Runs key resolution in `O(n)` time using [`slice::sort_by_cached_key`],
+    /// resolving `path` once per record rather than on every comparison made
+    /// by a standard `sort_by` closure.
     ///
     /// # Errors
     ///
-    /// - [`QueryError::UnknownFieldPath`] if `path` is malformed.
+    /// - [`UnknownFieldPath`] if `path` cannot be parsed as a valid field path.
+    ///
+    /// [`UnknownFieldPath`]: QueryError::UnknownFieldPath
     fn sort_by_field(
         self,
         path: &str,
@@ -585,13 +606,14 @@ impl<'a> IntoIterator for &'a QueryOutcome {
     }
 }
 
-/// Converts a resolved [`FieldValue`] to plain text for [`QueryOutcome::list`]
-/// and [`QueryOutcome::table`] cells.
+/// Converts a resolved [`FieldValue`] to plain text for list and table
+/// rendering.
 ///
-/// [`FieldValue::Null`] renders as an empty string. [`FieldValue::Link`]
-/// renders as its target path; Traces has no separate link display yet.
-/// [`FieldValue::List`] and [`FieldValue::Object`] flatten recursively,
-/// joined by `", "`.
+/// Conversion rules:
+/// - [`FieldValue::Null`] renders as an empty string.
+/// - [`FieldValue::Link`] renders as its target path.
+/// - [`FieldValue::List`] and [`FieldValue::Object`] flatten recursively with
+///   elements joined by `", "`.
 fn field_text(value: &FieldValue) -> String {
     match value {
         FieldValue::Null => String::new(),
@@ -612,15 +634,14 @@ fn field_text(value: &FieldValue) -> String {
     }
 }
 
-/// Escapes `|` and collapses newlines to spaces so `text` cannot corrupt
-/// [`QueryOutcome::table`]'s `| cell | cell |` row structure. Applied to both
-/// header labels and cell values.
+/// Escapes pipes (`|`) and collapses newlines to spaces to preserve table row
+/// formatting.
 fn escape_table_text(text: &str) -> String {
     text.replace('\n', " ").replace('|', "\\|")
 }
 
-/// [`field_text`], escaped with [`escape_table_text`] so a cell value cannot
-/// corrupt [`QueryOutcome::table`]'s row structure.
+/// Converts a [`FieldValue`] to plain text and escapes table formatting
+/// characters.
 fn table_cell_text(value: &FieldValue) -> String {
     escape_table_text(&field_text(value))
 }
@@ -637,8 +658,8 @@ mod tests {
 
         use super::*;
 
-        /// Builds a [`QueryOutcome`] over every markdown Note in `files`
-        /// (`(name, content)` pairs), written under `temp`.
+        /// Builds a [`QueryOutcome`] over every Markdown Note in `files`
+        /// written under `temp`.
         pub(super) fn outcome_for_files(
             temp: &Path,
             files: &[(&str, &str)],
@@ -651,8 +672,8 @@ mod tests {
                 .query(&QuerySource::All)
         }
 
-        /// Builds a single-record [`QueryOutcome`] from one markdown Note's
-        /// `content`.
+        /// Builds a single-record [`QueryOutcome`] from a single Markdown
+        /// Note's content.
         pub(super) fn outcome_for(temp: &Path, content: &str) -> QueryOutcome {
             outcome_for_files(temp, &[("note.md", content)])
         }
@@ -972,9 +993,7 @@ mod tests {
 
             assert_eq!(
                 record.field(path),
-                Err(QueryError::UnknownFieldPath {
-                    path: path.to_owned()
-                })
+                Err(QueryError::unknown_field_path(path, None))
             );
         }
 
@@ -1093,9 +1112,7 @@ mod tests {
 
             assert_eq!(
                 outcome.group_by("file.bogus"),
-                Err(QueryError::UnknownFieldPath {
-                    path: "file.bogus".to_owned()
-                })
+                Err(QueryError::unknown_field_path("file.bogus", None))
             );
         }
     }
@@ -1181,9 +1198,7 @@ mod tests {
 
             assert_eq!(
                 outcome.flatten("file.bogus"),
-                Err(QueryError::UnknownFieldPath {
-                    path: "file.bogus".to_owned()
-                })
+                Err(QueryError::unknown_field_path("file.bogus", None))
             );
         }
 
@@ -1334,9 +1349,7 @@ mod tests {
 
             assert_eq!(
                 outcome.table(&["Name"], &["file.bogus"]),
-                Err(QueryError::UnknownFieldPath {
-                    path: "file.bogus".to_owned()
-                })
+                Err(QueryError::unknown_field_path("file.bogus", None))
             );
         }
 
@@ -1391,9 +1404,7 @@ mod tests {
 
             assert_eq!(
                 outcome.list("file.bogus"),
-                Err(QueryError::UnknownFieldPath {
-                    path: "file.bogus".to_owned()
-                })
+                Err(QueryError::unknown_field_path("file.bogus", None))
             );
         }
 

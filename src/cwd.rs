@@ -64,8 +64,8 @@ pub(crate) struct CwdGuard {
 
 #[cfg(test)]
 impl CwdGuard {
-    /// Saves the current directory and enters `dir`, holding
-    /// [`CWD_TEST_LOCK`] until dropped.
+    /// Saves the current directory and enters `dir`, holding [`CWD_TEST_LOCK`]
+    /// until dropped.
     ///
     /// # Panics
     ///
@@ -98,9 +98,9 @@ impl Drop for CwdGuard {
 mod tests {
     use super::*;
 
-    /// Reads cwd under [`CWD_TEST_LOCK`] too: an un-serialized read can
-    /// observe another thread's `CwdGuard`-entered directory disappearing
-    /// mid-read once that guard drops and its backing `TempDir` is removed.
+    /// Reads cwd under [`CWD_TEST_LOCK`] too: an un-serialized read can observe
+    /// another thread's `CwdGuard`-entered directory disappearing mid-read once
+    /// that guard drops and its backing `TempDir` is removed.
     fn locked_cwd() -> Cwd {
         let _lock = CWD_TEST_LOCK
             .lock()

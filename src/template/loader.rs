@@ -2,14 +2,13 @@
 //!
 //! [`TemplateLoader::find`] is the single resolution path for validated
 //! top-level `-i <path>` and minijinja `{% include %}`/`{% extends %}` inputs.
-//! Its caller must pass a
-//! [`TemplatePathInput`], which proves the raw
-//! path was validated before search. It then searches
-//! [`TemplateLoader::directories`] in local-before-global order via
-//! [`TemplateLoader::find_path_in`] and [`TemplateLoader::find_name_in`].
+//! Its caller must pass a [`TemplatePathInput`], which proves the raw path was
+//! validated before search. It then searches [`TemplateLoader::directories`] in
+//! local-before-global order via [`TemplateLoader::find_path_in`] and
+//! [`TemplateLoader::find_name_in`].
 //!
-//! An invalid name (absolute, `..`, or no real segment such as an empty name
-//! or bare `.`) fails validation before any directory is searched, returning
+//! An invalid name (absolute, `..`, or no real segment such as an empty name or
+//! bare `.`) fails validation before any directory is searched, returning
 //! [`TemplatePathError::Absolute`] or [`TemplatePathError::UnsafeComponent`].
 //! This is distinct from [`TemplatePathError::TemplateNotFound`], which
 //! [`TemplateLoader::find`] returns only after every directory was searched and
@@ -18,13 +17,11 @@
 //! # Why Not `minijinja::path_loader`
 //!
 //! [`TemplateLoader::load`] backs minijinja's `{% include %}`/`{% extends %}`
-//! loader callback, wired through
-//! [`Environment::set_loader`] in
-//! [`TemplateEngine::new`].
-//! [`minijinja::path_loader`] is not used because its `safe_join` rejects any
-//! dot-prefixed path segment. That would reject `{% include ".draft.md" %}`
-//! and the project's own dot-prefixed default template directory,
-//! `.traces/templates`.
+//! loader callback, wired through [`Environment::set_loader`] in
+//! [`TemplateEngine::new`]. [`minijinja::path_loader`] is not used because its
+//! `safe_join` rejects any dot-prefixed path segment. That would reject `{%
+//! include ".draft.md" %}` and the project's own dot-prefixed default template
+//! directory, `.traces/templates`.
 //!
 //! [`Environment::set_loader`]: minijinja::Environment::set_loader
 //! [`TemplateEngine::new`]: super::engine::TemplateEngine::new
@@ -47,9 +44,9 @@ use crate::config::Config;
 /// the `Config`-agnostic constructor used by tests.
 ///
 /// `Clone` is cheap because the struct stores two `Option<PathBuf>` values.
-/// [`TemplateEngine::new`] clones one
-/// loader into minijinja's `set_loader` callback and keeps the original for
-/// [`Self::find`], avoiding a second derivation from [`Config`].
+/// [`TemplateEngine::new`] clones one loader into minijinja's `set_loader`
+/// callback and keeps the original for [`Self::find`], avoiding a second
+/// derivation from [`Config`].
 ///
 /// [`TemplateEngine::new`]: super::engine::TemplateEngine::new
 #[derive(Clone, Debug)]
@@ -115,8 +112,7 @@ impl TemplateLoader {
     /// Matches `name` directly within `dir`, returning the [`TemplatePath`] if
     /// a matching file exists.
     ///
-    /// Uses [`fs::symlink_metadata`] rather than
-    /// [`Path::is_file`], matching
+    /// Uses [`fs::symlink_metadata`] rather than [`Path::is_file`], matching
     /// [`Self::find_name_in`]: a symlink never counts as a match.
     ///
     /// [`Path::is_file`]: std::path::Path::is_file
@@ -134,9 +130,8 @@ impl TemplateLoader {
     /// Searches `dir` itself, or `dir`'s subdirectory named by `path`'s parent
     /// component, for files sharing `path`'s file stem: `None` for no matches,
     /// the sole match for exactly one. Like [`Self::find_path_in`], a symlink
-    /// never counts as a match because
-    /// [`DirEntry::file_type`] reports the link's
-    /// own type, not its target's.
+    /// never counts as a match because [`DirEntry::file_type`] reports the
+    /// link's own type, not its target's.
     ///
     /// # Errors
     ///
@@ -208,8 +203,7 @@ impl TemplateLoader {
     /// Resolves `name` via [`Self::find`] and reads it.
     ///
     /// This is the logic behind minijinja's `{% include %}`/`{% extends %}`
-    /// loader callback, wired in by
-    /// [`TemplateEngine::new`].
+    /// loader callback, wired in by [`TemplateEngine::new`].
     ///
     /// A missing include becomes `Ok(None)`, which lets minijinja honour
     /// `ignore missing`. Invalid identifiers, ambiguity, and inaccessible
@@ -272,11 +266,11 @@ impl TemplateLoader {
     /// Collects the file stems of every top-level `.md` file directly inside
     /// `dir`.
     ///
-    /// A symlink entry does not count, matching the
-    /// [`DirEntry::file_type`] check in
-    /// [`Self::find_name_in`]. Returns empty when `dir` is `None`, does not
-    /// exist, or cannot be read. An unreadable entry inside an otherwise-valid
-    /// `dir` is skipped, not fatal. This never recurses into subdirectories.
+    /// A symlink entry does not count, matching the [`DirEntry::file_type`]
+    /// check in [`Self::find_name_in`]. Returns empty when `dir` is `None`,
+    /// does not exist, or cannot be read. An unreadable entry inside an
+    /// otherwise-valid `dir` is skipped, not fatal. This never recurses into
+    /// subdirectories.
     ///
     /// [`DirEntry::file_type`]: std::fs::DirEntry::file_type
     fn stems_in(dir: Option<&Path>) -> Vec<String> {

@@ -1,11 +1,17 @@
 //! Builds and runs the minijinja environment used by [`TemplateService`].
 //!
-//! Most template-facing helpers live in submodules: [`date`], [`mod@file`],
-//! [`path`], [`num`], [`query`], [`string`], and [`ui`]. The
-//! standalone [`uuid`] function is defined here.
+//! Most template-facing helpers live in submodules:
+//! - [`date`]
+//! - [`mod@file`]
+//! - [`path`]
+//! - [`num`]
+//! - [`query`]
+//! - [`string`]
+//! - [`ui`]
+//!
+//! The standalone [`uuid`] function is defined here.
 //!
 //! [`TemplateService`]: super::service::TemplateService
-//!
 //! [`uuid`]: fn@uuid
 
 mod date;
@@ -37,36 +43,41 @@ use self::{
 use super::{loader::TemplateLoader, path::DeclaredOutputPath};
 use crate::DialogProvider;
 
-/// Renders template source through minijinja, backed by `loader`'s
-/// `{% include %}`/`{% extends %}` resolution.
+/// Renders template source through minijinja, backed by [`TemplateLoader`]'s
+/// `{% include %}` and `{% extends %}` resolution.
 ///
-/// [`TemplateService`] keeps its own [`TemplateLoader`] clone for `-i`
-/// resolution, built from the same [`Config`] as the
-/// clone wired in here, so the two can never disagree about which directory
-/// wins.
+/// [`TemplateService`] retains a [`TemplateLoader`] clone for inclusion
+/// resolution, built from the same [`Config`] as the clone wired into this
+/// engine, ensuring both agree on template directory priorities.
 ///
 /// [`TemplateService`]: super::service::TemplateService
-///
+/// [`TemplateLoader`]: super::loader::TemplateLoader
 /// [`Config`]: crate::config::Config
 pub(super) struct TemplateEngine {
     env: Environment<'static>,
 }
 
 impl TemplateEngine {
-    /// Builds an engine backed by `loader`, registering every submodule's
-    /// custom functions ([`date`], [`mod@file`], [`path`], [`num`], [`query`],
-    /// [`string`], [`ui`]; see each module's own docs for what it contributes)
-    /// plus the standalone [`uuid`] function.
+    /// Builds a [`TemplateEngine`] backed by `loader`, registering all custom
+    /// submodule functions and the standalone [`uuid`] function.
+    ///
+    /// Registers functions from the [`date`], [`mod@file`], [`path`], [`num`],
+    /// [`query`], [`string`], and [`ui`] submodules. Enables debug mode on the
+    /// underlying minijinja environment to support line and column diagnostic
+    /// locations on render errors.
     ///
     /// # Arguments
     ///
-    /// * `loader` - the [`TemplateLoader`] to wire into minijinja's
-    ///   include/extends resolution; cloned once into the closure, not retained
-    /// * `provider` - backend `ui.*` calls delegate to
-    /// * `root` - base directory `file.*`, `query.*`, `tasks.*`, and the
-    ///   path-inspection group are confined to
+    /// * `loader` - The [`TemplateLoader`] used for `{% include %}` and `{%
+    ///   extends %}` resolution.
+    /// * `provider` - The [`DialogProvider`] implementation handling `ui.*`
+    ///   calls.
+    /// * `root` - The base [`Path`] confining file operations, queries, and
+    ///   path inspections.
     ///
     /// [`uuid`]: fn@uuid
+    /// [`DialogProvider`]: crate::DialogProvider
+    /// [`Path`]: std::path::Path
     #[inline]
     #[must_use]
     pub(super) fn new(
@@ -75,6 +86,12 @@ impl TemplateEngine {
         root: &Path,
     ) -> Self {
         let mut env = Environment::new();
+        // Powers `minijinja::Error::range()`/`template_source()`, which
+        // `crate::cli::error` uses to compute a line:column location for
+        // template diagnostics (see `render_error_location`). Cheap: it only
+        // retains the rendered template's source text and the failing span,
+        // and only on error.
+        env.set_debug(true);
         env.set_loader({
             let loader = loader.clone();
             move |name| loader.load(name)
@@ -95,21 +112,31 @@ impl TemplateEngine {
         }
     }
 
-    /// Compiles and renders `source` with an empty template context, then reads
-    /// back whatever `file.write_to()` stashed during render (if anything).
-    /// Captured across the whole render tree (including `{% include %}`s), so
-    /// nothing to reset between calls.
+    /// Compiles and renders template `source` identified by `name` with an
+    /// empty context, returning a [`RenderOutput`] containing the rendered
+    /// text and any path captured by `file.write_to()`.
+    ///
+    /// The template `name` is passed to minijinja as the template identifier so
+    /// diagnostic errors report the actual template name rather than defaulting
+    /// to `<string>`. Captured state from `file.write_to()` is collected
+    /// across the entire render tree, including any included or extended
+    /// templates.
     ///
     /// # Errors
     ///
-    /// - [`minijinja::Error`] if `source` fails to parse.
-    /// - [`minijinja::Error`] if a referenced `{% include %}` or `{% extends
-    ///   %}` template fails to load or render.
+    /// Returns a `minijinja::Error` if:
+    /// - `source` fails to parse or render.
+    /// - A referenced `{% include %}` or `{% extends %}` template target fails
+    ///   to load or render.
     #[inline]
-    pub(super) fn render(&self, source: &str) -> Result<RenderOutput, Error> {
+    pub(super) fn render(
+        &self,
+        source: &str,
+        name: &str,
+    ) -> Result<RenderOutput, Error> {
         let captured = self
             .env
-            .template_from_str(source)?
+            .template_from_named_str(name, source)?
             .render_captured(minijinja::context!())?;
         let write_to = captured
             .state()
@@ -123,19 +150,21 @@ impl TemplateEngine {
     }
 }
 
-/// Carries a render's output, plus whatever `file.write_to()` captured during
-/// that render (if the template called it).
+/// Contains the output of a template render operation and optional declared
+/// output paths.
 #[derive(Debug)]
 pub(super) struct RenderOutput {
     /// The rendered template content.
     pub(super) content: String,
-    /// The path `file.write_to()` set, if the template called it.
+    /// The output path set by `file.write_to()`, if invoked during rendering.
     pub(super) write_to: Option<DeclaredOutputPath>,
 }
 
-/// Generates a random UUID v4, formatted per RFC 4122
-/// (`xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx`). Registered as the standalone
-/// `uuid()` function, unlike `file.*`/`ui.*`/`date.*`.
+/// Generates a random UUID v4 string formatted per RFC 4122
+/// (`xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx`).
+///
+/// Registered in minijinja as the standalone `uuid()` function, unlike
+/// namespace-qualified helpers such as `file.*`, `ui.*`, or `date.*`.
 fn uuid() -> String {
     Uuid::new_v4().to_string()
 }
@@ -150,8 +179,10 @@ mod tests {
         TemplateLoader::new(Some(path.to_path_buf()), None)
     }
 
-    /// Creates a cheap, deterministic provider for tests that never exercise
-    /// `ui.*`; `TemplateEngine::new` requires one regardless.
+    /// Creates a cheap, deterministic [`DialogProvider`] for tests that do not
+    /// exercise `ui.*` functions.
+    ///
+    /// [`DialogProvider`]: crate::DialogProvider
     fn preset_provider() -> Arc<dyn DialogProvider> {
         Arc::new(crate::PresetDialogProvider::new())
     }
@@ -171,7 +202,7 @@ mod tests {
             );
 
             let rendered = engine
-                .render("{% for n in [1, 2] %}{{ n }}{% endfor %}")
+                .render("{% for n in [1, 2] %}{{ n }}{% endfor %}", "test.md")
                 .expect("render succeeds");
 
             assert_eq!(rendered.content, "12");
@@ -189,7 +220,7 @@ mod tests {
             );
 
             let rendered = engine
-                .render("{% include \"partial.md\" %}!")
+                .render("{% include \"partial.md\" %}!", "test.md")
                 .expect("render succeeds");
 
             assert_eq!(rendered.content, "included!");
@@ -207,8 +238,9 @@ mod tests {
                 temp.path(),
             );
 
-            let rendered =
-                engine.render("{% include \"daily.md\" %}").expect("render");
+            let rendered = engine
+                .render("{% include \"daily.md\" %}", "test.md")
+                .expect("render");
 
             assert_eq!(rendered.content, "hello");
         }
@@ -225,7 +257,7 @@ mod tests {
             );
 
             let rendered = engine
-                .render("{% include \".draft.md\" %}")
+                .render("{% include \".draft.md\" %}", "test.md")
                 .expect("render succeeds");
 
             assert_eq!(rendered.content, "secret");
@@ -247,7 +279,7 @@ mod tests {
             );
 
             let rendered = engine
-                .render("{% include \"shared.md\" %}")
+                .render("{% include \"shared.md\" %}", "test.md")
                 .expect("render succeeds");
 
             assert_eq!(rendered.content, "from global");
@@ -265,7 +297,7 @@ mod tests {
             );
 
             let rendered = engine
-                .render("{% include \"daily\" %}")
+                .render("{% include \"daily\" %}", "test.md")
                 .expect("extension-less include name is stem-matched");
 
             assert_eq!(rendered.content, "hello");
@@ -289,6 +321,7 @@ mod tests {
                      is_dir_path }}-{{ '/foo/bar/main.rs' | path_basename \
                      }}-{{ '/foo/bar/main.rs' | path_extension }}-{{ \
                      '/foo/bar/main.rs' | path_parent }}",
+                    "test.md",
                 )
                 .expect("render succeeds");
 
@@ -313,8 +346,9 @@ mod tests {
                 temp.path(),
             );
 
-            let rendered =
-                engine.render("no output path here").expect("render succeeds");
+            let rendered = engine
+                .render("no output path here", "test.md")
+                .expect("render succeeds");
 
             assert_eq!(rendered.write_to, None);
         }
@@ -329,7 +363,7 @@ mod tests {
             );
 
             let rendered = engine
-                .render("{{ file.write_to(\"notes/daily.md\") }}")
+                .render("{{ file.write_to(\"notes/daily.md\") }}", "test.md")
                 .expect("render succeeds");
 
             assert_eq!(
@@ -347,11 +381,12 @@ mod tests {
                 temp.path(),
             );
             engine
-                .render("{{ file.write_to(\"first.md\") }}")
+                .render("{{ file.write_to(\"first.md\") }}", "test.md")
                 .expect("render succeeds");
 
-            let rendered =
-                engine.render("no write_to here").expect("render succeeds");
+            let rendered = engine
+                .render("no write_to here", "test.md")
+                .expect("render succeeds");
 
             assert_eq!(rendered.write_to, None);
         }
@@ -366,17 +401,18 @@ mod tests {
             );
 
             let error = engine
-                .render("{{ file.move_to(\"x.md\") }}")
+                .render("{{ file.move_to(\"x.md\") }}", "test.md")
                 .expect_err("unknown method fails");
 
             assert_eq!(error.kind(), minijinja::ErrorKind::UnknownMethod);
         }
     }
 
-    /// Wiring tests for `05-includes-and-utility-functions`: each new
-    /// namespace/filter/function is reachable through a real
-    /// [`TemplateEngine`]. Exhaustive per-feature behavior lives in each
-    /// collaborator's own tests (`file`, `date`, `string`, `ui`).
+    /// Verifies that each namespace, filter, and function is accessible through
+    /// [`TemplateEngine`].
+    ///
+    /// Exhaustive per-feature behavior lives in each collaborator's own tests
+    /// (`file`, `date`, `string`, `ui`).
     mod utilities {
         use pretty_assertions::assert_eq;
 
@@ -394,7 +430,7 @@ mod tests {
             );
 
             let rendered = engine
-                .render("{{ file.include(\"snippet.md\") }}")
+                .render("{{ file.include(\"snippet.md\") }}", "test.md")
                 .expect("render succeeds");
 
             assert_eq!(rendered.content, "inlined");
@@ -410,7 +446,7 @@ mod tests {
             );
 
             let rendered = engine
-                .render("{{ ui.confirm(\"proceed?\") }}")
+                .render("{{ ui.confirm(\"proceed?\") }}", "test.md")
                 .expect("render succeeds");
 
             assert_eq!(rendered.content, "false");
@@ -426,7 +462,7 @@ mod tests {
             );
 
             let rendered = engine
-                .render("{{ date.now(format=\"%Y\") }}")
+                .render("{{ date.now(format=\"%Y\") }}", "test.md")
                 .expect("render succeeds");
 
             assert_eq!(rendered.content.len(), 4);
@@ -441,8 +477,9 @@ mod tests {
                 temp.path(),
             );
 
-            let rendered =
-                engine.render("{{ uuid() }}").expect("render succeeds");
+            let rendered = engine
+                .render("{{ uuid() }}", "test.md")
+                .expect("render succeeds");
 
             let parsed = ::uuid::Uuid::parse_str(&rendered.content)
                 .expect("uuid() produces a parseable UUID");
@@ -459,7 +496,7 @@ mod tests {
             );
 
             let rendered = engine
-                .render("{{ \"hello world\" | snake_case }}")
+                .render("{{ \"hello world\" | snake_case }}", "test.md")
                 .expect("render succeeds");
 
             assert_eq!(rendered.content, "hello_world");
@@ -478,6 +515,7 @@ mod tests {
                 .render(
                     "{{ 3.14 | ceil }} {{ 42 | sqrt }} {{ 3.14159 | \
                      num_format(2) }}",
+                    "test.md",
                 )
                 .expect("render succeeds");
 

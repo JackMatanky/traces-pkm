@@ -1,12 +1,12 @@
-//! Filter expression parsing and evaluation.
+//! Parses and evaluates `.filter()`/`.where()` expressions.
 //!
 //! # Main Types
 //!
-//! - [`FilterExpr`] - Parsed AST for `.filter()` and `.where()` expressions.
-//! - [`FilterToken`] - Token stream produced from a filter expression by
+//! - [`FilterExpr`]: Parsed AST for a filter expression.
+//! - [`FilterToken`]: Token stream produced from a filter expression by
 //!   [`tokenize_filter_expr`].
-//! - [`FilterParser`] - Turns tokens into a [`FilterExpr`].
-//! - [`FilterFunction`] - Recognized calls such as `contains(tags, "#book")`.
+//! - [`FilterParser`]: Turns tokens into a [`FilterExpr`].
+//! - [`FilterFunction`]: Recognized calls such as `contains(tags, "#book")`.
 
 use std::vec;
 
@@ -523,9 +523,7 @@ mod tests {
 
         assert_eq!(
             outcome.filter("file.bogus == 1"),
-            Err(QueryError::UnknownFieldPath {
-                path: "file.bogus".to_owned()
-            })
+            Err(QueryError::unknown_field_path("file.bogus", None))
         );
     }
 

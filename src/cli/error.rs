@@ -1,8 +1,8 @@
-//! CLI diagnostic boundary.
+//! Defines the CLI diagnostic boundary.
 //!
-//! Owns [`CliError`] and the mapping from domain failures to stable diagnostic
-//! codes, help text, and deliberate user-abort detection. Command modules
-//! return this type instead of exposing lower-level errors.
+//! [`CliError`] maps domain failures to stable diagnostic codes, help text, and
+//! deliberate [`UserAbort`] detection. Command modules return [`CliError`]
+//! instead of exposing lower-level domain errors directly.
 
 use std::{
     error::Error as StdError,
@@ -44,8 +44,8 @@ pub enum CliError {
         #[source]
         source: io::Error,
     },
-    /// Configuration loading from `cwd` failed. Shared by every command
-    /// that needs the current configuration.
+    /// Configuration loading from `cwd` failed. Shared by every command that
+    /// needs the current configuration.
     #[error("failed to load configuration from {cwd}")]
     ConfigLoad {
         /// The directory configuration loading started from.
@@ -120,25 +120,25 @@ pub enum CliError {
     /// Scaffolding `.traces`/`.traces/templates` under `root` failed.
     #[error("failed to scaffold traces in {root}")]
     InitScaffold {
-        /// The root being initialised.
+        /// The root being initialized.
         root: PathBuf,
         /// Source filesystem error.
         #[source]
         source: io::Error,
     },
-    /// Serialising the local config file for `root` failed.
+    /// Serializing the local config file for `root` failed.
     #[error("failed to serialise config for {root}")]
     InitSerialize {
-        /// The root being initialised.
+        /// The root being initialized.
         root: PathBuf,
-        /// Source TOML serialisation error.
+        /// Source TOML serialization error.
         #[source]
         source: toml::ser::Error,
     },
     /// Writing the local config file under `root` failed.
     #[error("failed to write config file in {root}")]
     InitWriteConfig {
-        /// The root being initialised.
+        /// The root being initialized.
         root: PathBuf,
         /// Source filesystem error.
         #[source]
@@ -177,8 +177,8 @@ pub enum CliError {
     /// directory.
     #[error("no templates found")]
     NoTemplates,
-    /// The interactive picker prompt itself failed: an I/O error, or the
-    /// user cancelled (Esc) or interrupted (Ctrl-C) it.
+    /// The interactive picker prompt itself failed: an I/O error, or the user
+    /// canceled (Esc) or interrupted (Ctrl-C) it.
     #[error("template picker failed")]
     TemplatePicker {
         /// The underlying dialog error.
@@ -191,8 +191,12 @@ pub enum CliError {
 }
 
 impl CliError {
-    /// Extracts a deliberate user abort from the error source chain, if
+    /// Extracts a deliberate [`UserAbort`] from the error source chain, if
     /// present.
+    ///
+    /// Returns `Some` if the chain contains a [`DialogError::UserCancelled`]
+    /// or [`DialogError::UserInterrupted`] source, or `None` if no deliberate
+    /// abort caused this error.
     pub(super) fn user_abort(&self) -> Option<UserAbort> {
         let mut error: &(dyn StdError + 'static) = self;
         loop {
@@ -212,16 +216,15 @@ impl CliError {
 
 /// Coarse category for a [`TemplateError::Render`] failure.
 ///
-/// This is only detailed enough to choose a stable diagnostic code and help
+/// Provides just enough detail to choose a stable diagnostic code and help
 /// text. Classification inspects [`minijinja::Error::kind`] and the retained
-/// source chain instead of parsing display text, so new custom functions do not
+/// source chain instead of parsing display text, so new custom functions don't
 /// need to update string-matching logic here.
 enum RenderFailureKind {
     /// The template's own minijinja syntax is invalid.
     Syntax,
-    /// An interactive `ui.*` prompt failed for a reason other than a
-    /// deliberate [`UserAbort`] (handled separately, upstream of this
-    /// classification).
+    /// An interactive `ui.*` prompt failed for a reason other than a deliberate
+    /// [`UserAbort`] (handled separately, upstream of this classification).
     Prompt,
     /// A `file.include()` (or other Custom Function) I/O operation failed.
     Io,
@@ -547,23 +550,64 @@ fn template_instantiate_help(source: &TemplateError) -> Box<dyn Display + '_> {
         TemplateError::Render {
             source,
             ..
-        } => match classify_render_error(source) {
-            RenderFailureKind::Syntax => {
-                Box::new("fix the invalid minijinja syntax reported above")
-            }
-            RenderFailureKind::Prompt => Box::new(
-                "the interactive prompt failed; try again, or pass --no-input \
-                 to use its defaults",
-            ),
-            RenderFailureKind::Io => Box::new(
-                "check that files referenced by file.include() are accessible",
-            ),
-            RenderFailureKind::Other => Box::new(
-                "check the template's custom function calls, filters, and \
-                 referenced values",
-            ),
-        },
+        } => {
+            let base = match classify_render_error(source) {
+                RenderFailureKind::Syntax => {
+                    "fix the invalid minijinja syntax reported above"
+                }
+                RenderFailureKind::Prompt => {
+                    "the interactive prompt failed; try again, or pass \
+                     --no-input to use its defaults"
+                }
+                RenderFailureKind::Io => {
+                    "check that files referenced by file.include() are \
+                     accessible"
+                }
+                RenderFailureKind::Other => {
+                    "check the template's custom function calls, filters, and \
+                     referenced values"
+                }
+            };
+            Box::new(match render_error_location(source) {
+                Some(location) => format!("{base} (at {location})"),
+                None => base.to_owned(),
+            })
+        }
     }
+}
+
+/// Formats a render error's failing location as `name:line`, or
+/// `name:line:column` when minijinja captured a byte-accurate span (requires
+/// [`minijinja::Environment::set_debug`], which `TemplateEngine::new` always
+/// enables).
+///
+/// Returns `None` if minijinja never attached a template name, which should not
+/// happen: every render goes through `TemplateEngine::render`, which always
+/// names the template via `template_from_named_str`.
+fn render_error_location(error: &minijinja::Error) -> Option<String> {
+    let name = error.name()?;
+    let line = error.line().unwrap_or(0);
+    let column = error
+        .range()
+        .zip(error.template_source())
+        .and_then(|(range, source)| line_column(source, range.start));
+    Some(column.map_or_else(
+        || format!("{name}:{line}"),
+        |col| format!("{name}:{line}:{col}"),
+    ))
+}
+
+/// Returns the 1-based column of `byte_offset` within its line of `source`.
+///
+/// `None` if `byte_offset` falls outside `source` or on a non-character
+/// boundary (defensive: minijinja's own span offsets always land on a boundary
+/// of the same source it reports, but this stays panic-free either way instead
+/// of asserting that invariant).
+fn line_column(source: &str, byte_offset: usize) -> Option<usize> {
+    let up_to_offset = source.get(..byte_offset)?;
+    let line_start =
+        up_to_offset.rfind('\n').map_or(0, |idx| idx.saturating_add(1));
+    Some(source.get(line_start..byte_offset)?.chars().count().saturating_add(1))
 }
 
 #[cfg(test)]
@@ -1269,6 +1313,53 @@ mod tests {
                      segments"
                         .to_owned()
                 )
+            );
+        }
+    }
+
+    mod location {
+        use pretty_assertions::assert_eq;
+        use rstest::rstest;
+
+        use super::super::*;
+
+        #[rstest]
+        #[case::start_of_source("abc", 0, Some(1))]
+        #[case::end_of_first_line("abc", 3, Some(4))]
+        #[case::start_of_second_line("line one\n{{ bad }}\n", 9, Some(1))]
+        #[case::mid_second_line("line one\n{{ bad }}\n", 12, Some(4))]
+        #[case::counts_chars_not_bytes("é\n{{ x }}\n", 2, Some(2))]
+        #[case::start_of_line_after_a_multibyte_char(
+            "é\n{{ x }}\n",
+            3,
+            Some(1)
+        )]
+        #[case::offset_past_the_source_end("abc", 10, None)]
+        #[case::offset_on_a_non_char_boundary("é", 1, None)]
+        fn line_column_returns_the_1_based_char_column(
+            #[case] source: &str,
+            #[case] offset: usize,
+            #[case] expected: Option<usize>,
+        ) {
+            assert_eq!(line_column(source, offset), expected);
+        }
+
+        #[test]
+        fn render_error_location_reports_name_line_and_column_for_a_real_render_error()
+         {
+            let mut env = minijinja::Environment::new();
+            env.set_debug(true);
+            let template = env
+                .template_from_named_str("greet.md", "line one\n{{ nope() }}\n")
+                .expect("template compiles");
+
+            let error = template
+                .render(minijinja::context!())
+                .expect_err("calling an unknown function fails to render");
+
+            assert_eq!(
+                render_error_location(&error),
+                Some("greet.md:2:4".to_owned())
             );
         }
     }
