@@ -1,4 +1,4 @@
-//! CLI entry point and dispatch.
+//! Provides the CLI entry point and command dispatch.
 //!
 //! Owns the clap parser, default `-i` template dispatch, command routing, and
 //! [`CliError`] export. Submodules contain command-specific behavior so this
@@ -40,7 +40,7 @@ pub enum CommandOutcome {
 /// User gesture that ended an interactive command.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum UserAbort {
-    /// Escape cancelled the command.
+    /// Escape canceled the command.
     Cancelled,
     /// Ctrl-C interrupted the command.
     Interrupted,
@@ -576,20 +576,27 @@ mod tests {
         }
     }
 
-    /// End-to-end coverage for ticket #12: indexing, page/task CLI queries,
-    /// Template `query`/`tasks` `QueryOps`, derived inlinks, and diagnostics,
-    /// all exercised together against one shared project instead of each
-    /// command's isolated per-behavior tests (`cli::list`, `cli::table`,
-    /// `cli::task`, `template::engine::query` — see each module's own tests
-    /// for exhaustive per-feature coverage).
+    /// End-to-end coverage for ticket #12, exercised together against one
+    /// shared project instead of each command's isolated per-behavior
+    /// tests:
     ///
-    /// `list`/`table`/`task` write their primary output to stdout (not
-    /// captured here — see [`super::list::List::render`]'s docs for why),
-    /// so the CLI-equivalent assertions below drive [`FileIndex`] directly,
-    /// the same shared interface those commands' `render`/`lines` methods
-    /// call. [`Cli::run`] dispatch is still exercised directly wherever the
-    /// observable is on the [`Result`] itself: the diagnostics tests below,
-    /// and every `parse`/`dispatch_end_to_end` test above.
+    /// - Indexing.
+    /// - Page and task CLI queries.
+    /// - Template `query`/`tasks` `QueryOps`.
+    /// - Derived inlinks.
+    /// - Diagnostics.
+    ///
+    /// See `cli::list`, `cli::table`, `cli::task`, and
+    /// `template::engine::query` for exhaustive per-feature coverage.
+    ///
+    /// `list`/`table`/`task` write their primary output to stdout, which
+    /// this module doesn't capture (see [`super::list::List::render`]'s
+    /// docs for why). Their CLI-equivalent assertions below drive
+    /// [`FileIndex`] directly instead, the same shared interface those
+    /// commands' `render`/`lines` methods call. [`Cli::run`] dispatch is
+    /// still exercised directly wherever the observable is on the
+    /// [`Result`] itself, in the diagnostics tests below and every
+    /// `parse`/`dispatch_end_to_end` test above.
     mod query_workflows {
         use std::{
             fs,

@@ -1,17 +1,23 @@
-//! Errors returned by field resolution and query outcome transformations.
+//! Defines errors returned during field resolution and query transformations.
 
 use thiserror::Error;
 
-/// Errors returned during field resolution or query transformations.
+/// Represents errors encountered during field resolution or query
+/// transformations.
 ///
-/// These report malformed *inputs*: an unparsable field path or filter
-/// expression. A well-formed field path that a given [`super::IndexRecord`]
-/// simply does not have a value for resolves to
-/// [`crate::note::FieldValue::Null`] instead of erroring.
+/// These errors report malformed inputs, such as invalid field paths or filter
+/// expressions. A well-formed field path for which a [`super::IndexRecord`]
+/// has no value resolves to [`crate::note::FieldValue::Null`] rather than
+/// producing an error.
 #[derive(Clone, Debug, Eq, PartialEq, Error)]
 pub(crate) enum QueryError {
-    /// A field path was empty, used an unknown `file.*`/`task.*` accessor,
-    /// or had unexpected `.` structure.
+    /// Indicates that a field path was empty, used an unknown accessor,
+    /// or contained an unexpected structure.
+    ///
+    /// The `suggestion` field holds [`Some`] with the closest matching
+    /// `file.*` or `task.*` accessor name when `path` resembles a typo,
+    /// or [`None`] when no close match exists or `path` targets arbitrary
+    /// frontmatter or inline fields.
     #[error(
         "invalid field path {path:?}; expected `file.<field>` (path, name, \
          folder, size, ctime, cdate, mtime, mdate), `task.<field>` \
@@ -22,74 +28,82 @@ pub(crate) enum QueryError {
         ))
     )]
     UnknownFieldPath {
-        /// The unparsable field path.
+        /// The raw, unparsable field path string.
         path: String,
-        /// The closest known `file.*`/`task.*` accessor name (e.g.
-        /// `"file.name"`) when `path` looks like a typo of one; `None`
-        /// otherwise. Built by [`Self::unknown_field_path`].
+        /// The closest matching `file.*` or `task.*` accessor name when `path`
+        /// resembles a typo of a known accessor (`Some`), or [`None`] when no
+        /// close match exists.
         suggestion: Option<String>,
     },
-    /// A filter expression did not match `<field> <op> <value>`.
+    /// Indicates that a filter expression failed to match the expected
+    /// `<field> <op> <value>` structure.
     #[error(
         "invalid filter expression {expr:?}; expected `<field> <op> <value>` \
          with op one of ==, !=, >=, <=, >, < and value a quoted string, \
          number, or boolean"
     )]
     UnparsableFilterExpression {
-        /// The unparsable filter expression.
+        /// The raw filter expression string that failed to parse.
         expr: String,
     },
-    /// A limit count was negative or exceeded platform [`usize`] bounds.
+    /// Indicates that a query limit count was negative or exceeded platform
+    /// [`usize`] bounds.
     #[error("invalid limit {n}; expected a non-negative row count")]
     NegativeLimit {
-        /// The rejected limit value.
+        /// The rejected limit count value.
         n: i64,
     },
-    /// [`super::QueryOutcome::task_list`] was called on records with no
-    /// `task.*` fields, meaning page-level records built by
-    /// [`super::super::FileIndex::query`] rather than task-level records
-    /// from [`super::super::FileIndex::query_tasks`].
+    /// Indicates that [`super::QueryOutcome::task_list`] was invoked on
+    /// page-level records lacking task fields.
+    ///
+    /// Page-level records are constructed by
+    /// [`super::super::FileIndex::query`], whereas task-list
+    /// transformations require task-level records produced
+    /// by [`super::super::FileIndex::query_tasks`].
     #[error(
         "task_list requires task-level records from the `tasks` namespace; \
          got page-level records with no task fields"
     )]
     TaskListOnPageRecords,
-    /// [`super::QueryOutcome::table`]'s `headers` and `columns` had different
-    /// lengths.
+    /// Indicates that the `headers` and `columns` passed to
+    /// [`super::QueryOutcome::table`] had unequal lengths.
     #[error(
         "table headers ({headers}) and columns ({columns}) must have the same \
          length"
     )]
     TableColumnMismatch {
-        /// Number of entries in `headers`.
+        /// The number of header titles provided.
         headers: usize,
-        /// Number of entries in `columns`.
+        /// The number of column data vectors provided.
         columns: usize,
     },
 }
 
 impl QueryError {
-    /// Builds an [`Self::UnparsableFilterExpression`] for the full `expr`.
+    /// Constructs a [`QueryError::UnparsableFilterExpression`] error for
+    /// `expr`.
     ///
-    /// Shared by [`super::filter`]'s tokenizer and parser, whose parse
-    /// errors always point at the entire expression rather than a
-    /// sub-span.
+    /// This constructor is shared by the tokenizer and parser in
+    /// [`super::filter`], where parse errors point at the entire filter
+    /// expression rather than an individual sub-span.
     pub(in crate::index::query) fn unparsable_filter(expr: &str) -> Self {
         Self::UnparsableFilterExpression {
             expr: expr.to_owned(),
         }
     }
 
-    /// Builds an [`Self::UnknownFieldPath`] for `path`, with `suggestion`
-    /// (a known accessor name such as `"file.name"`) rendered into a "did
-    /// you mean" hint by [`Self::UnknownFieldPath`]'s `#[error(...)]`
-    /// message when given.
+    /// Constructs a [`QueryError::UnknownFieldPath`] error for `path`,
+    /// optionally attaching a did-you-mean `suggestion`.
     ///
-    /// Shared by every [`super::field::FieldPath::parse`] failure site: a
-    /// malformed `file.<field>`/`task.<field>` accessor passes its closest
-    /// match (see `closest_accessor` in that module); every other malformed
-    /// path passes `None`, since there is no fixed accessor list to compare
-    /// arbitrary frontmatter/inline-field keys against.
+    /// When `suggestion` is [`Some`], it supplies a known accessor name (such
+    /// as `"file.name"`) to be rendered as a did-you-mean hint. When
+    /// `suggestion` is [`None`], no close match exists.
+    ///
+    /// This constructor is shared across all [`super::field::FieldPath::parse`]
+    /// failure sites: malformed `file.*` or `task.*` accessors supply their
+    /// closest matching accessor name, whereas invalid frontmatter or inline
+    /// field paths pass [`None`] because no fixed accessor list exists for
+    /// custom fields.
     pub(in crate::index::query) fn unknown_field_path(
         path: &str,
         suggestion: Option<&str>,

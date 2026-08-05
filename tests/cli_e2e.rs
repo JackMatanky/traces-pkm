@@ -1,13 +1,16 @@
-//! Process-level end-to-end tests for the `traces` CLI.
+//! Runs process-level end-to-end tests for the `traces` CLI.
 //!
 //! Spawns the compiled binary against a fully isolated sandbox (its own
-//! trust/tracked-config state directory, its own global-config directory,
-//! its own project root) and asserts on real stdout, stderr, and exit
-//! codes. This is the one layer no in-process test can reach: `list`,
-//! `table`, and `task` print their primary output directly instead of
-//! returning it (see `traces_pkm::cli`'s per-command `render`/`lines`
-//! docs for why), so content assertions on what a User actually sees can
-//! only happen here, against the real binary.
+//! trust/tracked-config state directory, global-config directory, and project
+//! root) and asserts on real stdout, stderr, and exit codes.
+//!
+//! In-process tests cannot reach this layer for commands that print primary
+//! output directly instead of returning values (see `traces_pkm::cli`'s
+//! per-command `render`/`lines` docs):
+//!
+//! - `list`
+//! - `table`
+//! - `task`
 //!
 //! # Scope
 //!
@@ -32,17 +35,19 @@
 //!
 //! # Diagnostic text is wrap-fragile
 //!
-//! miette line-wraps long diagnostic text (absolute paths, multi-level
-//! causal chains) at a fixed width, and for a causal chain more than one
-//! level deep it prefixes wrapped continuation lines with a `│`/`├─▶`
-//! glyph — sometimes mid-path, where the original text had no whitespace
-//! at all. Reconstructing exact wrapped text is therefore not reliable in
-//! general. Assertions here stick to content proven not to wrap:
-//! diagnostic codes (always their own short line) and primary stdout
-//! content (printed directly, `print!`, never through miette). [`plain`]
-//! is the one exception, used only for short single-bullet messages
-//! confirmed to wrap at real word boundaries with no glyph inside the
-//! reconstructed span.
+//! Miette line-wraps long diagnostic text (such as absolute paths and
+//! multi-level causal chains) at a fixed width. Causal chains deeper than one
+//! level receive wrapped continuation lines prefixed with `│` or `├─▶` glyphs,
+//! which can occur mid-path where no whitespace existed originally.
+//!
+//! Reconstructing exact wrapped text is therefore unreliable in general.
+//! Assertions stick to content proven not to wrap:
+//!
+//! - Diagnostic codes (always printed on their own short line).
+//! - Primary stdout content (printed directly via `print!`, never through
+//!   Miette).
+//! - [`plain`] output (used only for short single-bullet messages confirmed to
+//!   wrap at real word boundaries with no glyph inside the reconstructed span).
 
 #![expect(
     clippy::expect_used,
@@ -58,11 +63,12 @@ use std::{
 
 use tempfile::TempDir;
 
-/// Absolute path to the compiled `traces` binary. Cargo builds it and sets
-/// this before any integration test in `tests/` runs.
+/// Stores the absolute path to the compiled `traces` binary set by Cargo before
+/// integration tests run.
 const TRACES_BIN: &str = env!("CARGO_BIN_EXE_traces-pkm");
 
-/// A captured process run: exit status plus UTF-8-lossy-decoded output.
+/// Represents a captured process run with exit status and decoded output
+/// streams.
 struct Run {
     status: ExitStatus,
     stdout: String,
@@ -75,14 +81,13 @@ impl Run {
     }
 }
 
-/// Strips miette's box-drawing continuation glyphs and collapses
-/// whitespace runs (including the newlines miette's line-wrapping
-/// inserts) to single spaces.
+/// Strips Miette box-drawing continuation glyphs and collapses whitespace runs
+/// to single spaces.
 ///
 /// Only safe for messages proven to wrap at real word boundaries with no
-/// glyph inside the reconstructed span (see the module docs). Never used
-/// here for long absolute paths, which miette can wrap mid-path with a
-/// `│` continuation prefix this cannot distinguish from a real space.
+/// glyph inside the reconstructed span (see module docs). Never used for
+/// long absolute paths, which Miette can wrap mid-path with a `│` continuation
+/// prefix.
 fn plain(s: &str) -> String {
     s.chars()
         .filter(|c| !matches!(c, '│' | '├' | '╰' | '─' | '▶' | '×' | '·'))
@@ -92,10 +97,11 @@ fn plain(s: &str) -> String {
         .join(" ")
 }
 
-/// An isolated project sandbox: its own trust/tracked-config state
-/// directory, its own global-config directory, and its own project root.
-/// Every [`Sandbox::run`] invocation runs against these, never the real
-/// machine's `traces` state.
+/// Manages an isolated project sandbox with dedicated state, configuration, and
+/// project root directories.
+///
+/// Every [`Sandbox::run`] invocation runs against these isolated temporary
+/// directories, never the real host environment.
 struct Sandbox {
     state_dir: TempDir,
     config_home: TempDir,
@@ -103,10 +109,12 @@ struct Sandbox {
 }
 
 impl Sandbox {
-    /// Creates the three isolated temp directories. No project files exist
-    /// yet — call [`Self::write_config`] (or use [`Self::trusted`], which
-    /// does that and trusts the root) before running a command that needs
-    /// a discoverable or trusted project.
+    /// Creates three isolated temporary directories for state, configuration,
+    /// and project root.
+    ///
+    /// Leaves project files uninitialized. Call [`Self::write_config`] or
+    /// [`Self::trusted`] before running commands that require a
+    /// discoverable or trusted project.
     fn new() -> Self {
         Self {
             state_dir: TempDir::new().expect("create state dir"),
@@ -119,8 +127,8 @@ impl Sandbox {
         self.project.path()
     }
 
-    /// Writes `.traces/config.toml` pointing at a local `templates`
-    /// directory, and creates that directory.
+    /// Writes `.traces/config.toml` pointing to a local `templates` directory
+    /// and creates that directory.
     fn write_config(&self) {
         std::fs::create_dir_all(self.root().join(".traces"))
             .expect("create .traces dir");
@@ -133,8 +141,8 @@ impl Sandbox {
         .expect("write config file");
     }
 
-    /// Writes a Note at `rel_path` under the project root, creating parent
-    /// directories as needed.
+    /// Writes a Note at `rel_path` relative to the project root, creating
+    /// parent directories as needed.
     fn write_note(&self, rel_path: &str, content: &str) {
         let path = self.root().join(rel_path);
         std::fs::create_dir_all(path.parent().expect("note parent"))
@@ -142,15 +150,17 @@ impl Sandbox {
         std::fs::write(path, content).expect("write note");
     }
 
-    /// Writes a Template file into the project's local template directory.
+    /// Writes a template file into the project's local template directory.
     fn write_template(&self, name: &str, source: &str) {
         std::fs::write(self.root().join("templates").join(name), source)
             .expect("write template");
     }
 
-    /// Builds a `traces` invocation against this sandbox: binary path,
-    /// project root as cwd, both isolation env vars set on the child only
-    /// (never mutating this test process's own environment).
+    /// Builds a `traces` [`Command`] invocation configured for this sandbox.
+    ///
+    /// Sets binary path, project root working directory, and isolation
+    /// environment variables on the child process without mutating the test
+    /// process environment.
     fn command(&self, args: &[&str]) -> Command {
         let mut cmd = Command::new(TRACES_BIN);
         cmd.args(args)
@@ -160,7 +170,7 @@ impl Sandbox {
         cmd
     }
 
-    /// Runs `args` against this sandbox and captures the result.
+    /// Executes `args` against this sandbox and captures output in a [`Run`].
     fn run(&self, args: &[&str]) -> Run {
         let Output {
             status,
@@ -174,10 +184,11 @@ impl Sandbox {
         }
     }
 
-    /// Writes `.traces/config.toml`, then trusts the project root through
-    /// a real `traces trust` dispatch (not a library shortcut) — this
-    /// exercises the trust flow itself as a side effect of every fixture
-    /// that needs a trusted root.
+    /// Constructs a trusted [`Sandbox`] by writing configuration and
+    /// dispatching `traces trust`.
+    ///
+    /// Exercises the trust flow as a side effect for fixtures requiring a
+    /// trusted root.
     fn trusted() -> Self {
         let sandbox = Self::new();
         sandbox.write_config();
@@ -386,11 +397,11 @@ mod template {
         // verified unit-level, against `minijinja::Error` directly, in
         // `src/template/service.rs`'s
         // `render_errors_name_the_real_template_and_line_not_string` and
-        // in `src/cli/error.rs`'s `render_error_location` tests — not
-        // reasserted here. miette wraps long causal chains across lines
+        // in `src/cli/error.rs`'s `render_error_location` tests, not
+        // reasserted here. Miette line-wraps long causal chains across lines
         // with a `│` continuation glyph that can land inside a path with
         // no original whitespace there, so reconstructing it from captured
-        // stderr text is not reliable (see the module docs).
+        // stderr text is not reliable (see module docs).
     }
 }
 

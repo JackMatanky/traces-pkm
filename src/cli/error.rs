@@ -1,8 +1,8 @@
-//! CLI diagnostic boundary.
+//! Defines the CLI diagnostic boundary.
 //!
-//! Owns [`CliError`] and the mapping from domain failures to stable diagnostic
-//! codes, help text, and deliberate user-abort detection. Command modules
-//! return this type instead of exposing lower-level errors.
+//! [`CliError`] maps domain failures to stable diagnostic codes, help text,
+//! and deliberate [`UserAbort`] detection. Command modules return
+//! [`CliError`] instead of exposing lower-level domain errors directly.
 
 use std::{
     error::Error as StdError,
@@ -120,25 +120,25 @@ pub enum CliError {
     /// Scaffolding `.traces`/`.traces/templates` under `root` failed.
     #[error("failed to scaffold traces in {root}")]
     InitScaffold {
-        /// The root being initialised.
+        /// The root being initialized.
         root: PathBuf,
         /// Source filesystem error.
         #[source]
         source: io::Error,
     },
-    /// Serialising the local config file for `root` failed.
+    /// Serializing the local config file for `root` failed.
     #[error("failed to serialise config for {root}")]
     InitSerialize {
-        /// The root being initialised.
+        /// The root being initialized.
         root: PathBuf,
-        /// Source TOML serialisation error.
+        /// Source TOML serialization error.
         #[source]
         source: toml::ser::Error,
     },
     /// Writing the local config file under `root` failed.
     #[error("failed to write config file in {root}")]
     InitWriteConfig {
-        /// The root being initialised.
+        /// The root being initialized.
         root: PathBuf,
         /// Source filesystem error.
         #[source]
@@ -178,7 +178,7 @@ pub enum CliError {
     #[error("no templates found")]
     NoTemplates,
     /// The interactive picker prompt itself failed: an I/O error, or the
-    /// user cancelled (Esc) or interrupted (Ctrl-C) it.
+    /// user canceled (Esc) or interrupted (Ctrl-C) it.
     #[error("template picker failed")]
     TemplatePicker {
         /// The underlying dialog error.
@@ -191,8 +191,12 @@ pub enum CliError {
 }
 
 impl CliError {
-    /// Extracts a deliberate user abort from the error source chain, if
+    /// Extracts a deliberate [`UserAbort`] from the error source chain, if
     /// present.
+    ///
+    /// Returns `Some` if the chain contains a [`DialogError::UserCancelled`]
+    /// or [`DialogError::UserInterrupted`] source, or `None` if no deliberate
+    /// abort caused this error.
     pub(super) fn user_abort(&self) -> Option<UserAbort> {
         let mut error: &(dyn StdError + 'static) = self;
         loop {
@@ -212,10 +216,10 @@ impl CliError {
 
 /// Coarse category for a [`TemplateError::Render`] failure.
 ///
-/// This is only detailed enough to choose a stable diagnostic code and help
+/// Provides just enough detail to choose a stable diagnostic code and help
 /// text. Classification inspects [`minijinja::Error::kind`] and the retained
-/// source chain instead of parsing display text, so new custom functions do not
-/// need to update string-matching logic here.
+/// source chain instead of parsing display text, so new custom functions
+/// don't need to update string-matching logic here.
 enum RenderFailureKind {
     /// The template's own minijinja syntax is invalid.
     Syntax,

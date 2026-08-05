@@ -1,37 +1,41 @@
-//! Query field path parsing and resolution.
+//! Parses and resolves query field paths.
 //!
-//! [`FieldPath`] is the unified accessor a query field path string resolves
-//! to: a `file.<field>` accessor ([`FileField`]), a `task.<field>` accessor
-//! ([`TaskField`]), `tags`, `inlinks`, or a frontmatter/inline field key.
+//! A query field path string resolves to a [`FieldPath`], which represents one
+//! of:
+//! - A `file.<field>` accessor ([`FileField`])
+//! - A `task.<field>` accessor ([`TaskField`])
+//! - The `tags` accessor
+//! - The `inlinks` accessor
+//! - A frontmatter or inline metadata field key
 
 use super::{super::file::FileRecord, error::QueryError};
 use crate::note::FieldValue;
 
-/// Query `file.*` accessors backed by [`FileRecord`] metadata.
+/// Represents a `file.<field>` accessor backed by [`FileRecord`] metadata.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(crate) enum FileField {
-    /// [`FileRecord::path`].
+    /// Accesses [`FileRecord::path`].
     Path,
-    /// [`FileRecord::name`].
+    /// Accesses [`FileRecord::name`].
     Name,
-    /// [`FileRecord::folder`].
+    /// Accesses [`FileRecord::folder`].
     Folder,
-    /// [`FileRecord::size`].
+    /// Accesses [`FileRecord::size`].
     Size,
-    /// [`FileRecord::created_at_or_modified`], as a datetime with no UTC
-    /// offset.
+    /// Accesses [`FileRecord::created_at_or_modified`] as a datetime without a
+    /// UTC offset.
     CreatedDateTime,
-    /// [`FileRecord::created_at_or_modified`], as a bare date.
+    /// Accesses [`FileRecord::created_at_or_modified`] as a bare date.
     CreatedDate,
-    /// [`FileRecord::modified_at`], as a datetime with no UTC offset.
+    /// Accesses [`FileRecord::modified_at`] as a datetime without a UTC offset.
     ModifiedDateTime,
-    /// [`FileRecord::modified_at`], as a bare date.
+    /// Accesses [`FileRecord::modified_at`] as a bare date.
     ModifiedDate,
 }
 
 impl FileField {
-    /// `file.<field>` accessor names [`Self::parse`] accepts, including
-    /// every alias.
+    /// Lists all `file.<field>` accessor names accepted by [`Self::parse`],
+    /// including aliases.
     pub(crate) const ACCESSOR_NAMES: &'static [&'static str] = &[
         "path",
         "name",
@@ -45,11 +49,13 @@ impl FileField {
         "mdate",
     ];
 
-    /// Parses a `file.<field>` accessor name.
+    /// Parses a `file.<field>` accessor name string.
     ///
-    /// Returns `None` when `name` is unknown. Callers build
-    /// [`super::QueryError::UnknownFieldPath`] themselves because they still
-    /// have the full `file.<field>` path.
+    /// Returns [`None`] when `name` is unknown. Callers construct
+    /// [`UnknownFieldPath`] directly because they retain the full
+    /// `file.<field>` path.
+    ///
+    /// [`UnknownFieldPath`]: QueryError::UnknownFieldPath
     pub(crate) fn parse(name: &str) -> Option<Self> {
         match name {
             "path" => Some(Self::Path),
@@ -64,7 +70,9 @@ impl FileField {
         }
     }
 
-    /// Returns this accessor's value for `file`.
+    /// Resolves this accessor's value for a [`FileRecord`].
+    ///
+    /// Returns the evaluated [`FieldValue`].
     pub(crate) fn resolve(self, file: &FileRecord) -> FieldValue {
         match self {
             Self::Path => {
@@ -97,27 +105,31 @@ impl FileField {
     }
 }
 
-/// A `task.<field>` accessor, valid on task-level rows built by
-/// [`super::super::FileIndex::query_tasks`].
+/// Represents a `task.<field>` accessor valid on task-level records.
+///
+/// Applied to task records produced by [`FileIndex::query_tasks`].
+///
+/// [`FileIndex::query_tasks`]: super::super::FileIndex::query_tasks
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(super) enum TaskField {
-    /// Task completion state (`- [ ]` vs `- [x]`).
+    /// Accesses task completion state (`- [ ]` versus `- [x]`).
     Completed,
-    /// Task item text.
+    /// Accesses task item text.
     Text,
 }
 
 impl TaskField {
-    /// `task.<field>` accessor names [`Self::parse`] accepts.
+    /// Lists all `task.<field>` accessor names accepted by [`Self::parse`].
     pub(super) const ACCESSOR_NAMES: &'static [&'static str] =
         &["completed", "text"];
 
-    /// Parses a `task.<field>` accessor name (the part after `"task."`).
+    /// Parses the field portion of a `task.<field>` accessor string.
     ///
-    /// Returns `None` if `name` is not a known accessor. Mirrors
-    /// [`FileField::parse`]'s single failure mode; the caller building
-    /// [`QueryError::UnknownFieldPath`] already has the full `task.<field>`
-    /// path.
+    /// Returns [`None`] if `name` is not a recognized accessor name. Mirrors
+    /// [`FileField::parse`], allowing the caller constructing
+    /// [`UnknownFieldPath`] to supply the full `task.<field>` path.
+    ///
+    /// [`UnknownFieldPath`]: QueryError::UnknownFieldPath
     pub(super) fn parse(name: &str) -> Option<Self> {
         match name {
             "completed" => Some(Self::Completed),
@@ -127,37 +139,54 @@ impl TaskField {
     }
 }
 
-/// A query field path, resolved once per
-/// [`super::QueryOutcome`] transformation and then applied to every
-/// [`super::IndexRecord`].
+/// Represents a resolved query field path.
+///
+/// A [`FieldPath`] is resolved once per [`QueryOutcome`] transformation and
+/// subsequently applied to each [`IndexRecord`].
+///
+/// [`QueryOutcome`]: super::QueryOutcome
+/// [`IndexRecord`]: super::IndexRecord
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) enum FieldPath {
-    /// A `file.<field>` accessor.
+    /// Wraps a `file.<field>` accessor ([`FileField`]).
     File(FileField),
-    /// A `task.<field>` accessor, resolving to [`FieldValue::Null`] on
-    /// page-level records.
+    /// Wraps a `task.<field>` accessor ([`TaskField`]), which resolves to
+    /// [`FieldValue::Null`] on page-level records.
     Task(TaskField),
-    /// A frontmatter or inline field, looked up by key.
+    /// Accesses a frontmatter or inline field key.
     Metadata(String),
-    /// The Note's markdown tags, as a [`FieldValue::List`] of tag strings.
+    /// Accesses Note tags as a [`FieldValue::List`] of tag strings.
     Tags,
-    /// Notes whose outlinks resolve to this Note, as a [`FieldValue::List`]
-    /// of project-relative path strings. Derived by
-    /// [`super::super::inlinks::derive_inlinks`], not stored on the Note
-    /// itself.
+    /// Accesses project-relative paths of Notes linking to this Note as a
+    /// [`FieldValue::List`].
+    ///
+    /// Derived dynamically by [`derive_inlinks`] rather than stored directly on
+    /// the Note.
+    ///
+    /// [`derive_inlinks`]: super::super::inlinks::derive_inlinks
     Inlinks,
 }
 
 impl FieldPath {
     /// Parses a query field path string into a [`FieldPath`].
     ///
-    /// Resolves `file.<field>` accessors, `task.<field>` accessors, `tags`,
-    /// `inlinks`, or frontmatter/inline field keys.
+    /// Resolves `path` to one of:
+    /// - A `file.<field>` accessor ([`FileField`])
+    /// - A `task.<field>` accessor ([`TaskField`])
+    /// - The `tags` accessor ([`FieldPath::Tags`])
+    /// - The `inlinks` accessor ([`FieldPath::Inlinks`])
+    /// - A frontmatter or inline metadata field key ([`FieldPath::Metadata`])
     ///
     /// # Errors
     ///
-    /// - [`QueryError::UnknownFieldPath`] if `path` is empty, uses an unknown
-    ///   `file.*`/`task.*` accessor, or has unexpected `.` structure.
+    /// Returns [`UnknownFieldPath`] if `path` meets any of the following
+    /// conditions:
+    /// - Is empty
+    /// - Contains invalid `.` structure
+    /// - Specifies an unrecognized `file.<field>` or `task.<field>` accessor
+    ///   name
+    ///
+    /// [`UnknownFieldPath`]: QueryError::UnknownFieldPath
     pub(super) fn parse(path: &str) -> Result<Self, QueryError> {
         let path = path.trim();
         let invalid = || QueryError::unknown_field_path(path, None);
@@ -205,14 +234,23 @@ impl FieldPath {
         Ok(Self::Metadata(path.to_owned()))
     }
 }
-
-/// Builds [`QueryError::UnknownFieldPath`] for a `<prefix>.<field>` path
-/// whose accessor `field` matched neither [`FileField::parse`] nor
-/// [`TaskField::parse`], adding a "did you mean" suggestion when `field` is
-/// a plausible typo of one of `candidates`.
+/// Constructs an [`UnknownFieldPath`] error containing a suggestion hint.
 ///
-/// Shared by [`FieldPath::parse`]'s `file.`/`task.` branches, which differ
-/// only in `prefix` and which accessor list to check against.
+/// Evaluates `field` against `candidates` using [`closest_accessor`] and
+/// appends a "did you mean" suggestion hint to the returned [`QueryError`] if a
+/// plausible match exists.
+///
+/// # Arguments
+///
+/// * `path` - The full unparsable field path string (for example `"file.nam"`).
+/// * `prefix` - The accessor prefix string (`"file"` or `"task"`).
+/// * `candidates` - The slice of valid accessor names for this prefix.
+/// * `field` - The field name following `prefix`.
+///
+/// Returns a [`QueryError::UnknownFieldPath`] populated with the full path and
+/// an optional suggested accessor.
+///
+/// [`UnknownFieldPath`]: QueryError::UnknownFieldPath
 fn accessor_typo_error(
     path: &str,
     prefix: &str,
@@ -227,22 +265,21 @@ fn accessor_typo_error(
     )
 }
 
-/// Finds the accessor name in `candidates` with the smallest edit distance
-/// from `input`, when that distance is small enough to be a plausible typo
-/// rather than an unrelated word.
+/// Finds the accessor name with the smallest edit distance to an input string.
 ///
-/// Shared "did you mean" suggestion builder for [`FieldPath::parse`]'s
-/// `file.<field>`/`task.<field>` failure branches. `candidates` is always
-/// [`FileField::ACCESSOR_NAMES`] or [`TaskField::ACCESSOR_NAMES`], each a
-/// handful of short, fixed names, so a brute-force scan is cheap. There is no
-/// equivalent for frontmatter/inline-field keys: those are arbitrary
-/// per-project data [`FieldPath::parse`] never sees, not a fixed list to
-/// compare against.
+/// Evaluates `input` against each candidate in `candidates` using
+/// [`edit_distance`].
 ///
-/// The threshold is half of `input`'s length (rounded up, minimum 1): tight
-/// enough that unrelated words like `"bogus"` never match one of the ten
-/// `file.*` accessors, loose enough to catch a single-character typo like
-/// `"nam"` for `"name"`.
+/// The matching threshold is half of `input`'s character count rounded up, with
+/// a minimum threshold of 1 (`input.chars().count().div_ceil(2).max(1)`). This
+/// threshold ensures single-character typos (such as `"nam"` for `"name"`)
+/// match while preventing unrelated words (such as `"bogus"`) from matching any
+/// candidate accessor.
+///
+/// Returns `Some(&'static str)` containing the candidate with the smallest edit
+/// distance if that distance does not exceed the calculated threshold. Returns
+/// [`None`] if `candidates` is empty or no candidate falls within the matching
+/// threshold.
 fn closest_accessor(
     candidates: &[&'static str],
     input: &str,
@@ -256,15 +293,13 @@ fn closest_accessor(
         .map(|(name, _)| name)
 }
 
-/// Levenshtein edit distance between `a` and `b`: the minimum number of
-/// single-character insertions, deletions, or substitutions turning one into
-/// the other.
+/// Calculates the Levenshtein edit distance between two strings.
 ///
-/// Iterative two-row Wagner-Fischer, built without indexing (every project
-/// lint here denies `clippy::indexing_slicing`) by growing `next_row`
-/// through `.push()` and reading prior entries with `.get()`. `candidates` in
-/// [`closest_accessor`] are a handful of characters each, so the O(n*m) shape
-/// stays trivially cheap.
+/// Computes the minimum number of single-character insertions, deletions, or
+/// substitutions required to transform `a` into `b` using an iterative two-row
+/// Wagner-Fischer algorithm.
+///
+/// Returns the edit distance as a [`usize`].
 fn edit_distance(a: &str, b: &str) -> usize {
     let b_chars: Vec<char> = b.chars().collect();
     let mut row: Vec<usize> = (0..=b_chars.len()).collect();

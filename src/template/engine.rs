@@ -1,11 +1,17 @@
 //! Builds and runs the minijinja environment used by [`TemplateService`].
 //!
-//! Most template-facing helpers live in submodules: [`date`], [`mod@file`],
-//! [`path`], [`num`], [`query`], [`string`], and [`ui`]. The
-//! standalone [`uuid`] function is defined here.
+//! Most template-facing helpers live in submodules:
+//! - [`date`]
+//! - [`mod@file`]
+//! - [`path`]
+//! - [`num`]
+//! - [`query`]
+//! - [`string`]
+//! - [`ui`]
+//!
+//! The standalone [`uuid`] function is defined here.
 //!
 //! [`TemplateService`]: super::service::TemplateService
-//!
 //! [`uuid`]: fn@uuid
 
 mod date;
@@ -37,36 +43,41 @@ use self::{
 use super::{loader::TemplateLoader, path::DeclaredOutputPath};
 use crate::DialogProvider;
 
-/// Renders template source through minijinja, backed by `loader`'s
-/// `{% include %}`/`{% extends %}` resolution.
+/// Renders template source through minijinja, backed by [`TemplateLoader`]'s
+/// `{% include %}` and `{% extends %}` resolution.
 ///
-/// [`TemplateService`] keeps its own [`TemplateLoader`] clone for `-i`
-/// resolution, built from the same [`Config`] as the
-/// clone wired in here, so the two can never disagree about which directory
-/// wins.
+/// [`TemplateService`] retains a [`TemplateLoader`] clone for inclusion
+/// resolution, built from the same [`Config`] as the clone wired into this
+/// engine, ensuring both agree on template directory priorities.
 ///
 /// [`TemplateService`]: super::service::TemplateService
-///
+/// [`TemplateLoader`]: super::loader::TemplateLoader
 /// [`Config`]: crate::config::Config
 pub(super) struct TemplateEngine {
     env: Environment<'static>,
 }
 
 impl TemplateEngine {
-    /// Builds an engine backed by `loader`, registering every submodule's
-    /// custom functions ([`date`], [`mod@file`], [`path`], [`num`], [`query`],
-    /// [`string`], [`ui`]; see each module's own docs for what it contributes)
-    /// plus the standalone [`uuid`] function.
+    /// Builds a [`TemplateEngine`] backed by `loader`, registering all custom
+    /// submodule functions and the standalone [`uuid`] function.
+    ///
+    /// Registers functions from the [`date`], [`mod@file`], [`path`], [`num`],
+    /// [`query`], [`string`], and [`ui`] submodules. Enables debug mode on the
+    /// underlying minijinja environment to support line and column diagnostic
+    /// locations on render errors.
     ///
     /// # Arguments
     ///
-    /// * `loader` - the [`TemplateLoader`] to wire into minijinja's
-    ///   include/extends resolution; cloned once into the closure, not retained
-    /// * `provider` - backend `ui.*` calls delegate to
-    /// * `root` - base directory `file.*`, `query.*`, `tasks.*`, and the
-    ///   path-inspection group are confined to
+    /// * `loader` - The [`TemplateLoader`] used for `{% include %}` and `{%
+    ///   extends %}` resolution.
+    /// * `provider` - The [`DialogProvider`] implementation handling `ui.*`
+    ///   calls.
+    /// * `root` - The base [`Path`] confining file operations, queries, and
+    ///   path inspections.
     ///
     /// [`uuid`]: fn@uuid
+    /// [`DialogProvider`]: crate::DialogProvider
+    /// [`Path`]: std::path::Path
     #[inline]
     #[must_use]
     pub(super) fn new(
@@ -101,22 +112,22 @@ impl TemplateEngine {
         }
     }
 
-    /// Compiles and renders `source` (named `name`, for error and diagnostic
-    /// context) with an empty template context, then reads back whatever
-    /// `file.write_to()` stashed during render (if anything). Captured across
-    /// the whole render tree (including `{% include %}`s), so nothing to
-    /// reset between calls.
+    /// Compiles and renders template `source` identified by `name` with an
+    /// empty context, returning a [`RenderOutput`] containing the rendered
+    /// text and any path captured by `file.write_to()`.
     ///
-    /// `name` becomes the minijinja template name reported by
-    /// [`minijinja::Error::name`] on render failure, instead of the crate
-    /// default `<string>`, so `TemplateError::Render`'s wrapped error
-    /// identifies the actual failing template.
+    /// The template `name` is passed to minijinja as the template identifier so
+    /// diagnostic errors report the actual template name rather than defaulting
+    /// to `<string>`. Captured state from `file.write_to()` is collected
+    /// across the entire render tree, including any included or extended
+    /// templates.
     ///
     /// # Errors
     ///
-    /// - [`minijinja::Error`] if `source` fails to parse.
-    /// - [`minijinja::Error`] if a referenced `{% include %}` or `{% extends
-    ///   %}` template fails to load or render.
+    /// Returns a `minijinja::Error` if:
+    /// - `source` fails to parse or render.
+    /// - A referenced `{% include %}` or `{% extends %}` template target fails
+    ///   to load or render.
     #[inline]
     pub(super) fn render(
         &self,
@@ -139,19 +150,21 @@ impl TemplateEngine {
     }
 }
 
-/// Carries a render's output, plus whatever `file.write_to()` captured during
-/// that render (if the template called it).
+/// Contains the output of a template render operation and optional declared
+/// output paths.
 #[derive(Debug)]
 pub(super) struct RenderOutput {
     /// The rendered template content.
     pub(super) content: String,
-    /// The path `file.write_to()` set, if the template called it.
+    /// The output path set by `file.write_to()`, if invoked during rendering.
     pub(super) write_to: Option<DeclaredOutputPath>,
 }
 
-/// Generates a random UUID v4, formatted per RFC 4122
-/// (`xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx`). Registered as the standalone
-/// `uuid()` function, unlike `file.*`/`ui.*`/`date.*`.
+/// Generates a random UUID v4 string formatted per RFC 4122
+/// (`xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx`).
+///
+/// Registered in minijinja as the standalone `uuid()` function, unlike
+/// namespace-qualified helpers such as `file.*`, `ui.*`, or `date.*`.
 fn uuid() -> String {
     Uuid::new_v4().to_string()
 }
@@ -166,8 +179,10 @@ mod tests {
         TemplateLoader::new(Some(path.to_path_buf()), None)
     }
 
-    /// Creates a cheap, deterministic provider for tests that never exercise
-    /// `ui.*`; `TemplateEngine::new` requires one regardless.
+    /// Creates a cheap, deterministic [`DialogProvider`] for tests that do not
+    /// exercise `ui.*` functions.
+    ///
+    /// [`DialogProvider`]: crate::DialogProvider
     fn preset_provider() -> Arc<dyn DialogProvider> {
         Arc::new(crate::PresetDialogProvider::new())
     }
@@ -393,10 +408,11 @@ mod tests {
         }
     }
 
-    /// Wiring tests for `05-includes-and-utility-functions`: each new
-    /// namespace/filter/function is reachable through a real
-    /// [`TemplateEngine`]. Exhaustive per-feature behavior lives in each
-    /// collaborator's own tests (`file`, `date`, `string`, `ui`).
+    /// Verifies that each namespace, filter, and function is accessible through
+    /// [`TemplateEngine`].
+    ///
+    /// Exhaustive per-feature behavior lives in each collaborator's own tests
+    /// (`file`, `date`, `string`, `ui`).
     mod utilities {
         use pretty_assertions::assert_eq;
 
