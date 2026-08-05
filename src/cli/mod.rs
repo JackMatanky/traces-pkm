@@ -576,6 +576,329 @@ mod tests {
         }
     }
 
+    /// End-to-end coverage for ticket #12: indexing, page/task CLI queries,
+    /// Template `query`/`tasks` `QueryOps`, derived inlinks, and diagnostics,
+    /// all exercised together against one shared project instead of each
+    /// command's isolated per-behavior tests (`cli::list`, `cli::table`,
+    /// `cli::task`, `template::engine::query` — see each module's own tests
+    /// for exhaustive per-feature coverage).
+    ///
+    /// `list`/`table`/`task` write their primary output to stdout (not
+    /// captured here — see [`super::list::List::render`]'s docs for why),
+    /// so the CLI-equivalent assertions below drive [`FileIndex`] directly,
+    /// the same shared interface those commands' `render`/`lines` methods
+    /// call. [`Cli::run`] dispatch is still exercised directly wherever the
+    /// observable is on the [`Result`] itself: the diagnostics tests below,
+    /// and every `parse`/`dispatch_end_to_end` test above.
+    mod query_workflows {
+        use std::{
+            fs,
+            path::{Path, PathBuf},
+            sync::Arc,
+        };
+
+        use miette::Diagnostic as _;
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+        use crate::{
+            CwdGuard,
+            config::{
+                Config, ConfigService, Discovered, LocalConfigFile,
+                TrustRequest,
+            },
+            dialog::PresetDialogProvider,
+            index::{FileIndex, QueryError, QuerySource},
+            template::{
+                TemplateError, TemplatePathInput, TemplateService, WriteMode,
+                WriteOutcome,
+            },
+        };
+
+        /// Writes a trusted project under `root/project` with two Notes
+        /// exercising every seam this suite covers: `#book` tags, a
+        /// `rating` frontmatter field, one markdown task, and a wikilink
+        /// from `hyperion.md` to `dune.md` so `dune.md` gets a derived
+        /// inlink. `dune`'s stem is unique in the project, so the wikilink
+        /// resolves unambiguously regardless of proximity tie-breaking.
+        ///
+        /// Returns the trusted [`ConfigService`] (for [`Cli::run`]
+        /// dispatch) and the project root (for direct [`FileIndex`]/
+        /// [`TemplateService`] calls).
+        fn seed_book_project(root: &Path) -> (ConfigService, PathBuf) {
+            let project = root.join("project");
+            fs::create_dir_all(project.join(".traces"))
+                .expect("create .traces dir");
+            fs::create_dir_all(project.join("templates"))
+                .expect("create templates dir");
+            fs::create_dir_all(project.join("books"))
+                .expect("create books dir");
+            fs::write(
+                project.join(".traces/config.toml"),
+                "[templates]\ndirectory = \"templates\"\n",
+            )
+            .expect("write config file");
+            fs::write(
+                project.join("books/dune.md"),
+                "---\nrating: 9\n---\n#book\n\n- [ ] read part two\n",
+            )
+            .expect("write dune.md");
+            fs::write(
+                project.join("books/hyperion.md"),
+                "---\nrating: 7\n---\n#book\n\nSee [[dune]] for comparison.\n",
+            )
+            .expect("write hyperion.md");
+            let config = LocalConfigFile::<Discovered>::try_new(
+                project.join(".traces/config.toml"),
+            )
+            .expect("valid local config");
+            let service = ConfigService::at(
+                root.join("tracked-store"),
+                root.join("trust-store"),
+            );
+            service
+                .trust(&TrustRequest::from(&config))
+                .expect("trust project root");
+            (service, project)
+        }
+
+        /// Renders `source` as a one-off template under `project`'s
+        /// `templates` directory and returns its preview content, mirroring
+        /// `traces template -i report --dry-run` without going through
+        /// [`ConfigService`]/trust (this only needs [`Config::for_test`],
+        /// matching [`crate::template::service`]'s own render tests).
+        fn render_query_template(project: &Path, source: &str) -> String {
+            let templates_dir = project.join("templates");
+            fs::write(templates_dir.join("report.md"), source)
+                .expect("write report.md");
+            let config = Config::for_test(
+                project.to_path_buf(),
+                Some(templates_dir),
+                None,
+                project.to_path_buf(),
+            );
+            let service = TemplateService::new(
+                &config,
+                Arc::new(PresetDialogProvider::new()),
+            );
+            let input = TemplatePathInput::parse(Path::new("report"))
+                .expect("valid template input");
+            let outcome = service
+                .render_to_file(&input, None, WriteMode::DryRun)
+                .expect("template renders");
+            let previewed = match outcome {
+                WriteOutcome::Previewed(content) => Some(content),
+                WriteOutcome::Written(_) => None,
+            };
+            previewed.expect("dry run always previews, never writes")
+        }
+
+        #[test]
+        fn indexing_then_page_and_task_queries_observe_the_same_project_state()
+        {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let (service, project) = seed_book_project(temp.path());
+            let _guard = CwdGuard::enter(&project);
+
+            // `traces index`: builds and persists the FileIndex through
+            // real CLI dispatch.
+            let index_outcome = Cli::try_parse_from(["traces", "index"])
+                .expect("parse index argv")
+                .run(&service, Arc::new(PresetDialogProvider::new()))
+                .expect("index succeeds");
+            assert_eq!(index_outcome, CommandOutcome::Completed);
+
+            // `traces list --from "#book" --sort rating --order desc`:
+            // dispatched through real `Cli::run` (proving argv → command →
+            // FileIndex succeeds), then the same query re-run directly
+            // through `FileIndex` — the interface `List::render` itself
+            // calls — to assert on content, since `list`'s primary output
+            // goes to stdout instead of a return value (see
+            // `super::list::List::render`'s docs for why).
+            let list_outcome = Cli::try_parse_from([
+                "traces", "list", "--from", "#book", "--sort", "rating",
+                "--order", "desc",
+            ])
+            .expect("parse list argv")
+            .run(&service, Arc::new(PresetDialogProvider::new()))
+            .expect("list succeeds");
+            assert_eq!(list_outcome, CommandOutcome::Completed);
+            let list = FileIndex::refresh(&project)
+                .expect("refresh index")
+                .query(&QuerySource::Tag("#book".to_owned()))
+                .sort("rating", true)
+                .expect("valid sort")
+                .list("file.path")
+                .expect("valid list");
+            assert_eq!(list, "- books/dune.md\n- books/hyperion.md\n");
+
+            // `traces table --column file.name --column rating`.
+            let table_outcome = Cli::try_parse_from([
+                "traces",
+                "table",
+                "--column",
+                "file.name",
+                "--column",
+                "rating",
+            ])
+            .expect("parse table argv")
+            .run(&service, Arc::new(PresetDialogProvider::new()))
+            .expect("table succeeds");
+            assert_eq!(table_outcome, CommandOutcome::Completed);
+            let table = FileIndex::refresh(&project)
+                .expect("refresh index")
+                .query(&QuerySource::All)
+                .table(&["Name", "Rating"], &["file.name", "rating"])
+                .expect("valid table");
+            assert!(table.contains("dune") && table.contains('9'));
+            assert!(table.contains("hyperion") && table.contains('7'));
+
+            // `traces task`: dune.md's one unfinished task.
+            let task_outcome = Cli::try_parse_from(["traces", "task"])
+                .expect("parse task argv")
+                .run(&service, Arc::new(PresetDialogProvider::new()))
+                .expect("task succeeds");
+            assert_eq!(task_outcome, CommandOutcome::Completed);
+            let tasks = FileIndex::refresh(&project)
+                .expect("refresh index")
+                .query_tasks(&QuerySource::All)
+                .task_list()
+                .expect("valid task_list");
+            assert_eq!(tasks, "- [ ] read part two\n");
+        }
+
+        #[test]
+        fn template_query_ops_render_identically_to_the_equivalent_file_index_query()
+         {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let (_service, project) = seed_book_project(temp.path());
+            FileIndex::build(&project)
+                .expect("build index")
+                .persist(&project)
+                .expect("persist index");
+
+            let rendered = render_query_template(
+                &project,
+                "{{ query.from_tags(\"#book\").sort(\"rating\", \
+                 true).table([\"Name\", \"Rating\"], [\"file.name\", \
+                 \"rating\"]) }}",
+            );
+
+            let expected = FileIndex::refresh(&project)
+                .expect("refresh index")
+                .query(&QuerySource::Tag("#book".to_owned()))
+                .sort("rating", true)
+                .expect("valid sort")
+                .table(&["Name", "Rating"], &["file.name", "rating"])
+                .expect("valid table");
+
+            assert_eq!(rendered, expected);
+        }
+
+        #[test]
+        fn derived_inlinks_are_queryable_from_page_queries_and_templates() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let (_service, project) = seed_book_project(temp.path());
+            FileIndex::build(&project)
+                .expect("build index")
+                .persist(&project)
+                .expect("persist index");
+
+            // hyperion.md links to dune.md, so only dune.md's derived
+            // inlinks list includes hyperion.md.
+            let inlinks = FileIndex::refresh(&project)
+                .expect("refresh index")
+                .query(&QuerySource::Folder(PathBuf::from("books")))
+                .sort("file.name", false)
+                .expect("valid sort")
+                .list("inlinks")
+                .expect("valid list");
+            assert_eq!(inlinks, "- books/hyperion.md\n- \n");
+
+            let rendered = render_query_template(
+                &project,
+                "{{ query.from_folder(\"books\").sort(\"file.name\", \
+                 false).list(\"inlinks\") }}",
+            );
+            assert_eq!(rendered, inlinks);
+        }
+
+        #[test]
+        fn unknown_field_path_and_unparsable_filter_surface_actionable_cli_diagnostics()
+         {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let (service, project) = seed_book_project(temp.path());
+            let _guard = CwdGuard::enter(&project);
+
+            let bad_field =
+                Cli::try_parse_from(["traces", "list", "--sort", "file.nam"])
+                    .expect("parse list argv")
+                    .run(&service, Arc::new(PresetDialogProvider::new()))
+                    .expect_err("unknown field path fails");
+            assert!(matches!(
+                &bad_field,
+                CliError::Query {
+                    source: QueryError::UnknownFieldPath { suggestion, .. },
+                    ..
+                } if suggestion.as_deref() == Some("file.name")
+            ));
+            assert_eq!(
+                bad_field.code().map(|code| code.to_string()),
+                Some("traces::cli::query::failed".to_owned())
+            );
+            assert!(bad_field.help().is_some());
+
+            let bad_filter = Cli::try_parse_from([
+                "traces",
+                "list",
+                "--where",
+                "not a valid expression",
+            ])
+            .expect("parse list argv")
+            .run(&service, Arc::new(PresetDialogProvider::new()))
+            .expect_err("unparsable filter fails");
+            assert!(matches!(bad_filter, CliError::Query {
+                source: QueryError::UnparsableFilterExpression { .. },
+                ..
+            }));
+        }
+
+        #[test]
+        fn template_render_errors_identify_the_failing_template_and_line_through_cli_dispatch()
+         {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let (service, project) = seed_book_project(temp.path());
+            fs::write(
+                project.join("templates/report.md"),
+                "line one\n{{ query.all().sort(\"nope.bad\") }}\n",
+            )
+            .expect("write report.md");
+            let _guard = CwdGuard::enter(&project);
+
+            let error = Cli::try_parse_from([
+                "traces",
+                "template",
+                "-i",
+                "report",
+                "--dry-run",
+            ])
+            .expect("parse template argv")
+            .run(&service, Arc::new(PresetDialogProvider::new()))
+            .expect_err("malformed query call fails to render");
+
+            assert!(matches!(error, CliError::TemplateInstantiate {
+                source: TemplateError::Render { .. },
+                ..
+            }));
+            let help = error.help().map(|h| h.to_string()).unwrap_or_default();
+            assert!(
+                help.contains("report.md:2"),
+                "expected the failing template name and line in help text, \
+                 got: {help}"
+            );
+        }
+    }
+
     mod run {
         use std::{fs, sync::Arc};
 

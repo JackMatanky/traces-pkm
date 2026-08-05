@@ -16,11 +16,18 @@ pub(crate) enum QueryError {
         "invalid field path {path:?}; expected `file.<field>` (path, name, \
          folder, size, ctime, cdate, mtime, mdate), `task.<field>` \
          (completed, text), or a single frontmatter, inline field, or `tags` \
-         name"
+         name{}",
+        suggestion.as_deref().map_or_else(String::new, |name| format!(
+            " (did you mean `{name}`?)"
+        ))
     )]
     UnknownFieldPath {
         /// The unparsable field path.
         path: String,
+        /// The closest known `file.*`/`task.*` accessor name (e.g.
+        /// `"file.name"`) when `path` looks like a typo of one; `None`
+        /// otherwise. Built by [`Self::unknown_field_path`].
+        suggestion: Option<String>,
     },
     /// A filter expression did not match `<field> <op> <value>`.
     #[error(
@@ -72,6 +79,26 @@ impl QueryError {
             expr: expr.to_owned(),
         }
     }
+
+    /// Builds an [`Self::UnknownFieldPath`] for `path`, with `suggestion`
+    /// (a known accessor name such as `"file.name"`) rendered into a "did
+    /// you mean" hint by [`Self::UnknownFieldPath`]'s `#[error(...)]`
+    /// message when given.
+    ///
+    /// Shared by every [`super::field::FieldPath::parse`] failure site: a
+    /// malformed `file.<field>`/`task.<field>` accessor passes its closest
+    /// match (see `closest_accessor` in that module); every other malformed
+    /// path passes `None`, since there is no fixed accessor list to compare
+    /// arbitrary frontmatter/inline-field keys against.
+    pub(in crate::index::query) fn unknown_field_path(
+        path: &str,
+        suggestion: Option<&str>,
+    ) -> Self {
+        Self::UnknownFieldPath {
+            path: path.to_owned(),
+            suggestion: suggestion.map(str::to_owned),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -92,6 +119,7 @@ mod tests {
     fn unknown_field_path_formats_display_message() {
         let error = QueryError::UnknownFieldPath {
             path: "file.bogus".to_owned(),
+            suggestion: None,
         };
 
         assert_display(
@@ -100,6 +128,21 @@ mod tests {
              (path, name, folder, size, ctime, cdate, mtime, mdate), \
              `task.<field>` (completed, text), or a single frontmatter, \
              inline field, or `tags` name",
+        );
+    }
+
+    #[test]
+    fn unknown_field_path_appends_a_did_you_mean_suggestion_when_built_with_one()
+     {
+        let error =
+            QueryError::unknown_field_path("file.nam", Some("file.name"));
+
+        assert_display(
+            &error,
+            "invalid field path \"file.nam\"; expected `file.<field>` (path, \
+             name, folder, size, ctime, cdate, mtime, mdate), `task.<field>` \
+             (completed, text), or a single frontmatter, inline field, or \
+             `tags` name (did you mean `file.name`?)",
         );
     }
 

@@ -181,10 +181,11 @@ impl<'a> TemplateService<'a> {
         })
     }
 
-    /// Renders `source` through the engine.
+    /// Renders `source` through the engine, naming the render `path` so
+    /// minijinja error context ([`minijinja::Error::name`]/`line`) identifies
+    /// the real template instead of the crate default `<string>`.
     ///
-    /// `path` is only used to name the template in a [`TemplateError::Render`],
-    /// not read again.
+    /// `path` is only used to name the template; it is not read again.
     /// # Errors
     ///
     /// - [`TemplateError::Render`] if minijinja cannot render `source`.
@@ -193,9 +194,11 @@ impl<'a> TemplateService<'a> {
         source: &str,
         path: &Path,
     ) -> Result<RenderOutput, TemplateError> {
-        self.engine.render(source).map_err(|source| TemplateError::Render {
-            path: path.to_path_buf(),
-            source,
+        self.engine.render(source, &path.to_string_lossy()).map_err(|source| {
+            TemplateError::Render {
+                path: path.to_path_buf(),
+                source,
+            }
         })
     }
 
@@ -465,6 +468,39 @@ mod tests {
                 .expect_err("invalid syntax fails to render");
 
             assert!(matches!(error, TemplateError::Render { .. }));
+        }
+
+        #[test]
+        fn render_errors_name_the_real_template_and_line_not_string() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let local_dir = temp.path().join("templates");
+            let template_path = write_file(
+                &local_dir,
+                "broken-query.md",
+                "line one\n{{ query.all().sort(\"nope.bad\") }}\n",
+            );
+            let config = Config::for_test(
+                temp.path().to_path_buf(),
+                Some(local_dir),
+                None,
+                temp.path().to_path_buf(),
+            );
+            let service = TemplateService::new(&config, preset_provider());
+
+            let error = service
+                .render_to_file(
+                    &input("broken-query"),
+                    None,
+                    WriteMode::Commit(CommitPolicy::CreateNew),
+                )
+                .expect_err("malformed sort field path fails to render");
+
+            assert!(matches!(
+                &error,
+                TemplateError::Render { source, .. }
+                    if source.name() == Some(template_path.to_string_lossy().as_ref())
+                        && source.line() == Some(2)
+            ));
         }
 
         #[test]

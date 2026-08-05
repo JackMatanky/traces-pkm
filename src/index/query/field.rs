@@ -108,6 +108,10 @@ pub(super) enum TaskField {
 }
 
 impl TaskField {
+    /// `task.<field>` accessor names [`Self::parse`] accepts.
+    pub(super) const ACCESSOR_NAMES: &'static [&'static str] =
+        &["completed", "text"];
+
     /// Parses a `task.<field>` accessor name (the part after `"task."`).
     ///
     /// Returns `None` if `name` is not a known accessor. Mirrors
@@ -156,21 +160,33 @@ impl FieldPath {
     ///   `file.*`/`task.*` accessor, or has unexpected `.` structure.
     pub(super) fn parse(path: &str) -> Result<Self, QueryError> {
         let path = path.trim();
-        let invalid = || QueryError::UnknownFieldPath {
-            path: path.to_owned(),
-        };
+        let invalid = || QueryError::unknown_field_path(path, None);
         if let Some(field) = path.strip_prefix("file.") {
             return if field.is_empty() || field.contains('.') {
                 Err(invalid())
             } else {
-                FileField::parse(field).map(Self::File).ok_or_else(invalid)
+                FileField::parse(field).map(Self::File).ok_or_else(|| {
+                    accessor_typo_error(
+                        path,
+                        "file",
+                        FileField::ACCESSOR_NAMES,
+                        field,
+                    )
+                })
             };
         }
         if let Some(field) = path.strip_prefix("task.") {
             return if field.is_empty() || field.contains('.') {
                 Err(invalid())
             } else {
-                TaskField::parse(field).map(Self::Task).ok_or_else(invalid)
+                TaskField::parse(field).map(Self::Task).ok_or_else(|| {
+                    accessor_typo_error(
+                        path,
+                        "task",
+                        TaskField::ACCESSOR_NAMES,
+                        field,
+                    )
+                })
             };
         }
         if path.is_empty()
@@ -188,6 +204,95 @@ impl FieldPath {
         }
         Ok(Self::Metadata(path.to_owned()))
     }
+}
+
+/// Builds [`QueryError::UnknownFieldPath`] for a `<prefix>.<field>` path
+/// whose accessor `field` matched neither [`FileField::parse`] nor
+/// [`TaskField::parse`], adding a "did you mean" suggestion when `field` is
+/// a plausible typo of one of `candidates`.
+///
+/// Shared by [`FieldPath::parse`]'s `file.`/`task.` branches, which differ
+/// only in `prefix` and which accessor list to check against.
+fn accessor_typo_error(
+    path: &str,
+    prefix: &str,
+    candidates: &[&'static str],
+    field: &str,
+) -> QueryError {
+    QueryError::unknown_field_path(
+        path,
+        closest_accessor(candidates, field)
+            .map(|name| format!("{prefix}.{name}"))
+            .as_deref(),
+    )
+}
+
+/// Finds the accessor name in `candidates` with the smallest edit distance
+/// from `input`, when that distance is small enough to be a plausible typo
+/// rather than an unrelated word.
+///
+/// Shared "did you mean" suggestion builder for [`FieldPath::parse`]'s
+/// `file.<field>`/`task.<field>` failure branches. `candidates` is always
+/// [`FileField::ACCESSOR_NAMES`] or [`TaskField::ACCESSOR_NAMES`], each a
+/// handful of short, fixed names, so a brute-force scan is cheap. There is no
+/// equivalent for frontmatter/inline-field keys: those are arbitrary
+/// per-project data [`FieldPath::parse`] never sees, not a fixed list to
+/// compare against.
+///
+/// The threshold is half of `input`'s length (rounded up, minimum 1): tight
+/// enough that unrelated words like `"bogus"` never match one of the ten
+/// `file.*` accessors, loose enough to catch a single-character typo like
+/// `"nam"` for `"name"`.
+fn closest_accessor(
+    candidates: &[&'static str],
+    input: &str,
+) -> Option<&'static str> {
+    let threshold = input.chars().count().div_ceil(2).max(1);
+    candidates
+        .iter()
+        .map(|&name| (name, edit_distance(input, name)))
+        .min_by_key(|&(_, distance)| distance)
+        .filter(|&(_, distance)| distance <= threshold)
+        .map(|(name, _)| name)
+}
+
+/// Levenshtein edit distance between `a` and `b`: the minimum number of
+/// single-character insertions, deletions, or substitutions turning one into
+/// the other.
+///
+/// Iterative two-row Wagner-Fischer, built without indexing (every project
+/// lint here denies `clippy::indexing_slicing`) by growing `next_row`
+/// through `.push()` and reading prior entries with `.get()`. `candidates` in
+/// [`closest_accessor`] are a handful of characters each, so the O(n*m) shape
+/// stays trivially cheap.
+fn edit_distance(a: &str, b: &str) -> usize {
+    let b_chars: Vec<char> = b.chars().collect();
+    let mut row: Vec<usize> = (0..=b_chars.len()).collect();
+    for (i, ch_a) in a.chars().enumerate() {
+        let mut next_row = Vec::with_capacity(row.len());
+        next_row.push(i.saturating_add(1));
+        for (j, &ch_b) in b_chars.iter().enumerate() {
+            let substitution_cost = usize::from(ch_a != ch_b);
+            let deletion = row
+                .get(j.saturating_add(1))
+                .copied()
+                .unwrap_or(usize::MAX)
+                .saturating_add(1);
+            let insertion = next_row
+                .get(j)
+                .copied()
+                .unwrap_or(usize::MAX)
+                .saturating_add(1);
+            let substitution = row
+                .get(j)
+                .copied()
+                .unwrap_or(usize::MAX)
+                .saturating_add(substitution_cost);
+            next_row.push(deletion.min(insertion).min(substitution));
+        }
+        row = next_row;
+    }
+    row.last().copied().unwrap_or(0)
 }
 
 #[cfg(test)]
@@ -232,6 +337,16 @@ mod tests {
         #[test]
         fn rejects_an_unknown_accessor_name() {
             assert_eq!(TaskField::parse("bogus"), None);
+        }
+
+        #[test]
+        fn accessor_names_round_trip_through_parse() {
+            for name in TaskField::ACCESSOR_NAMES {
+                assert!(
+                    TaskField::parse(name).is_some(),
+                    "{name} should parse"
+                );
+            }
         }
     }
 
@@ -289,9 +404,37 @@ mod tests {
         fn rejects_malformed_paths(#[case] path: &str) {
             assert_eq!(
                 FieldPath::parse(path),
-                Err(QueryError::UnknownFieldPath {
-                    path: path.to_owned()
-                })
+                Err(QueryError::unknown_field_path(path, None))
+            );
+        }
+
+        #[test]
+        fn suggests_the_closest_file_accessor_for_a_typo() {
+            assert_eq!(
+                FieldPath::parse("file.nam"),
+                Err(QueryError::unknown_field_path(
+                    "file.nam",
+                    Some("file.name")
+                ))
+            );
+        }
+
+        #[test]
+        fn suggests_the_closest_task_accessor_for_a_typo() {
+            assert_eq!(
+                FieldPath::parse("task.complete"),
+                Err(QueryError::unknown_field_path(
+                    "task.complete",
+                    Some("task.completed")
+                ))
+            );
+        }
+
+        #[test]
+        fn no_suggestion_for_an_unrelated_unknown_accessor() {
+            assert_eq!(
+                FieldPath::parse("file.bogus"),
+                Err(QueryError::unknown_field_path("file.bogus", None))
             );
         }
     }

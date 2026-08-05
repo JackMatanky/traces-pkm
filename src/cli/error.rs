@@ -547,23 +547,64 @@ fn template_instantiate_help(source: &TemplateError) -> Box<dyn Display + '_> {
         TemplateError::Render {
             source,
             ..
-        } => match classify_render_error(source) {
-            RenderFailureKind::Syntax => {
-                Box::new("fix the invalid minijinja syntax reported above")
-            }
-            RenderFailureKind::Prompt => Box::new(
-                "the interactive prompt failed; try again, or pass --no-input \
-                 to use its defaults",
-            ),
-            RenderFailureKind::Io => Box::new(
-                "check that files referenced by file.include() are accessible",
-            ),
-            RenderFailureKind::Other => Box::new(
-                "check the template's custom function calls, filters, and \
-                 referenced values",
-            ),
-        },
+        } => {
+            let base = match classify_render_error(source) {
+                RenderFailureKind::Syntax => {
+                    "fix the invalid minijinja syntax reported above"
+                }
+                RenderFailureKind::Prompt => {
+                    "the interactive prompt failed; try again, or pass \
+                     --no-input to use its defaults"
+                }
+                RenderFailureKind::Io => {
+                    "check that files referenced by file.include() are \
+                     accessible"
+                }
+                RenderFailureKind::Other => {
+                    "check the template's custom function calls, filters, and \
+                     referenced values"
+                }
+            };
+            Box::new(match render_error_location(source) {
+                Some(location) => format!("{base} (at {location})"),
+                None => base.to_owned(),
+            })
+        }
     }
+}
+
+/// Formats a render error's failing location as `name:line`, or
+/// `name:line:column` when minijinja captured a byte-accurate span
+/// (requires [`minijinja::Environment::set_debug`], which
+/// `TemplateEngine::new` always enables).
+///
+/// Returns `None` if minijinja never attached a template name, which should
+/// not happen: every render goes through `TemplateEngine::render`, which
+/// always names the template via `template_from_named_str`.
+fn render_error_location(error: &minijinja::Error) -> Option<String> {
+    let name = error.name()?;
+    let line = error.line().unwrap_or(0);
+    let column = error
+        .range()
+        .zip(error.template_source())
+        .and_then(|(range, source)| line_column(source, range.start));
+    Some(column.map_or_else(
+        || format!("{name}:{line}"),
+        |col| format!("{name}:{line}:{col}"),
+    ))
+}
+
+/// Returns the 1-based column of `byte_offset` within its line of `source`.
+///
+/// `None` if `byte_offset` falls outside `source` or on a non-character
+/// boundary (defensive: minijinja's own span offsets always land on a
+/// boundary of the same source it reports, but this stays panic-free either
+/// way instead of asserting that invariant).
+fn line_column(source: &str, byte_offset: usize) -> Option<usize> {
+    let up_to_offset = source.get(..byte_offset)?;
+    let line_start =
+        up_to_offset.rfind('\n').map_or(0, |idx| idx.saturating_add(1));
+    Some(source.get(line_start..byte_offset)?.chars().count().saturating_add(1))
 }
 
 #[cfg(test)]

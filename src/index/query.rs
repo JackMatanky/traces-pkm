@@ -972,9 +972,7 @@ mod tests {
 
             assert_eq!(
                 record.field(path),
-                Err(QueryError::UnknownFieldPath {
-                    path: path.to_owned()
-                })
+                Err(QueryError::unknown_field_path(path, None))
             );
         }
 
@@ -1093,9 +1091,7 @@ mod tests {
 
             assert_eq!(
                 outcome.group_by("file.bogus"),
-                Err(QueryError::UnknownFieldPath {
-                    path: "file.bogus".to_owned()
-                })
+                Err(QueryError::unknown_field_path("file.bogus", None))
             );
         }
     }
@@ -1181,9 +1177,7 @@ mod tests {
 
             assert_eq!(
                 outcome.flatten("file.bogus"),
-                Err(QueryError::UnknownFieldPath {
-                    path: "file.bogus".to_owned()
-                })
+                Err(QueryError::unknown_field_path("file.bogus", None))
             );
         }
 
@@ -1334,9 +1328,7 @@ mod tests {
 
             assert_eq!(
                 outcome.table(&["Name"], &["file.bogus"]),
-                Err(QueryError::UnknownFieldPath {
-                    path: "file.bogus".to_owned()
-                })
+                Err(QueryError::unknown_field_path("file.bogus", None))
             );
         }
 
@@ -1391,9 +1383,7 @@ mod tests {
 
             assert_eq!(
                 outcome.list("file.bogus"),
-                Err(QueryError::UnknownFieldPath {
-                    path: "file.bogus".to_owned()
-                })
+                Err(QueryError::unknown_field_path("file.bogus", None))
             );
         }
 

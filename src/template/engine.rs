@@ -75,6 +75,12 @@ impl TemplateEngine {
         root: &Path,
     ) -> Self {
         let mut env = Environment::new();
+        // Powers `minijinja::Error::range()`/`template_source()`, which
+        // `crate::cli::error` uses to compute a line:column location for
+        // template diagnostics (see `render_error_location`). Cheap: it only
+        // retains the rendered template's source text and the failing span,
+        // and only on error.
+        env.set_debug(true);
         env.set_loader({
             let loader = loader.clone();
             move |name| loader.load(name)
@@ -95,10 +101,16 @@ impl TemplateEngine {
         }
     }
 
-    /// Compiles and renders `source` with an empty template context, then reads
-    /// back whatever `file.write_to()` stashed during render (if anything).
-    /// Captured across the whole render tree (including `{% include %}`s), so
-    /// nothing to reset between calls.
+    /// Compiles and renders `source` (named `name`, for error and diagnostic
+    /// context) with an empty template context, then reads back whatever
+    /// `file.write_to()` stashed during render (if anything). Captured across
+    /// the whole render tree (including `{% include %}`s), so nothing to
+    /// reset between calls.
+    ///
+    /// `name` becomes the minijinja template name reported by
+    /// [`minijinja::Error::name`] on render failure, instead of the crate
+    /// default `<string>`, so `TemplateError::Render`'s wrapped error
+    /// identifies the actual failing template.
     ///
     /// # Errors
     ///
@@ -106,10 +118,14 @@ impl TemplateEngine {
     /// - [`minijinja::Error`] if a referenced `{% include %}` or `{% extends
     ///   %}` template fails to load or render.
     #[inline]
-    pub(super) fn render(&self, source: &str) -> Result<RenderOutput, Error> {
+    pub(super) fn render(
+        &self,
+        source: &str,
+        name: &str,
+    ) -> Result<RenderOutput, Error> {
         let captured = self
             .env
-            .template_from_str(source)?
+            .template_from_named_str(name, source)?
             .render_captured(minijinja::context!())?;
         let write_to = captured
             .state()
@@ -171,7 +187,7 @@ mod tests {
             );
 
             let rendered = engine
-                .render("{% for n in [1, 2] %}{{ n }}{% endfor %}")
+                .render("{% for n in [1, 2] %}{{ n }}{% endfor %}", "test.md")
                 .expect("render succeeds");
 
             assert_eq!(rendered.content, "12");
@@ -189,7 +205,7 @@ mod tests {
             );
 
             let rendered = engine
-                .render("{% include \"partial.md\" %}!")
+                .render("{% include \"partial.md\" %}!", "test.md")
                 .expect("render succeeds");
 
             assert_eq!(rendered.content, "included!");
@@ -207,8 +223,9 @@ mod tests {
                 temp.path(),
             );
 
-            let rendered =
-                engine.render("{% include \"daily.md\" %}").expect("render");
+            let rendered = engine
+                .render("{% include \"daily.md\" %}", "test.md")
+                .expect("render");
 
             assert_eq!(rendered.content, "hello");
         }
@@ -225,7 +242,7 @@ mod tests {
             );
 
             let rendered = engine
-                .render("{% include \".draft.md\" %}")
+                .render("{% include \".draft.md\" %}", "test.md")
                 .expect("render succeeds");
 
             assert_eq!(rendered.content, "secret");
@@ -247,7 +264,7 @@ mod tests {
             );
 
             let rendered = engine
-                .render("{% include \"shared.md\" %}")
+                .render("{% include \"shared.md\" %}", "test.md")
                 .expect("render succeeds");
 
             assert_eq!(rendered.content, "from global");
@@ -265,7 +282,7 @@ mod tests {
             );
 
             let rendered = engine
-                .render("{% include \"daily\" %}")
+                .render("{% include \"daily\" %}", "test.md")
                 .expect("extension-less include name is stem-matched");
 
             assert_eq!(rendered.content, "hello");
@@ -289,6 +306,7 @@ mod tests {
                      is_dir_path }}-{{ '/foo/bar/main.rs' | path_basename \
                      }}-{{ '/foo/bar/main.rs' | path_extension }}-{{ \
                      '/foo/bar/main.rs' | path_parent }}",
+                    "test.md",
                 )
                 .expect("render succeeds");
 
@@ -313,8 +331,9 @@ mod tests {
                 temp.path(),
             );
 
-            let rendered =
-                engine.render("no output path here").expect("render succeeds");
+            let rendered = engine
+                .render("no output path here", "test.md")
+                .expect("render succeeds");
 
             assert_eq!(rendered.write_to, None);
         }
@@ -329,7 +348,7 @@ mod tests {
             );
 
             let rendered = engine
-                .render("{{ file.write_to(\"notes/daily.md\") }}")
+                .render("{{ file.write_to(\"notes/daily.md\") }}", "test.md")
                 .expect("render succeeds");
 
             assert_eq!(
@@ -347,11 +366,12 @@ mod tests {
                 temp.path(),
             );
             engine
-                .render("{{ file.write_to(\"first.md\") }}")
+                .render("{{ file.write_to(\"first.md\") }}", "test.md")
                 .expect("render succeeds");
 
-            let rendered =
-                engine.render("no write_to here").expect("render succeeds");
+            let rendered = engine
+                .render("no write_to here", "test.md")
+                .expect("render succeeds");
 
             assert_eq!(rendered.write_to, None);
         }
@@ -366,7 +386,7 @@ mod tests {
             );
 
             let error = engine
-                .render("{{ file.move_to(\"x.md\") }}")
+                .render("{{ file.move_to(\"x.md\") }}", "test.md")
                 .expect_err("unknown method fails");
 
             assert_eq!(error.kind(), minijinja::ErrorKind::UnknownMethod);
@@ -394,7 +414,7 @@ mod tests {
             );
 
             let rendered = engine
-                .render("{{ file.include(\"snippet.md\") }}")
+                .render("{{ file.include(\"snippet.md\") }}", "test.md")
                 .expect("render succeeds");
 
             assert_eq!(rendered.content, "inlined");
@@ -410,7 +430,7 @@ mod tests {
             );
 
             let rendered = engine
-                .render("{{ ui.confirm(\"proceed?\") }}")
+                .render("{{ ui.confirm(\"proceed?\") }}", "test.md")
                 .expect("render succeeds");
 
             assert_eq!(rendered.content, "false");
@@ -426,7 +446,7 @@ mod tests {
             );
 
             let rendered = engine
-                .render("{{ date.now(format=\"%Y\") }}")
+                .render("{{ date.now(format=\"%Y\") }}", "test.md")
                 .expect("render succeeds");
 
             assert_eq!(rendered.content.len(), 4);
@@ -441,8 +461,9 @@ mod tests {
                 temp.path(),
             );
 
-            let rendered =
-                engine.render("{{ uuid() }}").expect("render succeeds");
+            let rendered = engine
+                .render("{{ uuid() }}", "test.md")
+                .expect("render succeeds");
 
             let parsed = ::uuid::Uuid::parse_str(&rendered.content)
                 .expect("uuid() produces a parseable UUID");
@@ -459,7 +480,7 @@ mod tests {
             );
 
             let rendered = engine
-                .render("{{ \"hello world\" | snake_case }}")
+                .render("{{ \"hello world\" | snake_case }}", "test.md")
                 .expect("render succeeds");
 
             assert_eq!(rendered.content, "hello_world");
@@ -478,6 +499,7 @@ mod tests {
                 .render(
                     "{{ 3.14 | ceil }} {{ 42 | sqrt }} {{ 3.14159 | \
                      num_format(2) }}",
+                    "test.md",
                 )
                 .expect("render succeeds");
 

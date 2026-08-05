@@ -212,9 +212,7 @@ mod tests {
 
         assert_eq!(
             outcome.sort("file.bogus", false),
-            Err(QueryError::UnknownFieldPath {
-                path: "file.bogus".to_owned()
-            })
+            Err(QueryError::unknown_field_path("file.bogus", None))
         );
     }
 
