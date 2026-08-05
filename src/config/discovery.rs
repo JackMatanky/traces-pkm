@@ -89,9 +89,11 @@ impl DiscoveryContext {
     /// # Errors
     ///
     /// - [`DiscoveryContextError::UnsupportedFileAnchor`] when `kind` is
-    ///   [`Full`](DiscoveryScope::Full) and `anchor` is a file; full loading is
-    ///   always directory-rooted, while focused local discovery may root at
-    ///   either a directory or a concrete local config file
+    ///   [`Full`] and `anchor` is a file; full loading is always
+    ///   directory-rooted, while focused local discovery may root at either a
+    ///   directory or a concrete local config file
+    ///
+    /// [`Full`]: DiscoveryScope::Full
     #[inline]
     pub(crate) fn new(
         kind: DiscoveryScope,
@@ -268,23 +270,24 @@ impl DiscoveryEngine {
     ///
     /// Resolution rules:
     /// - file paths resolve to that local config;
-    /// - directories with [`NearestLocal`](DiscoveryScope::NearestLocal)
-    ///   resolve to the nearest local config, falling back to a root-only
-    ///   request when none is found;
-    /// - directories with [`LocalSubtree`](DiscoveryScope::LocalSubtree) yield
-    ///   discovered config requests only.
+    /// - directories with [`NearestLocal`] resolve to the nearest local config,
+    ///   falling back to a root-only request when none is found;
+    /// - directories with [`LocalSubtree`] yield discovered config requests
+    ///   only.
     ///
     /// # Errors
     ///
     /// - [`DiscoveryError::PathInaccessible`] when discovery cannot inspect a
     ///   filesystem path
-    /// - [`DiscoveryError::Context`] when `scope` is
-    ///   [`Full`](DiscoveryScope::Full), which trust resolution does not
-    ///   support
+    /// - [`DiscoveryError::Context`] when `scope` is [`Full`], which trust
+    ///   resolution does not support
     /// - [`DiscoveryError::ConfigFile`] when a config-file anchor is invalid
-    /// - [`DiscoveryError::LocalConfigAbsent`] when
-    ///   [`LocalSubtree`](DiscoveryScope::LocalSubtree) discovery has no local
-    ///   root to walk from
+    /// - [`DiscoveryError::LocalConfigAbsent`] when [`LocalSubtree`] discovery
+    ///   has no local root to walk from
+    ///
+    /// [`NearestLocal`]: DiscoveryScope::NearestLocal
+    /// [`LocalSubtree`]: DiscoveryScope::LocalSubtree
+    /// [`Full`]: DiscoveryScope::Full
     #[inline]
     #[expect(
         clippy::unused_self,

@@ -4,18 +4,22 @@
 //! by [`super::TemplateEngine`]. It exposes two methods:
 //!
 //! - `file.write_to("path")`: declares the output path for the current render.
-//! - `file.include("path")`: reads another file under
-//!   [`Config::root`](crate::config::Config::root) and inlines its contents.
+//! - `file.include("path")`: reads another file under [`Config::root`] and
+//!   inlines its contents.
 //!
 //! `write_to` stores its argument in minijinja's per-render
 //! [`State::set_temp`]; [`super::TemplateEngine::render`] reads that value once
 //! rendering completes.
 //!
 //! `file.include()` confines its `path` argument to `root` via
-//! [`RootConfinedPath::parse`](crate::path::RootConfinedPath::parse), the same
-//! seam [`TemplateWriteTarget`](super::super::writer::TemplateWriteTarget) uses
+//! [`RootConfinedPath::parse`], the same
+//! seam [`TemplateWriteTarget`] uses
 //! for `-o` and `file.write_to()` candidates. Symlink escapes are rejected the
 //! same way on the read and write sides.
+//!
+//! [`Config::root`]: crate::config::Config::root
+//! [`RootConfinedPath::parse`]: crate::path::RootConfinedPath::parse
+//! [`TemplateWriteTarget`]: super::super::writer::TemplateWriteTarget
 
 use std::{path::Path, sync::Arc};
 

@@ -449,7 +449,7 @@ impl QueryOutcome {
     /// column per entry, pairing each `headers` label with the field path at
     /// the same position in `columns`. Columns are aligned to their widest cell
     /// (via `comfy-table`'s
-    /// [`ASCII_MARKDOWN`](comfy_table::presets::ASCII_MARKDOWN) preset) so rows
+    /// [`ASCII_MARKDOWN`] preset) so rows
     /// line up visually in a terminal.
     ///
     /// Header and cell text render like [`Self::list`], except pipe characters
@@ -462,6 +462,8 @@ impl QueryOutcome {
     ///   different lengths.
     /// - [`QueryError::UnknownFieldPath`] if any entry of `columns` is
     ///   malformed.
+    ///
+    /// [`ASCII_MARKDOWN`]: comfy_table::presets::ASCII_MARKDOWN
     pub(crate) fn table(
         &self,
         headers: &[&str],

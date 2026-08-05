@@ -2,10 +2,13 @@
 //! pipeline.
 //!
 //! [`TemplatePath`] is built by
-//! [`TemplateLoader`](super::loader::TemplateLoader)'s search immediately
+//! [`TemplateLoader`]'s search immediately
 //! after confirming the file exists. Nothing later in the pipeline re-verifies
 //! it. [`DeclaredOutputPath`] labels the raw `file.write_to()` candidate before
-//! [`writer`](super::writer) resolves it.
+//! [`writer`] resolves it.
+//!
+//! [`TemplateLoader`]: super::loader::TemplateLoader
+//! [`writer`]: super::writer
 
 use std::{
     fs, io,
@@ -33,15 +36,17 @@ impl TemplatePathInput {
     ///
     /// This performs no filesystem access, only a path-shape check. Used by
     /// the CLI boundary before rendering and by
-    /// [`TemplateLoader::load`](super::loader::TemplateLoader::load) before
+    /// [`TemplateLoader::load`] before
     /// resolving minijinja includes.
     ///
     /// # Errors
     ///
     /// - [`TemplatePathError::Absolute`] if `path` is absolute.
     /// - [`TemplatePathError::UnsafeComponent`] for `..`, any component that is
-    ///   not a plain name or `.`, or a path with no
-    ///   [`Component::Normal`](std::path::Component::Normal).
+    ///   not a plain name or `.`, or a path with no [`Component::Normal`].
+    ///
+    /// [`TemplateLoader::load`]: super::loader::TemplateLoader::load
+    /// [`Component::Normal`]: std::path::Component::Normal
     pub(crate) fn parse(path: &Path) -> Result<Self, TemplatePathError> {
         SafeRelativePath::parse(path).map(Self).map_err(|_| {
             if path.is_absolute() {
@@ -69,13 +74,17 @@ pub(super) struct TemplatePath {
 
 impl TemplatePath {
     /// Creates a [`TemplatePath`] proven to exist by
-    /// [`TemplateLoader`](super::loader::TemplateLoader)'s search: called
+    /// [`TemplateLoader`]'s search: called
     /// only from
-    /// [`TemplateLoader::find_path_in`](super::loader::TemplateLoader::find_path_in)
+    /// [`TemplateLoader::find_path_in`]
     /// and
-    /// [`TemplateLoader::find_name_in`](super::loader::TemplateLoader::find_name_in),
+    /// [`TemplateLoader::find_name_in`],
     /// immediately after each confirms the file exists. Nothing later in the
     /// pipeline re-verifies it.
+    ///
+    /// [`TemplateLoader`]: super::loader::TemplateLoader
+    /// [`TemplateLoader::find_path_in`]: super::loader::TemplateLoader::find_path_in
+    /// [`TemplateLoader::find_name_in`]: super::loader::TemplateLoader::find_name_in
     #[inline]
     #[must_use]
     pub(super) fn verified(
@@ -90,7 +99,9 @@ impl TemplatePath {
 
     /// Test-only fixture constructor, bypassing the existence guarantee
     /// [`Self::verified`] documents. Production code must go through
-    /// [`TemplateLoader::find`](super::loader::TemplateLoader::find).
+    /// [`TemplateLoader::find`].
+    ///
+    /// [`TemplateLoader::find`]: super::loader::TemplateLoader::find
     #[cfg(test)]
     #[must_use]
     pub(super) fn for_test(

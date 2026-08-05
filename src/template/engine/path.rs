@@ -14,13 +14,15 @@
 //! - `path_parent`
 //!
 //! The I/O tests resolve relative paths against
-//! [`Config::root`](crate::config::Config::root) and use absolute paths as-is.
+//! [`Config::root`] and use absolute paths as-is.
 //! They call [`std::fs::metadata`] directly instead of [`Path::exists`],
 //! [`Path::is_file`], or [`Path::is_dir`], which collapse every I/O error into
 //! `false`. Permission errors therefore surface as [`minijinja::Error`] instead
 //! of being misreported as "does not exist".
 //!
 //! The filters are pure string transformations over [`std::path::Path`].
+//!
+//! [`Config::root`]: crate::config::Config::root
 
 use std::{
     ffi::OsStr,
@@ -80,8 +82,10 @@ impl PathOps {
     ///
     /// The closure calls [`inspect`], the shared implementation behind
     /// `path_exists`, `is_file_path`, and `is_dir_path`. It clones `root`
-    /// because [`Value::from_function`](minijinja::value::Value::from_function)
+    /// because [`Value::from_function`]
     /// requires a `Send + Sync + 'static` closure.
+    ///
+    /// [`Value::from_function`]: minijinja::value::Value::from_function
     fn register_test(
         &self,
         env: &mut Environment<'static>,
@@ -160,10 +164,12 @@ impl InspectTarget {
     /// That means every component is [`Component::CurDir`], or there are no
     /// components at all, as in an empty path. This cannot escape no matter how
     /// it is joined.
-    /// [`SafeRelativePath::parse`](crate::path::SafeRelativePath::parse)
+    /// [`SafeRelativePath::parse`]
     /// rejects this shape because it is meaningless as a file to write or
     /// include; here it is the legitimate "ask about root" case
     /// `is_dir_path('.')`/`path_exists('')` rely on.
+    ///
+    /// [`SafeRelativePath::parse`]: crate::path::SafeRelativePath::parse
     fn is_root_reference(candidate: &Path) -> bool {
         candidate.components().all(|component| component == Component::CurDir)
     }

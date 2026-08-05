@@ -10,14 +10,14 @@ use super::{DialogError, DialogProvider};
 ///
 /// | method                                         | fallback            |
 /// | ---------------------------------------------- | ------------------- |
-/// | [`text`](DialogProvider::text)                 | default or `""`     |
-/// | [`confirm`](DialogProvider::confirm)           | default or `false`  |
-/// | [`select`](DialogProvider::select)             | index `0`           |
-/// | [`multi_select`](DialogProvider::multi_select) | empty [`Vec`]       |
+/// | [`text`]                 | default or `""`     |
+/// | [`confirm`]           | default or `false`  |
+/// | [`select`]             | index `0`           |
+/// | [`multi_select`] | empty [`Vec`]       |
 ///
 /// # Empty Selection
 ///
-/// [`select`](DialogProvider::select) checks for empty `items` before the TTY
+/// [`select`] checks for empty `items` before the TTY
 /// guard and returns [`DialogError::EmptySelectionInput`] in every runtime
 /// mode.
 ///
@@ -32,6 +32,11 @@ use super::{DialogError, DialogProvider};
 /// assert_eq!(name, "carol");
 /// # Ok::<_, traces_pkm::DialogError>(())
 /// ```
+///
+/// [`text`]: DialogProvider::text
+/// [`confirm`]: DialogProvider::confirm
+/// [`select`]: DialogProvider::select
+/// [`multi_select`]: DialogProvider::multi_select
 #[derive(Copy, Clone, Debug, Default)]
 pub struct TerminalDialogProvider;
 

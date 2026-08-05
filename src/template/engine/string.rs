@@ -10,13 +10,16 @@
 //!
 //! Each filter is a plain function registered through
 //! [`Environment::add_filter`]. None carry shared state, so there is no
-//! [`Object`](minijinja::value::Object) dispatch.
+//! [`Object`] dispatch.
 //!
 //! Case conversion delegates to [`convert_case`]'s
-//! [`Casing::to_case`](convert_case::Casing::to_case). The stdlib-backed
+//! [`Casing::to_case`]. The stdlib-backed
 //! filters wrap `str::strip_prefix`, `str::strip_suffix`, `str::repeat`, and
 //! [`str::split_whitespace`] directly. `regex_replace` and `regex_match`
 //! compile their pattern fresh on every call via [`Regex::new`].
+//!
+//! [`Object`]: minijinja::value::Object
+//! [`Casing::to_case`]: convert_case::Casing::to_case
 
 use convert_case::{Case, Casing as _};
 use minijinja::{Environment, Error, ErrorKind, value::Kwargs};

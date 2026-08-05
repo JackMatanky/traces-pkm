@@ -136,11 +136,15 @@ impl FileRecord {
 
 /// Coarse file classification used by the two-tier index.
 ///
-/// Markdown notes get parsed [`Note`](crate::note::Note) metadata in addition
+/// Markdown notes get parsed [`Note`] metadata in addition
 /// to their [`FileRecord`]. Other files only keep general file metadata.
+///
+/// [`Note`]: crate::note::Note
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub(crate) enum FileFormat {
-    /// Markdown file parsed into a [`Note`](crate::note::Note).
+    /// Markdown file parsed into a [`Note`].
+    ///
+    /// [`Note`]: crate::note::Note
     Note,
     /// Regular non-markdown file.
     Other,

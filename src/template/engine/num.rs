@@ -8,13 +8,16 @@
 //! - `num_format`
 //!
 //! Each filter is a plain function registered through
-//! [`Environment::add_filter`], not an [`Object`](minijinja::value::Object),
+//! [`Environment::add_filter`], not an [`Object`],
 //! because no filter carries shared state. `num_format` is prefixed rather than
 //! named `format` to avoid minijinja's built-in `format` filter.
 //!
-//! minijinja converts integer and float [`Value`](minijinja::value::Value)
+//! minijinja converts integer and float [`Value`]
 //! arguments into `f64` and raises its normal argument-type error for anything
 //! else.
+//!
+//! [`Object`]: minijinja::value::Object
+//! [`Value`]: minijinja::value::Value
 
 use minijinja::{Environment, Error, ErrorKind};
 

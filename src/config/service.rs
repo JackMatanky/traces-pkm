@@ -283,13 +283,14 @@ impl ConfigService {
     ///
     /// - [`DiscoveryError::PathInaccessible`] when discovery cannot inspect the
     ///   path
-    /// - [`DiscoveryError::Context`] when `scope` is
-    ///   [`Full`](DiscoveryScope::Full), which trust resolution does not
-    ///   support
+    /// - [`DiscoveryError::Context`] when `scope` is [`Full`], which trust
+    ///   resolution does not support
     /// - [`DiscoveryError::ConfigFile`] when a config-file anchor is invalid
-    /// - [`DiscoveryError::LocalConfigAbsent`] when
-    ///   [`LocalSubtree`](DiscoveryScope::LocalSubtree) discovery has no local
-    ///   root to walk from
+    /// - [`DiscoveryError::LocalConfigAbsent`] when [`LocalSubtree`] discovery
+    ///   has no local root to walk from
+    ///
+    /// [`Full`]: DiscoveryScope::Full
+    /// [`LocalSubtree`]: DiscoveryScope::LocalSubtree
     #[inline]
     #[expect(
         clippy::unused_self,
@@ -1023,7 +1024,9 @@ mod tests {
     ///
     /// Migrated from the standalone `builder` module and kept as a separate
     /// fixture because it needs local/global candidate helpers the outer test
-    /// [`Fixture`](super::Fixture) does not.
+    /// [`Fixture`] does not.
+    ///
+    /// [`Fixture`]: super::Fixture
     mod builder {
         use super::*;
 

@@ -137,14 +137,15 @@ impl<'a> TemplateService<'a> {
     ///   names an absolute or `..`-containing path. Never returned for
     ///   [`WriteMode::DryRun`].
     /// - [`TemplateError::OutputFileAlreadyExists`] if the output path exists
-    ///   and `mode` is [`WriteMode::Commit`] with
-    ///   [`CommitPolicy::CreateNew`](super::writer::CommitPolicy::CreateNew).
-    ///   This is checked atomically by
-    ///   [`fs::File::create_new`](std::fs::File::create_new), not by a separate
-    ///   `exists()` call, so there is no race between the check and write.
-    ///   Never returned for [`WriteMode::DryRun`].
+    ///   and `mode` is [`WriteMode::Commit`] with [`CommitPolicy::CreateNew`].
+    ///   This is checked atomically by [`fs::File::create_new`], not by a
+    ///   separate `exists()` call, so there is no race between the check and
+    ///   write. Never returned for [`WriteMode::DryRun`].
     /// - [`TemplateError::Write`] if the output, or its parent directory,
     ///   cannot be written.
+    ///
+    /// [`CommitPolicy::CreateNew`]: super::writer::CommitPolicy::CreateNew
+    /// [`fs::File::create_new`]: std::fs::File::create_new
     #[inline]
     pub(crate) fn write(
         &self,

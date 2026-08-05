@@ -246,8 +246,10 @@ fn cached_refresh(
 
 /// Maps a [`FileIndexError`] into a [`minijinja::Error`].
 ///
-/// Keeps the original error as [`source`](std::error::Error::source), matching
+/// Keeps the original error as [`source`], matching
 /// [`super::ui`]'s `dialog_error`.
+///
+/// [`source`]: std::error::Error::source
 fn index_error(source: FileIndexError) -> Error {
     Error::new(ErrorKind::InvalidOperation, "failed to refresh the file index")
         .with_source(source)
@@ -255,7 +257,9 @@ fn index_error(source: FileIndexError) -> Error {
 
 /// Maps a [`QueryError`] into a [`minijinja::Error`].
 ///
-/// Keeps the original error as [`source`](std::error::Error::source).
+/// Keeps the original error as [`source`].
+///
+/// [`source`]: std::error::Error::source
 fn query_error(source: QueryError) -> Error {
     Error::new(ErrorKind::InvalidOperation, "query failed").with_source(source)
 }

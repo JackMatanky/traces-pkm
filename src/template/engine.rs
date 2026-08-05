@@ -2,9 +2,11 @@
 //!
 //! Most template-facing helpers live in submodules: [`date`], [`mod@file`],
 //! [`path`], [`num`], [`query`], [`string`], and [`ui`]. The
-//! standalone [`uuid`](fn@uuid) function is defined here.
+//! standalone [`uuid`] function is defined here.
 //!
 //! [`TemplateService`]: super::service::TemplateService
+//!
+//! [`uuid`]: fn@uuid
 
 mod date;
 mod error;
@@ -39,11 +41,13 @@ use crate::DialogProvider;
 /// `{% include %}`/`{% extends %}` resolution.
 ///
 /// [`TemplateService`] keeps its own [`TemplateLoader`] clone for `-i`
-/// resolution, built from the same [`Config`](crate::config::Config) as the
+/// resolution, built from the same [`Config`] as the
 /// clone wired in here, so the two can never disagree about which directory
 /// wins.
 ///
 /// [`TemplateService`]: super::service::TemplateService
+///
+/// [`Config`]: crate::config::Config
 pub(super) struct TemplateEngine {
     env: Environment<'static>,
 }
@@ -52,7 +56,7 @@ impl TemplateEngine {
     /// Builds an engine backed by `loader`, registering every submodule's
     /// custom functions ([`date`], [`mod@file`], [`path`], [`num`], [`query`],
     /// [`string`], [`ui`]; see each module's own docs for what it contributes)
-    /// plus the standalone [`uuid`](fn@uuid) function.
+    /// plus the standalone [`uuid`] function.
     ///
     /// # Arguments
     ///
@@ -61,6 +65,8 @@ impl TemplateEngine {
     /// * `provider` - backend `ui.*` calls delegate to
     /// * `root` - base directory `file.*`, `query.*`, `tasks.*`, and the
     ///   path-inspection group are confined to
+    ///
+    /// [`uuid`]: fn@uuid
     #[inline]
     #[must_use]
     pub(super) fn new(

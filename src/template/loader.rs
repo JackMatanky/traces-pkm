@@ -19,12 +19,15 @@
 //!
 //! [`TemplateLoader::load`] backs minijinja's `{% include %}`/`{% extends %}`
 //! loader callback, wired through
-//! [`Environment::set_loader`](minijinja::Environment::set_loader) in
-//! [`TemplateEngine::new`](super::engine::TemplateEngine::new).
+//! [`Environment::set_loader`] in
+//! [`TemplateEngine::new`].
 //! [`minijinja::path_loader`] is not used because its `safe_join` rejects any
 //! dot-prefixed path segment. That would reject `{% include ".draft.md" %}`
 //! and the project's own dot-prefixed default template directory,
 //! `.traces/templates`.
+//!
+//! [`Environment::set_loader`]: minijinja::Environment::set_loader
+//! [`TemplateEngine::new`]: super::engine::TemplateEngine::new
 
 use std::{
     fs, io,
@@ -44,9 +47,11 @@ use crate::config::Config;
 /// the `Config`-agnostic constructor used by tests.
 ///
 /// `Clone` is cheap because the struct stores two `Option<PathBuf>` values.
-/// [`TemplateEngine::new`](super::engine::TemplateEngine::new) clones one
+/// [`TemplateEngine::new`] clones one
 /// loader into minijinja's `set_loader` callback and keeps the original for
 /// [`Self::find`], avoiding a second derivation from [`Config`].
+///
+/// [`TemplateEngine::new`]: super::engine::TemplateEngine::new
 #[derive(Clone, Debug)]
 pub(super) struct TemplateLoader {
     local: Option<PathBuf>,
@@ -111,8 +116,10 @@ impl TemplateLoader {
     /// a matching file exists.
     ///
     /// Uses [`fs::symlink_metadata`] rather than
-    /// [`Path::is_file`](std::path::Path::is_file), matching
+    /// [`Path::is_file`], matching
     /// [`Self::find_name_in`]: a symlink never counts as a match.
+    ///
+    /// [`Path::is_file`]: std::path::Path::is_file
     fn find_path_in(
         dir: &Path,
         name: &TemplatePathInput,
@@ -128,13 +135,15 @@ impl TemplateLoader {
     /// component, for files sharing `path`'s file stem: `None` for no matches,
     /// the sole match for exactly one. Like [`Self::find_path_in`], a symlink
     /// never counts as a match because
-    /// [`DirEntry::file_type`](std::fs::DirEntry::file_type) reports the link's
+    /// [`DirEntry::file_type`] reports the link's
     /// own type, not its target's.
     ///
     /// # Errors
     ///
     /// - [`TemplatePathError::AmbiguousTemplate`] if more than one file in the
     ///   search directory shares the stem.
+    ///
+    /// [`DirEntry::file_type`]: std::fs::DirEntry::file_type
     fn find_name_in(
         dir: &Path,
         name: &TemplatePathInput,
@@ -200,7 +209,7 @@ impl TemplateLoader {
     ///
     /// This is the logic behind minijinja's `{% include %}`/`{% extends %}`
     /// loader callback, wired in by
-    /// [`TemplateEngine::new`](super::engine::TemplateEngine::new).
+    /// [`TemplateEngine::new`].
     ///
     /// A missing include becomes `Ok(None)`, which lets minijinja honour
     /// `ignore missing`. Invalid identifiers, ambiguity, and inaccessible
@@ -212,6 +221,8 @@ impl TemplateLoader {
     /// - [`minijinja::Error`] if resolving `name` fails for anything except
     ///   absence.
     /// - [`minijinja::Error`] if the resolved file cannot be read.
+    ///
+    /// [`TemplateEngine::new`]: super::engine::TemplateEngine::new
     pub(super) fn load(&self, name: &str) -> Result<Option<String>, Error> {
         let found = match TemplatePathInput::parse(Path::new(name))
             .and_then(|input| self.find(&input))
@@ -262,10 +273,12 @@ impl TemplateLoader {
     /// `dir`.
     ///
     /// A symlink entry does not count, matching the
-    /// [`DirEntry::file_type`](std::fs::DirEntry::file_type) check in
+    /// [`DirEntry::file_type`] check in
     /// [`Self::find_name_in`]. Returns empty when `dir` is `None`, does not
     /// exist, or cannot be read. An unreadable entry inside an otherwise-valid
     /// `dir` is skipped, not fatal. This never recurses into subdirectories.
+    ///
+    /// [`DirEntry::file_type`]: std::fs::DirEntry::file_type
     fn stems_in(dir: Option<&Path>) -> Vec<String> {
         let Some(dir) = dir else {
             return Vec::new();

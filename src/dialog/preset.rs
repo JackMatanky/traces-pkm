@@ -28,8 +28,8 @@ fn get_mut<T>(m: &mut Mutex<T>) -> &mut T {
 
 /// Deterministic [`DialogProvider`] that replays queued responses.
 ///
-/// Queue answers with builder methods such as [`with_text`](Self::with_text)
-/// and [`with_confirm`](Self::with_confirm). Each dialog call consumes one
+/// Queue answers with builder methods such as [`with_text`]
+/// and [`with_confirm`]. Each dialog call consumes one
 /// queued value, then falls back to the prompt's default or the provider's
 /// hard-coded fallback.
 ///
@@ -46,6 +46,9 @@ fn get_mut<T>(m: &mut Mutex<T>) -> &mut T {
 /// assert!(p.confirm("proceed?", None)?);
 /// # Ok::<_, traces_pkm::DialogError>(())
 /// ```
+///
+/// [`with_text`]: Self::with_text
+/// [`with_confirm`]: Self::with_confirm
 #[derive(Debug, Default)]
 pub struct PresetDialogProvider {
     texts: Mutex<VecDeque<String>>,
@@ -68,7 +71,7 @@ impl PresetDialogProvider {
     /// Queues a response for the next [`DialogProvider::text`] call.
     ///
     /// Text responses are consumed first-in-first-out. When the queue is empty,
-    /// [`text`](DialogProvider::text) falls back to the `default` parameter.
+    /// [`text`] falls back to the `default` parameter.
     ///
     /// # Examples
     ///
@@ -80,6 +83,8 @@ impl PresetDialogProvider {
     /// assert_eq!(p.text("name", None)?, "bob");
     /// # Ok::<_, traces_pkm::DialogError>(())
     /// ```
+    ///
+    /// [`text`]: DialogProvider::text
     #[inline]
     #[must_use]
     pub fn with_text<S: Into<String>>(mut self, response: S) -> Self {

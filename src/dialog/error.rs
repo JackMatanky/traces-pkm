@@ -7,19 +7,24 @@
 //! - unavailable interactive input;
 //! - I/O or backend failures with preserved sources.
 
-/// Error returned by [`DialogProvider`](super::DialogProvider) methods.
+/// Error returned by [`DialogProvider`] methods.
 ///
 /// Variants distinguish user-controlled exits from configuration mistakes and
 /// backend failures so CLI code can choose the right diagnostic.
+///
+/// [`DialogProvider`]: super::DialogProvider
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum DialogError {
     /// A single-selection prompt received no options.
     ///
-    /// [`select`](super::DialogProvider::select) cannot return an item without
+    /// [`select`] cannot return an item without
     /// at least one choice.
-    /// [`multi_select`](super::DialogProvider::multi_select) accepts an
+    /// [`multi_select`] accepts an
     /// empty list and returns an empty [`Vec`].
+    ///
+    /// [`select`]: super::DialogProvider::select
+    /// [`multi_select`]: super::DialogProvider::multi_select
     #[error("cannot select from an empty list")]
     EmptySelectionInput,
 
@@ -41,23 +46,29 @@ pub enum DialogError {
     ///
     /// Returned when the backend reports that stdin is not a terminal and the
     /// caller did not provide fallback defaults. This should not occur when
-    /// using [`TerminalDialogProvider`](super::TerminalDialogProvider) because
+    /// using [`TerminalDialogProvider`] because
     /// its TTY guard catches this condition before invoking the backend.
+    ///
+    /// [`TerminalDialogProvider`]: super::TerminalDialogProvider
     #[error("interactive dialog not available, stdin is not a terminal")]
     NotInteractive,
 
     /// An I/O operation failed during prompting.
     ///
     /// The underlying [`std::io::Error`] is available through the
-    /// [`source`](std::error::Error::source) chain.
+    /// [`source`] chain.
+    ///
+    /// [`source`]: std::error::Error::source
     #[error("dialog I/O operation failed: {0}")]
     Io(#[source] std::io::Error),
 
     /// The dialog backend reported an unexpected error.
     ///
     /// The backend error is preserved as the
-    /// [`source`](std::error::Error::source) so the chain can be walked,
+    /// [`source`] so the chain can be walked,
     /// while its concrete type stays opaque outside of this crate.
+    ///
+    /// [`source`]: std::error::Error::source
     #[error("dialog backend error: {0}")]
     BackendFailure(#[source] Box<dyn std::error::Error + Send + Sync>),
 }

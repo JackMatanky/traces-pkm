@@ -2,9 +2,9 @@
 //!
 //! [`FileIndex`] stores a sorted [`FileRecord`] for every regular file under a
 //! trusted project root. Markdown files also get parsed into [`Note`] metadata.
-//! Persistence lives in [`store`](mod@store); callers use [`FileIndex`]'s
+//! Persistence lives in [`store`]; callers use [`FileIndex`]'s
 //! methods instead of redb tables. Inbound links between Notes are derived
-//! from outlinks and persisted alongside them; see [`inlinks`](mod@inlinks).
+//! from outlinks and persisted alongside them; see [`inlinks`].
 //!
 //! # Main Entry Points
 //!
@@ -16,6 +16,9 @@
 //!   task-level queries.
 //! - [`FileIndex::records`] and [`FileIndex::notes`] - Expose sorted indexed
 //!   records for direct inspection.
+//!
+//! [`store`]: mod@store
+//! [`inlinks`]: mod@inlinks
 
 #![cfg_attr(
     not(test),
@@ -391,9 +394,11 @@ fn record_with_inlinks(
 /// Binary-searches path-sorted `notes` for an exact path match.
 ///
 /// Shared by [`FileIndex::note`], which does this lookup once `self` exists,
-/// and the [`inlinks`](mod@inlinks) submodule, which needs the same search over
+/// and the [`inlinks`] submodule, which needs the same search over
 /// a bare `&[Note]` slice while resolving link targets during
 /// [`FileIndex::build`]/[`FileIndex::refresh`].
+///
+/// [`inlinks`]: mod@inlinks
 fn find_by_path<'a>(notes: &'a [Note], path: &Path) -> Option<&'a Note> {
     let idx = notes.binary_search_by(|note| note.path().cmp(path)).ok()?;
     notes.get(idx)

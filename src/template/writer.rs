@@ -3,16 +3,20 @@
 //! [`TemplateWriteTarget::write`] resolves a render's output path and writes
 //! `content` under a [`CommitPolicy`]. [`WriteMode`] is defined here and
 //! converted from CLI flags via [`WriteMode::from_flags`], but
-//! [`TemplateService::write`](super::service::TemplateService::write) is the
+//! [`TemplateService::write`] is the
 //! only place that matches on it.
 //!
 //! [`TemplateWriteTarget`] gathers output-destination candidates from `-o`
 //! (`requested`) and `file.write_to()` ([`DeclaredOutputPath`]), then resolves
 //! them by precedence: `requested`, `declared`, caller-supplied default.
 //! `requested`/`declared` are runtime values confined to
-//! [`Config::root`](crate::config::Config::root) via
+//! [`Config::root`] via
 //! [`crate::path::RootConfinedPath::parse`]. The default comes from an already
-//! trust-gated [`Config::output_dir`](crate::config::Config::output_dir).
+//! trust-gated [`Config::output_dir`].
+//!
+//! [`TemplateService::write`]: super::service::TemplateService::write
+//! [`Config::root`]: crate::config::Config::root
+//! [`Config::output_dir`]: crate::config::Config::output_dir
 
 use std::{
     fs,
@@ -26,8 +30,10 @@ use crate::{DialogError, DialogProvider, path::RootConfinedPath};
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(crate) enum WriteMode {
     /// Render only.
-    /// [`TemplateService::write`](super::service::TemplateService::write)
+    /// [`TemplateService::write`]
     /// returns [`WriteOutcome::Previewed`] without touching disk.
+    ///
+    /// [`TemplateService::write`]: super::service::TemplateService::write
     DryRun,
     /// Write to disk under this [`CommitPolicy`].
     Commit(CommitPolicy),
@@ -106,9 +112,11 @@ impl CommitPolicy {
     }
 }
 
-/// What [`TemplateService::write`](super::service::TemplateService::write)
+/// What [`TemplateService::write`]
 /// did with rendered content: wrote it to disk, or handed it back unwritten
 /// under [`WriteMode::DryRun`].
+///
+/// [`TemplateService::write`]: super::service::TemplateService::write
 #[derive(Debug, Eq, PartialEq)]
 pub(crate) enum WriteOutcome {
     /// Written to disk at this path.
@@ -290,8 +298,10 @@ impl<'a> TemplateWriteTarget<'a> {
     /// Joins `candidate` onto `root` when relative, without validating it.
     ///
     /// Used for the already trust-gated
-    /// [`Config::output_dir`](crate::config::Config::output_dir), which may
+    /// [`Config::output_dir`], which may
     /// legitimately be absolute. See the module docs.
+    ///
+    /// [`Config::output_dir`]: crate::config::Config::output_dir
     #[inline]
     #[must_use]
     pub(super) fn trusted(root: &Path, candidate: PathBuf) -> PathBuf {

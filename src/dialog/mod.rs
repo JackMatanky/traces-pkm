@@ -10,11 +10,14 @@
 //!
 //! # Selection By Position
 //!
-//! [`select`](DialogProvider::select) and
-//! [`multi_select`](DialogProvider::multi_select) return indices into the
+//! [`select`] and
+//! [`multi_select`] return indices into the
 //! `items` slice, not copied labels. Index-based selection lets callers recover
 //! non-string values from a parallel list and keeps duplicate labels
 //! distinguishable.
+//!
+//! [`select`]: DialogProvider::select
+//! [`multi_select`]: DialogProvider::multi_select
 mod error;
 mod preset;
 mod terminal;
@@ -65,7 +68,7 @@ pub trait DialogProvider: Send + Sync {
 
     /// Prompt the user to pick any number of items, returning their indices.
     ///
-    /// The multi-selection counterpart to [`select`](Self::select). An empty
+    /// The multi-selection counterpart to [`select`]. An empty
     /// `items` slice yields an empty [`Vec`] (not an error).
     ///
     /// # Examples
@@ -82,6 +85,8 @@ pub trait DialogProvider: Send + Sync {
     /// # Errors
     ///
     /// - [`DialogError`] if the provider cannot complete the prompt.
+    ///
+    /// [`select`]: Self::select
     fn multi_select(
         &self,
         label: &str,

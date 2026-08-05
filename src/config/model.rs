@@ -48,12 +48,14 @@ impl Config {
         self.templates.global()
     }
 
-    /// Returns the configured output directory, or [`root`](Self::root) when
+    /// Returns the configured output directory, or [`root`] when
     /// not configured.
     ///
     /// May be relative (preserved unresolved from the config file) or absolute
-    /// (the [`root`](Self::root) fallback); callers needing an absolute path
-    /// resolve a relative result against [`root`](Self::root) themselves.
+    /// (the [`root`] fallback); callers needing an absolute path
+    /// resolve a relative result against [`root`] themselves.
+    ///
+    /// [`root`]: Self::root
     #[inline]
     #[must_use]
     pub(crate) fn output_dir(&self) -> &Path {

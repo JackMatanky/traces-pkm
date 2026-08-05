@@ -581,13 +581,15 @@ fn end_of_month(value: &str) -> Result<String, Error> {
 /// `{{ value | weekday }}` returns `0` for Monday through `6` for Sunday.
 ///
 /// Chrono's own
-/// [`Weekday::number_from_sunday`](chrono::Weekday::number_from_sunday) is
+/// [`Weekday::number_from_sunday`] is
 /// Sunday-first, so this filter remaps to Monday-first order.
 ///
 /// # Errors
 ///
 /// - [`ErrorKind::InvalidOperation`] if `value` is not a parseable date/time
 ///   string; see [`parse_date`].
+///
+/// [`Weekday::number_from_sunday`]: chrono::Weekday::number_from_sunday
 fn weekday(value: &str) -> Result<u32, Error> {
     Ok(parse_date(value)?.weekday().num_days_from_monday())
 }
