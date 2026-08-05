@@ -33,7 +33,7 @@ use minijinja::{
 
 /// `date.now(format=...)`'s default format when the `format` kwarg is omitted.
 ///
-/// This is an ISO-8601-style date (`YYYY-MM-DD`) and also the default output
+/// This is an ISO-8601-style date (`YYYY-MM-DD`) and the default output
 /// shape [`format_precise`] uses for a date-only input.
 const DEFAULT_FORMAT: &str = "%Y-%m-%d";
 

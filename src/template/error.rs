@@ -11,8 +11,8 @@ use thiserror::Error;
 use super::path::TemplatePathError;
 use crate::DialogError;
 
-/// One variant per pipeline stage, so a caller can tell which stage failed
-/// without inspecting the wrapped source error.
+/// Identifies pipeline stage failures, allowing callers to determine which
+/// stage failed without inspecting the wrapped source error.
 #[derive(Debug, Error)]
 pub(crate) enum TemplateError {
     /// `name` failed to resolve to a file. Transparent: [`TemplatePathError`]'s

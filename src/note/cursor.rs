@@ -2,7 +2,7 @@
 
 use std::ops::Range;
 
-/// Borrowed parser input addressed by validated byte offsets.
+/// Represents borrowed parser input addressed by validated byte offsets.
 pub(crate) struct SourceText<'a>(&'a str);
 
 impl<'a> SourceText<'a> {
@@ -34,14 +34,14 @@ impl<'a> SourceText<'a> {
         self.0.get(range)
     }
 
-    /// Returns `true` if the source at `pos` starts with `needle`.
+    /// Checks whether the source at `pos` starts with `needle`.
     #[inline]
     #[must_use]
     pub(crate) fn starts_with(&self, pos: usize, needle: &str) -> bool {
         self.from(pos).is_some_and(|source| source.starts_with(needle))
     }
 
-    /// Returns `pos` advanced by `bytes`.
+    /// Advances `pos` by `bytes` and returns the new offset.
     #[inline]
     #[must_use]
     #[expect(
@@ -53,14 +53,14 @@ impl<'a> SourceText<'a> {
         pos + bytes
     }
 
-    /// Advances `pos` past `ch`.
+    /// Advances `pos` past `ch` and returns the new offset.
     #[inline]
     #[must_use]
     pub(crate) fn advance_char(&self, pos: usize, ch: char) -> usize {
         self.advance(pos, ch.len_utf8())
     }
 
-    /// Returns the byte offset just after a token-ending character.
+    /// Calculates the byte offset just after a token-ending character.
     ///
     /// `pos` is the token start, `offset` is the character offset within that
     /// token, and `ch` is the token's final character.

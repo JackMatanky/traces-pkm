@@ -208,10 +208,10 @@ impl ConfigService {
 
     /// Builds a [`Config`] from discovered candidates.
     ///
-    /// Selects the local and optional global config per
-    /// [`ConfigBuilderInput`]'s precedence rule, tracks and trust-checks the
-    /// local config, then parses and merges it against the optional global
-    /// config into the resolved output directory.
+    /// Selects the local and optional global config files according to
+    /// [`ConfigBuilderInput`]'s precedence rules. Tracks the local config path
+    /// and verifies its trust baseline. Parses and merges global settings
+    /// before local settings, resolving the final output directory.
     ///
     /// Recording the candidate in the tracking store is best-effort; a write
     /// failure does not fail the build. The local candidate's root is checked

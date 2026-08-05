@@ -202,6 +202,7 @@ impl SelectOptions {
         })
     }
 
+    /// Returns display labels for all selectable items.
     fn labels(&self) -> Vec<String> {
         let mut labels = Vec::with_capacity(self.items.len());
         for item in &self.items {
@@ -210,6 +211,11 @@ impl SelectOptions {
         labels
     }
 
+    /// Recovers the original [`Value`] picked by `index`.
+    ///
+    /// # Errors
+    ///
+    /// - [`ErrorKind::InvalidOperation`] if `index` is out of bounds.
     fn recover(&self, index: usize) -> Result<Value, Error> {
         self.items.get(index).map(|item| item.value.clone()).ok_or_else(|| {
             Error::new(

@@ -1,8 +1,7 @@
 //! Dataview inline-field and Markdown tag lexer.
 //!
-//! This module scans plain-text buffers produced by the Markdown parser. Those
-//! buffers already exclude fenced code blocks, indented code blocks, and inline
-//! code.
+//! Scans plain-text buffers produced by the Markdown parser. Those buffers
+//! already exclude fenced code blocks, indented code blocks, and inline code.
 //!
 //! # Main Functions
 //!

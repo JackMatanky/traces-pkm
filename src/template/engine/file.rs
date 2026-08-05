@@ -95,13 +95,14 @@ impl Object for FileOps {
     }
 }
 
-/// Builds the `file.include()` error for an I/O failure reading the
-/// file, once `path` has already passed root confinement.
+/// Wraps a [`std::io::Error`] from reading `path` in a [`minijinja::Error`].
+///
+/// Used by `file.include()` when reading `path` fails after root confinement
+/// checks pass.
 fn read_error(path: &str, source: std::io::Error) -> Error {
     Error::new(ErrorKind::InvalidOperation, format!("failed to read {path}"))
         .with_source(source)
 }
-
 #[cfg(test)]
 mod tests {
     use minijinja::Environment;

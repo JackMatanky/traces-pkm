@@ -6,7 +6,7 @@
 //!
 //! # Main Types
 //!
-//! - [`Note`] - Stores the parsed note.
+//! - [`Note`] - Represents a parsed note record.
 //! - [`List`], [`ListItem`], and [`TaskStatus`] - Represent Markdown lists and
 //!   task items.
 //! - [`Link`], [`LinkType`], and [`LinkTarget`] - Represent Markdown links,

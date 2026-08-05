@@ -39,7 +39,7 @@ pub(crate) enum ConfigStateError {
     Hash(#[from] HashError),
 }
 
-/// Parse permission result for a local config file.
+/// Represents the parse permission result for a local config file.
 ///
 /// Only [`Self::Trusted`] carries already-read content. Keeping content and
 /// status together prevents callers from pairing trusted status with missing
@@ -60,7 +60,7 @@ pub(crate) enum ConfigTrustCheck {
 }
 
 impl ConfigTrustCheck {
-    /// The status-only view, discarding any trusted content.
+    /// Returns the status-only view, discarding any trusted content.
     #[inline]
     #[must_use]
     pub(crate) fn status(&self) -> ConfigTrustStatus {
@@ -75,7 +75,7 @@ impl ConfigTrustCheck {
 
 const COMPANION_SUFFIX: &str = ".hash";
 
-/// Backing store for config tracking and trust records.
+/// Manages the backing store for config tracking and trust records.
 ///
 /// Wraps two independent hash-keyed [`FileStateStore`] values:
 /// - `tracked` records config files discovery has seen;

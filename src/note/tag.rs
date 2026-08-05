@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Markdown tag value, including its leading `#`.
+/// Represents a Markdown tag value, including its leading `#`.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub(crate) struct Tag(String);
 
@@ -14,7 +14,7 @@ impl Tag {
         Self(text.into())
     }
 
-    /// Tag text, including the leading `#`.
+    /// Returns the tag text, including the leading `#`.
     #[inline]
     #[must_use]
     pub(crate) fn as_str(&self) -> &str {

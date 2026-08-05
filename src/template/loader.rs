@@ -3,7 +3,7 @@
 //! [`TemplateLoader::find`] is the single resolution path for validated
 //! top-level `-i <path>` and minijinja `{% include %}`/`{% extends %}` inputs.
 //! Its caller must pass a
-//! [`TemplatePathInput`](super::path::TemplatePathInput), which proves the raw
+//! [`TemplatePathInput`], which proves the raw
 //! path was validated before search. It then searches
 //! [`TemplateLoader::directories`] in local-before-global order via
 //! [`TemplateLoader::find_path_in`] and [`TemplateLoader::find_name_in`].
@@ -12,8 +12,8 @@
 //! or bare `.`) fails validation before any directory is searched, returning
 //! [`TemplatePathError::Absolute`] or [`TemplatePathError::UnsafeComponent`].
 //! This is distinct from [`TemplatePathError::TemplateNotFound`], which
-//! [`Self::find`] returns only after every directory was searched and none
-//! matched.
+//! [`TemplateLoader::find`] returns only after every directory was searched and
+//! none matched.
 //!
 //! # Why Not `minijinja::path_loader`
 //!
@@ -93,8 +93,8 @@ impl TemplateLoader {
         Err(TemplatePathError::TemplateNotFound(name.as_ref().to_path_buf()))
     }
 
-    /// The directories to search, local then global, deduped when the two paths
-    /// are textually identical.
+    /// Returns an iterator over the search directories in local-first order,
+    /// deduplicating identical paths.
     ///
     /// No canonicalization is performed, so two differently-spelled paths to
     /// the same place, for example one reached via a symlink, are searched
@@ -107,8 +107,8 @@ impl TemplateLoader {
         self.local.as_deref().into_iter().chain(global)
     }
 
-    /// The exact-match rule: if `dir.join(path)` names a real file, returns
-    /// the [`TemplatePath`] rooted at `dir`.
+    /// Matches `name` directly within `dir`, returning the [`TemplatePath`] if
+    /// a matching file exists.
     ///
     /// Uses [`fs::symlink_metadata`] rather than
     /// [`Path::is_file`](std::path::Path::is_file), matching
@@ -122,7 +122,7 @@ impl TemplateLoader {
             .then(|| TemplatePath::verified(name.clone(), dir.to_path_buf()))
     }
 
-    /// The stem-match rule, skipped when `path` already has an extension.
+    /// Matches `name` by file stem within `dir` when `name` has no extension.
     ///
     /// Searches `dir` itself, or `dir`'s subdirectory named by `path`'s parent
     /// component, for files sharing `path`'s file stem: `None` for no matches,
@@ -258,7 +258,8 @@ impl TemplateLoader {
         names
     }
 
-    /// The file stems of every top-level `.md` file directly inside `dir`.
+    /// Collects the file stems of every top-level `.md` file directly inside
+    /// `dir`.
     ///
     /// A symlink entry does not count, matching the
     /// [`DirEntry::file_type`](std::fs::DirEntry::file_type) check in

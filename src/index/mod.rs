@@ -10,9 +10,8 @@
 //!
 //! - [`FileIndex::build`], [`FileIndex::refresh`], [`FileIndex::persist`], and
 //!   [`FileIndex::load`] - Build, refresh, save, and reload the index.
-//!   Rendering caches one refresh per render instead of calling `refresh`
-//!   per query; see
-//!   [`template::engine::query::cached_refresh`](crate::template::engine::query::cached_refresh).
+//!   Rendering caches one refresh per render instead of calling `refresh` per
+//!   query; see `template::engine::query::cached_refresh`.
 //! - [`FileIndex::query`] and [`FileIndex::query_tasks`] - Run page-level and
 //!   task-level queries.
 //! - [`FileIndex::records`] and [`FileIndex::notes`] - Expose sorted indexed
@@ -286,14 +285,14 @@ impl FileIndex {
         QueryOutcome::new(matched)
     }
 
-    /// Indexed [`FileRecord`]s, sorted by path.
+    /// Returns indexed [`FileRecord`]s, sorted by path.
     #[inline]
     #[must_use]
     pub(crate) fn records(&self) -> &[FileRecord] {
         &self.records
     }
 
-    /// Indexed [`Note`] records, sorted by path.
+    /// Returns indexed [`Note`] records, sorted by path.
     #[inline]
     #[must_use]
     pub(crate) fn notes(&self) -> &[Note] {

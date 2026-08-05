@@ -1,4 +1,4 @@
-//! Trust request and status model.
+//! Defines the trust request target types and trust status models.
 //!
 //! # Concepts
 //!
@@ -14,7 +14,7 @@ use std::{
 
 use super::file::{Discovered, LocalConfigFile, Tracked};
 
-/// Target of a trust or untrust operation.
+/// Represents the target of a trust or untrust operation.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum TrustRequest {
     /// Trust a workspace root without binding to a config file.
@@ -29,7 +29,7 @@ pub(crate) enum TrustRequest {
 }
 
 impl TrustRequest {
-    /// The workspace root this request refers to.
+    /// Returns the workspace root this request refers to.
     #[inline]
     #[must_use]
     pub(crate) fn root_path(&self) -> &Path {
@@ -42,7 +42,7 @@ impl TrustRequest {
         }
     }
 
-    /// The config file path, when this request carries one.
+    /// Returns the config file path, when this request carries one.
     #[inline]
     #[must_use]
     pub(crate) fn config_file(&self) -> Option<&Path> {
@@ -83,7 +83,7 @@ impl From<&LocalConfigFile<Tracked>> for TrustRequest {
     }
 }
 
-/// Trust requests resolved from one discovery operation.
+/// Holds trust requests resolved from a single discovery operation.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct TrustRequests(Box<[TrustRequest]>);
 
@@ -111,14 +111,14 @@ impl IntoIterator for TrustRequests {
     }
 }
 
-/// Trust state for a workspace root.
+/// Describes the trust state for a workspace root.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(crate) enum WorkspaceTrustStatus {
     Trusted,
     Untrusted,
 }
 
-/// Trust state for a config file relative to its workspace root.
+/// Describes the trust state for a config file relative to its workspace root.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(crate) enum ConfigTrustStatus {
     /// The workspace root is trusted and, when a baseline hash exists,

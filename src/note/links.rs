@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use super::cursor::SourceText;
 
-/// Link syntax for an extracted [`Link`].
+/// Represents the link syntax for an extracted [`Link`].
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub(crate) enum LinkType {
     /// Standard Markdown `[text](target)` link.
@@ -17,7 +17,7 @@ pub(crate) enum LinkType {
     Wikilink,
 }
 
-/// Outgoing Markdown link or Obsidian wikilink.
+/// Represents an outgoing Markdown link or Obsidian wikilink.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub(crate) struct Link {
     target: String,
@@ -44,7 +44,12 @@ impl Link {
         }
     }
 
-    /// Parses a complete Obsidian wikilink such as `[[target|text]]`.
+    /// Parses `s` as a complete Obsidian wikilink such as `[[target|text]]`.
+    ///
+    /// Unlike [`Self::parse_wikilink_prefix`], `s` must contain nothing but
+    /// the wikilink itself: any trailing text after the closing `]]` makes
+    /// this return `None`. Also returns `None` for any input
+    /// [`Self::parse_wikilink_prefix`] rejects.
     #[must_use]
     pub(crate) fn parse_wikilink(s: &str) -> Option<Self> {
         let (link, consumed) = Self::parse_wikilink_prefix(s)?;
@@ -54,7 +59,9 @@ impl Link {
     /// Parses an Obsidian wikilink prefix from the start of `s`.
     ///
     /// Allows trailing text after the closing `]]` and returns the parsed link
-    /// with the number of bytes consumed.
+    /// with the number of bytes consumed. Returns `None` if `s` does not start
+    /// with `[[` (after an optional leading `!`), has no unescaped closing
+    /// `]]`, or has an empty target.
     #[must_use]
     pub(crate) fn parse_wikilink_prefix(s: &str) -> Option<(Self, usize)> {
         let source = SourceText::new(s);
@@ -89,7 +96,7 @@ impl Link {
         ))
     }
 
-    /// Link destination.
+    /// Returns the link destination.
     #[inline]
     #[must_use]
     pub(crate) fn target(&self) -> &str {
@@ -114,15 +121,14 @@ impl Link {
         }
     }
 
-    /// Display text, or alias text for a wikilink.
+    /// Returns the display text, or alias text for a wikilink.
     #[inline]
     #[must_use]
     pub(crate) fn text(&self) -> &str {
         &self.text
     }
 
-    /// Syntax used by the source link.
-    #[inline]
+    /// Returns the syntax used by the source link.
     #[must_use]
     pub(crate) fn kind(&self) -> LinkType {
         self.kind
@@ -142,7 +148,7 @@ impl Link {
         matches!(self.kind, LinkType::Markdown)
     }
 
-    /// Returns `true` for embedded wikilinks.
+    /// Returns `true` for embedded wikilinks (`![[target]]`).
     #[inline]
     #[must_use]
     pub(crate) fn is_embedded(&self) -> bool {
@@ -150,7 +156,8 @@ impl Link {
     }
 }
 
-/// The parts a [`Link`]'s raw target text splits into at its first `#`.
+/// Represents the parts a [`Link`]'s raw target text splits into at its first
+/// `#`.
 ///
 /// Obsidian and Markdown links can point to three mutually exclusive shapes,
 /// not an optional path paired with an optional anchor:
@@ -170,7 +177,7 @@ pub(crate) enum LinkTarget<'a> {
 }
 
 impl<'a> LinkTarget<'a> {
-    /// This target's path segment, or `None` for [`Self::AnchorOnly`].
+    /// Returns this target's path segment, or `None` for [`Self::AnchorOnly`].
     #[must_use]
     pub(crate) fn path(self) -> Option<&'a str> {
         match self {
@@ -179,7 +186,7 @@ impl<'a> LinkTarget<'a> {
         }
     }
 
-    /// This target's `#heading` anchor, or `None` when it has none.
+    /// Returns this target's `#heading` anchor, or `None` when it has none.
     #[must_use]
     pub(crate) fn anchor(self) -> Option<&'a str> {
         match self {
@@ -190,21 +197,23 @@ impl<'a> LinkTarget<'a> {
         }
     }
 
-    /// Whether this target has a non-empty path segment: `false` for
-    /// [`Self::AnchorOnly`] and for the degenerate case of an entirely empty
-    /// target. Corresponds to whether an exact-path lookup is worth attempting
-    /// at all.
+    /// Returns whether this target has a non-empty path segment.
+    ///
+    /// `false` for [`Self::AnchorOnly`] and for the degenerate case of an
+    /// entirely empty target. Corresponds to whether an exact-path lookup is
+    /// worth attempting at all.
     #[must_use]
     pub(crate) fn has_path(self) -> bool {
         self.path().is_some_and(|path| !path.is_empty())
     }
 
-    /// Whether this target's path segment is a bare name with no directory
-    /// prefix, such as `Project Alpha` rather than `archive/Project Alpha`:
-    /// the shape Obsidian's wikilink-by-name search resolves. Corresponds to
-    /// whether a whole-index stem search is eligible as a fallback.
+    /// Returns whether this target's path segment is a bare name with no
+    /// directory prefix, such as `Project Alpha` rather than
+    /// `archive/Project Alpha`.
     ///
-    /// `false` in two cases:
+    /// This is the shape Obsidian's wikilink-by-name search resolves, so it
+    /// corresponds to whether a whole-index stem search is eligible as a
+    /// fallback. `false` in two cases:
     /// - [`Self::AnchorOnly`], which has no path at all.
     /// - A path with an explicit directory component. Such a path that fails to
     ///   match exactly stays unresolved rather than falling back to a

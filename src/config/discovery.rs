@@ -139,7 +139,7 @@ pub(crate) enum DiscoveryAnchor {
 }
 
 impl DiscoveryAnchor {
-    /// The path carried by this filesystem anchor.
+    /// Returns the path carried by this filesystem anchor.
     #[inline]
     #[must_use]
     pub(super) fn path(&self) -> &Path {
@@ -198,28 +198,28 @@ impl DiscoveryOutcome {
         }
     }
 
-    /// The discovery operation that produced this outcome.
+    /// Returns the discovery operation that produced this outcome.
     #[inline]
     #[must_use]
     pub(crate) fn kind(&self) -> DiscoveryScope {
         self.kind
     }
 
-    /// The filesystem anchor used for discovery.
+    /// Returns the filesystem anchor used for discovery.
     #[inline]
     #[must_use]
     pub(crate) fn anchor(&self) -> &DiscoveryAnchor {
         &self.anchor
     }
 
-    /// Local config candidates found during discovery (empty if none).
+    /// Returns local config candidates found during discovery (empty if none).
     #[inline]
     #[must_use]
     pub(super) fn local(&self) -> &[LocalConfigFile<Discovered>] {
         &self.local
     }
 
-    /// Global config candidates found during discovery (empty if none).
+    /// Returns global config candidates found during discovery (empty if none).
     #[inline]
     #[must_use]
     pub(super) fn global(&self) -> &[GlobalConfigFile<Discovered>] {

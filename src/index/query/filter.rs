@@ -131,9 +131,8 @@ impl FilterToken {
 /// Tokenizes `expr` into a vector of [`FilterToken`]s.
 ///
 /// Bare words that are not recognized keywords or literal tokens lex as
-/// [`FilterToken::Ident`] and are reclassified by
-/// [`FilterToken::reclassify`], since numeric literals cannot be matched by a
-/// fixed-literal pattern.
+/// [`FilterToken::Ident`] and are reclassified by [`FilterToken::reclassify`],
+/// since numeric literals cannot be matched by a fixed-literal pattern.
 ///
 /// # Errors
 ///
@@ -396,7 +395,7 @@ fn eval_contains(field_val: &FieldValue, target: &FieldValue) -> bool {
     }
 }
 
-/// Whether list element `item` matches `target`.
+/// Evaluates whether list element `item` matches `target`.
 ///
 /// Matches by exact equality. Tag-like strings also match when `item` equals
 /// `target` or nests under it as a sub-tag, such as `#book/fiction` under

@@ -155,7 +155,7 @@ impl InspectTarget {
         }
     }
 
-    /// True when `candidate` names `root` itself.
+    /// Checks whether `candidate` names `root` itself.
     ///
     /// That means every component is [`Component::CurDir`], or there are no
     /// components at all, as in an empty path. This cannot escape no matter how
@@ -176,9 +176,10 @@ impl AsRef<Path> for InspectTarget {
     }
 }
 
-/// Builds the [`ErrorKind::InvalidOperation`] error for an I/O failure other
-/// than "not found" while inspecting `path`, such as permission denied or a
-/// broken symlink loop.
+/// Wraps an I/O failure during `path` inspection into a [`minijinja::Error`].
+///
+/// Used for I/O errors other than "not found" (such as permission denied or a
+/// broken symlink loop).
 fn inspect_error(path: &str, source: io::Error) -> Error {
     Error::new(ErrorKind::InvalidOperation, format!("failed to inspect {path}"))
         .with_source(source)
@@ -196,23 +197,26 @@ fn component_or_empty(component: Option<impl AsRef<OsStr>>) -> String {
         .unwrap_or_default()
 }
 
-/// `path_filename`: the final path component including its extension
-/// (e.g. `"main.rs"`), or an empty string when `path` has none (e.g.
-/// `""`, `"/"`, `".."`).
+/// Returns the final component of `path` including its extension.
+///
+/// Returns an empty string when `path` has no filename component (e.g. `""`,
+/// `"/"`, `".."`).
 fn filename(path: &str) -> String {
     component_or_empty(Path::new(path).file_name())
 }
 
-/// `path_basename`: the final path component without its extension
-/// (e.g. `"main"`), or an empty string when `path` has no filename.
+/// Returns the final component of `path` without its extension.
+///
+/// Returns an empty string when `path` has no filename component.
 fn basename(path: &str) -> String {
     FileName::try_from(Path::new(path))
         .map(|name| BaseName::from(&name).as_str().to_owned())
         .unwrap_or_default()
 }
 
-/// `path_extension`: the final path component's extension without the
-/// leading dot (e.g. `"rs"`), or an empty string when it has none.
+/// Returns the file extension of `path` without the leading dot.
+///
+/// Returns an empty string when `path` has no extension.
 fn extension(path: &str) -> String {
     FileName::try_from(Path::new(path))
         .ok()
@@ -220,9 +224,10 @@ fn extension(path: &str) -> String {
         .unwrap_or_default()
 }
 
-/// `path_parent`: the path with its final component removed, for example
-/// `"/foo/bar/main.rs"` becomes `"/foo/bar"`. Returns an empty string when
-/// `path` has no parent, for example `""`, `"/"`, or a single bare name.
+/// Returns the parent directory of `path`.
+///
+/// Returns an empty string when `path` has no parent (e.g. `""`, `"/"`, or a
+/// single bare name).
 fn parent(path: &str) -> String {
     component_or_empty(Path::new(path).parent())
 }

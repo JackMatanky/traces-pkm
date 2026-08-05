@@ -154,15 +154,16 @@ impl IndexRecord {
         self
     }
 
-    /// This row's task completion state, if it is a task-level row built by
-    /// [`super::FileIndex::query_tasks`]. `None` for page-level records.
+    /// Returns this row's task completion state, if it is a task-level row
+    /// built by [`super::FileIndex::query_tasks`]. `None` for page-level
+    /// records.
     #[inline]
     #[must_use]
     pub(crate) fn task_completed(&self) -> Option<bool> {
         self.task.as_ref().map(|task| task.completed)
     }
 
-    /// This row's task text, if it is a task-level row built by
+    /// Returns this row's task text, if it is a task-level row built by
     /// [`super::FileIndex::query_tasks`]. `None` for page-level records.
     #[inline]
     #[must_use]
@@ -170,22 +171,22 @@ impl IndexRecord {
         self.task.as_ref().map(|task| task.text.as_str())
     }
 
-    /// The indexed file's general metadata.
+    /// Returns the indexed file's general metadata.
     #[inline]
     #[must_use]
     pub(crate) fn file(&self) -> &FileRecord {
         &self.file
     }
 
-    /// The indexed file's parsed [`Note`] metadata.
+    /// Returns the indexed file's parsed [`Note`] metadata.
     #[inline]
     #[must_use]
     pub(crate) fn note(&self) -> &Note {
         &self.note
     }
 
-    /// Project-relative paths of Notes whose outlinks resolve to this row's
-    /// Note. Empty for a Note nothing links to.
+    /// Returns project-relative paths of Notes whose outlinks resolve to this
+    /// row's Note. Empty for a Note nothing links to.
     #[inline]
     #[must_use]
     pub(crate) fn inlinks(&self) -> &[PathBuf] {

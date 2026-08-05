@@ -1,4 +1,4 @@
-//! Resolved config model for consumers.
+//! Defines the resolved configuration model for downstream consumers.
 //!
 //! # Main Types
 //!
@@ -27,29 +27,29 @@ impl Config {
         }
     }
 
-    /// Project root directory used as the local resolution base.
+    /// Returns the project root directory used as the local resolution base.
     #[inline]
     #[must_use]
     pub(crate) fn root(&self) -> &Path {
         &self.root
     }
 
-    /// Local template directory, if one was configured.
+    /// Returns the local template directory, if configured.
     #[inline]
     #[must_use]
     pub(crate) fn local_template_dir(&self) -> Option<&Path> {
         self.templates.local()
     }
 
-    /// Global template directory, if one was configured.
+    /// Returns the global template directory, if configured.
     #[inline]
     #[must_use]
     pub(crate) fn global_template_dir(&self) -> Option<&Path> {
         self.templates.global()
     }
 
-    /// The configured output directory, or [`root`](Self::root) when not
-    /// configured.
+    /// Returns the configured output directory, or [`root`](Self::root) when
+    /// not configured.
     ///
     /// May be relative (preserved unresolved from the config file) or absolute
     /// (the [`root`](Self::root) fallback); callers needing an absolute path
@@ -106,21 +106,21 @@ impl TemplateConfig {
         }
     }
 
-    /// The local project template directory, if set.
+    /// Returns the local project template directory, if set.
     #[inline]
     #[must_use]
     pub(super) fn local(&self) -> Option<&Path> {
         self.local.as_deref()
     }
 
-    /// The global template directory, if set.
+    /// Returns the global template directory, if set.
     #[inline]
     #[must_use]
     pub(super) fn global(&self) -> Option<&Path> {
         self.global.as_deref()
     }
 
-    /// The configured output directory, or the config root when absent.
+    /// Returns the configured output directory, or the config root when absent.
     #[inline]
     #[must_use]
     pub(super) fn output(&self) -> &Path {

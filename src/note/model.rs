@@ -11,7 +11,7 @@ use super::{
     tag::Tag,
 };
 
-/// Parsed metadata and structure for one Markdown note.
+/// Represents parsed metadata and structure for one Markdown note.
 ///
 /// Stores page-level frontmatter, top-level lists, outgoing links, inline
 /// fields, and tags. [`Self::tasks`] derives task items from stored lists
@@ -69,21 +69,21 @@ impl Note {
         self
     }
 
-    /// Project-relative path to this note.
+    /// Returns the project-relative path to this note.
     #[inline]
     #[must_use]
     pub(crate) fn path(&self) -> &Path {
         &self.path
     }
 
-    /// Parsed YAML frontmatter block, if present.
+    /// Returns the parsed YAML frontmatter block, if present.
     #[inline]
     #[must_use]
     pub(crate) fn frontmatter(&self) -> Option<&Frontmatter> {
         self.frontmatter.as_ref()
     }
 
-    /// Top-level body lists.
+    /// Returns the top-level body lists.
     ///
     /// Nested lists live under [`ListItem::children`]. Use [`Self::tasks`] for
     /// a flattened view of task items from every list depth.
@@ -93,15 +93,15 @@ impl Note {
         &self.lists
     }
 
-    /// Outgoing links extracted from Markdown and wikilink syntax.
+    /// Returns the outgoing links extracted from Markdown and wikilink syntax.
     #[inline]
     #[must_use]
     pub(crate) fn outlinks(&self) -> &[Link] {
         &self.outlinks
     }
 
-    /// Dataview-compatible inline fields from text blocks and list items, in
-    /// document order.
+    /// Returns Dataview-compatible inline fields from text blocks and list
+    /// items, in document order.
     #[inline]
     #[must_use]
     pub(crate) fn inline_fields(&self) -> &[InlineField] {
@@ -118,8 +118,8 @@ impl Note {
             .chain(self.inline_fields.iter().map(InlineField::metadata))
     }
 
-    /// Markdown tags from paragraphs, headings, and list items, in document
-    /// order.
+    /// Returns Markdown tags from paragraphs, headings, and list items, in
+    /// document order.
     #[inline]
     #[must_use]
     pub(crate) fn tags(&self) -> &[Tag] {
@@ -132,7 +132,7 @@ impl Note {
     }
 }
 
-/// Depth-first iterator over task list items in a [`Note`].
+/// Represents a depth-first iterator over task list items in a [`Note`].
 pub(crate) struct TaskIter<'a> {
     stack: Vec<std::slice::Iter<'a, ListItem>>,
 }

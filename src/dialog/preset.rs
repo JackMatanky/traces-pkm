@@ -87,7 +87,7 @@ impl PresetDialogProvider {
         self
     }
 
-    /// Queue a response for the next [`DialogProvider::confirm`] call.
+    /// Queues a response for the next [`DialogProvider::confirm`] call.
     ///
     /// # Examples
     ///
@@ -106,7 +106,7 @@ impl PresetDialogProvider {
         self
     }
 
-    /// Queue a chosen index for the next [`DialogProvider::select`] call.
+    /// Queues a chosen index for the next [`DialogProvider::select`] call.
     ///
     /// The queued index is validated only when [`DialogProvider::select`]
     /// consumes it. An index at or beyond the prompted items' length returns

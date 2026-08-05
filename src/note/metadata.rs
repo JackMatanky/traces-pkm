@@ -12,7 +12,7 @@ use yaml_serde as serde_yaml;
 
 use super::Link;
 
-/// Raw YAML frontmatter block from a Markdown note.
+/// Represents a raw YAML frontmatter block from a Markdown note.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct RawFrontmatter(String);
 
@@ -24,7 +24,7 @@ impl RawFrontmatter {
         Self(raw.into())
     }
 
-    /// YAML text between frontmatter delimiters.
+    /// Returns the YAML text between frontmatter delimiters.
     #[inline]
     #[must_use]
     pub(crate) fn as_str(&self) -> &str {
@@ -39,7 +39,7 @@ impl RawFrontmatter {
     }
 }
 
-/// Structured frontmatter fields parsed from [`RawFrontmatter`].
+/// Represents structured frontmatter fields parsed from [`RawFrontmatter`].
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub(crate) struct Frontmatter {
     fields: Vec<MetadataField>,
@@ -55,7 +55,7 @@ impl Frontmatter {
         }
     }
 
-    /// Parsed frontmatter fields.
+    /// Returns the parsed frontmatter fields.
     #[inline]
     #[must_use]
     pub(crate) fn fields(&self) -> &[MetadataField] {
@@ -83,7 +83,11 @@ impl From<&RawFrontmatter> for Frontmatter {
         {
             Ok(v) => v,
             Err(err) => {
-                warn!(%err, "failed to parse YAML frontmatter block; ignoring malformed fields");
+                warn!(
+                    %err,
+                    "failed to parse YAML frontmatter block; \
+                    ignoring malformed fields"
+                );
                 return Self::default();
             }
         };
@@ -105,7 +109,7 @@ impl From<&RawFrontmatter> for Frontmatter {
     }
 }
 
-/// Dataview-compatible inline field syntax.
+/// Represents Dataview-compatible inline field syntax.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub(crate) enum InlineFieldForm {
     /// `Key:: Value`, filling an entire line.
@@ -116,7 +120,7 @@ pub(crate) enum InlineFieldForm {
     HiddenKey,
 }
 
-/// Dataview field key shared by frontmatter and inline fields.
+/// Represents a Dataview field key shared by frontmatter and inline fields.
 ///
 /// Distinguishes metadata keys from other note text such as list item content,
 /// link targets, and tags.
@@ -131,7 +135,7 @@ impl FieldKey {
         Self(text.into())
     }
 
-    /// Field key text.
+    /// Returns the field key text.
     #[inline]
     #[must_use]
     pub(crate) fn as_str(&self) -> &str {
@@ -146,7 +150,7 @@ impl PartialEq<str> for FieldKey {
     }
 }
 
-/// Key-value metadata from frontmatter or Markdown body text.
+/// Represents key-value metadata from frontmatter or Markdown body text.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub(crate) struct MetadataField {
     key: FieldKey,
@@ -164,14 +168,14 @@ impl MetadataField {
         }
     }
 
-    /// Field key.
+    /// Returns the field key.
     #[inline]
     #[must_use]
     pub(crate) fn key(&self) -> &FieldKey {
         &self.key
     }
 
-    /// Field value.
+    /// Returns the field value.
     #[inline]
     #[must_use]
     pub(crate) fn value(&self) -> &FieldValue {
@@ -179,7 +183,7 @@ impl MetadataField {
     }
 }
 
-/// Dataview-compatible inline field with its source syntax.
+/// Represents a Dataview-compatible inline field with its source syntax.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub(crate) struct InlineField {
     metadata: MetadataField,
@@ -201,28 +205,28 @@ impl InlineField {
         }
     }
 
-    /// Field key.
+    /// Returns the field key.
     #[inline]
     #[must_use]
     pub(crate) fn key(&self) -> &FieldKey {
         self.metadata.key()
     }
 
-    /// Field value.
+    /// Returns the field value.
     #[inline]
     #[must_use]
     pub(crate) fn value(&self) -> &FieldValue {
         self.metadata.value()
     }
 
-    /// Inline field syntax.
+    /// Returns the inline field syntax.
     #[inline]
     #[must_use]
     pub(crate) fn form(&self) -> InlineFieldForm {
         self.form
     }
 
-    /// Underlying key-value metadata without syntax information.
+    /// Returns the underlying key-value metadata without syntax information.
     #[inline]
     #[must_use]
     pub(crate) fn metadata(&self) -> &MetadataField {
@@ -230,7 +234,8 @@ impl InlineField {
     }
 }
 
-/// Dataview-compatible metadata value parsed from YAML or inline text.
+/// Represents a Dataview-compatible metadata value parsed from YAML or inline
+/// text.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub(crate) enum FieldValue {
     /// Empty or missing value.
@@ -343,7 +348,7 @@ fn yaml_key_to_string(key: serde_yaml::Value) -> Option<String> {
     }
 }
 
-/// Returns `true` if `s` starts with an ISO date format `YYYY-MM-DD`.
+/// Checks whether `s` starts with an ISO date format `YYYY-MM-DD`.
 pub(super) fn is_iso_date(s: &str) -> bool {
     let bytes = s.as_bytes();
     bytes.len() >= 10

@@ -3,7 +3,7 @@
 //! [`TemplateService`] owns the short top-to-bottom sequence for one
 //! [`Config`]: resolve through its own [`TemplateLoader`], read the source,
 //! render it through [`TemplateEngine`], then delegate output resolution and
-//! disk writes to [`TemplateWriteTarget`](super::writer::TemplateWriteTarget).
+//! disk writes to [`TemplateWriteTarget`].
 
 use std::{
     path::{Path, PathBuf},
@@ -180,9 +180,10 @@ impl<'a> TemplateService<'a> {
         })
     }
 
-    /// Renders `source` through the engine. `path` is only used to name the
-    /// template in a [`TemplateError::Render`], not read again.
+    /// Renders `source` through the engine.
     ///
+    /// `path` is only used to name the template in a [`TemplateError::Render`],
+    /// not read again.
     /// # Errors
     ///
     /// - [`TemplateError::Render`] if minijinja cannot render `source`.
@@ -197,13 +198,13 @@ impl<'a> TemplateService<'a> {
         })
     }
 
-    /// [`Config::output_dir`] joined with the resolved template's
-    /// default output filename
-    /// ([`TemplatePath::default_output_filename`]), not the raw `-i`
-    /// argument, so two directories' same-named templates don't
-    /// collide. Uses [`TemplateWriteTarget::trusted`], not the
-    /// private `confine` helper: `output_dir` is a trusted config
-    /// value, not a runtime candidate.
+    /// Returns the default output path by joining [`Config::output_dir`] with
+    /// the resolved template's default output filename
+    /// ([`TemplatePath::default_output_filename`]), so two directories'
+    /// same-named templates don't collide.
+    ///
+    /// Uses [`TemplateWriteTarget::trusted`], not the private `confine` helper:
+    /// `output_dir` is a trusted config value, not a runtime candidate.
     fn default_output_path(&self, resolved: &TemplatePath) -> PathBuf {
         self.config.output_dir().join(resolved.default_output_filename())
     }
@@ -240,8 +241,8 @@ mod tests {
         TemplatePathInput::parse(Path::new(path)).expect("valid template input")
     }
 
-    /// A cheap, deterministic provider for tests that never exercise `ui.*`.
-    /// [`TemplateService::new`] requires one regardless.
+    /// Creates a cheap, deterministic provider for tests that never exercise
+    /// `ui.*`. [`TemplateService::new`] requires one regardless.
     fn preset_provider() -> Arc<dyn DialogProvider> {
         Arc::new(PresetDialogProvider::new())
     }

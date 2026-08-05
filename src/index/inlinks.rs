@@ -217,11 +217,13 @@ fn find_nearest_by_stem<'a>(
     }
 }
 
-/// Path-segment distance between `a`'s and `b`'s containing folders: steps up
-/// from `a`'s folder to its nearest shared ancestor with `b`'s folder, plus
-/// steps back down to `b`'s folder. Files in the same folder are distance `0`.
-/// This is [`resolve_target`]'s proximity tie-break for ambiguous wikilink stem
-/// matches.
+/// Computes the path-segment distance between `a`'s and `b`'s containing
+/// folders.
+///
+/// Steps up from `a`'s folder to its nearest shared ancestor with `b`'s
+/// folder, then back down to `b`'s folder; files in the same folder are
+/// distance `0`. This is [`resolve_target`]'s proximity tie-break for
+/// ambiguous wikilink stem matches.
 ///
 /// Reads folder placement straight from each Note's own `path()` rather than
 /// joining [`super::FileRecord`]'s precomputed `folder`/`name` fields.

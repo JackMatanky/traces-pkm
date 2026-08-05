@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use super::metadata::InlineField;
 
-/// Ordered or unordered Markdown list.
+/// Represents an ordered or unordered Markdown list.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub(crate) struct List {
     is_ordered: bool,
@@ -29,7 +29,7 @@ impl List {
         self.is_ordered
     }
 
-    /// Direct child items in this list.
+    /// Returns the direct child items in this list.
     #[inline]
     #[must_use]
     pub(crate) fn items(&self) -> &[ListItem] {
@@ -37,14 +37,15 @@ impl List {
     }
 }
 
-/// Completion state of a Markdown task list item.
+/// Represents the completion state of a Markdown task list item.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub(crate) enum TaskStatus {
     Incomplete,
     Complete,
 }
 
-/// Markdown list item with optional task state, child lists, and item fields.
+/// Represents a Markdown list item with optional task state, child lists, and
+/// item fields.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub(crate) struct ListItem {
     text: String,
@@ -88,14 +89,14 @@ impl ListItem {
         }
     }
 
-    /// Plain text content.
+    /// Returns the plain text content.
     #[inline]
     #[must_use]
     pub(crate) fn text(&self) -> &str {
         &self.text
     }
 
-    /// Task completion state, if this item is a task.
+    /// Returns the task completion state, if this item is a task.
     #[inline]
     #[must_use]
     pub(crate) fn task_status(&self) -> Option<TaskStatus> {
@@ -116,7 +117,7 @@ impl ListItem {
         matches!(self.task_status, Some(TaskStatus::Complete))
     }
 
-    /// Nested lists under this item.
+    /// Returns the nested lists under this item.
     #[inline]
     #[must_use]
     pub(crate) fn children(&self) -> &[List] {
@@ -135,7 +136,7 @@ impl ListItem {
         self
     }
 
-    /// Inline fields parsed from this item's own text.
+    /// Returns the inline fields parsed from this item's own text.
     ///
     /// Task items also recognize Dataview date shorthand emoji such as `🗓️`,
     /// `➕`, `🛫`, `⏳`, and `✅`.

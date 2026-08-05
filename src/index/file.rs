@@ -71,36 +71,36 @@ impl FileRecord {
         })
     }
 
-    /// The file's path, relative to the project root.
+    /// Returns the file's path, relative to the project root.
     #[inline]
     #[must_use]
     pub(crate) fn path(&self) -> &Path {
         &self.path
     }
 
-    /// The file's name, without its extension.
+    /// Returns the file's name, without its extension.
     #[inline]
     #[must_use]
     pub(crate) fn name(&self) -> &BaseName {
         &self.name
     }
 
-    /// The file's parent directory, relative to the project root. Empty for
-    /// files directly under the project root.
+    /// Returns the file's parent directory, relative to the project root. Empty
+    /// for files directly under the project root.
     #[inline]
     #[must_use]
     pub(crate) fn folder(&self) -> &Path {
         &self.folder
     }
 
-    /// Whether this file is a markdown note or another regular file.
+    /// Returns whether this file is a markdown note or another regular file.
     #[inline]
     #[must_use]
     pub(crate) fn format(&self) -> FileFormat {
         self.format
     }
 
-    /// Filesystem creation timestamp, if the host reports one.
+    /// Returns the filesystem creation timestamp, if the host reports one.
     ///
     /// Use [`Self::created_at_or_modified`] when unsupported creation times
     /// should fall back to [`Self::modified_at`].
@@ -110,7 +110,7 @@ impl FileRecord {
         self.created_at
     }
 
-    /// Uses [`Self::created_at`] when available, falling back to
+    /// Returns [`Self::created_at`] when available, falling back to
     /// [`Self::modified_at`] when creation time is unsupported on the host
     /// OS/filesystem.
     #[inline]
@@ -119,14 +119,14 @@ impl FileRecord {
         self.created_at.unwrap_or(self.modified_at)
     }
 
-    /// This file's last modification time.
+    /// Returns this file's last modification time.
     #[inline]
     #[must_use]
     pub(crate) fn modified_at(&self) -> Timestamp {
         self.modified_at
     }
 
-    /// This file's size in bytes.
+    /// Returns this file's size in bytes.
     #[inline]
     #[must_use]
     pub(crate) fn size(&self) -> u64 {

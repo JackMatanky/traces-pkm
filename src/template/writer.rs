@@ -334,7 +334,7 @@ fn commit(
 mod tests {
     use super::*;
 
-    /// A real, canonicalized temp directory.
+    /// Returns a real, canonicalized temp directory.
     ///
     /// macOS's temp dir is itself reached through a symlink (`/tmp` to
     /// `/private/tmp`), so tests asserting an exact output path need an

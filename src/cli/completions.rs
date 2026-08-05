@@ -1,8 +1,8 @@
 //! Shell completion generation and template-name listing.
 //!
-//! Serves `traces completions` by either emitting a static script for a
-//! supported shell or loading config to print template names for dynamic
-//! completion.
+//! Serves `traces completions` by either emitting a static completion script
+//! for a supported [`Shell`] or loading configuration to print available
+//! template names for dynamic completion.
 
 use clap::{ArgGroup, Args, CommandFactory as _};
 use clap_complete::{Shell, generate};
@@ -79,7 +79,7 @@ impl Completions {
             .expect("clap_complete generates valid UTF-8 shell-script text")
     }
 
-    /// Loads configuration and returns available template names.
+    /// Loads configuration and retrieves available template names.
     ///
     /// # Errors
     ///

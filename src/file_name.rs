@@ -83,7 +83,7 @@ impl From<&FileName> for BaseName {
 ///
 /// Use this instead of [`BaseName`] where a stem is only needed for one
 /// comparison or hash lookup, such as the wikilink stem index in
-/// [`inlinks`](crate::index::inlinks), so resolving many candidates doesn't
+/// `inlinks`, so resolving many candidates doesn't
 /// allocate a [`BaseName`] per candidate.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub(crate) struct BaseNameRef<'a>(&'a str);

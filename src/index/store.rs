@@ -238,7 +238,7 @@ impl IndexStore {
     /// multimap table.
     ///
     /// [`Self::load_all`] uses this instead of [`Self::load_table`] because
-    /// [`ReadableMultimapTable::iter`] already yields each key's values
+    /// [`redb::ReadableMultimapTable::iter`] already yields each key's values
     /// sorted, so no per-key deserialize-a-`Vec` step is needed.
     ///
     /// # Errors

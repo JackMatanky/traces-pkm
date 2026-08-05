@@ -23,7 +23,7 @@ pub(crate) struct RawConfig {
     pub(crate) templates: RawTemplateConfig,
 }
 
-/// Raw `[templates]` table exactly as written in TOML.
+/// Represents the raw `[templates]` table exactly as written in TOML.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct RawTemplateConfig {

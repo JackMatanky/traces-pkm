@@ -1,6 +1,6 @@
 //! Builds and runs the minijinja environment used by [`TemplateService`].
 //!
-//! Most template-facing helpers live in submodules: [`date`], [`file`],
+//! Most template-facing helpers live in submodules: [`date`], [`mod@file`],
 //! [`path`], [`num`], [`query`], [`string`], and [`ui`]. The
 //! standalone [`uuid`](fn@uuid) function is defined here.
 //!
@@ -50,7 +50,7 @@ pub(super) struct TemplateEngine {
 
 impl TemplateEngine {
     /// Builds an engine backed by `loader`, registering every submodule's
-    /// custom functions ([`date`], [`file`], [`path`], [`num`], [`query`],
+    /// custom functions ([`date`], [`mod@file`], [`path`], [`num`], [`query`],
     /// [`string`], [`ui`]; see each module's own docs for what it contributes)
     /// plus the standalone [`uuid`](fn@uuid) function.
     ///
@@ -117,8 +117,8 @@ impl TemplateEngine {
     }
 }
 
-/// A render's output, plus whatever `file.write_to()` captured during that
-/// render (if the template called it).
+/// Carries a render's output, plus whatever `file.write_to()` captured during
+/// that render (if the template called it).
 #[derive(Debug)]
 pub(super) struct RenderOutput {
     /// The rendered template content.
@@ -144,8 +144,8 @@ mod tests {
         TemplateLoader::new(Some(path.to_path_buf()), None)
     }
 
-    /// A cheap, deterministic provider for tests that never exercise `ui.*`;
-    /// `TemplateEngine::new` requires one regardless.
+    /// Creates a cheap, deterministic provider for tests that never exercise
+    /// `ui.*`; `TemplateEngine::new` requires one regardless.
     fn preset_provider() -> Arc<dyn DialogProvider> {
         Arc::new(crate::PresetDialogProvider::new())
     }

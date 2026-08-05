@@ -49,25 +49,27 @@ impl StrOps {
     }
 }
 
-/// `trim_prefix(prefix)` filter body: [`str::strip_prefix`] returns
-/// `None` when `prefix` isn't present, in which case the original
-/// string is returned unchanged.
+/// Trims a prefix from the start of `value`.
+///
+/// Returns `value` unchanged when `prefix` is not present, using
+/// [`str::strip_prefix`].
 fn trim_prefix(value: &str, prefix: &str) -> String {
     value.strip_prefix(prefix).unwrap_or(value).to_owned()
 }
 
-/// `trim_suffix(suffix)` filter body. Mirrors [`trim_prefix`] via
+/// Trims a suffix from the end of `value`.
+///
+/// Returns `value` unchanged when `suffix` is not present, using
 /// [`str::strip_suffix`].
 fn trim_suffix(value: &str, suffix: &str) -> String {
     value.strip_suffix(suffix).unwrap_or(value).to_owned()
 }
 
-/// `truncate(length, ellipsis="...")` filter body.
+/// Truncates `value` to a maximum character count.
 ///
 /// Truncates by character count, not byte count, so multi-byte UTF-8 input is
 /// not split mid-character. Keeps the total output length, including the
-/// ellipsis, within `length`. A no-op when `value` already fits.
-///
+/// ellipsis, within `length`. Returns `value` unchanged when it already fits.
 /// # Errors
 ///
 /// - [`ErrorKind::InvalidOperation`] if `ellipsis` is present but not a string.
@@ -102,7 +104,7 @@ fn truncate(
     Ok(format!("{kept}{ellipsis}"))
 }
 
-/// `truncate_words(count, ellipsis="...")` filter body.
+/// Truncates `value` to a maximum word count.
 ///
 /// Truncates by whitespace-separated word count rather than character count;
 /// see [`truncate`] for the character-count variant. Uses a single pass over
@@ -151,15 +153,15 @@ fn truncate_words(
     Ok(kept)
 }
 
-/// `word_count` filter body: counts whitespace-separated tokens via
-/// [`str::split_whitespace`], which also collapses consecutive
-/// whitespace and ignores leading/trailing whitespace.
+/// Counts whitespace-separated words in `value`.
+///
+/// Uses [`str::split_whitespace`], which collapses consecutive whitespace and
+/// ignores leading or trailing whitespace.
 fn word_count(value: &str) -> usize {
     value.split_whitespace().count()
 }
 
-/// Extracts the shared `ellipsis="..."` kwarg for [`truncate`] and
-/// [`truncate_words`].
+/// Extracts the `ellipsis` kwarg for truncation filters.
 ///
 /// Defaults to `"..."` and rejects any other kwarg via
 /// [`Kwargs::assert_all_used`].
@@ -175,7 +177,7 @@ fn ellipsis_kwarg(kwargs: &Kwargs) -> Result<&str, Error> {
     Ok(ellipsis)
 }
 
-/// `regex_replace(pattern, replacement)` filter body.
+/// Replaces regex pattern matches in `value` with a replacement string.
 ///
 /// Replaces every non-overlapping match of `pattern` with `replacement`, which
 /// may reference capture groups as `$1`/`$2` using
@@ -196,8 +198,9 @@ fn regex_replace(
     Ok(re.replace_all(value, replacement).into_owned())
 }
 
-/// `regex_match(pattern)` filter body: `true` if `value` contains any
-/// match for `pattern`.
+/// Checks whether `value` matches a regex pattern.
+///
+/// Returns `true` if `value` contains any match for `pattern`.
 ///
 /// # Errors
 ///
@@ -209,9 +212,10 @@ fn regex_match(value: &str, pattern: &str) -> Result<bool, Error> {
     Ok(re.is_match(value))
 }
 
-/// Shared regex-compilation error for `regex_replace`/`regex_match`:
-/// wraps [`regex::Error`] as a [`minijinja::Error`] instead of letting
-/// an invalid pattern panic through `Regex::new`.
+/// Wraps a [`regex::Error`] in a [`minijinja::Error`].
+///
+/// Used by `regex_replace` and `regex_match` to return a template error
+/// instead of letting an invalid pattern panic.
 fn regex_compile_error(pattern: &str, source: regex::Error) -> Error {
     Error::new(
         ErrorKind::InvalidOperation,

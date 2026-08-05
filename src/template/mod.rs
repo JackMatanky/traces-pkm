@@ -4,10 +4,10 @@
 //! [`TemplateService`] is the entry point used by `crate::cli::template`.
 //! The supporting modules keep each pipeline stage small:
 //!
-//! - [`path`][]: [`TemplatePathInput`](path::TemplatePathInput) validates raw
-//!   template path inputs before they reach rendering,
-//!   [`TemplatePath`](path::TemplatePath) tracks a found file proven to exist,
-//!   and [`DeclaredOutputPath`](path::DeclaredOutputPath) labels a raw
+//! - [`path`][]: [`TemplatePathInput`] validates raw template path inputs
+//!   before they reach rendering, [`TemplatePath`](path::TemplatePath) tracks a
+//!   found file proven to exist, and
+//!   [`DeclaredOutputPath`](path::DeclaredOutputPath) labels a raw
 //!   `file.write_to()` candidate before writing.
 //! - [`loader`][]: [`TemplateLoader`](loader::TemplateLoader) searches the
 //!   configured template directories through

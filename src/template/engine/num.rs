@@ -34,12 +34,11 @@ impl NumOps {
     }
 }
 
-/// `sqrt` returns the square root of `value`.
+/// Computes the square root of `value`.
 ///
 /// [`f64::sqrt`] returns `NaN` for negative input, so this filter rejects
 /// negative values and returns a template error instead of rendering `NaN`.
 /// `-0.0` is allowed because `-0.0 < 0.0` is false under IEEE 754.
-///
 /// # Errors
 ///
 /// - [`ErrorKind::InvalidOperation`] if `value` is negative.
@@ -53,8 +52,10 @@ fn sqrt(value: f64) -> Result<f64, Error> {
     Ok(value.sqrt())
 }
 
-/// `num_format(decimals)` formats `value` with exactly `decimals` decimal
-/// places via Rust's `{:.N$}` precision formatting.
+/// Formats `value` with a fixed number of decimal places.
+///
+/// Formats `value` with `decimals` decimal places using Rust's `{:.N$}`
+/// precision formatting.
 fn num_format(value: f64, decimals: usize) -> String {
     format!("{value:.decimals$}")
 }

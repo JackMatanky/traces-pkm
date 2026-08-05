@@ -42,7 +42,7 @@ pub(crate) fn parse_markdown(path: impl Into<PathBuf>, src: &str) -> Note {
     ctx.into_note(path)
 }
 
-/// Top-level block currently being parsed.
+/// Represents the top-level block currently being parsed.
 ///
 /// Metadata, code, and text blocks are mutually exclusive.
 #[derive(Default, Eq, PartialEq)]
@@ -57,7 +57,7 @@ enum BlockContext {
 /// Inline fields and tags flushed from a closed list item's scan buffer.
 type FlushedFields = Option<(Vec<InlineField>, Vec<Tag>)>;
 
-/// State accumulated while walking Markdown events for one note.
+/// Represents state accumulated while walking Markdown events for one note.
 #[derive(Default)]
 struct ParserContext {
     frontmatter: Option<Frontmatter>,
@@ -303,7 +303,7 @@ impl ParserContext {
     }
 }
 
-/// Link currently being walked, accumulating its display text.
+/// Represents a link currently being walked, accumulating its display text.
 struct ActiveLink {
     target: String,
     kind: LinkType,
@@ -320,7 +320,7 @@ impl ActiveLink {
     }
 }
 
-/// Nested list and list-item state for one Markdown event stream.
+/// Manages nested list and list-item state for one Markdown event stream.
 ///
 /// Completed top-level lists live in `lists`; still-open lists and items live
 /// on explicit stacks.
@@ -376,13 +376,12 @@ impl ListTracker {
         } else {
             lexer::extract_inline_fields(&text)
         };
-        // Two independently owned copies, not a borrow-checker
-        // workaround: `item.fields` lets a task/list item resolve its
-        // own metadata (`ListItem::fields`), while the returned copy
-        // feeds the caller's document-order stream every page-level
-        // query already relies on. Both outlive this function inside
-        // different serialized structs, so neither can borrow from the
-        // other.
+        // Two independently owned copies, not a borrow-checker workaround:
+        // `item.fields` lets a task/list item resolve its own metadata
+        // (`ListItem::fields`), while the returned copy feeds the caller's
+        // document-order stream every page-level query already relies on. Both
+        // outlive this function inside different serialized structs, so neither
+        // can borrow from the other.
         item.fields.extend(fields.clone());
         let tags = lexer::extract_tags(&text);
         Some((fields, tags))
@@ -489,13 +488,13 @@ impl ListTracker {
     }
 }
 
-/// Active list frame on the parser stack.
+/// Represents an active list frame on the parser stack.
 struct ListFrame {
     is_ordered: bool,
     items: Vec<ListItem>,
 }
 
-/// Active list item frame on the parser stack.
+/// Represents an active list item frame on the parser stack.
 struct ItemFrame {
     task_status: Option<TaskStatus>,
     text_buffer: String,

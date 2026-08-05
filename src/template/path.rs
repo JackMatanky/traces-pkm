@@ -103,15 +103,15 @@ impl TemplatePath {
         }
     }
 
-    /// Builds the absolute path on demand: `source_dir` joined with `input`.
+    /// Returns the absolute path by joining `source_dir` with `input`.
     #[inline]
     #[must_use]
     pub(super) fn absolute(&self) -> PathBuf {
         self.source_dir.join(self.input.as_ref())
     }
 
-    /// The default output filename: this candidate with its extension forced
-    /// to `md`, directory segments kept.
+    /// Returns the default output filename with its extension forced
+    /// to `md`, keeping directory segments.
     #[inline]
     #[must_use]
     pub(super) fn default_output_filename(&self) -> PathBuf {
@@ -162,7 +162,7 @@ pub(crate) enum TemplatePathError {
     /// directory it is searched in.
     #[error("template path {0} must be relative, not absolute")]
     Absolute(PathBuf),
-    /// `name` can't stay inside a directory: some component could escape it
+    /// `name` cannot stay inside a directory: some component could escape it
     /// (most notably `..`), or there's no
     /// [`std::path::Component::Normal`] component at
     /// all (an empty path, or a bare `.`).
