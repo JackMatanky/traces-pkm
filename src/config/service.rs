@@ -224,8 +224,8 @@ impl ConfigService {
     ///
     /// - [`DiscoveryError::PathInaccessible`] when discovery cannot inspect the
     ///   path
-    /// - [`DiscoveryError::Context`] when `scope` is [`Full`], which trust
-    ///   resolution does not support
+    /// - [`DiscoveryError::UnsupportedTrustScope`] when `scope` is [`Full`],
+    ///   which trust resolution does not support
     /// - [`DiscoveryError::ConfigFile`] when a config-file anchor is invalid
     /// - [`DiscoveryError::LocalConfigAbsent`] when [`LocalSubtree`] discovery
     ///   has no local root to walk from

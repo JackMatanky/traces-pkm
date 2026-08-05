@@ -3,16 +3,9 @@
 //!
 //! Every variant here crosses a `config` submodule boundary — either raised
 //! in one file and consumed in another, or composed by [`ConfigLoadError`]
-//! into the result `crate::cli::error::CliError` reports. File-local
+//! into the result [`crate::cli::CliError`] reports. File-local
 //! parsing/construction failures that never propagate past the file that
 //! raises them stay defined there instead.
-//!
-//! Ordered by proximity to [`super::ConfigService`]'s public methods, from
-//! its primary access point down to the shared leaf: [`ConfigLoadError`]
-//! (`load`) composes [`DiscoveryError`] then [`ConfigBuilderError`], both of
-//! which fail through [`ConfigFileError`], which in turn wraps
-//! [`ConfigStateError`] (also `trust`/`untrust`/`trust_status`'s own direct
-//! return type).
 
 use std::{io, path::PathBuf};
 
@@ -54,7 +47,8 @@ pub(crate) enum DiscoveryError {
         #[source]
         source: io::Error,
     },
-    /// Rejects file-rooted discovery for directory-only scopes.
+    /// Rejects a file anchor for [`DiscoveryScope::Full`], which always
+    /// requires a directory anchor.
     #[error("{kind:?} discovery cannot be anchored at file {path}")]
     UnsupportedFileAnchor {
         /// Discovery kind.
@@ -62,7 +56,9 @@ pub(crate) enum DiscoveryError {
         /// Unsupported file anchor path.
         path: PathBuf,
     },
-    /// Full loading is not a trust-administration traversal scope.
+    /// Rejects [`DiscoveryScope::Full`] for trust-request resolution, which
+    /// only supports [`DiscoveryScope::NearestLocal`] and
+    /// [`DiscoveryScope::LocalSubtree`].
     #[error("{scope:?} discovery cannot be used for trust request resolution")]
     UnsupportedTrustScope {
         /// Unsupported discovery scope.
