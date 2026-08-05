@@ -86,3 +86,49 @@ Query failures surface as raw minijinja render errors (templates) or `CliError::
   (1158 tests), `cargo clippy --workspace --all-targets -- -D warnings`,
   `cargo fmt --check`, `cargo doc --document-private-items -D warnings`,
   `hk check`, `cargo deny check`.
+
+**Follow-up (2026-08-05):** Code review (`/code-review`, standards + spec
+axes, run against `092d355`) surfaced one real gap: `AC3`/`AC5`'s
+"page/task CLI queries" and "end-to-end tests" coverage was only
+in-process (`Cli::try_parse_from(...).run(...)`) — `list`/`table`/`task`
+print their primary output directly to stdout (`print!`, see each
+command's `render`/`lines` docs) rather than returning it, so no
+in-process test could assert on what a User actually sees. Closed by
+adding `tests/cli_e2e.rs` (commit `d63a78c`, same branch/worktree): a
+process-level suite that spawns the compiled `traces` binary via
+`Command::new(env!("CARGO_BIN_EXE_traces-pkm"))`.
+
+- Isolation: two environment variables set only on the spawned child —
+  `TRACES_STATE_DIR` (trust/tracked-config stores, `src/dirs.rs`'s existing
+  override) and `XDG_CONFIG_HOME` (global config/template discovery). Both
+  overrides already existed for other purposes; no library code changed to
+  support this, and no new `pub` surface was added anywhere in the crate.
+- Scope: non-interactive commands only (`trust`, `index`, `list`, `table`,
+  `task`, `template -i ... --dry-run --no-input`, `completions`). `init` has
+  no non-interactive mode (always prompts via the injected
+  `DialogProvider`) and stays covered by the pre-existing
+  `tests/init_cli.rs`, which drives it with a `PresetDialogProvider`
+  instead of a real TTY.
+- 10 tests: trust+index happy path, untrusted-root diagnostic, did-you-mean
+  field-typo suggestion, unparsable-filter grammar, `list`/`table`/`task`
+  real stdout content, `template --dry-run` real stdout content (writes
+  nothing to disk), template render-error diagnostic code, and
+  `completions`.
+- Two things only this suite could catch, both fixed during authoring:
+  miette line-wraps long diagnostic causal chains with a `│`
+  continuation glyph that can land mid-path with no original whitespace
+  there, so reconstructed wrapped text is unreliable — assertions stick to
+  diagnostic codes (always their own short line) and primary stdout
+  content instead. `FileIndex` indexes the `templates/` directory itself,
+  so an unscoped `query.all()` inside a template counts the template file
+  alongside project notes — the dry-run fixture scopes its query to a
+  `notes/` subfolder to avoid an off-by-one.
+- Full gate re-verified after this addition: `cargo check --all-targets`,
+  `cargo test --workspace` (1158 lib + 10 e2e + 1 init_cli + 10 doctests,
+  all pass), `cargo clippy --workspace --all-targets -- -D warnings`,
+  `cargo fmt --check`, `hk check`, `cargo deny check` — all clean.
+- Explicitly not done: trimming `query_workflows`'s now-partially-redundant
+  dispatch-only assertions (flagged, not actioned — reduces existing
+  coverage without being asked); combined-flag matrices for `table`/`task`
+  (`--where` + `--sort` + `--from` together) beyond what's already covered
+  per-command in-crate.
