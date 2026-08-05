@@ -148,7 +148,7 @@ impl ConfigService {
             DiscoveryScope::Full,
             DiscoveryAnchor::Directory(cwd.to_path_buf()),
         )?;
-        DiscoveryEngine.process(ctx)
+        DiscoveryEngine::process(ctx)
     }
 
     /// Builds a [`Config`] from discovered candidates.
@@ -249,7 +249,7 @@ impl ConfigService {
         path: &Path,
         scope: DiscoveryScope,
     ) -> Result<TrustRequests, DiscoveryError> {
-        DiscoveryEngine.trust_requests(path, scope)
+        DiscoveryEngine::trust_requests(path, scope)
     }
 
     /// Grants trust for a workspace root, and for config subjects also records

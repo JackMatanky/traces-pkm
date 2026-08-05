@@ -14,7 +14,7 @@ use clap::Args;
 use super::error::CliError;
 use crate::{
     DialogProvider,
-    config::{ConfigService, LOCAL_CONFIG_FILE},
+    config::{ConfigService, LOCAL_CONFIG_DIR},
 };
 
 const DEFAULT_TEMPLATE_DIRECTORY: &str = ".traces/templates";
@@ -23,12 +23,6 @@ const DEFAULT_OUTPUT_DIRECTORY: &str = ".";
 /// Command-line arguments for `traces init`.
 #[derive(Debug, Args)]
 pub struct Init;
-
-/// The user's chosen template/output directories, collected interactively.
-struct InitInput {
-    directory: PathBuf,
-    output_dir: PathBuf,
-}
 
 impl Init {
     /// Runs `traces init` using the current directory as the project root.
@@ -83,19 +77,8 @@ impl Init {
     /// - [`CliError::InitAlreadyInitialized`] if `.traces` already exists under
     ///   `root`.
     /// - [`CliError::InitScaffold`] if creating directories fails.
-    #[expect(
-        clippy::expect_used,
-        reason = "LOCAL_CONFIG_FILE is a compile-time constant with a known \
-                  parent component; failure here means the constant itself \
-                  was changed to something without a directory segment, not a \
-                  recoverable runtime condition"
-    )]
     fn scaffold_directory(root: &Path) -> Result<(), CliError> {
-        let traces_dir = root.join(
-            Path::new(LOCAL_CONFIG_FILE)
-                .parent()
-                .expect("LOCAL_CONFIG_FILE has a parent directory component"),
-        );
+        let traces_dir = root.join(LOCAL_CONFIG_DIR);
         if traces_dir.exists() {
             return Err(CliError::InitAlreadyInitialized {
                 root: root.to_path_buf(),
@@ -134,6 +117,12 @@ impl Init {
             },
         )
     }
+}
+
+/// The user's chosen template/output directories, collected interactively.
+struct InitInput {
+    directory: PathBuf,
+    output_dir: PathBuf,
 }
 
 #[cfg(test)]

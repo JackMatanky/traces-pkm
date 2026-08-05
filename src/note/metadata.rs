@@ -259,14 +259,6 @@ pub(crate) enum FieldValue {
 }
 
 impl FieldValue {
-    /// Returns `true` if this value is [`FieldValue::Null`].
-    #[expect(dead_code, reason = "domain accessor for QueryOps filtering")]
-    #[inline]
-    #[must_use]
-    pub(crate) fn is_null(&self) -> bool {
-        matches!(self, Self::Null)
-    }
-
     /// Returns the inner text for [`FieldValue::String`],
     /// [`FieldValue::Date`], and [`FieldValue::Duration`] variants, or
     /// `None` for any other kind.

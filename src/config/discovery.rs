@@ -24,6 +24,12 @@ use super::{
 };
 use crate::dirs;
 
+/// Relative path to the local project config directory.
+///
+/// Re-exported at [`super::LOCAL_CONFIG_DIR`] for `crate::cli::init`, which
+/// needs the bare directory without deriving it from
+/// [`LOCAL_CONFIG_FILE`]'s parent.
+pub(crate) const LOCAL_CONFIG_DIR: &str = ".traces";
 /// Relative path to a local project config file.
 ///
 /// Re-exported at [`super::LOCAL_CONFIG_FILE`] for `crate::cli::init`.
@@ -190,7 +196,10 @@ impl DiscoveryOutcome {
 }
 
 /// Routes discovery requests to the matching filesystem traversal.
-#[derive(Copy, Clone, Debug, Default)]
+///
+/// A stateless namespace: every method is an associated function called via
+/// `Self::`, not an instance method, since no discovery operation depends on
+/// per-call state.
 pub(crate) struct DiscoveryEngine;
 
 impl DiscoveryEngine {
@@ -203,13 +212,7 @@ impl DiscoveryEngine {
     /// - [`DiscoveryError::PathInaccessible`] when discovery cannot inspect a
     ///   filesystem path
     #[inline]
-    #[expect(
-        clippy::unused_self,
-        reason = "ZST keeps the orchestrator seam open for future discovery \
-                  policy"
-    )]
     pub(crate) fn process(
-        self,
         ctx: DiscoveryContext,
     ) -> Result<DiscoveryOutcome, DiscoveryError> {
         let (kind, anchor) = ctx.into_parts();
@@ -243,13 +246,7 @@ impl DiscoveryEngine {
     /// [`LocalSubtree`]: DiscoveryScope::LocalSubtree
     /// [`Full`]: DiscoveryScope::Full
     #[inline]
-    #[expect(
-        clippy::unused_self,
-        reason = "ZST discovery seam mirrors `process` and keeps caller style \
-                  consistent"
-    )]
     pub(crate) fn trust_requests(
-        self,
         path: &Path,
         scope: DiscoveryScope,
     ) -> Result<TrustRequests, DiscoveryError> {
@@ -298,7 +295,7 @@ impl DiscoveryEngine {
         anchor: DiscoveryAnchor,
     ) -> Result<TrustRequests, DiscoveryError> {
         let ctx = DiscoveryContext::new(scope, anchor)?;
-        let outcome = DiscoveryEngine.process(ctx)?;
+        let outcome = DiscoveryEngine::process(ctx)?;
         let requests: Vec<TrustRequest> =
             outcome.local().iter().map(TrustRequest::from).collect();
         Ok(TrustRequests::from(requests))
@@ -574,7 +571,7 @@ mod tests {
             .unwrap();
 
             // Act
-            let result = DiscoveryEngine.process(ctx);
+            let result = DiscoveryEngine::process(ctx);
 
             // Assert
             assert!(result.is_ok());
@@ -600,7 +597,7 @@ mod tests {
             .unwrap();
 
             // Act
-            let result = DiscoveryEngine.process(ctx);
+            let result = DiscoveryEngine::process(ctx);
 
             // Assert
             assert!(result.is_ok());
@@ -626,7 +623,7 @@ mod tests {
             .unwrap();
 
             // Act
-            let result = DiscoveryEngine.process(ctx);
+            let result = DiscoveryEngine::process(ctx);
 
             // Assert
             assert!(result.is_ok());
@@ -646,7 +643,7 @@ mod tests {
 
             // Act
             let result =
-                DiscoveryEngine.trust_requests(&project, DiscoveryScope::Full);
+                DiscoveryEngine::trust_requests(&project, DiscoveryScope::Full);
 
             // Assert
             assert!(matches!(
@@ -664,8 +661,10 @@ mod tests {
             fixture.create_config("project");
 
             // Act
-            let result = DiscoveryEngine
-                .trust_requests(&project, DiscoveryScope::NearestLocal);
+            let result = DiscoveryEngine::trust_requests(
+                &project,
+                DiscoveryScope::NearestLocal,
+            );
 
             // Assert
             assert!(result.is_ok());
@@ -680,8 +679,10 @@ mod tests {
             let project = fixture.create_dir("project");
 
             // Act
-            let result = DiscoveryEngine
-                .trust_requests(&project, DiscoveryScope::NearestLocal);
+            let result = DiscoveryEngine::trust_requests(
+                &project,
+                DiscoveryScope::NearestLocal,
+            );
 
             // Assert
             assert!(result.is_ok());
@@ -697,8 +698,10 @@ mod tests {
             fixture.create_config("project");
 
             // Act
-            let result = DiscoveryEngine
-                .trust_requests(&project, DiscoveryScope::LocalSubtree);
+            let result = DiscoveryEngine::trust_requests(
+                &project,
+                DiscoveryScope::LocalSubtree,
+            );
 
             // Assert
             assert!(result.is_ok());
@@ -713,8 +716,10 @@ mod tests {
             let project = fixture.create_dir("project");
 
             // Act
-            let result = DiscoveryEngine
-                .trust_requests(&project, DiscoveryScope::LocalSubtree);
+            let result = DiscoveryEngine::trust_requests(
+                &project,
+                DiscoveryScope::LocalSubtree,
+            );
 
             // Assert
             assert!(matches!(

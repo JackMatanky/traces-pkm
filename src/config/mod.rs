@@ -29,7 +29,9 @@ mod service;
 mod store;
 mod trust;
 
-pub(crate) use discovery::{DiscoveryScope, LOCAL_CONFIG_FILE};
+pub(crate) use discovery::{
+    DiscoveryScope, LOCAL_CONFIG_DIR, LOCAL_CONFIG_FILE,
+};
 #[cfg(test)]
 pub(crate) use error::ConfigFileError;
 pub(crate) use error::{

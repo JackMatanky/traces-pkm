@@ -35,13 +35,13 @@ mod tag;
 
 pub(crate) use links::{Link, LinkTarget, LinkType};
 pub(crate) use lists::{List, ListItem, TaskStatus};
+pub(crate) use metadata::FieldValue;
 #[expect(
     unused_imports,
     reason = "note domain interface exported for later query callers"
 )]
 pub(crate) use metadata::{
-    FieldValue, Frontmatter, InlineField, InlineFieldForm, MetadataField,
-    RawFrontmatter,
+    Frontmatter, InlineField, InlineFieldForm, MetadataField, RawFrontmatter,
 };
 pub(crate) use model::Note;
 pub(crate) use parser::parse_markdown;
