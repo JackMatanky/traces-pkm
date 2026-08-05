@@ -25,6 +25,14 @@ impl List {
     /// Returns `true` if this is an ordered list.
     #[inline]
     #[must_use]
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "no current caller outside tests; kept for List accessor \
+                      symmetry with its fields"
+        )
+    )]
     pub(crate) fn is_ordered(&self) -> bool {
         self.is_ordered
     }
@@ -58,6 +66,14 @@ impl ListItem {
     /// Creates a list item without child lists.
     #[inline]
     #[must_use]
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "no current caller outside tests; kept for ListItem \
+                      constructor symmetry with with_children"
+        )
+    )]
     pub(crate) fn new(
         text: impl Into<String>,
         task_status: Option<TaskStatus>,
@@ -99,6 +115,14 @@ impl ListItem {
     /// Returns the task completion state, if this item is a task.
     #[inline]
     #[must_use]
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "no current caller outside tests; kept for ListItem \
+                      accessor symmetry with its fields"
+        )
+    )]
     pub(crate) fn task_status(&self) -> Option<TaskStatus> {
         self.task_status
     }
@@ -144,6 +168,14 @@ impl ListItem {
     /// `➕`, `🛫`, `⏳`, and `✅`.
     #[inline]
     #[must_use]
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "no current caller outside tests; kept for ListItem \
+                      accessor symmetry with its fields"
+        )
+    )]
     pub(crate) fn fields(&self) -> &[InlineField] {
         &self.fields
     }

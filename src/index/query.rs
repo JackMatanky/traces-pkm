@@ -186,6 +186,18 @@ impl IndexRecord {
     /// or an empty slice if unlinked.
     #[inline]
     #[must_use]
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "no current caller outside tests; documented deliberate \
+                      API in template-query#10's derived-inlinks design \
+                      (Templates/CLI select or filter inlinks via \
+                      field(\"inlinks\") today; this direct accessor for \
+                      display output is not yet wired to a CLI/Template \
+                      renderer)"
+        )
+    )]
     pub(crate) fn inlinks(&self) -> &[PathBuf] {
         &self.inlinks
     }
@@ -293,6 +305,14 @@ impl QueryOutcome {
     /// Returns `true` if this outcome contains no [`IndexRecord`] rows.
     #[inline]
     #[must_use]
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "no current caller outside tests; kept as len()'s \
+                      required clippy::len_without_is_empty companion"
+        )
+    )]
     pub(crate) fn is_empty(&self) -> bool {
         self.records.is_empty()
     }
@@ -365,6 +385,18 @@ impl QueryOutcome {
     /// [`UnparsableFilterExpression`]: QueryError::UnparsableFilterExpression
     /// [`UnknownFieldPath`]: QueryError::UnknownFieldPath
     #[inline]
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "no current caller outside tests; Rust-side alias for \
+                      direct callers of this crate's Rust API (Templates and \
+                      the CLI both call filter() directly, see \
+                      template/engine/query.rs's \"filter\" | \"where\" \
+                      dispatch, which maps the Template-facing `where` method \
+                      name onto filter(), not r#where())"
+        )
+    )]
     pub(crate) fn r#where(self, expr: &str) -> Result<Self, QueryError> {
         self.filter(expr)
     }

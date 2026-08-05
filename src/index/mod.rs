@@ -20,17 +20,6 @@
 //! [`store`]: mod@store
 //! [`inlinks`]: mod@inlinks
 
-#![cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "crate-internal API surface for FileIndex querying and \
-                  QueryOutcome transformations: some accessors and the \
-                  QueryOutcome::r#where alias are exposed for Rust callers \
-                  and not yet consumed by CLI or Template wiring"
-    )
-)]
-
 mod error;
 mod file;
 mod inlinks;
@@ -41,11 +30,7 @@ mod store;
 use std::{fs, path::Path};
 
 pub(crate) use error::FileIndexError;
-#[expect(
-    unused_imports,
-    reason = "domain types exported for index module callers"
-)]
-pub(crate) use file::{FileFormat, FileRecord, Timestamp};
+pub(crate) use file::{FileFormat, FileRecord};
 use inlinks::{InlinkMap, derive_inlinks};
 pub(crate) use query::{
     FileField, IndexRecord, QueryError, QueryOutcome, QuerySource, SortOrder,
@@ -298,6 +283,14 @@ impl FileIndex {
     /// Returns indexed [`Note`] records, sorted by path.
     #[inline]
     #[must_use]
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "no current caller outside tests; CLI exposes \
+                      FileIndex::records but not the parsed Note view yet"
+        )
+    )]
     pub(crate) fn notes(&self) -> &[Note] {
         &self.notes
     }

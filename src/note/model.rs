@@ -79,6 +79,15 @@ impl Note {
     /// Returns the parsed YAML frontmatter block, if present.
     #[inline]
     #[must_use]
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "no current caller outside tests; documented deliberate \
+                      API in template-query#03's Note Accessor design, split \
+                      from the fields() iterator that is used"
+        )
+    )]
     pub(crate) fn frontmatter(&self) -> Option<&Frontmatter> {
         self.frontmatter.as_ref()
     }
@@ -89,6 +98,14 @@ impl Note {
     /// a flattened view of task items from every list depth.
     #[inline]
     #[must_use]
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "no current caller outside tests; kept for Note accessor \
+                      symmetry with its fields"
+        )
+    )]
     pub(crate) fn lists(&self) -> &[List] {
         &self.lists
     }
@@ -104,6 +121,15 @@ impl Note {
     /// items, in document order.
     #[inline]
     #[must_use]
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "no current caller outside tests; documented deliberate \
+                      API in template-query#03's Note Accessor design, split \
+                      from the fields() iterator that is used"
+        )
+    )]
     pub(crate) fn inline_fields(&self) -> &[InlineField] {
         &self.inline_fields
     }

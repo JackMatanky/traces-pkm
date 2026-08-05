@@ -65,6 +65,14 @@ impl Frontmatter {
     /// Returns `true` if no structured fields were parsed.
     #[inline]
     #[must_use]
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "no current caller outside tests; kept for Frontmatter \
+                      accessor symmetry with its fields"
+        )
+    )]
     pub(crate) fn is_empty(&self) -> bool {
         self.fields.is_empty()
     }
@@ -138,6 +146,14 @@ impl FieldKey {
     /// Returns the field key text.
     #[inline]
     #[must_use]
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "no current caller outside tests; kept for FieldKey \
+                      accessor symmetry with its inner value"
+        )
+    )]
     pub(crate) fn as_str(&self) -> &str {
         &self.0
     }
@@ -208,6 +224,14 @@ impl InlineField {
     /// Returns the field key.
     #[inline]
     #[must_use]
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "no current caller outside tests; kept for InlineField \
+                      accessor symmetry with its embedded MetadataField"
+        )
+    )]
     pub(crate) fn key(&self) -> &FieldKey {
         self.metadata.key()
     }
@@ -215,6 +239,14 @@ impl InlineField {
     /// Returns the field value.
     #[inline]
     #[must_use]
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "no current caller outside tests; kept for InlineField \
+                      accessor symmetry with its embedded MetadataField"
+        )
+    )]
     pub(crate) fn value(&self) -> &FieldValue {
         self.metadata.value()
     }
@@ -222,6 +254,14 @@ impl InlineField {
     /// Returns the inline field syntax.
     #[inline]
     #[must_use]
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "no current caller outside tests; kept for InlineField \
+                      accessor symmetry with its embedded MetadataField"
+        )
+    )]
     pub(crate) fn form(&self) -> InlineFieldForm {
         self.form
     }

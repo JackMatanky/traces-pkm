@@ -12,18 +12,9 @@
 //! - [`Link`], [`LinkType`], and [`LinkTarget`] - Represent Markdown links,
 //!   Obsidian wikilinks, and a link's split path/anchor target.
 //! - [`Frontmatter`] and [`RawFrontmatter`] - Preserve YAML metadata.
-//! - [`InlineField`], [`InlineFieldForm`], [`MetadataField`], and
-//!   [`FieldValue`] - Represent Dataview-compatible metadata.
+//! - [`InlineField`], [`InlineFieldForm`], and [`FieldValue`] - Represent
+//!   Dataview-compatible metadata.
 //! - [`Tag`] - Stores Markdown tags.
-#![cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "crate-internal API surface for note metadata, consumed by \
-                  later tickets (#06 QueryOps template namespace)"
-    )
-)]
-
 mod cursor;
 mod lexer;
 mod links;
@@ -35,13 +26,8 @@ mod tag;
 
 pub(crate) use links::{Link, LinkTarget, LinkType};
 pub(crate) use lists::{List, ListItem, TaskStatus};
-pub(crate) use metadata::FieldValue;
-#[expect(
-    unused_imports,
-    reason = "note domain interface exported for later query callers"
-)]
 pub(crate) use metadata::{
-    Frontmatter, InlineField, InlineFieldForm, MetadataField, RawFrontmatter,
+    FieldValue, Frontmatter, InlineField, InlineFieldForm, RawFrontmatter,
 };
 pub(crate) use model::Note;
 pub(crate) use parser::parse_markdown;

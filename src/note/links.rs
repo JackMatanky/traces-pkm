@@ -124,12 +124,28 @@ impl Link {
     /// Returns the display text, or alias text for a wikilink.
     #[inline]
     #[must_use]
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "no current caller outside tests; kept for Link accessor \
+                      symmetry with its fields"
+        )
+    )]
     pub(crate) fn text(&self) -> &str {
         &self.text
     }
 
     /// Returns the syntax used by the source link.
     #[must_use]
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "no current caller outside tests; kept for Link accessor \
+                      symmetry with its fields"
+        )
+    )]
     pub(crate) fn kind(&self) -> LinkType {
         self.kind
     }
@@ -137,6 +153,14 @@ impl Link {
     /// Returns `true` for Obsidian wikilinks.
     #[inline]
     #[must_use]
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "no current caller outside tests; kept for Link accessor \
+                      symmetry with its fields"
+        )
+    )]
     pub(crate) fn is_wikilink(&self) -> bool {
         matches!(self.kind, LinkType::Wikilink)
     }
@@ -144,6 +168,14 @@ impl Link {
     /// Returns `true` for standard Markdown links.
     #[inline]
     #[must_use]
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "no current caller outside tests; kept for Link accessor \
+                      symmetry with its fields"
+        )
+    )]
     pub(crate) fn is_markdown(&self) -> bool {
         matches!(self.kind, LinkType::Markdown)
     }
@@ -151,6 +183,14 @@ impl Link {
     /// Returns `true` for embedded wikilinks (`![[target]]`).
     #[inline]
     #[must_use]
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "no current caller outside tests; kept for Link accessor \
+                      symmetry with its fields"
+        )
+    )]
     pub(crate) fn is_embedded(&self) -> bool {
         self.embedded
     }
@@ -188,6 +228,14 @@ impl<'a> LinkTarget<'a> {
 
     /// Returns this target's `#heading` anchor, or `None` when it has none.
     #[must_use]
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "no current caller outside tests; kept for LinkTarget \
+                      accessor symmetry with its variants"
+        )
+    )]
     pub(crate) fn anchor(self) -> Option<&'a str> {
         match self {
             Self::PathWithAnchor(_, anchor) | Self::AnchorOnly(anchor) => {

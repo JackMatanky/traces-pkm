@@ -106,6 +106,16 @@ impl FileRecord {
     /// should fall back to [`Self::modified_at`].
     #[inline]
     #[must_use]
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "no current caller outside tests; documented deliberate \
+                      API in template-query#01's FileIndex baseline design, \
+                      distinct from created_at_or_modified which field \
+                      resolution uses"
+        )
+    )]
     pub(crate) fn created_at(&self) -> Option<Timestamp> {
         self.created_at
     }
@@ -181,6 +191,14 @@ impl Timestamp {
     /// Returns the current UTC timestamp.
     #[inline]
     #[must_use]
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "no current caller outside tests; kept for Timestamp \
+                      constructor symmetry with Utc::now"
+        )
+    )]
     pub(crate) fn now() -> Self {
         Self(Utc::now())
     }
@@ -192,6 +210,16 @@ impl Timestamp {
     /// [`Self::to_datetime_string`] unless the offset itself matters.
     #[inline]
     #[must_use]
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "no current caller outside tests; documented deliberate \
+                      API in template-query#05, split out alongside \
+                      to_datetime_string/to_date_string which field \
+                      resolution uses"
+        )
+    )]
     pub(crate) fn to_offset_string(self) -> String {
         self.0.to_rfc3339()
     }
@@ -222,6 +250,16 @@ impl Timestamp {
     /// Produces values like `"14:30:00"`.
     #[inline]
     #[must_use]
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "no current caller outside tests; documented deliberate \
+                      API in template-query#05, added alongside \
+                      to_datetime_string/to_date_string which field \
+                      resolution uses"
+        )
+    )]
     pub(crate) fn to_time_string(self) -> String {
         self.0.format("%H:%M:%S").to_string()
     }
