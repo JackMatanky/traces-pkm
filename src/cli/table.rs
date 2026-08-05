@@ -9,10 +9,7 @@ use std::path::Path;
 use clap::Args;
 
 use super::error::CliError;
-use crate::{
-    config::ConfigService,
-    index::{FileIndex, QueryError, QuerySource, SortOrder},
-};
+use crate::{config::ConfigService, index::SortOrder};
 
 /// Command-line arguments for `traces table`.
 #[derive(Debug, Args)]
@@ -79,23 +76,15 @@ impl Table {
     ///   `--sort` names a malformed field path, or `--column` names a malformed
     ///   field path.
     fn render(&self, root: &Path) -> Result<(String, usize), CliError> {
-        let index =
-            FileIndex::refresh(root).map_err(|source| CliError::Index {
-                root: root.to_path_buf(),
-                source,
-            })?;
-        let mut outcome =
-            index.query(&QuerySource::from_flag(self.from.as_deref()));
-        if let Some(expr) = self.filter.as_deref() {
-            outcome = outcome
-                .filter(expr)
-                .map_err(|source| query_error(root, source))?;
-        }
-        if let Some(path) = self.sort.as_deref() {
-            outcome = outcome
-                .sort(path, self.order.is_descending())
-                .map_err(|source| query_error(root, source))?;
-        }
+        let outcome = super::refresh_page_query(root, self.from.as_deref())?;
+        let outcome =
+            super::apply_filter(outcome, root, self.filter.as_deref())?;
+        let outcome = super::apply_sort(
+            outcome,
+            root,
+            self.sort.as_deref(),
+            self.order.is_descending(),
+        )?;
         let count = outcome.len();
         let columns =
             self.columns.iter().map(String::as_str).collect::<Vec<_>>();
@@ -104,19 +93,8 @@ impl Table {
         // CLI escaping it a second time.
         let rendered = outcome
             .table(&columns, &columns)
-            .map_err(|source| query_error(root, source))?;
+            .map_err(|source| super::query_error(root, source))?;
         Ok((rendered, count))
-    }
-}
-
-/// Wraps a [`QueryError`] as a [`CliError::Query`] against `root`.
-///
-/// Shared by every `outcome.*` call in [`Table::render`] so each call site is a
-/// single `.map_err(|source| query_error(root, source))?`.
-fn query_error(root: &Path, source: QueryError) -> CliError {
-    CliError::Query {
-        root: root.to_path_buf(),
-        source,
     }
 }
 

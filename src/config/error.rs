@@ -157,3 +157,23 @@ pub(crate) enum ConfigStateError {
     #[error(transparent)]
     Hash(#[from] HashError),
 }
+
+/// Errors raised while scaffolding a local config file's on-disk content.
+#[derive(Debug, Error)]
+pub(crate) enum ConfigScaffoldError {
+    /// The collected template and output directories could not be
+    /// serialised to TOML.
+    #[error("failed to serialise local config")]
+    Serialize {
+        /// Source TOML serialization error.
+        #[source]
+        source: toml::ser::Error,
+    },
+    /// The serialised local config could not be written to disk.
+    #[error("failed to write local config file")]
+    Write {
+        /// Source filesystem error.
+        #[source]
+        source: io::Error,
+    },
+}

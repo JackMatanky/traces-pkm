@@ -14,7 +14,7 @@ use clap::Args;
 use super::error::CliError;
 use crate::{
     DialogProvider,
-    config::{LOCAL_CONFIG_FILE, RawConfig, RawTemplateConfig},
+    config::{ConfigService, LOCAL_CONFIG_FILE},
 };
 
 const DEFAULT_TEMPLATE_DIRECTORY: &str = ".traces/templates";
@@ -40,8 +40,8 @@ impl Init {
     /// - [`CliError::InitPrompt`] if collecting input interactively fails.
     /// - [`CliError::InitAlreadyInitialized`] if `.traces` already exists.
     /// - [`CliError::InitScaffold`] if directory scaffolding fails.
-    /// - [`CliError::InitSerialize`] if serializing configuration fails.
-    /// - [`CliError::InitWriteConfig`] if writing the configuration file fails.
+    /// - [`CliError::InitConfigWrite`] if serializing or writing the local
+    ///   config file fails.
     #[inline]
     pub fn run(self, provider: &dyn DialogProvider) -> Result<(), CliError> {
         let root = super::current_dir()?.into_inner();
@@ -116,36 +116,23 @@ impl Init {
         Ok(())
     }
 
-    /// Serializes template configuration and writes `.traces/config.toml`.
+    /// Writes the local config file under `root` via [`ConfigService`].
     ///
     /// # Errors
     ///
-    /// - [`CliError::InitSerialize`] if TOML serialization fails.
-    /// - [`CliError::InitWriteConfig`] if writing the configuration file fails.
+    /// - [`CliError::InitConfigWrite`] if serializing or writing the local
+    ///   config file fails.
     fn write_config_file(
         root: &Path,
         directory: &Path,
         output_dir: &Path,
     ) -> Result<(), CliError> {
-        let config = RawConfig {
-            templates: RawTemplateConfig {
-                directory: Some(directory.to_path_buf()),
-                output_dir: Some(output_dir.to_path_buf()),
-            },
-        };
-        let contents = toml::to_string(&config).map_err(|source| {
-            CliError::InitSerialize {
-                root: root.to_path_buf(),
-                source,
-            }
-        })?;
-        fs::write(root.join(LOCAL_CONFIG_FILE), contents).map_err(
-            |source| CliError::InitWriteConfig {
+        ConfigService::scaffold_local(root, directory, output_dir).map_err(
+            |source| CliError::InitConfigWrite {
                 root: root.to_path_buf(),
                 source,
             },
-        )?;
-        Ok(())
+        )
     }
 }
 

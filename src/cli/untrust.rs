@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use clap::Args;
 
 use super::error::CliError;
-use crate::config::{ConfigService, DiscoveryScope};
+use crate::config::ConfigService;
 
 /// Command-line arguments for `traces untrust`.
 #[derive(Debug, Args)]
@@ -33,25 +33,11 @@ impl Untrust {
     /// - [`CliError::Untrust`] if updating the trust store fails.
     #[inline]
     pub(super) fn run(self, service: &ConfigService) -> Result<(), CliError> {
-        let cwd;
-        let path = if let Some(path) = self.path.as_deref() {
-            path
-        } else {
-            cwd = super::current_dir()?;
-            cwd.as_ref()
-        };
-        let scope = if self.all {
-            DiscoveryScope::LocalSubtree
-        } else {
-            DiscoveryScope::NearestLocal
-        };
-        let subjects =
-            service.trust_requests(path, scope).map_err(|source| {
-                CliError::TrustTargetResolve {
-                    path: path.to_path_buf(),
-                    source,
-                }
-            })?;
+        let subjects = super::resolve_trust_subjects(
+            service,
+            self.path.as_deref(),
+            self.all,
+        )?;
         for subject in subjects {
             let root = subject.root_path().to_path_buf();
             if let Err(source) = service.untrust(&subject) {

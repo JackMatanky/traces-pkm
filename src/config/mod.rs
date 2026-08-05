@@ -33,13 +33,13 @@ pub(crate) use discovery::{DiscoveryScope, LOCAL_CONFIG_FILE};
 #[cfg(test)]
 pub(crate) use error::ConfigFileError;
 pub(crate) use error::{
-    ConfigBuilderError, ConfigLoadError, ConfigStateError, DiscoveryError,
+    ConfigBuilderError, ConfigLoadError, ConfigScaffoldError, ConfigStateError,
+    DiscoveryError,
 };
 #[cfg(test)]
 pub(crate) use file::{Discovered, LocalConfigFile};
 pub(crate) use model::Config;
-pub(crate) use raw::{RawConfig, RawTemplateConfig};
 pub(crate) use service::ConfigService;
 #[cfg(test)]
 pub(crate) use trust::ConfigTrustStatus;
-pub(crate) use trust::TrustRequest;
+pub(crate) use trust::{TrustRequest, TrustRequests};

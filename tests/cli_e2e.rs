@@ -389,7 +389,9 @@ mod template {
         assert!(!template.is_success());
         assert!(template.stdout.is_empty(), "stdout: {}", template.stdout);
         assert!(
-            template.stderr.contains("traces::cli::template::render_failed"),
+            template
+                .stderr
+                .contains("traces::cli::template::render_query_failed"),
             "stderr: {}",
             template.stderr
         );

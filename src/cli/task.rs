@@ -9,10 +9,7 @@ use std::path::Path;
 use clap::Args;
 
 use super::error::CliError;
-use crate::{
-    config::ConfigService,
-    index::{FileIndex, QuerySource},
-};
+use crate::config::ConfigService;
 
 /// Command-line arguments for `traces task`.
 #[derive(Debug, Args)]
@@ -73,20 +70,9 @@ impl Task {
     /// - [`CliError::Index`] if refreshing the [`FileIndex`] fails.
     /// - [`CliError::Query`] if `--where` is an unparsable filter expression.
     fn lines(&self, root: &Path) -> Result<Vec<String>, CliError> {
-        let index =
-            FileIndex::refresh(root).map_err(|source| CliError::Index {
-                root: root.to_path_buf(),
-                source,
-            })?;
-        let mut outcome =
-            index.query_tasks(&QuerySource::from_flag(self.from.as_deref()));
-        if let Some(expr) = self.filter.as_deref() {
-            outcome =
-                outcome.filter(expr).map_err(|source| CliError::Query {
-                    root: root.to_path_buf(),
-                    source,
-                })?;
-        }
+        let outcome = super::refresh_task_query(root, self.from.as_deref())?;
+        let outcome =
+            super::apply_filter(outcome, root, self.filter.as_deref())?;
         Ok(outcome
             .iter()
             .map(|record| {

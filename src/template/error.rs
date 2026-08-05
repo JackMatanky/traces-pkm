@@ -4,12 +4,15 @@
 //! stage and source error, while `crate::cli::error` adds user-facing help text
 //! and diagnostic codes.
 
-use std::{io, path::PathBuf};
+use std::{error::Error as StdError, io, path::PathBuf};
 
 use thiserror::Error;
 
 use super::path::TemplatePathError;
-use crate::DialogError;
+use crate::{
+    DialogError,
+    index::{FileIndexError, QueryError},
+};
 
 /// Identifies pipeline stage failures, allowing callers to determine which
 /// stage failed without inspecting the wrapped source error.
@@ -85,4 +88,59 @@ pub(crate) enum TemplateError {
     /// cancelled.
     #[error(transparent)]
     Prompt(#[from] DialogError),
+}
+
+/// Coarse category for a [`TemplateError::Render`] failure.
+///
+/// Provides just enough detail for `crate::cli::error` to choose a stable
+/// diagnostic code and help text. Classification inspects
+/// [`minijinja::Error::kind`] and the retained source chain instead of
+/// parsing display text, so new custom functions don't need to update
+/// string-matching logic in the CLI diagnostic layer.
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub(crate) enum RenderFailureKind {
+    /// The template's own minijinja syntax is invalid.
+    Syntax,
+    /// An interactive `ui.*` prompt failed for a reason other than a
+    /// deliberate user abort (handled separately, upstream of this
+    /// classification).
+    Prompt,
+    /// A `query.*` call failed on a malformed field path, filter expression,
+    /// sort path, or `.table()` header/column mismatch.
+    Query,
+    /// Refreshing the file index for a `query.*` call failed: a filesystem,
+    /// database, or (de)serialization error, not a template authoring
+    /// mistake.
+    Index,
+    /// A `file.include()` (or other Custom Function) I/O operation failed.
+    Io,
+    /// Anything else: an unknown function/filter/test, a bad argument, an
+    /// undefined-value operation, or another engine-level failure.
+    Other,
+}
+
+/// Classifies `error` per [`RenderFailureKind`].
+pub(crate) fn classify_render_error(
+    error: &minijinja::Error,
+) -> RenderFailureKind {
+    if error.kind() == minijinja::ErrorKind::SyntaxError {
+        return RenderFailureKind::Syntax;
+    }
+    let mut cause: Option<&(dyn StdError + 'static)> = StdError::source(error);
+    while let Some(err) = cause {
+        if err.downcast_ref::<DialogError>().is_some() {
+            return RenderFailureKind::Prompt;
+        }
+        if err.downcast_ref::<QueryError>().is_some() {
+            return RenderFailureKind::Query;
+        }
+        if err.downcast_ref::<FileIndexError>().is_some() {
+            return RenderFailureKind::Index;
+        }
+        if err.downcast_ref::<io::Error>().is_some() {
+            return RenderFailureKind::Io;
+        }
+        cause = err.source();
+    }
+    RenderFailureKind::Other
 }

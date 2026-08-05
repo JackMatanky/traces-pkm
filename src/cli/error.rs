@@ -18,10 +18,14 @@ use super::UserAbort;
 use crate::{
     DialogError,
     config::{
-        ConfigBuilderError, ConfigLoadError, ConfigStateError, DiscoveryError,
+        ConfigBuilderError, ConfigLoadError, ConfigScaffoldError,
+        ConfigStateError, DiscoveryError,
     },
     index::{FileIndexError, QueryError},
-    template::{TemplateError, TemplatePathError},
+    template::{
+        RenderFailureKind, TemplateError, TemplatePathError,
+        classify_render_error,
+    },
 };
 
 /// Unified error type for all `traces` CLI operations.
@@ -128,23 +132,16 @@ pub enum CliError {
         #[source]
         source: io::Error,
     },
-    /// Serializing the local config file for `root` failed.
-    #[error("failed to serialise config for {root}")]
-    InitSerialize {
-        /// The root being initialized.
-        root: PathBuf,
-        /// Source TOML serialization error.
-        #[source]
-        source: toml::ser::Error,
-    },
-    /// Writing the local config file under `root` failed.
+    /// Writing the local config file under `root` failed: the collected
+    /// template and output directories could not be serialised, or the
+    /// serialised file could not be written to disk.
     #[error("failed to write config file in {root}")]
-    InitWriteConfig {
+    InitConfigWrite {
         /// The root being initialized.
         root: PathBuf,
-        /// Source filesystem error.
+        /// Source config-scaffold error.
         #[source]
-        source: io::Error,
+        source: ConfigScaffoldError,
     },
     /// Building or persisting the file index for `root` failed.
     #[error("failed to index {root}")]
@@ -214,43 +211,6 @@ impl CliError {
             error = error.source()?;
         }
     }
-}
-
-/// Coarse category for a [`TemplateError::Render`] failure.
-///
-/// Provides just enough detail to choose a stable diagnostic code and help
-/// text. Classification inspects [`minijinja::Error::kind`] and the retained
-/// source chain instead of parsing display text, so new custom functions don't
-/// need to update string-matching logic here.
-enum RenderFailureKind {
-    /// The template's own minijinja syntax is invalid.
-    Syntax,
-    /// An interactive `ui.*` prompt failed for a reason other than a deliberate
-    /// [`UserAbort`] (handled separately, upstream of this classification).
-    Prompt,
-    /// A `file.include()` (or other Custom Function) I/O operation failed.
-    Io,
-    /// Anything else: an unknown function/filter/test, a bad argument, an
-    /// undefined-value operation, or another engine-level failure.
-    Other,
-}
-
-/// Classifies `error` per [`RenderFailureKind`].
-fn classify_render_error(error: &minijinja::Error) -> RenderFailureKind {
-    if error.kind() == minijinja::ErrorKind::SyntaxError {
-        return RenderFailureKind::Syntax;
-    }
-    let mut cause: Option<&(dyn StdError + 'static)> = StdError::source(error);
-    while let Some(err) = cause {
-        if err.downcast_ref::<DialogError>().is_some() {
-            return RenderFailureKind::Prompt;
-        }
-        if err.downcast_ref::<io::Error>().is_some() {
-            return RenderFailureKind::Io;
-        }
-        cause = err.source();
-    }
-    RenderFailureKind::Other
 }
 
 impl Diagnostic for CliError {
@@ -323,10 +283,18 @@ impl Diagnostic for CliError {
             Self::InitScaffold {
                 ..
             } => "traces::cli::init::scaffold_failed",
-            Self::InitSerialize {
+            Self::InitConfigWrite {
+                source:
+                    ConfigScaffoldError::Serialize {
+                        ..
+                    },
                 ..
             } => "traces::cli::init::serialize_failed",
-            Self::InitWriteConfig {
+            Self::InitConfigWrite {
+                source:
+                    ConfigScaffoldError::Write {
+                        ..
+                    },
                 ..
             } => "traces::cli::init::write_config_failed",
             Self::Index {
@@ -407,18 +375,13 @@ impl Diagnostic for CliError {
             )),
             Self::InitScaffold {
                 ..
-            }
-            | Self::InitWriteConfig {
-                ..
             } => Some(Box::new(
                 "check that the project directory is writable and try again",
             )),
-            Self::InitSerialize {
+            Self::InitConfigWrite {
+                source,
                 ..
-            } => Some(Box::new(
-                "this is an internal error — the collected template and \
-                 output directories could not be serialised to TOML",
-            )),
+            } => Some(init_config_write_help(source)),
             Self::Index {
                 root,
                 ..
@@ -495,6 +458,25 @@ fn config_build_help(source: &ConfigBuilderError) -> Box<dyn Display + '_> {
     }
 }
 
+/// Builds diagnostic help text for [`CliError::InitConfigWrite`].
+fn init_config_write_help(
+    source: &ConfigScaffoldError,
+) -> Box<dyn Display + '_> {
+    match source {
+        ConfigScaffoldError::Write {
+            ..
+        } => Box::new(
+            "check that the project directory is writable and try again",
+        ),
+        ConfigScaffoldError::Serialize {
+            ..
+        } => Box::new(
+            "this is an internal error — the collected template and output \
+             directories could not be serialised to TOML",
+        ),
+    }
+}
+
 /// Builds diagnostic help text for [`CliError::Query`].
 fn query_help() -> Box<dyn Display + 'static> {
     Box::new(
@@ -546,6 +528,12 @@ fn template_instantiate_code(source: &TemplateError) -> &'static str {
             }
             RenderFailureKind::Prompt => {
                 "traces::cli::template::render_prompt_failed"
+            }
+            RenderFailureKind::Query => {
+                "traces::cli::template::render_query_failed"
+            }
+            RenderFailureKind::Index => {
+                "traces::cli::template::render_index_failed"
             }
             RenderFailureKind::Io => "traces::cli::template::render_io_failed",
             RenderFailureKind::Other => "traces::cli::template::render_failed",
@@ -617,6 +605,14 @@ fn template_instantiate_help(source: &TemplateError) -> Box<dyn Display + '_> {
                 RenderFailureKind::Prompt => {
                     "the interactive prompt failed; try again, or pass \
                      --no-input to use its defaults"
+                }
+                RenderFailureKind::Query => {
+                    "check the query's field paths and filter/sort expressions \
+                     in the template"
+                }
+                RenderFailureKind::Index => {
+                    "check that the project directory and its file index are \
+                     readable and writable"
                 }
                 RenderFailureKind::Io => {
                     "check that files referenced by file.include() are \
@@ -1192,9 +1188,11 @@ mod tests {
         #[test]
         fn init_write_config() {
             let root = PathBuf::from("/some/project");
-            let error = CliError::InitWriteConfig {
+            let error = CliError::InitConfigWrite {
                 root: root.clone(),
-                source: io::Error::other("boom"),
+                source: ConfigScaffoldError::Write {
+                    source: io::Error::other("boom"),
+                },
             };
 
             assert_eq!(
@@ -1219,14 +1217,16 @@ mod tests {
         #[test]
         fn init_serialize() {
             let root = PathBuf::from("/some/project");
-            let error = CliError::InitSerialize {
+            let error = CliError::InitConfigWrite {
                 root: root.clone(),
-                source: toml::ser::Error::custom("serialization failure"),
+                source: ConfigScaffoldError::Serialize {
+                    source: toml::ser::Error::custom("serialization failure"),
+                },
             };
 
             assert_eq!(
                 error.to_string(),
-                "failed to serialise config for /some/project"
+                "failed to write config file in /some/project"
             );
             assert_eq!(
                 error.code().map(|code| code.to_string()),
@@ -1543,6 +1543,53 @@ mod tests {
             assert_eq!(
                 error.code().map(|code| code.to_string()),
                 Some("traces::cli::template::render_io_failed".to_owned())
+            );
+        }
+
+        #[test]
+        fn query_failure() {
+            let name = PathBuf::from("daily");
+            let path = PathBuf::from("/project/daily.md");
+            let error = CliError::TemplateInstantiate {
+                name,
+                source: TemplateError::Render {
+                    path,
+                    source: minijinja::Error::new(
+                        minijinja::ErrorKind::InvalidOperation,
+                        "query failed",
+                    )
+                    .with_source(QueryError::TaskListOnPageRecords),
+                },
+            };
+
+            assert_eq!(
+                error.code().map(|code| code.to_string()),
+                Some("traces::cli::template::render_query_failed".to_owned())
+            );
+        }
+
+        #[test]
+        fn index_failure() {
+            let name = PathBuf::from("daily");
+            let path = PathBuf::from("/project/daily.md");
+            let error = CliError::TemplateInstantiate {
+                name,
+                source: TemplateError::Render {
+                    path,
+                    source: minijinja::Error::new(
+                        minijinja::ErrorKind::InvalidOperation,
+                        "failed to refresh the file index",
+                    )
+                    .with_source(FileIndexError::Io {
+                        path: PathBuf::from("/project"),
+                        source: io::Error::other("boom"),
+                    }),
+                },
+            };
+
+            assert_eq!(
+                error.code().map(|code| code.to_string()),
+                Some("traces::cli::template::render_index_failed".to_owned())
             );
         }
 

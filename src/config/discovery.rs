@@ -26,7 +26,7 @@ use crate::dirs;
 
 /// Relative path to a local project config file.
 ///
-/// Re-exported at [`super::LOCAL_CONFIG_FILE`] for `crate::cli::trust`.
+/// Re-exported at [`super::LOCAL_CONFIG_FILE`] for `crate::cli::init`.
 pub(crate) const LOCAL_CONFIG_FILE: &str = ".traces/config.toml";
 const GLOBAL_CONFIG_FILE: &str = "traces/config.toml";
 

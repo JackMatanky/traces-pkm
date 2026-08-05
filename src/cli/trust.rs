@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use clap::{Args, Subcommand};
 
 use super::error::CliError;
-use crate::config::{ConfigService, DiscoveryScope, TrustRequest};
+use crate::config::{ConfigService, TrustRequest};
 
 /// Command-line arguments for `traces trust`.
 #[derive(Debug, Args)]
@@ -155,25 +155,11 @@ impl Trust {
         service: &ConfigService,
         mut visit: impl FnMut(TrustRequest) -> Result<(), CliError>,
     ) -> Result<(), CliError> {
-        let cwd;
-        let path = if let Some(path) = self.path.as_deref() {
-            path
-        } else {
-            cwd = super::current_dir()?;
-            cwd.as_ref()
-        };
-        let scope = if self.all {
-            DiscoveryScope::LocalSubtree
-        } else {
-            DiscoveryScope::NearestLocal
-        };
-        let subjects =
-            service.trust_requests(path, scope).map_err(|source| {
-                CliError::TrustTargetResolve {
-                    path: path.to_path_buf(),
-                    source,
-                }
-            })?;
+        let subjects = super::resolve_trust_subjects(
+            service,
+            self.path.as_deref(),
+            self.all,
+        )?;
         for subject in subjects {
             visit(subject)?;
         }

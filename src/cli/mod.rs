@@ -15,14 +15,18 @@ mod template;
 mod trust;
 mod untrust;
 
-use std::{path::PathBuf, sync::Arc};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use clap::{Parser, Subcommand};
 pub use error::CliError;
 
 use crate::{
     Cwd, DialogProvider,
-    config::{Config, ConfigService},
+    config::{Config, ConfigService, DiscoveryScope, TrustRequests},
+    index::{FileIndex, QueryError, QueryOutcome, QuerySource},
 };
 
 /// Outcome of a successful CLI command.
@@ -205,6 +209,130 @@ fn load_config(service: &ConfigService) -> Result<Config, CliError> {
     service.load(&cwd).map_err(|source| CliError::ConfigLoad {
         cwd,
         source,
+    })
+}
+
+/// Refreshes `root`'s [`FileIndex`] and returns page-level records selected
+/// by `from`.
+///
+/// Shared by `traces table` and `traces list`.
+///
+/// # Errors
+///
+/// - [`CliError::Index`] if refreshing the [`FileIndex`] fails.
+fn refresh_page_query(
+    root: &Path,
+    from: Option<&str>,
+) -> Result<QueryOutcome, CliError> {
+    let index = FileIndex::refresh(root).map_err(|source| CliError::Index {
+        root: root.to_path_buf(),
+        source,
+    })?;
+    Ok(index.query(&QuerySource::from_flag(from)))
+}
+
+/// Refreshes `root`'s [`FileIndex`] and returns task-level records selected
+/// by `from`.
+///
+/// Shared by `traces task`.
+///
+/// # Errors
+///
+/// - [`CliError::Index`] if refreshing the [`FileIndex`] fails.
+fn refresh_task_query(
+    root: &Path,
+    from: Option<&str>,
+) -> Result<QueryOutcome, CliError> {
+    let index = FileIndex::refresh(root).map_err(|source| CliError::Index {
+        root: root.to_path_buf(),
+        source,
+    })?;
+    Ok(index.query_tasks(&QuerySource::from_flag(from)))
+}
+
+/// Applies an optional `--where` filter expression to `outcome`.
+///
+/// Shared by `traces table`, `traces list`, and `traces task`.
+///
+/// # Errors
+///
+/// - [`CliError::Query`] if `filter` is an unparsable filter expression.
+fn apply_filter(
+    outcome: QueryOutcome,
+    root: &Path,
+    filter: Option<&str>,
+) -> Result<QueryOutcome, CliError> {
+    match filter {
+        Some(expr) => {
+            outcome.filter(expr).map_err(|source| query_error(root, source))
+        }
+        None => Ok(outcome),
+    }
+}
+
+/// Applies an optional `--sort` field path to `outcome`.
+///
+/// Shared by `traces table` and `traces list`.
+///
+/// # Errors
+///
+/// - [`CliError::Query`] if `sort` names a malformed field path.
+fn apply_sort(
+    outcome: QueryOutcome,
+    root: &Path,
+    sort: Option<&str>,
+    descending: bool,
+) -> Result<QueryOutcome, CliError> {
+    match sort {
+        Some(path) => outcome
+            .sort(path, descending)
+            .map_err(|source| query_error(root, source)),
+        None => Ok(outcome),
+    }
+}
+
+/// Wraps a [`QueryError`] as a [`CliError::Query`] against `root`.
+///
+/// Shared by every query-command outcome transformation and render call.
+fn query_error(root: &Path, source: QueryError) -> CliError {
+    CliError::Query {
+        root: root.to_path_buf(),
+        source,
+    }
+}
+
+/// Resolves trust subjects for `path` (or the current directory when
+/// absent) at `all`'s scope.
+///
+/// Shared by `traces trust` and `traces untrust`.
+///
+/// # Errors
+///
+/// - [`CliError::CurrentDirectory`] if no path was provided and reading the
+///   current directory fails.
+/// - [`CliError::TrustTargetResolve`] if resolving trust targets fails.
+fn resolve_trust_subjects(
+    service: &ConfigService,
+    path: Option<&Path>,
+    all: bool,
+) -> Result<TrustRequests, CliError> {
+    let cwd;
+    let path = if let Some(path) = path {
+        path
+    } else {
+        cwd = current_dir()?;
+        cwd.as_ref()
+    };
+    let scope = if all {
+        DiscoveryScope::LocalSubtree
+    } else {
+        DiscoveryScope::NearestLocal
+    };
+    service.trust_requests(path, scope).map_err(|source| {
+        CliError::TrustTargetResolve {
+            path: path.to_path_buf(),
+            source,
+        }
     })
 }
 
