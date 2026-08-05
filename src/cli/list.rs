@@ -64,11 +64,11 @@ impl List {
         Ok(())
     }
 
-    /// Renders matching pages from `root`'s [`FileIndex`] as a Markdown
-    /// bullet list, alongside the matched row count.
+    /// Renders matching pages from `root`'s [`FileIndex`] as a Markdown bullet
+    /// list, alongside the matched row count.
     ///
-    /// Split from [`Self::run`] so tests can assert on rendered content
-    /// without capturing process stdout.
+    /// Split from [`Self::run`] so tests can assert on rendered content without
+    /// capturing process stdout.
     ///
     /// # Errors
     ///
@@ -103,8 +103,8 @@ impl List {
 
 /// Wraps a [`QueryError`] as a [`CliError::Query`] against `root`.
 ///
-/// Shared by every `outcome.*` call in [`List::render`] so each call site is
-/// a single `.map_err(|source| query_error(root, source))?`.
+/// Shared by every `outcome.*` call in [`List::render`] so each call site is a
+/// single `.map_err(|source| query_error(root, source))?`.
 fn query_error(root: &Path, source: QueryError) -> CliError {
     CliError::Query {
         root: root.to_path_buf(),

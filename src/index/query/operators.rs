@@ -109,8 +109,8 @@ impl ComparisonExpr {
 
 /// Logical `AND`/`OR` combinator for two or more [`FilterExpr`]s.
 ///
-/// `NOT` negates exactly one sub-expression, so it stays in
-/// [`FilterExpr::Not`] instead of sharing this multi-expression operator.
+/// `NOT` negates exactly one sub-expression, so it stays in [`FilterExpr::Not`]
+/// instead of sharing this multi-expression operator.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(super) enum LogicalOp {
     /// `AND` / `and` / `&&`

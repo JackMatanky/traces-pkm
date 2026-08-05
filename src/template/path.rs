@@ -1,10 +1,9 @@
 //! Template paths validate and label path-shaped values in the template
 //! pipeline.
 //!
-//! [`TemplatePath`] is built by
-//! [`TemplateLoader`]'s search immediately
-//! after confirming the file exists. Nothing later in the pipeline re-verifies
-//! it. [`DeclaredOutputPath`] labels the raw `file.write_to()` candidate before
+//! [`TemplatePath`] is built by [`TemplateLoader`]'s search immediately after
+//! confirming the file exists. Nothing later in the pipeline re-verifies it.
+//! [`DeclaredOutputPath`] labels the raw `file.write_to()` candidate before
 //! [`writer`] resolves it.
 //!
 //! [`TemplateLoader`]: super::loader::TemplateLoader
@@ -34,9 +33,8 @@ pub(crate) struct TemplatePathInput(SafeRelativePath);
 impl TemplatePathInput {
     /// Parses `path` as a template path input.
     ///
-    /// This performs no filesystem access, only a path-shape check. Used by
-    /// the CLI boundary before rendering and by
-    /// [`TemplateLoader::load`] before
+    /// This performs no filesystem access, only a path-shape check. Used by the
+    /// CLI boundary before rendering and by [`TemplateLoader::load`] before
     /// resolving minijinja includes.
     ///
     /// # Errors
@@ -73,14 +71,10 @@ pub(super) struct TemplatePath {
 }
 
 impl TemplatePath {
-    /// Creates a [`TemplatePath`] proven to exist by
-    /// [`TemplateLoader`]'s search: called
-    /// only from
-    /// [`TemplateLoader::find_path_in`]
-    /// and
-    /// [`TemplateLoader::find_name_in`],
-    /// immediately after each confirms the file exists. Nothing later in the
-    /// pipeline re-verifies it.
+    /// Creates a [`TemplatePath`] proven to exist by [`TemplateLoader`]'s
+    /// search: called only from [`TemplateLoader::find_path_in`] and
+    /// [`TemplateLoader::find_name_in`], immediately after each confirms the
+    /// file exists. Nothing later in the pipeline re-verifies it.
     ///
     /// [`TemplateLoader`]: super::loader::TemplateLoader
     /// [`TemplateLoader::find_path_in`]: super::loader::TemplateLoader::find_path_in
@@ -121,8 +115,8 @@ impl TemplatePath {
         self.source_dir.join(self.input.as_ref())
     }
 
-    /// Returns the default output filename with its extension forced
-    /// to `md`, keeping directory segments.
+    /// Returns the default output filename with its extension forced to `md`,
+    /// keeping directory segments.
     #[inline]
     #[must_use]
     pub(super) fn default_output_filename(&self) -> PathBuf {
@@ -174,9 +168,8 @@ pub(crate) enum TemplatePathError {
     #[error("template path {0} must be relative, not absolute")]
     Absolute(PathBuf),
     /// `name` cannot stay inside a directory: some component could escape it
-    /// (most notably `..`), or there's no
-    /// [`std::path::Component::Normal`] component at
-    /// all (an empty path, or a bare `.`).
+    /// (most notably `..`), or there's no [`std::path::Component::Normal`]
+    /// component at all (an empty path, or a bare `.`).
     #[error("template path {0} is not a valid template identifier")]
     UnsafeComponent(PathBuf),
     /// More than one file in a Template Directory matched the name.

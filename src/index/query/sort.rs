@@ -102,8 +102,8 @@ pub(super) fn sort_key_cmp(
     }
 }
 
-/// Wraps a resolved [`FieldValue`] so [`slice::sort_by_cached_key`] can
-/// order by it using [`sort_key_cmp`].
+/// Wraps a resolved [`FieldValue`] so [`slice::sort_by_cached_key`] can order
+/// by it using [`sort_key_cmp`].
 ///
 /// [`FieldValue`] does not implement [`Ord`] directly because comparison
 /// requires a `descending` flag and null-as-minimum fallback rules that depend

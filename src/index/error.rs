@@ -1,8 +1,8 @@
 //! Errors from index scanning, persistence, and loading.
 //!
-//! [`FileIndexError`] preserves path context for filesystem, redb, and
-//! postcard encoding failures so CLI diagnostics can name the affected
-//! record or database.
+//! [`FileIndexError`] preserves path context for filesystem, redb, and postcard
+//! encoding failures so CLI diagnostics can name the affected record or
+//! database.
 
 use std::{io, path::PathBuf};
 
@@ -55,10 +55,9 @@ pub(crate) enum FileIndexError {
     Deserialize {
         /// The record's project-relative path (its key in the index database).
         path: PathBuf,
-        /// Source postcard deserialization error. Not boxed:
-        /// `postcard::Error` is a small, fieldless, non-exhaustive enum with
-        /// no parse-diagnostic payload, unlike the `toml::de::Error` this
-        /// replaces.
+        /// Source postcard deserialization error. Not boxed: `postcard::Error`
+        /// is a small, fieldless, non-exhaustive enum with no parse-diagnostic
+        /// payload, unlike the `toml::de::Error` this replaces.
         #[source]
         source: postcard::Error,
     },

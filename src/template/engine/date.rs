@@ -33,8 +33,8 @@ use minijinja::{
 
 /// `date.now(format=...)`'s default format when the `format` kwarg is omitted.
 ///
-/// This is an ISO-8601-style date (`YYYY-MM-DD`) and the default output
-/// shape [`format_precise`] uses for a date-only input.
+/// This is an ISO-8601-style date (`YYYY-MM-DD`) and the default output shape
+/// [`format_precise`] uses for a date-only input.
 const DEFAULT_FORMAT: &str = "%Y-%m-%d";
 
 /// [`format_precise`]'s output shape for an input that carried a time
@@ -250,9 +250,9 @@ impl DateTimeUnit {
     }
 }
 
-/// Extracts the shared `format="..."` kwarg every `date.*` namespace
-/// method takes, defaulting to [`DEFAULT_FORMAT`], and rejects any
-/// other kwarg via [`Kwargs::assert_all_used`].
+/// Extracts the shared `format="..."` kwarg every `date.*` namespace method
+/// takes, defaulting to [`DEFAULT_FORMAT`], and rejects any other kwarg via
+/// [`Kwargs::assert_all_used`].
 ///
 /// This is the one place all five
 /// `now`/`today`/`tomorrow`/`yesterday`/`from_timestamp` closures decide how
@@ -272,9 +272,9 @@ fn format_kwarg(kwargs: &Kwargs) -> Result<&str, Error> {
 }
 
 /// Extracts the shared `unit="..."` kwarg [`date_add`], [`date_sub`], and
-/// [`date_diff`] all take, defaulting to `"days"`, and rejects any other
-/// kwarg via [`Kwargs::assert_all_used`], mirroring [`format_kwarg`] for the
-/// `date.*` namespace methods' `format=` kwarg.
+/// [`date_diff`] all take, defaulting to `"days"`, and rejects any other kwarg
+/// via [`Kwargs::assert_all_used`], mirroring [`format_kwarg`] for the `date.*`
+/// namespace methods' `format=` kwarg.
 ///
 /// # Errors
 ///
@@ -380,8 +380,8 @@ fn timestamp(value: &str) -> Result<i64, Error> {
     Ok(parse_date(value)?.and_utc().timestamp())
 }
 
-/// Parses `value` as a date/time string, transforms `datetime` via `op`,
-/// and re-serializes the result at `value`'s original precision.
+/// Parses `value` as a date/time string, transforms `datetime` via `op`, and
+/// re-serializes the result at `value`'s original precision.
 ///
 /// # Errors
 ///
@@ -580,9 +580,8 @@ fn end_of_month(value: &str) -> Result<String, Error> {
 
 /// `{{ value | weekday }}` returns `0` for Monday through `6` for Sunday.
 ///
-/// Chrono's own
-/// [`Weekday::number_from_sunday`] is
-/// Sunday-first, so this filter remaps to Monday-first order.
+/// Chrono's own [`Weekday::number_from_sunday`] is Sunday-first, so this filter
+/// remaps to Monday-first order.
 ///
 /// # Errors
 ///
@@ -756,9 +755,8 @@ fn is_future(value: &str) -> Result<bool, Error> {
     Ok(parse_date(value)?.and_utc() > Utc::now())
 }
 
-/// `{% if value is is_leap_year %}` accepts either an integer year
-/// (`2024 is is_leap_year`) or a date/time string checked through
-/// [`parse_date`].
+/// `{% if value is is_leap_year %}` accepts either an integer year (`2024 is
+/// is_leap_year`) or a date/time string checked through [`parse_date`].
 ///
 /// # Errors
 ///

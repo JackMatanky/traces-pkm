@@ -18,10 +18,8 @@
 pub enum DialogError {
     /// A single-selection prompt received no options.
     ///
-    /// [`select`] cannot return an item without
-    /// at least one choice.
-    /// [`multi_select`] accepts an
-    /// empty list and returns an empty [`Vec`].
+    /// [`select`] cannot return an item without at least one choice.
+    /// [`multi_select`] accepts an empty list and returns an empty [`Vec`].
     ///
     /// [`select`]: super::DialogProvider::select
     /// [`multi_select`]: super::DialogProvider::multi_select
@@ -46,8 +44,8 @@ pub enum DialogError {
     ///
     /// Returned when the backend reports that stdin is not a terminal and the
     /// caller did not provide fallback defaults. This should not occur when
-    /// using [`TerminalDialogProvider`] because
-    /// its TTY guard catches this condition before invoking the backend.
+    /// using [`TerminalDialogProvider`] because its TTY guard catches this
+    /// condition before invoking the backend.
     ///
     /// [`TerminalDialogProvider`]: super::TerminalDialogProvider
     #[error("interactive dialog not available, stdin is not a terminal")]
@@ -55,8 +53,8 @@ pub enum DialogError {
 
     /// An I/O operation failed during prompting.
     ///
-    /// The underlying [`std::io::Error`] is available through the
-    /// [`source`] chain.
+    /// The underlying [`std::io::Error`] is available through the [`source`]
+    /// chain.
     ///
     /// [`source`]: std::error::Error::source
     #[error("dialog I/O operation failed: {0}")]
@@ -64,9 +62,8 @@ pub enum DialogError {
 
     /// The dialog backend reported an unexpected error.
     ///
-    /// The backend error is preserved as the
-    /// [`source`] so the chain can be walked,
-    /// while its concrete type stays opaque outside of this crate.
+    /// The backend error is preserved as the [`source`] so the chain can be
+    /// walked, while its concrete type stays opaque outside of this crate.
     ///
     /// [`source`]: std::error::Error::source
     #[error("dialog backend error: {0}")]

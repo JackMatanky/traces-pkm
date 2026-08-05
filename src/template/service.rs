@@ -39,10 +39,9 @@ impl<'a> TemplateService<'a> {
     /// Constructs a new [`TemplateService`] for `config`.
     ///
     /// The `provider` receives all interactive `ui.*` prompt calls, including
-    /// under [`WriteMode::DryRun`]. The [`WriteMode`] controls whether
-    /// output files are written to disk, not whether prompts execute.
-    /// Callers enforce non-interactive execution by choosing an appropriate
-    /// [`DialogProvider`].
+    /// under [`WriteMode::DryRun`]. The [`WriteMode`] controls whether output
+    /// files are written to disk, not whether prompts execute. Callers enforce
+    /// non-interactive execution by choosing an appropriate [`DialogProvider`].
     #[inline]
     #[must_use]
     pub(crate) fn new(
@@ -63,8 +62,7 @@ impl<'a> TemplateService<'a> {
     /// Lists available template names configured in `config`.
     ///
     /// Returns all top-level `.md` file stems from the local template directory
-    /// followed by the global template directory, excluding local
-    /// duplicates.
+    /// followed by the global template directory, excluding local duplicates.
     ///
     /// This is an associated function requiring only [`Config`], allowing
     /// candidates to be listed before constructing a full
@@ -78,8 +76,7 @@ impl<'a> TemplateService<'a> {
     /// Resolves, renders, and outputs a template in a single pass.
     ///
     /// Combines [`Self::render`] and [`Self::write`] for callers that do not
-    /// need to inspect the intermediate [`RenderedTemplate`] before
-    /// writing.
+    /// need to inspect the intermediate [`RenderedTemplate`] before writing.
     ///
     /// # Arguments
     ///
@@ -114,8 +111,8 @@ impl<'a> TemplateService<'a> {
     ///
     /// Passes the resolved template's absolute file path to [`TemplateEngine`]
     /// as the template name. If rendering fails, error context
-    /// ([`minijinja::Error::name`]) reports the true file path and
-    /// line number instead of a generic placeholder.
+    /// ([`minijinja::Error::name`]) reports the true file path and line number
+    /// instead of a generic placeholder.
     ///
     /// # Errors
     ///
@@ -148,8 +145,8 @@ impl<'a> TemplateService<'a> {
     ///
     /// When `mode` is [`WriteMode::DryRun`], returns
     /// [`WriteOutcome::Previewed`] immediately without resolving an output
-    /// path. When `mode` is [`WriteMode::Commit`], resolves the output
-    /// target path according to the following precedence:
+    /// path. When `mode` is [`WriteMode::Commit`], resolves the output target
+    /// path according to the following precedence:
     ///
     /// 1. Explicit `output` path override.
     /// 2. Declared output path from the template's `file.write_to()` call.
@@ -224,9 +221,9 @@ impl<'a> TemplateService<'a> {
     ///
     /// Passes `path` as the template identifier to [`TemplateEngine`] so that
     /// syntax errors and prompt failures report the absolute path and line
-    /// number of `path` instead of the default `<string>` placeholder. The
-    /// file at `path` is only used to name the render template and is
-    /// not read again.
+    /// number of `path` instead of the default `<string>` placeholder. The file
+    /// at `path` is only used to name the render template and is not read
+    /// again.
     ///
     /// # Errors
     ///
@@ -250,9 +247,9 @@ impl<'a> TemplateService<'a> {
     ///
     /// Joins [`Config::output_dir`] with the default output filename from
     /// `resolved` ([`TemplatePath::default_output_filename`]), preventing
-    /// templates with identical stems in different directories from
-    /// colliding. Treats [`Config::output_dir`] as a trusted base directory
-    /// rather than an untrusted user path.
+    /// templates with identical stems in different directories from colliding.
+    /// Treats [`Config::output_dir`] as a trusted base directory rather than an
+    /// untrusted user path.
     fn default_output_path(&self, resolved: &TemplatePath) -> PathBuf {
         self.config.output_dir().join(resolved.default_output_filename())
     }

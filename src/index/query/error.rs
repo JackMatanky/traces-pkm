@@ -11,13 +11,13 @@ use thiserror::Error;
 /// producing an error.
 #[derive(Clone, Debug, Eq, PartialEq, Error)]
 pub(crate) enum QueryError {
-    /// Indicates that a field path was empty, used an unknown accessor,
-    /// or contained an unexpected structure.
+    /// Indicates that a field path was empty, used an unknown accessor, or
+    /// contained an unexpected structure.
     ///
-    /// The `suggestion` field holds [`Some`] with the closest matching
-    /// `file.*` or `task.*` accessor name when `path` resembles a typo,
-    /// or [`None`] when no close match exists or `path` targets arbitrary
-    /// frontmatter or inline fields.
+    /// The `suggestion` field holds [`Some`] with the closest matching `file.*`
+    /// or `task.*` accessor name when `path` resembles a typo, or [`None`] when
+    /// no close match exists or `path` targets arbitrary frontmatter or inline
+    /// fields.
     #[error(
         "invalid field path {path:?}; expected `file.<field>` (path, name, \
          folder, size, ctime, cdate, mtime, mdate), `task.<field>` \
@@ -57,9 +57,9 @@ pub(crate) enum QueryError {
     /// page-level records lacking task fields.
     ///
     /// Page-level records are constructed by
-    /// [`super::super::FileIndex::query`], whereas task-list
-    /// transformations require task-level records produced
-    /// by [`super::super::FileIndex::query_tasks`].
+    /// [`super::super::FileIndex::query`], whereas task-list transformations
+    /// require task-level records produced by
+    /// [`super::super::FileIndex::query_tasks`].
     #[error(
         "task_list requires task-level records from the `tasks` namespace; \
          got page-level records with no task fields"

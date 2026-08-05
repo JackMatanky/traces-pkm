@@ -57,8 +57,8 @@ pub(crate) enum ConfigBuilderError {
         /// The trust status that caused the halt.
         status: ConfigTrustStatus,
     },
-    /// The merged local/global config could not be re-extracted to resolve
-    /// the effective output directory.
+    /// The merged local/global config could not be re-extracted to resolve the
+    /// effective output directory.
     #[error("failed to merge local and global config")]
     Merge {
         /// Source figment error.

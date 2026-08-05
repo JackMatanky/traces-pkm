@@ -145,8 +145,8 @@ impl IndexRecord {
         self
     }
 
-    /// Attaches project-relative paths of Notes whose outlinks resolve to
-    /// this record's Note.
+    /// Attaches project-relative paths of Notes whose outlinks resolve to this
+    /// record's Note.
     pub(super) fn with_inlinks(mut self, inlinks: Vec<PathBuf>) -> Self {
         self.inlinks = inlinks;
         self
@@ -182,8 +182,8 @@ impl IndexRecord {
         &self.note
     }
 
-    /// Returns project-relative paths of Notes linking to this record's
-    /// Note, or an empty slice if unlinked.
+    /// Returns project-relative paths of Notes linking to this record's Note,
+    /// or an empty slice if unlinked.
     #[inline]
     #[must_use]
     pub(crate) fn inlinks(&self) -> &[PathBuf] {
@@ -353,8 +353,8 @@ impl QueryOutcome {
     /// [`Self::filter`].
     ///
     /// Uses Rust raw identifier syntax (`r#where`) to match Dataview's
-    /// `.where()` API. Refer to [`Self::filter`] for full syntax details
-    /// and matching behavior.
+    /// `.where()` API. Refer to [`Self::filter`] for full syntax details and
+    /// matching behavior.
     ///
     /// # Errors
     ///

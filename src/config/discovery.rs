@@ -301,12 +301,12 @@ impl DiscoveryEngine {
     ) -> Result<TrustRequests, DiscoveryError> {
         let start = match path.canonicalize() {
             Ok(canonical) => canonical,
-            // The path may legitimately not exist yet (e.g. a trust target
-            // that will be created); fall back to the given path. Any other
-            // error (permission denied, symlink loop) is unexpected for a
-            // trust operation, where the canonical path is the workspace
-            // identity. Propagate it instead of silently trusting a
-            // possibly-different, non-canonical path.
+            // The path may legitimately not exist yet (e.g. a trust target that
+            // will be created); fall back to the given path. Any other error
+            // (permission denied, symlink loop) is unexpected for a trust
+            // operation, where the canonical path is the workspace identity.
+            // Propagate it instead of silently trusting a possibly-different,
+            // non-canonical path.
             Err(source) if source.kind() == io::ErrorKind::NotFound => {
                 path.to_path_buf()
             }
@@ -445,8 +445,8 @@ impl DiscoveryEngine {
         })
     }
 
-    /// Checks the default global config path, returning a candidate if the
-    /// file exists.
+    /// Checks the default global config path, returning a candidate if the file
+    /// exists.
     ///
     /// # Errors
     ///

@@ -1,8 +1,8 @@
 //! Defines the CLI diagnostic boundary.
 //!
-//! [`CliError`] maps domain failures to stable diagnostic codes, help text,
-//! and deliberate [`UserAbort`] detection. Command modules return
-//! [`CliError`] instead of exposing lower-level domain errors directly.
+//! [`CliError`] maps domain failures to stable diagnostic codes, help text, and
+//! deliberate [`UserAbort`] detection. Command modules return [`CliError`]
+//! instead of exposing lower-level domain errors directly.
 
 use std::{
     error::Error as StdError,
@@ -44,8 +44,8 @@ pub enum CliError {
         #[source]
         source: io::Error,
     },
-    /// Configuration loading from `cwd` failed. Shared by every command
-    /// that needs the current configuration.
+    /// Configuration loading from `cwd` failed. Shared by every command that
+    /// needs the current configuration.
     #[error("failed to load configuration from {cwd}")]
     ConfigLoad {
         /// The directory configuration loading started from.
@@ -177,8 +177,8 @@ pub enum CliError {
     /// directory.
     #[error("no templates found")]
     NoTemplates,
-    /// The interactive picker prompt itself failed: an I/O error, or the
-    /// user canceled (Esc) or interrupted (Ctrl-C) it.
+    /// The interactive picker prompt itself failed: an I/O error, or the user
+    /// canceled (Esc) or interrupted (Ctrl-C) it.
     #[error("template picker failed")]
     TemplatePicker {
         /// The underlying dialog error.
@@ -218,14 +218,13 @@ impl CliError {
 ///
 /// Provides just enough detail to choose a stable diagnostic code and help
 /// text. Classification inspects [`minijinja::Error::kind`] and the retained
-/// source chain instead of parsing display text, so new custom functions
-/// don't need to update string-matching logic here.
+/// source chain instead of parsing display text, so new custom functions don't
+/// need to update string-matching logic here.
 enum RenderFailureKind {
     /// The template's own minijinja syntax is invalid.
     Syntax,
-    /// An interactive `ui.*` prompt failed for a reason other than a
-    /// deliberate [`UserAbort`] (handled separately, upstream of this
-    /// classification).
+    /// An interactive `ui.*` prompt failed for a reason other than a deliberate
+    /// [`UserAbort`] (handled separately, upstream of this classification).
     Prompt,
     /// A `file.include()` (or other Custom Function) I/O operation failed.
     Io,
@@ -578,13 +577,13 @@ fn template_instantiate_help(source: &TemplateError) -> Box<dyn Display + '_> {
 }
 
 /// Formats a render error's failing location as `name:line`, or
-/// `name:line:column` when minijinja captured a byte-accurate span
-/// (requires [`minijinja::Environment::set_debug`], which
-/// `TemplateEngine::new` always enables).
+/// `name:line:column` when minijinja captured a byte-accurate span (requires
+/// [`minijinja::Environment::set_debug`], which `TemplateEngine::new` always
+/// enables).
 ///
-/// Returns `None` if minijinja never attached a template name, which should
-/// not happen: every render goes through `TemplateEngine::render`, which
-/// always names the template via `template_from_named_str`.
+/// Returns `None` if minijinja never attached a template name, which should not
+/// happen: every render goes through `TemplateEngine::render`, which always
+/// names the template via `template_from_named_str`.
 fn render_error_location(error: &minijinja::Error) -> Option<String> {
     let name = error.name()?;
     let line = error.line().unwrap_or(0);
@@ -601,9 +600,9 @@ fn render_error_location(error: &minijinja::Error) -> Option<String> {
 /// Returns the 1-based column of `byte_offset` within its line of `source`.
 ///
 /// `None` if `byte_offset` falls outside `source` or on a non-character
-/// boundary (defensive: minijinja's own span offsets always land on a
-/// boundary of the same source it reports, but this stays panic-free either
-/// way instead of asserting that invariant).
+/// boundary (defensive: minijinja's own span offsets always land on a boundary
+/// of the same source it reports, but this stays panic-free either way instead
+/// of asserting that invariant).
 fn line_column(source: &str, byte_offset: usize) -> Option<usize> {
     let up_to_offset = source.get(..byte_offset)?;
     let line_start =

@@ -65,8 +65,8 @@ impl Task {
     /// - `- [ ] <text> (<path>)` for an incomplete task.
     /// - `- [x] <text> (<path>)` for a complete task.
     ///
-    /// Split from [`Self::run`] so tests can assert on rendered content
-    /// without capturing process stdout.
+    /// Split from [`Self::run`] so tests can assert on rendered content without
+    /// capturing process stdout.
     ///
     /// # Errors
     ///
