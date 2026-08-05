@@ -17,10 +17,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use thiserror::Error;
-
 use super::{
-    file::{ConfigFileError, Discovered, GlobalConfigFile, LocalConfigFile},
+    error::DiscoveryError,
+    file::{Discovered, GlobalConfigFile, LocalConfigFile},
     trust::{TrustRequest, TrustRequests},
 };
 use crate::dirs;
@@ -30,43 +29,6 @@ use crate::dirs;
 /// Re-exported at [`super::LOCAL_CONFIG_FILE`] for `crate::cli::trust`.
 pub(crate) const LOCAL_CONFIG_FILE: &str = ".traces/config.toml";
 const GLOBAL_CONFIG_FILE: &str = "traces/config.toml";
-
-/// Errors raised while finding candidate config files.
-#[derive(Debug, Error)]
-pub(crate) enum DiscoveryError {
-    /// No local `.traces/config.toml` was found in any ancestor directory.
-    #[error("no local config found from {cwd}")]
-    LocalConfigAbsent {
-        /// The working directory from which discovery started.
-        cwd: PathBuf,
-    },
-    /// Discovery could not access a path.
-    #[error("failed to access path {path} during discovery")]
-    PathInaccessible {
-        /// Path that could not be accessed.
-        path: PathBuf,
-        /// Source I/O error.
-        #[source]
-        source: io::Error,
-    },
-    /// A discovered config file path/source combination was invalid.
-    #[error(transparent)]
-    ConfigFile(#[from] ConfigFileError),
-    /// Rejects file-rooted discovery for directory-only scopes.
-    #[error("{kind:?} discovery cannot be anchored at file {path}")]
-    UnsupportedFileAnchor {
-        /// Discovery kind.
-        kind: DiscoveryScope,
-        /// Unsupported file anchor path.
-        path: PathBuf,
-    },
-    /// Full loading is not a trust-administration traversal scope.
-    #[error("{scope:?} discovery cannot be used for trust request resolution")]
-    UnsupportedTrustScope {
-        /// Unsupported discovery scope.
-        scope: DiscoveryScope,
-    },
-}
 
 /// Validated scope and filesystem anchor for one discovery run.
 #[derive(Clone, Debug, Eq, PartialEq)]

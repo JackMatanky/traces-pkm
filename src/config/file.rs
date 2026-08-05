@@ -16,49 +16,15 @@ use figment::{
     Figment,
     providers::{Format, Toml},
 };
-use thiserror::Error;
 
 #[cfg(test)]
 use super::trust::TrustRequest;
 use super::{
+    error::ConfigFileError,
     raw::RawConfig,
-    store::{ConfigStateError, ConfigStateStore, ConfigTrustCheck},
+    store::{ConfigStateStore, ConfigTrustCheck},
     trust::ConfigTrustStatus,
 };
-
-/// Errors raised while validating config paths, trust state, or TOML content.
-#[derive(Debug, Error)]
-pub(crate) enum ConfigFileError {
-    /// The path is not a local `.traces/config.toml` file.
-    #[error("unsupported local config file {path}")]
-    UnsupportedLocalConfigFile {
-        /// Rejected local config path.
-        path: PathBuf,
-    },
-    /// The path is not a supported global `config.toml` file.
-    #[error("unsupported global config file {path}")]
-    UnsupportedGlobalConfigFile {
-        /// Rejected global config path.
-        path: PathBuf,
-    },
-    /// The config file could not be read or parsed.
-    #[error("failed to load config file {path}")]
-    Read {
-        /// File that failed to load.
-        path: PathBuf,
-        /// TOML provider error from `figment`.
-        #[source]
-        source: Box<figment::Error>,
-    },
-    /// Trust verification failed before the file could be parsed.
-    #[error("failed to check trust for {root}")]
-    TrustCheckFailed {
-        /// Workspace root being checked.
-        root: PathBuf,
-        /// Underlying trust-store or hash error.
-        source: Box<ConfigStateError>,
-    },
-}
 
 /// Source marker for a local project config file.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]

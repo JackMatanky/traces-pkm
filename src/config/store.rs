@@ -17,27 +17,14 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use thiserror::Error;
-
 use super::{
+    error::ConfigStateError,
     file::{Discovered, LocalConfigFile},
     trust::{ConfigTrustStatus, TrustRequest, WorkspaceTrustStatus},
 };
 use crate::{
-    Blake3FileHash, FileStateStore, FileStateStoreError, FileStoreCleanMode,
-    dirs, hash::HashError,
+    Blake3FileHash, FileStateStore, FileStoreCleanMode, dirs, hash::HashError,
 };
-
-/// Errors from config tracking or trust-state operations.
-#[derive(Debug, Error)]
-pub(crate) enum ConfigStateError {
-    /// The underlying hash-keyed store operation failed.
-    #[error(transparent)]
-    Store(#[from] FileStateStoreError),
-    /// Hashing a config file failed.
-    #[error(transparent)]
-    Hash(#[from] HashError),
-}
 
 /// Represents the parse permission result for a local config file.
 ///

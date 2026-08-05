@@ -12,77 +12,26 @@
 use std::path::{Path, PathBuf};
 
 use figment::{Figment, providers::Serialized};
-use thiserror::Error;
 
+#[cfg(test)]
+use super::error::ConfigFileError;
 use super::{
     discovery::{
-        DiscoveryAnchor, DiscoveryContext, DiscoveryEngine, DiscoveryError,
-        DiscoveryOutcome, DiscoveryScope,
+        DiscoveryAnchor, DiscoveryContext, DiscoveryEngine, DiscoveryOutcome,
+        DiscoveryScope,
+    },
+    error::{
+        ConfigBuilderError, ConfigLoadError, ConfigStateError, DiscoveryError,
     },
     file::{
-        ConfigFileError, Discovered as FileDiscovered, GlobalConfigFile,
-        LocalConfigFile, Parsed, Tracked, TrustOutcome,
+        Discovered as FileDiscovered, GlobalConfigFile, LocalConfigFile,
+        Parsed, Tracked, TrustOutcome,
     },
     model::{Config, TemplateConfig},
     raw::RawConfig,
-    store::{ConfigStateError, ConfigStateStore},
+    store::ConfigStateStore,
     trust::{ConfigTrustStatus, TrustRequest, TrustRequests},
 };
-
-/// Errors from the full config-loading pipeline.
-#[derive(Debug, Error)]
-pub(crate) enum ConfigLoadError {
-    /// Discovery failed before any config could be loaded.
-    #[error(transparent)]
-    Discovery(#[from] DiscoveryError),
-    /// Build failed after discovery selected candidate config files.
-    #[error(transparent)]
-    Build(#[from] ConfigBuilderError),
-}
-
-/// Errors raised while building a [`Config`] from discovered files.
-#[derive(Debug, Error)]
-pub(crate) enum ConfigBuilderError {
-    /// Only full discovery output can feed config loading.
-    #[error(
-        "config builder input requires full discovery output, got {actual:?}"
-    )]
-    WrongDiscoveryKindForBuild {
-        /// Actual discovery kind.
-        actual: DiscoveryScope,
-    },
-    /// Full discovery found no local config candidates.
-    #[error("full discovery output did not contain a local config")]
-    FullDiscoveryWithoutLocal,
-    /// Full discovery found locals, but none contains the discovery anchor.
-    #[error(
-        "full discovery output did not contain a local config for anchor \
-         {anchor}"
-    )]
-    FullDiscoveryWithoutAnchorLocal {
-        /// Discovery anchor path that no local config contained.
-        anchor: PathBuf,
-    },
-    /// Config file trust validation halted, requiring user action.
-    #[error("config file is untrusted: {status:?}")]
-    Untrusted {
-        /// The halted config file.
-        file: LocalConfigFile<Tracked>,
-        /// The trust status that caused the halt.
-        status: ConfigTrustStatus,
-    },
-    /// The merged local/global config could not be re-extracted to resolve the
-    /// effective output directory.
-    #[error("failed to merge local and global config")]
-    Merge {
-        /// Source figment error.
-        #[source]
-        source: Box<figment::Error>,
-    },
-    /// Config file lifecycle validation failed.
-    #[error(transparent)]
-    ConfigFile(#[from] ConfigFileError),
-}
 
 /// Files selected for full config loading.
 ///
