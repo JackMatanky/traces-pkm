@@ -385,6 +385,56 @@ mod tests {
         }
     }
 
+    mod accessor_matching {
+        use pretty_assertions::assert_eq;
+        use rstest::rstest;
+
+        use super::*;
+
+        #[rstest]
+        #[case::identical("name", "name", 0)]
+        #[case::classic_kitten_sitting("kitten", "sitting", 3)]
+        #[case::empty_a("", "abc", 3)]
+        #[case::empty_b("abc", "", 3)]
+        #[case::single_insertion("nam", "name", 1)]
+        #[case::single_deletion("name", "nam", 1)]
+        #[case::single_substitution("cat", "hat", 1)]
+        fn edit_distance_computes_the_minimum_operation_count(
+            #[case] a: &str,
+            #[case] b: &str,
+            #[case] expected: usize,
+        ) {
+            assert_eq!(edit_distance(a, b), expected);
+        }
+
+        #[test]
+        fn closest_accessor_matches_within_the_half_length_threshold() {
+            let candidates: &[&str] = &["path", "name", "folder"];
+            assert_eq!(closest_accessor(candidates, "nam"), Some("name"));
+        }
+
+        #[test]
+        fn closest_accessor_rejects_a_match_past_the_threshold() {
+            // "na" has threshold ceil(2/2).max(1) = 1, but its distance to
+            // "name" is 2 (insert "m", "e"): too far to suggest.
+            let candidates: &[&str] = &["name"];
+            assert_eq!(closest_accessor(candidates, "na"), None);
+        }
+
+        #[test]
+        fn closest_accessor_returns_none_for_an_empty_candidate_list() {
+            assert_eq!(closest_accessor(&[], "name"), None);
+        }
+
+        #[test]
+        fn closest_accessor_breaks_ties_by_iteration_order() {
+            // Both "cat" and "bat" are distance 1 from "mat"; the first
+            // candidate in iteration order wins.
+            let candidates: &[&str] = &["cat", "bat"];
+            assert_eq!(closest_accessor(candidates, "mat"), Some("cat"));
+        }
+    }
+
     mod field_path {
         use pretty_assertions::assert_eq;
         use rstest::rstest;

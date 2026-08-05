@@ -1317,6 +1317,53 @@ mod tests {
         }
     }
 
+    mod location {
+        use pretty_assertions::assert_eq;
+        use rstest::rstest;
+
+        use super::super::*;
+
+        #[rstest]
+        #[case::start_of_source("abc", 0, Some(1))]
+        #[case::end_of_first_line("abc", 3, Some(4))]
+        #[case::start_of_second_line("line one\n{{ bad }}\n", 9, Some(1))]
+        #[case::mid_second_line("line one\n{{ bad }}\n", 12, Some(4))]
+        #[case::counts_chars_not_bytes("é\n{{ x }}\n", 2, Some(2))]
+        #[case::start_of_line_after_a_multibyte_char(
+            "é\n{{ x }}\n",
+            3,
+            Some(1)
+        )]
+        #[case::offset_past_the_source_end("abc", 10, None)]
+        #[case::offset_on_a_non_char_boundary("é", 1, None)]
+        fn line_column_returns_the_1_based_char_column(
+            #[case] source: &str,
+            #[case] offset: usize,
+            #[case] expected: Option<usize>,
+        ) {
+            assert_eq!(line_column(source, offset), expected);
+        }
+
+        #[test]
+        fn render_error_location_reports_name_line_and_column_for_a_real_render_error()
+         {
+            let mut env = minijinja::Environment::new();
+            env.set_debug(true);
+            let template = env
+                .template_from_named_str("greet.md", "line one\n{{ nope() }}\n")
+                .expect("template compiles");
+
+            let error = template
+                .render(minijinja::context!())
+                .expect_err("calling an unknown function fails to render");
+
+            assert_eq!(
+                render_error_location(&error),
+                Some("greet.md:2:4".to_owned())
+            );
+        }
+    }
+
     mod render {
         use std::{io, path::PathBuf};
 

@@ -393,15 +393,18 @@ mod template {
             "stderr: {}",
             template.stderr
         );
-        // The exact `broken.md:2:<col>` location this error carries is
-        // verified unit-level, against `minijinja::Error` directly, in
-        // `src/template/service.rs`'s
-        // `render_errors_name_the_real_template_and_line_not_string` and
-        // in `src/cli/error.rs`'s `render_error_location` tests, not
-        // reasserted here. Miette line-wraps long causal chains across lines
-        // with a `│` continuation glyph that can land inside a path with
-        // no original whitespace there, so reconstructing it from captured
-        // stderr text is not reliable (see module docs).
+        // The exact `broken.md:2:<col>` location this error carries is verified
+        // unit-level against `minijinja::Error` directly, in
+        // `src/cli/error.rs`'s
+        // `location::line_column_returns_the_1_based_char_column` and
+        // `location::render_error_location_reports_name_line_and_column_for_a_real_render_error`
+        // tests, and end-to-end (in-process) in `src/cli/mod.rs`'s
+        // `query_workflows::template_render_errors_identify_the_failing_template_and_line_through_cli_dispatch`,
+        // which asserts the full `report.md:2:15` string. Not reasserted here:
+        // Miette line-wraps long causal chains across lines with a `│`
+        // continuation glyph that can land inside a path with no original
+        // whitespace there, so reconstructing it from captured stderr text is
+        // not reliable (see module docs).
     }
 }
 

@@ -899,9 +899,9 @@ mod tests {
             }));
             let help = error.help().map(|h| h.to_string()).unwrap_or_default();
             assert!(
-                help.contains("report.md:2"),
-                "expected the failing template name and line in help text, \
-                 got: {help}"
+                help.contains("report.md:2:15"),
+                "expected the failing template name, line, and column in help \
+                 text, got: {help}"
             );
         }
     }
