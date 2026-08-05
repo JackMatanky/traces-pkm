@@ -9,7 +9,7 @@
 //! (`requested`) and `file.write_to()` ([`DeclaredOutputPath`]), then resolves
 //! them by precedence: `requested`, `declared`, caller-supplied default.
 //! `requested`/`declared` are runtime values confined to [`Config::root`] via
-//! [`crate::path::RootConfinedPath::parse`]. The default comes from an already
+//! [`RootConfinedPath::parse`]. The default comes from an already
 //! trust-gated [`Config::output_dir`].
 //!
 //! [`TemplateService::write`]: super::service::TemplateService::write

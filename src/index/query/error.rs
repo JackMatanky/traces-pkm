@@ -7,8 +7,10 @@ use thiserror::Error;
 ///
 /// These errors report malformed inputs, such as invalid field paths or filter
 /// expressions. A well-formed field path for which a [`super::IndexRecord`]
-/// has no value resolves to [`crate::note::FieldValue::Null`] rather than
+/// has no value resolves to [`FieldValue::Null`] rather than
 /// producing an error.
+///
+/// [`FieldValue::Null`]: crate::note::FieldValue::Null
 #[derive(Clone, Debug, Eq, PartialEq, Error)]
 pub(crate) enum QueryError {
     /// Indicates that a field path was empty, used an unknown accessor, or
@@ -56,10 +58,12 @@ pub(crate) enum QueryError {
     /// Indicates that [`super::QueryOutcome::task_list`] was invoked on
     /// page-level records lacking task fields.
     ///
-    /// Page-level records are constructed by
-    /// [`super::super::FileIndex::query`], whereas task-list transformations
-    /// require task-level records produced by
-    /// [`super::super::FileIndex::query_tasks`].
+    /// Page-level records are constructed by [`FileIndex::query`], whereas
+    /// task-list transformations require task-level records produced by
+    /// [`FileIndex::query_tasks`].
+    ///
+    /// [`FileIndex::query`]: crate::index::FileIndex::query
+    /// [`FileIndex::query_tasks`]: crate::index::FileIndex::query_tasks
     #[error(
         "task_list requires task-level records from the `tasks` namespace; \
          got page-level records with no task fields"

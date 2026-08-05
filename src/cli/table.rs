@@ -3,6 +3,8 @@
 //! Handles `traces table` by refreshing the trusted root's [`FileIndex`],
 //! selecting a source scope, applying the optional filter, and printing
 //! matching pages as a Markdown table.
+//!
+//! [`FileIndex`]: crate::index::FileIndex
 
 use std::path::Path;
 
@@ -49,6 +51,8 @@ impl Table {
     /// - [`CliError::Query`] if `--where` is an unparsable filter expression,
     ///   `--sort` names a malformed field path, or `--column` names a malformed
     ///   field path.
+    ///
+    /// [`FileIndex`]: crate::index::FileIndex
     #[expect(
         clippy::print_stdout,
         reason = "table output is primary command output, not diagnostic \
@@ -75,6 +79,8 @@ impl Table {
     /// - [`CliError::Query`] if `--where` is an unparsable filter expression,
     ///   `--sort` names a malformed field path, or `--column` names a malformed
     ///   field path.
+    ///
+    /// [`FileIndex`]: crate::index::FileIndex
     fn render(&self, root: &Path) -> Result<(String, usize), CliError> {
         let outcome = super::refresh_page_query(root, self.from.as_deref())?;
         let outcome =

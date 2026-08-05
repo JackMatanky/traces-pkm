@@ -3,6 +3,8 @@
 //! Handles `traces task` by refreshing the trusted root's [`FileIndex`],
 //! selecting a source scope, applying the optional filter, and printing
 //! matching tasks as Markdown checkbox lines.
+//!
+//! [`FileIndex`]: crate::index::FileIndex
 
 use std::path::Path;
 
@@ -37,6 +39,8 @@ impl Task {
     ///   untrusted project root.
     /// - [`CliError::Index`] if refreshing the [`FileIndex`] fails.
     /// - [`CliError::Query`] if `--where` is an unparsable filter expression.
+    ///
+    /// [`FileIndex`]: crate::index::FileIndex
     #[expect(
         clippy::print_stdout,
         reason = "task rows are primary command output, not diagnostic text; \
@@ -69,6 +73,8 @@ impl Task {
     ///
     /// - [`CliError::Index`] if refreshing the [`FileIndex`] fails.
     /// - [`CliError::Query`] if `--where` is an unparsable filter expression.
+    ///
+    /// [`FileIndex`]: crate::index::FileIndex
     fn lines(&self, root: &Path) -> Result<Vec<String>, CliError> {
         let outcome = super::refresh_task_query(root, self.from.as_deref())?;
         let outcome =

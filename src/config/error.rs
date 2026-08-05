@@ -56,9 +56,12 @@ pub(crate) enum DiscoveryError {
         /// Unsupported file anchor path.
         path: PathBuf,
     },
-    /// Rejects [`DiscoveryScope::Full`] for trust-request resolution, which
-    /// only supports [`DiscoveryScope::NearestLocal`] and
-    /// [`DiscoveryScope::LocalSubtree`].
+    /// Rejects [`Full`] for trust-request resolution, which only supports
+    /// [`NearestLocal`] and [`LocalSubtree`].
+    ///
+    /// [`Full`]: DiscoveryScope::Full
+    /// [`NearestLocal`]: DiscoveryScope::NearestLocal
+    /// [`LocalSubtree`]: DiscoveryScope::LocalSubtree
     #[error("{scope:?} discovery cannot be used for trust request resolution")]
     UnsupportedTrustScope {
         /// Unsupported discovery scope.
