@@ -6,6 +6,13 @@
 //! into the result `crate::cli::error::CliError` reports. File-local
 //! parsing/construction failures that never propagate past the file that
 //! raises them stay defined there instead.
+//!
+//! Ordered by proximity to [`super::ConfigService`]'s public methods, from
+//! its primary access point down to the shared leaf: [`ConfigLoadError`]
+//! (`load`) composes [`DiscoveryError`] then [`ConfigBuilderError`], both of
+//! which fail through [`ConfigFileError`], which in turn wraps
+//! [`ConfigStateError`] (also `trust`/`untrust`/`trust_status`'s own direct
+//! return type).
 
 use std::{io, path::PathBuf};
 
@@ -17,6 +24,17 @@ use super::{
     trust::ConfigTrustStatus,
 };
 use crate::{FileStateStoreError, hash::HashError};
+
+/// Errors from the full config-loading pipeline.
+#[derive(Debug, Error)]
+pub(crate) enum ConfigLoadError {
+    /// Discovery failed before any config could be loaded.
+    #[error(transparent)]
+    Discovery(#[from] DiscoveryError),
+    /// Build failed after discovery selected candidate config files.
+    #[error(transparent)]
+    Build(#[from] ConfigBuilderError),
+}
 
 /// Errors raised while finding candidate config files.
 #[derive(Debug, Error)]
@@ -36,9 +54,6 @@ pub(crate) enum DiscoveryError {
         #[source]
         source: io::Error,
     },
-    /// A discovered config file path/source combination was invalid.
-    #[error(transparent)]
-    ConfigFile(#[from] ConfigFileError),
     /// Rejects file-rooted discovery for directory-only scopes.
     #[error("{kind:?} discovery cannot be anchored at file {path}")]
     UnsupportedFileAnchor {
@@ -53,51 +68,9 @@ pub(crate) enum DiscoveryError {
         /// Unsupported discovery scope.
         scope: DiscoveryScope,
     },
-}
-
-/// Errors raised while validating config paths, trust state, or TOML content.
-#[derive(Debug, Error)]
-pub(crate) enum ConfigFileError {
-    /// The path is not a local `.traces/config.toml` file.
-    #[error("unsupported local config file {path}")]
-    UnsupportedLocalConfigFile {
-        /// Rejected local config path.
-        path: PathBuf,
-    },
-    /// The path is not a supported global `config.toml` file.
-    #[error("unsupported global config file {path}")]
-    UnsupportedGlobalConfigFile {
-        /// Rejected global config path.
-        path: PathBuf,
-    },
-    /// The config file could not be read or parsed.
-    #[error("failed to load config file {path}")]
-    Read {
-        /// File that failed to load.
-        path: PathBuf,
-        /// TOML provider error from `figment`.
-        #[source]
-        source: Box<figment::Error>,
-    },
-    /// Trust verification failed before the file could be parsed.
-    #[error("failed to check trust for {root}")]
-    TrustCheckFailed {
-        /// Workspace root being checked.
-        root: PathBuf,
-        /// Underlying trust-store or hash error.
-        source: Box<ConfigStateError>,
-    },
-}
-
-/// Errors from the full config-loading pipeline.
-#[derive(Debug, Error)]
-pub(crate) enum ConfigLoadError {
-    /// Discovery failed before any config could be loaded.
+    /// A discovered config file path/source combination was invalid.
     #[error(transparent)]
-    Discovery(#[from] DiscoveryError),
-    /// Build failed after discovery selected candidate config files.
-    #[error(transparent)]
-    Build(#[from] ConfigBuilderError),
+    ConfigFile(#[from] ConfigFileError),
 }
 
 /// Errors raised while building a [`super::Config`] from discovered files.
@@ -142,6 +115,40 @@ pub(crate) enum ConfigBuilderError {
     /// Config file lifecycle validation failed.
     #[error(transparent)]
     ConfigFile(#[from] ConfigFileError),
+}
+
+/// Errors raised while validating config paths, trust state, or TOML content.
+#[derive(Debug, Error)]
+pub(crate) enum ConfigFileError {
+    /// The path is not a local `.traces/config.toml` file.
+    #[error("unsupported local config file {path}")]
+    UnsupportedLocalConfigFile {
+        /// Rejected local config path.
+        path: PathBuf,
+    },
+    /// The path is not a supported global `config.toml` file.
+    #[error("unsupported global config file {path}")]
+    UnsupportedGlobalConfigFile {
+        /// Rejected global config path.
+        path: PathBuf,
+    },
+    /// The config file could not be read or parsed.
+    #[error("failed to load config file {path}")]
+    Read {
+        /// File that failed to load.
+        path: PathBuf,
+        /// TOML provider error from `figment`.
+        #[source]
+        source: Box<figment::Error>,
+    },
+    /// Trust verification failed before the file could be parsed.
+    #[error("failed to check trust for {root}")]
+    TrustCheckFailed {
+        /// Workspace root being checked.
+        root: PathBuf,
+        /// Underlying trust-store or hash error.
+        source: Box<ConfigStateError>,
+    },
 }
 
 /// Errors from config tracking or trust-state operations.
