@@ -31,7 +31,10 @@ mod template;
 pub mod cli;
 
 #[cfg(any(test, feature = "test-utils"))]
-pub use config::{Config, ConfigService, TrustRequest};
+pub use config::{
+    Config, ConfigService, DateFieldConfig, FrontmatterConfig, SchemasConfig,
+    TrustRequest,
+};
 pub use dialog::{
     DialogError, DialogProvider, PresetDialogProvider, TerminalDialogProvider,
 };

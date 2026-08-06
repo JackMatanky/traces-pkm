@@ -2,28 +2,71 @@
 //!
 //! # Main Types
 //!
-//! - [`Config`] - Exposes the project root, template directories, and output
-//!   directory after discovery, trust checks, and merging.
+//! - [`Config`] - Exposes the project root, template directories, output
+//!   directory, Schema registry settings, and frontmatter key names after
+//!   discovery, trust checks, and merging.
 //! - [`TemplateConfig`] - Preserves local and global template directories so
 //!   template lookup can stay local-first.
+//! - [`SchemasConfig`] - The `[schemas]` class field name and registry
+//!   directory, declared here and consumed by later Schema-registry work.
+//! - [`FrontmatterConfig`] - The `[frontmatter]` key names for title, aliases,
+//!   and the `{name, format}` date roles, declared here and consumed by later
+//!   frontmatter-aware work.
+//! - [`DateFieldConfig`] - A `{name, format}` pair for one frontmatter date
+//!   role, held by [`FrontmatterConfig`].
 
 use std::path::{Path, PathBuf};
+
+use super::raw::{RawDateFieldConfig, RawFrontmatterConfig, RawSchemasConfig};
+
+/// Default `[schemas] class_field` when unconfigured.
+const DEFAULT_CLASS_FIELD: &str = "class";
+
+/// Default `[schemas] directory` when unconfigured.
+const DEFAULT_SCHEMAS_DIR: &str = ".traces/schemas/";
 
 /// Merged local/global configuration ready for consumers.
 #[derive(Clone, Debug)]
 pub struct Config {
     root: PathBuf,
     templates: TemplateConfig,
+    #[cfg_attr(
+        not(any(test, feature = "test-utils")),
+        expect(
+            dead_code,
+            reason = "declared by the config-surface ticket; read by the \
+                      later Schema-registry ticket \
+                      (.scratch/metadata-schemas/issues/01-config-surface.md)"
+        )
+    )]
+    schemas: SchemasConfig,
+    #[cfg_attr(
+        not(any(test, feature = "test-utils")),
+        expect(
+            dead_code,
+            reason = "declared by the config-surface ticket; read by later \
+                      frontmatter-aware tickets \
+                      (.scratch/metadata-schemas/issues/01-config-surface.md)"
+        )
+    )]
+    frontmatter: FrontmatterConfig,
 }
 
 impl Config {
     /// Creates a resolved config from builder-owned parts.
     #[inline]
     #[must_use]
-    pub(super) fn new(root: PathBuf, templates: TemplateConfig) -> Self {
+    pub(super) fn new(
+        root: PathBuf,
+        templates: TemplateConfig,
+        schemas: SchemasConfig,
+        frontmatter: FrontmatterConfig,
+    ) -> Self {
         Self {
             root,
             templates,
+            schemas,
+            frontmatter,
         }
     }
 
@@ -62,6 +105,38 @@ impl Config {
         self.templates.output()
     }
 
+    /// Returns the resolved `[schemas]` settings.
+    #[inline]
+    #[must_use]
+    #[cfg_attr(
+        not(any(test, feature = "test-utils")),
+        expect(
+            dead_code,
+            reason = "declared by the config-surface ticket; read by the \
+                      later Schema-registry ticket \
+                      (.scratch/metadata-schemas/issues/01-config-surface.md)"
+        )
+    )]
+    pub fn schemas(&self) -> &SchemasConfig {
+        &self.schemas
+    }
+
+    /// Returns the resolved `[frontmatter]` settings.
+    #[inline]
+    #[must_use]
+    #[cfg_attr(
+        not(any(test, feature = "test-utils")),
+        expect(
+            dead_code,
+            reason = "declared by the config-surface ticket; read by later \
+                      frontmatter-aware tickets \
+                      (.scratch/metadata-schemas/issues/01-config-surface.md)"
+        )
+    )]
+    pub fn frontmatter(&self) -> &FrontmatterConfig {
+        &self.frontmatter
+    }
+
     /// Builds config directly for tests that do not exercise discovery.
     ///
     /// Prefer [`super::service::ConfigService::at`] and TOML fixtures for
@@ -77,6 +152,8 @@ impl Config {
     ) -> Self {
         Self {
             templates: TemplateConfig::new(local, global, output),
+            schemas: SchemasConfig::default(),
+            frontmatter: FrontmatterConfig::default(),
             root,
         }
     }
@@ -128,5 +205,294 @@ impl TemplateConfig {
     #[must_use]
     pub(super) fn output(&self) -> &Path {
         &self.output
+    }
+}
+
+/// Resolved `[schemas]` settings: the class field name and registry
+/// directory.
+///
+/// The registry directory and class field are declared here but not yet
+/// read by any consumer; a later Schema-registry ticket resolves the
+/// directory against [`Config::root`] and reads Notes' class field.
+#[derive(Clone, Debug)]
+pub struct SchemasConfig {
+    #[cfg_attr(
+        not(any(test, feature = "test-utils")),
+        expect(
+            dead_code,
+            reason = "declared by the config-surface ticket; read by the \
+                      later Schema-registry ticket \
+                      (.scratch/metadata-schemas/issues/01-config-surface.md)"
+        )
+    )]
+    class_field: String,
+    #[cfg_attr(
+        not(any(test, feature = "test-utils")),
+        expect(
+            dead_code,
+            reason = "declared by the config-surface ticket; read by the \
+                      later Schema-registry ticket \
+                      (.scratch/metadata-schemas/issues/01-config-surface.md)"
+        )
+    )]
+    directory: PathBuf,
+}
+
+impl SchemasConfig {
+    /// Returns the frontmatter key naming a Note's File Class(es). Defaults
+    /// to `class`.
+    #[inline]
+    #[must_use]
+    #[cfg_attr(
+        not(any(test, feature = "test-utils")),
+        expect(
+            dead_code,
+            reason = "declared by the config-surface ticket; read by the \
+                      later Schema-registry ticket \
+                      (.scratch/metadata-schemas/issues/01-config-surface.md)"
+        )
+    )]
+    pub fn class_field(&self) -> &str {
+        &self.class_field
+    }
+
+    /// Returns the Schema registry directory, as configured (unresolved
+    /// against [`Config::root`]). Defaults to `.traces/schemas/`.
+    #[inline]
+    #[must_use]
+    #[cfg_attr(
+        not(any(test, feature = "test-utils")),
+        expect(
+            dead_code,
+            reason = "declared by the config-surface ticket; read by the \
+                      later Schema-registry ticket \
+                      (.scratch/metadata-schemas/issues/01-config-surface.md)"
+        )
+    )]
+    pub fn directory(&self) -> &Path {
+        &self.directory
+    }
+}
+
+impl Default for SchemasConfig {
+    #[inline]
+    fn default() -> Self {
+        Self {
+            class_field: DEFAULT_CLASS_FIELD.to_owned(),
+            directory: PathBuf::from(DEFAULT_SCHEMAS_DIR),
+        }
+    }
+}
+
+impl From<RawSchemasConfig> for SchemasConfig {
+    #[inline]
+    fn from(raw: RawSchemasConfig) -> Self {
+        Self {
+            class_field: raw
+                .class_field
+                .unwrap_or_else(|| DEFAULT_CLASS_FIELD.to_owned()),
+            directory: raw
+                .directory
+                .unwrap_or_else(|| PathBuf::from(DEFAULT_SCHEMAS_DIR)),
+        }
+    }
+}
+
+/// Resolved `[frontmatter]` settings: key names for title, aliases, and the
+/// `{name, format}` date roles.
+///
+/// Every key is optional; absence means no consumer-facing default is
+/// declared yet (later frontmatter-aware tickets read these).
+#[derive(Clone, Debug, Default)]
+pub struct FrontmatterConfig {
+    #[cfg_attr(
+        not(any(test, feature = "test-utils")),
+        expect(
+            dead_code,
+            reason = "declared by the config-surface ticket; read by later \
+                      frontmatter-aware tickets \
+                      (.scratch/metadata-schemas/issues/01-config-surface.md)"
+        )
+    )]
+    title: Option<String>,
+    #[cfg_attr(
+        not(any(test, feature = "test-utils")),
+        expect(
+            dead_code,
+            reason = "declared by the config-surface ticket; read by later \
+                      frontmatter-aware tickets \
+                      (.scratch/metadata-schemas/issues/01-config-surface.md)"
+        )
+    )]
+    aliases: Option<String>,
+    #[cfg_attr(
+        not(any(test, feature = "test-utils")),
+        expect(
+            dead_code,
+            reason = "declared by the config-surface ticket; read by later \
+                      frontmatter-aware tickets \
+                      (.scratch/metadata-schemas/issues/01-config-surface.md)"
+        )
+    )]
+    date_created: Option<DateFieldConfig>,
+    #[cfg_attr(
+        not(any(test, feature = "test-utils")),
+        expect(
+            dead_code,
+            reason = "declared by the config-surface ticket; read by later \
+                      frontmatter-aware tickets \
+                      (.scratch/metadata-schemas/issues/01-config-surface.md)"
+        )
+    )]
+    date_modified: Option<DateFieldConfig>,
+}
+
+impl FrontmatterConfig {
+    /// Returns the frontmatter key holding a Note's display title, if
+    /// configured.
+    #[inline]
+    #[must_use]
+    #[cfg_attr(
+        not(any(test, feature = "test-utils")),
+        expect(
+            dead_code,
+            reason = "declared by the config-surface ticket; read by later \
+                      frontmatter-aware tickets \
+                      (.scratch/metadata-schemas/issues/01-config-surface.md)"
+        )
+    )]
+    pub fn title(&self) -> Option<&str> {
+        self.title.as_deref()
+    }
+
+    /// Returns the frontmatter key holding a Note's aliases, if configured.
+    #[inline]
+    #[must_use]
+    #[cfg_attr(
+        not(any(test, feature = "test-utils")),
+        expect(
+            dead_code,
+            reason = "declared by the config-surface ticket; read by later \
+                      frontmatter-aware tickets \
+                      (.scratch/metadata-schemas/issues/01-config-surface.md)"
+        )
+    )]
+    pub fn aliases(&self) -> Option<&str> {
+        self.aliases.as_deref()
+    }
+
+    /// Returns the creation-timestamp frontmatter key and date format, if
+    /// configured.
+    #[inline]
+    #[must_use]
+    #[cfg_attr(
+        not(any(test, feature = "test-utils")),
+        expect(
+            dead_code,
+            reason = "declared by the config-surface ticket; read by later \
+                      frontmatter-aware tickets \
+                      (.scratch/metadata-schemas/issues/01-config-surface.md)"
+        )
+    )]
+    pub fn date_created(&self) -> Option<&DateFieldConfig> {
+        self.date_created.as_ref()
+    }
+
+    /// Returns the modification-timestamp frontmatter key and date format,
+    /// if configured.
+    #[inline]
+    #[must_use]
+    #[cfg_attr(
+        not(any(test, feature = "test-utils")),
+        expect(
+            dead_code,
+            reason = "declared by the config-surface ticket; read by later \
+                      frontmatter-aware tickets \
+                      (.scratch/metadata-schemas/issues/01-config-surface.md)"
+        )
+    )]
+    pub fn date_modified(&self) -> Option<&DateFieldConfig> {
+        self.date_modified.as_ref()
+    }
+}
+
+impl From<RawFrontmatterConfig> for FrontmatterConfig {
+    #[inline]
+    fn from(raw: RawFrontmatterConfig) -> Self {
+        Self {
+            title: raw.title,
+            aliases: raw.aliases,
+            date_created: raw.date_created.map(DateFieldConfig::from),
+            date_modified: raw.date_modified.map(DateFieldConfig::from),
+        }
+    }
+}
+
+/// A `{name, format}` pair naming a date-valued frontmatter key.
+#[derive(Clone, Debug)]
+pub struct DateFieldConfig {
+    #[cfg_attr(
+        not(any(test, feature = "test-utils")),
+        expect(
+            dead_code,
+            reason = "declared by the config-surface ticket; read by later \
+                      frontmatter-aware tickets \
+                      (.scratch/metadata-schemas/issues/01-config-surface.md)"
+        )
+    )]
+    name: String,
+    #[cfg_attr(
+        not(any(test, feature = "test-utils")),
+        expect(
+            dead_code,
+            reason = "declared by the config-surface ticket; read by later \
+                      frontmatter-aware tickets \
+                      (.scratch/metadata-schemas/issues/01-config-surface.md)"
+        )
+    )]
+    format: String,
+}
+
+impl DateFieldConfig {
+    /// Returns the frontmatter key name.
+    #[inline]
+    #[must_use]
+    #[cfg_attr(
+        not(any(test, feature = "test-utils")),
+        expect(
+            dead_code,
+            reason = "declared by the config-surface ticket; read by later \
+                      frontmatter-aware tickets \
+                      (.scratch/metadata-schemas/issues/01-config-surface.md)"
+        )
+    )]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Returns the date format string applied to the key's value.
+    #[inline]
+    #[must_use]
+    #[cfg_attr(
+        not(any(test, feature = "test-utils")),
+        expect(
+            dead_code,
+            reason = "declared by the config-surface ticket; read by later \
+                      frontmatter-aware tickets \
+                      (.scratch/metadata-schemas/issues/01-config-surface.md)"
+        )
+    )]
+    pub fn format(&self) -> &str {
+        &self.format
+    }
+}
+
+impl From<RawDateFieldConfig> for DateFieldConfig {
+    #[inline]
+    fn from(raw: RawDateFieldConfig) -> Self {
+        Self {
+            name: raw.name,
+            format: raw.format,
+        }
     }
 }
