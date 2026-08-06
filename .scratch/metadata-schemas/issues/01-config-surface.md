@@ -4,7 +4,7 @@
 
 **Blocked by:** None — can start immediately.
 
-**Status:** ready-for-agent
+**Status:** implemented
 
 **Category:** enhancement
 
@@ -38,3 +38,52 @@ The config service resolves `[templates]` (directory, output_dir) from local and
 - Any consumer of these values — the schemas directory, class field, or frontmatter keys are not read yet (later tickets).
 - The Schema TOML shape itself.
 - `date_created`/`date_modified` consumption (declared but not yet used).
+
+## Implementation notes
+
+**Date**: 2026-08-06
+**Implemented in**: `37cebd6` on branch `feat/config-surface` (worktree `.worktrees/config-surface`)
+
+### What was built
+
+- `src/config/raw.rs`: `RawSchemasConfig` (`class_field: Option<String>`, `directory: Option<PathBuf>`) and `RawFrontmatterConfig` (`title`/`aliases: Option<String>`, `date_created`/`date_modified: Option<RawDateFieldConfig>`) plus `RawDateFieldConfig { name: String, format: String }` — all `#[serde(deny_unknown_fields)]`, mirroring `RawTemplateConfig`. Wired onto `RawConfig` as `#[serde(default)] schemas`/`frontmatter` fields.
+- `src/config/model.rs`: resolved `SchemasConfig` (`class_field()` defaults to `"class"`, `directory()` defaults to `.traces/schemas/`, both via `Default`/`From<RawSchemasConfig>`) and `FrontmatterConfig` (`title()`/`aliases()`/`date_created()`/`date_modified()`, all `Option`, no synthesized default value — absence stays `None`) plus `DateFieldConfig { name, format }`. `Config` gained `schemas()`/`frontmatter()` accessors alongside the existing `root()`/`local_template_dir()`/etc.
+- `src/config/service.rs`: `ConfigService::build()` now extracts the merged `RawConfig` once (`let merged = figment.extract::<RawConfig>()?`) and threads `SchemasConfig::from(merged.schemas)`/`FrontmatterConfig::from(merged.frontmatter)` into `Config::new`, alongside the existing `output_dir` extraction. `scaffold_local`'s hand-built `RawConfig` literal now spreads `..RawConfig::default()` for the two new tables.
+- `src/config/mod.rs`, `src/lib.rs`: re-export `SchemasConfig`/`FrontmatterConfig`/`DateFieldConfig` under the same `#[cfg(any(test, feature = "test-utils"))]` gate as `Config`/`ConfigService`.
+
+### Key design decisions
+
+- **Frontmatter keys default to `None`, not a synthesized string.** The ticket only specifies concrete defaults for `[schemas] class_field`/`directory`; `title`/`aliases`/`date_created`/`date_modified` have no stated default value, so absence resolves to `Option::None` rather than inventing a convention (e.g. `"title"`) ahead of the consuming ticket.
+- **Merge semantics match `[templates]`.** `RawSchemasConfig`/`RawFrontmatterConfig` fields stay `Option<T>` (not `#[serde(default = "...")]`-materialized) so figment's per-layer "local wins, missing key falls through to the lower layer" merge behaves identically to the existing `output_dir` field — local partially overriding global was verified in `prioritizes_local_class_field_over_global`.
+- **Dead-code suppression, not deferred accessors.** The ticket's Agent Brief explicitly asks for the `Config` accessors now even though no consumer reads them yet. Since `cargo clippy --workspace` (the repo's clippy gate) compiles the lib without `cfg(test)`, every new field/accessor carries `#[cfg_attr(not(any(test, feature = "test-utils")), expect(dead_code, reason = "..."))]` — the same reachability condition already used to gate the crate's test-only-visible public API in `lib.rs`/`config/mod.rs`. Verified `expect` stays fulfilled under plain `cargo clippy --workspace` and does not misfire under `cargo clippy --all-targets --features test-utils` or `cargo test` (where the new tests genuinely use the accessors).
+
+### Test inventory
+
+New tests in `src/config/service.rs`, `mod tests::builder`, reusing the existing `Fixture`/`build()` harness (hoisted `build()` out of `mod merge` so `mod schemas`/`mod frontmatter` can share it):
+
+| Module | Test | Covers |
+|---|---|---|
+| `schemas` | `extracts_local_class_field` | parses `[schemas] class_field` |
+| `schemas` | `defaults_class_field_when_unconfigured` | defaults to `"class"` |
+| `schemas` | `extracts_local_directory` | parses `[schemas] directory` |
+| `schemas` | `defaults_directory_when_unconfigured` | defaults to `.traces/schemas/` |
+| `schemas` | `prioritizes_local_class_field_over_global` | local-over-global merge precedence |
+| `schemas` | `rejects_unknown_key` | deny-unknown-fields on `[schemas]` |
+| `frontmatter` | `parses_title_and_aliases` | `[frontmatter] title`/`aliases` |
+| `frontmatter` | `defaults_title_and_aliases_to_none_when_unconfigured` | absence → `None` |
+| `frontmatter` | `parses_date_created_and_date_modified` | `{name, format}` sub-tables |
+| `frontmatter` | `defaults_date_fields_to_none_when_unconfigured` | absence → `None` |
+| `frontmatter` | `rejects_unknown_key` | deny-unknown-fields on `[frontmatter]` |
+| `frontmatter` | `rejects_unknown_date_field_key` | deny-unknown-fields on the nested `{name, format}` object |
+
+### Verification
+
+```sh
+mise run verify   # fmt → lint → clippy → test-all → audit, exit 0
+```
+
+1223 tests pass (12 new). `cargo clippy --workspace -- -D warnings` clean; also spot-checked clean under `cargo clippy --workspace --all-targets --features test-utils -- -D warnings`.
+
+### Out of scope (unchanged)
+
+Confirmed nothing beyond the config surface was touched: the schemas directory is not resolved against `Config::root`, no code reads a Note's class-field frontmatter key, the `schema` minijinja namespace was not added, and `date_created`/`date_modified` are declared but not consumed anywhere.
