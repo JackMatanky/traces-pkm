@@ -57,43 +57,7 @@ mod tests {
     use super::*;
 
     mod fixtures {
-        use std::{fs, path::Path};
-
         use super::*;
-        use crate::config::{Discovered, LocalConfigFile, TrustRequest};
-
-        pub(super) fn service(temp: &Path) -> ConfigService {
-            ConfigService::at(
-                temp.join("tracked-store"),
-                temp.join("trust-store"),
-            )
-        }
-
-        pub(super) fn trust_config(
-            service: &ConfigService,
-            config_path: &Path,
-        ) {
-            let config = LocalConfigFile::<Discovered>::try_new(
-                config_path.to_path_buf(),
-            )
-            .expect("valid local config");
-            service
-                .trust(&TrustRequest::from(&config))
-                .expect("trust project config");
-        }
-
-        pub(super) fn create_trusted_project(
-            service: &ConfigService,
-            root: &Path,
-        ) {
-            fs::create_dir_all(root).expect("create project dir");
-            let config_file = root.join(".traces/config.toml");
-            fs::create_dir_all(config_file.parent().expect("config parent"))
-                .expect("create config parent");
-            fs::write(&config_file, "[templates]\ndirectory = \"templates\"\n")
-                .expect("write config file");
-            trust_config(service, &config_file);
-        }
 
         pub(super) fn record_paths(index: &FileIndex) -> Vec<String> {
             index
@@ -105,6 +69,8 @@ mod tests {
     }
     use fixtures::*;
 
+    use crate::cli::tests::fixtures::{create_trusted_project, service};
+
     mod index {
         use std::{fs, path::Path};
 
@@ -113,7 +79,7 @@ mod tests {
 
         use super::*;
         use crate::{
-            CwdGuard,
+            cli::CwdGuard,
             config::ConfigLoadError,
             index::{FileIndex, FileIndexError},
         };

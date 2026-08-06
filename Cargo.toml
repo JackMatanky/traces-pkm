@@ -46,6 +46,9 @@ pretty_assertions = "1.4.1"
 rstest = "0.24"
 tempfile = "3.27.0"
 
+[features]
+test-utils = []
+
 [lints.clippy]
 absolute_paths = "allow"
 allow_attributes_without_reason = "deny"

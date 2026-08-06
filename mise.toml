@@ -57,8 +57,8 @@ depends = ["check"]
 alias = "t"
 
 [tasks."test-all"]
-description = "Run all tests including doc-tests"
-run = "cargo test --workspace"
+description = "Run all tests including doc-tests (test-utils feature enabled so tests/test_utils_smoke.rs actually exercises the gated re-export surface)"
+run = "cargo test --workspace --features test-utils"
 
 [tasks.lint]
 description = "Run all hk linters"

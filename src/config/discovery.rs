@@ -13,9 +13,11 @@
 //! traversal state private and downstream inputs typed.
 
 use std::{
-    fs, io,
+    io,
     path::{Path, PathBuf},
 };
+
+use walkdir::WalkDir;
 
 use super::{
     error::DiscoveryError,
@@ -161,6 +163,7 @@ impl DiscoveryOutcome {
     }
 
     /// Returns the discovery operation that produced this outcome.
+    #[cfg(test)]
     #[inline]
     #[must_use]
     pub(crate) fn kind(&self) -> DiscoveryScope {
@@ -168,6 +171,7 @@ impl DiscoveryOutcome {
     }
 
     /// Returns the filesystem anchor used for discovery.
+    #[cfg(test)]
     #[inline]
     #[must_use]
     pub(crate) fn anchor(&self) -> &DiscoveryAnchor {
@@ -182,6 +186,7 @@ impl DiscoveryOutcome {
     }
 
     /// Returns global config candidates found during discovery (empty if none).
+    #[cfg(test)]
     #[inline]
     #[must_use]
     pub(super) fn global(&self) -> &[GlobalConfigFile<Discovered>] {
@@ -354,7 +359,7 @@ impl DiscoveryEngine {
         let nearest = Self::local_from_anchor(&anchor)?;
         let root = nearest.root().to_path_buf();
         let mut local = vec![nearest];
-        Self::collect_descendant_configs(&root, &mut local)?;
+        local.extend(Self::collect_descendant_configs(&root)?);
         local.sort_by(|left, right| left.root().cmp(right.root()));
         local.dedup_by(|left, right| left.root() == right.root());
         Ok(DiscoveryOutcome::with_kind(
@@ -415,35 +420,20 @@ impl DiscoveryEngine {
 
     fn collect_descendant_configs(
         dir: &Path,
-        configs: &mut Vec<LocalConfigFile<Discovered>>,
-    ) -> Result<(), DiscoveryError> {
-        let config_file = dir.join(LOCAL_CONFIG_FILE);
-        if Self::is_config_file(&config_file)? {
-            configs.push(LocalConfigFile::<Discovered>::try_new(config_file)?);
-        }
-
-        for entry in fs::read_dir(dir).map_err(|source| {
-            DiscoveryError::PathInaccessible {
-                path: dir.to_path_buf(),
-                source,
+    ) -> Result<Vec<LocalConfigFile<Discovered>>, DiscoveryError> {
+        let mut configs = Vec::new();
+        for entry in WalkDir::new(dir) {
+            let entry = entry.map_err(|source| walk_error(dir, source))?;
+            if !entry.file_type().is_dir() {
+                continue;
             }
-        })? {
-            let entry =
-                entry.map_err(|source| DiscoveryError::PathInaccessible {
-                    path: dir.to_path_buf(),
-                    source,
-                })?;
-            let file_type = entry.file_type().map_err(|source| {
-                DiscoveryError::PathInaccessible {
-                    path: entry.path(),
-                    source,
-                }
-            })?;
-            if file_type.is_dir() {
-                Self::collect_descendant_configs(&entry.path(), configs)?;
+            let config_file = entry.path().join(LOCAL_CONFIG_FILE);
+            if Self::is_config_file(&config_file)? {
+                configs
+                    .push(LocalConfigFile::<Discovered>::try_new(config_file)?);
             }
         }
-        Ok(())
+        Ok(configs)
     }
 
     fn is_config_file(path: &Path) -> Result<bool, DiscoveryError> {
@@ -457,6 +447,16 @@ impl DiscoveryEngine {
                 source,
             }),
         }
+    }
+}
+
+/// Wraps a [`walkdir::Error`] with path context as a
+/// [`DiscoveryError::PathInaccessible`].
+fn walk_error(dir: &Path, source: walkdir::Error) -> DiscoveryError {
+    let path = source.path().unwrap_or(dir).to_path_buf();
+    DiscoveryError::PathInaccessible {
+        path,
+        source: source.into(),
     }
 }
 

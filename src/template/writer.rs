@@ -26,7 +26,7 @@ use super::{error::TemplateError, path::DeclaredOutputPath};
 use crate::{DialogError, DialogProvider, path::RootConfinedPath};
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub(crate) enum WriteMode {
+pub enum WriteMode {
     /// Render only. [`TemplateService::write`] returns
     /// [`WriteOutcome::Previewed`] without touching disk.
     ///
@@ -55,7 +55,7 @@ impl WriteMode {
 /// This is [`WriteMode::Commit`]'s payload, produced once from CLI flags and
 /// then threaded through output resolution and the final write.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub(crate) enum CommitPolicy {
+pub enum CommitPolicy {
     /// Fail with [`TemplateError::OutputFileAlreadyExists`] if the target
     /// already exists. The default, safe mode.
     CreateNew,
@@ -114,7 +114,7 @@ impl CommitPolicy {
 ///
 /// [`TemplateService::write`]: super::service::TemplateService::write
 #[derive(Debug, Eq, PartialEq)]
-pub(crate) enum WriteOutcome {
+pub enum WriteOutcome {
     /// Written to disk at this path.
     Written(PathBuf),
     /// [`WriteMode::DryRun`]: the content for the caller to print, with nothing

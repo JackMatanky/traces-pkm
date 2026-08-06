@@ -28,7 +28,7 @@ const DEFAULT_EXTENSION: &str = "md";
 /// template resolution. It guarantees the input path is relative, non-empty,
 /// and unable to escape through `..`; it does not prove the template exists.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct TemplatePathInput(SafeRelativePath);
+pub struct TemplatePathInput(SafeRelativePath);
 
 impl TemplatePathInput {
     /// Parses `path` as a template path input.
@@ -60,6 +60,7 @@ impl TemplatePathInput {
 }
 
 impl AsRef<Path> for TemplatePathInput {
+    #[inline]
     fn as_ref(&self) -> &Path {
         self.0.as_ref()
     }
@@ -165,7 +166,7 @@ impl DeclaredOutputPath {
 /// ([`Self::AmbiguousTemplate`], [`Self::TemplateNotFound`], or
 /// [`Self::DirectoryRead`]).
 #[derive(Debug, Error)]
-pub(crate) enum TemplatePathError {
+pub enum TemplatePathError {
     /// `name` is absolute. A template identifier must be relative to whichever
     /// directory it is searched in.
     #[error("template path {0} must be relative, not absolute")]

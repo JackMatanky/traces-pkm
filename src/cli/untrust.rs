@@ -59,8 +59,10 @@ mod tests {
     use clap::Parser;
 
     use super::*;
-    use crate::config::{ConfigTrustStatus, TrustRequest};
-
+    use crate::{
+        cli::tests::fixtures::{create_empty_config, service},
+        config::{ConfigTrustStatus, TrustRequest},
+    };
     #[derive(Debug, Parser)]
     struct TestCli {
         #[command(flatten)]
@@ -105,23 +107,11 @@ mod tests {
         }
     }
 
-    fn service(temp: &Path) -> ConfigService {
-        ConfigService::at(temp.join("tracked-store"), temp.join("trust-store"))
-    }
-
     fn untrust_args(path: Option<PathBuf>, all: bool) -> Untrust {
         Untrust {
             all,
             path,
         }
-    }
-
-    fn create_config(root: &Path) -> PathBuf {
-        let config_file = root.join(".traces/config.toml");
-        fs::create_dir_all(config_file.parent().expect("config parent"))
-            .expect("create config parent");
-        fs::write(&config_file, "").expect("write config file");
-        config_file
     }
 
     fn trust_root(service: &ConfigService, root: &Path) {
@@ -133,14 +123,14 @@ mod tests {
         use pretty_assertions::assert_eq;
 
         use super::*;
-        use crate::CwdGuard;
+        use crate::cli::CwdGuard;
 
         #[test]
         fn removes_the_resolved_root() {
             let temp = tempfile::tempdir().expect("create temp dir");
             let root = temp.path().join("project");
             fs::create_dir_all(&root).expect("create project dir");
-            super::create_config(&root);
+            create_empty_config(&root);
             let service = super::service(temp.path());
             super::trust_root(&service, &root);
 
@@ -162,7 +152,7 @@ mod tests {
             let root = temp.path().join("project");
             let cwd = root.join("notes/daily");
             fs::create_dir_all(&cwd).expect("create nested cwd");
-            super::create_config(&root);
+            create_empty_config(&root);
             let service = super::service(temp.path());
             super::trust_root(&service, &root);
             let _guard = CwdGuard::enter(&cwd);
@@ -185,8 +175,8 @@ mod tests {
             let parent = temp.path().join("parent");
             let child = parent.join("child");
             fs::create_dir_all(&child).expect("create child dir");
-            super::create_config(&parent);
-            super::create_config(&child);
+            create_empty_config(&parent);
+            create_empty_config(&child);
             let service = super::service(temp.path());
             super::trust_root(&service, &parent);
             super::trust_root(&service, &child);

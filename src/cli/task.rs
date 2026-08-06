@@ -100,38 +100,7 @@ impl Task {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    mod fixtures {
-        use std::{fs, path::Path};
-
-        use super::*;
-        use crate::config::{Discovered, LocalConfigFile, TrustRequest};
-
-        pub(super) fn service(temp: &Path) -> ConfigService {
-            ConfigService::at(
-                temp.join("tracked-store"),
-                temp.join("trust-store"),
-            )
-        }
-
-        pub(super) fn create_trusted_project(
-            service: &ConfigService,
-            root: &Path,
-        ) {
-            fs::create_dir_all(root).expect("create project dir");
-            let config_file = root.join(".traces/config.toml");
-            fs::create_dir_all(config_file.parent().expect("config parent"))
-                .expect("create config parent");
-            fs::write(&config_file, "[templates]\ndirectory = \"templates\"\n")
-                .expect("write config file");
-            let config = LocalConfigFile::<Discovered>::try_new(config_file)
-                .expect("valid local config");
-            service
-                .trust(&TrustRequest::from(&config))
-                .expect("trust project config");
-        }
-    }
-    use fixtures::*;
+    use crate::cli::tests::fixtures::{create_trusted_project, service};
 
     mod lines {
         use std::fs;
@@ -244,7 +213,7 @@ mod tests {
         use std::fs;
 
         use super::*;
-        use crate::{CwdGuard, config::ConfigLoadError};
+        use crate::{cli::CwdGuard, config::ConfigLoadError};
 
         #[test]
         fn succeeds_for_a_trusted_project_root() {

@@ -29,12 +29,12 @@ mod store;
 
 use std::{fs, path::Path};
 
-pub(crate) use error::FileIndexError;
-pub(crate) use file::{FileFormat, FileRecord};
+pub use error::FileIndexError;
+pub(crate) use file::FileFormat;
+pub use file::FileRecord;
 use inlinks::{InlinkMap, derive_inlinks};
-pub(crate) use query::{
-    FileField, IndexRecord, QueryError, QueryOutcome, QuerySource, SortOrder,
-};
+pub(crate) use query::{FileField, QueryError, SortOrder};
+pub use query::{IndexRecord, QueryOutcome, QuerySource};
 use store::IndexStore;
 
 use crate::note::{Note, parse_markdown};
@@ -48,7 +48,7 @@ const INDEX_FILE: &str = ".traces/index.redb";
 /// Every regular file contributes a [`FileRecord`]. Markdown files also
 /// contribute a [`Note`], accessible through [`Self::notes`] or [`Self::note`].
 #[derive(Clone, Debug)]
-pub(crate) struct FileIndex {
+pub struct FileIndex {
     records: Vec<FileRecord>,
     notes: Vec<Note>,
     /// Inbound links, keyed by target path; see [`inlinks::derive_inlinks`].
@@ -67,7 +67,8 @@ impl FileIndex {
     ///
     /// - [`FileIndexError::Io`] if a directory cannot be read, a file's
     ///   metadata cannot be inspected, or a markdown file cannot be read.
-    pub(crate) fn build(root: &Path) -> Result<Self, FileIndexError> {
+    #[inline]
+    pub fn build(root: &Path) -> Result<Self, FileIndexError> {
         let records = scan::scan_root(root)?;
         let mut notes = Vec::new();
 
@@ -117,7 +118,8 @@ impl FileIndex {
     /// - [`FileIndexError::Store`] or [`FileIndexError::Deserialize`] if the
     ///   previous index cannot be loaded.
     /// - [`FileIndexError::Serialize`] if the refreshed index cannot be stored.
-    pub(crate) fn refresh(root: &Path) -> Result<Self, FileIndexError> {
+    #[inline]
+    pub fn refresh(root: &Path) -> Result<Self, FileIndexError> {
         let previous = Self::load(root)?;
         let records = scan::scan_root(root)?;
         let mut notes = Vec::new();
@@ -169,7 +171,7 @@ impl FileIndex {
     /// - [`FileIndexError::Store`] if the database transaction fails.
     /// - [`FileIndexError::Serialize`] if a record cannot be encoded.
     #[inline]
-    pub(crate) fn persist(&self, root: &Path) -> Result<(), FileIndexError> {
+    pub fn persist(&self, root: &Path) -> Result<(), FileIndexError> {
         IndexStore::open(root)?.replace_all(
             &self.records,
             &self.notes,
@@ -187,13 +189,62 @@ impl FileIndex {
     /// - [`FileIndexError::Deserialize`] if stored bytes are not a valid
     ///   record.
     #[inline]
-    pub(crate) fn load(root: &Path) -> Result<Self, FileIndexError> {
+    pub fn load(root: &Path) -> Result<Self, FileIndexError> {
         let (records, notes, inlinks) = IndexStore::open(root)?.load_all()?;
         Ok(Self {
             records,
             notes,
             inlinks,
         })
+    }
+
+    /// Returns indexed [`FileRecord`]s, sorted by path.
+    #[inline]
+    #[must_use]
+    pub fn records(&self) -> &[FileRecord] {
+        &self.records
+    }
+
+    /// Returns indexed [`Note`] records, sorted by path.
+    #[inline]
+    #[must_use]
+    #[cfg_attr(
+        not(any(test, feature = "test-utils")),
+        expect(
+            dead_code,
+            reason = "no current caller outside tests; CLI exposes \
+                      FileIndex::records but not the parsed Note view yet"
+        )
+    )]
+    pub fn notes(&self) -> &[Note] {
+        &self.notes
+    }
+
+    /// Returns the [`Note`] for the note at `path`, if indexed.
+    ///
+    /// # Performance
+    ///
+    /// O(log n): [`Self::notes`] is kept sorted by path, so this binary
+    /// searches rather than scanning.
+    #[inline]
+    #[must_use]
+    pub(crate) fn note(&self, path: &Path) -> Option<&Note> {
+        find_by_path(&self.notes, path)
+    }
+
+    /// Returns the [`FileRecord`] for the file at `path`, if indexed.
+    ///
+    /// # Performance
+    ///
+    /// O(log n): [`Self::records`] is kept sorted by path, so this binary
+    /// searches rather than scanning.
+    #[inline]
+    #[must_use]
+    pub(crate) fn record(&self, path: &Path) -> Option<&FileRecord> {
+        self.records
+            .binary_search_by(|r| r.path().cmp(path))
+            .ok()
+            .and_then(|idx| self.records.get(idx))
     }
 
     /// Executes a page-level query over `source`, consuming this index.
@@ -213,8 +264,9 @@ impl FileIndex {
     /// `self.inlinks`, so this is just the single-pass iterator merge-join
     /// across `records` and `notes`, looking each matched Note's inlinks up by
     /// moving them out of the map instead of cloning.
+    #[inline]
     #[must_use]
-    pub(crate) fn query(self, source: &QuerySource) -> QueryOutcome {
+    pub fn query(self, source: &QuerySource) -> QueryOutcome {
         let Self {
             records,
             notes,
@@ -252,8 +304,9 @@ impl FileIndex {
     ///   [`IndexRecord`]'s `note` field is an [`Arc`], not a deep clone.
     ///
     /// [`Arc`]: std::sync::Arc
+    #[inline]
     #[must_use]
-    pub(crate) fn query_tasks(self, source: &QuerySource) -> QueryOutcome {
+    pub fn query_tasks(self, source: &QuerySource) -> QueryOutcome {
         let Self {
             records,
             notes,
@@ -277,77 +330,6 @@ impl FileIndex {
         }
         QueryOutcome::new(matched)
     }
-
-    /// Returns indexed [`FileRecord`]s, sorted by path.
-    #[inline]
-    #[must_use]
-    pub(crate) fn records(&self) -> &[FileRecord] {
-        &self.records
-    }
-
-    /// Returns indexed [`Note`] records, sorted by path.
-    #[inline]
-    #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "no current caller outside tests; CLI exposes \
-                      FileIndex::records but not the parsed Note view yet"
-        )
-    )]
-    pub(crate) fn notes(&self) -> &[Note] {
-        &self.notes
-    }
-
-    /// Returns the [`Note`] for the note at `path`, if indexed.
-    ///
-    /// # Performance
-    ///
-    /// O(log n): [`Self::notes`] is kept sorted by path, so this binary
-    /// searches rather than scanning.
-    #[inline]
-    #[must_use]
-    pub(crate) fn note(&self, path: &Path) -> Option<&Note> {
-        find_by_path(&self.notes, path)
-    }
-
-    /// Returns the [`FileRecord`] for the file at `path`, if indexed.
-    ///
-    /// # Performance
-    ///
-    /// O(log n): [`Self::records`] is kept sorted by path, so this binary
-    /// searches rather than scanning.
-    #[inline]
-    #[must_use]
-    pub(crate) fn record(&self, path: &Path) -> Option<&FileRecord> {
-        self.records
-            .binary_search_by(|r| r.path().cmp(path))
-            .ok()
-            .and_then(|idx| self.records.get(idx))
-    }
-}
-
-/// Reads and parses the markdown file for `record` into a [`Note`].
-///
-/// Shared by [`FileIndex::build`] (parses every markdown file from scratch) and
-/// [`FileIndex::refresh`] (parses only added or changed markdown files).
-///
-/// # Errors
-///
-/// - [`FileIndexError::Io`] if the file cannot be read.
-fn parse_note_file(
-    root: &Path,
-    record: &FileRecord,
-) -> Result<Note, FileIndexError> {
-    let full_path = root.join(record.path());
-    let content = fs::read_to_string(&full_path).map_err(|source| {
-        FileIndexError::Io {
-            path: full_path,
-            source,
-        }
-    })?;
-    Ok(parse_markdown(record.path(), &content))
 }
 
 /// Merge-joins `records` and `notes` by path, yielding only the file/note pairs
@@ -387,6 +369,28 @@ fn record_with_inlinks(
 ) -> IndexRecord {
     let links = inlinks.remove(file.path()).unwrap_or_default();
     IndexRecord::new(file, note).with_inlinks(links)
+}
+
+/// Reads and parses the markdown file for `record` into a [`Note`].
+///
+/// Shared by [`FileIndex::build`] (parses every markdown file from scratch) and
+/// [`FileIndex::refresh`] (parses only added or changed markdown files).
+///
+/// # Errors
+///
+/// - [`FileIndexError::Io`] if the file cannot be read.
+fn parse_note_file(
+    root: &Path,
+    record: &FileRecord,
+) -> Result<Note, FileIndexError> {
+    let full_path = root.join(record.path());
+    let content = fs::read_to_string(&full_path).map_err(|source| {
+        FileIndexError::Io {
+            path: full_path,
+            source,
+        }
+    })?;
+    Ok(parse_markdown(record.path(), &content))
 }
 
 /// Binary-searches path-sorted `notes` for an exact path match.

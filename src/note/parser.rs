@@ -28,8 +28,9 @@ use super::{
 /// Parses Markdown source into a [`Note`].
 ///
 /// Enables task lists, YAML frontmatter blocks, and Obsidian wikilinks.
+#[inline]
 #[must_use]
-pub(crate) fn parse_markdown(path: impl Into<PathBuf>, src: &str) -> Note {
+pub fn parse_markdown<P: Into<PathBuf>>(path: P, src: &str) -> Note {
     let mut opts = Options::empty();
     opts.insert(Options::ENABLE_TASKLISTS);
     opts.insert(Options::ENABLE_YAML_STYLE_METADATA_BLOCKS);

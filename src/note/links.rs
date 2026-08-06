@@ -10,7 +10,7 @@ use super::cursor::SourceText;
 
 /// Represents the link syntax for an extracted [`Link`].
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
-pub(crate) enum LinkType {
+pub enum LinkType {
     /// Standard Markdown `[text](target)` link.
     Markdown,
     /// Obsidian `[[target|alias]]` wikilink.
@@ -19,7 +19,7 @@ pub(crate) enum LinkType {
 
 /// Represents an outgoing Markdown link or Obsidian wikilink.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
-pub(crate) struct Link {
+pub struct Link {
     target: String,
     text: String,
     kind: LinkType,
@@ -207,7 +207,7 @@ impl Link {
 /// - An in-page anchor with no Note path at all, such as `[[#Heading]]`
 ///   ([`Self::AnchorOnly`]).
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub(crate) enum LinkTarget<'a> {
+pub enum LinkTarget<'a> {
     /// A path with no `#` suffix.
     Path(&'a str),
     /// A path followed by a `#heading` anchor.

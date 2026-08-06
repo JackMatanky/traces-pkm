@@ -24,11 +24,11 @@ mod model;
 mod parser;
 mod tag;
 
-pub(crate) use links::{Link, LinkTarget, LinkType};
-pub(crate) use lists::{List, ListItem, TaskStatus};
-pub(crate) use metadata::{
+pub use links::{Link, LinkTarget, LinkType};
+pub use lists::{List, ListItem, TaskStatus};
+pub use metadata::{
     FieldValue, Frontmatter, InlineField, InlineFieldForm, RawFrontmatter,
 };
-pub(crate) use model::Note;
-pub(crate) use parser::parse_markdown;
-pub(crate) use tag::Tag;
+pub use model::Note;
+pub use parser::parse_markdown;
+pub use tag::Tag;

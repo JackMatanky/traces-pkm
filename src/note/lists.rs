@@ -6,7 +6,7 @@ use super::metadata::InlineField;
 
 /// Represents an ordered or unordered Markdown list.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
-pub(crate) struct List {
+pub struct List {
     is_ordered: bool,
     items: Vec<ListItem>,
 }
@@ -47,7 +47,7 @@ impl List {
 
 /// Represents the completion state of a Markdown task list item.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
-pub(crate) enum TaskStatus {
+pub enum TaskStatus {
     Incomplete,
     Complete,
 }
@@ -55,7 +55,7 @@ pub(crate) enum TaskStatus {
 /// Represents a Markdown list item with optional task state, child lists, and
 /// item fields.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
-pub(crate) struct ListItem {
+pub struct ListItem {
     text: String,
     task_status: Option<TaskStatus>,
     children: Vec<List>,

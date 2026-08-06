@@ -117,48 +117,7 @@ impl Completions {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    mod fixtures {
-        use std::path::{Path, PathBuf};
-
-        use super::*;
-        use crate::config::{Discovered, LocalConfigFile, TrustRequest};
-
-        pub(super) fn service(temp: &Path) -> ConfigService {
-            ConfigService::at(
-                temp.join("tracked-store"),
-                temp.join("trust-store"),
-            )
-        }
-
-        pub(super) fn create_config(root: &Path, directory: &str) -> PathBuf {
-            let config_file = root.join(".traces/config.toml");
-            std::fs::create_dir_all(
-                config_file.parent().expect("config parent"),
-            )
-            .expect("create config parent");
-            std::fs::write(
-                &config_file,
-                format!("[templates]\ndirectory = \"{directory}\"\n"),
-            )
-            .expect("write config file");
-            config_file
-        }
-
-        pub(super) fn trust_config(
-            service: &ConfigService,
-            config_path: &Path,
-        ) {
-            let config = LocalConfigFile::<Discovered>::try_new(
-                config_path.to_path_buf(),
-            )
-            .expect("valid local config");
-            service
-                .trust(&TrustRequest::from(&config))
-                .expect("trust project config");
-        }
-    }
-    use fixtures::*;
+    use crate::cli::tests::fixtures::{create_config, service, trust_config};
 
     mod script {
         use super::*;
@@ -206,7 +165,10 @@ mod tests {
         use std::fs;
 
         use super::*;
-        use crate::{CwdGuard, cli::error::CliError, config::ConfigLoadError};
+        use crate::{
+            cli::{CwdGuard, error::CliError},
+            config::ConfigLoadError,
+        };
 
         #[test]
         fn fails_with_config_discovery_when_no_config_is_found() {
@@ -236,7 +198,10 @@ mod tests {
         use pretty_assertions::assert_eq;
 
         use super::*;
-        use crate::{CwdGuard, cli::error::CliError, config::ConfigLoadError};
+        use crate::{
+            cli::{CwdGuard, error::CliError},
+            config::ConfigLoadError,
+        };
 
         #[test]
         fn lists_every_available_template_name() {

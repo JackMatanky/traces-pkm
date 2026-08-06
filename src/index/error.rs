@@ -13,7 +13,7 @@ use thiserror::Error;
 /// Variants distinguish filesystem access, database storage, and postcard
 /// encoding failures.
 #[derive(Debug, Error)]
-pub(crate) enum FileIndexError {
+pub enum FileIndexError {
     /// A filesystem operation failed during a scan or directory setup.
     ///
     /// Occurs while scanning a project root or preparing the index database's

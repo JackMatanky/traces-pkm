@@ -30,7 +30,7 @@ use std::{
     sync::Arc,
 };
 
-use minijinja::{Environment, Error, ErrorKind};
+use minijinja::{Environment, Error};
 
 use super::error::confine_error;
 use crate::{
@@ -185,8 +185,7 @@ impl AsRef<Path> for InspectTarget {
 /// Used for I/O errors other than "not found" (such as permission denied or a
 /// broken symlink loop).
 fn inspect_error(path: &str, source: io::Error) -> Error {
-    Error::new(ErrorKind::InvalidOperation, format!("failed to inspect {path}"))
-        .with_source(source)
+    super::error::invalid_operation(format!("failed to inspect {path}"), source)
 }
 
 /// Converts an optional path component to an owned `String`.

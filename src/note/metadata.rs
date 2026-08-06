@@ -14,7 +14,7 @@ use super::Link;
 
 /// Represents a raw YAML frontmatter block from a Markdown note.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub(crate) struct RawFrontmatter(String);
+pub struct RawFrontmatter(String);
 
 impl RawFrontmatter {
     /// Stores unparsed frontmatter text.
@@ -41,7 +41,7 @@ impl RawFrontmatter {
 
 /// Represents structured frontmatter fields parsed from [`RawFrontmatter`].
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
-pub(crate) struct Frontmatter {
+pub struct Frontmatter {
     fields: Vec<MetadataField>,
 }
 
@@ -83,6 +83,7 @@ impl Frontmatter {
 /// Empty, malformed, or non-mapping frontmatter becomes
 /// [`Frontmatter::default`] after logging parse failures.
 impl From<&RawFrontmatter> for Frontmatter {
+    #[inline]
     fn from(raw: &RawFrontmatter) -> Self {
         if raw.is_empty() {
             return Self::default();
@@ -120,7 +121,7 @@ impl From<&RawFrontmatter> for Frontmatter {
 /// Distinguishes an inline field's source syntax: bare, bracket-wrapped, or
 /// paren-wrapped.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
-pub(crate) enum InlineFieldForm {
+pub enum InlineFieldForm {
     /// `Key:: Value`, filling an entire line.
     Body,
     /// `[Key:: Value]`, with the key visible in rendered Markdown.
@@ -169,7 +170,7 @@ impl PartialEq<str> for FieldKey {
 
 /// Represents key-value metadata from frontmatter or Markdown body text.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
-pub(crate) struct MetadataField {
+pub struct MetadataField {
     key: FieldKey,
     value: FieldValue,
 }
@@ -202,7 +203,7 @@ impl MetadataField {
 
 /// Represents a `Key:: Value` inline field with its source syntax.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
-pub(crate) struct InlineField {
+pub struct InlineField {
     metadata: MetadataField,
     form: InlineFieldForm,
 }
@@ -278,7 +279,7 @@ impl InlineField {
 /// Represents a metadata value parsed from YAML frontmatter or inline field
 /// text.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
-pub(crate) enum FieldValue {
+pub enum FieldValue {
     /// Empty or missing value.
     Null,
     /// Boolean value.
@@ -319,6 +320,7 @@ impl FieldValue {
 /// [`FieldValue::Link`], an ISO date prefix becomes [`FieldValue::Date`], and
 /// anything else stays [`FieldValue::String`].
 impl From<serde_yaml::Value> for FieldValue {
+    #[inline]
     fn from(val: serde_yaml::Value) -> Self {
         match val {
             serde_yaml::Value::Null => Self::Null,

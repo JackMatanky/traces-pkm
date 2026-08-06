@@ -287,7 +287,7 @@ mod tests {
 
     mod run {
         use super::*;
-        use crate::{CwdGuard, cli::UserAbort};
+        use crate::cli::{CwdGuard, UserAbort};
 
         #[test]
         fn leaves_no_traces_directory_when_the_prompt_is_cancelled() {

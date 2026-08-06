@@ -124,7 +124,7 @@ impl From<StateDirRoot> for FileStateStore {
 
 impl FileStateStore {
     /// Creates a store rooted at an arbitrary path for tests.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-utils"))]
     #[inline]
     #[must_use]
     pub(crate) fn at(root: PathBuf) -> Self {

@@ -436,15 +436,12 @@ mod tests {
             // Act
             let _ = LocalConfigFile::<Tracked>::from((file, &state));
 
-            // Assert
-            #[expect(clippy::disallowed_methods, reason = "tests use std fs")]
-            let canonical_path = std::fs::canonicalize(&config_path).unwrap();
-            let expected_marker = temp.path().join("tracked").join(
-                crate::hash::Blake3PathHash::from(canonical_path.as_path())
-                    .as_str(),
+            let tracked =
+                crate::FileStateStore::at(temp.path().join("tracked"));
+            assert!(
+                tracked.contains(&config_path).expect("check tracked store"),
+                "config path should be recorded in the tracked store"
             );
-
-            assert!(expected_marker.exists());
         }
     }
 

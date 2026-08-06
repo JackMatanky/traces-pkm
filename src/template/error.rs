@@ -17,7 +17,7 @@ use crate::{
 /// Identifies pipeline stage failures, allowing callers to determine which
 /// stage failed without inspecting the wrapped source error.
 #[derive(Debug, Error)]
-pub(crate) enum TemplateError {
+pub enum TemplateError {
     /// `name` failed to resolve to a file. Transparent: [`TemplatePathError`]'s
     /// own [`Display`] already names the template and what went wrong.
     ///
@@ -98,7 +98,7 @@ pub(crate) enum TemplateError {
 /// parsing display text, so new custom functions don't need to update
 /// string-matching logic in the CLI diagnostic layer.
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub(crate) enum RenderFailureKind {
+pub enum RenderFailureKind {
     /// The template's own minijinja syntax is invalid.
     Syntax,
     /// An interactive `ui.*` prompt failed for a reason other than a
@@ -120,9 +120,9 @@ pub(crate) enum RenderFailureKind {
 }
 
 /// Classifies `error` per [`RenderFailureKind`].
-pub(crate) fn classify_render_error(
-    error: &minijinja::Error,
-) -> RenderFailureKind {
+#[inline]
+#[must_use]
+pub fn classify_render_error(error: &minijinja::Error) -> RenderFailureKind {
     if error.kind() == minijinja::ErrorKind::SyntaxError {
         return RenderFailureKind::Syntax;
     }

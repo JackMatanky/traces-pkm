@@ -39,7 +39,7 @@ use crate::note::{FieldValue, Note};
 
 /// Selects which Markdown Notes a page-level or task-level query includes.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) enum QuerySource {
+pub enum QuerySource {
     /// Includes every indexed Markdown Note.
     All,
     /// Includes Notes tagged with `tag` or a sub-tag nested under it (for
@@ -87,7 +87,7 @@ impl QuerySource {
 /// `file.*`, `task.*`, frontmatter, inline fields, tags, and derived inlinks
 /// for template rendering and CLI output.
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct IndexRecord {
+pub struct IndexRecord {
     file: FileRecord,
     /// Reference-counted, not owned outright: exploding one Note into
     /// several rows (see [`super::FileIndex::query_tasks`] and
@@ -287,7 +287,7 @@ struct TaskInfo {
 /// [`QueryOutcome`], enabling method chaining such as `outcome.filter("rating >
 /// 7")?.sort("rating", true)?.limit(10)?`.
 #[derive(Clone, Debug, Default, PartialEq)]
-pub(crate) struct QueryOutcome {
+pub struct QueryOutcome {
     records: Vec<IndexRecord>,
 }
 

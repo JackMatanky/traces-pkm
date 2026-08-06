@@ -24,7 +24,7 @@
 use std::{path::Path, sync::Arc};
 
 use minijinja::{
-    Environment, Error, ErrorKind, State,
+    Environment, Error, State,
     value::{Enumerator, Object, Value},
 };
 
@@ -104,8 +104,7 @@ impl Object for FileOps {
 /// Used by `file.include()` when reading `path` fails after root confinement
 /// checks pass.
 fn read_error(path: &str, source: std::io::Error) -> Error {
-    Error::new(ErrorKind::InvalidOperation, format!("failed to read {path}"))
-        .with_source(source)
+    super::error::invalid_operation(format!("failed to read {path}"), source)
 }
 #[cfg(test)]
 mod tests {

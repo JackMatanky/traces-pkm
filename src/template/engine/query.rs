@@ -251,8 +251,7 @@ fn cached_refresh(
 ///
 /// [`source`]: std::error::Error::source
 fn index_error(source: FileIndexError) -> Error {
-    Error::new(ErrorKind::InvalidOperation, "failed to refresh the file index")
-        .with_source(source)
+    super::error::invalid_operation("failed to refresh the file index", source)
 }
 
 /// Maps a [`QueryError`] into a [`minijinja::Error`].
@@ -261,18 +260,21 @@ fn index_error(source: FileIndexError) -> Error {
 ///
 /// [`source`]: std::error::Error::source
 fn query_error(source: QueryError) -> Error {
-    Error::new(ErrorKind::InvalidOperation, "query failed").with_source(source)
+    super::error::invalid_operation("query failed", source)
 }
 
 impl Object for QueryOutcome {
+    #[inline]
     fn repr(self: &Arc<Self>) -> ObjectRepr {
         ObjectRepr::Seq
     }
 
+    #[inline]
     fn get_value(self: &Arc<Self>, key: &Value) -> Option<Value> {
         self.get(key.as_usize()?).cloned().map(Value::from_object)
     }
 
+    #[inline]
     fn enumerate(self: &Arc<Self>) -> Enumerator {
         Enumerator::Seq(self.len())
     }
@@ -309,6 +311,7 @@ impl Object for QueryOutcome {
     /// - [`ErrorKind::InvalidOperation`] via [`query_error`] if a field path or
     ///   filter expression is unparsable, `.limit(...)` is negative, or
     ///   `.task_list()` runs on records with no `task.*` fields.
+    #[inline]
     fn call_method(
         self: &Arc<Self>,
         _state: &State<'_, '_>,
@@ -428,6 +431,7 @@ impl Object for IndexRecord {
     /// A rejected key, such as a dotted, empty, or unknown `file.*`/`task.*`
     /// accessor, resolves to `None` like any other missing attribute instead of
     /// surfacing [`QueryError::UnknownFieldPath`] as a render error.
+    #[inline]
     fn get_value(self: &Arc<Self>, key: &Value) -> Option<Value> {
         let key = key.as_str()?;
         match key {

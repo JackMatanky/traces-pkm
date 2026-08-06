@@ -240,8 +240,7 @@ impl SelectOptions {
 ///
 /// [`source`]: std::error::Error::source
 fn dialog_error(source: DialogError) -> Error {
-    Error::new(ErrorKind::InvalidOperation, "dialog provider failed")
-        .with_source(source)
+    super::error::invalid_operation("dialog provider failed", source)
 }
 
 /// Walks a dot-separated attribute path on `item`.

@@ -36,9 +36,7 @@ mod path;
 mod service;
 mod writer;
 
-pub(crate) use error::{
-    RenderFailureKind, TemplateError, classify_render_error,
-};
-pub(crate) use path::{TemplatePathError, TemplatePathInput};
-pub(crate) use service::TemplateService;
-pub(crate) use writer::{WriteMode, WriteOutcome};
+pub use error::{RenderFailureKind, TemplateError, classify_render_error};
+pub use path::{TemplatePathError, TemplatePathInput};
+pub use service::TemplateService;
+pub use writer::{WriteMode, WriteOutcome};

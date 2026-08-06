@@ -18,7 +18,6 @@
 //!   note rendering.
 
 mod config;
-mod cwd;
 mod dialog;
 mod dirs;
 mod file_name;
@@ -31,9 +30,8 @@ mod template;
 
 pub mod cli;
 
-pub(crate) use cwd::Cwd;
-#[cfg(test)]
-pub(crate) use cwd::CwdGuard;
+#[cfg(any(test, feature = "test-utils"))]
+pub use config::{Config, ConfigService};
 pub use dialog::{
     DialogError, DialogProvider, PresetDialogProvider, TerminalDialogProvider,
 };
@@ -41,3 +39,19 @@ pub(crate) use file_store::{
     FileStateStore, FileStateStoreError, FileStoreCleanMode,
 };
 pub(crate) use hash::{Blake3FileHash, Blake3PathHash};
+#[cfg(any(test, feature = "test-utils"))]
+pub use index::{
+    FileIndex, FileIndexError, FileRecord, IndexRecord, QueryOutcome,
+    QuerySource,
+};
+#[cfg(any(test, feature = "test-utils"))]
+pub use note::{
+    FieldValue, Frontmatter, InlineField, InlineFieldForm, Link, LinkTarget,
+    LinkType, List, ListItem, Note, RawFrontmatter, Tag, TaskStatus,
+    parse_markdown,
+};
+#[cfg(any(test, feature = "test-utils"))]
+pub use template::{
+    RenderFailureKind, TemplateError, TemplatePathError, TemplatePathInput,
+    TemplateService, WriteMode, WriteOutcome, classify_render_error,
+};

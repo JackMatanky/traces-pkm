@@ -28,7 +28,7 @@ use crate::{DialogProvider, config::Config};
 ///
 /// Holds a borrowed [`Config`], an internal [`TemplateLoader`], and a
 /// [`TemplateEngine`] constructed from the configuration.
-pub(crate) struct TemplateService<'a> {
+pub struct TemplateService<'a> {
     config: &'a Config,
     loader: TemplateLoader,
     engine: TemplateEngine,
@@ -44,10 +44,7 @@ impl<'a> TemplateService<'a> {
     /// non-interactive execution by choosing an appropriate [`DialogProvider`].
     #[inline]
     #[must_use]
-    pub(crate) fn new(
-        config: &'a Config,
-        provider: Arc<dyn DialogProvider>,
-    ) -> Self {
+    pub fn new(config: &'a Config, provider: Arc<dyn DialogProvider>) -> Self {
         let loader = TemplateLoader::from(config);
         let engine =
             TemplateEngine::new(&loader, Arc::clone(&provider), config.root());
@@ -69,7 +66,7 @@ impl<'a> TemplateService<'a> {
     /// [`TemplateService`].
     #[inline]
     #[must_use]
-    pub(crate) fn list_available(config: &Config) -> Vec<String> {
+    pub fn list_available(config: &Config) -> Vec<String> {
         TemplateLoader::from(config).list_available()
     }
 
@@ -92,7 +89,7 @@ impl<'a> TemplateService<'a> {
     /// - Any [`TemplateError`] produced during path resolution or file writing
     ///   by [`Self::write`].
     #[inline]
-    pub(crate) fn render_to_file(
+    pub fn render_to_file(
         &self,
         name: &TemplatePathInput,
         output: Option<&Path>,

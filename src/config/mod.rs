@@ -11,15 +11,6 @@
 //! - Reject untrusted or stale local config content before parsing.
 //! - Merge global config before local config so local values win.
 
-#![cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "config loading is implemented before the render command \
-                  consumes it"
-    )
-)]
-
 mod discovery;
 mod error;
 mod file;
@@ -40,8 +31,8 @@ pub(crate) use error::{
 };
 #[cfg(test)]
 pub(crate) use file::{Discovered, LocalConfigFile};
-pub(crate) use model::Config;
-pub(crate) use service::ConfigService;
+pub use model::Config;
+pub use service::ConfigService;
 #[cfg(test)]
 pub(crate) use trust::ConfigTrustStatus;
 pub(crate) use trust::{TrustRequest, TrustRequests};

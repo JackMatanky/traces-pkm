@@ -5,6 +5,7 @@
 //! module stays limited to argument flow and shared helpers.
 
 mod completions;
+mod cwd;
 mod error;
 mod index;
 pub mod init;
@@ -12,6 +13,7 @@ mod list;
 mod table;
 mod task;
 mod template;
+mod tracked;
 mod trust;
 mod untrust;
 
@@ -21,10 +23,13 @@ use std::{
 };
 
 use clap::{Parser, Subcommand};
+use cwd::Cwd;
+#[cfg(test)]
+pub(crate) use cwd::CwdGuard;
 pub use error::CliError;
 
 use crate::{
-    Cwd, DialogProvider,
+    DialogProvider,
     config::{Config, ConfigService, DiscoveryScope, TrustRequests},
     index::{FileIndex, QueryError, QueryOutcome, QuerySource},
 };
@@ -144,6 +149,8 @@ enum Commands {
     /// Generate shell completions or list available template names.
     #[command(alias = "completion")]
     Completions(completions::Completions),
+    /// Manage tracked (best-effort seen) local configs.
+    Tracked(tracked::Tracked),
 }
 
 impl Commands {
@@ -167,6 +174,7 @@ impl Commands {
             Self::Task(args) => args.run(service),
             Self::Template(args) => args.run(service, provider),
             Self::Completions(args) => args.run(service),
+            Self::Tracked(args) => args.run(service),
         }
     }
 }
@@ -340,15 +348,70 @@ fn resolve_trust_subjects(
 mod tests {
     use super::*;
 
-    mod fixtures {
-        use std::{fs, path::Path, sync::Arc};
+    pub(crate) mod fixtures {
+        use std::{
+            fs,
+            path::{Path, PathBuf},
+            sync::Arc,
+        };
 
         use super::*;
         use crate::{
-            CwdGuard,
-            config::{ConfigService, TrustRequest},
+            cli::CwdGuard,
+            config::{
+                ConfigService, Discovered, LocalConfigFile, TrustRequest,
+            },
             dialog::PresetDialogProvider,
         };
+
+        pub(crate) fn service(temp: &Path) -> ConfigService {
+            ConfigService::at(
+                temp.join("tracked-store"),
+                temp.join("trust-store"),
+            )
+        }
+
+        pub(crate) fn create_config(root: &Path, directory: &str) -> PathBuf {
+            let config_file = root.join(".traces/config.toml");
+            fs::create_dir_all(config_file.parent().expect("config parent"))
+                .expect("create config parent");
+            fs::write(
+                &config_file,
+                format!("[templates]\ndirectory = \"{directory}\"\n"),
+            )
+            .expect("write config file");
+            config_file
+        }
+
+        pub(crate) fn create_empty_config(root: &Path) -> PathBuf {
+            let config_file = root.join(".traces/config.toml");
+            fs::create_dir_all(config_file.parent().expect("config parent"))
+                .expect("create config parent");
+            fs::write(&config_file, "").expect("write config file");
+            config_file
+        }
+
+        pub(crate) fn trust_config(
+            service: &ConfigService,
+            config_path: &Path,
+        ) {
+            let config = LocalConfigFile::<Discovered>::try_new(
+                config_path.to_path_buf(),
+            )
+            .expect("valid local config");
+            service
+                .trust(&TrustRequest::from(&config))
+                .expect("trust project config");
+        }
+
+        pub(crate) fn create_trusted_project(
+            service: &ConfigService,
+            root: &Path,
+        ) {
+            fs::create_dir_all(root).expect("create project dir");
+            let config_file = create_config(root, "templates");
+            trust_config(service, &config_file);
+        }
 
         pub(super) struct CancellingSelect;
         impl DialogProvider for CancellingSelect {
@@ -633,7 +696,7 @@ mod tests {
 
         use super::*;
         use crate::{
-            CwdGuard,
+            cli::CwdGuard,
             config::{ConfigService, TrustRequest},
             dialog::PresetDialogProvider,
         };
@@ -737,7 +800,7 @@ mod tests {
 
         use super::*;
         use crate::{
-            CwdGuard,
+            cli::CwdGuard,
             config::{
                 Config, ConfigService, Discovered, LocalConfigFile,
                 TrustRequest,
@@ -1039,7 +1102,7 @@ mod tests {
 
         use super::*;
         use crate::{
-            CwdGuard, config::ConfigService, dialog::PresetDialogProvider,
+            cli::CwdGuard, config::ConfigService, dialog::PresetDialogProvider,
         };
 
         #[test]
@@ -1101,7 +1164,7 @@ mod tests {
 
     mod helpers {
         use super::*;
-        use crate::{CwdGuard, config::ConfigLoadError};
+        use crate::{cli::CwdGuard, config::ConfigLoadError};
 
         #[test]
         fn current_dir_reads_process_cwd() {

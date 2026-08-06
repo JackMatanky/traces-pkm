@@ -85,7 +85,7 @@ impl ConfigStateStore {
     }
 
     /// Creates a state store at explicit roots for tests.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-utils"))]
     #[inline]
     #[must_use]
     pub(crate) fn at(tracked_root: PathBuf, trusted_root: PathBuf) -> Self {

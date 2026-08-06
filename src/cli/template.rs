@@ -247,6 +247,7 @@ impl Template {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cli::tests::fixtures::{create_config, service, trust_config};
 
     mod fixtures {
         use std::{
@@ -255,18 +256,8 @@ mod tests {
             sync::Arc,
         };
 
-        use super::super::*;
-        use crate::{
-            DialogError,
-            config::{Discovered, LocalConfigFile, TrustRequest},
-        };
-
-        pub(super) fn service(temp: &Path) -> ConfigService {
-            ConfigService::at(
-                temp.join("tracked-store"),
-                temp.join("trust-store"),
-            )
-        }
+        use super::*;
+        use crate::DialogError;
 
         /// Cheap deterministic provider for tests that never exercise `ui.*`.
         ///
@@ -275,32 +266,6 @@ mod tests {
         pub(super) fn preset_provider() -> Arc<dyn DialogProvider> {
             Arc::new(crate::PresetDialogProvider::new())
         }
-
-        pub(super) fn trust_config(
-            service: &ConfigService,
-            config_path: &Path,
-        ) {
-            let config = LocalConfigFile::<Discovered>::try_new(
-                config_path.to_path_buf(),
-            )
-            .expect("valid local config");
-            service
-                .trust(&TrustRequest::from(&config))
-                .expect("trust project config");
-        }
-
-        pub(super) fn create_config(root: &Path, directory: &str) -> PathBuf {
-            let config_file = root.join(".traces/config.toml");
-            fs::create_dir_all(config_file.parent().expect("config parent"))
-                .expect("create config parent");
-            fs::write(
-                &config_file,
-                format!("[templates]\ndirectory = \"{directory}\"\n"),
-            )
-            .expect("write config file");
-            config_file
-        }
-
         /// Sets up a trusted project with a template directory and optional
         /// template file, returning the project root and a ready-to-use
         /// [`ConfigService`].
@@ -369,7 +334,10 @@ mod tests {
         use pretty_assertions::assert_eq;
 
         use super::*;
-        use crate::{CwdGuard, cli::UserAbort, config::ConfigLoadError};
+        use crate::{
+            cli::{CwdGuard, UserAbort},
+            config::ConfigLoadError,
+        };
 
         #[test]
         fn writes_the_rendered_template_to_the_default_output_path() {
@@ -661,7 +629,7 @@ mod tests {
         use pretty_assertions::assert_eq;
 
         use super::*;
-        use crate::CwdGuard;
+        use crate::cli::CwdGuard;
 
         #[test]
         fn with_no_name_and_no_available_templates_fails_with_no_templates() {

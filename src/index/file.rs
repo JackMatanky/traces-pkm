@@ -20,7 +20,7 @@ use crate::file_name::{BaseName, FileName};
 /// Stored paths are project-root-relative so the index can move with the
 /// project directory.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
-pub(crate) struct FileRecord {
+pub struct FileRecord {
     path: PathBuf,
     name: BaseName,
     folder: PathBuf,

@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 /// Represents a Markdown tag value, including its leading `#`.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
-pub(crate) struct Tag(String);
+pub struct Tag(String);
 
 impl Tag {
     /// Creates a tag from text that includes the leading `#`.

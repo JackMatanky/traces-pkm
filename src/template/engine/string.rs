@@ -22,7 +22,7 @@
 //! [`Casing::to_case`]: convert_case::Casing::to_case
 
 use convert_case::{Case, Casing as _};
-use minijinja::{Environment, Error, ErrorKind, value::Kwargs};
+use minijinja::{Environment, Error, value::Kwargs};
 use regex::Regex;
 
 /// Registration namespace for the stateless string filters.
@@ -220,11 +220,10 @@ fn regex_match(value: &str, pattern: &str) -> Result<bool, Error> {
 /// Used by `regex_replace` and `regex_match` to return a template error
 /// instead of letting an invalid pattern panic.
 fn regex_compile_error(pattern: &str, source: regex::Error) -> Error {
-    Error::new(
-        ErrorKind::InvalidOperation,
+    super::error::invalid_operation(
         format!("invalid regex pattern {pattern:?}"),
+        source,
     )
-    .with_source(source)
 }
 
 #[cfg(test)]

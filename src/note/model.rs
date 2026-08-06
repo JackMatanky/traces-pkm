@@ -17,7 +17,7 @@ use super::{
 /// fields, and tags. [`Self::tasks`] derives task items from stored lists
 /// instead of duplicating them.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
-pub(crate) struct Note {
+pub struct Note {
     path: PathBuf,
     frontmatter: Option<Frontmatter>,
     lists: Vec<List>,
@@ -34,8 +34,8 @@ impl Note {
     /// [`Self::with_inline_fields`] and [`Self::with_tags`].
     #[inline]
     #[must_use]
-    pub(crate) fn new(
-        path: impl Into<PathBuf>,
+    pub fn new<P: Into<PathBuf>>(
+        path: P,
         frontmatter: Option<Frontmatter>,
         lists: Vec<List>,
         outlinks: Vec<Link>,
@@ -53,7 +53,7 @@ impl Note {
     /// Attaches `inline_fields` and returns the updated [`Note`].
     #[inline]
     #[must_use]
-    pub(crate) fn with_inline_fields(
+    pub fn with_inline_fields(
         mut self,
         inline_fields: Vec<InlineField>,
     ) -> Self {
@@ -64,7 +64,7 @@ impl Note {
     /// Attaches `tags` and returns the updated [`Note`].
     #[inline]
     #[must_use]
-    pub(crate) fn with_tags(mut self, tags: Vec<Tag>) -> Self {
+    pub fn with_tags(mut self, tags: Vec<Tag>) -> Self {
         self.tags = tags;
         self
     }
@@ -72,7 +72,7 @@ impl Note {
     /// Returns the project-relative path to this note.
     #[inline]
     #[must_use]
-    pub(crate) fn path(&self) -> &Path {
+    pub fn path(&self) -> &Path {
         &self.path
     }
 
@@ -80,7 +80,7 @@ impl Note {
     #[inline]
     #[must_use]
     #[cfg_attr(
-        not(test),
+        not(any(test, feature = "test-utils")),
         expect(
             dead_code,
             reason = "no current caller outside tests; documented deliberate \
@@ -88,7 +88,7 @@ impl Note {
                       from the fields() iterator that is used"
         )
     )]
-    pub(crate) fn frontmatter(&self) -> Option<&Frontmatter> {
+    pub fn frontmatter(&self) -> Option<&Frontmatter> {
         self.frontmatter.as_ref()
     }
 
@@ -99,21 +99,21 @@ impl Note {
     #[inline]
     #[must_use]
     #[cfg_attr(
-        not(test),
+        not(any(test, feature = "test-utils")),
         expect(
             dead_code,
             reason = "no current caller outside tests; kept for Note accessor \
                       symmetry with its fields"
         )
     )]
-    pub(crate) fn lists(&self) -> &[List] {
+    pub fn lists(&self) -> &[List] {
         &self.lists
     }
 
     /// Returns the outgoing links extracted from Markdown and wikilink syntax.
     #[inline]
     #[must_use]
-    pub(crate) fn outlinks(&self) -> &[Link] {
+    pub fn outlinks(&self) -> &[Link] {
         &self.outlinks
     }
 
@@ -122,7 +122,7 @@ impl Note {
     #[inline]
     #[must_use]
     #[cfg_attr(
-        not(test),
+        not(any(test, feature = "test-utils")),
         expect(
             dead_code,
             reason = "no current caller outside tests; documented deliberate \
@@ -130,12 +130,13 @@ impl Note {
                       from the fields() iterator that is used"
         )
     )]
-    pub(crate) fn inline_fields(&self) -> &[InlineField] {
+    pub fn inline_fields(&self) -> &[InlineField] {
         &self.inline_fields
     }
 
     /// Iterates over frontmatter fields, then body inline fields.
-    pub(crate) fn fields(&self) -> impl Iterator<Item = &MetadataField> {
+    #[inline]
+    pub fn fields(&self) -> impl Iterator<Item = &MetadataField> {
         let empty: &[MetadataField] = &[];
         let frontmatter_fields =
             self.frontmatter.as_ref().map_or(empty, Frontmatter::fields);
@@ -148,18 +149,20 @@ impl Note {
     /// document order.
     #[inline]
     #[must_use]
-    pub(crate) fn tags(&self) -> &[Tag] {
+    pub fn tags(&self) -> &[Tag] {
         &self.tags
     }
 
     /// Iterates over task list items at every list depth.
-    pub(crate) fn tasks(&self) -> TaskIter<'_> {
+    #[inline]
+    #[must_use]
+    pub fn tasks(&self) -> TaskIter<'_> {
         TaskIter::new(&self.lists)
     }
 }
 
 /// Represents a depth-first iterator over task list items in a [`Note`].
-pub(crate) struct TaskIter<'a> {
+pub struct TaskIter<'a> {
     stack: Vec<std::slice::Iter<'a, ListItem>>,
 }
 

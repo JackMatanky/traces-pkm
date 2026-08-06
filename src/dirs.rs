@@ -29,7 +29,7 @@ impl StateDirRoot {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-utils"))]
 impl From<PathBuf> for StateDirRoot {
     #[inline]
     fn from(path: PathBuf) -> Self {

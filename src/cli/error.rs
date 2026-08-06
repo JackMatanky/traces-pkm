@@ -32,11 +32,14 @@ use crate::{
 #[derive(Debug, Error)]
 #[expect(
     private_interfaces,
-    reason = "domain source types (ConfigLoadError, ConfigStateError, \
-              DiscoveryError, TemplateError, FileIndexError, QueryError) stay \
-              pub(crate). Only construction and matching happens inside \
-              crate::cli; callers use CliError's Display/Diagnostic surface, \
-              never these types directly"
+    reason = "ConfigLoadError, ConfigStateError, DiscoveryError, and \
+              QueryError stay pub(crate); construction and matching happen \
+              inside crate::cli, callers use CliError's Display/Diagnostic \
+              surface, never these types directly. TemplateError and \
+              FileIndexError are pub only under cfg(any(test, feature = \
+              \"test-utils\")), where FileIndex::build/refresh and \
+              TemplateService::render_to_file are themselves pub for external \
+              benchmark/test use"
 )]
 #[non_exhaustive]
 pub enum CliError {
@@ -107,6 +110,20 @@ pub enum CliError {
     #[error("failed to clean the trust store")]
     TrustClean {
         /// Source trust-store error.
+        #[source]
+        source: ConfigStateError,
+    },
+    /// Listing the tracked-config store failed.
+    #[error("failed to list tracked configs")]
+    TrackedList {
+        /// Source tracked-store error.
+        #[source]
+        source: ConfigStateError,
+    },
+    /// Cleaning the tracked-config store failed.
+    #[error("failed to clean the tracked-config store")]
+    TrackedClean {
+        /// Source tracked-store error.
         #[source]
         source: ConfigStateError,
     },
@@ -221,41 +238,9 @@ impl Diagnostic for CliError {
                 ..
             } => "traces::cli::current_directory_failed",
             Self::ConfigLoad {
-                source: ConfigLoadError::Discovery(_),
+                source,
                 ..
-            } => "traces::cli::config_discovery_failed",
-            Self::ConfigLoad {
-                source:
-                    ConfigLoadError::Build(
-                        ConfigBuilderError::WrongDiscoveryKindForBuild {
-                            ..
-                        }
-                        | ConfigBuilderError::FullDiscoveryWithoutLocal
-                        | ConfigBuilderError::FullDiscoveryWithoutAnchorLocal {
-                            ..
-                        },
-                    ),
-                ..
-            } => "traces::cli::config_build_invariant_failed",
-            Self::ConfigLoad {
-                source:
-                    ConfigLoadError::Build(ConfigBuilderError::Untrusted {
-                        ..
-                    }),
-                ..
-            } => "traces::cli::config_build_untrusted",
-            Self::ConfigLoad {
-                source:
-                    ConfigLoadError::Build(ConfigBuilderError::ConfigFile(_)),
-                ..
-            } => "traces::cli::config_build_config_file_failed",
-            Self::ConfigLoad {
-                source:
-                    ConfigLoadError::Build(ConfigBuilderError::Merge {
-                        ..
-                    }),
-                ..
-            } => "traces::cli::config_build_merge_failed",
+            } => config_load_code(source),
             Self::TrustTargetResolve {
                 ..
             } => "traces::cli::trust::target_resolve_failed",
@@ -274,6 +259,12 @@ impl Diagnostic for CliError {
             Self::TrustClean {
                 ..
             } => "traces::cli::trust::clean_failed",
+            Self::TrackedList {
+                ..
+            } => "traces::cli::tracked::list_failed",
+            Self::TrackedClean {
+                ..
+            } => "traces::cli::tracked::clean_failed",
             Self::InitPrompt {
                 ..
             } => "traces::cli::init::prompt_failed",
@@ -361,6 +352,16 @@ impl Diagnostic for CliError {
                 ..
             } => Some(Box::new(
                 "check that the trust store is readable and writable",
+            )),
+            Self::TrackedList {
+                ..
+            } => Some(Box::new(
+                "check that the tracked-config store is readable",
+            )),
+            Self::TrackedClean {
+                ..
+            } => Some(Box::new(
+                "check that the tracked-config store is readable and writable",
             )),
             Self::InitPrompt {
                 ..
@@ -483,6 +484,31 @@ fn query_help() -> Box<dyn Display + 'static> {
         "check the `--where` filter expression syntax and the field paths it \
          references",
     )
+}
+
+/// Selects the diagnostic code for a [`CliError::ConfigLoad`] source.
+fn config_load_code(source: &ConfigLoadError) -> &'static str {
+    match source {
+        ConfigLoadError::Discovery(_) => "traces::cli::config_discovery_failed",
+        ConfigLoadError::Build(
+            ConfigBuilderError::WrongDiscoveryKindForBuild {
+                ..
+            }
+            | ConfigBuilderError::FullDiscoveryWithoutLocal
+            | ConfigBuilderError::FullDiscoveryWithoutAnchorLocal {
+                ..
+            },
+        ) => "traces::cli::config_build_invariant_failed",
+        ConfigLoadError::Build(ConfigBuilderError::Untrusted {
+            ..
+        }) => "traces::cli::config_build_untrusted",
+        ConfigLoadError::Build(ConfigBuilderError::ConfigFile(_)) => {
+            "traces::cli::config_build_config_file_failed"
+        }
+        ConfigLoadError::Build(ConfigBuilderError::Merge {
+            ..
+        }) => "traces::cli::config_build_merge_failed",
+    }
 }
 
 /// Selects the diagnostic code for a [`TemplateError`].

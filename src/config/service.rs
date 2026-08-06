@@ -91,7 +91,7 @@ impl TryFrom<DiscoveryOutcome> for ConfigBuilderInput {
 /// ([`Self::load`]) separate from trust operations such as [`Self::trust`] and
 /// [`Self::untrust`].
 #[derive(Clone, Debug)]
-pub(crate) struct ConfigService {
+pub struct ConfigService {
     state: ConfigStateStore,
 }
 
@@ -111,9 +111,10 @@ impl ConfigService {
     ///
     /// Test-only constructor for `crate::cli::trust` tests that need isolated
     /// stores instead of real OS state directories.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-utils"))]
+    #[inline]
     #[must_use]
-    pub(crate) fn at(tracked_root: PathBuf, trusted_root: PathBuf) -> Self {
+    pub fn at(tracked_root: PathBuf, trusted_root: PathBuf) -> Self {
         Self {
             state: ConfigStateStore::at(tracked_root, trusted_root),
         }

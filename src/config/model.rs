@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 
 /// Merged local/global configuration ready for consumers.
 #[derive(Clone, Debug)]
-pub(crate) struct Config {
+pub struct Config {
     root: PathBuf,
     templates: TemplateConfig,
 }
@@ -30,21 +30,21 @@ impl Config {
     /// Returns the project root directory used as the local resolution base.
     #[inline]
     #[must_use]
-    pub(crate) fn root(&self) -> &Path {
+    pub fn root(&self) -> &Path {
         &self.root
     }
 
     /// Returns the local template directory, if configured.
     #[inline]
     #[must_use]
-    pub(crate) fn local_template_dir(&self) -> Option<&Path> {
+    pub fn local_template_dir(&self) -> Option<&Path> {
         self.templates.local()
     }
 
     /// Returns the global template directory, if configured.
     #[inline]
     #[must_use]
-    pub(crate) fn global_template_dir(&self) -> Option<&Path> {
+    pub fn global_template_dir(&self) -> Option<&Path> {
         self.templates.global()
     }
 
@@ -58,7 +58,7 @@ impl Config {
     /// [`root`]: Self::root
     #[inline]
     #[must_use]
-    pub(crate) fn output_dir(&self) -> &Path {
+    pub fn output_dir(&self) -> &Path {
         self.templates.output()
     }
 
@@ -66,9 +66,10 @@ impl Config {
     ///
     /// Prefer [`super::service::ConfigService::at`] and TOML fixtures for
     /// integration-style tests that need the real loading pipeline.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-utils"))]
+    #[inline]
     #[must_use]
-    pub(crate) fn for_test(
+    pub fn for_test(
         root: PathBuf,
         local: Option<PathBuf>,
         global: Option<PathBuf>,
