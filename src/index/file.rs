@@ -111,7 +111,7 @@ impl FileRecord {
         expect(
             dead_code,
             reason = "no current caller outside tests; documented deliberate \
-                      API in template-query#01's FileIndex baseline design, \
+                      API in index-query#01's FileIndex baseline design, \
                       distinct from created_at_or_modified which field \
                       resolution uses"
         )
@@ -215,7 +215,7 @@ impl Timestamp {
         expect(
             dead_code,
             reason = "no current caller outside tests; documented deliberate \
-                      API in template-query#05, split out alongside \
+                      API in index-query#05, split out alongside \
                       to_datetime_string/to_date_string which field \
                       resolution uses"
         )
@@ -255,7 +255,7 @@ impl Timestamp {
         expect(
             dead_code,
             reason = "no current caller outside tests; documented deliberate \
-                      API in template-query#05, added alongside \
+                      API in index-query#05, added alongside \
                       to_datetime_string/to_date_string which field \
                       resolution uses"
         )

@@ -182,7 +182,7 @@ impl IndexRecord {
         expect(
             dead_code,
             reason = "no current caller outside tests; documented deliberate \
-                      API in template-query#10's derived-inlinks design \
+                      API in index-query#10's derived-inlinks design \
                       (Templates/CLI select or filter inlinks via \
                       field(\"inlinks\") today; this direct accessor for \
                       display output is not yet wired to a CLI/Template \

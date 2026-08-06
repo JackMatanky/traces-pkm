@@ -85,5 +85,5 @@
   table` CLI commands (#08, unrelated and not yet built on `main`).
 
 **Implementation**: `.worktrees/09-task-level-queries`, branch
-`template-query/09-task-level-queries`. Original feature commit: `0b407ac`.
+`index-query/09-task-level-queries`. Original feature commit: `0b407ac`.
 Review/test cleanup: `db484b0`. Rust best-practice refactor: `b0f417d`.

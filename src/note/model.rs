@@ -84,7 +84,7 @@ impl Note {
         expect(
             dead_code,
             reason = "no current caller outside tests; documented deliberate \
-                      API in template-query#03's Note Accessor design, split \
+                      API in index-query#03's Note Accessor design, split \
                       from the fields() iterator that is used"
         )
     )]
@@ -126,7 +126,7 @@ impl Note {
         expect(
             dead_code,
             reason = "no current caller outside tests; documented deliberate \
-                      API in template-query#03's Note Accessor design, split \
+                      API in index-query#03's Note Accessor design, split \
                       from the fields() iterator that is used"
         )
     )]
