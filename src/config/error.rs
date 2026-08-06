@@ -152,7 +152,7 @@ pub(crate) enum ConfigFileError {
 
 /// Errors from config tracking or trust-state operations.
 #[derive(Debug, Error)]
-pub(crate) enum ConfigStateError {
+pub enum ConfigStateError {
     /// The underlying hash-keyed store operation failed.
     #[error(transparent)]
     Store(#[from] FileStateStoreError),

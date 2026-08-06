@@ -147,7 +147,7 @@ impl IndexRecord {
     /// for page-level records.
     #[inline]
     #[must_use]
-    pub(crate) fn task_completed(&self) -> Option<bool> {
+    pub fn task_completed(&self) -> Option<bool> {
         self.task.as_ref().map(|task| task.completed)
     }
 
@@ -162,7 +162,7 @@ impl IndexRecord {
     /// Returns general metadata for the indexed file.
     #[inline]
     #[must_use]
-    pub(crate) fn file(&self) -> &FileRecord {
+    pub fn file(&self) -> &FileRecord {
         &self.file
     }
 
@@ -302,22 +302,14 @@ impl QueryOutcome {
     /// Returns the number of [`IndexRecord`] rows in this outcome.
     #[inline]
     #[must_use]
-    pub(crate) fn len(&self) -> usize {
+    pub fn len(&self) -> usize {
         self.records.len()
     }
 
     /// Returns `true` if this outcome contains no [`IndexRecord`] rows.
     #[inline]
     #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "no current caller outside tests; kept as len()'s \
-                      required clippy::len_without_is_empty companion"
-        )
-    )]
-    pub(crate) fn is_empty(&self) -> bool {
+    pub fn is_empty(&self) -> bool {
         self.records.is_empty()
     }
 
@@ -325,7 +317,7 @@ impl QueryOutcome {
     /// of bounds.
     #[inline]
     #[must_use]
-    pub(crate) fn get(&self, index: usize) -> Option<&IndexRecord> {
+    pub fn get(&self, index: usize) -> Option<&IndexRecord> {
         self.records.get(index)
     }
 
@@ -363,7 +355,8 @@ impl QueryOutcome {
     ///
     /// [`UnparsableFilterExpression`]: QueryError::UnparsableFilterExpression
     /// [`UnknownFieldPath`]: QueryError::UnknownFieldPath
-    pub(crate) fn filter(self, expr: &str) -> Result<Self, QueryError> {
+    #[inline]
+    pub fn filter(self, expr: &str) -> Result<Self, QueryError> {
         let expr = FilterExpr::parse(expr)?;
         let records = self
             .records
@@ -421,7 +414,7 @@ impl QueryOutcome {
     ///
     /// [`UnknownFieldPath`]: QueryError::UnknownFieldPath
     #[inline]
-    pub(crate) fn sort(
+    pub fn sort(
         self,
         path: &str,
         descending: bool,
@@ -437,7 +430,8 @@ impl QueryOutcome {
     ///   limits.
     ///
     /// [`NegativeLimit`]: QueryError::NegativeLimit
-    pub(crate) fn limit(self, n: i64) -> Result<Self, QueryError> {
+    #[inline]
+    pub fn limit(self, n: i64) -> Result<Self, QueryError> {
         let n = usize::try_from(n).map_err(|_source| {
             QueryError::NegativeLimit {
                 n,

@@ -1,4 +1,12 @@
-use std::{env, fs, path::Path};
+//! Proves the interactive `traces init` flow end-to-end via
+//! `PresetDialogProvider`. `init` has no non-interactive mode (it always
+//! prompts via the injected `DialogProvider`, with no CLI flags at all), so
+//! this drives it directly in-process rather than through `Sandbox`'s
+//! process-spawn model — the only e2e test besides `golden_path` that does.
+//! Covers preset input, default input, and the already-initialized refusal
+//! path.
+
+use std::{fs, path::Path};
 
 use pretty_assertions::assert_eq;
 use traces_pkm::{
@@ -6,31 +14,7 @@ use traces_pkm::{
     cli::{CliError, init::Init},
 };
 
-struct CwdGuard {
-    original: std::path::PathBuf,
-}
-
-impl CwdGuard {
-    #[expect(
-        clippy::disallowed_methods,
-        clippy::expect_used,
-        reason = "test helper mirroring crate-internal CwdGuard"
-    )]
-    fn enter(path: &Path) -> Self {
-        let original = env::current_dir().expect("read current dir");
-        env::set_current_dir(path).expect("enter temp dir");
-        Self {
-            original,
-        }
-    }
-}
-
-impl Drop for CwdGuard {
-    #[expect(clippy::expect_used, reason = "see CwdGuard")]
-    fn drop(&mut self) {
-        env::set_current_dir(&self.original).expect("restore current dir");
-    }
-}
+use super::support::CwdGuard;
 
 #[test]
 fn init_scaffolds_preset_defaults_and_refuses_existing_traces_dir() {

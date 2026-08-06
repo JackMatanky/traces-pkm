@@ -74,7 +74,7 @@ impl FileRecord {
     /// Returns the file's path, relative to the project root.
     #[inline]
     #[must_use]
-    pub(crate) fn path(&self) -> &Path {
+    pub fn path(&self) -> &Path {
         &self.path
     }
 

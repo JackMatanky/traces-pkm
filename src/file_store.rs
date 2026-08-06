@@ -15,7 +15,7 @@ use crate::{Blake3PathHash, dirs::StateDirRoot};
 
 /// Error returned by [`FileStateStore`] operations.
 #[derive(Debug, Error)]
-pub(crate) enum FileStateStoreError {
+pub enum FileStateStoreError {
     /// The target path could not be canonicalized before store-key hashing.
     #[error("failed to canonicalize path {path}")]
     Canonicalize {

@@ -295,7 +295,7 @@ impl ConfigService {
     ///
     /// - [`ConfigStateError::Store`] when the trust entry cannot be removed
     #[inline]
-    pub(crate) fn untrust(
+    pub fn untrust(
         &self,
         subject: &TrustRequest,
     ) -> Result<usize, ConfigStateError> {

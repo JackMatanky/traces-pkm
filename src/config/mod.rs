@@ -29,10 +29,11 @@ pub(crate) use error::{
     ConfigBuilderError, ConfigLoadError, ConfigScaffoldError, ConfigStateError,
     DiscoveryError,
 };
-#[cfg(test)]
+#[cfg(any(test, feature = "test-utils"))]
 pub(crate) use file::{Discovered, LocalConfigFile};
 pub use model::Config;
 pub use service::ConfigService;
 #[cfg(test)]
 pub(crate) use trust::ConfigTrustStatus;
-pub(crate) use trust::{TrustRequest, TrustRequests};
+pub use trust::TrustRequest;
+pub(crate) use trust::TrustRequests;

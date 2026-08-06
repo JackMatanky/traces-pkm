@@ -15,7 +15,7 @@ use thiserror::Error;
 /// Error returned when a file's contents could not be read for hashing.
 #[derive(Debug, Error)]
 #[error("failed to read {path} for hashing")]
-pub(crate) struct HashError {
+pub struct HashError {
     /// Path that could not be read.
     pub(crate) path: PathBuf,
     /// Source I/O error.
@@ -29,7 +29,7 @@ pub(crate) struct HashError {
 /// already-loaded content when the caller has it; hashing from a path and then
 /// reading that same path again opens a TOCTOU window between reads.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub(crate) struct Blake3FileHash(blake3::Hash);
+pub struct Blake3FileHash(blake3::Hash);
 
 impl TryFrom<&Path> for Blake3FileHash {
     type Error = HashError;
@@ -75,7 +75,7 @@ impl Display for Blake3FileHash {
 /// [`String`]. BLAKE3 hex encoding is always exactly 64 ASCII bytes, so a stack
 /// array avoids an allocation on store-entry construction.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub(crate) struct Blake3PathHash([u8; 64]);
+pub struct Blake3PathHash([u8; 64]);
 
 impl From<&Path> for Blake3PathHash {
     #[inline]

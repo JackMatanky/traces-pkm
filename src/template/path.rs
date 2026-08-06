@@ -45,7 +45,8 @@ impl TemplatePathInput {
     ///
     /// [`TemplateLoader::load`]: super::loader::TemplateLoader::load
     /// [`Component::Normal`]: std::path::Component::Normal
-    pub(crate) fn parse(path: &Path) -> Result<Self, TemplatePathError> {
+    #[inline]
+    pub fn parse(path: &Path) -> Result<Self, TemplatePathError> {
         SafeRelativePath::parse(path).map(Self).map_err(|error| match error {
             PathError::Absolute => {
                 TemplatePathError::Absolute(path.to_path_buf())

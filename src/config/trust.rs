@@ -16,7 +16,7 @@ use super::file::{Discovered, LocalConfigFile, Tracked};
 
 /// Represents the target of a trust or untrust operation.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) enum TrustRequest {
+pub enum TrustRequest {
     /// Trust a workspace root without binding to a config file.
     Root(PathBuf),
     /// Trust a specific config file and its root.

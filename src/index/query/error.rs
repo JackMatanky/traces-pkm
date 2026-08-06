@@ -12,7 +12,7 @@ use thiserror::Error;
 ///
 /// [`FieldValue::Null`]: crate::note::FieldValue::Null
 #[derive(Clone, Debug, Eq, PartialEq, Error)]
-pub(crate) enum QueryError {
+pub enum QueryError {
     /// Indicates that a field path was empty, used an unknown accessor, or
     /// contained an unexpected structure.
     ///
