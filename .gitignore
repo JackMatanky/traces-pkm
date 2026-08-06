@@ -30,7 +30,7 @@ __MACOSX/
 
 # --------------------- Gitingest Digests --------------------- #
 *digest.txt
-docs/refs/digests/
+docs/digests/
 
 # -------------------------- Claude --------------------------- #
 .claude/
