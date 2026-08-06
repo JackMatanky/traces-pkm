@@ -7,6 +7,12 @@
 mod trust_and_diagnostics {
     use super::super::support::{Sandbox, plain};
 
+    /// Trusts a project, writes a note, runs `index`, and checks
+    /// `.traces/index.redb` gets persisted.
+    ///
+    /// A `FileIndex::persist` unit test proves the write; only a spawned
+    /// process proves the CLI's `index` subcommand actually wires argv to
+    /// it and the result survives process exit.
     #[test]
     fn trust_then_index_persists_the_file_index() {
         let sandbox = Sandbox::trusted();
@@ -18,6 +24,13 @@ mod trust_and_diagnostics {
         assert!(sandbox.root().join(".traces/index.redb").is_file());
     }
 
+    /// Checks an untrusted config makes `list` fail with the untrusted
+    /// diagnostic, non-zero exit, and empty stdout.
+    ///
+    /// That's the exact contract a script's exit-code check depends on. A
+    /// unit test of the error type proves it constructs; it can't prove the
+    /// full CLI error path delivers it to real stderr with the right exit
+    /// code.
     #[test]
     fn untrusted_root_fails_with_the_config_build_diagnostic() {
         let sandbox = Sandbox::new();
@@ -34,6 +47,12 @@ mod trust_and_diagnostics {
         );
     }
 
+    /// Sorts by a misspelled field and checks the "did you mean" suggestion
+    /// reaches captured stderr.
+    ///
+    /// The suggestion logic itself is likely unit-tested elsewhere; only a
+    /// spawned process proves it survives Miette's fancy-diagnostic
+    /// rendering intact enough to still match as a substring.
     #[test]
     fn unknown_sort_field_reports_a_did_you_mean_suggestion() {
         let sandbox = Sandbox::trusted();
@@ -55,6 +74,12 @@ mod trust_and_diagnostics {
         );
     }
 
+    /// Passes an invalid `--where` expression and checks the expected
+    /// grammar reaches captured stderr.
+    ///
+    /// Same reasoning as the sort-suggestion test above: proves the
+    /// parser's error message survives Miette rendering, not just that it
+    /// constructs.
     #[test]
     fn unparsable_filter_expression_reports_the_expected_grammar() {
         let sandbox = Sandbox::trusted();
@@ -84,6 +109,12 @@ mod query_commands {
 
     use super::super::support::Sandbox;
 
+    /// Filters `list` by tag and checks matches land on stdout with a
+    /// count on stderr.
+    ///
+    /// The stdout/stderr split is a CLI-only guarantee scripts pipe on; no
+    /// library type (`QueryOutcome` included) has a stdout/stderr concept
+    /// to unit-test against.
     #[test]
     fn list_prints_matching_pages_to_stdout_and_a_count_to_stderr() {
         let sandbox = Sandbox::trusted();
@@ -97,6 +128,12 @@ mod query_commands {
         assert!(list.stderr.contains("1 page(s)"), "stderr: {}", list.stderr);
     }
 
+    /// Runs `table --column` and checks the rendered Markdown reaches
+    /// stdout.
+    ///
+    /// Proves `--column` argv parsing and rendering are wired together —
+    /// each is simple alone, but nothing below this test proves the
+    /// connection.
     #[test]
     fn table_renders_a_markdown_table_with_one_row_per_page() {
         let sandbox = Sandbox::trusted();
@@ -123,6 +160,10 @@ mod query_commands {
         );
     }
 
+    /// Runs `task` and checks one checkbox line per task reaches stdout.
+    ///
+    /// Same reasoning as `table` above, for the `task` subcommand's argv
+    /// wiring and rendering.
     #[test]
     fn task_prints_a_checkbox_line_per_task() {
         let sandbox = Sandbox::trusted();
@@ -149,6 +190,11 @@ mod template {
 
     use super::super::support::Sandbox;
 
+    /// Checks `--dry-run` prints rendered content to stdout without
+    /// writing a file.
+    ///
+    /// A negative filesystem assertion — only a real process against a
+    /// real disk can prove absence; a mock can't.
     #[test]
     fn dry_run_prints_rendered_content_to_stdout_without_writing() {
         let sandbox = Sandbox::trusted();
@@ -176,6 +222,14 @@ mod template {
         assert!(!sandbox.root().join("report.md").exists());
     }
 
+    /// Checks a render error surfaces the stable `render_query_failed`
+    /// diagnostic code.
+    ///
+    /// That code is the contract external tooling greps stderr for. Proves
+    /// it survives the full CLI error path, not just that the error value
+    /// constructs correctly. Does not reassert the exact source location —
+    /// see the trailing comment inside this test for why and where that's
+    /// covered instead.
     #[test]
     fn render_error_reports_a_stable_diagnostic_code() {
         let sandbox = Sandbox::trusted();
@@ -219,6 +273,11 @@ mod template {
 mod completions {
     use super::super::support::Sandbox;
 
+    /// Checks `completions --shell bash` prints the `_traces()` function
+    /// marker to stdout.
+    ///
+    /// Completion scripts exist to be read by a real shell from real
+    /// stdout; there's no lower-level abstraction to unit-test.
     #[test]
     fn bash_shell_prints_a_completion_script() {
         let sandbox = Sandbox::trusted();
@@ -233,6 +292,8 @@ mod completions {
         );
     }
 
+    /// Same as the bash completions test above, for zsh's `#compdef
+    /// traces` marker.
     #[test]
     fn zsh_shell_prints_a_completion_script() {
         let sandbox = Sandbox::trusted();
@@ -247,6 +308,8 @@ mod completions {
         );
     }
 
+    /// Same as the bash completions test above, for fish's `complete -c
+    /// traces` marker.
     #[test]
     fn fish_shell_prints_a_completion_script() {
         let sandbox = Sandbox::trusted();

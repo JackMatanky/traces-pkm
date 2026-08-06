@@ -3,6 +3,13 @@
 
 use super::support::Sandbox;
 
+/// Untrusts a trusted project, then checks a later `list` fails with the
+/// untrusted diagnostic.
+///
+/// Needs two real process invocations: the contract is that untrust
+/// survives past its own process and is honored on the next config load,
+/// which a single-process unit test can't distinguish from a plain store
+/// mutation.
 #[test]
 fn untrust_then_list_fails_with_the_untrusted_diagnostic() {
     let sandbox = Sandbox::trusted();

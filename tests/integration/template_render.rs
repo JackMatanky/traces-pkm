@@ -11,6 +11,12 @@ use traces_pkm::{
     fixture_service, write_note, write_template,
 };
 
+/// Renders a template whose query counts real indexed notes, and checks
+/// the written file's content.
+///
+/// No single module's unit tests cover this seam: `template` and `index`
+/// are each tested in isolation. This is the only test proving they
+/// compose correctly through the public API alone.
 #[test]
 fn renders_a_query_over_real_indexed_notes_and_writes_the_result() {
     let temp = tempfile::tempdir().expect("create temp dir");

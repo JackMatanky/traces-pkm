@@ -16,6 +16,12 @@ use traces_pkm::{
 
 use super::support::CwdGuard;
 
+/// Runs `init` three times to cover preset input, default input, and
+/// refusal of an already-initialized project.
+///
+/// `init` is dialog input driving a filesystem scaffold in one pass.
+/// Unit-testing either half alone would miss a wiring bug where typed
+/// answers never reach the config the scaffold logic writes.
 #[test]
 fn init_scaffolds_preset_defaults_and_refuses_existing_traces_dir() {
     let preset = tempfile::tempdir().expect("create preset temp dir");

@@ -14,6 +14,12 @@
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use traces_pkm::{Blake3FileHash, Blake3PathHash};
 
+/// Hashes a small (1KB) and a large (1MB) file via `Blake3FileHash::try_from`.
+///
+/// Every trust check and tracked-config lookup hashes a file through this
+/// path (see module docs); scaling by size catches a regression from fixed
+/// overhead to something that grows with file size, either of which a
+/// correctness test would miss.
 fn bench_file_hash(c: &mut Criterion) {
     let mut group = c.benchmark_group("Blake3FileHash::try_from");
     for (label, size) in [("1kb", 1024_usize), ("1mb", 1024 * 1024)] {
@@ -33,6 +39,10 @@ fn bench_file_hash(c: &mut Criterion) {
     group.finish();
 }
 
+/// Hashes a fixed config-file path string via `Blake3PathHash::from`.
+///
+/// Same hot-path reasoning as `bench_file_hash`, for the path-hashing half
+/// every tracked-config lookup also pays.
 fn bench_path_hash(c: &mut Criterion) {
     c.bench_function("Blake3PathHash::from", |b| {
         let path = std::path::Path::new("/project/.traces/config.toml");

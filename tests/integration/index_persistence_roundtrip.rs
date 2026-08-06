@@ -8,6 +8,12 @@ use std::fs;
 use pretty_assertions::assert_eq;
 use traces_pkm::FileIndex;
 
+/// Builds an index, persists it, and reloads it into a fresh `FileIndex`,
+/// checking records survive intact.
+///
+/// `src/index/mod.rs` covers the identical round trip with an internal
+/// unit test. This is the only test proving `build`/`persist`/`load` still
+/// work when called only through their `pub` signatures.
 #[test]
 fn persist_then_load_recovers_the_same_record_count_and_paths() {
     let temp = tempfile::tempdir().expect("create temp dir");

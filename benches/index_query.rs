@@ -25,6 +25,11 @@ fn built_index() -> FileIndex {
     FileIndex::build(temp.path()).expect("build index")
 }
 
+/// Filters a pre-built 1000-record index on `rating >= 50`.
+///
+/// The transformation every `--where` and template `.filter()` call runs
+/// (see module docs); a correctness test would pass regardless of a silent
+/// slowdown here.
 fn bench_filter(c: &mut Criterion) {
     c.bench_function("QueryOutcome::filter", |b| {
         b.iter_batched(
@@ -40,6 +45,9 @@ fn bench_filter(c: &mut Criterion) {
     });
 }
 
+/// Sorts a pre-built 1000-record index on `rating` descending.
+///
+/// Same reasoning as `bench_filter` above, for `--sort`/template `.sort()`.
 fn bench_sort(c: &mut Criterion) {
     c.bench_function("QueryOutcome::sort", |b| {
         b.iter_batched(

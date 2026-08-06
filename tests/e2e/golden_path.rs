@@ -56,6 +56,17 @@ fn run(
     }
 }
 
+/// Chains `init` → `trust` → `index` → `list` → `table` → `task` →
+/// `template --dry-run` in one project directory, matching a real first
+/// run.
+///
+/// The most expensive test in the suite — eight process spawns — because
+/// it's the only one that can prove commands compose: `dispatch.rs`'s
+/// per-command tests each start from a fresh `Sandbox::trusted()` fixture,
+/// so none of them prove `index`'s output is what `list` reads, or that
+/// `trust` durably unblocks later commands. Also confirms `init` alone
+/// doesn't establish trust (see the inline comment before the `trust`
+/// step).
 #[test]
 fn init_trust_index_list_table_task_and_template_chain_through_one_project() {
     let root = tempfile::tempdir().expect("create project temp dir");

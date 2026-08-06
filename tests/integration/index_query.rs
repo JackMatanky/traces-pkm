@@ -10,6 +10,12 @@ use std::{fs, path::Path};
 use pretty_assertions::assert_eq;
 use traces_pkm::{FileIndex, QuerySource};
 
+/// Chains `query` → `filter` → `sort` → `limit` and checks the composed
+/// result matches the expected row.
+///
+/// `src/index/query.rs` unit-tests the same chain internally. `filter`,
+/// `sort`, and `limit` only became `pub` this session; only a test that
+/// imports `traces_pkm` as a library can catch a broken public signature.
 #[test]
 fn query_then_filter_then_sort_then_limit_composes_across_the_public_surface() {
     let temp = tempfile::tempdir().expect("create temp dir");
@@ -35,6 +41,11 @@ fn query_then_filter_then_sort_then_limit_composes_across_the_public_surface() {
     assert_eq!(top.file().path(), Path::new("b.md"));
 }
 
+/// Checks `query_tasks` flattens two tasks in one note into two rows, each
+/// with the correct completion state.
+///
+/// Proves `IndexRecord::task_completed`, newly `pub`, works from outside
+/// the crate — `src/index/query.rs`'s internal test can't see that boundary.
 #[test]
 fn query_tasks_returns_task_level_rows_distinct_from_page_level_query() {
     let temp = tempfile::tempdir().expect("create temp dir");

@@ -13,6 +13,13 @@
 use pretty_assertions::assert_eq;
 use traces_pkm::{TrustRequest, create_trusted_project, fixture_service};
 
+/// Trusts then untrusts a project via `ConfigService`, checking the
+/// removed-entry count.
+///
+/// `src/config/service.rs` unit-tests the same trust/untrust logic from
+/// inside the crate. This is the only test proving that logic still works
+/// through the `pub` surface real consumers get — it would stay green if
+/// only the public re-export broke.
 #[test]
 fn trust_then_untrust_round_trips_through_the_public_service_surface() {
     let temp = tempfile::tempdir().expect("create temp dir");

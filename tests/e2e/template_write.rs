@@ -6,6 +6,12 @@ use pretty_assertions::assert_eq;
 
 use super::support::Sandbox;
 
+/// Renders without `--dry-run` and checks the rendered file lands on disk
+/// at the default output path.
+///
+/// The only test that lets the CLI commit a write — `dispatch.rs`'s
+/// `template` tests stay on `--dry-run`. Covers the highest-blast-radius
+/// mutating path the CLI has.
 #[test]
 fn writes_the_rendered_file_to_the_default_output_path() {
     let sandbox = Sandbox::trusted();
