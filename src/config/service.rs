@@ -1599,11 +1599,11 @@ mod tests {
             use super::*;
 
             #[test]
-            fn parses_title_and_aliases() {
+            fn parses_title() {
                 let fixture = Fixture::new();
                 let local_path = fixture.write_config(
                     "project/.traces/config.toml",
-                    "[frontmatter]\ntitle = \"Title\"\naliases = \"Aliases\"",
+                    "[frontmatter]\ntitle = \"Title\"",
                 );
                 let local =
                     LocalConfigFile::<FileDiscovered>::try_new(local_path)
@@ -1614,11 +1614,28 @@ mod tests {
 
                 // Assert
                 assert_eq!(config.frontmatter().title(), Some("Title"));
+            }
+
+            #[test]
+            fn parses_aliases() {
+                let fixture = Fixture::new();
+                let local_path = fixture.write_config(
+                    "project/.traces/config.toml",
+                    "[frontmatter]\naliases = \"Aliases\"",
+                );
+                let local =
+                    LocalConfigFile::<FileDiscovered>::try_new(local_path)
+                        .unwrap();
+
+                // Act
+                let config = build(&fixture, local, None).expect("build");
+
+                // Assert
                 assert_eq!(config.frontmatter().aliases(), Some("Aliases"));
             }
 
             #[test]
-            fn defaults_title_and_aliases_to_none_when_unconfigured() {
+            fn defaults_title_to_none_when_unconfigured() {
                 let fixture = Fixture::new();
                 let local_path = fixture
                     .write_config("project/.traces/config.toml", "[templates]");
@@ -1631,17 +1648,31 @@ mod tests {
 
                 // Assert
                 assert_eq!(config.frontmatter().title(), None);
+            }
+
+            #[test]
+            fn defaults_aliases_to_none_when_unconfigured() {
+                let fixture = Fixture::new();
+                let local_path = fixture
+                    .write_config("project/.traces/config.toml", "[templates]");
+                let local =
+                    LocalConfigFile::<FileDiscovered>::try_new(local_path)
+                        .unwrap();
+
+                // Act
+                let config = build(&fixture, local, None).expect("build");
+
+                // Assert
                 assert_eq!(config.frontmatter().aliases(), None);
             }
 
             #[test]
-            fn parses_date_created_and_date_modified() {
+            fn parses_date_created() {
                 let fixture = Fixture::new();
                 let local_path = fixture.write_config(
                     "project/.traces/config.toml",
                     "[frontmatter.date_created]\nname = \"created\"\nformat = \
-                     \"%Y-%m-%d\"\n\n[frontmatter.date_modified]\nname = \
-                     \"modified\"\nformat = \"%Y-%m-%dT%H:%M:%S\"",
+                     \"%Y-%m-%d\"",
                 );
                 let local =
                     LocalConfigFile::<FileDiscovered>::try_new(local_path)
@@ -1657,6 +1688,24 @@ mod tests {
                     .expect("date_created configured");
                 assert_eq!(created.name(), "created");
                 assert_eq!(created.format(), "%Y-%m-%d");
+            }
+
+            #[test]
+            fn parses_date_modified() {
+                let fixture = Fixture::new();
+                let local_path = fixture.write_config(
+                    "project/.traces/config.toml",
+                    "[frontmatter.date_modified]\nname = \"modified\"\nformat \
+                     = \"%Y-%m-%dT%H:%M:%S\"",
+                );
+                let local =
+                    LocalConfigFile::<FileDiscovered>::try_new(local_path)
+                        .unwrap();
+
+                // Act
+                let config = build(&fixture, local, None).expect("build");
+
+                // Assert
                 let modified = config
                     .frontmatter()
                     .date_modified()
@@ -1666,7 +1715,7 @@ mod tests {
             }
 
             #[test]
-            fn defaults_date_fields_to_none_when_unconfigured() {
+            fn defaults_date_created_to_none_when_unconfigured() {
                 let fixture = Fixture::new();
                 let local_path = fixture
                     .write_config("project/.traces/config.toml", "[templates]");
@@ -1679,6 +1728,21 @@ mod tests {
 
                 // Assert
                 assert!(config.frontmatter().date_created().is_none());
+            }
+
+            #[test]
+            fn defaults_date_modified_to_none_when_unconfigured() {
+                let fixture = Fixture::new();
+                let local_path = fixture
+                    .write_config("project/.traces/config.toml", "[templates]");
+                let local =
+                    LocalConfigFile::<FileDiscovered>::try_new(local_path)
+                        .unwrap();
+
+                // Act
+                let config = build(&fixture, local, None).expect("build");
+
+                // Assert
                 assert!(config.frontmatter().date_modified().is_none());
             }
 
@@ -1711,6 +1775,29 @@ mod tests {
                 let local_path = fixture.write_config(
                     "project/.traces/config.toml",
                     "[frontmatter.date_created]\nname = \"created\"\nbogus = 1",
+                );
+                let local =
+                    LocalConfigFile::<FileDiscovered>::try_new(local_path)
+                        .unwrap();
+
+                // Act
+                let result = build(&fixture, local, None);
+
+                // Assert
+                assert!(matches!(
+                    result,
+                    Err(ConfigBuilderError::ConfigFile(
+                        ConfigFileError::Read { .. }
+                    ))
+                ));
+            }
+
+            #[test]
+            fn rejects_date_field_missing_required_key() {
+                let fixture = Fixture::new();
+                let local_path = fixture.write_config(
+                    "project/.traces/config.toml",
+                    "[frontmatter.date_created]\nname = \"created\"",
                 );
                 let local =
                     LocalConfigFile::<FileDiscovered>::try_new(local_path)
