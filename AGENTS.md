@@ -3,47 +3,42 @@
 
 ## Issue tracker
 
-Issues live as local markdown files under `.scratch/`. See `docs/agents/issue-tracker.md`.
+Issues: local markdown under `.scratch/`. See `docs/agents/issue-tracker.md`.
 
 ## Triage labels
 
-Five canonical roles mapped to local state strings in issue files. See `docs/agents/triage-labels.md`.
+Five roles mapped to local state strings in issue files. See `docs/agents/triage-labels.md`.
 
 ## Domain docs
 
-Single-context — one `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.
+Single-context — one `CONTEXT.md` + `docs/adr/` at repo root. See `docs/agents/domain.md`.
 <!-- agent-skills:end -->
 
 <!-- mise:start -->
 # Mise — Environment & Task Orchestration
 
-This project uses **mise** for tool versioning and task management. Use the Mise MCP tools to manage dependencies and execute project tasks.
-
-> **Note**: Mise tools require `MISE_EXPERIMENTAL=1` to be enabled in the environment.
+> Note: Mise tools require `MISE_EXPERIMENTAL=1`.
 
 ## Always Do
 
-- **MUST check available tasks** using `mise://tasks` before assuming how to build, test, or lint the project.
-- **MUST verify tool versions** using `mise://tools` if you encounter environment-specific issues.
-- **ALWAYS `mise://tasks` first, then `run_task`.** Before any `cargo`/`hk`/`gitleaks`/build/test/lint/fmt command, check `mise://tasks` and run the matching task via `run_task` — only drop to a raw shell command when no task covers it.
+- Check `mise://tasks` before assuming how to build/test/lint; check `mise://tools` on environment issues.
+- Prefer `run_task` over raw `cargo`/`hk`/`gitleaks`/build/test/lint/fmt — only raw shell when no task covers it.
 
 ## Tasks
 
-High-value tasks — reach for these before anything else in `mise://tasks`:
-
-| Task | Alias | Use for |
-| --- | --- | --- |
-| `check` | `c` | Fastest compile signal — run after every edit |
-| `test` | `t` | Prove it works; scope with `-- --lib <module>`, `-- --test <file>`, or a name substring instead of the full suite |
-| `clippy` | — | Deny-warnings lint gate; `--fix` auto-applies fixes |
-| `fmt` | `f` | Format before diffing/committing |
-| `fix` | — | Auto-fix hygiene/formatting `hk` catches (not Rust-only); `-- --unstaged` scopes to files just edited |
-| `verify` | `v` | Full gate (fmt→lint→clippy→test-all→audit) — run before yielding/committing non-trivial changes |
+| Task   | Alias | Use for                                                                                         |
+| ------ | ----- | ----------------------------------------------------------------------------------------------- |
+| `check`  | `c`     | Fastest compile signal — run after every edit                                                   |
+| `test`   | `t`     | Prove it works; scope with `-- --lib <module>`, `-- --test <file>`, or a name substring             |
+| `clippy` | —     | Deny-warnings lint gate; `--fix` auto-applies                                                     |
+| `fmt`    | `f`     | Format before diffing/committing                                                                |
+| `fix`    | —     | Auto-fix hygiene/formatting `hk` catches; `-- --unstaged` scopes to files just edited               |
+| `verify` | `v`     | Full gate (fmt→lint→clippy→test-all→audit) — run before yielding/committing non-trivial changes |
 
 ## Never Do
 
-- NEVER run a shell command that has an equivalent `mise` task (check `mise://tasks`).
-- NEVER modify `.tool-versions` or `mise.toml` without verifying the impact on the environment.
+- NEVER run a shell command with an equivalent `mise` task.
+- NEVER modify `.tool-versions` or `mise.toml` without verifying impact.
 
 ## Resources
 
@@ -64,98 +59,56 @@ High-value tasks — reach for these before anything else in `mise://tasks`:
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **traces-pkm** (3000 symbols, 6973 relationships, 241 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+Indexed as **traces-pkm** (3000 symbols, 6973 relationships, 241 flows). Use GitNexus MCP tools to understand code, assess impact, navigate safely.
 
-> If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
+> Stale index? Run `npx gitnexus analyze` first.
 
 ## Always Do
 
-- **MUST run impact analysis before editing any symbol.** Before modifying a function, class, or method, run `gitnexus_impact({target: "symbolName", direction: "upstream"})` and report the blast radius (direct callers, affected processes, risk level) to the user.
-- **MUST run `gitnexus_detect_changes()` before committing** to verify your changes only affect expected symbols and execution flows.
-- **MUST warn the user** if impact analysis returns HIGH or CRITICAL risk before proceeding with edits.
-- When exploring unfamiliar code, use `gitnexus_query({query: "concept"})` to find execution flows instead of grepping. It returns process-grouped results ranked by relevance.
-- When you need full context on a specific symbol — callers, callees, which execution flows it participates in — use `gitnexus_context({name: "symbolName"})`.
-
-## Never Do
-
-- NEVER edit a function, class, or method without first running `gitnexus_impact` on it.
-- NEVER ignore HIGH or CRITICAL risk warnings from impact analysis.
-- NEVER rename symbols with find-and-replace — use `gitnexus_rename` which understands the call graph.
-- NEVER commit changes without running `gitnexus_detect_changes()` to check affected scope.
+- Before editing any symbol: `gitnexus_impact({target, direction: "upstream"})`, report blast radius (callers, processes, risk); warn user on HIGH/CRITICAL.
+- Before committing: `gitnexus_detect_changes()` — verify only expected symbols/flows affected.
+- Explore via `gitnexus_query({query: "concept"})`, not grep. Full context: `gitnexus_context({name})`.
+- Rename via `gitnexus_rename` (call-graph aware) — never find-and-replace.
 
 ## Resources
 
-| Resource | Use for |
-|----------|---------|
-| `gitnexus://repo/traces-pkm/context` | Codebase overview, check index freshness |
-| `gitnexus://repo/traces-pkm/clusters` | All functional areas |
-| `gitnexus://repo/traces-pkm/processes` | All execution flows |
-| `gitnexus://repo/traces-pkm/process/{name}` | Step-by-step execution trace |
+| Resource                                  | Use for                            |
+| ----------------------------------------- | ---------------------------------- |
+| `gitnexus://repo/traces-pkm/context`        | Codebase overview, index freshness |
+| `gitnexus://repo/traces-pkm/clusters`       | Functional areas                   |
+| `gitnexus://repo/traces-pkm/processes`      | Execution flows                    |
+| `gitnexus://repo/traces-pkm/process/{name}` | Step-by-step execution trace       |
 
 ## CLI
 
-| Task | Read this skill file |
-|------|---------------------|
-| Understand architecture / "How does X work?" | `.claude/skills/gitnexus/gitnexus-exploring/SKILL.md` |
-| Blast radius / "What breaks if I change X?" | `.claude/skills/gitnexus/gitnexus-impact-analysis/SKILL.md` |
-| Trace bugs / "Why is X failing?" | `.claude/skills/gitnexus/gitnexus-debugging/SKILL.md` |
-| Rename / extract / split / refactor | `.claude/skills/gitnexus/gitnexus-refactoring/SKILL.md` |
-| Tools, resources, schema reference | `.claude/skills/gitnexus/gitnexus-guide/SKILL.md` |
-| Index, status, clean, wiki CLI commands | `.claude/skills/gitnexus/gitnexus-cli/SKILL.md` |
-
+| Task                              | Skill file                                                |
+| --------------------------------- | --------------------------------------------------------- |
+| Architecture / "How does X work?" | `.claude/skills/gitnexus/gitnexus-exploring/SKILL.md`       |
+| Blast radius                      | `.claude/skills/gitnexus/gitnexus-impact-analysis/SKILL.md` |
+| Trace bugs                        | `.claude/skills/gitnexus/gitnexus-debugging/SKILL.md`       |
+| Rename/extract/split/refactor     | `.claude/skills/gitnexus/gitnexus-refactoring/SKILL.md`     |
+| Tools, resources, schema          | `.claude/skills/gitnexus/gitnexus-guide/SKILL.md`           |
+| Index, status, clean, wiki        | `.claude/skills/gitnexus/gitnexus-cli/SKILL.md`             |
 <!-- gitnexus:end -->
 
 <!-- rust-docs:start -->
 # rust-docs-mcp — Rust Crate Documentation
 
-This project uses **rust-docs-mcp** for querying Rust crate documentation, source code, dependencies, and module structure. All tools are prefixed with `rust-docs_`.
-
-> First cache a crate (`cache_crate`) before querying it. For workspace crates, specify the `member` parameter (e.g., `crates/rmcp`).
+Query Rust crate docs/source/deps/module structure via `rust-docs_*` tools.
 
 ## Always Do
 
-- **Prefer `rust-docs_*` over web search** for any Rust crate documentation, API, or dependency question. Cache the crate first, then query locally.
-- **Start with `structure`** to get a high-level overview of a crate's module hierarchy.
-- **Use `search_items_preview` first** for name searches (returns id, name, kind) — avoids token limits. Then drill into specific items with `get_item_details`.
-- **Cache from local path** (`cache_crate` with `source_type: "local"`) for workspace-local crates to analyze this project's own source.
-- **Use `get_item_source`** to view actual implementation code with configurable context lines.
-
-## Common Workflows
-
-| Goal | Steps |
-|------|-------|
-| Explore a new crate | `structure` → `search_items_preview` (or `list_crate_items`) → `get_item_details` on interesting items |
-| Find a specific function/type | `search_items_preview({pattern: "foo"})` → `get_item_details({item_id: N})` → `get_item_source({item_id: N})` |
-| Browse all items in a crate | `list_crate_items` with optional `kind_filter` (function, struct, enum, trait) |
-| Fuzzy search (typo-tolerant) | `search_items_fuzzy({query: "concept"})` — searches names + docs + metadata |
-| Trace dependencies | `get_dependencies` — direct deps by default, `include_tree: true` for transitive |
-| View module hierarchy | `structure` with `max_depth`, `focus_on` to zoom into a submodule |
-
-## Tools
-
-| Tool | Use for |
-|------|---------|
-| `cache_crate` | Download & cache a crate (source_type: cratesio, github, local) |
-| `cache_operations` | List, monitor, cancel background caching tasks |
-| `structure` | Module tree visualization (cargo-modules) |
-| `list_crate_items` | Browse all items in a crate (with kind/path filters) |
-| `search_items_preview` | Search by name — lightweight (id, name, kind only) |
-| `search_items` | Full search with complete docs (may exceed token limits) |
-| `search_items_fuzzy` | Typo-tolerant search across names, docs, metadata |
-| `get_item_details` | Full item info: signature, fields, methods, docs |
-| `get_item_docs` | Extract just the doc string for an item |
-| `get_item_source` | Source code with surrounding context lines |
-| `get_dependencies` | Direct or transitive dependency tree |
-| `get_crates_metadata` | Batch metadata for multiple crates |
-| `list_cached_crates` | List all locally cached crates + sizes |
-| `list_crate_versions` | List cached versions of a specific crate |
-| `remove_crate` | Remove a cached crate to free disk space |
+- Prefer `rust-docs_*` over web search. `cache_crate` first (workspace crates: pass `member`, e.g. `crates/rmcp`; local: `source_type: "local"`).
+- `structure` for module overview. `search_items_preview` (id/name/kind only) → `get_item_details`; `get_item_source` for implementation with context lines.
+- Fuzzy: `search_items_fuzzy({query})`. Deps: `get_dependencies` (`include_tree: true` for transitive). Browse: `list_crate_items` (`kind_filter`).
 <!-- rust-docs:end -->
 
 <!-- adrs:start -->
 # ADRs — Architecture Decision Records
 
-This project uses [`adrs`](https://crates.io/crates/adrs) ([docs](https://joshrotenberg.com/adrs/)). The MCP server in `opencode.json` exposes ADR tools to AI agents.
+[`adrs`](https://crates.io/crates/adrs) ([docs](https://joshrotenberg.com/adrs/)). MCP server exposes ADR tools (also via CLI: `adrs init`, `adrs new "Title"`, `adrs list`, `adrs get 1`).
+
+Best practices: AI-created ADRs start as `proposed` — review before accepting. Use `link_adrs` for decision traceability.
 
 | CLI                | MCP tools                                                                |
 | ------------------ | ------------------------------------------------------------------------ |
@@ -163,6 +116,4 @@ This project uses [`adrs`](https://crates.io/crates/adrs) ([docs](https://joshro
 | `adrs new "Title"` | Write: `create_adr`, `update_status`, `link_adrs`, `update_content`      |
 | `adrs list`        | Analyse: `validate_adr`, `compare_adrs`, `suggest_tags`                  |
 | `adrs get 1`       |                                                                          |
-
-Best practices: AI-created ADRs start as `proposed` — review before accepting. Use `link_adrs` for decision traceability.
 <!-- adrs:end -->
