@@ -23,8 +23,7 @@ use super::{
 use crate::note::Note;
 
 /// Postcard-encoded [`FileRecord`] bytes keyed by project-relative path.
-const FILE_RECORDS: TableDefinition<&str, &[u8]> =
-    TableDefinition::new("file_records");
+const FILES: TableDefinition<&str, &[u8]> = TableDefinition::new("files");
 
 /// Postcard-encoded [`Note`] bytes keyed by project-relative path.
 const NOTES: TableDefinition<&str, &[u8]> = TableDefinition::new("notes");
@@ -97,7 +96,7 @@ impl IndexStore {
         let write_txn =
             self.db.begin_write().map_err(|source| self.store_error(source))?;
         write_txn
-            .delete_table(FILE_RECORDS)
+            .delete_table(FILES)
             .map_err(|source| self.store_error(source))?;
         write_txn
             .delete_table(NOTES)
@@ -105,7 +104,7 @@ impl IndexStore {
         write_txn
             .delete_multimap_table(LINKS)
             .map_err(|source| self.store_error(source))?;
-        self.store_table(&write_txn, FILE_RECORDS, records, FileRecord::path)?;
+        self.store_table(&write_txn, FILES, records, FileRecord::path)?;
         self.store_table(&write_txn, NOTES, notes, Note::path)?;
         self.store_links(&write_txn, links)?;
         write_txn.commit().map_err(|source| self.store_error(source))
@@ -122,8 +121,7 @@ impl IndexStore {
     pub(super) fn load_all(&self) -> Result<IndexSnapshot, FileIndexError> {
         let read_txn =
             self.db.begin_read().map_err(|source| self.store_error(source))?;
-        let records =
-            self.load_table(&read_txn, FILE_RECORDS, FileRecord::path)?;
+        let records = self.load_table(&read_txn, FILES, FileRecord::path)?;
         let notes = self.load_table(&read_txn, NOTES, Note::path)?;
         let links = self.load_links(&read_txn)?;
         Ok((records, notes, links))
@@ -511,7 +509,7 @@ mod tests {
         }
 
         #[rstest]
-        #[case::file_records(FILE_RECORDS)]
+        #[case::file_records(FILES)]
         #[case::notes(NOTES)]
         fn returns_deserialize_error_when_stored_bytes_are_invalid(
             #[case] table_def: TableDefinition<&str, &[u8]>,
@@ -541,7 +539,7 @@ mod tests {
                 .expect("persist records");
 
             let read_txn = store.db.begin_read().expect("begin read txn");
-            let table = read_txn.open_table(FILE_RECORDS).expect("open table");
+            let table = read_txn.open_table(FILES).expect("open table");
             let raw = table
                 .get("note.md")
                 .expect("read raw value")
