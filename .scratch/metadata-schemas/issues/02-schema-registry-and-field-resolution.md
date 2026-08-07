@@ -4,19 +4,20 @@
 
 **Blocked by:** None — can start immediately.
 
-**Status:** ready-for-agent
+**Status:** implemented
 
 ## Acceptance Criteria
 
-- [ ] Schema TOML parses from `.traces/schemas/<name>.toml` with filename stem as Schema name; unknown keys rejected at parse.
-- [ ] Field Definitions support all six types (`input`, `select`, `boolean`, `number`, `date`, `file`) with type-specific options and optional `required`/`multi` flags.
-- [ ] Kahn's topological sort resolves the extends DAG; cycles are hard errors.
-- [ ] A missing `extends` target degrades to exact match with a warning; the class's own fields still render.
-- [ ] Own fields override all parents; first-listed wins among parents; `excludes` drops inherited fields by name.
-- [ ] Bounded `$ref` resolves (`#global/<field>` or `#<ancestor-schema>/<field>`); local keys in the same definition override the base's.
-- [ ] The reserved `global.toml` Schema: `global` is forbidden as a File Class; a stray `required = true` there is ignored with a warn log while a referencing Schema's local `required` holds.
-- [ ] Is-a matching is transitive (a class matches queries for its parents).
-- [ ] All covered by unit tests over Schema fixtures — no vault, no minijinja.
+- [x] Schema TOML parses from `.traces/schemas/<name>.toml` with filename stem as Schema name; unknown keys rejected at parse.
+- [x] Field Definitions support all six types (`input`, `select`, `boolean`, `number`, `date`, `file`) with type-specific options and optional `required`/`multi` flags.
+- [x] Kahn's topological sort resolves the extends DAG; cycles are hard errors.
+- [x] A missing `extends` target degrades to exact match with a warning; the class's own fields still render.
+- [x] Own fields override all parents; first-listed wins among parents; `excludes` drops inherited fields by name.
+- [x] Bounded `$ref` resolves (`#global/<field>` or `#<ancestor-schema>/<field>`); local keys in the same definition override the base's.
+- [x] The reserved `global.toml` Schema: a stray `required = true` there is ignored with a warn log while a referencing Schema's local `required` holds.
+- [ ] `global` is forbidden as a File Class value — **deferred**: this is a Note-frontmatter check, not a Schema-resolution one; no code in this ticket reads Note frontmatter (see Out of Scope). `GLOBAL_SCHEMA_NAME` is exposed `pub(crate)` for whichever later ticket implements it.
+- [x] Is-a matching is transitive (a class matches queries for its parents).
+- [x] All covered by unit tests over Schema fixtures — no vault, no minijinja.
 
 ## Comments
 
@@ -51,3 +52,258 @@ No Schema parsing or field-resolution code exists anywhere in `src/`. Traces has
 - `query.from_class`/`tasks.from_class` (ticket 05) that consume is-a matching.
 - Any vault/index interaction.
 - Schema authoring/validation CLI.
+
+## Implementation notes
+
+**Date**: 2026-08-07
+**Implemented in**: `1181a3f` on branch `feat/schema-registry` (worktree `.worktrees/schema-registry`)
+
+### What was built
+
+- `src/schema/raw.rs`: `RawSchema` (`extends`/`excludes`/`fields: BTreeMap<String, RawFieldDef>`) and `RawFieldDef` (`type`/`$ref`/`required`/`multi`/`values`/`folders`/`ext`/`class`), all `#[serde(deny_unknown_fields)]`, mirroring `config/raw.rs`'s pattern. `RawFieldType` is the six-way `type` enum.
+- `src/schema/model.rs`: the resolved domain shapes — `Schema` (renamed from an earlier `ResolvedSchema`; `name`/`fields`/`ancestors`, `pub(super)` constructor, `pub(crate)` accessors), `FieldDefinition`, and `FieldOptions` (an enum keyed by field type: `Select { values }` / `File { folders, ext, class }` / four unit variants for `input`/`boolean`/`number`/`date`, so a mismatched type/option pairing is unrepresentable). Construction (`Schema::new`/`FieldDefinition::new`, `FieldOptions::from_raw`/`merged`/`field_type`) is `pub(super)`: only `resolve.rs` builds these.
+- `src/schema/resolve.rs`: pure `resolve(&BTreeMap<String, RawSchema>) -> Result<(BTreeMap<String, Schema>, Vec<SchemaWarning>), SchemaError>`, plus its `build_dag`/`resolve_one`/`build_field`/`parse_ref` helpers (split out of one function that originally tripped `clippy::too_many_lines`). `build_dag` filters `extends` to known targets (warning + drop on miss) and forces the reserved Global Schema to Kahn in-degree zero regardless of its own declared `extends` — it is a flat, `$ref`-able-from-anywhere reference pool (ADR-7), not a DAG link. `resolve_one` merges parent fields first-listed-wins, applies `excludes`, then overrides with own (`$ref`-resolved) fields; `$ref` targets are validated against the referencing Schema's actual transitive-ancestor set, not merely "already resolved by Kahn's tie-breaking order".
+- `src/schema/registry.rs`: `SchemaRegistry::load(&Path)` walks every `*.toml` directly under a directory via `walkdir::WalkDir::new(dir).min_depth(1).max_depth(1)` (filename stem = Schema name; a missing directory degrades to an empty registry, not an error — detected via `walkdir::Error::depth() == 0` plus a `NotFound` `io_error()`) and resolves it via `resolve::resolve`. `SchemaRegistry::get`/`is_a` expose lookup and transitive is-a matching (a class absent from the registry degrades to exact-string match). This is the module's only impure/filesystem-touching file.
+- `src/schema/mod.rs`: now a thin orchestrator — `mod` declarations, the `pub(crate) use` re-exports (`Schema`, `SchemaRegistry`, `SchemaError`, `SchemaWarning`), and the shared `GLOBAL_SCHEMA_NAME = "global"` constant (exported for the future Note-classification consumer, ticket 05, to forbid as a File Class value).
+- `src/schema/error.rs`: `SchemaError` (hard: `ReadDirectory`/`ReadFile`/`Parse`/`MissingFieldType`/`Cycle`/`MalformedRef`/`UnresolvedRef`) and `SchemaWarning` (degrade: `MissingExtendsTarget`/`StrayGlobalRequired`), `thiserror`-backed.
+- `src/lib.rs`: added `mod schema;` (alphabetically ordered) plus a `# Core Subsystems` doc bullet.
+
+### Key design decisions
+
+- **`FieldOptions` is an enum, not a flat struct of `Option<T>`s.** Only `select` (`values`) and `file` (`folders`/`ext`/`class`) are list-bearing per spec User Story 9; giving every type its own variant makes a `date` field with a stray `folders` list unrepresentable, rather than merely unpopulated.
+- **Global Schema is forced to Kahn in-degree zero, unconditionally.** An early version only reordered Global to the front of the *existing* zero-in-degree tier (a tie-break), which left a real gap: a Schema `$ref`-ing `#global/<field>` from an earlier Kahn tier than Global's own (hypothetical) `extends` would spuriously fail. `build_dag` now clears Global's own `extends`/in-degree unconditionally — it never inherits, matching its "flat reference pool" role — closing the gap regardless of what `global.toml` declares. Caught by an adversarial `/code-review` pass (Spec sub-agent), regression-tested by `global_ignores_its_own_declared_extends_and_still_resolves_first`.
+- **`$ref` targets are validated against the ancestor set, not "is it resolved yet".** An early version only checked `resolved.get(ref_schema)`, which would let a `$ref` to an unrelated sibling Schema silently succeed whenever Kahn's (alphabetic) tie-breaking happened to resolve that sibling first — a spec violation (ADR-7: "bounded to global + ancestors") that would non-deterministically pass or fail depending on iteration order. `resolve_one` now threads a `ResolutionContext { ancestors, resolved }` through `build_field`, which rejects any `$ref` target that isn't `GLOBAL_SCHEMA_NAME` or a member of the referencing Schema's own transitive ancestors before ever consulting `resolved`. Regression-tested by `a_ref_to_a_non_ancestor_sibling_is_a_hard_error`.
+- **Dead-code suppression, not deferred wiring.** Nothing in ticket 02's scope wires `SchemaRegistry` into `ConfigService`/CLI (that's ticket 03's job registering the `schema` minijinja namespace), so the entire module tree is unreached outside `#[cfg(test)]`. Every otherwise-dead item carries `#[cfg_attr(not(test), expect(dead_code, reason = "..."))]`, mirroring `config/model.rs`'s ticket-01 precedent — but scoped to `not(test)` alone (not `not(any(test, feature = "test-utils"))`) since nothing here is re-exported `pub` from `lib.rs` for external `tests/`/`benches/` consumers; `feature = "test-utils"` grants no additional reachability for `pub(crate)`-only code, so including it in the condition was verified (empirically, via `cargo clippy --workspace --all-targets --features test-utils`) to under-suppress.
+- **`resolve()` split into `build_dag`/`resolve_one` helpers.** The original monolithic `resolve()` tripped `clippy::too_many_lines` (106/100) once the Global in-degree fix was added; splitting along its two natural phases (DAG construction, per-Schema field merge) each stayed well under the limit and reads as two named steps instead of one long function.
+
+### Test inventory
+
+31 tests: `src/schema/resolve.rs` `mod tests` (21, pure fixtures — no filesystem) covers Kahn's sort, own-overrides-parents, first-listed-wins, `excludes`, missing-target degrade, cycle detection, all six field types, `multi`, `$ref` to an ancestor/to Global/to a `file`-type field, the bounded-ref rejection, the Global-forced-zero-degree regression (split into a does-not-inherit-its-own-extends case and a resolves-before-a-sibling-despite-alphabetical-order case), a `$ref`-to-Global ordering-independence case, the stray-Global-`required` degrade, a `$ref`-type-switch-starts-from-empty-options case, and the three parse-time hard errors (malformed ref, unresolved ref, missing type). `src/schema/registry.rs` `mod tests` splits into `mod load` (8: filename-stem keying, non-`.toml` filtering, a missing directory degrading to empty, a nested subdirectory being ignored, unknown-key rejection at both the Schema and Field Definition level, and a `SchemaError::ReadDirectory`/`ReadFile` case each for an unreadable directory/file) and `mod is_a` (2: registry-level exact-match degrade and transitive matching).
+
+### Verification
+
+```sh
+mise run verify   # fmt → lint → clippy → test-all → audit, exit 0
+```
+
+1230 tests pass (31 new). `cargo clippy --workspace -- -D warnings` and `cargo clippy --workspace --all-targets --features test-utils -- -D warnings` both clean. `cargo doc --no-deps --all-features --document-private-items` emits no warnings from `src/schema/*.rs`.
+
+### Out of scope (unchanged)
+
+Confirmed nothing beyond pure Schema parsing/resolution was touched: no `schema` minijinja namespace, no `file`-field FileIndex resolution, no `query.from_class`/`tasks.from_class`, no vault/index interaction, and `SchemaRegistry` is not yet called from `ConfigService`/CLI. `global` being rejected as a Note's File Class value (issue bullet 17's other half) is deferred to whichever later ticket reads Note frontmatter — this ticket exposes `GLOBAL_SCHEMA_NAME` for that consumer and implements the pure-resolution half (stray `required` degrade) that is testable without vault access.
+
+### Adversarial re-review (2026-08-07)
+
+Ran a `/code-review`-style Standards + Spec pass (two parallel reviewer sub-agents) against `main` before committing.
+
+- **Standards**: no hard violations. Two low-priority judgement calls noted and left as-is: (1) `schema_name`/`field_name` `&str` pairs recur as adjacent params across `build_field`/`parse_ref`/`SchemaError` variants (Fowler Data Clump) — accepted, every call site is correct today and a wrapper type would be premature ahead of ticket 03/05 adding real call sites; (2) the repeated `expect(dead_code)` cfg_attr block (Fowler Duplicated Code) — accepted as directly precedented by `config/model.rs`.
+- **Spec**: found the Global-in-degree gap and the `$ref`-bounding gap described above; both were fixed and regression-tested before commit, not left as known issues.
+
+### Post-review file reorganization (2026-08-07)
+
+User feedback after the first commit: rename `ResolvedSchema` to `Schema` and move
+it plus the `FieldDefinition`/`FieldOptions`/`FieldType` domain types into a
+dedicated `model.rs` (mirroring `config/{raw,model,service}.rs`'s split);
+move `SchemaRegistry` into its own `registry.rs`; use the `walkdir` crate
+(already a dependency, used by `config/discovery.rs` and `index/scan.rs`)
+instead of hand-rolled `fs::read_dir`.
+
+- `resolve.rs` shrank to just the pure Kahn's-sort algorithm
+  (`resolve`/`build_dag`/`resolve_one`/`build_field`/`parse_ref`,
+  `ResolutionContext`); `model.rs` now owns construction (`pub(super)`
+  constructors/builders) and the `pub(crate)` read accessors, matching the
+  house convention that a type's own file owns its `impl` block.
+- `registry.rs`'s directory walk uses
+  `WalkDir::new(dir).min_depth(1).max_depth(1)` to keep the original
+  non-recursive semantics (Schemas do not nest) — regression-tested by a new
+  `ignores_a_nested_subdirectory_of_the_registry` test, since a plain
+  `WalkDir::new(dir)` would silently start reading nested `.toml` files.
+  The "missing directory degrades to an empty registry" behavior moved from
+  matching `io::ErrorKind::NotFound` on `fs::read_dir`'s single `Result` to
+  matching `walkdir::Error::depth() == 0` with a `NotFound` `io_error()` on
+  the walk's first yielded item — same external behavior, verified by the
+  existing `a_missing_registry_directory_resolves_to_an_empty_registry` test.
+- No other behavior changed; re-ran the full verification sweep (below) after
+  the split.
+
+### Pipeline/machinery extraction and reorder (2026-08-07, continued)
+
+Three follow-up refactor commits, all pure structure moves (no behavior
+change, verified by the full suite after each):
+
+- **`7f4c3a6` — extract `RefResolver`/`SchemaGraph`, split `UnresolvedRef`.**
+  `FieldPath<'a>` replaces the bare `(schema, field)` `&str` pairs
+  threaded through `resolve_one`/`build_field`/`parse_ref`, closing a
+  same-typed-adjacent-params transposition risk the earlier adversarial
+  review flagged but left as-is (mirrors `BaseNameRef`/`BaseName`).
+  `ResolutionContext` is renamed `RefResolver` and gains a `.resolve()`
+  method: it now owns `$ref` parse + bounds-check + lookup instead of
+  `build_field` driving each step inline. `SchemaError::UnresolvedRef`
+  splits into `RefOutOfBounds`/`RefFieldNotFound` (distinct causes,
+  distinct fixes) and drops the redundant `ref_schema`/`ref_field`
+  fields now that `reference` already shows them verbatim — cuts the
+  enum's largest variant from 120 to 72 bytes, with a new
+  `schema_error_stays_small` regression guard. `SchemaGraph` extracts
+  Kahn's adjacency/in-degree/queue/visited bookkeeping out of
+  `resolve()`/`build_dag`, isolating the Global-first tie-break;
+  `parents_of` returns a slice instead of cloning a `Vec<&str>` per
+  Schema. `parse_ref` becomes `FieldPath::parse`.
+- **`df6f4c7` — reorder items for canonical top-down tour.** `model.rs`
+  had its headline type (`Schema`, the file's primary and only
+  crate-re-exported type) declared *last*, below its own supporting
+  pieces. Reordered to `Schema`+impl, `FieldDefinition`+impl,
+  `FieldOptions`+impl, `FieldType`+impl per
+  `docs/refs/canonical_ordering_discipline.md` (primary items first).
+  `registry.rs::read_raw_schemas` swapped a `let mut`/`let` declaration
+  pair to match the discipline's plain-before-`mut` ordering rule.
+- **`02af4c1` — split `resolve.rs` into pipeline-then-machinery tiers.**
+  The file was interleaved by construction order (a reader tracing the
+  pipeline had to detour through `SchemaGraph`'s internals before
+  reaching `resolve_one`, and `RefResolver`'s definition sat between the
+  two pipeline steps that construct and call it). Reordered into two
+  tiers: the pipeline in call order (`resolve` -> `resolve_one` ->
+  `build_field` -> `apply_global_degrade` -> `FieldPath::parse`, all
+  readable end to end without first knowing struct internals), then the
+  supporting types each stage leans on (`SchemaGraph`, `RefResolver` +
+  its `FieldPath` address type).
+
+### `SchemaName`/`SchemaNameRef` newtypes (2026-08-07)
+
+Adversarial `rust-code-review`/`rust-skills` pass over `src/schema/`
+found the module had built exactly one newtype for identity safety
+(`FieldPath`, above) but still threaded every Schema *name* through the
+rest of the module as bare `String`/`&str` — including one call site
+that briefly held a real newtype (`BaseNameRef`) and discarded it into
+a `String` one line later. Findings, in severity order:
+
+- **M1/M2 (transposition risk):** `SchemaRegistry::is_a(class, queried)`
+  had two same-typed `&str` params playing different roles (a same-role
+  swap a newtype can't close by itself); `SchemaError`'s four
+  `$ref`-related variants each hand-copied `schema: String, field:
+  String` at their construction site, one typo from a silent swap.
+- **L1-L4 (pervasive `String`/`&str` for a real identity type):** the
+  `BaseNameRef` discard in `registry.rs::read_raw_schemas`; `Schema`/
+  `SchemaRegistry`/`SchemaGraph`/`RefResolver`/`SchemaError`/
+  `SchemaWarning` all storing/comparing Schema names as bare strings;
+  `FieldPath.schema` typed `&'a str` despite its own doc saying it
+  exists to stop schema/field transposition (two same-typed fields
+  still made `FieldPath { schema: field_name, field: name }` compile).
+
+Fix (`a7d4720`): new `src/schema/name.rs` — `SchemaName` (owned) /
+`SchemaNameRef` (borrowed), mirroring `file_name.rs`'s `FileName`/
+`BaseName`/`BaseNameRef` split. Manual `Debug`/`Display` delegate to the
+wrapped `String`/`str` so wrapping a name never changes an error or
+warning message's text; derived `Ord`/`PartialOrd` is provably
+identical to the wrapped type's own (single-field tuple struct), so
+`SchemaGraph`'s Kahn tie-break determinism carries over unchanged. Both
+types threaded through every Schema-identity slot crate-wide within
+`schema/`; `FieldPath.schema` retyped to `SchemaNameRef<'a>` (now a
+compile error, not a silent transposition, to swap `schema`/`field`);
+`FieldPath::parse` replaces the old free-function `parse_ref`, matching
+this crate's own `Type::parse(&str) -> Result<Self, Error>` idiom
+(`index::query::field::FieldPath::parse`) over generic `TryFrom`;
+`is_a`'s `class` param renamed `subject` with a worked doc example plus
+a named `is_not_commutative_reversed_arguments_give_a_different_answer`
+regression test (M1's transposition risk can't be closed by a type, so
+it's closed by a test instead); `SchemaError`'s four `schema: String`
+fields retyped to `SchemaName` (M2). No public API change — `Schema::
+name()`/`is_a()`, `SchemaRegistry::get()` still take/return plain `&str`
+at the module boundary; `SchemaName`/`SchemaNameRef` stay `pub(crate)`,
+internal to `schema/`. Follow-up (`a3d3b51`) renamed
+`FieldOptions::field_type()` to `kind()` to match the crate's `*Type`
+accessor-naming convention (e.g. `index/inlinks.rs`'s `Target`).
+
+### Canonical ordering discipline audit (`6e5d8e4`, 2026-08-07)
+
+Second, more granular pass against
+`docs/refs/canonical_ordering_discipline.md` and `clippy.toml`'s
+`source-item-ordering` config (item/impl placement was already
+compliant from the reorders above). Two real violations found: (1)
+`name.rs`'s `SchemaName`/`SchemaNameRef` derive lists had `Hash`
+trailing after `Ord`/`PartialOrd` instead of its lexicographic slot
+between `Eq` and `Ord` — `index/inlinks.rs`'s `Target` type already
+gets this right and served as the in-crate reference; (2) `model.rs`'s
+`FieldOptions::kind()` (an accessor) was declared *before* its own
+type's constructors (`from_raw`, `merged`), breaking the
+constructor-before-accessor convention `Schema::new` and
+`FieldDefinition::new` both already establish earlier in the same file.
+Both fixed; no behavior change.
+
+### Rustdoc revision (`8eb925b`, 2026-08-07)
+
+Full pass over every `//!`/`///` doc comment in `src/schema/` against
+the `rust-doc` skill (Rust API Guidelines + rustdoc conventions).
+Stripped ticket/spec-tracking artifacts that don't serve a future
+reader — `(spec User Story N)` citations, quoted `(spec: "...")`/`(spec
+Implementation Decisions: "...")` citations, and a `.scratch/`
+ticket-path reference in `mod.rs`'s module doc — keeping the
+substance (the *why*) as plain prose instead of a citation wrapper;
+kept ADR-7 citations since ADRs are durable accepted design records,
+not ephemeral scratch tickets. Caught and corrected one factual
+regression introduced mid-edit: an early trim of `registry.rs::load`'s
+doc conflated the spec's lazy-validation precedent into a false claim
+that `load()` defers a broken Schema's failure to the Template that
+touches it (it doesn't — `load()` eagerly parses and resolves every
+present Schema); reworded to describe only the actual missing-directory
+behavior. Removed 3 em dashes; added 3 missing `# Errors` sections
+(`read_raw_schemas`, `resolve_one`, `build_field`); fixed one genuine
+grammar issue `harper-cli` caught (missing comma after a
+sentence-initial "Otherwise"). ~50 additional `harper-cli` flags
+reviewed individually and left as-is — domain proper nouns absent from
+its dictionary (`Kahn's`, `minijinja`, `ADR`, `serde`, `newtypes`),
+markdown code-span-plus-possessive tokenization artifacts, and two
+flags that would have introduced real grammar errors if applied.
+
+### Test coverage and structure audit (`ba651f6`, 2026-08-07)
+
+Systematic audit of every `src/schema/` implementation file against its
+test suite via `rust-unit-testing`'s case-surface enumeration method
+(read the source, list every branch/error variant/`Option` path, map
+existing tests onto that list, then close what's unmapped).
+
+**Coverage gaps closed:**
+- `model.rs` had **zero** direct unit tests — `Schema`, `FieldDefinition`,
+  `FieldOptions`, `FieldType` were only exercised indirectly through
+  `resolve.rs`'s end-to-end pipeline tests, so a bug in
+  `FieldOptions::merged`'s `File`-type per-subfield fallback would fail
+  an integration test three call-frames from the actual bug. Added a
+  35-test `mod tests` covering every branch, including the independent
+  per-subfield `File` fallback never isolated before.
+- `error.rs`: `SchemaError`'s 8 variants had no `Display`-message tests
+  while `SchemaWarning`'s 2 did — asymmetric against this crate's own
+  `index/query/error.rs` convention (`assert_display` helper, one
+  `*_formats_display_message` test per variant). Added all 8.
+- `resolve.rs`: `FieldPath::parse`'s 4 malformed-input branches (missing
+  `#`, missing `/`, empty schema segment, empty field segment) collapsed
+  to one indirectly-tested shape through the full pipeline. Added direct
+  `field_path`/`ref_resolver` test modules bypassing `SchemaGraph`/
+  `resolve_one`/`build_field` entirely.
+- `registry.rs`: `load()`'s own doc documents that it propagates any
+  `resolve()` error, but nothing tested that boundary; `is_a`'s
+  `Some(schema)` branch was untested for a real (non-"ghost") schema
+  matching itself. Added both.
+
+**Structure** (naming.md's hard rule: 2+ units of work -> submodules):
+`name.rs` (7 tests flat -> `ordering`/`borrowing`/`formatting`/
+`conversions`), `resolve.rs` (23 tests flat -> `resolve`/`schema_graph`/
+`field_path`/`ref_resolver`), `error.rs` (-> `schema_error`/
+`schema_warning`). Moved the `schema_error_stays_small` size-regression
+guard from `resolve.rs` into `error.rs`, next to the type it guards.
+Added the crate's default `pretty_assertions::assert_eq` import to
+`error.rs`/`name.rs`, which used `std`'s throughout despite every
+sibling test file in the module already shadowing it.
+
+**Explicitly not flagged:** `raw.rs`'s derive-only `Deserialize` shapes
+(no custom logic, covered by `registry.rs`'s TOML fixtures); two
+defensive branches (`resolve_one`'s parent-not-yet-resolved case,
+`read_raw_schemas`'s `BaseNameRef::from_path` returning `None`) that are
+unreachable through the public entry points given Kahn's invariant and
+`WalkDir`'s filename guarantee — not given manufactured coverage for
+cases that can't occur. Zero `#[allow]`/`#[expect]` lint suppressions
+found in any test module.
+
+**Verified:** fmt clean, both clippy gates (`--all-features`,
+`--features test-utils`; `-D warnings`) clean, `cargo doc
+--document-private-items` unchanged at the crate's established 42
+pre-existing warnings (0 from `schema/`), 100/100 `schema` tests (was
+43 before this pass, +57 net new), full 1299/1299 lib suite green.
