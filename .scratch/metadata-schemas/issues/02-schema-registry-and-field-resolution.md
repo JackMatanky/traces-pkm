@@ -14,7 +14,8 @@
 - [x] A missing `extends` target degrades to exact match with a warning; the class's own fields still render.
 - [x] Own fields override all parents; first-listed wins among parents; `excludes` drops inherited fields by name.
 - [x] Bounded `$ref` resolves (`#global/<field>` or `#<ancestor-schema>/<field>`); local keys in the same definition override the base's.
-- [x] The reserved `global.toml` Schema: `global` is forbidden as a File Class; a stray `required = true` there is ignored with a warn log while a referencing Schema's local `required` holds.
+- [x] The reserved `global.toml` Schema: a stray `required = true` there is ignored with a warn log while a referencing Schema's local `required` holds.
+- [ ] `global` is forbidden as a File Class value — **deferred**: this is a Note-frontmatter check, not a Schema-resolution one; no code in this ticket reads Note frontmatter (see Out of Scope). `GLOBAL_SCHEMA_NAME` is exposed `pub(crate)` for whichever later ticket implements it.
 - [x] Is-a matching is transitive (a class matches queries for its parents).
 - [x] All covered by unit tests over Schema fixtures — no vault, no minijinja.
 
