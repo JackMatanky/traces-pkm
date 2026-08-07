@@ -1,7 +1,7 @@
 //! Errors and warnings produced while reading and resolving the Schema
 //! registry.
 
-use std::path::PathBuf;
+use std::{fmt, path::PathBuf};
 
 use thiserror::Error;
 
@@ -69,18 +69,27 @@ pub(crate) enum SchemaError {
         field: String,
         reference: String,
     },
-    /// A `$ref` named a Schema or field that does not exist, or a Schema not
-    /// yet resolved (not an ancestor of the referencing Schema, nor Global).
+    /// A `$ref` named a Schema that is neither the Global Schema nor a
+    /// transitive `extends` ancestor of the referencing Schema.
     #[error(
-        "$ref {reference:?} in field {field:?} of Schema {schema:?} does not \
-         resolve: no field {ref_field:?} in Schema {ref_schema:?}"
+        "$ref {reference:?} in field {field:?} of Schema {schema:?} is out of \
+         bounds: not the Global Schema or a transitive `extends` ancestor"
     )]
-    UnresolvedRef {
+    RefOutOfBounds {
         schema: String,
         field: String,
         reference: String,
-        ref_schema: String,
-        ref_field: String,
+    },
+    /// A `$ref` named an in-bounds Schema, but that Schema has no such
+    /// field.
+    #[error(
+        "$ref {reference:?} in field {field:?} of Schema {schema:?} does not \
+         resolve"
+    )]
+    RefFieldNotFound {
+        schema: String,
+        field: String,
+        reference: String,
     },
 }
 
@@ -112,4 +121,60 @@ pub(crate) enum SchemaWarning {
     StrayGlobalRequired {
         field: String,
     },
+}
+
+impl fmt::Display for SchemaWarning {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::MissingExtendsTarget {
+                schema,
+                target,
+            } => write!(
+                f,
+                "Schema {schema:?} extends unknown Schema {target:?}; its own \
+                 fields still resolve"
+            ),
+            Self::StrayGlobalRequired {
+                field,
+            } => write!(
+                f,
+                "the reserved Global Schema declared field {field:?} as \
+                 required; ignoring, since Global Schema fields can never be \
+                 required"
+            ),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn missing_extends_target_message_names_schema_and_target() {
+        let warning = SchemaWarning::MissingExtendsTarget {
+            schema: "sci_fi".to_owned(),
+            target: "ghost".to_owned(),
+        };
+
+        assert_eq!(
+            warning.to_string(),
+            "Schema \"sci_fi\" extends unknown Schema \"ghost\"; its own \
+             fields still resolve"
+        );
+    }
+
+    #[test]
+    fn stray_global_required_message_names_the_field() {
+        let warning = SchemaWarning::StrayGlobalRequired {
+            field: "priority".to_owned(),
+        };
+
+        assert_eq!(
+            warning.to_string(),
+            "the reserved Global Schema declared field \"priority\" as \
+             required; ignoring, since Global Schema fields can never be \
+             required"
+        );
+    }
 }

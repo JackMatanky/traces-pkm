@@ -183,8 +183,8 @@ fn is_missing_root(error: &walkdir::Error) -> bool {
 /// Wraps a [`walkdir::Error`] with path context as a
 /// [`SchemaError::ReadDirectory`].
 ///
-/// Falls back to `directory` if the underlying error provides no path (such
-/// as rare symlink loop errors).
+/// Falls back to `directory` if the underlying error carries no path of its
+/// own (some I/O errors surface without `DirEntry` context).
 fn walk_error(directory: &Path, source: walkdir::Error) -> SchemaError {
     let path = source.path().unwrap_or(directory).to_path_buf();
     SchemaError::ReadDirectory {

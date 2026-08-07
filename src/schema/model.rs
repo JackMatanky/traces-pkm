@@ -53,7 +53,7 @@ impl From<RawFieldType> for FieldType {
 /// `select` field without `values` or a `date` field with a stray `folders`
 /// list cannot be represented. `select` and `file` are the only list-bearing
 /// kinds (spec User Story 9): every other variant is a unit variant.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 #[cfg_attr(
     not(test),
     expect(
@@ -159,32 +159,37 @@ impl FieldOptions {
         raw: &RawFieldDef,
     ) -> Self {
         match field_type {
-            FieldType::Select => {
-                let base_values = match base {
+            FieldType::Select => Self::Select {
+                values: raw.values.clone().unwrap_or_else(|| match base {
                     Self::Select {
                         values,
                     } => values.clone(),
                     _ => Vec::new(),
-                };
-                Self::Select {
-                    values: raw.values.clone().unwrap_or(base_values),
-                }
-            }
-            FieldType::File => {
-                let (base_folders, base_ext, base_class) = match base {
+                }),
+            },
+            FieldType::File => Self::File {
+                folders: raw.folders.clone().unwrap_or_else(|| match base {
                     Self::File {
                         folders,
+                        ..
+                    } => folders.clone(),
+                    _ => Vec::new(),
+                }),
+                ext: raw.ext.clone().or_else(|| match base {
+                    Self::File {
                         ext,
+                        ..
+                    } => ext.clone(),
+                    _ => None,
+                }),
+                class: raw.class.clone().unwrap_or_else(|| match base {
+                    Self::File {
                         class,
-                    } => (folders.clone(), ext.clone(), class.clone()),
-                    _ => (Vec::new(), None, Vec::new()),
-                };
-                Self::File {
-                    folders: raw.folders.clone().unwrap_or(base_folders),
-                    ext: raw.ext.clone().or(base_ext),
-                    class: raw.class.clone().unwrap_or(base_class),
-                }
-            }
+                        ..
+                    } => class.clone(),
+                    _ => Vec::new(),
+                }),
+            },
             other => Self::from_raw(other, raw),
         }
     }
@@ -195,7 +200,7 @@ impl FieldOptions {
 ///
 /// `required`/`multi` are declared for future LSP/MCP guardrails (spec User
 /// Story 3) and stay inert here.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 #[cfg_attr(
     not(test),
     expect(
@@ -291,7 +296,7 @@ impl FieldDefinition {
 
 /// A Schema's effective Field Definitions after inheritance, `excludes`, and
 /// `$ref` are applied.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 #[cfg_attr(
     not(test),
     expect(

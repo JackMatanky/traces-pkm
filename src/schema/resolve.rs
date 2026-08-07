@@ -37,14 +37,12 @@ type ResolveOutput = (BTreeMap<String, Schema>, Vec<SchemaWarning>);
 ///
 /// # Errors
 ///
-/// - [`SchemaError::Cycle`] if the `extends` graph (after dropping missing
-///   targets) contains a cycle.
-/// - [`SchemaError::MissingFieldType`] if an own Field Definition has neither
-///   `type` nor `$ref`.
 /// - [`SchemaError::MalformedRef`] if a `$ref` is not shaped
 ///   `#<schema>/<field>`.
-/// - [`SchemaError::UnresolvedRef`] if a `$ref` names a Schema or field that
-///   does not resolve.
+/// - [`SchemaError::RefOutOfBounds`] if a `$ref` names a Schema outside its
+///   bound (the Global Schema or a transitive `extends` ancestor).
+/// - [`SchemaError::RefFieldNotFound`] if a `$ref` names an in-bounds Schema
+///   that has no such field.
 #[cfg_attr(
     not(test),
     expect(
@@ -59,136 +57,226 @@ pub(crate) fn resolve(
     raw_schemas: &BTreeMap<String, RawSchema>,
 ) -> Result<ResolveOutput, SchemaError> {
     let mut warnings = Vec::new();
-    let (parents_by_name, mut in_degree, children_by_name) =
-        build_dag(raw_schemas, &mut warnings);
-
-    let mut queue: VecDeque<&str> = in_degree
-        .iter()
-        .filter(|&(_, &degree)| degree == 0)
-        .map(|(&name, _)| name)
-        .collect();
-    // Kahn's sort only guarantees parent-before-child ordering along
-    // `extends` edges, so several Schemas can tie at in-degree zero with no
-    // defined order between them; this reorders Global to the front of that
-    // tier so it is popped (and resolved) before any sibling that might
-    // `$ref` it. `build_dag` already forces Global to in-degree zero
-    // regardless of its own declared `extends`.
-    if let Some(position) =
-        queue.iter().position(|&name| name == GLOBAL_SCHEMA_NAME)
-        && let Some(global) = queue.remove(position)
-    {
-        queue.push_front(global);
-    }
-
+    let mut graph = SchemaGraph::new(raw_schemas, &mut warnings);
     let mut resolved: BTreeMap<String, Schema> = BTreeMap::new();
-    let mut visited: BTreeSet<&str> = BTreeSet::new();
 
-    while let Some(name) = queue.pop_front() {
-        visited.insert(name);
+    while let Some(name) = graph.next_ready() {
         let Some(raw) = raw_schemas.get(name) else {
             continue;
         };
-        let parents = parents_by_name.get(name).cloned().unwrap_or_default();
-
-        let schema =
-            resolve_one(name, raw, &parents, &resolved, &mut warnings)?;
+        let schema = resolve_one(
+            name,
+            raw,
+            graph.parents_of(name),
+            &resolved,
+            &mut warnings,
+        )?;
         resolved.insert(name.to_owned(), schema);
+        graph.mark_resolved(name);
+    }
 
-        for &child in children_by_name.get(name).into_iter().flatten() {
-            if let Some(degree) = in_degree.get_mut(child) {
+    match graph.cyclic_remainder(raw_schemas) {
+        Some(schemas) => Err(SchemaError::Cycle {
+            schemas,
+        }),
+        None => Ok((resolved, warnings)),
+    }
+}
+
+/// Kahn's-algorithm bookkeeping for linearizing the `extends` DAG: adjacency,
+/// in-degrees, the ready queue, and which Schemas have been popped.
+/// Isolates the Global-first tie-break (see [`SchemaGraph::new`]'s doc) from
+/// the field-merge logic in [`resolve_one`].
+struct SchemaGraph<'a> {
+    parents_by_name: BTreeMap<&'a str, Vec<&'a str>>,
+    in_degree: BTreeMap<&'a str, usize>,
+    children_by_name: BTreeMap<&'a str, Vec<&'a str>>,
+    queue: VecDeque<&'a str>,
+    visited: BTreeSet<&'a str>,
+}
+
+impl<'a> SchemaGraph<'a> {
+    /// Builds `raw_schemas`' `extends` adjacency (parent -> children) and Kahn
+    /// in-degrees, seeding the ready queue with every in-degree-zero Schema.
+    ///
+    /// Filters each Schema's `extends` list to targets `raw_schemas` actually
+    /// contains, pushing a [`SchemaWarning::MissingExtendsTarget`] for each
+    /// miss. The reserved Global Schema is forced to in-degree zero and
+    /// stripped of any declared `extends` — it is a flat,
+    /// `$ref`-able-from-anywhere reference pool (ADR-7: "refs point up the
+    /// extends DAG or to the Global Schema"), not a link in the `extends` chain
+    /// itself.
+    ///
+    /// Kahn's sort only guarantees parent-before-child ordering along `extends`
+    /// edges, so several Schemas can tie at in-degree zero with no defined
+    /// order between them; the ready queue reorders Global to the front of that
+    /// tier so it is popped (and resolved) before any sibling that might `$ref`
+    /// it.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "declared by the schema-registry ticket; consumed by the \
+                      schema-namespace ticket \
+                      (.scratch/metadata-schemas/issues/\
+                      03-schema-minijinja-namespace.md)"
+        )
+    )]
+    fn new(
+        raw_schemas: &'a BTreeMap<String, RawSchema>,
+        warnings: &mut Vec<SchemaWarning>,
+    ) -> Self {
+        // `BTreeMap` iteration is name-sorted, so the parent order for a
+        // given schema matches declaration order in its own `extends` list
+        // while the overall processing order stays deterministic.
+        let mut parents_by_name: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+        for (name, raw) in raw_schemas {
+            let mut parents = Vec::with_capacity(raw.extends.len());
+            for target in &raw.extends {
+                if raw_schemas.contains_key(target) {
+                    parents.push(target.as_str());
+                } else {
+                    warnings.push(SchemaWarning::MissingExtendsTarget {
+                        schema: name.clone(),
+                        target: target.clone(),
+                    });
+                }
+            }
+            parents_by_name.insert(name.as_str(), parents);
+        }
+
+        // An edge runs parent -> child, so a child's in-degree is its
+        // (filtered) parent count.
+        let mut in_degree: BTreeMap<&str, usize> = BTreeMap::new();
+        let mut children_by_name: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+        for (&name, parents) in &parents_by_name {
+            in_degree.insert(name, parents.len());
+            for &parent in parents {
+                children_by_name.entry(parent).or_default().push(name);
+            }
+        }
+
+        if let Some(parents) = parents_by_name.get_mut(GLOBAL_SCHEMA_NAME) {
+            parents.clear();
+        }
+        if let Some(degree) = in_degree.get_mut(GLOBAL_SCHEMA_NAME) {
+            *degree = 0;
+        }
+
+        let mut queue: VecDeque<&str> = in_degree
+            .iter()
+            .filter(|&(_, &degree)| degree == 0)
+            .map(|(&name, _)| name)
+            .collect();
+        if let Some(position) =
+            queue.iter().position(|&name| name == GLOBAL_SCHEMA_NAME)
+            && let Some(global) = queue.remove(position)
+        {
+            queue.push_front(global);
+        }
+
+        Self {
+            parents_by_name,
+            in_degree,
+            children_by_name,
+            queue,
+            visited: BTreeSet::new(),
+        }
+    }
+
+    /// Pops the next Schema whose in-degree reached zero, marking it
+    /// visited, or `None` once the ready queue drains.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "declared by the schema-registry ticket; consumed by the \
+                      schema-namespace ticket \
+                      (.scratch/metadata-schemas/issues/\
+                      03-schema-minijinja-namespace.md)"
+        )
+    )]
+    fn next_ready(&mut self) -> Option<&'a str> {
+        let name = self.queue.pop_front()?;
+        self.visited.insert(name);
+        Some(name)
+    }
+
+    /// Borrows `name`'s (filtered) parent list.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "declared by the schema-registry ticket; consumed by the \
+                      schema-namespace ticket \
+                      (.scratch/metadata-schemas/issues/\
+                      03-schema-minijinja-namespace.md)"
+        )
+    )]
+    fn parents_of(&self, name: &str) -> &[&'a str] {
+        self.parents_by_name.get(name).map_or(&[], Vec::as_slice)
+    }
+
+    /// Records `name` as resolved, releasing any children whose in-degree
+    /// just hit zero into the ready queue.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "declared by the schema-registry ticket; consumed by the \
+                      schema-namespace ticket \
+                      (.scratch/metadata-schemas/issues/\
+                      03-schema-minijinja-namespace.md)"
+        )
+    )]
+    fn mark_resolved(&mut self, name: &str) {
+        for &child in self.children_by_name.get(name).into_iter().flatten() {
+            if let Some(degree) = self.in_degree.get_mut(child) {
                 *degree = degree.saturating_sub(1);
                 if *degree == 0 {
-                    queue.push_back(child);
+                    self.queue.push_back(child);
                 }
             }
         }
     }
 
-    if visited.len() != raw_schemas.len() {
-        let cyclic = raw_schemas
-            .keys()
-            .filter(|name| !visited.contains(name.as_str()))
-            .cloned()
-            .collect();
-        return Err(SchemaError::Cycle {
-            schemas: cyclic,
-        });
+    /// Returns every Schema name that never reached in-degree zero (a cycle
+    /// membership), or `None` if every Schema in `raw_schemas` was visited.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "declared by the schema-registry ticket; consumed by the \
+                      schema-namespace ticket \
+                      (.scratch/metadata-schemas/issues/\
+                      03-schema-minijinja-namespace.md)"
+        )
+    )]
+    fn cyclic_remainder(
+        &self,
+        raw_schemas: &BTreeMap<String, RawSchema>,
+    ) -> Option<Vec<String>> {
+        if self.visited.len() == raw_schemas.len() {
+            return None;
+        }
+        Some(
+            raw_schemas
+                .keys()
+                .filter(|name| !self.visited.contains(name.as_str()))
+                .cloned()
+                .collect(),
+        )
     }
-
-    Ok((resolved, warnings))
 }
 
-/// The `extends` DAG's parent/child adjacency and each Schema's Kahn
-/// in-degree, keyed by name and borrowed from `raw_schemas`.
-type DagIndex<'a> = (
-    BTreeMap<&'a str, Vec<&'a str>>,
-    BTreeMap<&'a str, usize>,
-    BTreeMap<&'a str, Vec<&'a str>>,
-);
-
-/// Builds `raw_schemas`' `extends` adjacency (parent -> children) and Kahn
-/// in-degrees.
-///
-/// Filters each Schema's `extends` list to targets `raw_schemas` actually
-/// contains, pushing a [`SchemaWarning::MissingExtendsTarget`] for each miss.
-/// The reserved Global Schema is then forced to in-degree zero and stripped
-/// of any declared `extends`. It is a flat, `$ref`-able-from-anywhere
-/// reference pool (ADR-7: "refs point up the extends DAG or to the Global
-/// Schema"), not a link in the `extends` chain itself. It therefore always
-/// resolves in the first Kahn tier, regardless of where its referrers fall
-/// in the DAG.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "declared by the schema-registry ticket; consumed by the \
-                  schema-namespace ticket \
-                  (.scratch/metadata-schemas/issues/\
-                  03-schema-minijinja-namespace.md)"
-    )
-)]
-fn build_dag<'a>(
-    raw_schemas: &'a BTreeMap<String, RawSchema>,
-    warnings: &mut Vec<SchemaWarning>,
-) -> DagIndex<'a> {
-    // `BTreeMap` iteration is name-sorted, so the parent order for a given
-    // schema matches declaration order in its own `extends` list while the
-    // overall processing order in `resolve` stays deterministic.
-    let mut parents_by_name: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
-    for (name, raw) in raw_schemas {
-        let mut parents = Vec::with_capacity(raw.extends.len());
-        for target in &raw.extends {
-            if raw_schemas.contains_key(target) {
-                parents.push(target.as_str());
-            } else {
-                warnings.push(SchemaWarning::MissingExtendsTarget {
-                    schema: name.clone(),
-                    target: target.clone(),
-                });
-            }
-        }
-        parents_by_name.insert(name.as_str(), parents);
-    }
-
-    // An edge runs parent -> child, so a child's in-degree is its (filtered)
-    // parent count.
-    let mut in_degree: BTreeMap<&str, usize> = BTreeMap::new();
-    let mut children_by_name: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
-    for (&name, parents) in &parents_by_name {
-        in_degree.insert(name, parents.len());
-        for &parent in parents {
-            children_by_name.entry(parent).or_default().push(name);
-        }
-    }
-
-    if let Some(parents) = parents_by_name.get_mut(GLOBAL_SCHEMA_NAME) {
-        parents.clear();
-    }
-    if let Some(degree) = in_degree.get_mut(GLOBAL_SCHEMA_NAME) {
-        *degree = 0;
-    }
-
-    (parents_by_name, in_degree, children_by_name)
+/// A field's address within a Schema: `<schema>.<field>`, mirroring what a
+/// `$ref` value (`#<schema>/<field>`) names. Keeps the two `&str`s that flow
+/// through `resolve_one`/`build_field`/`parse_ref` from being silently
+/// transposed at a call site.
+#[derive(Copy, Clone, Debug)]
+struct FieldPath<'a> {
+    schema: &'a str,
+    field: &'a str,
 }
 
 /// Resolves one Schema's effective fields and transitive ancestors: merges
@@ -243,18 +331,17 @@ fn resolve_one(
     // Own fields resolve last (so they override inherited fields above) but
     // need `ancestors` computed above to validate a `$ref`'s bounded target:
     // `#global/<field>` or `#<ancestor-schema>/<field>` only.
+    let refs = RefResolver {
+        ancestors: &ancestors,
+        resolved,
+    };
     let mut own_fields = BTreeMap::new();
     for (field_name, raw_field) in &raw.fields {
-        let field = build_field(
-            name,
-            field_name,
-            raw_field,
-            &ResolutionContext {
-                ancestors: &ancestors,
-                resolved,
-            },
-            warnings,
-        )?;
+        let at = FieldPath {
+            schema: name,
+            field: field_name,
+        };
+        let field = build_field(at, raw_field, &refs, warnings)?;
         own_fields.insert(field_name.clone(), field);
     }
     fields.extend(own_fields);
@@ -262,29 +349,69 @@ fn resolve_one(
     Ok(Schema::new(name.to_owned(), fields, ancestors))
 }
 
-/// The `$ref`-resolution inputs available while `resolve` walks Schemas in
-/// topological order: `ancestors` bounds a `$ref`'s valid targets, and
-/// `resolved` supplies the already-resolved base definitions those targets
-/// point at.
-struct ResolutionContext<'a> {
+/// Resolves a Schema's `$ref` values to their base [`FieldDefinition`]s,
+/// bounded to the Global Schema or the referencing Schema's transitive
+/// `extends` ancestors (spec: "refs point up the extends DAG or to the
+/// Global Schema, so they are acyclic by construction").
+struct RefResolver<'a> {
     ancestors: &'a BTreeSet<String>,
     resolved: &'a BTreeMap<String, Schema>,
 }
 
-/// Builds one resolved [`FieldDefinition`] for `field_name` on `schema_name`,
-/// resolving its `$ref` (if any) against `context.resolved` and applying the
-/// Global Schema's `required` degrade.
-///
-/// # Arguments
-///
-/// * `schema_name` - The Schema `field_name` belongs to.
-/// * `field_name` - The field being built.
-/// * `raw` - `field_name`'s own parsed TOML.
-/// * `context` - `$ref` resolution inputs: `ancestors` bounds valid targets,
-///   `resolved` supplies base definitions.
-/// * `warnings` - Accumulates a [`SchemaWarning::StrayGlobalRequired`] if
-///   `schema_name` is the Global Schema and `field_name` declared `required =
-///   true`.
+impl<'a> RefResolver<'a> {
+    /// Resolves `reference` (`at`'s own `$ref` value) to its base
+    /// [`FieldDefinition`].
+    ///
+    /// # Errors
+    ///
+    /// - [`SchemaError::MalformedRef`] if `reference` is not shaped
+    ///   `#<schema>/<field>`.
+    /// - [`SchemaError::RefOutOfBounds`] if the named Schema is neither the
+    ///   Global Schema nor a transitive `extends` ancestor of `at.schema`.
+    /// - [`SchemaError::RefFieldNotFound`] if the named Schema is in bounds but
+    ///   has no such field.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "declared by the schema-registry ticket; consumed by the \
+                      schema-namespace ticket \
+                      (.scratch/metadata-schemas/issues/\
+                      03-schema-minijinja-namespace.md)"
+        )
+    )]
+    fn resolve(
+        &self,
+        at: FieldPath<'_>,
+        reference: &str,
+    ) -> Result<&'a FieldDefinition, SchemaError> {
+        let target = parse_ref(at, reference)?;
+        // Rejecting an out-of-bounds target here, rather than only checking
+        // whether it happens to be resolved yet, keeps the bound
+        // spec-accurate and independent of Kahn's tie-breaking order among
+        // unrelated Schemas.
+        if target.schema != GLOBAL_SCHEMA_NAME
+            && !self.ancestors.contains(target.schema)
+        {
+            return Err(SchemaError::RefOutOfBounds {
+                schema: at.schema.to_owned(),
+                field: at.field.to_owned(),
+                reference: reference.to_owned(),
+            });
+        }
+        self.resolved
+            .get(target.schema)
+            .and_then(|schema| schema.field(target.field))
+            .ok_or_else(|| SchemaError::RefFieldNotFound {
+                schema: at.schema.to_owned(),
+                field: at.field.to_owned(),
+                reference: reference.to_owned(),
+            })
+    }
+}
+
+/// Builds one resolved [`FieldDefinition`] for `at`, resolving its `$ref`
+/// (if any) via `refs` and applying the Global Schema's `required` degrade.
 #[cfg_attr(
     not(test),
     expect(
@@ -296,38 +423,13 @@ struct ResolutionContext<'a> {
     )
 )]
 fn build_field(
-    schema_name: &str,
-    field_name: &str,
+    at: FieldPath<'_>,
     raw: &RawFieldDef,
-    context: &ResolutionContext<'_>,
+    refs: &RefResolver<'_>,
     warnings: &mut Vec<SchemaWarning>,
 ) -> Result<FieldDefinition, SchemaError> {
     let (options, required, multi) = if let Some(reference) = &raw.reference {
-        let (ref_schema, ref_field) =
-            parse_ref(schema_name, field_name, reference)?;
-        let unresolved = || SchemaError::UnresolvedRef {
-            schema: schema_name.to_owned(),
-            field: field_name.to_owned(),
-            reference: reference.clone(),
-            ref_schema: ref_schema.to_owned(),
-            ref_field: ref_field.to_owned(),
-        };
-        // `$ref` is bounded to the Global Schema or a transitive `extends`
-        // ancestor (spec: "refs point up the extends DAG or to the Global
-        // Schema, so they are acyclic by construction"). Rejecting any other
-        // target here, rather than only checking whether it happens to be
-        // resolved yet, keeps the bound spec-accurate and independent of
-        // Kahn's tie-breaking order among unrelated Schemas.
-        if ref_schema != GLOBAL_SCHEMA_NAME
-            && !context.ancestors.contains(ref_schema)
-        {
-            return Err(unresolved());
-        }
-        let base = context
-            .resolved
-            .get(ref_schema)
-            .and_then(|schema| schema.field(ref_field))
-            .ok_or_else(unresolved)?;
+        let base = refs.resolve(at, reference)?;
         let field_type = raw
             .field_type
             .map_or_else(|| base.options().field_type(), FieldType::from);
@@ -340,8 +442,8 @@ fn build_field(
         let field_type =
             raw.field_type.map(FieldType::from).ok_or_else(|| {
                 SchemaError::MissingFieldType {
-                    schema: schema_name.to_owned(),
-                    field: field_name.to_owned(),
+                    schema: at.schema.to_owned(),
+                    field: at.field.to_owned(),
                 }
             })?;
         (
@@ -351,19 +453,42 @@ fn build_field(
         )
     };
 
-    let required = if schema_name == GLOBAL_SCHEMA_NAME && required {
+    Ok(FieldDefinition::new(
+        options,
+        apply_global_degrade(at, required, warnings),
+        multi,
+    ))
+}
+
+/// Global Schema fields can never be required: forces `required` to `false`
+/// and records a [`SchemaWarning::StrayGlobalRequired`] when `at.schema` is
+/// the Global Schema and it declared `required = true`.
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "declared by the schema-registry ticket; consumed by the \
+                  schema-namespace ticket \
+                  (.scratch/metadata-schemas/issues/\
+                  03-schema-minijinja-namespace.md)"
+    )
+)]
+fn apply_global_degrade(
+    at: FieldPath<'_>,
+    required: bool,
+    warnings: &mut Vec<SchemaWarning>,
+) -> bool {
+    if at.schema == GLOBAL_SCHEMA_NAME && required {
         warnings.push(SchemaWarning::StrayGlobalRequired {
-            field: field_name.to_owned(),
+            field: at.field.to_owned(),
         });
         false
     } else {
         required
-    };
-
-    Ok(FieldDefinition::new(options, required, multi))
+    }
 }
 
-/// Parses a `$ref` value into its target Schema and field name.
+/// Parses a `$ref` value into its target [`FieldPath`].
 ///
 /// # Errors
 ///
@@ -380,22 +505,23 @@ fn build_field(
     )
 )]
 fn parse_ref<'a>(
-    schema_name: &str,
-    field_name: &str,
+    at: FieldPath<'_>,
     reference: &'a str,
-) -> Result<(&'a str, &'a str), SchemaError> {
+) -> Result<FieldPath<'a>, SchemaError> {
     let malformed = || SchemaError::MalformedRef {
-        schema: schema_name.to_owned(),
-        field: field_name.to_owned(),
+        schema: at.schema.to_owned(),
+        field: at.field.to_owned(),
         reference: reference.to_owned(),
     };
     let stripped = reference.strip_prefix('#').ok_or_else(malformed)?;
-    let (ref_schema, ref_field) =
-        stripped.split_once('/').ok_or_else(malformed)?;
-    if ref_schema.is_empty() || ref_field.is_empty() {
+    let (schema, field) = stripped.split_once('/').ok_or_else(malformed)?;
+    if schema.is_empty() || field.is_empty() {
         return Err(malformed());
     }
-    Ok((ref_schema, ref_field))
+    Ok(FieldPath {
+        schema,
+        field,
+    })
 }
 
 #[cfg(test)]
@@ -717,7 +843,7 @@ mod tests {
         );
 
         let err = resolve(&raw).expect_err("unresolved ref rejected");
-        assert!(matches!(err, SchemaError::UnresolvedRef { .. }));
+        assert!(matches!(err, SchemaError::RefFieldNotFound { .. }));
     }
 
     #[test]
@@ -737,7 +863,21 @@ mod tests {
         );
 
         let err = resolve(&raw).expect_err("out-of-bounds ref rejected");
-        assert!(matches!(err, SchemaError::UnresolvedRef { .. }));
+        assert!(matches!(err, SchemaError::RefOutOfBounds { .. }));
+    }
+
+    #[test]
+    fn schema_error_stays_small() {
+        // Regression guard (mem-assert-type-size): `UnresolvedRef` used to
+        // carry 5 owned Strings (120 bytes) because `ref_schema`/`ref_field`
+        // duplicated what `reference` already shows verbatim. Keep every
+        // variant's payload small enough that `Result<_, SchemaError>`
+        // stays cheap to move through the resolution call chain.
+        assert!(
+            std::mem::size_of::<SchemaError>() <= 80,
+            "SchemaError grew to {} bytes; box or trim the offending variant",
+            std::mem::size_of::<SchemaError>()
+        );
     }
 
     #[test]
@@ -947,6 +1087,23 @@ mod tests {
         assert_eq!(name.options(), &FieldOptions::Select {
             values: vec!["anon".to_owned()]
         });
+    }
+
+    #[test]
+    fn schema_graph_pops_global_before_an_alphabetically_earlier_sibling() {
+        // Isolates the Global-first reorder at the graph level, without
+        // going through field resolution: `"author"` sorts before
+        // `"global"` in name order, so this fails without the reorder.
+        let mut raw = BTreeMap::new();
+        raw.insert(GLOBAL_SCHEMA_NAME.to_owned(), schema(&[], &[]));
+        raw.insert("author".to_owned(), schema(&[], &[]));
+        let mut warnings = Vec::new();
+
+        let mut graph = SchemaGraph::new(&raw, &mut warnings);
+
+        assert_eq!(graph.next_ready(), Some(GLOBAL_SCHEMA_NAME));
+        assert_eq!(graph.next_ready(), Some("author"));
+        assert_eq!(graph.next_ready(), None);
     }
 
     #[test]
