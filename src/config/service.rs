@@ -362,6 +362,10 @@ impl ConfigService {
     /// Serialises `directory`/`output_dir` as the local template config and
     /// writes it to `root.join(LOCAL_CONFIG_FILE)`.
     ///
+    /// `[schemas]` and `[frontmatter]` are written as empty tables (their
+    /// serde defaults), so a freshly scaffolded config behaves identically
+    /// to one that omits those tables entirely.
+    ///
     /// Uses [`File::create_new`] rather than [`std::fs::write`] so this fails
     /// atomically if the file already exists instead of silently truncating it.
     /// `traces init` already refuses to run when `.traces/` exists, but that
@@ -1813,6 +1817,32 @@ mod tests {
                         ConfigFileError::Read { .. }
                     ))
                 ));
+            }
+
+            #[test]
+            fn prioritizes_local_title_over_global() {
+                let fixture = Fixture::new();
+                let local_path = fixture.write_config(
+                    "project/.traces/config.toml",
+                    "[frontmatter]\ntitle = \"local_title\"",
+                );
+                let global_path = fixture.write_config(
+                    "global/config.toml",
+                    "[frontmatter]\ntitle = \"global_title\"",
+                );
+                let local =
+                    LocalConfigFile::<FileDiscovered>::try_new(local_path)
+                        .unwrap();
+                let global =
+                    GlobalConfigFile::<FileDiscovered>::try_new(global_path)
+                        .unwrap();
+
+                // Act
+                let config =
+                    build(&fixture, local, Some(global)).expect("build");
+
+                // Assert
+                assert_eq!(config.frontmatter().title(), Some("local_title"));
             }
         }
     }
