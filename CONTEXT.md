@@ -173,7 +173,7 @@ A named entry in a Schema describing one field: a `type` (`input`, `select`, `bo
 _Avoid_: property, field setting, column
 
 ### Extends
-A Schema-level array of parent Schema names. A class that extends another is that class: it inherits the parent's Field Definitions and matches class queries for the parent transitively. Cycles and missing targets are hard validation errors.
+A Schema-level array of parent Schema names. A class that extends another is that class: it inherits the parent's Field Definitions and matches class queries for the parent transitively. A cycle is a hard validation error; a missing target degrades to exact match with a warning (the class's own fields still resolve).
 _Avoid_: inherits, parents
 
 ### Excludes
