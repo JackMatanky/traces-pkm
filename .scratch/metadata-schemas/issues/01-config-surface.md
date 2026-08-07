@@ -57,9 +57,14 @@ The config service resolves `[templates]` (directory, output_dir) from local and
 - **Merge semantics match `[templates]`.** `RawSchemasConfig`/`RawFrontmatterConfig` fields stay `Option<T>` (not `#[serde(default = "...")]`-materialized) so figment's per-layer "local wins, missing key falls through to the lower layer" merge behaves identically to the existing `output_dir` field — local partially overriding global was verified in `prioritizes_local_class_field_over_global`.
 - **Dead-code suppression, not deferred accessors.** The ticket's Agent Brief explicitly asks for the `Config` accessors now even though no consumer reads them yet. Since `cargo clippy --workspace` (the repo's clippy gate) compiles the lib without `cfg(test)`, every new field/accessor carries `#[cfg_attr(not(any(test, feature = "test-utils")), expect(dead_code, reason = "..."))]` — the same reachability condition already used to gate the crate's test-only-visible public API in `lib.rs`/`config/mod.rs`. Verified `expect` stays fulfilled under plain `cargo clippy --workspace` and does not misfire under `cargo clippy --all-targets --features test-utils` or `cargo test` (where the new tests genuinely use the accessors).
 
-### Test inventory
+### Test inventory (updated `d503a4c`)
 
-New tests in `src/config/service.rs`, `mod tests::builder`, reusing the existing `Fixture`/`build()` harness (hoisted `build()` out of `mod merge` so `mod schemas`/`mod frontmatter` can share it):
+Tests in `src/config/service.rs`, `mod tests::builder`, reusing the existing
+`Fixture`/`build()` harness. Superseded `d503a4c`/`dde0d67`: the original
+`parses_title_and_aliases`/`defaults_title_and_aliases_to_none_when_unconfigured`/
+`parses_date_created_and_date_modified`/`defaults_date_fields_to_none_when_unconfigured`
+bundled two behaviors each and were split into atomic per-field tests; a
+missing-required-key case and a frontmatter precedence test were added.
 
 | Module | Test | Covers |
 |---|---|---|
@@ -69,21 +74,60 @@ New tests in `src/config/service.rs`, `mod tests::builder`, reusing the existing
 | `schemas` | `defaults_directory_when_unconfigured` | defaults to `.traces/schemas/` |
 | `schemas` | `prioritizes_local_class_field_over_global` | local-over-global merge precedence |
 | `schemas` | `rejects_unknown_key` | deny-unknown-fields on `[schemas]` |
-| `frontmatter` | `parses_title_and_aliases` | `[frontmatter] title`/`aliases` |
-| `frontmatter` | `defaults_title_and_aliases_to_none_when_unconfigured` | absence → `None` |
-| `frontmatter` | `parses_date_created_and_date_modified` | `{name, format}` sub-tables |
-| `frontmatter` | `defaults_date_fields_to_none_when_unconfigured` | absence → `None` |
+| `frontmatter` | `parses_title` | `[frontmatter] title` |
+| `frontmatter` | `parses_aliases` | `[frontmatter] aliases` |
+| `frontmatter` | `defaults_title_to_none_when_unconfigured` | absence → `None` |
+| `frontmatter` | `defaults_aliases_to_none_when_unconfigured` | absence → `None` |
+| `frontmatter` | `parses_date_created` | `{name, format}` sub-table |
+| `frontmatter` | `parses_date_modified` | `{name, format}` sub-table |
+| `frontmatter` | `defaults_date_created_to_none_when_unconfigured` | absence → `None` |
+| `frontmatter` | `defaults_date_modified_to_none_when_unconfigured` | absence → `None` |
 | `frontmatter` | `rejects_unknown_key` | deny-unknown-fields on `[frontmatter]` |
 | `frontmatter` | `rejects_unknown_date_field_key` | deny-unknown-fields on the nested `{name, format}` object |
+| `frontmatter` | `rejects_date_field_missing_required_key` | `{name, format}` both required |
+| `frontmatter` | `prioritizes_local_title_over_global` | local-over-global merge precedence (parity with `schemas`) |
 
-### Verification
+### Verification (updated `d503a4c`)
 
 ```sh
 mise run verify   # fmt → lint → clippy → test-all → audit, exit 0
 ```
 
-1223 tests pass (12 new). `cargo clippy --workspace -- -D warnings` clean; also spot-checked clean under `cargo clippy --workspace --all-targets --features test-utils -- -D warnings`.
+1229 tests pass. `cargo clippy --workspace -- -D warnings` clean; also clean
+under `cargo clippy --workspace --all-targets --features test-utils -- -D
+warnings`.
 
 ### Out of scope (unchanged)
 
 Confirmed nothing beyond the config surface was touched: the schemas directory is not resolved against `Config::root`, no code reads a Note's class-field frontmatter key, the `schema` minijinja namespace was not added, and `date_created`/`date_modified` are declared but not consumed anywhere.
+
+## Adversarial re-review (2026-08-07)
+
+Re-derived the AC checklist from the issue text (not from memory of the prior
+self-review) and cross-checked each against the current implementation and
+test suite; also ran a fresh `rust-code-review`/`rust-unit-testing`/`rust-doc`
+pass over `raw.rs`/`model.rs`/`mod.rs`/`service.rs`.
+
+**AC verdict — all 6 checklist items fulfilled:**
+
+1. `class_field`/`directory` parse + resolve — `schemas::extracts_local_class_field`, `extracts_local_directory` (+ defaults).
+2. `title`/`aliases` parse as key names — `frontmatter::parses_title`, `parses_aliases`.
+3. `date_created`/`date_modified` parse as `{name, format}` — `frontmatter::parses_date_created`, `parses_date_modified`.
+4. All five keys optional, omission ≡ none-set — the four `defaults_*_when_unconfigured` tests, all using a config file that omits the table entirely.
+5. Unknown-key denial mirrors existing tables — `schemas::rejects_unknown_key`, `frontmatter::rejects_unknown_key` + `rejects_unknown_date_field_key` (denies unknown keys one level deeper than the AC's minimum bar).
+6. Fixture-pattern config-service tests — all of the above use `Fixture::new()`/`write_config`/`LocalConfigFile<FileDiscovered>`, matching the established pattern.
+
+**Gaps found and fixed this pass:**
+
+- `frontmatter` had no local-over-global precedence test even though `schemas` did (`prioritizes_local_class_field_over_global`), despite both tables sharing the exact same figment merge path — added `prioritizes_local_title_over_global` (`d503a4c`).
+- `scaffold_local`'s doc comment didn't mention `[schemas]`/`[frontmatter]` at all. Verified empirically (temporary `eprintln!` in `scaffold_local::writes_the_local_config_file`, reverted after): `toml::to_string` on `RawConfig { ..RawConfig::default() }` **does** emit empty `[schemas]`/`[frontmatter]` table headers (not full omission) — corrected an inaccurate assumption from the initial implementation session. Doc comment updated to state this (`d503a4c`). No behavior change: an empty table and an absent table deserialize identically, so AC 4 already covered this.
+- This file's "Implementation notes" (added post-hoc in `01419f1`) had drifted from the codebase: it named four pre-atomization test functions that no longer exist (renamed/split in `dde0d67`) and an outdated "1223 tests" count. Corrected above.
+
+**Judgment calls re-examined, both upheld:**
+
+- *No pure `model.rs` unit tests for the `From`/`Default` impls* (logged in `dde0d67`). Re-verified by hand: every branch in `SchemasConfig::from` (2× `unwrap_or_else`) and `FrontmatterConfig::from` (2× `Option::map`) is exercised by an existing `service.rs` test through the full parse → figment-merge → `From` pipeline (e.g. `defaults_class_field_when_unconfigured` hits the `unwrap_or_else` closure; `parses_date_created`/`defaults_date_created_to_none_when_unconfigured` hit both arms of the `.map(DateFieldConfig::from)`). Per `rust-unit-testing`'s coverage-gap definition (case-surface rows with zero mapped tests), there is no gap. The one real tradeoff is fault isolation, not coverage: a broken `From` impl surfaces as a `service.rs` integration-test failure rather than a narrower unit-test failure. Not worth a second, narrower copy of the same assertions for a handful of one-line field mappings.
+- *`scaffold_local` not writing explicit `[schemas]`/`[frontmatter]` key/value defaults into new local configs.* Confirmed correct: it never claimed to (Agent Brief lists this ticket's scope as declaring the surface, not scaffolding UX), and the empty-but-present table headers (see above) already give as much discoverability as a bare `[schemas]` stub would without hardcoding default values into scaffolded output that could drift from `model.rs`'s actual defaults.
+
+**Left unresolved, deliberately, as pre-existing and out of scope:** two `rustdoc::private_intra_doc_links` warnings at `service.rs`'s `ConfigService` struct doc (link to `Self::load`/`Self::trust`) and `untrust`'s `# Errors` section (link to `ConfigStateError::Store`), both confirmed byte-identical to `main` via `git show main:src/config/service.rs`. They predate this ticket, are unrelated to `[schemas]`/`[frontmatter]`, and fixing them would touch doc text this ticket doesn't own — declining rather than expanding scope.
+
+**Rust-quality audit — no additional findings.** Checked against `rust-code-review`'s checklist (ownership/cloning, error handling, API design, performance) and `docs/refs/canonical_ordering_discipline.md` (impl-block order, derive order, struct-field visibility tiers): all new code follows established repo precedent (`#[inline] #[must_use]` on every accessor and constructor, lazy `unwrap_or_else` for defaults to avoid allocating unless needed, `&str`/`&Path` accessor return types, `Default`/`From` ordered lexicographically per type, derives ordered `Clone, Debug, Default, Deserialize, Serialize`). The ~20 near-identical `#[cfg_attr(not(any(test, feature = "test-utils")), expect(dead_code, reason = "..."))]` blocks in `model.rs` are real repetition, but this is a previously-litigated, deliberate choice (per-item suppression over module-wide, for audit clarity) — not re-relitigated here.
