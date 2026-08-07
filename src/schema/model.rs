@@ -2,10 +2,10 @@
 //! their type-specific [`FieldOptions`].
 //!
 //! These are the *output* shapes [`super::resolve::resolve`] produces from a
-//! parsed [`super::raw::RawSchema`] set — inheritance, `excludes`, and `$ref`
-//! already applied. Construction stays `pub(super)`: only [`super::resolve`]
-//! builds these; the rest of the crate only reads them through the `pub(crate)`
-//! accessors below.
+//! parsed [`super::raw::RawSchema`] set (inheritance, `excludes`, and `$ref`
+//! already applied). Construction stays `pub(super)`: only
+//! [`super::resolve`] builds these; the rest of the crate only reads them
+//! through the `pub(crate)` accessors below.
 
 use std::collections::{BTreeMap, BTreeSet};
 

@@ -1,7 +1,7 @@
 //! Pure Field Resolution: linearizes the `extends` DAG and merges Field
 //! Definitions.
 //!
-//! No filesystem or minijinja access — [`resolve`] is a pure function over an
+//! No filesystem or minijinja access: [`resolve`] is a pure function over an
 //! already-parsed Schema set, mirroring how `index::query`'s `filter`/
 //! `operators` submodules unit-test their expression machinery.
 //!
@@ -132,10 +132,11 @@ type DagIndex<'a> = (
 /// Filters each Schema's `extends` list to targets `raw_schemas` actually
 /// contains, pushing a [`SchemaWarning::MissingExtendsTarget`] for each miss.
 /// The reserved Global Schema is then forced to in-degree zero and stripped
-/// of any declared `extends`: it is a flat, `$ref`-able-from-anywhere
+/// of any declared `extends`. It is a flat, `$ref`-able-from-anywhere
 /// reference pool (ADR-7: "refs point up the extends DAG or to the Global
-/// Schema"), not a link in the `extends` chain itself, so it always resolves
-/// in the first Kahn tier regardless of where its referrers fall in the DAG.
+/// Schema"), not a link in the `extends` chain itself. It therefore always
+/// resolves in the first Kahn tier, regardless of where its referrers fall
+/// in the DAG.
 #[cfg_attr(
     not(test),
     expect(
@@ -194,7 +195,7 @@ fn build_dag<'a>(
 /// `parents`' fields first-listed-wins, applies `raw.excludes`, then
 /// overrides the result with `raw`'s own (`$ref`-resolved) fields.
 ///
-/// `parents` must already be resolved in `resolved` — [`resolve`] guarantees
+/// `parents` must already be resolved in `resolved`: [`resolve`] guarantees
 /// this by calling in Kahn topological order.
 ///
 /// # Arguments

@@ -2,8 +2,8 @@
 //!
 //! The filesystem is the Schema registry: a Schema is a TOML file whose
 //! filename stem is the Schema name (spec User Story 1). [`SchemaRegistry`]
-//! is the impure edge of the `schema` module — it walks a directory and
-//! parses TOML — everything past that (inheritance, `excludes`, `$ref`) is
+//! is the impure edge of the `schema` module: it walks a directory and
+//! parses TOML; everything past that (inheritance, `excludes`, `$ref`) is
 //! [`super::resolve::resolve`], a pure function tested with no filesystem at
 //! all.
 
@@ -44,7 +44,7 @@ impl SchemaRegistry {
     /// A missing `directory` resolves to an empty registry rather than an
     /// error, matching the lazy-validation model (spec Implementation
     /// Decisions: "a broken Schema only breaks the Template that touches
-    /// it") — an unconfigured or not-yet-created registry is not "broken".
+    /// it"); an unconfigured or not-yet-created registry is not "broken".
     ///
     /// # Errors
     ///
