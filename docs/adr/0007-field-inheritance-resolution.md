@@ -1,23 +1,23 @@
 ---
 number: 7
 title: Field inheritance with extends-as-is-a and bounded $ref
-status: proposed
+status: accepted
 date: 2026-08-03
 tags:
-    - extends
-    - inheritance
-    - schemas
-    - file-class
-    - domain-model
+  - extends
+  - inheritance
+  - schemas
+  - file-class
+  - domain-model
 links:
-    - target: 6
-      kind: relatesto
-    - target: 1
-      kind: relatesto
-    - target: 3
-      kind: relatesto
-    - target: 5
-      kind: relatesto
+  - target: 6
+    kind: relatesto
+  - target: 1
+    kind: relatesto
+  - target: 3
+    kind: relatesto
+  - target: 5
+    kind: relatesto
 ---
 
 # Field inheritance with extends-as-is-a and bounded $ref

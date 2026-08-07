@@ -1,23 +1,23 @@
 ---
 number: 6
 title: Schemas as File Class field definitions with extends-as-is-a and bounded $ref
-status: proposed
+status: accepted
 date: 2026-08-03
 tags:
-    - schemas
-    - file-class
-    - templates
-    - domain-model
-    - queries
+  - schemas
+  - file-class
+  - templates
+  - domain-model
+  - queries
 links:
-    - target: 7
-      kind: relatesto
-    - target: 1
-      kind: relatesto
-    - target: 3
-      kind: relatesto
-    - target: 5
-      kind: relatesto
+  - target: 7
+    kind: relatesto
+  - target: 1
+    kind: relatesto
+  - target: 3
+    kind: relatesto
+  - target: 5
+    kind: relatesto
 ---
 
 # Schemas as File Class field definitions with extends-as-is-a and bounded $ref
