@@ -6,14 +6,17 @@
 
 **Status:** ready-for-agent
 
-- [ ] A Schema TOML file is parsed from `.traces/schemas/<name>.toml`; the filename stem is the Schema name. Unknown keys in a Schema file are rejected at parse.
-- [ ] A Field Definition supports `type` (`input`, `select`, `boolean`, `number`, `date`, `file`) with type-specific options and optional `required`/`multi` flags.
-- [ ] Class hierarchies resolve deterministically: Kahn's topological sort; cycles are hard errors; a missing `extends` target degrades to exact match with a warning (the class's own fields still render).
-- [ ] Own fields override all parents; among parents the first-listed wins; `excludes` drops inherited fields by name.
+## Acceptance Criteria
+
+- [ ] Schema TOML parses from `.traces/schemas/<name>.toml` with filename stem as Schema name; unknown keys rejected at parse.
+- [ ] Field Definitions support all six types (`input`, `select`, `boolean`, `number`, `date`, `file`) with type-specific options and optional `required`/`multi` flags.
+- [ ] Kahn's topological sort resolves the extends DAG; cycles are hard errors.
+- [ ] A missing `extends` target degrades to exact match with a warning; the class's own fields still render.
+- [ ] Own fields override all parents; first-listed wins among parents; `excludes` drops inherited fields by name.
 - [ ] Bounded `$ref` resolves (`#global/<field>` or `#<ancestor-schema>/<field>`); local keys in the same definition override the base's.
 - [ ] The reserved `global.toml` Schema: `global` is forbidden as a File Class; a stray `required = true` there is ignored with a warn log while a referencing Schema's local `required` holds.
-- [ ] Is-a matching is available transitively (a class matching query for its parents).
-- [ ] The resolution engine is a pure function over Schema fixtures — no vault, no minijinja — tested via the existing pure-logic fixture pattern (e.g. `index/query/filter.rs`).
+- [ ] Is-a matching is transitive (a class matches queries for its parents).
+- [ ] All covered by unit tests over Schema fixtures — no vault, no minijinja.
 
 ## Comments
 
@@ -42,17 +45,6 @@ No Schema parsing or field-resolution code exists anywhere in `src/`. Traces has
 - A pure resolution function over a parsed schema set returning each class's effective Field Definitions (inheritance, excludes, `$ref` applied).
 - Errors/warnings as domain types: cycle (hard), unknown key (hard, at parse), missing extends target (warn + degrade), stray global required (warn).
 - An is-a query predicate (a class matches a queried class if equal or transitively under it).
-
-**Acceptance criteria:**
-- [ ] Schema TOML parses from `.traces/schemas/<name>.toml` with filename stem as Schema name; unknown keys rejected at parse.
-- [ ] Field Definitions support all six types plus optional `required`/`multi`.
-- [ ] Kahn's topological sort resolves the DAG; cycles are hard errors.
-- [ ] A missing `extends` target degrades to exact match with a warning; the class's own fields still render.
-- [ ] Own fields override parents; first-listed wins among parents; `excludes` drops inherited fields.
-- [ ] Bounded `$ref` resolves with local-key overrides.
-- [ ] `global.toml` rules hold (forbidden as class value; stray `required` ignored with warn).
-- [ ] Is-a matching is transitive.
-- [ ] All covered by unit tests over Schema fixtures, no vault, no minijinja.
 
 **Out of scope:**
 - The `schema` minijinja namespace (ticket 03) and `file`-field index filters (ticket 04) that consume resolved Schemas.
