@@ -431,3 +431,378 @@ impl From<RawFieldType> for FieldType {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    mod schema {
+        use std::collections::{BTreeMap, BTreeSet};
+
+        use pretty_assertions::assert_eq;
+
+        use super::super::*;
+
+        fn field(options: FieldOptions) -> FieldDefinition {
+            FieldDefinition::new(options, false, false)
+        }
+
+        #[test]
+        fn new_stores_the_given_name_fields_and_ancestors() {
+            let mut fields = BTreeMap::new();
+            fields.insert("title".to_owned(), field(FieldOptions::Input));
+            let mut ancestors = BTreeSet::new();
+            ancestors.insert(SchemaName::from("thing"));
+
+            let schema = Schema::new(
+                SchemaName::from("book"),
+                fields.clone(),
+                ancestors.clone(),
+            );
+
+            assert_eq!(schema.name(), "book");
+            assert_eq!(schema.fields(), &fields);
+            assert_eq!(schema.ancestors(), &ancestors);
+        }
+
+        #[test]
+        fn field_returns_the_named_definition_when_present() {
+            let mut fields = BTreeMap::new();
+            fields.insert("title".to_owned(), field(FieldOptions::Input));
+            let schema =
+                Schema::new(SchemaName::from("book"), fields, BTreeSet::new());
+
+            assert_eq!(
+                schema.field("title"),
+                Some(&field(FieldOptions::Input))
+            );
+        }
+
+        #[test]
+        fn field_returns_none_when_the_name_is_absent() {
+            let schema = Schema::new(
+                SchemaName::from("book"),
+                BTreeMap::new(),
+                BTreeSet::new(),
+            );
+
+            assert_eq!(schema.field("missing"), None);
+        }
+
+        #[test]
+        fn is_a_matches_when_queried_equals_its_own_name() {
+            let schema = Schema::new(
+                SchemaName::from("book"),
+                BTreeMap::new(),
+                BTreeSet::new(),
+            );
+
+            assert!(schema.is_a("book"));
+        }
+
+        #[test]
+        fn is_a_matches_when_queried_is_a_transitive_ancestor() {
+            let mut ancestors = BTreeSet::new();
+            ancestors.insert(SchemaName::from("thing"));
+            let schema = Schema::new(
+                SchemaName::from("book"),
+                BTreeMap::new(),
+                ancestors,
+            );
+
+            assert!(schema.is_a("thing"));
+        }
+
+        #[test]
+        fn is_a_does_not_match_an_unrelated_name() {
+            let schema = Schema::new(
+                SchemaName::from("book"),
+                BTreeMap::new(),
+                BTreeSet::new(),
+            );
+
+            assert!(!schema.is_a("movie"));
+        }
+    }
+
+    mod field_definition {
+        use pretty_assertions::assert_eq;
+
+        use super::super::*;
+
+        #[test]
+        fn new_stores_the_given_options_required_and_multi() {
+            let definition =
+                FieldDefinition::new(FieldOptions::Boolean, true, true);
+
+            assert_eq!(definition.options(), &FieldOptions::Boolean);
+            assert!(definition.is_required());
+            assert!(definition.is_multi());
+        }
+    }
+
+    mod field_options {
+        mod from_raw {
+            use pretty_assertions::assert_eq;
+            use rstest::rstest;
+
+            use super::super::super::*;
+
+            #[rstest]
+            #[case::input(
+                FieldType::Input,
+                RawFieldDef::default(),
+                FieldOptions::Input
+            )]
+            #[case::select(
+                FieldType::Select,
+                RawFieldDef { values: Some(vec!["draft".to_owned(), "done".to_owned()]), ..RawFieldDef::default() },
+                FieldOptions::Select { values: vec!["draft".to_owned(), "done".to_owned()] }
+            )]
+            #[case::boolean(
+                FieldType::Boolean,
+                RawFieldDef::default(),
+                FieldOptions::Boolean
+            )]
+            #[case::number(
+                FieldType::Number,
+                RawFieldDef::default(),
+                FieldOptions::Number
+            )]
+            #[case::date(
+                FieldType::Date,
+                RawFieldDef::default(),
+                FieldOptions::Date
+            )]
+            #[case::file(
+                FieldType::File,
+                RawFieldDef {
+                    folders: Some(vec!["assets".to_owned()]),
+                    ext: Some("png".to_owned()),
+                    class: Some(vec!["image".to_owned()]),
+                    ..RawFieldDef::default()
+                },
+                FieldOptions::File {
+                    folders: vec!["assets".to_owned()],
+                    ext: Some("png".to_owned()),
+                    class: vec!["image".to_owned()],
+                }
+            )]
+            fn maps_each_field_type_to_its_own_options(
+                #[case] field_type: FieldType,
+                #[case] raw: RawFieldDef,
+                #[case] expected: FieldOptions,
+            ) {
+                assert_eq!(FieldOptions::from_raw(field_type, &raw), expected);
+            }
+
+            #[test]
+            fn select_defaults_to_empty_values_when_raw_omits_them() {
+                let options = FieldOptions::from_raw(
+                    FieldType::Select,
+                    &RawFieldDef::default(),
+                );
+
+                assert_eq!(options, FieldOptions::Select {
+                    values: Vec::new()
+                });
+            }
+
+            #[test]
+            fn file_defaults_to_empty_filter_fields_when_raw_omits_them() {
+                let options = FieldOptions::from_raw(
+                    FieldType::File,
+                    &RawFieldDef::default(),
+                );
+
+                assert_eq!(options, FieldOptions::File {
+                    folders: Vec::new(),
+                    ext: None,
+                    class: Vec::new()
+                });
+            }
+        }
+
+        mod merged {
+            use pretty_assertions::assert_eq;
+
+            use super::super::super::*;
+
+            #[test]
+            fn select_uses_raws_values_when_present() {
+                let base = FieldOptions::Select {
+                    values: vec!["old".to_owned()],
+                };
+                let raw = RawFieldDef {
+                    values: Some(vec!["new".to_owned()]),
+                    ..RawFieldDef::default()
+                };
+
+                let merged =
+                    FieldOptions::merged(&base, FieldType::Select, &raw);
+
+                assert_eq!(merged, FieldOptions::Select {
+                    values: vec!["new".to_owned()]
+                });
+            }
+
+            #[test]
+            fn select_falls_back_to_bases_values_when_raw_omits_them() {
+                let base = FieldOptions::Select {
+                    values: vec!["old".to_owned()],
+                };
+                let raw = RawFieldDef::default();
+
+                let merged =
+                    FieldOptions::merged(&base, FieldType::Select, &raw);
+
+                assert_eq!(merged, base);
+            }
+
+            #[test]
+            fn select_falls_back_to_empty_when_base_is_not_select() {
+                let base = FieldOptions::Input;
+                let raw = RawFieldDef::default();
+
+                let merged =
+                    FieldOptions::merged(&base, FieldType::Select, &raw);
+
+                assert_eq!(merged, FieldOptions::Select {
+                    values: Vec::new()
+                });
+            }
+
+            #[test]
+            fn file_uses_raws_fields_when_present() {
+                let base = FieldOptions::File {
+                    folders: vec!["old".to_owned()],
+                    ext: Some("old".to_owned()),
+                    class: vec!["old".to_owned()],
+                };
+                let raw = RawFieldDef {
+                    folders: Some(vec!["new".to_owned()]),
+                    ext: Some("new".to_owned()),
+                    class: Some(vec!["new".to_owned()]),
+                    ..RawFieldDef::default()
+                };
+
+                let merged = FieldOptions::merged(&base, FieldType::File, &raw);
+
+                assert_eq!(merged, FieldOptions::File {
+                    folders: vec!["new".to_owned()],
+                    ext: Some("new".to_owned()),
+                    class: vec!["new".to_owned()],
+                });
+            }
+
+            #[test]
+            fn file_falls_back_to_bases_fields_when_raw_omits_them() {
+                let base = FieldOptions::File {
+                    folders: vec!["old".to_owned()],
+                    ext: Some("old".to_owned()),
+                    class: vec!["old".to_owned()],
+                };
+                let raw = RawFieldDef::default();
+
+                let merged = FieldOptions::merged(&base, FieldType::File, &raw);
+
+                assert_eq!(merged, base);
+            }
+
+            #[test]
+            fn file_falls_back_to_empty_when_base_is_not_file() {
+                let base = FieldOptions::Input;
+                let raw = RawFieldDef::default();
+
+                let merged = FieldOptions::merged(&base, FieldType::File, &raw);
+
+                assert_eq!(merged, FieldOptions::File {
+                    folders: Vec::new(),
+                    ext: None,
+                    class: Vec::new()
+                });
+            }
+
+            #[test]
+            fn file_fields_fall_back_independently_per_subfield() {
+                // Each of folders/ext/class resolves raw-vs-base on its own:
+                // overriding one must not force the others to fall back too.
+                let base = FieldOptions::File {
+                    folders: vec!["base-folder".to_owned()],
+                    ext: Some("base-ext".to_owned()),
+                    class: vec!["base-class".to_owned()],
+                };
+                let raw = RawFieldDef {
+                    folders: Some(vec!["raw-folder".to_owned()]),
+                    ext: None,
+                    class: None,
+                    ..RawFieldDef::default()
+                };
+
+                let merged = FieldOptions::merged(&base, FieldType::File, &raw);
+
+                assert_eq!(merged, FieldOptions::File {
+                    folders: vec!["raw-folder".to_owned()],
+                    ext: Some("base-ext".to_owned()),
+                    class: vec!["base-class".to_owned()],
+                });
+            }
+
+            #[test]
+            fn non_list_types_ignore_base_and_delegate_to_from_raw() {
+                let base = FieldOptions::Select {
+                    values: vec!["leaked?".to_owned()],
+                };
+                let raw = RawFieldDef::default();
+
+                let merged =
+                    FieldOptions::merged(&base, FieldType::Input, &raw);
+
+                assert_eq!(merged, FieldOptions::Input);
+            }
+        }
+
+        mod kind {
+            use pretty_assertions::assert_eq;
+            use rstest::rstest;
+
+            use super::super::super::*;
+
+            #[rstest]
+            #[case::input(FieldOptions::Input, FieldType::Input)]
+            #[case::select(FieldOptions::Select { values: Vec::new() }, FieldType::Select)]
+            #[case::boolean(FieldOptions::Boolean, FieldType::Boolean)]
+            #[case::number(FieldOptions::Number, FieldType::Number)]
+            #[case::date(FieldOptions::Date, FieldType::Date)]
+            #[case::file(
+                FieldOptions::File { folders: Vec::new(), ext: None, class: Vec::new() },
+                FieldType::File
+            )]
+            fn returns_the_field_type_matching_the_variant(
+                #[case] options: FieldOptions,
+                #[case] expected: FieldType,
+            ) {
+                assert_eq!(options.kind(), expected);
+            }
+        }
+    }
+
+    mod field_type {
+        use pretty_assertions::assert_eq;
+        use rstest::rstest;
+
+        use super::super::*;
+
+        #[rstest]
+        #[case::input(RawFieldType::Input, FieldType::Input)]
+        #[case::select(RawFieldType::Select, FieldType::Select)]
+        #[case::boolean(RawFieldType::Boolean, FieldType::Boolean)]
+        #[case::number(RawFieldType::Number, FieldType::Number)]
+        #[case::date(RawFieldType::Date, FieldType::Date)]
+        #[case::file(RawFieldType::File, FieldType::File)]
+        fn from_raw_field_type_maps_each_variant(
+            #[case] raw: RawFieldType,
+            #[case] expected: FieldType,
+        ) {
+            assert_eq!(FieldType::from(raw), expected);
+        }
+    }
+}

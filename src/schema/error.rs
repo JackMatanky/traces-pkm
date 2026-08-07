@@ -154,33 +154,180 @@ impl fmt::Display for SchemaWarning {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    mod schema_error {
+        use std::path::PathBuf;
 
-    #[test]
-    fn missing_extends_target_message_names_schema_and_target() {
-        let warning = SchemaWarning::MissingExtendsTarget {
-            schema: SchemaName::from("sci_fi"),
-            target: SchemaName::from("ghost"),
-        };
+        use pretty_assertions::assert_eq;
 
-        assert_eq!(
-            warning.to_string(),
-            "Schema \"sci_fi\" extends unknown Schema \"ghost\"; its own \
-             fields still resolve"
-        );
+        use super::super::*;
+
+        fn assert_display(error: &SchemaError, expected: &str) {
+            assert_eq!(
+                error.to_string(),
+                expected,
+                "unexpected SchemaError display"
+            );
+        }
+
+        #[test]
+        fn read_directory_formats_display_message() {
+            let error = SchemaError::ReadDirectory {
+                directory: PathBuf::from("/schemas"),
+                source: std::io::Error::other("denied"),
+            };
+
+            assert_display(
+                &error,
+                "failed to read Schema registry directory /schemas: denied",
+            );
+        }
+
+        #[test]
+        fn read_file_formats_display_message() {
+            let error = SchemaError::ReadFile {
+                path: PathBuf::from("/schemas/book.toml"),
+                source: std::io::Error::other("denied"),
+            };
+
+            assert_display(
+                &error,
+                "failed to read Schema file /schemas/book.toml: denied",
+            );
+        }
+
+        #[test]
+        fn parse_formats_display_message_wrapping_the_toml_source() {
+            let source = "not valid toml".parse::<toml::Value>().unwrap_err();
+            let error = SchemaError::Parse {
+                schema: SchemaName::from("book"),
+                source: Box::new(source),
+            };
+
+            let message = error.to_string();
+            assert!(
+                message.starts_with("failed to parse Schema book: "),
+                "expected message to open with the Schema context, got: \
+                 {message:?}"
+            );
+        }
+
+        #[test]
+        fn missing_field_type_formats_display_message() {
+            let error = SchemaError::MissingFieldType {
+                schema: SchemaName::from("book"),
+                field: "status".to_owned(),
+            };
+
+            assert_display(
+                &error,
+                "field \"status\" in Schema \"book\" has neither `type` nor \
+                 `$ref`",
+            );
+        }
+
+        #[test]
+        fn cycle_formats_display_message_joining_every_schema() {
+            let error = SchemaError::Cycle {
+                schemas: vec![SchemaName::from("a"), SchemaName::from("b")],
+            };
+
+            assert_display(&error, "cycle detected among Schemas: a, b");
+        }
+
+        #[test]
+        fn malformed_ref_formats_display_message() {
+            let error = SchemaError::MalformedRef {
+                schema: SchemaName::from("book"),
+                field: "status".to_owned(),
+                reference: "book/status".to_owned(),
+            };
+
+            assert_display(
+                &error,
+                "malformed $ref \"book/status\" in field \"status\" of Schema \
+                 \"book\": expected `#<schema>/<field>`",
+            );
+        }
+
+        #[test]
+        fn ref_out_of_bounds_formats_display_message() {
+            let error = SchemaError::RefOutOfBounds {
+                schema: SchemaName::from("movie"),
+                field: "status".to_owned(),
+                reference: "#book/status".to_owned(),
+            };
+
+            assert_display(
+                &error,
+                "$ref \"#book/status\" in field \"status\" of Schema \
+                 \"movie\" is out of bounds: not the Global Schema or a \
+                 transitive `extends` ancestor",
+            );
+        }
+
+        #[test]
+        fn ref_field_not_found_formats_display_message() {
+            let error = SchemaError::RefFieldNotFound {
+                schema: SchemaName::from("book"),
+                field: "status".to_owned(),
+                reference: "#book/status".to_owned(),
+            };
+
+            assert_display(
+                &error,
+                "$ref \"#book/status\" in field \"status\" of Schema \"book\" \
+                 does not resolve",
+            );
+        }
+
+        #[test]
+        fn stays_small() {
+            // Regression guard (mem-assert-type-size): `UnresolvedRef` used
+            // to carry 5 owned Strings (120 bytes) because
+            // `ref_schema`/`ref_field` duplicated what `reference` already
+            // shows verbatim. Keep every variant's payload small enough
+            // that `Result<_, SchemaError>` stays cheap to move through the
+            // resolution call chain.
+            assert!(
+                std::mem::size_of::<SchemaError>() <= 80,
+                "SchemaError grew to {} bytes; box or trim the offending \
+                 variant",
+                std::mem::size_of::<SchemaError>()
+            );
+        }
     }
 
-    #[test]
-    fn stray_global_required_message_names_the_field() {
-        let warning = SchemaWarning::StrayGlobalRequired {
-            field: "priority".to_owned(),
-        };
+    mod schema_warning {
+        use pretty_assertions::assert_eq;
 
-        assert_eq!(
-            warning.to_string(),
-            "the reserved Global Schema declared field \"priority\" as \
-             required; ignoring, since Global Schema fields can never be \
-             required"
-        );
+        use super::super::*;
+
+        #[test]
+        fn missing_extends_target_message_names_schema_and_target() {
+            let warning = SchemaWarning::MissingExtendsTarget {
+                schema: SchemaName::from("sci_fi"),
+                target: SchemaName::from("ghost"),
+            };
+
+            assert_eq!(
+                warning.to_string(),
+                "Schema \"sci_fi\" extends unknown Schema \"ghost\"; its own \
+                 fields still resolve"
+            );
+        }
+
+        #[test]
+        fn stray_global_required_message_names_the_field() {
+            let warning = SchemaWarning::StrayGlobalRequired {
+                field: "priority".to_owned(),
+            };
+
+            assert_eq!(
+                warning.to_string(),
+                "the reserved Global Schema declared field \"priority\" as \
+                 required; ignoring, since Global Schema fields can never be \
+                 required"
+            );
+        }
     }
 }

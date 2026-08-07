@@ -296,6 +296,18 @@ mod tests {
         }
 
         #[test]
+        fn propagates_a_resolve_error_when_the_extends_dag_has_a_cycle() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_schema(temp.path(), "a", r#"extends = ["b"]"#);
+            write_schema(temp.path(), "b", r#"extends = ["a"]"#);
+
+            let err =
+                SchemaRegistry::load(temp.path()).expect_err("cycle rejected");
+
+            assert!(matches!(err, SchemaError::Cycle { .. }));
+        }
+
+        #[test]
         fn ignores_a_nested_subdirectory_of_the_registry() {
             let temp = tempfile::tempdir().expect("create temp dir");
             let nested = temp.path().join("nested");
@@ -370,6 +382,17 @@ mod tests {
 
             assert!(registry.is_a("ghost", "ghost"));
             assert!(!registry.is_a("ghost", "book"));
+        }
+
+        #[test]
+        fn matches_itself_for_a_schema_that_exists_in_the_registry() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_schema(temp.path(), "book", "");
+
+            let (registry, _) =
+                SchemaRegistry::load(temp.path()).expect("registry loads");
+
+            assert!(registry.is_a("book", "book"));
         }
 
         #[test]

@@ -155,75 +155,112 @@ impl fmt::Display for SchemaNameRef<'_> {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::{BTreeMap, BTreeSet};
+    mod ordering {
+        use pretty_assertions::assert_eq;
 
-    use super::*;
+        use super::super::*;
 
-    #[test]
-    fn ordering_matches_str_ordering() {
-        let mut strs = ["global", "author", "sci_fi", "book"];
-        let mut names: Vec<SchemaName> =
-            strs.iter().map(|&s| SchemaName(s.to_owned())).collect();
-        strs.sort_unstable();
-        names.sort();
+        #[test]
+        fn schema_name_ordering_matches_str_ordering() {
+            let mut strs = ["global", "author", "sci_fi", "book"];
+            let mut names: Vec<SchemaName> =
+                strs.iter().map(|&s| SchemaName(s.to_owned())).collect();
+            strs.sort_unstable();
+            names.sort();
 
-        let sorted_names: Vec<&str> =
-            names.iter().map(SchemaName::as_str).collect();
-        assert_eq!(sorted_names, strs);
+            let sorted_names: Vec<&str> =
+                names.iter().map(SchemaName::as_str).collect();
+            assert_eq!(sorted_names, strs);
+        }
+
+        #[test]
+        fn schema_name_ref_ordering_matches_str_ordering() {
+            let mut strs = ["global", "author", "sci_fi", "book"];
+            let mut refs: Vec<SchemaNameRef<'_>> =
+                strs.iter().map(|&s| SchemaNameRef(s)).collect();
+            strs.sort_unstable();
+            refs.sort();
+
+            let sorted_refs: Vec<&str> =
+                refs.iter().map(|r| r.as_str()).collect();
+            assert_eq!(sorted_refs, strs);
+        }
     }
 
-    #[test]
-    fn ref_ordering_matches_str_ordering() {
-        let mut strs = ["global", "author", "sci_fi", "book"];
-        let mut refs: Vec<SchemaNameRef<'_>> =
-            strs.iter().map(|&s| SchemaNameRef(s)).collect();
-        strs.sort_unstable();
-        refs.sort();
+    mod borrowing {
+        use std::collections::{BTreeMap, BTreeSet};
 
-        let sorted_refs: Vec<&str> = refs.iter().map(|r| r.as_str()).collect();
-        assert_eq!(sorted_refs, strs);
+        use pretty_assertions::assert_eq;
+
+        use super::super::*;
+
+        #[test]
+        fn schema_name_borrow_str_enables_map_lookup_without_allocating() {
+            let mut map = BTreeMap::new();
+            map.insert(SchemaName("book".to_owned()), 1);
+
+            assert_eq!(map.get("book"), Some(&1));
+        }
+
+        #[test]
+        fn schema_name_ref_borrow_str_enables_set_lookup_without_allocating() {
+            let mut set = BTreeSet::new();
+            set.insert(SchemaNameRef("book"));
+
+            assert!(set.contains("book"));
+        }
     }
 
-    #[test]
-    fn borrow_str_enables_map_lookup_without_allocating() {
-        let mut map = BTreeMap::new();
-        map.insert(SchemaName("book".to_owned()), 1);
+    mod formatting {
+        use pretty_assertions::assert_eq;
 
-        assert_eq!(map.get("book"), Some(&1));
+        use super::super::*;
+
+        #[test]
+        fn debug_matches_str_debug_exactly() {
+            let name = SchemaName("sci_fi".to_owned());
+            assert_eq!(format!("{name:?}"), format!("{:?}", "sci_fi"));
+
+            let name_ref = SchemaNameRef("sci_fi");
+            assert_eq!(format!("{name_ref:?}"), format!("{:?}", "sci_fi"));
+        }
+
+        #[test]
+        fn display_matches_str_display_exactly() {
+            let name = SchemaName("sci_fi".to_owned());
+            assert_eq!(name.to_string(), "sci_fi");
+
+            let name_ref = SchemaNameRef("sci_fi");
+            assert_eq!(name_ref.to_string(), "sci_fi");
+        }
     }
 
-    #[test]
-    fn ref_borrow_str_enables_set_lookup_without_allocating() {
-        let mut set = BTreeSet::new();
-        set.insert(SchemaNameRef("book"));
+    mod conversions {
+        use pretty_assertions::assert_eq;
 
-        assert!(set.contains("book"));
-    }
+        use super::super::*;
 
-    #[test]
-    fn debug_matches_str_debug_exactly() {
-        let name = SchemaName("sci_fi".to_owned());
-        assert_eq!(format!("{name:?}"), format!("{:?}", "sci_fi"));
+        #[test]
+        fn schema_name_from_str_owns_a_copy_of_the_given_name() {
+            let name = SchemaName::from("book");
 
-        let name_ref = SchemaNameRef("sci_fi");
-        assert_eq!(format!("{name_ref:?}"), format!("{:?}", "sci_fi"));
-    }
+            assert_eq!(name.as_str(), "book");
+        }
 
-    #[test]
-    fn display_matches_str_display_exactly() {
-        let name = SchemaName("sci_fi".to_owned());
-        assert_eq!(name.to_string(), "sci_fi");
+        #[test]
+        fn schema_name_ref_from_str_borrows_the_given_name() {
+            let name_ref = SchemaNameRef::from("book");
 
-        let name_ref = SchemaNameRef("sci_fi");
-        assert_eq!(name_ref.to_string(), "sci_fi");
-    }
+            assert_eq!(name_ref.as_str(), "book");
+        }
 
-    #[test]
-    fn as_ref_round_trips_through_from() {
-        let name = SchemaName("book".to_owned());
-        let name_ref = name.as_ref();
-        let round_tripped = SchemaName::from(name_ref);
+        #[test]
+        fn as_ref_round_trips_through_from() {
+            let name = SchemaName("book".to_owned());
+            let name_ref = name.as_ref();
+            let round_tripped = SchemaName::from(name_ref);
 
-        assert_eq!(name, round_tripped);
+            assert_eq!(name, round_tripped);
+        }
     }
 }
