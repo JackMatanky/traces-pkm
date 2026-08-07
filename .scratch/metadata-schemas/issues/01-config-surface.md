@@ -8,12 +8,12 @@
 
 **Category:** enhancement
 
-- [ ] `[schemas] class_field` (default `class`) and `[schemas] directory` (default `.traces/schemas/`) parse and round-trip through the resolved config model.
-- [ ] `[frontmatter] title` and `[frontmatter] aliases` parse as key names.
-- [ ] `[frontmatter] date_created` and `[frontmatter] date_modified` parse as `{name, format}` objects.
-- [ ] All five keys are optional with defaults; a config file omitting them behaves identically to one with none set.
-- [ ] Unknown keys in `[schemas]` or `[frontmatter]` are rejected at config parse time (deny-unknown-fields, mirroring the existing config tables).
-- [ ] Config-service tests cover the parse, defaults, and unknown-key denial through the existing config fixture pattern (temp dirs, trusted config files).
+- [x] `[schemas] class_field` (default `class`) and `[schemas] directory` (default `.traces/schemas/`) parse and round-trip through the resolved config model.
+- [x] `[frontmatter] title` and `[frontmatter] aliases` parse as key names.
+- [x] `[frontmatter] date_created` and `[frontmatter] date_modified` parse as `{name, format}` objects.
+- [x] All five keys are optional with defaults; a config file omitting them behaves identically to one with none set.
+- [x] Unknown keys in `[schemas]` or `[frontmatter]` are rejected at config parse time (deny-unknown-fields, mirroring the existing config tables).
+- [x] Config-service tests cover the parse, defaults, and unknown-key denial through the existing config fixture pattern (temp dirs, trusted config files).
 
 ## Comments
 
@@ -128,6 +128,6 @@ pass over `raw.rs`/`model.rs`/`mod.rs`/`service.rs`.
 - *No pure `model.rs` unit tests for the `From`/`Default` impls* (logged in `dde0d67`). Re-verified by hand: every branch in `SchemasConfig::from` (2× `unwrap_or_else`) and `FrontmatterConfig::from` (2× `Option::map`) is exercised by an existing `service.rs` test through the full parse → figment-merge → `From` pipeline (e.g. `defaults_class_field_when_unconfigured` hits the `unwrap_or_else` closure; `parses_date_created`/`defaults_date_created_to_none_when_unconfigured` hit both arms of the `.map(DateFieldConfig::from)`). Per `rust-unit-testing`'s coverage-gap definition (case-surface rows with zero mapped tests), there is no gap. The one real tradeoff is fault isolation, not coverage: a broken `From` impl surfaces as a `service.rs` integration-test failure rather than a narrower unit-test failure. Not worth a second, narrower copy of the same assertions for a handful of one-line field mappings.
 - *`scaffold_local` not writing explicit `[schemas]`/`[frontmatter]` key/value defaults into new local configs.* Confirmed correct: it never claimed to (Agent Brief lists this ticket's scope as declaring the surface, not scaffolding UX), and the empty-but-present table headers (see above) already give as much discoverability as a bare `[schemas]` stub would without hardcoding default values into scaffolded output that could drift from `model.rs`'s actual defaults.
 
-**Left unresolved, deliberately, as pre-existing and out of scope:** two `rustdoc::private_intra_doc_links` warnings at `service.rs`'s `ConfigService` struct doc (link to `Self::load`/`Self::trust`) and `untrust`'s `# Errors` section (link to `ConfigStateError::Store`), both confirmed byte-identical to `main` via `git show main:src/config/service.rs`. They predate this ticket, are unrelated to `[schemas]`/`[frontmatter]`, and fixing them would touch doc text this ticket doesn't own — declining rather than expanding scope.
+**Resolved (2026-08-07, out-of-scope cleanup):** the two `rustdoc::private_intra_doc_links` warnings at `service.rs`'s `ConfigService` struct doc (linked `Self::load`/`Self::trust`, both `pub(crate)`) and `untrust`'s `# Errors` section (linked `ConfigStateError::Store`, re-exported `pub(crate)`) were pre-existing and byte-identical to `main`, unrelated to `[schemas]`/`[frontmatter]` — user asked to fix them anyway. Reworded both to plain text (dropped the intra-doc link brackets on the two `pub(crate)` targets; kept the link to `Self::untrust`, which is `pub`). `cargo doc --no-deps --all-features --document-private-items` now emits zero warnings from `config/service.rs`; the one remaining `private_intra_doc_links` warning in the crate is in an unrelated module (`filter`/`QueryError::UnparsableFilterExpression`) and was not touched.
 
 **Rust-quality audit — no additional findings.** Checked against `rust-code-review`'s checklist (ownership/cloning, error handling, API design, performance) and `docs/refs/canonical_ordering_discipline.md` (impl-block order, derive order, struct-field visibility tiers): all new code follows established repo precedent (`#[inline] #[must_use]` on every accessor and constructor, lazy `unwrap_or_else` for defaults to avoid allocating unless needed, `&str`/`&Path` accessor return types, `Default`/`From` ordered lexicographically per type, derives ordered `Clone, Debug, Default, Deserialize, Serialize`). The ~20 near-identical `#[cfg_attr(not(any(test, feature = "test-utils")), expect(dead_code, reason = "..."))]` blocks in `model.rs` are real repetition, but this is a previously-litigated, deliberate choice (per-item suppression over module-wide, for audit clarity) — not re-relitigated here.

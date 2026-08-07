@@ -88,7 +88,7 @@ impl TryFrom<DiscoveryOutcome> for ConfigBuilderInput {
 /// Service boundary for config loading and trust-admin commands.
 ///
 /// Holds the shared state store while keeping filesystem discovery
-/// ([`Self::load`]) separate from trust operations such as [`Self::trust`] and
+/// (`load`) separate from trust operations such as `trust` and
 /// [`Self::untrust`].
 #[derive(Clone, Debug)]
 pub struct ConfigService {
@@ -294,7 +294,7 @@ impl ConfigService {
     ///
     /// # Errors
     ///
-    /// - [`ConfigStateError::Store`] when the trust entry cannot be removed
+    /// - `ConfigStateError::Store` when the trust entry cannot be removed
     #[inline]
     pub fn untrust(
         &self,
