@@ -1,5 +1,9 @@
 //! Errors and warnings produced while reading and resolving the Schema
 //! registry.
+//!
+//! - [`SchemaError`]: a hard failure; registry loading and resolution stop.
+//! - [`SchemaWarning`]: a recoverable defect; resolution continues after
+//!   degrading to a documented fallback.
 
 use std::{fmt, path::PathBuf};
 

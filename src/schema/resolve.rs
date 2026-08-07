@@ -105,6 +105,11 @@ pub(crate) fn resolve(
 ///   name.
 /// * `warnings` - Accumulates degraded-resolution warnings raised while
 ///   building `name`'s own fields.
+///
+/// # Errors
+///
+/// Propagates any [`SchemaError`] [`build_field`] returns while resolving
+/// `raw`'s own fields.
 #[cfg_attr(
     not(test),
     expect(
@@ -161,6 +166,12 @@ fn resolve_one(
 
 /// Builds one resolved [`FieldDefinition`] for `at`, resolving its `$ref`
 /// (if any) via `refs` and applying the Global Schema's `required` degrade.
+///
+/// # Errors
+///
+/// - [`SchemaError::MissingFieldType`] if `raw` declares neither `type` nor
+///   `$ref`.
+/// - Any error [`RefResolver::resolve`] returns while resolving a `$ref`.
 #[cfg_attr(
     not(test),
     expect(
@@ -256,10 +267,10 @@ impl<'a> SchemaGraph<'a> {
     /// Filters each Schema's `extends` list to targets `raw_schemas` actually
     /// contains, pushing a [`SchemaWarning::MissingExtendsTarget`] for each
     /// miss. The reserved Global Schema is forced to in-degree zero and
-    /// stripped of any declared `extends` — it is a flat,
-    /// `$ref`-able-from-anywhere reference pool (ADR-7: "refs point up the
-    /// extends DAG or to the Global Schema"), not a link in the `extends` chain
-    /// itself.
+    /// stripped of any declared `extends`: it is a flat,
+    /// `$ref`-able-from-anywhere reference pool (ADR-7: refs point up the
+    /// extends DAG or to the Global Schema), not a link in the `extends`
+    /// chain itself.
     ///
     /// Kahn's sort only guarantees parent-before-child ordering along `extends`
     /// edges, so several Schemas can tie at in-degree zero with no defined
@@ -433,8 +444,8 @@ impl<'a> SchemaGraph<'a> {
 
 /// Resolves a Schema's `$ref` values to their base [`FieldDefinition`]s,
 /// bounded to the Global Schema or the referencing Schema's transitive
-/// `extends` ancestors (spec: "refs point up the extends DAG or to the
-/// Global Schema, so they are acyclic by construction").
+/// `extends` ancestors: `$ref`s point up the `extends` DAG or to the Global
+/// Schema, so they are acyclic by construction.
 struct RefResolver<'a> {
     ancestors: &'a BTreeSet<SchemaName>,
     resolved: &'a BTreeMap<SchemaName, Schema>,
@@ -511,15 +522,15 @@ struct FieldPath<'a> {
 
 impl<'a> FieldPath<'a> {
     /// Parses a `$ref` value (`#<schema>/<field>`) into its target
-    /// `FieldPath`. Context-free — the caller attaches its own address on
+    /// `FieldPath`. Context-free: the caller attaches its own address on
     /// failure (see [`RefResolver::resolve`]), mirroring
     /// `index::query::field::FieldPath::parse`, this crate's established
     /// `Type::parse(&str) -> Result<Self, Error>` idiom.
     ///
     /// # Errors
     ///
-    /// [`ParseRefError`] if `reference` is not shaped `#<schema>/<field>`
-    /// with both segments non-empty.
+    /// - [`ParseRefError`] if `reference` is not shaped `#<schema>/<field>`
+    ///   with both segments non-empty.
     #[cfg_attr(
         not(test),
         expect(

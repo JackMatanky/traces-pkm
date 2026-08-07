@@ -1,9 +1,9 @@
 //! Reads and resolves every Schema under a registry directory.
 //!
 //! The filesystem is the Schema registry: a Schema is a TOML file whose
-//! filename stem is the Schema name (spec User Story 1). [`SchemaRegistry`]
-//! is the impure edge of the `schema` module: it walks a directory and
-//! parses TOML; everything past that (inheritance, `excludes`, `$ref`) is
+//! filename stem is the Schema name. [`SchemaRegistry`] is the impure edge
+//! of the `schema` module: it walks a directory and parses TOML; everything
+//! past that (inheritance, `excludes`, `$ref`) is
 //! [`super::resolve::resolve`], a pure function tested with no filesystem at
 //! all.
 
@@ -43,9 +43,8 @@ impl SchemaRegistry {
     /// `extends` DAG.
     ///
     /// A missing `directory` resolves to an empty registry rather than an
-    /// error, matching the lazy-validation model (spec Implementation
-    /// Decisions: "a broken Schema only breaks the Template that touches
-    /// it"); an unconfigured or not-yet-created registry is not "broken".
+    /// error: an unconfigured or not-yet-created Schema directory is
+    /// absence, not corruption.
     ///
     /// # Errors
     ///
@@ -97,15 +96,14 @@ impl SchemaRegistry {
         self.schemas.get(name)
     }
 
-    /// Returns `true` if `subject` is-a `queried` (spec User Story 18). For
-    /// example, `registry.is_a("sci_fi", "book")` is `true` when the
-    /// `sci_fi` Schema `extends` `book`; the reverse call,
-    /// `registry.is_a("book", "sci_fi")`, is `false`.
+    /// Returns `true` if `subject` is-a `queried`. For example,
+    /// `registry.is_a("sci_fi", "book")` is `true` when the `sci_fi` Schema
+    /// `extends` `book`; the reverse call, `registry.is_a("book", "sci_fi")`,
+    /// is `false`.
     ///
     /// A `subject` absent from the registry degrades to an exact-string
-    /// match against `queried`, mirroring the spec's "a class with no
-    /// Schema degrades to exact match" fallback for `from_class` (ticket
-    /// 05).
+    /// match against `queried`: a class name with no corresponding Schema
+    /// file still matches itself.
     #[inline]
     #[must_use]
     #[cfg_attr(
@@ -129,6 +127,14 @@ impl SchemaRegistry {
 /// Walks only `directory`'s immediate entries (`min_depth(1).max_depth(1)`):
 /// Schemas do not nest. A `directory` that does not exist yields an empty
 /// map rather than [`SchemaError::ReadDirectory`].
+///
+/// # Errors
+///
+/// - [`SchemaError::ReadDirectory`] if `directory` exists but its entries
+///   cannot be listed.
+/// - [`SchemaError::ReadFile`] if a `.toml` file cannot be read.
+/// - [`SchemaError::Parse`] if a Schema file's TOML is malformed or contains an
+///   unknown key.
 #[cfg_attr(
     not(test),
     expect(
@@ -309,7 +315,7 @@ mod tests {
             use std::os::unix::fs::PermissionsExt as _;
 
             /// Restores a locked directory's permissions on drop, even if
-            /// the test panics. Otherwise a `0o000` directory blocks the
+            /// the test panics. Otherwise, a `0o000` directory blocks the
             /// tempdir's own cleanup.
             struct RestorePermissions<'a>(&'a Path);
 

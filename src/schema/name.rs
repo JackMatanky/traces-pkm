@@ -20,7 +20,7 @@ use std::{borrow::Borrow, fmt};
 
 use serde::Deserialize;
 
-/// A Schema's name: its source file's stem (spec User Story 1).
+/// A Schema's name: its source file's stem.
 #[derive(Clone, Default, Eq, Hash, Ord, PartialEq, PartialOrd, Deserialize)]
 #[cfg_attr(
     not(test),
@@ -140,7 +140,7 @@ impl Borrow<str> for SchemaNameRef<'_> {
 }
 
 impl fmt::Debug for SchemaNameRef<'_> {
-    /// Matches `str`'s own `Debug` (quoted, escaped) — see [`SchemaName`]'s
+    /// Matches `str`'s own `Debug` (quoted, escaped); see [`SchemaName`]'s
     /// `Debug` impl for why this matters.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Debug::fmt(self.0, f)

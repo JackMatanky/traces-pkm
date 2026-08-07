@@ -132,7 +132,7 @@ impl Schema {
     }
 
     /// Returns `true` if this Schema is-a `queried`: equal, or `queried` is a
-    /// transitive `extends` ancestor (spec User Story 18).
+    /// transitive `extends` ancestor.
     #[inline]
     #[must_use]
     #[cfg_attr(
@@ -152,8 +152,8 @@ impl Schema {
 /// One resolved Field Definition: its type-specific [`FieldOptions`] plus
 /// `required`/`multi` flags.
 ///
-/// `required`/`multi` are declared for future LSP/MCP guardrails (spec User
-/// Story 3) and stay inert here.
+/// `required` and `multi` are reserved for future LSP/MCP guardrails and
+/// stay inert here.
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[cfg_attr(
     not(test),
@@ -253,7 +253,7 @@ impl FieldDefinition {
 /// Pairs each [`FieldType`] with the options only that type carries, so a
 /// `select` field without `values` or a `date` field with a stray `folders`
 /// list cannot be represented. `select` and `file` are the only list-bearing
-/// kinds (spec User Story 9): every other variant is a unit variant.
+/// kinds: every other variant is a unit variant.
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[cfg_attr(
     not(test),
