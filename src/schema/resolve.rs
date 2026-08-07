@@ -5,6 +5,11 @@
 //! already-parsed Schema set, mirroring how `index::query`'s `filter`/
 //! `operators` submodules unit-test their expression machinery.
 //!
+//! Reads top-down: the pipeline ([`resolve`] -> [`resolve_one`] ->
+//! [`build_field`]) comes first; the [`SchemaGraph`] (DAG bookkeeping) and
+//! [`RefResolver`] (`$ref` bounds-checking) types backing it, plus the
+//! `FieldPath` address type threaded through all three, follow below.
+//!
 //! # Main Type
 //!
 //! - [`resolve`]: Resolves an entire Schema set via Kahn's topological sort
@@ -81,6 +86,190 @@ pub(crate) fn resolve(
         }),
         None => Ok((resolved, warnings)),
     }
+}
+
+/// Resolves one Schema's effective fields and transitive ancestors: merges
+/// `parents`' fields first-listed-wins, applies `raw.excludes`, then
+/// overrides the result with `raw`'s own (`$ref`-resolved) fields.
+///
+/// `parents` must already be resolved in `resolved`: [`resolve`] guarantees
+/// this by calling in Kahn topological order.
+///
+/// # Arguments
+///
+/// * `name` - The Schema being resolved (its filename stem).
+/// * `raw` - `name`'s own parsed TOML: `extends`, `excludes`, and fields.
+/// * `parents` - `raw.extends`, filtered to targets that resolved.
+/// * `resolved` - Schemas already resolved earlier in Kahn order, keyed by
+///   name.
+/// * `warnings` - Accumulates degraded-resolution warnings raised while
+///   building `name`'s own fields.
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "declared by the schema-registry ticket; consumed by the \
+                  schema-namespace ticket \
+                  (.scratch/metadata-schemas/issues/\
+                  03-schema-minijinja-namespace.md)"
+    )
+)]
+fn resolve_one(
+    name: &str,
+    raw: &RawSchema,
+    parents: &[&str],
+    resolved: &BTreeMap<String, Schema>,
+    warnings: &mut Vec<SchemaWarning>,
+) -> Result<Schema, SchemaError> {
+    let mut fields = BTreeMap::new();
+    let mut ancestors = BTreeSet::new();
+    for &parent in parents {
+        let Some(parent_schema) = resolved.get(parent) else {
+            continue;
+        };
+        for (field_name, field) in parent_schema.fields() {
+            fields.entry(field_name.clone()).or_insert_with(|| field.clone());
+        }
+        ancestors.insert(parent.to_owned());
+        ancestors.extend(parent_schema.ancestors().iter().cloned());
+    }
+    for excluded in &raw.excludes {
+        fields.remove(excluded);
+    }
+
+    // Own fields resolve last (so they override inherited fields above) but
+    // need `ancestors` computed above to validate a `$ref`'s bounded target:
+    // `#global/<field>` or `#<ancestor-schema>/<field>` only.
+    let refs = RefResolver {
+        ancestors: &ancestors,
+        resolved,
+    };
+    let mut own_fields = BTreeMap::new();
+    for (field_name, raw_field) in &raw.fields {
+        let at = FieldPath {
+            schema: name,
+            field: field_name,
+        };
+        let field = build_field(at, raw_field, &refs, warnings)?;
+        own_fields.insert(field_name.clone(), field);
+    }
+    fields.extend(own_fields);
+
+    Ok(Schema::new(name.to_owned(), fields, ancestors))
+}
+
+/// Builds one resolved [`FieldDefinition`] for `at`, resolving its `$ref`
+/// (if any) via `refs` and applying the Global Schema's `required` degrade.
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "declared by the schema-registry ticket; consumed by the \
+                  schema-namespace ticket \
+                  (.scratch/metadata-schemas/issues/\
+                  03-schema-minijinja-namespace.md)"
+    )
+)]
+fn build_field(
+    at: FieldPath<'_>,
+    raw: &RawFieldDef,
+    refs: &RefResolver<'_>,
+    warnings: &mut Vec<SchemaWarning>,
+) -> Result<FieldDefinition, SchemaError> {
+    let (options, required, multi) = if let Some(reference) = &raw.reference {
+        let base = refs.resolve(at, reference)?;
+        let field_type = raw
+            .field_type
+            .map_or_else(|| base.options().field_type(), FieldType::from);
+        (
+            FieldOptions::merged(base.options(), field_type, raw),
+            raw.required.unwrap_or(base.is_required()),
+            raw.multi.unwrap_or(base.is_multi()),
+        )
+    } else {
+        let field_type =
+            raw.field_type.map(FieldType::from).ok_or_else(|| {
+                SchemaError::MissingFieldType {
+                    schema: at.schema.to_owned(),
+                    field: at.field.to_owned(),
+                }
+            })?;
+        (
+            FieldOptions::from_raw(field_type, raw),
+            raw.required.unwrap_or(false),
+            raw.multi.unwrap_or(false),
+        )
+    };
+
+    Ok(FieldDefinition::new(
+        options,
+        apply_global_degrade(at, required, warnings),
+        multi,
+    ))
+}
+
+/// Global Schema fields can never be required: forces `required` to `false`
+/// and records a [`SchemaWarning::StrayGlobalRequired`] when `at.schema` is
+/// the Global Schema and it declared `required = true`.
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "declared by the schema-registry ticket; consumed by the \
+                  schema-namespace ticket \
+                  (.scratch/metadata-schemas/issues/\
+                  03-schema-minijinja-namespace.md)"
+    )
+)]
+fn apply_global_degrade(
+    at: FieldPath<'_>,
+    required: bool,
+    warnings: &mut Vec<SchemaWarning>,
+) -> bool {
+    if at.schema == GLOBAL_SCHEMA_NAME && required {
+        warnings.push(SchemaWarning::StrayGlobalRequired {
+            field: at.field.to_owned(),
+        });
+        false
+    } else {
+        required
+    }
+}
+
+/// Parses a `$ref` value into its target [`FieldPath`].
+///
+/// # Errors
+///
+/// [`SchemaError::MalformedRef`] if `reference` is not shaped
+/// `#<schema>/<field>` with both segments non-empty.
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "declared by the schema-registry ticket; consumed by the \
+                  schema-namespace ticket \
+                  (.scratch/metadata-schemas/issues/\
+                  03-schema-minijinja-namespace.md)"
+    )
+)]
+fn parse_ref<'a>(
+    at: FieldPath<'_>,
+    reference: &'a str,
+) -> Result<FieldPath<'a>, SchemaError> {
+    let malformed = || SchemaError::MalformedRef {
+        schema: at.schema.to_owned(),
+        field: at.field.to_owned(),
+        reference: reference.to_owned(),
+    };
+    let stripped = reference.strip_prefix('#').ok_or_else(malformed)?;
+    let (schema, field) = stripped.split_once('/').ok_or_else(malformed)?;
+    if schema.is_empty() || field.is_empty() {
+        return Err(malformed());
+    }
+    Ok(FieldPath {
+        schema,
+        field,
+    })
 }
 
 /// Kahn's-algorithm bookkeeping for linearizing the `extends` DAG: adjacency,
@@ -269,86 +458,6 @@ impl<'a> SchemaGraph<'a> {
     }
 }
 
-/// A field's address within a Schema: `<schema>.<field>`, mirroring what a
-/// `$ref` value (`#<schema>/<field>`) names. Keeps the two `&str`s that flow
-/// through `resolve_one`/`build_field`/`parse_ref` from being silently
-/// transposed at a call site.
-#[derive(Copy, Clone, Debug)]
-struct FieldPath<'a> {
-    schema: &'a str,
-    field: &'a str,
-}
-
-/// Resolves one Schema's effective fields and transitive ancestors: merges
-/// `parents`' fields first-listed-wins, applies `raw.excludes`, then
-/// overrides the result with `raw`'s own (`$ref`-resolved) fields.
-///
-/// `parents` must already be resolved in `resolved`: [`resolve`] guarantees
-/// this by calling in Kahn topological order.
-///
-/// # Arguments
-///
-/// * `name` - The Schema being resolved (its filename stem).
-/// * `raw` - `name`'s own parsed TOML: `extends`, `excludes`, and fields.
-/// * `parents` - `raw.extends`, filtered to targets that resolved.
-/// * `resolved` - Schemas already resolved earlier in Kahn order, keyed by
-///   name.
-/// * `warnings` - Accumulates degraded-resolution warnings raised while
-///   building `name`'s own fields.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "declared by the schema-registry ticket; consumed by the \
-                  schema-namespace ticket \
-                  (.scratch/metadata-schemas/issues/\
-                  03-schema-minijinja-namespace.md)"
-    )
-)]
-fn resolve_one(
-    name: &str,
-    raw: &RawSchema,
-    parents: &[&str],
-    resolved: &BTreeMap<String, Schema>,
-    warnings: &mut Vec<SchemaWarning>,
-) -> Result<Schema, SchemaError> {
-    let mut fields = BTreeMap::new();
-    let mut ancestors = BTreeSet::new();
-    for &parent in parents {
-        let Some(parent_schema) = resolved.get(parent) else {
-            continue;
-        };
-        for (field_name, field) in parent_schema.fields() {
-            fields.entry(field_name.clone()).or_insert_with(|| field.clone());
-        }
-        ancestors.insert(parent.to_owned());
-        ancestors.extend(parent_schema.ancestors().iter().cloned());
-    }
-    for excluded in &raw.excludes {
-        fields.remove(excluded);
-    }
-
-    // Own fields resolve last (so they override inherited fields above) but
-    // need `ancestors` computed above to validate a `$ref`'s bounded target:
-    // `#global/<field>` or `#<ancestor-schema>/<field>` only.
-    let refs = RefResolver {
-        ancestors: &ancestors,
-        resolved,
-    };
-    let mut own_fields = BTreeMap::new();
-    for (field_name, raw_field) in &raw.fields {
-        let at = FieldPath {
-            schema: name,
-            field: field_name,
-        };
-        let field = build_field(at, raw_field, &refs, warnings)?;
-        own_fields.insert(field_name.clone(), field);
-    }
-    fields.extend(own_fields);
-
-    Ok(Schema::new(name.to_owned(), fields, ancestors))
-}
-
 /// Resolves a Schema's `$ref` values to their base [`FieldDefinition`]s,
 /// bounded to the Global Schema or the referencing Schema's transitive
 /// `extends` ancestors (spec: "refs point up the extends DAG or to the
@@ -410,118 +519,14 @@ impl<'a> RefResolver<'a> {
     }
 }
 
-/// Builds one resolved [`FieldDefinition`] for `at`, resolving its `$ref`
-/// (if any) via `refs` and applying the Global Schema's `required` degrade.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "declared by the schema-registry ticket; consumed by the \
-                  schema-namespace ticket \
-                  (.scratch/metadata-schemas/issues/\
-                  03-schema-minijinja-namespace.md)"
-    )
-)]
-fn build_field(
-    at: FieldPath<'_>,
-    raw: &RawFieldDef,
-    refs: &RefResolver<'_>,
-    warnings: &mut Vec<SchemaWarning>,
-) -> Result<FieldDefinition, SchemaError> {
-    let (options, required, multi) = if let Some(reference) = &raw.reference {
-        let base = refs.resolve(at, reference)?;
-        let field_type = raw
-            .field_type
-            .map_or_else(|| base.options().field_type(), FieldType::from);
-        (
-            FieldOptions::merged(base.options(), field_type, raw),
-            raw.required.unwrap_or(base.is_required()),
-            raw.multi.unwrap_or(base.is_multi()),
-        )
-    } else {
-        let field_type =
-            raw.field_type.map(FieldType::from).ok_or_else(|| {
-                SchemaError::MissingFieldType {
-                    schema: at.schema.to_owned(),
-                    field: at.field.to_owned(),
-                }
-            })?;
-        (
-            FieldOptions::from_raw(field_type, raw),
-            raw.required.unwrap_or(false),
-            raw.multi.unwrap_or(false),
-        )
-    };
-
-    Ok(FieldDefinition::new(
-        options,
-        apply_global_degrade(at, required, warnings),
-        multi,
-    ))
-}
-
-/// Global Schema fields can never be required: forces `required` to `false`
-/// and records a [`SchemaWarning::StrayGlobalRequired`] when `at.schema` is
-/// the Global Schema and it declared `required = true`.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "declared by the schema-registry ticket; consumed by the \
-                  schema-namespace ticket \
-                  (.scratch/metadata-schemas/issues/\
-                  03-schema-minijinja-namespace.md)"
-    )
-)]
-fn apply_global_degrade(
-    at: FieldPath<'_>,
-    required: bool,
-    warnings: &mut Vec<SchemaWarning>,
-) -> bool {
-    if at.schema == GLOBAL_SCHEMA_NAME && required {
-        warnings.push(SchemaWarning::StrayGlobalRequired {
-            field: at.field.to_owned(),
-        });
-        false
-    } else {
-        required
-    }
-}
-
-/// Parses a `$ref` value into its target [`FieldPath`].
-///
-/// # Errors
-///
-/// [`SchemaError::MalformedRef`] if `reference` is not shaped
-/// `#<schema>/<field>` with both segments non-empty.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "declared by the schema-registry ticket; consumed by the \
-                  schema-namespace ticket \
-                  (.scratch/metadata-schemas/issues/\
-                  03-schema-minijinja-namespace.md)"
-    )
-)]
-fn parse_ref<'a>(
-    at: FieldPath<'_>,
-    reference: &'a str,
-) -> Result<FieldPath<'a>, SchemaError> {
-    let malformed = || SchemaError::MalformedRef {
-        schema: at.schema.to_owned(),
-        field: at.field.to_owned(),
-        reference: reference.to_owned(),
-    };
-    let stripped = reference.strip_prefix('#').ok_or_else(malformed)?;
-    let (schema, field) = stripped.split_once('/').ok_or_else(malformed)?;
-    if schema.is_empty() || field.is_empty() {
-        return Err(malformed());
-    }
-    Ok(FieldPath {
-        schema,
-        field,
-    })
+/// A field's address within a Schema: `<schema>.<field>`, mirroring what a
+/// `$ref` value (`#<schema>/<field>`) names. Keeps the two `&str`s that flow
+/// through `resolve_one`/`build_field`/`parse_ref` from being silently
+/// transposed at a call site.
+#[derive(Copy, Clone, Debug)]
+struct FieldPath<'a> {
+    schema: &'a str,
+    field: &'a str,
 }
 
 #[cfg(test)]
