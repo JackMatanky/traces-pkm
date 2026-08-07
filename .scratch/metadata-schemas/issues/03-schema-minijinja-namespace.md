@@ -8,8 +8,8 @@
 
 - [ ] A `schema` namespace object is registered on the minijinja environment, alongside `file`/`ui`/`date`/`query`.
 - [ ] `schema.get("book")` binds a resolved Schema (fields resolved through inheritance/`$ref` from ticket 02).
-- [ ] `.field("status")` on a `select` field returns the plain string options.
-- [ ] `.field(...)` on a non-list field type returns `None`.
+- [ ] `.field("status")` on a list-bearing field returns the selectable values (plain strings for `select` fields; `file` fields are ticket 04).
+- [ ] `.field(...)` on a non-list field type returns `None` (no selectable values to prompt).
 - [ ] `schema.get` of an unknown Schema, and `.field` of an unknown field, hard-error during render with template context — render error, not panic (mirroring the `query` namespace's `errors` module).
 - [ ] A broken Schema only breaks the Template that touches it (lazy validation; no `enabled` flag).
 - [ ] Render-seam tests (temp vault root with `.traces/schemas/*.toml` fixtures and Notes carrying `class:` frontmatter) assert values, `None`, and the error behavior.
@@ -30,7 +30,7 @@ Template consumption surface per spec User Stories 4–11, 14 and Implementation
 
 **Desired behavior:**
 - `schema.get("book")` returns an object exposing `.field("status")` that yields the declared options for a field.
-- `select` fields return plain strings (suitable for `ui.select`); non-list types return `None`; `file` fields are ticket 04's concern.
+- List-bearing fields return selectable values (plain strings for `select` fields; `file` fields are ticket 04); non-list types return `None` (no selectable values to prompt).
 - The namespace resolves the class through the ticket-02 engine so inheritance/excludes/`$ref` are already applied.
 - Unknown Schema or unknown field in a structural reference (`schema.get`, `.field`) hard-errors during render, carrying template name/line/column, not a panic.
 
