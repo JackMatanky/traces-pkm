@@ -21,7 +21,7 @@ use std::{borrow::Borrow, fmt};
 use serde::Deserialize;
 
 /// A Schema's name: its source file's stem (spec User Story 1).
-#[derive(Clone, Default, Eq, PartialEq, Ord, PartialOrd, Hash, Deserialize)]
+#[derive(Clone, Default, Eq, Hash, Ord, PartialEq, PartialOrd, Deserialize)]
 #[cfg_attr(
     not(test),
     expect(
@@ -105,7 +105,7 @@ impl fmt::Display for SchemaName {
 /// Borrowed counterpart to [`SchemaName`]: a Schema name borrowed from parsed
 /// TOML data or a `$ref` string, mirroring the `&str`/`String` split
 /// ([`crate::file_name::BaseNameRef`]).
-#[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
+#[derive(Copy, Clone, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub(crate) struct SchemaNameRef<'a>(&'a str);
 
 impl<'a> SchemaNameRef<'a> {

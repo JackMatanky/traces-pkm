@@ -281,34 +281,6 @@ pub(crate) enum FieldOptions {
 }
 
 impl FieldOptions {
-    /// Returns the [`FieldType`] this variant represents.
-    #[inline]
-    #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "declared by the schema-registry ticket; consumed by the \
-                      schema-namespace ticket \
-                      (.scratch/metadata-schemas/issues/\
-                      03-schema-minijinja-namespace.md)"
-        )
-    )]
-    pub(super) fn kind(&self) -> FieldType {
-        match self {
-            Self::Input => FieldType::Input,
-            Self::Select {
-                ..
-            } => FieldType::Select,
-            Self::Boolean => FieldType::Boolean,
-            Self::Number => FieldType::Number,
-            Self::Date => FieldType::Date,
-            Self::File {
-                ..
-            } => FieldType::File,
-        }
-    }
-
     /// Builds fresh options for `field_type` from `raw`'s own keys, with no
     /// base definition to fall back on. Absent keys default to empty.
     #[cfg_attr(
@@ -392,6 +364,34 @@ impl FieldOptions {
                 }),
             },
             other => Self::from_raw(other, raw),
+        }
+    }
+
+    /// Returns the [`FieldType`] this variant represents.
+    #[inline]
+    #[must_use]
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "declared by the schema-registry ticket; consumed by the \
+                      schema-namespace ticket \
+                      (.scratch/metadata-schemas/issues/\
+                      03-schema-minijinja-namespace.md)"
+        )
+    )]
+    pub(super) fn kind(&self) -> FieldType {
+        match self {
+            Self::Input => FieldType::Input,
+            Self::Select {
+                ..
+            } => FieldType::Select,
+            Self::Boolean => FieldType::Boolean,
+            Self::Number => FieldType::Number,
+            Self::Date => FieldType::Date,
+            Self::File {
+                ..
+            } => FieldType::File,
         }
     }
 }
