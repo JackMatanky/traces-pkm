@@ -17,6 +17,7 @@ use super::{
     raw::RawSchema,
     resolve,
 };
+use crate::file_name::BaseNameRef;
 
 /// Every Schema under a registry directory, resolved through `extends`,
 /// `excludes`, and `$ref`.
@@ -150,10 +151,10 @@ fn read_raw_schemas(
         if path.extension().and_then(OsStr::to_str) != Some("toml") {
             continue;
         }
-        let Some(stem) = path.file_stem().and_then(OsStr::to_str) else {
+        let Some(stem) = BaseNameRef::from_path(path) else {
             continue;
         };
-        let stem = stem.to_owned();
+        let stem = stem.as_str().to_owned();
         let contents = fs::read_to_string(path).map_err(|source| {
             SchemaError::ReadFile {
                 path: path.to_path_buf(),

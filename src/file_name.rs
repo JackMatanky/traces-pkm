@@ -1,4 +1,4 @@
-//! File-name newtypes shared by the index and template layers.
+//! File-name newtypes shared by the index, template, and schema layers.
 //!
 //! - [`FileName`] keeps the final path component exactly as written, including
 //!   any extension.
@@ -95,6 +95,13 @@ impl<'a> BaseNameRef<'a> {
     pub(crate) fn from_path(path: &'a Path) -> Option<Self> {
         path.file_stem().and_then(|stem| stem.to_str()).map(Self)
     }
+
+    /// Returns this stem as a string slice.
+    #[inline]
+    #[must_use]
+    pub(crate) fn as_str(&self) -> &str {
+        self.0
+    }
 }
 
 impl std::borrow::Borrow<str> for BaseNameRef<'_> {
@@ -169,10 +176,7 @@ mod tests {
             let stem = BaseNameRef::from_path(Path::new("todo.md"))
                 .expect("valid path");
 
-            // No `as_str()` accessor: nothing outside this module needs one
-            // (see `Borrow<str>` above), and one that only tests exercised
-            // would trip the crate's deny-warnings dead-code lint.
-            assert_eq!(stem.0, "todo");
+            assert_eq!(stem.as_str(), "todo");
         }
 
         #[test]
