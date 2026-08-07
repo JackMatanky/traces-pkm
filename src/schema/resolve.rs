@@ -196,6 +196,16 @@ fn build_dag<'a>(
 ///
 /// `parents` must already be resolved in `resolved` — [`resolve`] guarantees
 /// this by calling in Kahn topological order.
+///
+/// # Arguments
+///
+/// * `name` - The Schema being resolved (its filename stem).
+/// * `raw` - `name`'s own parsed TOML: `extends`, `excludes`, and fields.
+/// * `parents` - `raw.extends`, filtered to targets that resolved.
+/// * `resolved` - Schemas already resolved earlier in Kahn order, keyed by
+///   name.
+/// * `warnings` - Accumulates degraded-resolution warnings raised while
+///   building `name`'s own fields.
 #[cfg_attr(
     not(test),
     expect(
@@ -263,6 +273,17 @@ struct ResolutionContext<'a> {
 /// Builds one resolved [`FieldDefinition`] for `field_name` on `schema_name`,
 /// resolving its `$ref` (if any) against `context.resolved` and applying the
 /// Global Schema's `required` degrade.
+///
+/// # Arguments
+///
+/// * `schema_name` - The Schema `field_name` belongs to.
+/// * `field_name` - The field being built.
+/// * `raw` - `field_name`'s own parsed TOML.
+/// * `context` - `$ref` resolution inputs: `ancestors` bounds valid targets,
+///   `resolved` supplies base definitions.
+/// * `warnings` - Accumulates a [`SchemaWarning::StrayGlobalRequired`] if
+///   `schema_name` is the Global Schema and `field_name` declared `required =
+///   true`.
 #[cfg_attr(
     not(test),
     expect(
