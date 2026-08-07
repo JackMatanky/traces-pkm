@@ -26,6 +26,7 @@ mod tag;
 
 pub use links::{Link, LinkTarget, LinkType};
 pub use lists::{List, ListItem, TaskStatus};
+pub(crate) use metadata::FieldKey;
 pub use metadata::{
     FieldValue, Frontmatter, InlineField, InlineFieldForm, RawFrontmatter,
 };

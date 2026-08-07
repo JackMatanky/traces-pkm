@@ -579,19 +579,19 @@ mod tests {
         #[rstest]
         #[case::body(
             "Status:: Draft",
-            "Status",
+            "status",
             "Draft",
             InlineFieldForm::Body
         )]
         #[case::visible_key(
             "[Status:: Draft]",
-            "Status",
+            "status",
             "Draft",
             InlineFieldForm::VisibleKey
         )]
         #[case::hidden_key(
             "(Status:: Draft)",
-            "Status",
+            "status",
             "Draft",
             InlineFieldForm::HiddenKey
         )]
@@ -1156,7 +1156,7 @@ mod tests {
                     .iter()
                     .map(crate::note::InlineField::key)
                     .collect::<Vec<_>>(),
-                ["Genre"]
+                ["genre"]
             );
             assert_eq!(record.note().tags(), [Tag::new("#book")]);
         }

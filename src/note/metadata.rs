@@ -130,41 +130,94 @@ pub enum InlineFieldForm {
     HiddenKey,
 }
 
-/// Represents a metadata key shared by frontmatter and inline fields.
+/// A metadata key shared by frontmatter and inline fields.
 ///
-/// Distinguishes metadata keys from other note text such as list item content,
-/// link targets, and tags.
-#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
-pub(crate) struct FieldKey(String);
+/// Stores the original key text for display and a canonical form for
+/// case-insensitive, whitespace-normalized matching.
+#[derive(Clone, Debug, Eq, Deserialize, Serialize)]
+pub(crate) struct FieldKey {
+    /// Original key text as written by the user.
+    name: String,
+    /// Canonical form for case-insensitive matching.
+    canonical: String,
+}
 
 impl FieldKey {
-    /// Creates a field key from `text`.
+    /// Creates a field key from `raw`, computing its canonical form.
     #[inline]
     #[must_use]
-    fn new(text: impl Into<String>) -> Self {
-        Self(text.into())
+    pub(crate) fn new(raw: impl Into<String>) -> Self {
+        let name = raw.into();
+        let canonical = Self::canonicalize(&name);
+        Self {
+            name,
+            canonical,
+        }
     }
 
-    /// Returns the field key text.
+    /// Returns the original key text.
     #[inline]
     #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "no current caller outside tests; kept for FieldKey \
-                      accessor symmetry with its inner value"
-        )
-    )]
-    pub(crate) fn as_str(&self) -> &str {
-        &self.0
+    #[allow(dead_code, reason = "used in tests")]
+    pub(crate) fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Returns the canonical key form for matching.
+    #[inline]
+    #[must_use]
+    #[allow(dead_code, reason = "used in tests")]
+    pub(crate) fn canonical(&self) -> &str {
+        &self.canonical
+    }
+
+    /// Normalizes a raw key string for case-insensitive matching.
+    ///
+    /// Transformations:
+    /// - ASCII whitespace → `-`
+    /// - `_`, `-`, ASCII alphanumeric → kept, lowercased
+    /// - Non-ASCII (emoji, Unicode letters) → kept, lowercased
+    /// - Everything else (`!`, `@`, `(`, etc.) → stripped
+    fn canonicalize(raw: &str) -> String {
+        let mut result = String::with_capacity(raw.len());
+        for ch in raw.chars() {
+            if ch.is_ascii_whitespace() {
+                result.push('-');
+                continue;
+            }
+            if ch == '_'
+                || ch == '-'
+                || ch.is_ascii_alphanumeric()
+                || !ch.is_ascii()
+            {
+                for c in ch.to_lowercase() {
+                    result.push(c);
+                }
+            }
+            // strip everything else
+        }
+        result
+    }
+}
+
+impl PartialEq for FieldKey {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        self.canonical == other.canonical
     }
 }
 
 impl PartialEq<str> for FieldKey {
     #[inline]
     fn eq(&self, other: &str) -> bool {
-        self.0 == other
+        self.canonical == Self::canonicalize(other)
+    }
+}
+
+impl PartialEq<&str> for FieldKey {
+    #[inline]
+    fn eq(&self, other: &&str) -> bool {
+        self.canonical == Self::canonicalize(other)
     }
 }
 
@@ -533,7 +586,8 @@ mod tests {
                 form,
             );
 
-            assert_eq!(field.key(), "Author");
+            assert_eq!(field.key().name(), "Author");
+            assert_eq!(field.key().canonical(), "author");
             assert_eq!(
                 field.value(),
                 &FieldValue::String("Jane Doe".to_owned())
@@ -560,6 +614,68 @@ mod tests {
                 postcard::from_bytes(&bytes).expect("decode inline field");
 
             assert_eq!(decoded, field);
+        }
+    }
+
+    mod field_key {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn stores_original_name() {
+            let key = FieldKey::new("Status");
+            assert_eq!(key.name(), "Status");
+        }
+
+        #[test]
+        fn computes_canonical_form() {
+            let key = FieldKey::new("Time Played");
+            assert_eq!(key.canonical(), "time-played");
+        }
+
+        #[test]
+        fn lowercases_ascii() {
+            let key = FieldKey::new("Status");
+            assert_eq!(key.canonical(), "status");
+        }
+
+        #[test]
+        fn replaces_whitespace_with_hyphens() {
+            let key = FieldKey::new("due date");
+            assert_eq!(key.canonical(), "due-date");
+        }
+
+        #[test]
+        fn strips_special_characters() {
+            let key = FieldKey::new("field-name!");
+            assert_eq!(key.canonical(), "field-name");
+        }
+
+        #[test]
+        fn preserves_underscores_and_hyphens() {
+            let key = FieldKey::new("my_field-name");
+            assert_eq!(key.canonical(), "my_field-name");
+        }
+
+        #[test]
+        fn preserves_emoji() {
+            let key = FieldKey::new("🗓️due");
+            assert_eq!(key.canonical(), "🗓️due");
+        }
+
+        #[test]
+        fn partial_eq_str_uses_canonical() {
+            let key = FieldKey::new("Status");
+            assert_eq!(key, "status");
+            assert_eq!(key, "Status");
+        }
+
+        #[test]
+        fn partial_eq_field_key_uses_canonical() {
+            let a = FieldKey::new("Status");
+            let b = FieldKey::new("status");
+            assert_eq!(a, b);
         }
     }
 }

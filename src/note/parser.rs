@@ -614,7 +614,7 @@ mod tests {
                 .frontmatter()
                 .into_iter()
                 .flat_map(Frontmatter::fields)
-                .map(|field| (field.key().as_str(), field.value()))
+                .map(|field| (field.key().name(), field.value()))
                 .collect();
             assert_eq!(fields.len(), 5);
             assert_eq!(
@@ -823,19 +823,19 @@ mod tests {
         #[rstest]
         #[case::body(
             "Author:: Jane Doe",
-            "Author",
+            "author",
             "Jane Doe",
             InlineFieldForm::Body
         )]
         #[case::visible_key(
             "See the [Status:: Draft] note.",
-            "Status",
+            "status",
             "Draft",
             InlineFieldForm::VisibleKey
         )]
         #[case::hidden_key(
             "See the (Status:: Draft) note.",
-            "Status",
+            "status",
             "Draft",
             InlineFieldForm::HiddenKey
         )]
@@ -860,7 +860,7 @@ mod tests {
                 parse_markdown("note.md", "Status:: Draft\n\nAuthor:: Jane");
 
             let keys: Vec<&str> =
-                note.inline_fields().iter().map(|f| f.key().as_str()).collect();
+                note.inline_fields().iter().map(|f| f.key().name()).collect();
             assert_eq!(keys, ["Status", "Author"]);
         }
 
@@ -877,7 +877,7 @@ mod tests {
             assert_eq!(item.text(), "Status:: Draft");
 
             let field = note.inline_fields().first().expect("field present");
-            assert_eq!(field.key(), "Status");
+            assert_eq!(field.key(), "status");
             assert_eq!(field.value().as_str(), Some("Draft"));
             assert_eq!(field.form(), InlineFieldForm::Body);
         }
@@ -994,13 +994,13 @@ mod tests {
 
             let fields = note.inline_fields();
             assert_eq!(fields.len(), 2);
-            assert_eq!(fields.first().map(|f| f.key().as_str()), Some("due"));
+            assert_eq!(fields.first().map(|f| f.key().name()), Some("due"));
             assert_eq!(
                 fields.first().map(InlineField::value),
                 Some(&FieldValue::Date("2022-07-14".to_owned()))
             );
             assert_eq!(
-                fields.get(1).map(|f| f.key().as_str()),
+                fields.get(1).map(|f| f.key().name()),
                 Some("scheduled")
             );
             assert_eq!(
@@ -1070,7 +1070,7 @@ mod tests {
 
             assert_eq!(note.inline_fields().len(), 1);
             let field = note.inline_fields().first().expect("field present");
-            assert_eq!(field.key(), "Status");
+            assert_eq!(field.key(), "status");
             assert_eq!(field.value().as_str(), Some("Draft"));
         }
 
@@ -1082,7 +1082,7 @@ mod tests {
             );
 
             let keys: Vec<&str> =
-                note.inline_fields().iter().map(|f| f.key().as_str()).collect();
+                note.inline_fields().iter().map(|f| f.key().name()).collect();
             assert_eq!(keys, ["Status", "Priority"]);
         }
 
@@ -1094,7 +1094,7 @@ mod tests {
             );
 
             let keys: Vec<&str> =
-                note.inline_fields().iter().map(|f| f.key().as_str()).collect();
+                note.inline_fields().iter().map(|f| f.key().name()).collect();
             assert_eq!(keys, ["Status", "Priority", "Reviewer"]);
         }
 
@@ -1146,7 +1146,7 @@ mod tests {
 
             assert_eq!(note.inline_fields().len(), 1);
             let field = note.inline_fields().first().expect("field present");
-            assert_eq!(field.key(), "Status");
+            assert_eq!(field.key(), "status");
             assert_eq!(field.value().as_str(), Some("Draft #urgent"));
 
             assert_eq!(note.tags(), [Tag::new("#urgent")]);
@@ -1161,7 +1161,7 @@ mod tests {
             );
 
             let keys: Vec<&str> =
-                note.inline_fields().iter().map(|f| f.key().as_str()).collect();
+                note.inline_fields().iter().map(|f| f.key().name()).collect();
             assert_eq!(keys, ["Status", "Reviewer"]);
         }
 
@@ -1174,7 +1174,7 @@ mod tests {
             );
 
             let keys: Vec<&str> =
-                note.inline_fields().iter().map(|f| f.key().as_str()).collect();
+                note.inline_fields().iter().map(|f| f.key().name()).collect();
             assert_eq!(keys, ["Reviewer", "Status"]);
         }
 
@@ -1186,7 +1186,7 @@ mod tests {
 
             assert_eq!(note.inline_fields().len(), 1);
             let field = note.inline_fields().first().expect("field present");
-            assert_eq!(field.key(), "Status");
+            assert_eq!(field.key(), "status");
             assert_eq!(field.value().as_str(), Some("Draft more text"));
         }
 
@@ -1203,7 +1203,7 @@ mod tests {
 
             assert_eq!(note.inline_fields().len(), 1);
             let field = note.inline_fields().first().expect("field present");
-            assert_eq!(field.key(), "Status");
+            assert_eq!(field.key(), "status");
             assert_eq!(field.value().as_str(), Some("Draft"));
         }
 
@@ -1217,7 +1217,7 @@ mod tests {
             assert_eq!(note.inline_fields().len(), 1);
             assert_eq!(note.outlinks().len(), 1);
             let field = note.inline_fields().first().expect("field present");
-            assert_eq!(field.key(), "Status");
+            assert_eq!(field.key(), "status");
             assert_eq!(field.value().as_str(), Some("Draft"));
             assert_eq!(field.form(), InlineFieldForm::VisibleKey);
 
@@ -1235,7 +1235,7 @@ mod tests {
 
             assert_eq!(note.inline_fields().len(), 1);
             let field = note.inline_fields().first().expect("field present");
-            assert_eq!(field.key(), "Status");
+            assert_eq!(field.key(), "status");
             assert_eq!(field.value().as_str(), Some("Draft"));
             assert_eq!(field.form(), InlineFieldForm::VisibleKey);
         }

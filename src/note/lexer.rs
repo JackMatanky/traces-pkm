@@ -704,7 +704,7 @@ mod tests {
 
             assert_eq!(fields.len(), 1);
             assert_eq!(
-                fields.first().map(|field| field.key().as_str()),
+                fields.first().map(|field| field.key().name()),
                 Some(expected_key)
             );
             assert_eq!(
@@ -735,7 +735,7 @@ mod tests {
             let fields = extract_inline_fields(input);
 
             assert_eq!(
-                fields.first().map(|field| field.key().as_str()),
+                fields.first().map(|field| field.key().name()),
                 Some(expected_key)
             );
             assert_eq!(
@@ -750,7 +750,7 @@ mod tests {
                 extract_inline_fields("Status:: Draft\nAuthor:: Jane Doe");
 
             let keys: Vec<&str> =
-                fields.iter().map(|field| field.key().as_str()).collect();
+                fields.iter().map(|field| field.key().name()).collect();
             assert_eq!(keys, ["Status", "Author"]);
         }
 
@@ -909,7 +909,7 @@ mod tests {
             let fields =
                 extract_inline_fields("This is some text. [key:: [value]]");
 
-            assert_eq!(fields.first().map(|f| f.key().as_str()), Some("key"));
+            assert_eq!(fields.first().map(|f| f.key().name()), Some("key"));
             assert_eq!(
                 fields.first().and_then(|field| field.value().as_str()),
                 Some("[value]")
@@ -920,7 +920,7 @@ mod tests {
         fn accepts_punctuation_in_wrapped_keys() {
             let fields = extract_inline_fields(r"Hello? [key! :: \[value]");
 
-            assert_eq!(fields.first().map(|f| f.key().as_str()), Some("key!"));
+            assert_eq!(fields.first().map(|f| f.key().name()), Some("key!"));
             assert_eq!(
                 fields.first().and_then(|field| field.value().as_str()),
                 Some(r"\[value")
@@ -931,7 +931,7 @@ mod tests {
         fn keeps_escaped_closing_bracket_inside_visible_value() {
             let fields = extract_inline_fields(r"Hello [key:: \] value]");
 
-            assert_eq!(fields.first().map(|f| f.key().as_str()), Some("key"));
+            assert_eq!(fields.first().map(|f| f.key().name()), Some("key"));
             assert_eq!(
                 fields.first().and_then(|field| field.value().as_str()),
                 Some(r"\] value")
@@ -942,7 +942,7 @@ mod tests {
         fn extracts_wrapped_field_after_large_leading_whitespace() {
             let fields = extract_inline_fields("      - [ ] Huh! [p:: 1]");
 
-            assert_eq!(fields.first().map(|f| f.key().as_str()), Some("p"));
+            assert_eq!(fields.first().map(|f| f.key().name()), Some("p"));
             assert_eq!(
                 fields.first().map(InlineField::value),
                 Some(&FieldValue::Number(1.0))
@@ -986,7 +986,7 @@ mod tests {
 
             assert_eq!(fields.len(), 1);
             assert_eq!(
-                fields.first().map(|field| field.key().as_str()),
+                fields.first().map(|field| field.key().name()),
                 Some(expected_key)
             );
             assert_eq!(
@@ -998,10 +998,7 @@ mod tests {
         fn accepts_a_bare_key_preceded_by_leading_whitespace() {
             let fields = extract_inline_fields("  Status:: Draft");
 
-            assert_eq!(
-                fields.first().map(|f| f.key().as_str()),
-                Some("Status")
-            );
+            assert_eq!(fields.first().map(|f| f.key().name()), Some("Status"));
         }
 
         #[test]
@@ -1011,7 +1008,7 @@ mod tests {
             );
 
             let keys: Vec<&str> =
-                fields.iter().map(|field| field.key().as_str()).collect();
+                fields.iter().map(|field| field.key().name()).collect();
             assert_eq!(keys, ["Status", "Reviewer", "Editor"]);
         }
 
@@ -1020,10 +1017,7 @@ mod tests {
             let fields = extract_inline_fields("Status:: Draft [Key:: Value]");
 
             assert_eq!(fields.len(), 1);
-            assert_eq!(
-                fields.first().map(|f| f.key().as_str()),
-                Some("Status")
-            );
+            assert_eq!(fields.first().map(|f| f.key().name()), Some("Status"));
             assert_eq!(
                 fields.first().and_then(|field| field.value().as_str()),
                 Some("Draft [Key:: Value]")

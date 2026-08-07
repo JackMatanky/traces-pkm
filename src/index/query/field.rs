@@ -9,7 +9,7 @@
 //! - A frontmatter or inline metadata field key
 
 use super::{super::file::FileRecord, error::QueryError};
-use crate::note::FieldValue;
+use crate::note::{FieldKey, FieldValue};
 
 /// Represents a `file.<field>` accessor backed by [`FileRecord`] metadata.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -231,7 +231,7 @@ impl FieldPath {
         if path == "inlinks" {
             return Ok(Self::Inlinks);
         }
-        Ok(Self::Metadata(path.to_owned()))
+        Ok(Self::Metadata(FieldKey::new(path).canonical().to_owned()))
     }
 }
 /// Constructs an [`UnknownFieldPath`] error containing a suggestion hint.

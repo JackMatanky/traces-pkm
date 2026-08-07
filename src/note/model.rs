@@ -299,7 +299,7 @@ mod tests {
             .with_inline_fields(vec![inline_field]);
 
             let keys: Vec<&str> =
-                note.fields().map(|field| field.key().as_str()).collect();
+                note.fields().map(|field| field.key().name()).collect();
             assert_eq!(keys, ["title", "Status"]);
         }
     }
