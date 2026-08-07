@@ -124,3 +124,185 @@ instead of hand-rolled `fs::read_dir`.
   existing `a_missing_registry_directory_resolves_to_an_empty_registry` test.
 - No other behavior changed; re-ran the full verification sweep (below) after
   the split.
+
+### Pipeline/machinery extraction and reorder (2026-08-07, continued)
+
+Three follow-up refactor commits, all pure structure moves (no behavior
+change, verified by the full suite after each):
+
+- **`7f4c3a6` — extract `RefResolver`/`SchemaGraph`, split `UnresolvedRef`.**
+  `FieldPath<'a>` replaces the bare `(schema, field)` `&str` pairs
+  threaded through `resolve_one`/`build_field`/`parse_ref`, closing a
+  same-typed-adjacent-params transposition risk the earlier adversarial
+  review flagged but left as-is (mirrors `BaseNameRef`/`BaseName`).
+  `ResolutionContext` is renamed `RefResolver` and gains a `.resolve()`
+  method: it now owns `$ref` parse + bounds-check + lookup instead of
+  `build_field` driving each step inline. `SchemaError::UnresolvedRef`
+  splits into `RefOutOfBounds`/`RefFieldNotFound` (distinct causes,
+  distinct fixes) and drops the redundant `ref_schema`/`ref_field`
+  fields now that `reference` already shows them verbatim — cuts the
+  enum's largest variant from 120 to 72 bytes, with a new
+  `schema_error_stays_small` regression guard. `SchemaGraph` extracts
+  Kahn's adjacency/in-degree/queue/visited bookkeeping out of
+  `resolve()`/`build_dag`, isolating the Global-first tie-break;
+  `parents_of` returns a slice instead of cloning a `Vec<&str>` per
+  Schema. `parse_ref` becomes `FieldPath::parse`.
+- **`df6f4c7` — reorder items for canonical top-down tour.** `model.rs`
+  had its headline type (`Schema`, the file's primary and only
+  crate-re-exported type) declared *last*, below its own supporting
+  pieces. Reordered to `Schema`+impl, `FieldDefinition`+impl,
+  `FieldOptions`+impl, `FieldType`+impl per
+  `docs/refs/canonical_ordering_discipline.md` (primary items first).
+  `registry.rs::read_raw_schemas` swapped a `let mut`/`let` declaration
+  pair to match the discipline's plain-before-`mut` ordering rule.
+- **`02af4c1` — split `resolve.rs` into pipeline-then-machinery tiers.**
+  The file was interleaved by construction order (a reader tracing the
+  pipeline had to detour through `SchemaGraph`'s internals before
+  reaching `resolve_one`, and `RefResolver`'s definition sat between the
+  two pipeline steps that construct and call it). Reordered into two
+  tiers: the pipeline in call order (`resolve` -> `resolve_one` ->
+  `build_field` -> `apply_global_degrade` -> `FieldPath::parse`, all
+  readable end to end without first knowing struct internals), then the
+  supporting types each stage leans on (`SchemaGraph`, `RefResolver` +
+  its `FieldPath` address type).
+
+### `SchemaName`/`SchemaNameRef` newtypes (2026-08-07)
+
+Adversarial `rust-code-review`/`rust-skills` pass over `src/schema/`
+found the module had built exactly one newtype for identity safety
+(`FieldPath`, above) but still threaded every Schema *name* through the
+rest of the module as bare `String`/`&str` — including one call site
+that briefly held a real newtype (`BaseNameRef`) and discarded it into
+a `String` one line later. Findings, in severity order:
+
+- **M1/M2 (transposition risk):** `SchemaRegistry::is_a(class, queried)`
+  had two same-typed `&str` params playing different roles (a same-role
+  swap a newtype can't close by itself); `SchemaError`'s four
+  `$ref`-related variants each hand-copied `schema: String, field:
+  String` at their construction site, one typo from a silent swap.
+- **L1-L4 (pervasive `String`/`&str` for a real identity type):** the
+  `BaseNameRef` discard in `registry.rs::read_raw_schemas`; `Schema`/
+  `SchemaRegistry`/`SchemaGraph`/`RefResolver`/`SchemaError`/
+  `SchemaWarning` all storing/comparing Schema names as bare strings;
+  `FieldPath.schema` typed `&'a str` despite its own doc saying it
+  exists to stop schema/field transposition (two same-typed fields
+  still made `FieldPath { schema: field_name, field: name }` compile).
+
+Fix (`a7d4720`): new `src/schema/name.rs` — `SchemaName` (owned) /
+`SchemaNameRef` (borrowed), mirroring `file_name.rs`'s `FileName`/
+`BaseName`/`BaseNameRef` split. Manual `Debug`/`Display` delegate to the
+wrapped `String`/`str` so wrapping a name never changes an error or
+warning message's text; derived `Ord`/`PartialOrd` is provably
+identical to the wrapped type's own (single-field tuple struct), so
+`SchemaGraph`'s Kahn tie-break determinism carries over unchanged. Both
+types threaded through every Schema-identity slot crate-wide within
+`schema/`; `FieldPath.schema` retyped to `SchemaNameRef<'a>` (now a
+compile error, not a silent transposition, to swap `schema`/`field`);
+`FieldPath::parse` replaces the old free-function `parse_ref`, matching
+this crate's own `Type::parse(&str) -> Result<Self, Error>` idiom
+(`index::query::field::FieldPath::parse`) over generic `TryFrom`;
+`is_a`'s `class` param renamed `subject` with a worked doc example plus
+a named `is_not_commutative_reversed_arguments_give_a_different_answer`
+regression test (M1's transposition risk can't be closed by a type, so
+it's closed by a test instead); `SchemaError`'s four `schema: String`
+fields retyped to `SchemaName` (M2). No public API change — `Schema::
+name()`/`is_a()`, `SchemaRegistry::get()` still take/return plain `&str`
+at the module boundary; `SchemaName`/`SchemaNameRef` stay `pub(crate)`,
+internal to `schema/`. Follow-up (`a3d3b51`) renamed
+`FieldOptions::field_type()` to `kind()` to match the crate's `*Type`
+accessor-naming convention (e.g. `index/inlinks.rs`'s `Target`).
+
+### Canonical ordering discipline audit (`6e5d8e4`, 2026-08-07)
+
+Second, more granular pass against
+`docs/refs/canonical_ordering_discipline.md` and `clippy.toml`'s
+`source-item-ordering` config (item/impl placement was already
+compliant from the reorders above). Two real violations found: (1)
+`name.rs`'s `SchemaName`/`SchemaNameRef` derive lists had `Hash`
+trailing after `Ord`/`PartialOrd` instead of its lexicographic slot
+between `Eq` and `Ord` — `index/inlinks.rs`'s `Target` type already
+gets this right and served as the in-crate reference; (2) `model.rs`'s
+`FieldOptions::kind()` (an accessor) was declared *before* its own
+type's constructors (`from_raw`, `merged`), breaking the
+constructor-before-accessor convention `Schema::new` and
+`FieldDefinition::new` both already establish earlier in the same file.
+Both fixed; no behavior change.
+
+### Rustdoc revision (`8eb925b`, 2026-08-07)
+
+Full pass over every `//!`/`///` doc comment in `src/schema/` against
+the `rust-doc` skill (Rust API Guidelines + rustdoc conventions).
+Stripped ticket/spec-tracking artifacts that don't serve a future
+reader — `(spec User Story N)` citations, quoted `(spec: "...")`/`(spec
+Implementation Decisions: "...")` citations, and a `.scratch/`
+ticket-path reference in `mod.rs`'s module doc — keeping the
+substance (the *why*) as plain prose instead of a citation wrapper;
+kept ADR-7 citations since ADRs are durable accepted design records,
+not ephemeral scratch tickets. Caught and corrected one factual
+regression introduced mid-edit: an early trim of `registry.rs::load`'s
+doc conflated the spec's lazy-validation precedent into a false claim
+that `load()` defers a broken Schema's failure to the Template that
+touches it (it doesn't — `load()` eagerly parses and resolves every
+present Schema); reworded to describe only the actual missing-directory
+behavior. Removed 3 em dashes; added 3 missing `# Errors` sections
+(`read_raw_schemas`, `resolve_one`, `build_field`); fixed one genuine
+grammar issue `harper-cli` caught (missing comma after a
+sentence-initial "Otherwise"). ~50 additional `harper-cli` flags
+reviewed individually and left as-is — domain proper nouns absent from
+its dictionary (`Kahn's`, `minijinja`, `ADR`, `serde`, `newtypes`),
+markdown code-span-plus-possessive tokenization artifacts, and two
+flags that would have introduced real grammar errors if applied.
+
+### Test coverage and structure audit (`ba651f6`, 2026-08-07)
+
+Systematic audit of every `src/schema/` implementation file against its
+test suite via `rust-unit-testing`'s case-surface enumeration method
+(read the source, list every branch/error variant/`Option` path, map
+existing tests onto that list, then close what's unmapped).
+
+**Coverage gaps closed:**
+- `model.rs` had **zero** direct unit tests — `Schema`, `FieldDefinition`,
+  `FieldOptions`, `FieldType` were only exercised indirectly through
+  `resolve.rs`'s end-to-end pipeline tests, so a bug in
+  `FieldOptions::merged`'s `File`-type per-subfield fallback would fail
+  an integration test three call-frames from the actual bug. Added a
+  35-test `mod tests` covering every branch, including the independent
+  per-subfield `File` fallback never isolated before.
+- `error.rs`: `SchemaError`'s 8 variants had no `Display`-message tests
+  while `SchemaWarning`'s 2 did — asymmetric against this crate's own
+  `index/query/error.rs` convention (`assert_display` helper, one
+  `*_formats_display_message` test per variant). Added all 8.
+- `resolve.rs`: `FieldPath::parse`'s 4 malformed-input branches (missing
+  `#`, missing `/`, empty schema segment, empty field segment) collapsed
+  to one indirectly-tested shape through the full pipeline. Added direct
+  `field_path`/`ref_resolver` test modules bypassing `SchemaGraph`/
+  `resolve_one`/`build_field` entirely.
+- `registry.rs`: `load()`'s own doc documents that it propagates any
+  `resolve()` error, but nothing tested that boundary; `is_a`'s
+  `Some(schema)` branch was untested for a real (non-"ghost") schema
+  matching itself. Added both.
+
+**Structure** (naming.md's hard rule: 2+ units of work -> submodules):
+`name.rs` (7 tests flat -> `ordering`/`borrowing`/`formatting`/
+`conversions`), `resolve.rs` (23 tests flat -> `resolve`/`schema_graph`/
+`field_path`/`ref_resolver`), `error.rs` (-> `schema_error`/
+`schema_warning`). Moved the `schema_error_stays_small` size-regression
+guard from `resolve.rs` into `error.rs`, next to the type it guards.
+Added the crate's default `pretty_assertions::assert_eq` import to
+`error.rs`/`name.rs`, which used `std`'s throughout despite every
+sibling test file in the module already shadowing it.
+
+**Explicitly not flagged:** `raw.rs`'s derive-only `Deserialize` shapes
+(no custom logic, covered by `registry.rs`'s TOML fixtures); two
+defensive branches (`resolve_one`'s parent-not-yet-resolved case,
+`read_raw_schemas`'s `BaseNameRef::from_path` returning `None`) that are
+unreachable through the public entry points given Kahn's invariant and
+`WalkDir`'s filename guarantee — not given manufactured coverage for
+cases that can't occur. Zero `#[allow]`/`#[expect]` lint suppressions
+found in any test module.
+
+**Verified:** fmt clean, both clippy gates (`--all-features`,
+`--features test-utils`; `-D warnings`) clean, `cargo doc
+--document-private-items` unchanged at the crate's established 42
+pre-existing warnings (0 from `schema/`), 100/100 `schema` tests (was
+43 before this pass, +57 net new), full 1299/1299 lib suite green.
