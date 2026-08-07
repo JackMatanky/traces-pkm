@@ -137,8 +137,8 @@ impl SchemaRegistry {
 fn read_raw_schemas(
     directory: &Path,
 ) -> Result<BTreeMap<String, RawSchema>, SchemaError> {
-    let mut schemas = BTreeMap::new();
     let entries = WalkDir::new(directory).min_depth(1).max_depth(1);
+    let mut schemas = BTreeMap::new();
     for entry in entries {
         let entry = match entry {
             Ok(entry) => entry,

@@ -11,9 +11,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::raw::{RawFieldDef, RawFieldType};
 
-/// A Field Definition's kind, mirroring [`RawFieldType`] after `$ref`
-/// resolution has settled on one.
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+/// A Schema's effective Field Definitions after inheritance, `excludes`, and
+/// `$ref` are applied.
+#[derive(Clone, Debug, Eq, PartialEq)]
 #[cfg_attr(
     not(test),
     expect(
@@ -24,26 +24,224 @@ use super::raw::{RawFieldDef, RawFieldType};
                   03-schema-minijinja-namespace.md)"
     )
 )]
-pub(crate) enum FieldType {
-    Input,
-    Select,
-    Boolean,
-    Number,
-    Date,
-    File,
+pub(crate) struct Schema {
+    name: String,
+    fields: BTreeMap<String, FieldDefinition>,
+    /// Transitive `extends` targets, filtered to targets that resolved (a
+    /// missing target never reaches here; see
+    /// [`super::error::SchemaWarning::MissingExtendsTarget`]).
+    ancestors: BTreeSet<String>,
 }
 
-impl From<RawFieldType> for FieldType {
-    #[inline]
-    fn from(raw: RawFieldType) -> Self {
-        match raw {
-            RawFieldType::Input => Self::Input,
-            RawFieldType::Select => Self::Select,
-            RawFieldType::Boolean => Self::Boolean,
-            RawFieldType::Number => Self::Number,
-            RawFieldType::Date => Self::Date,
-            RawFieldType::File => Self::File,
+impl Schema {
+    /// Builds a resolved Schema from its already-merged parts.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "declared by the schema-registry ticket; consumed by the \
+                      schema-namespace ticket \
+                      (.scratch/metadata-schemas/issues/\
+                      03-schema-minijinja-namespace.md)"
+        )
+    )]
+    pub(super) fn new(
+        name: String,
+        fields: BTreeMap<String, FieldDefinition>,
+        ancestors: BTreeSet<String>,
+    ) -> Self {
+        Self {
+            name,
+            fields,
+            ancestors,
         }
+    }
+
+    /// Returns the Schema name (the source file's stem).
+    #[inline]
+    #[must_use]
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "declared by the schema-registry ticket; consumed by the \
+                      schema-namespace ticket \
+                      (.scratch/metadata-schemas/issues/\
+                      03-schema-minijinja-namespace.md)"
+        )
+    )]
+    pub(crate) fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Returns this Schema's effective Field Definitions, keyed by name.
+    #[inline]
+    #[must_use]
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "declared by the schema-registry ticket; consumed by the \
+                      schema-namespace ticket \
+                      (.scratch/metadata-schemas/issues/\
+                      03-schema-minijinja-namespace.md)"
+        )
+    )]
+    pub(crate) fn fields(&self) -> &BTreeMap<String, FieldDefinition> {
+        &self.fields
+    }
+
+    /// Returns the named Field Definition, or `None` if it does not resolve
+    /// for this Schema.
+    #[inline]
+    #[must_use]
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "declared by the schema-registry ticket; consumed by the \
+                      schema-namespace ticket \
+                      (.scratch/metadata-schemas/issues/\
+                      03-schema-minijinja-namespace.md)"
+        )
+    )]
+    pub(crate) fn field(&self, name: &str) -> Option<&FieldDefinition> {
+        self.fields.get(name)
+    }
+
+    /// Returns this Schema's transitive `extends` ancestors, used by
+    /// `resolve::resolve_one` to accumulate a child's own ancestor set from
+    /// its parents'.
+    #[inline]
+    #[must_use]
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "declared by the schema-registry ticket; consumed by the \
+                      schema-namespace ticket \
+                      (.scratch/metadata-schemas/issues/\
+                      03-schema-minijinja-namespace.md)"
+        )
+    )]
+    pub(super) fn ancestors(&self) -> &BTreeSet<String> {
+        &self.ancestors
+    }
+
+    /// Returns `true` if this Schema is-a `queried`: equal, or `queried` is a
+    /// transitive `extends` ancestor (spec User Story 18).
+    #[inline]
+    #[must_use]
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "declared by the schema-registry ticket; consumed by the \
+                      class-queries ticket \
+                      (.scratch/metadata-schemas/issues/05-class-queries.md)"
+        )
+    )]
+    pub(crate) fn is_a(&self, queried: &str) -> bool {
+        self.name == queried || self.ancestors.contains(queried)
+    }
+}
+
+/// One resolved Field Definition: its type-specific [`FieldOptions`] plus
+/// `required`/`multi` flags.
+///
+/// `required`/`multi` are declared for future LSP/MCP guardrails (spec User
+/// Story 3) and stay inert here.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "declared by the schema-registry ticket; consumed by the \
+                  schema-namespace ticket \
+                  (.scratch/metadata-schemas/issues/\
+                  03-schema-minijinja-namespace.md)"
+    )
+)]
+pub(crate) struct FieldDefinition {
+    options: FieldOptions,
+    required: bool,
+    multi: bool,
+}
+
+impl FieldDefinition {
+    /// Builds a resolved Field Definition from its already-merged parts.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "declared by the schema-registry ticket; consumed by the \
+                      schema-namespace ticket \
+                      (.scratch/metadata-schemas/issues/\
+                      03-schema-minijinja-namespace.md)"
+        )
+    )]
+    pub(super) fn new(
+        options: FieldOptions,
+        required: bool,
+        multi: bool,
+    ) -> Self {
+        Self {
+            options,
+            required,
+            multi,
+        }
+    }
+
+    /// Returns this field's type-specific options.
+    #[inline]
+    #[must_use]
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "declared by the schema-registry ticket; consumed by the \
+                      schema-namespace ticket \
+                      (.scratch/metadata-schemas/issues/\
+                      03-schema-minijinja-namespace.md)"
+        )
+    )]
+    pub(crate) fn options(&self) -> &FieldOptions {
+        &self.options
+    }
+
+    /// Returns `true` if this field must be set. Always `false` on the
+    /// reserved Global Schema, regardless of its own TOML.
+    #[inline]
+    #[must_use]
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "declared by the schema-registry ticket; consumed by the \
+                      schema-namespace ticket \
+                      (.scratch/metadata-schemas/issues/\
+                      03-schema-minijinja-namespace.md)"
+        )
+    )]
+    pub(crate) fn is_required(&self) -> bool {
+        self.required
+    }
+
+    /// Returns `true` if this field accepts multiple values.
+    #[inline]
+    #[must_use]
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "declared by the schema-registry ticket; consumed by the \
+                      schema-namespace ticket \
+                      (.scratch/metadata-schemas/issues/\
+                      03-schema-minijinja-namespace.md)"
+        )
+    )]
+    pub(crate) fn is_multi(&self) -> bool {
+        self.multi
     }
 }
 
@@ -195,12 +393,9 @@ impl FieldOptions {
     }
 }
 
-/// One resolved Field Definition: its type-specific [`FieldOptions`] plus
-/// `required`/`multi` flags.
-///
-/// `required`/`multi` are declared for future LSP/MCP guardrails (spec User
-/// Story 3) and stay inert here.
-#[derive(Clone, Debug, Eq, PartialEq)]
+/// A Field Definition's kind, mirroring [`RawFieldType`] after `$ref`
+/// resolution has settled on one.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
 #[cfg_attr(
     not(test),
     expect(
@@ -211,220 +406,25 @@ impl FieldOptions {
                   03-schema-minijinja-namespace.md)"
     )
 )]
-pub(crate) struct FieldDefinition {
-    options: FieldOptions,
-    required: bool,
-    multi: bool,
+pub(crate) enum FieldType {
+    Input,
+    Select,
+    Boolean,
+    Number,
+    Date,
+    File,
 }
 
-impl FieldDefinition {
-    /// Builds a resolved Field Definition from its already-merged parts.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "declared by the schema-registry ticket; consumed by the \
-                      schema-namespace ticket \
-                      (.scratch/metadata-schemas/issues/\
-                      03-schema-minijinja-namespace.md)"
-        )
-    )]
-    pub(super) fn new(
-        options: FieldOptions,
-        required: bool,
-        multi: bool,
-    ) -> Self {
-        Self {
-            options,
-            required,
-            multi,
+impl From<RawFieldType> for FieldType {
+    #[inline]
+    fn from(raw: RawFieldType) -> Self {
+        match raw {
+            RawFieldType::Input => Self::Input,
+            RawFieldType::Select => Self::Select,
+            RawFieldType::Boolean => Self::Boolean,
+            RawFieldType::Number => Self::Number,
+            RawFieldType::Date => Self::Date,
+            RawFieldType::File => Self::File,
         }
-    }
-
-    /// Returns this field's type-specific options.
-    #[inline]
-    #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "declared by the schema-registry ticket; consumed by the \
-                      schema-namespace ticket \
-                      (.scratch/metadata-schemas/issues/\
-                      03-schema-minijinja-namespace.md)"
-        )
-    )]
-    pub(crate) fn options(&self) -> &FieldOptions {
-        &self.options
-    }
-
-    /// Returns `true` if this field must be set. Always `false` on the
-    /// reserved Global Schema, regardless of its own TOML.
-    #[inline]
-    #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "declared by the schema-registry ticket; consumed by the \
-                      schema-namespace ticket \
-                      (.scratch/metadata-schemas/issues/\
-                      03-schema-minijinja-namespace.md)"
-        )
-    )]
-    pub(crate) fn is_required(&self) -> bool {
-        self.required
-    }
-
-    /// Returns `true` if this field accepts multiple values.
-    #[inline]
-    #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "declared by the schema-registry ticket; consumed by the \
-                      schema-namespace ticket \
-                      (.scratch/metadata-schemas/issues/\
-                      03-schema-minijinja-namespace.md)"
-        )
-    )]
-    pub(crate) fn is_multi(&self) -> bool {
-        self.multi
-    }
-}
-
-/// A Schema's effective Field Definitions after inheritance, `excludes`, and
-/// `$ref` are applied.
-#[derive(Clone, Debug, Eq, PartialEq)]
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "declared by the schema-registry ticket; consumed by the \
-                  schema-namespace ticket \
-                  (.scratch/metadata-schemas/issues/\
-                  03-schema-minijinja-namespace.md)"
-    )
-)]
-pub(crate) struct Schema {
-    name: String,
-    fields: BTreeMap<String, FieldDefinition>,
-    /// Transitive `extends` targets, filtered to targets that resolved (a
-    /// missing target never reaches here; see
-    /// [`super::error::SchemaWarning::MissingExtendsTarget`]).
-    ancestors: BTreeSet<String>,
-}
-
-impl Schema {
-    /// Builds a resolved Schema from its already-merged parts.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "declared by the schema-registry ticket; consumed by the \
-                      schema-namespace ticket \
-                      (.scratch/metadata-schemas/issues/\
-                      03-schema-minijinja-namespace.md)"
-        )
-    )]
-    pub(super) fn new(
-        name: String,
-        fields: BTreeMap<String, FieldDefinition>,
-        ancestors: BTreeSet<String>,
-    ) -> Self {
-        Self {
-            name,
-            fields,
-            ancestors,
-        }
-    }
-
-    /// Returns the Schema name (the source file's stem).
-    #[inline]
-    #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "declared by the schema-registry ticket; consumed by the \
-                      schema-namespace ticket \
-                      (.scratch/metadata-schemas/issues/\
-                      03-schema-minijinja-namespace.md)"
-        )
-    )]
-    pub(crate) fn name(&self) -> &str {
-        &self.name
-    }
-
-    /// Returns this Schema's effective Field Definitions, keyed by name.
-    #[inline]
-    #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "declared by the schema-registry ticket; consumed by the \
-                      schema-namespace ticket \
-                      (.scratch/metadata-schemas/issues/\
-                      03-schema-minijinja-namespace.md)"
-        )
-    )]
-    pub(crate) fn fields(&self) -> &BTreeMap<String, FieldDefinition> {
-        &self.fields
-    }
-
-    /// Returns the named Field Definition, or `None` if it does not resolve
-    /// for this Schema.
-    #[inline]
-    #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "declared by the schema-registry ticket; consumed by the \
-                      schema-namespace ticket \
-                      (.scratch/metadata-schemas/issues/\
-                      03-schema-minijinja-namespace.md)"
-        )
-    )]
-    pub(crate) fn field(&self, name: &str) -> Option<&FieldDefinition> {
-        self.fields.get(name)
-    }
-
-    /// Returns this Schema's transitive `extends` ancestors, used by
-    /// `resolve::resolve_one` to accumulate a child's own ancestor set from
-    /// its parents'.
-    #[inline]
-    #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "declared by the schema-registry ticket; consumed by the \
-                      schema-namespace ticket \
-                      (.scratch/metadata-schemas/issues/\
-                      03-schema-minijinja-namespace.md)"
-        )
-    )]
-    pub(super) fn ancestors(&self) -> &BTreeSet<String> {
-        &self.ancestors
-    }
-
-    /// Returns `true` if this Schema is-a `queried`: equal, or `queried` is a
-    /// transitive `extends` ancestor (spec User Story 18).
-    #[inline]
-    #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "declared by the schema-registry ticket; consumed by the \
-                      class-queries ticket \
-                      (.scratch/metadata-schemas/issues/05-class-queries.md)"
-        )
-    )]
-    pub(crate) fn is_a(&self, queried: &str) -> bool {
-        self.name == queried || self.ancestors.contains(queried)
     }
 }
