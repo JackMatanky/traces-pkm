@@ -195,8 +195,6 @@ fn walk_error(directory: &Path, source: walkdir::Error) -> SchemaError {
 
 #[cfg(test)]
 mod tests {
-    use pretty_assertions::assert_eq;
-
     use super::*;
 
     fn write_schema(dir: &Path, name: &str, toml: &str) {
@@ -204,115 +202,175 @@ mod tests {
             .expect("write schema fixture");
     }
 
-    #[test]
-    fn parses_a_schema_directory_keyed_by_filename_stem() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        write_schema(
-            temp.path(),
-            "book",
-            r#"
-            [fields.status]
-            type = "select"
-            values = ["draft", "done"]
-            "#,
-        );
+    mod load {
+        use pretty_assertions::assert_eq;
 
-        let (registry, warnings) =
-            SchemaRegistry::load(temp.path()).expect("registry loads");
+        use super::*;
 
-        assert!(warnings.is_empty());
-        let book = registry.get("book").expect("book resolved");
-        assert_eq!(book.name(), "book");
-        assert!(book.field("status").is_some());
+        #[test]
+        fn parses_a_schema_directory_keyed_by_filename_stem() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_schema(
+                temp.path(),
+                "book",
+                r#"
+                [fields.status]
+                type = "select"
+                values = ["draft", "done"]
+                "#,
+            );
+
+            let (registry, warnings) =
+                SchemaRegistry::load(temp.path()).expect("registry loads");
+
+            assert!(warnings.is_empty());
+            let book = registry.get("book").expect("book resolved");
+            assert_eq!(book.name(), "book");
+            assert!(book.field("status").is_some());
+        }
+
+        #[test]
+        fn ignores_non_toml_files_in_the_registry_directory() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("README.md"), "not a schema")
+                .expect("write non-schema file");
+
+            let (registry, _) =
+                SchemaRegistry::load(temp.path()).expect("registry loads");
+
+            assert!(registry.get("README").is_none());
+        }
+
+        #[test]
+        fn resolves_to_an_empty_registry_when_the_directory_is_missing() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let missing = temp.path().join("does-not-exist");
+
+            let (registry, warnings) = SchemaRegistry::load(&missing)
+                .expect("missing dir is not fatal");
+
+            assert!(warnings.is_empty());
+            assert!(registry.get("anything").is_none());
+        }
+
+        #[test]
+        fn rejects_an_unknown_top_level_key_at_parse() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_schema(temp.path(), "book", "typo_key = true\n");
+
+            let err = SchemaRegistry::load(temp.path())
+                .expect_err("unknown key rejected");
+
+            assert!(matches!(err, SchemaError::Parse { .. }));
+        }
+
+        #[test]
+        fn rejects_an_unknown_field_key_at_parse() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_schema(
+                temp.path(),
+                "book",
+                r#"
+                [fields.status]
+                type = "select"
+                values = ["draft"]
+                typo_key = true
+                "#,
+            );
+
+            let err = SchemaRegistry::load(temp.path())
+                .expect_err("unknown field key rejected");
+
+            assert!(matches!(err, SchemaError::Parse { .. }));
+        }
+
+        #[test]
+        fn ignores_a_nested_subdirectory_of_the_registry() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let nested = temp.path().join("nested");
+            fs::create_dir(&nested).expect("create nested dir");
+            write_schema(&nested, "hidden", "");
+
+            let (registry, _) =
+                SchemaRegistry::load(temp.path()).expect("registry loads");
+
+            assert!(registry.get("hidden").is_none());
+        }
+
+        #[cfg(unix)]
+        #[test]
+        fn returns_a_read_directory_error_when_the_registry_directory_is_unreadable()
+         {
+            use std::os::unix::fs::PermissionsExt as _;
+
+            /// Restores a locked directory's permissions on drop, even if
+            /// the test panics. Otherwise a `0o000` directory blocks the
+            /// tempdir's own cleanup.
+            struct RestorePermissions<'a>(&'a Path);
+
+            impl Drop for RestorePermissions<'_> {
+                fn drop(&mut self) {
+                    let _ = fs::set_permissions(
+                        self.0,
+                        fs::Permissions::from_mode(0o700),
+                    );
+                }
+            }
+
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let locked = temp.path().join("locked");
+            fs::create_dir(&locked).expect("create locked dir");
+            fs::set_permissions(&locked, fs::Permissions::from_mode(0o000))
+                .expect("revoke read permission");
+            let _restore = RestorePermissions(&locked);
+
+            let err = SchemaRegistry::load(&locked)
+                .expect_err("unreadable directory fails");
+
+            assert!(matches!(err, SchemaError::ReadDirectory { .. }));
+        }
+
+        #[cfg(unix)]
+        #[test]
+        fn returns_a_read_file_error_when_a_schema_file_is_unreadable() {
+            use std::os::unix::fs::PermissionsExt as _;
+
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_schema(temp.path(), "book", "");
+            let file = temp.path().join("book.toml");
+            fs::set_permissions(&file, fs::Permissions::from_mode(0o000))
+                .expect("revoke read permission");
+
+            let err = SchemaRegistry::load(temp.path())
+                .expect_err("unreadable file fails");
+
+            assert!(matches!(err, SchemaError::ReadFile { .. }));
+        }
     }
 
-    #[test]
-    fn ignores_non_toml_files_in_the_registry_directory() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        fs::write(temp.path().join("README.md"), "not a schema")
-            .expect("write non-schema file");
+    mod is_a {
+        use super::*;
 
-        let (registry, _) =
-            SchemaRegistry::load(temp.path()).expect("registry loads");
+        #[test]
+        fn degrades_to_exact_match_for_a_class_with_no_schema() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let (registry, _) =
+                SchemaRegistry::load(temp.path()).expect("registry loads");
 
-        assert!(registry.get("README").is_none());
-    }
+            assert!(registry.is_a("ghost", "ghost"));
+            assert!(!registry.is_a("ghost", "book"));
+        }
 
-    #[test]
-    fn a_missing_registry_directory_resolves_to_an_empty_registry() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let missing = temp.path().join("does-not-exist");
+        #[test]
+        fn matches_transitively_through_the_registry() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_schema(temp.path(), "book", "");
+            write_schema(temp.path(), "sci_fi", r#"extends = ["book"]"#);
 
-        let (registry, warnings) =
-            SchemaRegistry::load(&missing).expect("missing dir is not fatal");
+            let (registry, _) =
+                SchemaRegistry::load(temp.path()).expect("registry loads");
 
-        assert!(warnings.is_empty());
-        assert!(registry.get("anything").is_none());
-    }
-
-    #[test]
-    fn rejects_an_unknown_top_level_key_at_parse() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        write_schema(temp.path(), "book", "typo_key = true\n");
-
-        let err = SchemaRegistry::load(temp.path())
-            .expect_err("unknown key rejected");
-
-        assert!(matches!(err, SchemaError::Parse { .. }));
-    }
-
-    #[test]
-    fn rejects_an_unknown_field_key_at_parse() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        write_schema(
-            temp.path(),
-            "book",
-            r#"
-            [fields.status]
-            type = "select"
-            values = ["draft"]
-            typo_key = true
-            "#,
-        );
-
-        let err = SchemaRegistry::load(temp.path())
-            .expect_err("unknown field key rejected");
-
-        assert!(matches!(err, SchemaError::Parse { .. }));
-    }
-
-    #[test]
-    fn is_a_degrades_to_exact_match_for_a_class_with_no_schema() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let (registry, _) =
-            SchemaRegistry::load(temp.path()).expect("registry loads");
-
-        assert!(registry.is_a("ghost", "ghost"));
-        assert!(!registry.is_a("ghost", "book"));
-    }
-
-    #[test]
-    fn is_a_matches_transitively_through_the_registry() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        write_schema(temp.path(), "book", "");
-        write_schema(temp.path(), "sci_fi", r#"extends = ["book"]"#);
-
-        let (registry, _) =
-            SchemaRegistry::load(temp.path()).expect("registry loads");
-
-        assert!(registry.is_a("sci_fi", "book"));
-    }
-
-    #[test]
-    fn ignores_a_nested_subdirectory_of_the_registry() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let nested = temp.path().join("nested");
-        fs::create_dir(&nested).expect("create nested dir");
-        write_schema(&nested, "hidden", "");
-
-        let (registry, _) =
-            SchemaRegistry::load(temp.path()).expect("registry loads");
-
-        assert!(registry.get("hidden").is_none());
+            assert!(registry.is_a("sci_fi", "book"));
+        }
     }
 }

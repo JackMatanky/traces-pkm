@@ -846,11 +846,36 @@ mod tests {
     }
 
     #[test]
-    fn global_ignores_its_own_declared_extends_and_still_resolves_first() {
+    fn global_does_not_inherit_fields_from_its_own_declared_extends() {
         // Global is a flat reference pool (ADR-7), not a link in the
-        // `extends` chain: a declared `extends` on `global.toml` itself must
-        // not be honored, and `$ref`s to it must resolve regardless of
-        // Kahn's tie-breaking order among unrelated Schemas.
+        // `extends` chain: a declared `extends` on `global.toml` itself
+        // must not be honored, and not even warned about (`book` is a
+        // real Schema, so this isn't a `MissingExtendsTarget`).
+        let mut raw = BTreeMap::new();
+        raw.insert("book".to_owned(), schema(&[], &[("title", input_field())]));
+        raw.insert(
+            GLOBAL_SCHEMA_NAME.to_owned(),
+            schema(&["book"], &[("priority", select_field(&["low", "high"]))]),
+        );
+
+        let (resolved, warnings) = resolve(&raw).expect("resolves");
+
+        assert!(warnings.is_empty());
+        let global = resolved.get(GLOBAL_SCHEMA_NAME).expect("global resolved");
+        assert!(
+            global.field("title").is_none(),
+            "global must not inherit from its own declared extends"
+        );
+    }
+
+    #[test]
+    fn global_resolves_before_a_sibling_that_refs_it_despite_declaring_extends()
+    {
+        // `book` is `global`'s declared (and ignored) `extends` parent, so
+        // a naive Kahn in-degree would place `global` one tier after
+        // `book` - after `poem`, which shares `book`'s tier-0 in-degree.
+        // `build_dag` forces `global` to in-degree zero unconditionally,
+        // so it must still resolve before `poem` needs it via `$ref`.
         let mut raw = BTreeMap::new();
         raw.insert("book".to_owned(), schema(&[], &[("title", input_field())]));
         raw.insert(
@@ -864,17 +889,75 @@ mod tests {
 
         let (resolved, _) = resolve(&raw).expect("resolves");
 
-        let global = resolved.get(GLOBAL_SCHEMA_NAME).expect("global resolved");
-        assert!(
-            global.field("title").is_none(),
-            "global must not inherit from its own declared extends"
-        );
         let priority = resolved
             .get("poem")
             .and_then(|s| s.field("priority"))
             .expect("priority field resolves via $ref to global");
         assert_eq!(priority.options(), &FieldOptions::Select {
             values: vec!["low".to_owned(), "high".to_owned()]
+        });
+    }
+
+    #[test]
+    fn a_ref_to_global_resolves_when_the_referrer_sorts_before_it_alphabetically()
+     {
+        // Both Schemas have no `extends`, so both start at Kahn in-degree
+        // zero. `"author"` sorts before `"global"` in the name-ordered
+        // `BTreeMap` `resolve` iterates, so without the explicit
+        // Global-first queue reorder, `author` would be popped (and
+        // resolved) before `global`, and its `$ref` would fail.
+        let mut raw = BTreeMap::new();
+        raw.insert(
+            GLOBAL_SCHEMA_NAME.to_owned(),
+            schema(&[], &[("name", select_field(&["anon"]))]),
+        );
+        raw.insert(
+            "author".to_owned(),
+            schema(&[], &[("name", ref_field("#global/name", None))]),
+        );
+
+        let (resolved, _) = resolve(&raw).expect("resolves");
+
+        let name = resolved
+            .get("author")
+            .and_then(|s| s.field("name"))
+            .expect("name field resolves via $ref to global");
+        assert_eq!(name.options(), &FieldOptions::Select {
+            values: vec!["anon".to_owned()]
+        });
+    }
+
+    #[test]
+    fn a_ref_that_switches_field_type_starts_from_empty_base_options() {
+        // Per `FieldOptions::merged`'s doc comment: a `$ref` that
+        // switches `type` starts from empty options rather than reusing a
+        // mismatched base, so a `select`'s `values` can never leak into
+        // an overriding `file` field.
+        let mut raw = BTreeMap::new();
+        raw.insert(
+            "book".to_owned(),
+            schema(&[], &[("status", select_field(&["draft", "done"]))]),
+        );
+        raw.insert(
+            "sci_fi".to_owned(),
+            schema(&["book"], &[("status", RawFieldDef {
+                reference: Some("#book/status".to_owned()),
+                field_type: Some(RawFieldType::File),
+                folders: Some(vec!["assets".to_owned()]),
+                ..RawFieldDef::default()
+            })]),
+        );
+
+        let (resolved, _) = resolve(&raw).expect("resolves");
+
+        let status = resolved
+            .get("sci_fi")
+            .and_then(|s| s.field("status"))
+            .expect("status field");
+        assert_eq!(status.options(), &FieldOptions::File {
+            folders: vec!["assets".to_owned()],
+            ext: None,
+            class: Vec::new(),
         });
     }
 }
