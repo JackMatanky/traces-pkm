@@ -77,7 +77,7 @@ No Schema parsing or field-resolution code exists anywhere in `src/`. Traces has
 
 ### Test inventory
 
-26 tests: `src/schema/resolve.rs` `mod tests` (18, pure fixtures — no filesystem) covers Kahn's sort, own-overrides-parents, first-listed-wins, `excludes`, missing-target degrade, cycle detection, all six field types, `multi`, `$ref` to an ancestor/to Global/to a `file`-type field, the bounded-ref rejection, the Global-forced-zero-degree regression, the stray-Global-`required` degrade, and the three parse-time hard errors (malformed ref, unresolved ref, missing type). `src/schema/registry.rs` `mod tests` (8, `tempfile`-backed registry I/O) covers filename-stem keying, non-`.toml` filtering, a missing directory degrading to empty, a nested subdirectory being ignored (the `walkdir` `min_depth`/`max_depth` regression check), unknown-key rejection at both the Schema and Field Definition level, and `is_a` (registry-level exact-match degrade and transitive matching).
+31 tests: `src/schema/resolve.rs` `mod tests` (21, pure fixtures — no filesystem) covers Kahn's sort, own-overrides-parents, first-listed-wins, `excludes`, missing-target degrade, cycle detection, all six field types, `multi`, `$ref` to an ancestor/to Global/to a `file`-type field, the bounded-ref rejection, the Global-forced-zero-degree regression (split into a does-not-inherit-its-own-extends case and a resolves-before-a-sibling-despite-alphabetical-order case), a `$ref`-to-Global ordering-independence case, the stray-Global-`required` degrade, a `$ref`-type-switch-starts-from-empty-options case, and the three parse-time hard errors (malformed ref, unresolved ref, missing type). `src/schema/registry.rs` `mod tests` splits into `mod load` (8: filename-stem keying, non-`.toml` filtering, a missing directory degrading to empty, a nested subdirectory being ignored, unknown-key rejection at both the Schema and Field Definition level, and a `SchemaError::ReadDirectory`/`ReadFile` case each for an unreadable directory/file) and `mod is_a` (2: registry-level exact-match degrade and transitive matching).
 
 ### Verification
 
@@ -85,7 +85,7 @@ No Schema parsing or field-resolution code exists anywhere in `src/`. Traces has
 mise run verify   # fmt → lint → clippy → test-all → audit, exit 0
 ```
 
-1225 tests pass (26 new). `cargo clippy --workspace -- -D warnings` and `cargo clippy --workspace --all-targets --features test-utils -- -D warnings` both clean. `cargo doc --no-deps --all-features --document-private-items` emits no warnings from `src/schema/*.rs`.
+1230 tests pass (31 new). `cargo clippy --workspace -- -D warnings` and `cargo clippy --workspace --all-targets --features test-utils -- -D warnings` both clean. `cargo doc --no-deps --all-features --document-private-items` emits no warnings from `src/schema/*.rs`.
 
 ### Out of scope (unchanged)
 
