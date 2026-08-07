@@ -5,372 +5,27 @@
 //! already-parsed Schema set, mirroring how `index::query`'s `filter`/
 //! `operators` submodules unit-test their expression machinery.
 //!
-//! # Main Types
+//! # Main Type
 //!
-//! - [`FieldOptions`]: Type-specific Field Definition options (`select` values,
-//!   `file` filter), making a mismatched type/option pairing unrepresentable.
-//! - [`FieldDefinition`]: One resolved field: its [`FieldOptions`] plus
-//!   `required`/`multi` flags.
-//! - [`ResolvedSchema`]: A Schema's effective Field Definitions after
-//!   inheritance, `excludes`, and `$ref` are applied, plus its transitive
-//!   `extends` ancestors for is-a matching.
-//! - [`resolve`]: Resolves an entire Schema set via Kahn's topological sort.
+//! - [`resolve`]: Resolves an entire Schema set via Kahn's topological sort
+//!   into [`super::model::Schema`]s. See [`super::model`] for the resolved
+//!   domain shapes ([`Schema`], `FieldDefinition`, `FieldOptions`) this
+//!   produces.
+//!
+//! [`Schema`]: super::model::Schema
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use super::{
     GLOBAL_SCHEMA_NAME,
     error::{SchemaError, SchemaWarning},
-    raw::{RawFieldDef, RawFieldType, RawSchema},
+    model::{FieldDefinition, FieldOptions, FieldType, Schema},
+    raw::{RawFieldDef, RawSchema},
 };
 
 /// Every Schema resolved by [`resolve`], keyed by name, alongside the
 /// [`SchemaWarning`]s degraded resolution accumulated along the way.
-type ResolveOutput = (BTreeMap<String, ResolvedSchema>, Vec<SchemaWarning>);
-
-/// A Field Definition's kind, mirroring [`RawFieldType`] after `$ref`
-/// resolution has settled on one.
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "declared by the schema-registry ticket; consumed by the \
-                  schema-namespace ticket \
-                  (.scratch/metadata-schemas/issues/\
-                  03-schema-minijinja-namespace.md)"
-    )
-)]
-pub(crate) enum FieldType {
-    Input,
-    Select,
-    Boolean,
-    Number,
-    Date,
-    File,
-}
-
-impl From<RawFieldType> for FieldType {
-    #[inline]
-    fn from(raw: RawFieldType) -> Self {
-        match raw {
-            RawFieldType::Input => Self::Input,
-            RawFieldType::Select => Self::Select,
-            RawFieldType::Boolean => Self::Boolean,
-            RawFieldType::Number => Self::Number,
-            RawFieldType::Date => Self::Date,
-            RawFieldType::File => Self::File,
-        }
-    }
-}
-
-/// Type-specific Field Definition options.
-///
-/// Pairs each [`FieldType`] with the options only that type carries, so a
-/// `select` field without `values` or a `date` field with a stray `folders`
-/// list cannot be represented. `select` and `file` are the only list-bearing
-/// kinds (spec User Story 9): every other variant is a unit variant.
-#[derive(Clone, Debug, PartialEq)]
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "declared by the schema-registry ticket; consumed by the \
-                  schema-namespace ticket \
-                  (.scratch/metadata-schemas/issues/\
-                  03-schema-minijinja-namespace.md)"
-    )
-)]
-pub(crate) enum FieldOptions {
-    Input,
-    Select {
-        values: Vec<String>,
-    },
-    Boolean,
-    Number,
-    Date,
-    File {
-        folders: Vec<String>,
-        ext: Option<String>,
-        class: Vec<String>,
-    },
-}
-
-impl FieldOptions {
-    /// Returns the [`FieldType`] this variant represents.
-    #[inline]
-    #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "declared by the schema-registry ticket; consumed by the \
-                      schema-namespace ticket \
-                      (.scratch/metadata-schemas/issues/\
-                      03-schema-minijinja-namespace.md)"
-        )
-    )]
-    fn field_type(&self) -> FieldType {
-        match self {
-            Self::Input => FieldType::Input,
-            Self::Select {
-                ..
-            } => FieldType::Select,
-            Self::Boolean => FieldType::Boolean,
-            Self::Number => FieldType::Number,
-            Self::Date => FieldType::Date,
-            Self::File {
-                ..
-            } => FieldType::File,
-        }
-    }
-
-    /// Builds fresh options for `field_type` from `raw`'s own keys, with no
-    /// base definition to fall back on. Absent keys default to empty.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "declared by the schema-registry ticket; consumed by the \
-                      schema-namespace ticket \
-                      (.scratch/metadata-schemas/issues/\
-                      03-schema-minijinja-namespace.md)"
-        )
-    )]
-    fn from_raw(field_type: FieldType, raw: &RawFieldDef) -> Self {
-        match field_type {
-            FieldType::Input => Self::Input,
-            FieldType::Select => Self::Select {
-                values: raw.values.clone().unwrap_or_default(),
-            },
-            FieldType::Boolean => Self::Boolean,
-            FieldType::Number => Self::Number,
-            FieldType::Date => Self::Date,
-            FieldType::File => Self::File {
-                folders: raw.folders.clone().unwrap_or_default(),
-                ext: raw.ext.clone(),
-                class: raw.class.clone().unwrap_or_default(),
-            },
-        }
-    }
-
-    /// Builds options for `field_type` from `raw`'s keys, falling back to
-    /// `base`'s options for any key `raw` leaves unset. `base`'s options are
-    /// consulted only when `base` is already the same [`FieldType`]; a `$ref`
-    /// that switches type starts from empty options instead of reusing a
-    /// mismatched base (for example a `select`'s `values` never leaks into an
-    /// overriding `file` field).
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "declared by the schema-registry ticket; consumed by the \
-                      schema-namespace ticket \
-                      (.scratch/metadata-schemas/issues/\
-                      03-schema-minijinja-namespace.md)"
-        )
-    )]
-    fn merged(base: &Self, field_type: FieldType, raw: &RawFieldDef) -> Self {
-        match field_type {
-            FieldType::Select => {
-                let base_values = match base {
-                    Self::Select {
-                        values,
-                    } => values.clone(),
-                    _ => Vec::new(),
-                };
-                Self::Select {
-                    values: raw.values.clone().unwrap_or(base_values),
-                }
-            }
-            FieldType::File => {
-                let (base_folders, base_ext, base_class) = match base {
-                    Self::File {
-                        folders,
-                        ext,
-                        class,
-                    } => (folders.clone(), ext.clone(), class.clone()),
-                    _ => (Vec::new(), None, Vec::new()),
-                };
-                Self::File {
-                    folders: raw.folders.clone().unwrap_or(base_folders),
-                    ext: raw.ext.clone().or(base_ext),
-                    class: raw.class.clone().unwrap_or(base_class),
-                }
-            }
-            other => Self::from_raw(other, raw),
-        }
-    }
-}
-
-/// One resolved Field Definition: its type-specific [`FieldOptions`] plus
-/// `required`/`multi` flags.
-///
-/// `required`/`multi` are declared for future LSP/MCP guardrails (spec User
-/// Story 3) and stay inert here.
-#[derive(Clone, Debug, PartialEq)]
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "declared by the schema-registry ticket; consumed by the \
-                  schema-namespace ticket \
-                  (.scratch/metadata-schemas/issues/\
-                  03-schema-minijinja-namespace.md)"
-    )
-)]
-pub(crate) struct FieldDefinition {
-    options: FieldOptions,
-    required: bool,
-    multi: bool,
-}
-
-impl FieldDefinition {
-    /// Returns this field's type-specific options.
-    #[inline]
-    #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "declared by the schema-registry ticket; consumed by the \
-                      schema-namespace ticket \
-                      (.scratch/metadata-schemas/issues/\
-                      03-schema-minijinja-namespace.md)"
-        )
-    )]
-    pub(crate) fn options(&self) -> &FieldOptions {
-        &self.options
-    }
-
-    /// Returns `true` if this field must be set. Always `false` on the
-    /// reserved Global Schema, regardless of its own TOML.
-    #[inline]
-    #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "declared by the schema-registry ticket; consumed by the \
-                      schema-namespace ticket \
-                      (.scratch/metadata-schemas/issues/\
-                      03-schema-minijinja-namespace.md)"
-        )
-    )]
-    pub(crate) fn is_required(&self) -> bool {
-        self.required
-    }
-
-    /// Returns `true` if this field accepts multiple values.
-    #[inline]
-    #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "declared by the schema-registry ticket; consumed by the \
-                      schema-namespace ticket \
-                      (.scratch/metadata-schemas/issues/\
-                      03-schema-minijinja-namespace.md)"
-        )
-    )]
-    pub(crate) fn is_multi(&self) -> bool {
-        self.multi
-    }
-}
-
-/// A Schema's effective Field Definitions after inheritance, `excludes`, and
-/// `$ref` are applied.
-#[derive(Clone, Debug, PartialEq)]
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "declared by the schema-registry ticket; consumed by the \
-                  schema-namespace ticket \
-                  (.scratch/metadata-schemas/issues/\
-                  03-schema-minijinja-namespace.md)"
-    )
-)]
-pub(crate) struct ResolvedSchema {
-    name: String,
-    fields: BTreeMap<String, FieldDefinition>,
-    /// Transitive `extends` targets, filtered to targets that resolved (a
-    /// missing target never reaches here; see
-    /// [`SchemaWarning::MissingExtendsTarget`]).
-    ancestors: BTreeSet<String>,
-}
-
-impl ResolvedSchema {
-    /// Returns the Schema name (the source file's stem).
-    #[inline]
-    #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "declared by the schema-registry ticket; consumed by the \
-                      schema-namespace ticket \
-                      (.scratch/metadata-schemas/issues/\
-                      03-schema-minijinja-namespace.md)"
-        )
-    )]
-    pub(crate) fn name(&self) -> &str {
-        &self.name
-    }
-
-    /// Returns this Schema's effective Field Definitions, keyed by name.
-    #[inline]
-    #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "declared by the schema-registry ticket; consumed by the \
-                      schema-namespace ticket \
-                      (.scratch/metadata-schemas/issues/\
-                      03-schema-minijinja-namespace.md)"
-        )
-    )]
-    pub(crate) fn fields(&self) -> &BTreeMap<String, FieldDefinition> {
-        &self.fields
-    }
-
-    /// Returns the named Field Definition, or `None` if it does not resolve
-    /// for this Schema.
-    #[inline]
-    #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "declared by the schema-registry ticket; consumed by the \
-                      schema-namespace ticket \
-                      (.scratch/metadata-schemas/issues/\
-                      03-schema-minijinja-namespace.md)"
-        )
-    )]
-    pub(crate) fn field(&self, name: &str) -> Option<&FieldDefinition> {
-        self.fields.get(name)
-    }
-
-    /// Returns `true` if this Schema is-a `queried`: equal, or `queried` is a
-    /// transitive `extends` ancestor (spec User Story 18).
-    #[inline]
-    #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "declared by the schema-registry ticket; consumed by the \
-                      class-queries ticket \
-                      (.scratch/metadata-schemas/issues/05-class-queries.md)"
-        )
-    )]
-    pub(crate) fn is_a(&self, queried: &str) -> bool {
-        self.name == queried || self.ancestors.contains(queried)
-    }
-}
+type ResolveOutput = (BTreeMap<String, Schema>, Vec<SchemaWarning>);
 
 /// Resolves `raw_schemas` into effective Field Definitions per Schema.
 ///
@@ -425,7 +80,7 @@ pub(crate) fn resolve(
         queue.push_front(global);
     }
 
-    let mut resolved: BTreeMap<String, ResolvedSchema> = BTreeMap::new();
+    let mut resolved: BTreeMap<String, Schema> = BTreeMap::new();
     let mut visited: BTreeSet<&str> = BTreeSet::new();
 
     while let Some(name) = queue.pop_front() {
@@ -555,20 +210,20 @@ fn resolve_one(
     name: &str,
     raw: &RawSchema,
     parents: &[&str],
-    resolved: &BTreeMap<String, ResolvedSchema>,
+    resolved: &BTreeMap<String, Schema>,
     warnings: &mut Vec<SchemaWarning>,
-) -> Result<ResolvedSchema, SchemaError> {
+) -> Result<Schema, SchemaError> {
     let mut fields = BTreeMap::new();
     let mut ancestors = BTreeSet::new();
     for &parent in parents {
         let Some(parent_schema) = resolved.get(parent) else {
             continue;
         };
-        for (field_name, field) in &parent_schema.fields {
+        for (field_name, field) in parent_schema.fields() {
             fields.entry(field_name.clone()).or_insert_with(|| field.clone());
         }
         ancestors.insert(parent.to_owned());
-        ancestors.extend(parent_schema.ancestors.iter().cloned());
+        ancestors.extend(parent_schema.ancestors().iter().cloned());
     }
     for excluded in &raw.excludes {
         fields.remove(excluded);
@@ -593,19 +248,16 @@ fn resolve_one(
     }
     fields.extend(own_fields);
 
-    Ok(ResolvedSchema {
-        name: name.to_owned(),
-        fields,
-        ancestors,
-    })
+    Ok(Schema::new(name.to_owned(), fields, ancestors))
 }
+
 /// The `$ref`-resolution inputs available while `resolve` walks Schemas in
 /// topological order: `ancestors` bounds a `$ref`'s valid targets, and
 /// `resolved` supplies the already-resolved base definitions those targets
 /// point at.
 struct ResolutionContext<'a> {
     ancestors: &'a BTreeSet<String>,
-    resolved: &'a BTreeMap<String, ResolvedSchema>,
+    resolved: &'a BTreeMap<String, Schema>,
 }
 
 /// Builds one resolved [`FieldDefinition`] for `field_name` on `schema_name`,
@@ -656,11 +308,11 @@ fn build_field(
             .ok_or_else(unresolved)?;
         let field_type = raw
             .field_type
-            .map_or_else(|| base.options.field_type(), FieldType::from);
+            .map_or_else(|| base.options().field_type(), FieldType::from);
         (
-            FieldOptions::merged(&base.options, field_type, raw),
-            raw.required.unwrap_or(base.required),
-            raw.multi.unwrap_or(base.multi),
+            FieldOptions::merged(base.options(), field_type, raw),
+            raw.required.unwrap_or(base.is_required()),
+            raw.multi.unwrap_or(base.is_multi()),
         )
     } else {
         let field_type =
@@ -686,11 +338,7 @@ fn build_field(
         required
     };
 
-    Ok(FieldDefinition {
-        options,
-        required,
-        multi,
-    })
+    Ok(FieldDefinition::new(options, required, multi))
 }
 
 /// Parses a `$ref` value into its target Schema and field name.
@@ -733,6 +381,7 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use super::*;
+    use crate::schema::raw::RawFieldType;
 
     /// Builds a `select`-type [`RawFieldDef`] with the given `values`.
     fn select_field(values: &[&str]) -> RawFieldDef {

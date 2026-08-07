@@ -60,8 +60,10 @@ No Schema parsing or field-resolution code exists anywhere in `src/`. Traces has
 ### What was built
 
 - `src/schema/raw.rs`: `RawSchema` (`extends`/`excludes`/`fields: BTreeMap<String, RawFieldDef>`) and `RawFieldDef` (`type`/`$ref`/`required`/`multi`/`values`/`folders`/`ext`/`class`), all `#[serde(deny_unknown_fields)]`, mirroring `config/raw.rs`'s pattern. `RawFieldType` is the six-way `type` enum.
-- `src/schema/resolve.rs`: pure `resolve(&BTreeMap<String, RawSchema>) -> Result<(BTreeMap<String, ResolvedSchema>, Vec<SchemaWarning>), SchemaError>`. `FieldOptions` is an enum keyed by field type (`Select { values }` / `File { folders, ext, class }` / four unit variants for `input`/`boolean`/`number`/`date`) so a mismatched type/option pairing is unrepresentable. `build_dag` filters `extends` to known targets (warning + drop on miss) and forces the reserved Global Schema to Kahn in-degree zero regardless of its own declared `extends` — it is a flat, `$ref`-able-from-anywhere reference pool (ADR-7), not a DAG link. `resolve_one` merges parent fields first-listed-wins, applies `excludes`, then overrides with own (`$ref`-resolved) fields; `$ref` targets are validated against the referencing Schema's actual transitive-ancestor set (not merely "already resolved by Kahn's tie-breaking order") so a `$ref` to an unrelated sibling is a hard `UnresolvedRef`, matching ADR-7's "bounded to global + ancestors" exactly.
-- `src/schema/mod.rs`: `SchemaRegistry::load(&Path)` reads every `*.toml` directly under a directory (filename stem = Schema name; a missing directory degrades to an empty registry, not an error) and resolves it via `resolve::resolve`. `SchemaRegistry::get`/`is_a` expose lookup and transitive is-a matching (a class absent from the registry degrades to exact-string match). `GLOBAL_SCHEMA_NAME = "global"` is exported for the future Note-classification consumer (ticket 05) to forbid as a File Class value.
+- `src/schema/model.rs`: the resolved domain shapes — `Schema` (renamed from an earlier `ResolvedSchema`; `name`/`fields`/`ancestors`, `pub(super)` constructor, `pub(crate)` accessors), `FieldDefinition`, and `FieldOptions` (an enum keyed by field type: `Select { values }` / `File { folders, ext, class }` / four unit variants for `input`/`boolean`/`number`/`date`, so a mismatched type/option pairing is unrepresentable). Construction (`Schema::new`/`FieldDefinition::new`, `FieldOptions::from_raw`/`merged`/`field_type`) is `pub(super)`: only `resolve.rs` builds these.
+- `src/schema/resolve.rs`: pure `resolve(&BTreeMap<String, RawSchema>) -> Result<(BTreeMap<String, Schema>, Vec<SchemaWarning>), SchemaError>`, plus its `build_dag`/`resolve_one`/`build_field`/`parse_ref` helpers (split out of one function that originally tripped `clippy::too_many_lines`). `build_dag` filters `extends` to known targets (warning + drop on miss) and forces the reserved Global Schema to Kahn in-degree zero regardless of its own declared `extends` — it is a flat, `$ref`-able-from-anywhere reference pool (ADR-7), not a DAG link. `resolve_one` merges parent fields first-listed-wins, applies `excludes`, then overrides with own (`$ref`-resolved) fields; `$ref` targets are validated against the referencing Schema's actual transitive-ancestor set, not merely "already resolved by Kahn's tie-breaking order".
+- `src/schema/registry.rs`: `SchemaRegistry::load(&Path)` walks every `*.toml` directly under a directory via `walkdir::WalkDir::new(dir).min_depth(1).max_depth(1)` (filename stem = Schema name; a missing directory degrades to an empty registry, not an error — detected via `walkdir::Error::depth() == 0` plus a `NotFound` `io_error()`) and resolves it via `resolve::resolve`. `SchemaRegistry::get`/`is_a` expose lookup and transitive is-a matching (a class absent from the registry degrades to exact-string match). This is the module's only impure/filesystem-touching file.
+- `src/schema/mod.rs`: now a thin orchestrator — `mod` declarations, the `pub(crate) use` re-exports (`Schema`, `SchemaRegistry`, `SchemaError`, `SchemaWarning`), and the shared `GLOBAL_SCHEMA_NAME = "global"` constant (exported for the future Note-classification consumer, ticket 05, to forbid as a File Class value).
 - `src/schema/error.rs`: `SchemaError` (hard: `ReadDirectory`/`ReadFile`/`Parse`/`MissingFieldType`/`Cycle`/`MalformedRef`/`UnresolvedRef`) and `SchemaWarning` (degrade: `MissingExtendsTarget`/`StrayGlobalRequired`), `thiserror`-backed.
 - `src/lib.rs`: added `mod schema;` (alphabetically ordered) plus a `# Core Subsystems` doc bullet.
 
@@ -75,7 +77,7 @@ No Schema parsing or field-resolution code exists anywhere in `src/`. Traces has
 
 ### Test inventory
 
-25 tests: `src/schema/resolve.rs` `mod tests` (18, pure fixtures — no filesystem) covers Kahn's sort, own-overrides-parents, first-listed-wins, `excludes`, missing-target degrade, cycle detection, all six field types, `multi`, `$ref` to an ancestor/to Global/to a `file`-type field, the bounded-ref rejection, the Global-forced-zero-degree regression, the stray-Global-`required` degrade, and the three parse-time hard errors (malformed ref, unresolved ref, missing type). `src/schema/mod.rs` `mod tests` (7, `tempfile`-backed registry I/O) covers filename-stem keying, non-`.toml` filtering, a missing directory degrading to empty, unknown-key rejection at both the Schema and Field Definition level, and `is_a` (registry-level exact-match degrade and transitive matching).
+26 tests: `src/schema/resolve.rs` `mod tests` (18, pure fixtures — no filesystem) covers Kahn's sort, own-overrides-parents, first-listed-wins, `excludes`, missing-target degrade, cycle detection, all six field types, `multi`, `$ref` to an ancestor/to Global/to a `file`-type field, the bounded-ref rejection, the Global-forced-zero-degree regression, the stray-Global-`required` degrade, and the three parse-time hard errors (malformed ref, unresolved ref, missing type). `src/schema/registry.rs` `mod tests` (8, `tempfile`-backed registry I/O) covers filename-stem keying, non-`.toml` filtering, a missing directory degrading to empty, a nested subdirectory being ignored (the `walkdir` `min_depth`/`max_depth` regression check), unknown-key rejection at both the Schema and Field Definition level, and `is_a` (registry-level exact-match degrade and transitive matching).
 
 ### Verification
 
@@ -83,7 +85,7 @@ No Schema parsing or field-resolution code exists anywhere in `src/`. Traces has
 mise run verify   # fmt → lint → clippy → test-all → audit, exit 0
 ```
 
-1224 tests pass (25 new). `cargo clippy --workspace -- -D warnings` and `cargo clippy --workspace --all-targets --features test-utils -- -D warnings` both clean. `cargo doc --no-deps --all-features --document-private-items` emits no warnings from `src/schema/*.rs`.
+1225 tests pass (26 new). `cargo clippy --workspace -- -D warnings` and `cargo clippy --workspace --all-targets --features test-utils -- -D warnings` both clean. `cargo doc --no-deps --all-features --document-private-items` emits no warnings from `src/schema/*.rs`.
 
 ### Out of scope (unchanged)
 
@@ -95,3 +97,30 @@ Ran a `/code-review`-style Standards + Spec pass (two parallel reviewer sub-agen
 
 - **Standards**: no hard violations. Two low-priority judgement calls noted and left as-is: (1) `schema_name`/`field_name` `&str` pairs recur as adjacent params across `build_field`/`parse_ref`/`SchemaError` variants (Fowler Data Clump) — accepted, every call site is correct today and a wrapper type would be premature ahead of ticket 03/05 adding real call sites; (2) the repeated `expect(dead_code)` cfg_attr block (Fowler Duplicated Code) — accepted as directly precedented by `config/model.rs`.
 - **Spec**: found the Global-in-degree gap and the `$ref`-bounding gap described above; both were fixed and regression-tested before commit, not left as known issues.
+
+### Post-review file reorganization (2026-08-07)
+
+User feedback after the first commit: rename `ResolvedSchema` to `Schema` and move
+it plus the `FieldDefinition`/`FieldOptions`/`FieldType` domain types into a
+dedicated `model.rs` (mirroring `config/{raw,model,service}.rs`'s split);
+move `SchemaRegistry` into its own `registry.rs`; use the `walkdir` crate
+(already a dependency, used by `config/discovery.rs` and `index/scan.rs`)
+instead of hand-rolled `fs::read_dir`.
+
+- `resolve.rs` shrank to just the pure Kahn's-sort algorithm
+  (`resolve`/`build_dag`/`resolve_one`/`build_field`/`parse_ref`,
+  `ResolutionContext`); `model.rs` now owns construction (`pub(super)`
+  constructors/builders) and the `pub(crate)` read accessors, matching the
+  house convention that a type's own file owns its `impl` block.
+- `registry.rs`'s directory walk uses
+  `WalkDir::new(dir).min_depth(1).max_depth(1)` to keep the original
+  non-recursive semantics (Schemas do not nest) — regression-tested by a new
+  `ignores_a_nested_subdirectory_of_the_registry` test, since a plain
+  `WalkDir::new(dir)` would silently start reading nested `.toml` files.
+  The "missing directory degrades to an empty registry" behavior moved from
+  matching `io::ErrorKind::NotFound` on `fs::read_dir`'s single `Result` to
+  matching `walkdir::Error::depth() == 0` with a `NotFound` `io_error()` on
+  the walk's first yielded item — same external behavior, verified by the
+  existing `a_missing_registry_directory_resolves_to_an_empty_registry` test.
+- No other behavior changed; re-ran the full verification sweep (below) after
+  the split.
