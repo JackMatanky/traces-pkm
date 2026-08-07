@@ -39,15 +39,6 @@ Template consumption surface per spec User Stories 4–11, 14 and Implementation
 - A `schema.get(name) -> Schema` binding and a `Schema.field(name) -> Value` resolution returning a minijinja `Value` (list of strings, or `none`).
 - Error conversion carrying template context, mirroring `query_ops`/`ui_ops`.
 
-**Acceptance criteria:**
-- [ ] The minijinja environment exposes a `schema` namespace Object.
-- [ ] `schema.get("book")` binds a resolved Schema.
-- [ ] `.field("status")` on a `select` field returns the plain string options.
-- [ ] `.field(...)` on a non-list field type returns `None`.
-- [ ] Unknown Schema/field names surface as render errors carrying template context — not panics.
-- [ ] A broken Schema breaks only the Template that touches it.
-- [ ] Render-seam tests over temp vault fixtures cover values, `None`, and errors.
-
 **Out of scope:**
 - `file`-field label/value pairs and FileIndex filtering — ticket 04.
 - `query.from_class`/`tasks.from_class` — ticket 05.
