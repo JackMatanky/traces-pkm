@@ -294,7 +294,7 @@ impl FieldOptions {
                       03-schema-minijinja-namespace.md)"
         )
     )]
-    pub(super) fn field_type(&self) -> FieldType {
+    pub(super) fn kind(&self) -> FieldType {
         match self {
             Self::Input => FieldType::Input,
             Self::Select {

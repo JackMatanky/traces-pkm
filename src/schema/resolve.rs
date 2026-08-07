@@ -181,7 +181,7 @@ fn build_field(
         let base = refs.resolve(at, reference)?;
         let field_type = raw
             .field_type
-            .map_or_else(|| base.options().field_type(), FieldType::from);
+            .map_or_else(|| base.options().kind(), FieldType::from);
         (
             FieldOptions::merged(base.options(), field_type, raw),
             raw.required.unwrap_or(base.is_required()),
