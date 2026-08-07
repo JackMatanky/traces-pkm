@@ -14,6 +14,9 @@
 //!   and query execution.
 //! - `note` - Markdown note parsing, YAML frontmatter extraction, and task
 //!   processing.
+//! - `schema` - Schema registry and Field Resolution: parses
+//!   `.traces/schemas/*.toml` and linearizes the `extends` DAG into effective
+//!   Field Definitions.
 //! - `template` - Template loading, path expansion, custom engine bindings, and
 //!   note rendering.
 
@@ -26,6 +29,7 @@ mod hash;
 mod index;
 mod note;
 mod path;
+mod schema;
 mod template;
 
 pub mod cli;
