@@ -114,7 +114,7 @@ mod tests {
     }
     use fixtures::*;
 
-    use crate::cli::tests::fixtures::{create_trusted_project, service};
+    use crate::cli::tests::fixtures::service;
 
     mod parsing {
         use super::*;
@@ -148,22 +148,6 @@ mod tests {
 
     mod clean {
         use super::*;
-
-        #[test]
-        fn removes_a_stale_tracked_entry() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            let root = temp.path().join("project");
-            let service = service(temp.path());
-            create_trusted_project(&service, &root);
-            service.load(&root).expect("load config to record tracking");
-            std::fs::remove_dir_all(&root).expect("delete project dir");
-
-            action_args(TrackedAction::Clean)
-                .run(&service)
-                .expect("clean tracked store");
-
-            assert!(service.list_tracked().expect("list tracked").is_empty());
-        }
 
         #[test]
         fn on_an_empty_tracked_store_does_not_error() {

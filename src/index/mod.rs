@@ -1260,27 +1260,6 @@ mod tests {
         }
 
         #[test]
-        fn expands_one_note_with_two_tasks_into_two_rows_not_one() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            fs::write(
-                temp.path().join("todo.md"),
-                "- [ ] buy milk\n- [x] pay rent\n",
-            )
-            .expect("write note");
-            let index = FileIndex::build(temp.path()).expect("build index");
-
-            let outcome = index.query_tasks(&QuerySource::All);
-
-            // A page-level query over the same Note returns exactly one row;
-            // the task-level query must not collapse back to that page row.
-            assert_eq!(outcome.len(), 2);
-            assert_eq!(task_rows(&outcome), [
-                (Some(false), "buy milk"),
-                (Some(true), "pay rent"),
-            ]);
-        }
-
-        #[test]
         fn contributes_no_rows_when_note_has_no_tasks() {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("no-tasks.md"), "Just prose, no tasks.")

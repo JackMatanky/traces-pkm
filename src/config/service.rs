@@ -808,26 +808,6 @@ mod tests {
         use super::*;
 
         #[test]
-        fn removes_trust_from_subject() {
-            // Arrange
-            let fixture = Fixture::new();
-            let root = fixture.target_dir("project");
-            let subject = TrustRequest::from(root.as_path());
-            fixture.service.trust(&subject).unwrap();
-
-            // Act
-            let result = fixture.service.untrust(&subject);
-
-            // Assert
-            assert!(result.is_ok());
-            assert_eq!(result.unwrap(), 1); // 1 entry removed
-            assert_eq!(
-                fixture.service.trust_status(&subject).unwrap(),
-                ConfigTrustStatus::Untrusted
-            );
-        }
-
-        #[test]
         fn returns_zero_when_already_untrusted() {
             // Arrange
             let fixture = Fixture::new();

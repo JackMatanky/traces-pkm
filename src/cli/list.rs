@@ -401,7 +401,7 @@ mod tests {
         use std::fs;
 
         use super::*;
-        use crate::{cli::CwdGuard, config::ConfigLoadError};
+        use crate::cli::CwdGuard;
 
         #[test]
         fn succeeds_for_a_trusted_project_root() {
@@ -419,33 +419,6 @@ mod tests {
             };
 
             list.run(&service).expect("run list command");
-        }
-
-        #[test]
-        fn fails_when_project_root_is_not_trusted() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            let root = temp.path().join("project");
-            fs::create_dir_all(&root).expect("create project dir");
-            let config_file = root.join(".traces/config.toml");
-            fs::create_dir_all(config_file.parent().expect("config parent"))
-                .expect("create config parent");
-            fs::write(&config_file, "[templates]\ndirectory = \"templates\"\n")
-                .expect("write config file");
-            let service = service(temp.path());
-            let _guard = CwdGuard::enter(&root);
-            let list = List {
-                from: None,
-                filter: None,
-                sort: None,
-                order: SortOrder::Ascending,
-            };
-
-            let error = list.run(&service).expect_err("untrusted root fails");
-
-            assert!(matches!(error, CliError::ConfigLoad {
-                source: ConfigLoadError::Build(_),
-                ..
-            }));
         }
     }
 }

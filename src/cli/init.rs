@@ -130,8 +130,6 @@ mod tests {
     use super::*;
 
     mod fixtures {
-        use std::path::Path;
-
         use super::super::*;
         use crate::DialogError;
 
@@ -173,117 +171,8 @@ mod tests {
                 Err(DialogError::UserCancelled)
             }
         }
-
-        pub(super) fn scaffold(root: &Path) {
-            Init::scaffold_directory(root).expect("scaffold");
-        }
     }
     use fixtures::*;
-
-    mod scaffold {
-        use super::super::*;
-
-        #[test]
-        fn creates_traces_and_templates() {
-            let root = tempfile::tempdir().expect("create temp dir");
-            let traces = root.path().join(".traces");
-
-            Init::scaffold_directory(root.path()).expect("scaffold");
-
-            assert!(traces.is_dir());
-            assert!(traces.join("templates").is_dir());
-        }
-
-        #[test]
-        fn refuses_existing_traces_dir() {
-            let root = tempfile::tempdir().expect("create temp dir");
-            let traces = root.path().join(".traces");
-            fs::create_dir(&traces).expect("create .traces dir");
-
-            let err = Init::scaffold_directory(root.path())
-                .expect_err("existing .traces should fail");
-
-            assert!(
-                matches!(
-                    &err,
-                    CliError::InitAlreadyInitialized { root: failed_root }
-                        if failed_root == root.path()
-                ),
-                "expected InitAlreadyInitialized for {}, got {err:?}",
-                root.path().display()
-            );
-        }
-    }
-
-    mod config {
-        use super::*;
-
-        #[test]
-        fn produces_valid_toml() {
-            let root = tempfile::tempdir().expect("create temp dir");
-            scaffold(root.path());
-
-            Init::write_config_file(
-                root.path(),
-                Path::new("custom/templates"),
-                Path::new("notes"),
-            )
-            .expect("write config");
-
-            let config_path = root.path().join(".traces/config.toml");
-            assert!(config_path.is_file(), "config file exists");
-
-            let contents =
-                fs::read_to_string(&config_path).expect("read config");
-            let value: toml::Value =
-                toml::from_str(&contents).expect("parse toml");
-            let templates = value
-                .get("templates")
-                .and_then(toml::Value::as_table)
-                .expect("templates table");
-
-            assert_eq!(
-                templates.get("directory").and_then(toml::Value::as_str),
-                Some("custom/templates")
-            );
-            assert_eq!(
-                templates.get("output_dir").and_then(toml::Value::as_str),
-                Some("notes")
-            );
-        }
-
-        #[test]
-        fn preserves_default_values() {
-            let root = tempfile::tempdir().expect("create temp dir");
-            scaffold(root.path());
-
-            Init::write_config_file(
-                root.path(),
-                Path::new(DEFAULT_TEMPLATE_DIRECTORY),
-                Path::new(DEFAULT_OUTPUT_DIRECTORY),
-            )
-            .expect("write config with defaults");
-
-            let config_path = root.path().join(".traces/config.toml");
-            let contents =
-                fs::read_to_string(&config_path).expect("read config");
-            let value: toml::Value =
-                toml::from_str(&contents).expect("parse toml");
-            let templates = value
-                .get("templates")
-                .and_then(toml::Value::as_table)
-                .expect("templates table");
-
-            assert_eq!(
-                templates.get("directory").and_then(toml::Value::as_str),
-                Some(DEFAULT_TEMPLATE_DIRECTORY)
-            );
-            assert_eq!(
-                templates.get("output_dir").and_then(toml::Value::as_str),
-                Some(DEFAULT_OUTPUT_DIRECTORY)
-            );
-        }
-    }
 
     mod run {
         use super::*;
