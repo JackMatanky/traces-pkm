@@ -14,6 +14,7 @@ use walkdir::WalkDir;
 use super::{
     error::{SchemaError, SchemaWarning},
     model::Schema,
+    name::SchemaName,
     raw::RawSchema,
     resolve,
 };
@@ -33,7 +34,7 @@ use crate::file_name::BaseNameRef;
     )
 )]
 pub(crate) struct SchemaRegistry {
-    schemas: BTreeMap<String, Schema>,
+    schemas: BTreeMap<SchemaName, Schema>,
 }
 
 impl SchemaRegistry {
@@ -96,11 +97,15 @@ impl SchemaRegistry {
         self.schemas.get(name)
     }
 
-    /// Returns `true` if `class` is-a `queried` (spec User Story 18).
+    /// Returns `true` if `subject` is-a `queried` (spec User Story 18). For
+    /// example, `registry.is_a("sci_fi", "book")` is `true` when the
+    /// `sci_fi` Schema `extends` `book`; the reverse call,
+    /// `registry.is_a("book", "sci_fi")`, is `false`.
     ///
-    /// A `class` absent from the registry degrades to an exact-string match
-    /// against `queried`, mirroring the spec's "a class with no Schema
-    /// degrades to exact match" fallback for `from_class` (ticket 05).
+    /// A `subject` absent from the registry degrades to an exact-string
+    /// match against `queried`, mirroring the spec's "a class with no
+    /// Schema degrades to exact match" fallback for `from_class` (ticket
+    /// 05).
     #[inline]
     #[must_use]
     #[cfg_attr(
@@ -112,9 +117,9 @@ impl SchemaRegistry {
                       (.scratch/metadata-schemas/issues/05-class-queries.md)"
         )
     )]
-    pub(crate) fn is_a(&self, class: &str, queried: &str) -> bool {
-        self.get(class)
-            .map_or_else(|| class == queried, |schema| schema.is_a(queried))
+    pub(crate) fn is_a(&self, subject: &str, queried: &str) -> bool {
+        self.get(subject)
+            .map_or_else(|| subject == queried, |schema| schema.is_a(queried))
     }
 }
 
@@ -136,7 +141,7 @@ impl SchemaRegistry {
 )]
 fn read_raw_schemas(
     directory: &Path,
-) -> Result<BTreeMap<String, RawSchema>, SchemaError> {
+) -> Result<BTreeMap<SchemaName, RawSchema>, SchemaError> {
     let entries = WalkDir::new(directory).min_depth(1).max_depth(1);
     let mut schemas = BTreeMap::new();
     for entry in entries {
@@ -154,7 +159,7 @@ fn read_raw_schemas(
         let Some(stem) = BaseNameRef::from_path(path) else {
             continue;
         };
-        let stem = stem.as_str().to_owned();
+        let stem = SchemaName::from(stem.as_str());
         let contents = fs::read_to_string(path).map_err(|source| {
             SchemaError::ReadFile {
                 path: path.to_path_buf(),
@@ -371,6 +376,19 @@ mod tests {
                 SchemaRegistry::load(temp.path()).expect("registry loads");
 
             assert!(registry.is_a("sci_fi", "book"));
+        }
+
+        #[test]
+        fn is_not_commutative_reversed_arguments_give_a_different_answer() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_schema(temp.path(), "book", "");
+            write_schema(temp.path(), "sci_fi", r#"extends = ["book"]"#);
+
+            let (registry, _) =
+                SchemaRegistry::load(temp.path()).expect("registry loads");
+
+            assert!(registry.is_a("sci_fi", "book"));
+            assert!(!registry.is_a("book", "sci_fi"));
         }
     }
 }

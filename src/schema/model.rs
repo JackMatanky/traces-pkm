@@ -9,7 +9,10 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::raw::{RawFieldDef, RawFieldType};
+use super::{
+    name::SchemaName,
+    raw::{RawFieldDef, RawFieldType},
+};
 
 /// A Schema's effective Field Definitions after inheritance, `excludes`, and
 /// `$ref` are applied.
@@ -25,12 +28,12 @@ use super::raw::{RawFieldDef, RawFieldType};
     )
 )]
 pub(crate) struct Schema {
-    name: String,
+    name: SchemaName,
     fields: BTreeMap<String, FieldDefinition>,
     /// Transitive `extends` targets, filtered to targets that resolved (a
     /// missing target never reaches here; see
     /// [`super::error::SchemaWarning::MissingExtendsTarget`]).
-    ancestors: BTreeSet<String>,
+    ancestors: BTreeSet<SchemaName>,
 }
 
 impl Schema {
@@ -46,9 +49,9 @@ impl Schema {
         )
     )]
     pub(super) fn new(
-        name: String,
+        name: SchemaName,
         fields: BTreeMap<String, FieldDefinition>,
-        ancestors: BTreeSet<String>,
+        ancestors: BTreeSet<SchemaName>,
     ) -> Self {
         Self {
             name,
@@ -71,7 +74,7 @@ impl Schema {
         )
     )]
     pub(crate) fn name(&self) -> &str {
-        &self.name
+        self.name.as_str()
     }
 
     /// Returns this Schema's effective Field Definitions, keyed by name.
@@ -124,7 +127,7 @@ impl Schema {
                       03-schema-minijinja-namespace.md)"
         )
     )]
-    pub(super) fn ancestors(&self) -> &BTreeSet<String> {
+    pub(super) fn ancestors(&self) -> &BTreeSet<SchemaName> {
         &self.ancestors
     }
 
@@ -142,7 +145,7 @@ impl Schema {
         )
     )]
     pub(crate) fn is_a(&self, queried: &str) -> bool {
-        self.name == queried || self.ancestors.contains(queried)
+        self.name.as_str() == queried || self.ancestors.contains(queried)
     }
 }
 

@@ -25,12 +25,13 @@ use super::{
     GLOBAL_SCHEMA_NAME,
     error::{SchemaError, SchemaWarning},
     model::{FieldDefinition, FieldOptions, FieldType, Schema},
+    name::{SchemaName, SchemaNameRef},
     raw::{RawFieldDef, RawSchema},
 };
 
 /// Every Schema resolved by [`resolve`], keyed by name, alongside the
 /// [`SchemaWarning`]s degraded resolution accumulated along the way.
-type ResolveOutput = (BTreeMap<String, Schema>, Vec<SchemaWarning>);
+type ResolveOutput = (BTreeMap<SchemaName, Schema>, Vec<SchemaWarning>);
 
 /// Resolves `raw_schemas` into effective Field Definitions per Schema.
 ///
@@ -59,14 +60,14 @@ type ResolveOutput = (BTreeMap<String, Schema>, Vec<SchemaWarning>);
     )
 )]
 pub(crate) fn resolve(
-    raw_schemas: &BTreeMap<String, RawSchema>,
+    raw_schemas: &BTreeMap<SchemaName, RawSchema>,
 ) -> Result<ResolveOutput, SchemaError> {
     let mut warnings = Vec::new();
     let mut graph = SchemaGraph::new(raw_schemas, &mut warnings);
-    let mut resolved: BTreeMap<String, Schema> = BTreeMap::new();
+    let mut resolved: BTreeMap<SchemaName, Schema> = BTreeMap::new();
 
     while let Some(name) = graph.next_ready() {
-        let Some(raw) = raw_schemas.get(name) else {
+        let Some(raw) = raw_schemas.get(name.as_str()) else {
             continue;
         };
         let schema = resolve_one(
@@ -76,7 +77,7 @@ pub(crate) fn resolve(
             &resolved,
             &mut warnings,
         )?;
-        resolved.insert(name.to_owned(), schema);
+        resolved.insert(SchemaName::from(name), schema);
         graph.mark_resolved(name);
     }
 
@@ -115,22 +116,22 @@ pub(crate) fn resolve(
     )
 )]
 fn resolve_one(
-    name: &str,
+    name: SchemaNameRef<'_>,
     raw: &RawSchema,
-    parents: &[&str],
-    resolved: &BTreeMap<String, Schema>,
+    parents: &[SchemaNameRef<'_>],
+    resolved: &BTreeMap<SchemaName, Schema>,
     warnings: &mut Vec<SchemaWarning>,
 ) -> Result<Schema, SchemaError> {
     let mut fields = BTreeMap::new();
     let mut ancestors = BTreeSet::new();
     for &parent in parents {
-        let Some(parent_schema) = resolved.get(parent) else {
+        let Some(parent_schema) = resolved.get(parent.as_str()) else {
             continue;
         };
         for (field_name, field) in parent_schema.fields() {
             fields.entry(field_name.clone()).or_insert_with(|| field.clone());
         }
-        ancestors.insert(parent.to_owned());
+        ancestors.insert(SchemaName::from(parent));
         ancestors.extend(parent_schema.ancestors().iter().cloned());
     }
     for excluded in &raw.excludes {
@@ -155,7 +156,7 @@ fn resolve_one(
     }
     fields.extend(own_fields);
 
-    Ok(Schema::new(name.to_owned(), fields, ancestors))
+    Ok(Schema::new(SchemaName::from(name), fields, ancestors))
 }
 
 /// Builds one resolved [`FieldDefinition`] for `at`, resolving its `$ref`
@@ -190,7 +191,7 @@ fn build_field(
         let field_type =
             raw.field_type.map(FieldType::from).ok_or_else(|| {
                 SchemaError::MissingFieldType {
-                    schema: at.schema.to_owned(),
+                    schema: SchemaName::from(at.schema),
                     field: at.field.to_owned(),
                 }
             })?;
@@ -226,7 +227,7 @@ fn apply_global_degrade(
     required: bool,
     warnings: &mut Vec<SchemaWarning>,
 ) -> bool {
-    if at.schema == GLOBAL_SCHEMA_NAME && required {
+    if at.schema.as_str() == GLOBAL_SCHEMA_NAME && required {
         warnings.push(SchemaWarning::StrayGlobalRequired {
             field: at.field.to_owned(),
         });
@@ -236,52 +237,16 @@ fn apply_global_degrade(
     }
 }
 
-/// Parses a `$ref` value into its target [`FieldPath`].
-///
-/// # Errors
-///
-/// [`SchemaError::MalformedRef`] if `reference` is not shaped
-/// `#<schema>/<field>` with both segments non-empty.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "declared by the schema-registry ticket; consumed by the \
-                  schema-namespace ticket \
-                  (.scratch/metadata-schemas/issues/\
-                  03-schema-minijinja-namespace.md)"
-    )
-)]
-fn parse_ref<'a>(
-    at: FieldPath<'_>,
-    reference: &'a str,
-) -> Result<FieldPath<'a>, SchemaError> {
-    let malformed = || SchemaError::MalformedRef {
-        schema: at.schema.to_owned(),
-        field: at.field.to_owned(),
-        reference: reference.to_owned(),
-    };
-    let stripped = reference.strip_prefix('#').ok_or_else(malformed)?;
-    let (schema, field) = stripped.split_once('/').ok_or_else(malformed)?;
-    if schema.is_empty() || field.is_empty() {
-        return Err(malformed());
-    }
-    Ok(FieldPath {
-        schema,
-        field,
-    })
-}
-
 /// Kahn's-algorithm bookkeeping for linearizing the `extends` DAG: adjacency,
 /// in-degrees, the ready queue, and which Schemas have been popped.
 /// Isolates the Global-first tie-break (see [`SchemaGraph::new`]'s doc) from
 /// the field-merge logic in [`resolve_one`].
 struct SchemaGraph<'a> {
-    parents_by_name: BTreeMap<&'a str, Vec<&'a str>>,
-    in_degree: BTreeMap<&'a str, usize>,
-    children_by_name: BTreeMap<&'a str, Vec<&'a str>>,
-    queue: VecDeque<&'a str>,
-    visited: BTreeSet<&'a str>,
+    parents_by_name: BTreeMap<SchemaNameRef<'a>, Vec<SchemaNameRef<'a>>>,
+    in_degree: BTreeMap<SchemaNameRef<'a>, usize>,
+    children_by_name: BTreeMap<SchemaNameRef<'a>, Vec<SchemaNameRef<'a>>>,
+    queue: VecDeque<SchemaNameRef<'a>>,
+    visited: BTreeSet<SchemaNameRef<'a>>,
 }
 
 impl<'a> SchemaGraph<'a> {
@@ -312,18 +277,21 @@ impl<'a> SchemaGraph<'a> {
         )
     )]
     fn new(
-        raw_schemas: &'a BTreeMap<String, RawSchema>,
+        raw_schemas: &'a BTreeMap<SchemaName, RawSchema>,
         warnings: &mut Vec<SchemaWarning>,
     ) -> Self {
         // `BTreeMap` iteration is name-sorted, so the parent order for a
         // given schema matches declaration order in its own `extends` list
         // while the overall processing order stays deterministic.
-        let mut parents_by_name: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+        let mut parents_by_name: BTreeMap<
+            SchemaNameRef<'_>,
+            Vec<SchemaNameRef<'_>>,
+        > = BTreeMap::new();
         for (name, raw) in raw_schemas {
             let mut parents = Vec::with_capacity(raw.extends.len());
             for target in &raw.extends {
                 if raw_schemas.contains_key(target) {
-                    parents.push(target.as_str());
+                    parents.push(target.as_ref());
                 } else {
                     warnings.push(SchemaWarning::MissingExtendsTarget {
                         schema: name.clone(),
@@ -331,13 +299,16 @@ impl<'a> SchemaGraph<'a> {
                     });
                 }
             }
-            parents_by_name.insert(name.as_str(), parents);
+            parents_by_name.insert(name.as_ref(), parents);
         }
 
         // An edge runs parent -> child, so a child's in-degree is its
         // (filtered) parent count.
-        let mut in_degree: BTreeMap<&str, usize> = BTreeMap::new();
-        let mut children_by_name: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+        let mut in_degree: BTreeMap<SchemaNameRef<'_>, usize> = BTreeMap::new();
+        let mut children_by_name: BTreeMap<
+            SchemaNameRef<'_>,
+            Vec<SchemaNameRef<'_>>,
+        > = BTreeMap::new();
         for (&name, parents) in &parents_by_name {
             in_degree.insert(name, parents.len());
             for &parent in parents {
@@ -352,13 +323,13 @@ impl<'a> SchemaGraph<'a> {
             *degree = 0;
         }
 
-        let mut queue: VecDeque<&str> = in_degree
+        let mut queue: VecDeque<SchemaNameRef<'_>> = in_degree
             .iter()
             .filter(|&(_, &degree)| degree == 0)
             .map(|(&name, _)| name)
             .collect();
         if let Some(position) =
-            queue.iter().position(|&name| name == GLOBAL_SCHEMA_NAME)
+            queue.iter().position(|&name| name.as_str() == GLOBAL_SCHEMA_NAME)
             && let Some(global) = queue.remove(position)
         {
             queue.push_front(global);
@@ -385,7 +356,7 @@ impl<'a> SchemaGraph<'a> {
                       03-schema-minijinja-namespace.md)"
         )
     )]
-    fn next_ready(&mut self) -> Option<&'a str> {
+    fn next_ready(&mut self) -> Option<SchemaNameRef<'a>> {
         let name = self.queue.pop_front()?;
         self.visited.insert(name);
         Some(name)
@@ -402,8 +373,8 @@ impl<'a> SchemaGraph<'a> {
                       03-schema-minijinja-namespace.md)"
         )
     )]
-    fn parents_of(&self, name: &str) -> &[&'a str] {
-        self.parents_by_name.get(name).map_or(&[], Vec::as_slice)
+    fn parents_of(&self, name: SchemaNameRef<'_>) -> &[SchemaNameRef<'a>] {
+        self.parents_by_name.get(name.as_str()).map_or(&[], Vec::as_slice)
     }
 
     /// Records `name` as resolved, releasing any children whose in-degree
@@ -418,9 +389,11 @@ impl<'a> SchemaGraph<'a> {
                       03-schema-minijinja-namespace.md)"
         )
     )]
-    fn mark_resolved(&mut self, name: &str) {
-        for &child in self.children_by_name.get(name).into_iter().flatten() {
-            if let Some(degree) = self.in_degree.get_mut(child) {
+    fn mark_resolved(&mut self, name: SchemaNameRef<'_>) {
+        for &child in
+            self.children_by_name.get(name.as_str()).into_iter().flatten()
+        {
+            if let Some(degree) = self.in_degree.get_mut(&child) {
                 *degree = degree.saturating_sub(1);
                 if *degree == 0 {
                     self.queue.push_back(child);
@@ -443,8 +416,8 @@ impl<'a> SchemaGraph<'a> {
     )]
     fn cyclic_remainder(
         &self,
-        raw_schemas: &BTreeMap<String, RawSchema>,
-    ) -> Option<Vec<String>> {
+        raw_schemas: &BTreeMap<SchemaName, RawSchema>,
+    ) -> Option<Vec<SchemaName>> {
         if self.visited.len() == raw_schemas.len() {
             return None;
         }
@@ -463,8 +436,8 @@ impl<'a> SchemaGraph<'a> {
 /// `extends` ancestors (spec: "refs point up the extends DAG or to the
 /// Global Schema, so they are acyclic by construction").
 struct RefResolver<'a> {
-    ancestors: &'a BTreeSet<String>,
-    resolved: &'a BTreeMap<String, Schema>,
+    ancestors: &'a BTreeSet<SchemaName>,
+    resolved: &'a BTreeMap<SchemaName, Schema>,
 }
 
 impl<'a> RefResolver<'a> {
@@ -494,25 +467,31 @@ impl<'a> RefResolver<'a> {
         at: FieldPath<'_>,
         reference: &str,
     ) -> Result<&'a FieldDefinition, SchemaError> {
-        let target = parse_ref(at, reference)?;
+        let target = FieldPath::parse(reference).map_err(|ParseRefError| {
+            SchemaError::MalformedRef {
+                schema: SchemaName::from(at.schema),
+                field: at.field.to_owned(),
+                reference: reference.to_owned(),
+            }
+        })?;
         // Rejecting an out-of-bounds target here, rather than only checking
         // whether it happens to be resolved yet, keeps the bound
         // spec-accurate and independent of Kahn's tie-breaking order among
         // unrelated Schemas.
-        if target.schema != GLOBAL_SCHEMA_NAME
-            && !self.ancestors.contains(target.schema)
+        if target.schema.as_str() != GLOBAL_SCHEMA_NAME
+            && !self.ancestors.contains(target.schema.as_str())
         {
             return Err(SchemaError::RefOutOfBounds {
-                schema: at.schema.to_owned(),
+                schema: SchemaName::from(at.schema),
                 field: at.field.to_owned(),
                 reference: reference.to_owned(),
             });
         }
         self.resolved
-            .get(target.schema)
+            .get(target.schema.as_str())
             .and_then(|schema| schema.field(target.field))
             .ok_or_else(|| SchemaError::RefFieldNotFound {
-                schema: at.schema.to_owned(),
+                schema: SchemaName::from(at.schema),
                 field: at.field.to_owned(),
                 reference: reference.to_owned(),
             })
@@ -520,14 +499,56 @@ impl<'a> RefResolver<'a> {
 }
 
 /// A field's address within a Schema: `<schema>.<field>`, mirroring what a
-/// `$ref` value (`#<schema>/<field>`) names. Keeps the two `&str`s that flow
-/// through `resolve_one`/`build_field`/`parse_ref` from being silently
-/// transposed at a call site.
+/// `$ref` value (`#<schema>/<field>`) names. `schema` and `field` are
+/// distinct types (not just distinct names), so a construction site like
+/// `FieldPath { schema: field_name, field: name }` is a compile error, not
+/// a silent transposition.
 #[derive(Copy, Clone, Debug)]
 struct FieldPath<'a> {
-    schema: &'a str,
+    schema: SchemaNameRef<'a>,
     field: &'a str,
 }
+
+impl<'a> FieldPath<'a> {
+    /// Parses a `$ref` value (`#<schema>/<field>`) into its target
+    /// `FieldPath`. Context-free — the caller attaches its own address on
+    /// failure (see [`RefResolver::resolve`]), mirroring
+    /// `index::query::field::FieldPath::parse`, this crate's established
+    /// `Type::parse(&str) -> Result<Self, Error>` idiom.
+    ///
+    /// # Errors
+    ///
+    /// [`ParseRefError`] if `reference` is not shaped `#<schema>/<field>`
+    /// with both segments non-empty.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "declared by the schema-registry ticket; consumed by the \
+                      schema-namespace ticket \
+                      (.scratch/metadata-schemas/issues/\
+                      03-schema-minijinja-namespace.md)"
+        )
+    )]
+    fn parse(reference: &'a str) -> Result<Self, ParseRefError> {
+        let stripped = reference.strip_prefix('#').ok_or(ParseRefError)?;
+        let (schema, field) = stripped.split_once('/').ok_or(ParseRefError)?;
+        if schema.is_empty() || field.is_empty() {
+            return Err(ParseRefError);
+        }
+        Ok(Self {
+            schema: SchemaNameRef::from(schema),
+            field,
+        })
+    }
+}
+
+/// `$ref` wasn't shaped `#<schema>/<field>` with both segments non-empty.
+/// Discarded by the one caller, which rebuilds
+/// [`SchemaError::MalformedRef`] with the referencing field's context
+/// (mirrors [`crate::file_name::MissingFileName`]).
+#[derive(Debug)]
+struct ParseRefError;
 
 #[cfg(test)]
 mod tests {
@@ -580,7 +601,7 @@ mod tests {
 
     fn schema(extends: &[&str], fields: &[(&str, RawFieldDef)]) -> RawSchema {
         RawSchema {
-            extends: extends.iter().map(|&s| s.to_owned()).collect(),
+            extends: extends.iter().map(|&s| SchemaName::from(s)).collect(),
             excludes: Vec::new(),
             fields: fields
                 .iter()
@@ -605,7 +626,7 @@ mod tests {
     fn resolves_a_schema_with_no_extends() {
         let mut raw = BTreeMap::new();
         raw.insert(
-            "book".to_owned(),
+            SchemaName::from("book"),
             schema(&[], &[("status", select_field(&["draft", "done"]))]),
         );
 
@@ -626,11 +647,11 @@ mod tests {
     fn own_fields_override_parent_fields() {
         let mut raw = BTreeMap::new();
         raw.insert(
-            "book".to_owned(),
+            SchemaName::from("book"),
             schema(&[], &[("status", select_field(&["draft", "done"]))]),
         );
         raw.insert(
-            "sci_fi".to_owned(),
+            SchemaName::from("sci_fi"),
             schema(&["book"], &[(
                 "status",
                 select_field(&["outline", "shipped"]),
@@ -652,14 +673,14 @@ mod tests {
     fn first_listed_parent_wins_a_shared_field() {
         let mut raw = BTreeMap::new();
         raw.insert(
-            "a".to_owned(),
+            SchemaName::from("a"),
             schema(&[], &[("shared", select_field(&["from-a"]))]),
         );
         raw.insert(
-            "b".to_owned(),
+            SchemaName::from("b"),
             schema(&[], &[("shared", select_field(&["from-b"]))]),
         );
-        raw.insert("child".to_owned(), schema(&["a", "b"], &[]));
+        raw.insert(SchemaName::from("child"), schema(&["a", "b"], &[]));
 
         let (resolved, _) = resolve(&raw).expect("resolves");
 
@@ -676,14 +697,14 @@ mod tests {
     fn excludes_drops_an_inherited_field_by_name() {
         let mut raw = BTreeMap::new();
         raw.insert(
-            "book".to_owned(),
+            SchemaName::from("book"),
             schema(&[], &[
                 ("status", select_field(&["draft"])),
                 ("author", input_field()),
             ]),
         );
         raw.insert(
-            "sci_fi".to_owned(),
+            SchemaName::from("sci_fi"),
             schema_with_excludes(&["book"], &["status"], &[]),
         );
 
@@ -701,15 +722,15 @@ mod tests {
     fn a_missing_extends_target_degrades_with_a_warning() {
         let mut raw = BTreeMap::new();
         raw.insert(
-            "sci_fi".to_owned(),
+            SchemaName::from("sci_fi"),
             schema(&["ghost"], &[("title", input_field())]),
         );
 
         let (resolved, warnings) = resolve(&raw).expect("resolves");
 
         assert_eq!(warnings, vec![SchemaWarning::MissingExtendsTarget {
-            schema: "sci_fi".to_owned(),
-            target: "ghost".to_owned(),
+            schema: SchemaName::from("sci_fi"),
+            target: SchemaName::from("ghost"),
         }]);
         let sci_fi = resolved.get("sci_fi").expect("own fields still render");
         assert!(sci_fi.field("title").is_some());
@@ -719,15 +740,15 @@ mod tests {
     #[test]
     fn a_cycle_is_a_hard_error() {
         let mut raw = BTreeMap::new();
-        raw.insert("a".to_owned(), schema(&["b"], &[]));
-        raw.insert("b".to_owned(), schema(&["a"], &[]));
+        raw.insert(SchemaName::from("a"), schema(&["b"], &[]));
+        raw.insert(SchemaName::from("b"), schema(&["a"], &[]));
 
         let err = resolve(&raw).expect_err("cycle rejected");
         assert!(
             matches!(
                 &err,
                 SchemaError::Cycle { schemas }
-                    if schemas == &vec!["a".to_owned(), "b".to_owned()]
+                    if schemas == &vec![SchemaName::from("a"), SchemaName::from("b")]
             ),
             "expected Cycle over [a, b], got {err:?}"
         );
@@ -736,9 +757,9 @@ mod tests {
     #[test]
     fn is_a_matches_transitively_through_extends() {
         let mut raw = BTreeMap::new();
-        raw.insert("thing".to_owned(), schema(&[], &[]));
-        raw.insert("book".to_owned(), schema(&["thing"], &[]));
-        raw.insert("sci_fi".to_owned(), schema(&["book"], &[]));
+        raw.insert(SchemaName::from("thing"), schema(&[], &[]));
+        raw.insert(SchemaName::from("book"), schema(&["thing"], &[]));
+        raw.insert(SchemaName::from("sci_fi"), schema(&["book"], &[]));
 
         let (resolved, _) = resolve(&raw).expect("resolves");
 
@@ -753,11 +774,11 @@ mod tests {
     fn a_ref_to_an_ancestor_resolves_with_local_overrides() {
         let mut raw = BTreeMap::new();
         raw.insert(
-            "book".to_owned(),
+            SchemaName::from("book"),
             schema(&[], &[("status", select_field(&["draft", "done"]))]),
         );
         raw.insert(
-            "sci_fi".to_owned(),
+            SchemaName::from("sci_fi"),
             schema(&["book"], &[(
                 "status",
                 ref_field("#book/status", Some(true)),
@@ -780,11 +801,11 @@ mod tests {
     fn a_ref_to_global_resolves_with_local_overrides() {
         let mut raw = BTreeMap::new();
         raw.insert(
-            GLOBAL_SCHEMA_NAME.to_owned(),
+            SchemaName::from(GLOBAL_SCHEMA_NAME),
             schema(&[], &[("priority", select_field(&["low", "high"]))]),
         );
         raw.insert(
-            "task".to_owned(),
+            SchemaName::from("task"),
             schema(&[], &[(
                 "priority",
                 ref_field("#global/priority", Some(true)),
@@ -807,7 +828,7 @@ mod tests {
     fn a_stray_required_on_global_is_ignored_with_a_warning() {
         let mut raw = BTreeMap::new();
         raw.insert(
-            GLOBAL_SCHEMA_NAME.to_owned(),
+            SchemaName::from(GLOBAL_SCHEMA_NAME),
             schema(&[], &[("priority", RawFieldDef {
                 required: Some(true),
                 ..select_field(&["low", "high"])
@@ -830,7 +851,7 @@ mod tests {
     fn a_malformed_ref_is_a_hard_error() {
         let mut raw = BTreeMap::new();
         raw.insert(
-            "book".to_owned(),
+            SchemaName::from("book"),
             schema(&[], &[("status", ref_field("book/status", None))]),
         );
 
@@ -841,9 +862,9 @@ mod tests {
     #[test]
     fn a_ref_to_an_unknown_field_is_a_hard_error() {
         let mut raw = BTreeMap::new();
-        raw.insert("book".to_owned(), schema(&[], &[]));
+        raw.insert(SchemaName::from("book"), schema(&[], &[]));
         raw.insert(
-            "sci_fi".to_owned(),
+            SchemaName::from("sci_fi"),
             schema(&["book"], &[("status", ref_field("#book/status", None))]),
         );
 
@@ -859,11 +880,11 @@ mod tests {
         // bounded to global + ancestors").
         let mut raw = BTreeMap::new();
         raw.insert(
-            "book".to_owned(),
+            SchemaName::from("book"),
             schema(&[], &[("status", select_field(&["draft"]))]),
         );
         raw.insert(
-            "movie".to_owned(),
+            SchemaName::from("movie"),
             schema(&[], &[("status", ref_field("#book/status", None))]),
         );
 
@@ -889,7 +910,7 @@ mod tests {
     fn a_field_with_neither_type_nor_ref_is_a_hard_error() {
         let mut raw = BTreeMap::new();
         raw.insert(
-            "book".to_owned(),
+            SchemaName::from("book"),
             schema(&[], &[("status", RawFieldDef::default())]),
         );
 
@@ -901,7 +922,7 @@ mod tests {
     fn every_field_type_resolves_its_own_options() {
         let mut raw = BTreeMap::new();
         raw.insert(
-            "book".to_owned(),
+            SchemaName::from("book"),
             schema(&[], &[
                 ("title", input_field()),
                 ("status", select_field(&["draft", "done"])),
@@ -963,7 +984,7 @@ mod tests {
     fn multi_defaults_to_false_and_honors_a_local_override() {
         let mut raw = BTreeMap::new();
         raw.insert(
-            "book".to_owned(),
+            SchemaName::from("book"),
             schema(&[], &[
                 ("status", select_field(&["draft"])),
                 ("authors", RawFieldDef {
@@ -984,14 +1005,14 @@ mod tests {
     fn a_ref_to_a_file_field_merges_the_filter_with_local_overrides() {
         let mut raw = BTreeMap::new();
         raw.insert(
-            GLOBAL_SCHEMA_NAME.to_owned(),
+            SchemaName::from(GLOBAL_SCHEMA_NAME),
             schema(&[], &[(
                 "cover",
                 file_field(&["assets"], Some("png"), &["image"]),
             )]),
         );
         raw.insert(
-            "book".to_owned(),
+            SchemaName::from("book"),
             schema(&[], &[("cover", RawFieldDef {
                 reference: Some("#global/cover".to_owned()),
                 folders: Some(vec!["assets/covers".to_owned()]),
@@ -1019,9 +1040,12 @@ mod tests {
         // must not be honored, and not even warned about (`book` is a
         // real Schema, so this isn't a `MissingExtendsTarget`).
         let mut raw = BTreeMap::new();
-        raw.insert("book".to_owned(), schema(&[], &[("title", input_field())]));
         raw.insert(
-            GLOBAL_SCHEMA_NAME.to_owned(),
+            SchemaName::from("book"),
+            schema(&[], &[("title", input_field())]),
+        );
+        raw.insert(
+            SchemaName::from(GLOBAL_SCHEMA_NAME),
             schema(&["book"], &[("priority", select_field(&["low", "high"]))]),
         );
 
@@ -1044,13 +1068,16 @@ mod tests {
         // `build_dag` forces `global` to in-degree zero unconditionally,
         // so it must still resolve before `poem` needs it via `$ref`.
         let mut raw = BTreeMap::new();
-        raw.insert("book".to_owned(), schema(&[], &[("title", input_field())]));
         raw.insert(
-            GLOBAL_SCHEMA_NAME.to_owned(),
+            SchemaName::from("book"),
+            schema(&[], &[("title", input_field())]),
+        );
+        raw.insert(
+            SchemaName::from(GLOBAL_SCHEMA_NAME),
             schema(&["book"], &[("priority", select_field(&["low", "high"]))]),
         );
         raw.insert(
-            "poem".to_owned(),
+            SchemaName::from("poem"),
             schema(&[], &[("priority", ref_field("#global/priority", None))]),
         );
 
@@ -1075,11 +1102,11 @@ mod tests {
         // resolved) before `global`, and its `$ref` would fail.
         let mut raw = BTreeMap::new();
         raw.insert(
-            GLOBAL_SCHEMA_NAME.to_owned(),
+            SchemaName::from(GLOBAL_SCHEMA_NAME),
             schema(&[], &[("name", select_field(&["anon"]))]),
         );
         raw.insert(
-            "author".to_owned(),
+            SchemaName::from("author"),
             schema(&[], &[("name", ref_field("#global/name", None))]),
         );
 
@@ -1100,14 +1127,17 @@ mod tests {
         // going through field resolution: `"author"` sorts before
         // `"global"` in name order, so this fails without the reorder.
         let mut raw = BTreeMap::new();
-        raw.insert(GLOBAL_SCHEMA_NAME.to_owned(), schema(&[], &[]));
-        raw.insert("author".to_owned(), schema(&[], &[]));
+        raw.insert(SchemaName::from(GLOBAL_SCHEMA_NAME), schema(&[], &[]));
+        raw.insert(SchemaName::from("author"), schema(&[], &[]));
         let mut warnings = Vec::new();
 
         let mut graph = SchemaGraph::new(&raw, &mut warnings);
 
-        assert_eq!(graph.next_ready(), Some(GLOBAL_SCHEMA_NAME));
-        assert_eq!(graph.next_ready(), Some("author"));
+        assert_eq!(
+            graph.next_ready(),
+            Some(SchemaNameRef::from(GLOBAL_SCHEMA_NAME))
+        );
+        assert_eq!(graph.next_ready(), Some(SchemaNameRef::from("author")));
         assert_eq!(graph.next_ready(), None);
     }
 
@@ -1119,11 +1149,11 @@ mod tests {
         // an overriding `file` field.
         let mut raw = BTreeMap::new();
         raw.insert(
-            "book".to_owned(),
+            SchemaName::from("book"),
             schema(&[], &[("status", select_field(&["draft", "done"]))]),
         );
         raw.insert(
-            "sci_fi".to_owned(),
+            SchemaName::from("sci_fi"),
             schema(&["book"], &[("status", RawFieldDef {
                 reference: Some("#book/status".to_owned()),
                 field_type: Some(RawFieldType::File),

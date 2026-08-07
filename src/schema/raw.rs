@@ -14,6 +14,8 @@ use std::collections::BTreeMap;
 
 use serde::Deserialize;
 
+use super::name::SchemaName;
+
 /// Raw Schema data deserialized from one `.traces/schemas/<name>.toml` file.
 ///
 /// The filename stem (not any field on this type) is the Schema name; see
@@ -34,7 +36,7 @@ pub(crate) struct RawSchema {
     /// Parent Schema names, first-listed wins when parents define the same
     /// field.
     #[serde(default)]
-    pub(crate) extends: Vec<String>,
+    pub(crate) extends: Vec<SchemaName>,
     /// Field names dropped from inherited (parent) Field Definitions.
     #[serde(default)]
     pub(crate) excludes: Vec<String>,

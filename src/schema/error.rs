@@ -5,6 +5,8 @@ use std::{fmt, path::PathBuf};
 
 use thiserror::Error;
 
+use super::name::SchemaName;
+
 /// Represents a hard failure while reading, parsing, or resolving the Schema
 /// registry.
 ///
@@ -40,7 +42,7 @@ pub(crate) enum SchemaError {
     /// A Schema TOML file failed to parse: malformed TOML or an unknown key.
     #[error("failed to parse Schema {schema}: {source}")]
     Parse {
-        schema: String,
+        schema: SchemaName,
         #[source]
         source: Box<toml::de::Error>,
     },
@@ -50,14 +52,14 @@ pub(crate) enum SchemaError {
         "field {field:?} in Schema {schema:?} has neither `type` nor `$ref`"
     )]
     MissingFieldType {
-        schema: String,
+        schema: SchemaName,
         field: String,
     },
     /// The `extends` DAG contains a cycle; Kahn's topological sort could not
     /// order every Schema.
     #[error("cycle detected among Schemas: {}", .schemas.join(", "))]
     Cycle {
-        schemas: Vec<String>,
+        schemas: Vec<SchemaName>,
     },
     /// A `$ref` value was not shaped `#<schema>/<field>`.
     #[error(
@@ -65,7 +67,7 @@ pub(crate) enum SchemaError {
          {schema:?}: expected `#<schema>/<field>`"
     )]
     MalformedRef {
-        schema: String,
+        schema: SchemaName,
         field: String,
         reference: String,
     },
@@ -76,7 +78,7 @@ pub(crate) enum SchemaError {
          bounds: not the Global Schema or a transitive `extends` ancestor"
     )]
     RefOutOfBounds {
-        schema: String,
+        schema: SchemaName,
         field: String,
         reference: String,
     },
@@ -87,7 +89,7 @@ pub(crate) enum SchemaError {
          resolve"
     )]
     RefFieldNotFound {
-        schema: String,
+        schema: SchemaName,
         field: String,
         reference: String,
     },
@@ -111,8 +113,8 @@ pub(crate) enum SchemaWarning {
     /// Schema file. `schema` degrades to exact match: parent-provided fields
     /// are dropped, but its own fields still resolve.
     MissingExtendsTarget {
-        schema: String,
-        target: String,
+        schema: SchemaName,
+        target: SchemaName,
     },
     /// The reserved Global Schema declared `field` as `required = true`.
     /// Global Schema fields can never be required, so resolution treats it
@@ -153,8 +155,8 @@ mod tests {
     #[test]
     fn missing_extends_target_message_names_schema_and_target() {
         let warning = SchemaWarning::MissingExtendsTarget {
-            schema: "sci_fi".to_owned(),
-            target: "ghost".to_owned(),
+            schema: SchemaName::from("sci_fi"),
+            target: SchemaName::from("ghost"),
         };
 
         assert_eq!(

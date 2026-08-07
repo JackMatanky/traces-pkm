@@ -27,6 +27,7 @@
 
 mod error;
 mod model;
+mod name;
 mod raw;
 mod registry;
 mod resolve;
