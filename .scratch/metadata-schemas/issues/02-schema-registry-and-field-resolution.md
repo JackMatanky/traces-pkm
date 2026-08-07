@@ -4,19 +4,19 @@
 
 **Blocked by:** None — can start immediately.
 
-**Status:** ready-for-agent
+**Status:** implemented
 
 ## Acceptance Criteria
 
-- [ ] Schema TOML parses from `.traces/schemas/<name>.toml` with filename stem as Schema name; unknown keys rejected at parse.
-- [ ] Field Definitions support all six types (`input`, `select`, `boolean`, `number`, `date`, `file`) with type-specific options and optional `required`/`multi` flags.
-- [ ] Kahn's topological sort resolves the extends DAG; cycles are hard errors.
-- [ ] A missing `extends` target degrades to exact match with a warning; the class's own fields still render.
-- [ ] Own fields override all parents; first-listed wins among parents; `excludes` drops inherited fields by name.
-- [ ] Bounded `$ref` resolves (`#global/<field>` or `#<ancestor-schema>/<field>`); local keys in the same definition override the base's.
-- [ ] The reserved `global.toml` Schema: `global` is forbidden as a File Class; a stray `required = true` there is ignored with a warn log while a referencing Schema's local `required` holds.
-- [ ] Is-a matching is transitive (a class matches queries for its parents).
-- [ ] All covered by unit tests over Schema fixtures — no vault, no minijinja.
+- [x] Schema TOML parses from `.traces/schemas/<name>.toml` with filename stem as Schema name; unknown keys rejected at parse.
+- [x] Field Definitions support all six types (`input`, `select`, `boolean`, `number`, `date`, `file`) with type-specific options and optional `required`/`multi` flags.
+- [x] Kahn's topological sort resolves the extends DAG; cycles are hard errors.
+- [x] A missing `extends` target degrades to exact match with a warning; the class's own fields still render.
+- [x] Own fields override all parents; first-listed wins among parents; `excludes` drops inherited fields by name.
+- [x] Bounded `$ref` resolves (`#global/<field>` or `#<ancestor-schema>/<field>`); local keys in the same definition override the base's.
+- [x] The reserved `global.toml` Schema: `global` is forbidden as a File Class; a stray `required = true` there is ignored with a warn log while a referencing Schema's local `required` holds.
+- [x] Is-a matching is transitive (a class matches queries for its parents).
+- [x] All covered by unit tests over Schema fixtures — no vault, no minijinja.
 
 ## Comments
 
@@ -51,3 +51,47 @@ No Schema parsing or field-resolution code exists anywhere in `src/`. Traces has
 - `query.from_class`/`tasks.from_class` (ticket 05) that consume is-a matching.
 - Any vault/index interaction.
 - Schema authoring/validation CLI.
+
+## Implementation notes
+
+**Date**: 2026-08-07
+**Implemented in**: `1181a3f` on branch `feat/schema-registry` (worktree `.worktrees/schema-registry`)
+
+### What was built
+
+- `src/schema/raw.rs`: `RawSchema` (`extends`/`excludes`/`fields: BTreeMap<String, RawFieldDef>`) and `RawFieldDef` (`type`/`$ref`/`required`/`multi`/`values`/`folders`/`ext`/`class`), all `#[serde(deny_unknown_fields)]`, mirroring `config/raw.rs`'s pattern. `RawFieldType` is the six-way `type` enum.
+- `src/schema/resolve.rs`: pure `resolve(&BTreeMap<String, RawSchema>) -> Result<(BTreeMap<String, ResolvedSchema>, Vec<SchemaWarning>), SchemaError>`. `FieldOptions` is an enum keyed by field type (`Select { values }` / `File { folders, ext, class }` / four unit variants for `input`/`boolean`/`number`/`date`) so a mismatched type/option pairing is unrepresentable. `build_dag` filters `extends` to known targets (warning + drop on miss) and forces the reserved Global Schema to Kahn in-degree zero regardless of its own declared `extends` — it is a flat, `$ref`-able-from-anywhere reference pool (ADR-7), not a DAG link. `resolve_one` merges parent fields first-listed-wins, applies `excludes`, then overrides with own (`$ref`-resolved) fields; `$ref` targets are validated against the referencing Schema's actual transitive-ancestor set (not merely "already resolved by Kahn's tie-breaking order") so a `$ref` to an unrelated sibling is a hard `UnresolvedRef`, matching ADR-7's "bounded to global + ancestors" exactly.
+- `src/schema/mod.rs`: `SchemaRegistry::load(&Path)` reads every `*.toml` directly under a directory (filename stem = Schema name; a missing directory degrades to an empty registry, not an error) and resolves it via `resolve::resolve`. `SchemaRegistry::get`/`is_a` expose lookup and transitive is-a matching (a class absent from the registry degrades to exact-string match). `GLOBAL_SCHEMA_NAME = "global"` is exported for the future Note-classification consumer (ticket 05) to forbid as a File Class value.
+- `src/schema/error.rs`: `SchemaError` (hard: `ReadDirectory`/`ReadFile`/`Parse`/`MissingFieldType`/`Cycle`/`MalformedRef`/`UnresolvedRef`) and `SchemaWarning` (degrade: `MissingExtendsTarget`/`StrayGlobalRequired`), `thiserror`-backed.
+- `src/lib.rs`: added `mod schema;` (alphabetically ordered) plus a `# Core Subsystems` doc bullet.
+
+### Key design decisions
+
+- **`FieldOptions` is an enum, not a flat struct of `Option<T>`s.** Only `select` (`values`) and `file` (`folders`/`ext`/`class`) are list-bearing per spec User Story 9; giving every type its own variant makes a `date` field with a stray `folders` list unrepresentable, rather than merely unpopulated.
+- **Global Schema is forced to Kahn in-degree zero, unconditionally.** An early version only reordered Global to the front of the *existing* zero-in-degree tier (a tie-break), which left a real gap: a Schema `$ref`-ing `#global/<field>` from an earlier Kahn tier than Global's own (hypothetical) `extends` would spuriously fail. `build_dag` now clears Global's own `extends`/in-degree unconditionally — it never inherits, matching its "flat reference pool" role — closing the gap regardless of what `global.toml` declares. Caught by an adversarial `/code-review` pass (Spec sub-agent), regression-tested by `global_ignores_its_own_declared_extends_and_still_resolves_first`.
+- **`$ref` targets are validated against the ancestor set, not "is it resolved yet".** An early version only checked `resolved.get(ref_schema)`, which would let a `$ref` to an unrelated sibling Schema silently succeed whenever Kahn's (alphabetic) tie-breaking happened to resolve that sibling first — a spec violation (ADR-7: "bounded to global + ancestors") that would non-deterministically pass or fail depending on iteration order. `resolve_one` now threads a `ResolutionContext { ancestors, resolved }` through `build_field`, which rejects any `$ref` target that isn't `GLOBAL_SCHEMA_NAME` or a member of the referencing Schema's own transitive ancestors before ever consulting `resolved`. Regression-tested by `a_ref_to_a_non_ancestor_sibling_is_a_hard_error`.
+- **Dead-code suppression, not deferred wiring.** Nothing in ticket 02's scope wires `SchemaRegistry` into `ConfigService`/CLI (that's ticket 03's job registering the `schema` minijinja namespace), so the entire module tree is unreached outside `#[cfg(test)]`. Every otherwise-dead item carries `#[cfg_attr(not(test), expect(dead_code, reason = "..."))]`, mirroring `config/model.rs`'s ticket-01 precedent — but scoped to `not(test)` alone (not `not(any(test, feature = "test-utils"))`) since nothing here is re-exported `pub` from `lib.rs` for external `tests/`/`benches/` consumers; `feature = "test-utils"` grants no additional reachability for `pub(crate)`-only code, so including it in the condition was verified (empirically, via `cargo clippy --workspace --all-targets --features test-utils`) to under-suppress.
+- **`resolve()` split into `build_dag`/`resolve_one` helpers.** The original monolithic `resolve()` tripped `clippy::too_many_lines` (106/100) once the Global in-degree fix was added; splitting along its two natural phases (DAG construction, per-Schema field merge) each stayed well under the limit and reads as two named steps instead of one long function.
+
+### Test inventory
+
+25 tests: `src/schema/resolve.rs` `mod tests` (18, pure fixtures — no filesystem) covers Kahn's sort, own-overrides-parents, first-listed-wins, `excludes`, missing-target degrade, cycle detection, all six field types, `multi`, `$ref` to an ancestor/to Global/to a `file`-type field, the bounded-ref rejection, the Global-forced-zero-degree regression, the stray-Global-`required` degrade, and the three parse-time hard errors (malformed ref, unresolved ref, missing type). `src/schema/mod.rs` `mod tests` (7, `tempfile`-backed registry I/O) covers filename-stem keying, non-`.toml` filtering, a missing directory degrading to empty, unknown-key rejection at both the Schema and Field Definition level, and `is_a` (registry-level exact-match degrade and transitive matching).
+
+### Verification
+
+```sh
+mise run verify   # fmt → lint → clippy → test-all → audit, exit 0
+```
+
+1224 tests pass (25 new). `cargo clippy --workspace -- -D warnings` and `cargo clippy --workspace --all-targets --features test-utils -- -D warnings` both clean. `cargo doc --no-deps --all-features --document-private-items` emits no warnings from `src/schema/*.rs`.
+
+### Out of scope (unchanged)
+
+Confirmed nothing beyond pure Schema parsing/resolution was touched: no `schema` minijinja namespace, no `file`-field FileIndex resolution, no `query.from_class`/`tasks.from_class`, no vault/index interaction, and `SchemaRegistry` is not yet called from `ConfigService`/CLI. `global` being rejected as a Note's File Class value (issue bullet 17's other half) is deferred to whichever later ticket reads Note frontmatter — this ticket exposes `GLOBAL_SCHEMA_NAME` for that consumer and implements the pure-resolution half (stray `required` degrade) that is testable without vault access.
+
+### Adversarial re-review (2026-08-07)
+
+Ran a `/code-review`-style Standards + Spec pass (two parallel reviewer sub-agents) against `main` before committing.
+
+- **Standards**: no hard violations. Two low-priority judgement calls noted and left as-is: (1) `schema_name`/`field_name` `&str` pairs recur as adjacent params across `build_field`/`parse_ref`/`SchemaError` variants (Fowler Data Clump) — accepted, every call site is correct today and a wrapper type would be premature ahead of ticket 03/05 adding real call sites; (2) the repeated `expect(dead_code)` cfg_attr block (Fowler Duplicated Code) — accepted as directly precedented by `config/model.rs`.
+- **Spec**: found the Global-in-degree gap and the `$ref`-bounding gap described above; both were fixed and regression-tested before commit, not left as known issues.
