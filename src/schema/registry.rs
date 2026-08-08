@@ -464,5 +464,18 @@ mod tests {
 
             assert_eq!(matches, set(&["book", "movie", "sci_fi"]));
         }
+
+        #[test]
+        fn returns_an_empty_set_for_no_queried_classes() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_schema(temp.path(), "book", "");
+
+            let (registry, _) =
+                SchemaRegistry::load(temp.path()).expect("registry loads");
+
+            let matches = registry.matching_classes(&[]);
+
+            assert!(matches.is_empty());
+        }
     }
 }

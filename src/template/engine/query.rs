@@ -1649,5 +1649,29 @@ mod tests {
             assert_eq!(configured, "1");
             assert_eq!(default, "0");
         }
+
+        #[test]
+        fn rejects_a_non_string_class_argument() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_class_note(temp.path(), "dune.md", "class: book");
+
+            let error =
+                render(temp.path(), "{{ query.from_class(5) | length }}")
+                    .expect_err("a non-string class argument is rejected");
+
+            assert_eq!(error.kind(), ErrorKind::InvalidOperation);
+        }
+
+        #[test]
+        fn rejects_a_non_string_class_in_a_list() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_class_note(temp.path(), "dune.md", "class: book");
+
+            let error =
+                render(temp.path(), "{{ query.from_class([5]) | length }}")
+                    .expect_err("a non-string class in a list is rejected");
+
+            assert_eq!(error.kind(), ErrorKind::InvalidOperation);
+        }
     }
 }

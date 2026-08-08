@@ -896,6 +896,24 @@ mod tests {
                 .is_match(record, note)
             );
         }
+
+        #[test]
+        fn returns_false_when_class_value_is_not_a_string() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("a.md"), "---\nclass: 5\n---\n# A")
+                .expect("write file");
+            let index = FileIndex::build(temp.path()).expect("build index");
+            let record = index.record(Path::new("a.md")).expect("record");
+            let note = index.note(Path::new("a.md")).expect("note");
+
+            assert!(
+                !QuerySource::Class {
+                    class_field: "class".to_owned(),
+                    classes: BTreeSet::from(["5".to_owned()]),
+                }
+                .is_match(record, note)
+            );
+        }
     }
 
     mod source_from_flag {
