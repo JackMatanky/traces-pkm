@@ -53,7 +53,7 @@ pub enum QuerySource {
     /// built by [`crate::schema::SchemaRegistry::matching_classes`].
     Class {
         /// Frontmatter field naming the Note's File Class(es).
-        class_field: String,
+        class_field: Arc<str>,
         /// Resolved match set: the queried class names plus every Schema
         /// that transitively `extends` one of them.
         classes: BTreeSet<String>,
@@ -820,14 +820,14 @@ mod tests {
 
             assert!(
                 QuerySource::Class {
-                    class_field: "class".to_owned(),
+                    class_field: Arc::from("class"),
                     classes: BTreeSet::from(["book".to_owned()]),
                 }
                 .is_match(record, note)
             );
             assert!(
                 !QuerySource::Class {
-                    class_field: "class".to_owned(),
+                    class_field: Arc::from("class"),
                     classes: BTreeSet::from(["movie".to_owned()]),
                 }
                 .is_match(record, note)
@@ -848,7 +848,7 @@ mod tests {
 
             assert!(
                 QuerySource::Class {
-                    class_field: "class".to_owned(),
+                    class_field: Arc::from("class"),
                     classes: BTreeSet::from(["movie".to_owned()]),
                 }
                 .is_match(record, note)
@@ -866,14 +866,14 @@ mod tests {
 
             assert!(
                 QuerySource::Class {
-                    class_field: "kind".to_owned(),
+                    class_field: Arc::from("kind"),
                     classes: BTreeSet::from(["book".to_owned()]),
                 }
                 .is_match(record, note)
             );
             assert!(
                 !QuerySource::Class {
-                    class_field: "class".to_owned(),
+                    class_field: Arc::from("class"),
                     classes: BTreeSet::from(["book".to_owned()]),
                 }
                 .is_match(record, note)
@@ -890,7 +890,7 @@ mod tests {
 
             assert!(
                 !QuerySource::Class {
-                    class_field: "class".to_owned(),
+                    class_field: Arc::from("class"),
                     classes: BTreeSet::from(["book".to_owned()]),
                 }
                 .is_match(record, note)
@@ -908,7 +908,7 @@ mod tests {
 
             assert!(
                 !QuerySource::Class {
-                    class_field: "class".to_owned(),
+                    class_field: Arc::from("class"),
                     classes: BTreeSet::from(["5".to_owned()]),
                 }
                 .is_match(record, note)

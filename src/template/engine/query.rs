@@ -234,7 +234,7 @@ impl QueryOps {
         }
         let matches = registry.matching_classes(&queried);
         self.run(state, &QuerySource::Class {
-            class_field: self.class_field.to_string(),
+            class_field: Arc::clone(&self.class_field),
             classes: matches,
         })
     }

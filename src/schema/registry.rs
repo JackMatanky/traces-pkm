@@ -71,21 +71,6 @@ impl SchemaRegistry {
         self.schemas.get(name)
     }
 
-    /// Returns `true` if `subject` is-a `queried`. For example,
-    /// `registry.is_a("sci_fi", "book")` is `true` when the `sci_fi` Schema
-    /// `extends` `book`; the reverse call, `registry.is_a("book", "sci_fi")`,
-    /// is `false`.
-    ///
-    /// A `subject` absent from the registry degrades to an exact-string
-    /// match against `queried`: a class name with no corresponding Schema
-    /// file still matches itself.
-    #[inline]
-    #[must_use]
-    pub(crate) fn is_a(&self, subject: &str, queried: &str) -> bool {
-        self.get(subject)
-            .map_or_else(|| subject == queried, |schema| schema.is_a(queried))
-    }
-
     /// Expands `queried` File Class names into their full is-a match set:
     ///
     /// - Every name in `queried` itself (so a class with no Schema still
@@ -96,13 +81,14 @@ impl SchemaRegistry {
     /// Class against: a Note matches when any of its class values is in the
     /// returned set. Transitive `extends` is folded in here, so the caller
     /// compares plain strings without consulting the registry per Note.
+    #[must_use]
     pub(crate) fn matching_classes(
         &self,
         queried: &[String],
     ) -> BTreeSet<String> {
         let mut matches: BTreeSet<String> = queried.iter().cloned().collect();
-        for name in self.schemas.keys() {
-            if queried.iter().any(|class| self.is_a(name.as_str(), class)) {
+        for (name, schema) in &self.schemas {
+            if queried.iter().any(|class| schema.is_a(class)) {
                 matches.insert(name.as_str().to_owned());
             }
         }
@@ -347,56 +333,6 @@ mod tests {
                 .expect_err("unreadable file fails");
 
             assert!(matches!(err, SchemaError::ReadFile { .. }));
-        }
-    }
-
-    mod is_a {
-        use super::*;
-
-        #[test]
-        fn degrades_to_exact_match_for_a_class_with_no_schema() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            let (registry, _) =
-                SchemaRegistry::load(temp.path()).expect("registry loads");
-
-            assert!(registry.is_a("ghost", "ghost"));
-            assert!(!registry.is_a("ghost", "book"));
-        }
-
-        #[test]
-        fn matches_itself_for_a_schema_that_exists_in_the_registry() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            write_schema(temp.path(), "book", "");
-
-            let (registry, _) =
-                SchemaRegistry::load(temp.path()).expect("registry loads");
-
-            assert!(registry.is_a("book", "book"));
-        }
-
-        #[test]
-        fn matches_transitively_through_the_registry() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            write_schema(temp.path(), "book", "");
-            write_schema(temp.path(), "sci_fi", r#"extends = ["book"]"#);
-
-            let (registry, _) =
-                SchemaRegistry::load(temp.path()).expect("registry loads");
-
-            assert!(registry.is_a("sci_fi", "book"));
-        }
-
-        #[test]
-        fn is_not_commutative_reversed_arguments_give_a_different_answer() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            write_schema(temp.path(), "book", "");
-            write_schema(temp.path(), "sci_fi", r#"extends = ["book"]"#);
-
-            let (registry, _) =
-                SchemaRegistry::load(temp.path()).expect("registry loads");
-
-            assert!(registry.is_a("sci_fi", "book"));
-            assert!(!registry.is_a("book", "sci_fi"));
         }
     }
 
