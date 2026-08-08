@@ -86,10 +86,11 @@ impl SchemaRegistry {
             .map_or_else(|| subject == queried, |schema| schema.is_a(queried))
     }
 
-    /// Expands `queried` File Class names into the full set of class values
-    /// that match them under is-a: every queried name (so a class with no
-    /// Schema still matches itself) plus every resolved Schema that is-a one
-    /// of the queried names.
+    /// Expands `queried` File Class names into their full is-a match set:
+    ///
+    /// - Every name in `queried` itself (so a class with no Schema still
+    ///   matches itself).
+    /// - Every resolved Schema that is-a one of the queried names.
     ///
     /// This is the match set a `from_class` query tests each Note's File
     /// Class against: a Note matches when any of its class values is in the
