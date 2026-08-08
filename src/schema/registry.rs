@@ -23,16 +23,6 @@ use crate::file_name::BaseNameRef;
 /// Every Schema under a registry directory, resolved through `extends`,
 /// `excludes`, and `$ref`.
 #[derive(Clone, Debug)]
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "declared by the schema-registry ticket; consumed by the \
-                  schema-namespace ticket \
-                  (.scratch/metadata-schemas/issues/\
-                  03-schema-minijinja-namespace.md)"
-    )
-)]
 pub(crate) struct SchemaRegistry {
     schemas: BTreeMap<SchemaName, Schema>,
 }
@@ -55,16 +45,6 @@ impl SchemaRegistry {
     ///   contains an unknown key.
     /// - Any error [`resolve::resolve`] returns while linearizing the `extends`
     ///   DAG.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "declared by the schema-registry ticket; consumed by the \
-                      schema-namespace ticket \
-                      (.scratch/metadata-schemas/issues/\
-                      03-schema-minijinja-namespace.md)"
-        )
-    )]
     pub(crate) fn load(
         directory: &Path,
     ) -> Result<(Self, Vec<SchemaWarning>), SchemaError> {
@@ -82,16 +62,6 @@ impl SchemaRegistry {
     /// resolved.
     #[inline]
     #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "declared by the schema-registry ticket; consumed by the \
-                      schema-namespace ticket \
-                      (.scratch/metadata-schemas/issues/\
-                      03-schema-minijinja-namespace.md)"
-        )
-    )]
     pub(crate) fn get(&self, name: &str) -> Option<&Schema> {
         self.schemas.get(name)
     }
@@ -135,16 +105,6 @@ impl SchemaRegistry {
 /// - [`SchemaError::ReadFile`] if a `.toml` file cannot be read.
 /// - [`SchemaError::Parse`] if a Schema file's TOML is malformed or contains an
 ///   unknown key.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "declared by the schema-registry ticket; consumed by the \
-                  schema-namespace ticket \
-                  (.scratch/metadata-schemas/issues/\
-                  03-schema-minijinja-namespace.md)"
-    )
-)]
 fn read_raw_schemas(
     directory: &Path,
 ) -> Result<BTreeMap<SchemaName, RawSchema>, SchemaError> {

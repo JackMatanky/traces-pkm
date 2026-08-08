@@ -22,16 +22,6 @@ use super::name::SchemaName;
 /// [`super::SchemaRegistry::load`].
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "declared by the schema-registry ticket; consumed by the \
-                  schema-namespace ticket \
-                  (.scratch/metadata-schemas/issues/\
-                  03-schema-minijinja-namespace.md)"
-    )
-)]
 pub(crate) struct RawSchema {
     /// Parent Schema names, first-listed wins when parents define the same
     /// field.
@@ -54,16 +44,6 @@ pub(crate) struct RawSchema {
 /// an absent key inherits the base's value.
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "declared by the schema-registry ticket; consumed by the \
-                  schema-namespace ticket \
-                  (.scratch/metadata-schemas/issues/\
-                  03-schema-minijinja-namespace.md)"
-    )
-)]
 pub(crate) struct RawFieldDef {
     /// The field's kind. Optional only when `reference` supplies it.
     #[serde(rename = "type")]
@@ -90,16 +70,6 @@ pub(crate) struct RawFieldDef {
 /// The `type` key of a raw Field Definition.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Deserialize)]
 #[serde(rename_all = "lowercase")]
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "declared by the schema-registry ticket; consumed by the \
-                  schema-namespace ticket \
-                  (.scratch/metadata-schemas/issues/\
-                  03-schema-minijinja-namespace.md)"
-    )
-)]
 pub(crate) enum RawFieldType {
     Input,
     Select,

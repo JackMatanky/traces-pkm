@@ -4,15 +4,15 @@
 
 **Blocked by:** 01 — Config Surface; 02 — Schema Registry and Field Resolution
 
-**Status:** ready-for-agent
+**Status:** implemented
 
-- [ ] A `schema` namespace object is registered on the minijinja environment, alongside `file`/`ui`/`date`/`query`.
-- [ ] `schema.get("book")` binds a resolved Schema (fields resolved through inheritance/`$ref` from ticket 02).
-- [ ] `.field("status")` on a list-bearing field returns the selectable values (plain strings for `select` fields; `file` fields are ticket 04).
-- [ ] `.field(...)` on a non-list field type returns `None` (no selectable values to prompt).
-- [ ] `schema.get` of an unknown Schema, and `.field` of an unknown field, hard-error during render with template context — render error, not panic (mirroring the `query` namespace's `errors` module).
-- [ ] A broken Schema only breaks the Template that touches it (lazy validation; no `enabled` flag).
-- [ ] Render-seam tests (temp vault root with `.traces/schemas/*.toml` fixtures and Notes carrying `class:` frontmatter) assert values, `None`, and the error behavior.
+- [x] A `schema` namespace object is registered on the minijinja environment, alongside `file`/`ui`/`date`/`query`.
+- [x] `schema.get("book")` binds a resolved Schema (fields resolved through inheritance/`$ref` from ticket 02).
+- [x] `.field("status")` on a list-bearing field returns the selectable values (plain strings for `select` fields; `file` fields are ticket 04).
+- [x] `.field(...)` on a non-list field type returns `None` (no selectable values to prompt).
+- [x] `schema.get` of an unknown Schema, and `.field` of an unknown field, hard-error during render with template context — render error, not panic (mirroring the `query` namespace's `errors` module).
+- [x] A broken Schema only breaks the Template that touches it (lazy validation; no `enabled` flag).
+- [x] Render-seam tests (temp vault root with `.traces/schemas/*.toml` fixtures) assert values, `None`, and the error behavior.
 
 ## Comments
 
@@ -43,3 +43,44 @@ Template consumption surface per spec User Stories 4–11, 14 and Implementation
 - `file`-field label/value pairs and FileIndex filtering — ticket 04.
 - `query.from_class`/`tasks.from_class` — ticket 05.
 - Predicate-reference degradation (that's the query and file-field surfaces).
+
+## Implementation notes
+
+**Date**: 2026-08-08
+**Implemented in**: worktree `.worktrees/schema-namespace`, branch `feat/schema-namespace`
+
+### What was built
+
+- `src/template/engine/schema.rs`: `SchemaOps`, the `schema` namespace Object, mirroring `QueryOps`/`UiOps`'s `get_value`/`enumerate` pattern. Holds the resolved Schema registry directory (`config.root().join(config.schemas().directory())`) as an `Arc<Path>`. `.get(name)` loads the registry (cached per render in `State`'s temp storage via a `CachedRegistry(Arc<SchemaRegistry>)` wrapper, mirroring `query.rs`'s `cached_refresh`/`CachedIndex`) and binds the named `Schema`, hard-erroring via `unknown_schema_error` if absent. `impl Object for Schema` lives here (not in `crate::schema`), mirroring how `query.rs` gives `QueryOutcome`/`IndexRecord` their `Object` impls — keeps `crate::schema` independent of minijinja. `.field(name)` resolves through a new `FieldDefinition::selectable_values(&self) -> Option<&[String]>` accessor on `crate::schema::model` (only `select` returns `Some`; every other type, including `file` pending ticket 04, returns `None`), hard-erroring via `unknown_field_error` if the field name doesn't resolve.
+- `src/template/engine.rs`: `TemplateEngine::new`'s third parameter changed from `root: &Path` to `config: &Config`, since the `schema` namespace needs the config-resolved registry directory alongside the project root every other namespace already used. Registers `SchemaOps` alongside the existing namespaces. All 17 existing test call sites updated to build a `Config` via a new `config_for` test helper instead of passing a bare root path.
+- `src/template/service.rs`: `TemplateService::new` passes `config` straight through instead of `config.root()`.
+- `src/schema/model.rs`: added `FieldDefinition::selectable_values()`. Kept the `FieldOptions` enum `pub(crate)`-but-module-private (not re-exported crate-wide) rather than exposing it to `template::engine::schema` for a `match`, since the mapping from "field type" to "does `.field()` have values" is exactly the kind of internal-representation query the owning module should answer, not something callers should reimplement by matching on `FieldOptions` variants themselves.
+- Removed every `#[cfg_attr(not(test), expect(dead_code, reason = "...consumed by the schema-namespace ticket..."))]` (and the mirroring `expect(unused_imports, ...)` on `schema/mod.rs`'s `Schema`/`SchemaRegistry` re-exports, and `expect(dead_code, ...)` on `Config::schemas()`/`SchemasConfig::directory()` in `config/model.rs`) once wiring `SchemaRegistry::load` into a genuinely-reachable path made the whole ticket-02 call graph (`resolve()` → `resolve_one()` → `build_field()`, which already read `options()`/`is_required()`/`is_multi()`/`fields()`/`ancestors()` internally) live. Verified precisely via the compiler: each removal was driven by an actual `unfulfilled_lint_expectations` warning under `cargo clippy --workspace -- -D warnings`, not a guess — confirmed nothing left behind is still genuinely dead. `SchemasConfig::class_field()`/`Config::frontmatter()` and its fields stay dead-code-gated: this ticket never reads them (class_field is ticket 05's concern; frontmatter aliases are ticket 04's).
+- `src/config/model.rs`: fixed a stale `expect(dead_code)` reason string on `class_field`/`class_field()` left over from ticket 01 (it named the already-landed Schema-registry ticket as the pending consumer; retargeted to the actual pending consumer, the class-queries ticket), caught by an adversarial `/code-review` pass before commit.
+
+### Key design decisions
+
+- **Lazy, per-render-cached registry load, not eager at `TemplateEngine::new` time.** No Schema TOML is read until a template actually calls `schema.get(...)`; a Template that never touches `schema` never reads the registry directory, so a broken Schema file elsewhere in it can't break that Template. This is the literal, architecturally-honest reading of the "broken Schema only breaks the Template that touches it" AC given ticket 02's `resolve()` contract: `resolve()` returns one `Result` for the *entire* directory (a single malformed sibling Schema fails the whole load), so a Template that *does* call into `schema` still fails if any Schema file in the registry is broken — documented in the module doc and covered by `a_broken_sibling_schema_still_breaks_a_template_that_touches_schema` alongside `a_broken_schema_never_breaks_a_template_that_never_touches_schema`. Widening ticket 02's `resolve()` to isolate failures per-Schema was out of scope for this ticket (that's a ticket-02-shaped change, not a namespace-wiring one).
+- **`Arc<SchemaRegistry>` in the cache, not a clone-per-call.** `query.rs`'s `cached_refresh` clones the cached `FileIndex` on every call (cheap enough there); `SchemaRegistry` wraps a `BTreeMap<SchemaName, Schema>`, so `CachedRegistry` holds an `Arc<SchemaRegistry>` and clones the `Arc` instead, avoiding a deep map clone per `schema.get()` call within one render.
+- **`FieldDefinition::selectable_values()`, not a re-exported `FieldOptions`.** `template::engine::schema` never learns `FieldOptions`'s variants; it asks the one question it needs answered.
+
+### Verification
+
+```sh
+mise run check    # cargo check --workspace, clean
+mise run clippy   # cargo clippy --workspace -- -D warnings, clean
+cargo clippy --workspace --all-targets --features test-utils -- -D warnings   # clean
+mise run fmt      # cargo fmt --all, no diff
+mise run lint     # hk check, clean
+mise run test     # cargo nextest, 1344/1344 pass
+cargo test --workspace   # 1322 lib + 4 bin + 18 e2e + 10 doctests, all pass
+```
+
+14 new tests in `template::engine::schema`, covering `.get`/`.field` values, `None` for non-list and `file` types, unknown-Schema/unknown-field render errors (not panics), a malformed-Schema render error, the broken-sibling-schema case, per-render registry caching, and that a Template never touching `schema` survives a broken sibling Schema file.
+
+### Adversarial re-review (2026-08-08)
+
+Ran a `/code-review`-style Standards + Spec pass (two parallel reviewer sub-agents) before committing.
+
+- **Spec**: verdict "correct" — full ticket checklist satisfied, no ticket 04/05 scope creep, error/`None`/lazy-validation semantics all match.
+- **Standards**: one real finding (the stale `class_field` reason string above, fixed) and one low-confidence judgement call (the `State`-temp-cache shape in `cached_registry` structurally repeats `query.rs`'s `cached_refresh`) — left as-is: extracting a two-call-site generic cache helper would trade a small, obvious duplication for a new abstraction layer, the wrong direction per this repo's own precedent of one small `Cached*` wrapper per consuming module.

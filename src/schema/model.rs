@@ -17,16 +17,6 @@ use super::{
 /// A Schema's effective Field Definitions after inheritance, `excludes`, and
 /// `$ref` are applied.
 #[derive(Clone, Debug, Eq, PartialEq)]
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "declared by the schema-registry ticket; consumed by the \
-                  schema-namespace ticket \
-                  (.scratch/metadata-schemas/issues/\
-                  03-schema-minijinja-namespace.md)"
-    )
-)]
 pub(crate) struct Schema {
     name: SchemaName,
     fields: BTreeMap<String, FieldDefinition>,
@@ -38,16 +28,6 @@ pub(crate) struct Schema {
 
 impl Schema {
     /// Builds a resolved Schema from its already-merged parts.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "declared by the schema-registry ticket; consumed by the \
-                      schema-namespace ticket \
-                      (.scratch/metadata-schemas/issues/\
-                      03-schema-minijinja-namespace.md)"
-        )
-    )]
     pub(super) fn new(
         name: SchemaName,
         fields: BTreeMap<String, FieldDefinition>,
@@ -63,16 +43,6 @@ impl Schema {
     /// Returns the Schema name (the source file's stem).
     #[inline]
     #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "declared by the schema-registry ticket; consumed by the \
-                      schema-namespace ticket \
-                      (.scratch/metadata-schemas/issues/\
-                      03-schema-minijinja-namespace.md)"
-        )
-    )]
     pub(crate) fn name(&self) -> &str {
         self.name.as_str()
     }
@@ -80,16 +50,6 @@ impl Schema {
     /// Returns this Schema's effective Field Definitions, keyed by name.
     #[inline]
     #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "declared by the schema-registry ticket; consumed by the \
-                      schema-namespace ticket \
-                      (.scratch/metadata-schemas/issues/\
-                      03-schema-minijinja-namespace.md)"
-        )
-    )]
     pub(crate) fn fields(&self) -> &BTreeMap<String, FieldDefinition> {
         &self.fields
     }
@@ -98,16 +58,6 @@ impl Schema {
     /// for this Schema.
     #[inline]
     #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "declared by the schema-registry ticket; consumed by the \
-                      schema-namespace ticket \
-                      (.scratch/metadata-schemas/issues/\
-                      03-schema-minijinja-namespace.md)"
-        )
-    )]
     pub(crate) fn field(&self, name: &str) -> Option<&FieldDefinition> {
         self.fields.get(name)
     }
@@ -117,16 +67,6 @@ impl Schema {
     /// its parents'.
     #[inline]
     #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "declared by the schema-registry ticket; consumed by the \
-                      schema-namespace ticket \
-                      (.scratch/metadata-schemas/issues/\
-                      03-schema-minijinja-namespace.md)"
-        )
-    )]
     pub(super) fn ancestors(&self) -> &BTreeSet<SchemaName> {
         &self.ancestors
     }
@@ -155,16 +95,6 @@ impl Schema {
 /// `required` and `multi` are reserved for future LSP/MCP guardrails and
 /// stay inert here.
 #[derive(Clone, Debug, Eq, PartialEq)]
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "declared by the schema-registry ticket; consumed by the \
-                  schema-namespace ticket \
-                  (.scratch/metadata-schemas/issues/\
-                  03-schema-minijinja-namespace.md)"
-    )
-)]
 pub(crate) struct FieldDefinition {
     options: FieldOptions,
     required: bool,
@@ -173,16 +103,6 @@ pub(crate) struct FieldDefinition {
 
 impl FieldDefinition {
     /// Builds a resolved Field Definition from its already-merged parts.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "declared by the schema-registry ticket; consumed by the \
-                      schema-namespace ticket \
-                      (.scratch/metadata-schemas/issues/\
-                      03-schema-minijinja-namespace.md)"
-        )
-    )]
     pub(super) fn new(
         options: FieldOptions,
         required: bool,
@@ -198,34 +118,39 @@ impl FieldDefinition {
     /// Returns this field's type-specific options.
     #[inline]
     #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "declared by the schema-registry ticket; consumed by the \
-                      schema-namespace ticket \
-                      (.scratch/metadata-schemas/issues/\
-                      03-schema-minijinja-namespace.md)"
-        )
-    )]
     pub(crate) fn options(&self) -> &FieldOptions {
         &self.options
+    }
+
+    /// Returns this field's selectable values for the `schema` minijinja
+    /// namespace's `.field()` method, or `None` if this field type has none
+    /// to offer.
+    ///
+    /// Only `select` carries a plain value list today. `file` is also
+    /// list-bearing in principle, but its options resolve live from the
+    /// `FileIndex` (a later ticket); until that lands, it returns `None` here
+    /// too rather than a value list `.field()` cannot yet honor.
+    #[inline]
+    #[must_use]
+    pub(crate) fn selectable_values(&self) -> Option<&[String]> {
+        match &self.options {
+            FieldOptions::Select {
+                values,
+            } => Some(values),
+            FieldOptions::Input
+            | FieldOptions::Boolean
+            | FieldOptions::Number
+            | FieldOptions::Date
+            | FieldOptions::File {
+                ..
+            } => None,
+        }
     }
 
     /// Returns `true` if this field must be set. Always `false` on the
     /// reserved Global Schema, regardless of its own TOML.
     #[inline]
     #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "declared by the schema-registry ticket; consumed by the \
-                      schema-namespace ticket \
-                      (.scratch/metadata-schemas/issues/\
-                      03-schema-minijinja-namespace.md)"
-        )
-    )]
     pub(crate) fn is_required(&self) -> bool {
         self.required
     }
@@ -233,16 +158,6 @@ impl FieldDefinition {
     /// Returns `true` if this field accepts multiple values.
     #[inline]
     #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "declared by the schema-registry ticket; consumed by the \
-                      schema-namespace ticket \
-                      (.scratch/metadata-schemas/issues/\
-                      03-schema-minijinja-namespace.md)"
-        )
-    )]
     pub(crate) fn is_multi(&self) -> bool {
         self.multi
     }
@@ -255,16 +170,6 @@ impl FieldDefinition {
 /// list cannot be represented. `select` and `file` are the only list-bearing
 /// kinds: every other variant is a unit variant.
 #[derive(Clone, Debug, Eq, PartialEq)]
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "declared by the schema-registry ticket; consumed by the \
-                  schema-namespace ticket \
-                  (.scratch/metadata-schemas/issues/\
-                  03-schema-minijinja-namespace.md)"
-    )
-)]
 pub(crate) enum FieldOptions {
     Input,
     Select {
@@ -283,16 +188,6 @@ pub(crate) enum FieldOptions {
 impl FieldOptions {
     /// Builds fresh options for `field_type` from `raw`'s own keys, with no
     /// base definition to fall back on. Absent keys default to empty.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "declared by the schema-registry ticket; consumed by the \
-                      schema-namespace ticket \
-                      (.scratch/metadata-schemas/issues/\
-                      03-schema-minijinja-namespace.md)"
-        )
-    )]
     pub(super) fn from_raw(field_type: FieldType, raw: &RawFieldDef) -> Self {
         match field_type {
             FieldType::Input => Self::Input,
@@ -316,16 +211,6 @@ impl FieldOptions {
     /// that switches type starts from empty options instead of reusing a
     /// mismatched base (for example a `select`'s `values` never leaks into an
     /// overriding `file` field).
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "declared by the schema-registry ticket; consumed by the \
-                      schema-namespace ticket \
-                      (.scratch/metadata-schemas/issues/\
-                      03-schema-minijinja-namespace.md)"
-        )
-    )]
     pub(super) fn merged(
         base: &Self,
         field_type: FieldType,
@@ -370,16 +255,6 @@ impl FieldOptions {
     /// Returns the [`FieldType`] this variant represents.
     #[inline]
     #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "declared by the schema-registry ticket; consumed by the \
-                      schema-namespace ticket \
-                      (.scratch/metadata-schemas/issues/\
-                      03-schema-minijinja-namespace.md)"
-        )
-    )]
     pub(super) fn kind(&self) -> FieldType {
         match self {
             Self::Input => FieldType::Input,
@@ -399,16 +274,6 @@ impl FieldOptions {
 /// A Field Definition's kind, mirroring [`RawFieldType`] after `$ref`
 /// resolution has settled on one.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "declared by the schema-registry ticket; consumed by the \
-                  schema-namespace ticket \
-                  (.scratch/metadata-schemas/issues/\
-                  03-schema-minijinja-namespace.md)"
-    )
-)]
 pub(crate) enum FieldType {
     Input,
     Select,

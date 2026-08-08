@@ -18,16 +18,6 @@ use super::name::SchemaName;
 /// recovers from (a missing `extends` target, a stray `required = true` on
 /// the reserved Global Schema).
 #[derive(Debug, Error)]
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "declared by the schema-registry ticket; consumed by the \
-                  schema-namespace ticket \
-                  (.scratch/metadata-schemas/issues/\
-                  03-schema-minijinja-namespace.md)"
-    )
-)]
 pub(crate) enum SchemaError {
     /// The Schema registry directory exists but could not be read.
     #[error("failed to read Schema registry directory {directory}: {source}")]
@@ -102,16 +92,6 @@ pub(crate) enum SchemaError {
 /// Represents a recoverable defect encountered while resolving the Schema
 /// registry: resolution continues, degrading to the documented fallback.
 #[derive(Clone, Debug, Eq, PartialEq)]
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "declared by the schema-registry ticket; consumed by the \
-                  schema-namespace ticket \
-                  (.scratch/metadata-schemas/issues/\
-                  03-schema-minijinja-namespace.md)"
-    )
-)]
 pub(crate) enum SchemaWarning {
     /// `schema`'s `extends` list named `target`, which has no corresponding
     /// Schema file. `schema` degrades to exact match: parent-provided fields

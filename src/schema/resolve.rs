@@ -49,16 +49,6 @@ type ResolveOutput = (BTreeMap<SchemaName, Schema>, Vec<SchemaWarning>);
 ///   bound (the Global Schema or a transitive `extends` ancestor).
 /// - [`SchemaError::RefFieldNotFound`] if a `$ref` names an in-bounds Schema
 ///   that has no such field.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "declared by the schema-registry ticket; consumed by the \
-                  schema-namespace ticket \
-                  (.scratch/metadata-schemas/issues/\
-                  03-schema-minijinja-namespace.md)"
-    )
-)]
 pub(crate) fn resolve(
     raw_schemas: &BTreeMap<SchemaName, RawSchema>,
 ) -> Result<ResolveOutput, SchemaError> {
@@ -110,16 +100,6 @@ pub(crate) fn resolve(
 ///
 /// Propagates any [`SchemaError`] [`build_field`] returns while resolving
 /// `raw`'s own fields.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "declared by the schema-registry ticket; consumed by the \
-                  schema-namespace ticket \
-                  (.scratch/metadata-schemas/issues/\
-                  03-schema-minijinja-namespace.md)"
-    )
-)]
 fn resolve_one(
     name: SchemaNameRef<'_>,
     raw: &RawSchema,
@@ -172,16 +152,6 @@ fn resolve_one(
 /// - [`SchemaError::MissingFieldType`] if `raw` declares neither `type` nor
 ///   `$ref`.
 /// - Any error [`RefResolver::resolve`] returns while resolving a `$ref`.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "declared by the schema-registry ticket; consumed by the \
-                  schema-namespace ticket \
-                  (.scratch/metadata-schemas/issues/\
-                  03-schema-minijinja-namespace.md)"
-    )
-)]
 fn build_field(
     at: FieldPath<'_>,
     raw: &RawFieldDef,
@@ -223,16 +193,6 @@ fn build_field(
 /// Global Schema fields can never be required: forces `required` to `false`
 /// and records a [`SchemaWarning::StrayGlobalRequired`] when `at.schema` is
 /// the Global Schema and it declared `required = true`.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "declared by the schema-registry ticket; consumed by the \
-                  schema-namespace ticket \
-                  (.scratch/metadata-schemas/issues/\
-                  03-schema-minijinja-namespace.md)"
-    )
-)]
 fn apply_global_degrade(
     at: FieldPath<'_>,
     required: bool,
@@ -277,16 +237,6 @@ impl<'a> SchemaGraph<'a> {
     /// order between them; the ready queue reorders Global to the front of that
     /// tier so it is popped (and resolved) before any sibling that might `$ref`
     /// it.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "declared by the schema-registry ticket; consumed by the \
-                      schema-namespace ticket \
-                      (.scratch/metadata-schemas/issues/\
-                      03-schema-minijinja-namespace.md)"
-        )
-    )]
     fn new(
         raw_schemas: &'a BTreeMap<SchemaName, RawSchema>,
         warnings: &mut Vec<SchemaWarning>,
@@ -357,16 +307,6 @@ impl<'a> SchemaGraph<'a> {
 
     /// Pops the next Schema whose in-degree reached zero, marking it
     /// visited, or `None` once the ready queue drains.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "declared by the schema-registry ticket; consumed by the \
-                      schema-namespace ticket \
-                      (.scratch/metadata-schemas/issues/\
-                      03-schema-minijinja-namespace.md)"
-        )
-    )]
     fn next_ready(&mut self) -> Option<SchemaNameRef<'a>> {
         let name = self.queue.pop_front()?;
         self.visited.insert(name);
@@ -374,32 +314,12 @@ impl<'a> SchemaGraph<'a> {
     }
 
     /// Borrows `name`'s (filtered) parent list.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "declared by the schema-registry ticket; consumed by the \
-                      schema-namespace ticket \
-                      (.scratch/metadata-schemas/issues/\
-                      03-schema-minijinja-namespace.md)"
-        )
-    )]
     fn parents_of(&self, name: SchemaNameRef<'_>) -> &[SchemaNameRef<'a>] {
         self.parents_by_name.get(name.as_str()).map_or(&[], Vec::as_slice)
     }
 
     /// Records `name` as resolved, releasing any children whose in-degree
     /// just hit zero into the ready queue.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "declared by the schema-registry ticket; consumed by the \
-                      schema-namespace ticket \
-                      (.scratch/metadata-schemas/issues/\
-                      03-schema-minijinja-namespace.md)"
-        )
-    )]
     fn mark_resolved(&mut self, name: SchemaNameRef<'_>) {
         for &child in
             self.children_by_name.get(name.as_str()).into_iter().flatten()
@@ -415,16 +335,6 @@ impl<'a> SchemaGraph<'a> {
 
     /// Returns every Schema name that never reached in-degree zero (a cycle
     /// membership), or `None` if every Schema in `raw_schemas` was visited.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "declared by the schema-registry ticket; consumed by the \
-                      schema-namespace ticket \
-                      (.scratch/metadata-schemas/issues/\
-                      03-schema-minijinja-namespace.md)"
-        )
-    )]
     fn cyclic_remainder(
         &self,
         raw_schemas: &BTreeMap<SchemaName, RawSchema>,
@@ -463,16 +373,6 @@ impl<'a> RefResolver<'a> {
     ///   Global Schema nor a transitive `extends` ancestor of `at.schema`.
     /// - [`SchemaError::RefFieldNotFound`] if the named Schema is in bounds but
     ///   has no such field.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "declared by the schema-registry ticket; consumed by the \
-                      schema-namespace ticket \
-                      (.scratch/metadata-schemas/issues/\
-                      03-schema-minijinja-namespace.md)"
-        )
-    )]
     fn resolve(
         &self,
         at: FieldPath<'_>,
@@ -531,16 +431,6 @@ impl<'a> FieldPath<'a> {
     ///
     /// - [`ParseRefError`] if `reference` is not shaped `#<schema>/<field>`
     ///   with both segments non-empty.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "declared by the schema-registry ticket; consumed by the \
-                      schema-namespace ticket \
-                      (.scratch/metadata-schemas/issues/\
-                      03-schema-minijinja-namespace.md)"
-        )
-    )]
     fn parse(reference: &'a str) -> Result<Self, ParseRefError> {
         let stripped = reference.strip_prefix('#').ok_or(ParseRefError)?;
         let (schema, field) = stripped.split_once('/').ok_or(ParseRefError)?;
