@@ -4,17 +4,17 @@
 
 **Blocked by:** 01 — Config Surface; 02 — Schema Registry and Field Resolution
 
-**Status:** ready-for-agent
+**Status:** implemented
 
-- [ ] `QuerySource` gains a `Class` variant (holding one or more class names) alongside the existing `All`, `Tag`, `Folder`.
-- [ ] `QuerySource::is_match` for `Class` reads the Note's File Class from the frontmatter key configured by `[schemas] class_field` (default `class`) and applies transitive is-a matching via the resolution engine's ancestor set.
-- [ ] `query.from_class("book")` selects Notes whose File Class matches `book`.
-- [ ] `query.from_class(["book", "movie"])` matches any of the listed classes (any-of).
-- [ ] `tasks.from_class(...)` mirrors both single and any-of forms for task-level queries.
-- [ ] `from_class` is registered in the `METHODS` list alongside `all`, `from_tags`, `from_folder`.
-- [ ] A class with no Schema degrades to exact match (class value only) with a warning.
-- [ ] `from_class("global")` is a hard error — `global` is forbidden as a Note's File Class.
-- [ ] Render-seam tests (`env(root).render_str(...)`) cover: single class, any-of, transitive is-a, degrade-with-warning, `global` rejection, and both `query` and `tasks` namespaces.
+- [x] `QuerySource` gains a `Class` variant (holding one or more class names) alongside the existing `All`, `Tag`, `Folder`.
+- [x] `QuerySource::is_match` for `Class` reads the Note's File Class from the frontmatter key configured by `[schemas] class_field` (default `class`) and applies transitive is-a matching via the resolution engine's ancestor set.
+- [x] `query.from_class("book")` selects Notes whose File Class matches `book`.
+- [x] `query.from_class(["book", "movie"])` matches any of the listed classes (any-of).
+- [x] `tasks.from_class(...)` mirrors both single and any-of forms for task-level queries.
+- [x] `from_class` is registered in the `METHODS` list alongside `all`, `from_tags`, `from_folder`.
+- [x] A class with no Schema degrades to exact match (class value only) with a warning.
+- [x] `from_class("global")` is a hard error — `global` is forbidden as a Note's File Class.
+- [x] Render-seam tests (`env(root).render_str(...)`) cover: single class, any-of, transitive is-a, degrade-with-warning, `global` rejection, and both `query` and `tasks` namespaces.
 
 ## Comments
 
@@ -47,3 +47,55 @@ Class query surface per spec User Stories 16–20 and Implementation Decisions (
 - The `schema` namespace and `file`-field filtering (tickets 03/04) — though the file-field `class` filter reuses this same transitive matching.
 - QueryOutcome transformation logic — unchanged.
 - General metadata field filtering with comparison operators — stays QueryOutcome's `.where()`/`.filter()`.
+
+## Implementation notes
+
+**Date**: 2026-08-08
+**Implemented in**: `166eda8`, `9cc5092`, `43986ee`, `7040236` on branch `feat/class-queries` (worktree `.worktrees/class-queries`, base `main` @ `b757970`)
+
+### What was built
+
+- `src/config/model.rs`: `SchemasConfig` (from ticket 01) exposed unconditionally (was `#[cfg(test)]`-gated) since it now has a real production consumer; `Config::schemas()` accessor's `dead_code` gate dropped for the same reason.
+- `src/schema/registry.rs`: `SchemaRegistry::matching_classes(&self, queried: &[String]) -> BTreeSet<String>` — expands queried File Class names into the full is-a match set (the queried names themselves ∪ every resolved Schema that transitively `extends` one of them).
+- `src/index/query.rs`: `QuerySource::Class { class_field: Arc<str>, classes: BTreeSet<String> }` variant, `is_match` arm, and a `class_values` helper reading a Note's frontmatter field named `class_field` (handles both scalar-string and list-of-strings shapes, allocation-free).
+- `src/template/engine.rs`: `TemplateEngine::new` takes a `&SchemasConfig` parameter; wires `class_field`/`schemas_dir` into `QueryOps`.
+- `src/template/engine/query.rs`: `QueryOps::from_class` dispatch, `run_class`, `class_arguments`, `CachedRegistry` (render-scoped, mirrors the existing `CachedIndex` pattern), `reserved_class_error()` (hard error on `from_class("global")`).
+- `src/template/service.rs`: threads `config.schemas()` through to `TemplateEngine::new`.
+- Removed 37 now-consumed `#[expect(dead_code)]`/`#[expect(unused_imports)]` placeholders across `src/schema/**` and `src/note/model.rs` that ticket 02 had left anticipating this ticket's consumer.
+
+### Key design decisions
+
+- **`from_class` lives in `index/query.rs` (`QuerySource::Class`), not `schema/`.** Keeps `src/index/` free of any `schema` dependency: the pure `QuerySource::is_match` primitive stays allocation-free, while `SchemaRegistry::matching_classes` (the only schema-aware step) runs once per query call and hands the index layer a plain `BTreeSet<String>`.
+- **`class_field` accepts scalar-string or list values** — `class_values` mirrors the existing tag-matching conventions in the same module (non-string list elements silently contribute nothing, matching the file's established degrade-soft style).
+- **Querying the reserved `global` Schema is a hard error, not a silent degrade** (`reserved_class_error()`, `ErrorKind::InvalidOperation`) — stricter than the "missing Schema" degrade path, because naming the reserved pool is a caller mistake, not a data-quality issue.
+- **`CachedRegistry` mirrors `CachedIndex`**: `SchemaRegistry` loaded once per render via `State::set_temp`/`get_temp`, reusing the render-scoped caching pattern already established for `FileIndex`.
+
+### Verification
+
+```sh
+mise run verify   # fmt → lint → clippy → test-all → audit, exit 0
+```
+
+1327 lib + 4 bin + 18 e2e + 5 integration + 10 doctests passed at `43986ee`; `cargo clippy --lib --tests --all-features -- -D warnings` clean.
+
+### Out of scope (unchanged)
+
+Confirmed nothing beyond `from_class` was touched: the `schema` namespace (03) and `file`-field filtering (04) were not added; `QueryOutcome` transformation logic and general `.where()`/`.filter()` field filtering are untouched.
+
+## Adversarial re-review (2026-08-08)
+
+Re-derived the 9-item AC checklist from the issue text (not from memory of the prior self-review) and cross-checked each against the diff and test suite directly; also ran a fresh `rust-code-review`/`rust-skills`/`rust-testing`/`rust-doc` pass specifically hunting for non-idiomatic code, missed newtype/struct/enum opportunities, and unfulfilled ACs.
+
+**AC verdict — all 9 checklist items fulfilled, none partial or narrowed.** Re-ran the 9 `template::engine::query::tests::from_class` render-seam tests and the registry/index unit tests directly rather than trusting the earlier pass's verdict.
+
+**Findings fixed this pass** (commit `7040236`):
+
+1. `QuerySource::Class::class_field` was `String`, reallocating a fresh copy of the config's class-field name on every single `from_class`/`tasks.from_class` call even though `QueryOps` already holds it in a render-lifetime `Arc<str>`. Changed to `Arc<str>`, cloned (not reallocated) per call.
+2. `SchemaRegistry::matching_classes` broke the file's own `#[must_use]` convention (sibling `get`/`is_a` both carried it). Added.
+3. `matching_classes`'s loop re-derived each `Schema` via a redundant `self.get(name)` BTreeMap lookup inside `self.is_a(name, class)`, when the loop already iterates `self.schemas` and has the `Schema` at hand. Refactored to iterate `self.schemas.iter()` and call `schema.is_a(class)` directly.
+4. Fix 3 left `SchemaRegistry::is_a` with zero production callers (`clippy -D warnings` failed on `dead_code`). Its "subject absent from registry" degrade branch never fired from its only call site anyway (subjects always came from `self.schemas.keys()`, which always resolves). Deleted the method and its now-redundant `mod is_a` test block — `Schema::is_a` is the real primitive and is what `matching_classes` calls directly; the transitive/degrade behaviors it tested remain covered by `matching_classes`'s own tests. Net: 1327 → 1323 lib tests, no coverage lost.
+
+**Judgment calls re-examined, both upheld — with corrected reasoning for the first:**
+
+- *Warning-emission for a class with no Schema is not asserted by a test.* Originally justified this as "no test in this codebase asserts on log lines" — **that reasoning was wrong**: `schema/resolve.rs` returns `Vec<SchemaWarning>` as first-class data and asserts on it directly (`assert_eq!(warnings, vec![SchemaWarning::MissingExtendsTarget { .. }])`); only the final `tracing::warn!` forwarding step is untested. `from_class`'s warning skips that "return as data" step and logs inline in `run_class`, a real deviation from house convention. Re-examined whether to fix it: `matching_classes`'s existing test `includes_a_queried_class_with_no_schema` already queries an empty registry and asserts the class still lands in the match set — the exact condition (`registry.get(class).is_none()`) that gates the warning. Restructuring `matching_classes`'s return type to expose that same fact through a second channel (mirroring `resolve()`'s `(schemas, warnings)` shape) would touch 5 existing tests to test information already covered, for a warning that's a single unconditional log statement behind a one-line check. Left as-is.
+- *`QuerySource::Class::classes: BTreeSet<String>`, not `BTreeSet<SchemaName>`.* `SchemaName` (ticket 02) exists to prevent transposing same-typed `&str` params in the same position shape (e.g. the historical `is_a(subject: &str, queried: &str)` finding). `class_field: Arc<str>` and `classes: BTreeSet<String>` are different container types already — no transposition is possible regardless of the inner type — and `classes` has exactly one construction site (`run_class`), built directly from `registry.matching_classes(&queried)`. No live bug class this newtype would close; only cosmetic self-documentation, which doesn't justify relocating `SchemaName` out of `schema::name` to cross the deliberate `index`/`schema` module boundary. Left as-is.
