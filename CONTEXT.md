@@ -192,6 +192,10 @@ _Avoid_: reference, field alias
 The minijinja global exposing Schemas to templates. `schema.get("book")` binds a Schema; `book.field("status")` returns its selectable values — plain strings, or label/value pairs for `file` fields (label from the `[frontmatter]` aliases key, else filename stem; value is the path). Unknown schema or field names are errors; a non-list field type returns `None`. Schemas supply values only — templates choose the interactive function themselves.
 _Avoid_: schema api, metadata menu function
 
+#### descendants
+`schema.get("book").descendants()` returns every Schema that is-a `book` transitively (extends it directly or via an ancestor), each itself a bound Schema so `.field(...)`/`.descendants()` chain further. Excludes `book` itself; an empty list, not an error, when nothing extends it.
+_Avoid_: children (implies direct extends only; this is transitive), subclasses
+
 #### from_class
 A page-level query source, `query.from_class("book")` or `query.from_class(["book", "movie"])`, selecting notes whose File Class matches any listed name with Extends is-a matching applied. A class with no Schema degrades to exact match with a warning.
 _Avoid_: from_schema, class source

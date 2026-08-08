@@ -3,23 +3,30 @@
 //! [`SchemaOps`] is the `schema` namespace object registered as a minijinja
 //! global by [`super::TemplateEngine`]. It exposes one method:
 //!
-//! - `schema.get(name)`: binds the resolved [`Schema`] named `name`,
-//!   hard-erroring if no Schema by that name resolves.
+//! - `schema.get(name)`: binds the resolved [`Schema`] named `name` as a
+//!   [`SchemaBinding`], hard-erroring if no Schema by that name resolves.
 //!
-//! The bound [`Schema`] is itself a minijinja object exposing one method:
+//! The bound [`SchemaBinding`] is itself a minijinja object exposing one
+//! plain attribute and two methods:
 //!
+//! - `.name`: the Schema's own name (its source file's stem).
 //! - `.field(name)`: the named field's selectable values, as plain strings for
 //!   a `select` field, or `none` for every other type. `file` fields currently
 //!   always resolve to `none` here; their selectable options come from the
 //!   `FileIndex`, which this namespace does not yet consult. An unknown field
 //!   name hard-errors, mirroring `.get`.
+//! - `.descendants()`: every Schema that is-a this one transitively (extends it
+//!   directly or via an ancestor), each itself a [`SchemaBinding`] so a
+//!   Template can walk the whole subtree (`.name`, `.field(...)`, and
+//!   `.descendants()` again). Empty, not an error, when nothing extends this
+//!   Schema.
 //!
-//! Both `schema.get` and `.field` are structural references: a typo in
-//! either name surfaces as a render error carrying template context, not a
-//! panic, mirroring [`super::query`]'s `errors` module. Class-based
-//! predicate references (`from_class`, `file`-field filters) are not
-//! supported by this namespace; the Schema supplies values only, and the
-//! template author still picks the interactive `ui.*` function.
+//! `schema.get` and `.field` are structural references: a typo in either
+//! name surfaces as a render error carrying template context, not a panic,
+//! mirroring [`super::query`]'s `errors` module. Class-based predicate
+//! references (`from_class`, `file`-field filters) are not supported by this
+//! namespace; the Schema supplies values only, and the template author still
+//! picks the interactive `ui.*` function.
 //!
 //! # Registry Loading and Caching
 //!
@@ -30,6 +37,9 @@
 //! resolved [`SchemaRegistry`] is cached in [`State`]'s temp storage for the
 //! remainder of the render, mirroring [`super::query`]'s `cached_refresh`, so
 //! a Template calling `schema.get` several times pays for one registry load.
+//! [`SchemaRegistry`] itself stores each Schema behind an `Arc`, so binding
+//! one via [`SchemaBinding`] shares that Schema's field map instead of
+//! deep-cloning it per call.
 
 use std::{path::Path, sync::Arc};
 
@@ -43,9 +53,9 @@ use crate::schema::{Schema, SchemaError, SchemaRegistry};
 /// Method names `schema` exposes, for [`SchemaOps::enumerate`].
 const METHODS: &[&str] = &["get"];
 
-/// Method names a bound [`Schema`] exposes, for its own [`Object::enumerate`]
-/// impl.
-const SCHEMA_METHODS: &[&str] = &["field"];
+/// Keys a bound [`SchemaBinding`] exposes: `field`/`descendants` are called
+/// as methods, `name` is a plain attribute. Backs [`Object::enumerate`].
+const SCHEMA_METHODS: &[&str] = &["field", "name", "descendants"];
 
 /// The [`State::set_temp`] key used to cache one loaded [`SchemaRegistry`]
 /// for the current render. See the module docs' "Registry Loading and
@@ -124,7 +134,14 @@ impl Object for SchemaOps {
                         registry
                             .get(name)
                             .cloned()
-                            .map(Value::from_object)
+                            .map(|schema| {
+                                Value::from_dyn_object(Arc::new(
+                                    SchemaBinding {
+                                        schema,
+                                        registry: Arc::clone(&registry),
+                                    },
+                                ))
+                            })
                             .ok_or_else(|| unknown_schema_error(name))
                     },
                 ))
@@ -140,20 +157,32 @@ impl Object for SchemaOps {
 
 /// Wraps [`SchemaRegistry`] only so it can round-trip through [`State`]'s
 /// temp storage via [`Value::from_object`]/[`Value::downcast_object_ref`].
-/// Never exposed to templates: no global registers it, unlike [`Schema`].
+/// Never exposed to templates: no global registers it, unlike
+/// [`SchemaBinding`].
 #[derive(Debug)]
 struct CachedRegistry(Arc<SchemaRegistry>);
 
 impl Object for CachedRegistry {}
 
-/// [`Schema`] gets its [`Object`] impl here instead of in [`crate::schema`],
-/// keeping that module independent from minijinja, mirroring how
-/// [`super::query`] wires up [`crate::index::QueryOutcome`].
-impl Object for Schema {
+/// Pairs a bound [`Schema`] with the [`SchemaRegistry`] it resolved from, so
+/// `.descendants()` can look up other Schemas by is-a relationship. [`Schema`]
+/// itself stays registry-unaware (see the module docs): this wrapper, not
+/// [`crate::schema`], is where minijinja-facing tree-walking lives.
+///
+/// Gets its [`Object`] impl here instead of in [`crate::schema`], mirroring
+/// how [`super::query`] wires up [`crate::index::QueryOutcome`].
+#[derive(Debug)]
+struct SchemaBinding {
+    schema: Arc<Schema>,
+    registry: Arc<SchemaRegistry>,
+}
+
+impl Object for SchemaBinding {
     fn get_value(self: &Arc<Self>, key: &Value) -> Option<Value> {
         match key.as_str()? {
+            "name" => Some(Value::from(self.schema.name())),
             "field" => {
-                let schema = Arc::clone(self);
+                let schema = Arc::clone(&self.schema);
                 Some(Value::from_function(
                     move |name: &str| -> Result<Value, Error> {
                         let field = schema.field(name).ok_or_else(|| {
@@ -165,6 +194,26 @@ impl Object for Schema {
                         ))
                     },
                 ))
+            }
+            "descendants" => {
+                let binding = Arc::clone(self);
+                Some(Value::from_function(move || -> Value {
+                    let descendants =
+                        binding.registry.descendants_of(binding.schema.name());
+                    Value::from(
+                        descendants
+                            .into_iter()
+                            .map(|schema| {
+                                Value::from_dyn_object(Arc::new(
+                                    SchemaBinding {
+                                        schema,
+                                        registry: Arc::clone(&binding.registry),
+                                    },
+                                ))
+                            })
+                            .collect::<Vec<_>>(),
+                    )
+                }))
             }
             _ => None,
         }
@@ -484,6 +533,104 @@ mod tests {
             .expect("render succeeds");
 
             assert_eq!(rendered, "true");
+        }
+    }
+
+    mod name {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn returns_the_schemas_own_name() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_schema(temp.path(), "book", "");
+
+            let rendered = render(
+                &temp.path().join(".traces/schemas"),
+                "{{ schema.get('book').name }}",
+            )
+            .expect("render succeeds");
+
+            assert_eq!(rendered, "book");
+        }
+    }
+
+    mod descendants {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn returns_a_direct_extender_as_a_bound_schema() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_schema(temp.path(), "book", "");
+            write_schema(temp.path(), "sci_fi", r#"extends = ["book"]"#);
+
+            let rendered = render(
+                &temp.path().join(".traces/schemas"),
+                "{{ schema.get('book').descendants() | map(attribute='name') \
+                 | join(',') }}",
+            )
+            .expect("render succeeds");
+
+            assert_eq!(rendered, "sci_fi");
+        }
+
+        #[test]
+        fn returns_a_transitive_descendant_through_an_intermediate_schema() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_schema(temp.path(), "thing", "");
+            write_schema(temp.path(), "book", r#"extends = ["thing"]"#);
+            write_schema(temp.path(), "sci_fi", r#"extends = ["book"]"#);
+
+            let rendered = render(
+                &temp.path().join(".traces/schemas"),
+                "{{ schema.get('thing').descendants() | map(attribute='name') \
+                 | join(',') }}",
+            )
+            .expect("render succeeds");
+
+            assert_eq!(rendered, "book,sci_fi");
+        }
+
+        #[test]
+        fn returns_an_empty_list_for_a_leaf_schema_not_none_or_an_error() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_schema(temp.path(), "book", "");
+            write_schema(temp.path(), "sci_fi", r#"extends = ["book"]"#);
+
+            let rendered = render(
+                &temp.path().join(".traces/schemas"),
+                "{{ schema.get('sci_fi').descendants() | length }}",
+            )
+            .expect("render succeeds");
+
+            assert_eq!(rendered, "0");
+        }
+
+        #[test]
+        fn a_descendant_still_resolves_its_own_fields() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_schema(
+                temp.path(),
+                "book",
+                r#"
+                [fields.status]
+                type = "select"
+                values = ["reading"]
+                "#,
+            );
+            write_schema(temp.path(), "sci_fi", r#"extends = ["book"]"#);
+
+            let rendered = render(
+                &temp.path().join(".traces/schemas"),
+                "{{ schema.get('book').descendants()[0].field('status') | \
+                 join(',') }}",
+            )
+            .expect("render succeeds");
+
+            assert_eq!(rendered, "reading");
         }
     }
 

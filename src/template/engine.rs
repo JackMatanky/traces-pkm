@@ -423,7 +423,7 @@ mod tests {
     /// [`TemplateEngine`].
     ///
     /// Exhaustive per-feature behavior lives in each collaborator's own tests
-    /// (`file`, `date`, `string`, `ui`).
+    /// (`file`, `date`, `string`, `ui`, `schema`).
     mod utilities {
         use pretty_assertions::assert_eq;
 
@@ -477,6 +477,32 @@ mod tests {
                 .expect("render succeeds");
 
             assert_eq!(rendered.content.len(), 4);
+        }
+
+        #[test]
+        fn schema_get_is_reachable() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::create_dir_all(temp.path().join(".traces/schemas"))
+                .expect("create schemas dir");
+            fs::write(
+                temp.path().join(".traces/schemas/book.toml"),
+                "[fields.status]\ntype = \"select\"\nvalues = [\"reading\"]\n",
+            )
+            .expect("write schema fixture");
+            let engine = TemplateEngine::new(
+                &loader_from_dir(temp.path()),
+                preset_provider(),
+                &config_for(temp.path()),
+            );
+
+            let rendered = engine
+                .render(
+                    "{{ schema.get('book').field('status') | join(',') }}",
+                    "test.md",
+                )
+                .expect("render succeeds");
+
+            assert_eq!(rendered.content, "reading");
         }
 
         #[test]

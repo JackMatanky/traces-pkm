@@ -144,3 +144,70 @@ as any other unknown name, already covered.
 `schema::model::tests::field_definition::selectable_values`. Full suite
 re-verified: `mise run check`/`clippy` (both gates)/`fmt`/`lint`, `cargo
 test --workspace` (1332 lib + 4 bin + 18 e2e + 10 doctests), all green.
+
+### Refinement pass (2026-08-08): Arc-sharing, `descendants()`, Config-wiring test
+
+Follow-up to the adversarial re-review and test coverage audit above, driven
+by three findings from a fresh, more critical pass plus one user-requested
+feature:
+
+- **`SchemaRegistry` now stores `Arc<Schema>`, not `Schema`.** `.get()`
+  returned `Option<&Schema>`; `SchemaOps`'s `"get"` handler did
+  `.cloned().map(Value::from_object)`, deep-cloning the whole field map on
+  every `schema.get(...)` call despite the registry itself already being
+  `Arc`-cached per render. `IndexRecord` (`crate::index`) solved the
+  identical problem for its own heavy field via `Arc<Note>`; `Schema` never
+  got the same treatment. Fixed by storing `Arc<Schema>` in the registry's
+  map (`SchemaRegistry::load` wraps once per Schema after `resolve()`
+  returns) and swapping `Value::from_object` for `Value::from_dyn_object` at
+  the binding site — `.cloned()` is now an `Arc` refcount bump, not a field-map
+  copy. `resolve.rs` is untouched: Arc-wrapping happens only at the registry
+  boundary, so Field Resolution stays a pure function over owned `Schema`.
+  Proven by `registry::tests::get::returns_the_same_arc_backed_schema_on_repeated_calls`
+  (`Arc::ptr_eq`) — a test that only compiles because the storage is
+  `Arc`-backed.
+- **`schema.get("book").descendants()`** — new capability, not part of the
+  original 7 ACs above, added on request: every Schema that is-a `book`
+  transitively (extends it directly or via an ancestor), excluding `book`
+  itself, empty (not an error) if nothing extends it. Named `descendants`
+  rather than `children` deliberately: every other is-a relationship in this
+  feature (`Schema::is_a`, `SchemaRegistry::is_a`, ticket 05's `from_class`)
+  is transitive, and "children" implies direct-extends-only in plain English.
+  `SchemaRegistry::descendants_of(name)` is the new Rust-level primitive
+  (symmetric with the existing `Schema::ancestors()`). Bound Schemas gained a
+  `SchemaBinding` wrapper (pairing `Arc<Schema>` with `Arc<SchemaRegistry>`)
+  since `Schema` itself must stay registry-unaware — `impl Object for Schema`
+  moved to `impl Object for SchemaBinding`. Each `.descendants()` result is
+  itself a `SchemaBinding`, so a Template can chain `.field(...)`/
+  `.descendants()` arbitrarily deep. Also added a `.name` attribute (plain,
+  not called) to `SchemaBinding` — without it, `.descendants()` results would
+  be unidentifiable opaque objects a template could call `.field()` on but
+  never know which class each one represents; not part of the original
+  request but required for `.descendants()` to be usable at all.
+- **Closed a real test-coverage gap**: `config.root().join(config.schemas().directory())`
+  (`template/engine.rs`, `TemplateEngine::new`) had zero test coverage
+  anywhere — every `schema.rs` test hand-builds `SchemaOps` with an arbitrary
+  directory, bypassing `Config`, and `engine.rs`'s own `mod utilities`
+  reachability suite (which covers `ui`/`date`/`file`/`string`/`num`/`path`)
+  had no `schema` case. Added `schema_get_is_reachable`, following the
+  `ui_confirm_is_reachable`/`date_now_is_reachable` pattern exactly. Verified
+  it actually catches a regression: temporarily dropped the `.root().join(...)`
+  from the wiring, confirmed the test fails with `unknown Schema "book"`, then
+  restored.
+- **Not changed**: the AC6 nuance ("a broken Schema only breaks the Template
+  that touches it" is true at whole-namespace granularity, not per-Schema,
+  since `SchemaRegistry::load` returns one `Result` for the entire directory)
+  — inherent to ticket 02's load contract, already documented and tested,
+  out of scope for this ticket to redesign.
+
+New test count: `template::engine::schema` 17 → 22 (5 new: 4 `descendants`,
+1 `name`), `schema::registry` +5 (`get::returns_the_same_arc_backed_schema_on_repeated_calls`,
+4 `descendants_of` cases), `template::engine::tests::utilities` +1
+(`schema_get_is_reachable`). Full re-verification: `cargo check`/`clippy`
+(both gates)/`fmt --check` all clean; `cargo test --workspace --features
+test-utils` 1343 lib + 4 bin + 5 integration + 10 doctests pass, e2e 18/18
+pass on a clean build (one flaky failure under `mise run verify`'s combined
+run reproduced as the same pre-existing build-ordering artifact noted in the
+prior session, not a regression); `cargo doc --no-deps --document-private-items
+--features test-utils` warning count unchanged (46, identical set before/after
+via diff — zero new warnings); `cargo deny check` clean.
