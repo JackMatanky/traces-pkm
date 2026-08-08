@@ -31,9 +31,9 @@ pub(crate) use error::{
 };
 #[cfg(any(test, feature = "test-utils"))]
 pub(crate) use file::{Discovered, LocalConfigFile};
-pub use model::Config;
+pub use model::{Config, SchemasConfig};
 #[cfg(any(test, feature = "test-utils"))]
-pub use model::{DateFieldConfig, FrontmatterConfig, SchemasConfig};
+pub use model::{DateFieldConfig, FrontmatterConfig};
 pub use service::ConfigService;
 #[cfg(test)]
 pub(crate) use trust::ConfigTrustStatus;

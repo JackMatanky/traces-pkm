@@ -25,7 +25,7 @@ mod filter;
 mod operators;
 mod sort;
 
-use std::{path::PathBuf, sync::Arc};
+use std::{collections::BTreeSet, path::PathBuf, sync::Arc};
 
 pub(crate) use error::QueryError;
 pub(crate) use field::FileField;
@@ -47,6 +47,17 @@ pub enum QuerySource {
     Tag(String),
     /// Includes Notes located in `folder` or a directory nested under it.
     Folder(PathBuf),
+    /// Includes Notes whose File Class matches. A Note's File Class(es) are
+    /// read from the frontmatter field named `class_field`; the Note matches
+    /// when any of those values is in `classes`, the resolved is-a match set
+    /// built by [`crate::schema::SchemaRegistry::matching_classes`].
+    Class {
+        /// Frontmatter field naming the Note's File Class(es).
+        class_field: Arc<str>,
+        /// Resolved match set: the queried class names plus every Schema
+        /// that transitively `extends` one of them.
+        classes: BTreeSet<String>,
+    },
 }
 
 impl QuerySource {
@@ -76,8 +87,39 @@ impl QuerySource {
                 note.tags().iter().any(|t| t.is_nested_under(tag))
             }
             Self::Folder(folder) => file.folder().starts_with(folder),
+            Self::Class {
+                class_field,
+                classes,
+            } => class_values(note, class_field)
+                .any(|value| classes.contains(value)),
         }
     }
+}
+
+/// Yields a Note's File Class values: the strings held by the frontmatter
+/// field named `class_field`, whether that field is a single string or a
+/// list of strings. A missing field, a non-string scalar, and non-string
+/// list elements yield nothing.
+fn class_values<'a>(
+    note: &'a Note,
+    class_field: &str,
+) -> impl Iterator<Item = &'a str> {
+    let value = note.frontmatter().and_then(|frontmatter| {
+        let field = frontmatter
+            .fields()
+            .iter()
+            .find(|field| field.key() == class_field)?;
+        Some(field.value())
+    });
+    let list = match value {
+        Some(FieldValue::List(items)) => items.as_slice(),
+        _ => &[],
+    };
+    let scalar = match value {
+        Some(FieldValue::List(_)) | None => None,
+        Some(other) => other.as_str(),
+    };
+    list.iter().filter_map(FieldValue::as_str).chain(scalar)
 }
 
 /// Represents a query row pairing a [`FileRecord`] with parsed [`Note`]
@@ -764,6 +806,112 @@ mod tests {
             assert!(
                 !QuerySource::Folder(PathBuf::from("archive"))
                     .is_match(record, note)
+            );
+        }
+
+        #[test]
+        fn returns_true_when_note_class_is_in_the_match_set() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("a.md"), "---\nclass: book\n---\n# A")
+                .expect("write file");
+            let index = FileIndex::build(temp.path()).expect("build index");
+            let record = index.record(Path::new("a.md")).expect("record");
+            let note = index.note(Path::new("a.md")).expect("note");
+
+            assert!(
+                QuerySource::Class {
+                    class_field: Arc::from("class"),
+                    classes: BTreeSet::from(["book".to_owned()]),
+                }
+                .is_match(record, note)
+            );
+            assert!(
+                !QuerySource::Class {
+                    class_field: Arc::from("class"),
+                    classes: BTreeSet::from(["movie".to_owned()]),
+                }
+                .is_match(record, note)
+            );
+        }
+
+        #[test]
+        fn matches_any_class_of_a_multi_class_note() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(
+                temp.path().join("a.md"),
+                "---\nclass: [book, movie]\n---\n# A",
+            )
+            .expect("write file");
+            let index = FileIndex::build(temp.path()).expect("build index");
+            let record = index.record(Path::new("a.md")).expect("record");
+            let note = index.note(Path::new("a.md")).expect("note");
+
+            assert!(
+                QuerySource::Class {
+                    class_field: Arc::from("class"),
+                    classes: BTreeSet::from(["movie".to_owned()]),
+                }
+                .is_match(record, note)
+            );
+        }
+
+        #[test]
+        fn reads_the_class_from_the_configured_field() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("a.md"), "---\nkind: book\n---\n# A")
+                .expect("write file");
+            let index = FileIndex::build(temp.path()).expect("build index");
+            let record = index.record(Path::new("a.md")).expect("record");
+            let note = index.note(Path::new("a.md")).expect("note");
+
+            assert!(
+                QuerySource::Class {
+                    class_field: Arc::from("kind"),
+                    classes: BTreeSet::from(["book".to_owned()]),
+                }
+                .is_match(record, note)
+            );
+            assert!(
+                !QuerySource::Class {
+                    class_field: Arc::from("class"),
+                    classes: BTreeSet::from(["book".to_owned()]),
+                }
+                .is_match(record, note)
+            );
+        }
+
+        #[test]
+        fn returns_false_when_note_has_no_class_field() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("a.md"), "# A").expect("write file");
+            let index = FileIndex::build(temp.path()).expect("build index");
+            let record = index.record(Path::new("a.md")).expect("record");
+            let note = index.note(Path::new("a.md")).expect("note");
+
+            assert!(
+                !QuerySource::Class {
+                    class_field: Arc::from("class"),
+                    classes: BTreeSet::from(["book".to_owned()]),
+                }
+                .is_match(record, note)
+            );
+        }
+
+        #[test]
+        fn returns_false_when_class_value_is_not_a_string() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("a.md"), "---\nclass: 5\n---\n# A")
+                .expect("write file");
+            let index = FileIndex::build(temp.path()).expect("build index");
+            let record = index.record(Path::new("a.md")).expect("record");
+            let note = index.note(Path::new("a.md")).expect("note");
+
+            assert!(
+                !QuerySource::Class {
+                    class_field: Arc::from("class"),
+                    classes: BTreeSet::from(["5".to_owned()]),
+                }
+                .is_match(record, note)
             );
         }
     }

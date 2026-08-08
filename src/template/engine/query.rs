@@ -3,12 +3,14 @@
 //! Both namespaces are backed by [`QueryOps`], registered twice by
 //! [`super::TemplateEngine::new`]: [`QueryOps::page`] creates the `query`
 //! global and [`QueryOps::task`] creates the `tasks` global. Each namespace
-//! starts a query with one of three methods, matching [`QuerySource`]'s
+//! starts a query with one of four methods, matching [`QuerySource`]'s
 //! variants:
 //!
 //! - `.all()`: every indexed Note.
 //! - `.from_tags(tag)`: Notes tagged `tag`.
 //! - `.from_folder(folder)`: Notes under `folder`.
+//! - `.from_class(class)`: Notes whose File Class matches `class` (a single
+//!   name or a list of names), with transitive is-a matching.
 //!
 //! Each method reuses the render's cached [`FileIndex`], refreshing it once
 //! per render (see [`cached_refresh`]), and returns a [`QueryOutcome`]
@@ -79,10 +81,11 @@ use crate::{
         QueryOutcome, QuerySource,
     },
     note::FieldValue,
+    schema::{GLOBAL_SCHEMA_NAME, SchemaError, SchemaRegistry, SchemaWarning},
 };
 
 /// Method names `query` and `tasks` each expose, for [`QueryOps::enumerate`].
-const METHODS: &[&str] = &["all", "from_tags", "from_folder"];
+const METHODS: &[&str] = &["all", "from_tags", "from_folder", "from_class"];
 
 /// The [`State::set_temp`] key used to cache one refreshed [`FileIndex`] for
 /// the current render.
@@ -95,6 +98,11 @@ const METHODS: &[&str] = &["all", "from_tags", "from_folder"];
 /// independent renders on a reused [`Environment`]/[`super::TemplateEngine`].
 const INDEX_CACHE_KEY: &str = "query.index_cache";
 
+/// The [`State::set_temp`] key caching one loaded [`SchemaRegistry`] for the
+/// current render, mirroring [`INDEX_CACHE_KEY`]: a render calling
+/// `from_class` several times pays for one [`SchemaRegistry::load`].
+const REGISTRY_CACHE_KEY: &str = "query.registry_cache";
+
 /// Backs both the `query` and `tasks` minijinja namespace objects: one instance
 /// per namespace, differing only in which global it registers as and which
 /// [`FileIndex`] method builds the [`QueryOutcome`]. See
@@ -102,6 +110,12 @@ const INDEX_CACHE_KEY: &str = "query.index_cache";
 #[derive(Debug)]
 pub(super) struct QueryOps {
     root: Arc<Path>,
+    /// Frontmatter field naming a Note's File Class(es), from `[schemas]
+    /// class_field`. Passed to [`QuerySource::Class`] by `from_class`.
+    class_field: Arc<str>,
+    /// Resolved Schema registry directory (`root` joined with `[schemas]
+    /// directory`), loaded by `from_class` for transitive is-a matching.
+    schemas_dir: Arc<Path>,
     /// The minijinja global this instance registers as.
     name: &'static str,
     /// [`FileIndex::query`] for `query`, [`FileIndex::query_tasks`] for
@@ -113,9 +127,15 @@ impl QueryOps {
     /// Wraps `root` for page-level dispatch under the `query` global.
     #[inline]
     #[must_use]
-    pub(super) const fn page(root: Arc<Path>) -> Self {
+    pub(super) const fn page(
+        root: Arc<Path>,
+        class_field: Arc<str>,
+        schemas_dir: Arc<Path>,
+    ) -> Self {
         Self {
             root,
+            class_field,
+            schemas_dir,
             name: "query",
             query: FileIndex::query,
         }
@@ -125,9 +145,15 @@ impl QueryOps {
     /// is one task item instead of one Note; see the module docs.
     #[inline]
     #[must_use]
-    pub(super) const fn task(root: Arc<Path>) -> Self {
+    pub(super) const fn task(
+        root: Arc<Path>,
+        class_field: Arc<str>,
+        schemas_dir: Arc<Path>,
+    ) -> Self {
         Self {
             root,
+            class_field,
+            schemas_dir,
             name: "tasks",
             query: FileIndex::query_tasks,
         }
@@ -167,6 +193,86 @@ impl QueryOps {
         let index = cached_refresh(state, &self.root).map_err(index_error)?;
         Ok(Value::from_object((self.query)(index, source)))
     }
+
+    /// Runs a `from_class` query for `classes` against `state`'s cached
+    /// [`FileIndex`], selecting Notes by File Class with transitive is-a
+    /// matching.
+    ///
+    /// `classes` is a single class name or a list of names. The render's
+    /// Schema registry (cached, see [`Self::cached_registry`]) expands the
+    /// queried names into their is-a match set via
+    /// [`SchemaRegistry::matching_classes`]. A queried class with no Schema
+    /// degrades to exact match and logs a warning.
+    ///
+    /// # Errors
+    ///
+    /// - [`ErrorKind::InvalidOperation`] if `classes` is neither a string nor a
+    ///   sequence of strings.
+    /// - [`ErrorKind::InvalidOperation`] if any queried class is the reserved
+    ///   `global` Schema, which is forbidden as a Note's File Class.
+    /// - [`ErrorKind::InvalidOperation`] via [`registry_error`] if loading the
+    ///   Schema registry fails.
+    /// - Any error [`Self::run`] returns.
+    fn run_class(
+        &self,
+        state: &State,
+        classes: &Value,
+    ) -> Result<Value, Error> {
+        let queried = class_arguments(classes)?;
+        if queried.iter().any(|class| class == GLOBAL_SCHEMA_NAME) {
+            return Err(reserved_class_error());
+        }
+        let registry = self.cached_registry(state)?;
+        for class in &queried {
+            if registry.get(class).is_none() {
+                tracing::warn!(
+                    class = %class,
+                    "from_class references a class with no Schema; degrading \
+                     to exact match"
+                );
+            }
+        }
+        let matches = registry.matching_classes(&queried);
+        self.run(state, &QuerySource::Class {
+            class_field: Arc::clone(&self.class_field),
+            classes: matches,
+        })
+    }
+
+    /// Returns the render's cached [`SchemaRegistry`], loading and caching it
+    /// in `state`'s temp storage first if not already cached this render.
+    /// Logs each [`SchemaWarning`] once, at load time.
+    ///
+    /// # Errors
+    ///
+    /// - [`ErrorKind::InvalidOperation`] via [`registry_error`] if
+    ///   [`SchemaRegistry::load`] fails: a malformed Schema file, a resolution
+    ///   cycle, or an out-of-bounds `$ref`.
+    fn cached_registry(
+        &self,
+        state: &State,
+    ) -> Result<Arc<SchemaRegistry>, Error> {
+        if let Some(registry) =
+            state.get_temp(REGISTRY_CACHE_KEY).and_then(|value| {
+                value
+                    .downcast_object_ref::<CachedRegistry>()
+                    .map(|cached| Arc::clone(&cached.0))
+            })
+        {
+            return Ok(registry);
+        }
+        let (registry, warnings): (SchemaRegistry, Vec<SchemaWarning>) =
+            SchemaRegistry::load(&self.schemas_dir).map_err(registry_error)?;
+        for warning in &warnings {
+            tracing::warn!(%warning, "Schema registry resolved with a warning");
+        }
+        let registry = Arc::new(registry);
+        state.set_temp(
+            REGISTRY_CACHE_KEY,
+            Value::from_object(CachedRegistry(Arc::clone(&registry))),
+        );
+        Ok(registry)
+    }
 }
 
 impl Object for QueryOps {
@@ -201,6 +307,16 @@ impl Object for QueryOps {
                     },
                 ))
             }
+            "from_class" => {
+                let ops = Arc::clone(self);
+                Some(Value::from_function(
+                    move |state: &State,
+                          classes: Value|
+                          -> Result<Value, Error> {
+                        ops.run_class(state, &classes)
+                    },
+                ))
+            }
             _ => None,
         }
     }
@@ -218,6 +334,13 @@ impl Object for QueryOps {
 struct CachedIndex(FileIndex);
 
 impl Object for CachedIndex {}
+
+/// Wraps [`SchemaRegistry`] so it can round-trip through [`State`]'s temp
+/// storage, mirroring [`CachedIndex`]. Never exposed to templates.
+#[derive(Debug)]
+struct CachedRegistry(Arc<SchemaRegistry>);
+
+impl Object for CachedRegistry {}
 
 /// Returns the render's cached [`FileIndex`], refreshing and caching it in
 /// `state`'s temp storage first if not already cached this render.
@@ -261,6 +384,60 @@ fn index_error(source: FileIndexError) -> Error {
 /// [`source`]: std::error::Error::source
 fn query_error(source: QueryError) -> Error {
     super::error::invalid_operation("query failed", source)
+}
+
+/// Maps a [`SchemaError`] into a [`minijinja::Error`].
+///
+/// Keeps the original error as [`source`].
+///
+/// [`source`]: std::error::Error::source
+fn registry_error(source: SchemaError) -> Error {
+    super::error::invalid_operation(
+        "failed to load the Schema registry",
+        source,
+    )
+}
+
+/// Collects a `from_class` argument into queried class names, accepting a
+/// single class name (`from_class("book")`) or a sequence of names
+/// (`from_class(["book", "movie"])`).
+///
+/// # Errors
+///
+/// - [`ErrorKind::InvalidOperation`] if `value` is neither a string nor a
+///   sequence, or a sequence element is not a string.
+fn class_arguments(value: &Value) -> Result<Vec<String>, Error> {
+    if let Some(single) = value.as_str() {
+        return Ok(vec![single.to_owned()]);
+    }
+    value
+        .try_iter()
+        .map_err(|_| class_argument_error())?
+        .map(|item| {
+            item.as_str().map(str::to_owned).ok_or_else(class_argument_error)
+        })
+        .collect()
+}
+
+/// Builds the error for a `from_class` argument that is not a class name or
+/// a list of class names.
+fn class_argument_error() -> Error {
+    Error::new(
+        ErrorKind::InvalidOperation,
+        "from_class expects a class name or a list of class names",
+    )
+}
+
+/// Builds the error for `from_class` naming the reserved `global` Schema,
+/// which is forbidden as a Note's File Class.
+fn reserved_class_error() -> Error {
+    Error::new(
+        ErrorKind::InvalidOperation,
+        format!(
+            "from_class cannot query the reserved `{GLOBAL_SCHEMA_NAME}` \
+             Schema: it is not a valid File Class"
+        ),
+    )
 }
 
 impl Object for QueryOutcome {
@@ -534,18 +711,55 @@ mod tests {
     use super::*;
     use crate::{DialogProvider, PresetDialogProvider};
 
+    /// Builds a `query` [`QueryOps`] for `root` with the default class field
+    /// (`class`) and Schema registry directory (`root/.traces/schemas`).
+    fn page_ops(root: &Path) -> QueryOps {
+        QueryOps::page(
+            Arc::from(root),
+            Arc::from("class"),
+            Arc::from(root.join(".traces/schemas")),
+        )
+    }
+
+    /// Builds a `tasks` [`QueryOps`], the [`page_ops`] counterpart.
+    fn task_ops(root: &Path) -> QueryOps {
+        QueryOps::task(
+            Arc::from(root),
+            Arc::from("class"),
+            Arc::from(root.join(".traces/schemas")),
+        )
+    }
+
     /// A minimal [`Environment`] with `query` and `tasks` registered against
     /// `root`, plus the `table`/`list`/`task_list`/`count` pipeline filters.
     fn env(root: &Path) -> Environment<'static> {
         let mut env = Environment::new();
-        QueryOps::page(Arc::from(root)).register(&mut env);
-        QueryOps::task(Arc::from(root)).register(&mut env);
+        page_ops(root).register(&mut env);
+        task_ops(root).register(&mut env);
         QueryOps::register_terminal_filters(&mut env);
         env
     }
 
     fn render(root: &Path, source: &str) -> Result<String, Error> {
         env(root).render_str(source, minijinja::context!())
+    }
+
+    /// Renders `source` against `root` with the `query`/`tasks` namespaces
+    /// bound to a non-default File Class frontmatter field, exercising the
+    /// `[schemas] class_field` wiring end-to-end.
+    fn render_with_class_field(
+        root: &Path,
+        class_field: &str,
+        source: &str,
+    ) -> Result<String, Error> {
+        let field: Arc<str> = Arc::from(class_field);
+        let dir: Arc<Path> = Arc::from(root.join(".traces/schemas"));
+        let mut env = Environment::new();
+        QueryOps::page(Arc::from(root), Arc::clone(&field), Arc::clone(&dir))
+            .register(&mut env);
+        QueryOps::task(Arc::from(root), field, dir).register(&mut env);
+        QueryOps::register_terminal_filters(&mut env);
+        env.render_str(source, minijinja::context!())
     }
 
     mod fixtures {
@@ -564,7 +778,7 @@ mod tests {
         #[test]
         fn returns_none_for_an_unknown_key() {
             let temp = tempfile::tempdir().expect("create temp dir");
-            let ops = Arc::new(QueryOps::page(Arc::from(temp.path())));
+            let ops = Arc::new(page_ops(temp.path()));
 
             assert!(ops.get_value(&Value::from("unknown")).is_none());
         }
@@ -572,7 +786,7 @@ mod tests {
         #[test]
         fn returns_none_for_a_non_string_key() {
             let temp = tempfile::tempdir().expect("create temp dir");
-            let ops = Arc::new(QueryOps::page(Arc::from(temp.path())));
+            let ops = Arc::new(page_ops(temp.path()));
 
             assert!(ops.get_value(&Value::from(1)).is_none());
         }
@@ -584,7 +798,7 @@ mod tests {
         #[test]
         fn lists_every_method() {
             let temp = tempfile::tempdir().expect("create temp dir");
-            let ops = Arc::new(QueryOps::page(Arc::from(temp.path())));
+            let ops = Arc::new(page_ops(temp.path()));
 
             assert!(matches!(ops.enumerate(), Enumerator::Str(METHODS)));
         }
@@ -592,7 +806,7 @@ mod tests {
         #[test]
         fn every_enumerated_method_resolves_via_get_value() {
             let temp = tempfile::tempdir().expect("create temp dir");
-            let ops = Arc::new(QueryOps::page(Arc::from(temp.path())));
+            let ops = Arc::new(page_ops(temp.path()));
 
             for method in METHODS {
                 assert!(
@@ -1236,8 +1450,8 @@ mod tests {
         fn tasks_reuses_the_index_query_cached_in_the_same_render() {
             let temp = tempfile::tempdir().expect("create temp dir");
             write_note(temp.path(), "a.md", "# A");
-            let page_ops = Arc::new(QueryOps::page(Arc::from(temp.path())));
-            let task_ops = Arc::new(QueryOps::task(Arc::from(temp.path())));
+            let page_ops = Arc::new(page_ops(temp.path()));
+            let task_ops = Arc::new(task_ops(temp.path()));
             let page_all = page_ops
                 .get_value(&Value::from("all"))
                 .expect("all is a known method");
@@ -1286,6 +1500,178 @@ mod tests {
 
             assert_eq!(pages, "1");
             assert_eq!(tasks, "2");
+        }
+    }
+
+    mod from_class {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        /// Writes `toml` as `<name>.toml` under `root`'s Schema registry
+        /// directory, creating it if needed.
+        fn write_schema(root: &Path, name: &str, toml: &str) {
+            let dir = root.join(".traces/schemas");
+            fs::create_dir_all(&dir).expect("create schema dir");
+            fs::write(dir.join(format!("{name}.toml")), toml)
+                .expect("write schema");
+        }
+
+        /// Writes a Note carrying `frontmatter` between YAML delimiters.
+        fn write_class_note(root: &Path, name: &str, frontmatter: &str) {
+            write_note(
+                root,
+                name,
+                &format!("---\n{frontmatter}\n---\n# {name}"),
+            );
+        }
+
+        #[test]
+        fn selects_notes_of_a_single_class() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_schema(temp.path(), "book", "");
+            write_class_note(temp.path(), "dune.md", "class: book");
+            write_class_note(temp.path(), "diary.md", "class: journal");
+
+            let rendered = render(
+                temp.path(),
+                r#"{{ query.from_class("book") | length }}"#,
+            )
+            .expect("render succeeds");
+
+            assert_eq!(rendered, "1");
+        }
+
+        #[test]
+        fn matches_any_of_several_classes() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_schema(temp.path(), "book", "");
+            write_schema(temp.path(), "movie", "");
+            write_class_note(temp.path(), "dune.md", "class: book");
+            write_class_note(temp.path(), "alien.md", "class: movie");
+            write_class_note(temp.path(), "diary.md", "class: journal");
+
+            let rendered = render(
+                temp.path(),
+                r#"{{ query.from_class(["book", "movie"]) | length }}"#,
+            )
+            .expect("render succeeds");
+
+            assert_eq!(rendered, "2");
+        }
+
+        #[test]
+        fn matches_a_subclass_transitively() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_schema(temp.path(), "book", "");
+            write_schema(temp.path(), "sci_fi", "extends = [\"book\"]\n");
+            write_class_note(temp.path(), "dune.md", "class: sci_fi");
+
+            let rendered = render(
+                temp.path(),
+                r#"{{ query.from_class("book") | length }}"#,
+            )
+            .expect("render succeeds");
+
+            assert_eq!(rendered, "1");
+        }
+
+        #[test]
+        fn degrades_to_exact_match_when_the_class_has_no_schema() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            // No Schema registry: `book` cannot resolve subclasses, so only
+            // a Note whose class is literally `book` matches.
+            write_class_note(temp.path(), "dune.md", "class: book");
+            write_class_note(temp.path(), "unknown.md", "class: sci_fi");
+
+            let rendered = render(
+                temp.path(),
+                r#"{{ query.from_class("book") | length }}"#,
+            )
+            .expect("render succeeds");
+
+            assert_eq!(rendered, "1");
+        }
+
+        #[test]
+        fn rejects_the_reserved_global_class() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_class_note(temp.path(), "dune.md", "class: book");
+
+            let error = render(
+                temp.path(),
+                r#"{{ query.from_class("global") | length }}"#,
+            )
+            .expect_err("global is a forbidden File Class");
+
+            assert_eq!(error.kind(), ErrorKind::InvalidOperation);
+        }
+
+        #[test]
+        fn tasks_from_class_selects_task_rows() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_schema(temp.path(), "book", "");
+            write_note(
+                temp.path(),
+                "dune.md",
+                "---\nclass: book\n---\n# Dune\n- [ ] read part two\n",
+            );
+
+            let rendered = render(
+                temp.path(),
+                r#"{{ tasks.from_class("book") | length }}"#,
+            )
+            .expect("render succeeds");
+
+            assert_eq!(rendered, "1");
+        }
+
+        #[test]
+        fn reads_the_file_class_from_the_configured_field() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_schema(temp.path(), "book", "");
+            write_class_note(temp.path(), "dune.md", "kind: book");
+
+            let configured = render_with_class_field(
+                temp.path(),
+                "kind",
+                r#"{{ query.from_class("book") | length }}"#,
+            )
+            .expect("render succeeds");
+            // Under the default `class` field the `kind: book` Note carries
+            // no File Class, so the same query must select nothing.
+            let default = render(
+                temp.path(),
+                r#"{{ query.from_class("book") | length }}"#,
+            )
+            .expect("render succeeds");
+
+            assert_eq!(configured, "1");
+            assert_eq!(default, "0");
+        }
+
+        #[test]
+        fn rejects_a_non_string_class_argument() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_class_note(temp.path(), "dune.md", "class: book");
+
+            let error =
+                render(temp.path(), "{{ query.from_class(5) | length }}")
+                    .expect_err("a non-string class argument is rejected");
+
+            assert_eq!(error.kind(), ErrorKind::InvalidOperation);
+        }
+
+        #[test]
+        fn rejects_a_non_string_class_in_a_list() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_class_note(temp.path(), "dune.md", "class: book");
+
+            let error =
+                render(temp.path(), "{{ query.from_class([5]) | length }}")
+                    .expect_err("a non-string class in a list is rejected");
+
+            assert_eq!(error.kind(), ErrorKind::InvalidOperation);
         }
     }
 }

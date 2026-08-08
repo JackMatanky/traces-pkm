@@ -32,13 +32,6 @@ mod raw;
 mod registry;
 mod resolve;
 
-#[expect(
-    unused_imports,
-    reason = "declared by the schema-registry ticket for crate-wide reuse; \
-              consumed by the schema-namespace ticket \
-              (.scratch/metadata-schemas/issues/03-schema-minijinja-namespace.\
-              md)"
-)]
 pub(crate) use error::{SchemaError, SchemaWarning};
 #[expect(
     unused_imports,
@@ -48,13 +41,6 @@ pub(crate) use error::{SchemaError, SchemaWarning};
               md)"
 )]
 pub(crate) use model::Schema;
-#[expect(
-    unused_imports,
-    reason = "declared by the schema-registry ticket for crate-wide reuse; \
-              consumed by the schema-namespace ticket \
-              (.scratch/metadata-schemas/issues/03-schema-minijinja-namespace.\
-              md)"
-)]
 pub(crate) use registry::SchemaRegistry;
 
 /// The reserved Global Schema name (`global.toml`).

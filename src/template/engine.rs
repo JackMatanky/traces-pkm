@@ -41,7 +41,7 @@ use self::{
     ui::UiOps,
 };
 use super::{loader::TemplateLoader, path::DeclaredOutputPath};
-use crate::DialogProvider;
+use crate::{DialogProvider, config::SchemasConfig};
 
 /// Renders template source through minijinja, backed by [`TemplateLoader`]'s
 /// `{% include %}` and `{% extends %}` resolution.
@@ -74,6 +74,9 @@ impl TemplateEngine {
     ///   calls.
     /// * `root` - The base [`Path`] confining file operations, queries, and
     ///   path inspections.
+    /// * `schemas` - The `[schemas]` settings supplying the File Class
+    ///   frontmatter field and the Schema registry directory for
+    ///   `query.from_class`/`tasks.from_class`.
     ///
     /// [`uuid`]: fn@uuid
     /// [`DialogProvider`]: crate::DialogProvider
@@ -84,6 +87,7 @@ impl TemplateEngine {
         loader: &TemplateLoader,
         provider: Arc<dyn DialogProvider>,
         root: &Path,
+        schemas: &SchemasConfig,
     ) -> Self {
         let mut env = Environment::new();
         // Powers `minijinja::Error::range()`/`template_source()`, which
@@ -96,10 +100,18 @@ impl TemplateEngine {
             let loader = loader.clone();
             move |name| loader.load(name)
         });
-        let root = Arc::from(root);
+        let root: Arc<Path> = Arc::from(root);
+        let class_field: Arc<str> = Arc::from(schemas.class_field());
+        let schemas_dir: Arc<Path> = Arc::from(root.join(schemas.directory()));
         FileOps::new(Arc::clone(&root)).register(&mut env);
-        QueryOps::page(Arc::clone(&root)).register(&mut env);
-        QueryOps::task(Arc::clone(&root)).register(&mut env);
+        QueryOps::page(
+            Arc::clone(&root),
+            Arc::clone(&class_field),
+            Arc::clone(&schemas_dir),
+        )
+        .register(&mut env);
+        QueryOps::task(Arc::clone(&root), class_field, schemas_dir)
+            .register(&mut env);
         QueryOps::register_terminal_filters(&mut env);
         PathOps::new(root).register(&mut env);
         UiOps::new(provider).register(&mut env);
@@ -199,6 +211,7 @@ mod tests {
                 &loader_from_dir(temp.path()),
                 preset_provider(),
                 temp.path(),
+                &SchemasConfig::default(),
             );
 
             let rendered = engine
@@ -217,6 +230,7 @@ mod tests {
                 &loader_from_dir(temp.path()),
                 preset_provider(),
                 temp.path(),
+                &SchemasConfig::default(),
             );
 
             let rendered = engine
@@ -236,6 +250,7 @@ mod tests {
                 &loader_from_dir(&dir),
                 preset_provider(),
                 temp.path(),
+                &SchemasConfig::default(),
             );
 
             let rendered = engine
@@ -254,6 +269,7 @@ mod tests {
                 &loader_from_dir(temp.path()),
                 preset_provider(),
                 temp.path(),
+                &SchemasConfig::default(),
             );
 
             let rendered = engine
@@ -276,6 +292,7 @@ mod tests {
                 &TemplateLoader::new(Some(local_dir), Some(global_dir)),
                 preset_provider(),
                 temp.path(),
+                &SchemasConfig::default(),
             );
 
             let rendered = engine
@@ -294,6 +311,7 @@ mod tests {
                 &loader_from_dir(temp.path()),
                 preset_provider(),
                 temp.path(),
+                &SchemasConfig::default(),
             );
 
             let rendered = engine
@@ -312,6 +330,7 @@ mod tests {
                 &loader_from_dir(temp.path()),
                 preset_provider(),
                 temp.path(),
+                &SchemasConfig::default(),
             );
 
             let rendered = engine
@@ -344,6 +363,7 @@ mod tests {
                 &loader_from_dir(temp.path()),
                 preset_provider(),
                 temp.path(),
+                &SchemasConfig::default(),
             );
 
             let rendered = engine
@@ -360,6 +380,7 @@ mod tests {
                 &loader_from_dir(temp.path()),
                 preset_provider(),
                 temp.path(),
+                &SchemasConfig::default(),
             );
 
             let rendered = engine
@@ -379,6 +400,7 @@ mod tests {
                 &loader_from_dir(temp.path()),
                 preset_provider(),
                 temp.path(),
+                &SchemasConfig::default(),
             );
             engine
                 .render("{{ file.write_to(\"first.md\") }}", "test.md")
@@ -398,6 +420,7 @@ mod tests {
                 &loader_from_dir(temp.path()),
                 preset_provider(),
                 temp.path(),
+                &SchemasConfig::default(),
             );
 
             let error = engine
@@ -427,6 +450,7 @@ mod tests {
                 &loader_from_dir(temp.path()),
                 preset_provider(),
                 temp.path(),
+                &SchemasConfig::default(),
             );
 
             let rendered = engine
@@ -443,6 +467,7 @@ mod tests {
                 &loader_from_dir(temp.path()),
                 preset_provider(),
                 temp.path(),
+                &SchemasConfig::default(),
             );
 
             let rendered = engine
@@ -459,6 +484,7 @@ mod tests {
                 &loader_from_dir(temp.path()),
                 preset_provider(),
                 temp.path(),
+                &SchemasConfig::default(),
             );
 
             let rendered = engine
@@ -475,6 +501,7 @@ mod tests {
                 &loader_from_dir(temp.path()),
                 preset_provider(),
                 temp.path(),
+                &SchemasConfig::default(),
             );
 
             let rendered = engine
@@ -493,6 +520,7 @@ mod tests {
                 &loader_from_dir(temp.path()),
                 preset_provider(),
                 temp.path(),
+                &SchemasConfig::default(),
             );
 
             let rendered = engine
@@ -509,6 +537,7 @@ mod tests {
                 &loader_from_dir(temp.path()),
                 preset_provider(),
                 temp.path(),
+                &SchemasConfig::default(),
             );
 
             let rendered = engine
