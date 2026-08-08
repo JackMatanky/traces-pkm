@@ -262,6 +262,20 @@ mod tests {
 
             assert!(matches!(ops.enumerate(), Enumerator::Str(METHODS)));
         }
+
+        #[test]
+        fn every_enumerated_method_resolves_via_get_value() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let ops = Arc::new(SchemaOps::new(Arc::from(temp.path())));
+
+            for method in METHODS {
+                assert!(
+                    ops.get_value(&Value::from(*method)).is_some(),
+                    "{method:?} is enumerated but get_value has no matching \
+                     arm"
+                );
+            }
+        }
     }
 
     mod get {
@@ -321,7 +335,7 @@ mod tests {
         }
 
         #[test]
-        fn a_second_call_in_the_same_render_reuses_the_cached_registry() {
+        fn two_calls_in_the_same_render_both_resolve_the_same_schema() {
             let temp = tempfile::tempdir().expect("create temp dir");
             write_schema(
                 temp.path(),
@@ -341,6 +355,87 @@ mod tests {
             .expect("render succeeds");
 
             assert_eq!(rendered, "reading-reading");
+        }
+    }
+
+    mod caching {
+        use std::fs;
+
+        use super::*;
+
+        #[test]
+        fn a_second_call_reuses_the_registry_cached_by_the_first() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let schemas_dir = temp.path().join(".traces/schemas");
+            write_schema(
+                temp.path(),
+                "book",
+                r#"
+                [fields.status]
+                type = "select"
+                values = ["reading"]
+                "#,
+            );
+            let ops =
+                Arc::new(SchemaOps::new(Arc::from(schemas_dir.as_path())));
+            let get = ops
+                .get_value(&Value::from("get"))
+                .expect("get is a known method");
+            let env = Environment::new();
+            let state = env.empty_state();
+
+            // Populates state's cached SchemaRegistry.
+            get.call(&state, &[Value::from("book")])
+                .expect("first call loads and caches the registry");
+            // A missing registry directory degrades to an empty registry
+            // (SchemaRegistry::load), not an error: if the second call
+            // below re-read the directory instead of reusing the cache, it
+            // would find no `book` Schema and hard-error.
+            fs::remove_dir_all(&schemas_dir).expect("remove schemas dir");
+
+            let second = get.call(&state, &[Value::from("book")]);
+
+            assert!(
+                second.is_ok(),
+                "a cached registry must not need to reread a now-missing \
+                 directory"
+            );
+        }
+    }
+
+    mod warnings {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn a_missing_extends_target_degrades_with_a_warning_instead_of_failing_the_render()
+         {
+            // `sci_fi` extends an unresolvable Schema name: ticket 02's
+            // resolve() degrades this to a `SchemaWarning`, not a
+            // `SchemaError` — `sci_fi`'s own fields must still render.
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_schema(
+                temp.path(),
+                "sci_fi",
+                r#"
+                extends = ["does_not_exist"]
+
+                [fields.status]
+                type = "select"
+                values = ["reading"]
+                "#,
+            );
+
+            let rendered = render(
+                &temp.path().join(".traces/schemas"),
+                "{{ schema.get('sci_fi').field('status') | join(',') }}",
+            )
+            .expect(
+                "a degraded extends target should warn, not fail the render",
+            );
+
+            assert_eq!(rendered, "reading");
         }
     }
 

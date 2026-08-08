@@ -402,6 +402,60 @@ mod tests {
             assert!(definition.is_required());
             assert!(definition.is_multi());
         }
+
+        mod selectable_values {
+            use pretty_assertions::assert_eq;
+            use rstest::rstest;
+
+            use super::super::super::*;
+
+            #[test]
+            fn returns_the_values_list_for_a_select_field() {
+                let field = FieldDefinition::new(
+                    FieldOptions::Select {
+                        values: vec!["draft".to_owned(), "done".to_owned()],
+                    },
+                    false,
+                    false,
+                );
+
+                assert_eq!(
+                    field.selectable_values(),
+                    Some(["draft".to_owned(), "done".to_owned()].as_slice())
+                );
+            }
+
+            #[test]
+            fn returns_an_empty_slice_for_a_select_field_with_no_values() {
+                let field = FieldDefinition::new(
+                    FieldOptions::Select {
+                        values: Vec::new(),
+                    },
+                    false,
+                    false,
+                );
+
+                assert_eq!(field.selectable_values(), Some([].as_slice()));
+            }
+
+            #[rstest]
+            #[case::input(FieldOptions::Input)]
+            #[case::boolean(FieldOptions::Boolean)]
+            #[case::number(FieldOptions::Number)]
+            #[case::date(FieldOptions::Date)]
+            #[case::file(FieldOptions::File {
+                folders: vec!["assets".to_owned()],
+                ext: Some("png".to_owned()),
+                class: vec!["image".to_owned()],
+            })]
+            fn returns_none_for_a_non_select_field_type(
+                #[case] options: FieldOptions,
+            ) {
+                let field = FieldDefinition::new(options, false, false);
+
+                assert_eq!(field.selectable_values(), None);
+            }
+        }
     }
 
     mod field_options {

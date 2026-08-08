@@ -84,3 +84,63 @@ Ran a `/code-review`-style Standards + Spec pass (two parallel reviewer sub-agen
 
 - **Spec**: verdict "correct" — full ticket checklist satisfied, no ticket 04/05 scope creep, error/`None`/lazy-validation semantics all match.
 - **Standards**: one real finding (the stale `class_field` reason string above, fixed) and one low-confidence judgement call (the `State`-temp-cache shape in `cached_registry` structurally repeats `query.rs`'s `cached_refresh`) — left as-is: extracting a two-call-site generic cache helper would trade a small, obvious duplication for a new abstraction layer, the wrong direction per this repo's own precedent of one small `Cached*` wrapper per consuming module.
+
+### Test coverage audit (2026-08-08)
+
+Ran `rust-unit-testing`'s case-surface enumeration method (read the source,
+list every match arm/`Option` path/error site, map existing tests onto that
+list, then close what's unmapped) against both new units: `SchemaOps`'s
+`Object` impl (`template/engine/schema.rs`) and the new
+`FieldDefinition::selectable_values()` (`schema/model.rs`).
+
+**Gaps closed:**
+
+- `FieldDefinition::selectable_values()` had **zero** direct unit tests — it
+  was only exercised indirectly through `schema.rs`'s render-seam tests,
+  three call-frames from the actual logic (the same gap ticket 02's own
+  audit found and closed for `model.rs` generally). Added a `mod
+  selectable_values` under the existing `mod field_definition`: a `select`
+  field with values, a `select` field with an empty list (boundary), and an
+  `#[rstest]` table (matching this file's own `from_raw`/`kind` precedent)
+  covering all five non-`select` `FieldOptions` variants return `None`,
+  including `file` with populated sub-fields (proving `file`'s current
+  `None` isn't just because the fixture happened to be empty).
+- `enumerate::every_enumerated_method_resolves_via_get_value` — present in
+  both `query.rs` and `ui.rs` for their top-level namespace object, absent
+  here. Added the equivalent for `SchemaOps`.
+- `a_second_call_in_the_same_render_reuses_the_cached_registry` asserted
+  only that two `schema.get()` calls agreed, not that caching actually
+  happened (a non-cached reload would produce the same correct output,
+  just slower). Replaced with `caching::a_second_call_reuses_the_registry_cached_by_the_first`,
+  which calls the `get` closure directly against one `State`
+  (`env.empty_state()`, mirroring `query.rs`'s
+  `tasks_reuses_the_index_query_cached_in_the_same_render`), deletes the
+  schemas directory between calls, and asserts the second call still
+  succeeds — a genuine proof, since `SchemaRegistry::load` degrades a
+  missing directory to an *empty* registry rather than an error, so an
+  uncached reload would hard-error on the now-unknown Schema. Verified
+  this test actually catches a regression by temporarily short-circuiting
+  the cache-hit branch and confirming the test fails, then restoring.
+  The original correctness case survives, renamed
+  `get::two_calls_in_the_same_render_both_resolve_the_same_schema`.
+- The non-empty-`SchemaWarning`-list branch in `cached_registry` (the
+  `tracing::warn!` loop) was never exercised — every existing fixture
+  resolved with zero warnings. Added
+  `warnings::a_missing_extends_target_degrades_with_a_warning_instead_of_failing_the_render`,
+  an `extends` pointing at an unresolvable Schema name, asserting the
+  render still succeeds with the child's own fields intact.
+
+**Explicitly not flagged (checked against precedent, not gaps):** direct
+`get_value`/`enumerate`/`call_method` unit tests for the bound `Schema`
+object itself (mirroring `SchemaOps`) — `query.rs` doesn't give its own
+bound objects (`QueryOutcome`, `IndexRecord`) that treatment either, only
+indirect render-level coverage, and `Schema::new` is `pub(super)`
+(inaccessible outside `crate::schema`) so a same-file direct test would
+need a real `SchemaRegistry::load` anyway, at which point it's the render
+seam. Empty-string `schema.get("")`/`.field("")` arguments: same code path
+as any other unknown name, already covered.
+
+17 tests in `template::engine::schema` (was 14), 8 new in
+`schema::model::tests::field_definition::selectable_values`. Full suite
+re-verified: `mise run check`/`clippy` (both gates)/`fmt`/`lint`, `cargo
+test --workspace` (1332 lib + 4 bin + 18 e2e + 10 doctests), all green.
