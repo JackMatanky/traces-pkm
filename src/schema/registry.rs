@@ -7,7 +7,12 @@
 //! [`super::resolve::resolve`], a pure function tested with no filesystem at
 //! all.
 
-use std::{collections::BTreeMap, ffi::OsStr, fs, io, path::Path};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    ffi::OsStr,
+    fs, io,
+    path::Path,
+};
 
 use walkdir::WalkDir;
 
@@ -23,16 +28,6 @@ use crate::file_name::BaseNameRef;
 /// Every Schema under a registry directory, resolved through `extends`,
 /// `excludes`, and `$ref`.
 #[derive(Clone, Debug)]
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "declared by the schema-registry ticket; consumed by the \
-                  schema-namespace ticket \
-                  (.scratch/metadata-schemas/issues/\
-                  03-schema-minijinja-namespace.md)"
-    )
-)]
 pub(crate) struct SchemaRegistry {
     schemas: BTreeMap<SchemaName, Schema>,
 }
@@ -55,16 +50,6 @@ impl SchemaRegistry {
     ///   contains an unknown key.
     /// - Any error [`resolve::resolve`] returns while linearizing the `extends`
     ///   DAG.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "declared by the schema-registry ticket; consumed by the \
-                      schema-namespace ticket \
-                      (.scratch/metadata-schemas/issues/\
-                      03-schema-minijinja-namespace.md)"
-        )
-    )]
     pub(crate) fn load(
         directory: &Path,
     ) -> Result<(Self, Vec<SchemaWarning>), SchemaError> {
@@ -82,16 +67,6 @@ impl SchemaRegistry {
     /// resolved.
     #[inline]
     #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "declared by the schema-registry ticket; consumed by the \
-                      schema-namespace ticket \
-                      (.scratch/metadata-schemas/issues/\
-                      03-schema-minijinja-namespace.md)"
-        )
-    )]
     pub(crate) fn get(&self, name: &str) -> Option<&Schema> {
         self.schemas.get(name)
     }
@@ -106,18 +81,31 @@ impl SchemaRegistry {
     /// file still matches itself.
     #[inline]
     #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "declared by the schema-registry ticket; consumed by the \
-                      class-queries ticket \
-                      (.scratch/metadata-schemas/issues/05-class-queries.md)"
-        )
-    )]
     pub(crate) fn is_a(&self, subject: &str, queried: &str) -> bool {
         self.get(subject)
             .map_or_else(|| subject == queried, |schema| schema.is_a(queried))
+    }
+
+    /// Expands `queried` File Class names into the full set of class values
+    /// that match them under is-a: every queried name (so a class with no
+    /// Schema still matches itself) plus every resolved Schema that is-a one
+    /// of the queried names.
+    ///
+    /// This is the match set a `from_class` query tests each Note's File
+    /// Class against: a Note matches when any of its class values is in the
+    /// returned set. Transitive `extends` is folded in here, so the caller
+    /// compares plain strings without consulting the registry per Note.
+    pub(crate) fn matching_classes(
+        &self,
+        queried: &[String],
+    ) -> BTreeSet<String> {
+        let mut matches: BTreeSet<String> = queried.iter().cloned().collect();
+        for name in self.schemas.keys() {
+            if queried.iter().any(|class| self.is_a(name.as_str(), class)) {
+                matches.insert(name.as_str().to_owned());
+            }
+        }
+        matches
     }
 }
 
@@ -135,16 +123,6 @@ impl SchemaRegistry {
 /// - [`SchemaError::ReadFile`] if a `.toml` file cannot be read.
 /// - [`SchemaError::Parse`] if a Schema file's TOML is malformed or contains an
 ///   unknown key.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "declared by the schema-registry ticket; consumed by the \
-                  schema-namespace ticket \
-                  (.scratch/metadata-schemas/issues/\
-                  03-schema-minijinja-namespace.md)"
-    )
-)]
 fn read_raw_schemas(
     directory: &Path,
 ) -> Result<BTreeMap<SchemaName, RawSchema>, SchemaError> {
@@ -418,6 +396,73 @@ mod tests {
 
             assert!(registry.is_a("sci_fi", "book"));
             assert!(!registry.is_a("book", "sci_fi"));
+        }
+    }
+
+    mod matching_classes {
+        use std::collections::BTreeSet;
+
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        fn set(names: &[&str]) -> BTreeSet<String> {
+            names.iter().map(|name| (*name).to_owned()).collect()
+        }
+
+        #[test]
+        fn includes_a_queried_class_with_no_schema() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let (registry, _) =
+                SchemaRegistry::load(temp.path()).expect("registry loads");
+
+            let matches = registry.matching_classes(&["ghost".to_owned()]);
+
+            assert_eq!(matches, set(&["ghost"]));
+        }
+
+        #[test]
+        fn includes_transitive_subclasses_of_a_queried_class() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_schema(temp.path(), "book", "");
+            write_schema(temp.path(), "sci_fi", r#"extends = ["book"]"#);
+
+            let (registry, _) =
+                SchemaRegistry::load(temp.path()).expect("registry loads");
+
+            let matches = registry.matching_classes(&["book".to_owned()]);
+
+            assert_eq!(matches, set(&["book", "sci_fi"]));
+        }
+
+        #[test]
+        fn excludes_classes_unrelated_to_the_queried_class() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_schema(temp.path(), "book", "");
+            write_schema(temp.path(), "movie", "");
+
+            let (registry, _) =
+                SchemaRegistry::load(temp.path()).expect("registry loads");
+
+            let matches = registry.matching_classes(&["book".to_owned()]);
+
+            assert_eq!(matches, set(&["book"]));
+        }
+
+        #[test]
+        fn unions_the_matches_of_every_queried_class() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_schema(temp.path(), "book", "");
+            write_schema(temp.path(), "sci_fi", r#"extends = ["book"]"#);
+            write_schema(temp.path(), "movie", "");
+
+            let (registry, _) =
+                SchemaRegistry::load(temp.path()).expect("registry loads");
+
+            let matches = registry
+                .matching_classes(&["book".to_owned(), "movie".to_owned()]);
+
+            assert_eq!(matches, set(&["book", "movie", "sci_fi"]));
         }
     }
 }

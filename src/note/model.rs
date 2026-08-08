@@ -79,15 +79,6 @@ impl Note {
     /// Returns the parsed YAML frontmatter block, if present.
     #[inline]
     #[must_use]
-    #[cfg_attr(
-        not(any(test, feature = "test-utils")),
-        expect(
-            dead_code,
-            reason = "no current caller outside tests; documented deliberate \
-                      API in index-query#03's Note Accessor design, split \
-                      from the fields() iterator that is used"
-        )
-    )]
     pub fn frontmatter(&self) -> Option<&Frontmatter> {
         self.frontmatter.as_ref()
     }

@@ -22,32 +22,12 @@ use serde::Deserialize;
 
 /// A Schema's name: its source file's stem.
 #[derive(Clone, Default, Eq, Hash, Ord, PartialEq, PartialOrd, Deserialize)]
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "declared by the schema-registry ticket; consumed by the \
-                  schema-namespace ticket \
-                  (.scratch/metadata-schemas/issues/\
-                  03-schema-minijinja-namespace.md)"
-    )
-)]
 pub(crate) struct SchemaName(String);
 
 impl SchemaName {
     /// Returns this name as a string slice.
     #[inline]
     #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "declared by the schema-registry ticket; consumed by the \
-                      schema-namespace ticket \
-                      (.scratch/metadata-schemas/issues/\
-                      03-schema-minijinja-namespace.md)"
-        )
-    )]
     pub(crate) fn as_str(&self) -> &str {
         &self.0
     }
@@ -55,16 +35,6 @@ impl SchemaName {
     /// Borrows this name as a [`SchemaNameRef`].
     #[inline]
     #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "declared by the schema-registry ticket; consumed by the \
-                      schema-namespace ticket \
-                      (.scratch/metadata-schemas/issues/\
-                      03-schema-minijinja-namespace.md)"
-        )
-    )]
     pub(crate) fn as_ref(&self) -> SchemaNameRef<'_> {
         SchemaNameRef(&self.0)
     }
@@ -112,16 +82,6 @@ impl<'a> SchemaNameRef<'a> {
     /// Returns this name as a string slice.
     #[inline]
     #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "declared by the schema-registry ticket; consumed by the \
-                      schema-namespace ticket \
-                      (.scratch/metadata-schemas/issues/\
-                      03-schema-minijinja-namespace.md)"
-        )
-    )]
     pub(crate) fn as_str(self) -> &'a str {
         self.0
     }

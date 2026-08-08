@@ -8,7 +8,7 @@
 //! - [`TemplateConfig`] - Preserves local and global template directories so
 //!   template lookup can stay local-first.
 //! - [`SchemasConfig`] - The `[schemas]` class field name and registry
-//!   directory, declared here and consumed by later Schema-registry work.
+//!   directory, resolved for `query.from_class`/`tasks.from_class`.
 //! - [`FrontmatterConfig`] - The `[frontmatter]` key names for title, aliases,
 //!   and the `{name, format}` date roles, declared here and consumed by later
 //!   frontmatter-aware work.
@@ -30,15 +30,6 @@ const DEFAULT_SCHEMAS_DIR: &str = ".traces/schemas/";
 pub struct Config {
     root: PathBuf,
     templates: TemplateConfig,
-    #[cfg_attr(
-        not(any(test, feature = "test-utils")),
-        expect(
-            dead_code,
-            reason = "declared by the config-surface ticket; read by the \
-                      later Schema-registry ticket \
-                      (.scratch/metadata-schemas/issues/01-config-surface.md)"
-        )
-    )]
     schemas: SchemasConfig,
     #[cfg_attr(
         not(any(test, feature = "test-utils")),
@@ -108,15 +99,6 @@ impl Config {
     /// Returns the resolved `[schemas]` settings.
     #[inline]
     #[must_use]
-    #[cfg_attr(
-        not(any(test, feature = "test-utils")),
-        expect(
-            dead_code,
-            reason = "declared by the config-surface ticket; read by the \
-                      later Schema-registry ticket \
-                      (.scratch/metadata-schemas/issues/01-config-surface.md)"
-        )
-    )]
     pub fn schemas(&self) -> &SchemasConfig {
         &self.schemas
     }
@@ -211,30 +193,12 @@ impl TemplateConfig {
 /// Resolved `[schemas]` settings: the class field name and registry
 /// directory.
 ///
-/// The registry directory and class field are declared here but not yet
-/// read by any consumer; a later Schema-registry ticket resolves the
-/// directory against [`Config::root`] and reads Notes' class field.
+/// The template engine reads the class field and joins the registry
+/// directory against [`Config::root`] to resolve a Note's File Class(es)
+/// for `query.from_class`/`tasks.from_class`.
 #[derive(Clone, Debug)]
 pub struct SchemasConfig {
-    #[cfg_attr(
-        not(any(test, feature = "test-utils")),
-        expect(
-            dead_code,
-            reason = "declared by the config-surface ticket; read by the \
-                      later Schema-registry ticket \
-                      (.scratch/metadata-schemas/issues/01-config-surface.md)"
-        )
-    )]
     class_field: String,
-    #[cfg_attr(
-        not(any(test, feature = "test-utils")),
-        expect(
-            dead_code,
-            reason = "declared by the config-surface ticket; read by the \
-                      later Schema-registry ticket \
-                      (.scratch/metadata-schemas/issues/01-config-surface.md)"
-        )
-    )]
     directory: PathBuf,
 }
 
@@ -243,15 +207,6 @@ impl SchemasConfig {
     /// to `class`.
     #[inline]
     #[must_use]
-    #[cfg_attr(
-        not(any(test, feature = "test-utils")),
-        expect(
-            dead_code,
-            reason = "declared by the config-surface ticket; read by the \
-                      later Schema-registry ticket \
-                      (.scratch/metadata-schemas/issues/01-config-surface.md)"
-        )
-    )]
     pub fn class_field(&self) -> &str {
         &self.class_field
     }
@@ -260,15 +215,6 @@ impl SchemasConfig {
     /// against [`Config::root`]). Defaults to `.traces/schemas/`.
     #[inline]
     #[must_use]
-    #[cfg_attr(
-        not(any(test, feature = "test-utils")),
-        expect(
-            dead_code,
-            reason = "declared by the config-surface ticket; read by the \
-                      later Schema-registry ticket \
-                      (.scratch/metadata-schemas/issues/01-config-surface.md)"
-        )
-    )]
     pub fn directory(&self) -> &Path {
         &self.directory
     }
