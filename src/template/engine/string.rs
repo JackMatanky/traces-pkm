@@ -73,6 +73,7 @@ fn trim_suffix(value: &str, suffix: &str) -> String {
 /// Truncates by character count, not byte count, so multi-byte UTF-8 input is
 /// not split mid-character. Keeps the total output length, including the
 /// ellipsis, within `length`. Returns `value` unchanged when it already fits.
+///
 /// # Errors
 ///
 /// - [`ErrorKind::InvalidOperation`] if `ellipsis` is present but not a string.

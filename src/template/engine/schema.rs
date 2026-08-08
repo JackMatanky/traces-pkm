@@ -8,18 +8,18 @@
 //!
 //! The bound [`Schema`] is itself a minijinja object exposing one method:
 //!
-//! - `.field(name)`: the named field's selectable values — plain strings for a
-//!   `select` field, `none` for every other type (`file` fields resolve their
-//!   options from the `FileIndex` in a later ticket and return `none` here
-//!   too). An unknown field name hard-errors, mirroring `.get`.
+//! - `.field(name)`: the named field's selectable values, as plain strings for
+//!   a `select` field, or `none` for every other type. `file` fields currently
+//!   always resolve to `none` here; their selectable options come from the
+//!   `FileIndex`, which this namespace does not yet consult. An unknown field
+//!   name hard-errors, mirroring `.get`.
 //!
 //! Both `schema.get` and `.field` are structural references: a typo in
 //! either name surfaces as a render error carrying template context, not a
-//! panic, mirroring [`super::query`]'s `errors` module. Predicate references
-//! (`from_class`, `file`-field filters) belong to later tickets and degrade
-//! instead of hard-erroring; nothing here does that. The Schema supplies
-//! values only — the template author still picks the interactive `ui.*`
-//! function.
+//! panic, mirroring [`super::query`]'s `errors` module. Class-based
+//! predicate references (`from_class`, `file`-field filters) are not
+//! supported by this namespace; the Schema supplies values only, and the
+//! template author still picks the interactive `ui.*` function.
 //!
 //! # Registry Loading and Caching
 //!

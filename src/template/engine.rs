@@ -78,7 +78,6 @@ impl TemplateEngine {
     ///
     /// [`uuid`]: fn@uuid
     /// [`DialogProvider`]: crate::DialogProvider
-    /// [`Path`]: std::path::Path
     #[inline]
     #[must_use]
     pub(super) fn new(

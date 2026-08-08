@@ -42,6 +42,7 @@ impl NumOps {
 /// [`f64::sqrt`] returns `NaN` for negative input, so this filter rejects
 /// negative values and returns a template error instead of rendering `NaN`.
 /// `-0.0` is allowed because `-0.0 < 0.0` is false under IEEE 754.
+///
 /// # Errors
 ///
 /// - [`ErrorKind::InvalidOperation`] if `value` is negative.

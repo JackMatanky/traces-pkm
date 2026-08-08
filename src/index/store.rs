@@ -129,7 +129,7 @@ impl IndexStore {
 
     /// Serializes `items` with postcard into `table`, keyed by `path_of`.
     ///
-    /// [`Self::replace_all`] uses this helper for both the `file_records` and
+    /// [`Self::replace_all`] uses this helper for both the `files` and
     /// `notes` tables instead of duplicating the serialize-and-insert loop.
     ///
     /// # Errors
@@ -193,7 +193,7 @@ impl IndexStore {
 
     /// Deserializes every postcard value in `table` and sorts the records.
     ///
-    /// [`Self::load_all`] uses this helper for both the `file_records` and
+    /// [`Self::load_all`] uses this helper for both the `files` and
     /// `notes` tables instead of duplicating the decode-and-sort loop.
     ///
     /// # Errors

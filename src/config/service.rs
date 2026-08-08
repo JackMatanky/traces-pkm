@@ -294,7 +294,7 @@ impl ConfigService {
     ///
     /// # Errors
     ///
-    /// - `ConfigStateError::Store` when the trust entry cannot be removed
+    /// - [`ConfigStateError::Store`] when the trust entry cannot be removed
     #[inline]
     pub fn untrust(
         &self,
@@ -369,7 +369,7 @@ impl ConfigService {
     /// Uses [`File::create_new`] rather than [`std::fs::write`] so this fails
     /// atomically if the file already exists instead of silently truncating it.
     /// `traces init` already refuses to run when `.traces/` exists, but that
-    /// check and this write are two separate filesystem operations — a
+    /// check and this write are two separate filesystem operations: a
     /// concurrent `traces init`, or a file planted in between, would otherwise
     /// let a plain `fs::write` clobber it unnoticed.
     ///

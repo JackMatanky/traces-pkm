@@ -78,7 +78,7 @@ pub enum QueryError {
     TableColumnMismatch {
         /// The number of header titles provided.
         headers: usize,
-        /// The number of column data vectors provided.
+        /// The number of column field-path strings provided.
         columns: usize,
     },
 }

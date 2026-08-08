@@ -246,8 +246,8 @@ fn cached_refresh(
 
 /// Maps a [`FileIndexError`] into a [`minijinja::Error`].
 ///
-/// Keeps the original error as [`source`], matching
-/// [`super::ui`]'s `dialog_error`.
+/// Keeps the original error as [`source`], matching [`super::ui`]'s
+/// `dialog_error`.
 ///
 /// [`source`]: std::error::Error::source
 fn index_error(source: FileIndexError) -> Error {

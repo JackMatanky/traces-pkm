@@ -128,8 +128,9 @@ impl FieldDefinition {
     ///
     /// Only `select` carries a plain value list today. `file` is also
     /// list-bearing in principle, but its options resolve live from the
-    /// `FileIndex` (a later ticket); until that lands, it returns `None` here
-    /// too rather than a value list `.field()` cannot yet honor.
+    /// `FileIndex`, which this method does not yet consult; until that's
+    /// wired up, it returns `None` here too rather than a value list it
+    /// cannot yet honor.
     #[inline]
     #[must_use]
     pub(crate) fn selectable_values(&self) -> Option<&[String]> {

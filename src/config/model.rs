@@ -195,9 +195,10 @@ impl TemplateConfig {
 /// directory.
 ///
 /// [`Self::directory`] is resolved against [`Config::root`] by the
-/// `TemplateEngine`'s `schema` namespace to build the Schema registry path;
-/// `class_field` is declared here but not yet read by any consumer (a later
-/// class-queries ticket reads Notes' class field).
+/// `TemplateEngine`'s `schema` namespace to build the Schema registry path.
+/// `class_field` is declared here but not yet read by any consumer; it will
+/// name the frontmatter key holding a Note's File Class once class-based
+/// queries land.
 #[derive(Clone, Debug)]
 pub struct SchemasConfig {
     #[cfg_attr(
@@ -268,7 +269,7 @@ impl From<RawSchemasConfig> for SchemasConfig {
 /// `{name, format}` date roles.
 ///
 /// Every key is optional; absence means no consumer-facing default is
-/// declared yet (later frontmatter-aware tickets read these).
+/// declared yet. Frontmatter-aware consumers read these once they exist.
 #[derive(Clone, Debug, Default)]
 pub struct FrontmatterConfig {
     #[cfg_attr(

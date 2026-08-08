@@ -25,6 +25,12 @@ use std::{
 use super::{error::TemplateError, path::DeclaredOutputPath};
 use crate::{DialogError, DialogProvider, path::RootConfinedPath};
 
+/// Whether a render's output is written to disk or only previewed.
+///
+/// Produced once from CLI flags via [`Self::from_flags`]; only
+/// [`TemplateService::write`] matches on it.
+///
+/// [`TemplateService::write`]: super::service::TemplateService::write
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum WriteMode {
     /// Render only. [`TemplateService::write`] returns
