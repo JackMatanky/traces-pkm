@@ -25,6 +25,7 @@
 //! index, or run is-a class queries over notes; those integrations consume
 //! [`SchemaRegistry`] and [`Schema::is_a`] from outside this module.
 
+mod address;
 mod error;
 mod model;
 mod name;

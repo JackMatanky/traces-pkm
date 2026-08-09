@@ -9,7 +9,7 @@ use std::{fmt, path::PathBuf};
 
 use thiserror::Error;
 
-use super::{name::SchemaName, raw::FieldRef};
+use super::{address::FieldAddress, name::SchemaName};
 use crate::field::FieldName;
 
 /// Represents a hard failure while reading, parsing, or resolving the Schema
@@ -21,7 +21,7 @@ use crate::field::FieldName;
 ///
 /// A malformed `$ref` or a Field Definition declaring neither `type` nor `$ref`
 /// both fail earlier, during TOML parsing (surfacing as [`Self::Parse`]): see
-/// [`super::raw::FieldRef`] and [`super::raw::RawFieldDefError`].
+/// [`super::address::FieldAddress`] and [`super::raw::RawFieldDefError`].
 #[derive(Debug, Error)]
 pub(crate) enum SchemaError {
     /// The Schema registry directory exists but could not be read.
@@ -61,7 +61,7 @@ pub(crate) enum SchemaError {
     RefOutOfBounds {
         schema: SchemaName,
         field: FieldName,
-        reference: Box<FieldRef>,
+        reference: Box<FieldAddress>,
     },
     /// A `$ref` named an in-bounds Schema, but that Schema has no such field.
     #[error(
@@ -71,7 +71,7 @@ pub(crate) enum SchemaError {
     RefFieldNotFound {
         schema: SchemaName,
         field: FieldName,
-        reference: Box<FieldRef>,
+        reference: Box<FieldAddress>,
     },
     /// Two of a Schema's effective fields share a
     /// [`FieldKey`](crate::field::FieldKey) canonical form: Note metadata could
@@ -203,7 +203,7 @@ mod tests {
                 schema: SchemaName::from("movie"),
                 field: FieldName::try_from("status").expect("valid name"),
                 reference: Box::new(
-                    FieldRef::try_from("#book/status").expect("valid ref"),
+                    FieldAddress::try_from("#book/status").expect("valid ref"),
                 ),
             };
 
@@ -221,7 +221,7 @@ mod tests {
                 schema: SchemaName::from("book"),
                 field: FieldName::try_from("status").expect("valid name"),
                 reference: Box::new(
-                    FieldRef::try_from("#book/status").expect("valid ref"),
+                    FieldAddress::try_from("#book/status").expect("valid ref"),
                 ),
             };
 
@@ -255,7 +255,7 @@ mod tests {
             // to carry 5 owned Strings (120 bytes) because
             // `ref_schema`/`ref_field` duplicated what `reference` already
             // shows verbatim. `RefOutOfBounds`/`RefFieldNotFound` box their
-            // `FieldRef` payload for the same reason now that a `$ref` is a
+            // `FieldAddress` payload for the same reason now that a `$ref` is a
             // validated `SchemaName` + `FieldName` pair rather than a single
             // `String`. `AmbiguousFieldName` boxes `second` for the same
             // reason: two owned `FieldName`s alongside `schema` would have

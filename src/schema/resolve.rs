@@ -4,8 +4,7 @@
 //! No filesystem or minijinja access: [`resolve`] is a pure function over an
 //! already-parsed Schema set. Reads top-down: the pipeline ([`resolve`] ->
 //! [`resolve_one`] -> [`build_field`]) comes first; [`SchemaGraph`] (DAG
-//! bookkeeping), [`RefResolver`] (`$ref` bounds-checking), and `FieldPath`
-//! (address type threaded through all three) follow below.
+//! bookkeeping) and [`RefResolver`] (`$ref` bounds-checking) follow below.
 //!
 //! # Main Type
 //!
@@ -20,12 +19,13 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use super::{
     GLOBAL_SCHEMA_NAME,
+    address::{FieldAddress, FieldAddressRef},
     error::{SchemaError, SchemaWarning},
     model::{FieldDefinition, FieldOptions, FieldType, Schema},
     name::{SchemaName, SchemaNameRef},
-    raw::{FieldRef, FieldSource, RawFieldDef, RawSchema},
+    raw::{RawFieldDef, RawFieldSource, RawSchema},
 };
-use crate::field::{FieldName, FieldNameRef};
+use crate::field::FieldName;
 
 /// Every Schema resolved by [`resolve`], keyed by name, alongside the
 /// [`SchemaWarning`]s degraded resolution accumulated along the way.
@@ -131,11 +131,8 @@ fn resolve_one(
     };
     let mut own_fields = BTreeMap::new();
     for (field_name, raw_field) in &raw.fields {
-        let at = FieldPath {
-            schema: name,
-            field: field_name.as_ref(),
-        };
-        let field = build_field(at, raw_field, &refs, warnings)?;
+        let address = FieldAddressRef::new(name, field_name.as_ref());
+        let field = build_field(address, raw_field, &refs, warnings)?;
         own_fields.insert(field_name.clone(), field);
     }
     fields.extend(own_fields);
@@ -172,24 +169,24 @@ fn reject_ambiguous_canonical_names(
     Ok(())
 }
 
-/// Builds one resolved [`FieldDefinition`] for `at`, resolving its `$ref`
+/// Builds one resolved [`FieldDefinition`] for `address`, resolving its `$ref`
 /// (if any) via `refs` and applying the Global Schema's `required` degrade.
 ///
 /// # Errors
 ///
 /// Any error [`RefResolver::resolve`] returns while resolving a `$ref`.
 fn build_field(
-    at: FieldPath<'_>,
+    address: FieldAddressRef<'_>,
     raw: &RawFieldDef,
     refs: &RefResolver<'_>,
     warnings: &mut Vec<SchemaWarning>,
 ) -> Result<FieldDefinition, SchemaError> {
     let (options, required, multi) = match &raw.source {
-        FieldSource::Ref {
-            reference,
+        RawFieldSource::Ref {
+            address: base_address,
             override_type,
         } => {
-            let base = refs.resolve(at, reference)?;
+            let base = refs.resolve(address, base_address)?;
             let field_type = (*override_type)
                 .map_or_else(|| base.options().kind(), FieldType::from);
             (
@@ -198,7 +195,7 @@ fn build_field(
                 raw.multi.unwrap_or(base.is_multi()),
             )
         }
-        FieldSource::Direct(raw_type) => {
+        RawFieldSource::Direct(raw_type) => {
             let field_type = FieldType::from(*raw_type);
             (
                 FieldOptions::from_raw(field_type, raw),
@@ -210,22 +207,22 @@ fn build_field(
 
     Ok(FieldDefinition::new(
         options,
-        apply_global_degrade(at, required, warnings),
+        apply_global_degrade(address, required, warnings),
         multi,
     ))
 }
 
 /// Global Schema fields can never be required: forces `required` to `false` and
-/// records a [`SchemaWarning::StrayGlobalRequired`] when `at.schema` is the
-/// Global Schema and it declared `required = true`.
+/// records a [`SchemaWarning::StrayGlobalRequired`] when `address.schema()` is
+/// the Global Schema and it declared `required = true`.
 fn apply_global_degrade(
-    at: FieldPath<'_>,
+    address: FieldAddressRef<'_>,
     required: bool,
     warnings: &mut Vec<SchemaWarning>,
 ) -> bool {
-    if at.schema.as_str() == GLOBAL_SCHEMA_NAME && required {
+    if address.schema().as_str() == GLOBAL_SCHEMA_NAME && required {
         warnings.push(SchemaWarning::StrayGlobalRequired {
-            field: at.field.as_str().to_owned(),
+            field: address.field().as_str().to_owned(),
         });
         false
     } else {
@@ -386,58 +383,48 @@ struct RefResolver<'a> {
 }
 
 impl<'a> RefResolver<'a> {
-    /// Resolves `reference` (`at`'s own already-parsed `$ref` value) to its
-    /// base [`FieldDefinition`].
+    /// Resolves `base_address` (`address`'s own already-parsed `$ref` value)
+    /// to its base [`FieldDefinition`].
     ///
     /// # Errors
     ///
     /// - [`SchemaError::RefOutOfBounds`] if the named Schema is neither the
-    ///   Global Schema nor a transitive `extends` ancestor of `at.schema`.
+    ///   Global Schema nor a transitive `extends` ancestor of
+    ///   `address.schema()`.
     /// - [`SchemaError::RefFieldNotFound`] if the named Schema is in bounds but
     ///   has no such field.
     fn resolve(
         &self,
-        at: FieldPath<'_>,
-        reference: &FieldRef,
+        address: FieldAddressRef<'_>,
+        base_address: &FieldAddress,
     ) -> Result<&'a FieldDefinition, SchemaError> {
         // Rejecting an out-of-bounds target here, rather than only checking
         // whether it happens to be resolved yet, keeps the bound spec-accurate
         // and independent of Kahn's tie-breaking order among unrelated Schemas.
-        if reference.schema().as_str() != GLOBAL_SCHEMA_NAME
-            && !self.ancestors.contains(reference.schema().as_str())
+        if base_address.schema().as_str() != GLOBAL_SCHEMA_NAME
+            && !self.ancestors.contains(base_address.schema().as_str())
         {
             return Err(SchemaError::RefOutOfBounds {
-                schema: SchemaName::from(at.schema),
-                field: FieldName::from(at.field),
-                reference: Box::new(reference.clone()),
+                schema: SchemaName::from(address.schema()),
+                field: FieldName::from(address.field()),
+                reference: Box::new(base_address.clone()),
             });
         }
         self.resolved
-            .get(reference.schema().as_str())
-            .and_then(|schema| schema.field(reference.field().as_str()))
+            .get(base_address.schema().as_str())
+            .and_then(|schema| schema.field(base_address.field().as_str()))
             .ok_or_else(|| SchemaError::RefFieldNotFound {
-                schema: SchemaName::from(at.schema),
-                field: FieldName::from(at.field),
-                reference: Box::new(reference.clone()),
+                schema: SchemaName::from(address.schema()),
+                field: FieldName::from(address.field()),
+                reference: Box::new(base_address.clone()),
             })
     }
-}
-
-/// A field's address within a Schema: `<schema>.<field>`, mirroring what a
-/// `$ref` value (`#<schema>/<field>`) names. `schema` and `field` are distinct
-/// types (not just distinct names), so a construction site like `FieldPath {
-/// schema: field_name, field: name }` is a compile error, not a silent
-/// transposition.
-#[derive(Copy, Clone, Debug)]
-struct FieldPath<'a> {
-    schema: SchemaNameRef<'a>,
-    field: FieldNameRef<'a>,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::schema::raw::RawFieldType;
+    use crate::{field::FieldNameRef, schema::raw::RawFieldType};
 
     /// Parses `name` into a [`FieldName`], panicking on an invalid test
     /// fixture.
@@ -445,10 +432,10 @@ mod tests {
         FieldName::try_from(name).expect("valid test field name")
     }
 
-    /// Parses `reference` into a [`FieldRef`], panicking on an invalid test
+    /// Parses `reference` into a [`FieldAddress`], panicking on an invalid test
     /// fixture.
-    fn field_ref(reference: &str) -> FieldRef {
-        FieldRef::try_from(reference).expect("valid test $ref")
+    fn field_address(reference: &str) -> FieldAddress {
+        FieldAddress::try_from(reference).expect("valid test $ref")
     }
 
     /// Builds a `select`-type [`RawFieldDef`] with the given `values`.
@@ -483,7 +470,7 @@ mod tests {
     fn ref_field(reference: &str, required: Option<bool>) -> RawFieldDef {
         RawFieldDef {
             required,
-            ..RawFieldDef::reference(field_ref(reference))
+            ..RawFieldDef::reference(field_address(reference))
         }
     }
 
@@ -917,7 +904,7 @@ mod tests {
                 SchemaName::from("book"),
                 schema(&[], &[("cover", RawFieldDef {
                     folders: Some(vec!["assets/covers".to_owned()]),
-                    ..RawFieldDef::reference(field_ref("#global/cover"))
+                    ..RawFieldDef::reference(field_address("#global/cover"))
                 })]),
             );
 
@@ -1046,8 +1033,8 @@ mod tests {
             raw.insert(
                 SchemaName::from("sci_fi"),
                 schema(&["book"], &[("status", RawFieldDef {
-                    source: FieldSource::Ref {
-                        reference: field_ref("#book/status"),
+                    source: RawFieldSource::Ref {
+                        address: field_address("#book/status"),
                         override_type: Some(RawFieldType::File),
                     },
                     folders: Some(vec!["assets".to_owned()]),
@@ -1130,14 +1117,14 @@ mod tests {
                 ancestors: &ancestors,
                 resolved: &resolved,
             };
-            let at = FieldPath {
-                schema: SchemaNameRef::from("sci_fi"),
-                field: FieldNameRef::try_from("status")
-                    .expect("valid field name"),
-            };
+            let address = FieldAddressRef::new(
+                SchemaNameRef::from("sci_fi"),
+                FieldNameRef::try_from("status").expect("valid field name"),
+            );
 
-            let field =
-                refs.resolve(at, &field_ref("#book/status")).expect("resolves");
+            let field = refs
+                .resolve(address, &field_address("#book/status"))
+                .expect("resolves");
 
             assert_eq!(field.options(), &FieldOptions::Input);
         }
@@ -1156,14 +1143,13 @@ mod tests {
                 ancestors: &ancestors,
                 resolved: &resolved,
             };
-            let at = FieldPath {
-                schema: SchemaNameRef::from("task"),
-                field: FieldNameRef::try_from("priority")
-                    .expect("valid field name"),
-            };
+            let address = FieldAddressRef::new(
+                SchemaNameRef::from("task"),
+                FieldNameRef::try_from("priority").expect("valid field name"),
+            );
 
             let field = refs
-                .resolve(at, &field_ref("#global/priority"))
+                .resolve(address, &field_address("#global/priority"))
                 .expect("resolves");
 
             assert_eq!(field.options(), &FieldOptions::Input);
@@ -1180,14 +1166,13 @@ mod tests {
                 ancestors: &ancestors,
                 resolved: &resolved,
             };
-            let at = FieldPath {
-                schema: SchemaNameRef::from("book"),
-                field: FieldNameRef::try_from("status")
-                    .expect("valid field name"),
-            };
+            let address = FieldAddressRef::new(
+                SchemaNameRef::from("book"),
+                FieldNameRef::try_from("status").expect("valid field name"),
+            );
 
             let err = refs
-                .resolve(at, &field_ref("#movie/status"))
+                .resolve(address, &field_address("#movie/status"))
                 .expect_err("out-of-bounds rejected");
 
             assert!(matches!(err, SchemaError::RefOutOfBounds { .. }));
@@ -1206,14 +1191,13 @@ mod tests {
                 ancestors: &ancestors,
                 resolved: &resolved,
             };
-            let at = FieldPath {
-                schema: SchemaNameRef::from("sci_fi"),
-                field: FieldNameRef::try_from("status")
-                    .expect("valid field name"),
-            };
+            let address = FieldAddressRef::new(
+                SchemaNameRef::from("sci_fi"),
+                FieldNameRef::try_from("status").expect("valid field name"),
+            );
 
             let err = refs
-                .resolve(at, &field_ref("#book/status"))
+                .resolve(address, &field_address("#book/status"))
                 .expect_err("missing field rejected");
 
             assert!(matches!(err, SchemaError::RefFieldNotFound { .. }));

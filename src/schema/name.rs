@@ -4,7 +4,7 @@
 //! Mirrors the crate's [`FileName`]/[`BaseName`]/[`BaseNameRef`] split:
 //! [`SchemaName`] owns its data for storage (`Schema.name`, map keys);
 //! [`SchemaNameRef`] borrows for zero-allocation comparisons in
-//! `resolve::SchemaGraph`'s Kahn's algorithm bookkeeping and `FieldPath`.
+//! `resolve::SchemaGraph` and `address::FieldAddressRef`.
 //!
 //! Ordering matches `str`'s: a derived `Ord`/`PartialOrd` on a single-field
 //! tuple struct delegates entirely to the wrapped field, which `SchemaGraph`'s
