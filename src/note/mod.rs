@@ -18,16 +18,16 @@
 //!
 //! # Main Types
 //!
-//! - [`Note`] -- parsed record for one Markdown file.
-//! - [`List`], [`ListItem`], [`TaskStatus`] -- ordered and unordered lists,
+//! - [`Note`]: parsed record for one Markdown file.
+//! - [`List`], [`ListItem`], [`TaskStatus`]: ordered and unordered lists,
 //!   including task items and nested child lists.
-//! - [`Link`], [`LinkType`], [`LinkTarget`] -- outgoing links from Markdown
+//! - [`Link`], [`LinkType`], [`LinkTarget`]: outgoing links from Markdown
 //!   `[text](target)` and Obsidian `[[target|alias]]` syntax.
-//! - [`Frontmatter`], [`RawFrontmatter`] -- YAML frontmatter as structured
-//!   fields or raw text.
-//! - [`InlineField`], [`InlineFieldForm`], [`FieldValue`] -- body metadata
-//!   parsed from `Key:: Value` syntax.
-//! - [`Tag`] -- Markdown tags such as `#book` and `#projects/active`.
+//! - [`Frontmatter`], [`RawFrontmatter`]: YAML frontmatter as structured fields
+//!   or raw text.
+//! - [`InlineField`], [`InlineFieldForm`], [`FieldValue`]: body metadata parsed
+//!   from `Key:: Value` syntax.
+//! - [`Tag`]: Markdown tags such as `#book` and `#projects/active`.
 
 mod cursor;
 mod lexer;

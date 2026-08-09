@@ -6,9 +6,9 @@
 //!
 //! Key types:
 //!
-//! - [`CommandOutcome`] -- top-level result of a successful command.
-//! - [`UserAbort`] -- deliberate user cancellation or interruption.
-//! - [`CliError`] -- unified diagnostic error for all CLI operations.
+//! - [`CommandOutcome`]: top-level result of a successful command.
+//! - [`UserAbort`]: deliberate user cancellation or interruption.
+//! - [`CliError`]: unified diagnostic error for all CLI operations.
 //!
 //! Submodules contain command-specific logic; this module stays limited to
 //! argument flow and shared helpers.
