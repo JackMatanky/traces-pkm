@@ -1,6 +1,7 @@
 //! Error types for dialog prompt failures.
 //!
-//! [`DialogError`] groups prompt failures by caller-visible outcome:
+//! [`DialogError`] groups prompt failures by caller-visible outcome so CLI
+//! code can choose the right diagnostic.
 
 /// Error returned by [`DialogProvider`] methods.
 ///

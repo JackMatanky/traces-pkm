@@ -110,6 +110,8 @@ pub trait DialogProvider: Send + Sync {
     /// # Errors
     ///
     /// - [`DialogError::EmptySelectionInput`] if `items` is empty.
+    /// - [`DialogError::InvalidConfiguration`] if a queued index is out of
+    ///   bounds (only [`PresetDialogProvider`]).
     /// - [`DialogError::UserCancelled`] if the user cancels the prompt.
     /// - [`DialogError::UserInterrupted`] if the user interrupts.
     /// - [`DialogError::NotInteractive`] if stdin is not a terminal.
