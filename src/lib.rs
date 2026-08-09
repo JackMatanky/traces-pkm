@@ -1,7 +1,7 @@
-//! Dispatch CLI workflows, resolve and trust configs, index notes, execute
-//! templates, and perform root-confined filesystem writes.
+//! Process Obsidian-style markdown notes with frontmatter, inline fields,
+//! wikilinks, and task lists.
 //!
-//! # Core Subsystems
+//! # Modules
 //!
 //! - [`cli`] - Command-line interface definitions, argument parsing, and
 //!   command execution flow.
@@ -13,9 +13,16 @@
 //!   processing.
 //! - `schema` - Schema registry and Field Resolution: parses
 //!   `.traces/schemas/*.toml` and linearizes the `extends` DAG into effective
-//!   Field Definitions.
+//!   field definitions.
 //! - `template` - Template loading, path expansion, custom engine bindings, and
 //!   note rendering.
+//! - `dialog` - Object-safe dialog prompts for interactive and preset input.
+//! - `dirs` - XDG and platform-specific directory resolution for configuration
+//!   and persistent state.
+//! - `field` - Validated field-name and field-key primitives shared across note
+//!   metadata and schemas.
+//! - `hash` - BLAKE3 hashing for file contents and canonicalized paths.
+//! - `path` - Root-relative path validation and confinement.
 
 mod config;
 mod dialog;
@@ -65,9 +72,10 @@ pub use template::{
     classify_render_error,
 };
 
-/// Build isolated fixtures for the crate's own `#[cfg(test)]` suites and, under
-/// the `test-utils` feature, for external `tests/`/`benches/` consumers. Use
-/// [`fixture_service`] to get a [`ConfigService`] backed by temporary
+/// Build isolated fixtures for the crate's own `#[cfg(test)]` suites and,
+/// under the `test-utils` feature, for external `tests/`/`benches/` consumers.
+///
+/// Use [`fixture_service`] to get a [`ConfigService`] backed by temporary
 /// directories, [`create_trusted_project`] to write a minimal config and trust
 /// it, [`write_note`] to create note files, and [`write_template`] to create
 /// template files.
@@ -89,6 +97,10 @@ mod test_support {
     /// Creates a [`ConfigService`] backed by isolated tracked-config and trust
     /// stores under `root`, never the real OS state directories.
     ///
+    /// # Panics
+    ///
+    /// Never panics.
+    ///
     /// # Examples
     ///
     /// ```
@@ -101,15 +113,16 @@ mod test_support {
         ConfigService::at(root.join("tracked-store"), root.join("trust-store"))
     }
 
-    /// Writes a minimal local config at `root/.traces/config.toml` pointing at
-    /// `root/templates` (creating that directory), and records `root` as
-    /// trusted in `service`'s trust store. Returns the written config file
-    /// path.
+    /// Writes a minimal local config at `root/.traces/config.toml` pointing
+    /// at `root/templates` (creating that directory), and records `root` as
+    /// trusted in `service`'s trust store.
+    ///
+    /// Returns the written config file path.
     ///
     /// # Panics
     ///
     /// Panics if `root` cannot be created, the config file cannot be written,
-    /// or trust cannot be recorded: this is fixture setup code, so any such
+    /// or trust cannot be recorded. This is fixture setup code, so any such
     /// failure means the test itself is broken.
     #[inline]
     #[must_use]
@@ -135,13 +148,14 @@ mod test_support {
         config_path
     }
 
-    /// Writes a Note at `root.join(rel_path)`, creating parent directories as
-    /// needed.
+    /// Writes a markdown note at `root.join(rel_path)`, creating parent
+    /// directories as needed.
     ///
     /// # Panics
     ///
-    /// Panics if parent directories or the note file cannot be written: this is
-    /// fixture setup code, so any such failure means the test itself is broken.
+    /// Panics if parent directories or the note file cannot be written. This
+    /// is fixture setup code, so any such failure means the test itself is
+    /// broken.
     #[inline]
     pub fn write_note(root: &Path, rel_path: &str, content: &str) {
         let path = root.join(rel_path);
@@ -156,7 +170,7 @@ mod test_support {
     /// # Panics
     ///
     /// Panics if the `templates` directory or the template file cannot be
-    /// written: this is fixture setup code, so any such failure means the test
+    /// written. This is fixture setup code, so any such failure means the test
     /// itself is broken.
     #[inline]
     pub fn write_template(root: &Path, name: &str, source: &str) {
