@@ -3,7 +3,7 @@
 //!
 //! No filesystem or minijinja access: [`resolve`] is a pure function over an
 //! already-parsed Schema set. Reads top-down: the pipeline ([`resolve`] to
-//! [`resolve_one`] to [`build_field`]) comes first; [`SchemaGraph`] (DAG
+//! [`build_schema`] to [`build_field`]) comes first; [`SchemaGraph`] (DAG
 //! bookkeeping) and [`RefResolver`] (`$ref` bounds-checking) follow below.
 //!
 //! # Main Type
@@ -30,8 +30,8 @@ type ResolveOutput = (BTreeMap<SchemaName, Schema>, Vec<SchemaWarning>);
 
 /// Resolve `raw_schemas` into effective Field Definitions per Schema.
 ///
-/// Linearizes the `extends` DAG with Kahn's topological sort so every Schema
-/// is resolved only after all of its valid parents. For each Schema, in order:
+/// Linearizes the `extends` DAG with Kahn's topological sort so every Schema is
+/// resolved only after all of its valid parents. For each Schema, in order:
 ///
 /// - Parent fields are merged first-listed-wins.
 /// - `excludes` drops named fields from that merge.
@@ -58,7 +58,7 @@ pub(crate) fn resolve(
         let Some(raw) = raw_schemas.get(name.as_str()) else {
             continue;
         };
-        let schema = resolve_one(
+        let schema = build_schema(
             name,
             raw,
             graph.parents_of(name),
@@ -100,7 +100,7 @@ pub(crate) fn resolve(
 /// Propagates any [`SchemaError`] that [`build_field`] returns while resolving
 /// `raw`'s own fields, or [`SchemaError::AmbiguousFieldName`] if two of the
 /// resolved fields share a [`FieldKey`](crate::field::FieldKey) canonical form.
-fn resolve_one(
+fn build_schema(
     name: SchemaNameRef<'_>,
     raw: &RawSchema,
     parents: &[SchemaNameRef<'_>],
@@ -141,33 +141,6 @@ fn resolve_one(
     reject_ambiguous_canonical_names(name, &fields)?;
 
     Ok(Schema::new(SchemaName::from(name), fields, ancestors))
-}
-
-/// Reject `fields` if two entries share a [`FieldKey`](crate::field::FieldKey)
-/// canonical form: ambiguous field identities would make later note-vs-schema
-/// field matching and unknown-field suggestions unreliable.
-///
-/// # Errors
-///
-/// Returns [`SchemaError::AmbiguousFieldName`] naming the first two
-/// (name-sorted) colliding field names.
-fn reject_ambiguous_canonical_names(
-    name: SchemaNameRef<'_>,
-    fields: &BTreeMap<FieldName, FieldDefinition>,
-) -> Result<(), SchemaError> {
-    let mut seen: BTreeMap<String, FieldName> = BTreeMap::new();
-    for field_name in fields.keys() {
-        let canonical = field_name.to_key().canonical().to_owned();
-        if let Some(first) = seen.get(&canonical) {
-            return Err(SchemaError::AmbiguousFieldName {
-                schema: SchemaName::from(name),
-                first: first.clone(),
-                second: Box::new(field_name.clone()),
-            });
-        }
-        seen.insert(canonical, field_name.clone());
-    }
-    Ok(())
 }
 
 /// Build one resolved [`FieldDefinition`] for `address`, resolving its `$ref`
@@ -233,10 +206,37 @@ fn apply_global_degrade(
     }
 }
 
+/// Reject `fields` if two entries share a [`FieldKey`](crate::field::FieldKey)
+/// canonical form: ambiguous field identities would make later note-vs-schema
+/// field matching and unknown-field suggestions unreliable.
+///
+/// # Errors
+///
+/// Returns [`SchemaError::AmbiguousFieldName`] naming the first two
+/// (name-sorted) colliding field names.
+fn reject_ambiguous_canonical_names(
+    name: SchemaNameRef<'_>,
+    fields: &BTreeMap<FieldName, FieldDefinition>,
+) -> Result<(), SchemaError> {
+    let mut seen: BTreeMap<String, FieldName> = BTreeMap::new();
+    for field_name in fields.keys() {
+        let canonical = field_name.to_key().canonical().to_owned();
+        if let Some(first) = seen.get(&canonical) {
+            return Err(SchemaError::AmbiguousFieldName {
+                schema: SchemaName::from(name),
+                first: first.clone(),
+                second: Box::new(field_name.clone()),
+            });
+        }
+        seen.insert(canonical, field_name.clone());
+    }
+    Ok(())
+}
+
 /// Track Kahn's-algorithm state for linearizing the `extends` DAG.
 ///
 /// Isolates the Global-first tie-break from the field-merge logic in
-/// [`resolve_one`].
+/// [`build_schema`].
 struct SchemaGraph<'a> {
     parents_by_name: BTreeMap<SchemaNameRef<'a>, Vec<SchemaNameRef<'a>>>,
     in_degree: BTreeMap<SchemaNameRef<'a>, usize>,
@@ -376,9 +376,9 @@ impl<'a> SchemaGraph<'a> {
     }
 }
 
-/// Resolve a Schema's `$ref` values to their base [`FieldDefinition`]s,
-/// bounded to the Global Schema or the referencing Schema's transitive
-/// `extends` ancestors.
+/// Resolve a Schema's `$ref` values to their base [`FieldDefinition`]s, bounded
+/// to the Global Schema or the referencing Schema's transitive `extends`
+/// ancestors.
 ///
 /// `$ref`s point up the `extends` DAG or to the Global Schema, so they are
 /// acyclic by construction.
@@ -388,8 +388,8 @@ struct RefResolver<'a> {
 }
 
 impl<'a> RefResolver<'a> {
-    /// Resolve `base_address`, `address`'s own already-parsed `$ref` value,
-    /// to its base [`FieldDefinition`].
+    /// Resolve `base_address`, `address`'s own already-parsed `$ref` value, to
+    /// its base [`FieldDefinition`].
     ///
     /// # Errors
     ///

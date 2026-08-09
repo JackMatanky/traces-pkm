@@ -65,8 +65,8 @@ impl Schema {
     }
 
     /// Return this Schema's transitive `extends` ancestors, used by
-    /// `resolve::resolve_one` to accumulate a child's own ancestor set from its
-    /// parents'.
+    /// `resolve::build_schema` to accumulate a child's own ancestor set from
+    /// its parents'.
     #[inline]
     #[must_use]
     pub(super) fn ancestors(&self) -> &BTreeSet<SchemaName> {
