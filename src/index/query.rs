@@ -59,8 +59,8 @@ pub enum QuerySource {
     Class {
         /// Frontmatter field naming the Note's File Class(es).
         class_field: Arc<str>,
-        /// Resolved match set: the queried class names plus every Schema
-        /// that transitively `extends` one of them.
+        /// Resolved match set: the queried class names plus every Schema that
+        /// transitively `extends` one of them.
         classes: BTreeSet<String>,
     },
 }
@@ -393,8 +393,8 @@ impl QueryOutcome {
     ///
     /// Uses Rust raw identifier syntax (`r#where`) because `where` is a
     /// reserved keyword; `where` is this query API's name for the same
-    /// operation as `filter`. Refer to [`Self::filter`] for full syntax
-    /// details and matching behavior.
+    /// operation as `filter`. Refer to [`Self::filter`] for full syntax details
+    /// and matching behavior.
     ///
     /// # Errors
     ///
@@ -655,8 +655,8 @@ impl<'a> IntoIterator for &'a QueryOutcome {
     }
 }
 
-/// Yields a Note's File Class values: the strings held by the frontmatter
-/// field named `class_field`.
+/// Yields a Note's File Class values: the strings held by the frontmatter field
+/// named `class_field`.
 ///
 /// - A single string yields one element.
 /// - A list of strings yields each string element.
