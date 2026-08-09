@@ -33,9 +33,8 @@ pub struct TemplatePathInput(SafeRelativePath);
 impl TemplatePathInput {
     /// Parses `path` as a template path input.
     ///
-    /// This performs no filesystem access, only a path-shape check. Used by the
-    /// CLI boundary before rendering and by [`TemplateLoader::load`] before
-    /// resolving minijinja includes.
+    /// Used by the CLI boundary before rendering and by `TemplateLoader::load`
+    /// before resolving minijinja includes.
     ///
     /// # Errors
     ///
@@ -43,7 +42,6 @@ impl TemplatePathInput {
     /// - [`TemplatePathError::UnsafeComponent`] for `..`, any component that is
     ///   not a plain name or `.`, or a path with no [`Component::Normal`].
     ///
-    /// [`TemplateLoader::load`]: super::loader::TemplateLoader::load
     /// [`Component::Normal`]: std::path::Component::Normal
     #[inline]
     pub fn parse(path: &Path) -> Result<Self, TemplatePathError> {
@@ -162,7 +160,7 @@ impl DeclaredOutputPath {
     }
 }
 
-/// Every way producing a [`TemplatePath`] can fail: validation
+/// Every way producing a template path can fail: validation
 /// ([`Self::Absolute`], [`Self::UnsafeComponent`]) and search
 /// ([`Self::AmbiguousTemplate`], [`Self::TemplateNotFound`], or
 /// [`Self::DirectoryRead`]).

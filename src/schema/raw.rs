@@ -179,6 +179,12 @@ impl fmt::Debug for FieldRef {
 }
 
 impl<'de> Deserialize<'de> for FieldRef {
+    /// Deserializes from a string shaped `#<schema>/<field>` and validates
+    /// it as a [`FieldRef`].
+    ///
+    /// # Errors
+    ///
+    /// See [`FieldRef::try_from`].
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
@@ -234,6 +240,14 @@ struct RawFieldDefToml {
 }
 
 impl<'de> Deserialize<'de> for RawFieldDef {
+    /// Deserializes the `[fields.<name>]` TOML table, converting its
+    /// `type`/`$ref` keys into a validated [`FieldSource`].
+    ///
+    /// # Errors
+    ///
+    /// Fails when neither `type` nor `$ref` is present, when `$ref` is not
+    /// shaped `#<schema>/<field>`, or when any other key fails to parse (an
+    /// unknown key, per `#[serde(deny_unknown_fields)]` on the wire shape).
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,

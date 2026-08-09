@@ -26,8 +26,8 @@ use yaml_serde as serde_yaml;
 pub(crate) struct FieldName(String);
 
 /// Borrowed counterpart to [`FieldName`]: a field name borrowed from parsed
-/// TOML data or a `$ref` string, mirroring the `&str`/`String` split used by
-/// [`crate::schema::name::SchemaNameRef`].
+/// TOML data or a `$ref` string, mirroring the [`str`]/[`String`] split used by
+/// `SchemaNameRef`.
 #[derive(Copy, Clone, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub(crate) struct FieldNameRef<'a>(&'a str);
 
@@ -238,6 +238,11 @@ impl fmt::Display for FieldName {
 }
 
 impl<'de> Deserialize<'de> for FieldName {
+    /// Deserializes from a string and validates it as a [`FieldName`].
+    ///
+    /// # Errors
+    ///
+    /// See [`FieldName::validate`].
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
@@ -368,10 +373,10 @@ impl FieldKey {
         &self.canonical
     }
 
-    /// Returns `true` if `candidate` matches this key: an exact raw name
-    /// match, falling back to a canonical (case/whitespace-forgiving) match.
-    /// The main entry point for checking a raw string against a
-    /// [`FieldKey`]; composes [`Self::is_canonical_match`].
+    /// Returns `true` if `candidate` matches this key: an exact raw name match,
+    /// falling back to a canonical (case/whitespace-forgiving) match. The main
+    /// entry point for checking a raw string against a [`FieldKey`]; composes
+    /// [`Self::is_canonical_match`].
     #[inline]
     #[must_use]
     pub(crate) fn is_match(&self, candidate: &str) -> bool {
@@ -381,10 +386,10 @@ impl FieldKey {
     /// Returns `true` if `candidate`'s canonical form matches `self`'s.
     ///
     /// Checks `candidate` against the stored canonical form literally first,
-    /// and only canonicalizes `candidate` (allocating) when that literal
-    /// check fails: most callers already pass an already-canonical string (a
-    /// schema field name, a prior canonical lookup key), so the common case
-    /// never allocates.
+    /// and only canonicalizes `candidate` (allocating) when that literal check
+    /// fails: most callers already pass an already-canonical string (a schema
+    /// field name, a prior canonical lookup key), so the common case never
+    /// allocates.
     #[must_use]
     pub(crate) fn is_canonical_match(&self, candidate: &str) -> bool {
         self.canonical == candidate
@@ -395,9 +400,8 @@ impl FieldKey {
     /// name text.
     ///
     /// Unlike [`Self::is_match`]/[`Self::is_canonical_match`], this never
-    /// forgives a case/whitespace difference: [`FieldName`] is Schema's
-    /// exact identity type, so matching a [`FieldKey`] against one stays
-    /// exact.
+    /// forgives a case/whitespace difference: [`FieldName`] is Schema's exact
+    /// identity type, so matching a [`FieldKey`] against one stays exact.
     #[must_use]
     #[cfg_attr(not(test), expect(dead_code, reason = "used in tests"))]
     pub(crate) fn is_name_match(&self, candidate: &FieldName) -> bool {
@@ -406,6 +410,8 @@ impl FieldKey {
 }
 
 impl PartialEq for FieldKey {
+    /// Compares canonical forms: two keys differing only by case or
+    /// whitespace style are equal, matching [`FieldKey::is_canonical_match`].
     #[inline]
     fn eq(&self, other: &Self) -> bool {
         self.canonical == other.canonical
@@ -460,6 +466,8 @@ impl TryFrom<serde_yaml::Value> for FieldKey {
 }
 
 impl Serialize for FieldKey {
+    /// Serializes as the original key text ([`FieldKey::name`]), not the
+    /// canonical form.
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
@@ -469,6 +477,11 @@ impl Serialize for FieldKey {
 }
 
 impl<'de> Deserialize<'de> for FieldKey {
+    /// Deserializes from a string and validates it as a [`FieldKey`].
+    ///
+    /// # Errors
+    ///
+    /// See [`FieldKey::try_new`].
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,

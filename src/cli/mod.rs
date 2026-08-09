@@ -133,7 +133,7 @@ enum Commands {
     Trust(trust::Trust),
     /// Revoke trust from project roots.
     Untrust(untrust::Untrust),
-    /// Build or rebuild the persisted [`FileIndex`](crate::index::FileIndex).
+    /// Build or rebuild the persisted [`FileIndex`].
     Index(index::Index),
     /// Run a page-level query and print list output.
     List(list::List),

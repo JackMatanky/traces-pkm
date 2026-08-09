@@ -46,7 +46,7 @@ const INDEX_FILE: &str = ".traces/index.redb";
 /// inbound links.
 ///
 /// Every regular file contributes a [`FileRecord`]. Markdown files also
-/// contribute a [`Note`], accessible through [`Self::notes`] or [`Self::note`].
+/// contribute a [`Note`], accessible through [`Self::notes`] or `Self::note`.
 #[derive(Clone, Debug)]
 pub struct FileIndex {
     records: Vec<FileRecord>,
@@ -105,9 +105,9 @@ impl FileIndex {
     /// Derived inlinks are recomputed in full only when something changed;
     /// otherwise the previously persisted computation is reused unchanged. A
     /// full recompute (not a per-note patch) is required because link target
-    /// resolution considers every indexed Note (see
-    /// [`inlinks::derive_inlinks`]): an unedited Note's *resolved* target can
-    /// change when an unrelated Note is added or removed. For example, a
+    /// resolution considers every indexed Note: an unedited Note's *resolved*
+    /// target can change when an unrelated Note is added or removed. For
+    /// example, a
     /// wikilink that was ambiguous becomes resolvable once one of the
     /// ambiguous candidates is deleted.
     ///
@@ -254,7 +254,7 @@ impl FileIndex {
     /// [`Self::build`] and [`Self::refresh`] add one for every parsed Note), so
     /// a Note found without one is skipped rather than causing a panic.
     ///
-    /// Every matched row's [`IndexRecord::inlinks`] reflects every indexed
+    /// Every matched [`IndexRecord`]'s `inlinks` reflects every indexed
     /// Note, not just Notes matching `source`: a Note outside `source` can
     /// still link to one inside it.
     ///
@@ -286,8 +286,8 @@ impl FileIndex {
     ///
     /// Each task row keeps its parent Note's `file.*`, frontmatter,
     /// inline-field, tag, and inlinks metadata for filtering and display
-    /// through [`IndexRecord::field`]. It also exposes
-    /// [`IndexRecord::task_completed`] and [`IndexRecord::task_text`].
+    /// through `IndexRecord::field`. It also exposes
+    /// [`IndexRecord::task_completed`] and `IndexRecord::task_text`.
     ///
     /// Call [`Self::refresh`] first so results reflect the current filesystem.
     ///
@@ -298,8 +298,8 @@ impl FileIndex {
     ///   `self.inlinks`.
     /// - Each Note's task items are collected into a small `(bool, String)`
     ///   buffer once, so its last row moves the shared [`IndexRecord`] base
-    ///   instead of cloning it (mirroring [`query::QueryOutcome::flatten`]'s
-    ///   last-item handling).
+    ///   instead of cloning it, mirroring `query::QueryOutcome::flatten`'s
+    ///   last-item handling.
     /// - Every earlier row still clones the base, but that clone is O(1):
     ///   [`IndexRecord`]'s `note` field is an [`Arc`], not a deep clone.
     ///

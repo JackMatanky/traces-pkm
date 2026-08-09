@@ -41,7 +41,7 @@ impl TryFrom<&Path> for Blake3FileHash {
     ///
     /// # Errors
     ///
-    /// - [`HashError`] when `path` cannot be read.
+    /// - `HashError` when `path` cannot be read.
     #[inline]
     fn try_from(path: &Path) -> Result<Self, HashError> {
         let contents = fs::read(path).map_err(|source| HashError {
@@ -66,9 +66,9 @@ impl Display for Blake3FileHash {
     }
 }
 
-/// BLAKE3 hex hash of a path string.
+/// BLAKE3 hex hash of a [`Path`] string.
 ///
-/// Used as a hash-keyed store filename by [`crate::FileStateStore`]. Callers
+/// Used as a hash-keyed store filename by `FileStateStore`. Callers
 /// that need canonical keys must canonicalize before constructing this value.
 ///
 /// Stores the hex digest as a fixed-size byte array instead of a heap
@@ -89,6 +89,11 @@ impl From<&Path> for Blake3PathHash {
 
 impl Blake3PathHash {
     /// Returns the hash string used as a store entry filename.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the stored digest bytes are not valid UTF-8, which never
+    /// happens for a real blake3 hex digest.
     #[inline]
     #[must_use]
     #[expect(

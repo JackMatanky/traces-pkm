@@ -462,11 +462,10 @@ impl Object for QueryOutcome {
     /// final output and return early, without touching the non-terminal chain
     /// below:
     ///
-    /// - `table(headers, columns)` and `list(path)` call
-    ///   [`QueryOutcome::table`] and [`QueryOutcome::list`]; all take field
-    ///   path strings (or, for `table`'s `headers`, display labels), not
-    ///   further [`QueryOutcome`] arguments.
-    /// - `task_list()` calls [`QueryOutcome::task_list`], taking no arguments.
+    /// - `table(headers, columns)` and `list(path)` render field path strings
+    ///   (or, for `table`'s `headers`, display labels), not further
+    ///   [`QueryOutcome`] arguments.
+    /// - `task_list()` takes no arguments.
     /// - `count()` takes no arguments and returns [`QueryOutcome::len`]
     ///   directly; it cannot fail, unlike the other three.
     ///
@@ -485,9 +484,14 @@ impl Object for QueryOutcome {
     /// - [`ErrorKind::UnknownMethod`] for any other method name.
     /// - [`ErrorKind::TooManyArguments`]/[`ErrorKind::MissingArgument`] if a
     ///   method's arguments don't match its expected shape.
-    /// - [`ErrorKind::InvalidOperation`] via [`query_error`] if a field path or
+    /// - [`ErrorKind::InvalidOperation`] via `query_error` if a field path or
     ///   filter expression is unparsable, `.limit(...)` is negative, or
     ///   `.task_list()` runs on records with no `task.*` fields.
+    ///
+    /// [`ErrorKind::InvalidOperation`]: minijinja::ErrorKind::InvalidOperation
+    /// [`ErrorKind::MissingArgument`]: minijinja::ErrorKind::MissingArgument
+    /// [`ErrorKind::TooManyArguments`]: minijinja::ErrorKind::TooManyArguments
+    /// [`ErrorKind::UnknownMethod`]: minijinja::ErrorKind::UnknownMethod
     #[inline]
     fn call_method(
         self: &Arc<Self>,
@@ -600,14 +604,14 @@ fn count_filter(outcome: &QueryOutcome) -> usize {
 impl Object for IndexRecord {
     /// Resolves `record.<key>` or `record["<key>"]`.
     ///
-    /// `"file"` and `"task"` return forwarding wrappers ([`FileFields`] and
-    /// [`TaskFields`]) for `record.file.*` and `record.task.*`. Every other key
-    /// resolves through [`IndexRecord::field`], the same frontmatter,
-    /// inline-field, and tag lookup used by `.where()` and `.sort()`.
+    /// `"file"` and `"task"` return forwarding wrappers for `record.file.*`
+    /// and `record.task.*`. Every other key resolves through [`IndexRecord`]'s
+    /// field lookup, the same frontmatter, inline-field, and tag lookup
+    /// used by `.where()` and `.sort()`.
     ///
     /// A rejected key, such as a dotted, empty, or unknown `file.*`/`task.*`
     /// accessor, resolves to `None` like any other missing attribute instead of
-    /// surfacing [`QueryError::UnknownFieldPath`] as a render error.
+    /// surfacing `QueryError::UnknownFieldPath` as a render error.
     #[inline]
     fn get_value(self: &Arc<Self>, key: &Value) -> Option<Value> {
         let key = key.as_str()?;

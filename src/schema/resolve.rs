@@ -46,7 +46,7 @@ type ResolveOutput = (BTreeMap<SchemaName, Schema>, Vec<SchemaWarning>);
 /// - [`SchemaError::RefFieldNotFound`] if a `$ref` names an in-bounds Schema
 ///   that has no such field.
 /// - [`SchemaError::AmbiguousFieldName`] if two of a Schema's effective fields
-///   share a [`FieldKey`] canonical form.
+///   share a [`FieldKey`](crate::field::FieldKey) canonical form.
 pub(crate) fn resolve(
     raw_schemas: &BTreeMap<SchemaName, RawSchema>,
 ) -> Result<ResolveOutput, SchemaError> {
@@ -98,7 +98,7 @@ pub(crate) fn resolve(
 ///
 /// Propagates any [`SchemaError`] [`build_field`] returns while resolving
 /// `raw`'s own fields, or [`SchemaError::AmbiguousFieldName`] if two of the
-/// resolved fields share a [`FieldKey`] canonical form.
+/// resolved fields share a [`FieldKey`](crate::field::FieldKey) canonical form.
 fn resolve_one(
     name: SchemaNameRef<'_>,
     raw: &RawSchema,
@@ -145,9 +145,9 @@ fn resolve_one(
     Ok(Schema::new(SchemaName::from(name), fields, ancestors))
 }
 
-/// Rejects `fields` if two entries share a [`FieldKey`] canonical form:
-/// ambiguous field identities would make later note-vs-schema field matching
-/// and unknown-field suggestions unreliable.
+/// Rejects `fields` if two entries share a [`FieldKey`](crate::field::FieldKey)
+/// canonical form: ambiguous field identities would make later note-vs-schema
+/// field matching and unknown-field suggestions unreliable.
 ///
 /// # Errors
 ///

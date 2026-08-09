@@ -55,8 +55,7 @@ pub enum QuerySource {
     /// Matches Notes whose File Class(es) overlap the resolved `classes` set.
     /// A Note's File Class(es) are read from the frontmatter field named
     /// `class_field`; the Note matches when any of those values is in
-    /// `classes`, the resolved is-a match set built by
-    /// [`crate::schema::SchemaRegistry::matching_classes`].
+    /// `classes`, the resolved is-a match set built by the schema registry.
     Class {
         /// Frontmatter field naming the Note's File Class(es).
         class_field: Arc<str>,
@@ -397,20 +396,16 @@ impl QueryOutcome {
     ///
     /// Matching rules:
     ///
-    /// - `==` and `!=` compare [`String`], [`Date`], and [`Duration`] values by
+    /// - `==` and `!=` compare [`String`], `Date`, and `Duration` values by
     ///   text.
     /// - Mismatched data types never match except under `!=`.
-    /// - Records missing a field ([`Null`]) fail equality and ordering checks,
+    /// - Records missing a field (`Null`) fail equality and ordering checks,
     ///   but match `!=`.
     ///
     /// # Errors
     ///
-    /// - [`UnparsableFilterExpression`] if `expr` cannot be parsed.
-    /// - [`UnknownFieldPath`] if a field path referenced in `expr` is
-    ///   malformed.
-    ///
-    /// [`UnparsableFilterExpression`]: QueryError::UnparsableFilterExpression
-    /// [`UnknownFieldPath`]: QueryError::UnknownFieldPath
+    /// - `UnparsableFilterExpression` if `expr` cannot be parsed.
+    /// - `UnknownFieldPath` if a field path referenced in `expr` is malformed.
     #[inline]
     pub fn filter(self, expr: &str) -> Result<Self, QueryError> {
         let expr = FilterExpr::parse(expr)?;
@@ -466,9 +461,7 @@ impl QueryOutcome {
     ///
     /// # Errors
     ///
-    /// - [`UnknownFieldPath`] if `path` cannot be parsed as a valid field path.
-    ///
-    /// [`UnknownFieldPath`]: QueryError::UnknownFieldPath
+    /// - `UnknownFieldPath` if `path` cannot be parsed as a valid field path.
     #[inline]
     pub fn sort(
         self,
@@ -482,10 +475,8 @@ impl QueryOutcome {
     ///
     /// # Errors
     ///
-    /// - [`NegativeLimit`] if `n` is negative or exceeds platform pointer width
+    /// - `NegativeLimit` if `n` is negative or exceeds platform pointer width
     ///   limits.
-    ///
-    /// [`NegativeLimit`]: QueryError::NegativeLimit
     #[inline]
     pub fn limit(self, n: i64) -> Result<Self, QueryError> {
         let n = usize::try_from(n).map_err(|_source| {

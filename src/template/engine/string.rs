@@ -76,8 +76,9 @@ fn trim_suffix(value: &str, suffix: &str) -> String {
 ///
 /// # Errors
 ///
-/// - [`ErrorKind::InvalidOperation`] if `ellipsis` is present but not a string.
-/// - [`ErrorKind::TooManyArguments`] if `kwargs` has any key besides
+/// - [`minijinja::ErrorKind::InvalidOperation`] if `ellipsis` is present but
+///   not a string.
+/// - [`minijinja::ErrorKind::TooManyArguments`] if `kwargs` has any key besides
 ///   `ellipsis`.
 #[expect(
     clippy::needless_pass_by_value,
@@ -118,8 +119,9 @@ fn truncate(
 ///
 /// # Errors
 ///
-/// - [`ErrorKind::InvalidOperation`] if `ellipsis` is present but not a string.
-/// - [`ErrorKind::TooManyArguments`] if `kwargs` has any key besides
+/// - [`minijinja::ErrorKind::InvalidOperation`] if `ellipsis` is present but
+///   not a string.
+/// - [`minijinja::ErrorKind::TooManyArguments`] if `kwargs` has any key besides
 ///   `ellipsis`.
 #[expect(
     clippy::needless_pass_by_value,
@@ -172,8 +174,9 @@ fn word_count(value: &str) -> usize {
 ///
 /// # Errors
 ///
-/// - [`ErrorKind::InvalidOperation`] if `ellipsis` is present but not a string.
-/// - [`ErrorKind::TooManyArguments`] if `kwargs` has any key besides
+/// - [`minijinja::ErrorKind::InvalidOperation`] if `ellipsis` is present but
+///   not a string.
+/// - [`minijinja::ErrorKind::TooManyArguments`] if `kwargs` has any key besides
 ///   `ellipsis`.
 fn ellipsis_kwarg(kwargs: &Kwargs) -> Result<&str, Error> {
     let ellipsis = kwargs.get::<Option<&str>>("ellipsis")?.unwrap_or("...");
@@ -190,8 +193,8 @@ fn ellipsis_kwarg(kwargs: &Kwargs) -> Result<&str, Error> {
 ///
 /// # Errors
 ///
-/// - [`ErrorKind::InvalidOperation`] if `pattern` is not a valid regex; see
-///   [`regex_compile_error`].
+/// - [`minijinja::ErrorKind::InvalidOperation`] if `pattern` is not a valid
+///   regex; see [`regex_compile_error`].
 fn regex_replace(
     value: &str,
     pattern: &str,
@@ -208,8 +211,8 @@ fn regex_replace(
 ///
 /// # Errors
 ///
-/// - [`ErrorKind::InvalidOperation`] if `pattern` is not a valid regex; see
-///   [`regex_compile_error`].
+/// - [`minijinja::ErrorKind::InvalidOperation`] if `pattern` is not a valid
+///   regex; see [`regex_compile_error`].
 fn regex_match(value: &str, pattern: &str) -> Result<bool, Error> {
     let re = Regex::new(pattern)
         .map_err(|source| regex_compile_error(pattern, source))?;

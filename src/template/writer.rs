@@ -8,11 +8,11 @@
 //! [`TemplateWriteTarget`] gathers output-destination candidates and resolves
 //! them by precedence:
 //!
-//! 1. `-o` / `--output` (`requested`) — a runtime value confined to
+//! 1. `-o` / `--output` (`requested`): a runtime value confined to
 //!    [`Config::root`] via [`RootConfinedPath::parse`].
-//! 2. `file.write_to()` ([`DeclaredOutputPath`]) — also a runtime value
-//!    confined to [`Config::root`].
-//! 3. Caller-supplied default — from an already trust-gated
+//! 2. `file.write_to()` ([`DeclaredOutputPath`]): also a runtime value confined
+//!    to [`Config::root`].
+//! 3. Caller-supplied default: from an already trust-gated
 //!    [`Config::output_dir`].
 //!
 //! [`TemplateService::write`]: super::service::TemplateService::write
@@ -30,16 +30,12 @@ use crate::{DialogError, DialogProvider, path::RootConfinedPath};
 
 /// Whether a render's output is written to disk or only previewed.
 ///
-/// Produced once from CLI flags via [`Self::from_flags`]; only
-/// [`TemplateService::write`] matches on it.
-///
-/// [`TemplateService::write`]: super::service::TemplateService::write
+/// Produced once from CLI flags via `WriteMode::from_flags`; only template
+/// writing matches on it.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum WriteMode {
-    /// Render only. [`TemplateService::write`] returns
-    /// [`WriteOutcome::Previewed`] without touching disk.
-    ///
-    /// [`TemplateService::write`]: super::service::TemplateService::write
+    /// Render only. Template writing returns [`WriteOutcome::Previewed`]
+    /// without touching disk.
     DryRun,
     /// Write to disk under this [`CommitPolicy`].
     Commit(CommitPolicy),
@@ -118,10 +114,8 @@ impl CommitPolicy {
     }
 }
 
-/// What [`TemplateService::write`] did with rendered content: wrote it to disk,
-/// or handed it back unwritten under [`WriteMode::DryRun`].
-///
-/// [`TemplateService::write`]: super::service::TemplateService::write
+/// What template writing did with rendered content: wrote it to disk, or handed
+/// it back unwritten under [`WriteMode::DryRun`].
 #[derive(Debug, Eq, PartialEq)]
 pub enum WriteOutcome {
     /// Written to disk at this path.

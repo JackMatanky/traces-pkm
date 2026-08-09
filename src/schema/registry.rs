@@ -83,7 +83,7 @@ impl SchemaRegistry {
 
     /// Every Schema that is-a `name` transitively (extends it directly or via
     /// an ancestor), excluding `name` itself. Empty, not an error, if nothing
-    /// extends `name`, mirroring [`Self::is_a`]'s soft-degrade style.
+    /// extends `name`.
     #[must_use]
     pub(crate) fn descendants_of(&self, name: &str) -> Vec<Arc<Schema>> {
         self.schemas

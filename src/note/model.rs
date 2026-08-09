@@ -85,7 +85,7 @@ impl Note {
 
     /// Returns the top-level body lists.
     ///
-    /// Nested lists live under [`ListItem::children`]. Use [`Self::tasks`] for
+    /// Nested [`ListItem`] values hold child lists. Use [`Self::tasks`] for
     /// a flattened view of task items from every list depth.
     #[inline]
     #[must_use]

@@ -81,8 +81,8 @@ impl Config {
     ///
     /// The value is preserved as-is from the config file:
     ///
-    /// - **Relative** — the caller resolves it against [`root`].
-    /// - **Absolute** — this is the [`root`] fallback.
+    /// - **Relative**: the caller resolves it against [`root`].
+    /// - **Absolute**: this is the [`root`] fallback.
     ///
     /// [`root`]: Self::root
     #[inline]
@@ -138,8 +138,8 @@ impl Config {
 
 /// Template directories and output path from merged config.
 ///
-/// Local and global directories are kept separate so template lookup
-/// preserves local-first precedence without re-reading config files.
+/// Local and global directories are kept separate so template lookup preserves
+/// local-first precedence without re-reading config files.
 #[derive(Clone, Debug)]
 pub(super) struct TemplateConfig {
     local: Option<PathBuf>,
@@ -202,8 +202,8 @@ impl SchemasConfig {
         &self.class_field
     }
 
-    /// Returns the Schema registry directory, as configured (unresolved
-    /// against [`Config::root`]). Defaults to `.traces/schemas/`.
+    /// Returns the Schema registry directory, as configured (unresolved against
+    /// [`Config::root`]). Defaults to `.traces/schemas/`.
     #[inline]
     #[must_use]
     pub fn directory(&self) -> &Path {
@@ -235,8 +235,8 @@ impl From<RawSchemasConfig> for SchemasConfig {
     }
 }
 
-/// Resolved `[frontmatter]` settings mapping key names for title, aliases,
-/// and date roles.
+/// Resolved `[frontmatter]` settings mapping key names for title, aliases, and
+/// date roles.
 #[derive(Clone, Debug, Default)]
 pub struct FrontmatterConfig {
     #[cfg_attr(

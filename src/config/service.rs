@@ -86,9 +86,8 @@ impl TryFrom<DiscoveryOutcome> for ConfigBuilderInput {
 
 /// Entry point for config loading and trust administration.
 ///
-/// Filesystem discovery ([`load`](Self::load)) and trust operations
-/// ([`trust`](Self::trust), [`untrust`](Self::untrust)) are separate
-/// surfaces on this type.
+/// Filesystem discovery (`load`) and [`TrustRequest`] operations (`trust`,
+/// `untrust`) are separate surfaces on this type.
 #[derive(Clone, Debug)]
 pub struct ConfigService {
     state: ConfigStateStore,
@@ -291,7 +290,7 @@ impl ConfigService {
     ///
     /// # Errors
     ///
-    /// - [`ConfigStateError::Store`] when the trust entry cannot be removed
+    /// - `ConfigStateError::Store` when the trust entry cannot be removed
     #[inline]
     pub fn untrust(
         &self,

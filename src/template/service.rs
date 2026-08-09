@@ -26,10 +26,10 @@ use crate::{DialogProvider, config::Config};
 
 /// Entry point for resolving, rendering, and writing one template.
 ///
-/// Holds a borrowed [`Config`], an internal [`TemplateLoader`], and a
-/// [`TemplateEngine`] constructed from the configuration.
+/// Holds a borrowed [`Config`], an internal template loader, and a template
+/// engine constructed from the configuration.
 ///
-/// ## Interaction with `WriteMode`
+/// ## Interaction with [`WriteMode`]
 ///
 /// `WriteMode` controls disk writes, not prompt execution: the
 /// [`DialogProvider`] receives all `ui.*` calls regardless of mode. Callers
@@ -76,8 +76,8 @@ impl<'a> TemplateService<'a> {
 
     /// Resolves, renders, and outputs a template in a single pass.
     ///
-    /// Combines [`Self::render`] and [`Self::write`] for callers that do not
-    /// need to inspect the intermediate [`RenderedTemplate`] before writing.
+    /// Renders and writes directly for callers that do not need to inspect the
+    /// intermediate rendered template before writing.
     ///
     /// # Arguments
     ///
@@ -88,10 +88,8 @@ impl<'a> TemplateService<'a> {
     ///
     /// # Errors
     ///
-    /// - Any [`TemplateError`] produced during resolution or rendering by
-    ///   [`Self::render`].
-    /// - Any [`TemplateError`] produced during path resolution or file writing
-    ///   by [`Self::write`].
+    /// - Any [`TemplateError`] produced during resolution or rendering.
+    /// - Any [`TemplateError`] produced during path resolution or file writing.
     #[inline]
     pub fn render_to_file(
         &self,
