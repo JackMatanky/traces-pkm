@@ -221,18 +221,18 @@ impl<'a> SchemaGraph<'a> {
     /// Builds `raw_schemas`' `extends` adjacency (parent -> children) and Kahn
     /// in-degrees, seeding the ready queue with every in-degree-zero Schema.
     ///
-    /// Filters each Schema's `extends` list to targets `raw_schemas` actually
-    /// contains, pushing a [`SchemaWarning::MissingExtendsTarget`] for each
-    /// miss. The reserved Global Schema is forced to in-degree zero and
-    /// stripped of any declared `extends`: it is a flat
-    /// `$ref`-able-from-anywhere reference pool (refs point up the extends DAG
-    /// or to the Global Schema), not a link in the `extends` chain itself.
+    /// Filtering and tie-breaking:
     ///
-    /// Kahn's sort only guarantees parent-before-child ordering along `extends`
-    /// edges, so several Schemas can tie at in-degree zero with no defined
-    /// order between them; the ready queue reorders Global to the front of that
-    /// tier so it is popped (and resolved) before any sibling that might `$ref`
-    /// it.
+    /// - Each Schema's `extends` list is filtered to targets `raw_schemas`
+    ///   actually contains; a missing target emits
+    ///   [`SchemaWarning::MissingExtendsTarget`].
+    /// - The reserved Global Schema is forced to in-degree zero and stripped of
+    ///   any declared `extends`. It is a flat `$ref`-able reference pool, not a
+    ///   link in the `extends` chain.
+    /// - Kahn's sort only guarantees parent-before-child ordering along
+    ///   `extends` edges, so several Schemas can tie at in-degree zero. The
+    ///   ready queue reorders Global to the front of that tier so it resolves
+    ///   before any sibling that might `$ref` it.
     fn new(
         raw_schemas: &'a BTreeMap<SchemaName, RawSchema>,
         warnings: &mut Vec<SchemaWarning>,

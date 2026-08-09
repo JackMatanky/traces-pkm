@@ -73,6 +73,14 @@ impl Schema {
 
     /// Returns `true` if this Schema is-a `queried`: equal, or `queried` is a
     /// transitive `extends` ancestor.
+    ///
+    /// # Examples
+    ///
+    /// A `sci_fi` Schema that transitively extends `book`:
+    ///
+    /// - `sci_fi.is_a("sci_fi")` → `true` (self)
+    /// - `sci_fi.is_a("book")` → `true` (ancestor)
+    /// - `sci_fi.is_a("movie")` → `false` (unrelated)
     #[inline]
     #[must_use]
     pub(crate) fn is_a(&self, queried: &str) -> bool {
@@ -83,8 +91,8 @@ impl Schema {
 /// One resolved Field Definition: its type-specific [`FieldOptions`] plus
 /// `required`/`multi` flags.
 ///
-/// `required` and `multi` are reserved for future LSP/MCP guardrails and stay
-/// inert here.
+/// `required` and `multi` are currently inert; reserved for future
+/// LSP/MCP guardrails.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct FieldDefinition {
     options: FieldOptions,
@@ -117,11 +125,13 @@ impl FieldDefinition {
     /// namespace's `.field()` method, or `None` if this field type has none to
     /// offer.
     ///
-    /// Only `select` carries a plain value list today. `file` is also
-    /// list-bearing in principle, but its options resolve live from the
-    /// `FileIndex`, which this method does not yet consult; until that's wired
-    /// up, it returns `None` here too rather than a value list it cannot yet
-    /// honor.
+    /// By field type:
+    ///
+    /// - `select`: returns the declared `values` list.
+    /// - `file`: list-bearing in principle, but options resolve live from the
+    ///   `FileIndex` which this method does not yet consult; returns `None`
+    ///   until that's wired up.
+    /// - All other types: `None`.
     #[inline]
     #[must_use]
     pub(crate) fn selectable_values(&self) -> Option<&[String]> {
@@ -158,9 +168,9 @@ impl FieldDefinition {
 /// Type-specific Field Definition options.
 ///
 /// Pairs each [`FieldType`] with the options only that type carries, so a
-/// `select` field without `values` or a `date` field with a stray `folders`
-/// list cannot be represented. `select` and `file` are the only list-bearing
-/// kinds: every other variant is a unit variant.
+/// `select` field without `values`, or a `date` field with a stray
+/// `folders` list, cannot be represented. `select` and `file` are the only
+/// list-bearing kinds: every other variant is a unit variant.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum FieldOptions {
     Input,
@@ -198,11 +208,20 @@ impl FieldOptions {
     }
 
     /// Builds options for `field_type` from `raw`'s keys, falling back to
-    /// `base`'s options for any key `raw` leaves unset. `base`'s options are
-    /// consulted only when `base` is already the same [`FieldType`]; a `$ref`
-    /// that switches type starts from empty options instead of reusing a
-    /// mismatched base (for example a `select`'s `values` never leaks into an
-    /// overriding `file` field).
+    /// `base`'s options for any key `raw` leaves unset.
+    ///
+    /// `base` is only consulted when it is already the same [`FieldType`]; a
+    /// `$ref` that switches type starts with empty options instead of reusing
+    /// a mismatched base. For example, a `select`'s `values` never leaks
+    /// into an overriding `file` field.
+    ///
+    /// # Examples
+    ///
+    /// A `select` field inheriting from a parent with `values = ["draft",
+    /// "done"]`, where the child only overrides `required`:
+    ///
+    /// - `raw.values` is `None` → falls back to parent's `["draft", "done"]`
+    /// - `raw.values` is `Some(["todo"])` → uses `["todo"]`
     pub(super) fn merged(
         base: &Self,
         field_type: FieldType,

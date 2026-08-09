@@ -15,8 +15,8 @@ use super::name::SchemaName;
 /// registry.
 ///
 /// Contrast [`SchemaWarning`], which is emitted for a defect resolution
-/// recovers from (a missing `extends` target, a stray `required = true` on
-/// the reserved Global Schema).
+/// recovers from (a missing `extends` target, a stray `required = true` on the
+/// reserved Global Schema).
 #[derive(Debug, Error)]
 pub(crate) enum SchemaError {
     /// The Schema registry directory exists but could not be read.
@@ -88,8 +88,8 @@ pub(crate) enum SchemaError {
     },
 }
 
-/// Represents a recoverable defect encountered while resolving the Schema
-/// registry: resolution continues, degrading to the documented fallback.
+/// Represents a recoverable defect during Schema registry resolution:
+/// resolution continues, degrading to the documented fallback.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum SchemaWarning {
     /// `schema`'s `extends` list named `target`, which has no corresponding
@@ -99,10 +99,9 @@ pub(crate) enum SchemaWarning {
         schema: SchemaName,
         target: SchemaName,
     },
-    /// The reserved Global Schema declared `field` as `required = true`.
-    /// Global Schema fields can never be required, so resolution treats it
-    /// as `false`; a Schema `$ref`-ing this field may still mark it required
-    /// locally.
+    /// The reserved Global Schema declared `field` as `required = true`. Global
+    /// Schema fields can never be required, so resolution treats it as `false`.
+    /// A Schema `$ref`-ing this field may still mark it required locally.
     StrayGlobalRequired {
         field: String,
     },

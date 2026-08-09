@@ -71,10 +71,10 @@ impl SchemaRegistry {
         ))
     }
 
-    /// Returns the named Schema, or `None` if no Schema by that name resolved.
-    /// Wrapped in `Arc` so repeated lookups (a Template calling
-    /// `schema.get(...)` many times in one render) share the Schema's field map
-    /// instead of deep-cloning it per call.
+    /// Returns a reference to the named Schema, or `None` if no Schema by
+    /// that name resolved. Stored in `Arc` so repeated lookups (a Template
+    /// calling `schema.get(...)` many times in one render) share the
+    /// Schema's field map instead of deep-cloning it per call.
     #[inline]
     #[must_use]
     pub(crate) fn get(&self, name: &str) -> Option<&Arc<Schema>> {
@@ -93,10 +93,9 @@ impl SchemaRegistry {
             .collect()
     }
 
-    /// Returns `true` if `subject` is-a `queried`. For example,
-    /// `registry.is_a("sci_fi", "book")` is `true` when the `sci_fi` Schema
-    /// `extends` `book`; the reverse call, `registry.is_a("book", "sci_fi")`,
-    /// is `false`.
+    /// Returns the set of Schema names that match `queried`.
+    ///
+    /// The set includes:
     ///
     /// - Every name in `queried` itself (so a class with no Schema still
     ///   matches itself).
@@ -106,6 +105,15 @@ impl SchemaRegistry {
     /// against: a Note matches when any of its class values is in the returned
     /// set. Transitive `extends` is folded in here, so the caller compares
     /// plain strings without consulting the registry per Note.
+    ///
+    /// # Examples
+    ///
+    /// Given `sci_fi` extending `book`, and `movie` unrelated:
+    ///
+    /// - `matching_classes(&["book"])` → `{"book", "sci_fi"}`
+    /// - `matching_classes(&["movie"])` → `{"movie"}`
+    /// - `matching_classes(&["ghost"])` → `{"ghost"}` (no Schema, still
+    ///   matches)
     #[must_use]
     pub(crate) fn matching_classes(
         &self,
