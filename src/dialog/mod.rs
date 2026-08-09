@@ -1,4 +1,4 @@
-//! Object-safe dialog prompts for interactive and preset input.
+//! Provide object-safe dialog prompts for interactive and preset input.
 //!
 //! [`DialogProvider`] is the seam between template rendering and user input.
 //! The two built-in providers cover the supported runtime modes:

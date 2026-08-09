@@ -1,4 +1,4 @@
-//! Terminal-backed [`DialogProvider`] for interactive prompts.
+//! Implement a terminal-backed [`DialogProvider`] for interactive prompts.
 
 use super::{DialogError, DialogProvider};
 

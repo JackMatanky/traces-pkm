@@ -1,4 +1,4 @@
-//! Preset-backed [`DialogProvider`] for deterministic prompts.
+//! Implement a preset-backed [`DialogProvider`] for deterministic prompts.
 //!
 //! [`PresetDialogProvider`] stores responses in FIFO queues. Each prompt pops
 //! one queued answer, then falls back to the call site's default when its queue

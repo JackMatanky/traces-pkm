@@ -1,4 +1,4 @@
-//! Error model for interactive dialog prompts.
+//! Model error outcomes for interactive dialog prompts.
 //!
 //! [`DialogError`] groups prompt failures by caller-visible outcome:
 //!
