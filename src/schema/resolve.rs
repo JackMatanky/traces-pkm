@@ -1,20 +1,17 @@
-//! Pure Field Resolution: linearizes the `extends` DAG and merges Field
-//! Definitions.
+//! Resolves raw Schema sets into effective Field Definitions via Kahn's
+//! topological sort.
 //!
 //! No filesystem or minijinja access: [`resolve`] is a pure function over an
-//! already-parsed Schema set, mirroring how `index::query`'s `filter`/
-//! `operators` submodules unit-test their expression machinery.
-//!
-//! Reads top-down: the pipeline ([`resolve`] -> [`resolve_one`] ->
-//! [`build_field`]) comes first; the [`SchemaGraph`] (DAG bookkeeping) and
-//! [`RefResolver`] (`$ref` bounds-checking) types backing it, plus the
-//! `FieldPath` address type threaded through all three, follow below.
+//! already-parsed Schema set. Reads top-down: the pipeline ([`resolve`] ->
+//! [`resolve_one`] -> [`build_field`]) comes first; [`SchemaGraph`] (DAG
+//! bookkeeping), [`RefResolver`] (`$ref` bounds-checking), and `FieldPath`
+//! (address type threaded through all three) follow below.
 //!
 //! # Main Type
 //!
-//! - [`resolve`]: Resolves an entire Schema set via Kahn's topological sort
-//!   into [`super::model::Schema`]s. See [`super::model`] for the resolved
-//!   domain shapes ([`Schema`], `FieldDefinition`, `FieldOptions`) this
+//! - [`resolve`]: linearizes the `extends` DAG into [`super::model::Schema`]s.
+//!   See [`super::model`] for the resolved domain shapes ([`Schema`],
+//!   [`super::model::FieldDefinition`], [`super::model::FieldOptions`]) this
 //!   produces.
 //!
 //! [`Schema`]: super::model::Schema
@@ -210,8 +207,8 @@ fn apply_global_degrade(
 
 /// Kahn's-algorithm bookkeeping for linearizing the `extends` DAG: adjacency,
 /// in-degrees, the ready queue, and which Schemas have been popped.
-/// Isolates the Global-first tie-break (see [`SchemaGraph::new`]'s doc) from
-/// the field-merge logic in [`resolve_one`].
+/// Isolates the Global-first tie-break from the field-merge logic in
+/// [`resolve_one`].
 struct SchemaGraph<'a> {
     parents_by_name: BTreeMap<SchemaNameRef<'a>, Vec<SchemaNameRef<'a>>>,
     in_degree: BTreeMap<SchemaNameRef<'a>, usize>,

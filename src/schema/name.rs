@@ -1,16 +1,14 @@
 //! Schema-name newtypes: keeps a Schema's identity from being mixed up with an
-//! unrelated `&str`/`String` (a field name, a `$ref` string, ...) anywhere it
-//! is threaded through the module.
+//! unrelated `&str`/`String` anywhere it is threaded through the module.
 //!
-//! Mirrors the crate's [`FileName`]/[`BaseName`]/[`BaseNameRef`] split
-//! (`crate::file_name`): [`SchemaName`] owns its data for storage
-//! (`Schema.name`, map keys); [`SchemaNameRef`] borrows for the zero-allocation
-//! comparisons `resolve::SchemaGraph`'s Kahn's algorithm bookkeeping and
-//! `FieldPath` need.
+//! Mirrors the crate's [`FileName`]/[`BaseName`]/[`BaseNameRef`] split:
+//! [`SchemaName`] owns its data for storage (`Schema.name`, map keys);
+//! [`SchemaNameRef`] borrows for zero-allocation comparisons in
+//! `resolve::SchemaGraph`'s Kahn's algorithm bookkeeping and `FieldPath`.
 //!
-//! Ordering matches `str`'s (a derived `Ord`/`PartialOrd` on a single-field
-//! tuple struct delegates entirely to the wrapped field): `SchemaGraph`'s
-//! determinism and its Global-first Kahn tie-break both depend on this.
+//! Ordering matches `str`'s: a derived `Ord`/`PartialOrd` on a single-field
+//! tuple struct delegates entirely to the wrapped field, which
+//! `SchemaGraph`'s determinism and its Global-first Kahn tie-break depend on.
 //!
 //! [`FileName`]: crate::file_name::FileName
 //! [`BaseName`]: crate::file_name::BaseName

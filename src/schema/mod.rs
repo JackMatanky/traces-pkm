@@ -38,7 +38,8 @@ pub(crate) use registry::SchemaRegistry;
 
 /// The reserved Global Schema name (`global.toml`).
 ///
-/// A reserved reference pool: never itself a Note's File Class, and its own
+/// The Global Schema is a flat `$ref`-able reference pool: never itself a
+/// Note's File Class, never inherits via its own `extends`, and its
 /// `required = true` fields degrade to `false` with a
 /// [`SchemaWarning::StrayGlobalRequired`] during resolution.
 pub(crate) const GLOBAL_SCHEMA_NAME: &str = "global";
