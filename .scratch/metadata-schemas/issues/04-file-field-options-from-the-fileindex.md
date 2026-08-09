@@ -1,17 +1,17 @@
 # 04 — File-Field Options from the FileIndex
 
-**What to build:** A `file`-typed Field Definition in a Schema resolves its option list live from the FileIndex: an AND-composed filter of `folders` (array), `ext`, and `class` (array). `.field()` on such a field returns label/value pairs — label from the `[frontmatter]` aliases key or the filename stem, value the path — so `ui.select` shows a friendly label and returns the path (per ADR-0003). The `class` filter matches transitively through extends. Option lists are index-derived at use-time, so only as fresh as the index. No regex in filters.
+**What to build:** A `file`-typed Field Definition in a Schema resolves its option list live from the FileIndex: an AND-composed filter of `folders` (array), `ext`, and `class` (array). `.field()` on such a field returns label/value pairs — label from the `[frontmatter]` aliases key, else the configured title key, else the filename stem; value the path — so `ui.select` shows a friendly label and returns the path (per ADR-0003). The `class` filter matches transitively through extends. Option lists are index-derived at use-time, so only as fresh as the index. No regex in filters.
 
 **Blocked by:** 03 — Schema minijinja Namespace (done on `feat/schema-namespace`, branch from there)
 
-**Status:** ready-for-agent
+**Status:** implemented
 
-- [ ] `file` fields resolve their options from the FileIndex through an AND-composed filter of `folders` (array), `ext`, and `class` (array); no regex in filters.
-- [ ] `class` filter values match transitively through is-a (a note whose class extends the filtered class is included), using ticket 02's matching.
-- [ ] `.field()` on a `file` field returns label/value pairs: label from `[frontmatter]` aliases when present, else the filename stem; value the path.
-- [ ] The pair list feeds `ui.select` directly (ADR-0003 index-based selection).
-- [ ] The options reflect the current index state at render time.
-- [ ] Render-seam tests assert label resolution (aliases present vs absent) and that the returned value is the path.
+- [x] `file` fields resolve their options from the FileIndex through an AND-composed filter of `folders` (array), `ext`, and `class` (array); no regex in filters.
+- [x] `class` filter values match transitively through is-a (a note whose class extends the filtered class is included), using ticket 02's matching.
+- [x] `.field()` on a `file` field returns label/value pairs: label from `[frontmatter]` aliases when present, else the configured title key, else the filename stem; value the path.
+- [x] The pair list feeds `ui.select` directly (ADR-0003 index-based selection).
+- [x] The options reflect the current index state at render time.
+- [x] Render-seam tests assert label resolution (aliases present vs absent) and that the returned value is the path.
 
 ## Comments
 
@@ -40,12 +40,12 @@ When a template calls `schema.get("book").field("cover")` on a `file`-typed fiel
 - Integration into `SchemaBinding::field()` — the `FieldType::File` arm currently returns `Value::NONE`; it should call the resolver and return the pair list.
 
 **Acceptance criteria:**
-- [ ] `file` fields resolve options via AND-composed `folders`/`ext`/`class` filter; no regex.
-- [ ] `class` filter matches transitively.
-- [ ] `.field()` on a `file` field returns label/value pairs (aliases label else stem; value path).
-- [ ] Pairs feed `ui.select` directly.
-- [ ] Options reflect current index state.
-- [ ] Render-seam tests cover label resolution and path values.
+- [x] `file` fields resolve options via AND-composed `folders`/`ext`/`class` filter; no regex.
+- [x] `class` filter matches transitively.
+- [x] `.field()` on a `file` field returns label/value pairs (aliases label, else configured title, else stem; value path).
+- [x] Pairs feed `ui.select` directly.
+- [x] Options reflect current index state.
+- [x] Render-seam tests cover label resolution and path values.
 
 **Out of scope:**
 - Regex support in filters (explicitly excluded).
@@ -54,18 +54,102 @@ When a template calls `schema.get("book").field("cover")` on a `file`-typed fiel
 
 ## Implementation notes
 
-**Date**:
-**Implemented in**:
-**Branch**:
+**Date**: 2026-08-09
+**Implemented in**: `.worktrees/file-field-options`
+**Branch**: `feat/file-field-options`
 
 ### What was built
 
+- `FileIndex::file_options(...)` now returns deterministic label/value file options from the current index.
+- `SchemaBinding::field()` now resolves `FieldType::File` through the render-scoped FileIndex cache and returns `[{ label, value }, ...]` objects.
+- File filters are AND-composed across `folders`, `ext`, and `class`; array filters are any-of within their dimension.
+- Class filters reuse `SchemaRegistry::matching_classes()` so subclasses match parent class filters transitively.
+- Labels use `aliases -> title -> filename stem` precedence, using the resolved `[frontmatter]` key names (both now concrete defaults, not `Option`-wrapped): the configured aliases field's scalar value or first list string, else the configured title field's scalar value, else the indexed filename stem. Values are project-relative paths.
+
+**Update (2026-08-09, `59162d6`/`75fa8c2`):** `FrontmatterConfig`'s `title`/`aliases`/`date_created`/`date_modified` now resolve to concrete defaults instead of `None` (see ticket 01's implementation notes). That closed a real gap this ticket had inherited: a Note's default Obsidian-style `aliases:` frontmatter was silently ignored by file-field labels unless a user explicitly set `aliases = "aliases"` in config, because the resolved model kept the key `Option`-wrapped. `FileOptionFilter::new`/`option_label` (renamed from `alias_label`) now take both `title_field` and `aliases_field` as plain `&str`, always active — label resolution is no longer a skippable filter dimension. The four `root`/`directory`/`class_field`/`aliases_field` `Arc` fields duplicated across `SchemaOps` and `SchemaBinding` (`template/engine/schema.rs`) were unified into one shared `SchemaContext`, which now also carries `title_field`; `SchemaBinding::file_field_values` reads `ctx.title_field`/`ctx.aliases_field` instead of a lone `Option<Arc<str>>` alias field.
+
 ### Key design decisions
+
+- Reused `template::engine::query::cached_refresh()` so `schema`, `query`, and `tasks` share one render-scoped FileIndex refresh.
+- Kept minijinja value construction in `template::engine::schema`; the index returns plain Rust `FileOption` data and stays minijinja-free.
+- Did not add regex, file watching, or a new selection API. Existing `ui.select` already reads the `label` attribute by default and returns the selected object by index; consumers read `.value` for the path.
+- Label precedence is `aliases -> title -> filename stem`, not just `aliases -> stem`: once `title`/`aliases` stopped resolving to `None`, every Note effectively has a usable title even without a Schema-aware alias, so falling straight to the filename stem was needlessly poor UX. `option_label` in `index/mod.rs` composes `alias_label` and a new `scalar_frontmatter` helper for this; `FieldKey::is_match` stays the only key-matching mechanism (no new key type introduced).
 
 ### Verification
 
+- Red check: `mise run test -- file_field` failed on the two new render-seam tests before implementation.
+- Focused green check (2026-08-09): `mise run test -- config::service::tests::builder::frontmatter` (15/15), `mise run test -- file_field` (8/8).
+- Full green check (2026-08-09): `mise run check`, `mise run clippy`, `mise run verify` (fmt -> lint -> clippy -> test-all -> audit) all clean; full suite 1424/1424 passed. `gitnexus_detect_changes` confirmed the touched-symbol set stayed within config defaults/frontmatter accessors, schema runtime context, file-option labels, tests, and issue/domain notes.
+
 ### Out of scope (unchanged)
 
-## Adversarial re-review
+- Regex support in filters.
+- A file watcher/daemon to keep the index continuously fresh.
+- Editing Notes through Schema output.
 
-_(Fill after implementation — re-derive ACs from the issue text, cross-check against diff and test suite, run rust-code-review/rust-skills/rust-testing/rust-doc pass.)_
+## Adversarial re-review (2026-08-09)
+
+Prompted by reviewing the `date_created`/`date_modified` dead_code `expect` reasons, which promised consumption by "later frontmatter-aware tickets" that never existed. Traced against `metadata-schemas/spec.md`: User Story 24 only asks for the config keys to be declared ("canonical metadata roles are configurable"); no consumer is specified anywhere in the spec's Implementation Decisions, Testing Decisions, or Out of Scope. Confirmed nothing was missing from this feature — just corrected the misleading comment in `config/model.rs`.
+
+Also audited every `dead_code` suppression in the crate (30 sites / 37 individual field/method spans): mechanically stripped each `expect(dead_code)`, ran `cargo clippy --workspace`, and confirmed all 37 still fire when unsuppressed. None stale, none removable as of this pass.
+
+Found `FrontmatterConfig::date_created`/`date_modified` and `DateFieldConfig::name`/`format` carried a field-level `expect(dead_code)` duplicating the one already on their accessors. Verified empirically: `#[expect(dead_code)]` on an accessor makes rustc treat it as a reachability root, so the accessor's own body (`&self.date_created`) already marks the backing field as read — the field-level suppression was redundant. Removed it, keeping the suppression only on the accessors.
+
+Replaced `Config::for_test_with_frontmatter` (a second, overlapping test constructor) with a chainable `Config::for_test(...).with_frontmatter(...)`, so there is exactly one `for_test` entry point; all prior `for_test(...)` call sites were unaffected.
+
+Commits: `59162d6` (concrete defaults, title fallback, `SchemaContext`, Figment merge-null fix), `75fa8c2` (`for_test` consolidation, dead_code trim).
+
+## Adversarial re-review, pass 2 (2026-08-09)
+
+Fresh, from-scratch pass: manually verified every AC against code and tests (not the checkmarks), then audited with `rust-code-review`/`rust-skills`, `rust-testing`/`rust-unit-testing`, and `rust-doc`. Every finding below is evidence-backed (code read + a runnable reproduction), not inferred.
+
+### Acceptance criteria — all 6 independently verified as met
+
+1. AND-composed `folders`/`ext`/`class` filter, no regex — `FileIndex::file_options` (`src/index/mod.rs`): folder any-of via `starts_with`, `ext` exact match after `trim_start_matches('.')`, class exact-set membership; no `regex` crate use anywhere in the path.
+2. Transitive class matching — `SchemaBinding::file_field_values` calls `SchemaRegistry::matching_classes`; confirmed end-to-end (not just at `matching_classes`'s own unit level) by `schema::tests::field::file_field_returns_index_derived_label_value_pairs`, where a note with `class: sci_fi` (`sci_fi extends ["book"]`) matches a `class = ["book"]` filter.
+3. Label precedence aliases -> title -> stem, value = path — confirmed in `option_label`/`alias_label`/`scalar_frontmatter` and exercised by the same render-seam test (alias case, title-fallback case, stem-fallback case all present).
+4. Pairs feed `ui.select` directly — `file_option_value` builds `{label, value}`; cross-checked against `ui.rs`'s own `SelectOptions::extract` (`attribute` defaults to `"label"`) and its existing test `select_recovers_the_original_object_by_its_label`.
+5. Options reflect current index state — `file_field_options_refresh_between_renders` proves a second render picks up a file added after the first.
+6. Render-seam tests cover label resolution and path values — present, as above.
+
+No unmet or partially-met ACs.
+
+### Code review (rust-code-review / rust-skills)
+
+- **Low — confirmed via compile:** `SchemaContext::new` (`src/template/engine/schema.rs`) dropped `const` during the `SchemaOps` -> `SchemaContext` extraction; the predecessor `SchemaOps::new` was `pub(super) const fn`. Verified by re-adding `const` locally: compiles clean under `cargo check --workspace`. No technical reason for the loss — plain struct-field assignment stays const-eligible. Violates rust-skills `const-fn`. Trivial fix: restore `const`.
+- **Medium/out-of-scope but confirmed live bug:** `RawSchemasConfig`/`RawTemplateConfig` (`src/config/raw.rs`) still lack `#[serde(skip_serializing_if = "Option::is_none")]` on their `Option` fields (`class_field`, `directory`, `output_dir`), unlike the sibling `RawFrontmatterConfig`/`RawDateFieldConfig` this ticket's own session fixed for the identical Figment merge-null bug. Reproduced live with a throwaway test (inserted, run, reverted — not committed): local `[schemas]\nclass_field = "local_kind"` + global `[schemas]\ndirectory = "global/schemas"` merges to `directory` silently reverting to the hardcoded `.traces/schemas/` default, discarding the global value, because local's `RawSchemasConfig` re-serializes `directory: None` as explicit `null` and Figment's `Serialized::defaults` overlay treats that as "set to null" rather than "absent." Same bug class, same mechanism, unfixed in two of three raw config tables. Not this ticket's diff surface, so not fixed here — flagging for a follow-up ticket/fix, as the previous session's own handoff already flagged as an open question.
+- `#[expect(clippy::too_many_arguments, reason = ...)]` on `FileOptionFilter::new` (6 args) is justified, not dead: this repo's `clippy.toml` sets `too-many-arguments-threshold = 5` (not clippy's default 7), so the lint genuinely fires without it.
+
+### Test suite review (rust-testing / rust-unit-testing)
+
+- **Confirmed gap, empirically proven insensitive:** `schema_file_field_uses_configured_aliases_field` (`src/template/engine.rs`) is the only seam test proving `Config`'s frontmatter keys reach `TemplateEngine::new` -> `SchemaContext` correctly. Proved by locally swapping the `title_field`/`aliases_field` arguments in the `SchemaContext::new(...)` call inside `TemplateEngine::new` (reverted after) — **the test still passes**. Its note fixture (`aka: Custom Alias`, no `title:` key) can't distinguish which config slot fed which resolver parameter, because `option_label`'s alias-then-title fallback finds a match either way. A parameter-order regression on that 5-arg constructor call would ship undetected. Fix: give the fixture both a `title:` key and a differently-valued aliases key, or add a companion test that configures a non-default *title* key with no aliases present, which today is untested at the render seam (only the aliases wiring is proven end-to-end; the title wiring is not).
+- **Confirmed gap:** `option_label`'s precedence suite (`src/index/mod.rs::tests::option_label`, 4 rstest cases) never exercises: a scalar (non-list) `aliases:` string value; an aliases `List` with zero string entries (must fall through to title); a `List` with leading non-string entries before a usable string (proves `find_map` skips correctly); a non-string aliases scalar (the title dimension has this case — `non_string_title_is_ignored` — aliases does not). `alias_label`/`scalar_frontmatter` have no direct unit tests of their own, only indirect coverage through `option_label`. Given this is the field's core precedence logic and the module otherwise favors thorough case enumeration (see `DateFieldConfig`'s partial-config tests), this is a real, addressable coverage gap, not nitpicking.
+- **Low:** `.scratch/metadata-schemas/spec.md`'s Testing Decisions (the file itself, not the ticket) still describes label precedence as "aliases... else the filename stem" with no mention of the title fallback step added this session. Minor spec/implementation drift — `spec.md` wasn't updated alongside the title-fallback change, only this ticket file and `CONTEXT.md` were.
+
+### Doc review (rust-doc)
+
+- Doc comments across all six touched `src/` files are consistently well-formed: single-line summaries, intra-doc links for every referenced type/method, no stray `# Returns` sections, reasoning ("why", not just "what") documented on the Figment-related struct/field docs in `raw.rs`.
+- One pre-existing (not introduced this session) terminology nit: `FileIndex::file_options`'s doc says "Empty `folders`, `ext`, or `classes` values skip that filter dimension" — `ext` is `Option<&str>`, not a collection, so calling `None` "empty" slightly conflates the two; could read "empty `folders`/`classes`, or an absent `ext`."
+- No missing `# Errors` sections found on fallible items touched this session.
+
+### Net assessment
+
+Implementation is functionally correct and all 6 ACs hold. Two real, evidence-backed weaknesses worth fixing before calling this ticket fully closed: (1) the seam test that's supposed to prove config-to-render wiring for frontmatter keys doesn't actually distinguish title from aliases, and (2) `alias_label`'s edge cases (scalar values, non-string entries, empty lists) are untested. Neither blocks correctness today; both are latent regression risk. The `RawSchemasConfig`/`RawTemplateConfig` Figment bug is real but out of this ticket's scope — needs its own ticket or explicit user sign-off to fix here. The dropped `const fn` is trivial and safe to fix immediately.
+
+## Fix-and-refactor pass (2026-08-09)
+
+Implemented all findings from the two adversarial-review passes, in 6 phases, in this worktree. `mise run verify` (fmt → clippy → lint hooks → full test suite → audit) clean; 1412 unit/doc tests + 4 bin tests + 18 e2e tests + 10 doctests all pass. Worktree diff: 11 files, +524/-114.
+
+**Phase 1 — `RawSchemasConfig`/`RawTemplateConfig` Figment fix.** Added `#[serde(skip_serializing_if = "Option::is_none")]` to both (`src/config/raw.rs`), mirroring the frontmatter fix from the prior session. Reproduced the bug live first with a throwaway probe test (global `[schemas] directory` silently discarded when local sets a sibling key) before fixing — confirmed it was real, not speculative. Added permanent regression tests: `falls_back_to_global_directory_when_local_omits_directory` (schemas), `falls_back_to_global_output_dir_when_local_omits_output_dir` (templates) in `src/config/service.rs`. Note: `RawTemplateConfig.directory` doesn't actually route through the Figment-merged struct (each file's template directory is read independently via `resolved_template_dir()`, kept separate by design so local and global dirs both survive) — only `output_dir` was live-exploitable there; the `directory` field still got the `skip_serializing_if` fix for consistency/future-proofing.
+
+**Phase 2 — `FieldKey` validation at the config boundary.** `SchemasConfig.class_field`, `FrontmatterConfig.title`/`.aliases` are now `FieldKey` internally (was raw `String`), validated via `FieldKey::try_new` at config-resolution time — an empty or whitespace-only configured key now fails config load with `ConfigBuilderError::InvalidFieldKey { table, source }` instead of silently never matching anything at render time. Public `&str`-returning accessors (`class_field()`, `title()`, `aliases()`) kept their exact signature and behavior for API stability (they're `pub`, re-exported under `test-utils`); new `pub(crate)` `*_key()` accessors expose the validated `FieldKey` for internal use. `From<RawXConfig>` became `TryFrom`; `service.rs::build()` propagates. Added `rejects_empty_class_field`, `rejects_empty_title`, `rejects_whitespace_only_aliases` tests. Removed a now-stale `dead_code` suppression on `FieldKey::name()` (it's genuinely called in production now) and added one to `FrontmatterConfig::title()`/`.aliases()` (now only test-reachable, matching the existing `date_created()`/`date_modified()` pattern).
+
+**Phase 3 — `FrontmatterFieldKeys` consolidation.** New type in `src/field.rs` bundling `class`/`title`/`aliases` as three already-validated `FieldKey`s — built once in `TemplateEngine::new` from `Config`'s validated accessors, threaded as one `Arc`-shared value through `SchemaContext` and `FileOptionFilter` instead of three-to-six loose parameters. This fixed the architectural inconsistency flagged in review: `SchemaContext` was already extracted to solve exactly this "too many related fields" problem for `root`/`directory`/`class_field`, but `title_field`/`aliases_field` were bolted on as two more loose `Arc<str>` fields instead of joining that pattern, and `FileOptionFilter::new`'s resulting 6-arg overflow was suppressed with `#[expect(clippy::too_many_arguments)]` rather than fixed. `FileOptionFilter::new` is now 4 args (`folders`, `ext`, `classes`, `keys`); the `#[expect]` is gone, not just satisfied. `alias_label`/`scalar_frontmatter`/`option_label` (`src/index/mod.rs`) now take `&FieldKey` and compare via `FieldKey`'s `PartialEq` (canonical-form equality) instead of re-canonicalizing a raw `&str` candidate through `is_match()` on every Note/field scan — proved algebraically equivalent (`is_match`'s raw-text fast path is redundant with canonical equality once both sides are pre-parsed `FieldKey`s) and empirically (full suite green). Deliberately did **not** extend this to `index::query::class_values`/`QueryOps` — that's the `from_class` query-predicate path, a different subsystem outside this ticket's diff surface; same validation gap plausibly exists there too, flagged as a follow-up, not fixed here.
+
+**Phase 4 — mechanical fixes.** `SchemaContext::new` is `const fn` again. `FileOption::into_parts(self) -> (String, String)` added; `file_option_value` now consumes `FileOption` and moves its two `String`s into the minijinja `context!` instead of `.to_owned()`-cloning already-owned data that was about to be dropped. `FileOption::label()`/`.value()` (the old borrowing accessors) were dead after that change with no remaining caller (checked directly) — deleted rather than kept-just-in-case, since `FileOption` is `pub(crate)` with no external API concern.
+
+**Phase 5 — test gaps.** `option_label`'s rstest suite grew from 4 to 8 cases: scalar (non-list) aliases string, an aliases list with zero string entries (falls through to title), a list with leading non-string entries before a usable string (proves the `find_map` skip-and-continue path), and a non-string aliases scalar (mirrors the pre-existing `non_string_title_is_ignored`, previously title-only). `schema_file_field_uses_configured_aliases_field`'s fixture now includes a distinctly-valued `title:` key alongside the aliases key, so a title/aliases parameter-order regression changes the rendered output instead of resolving identically either way — reverified by re-running the exact swap mutation from the prior review pass: the test now correctly **fails** on the swap (previously it passed either way). Added `schema_file_field_uses_configured_title_field`, a new companion seam test proving the *configured title key* specifically reaches the render path (nothing exercised this before — the old test always had aliases win, so title wiring was never actually observed).
+
+**Phase 6 — docs.** `spec.md`'s Testing Decisions now mention the title-fallback step in label precedence (was still "aliases... else stem" only). Tightened `FileIndex::file_options`'s doc: "empty `folders`/`classes`, or an absent `ext`" instead of lumping `ext: Option<&str>` in with "empty" collection language.
+
+**Deliberately left open, by design:** the `index::query::class_values`/`QueryOps` `&str`-based class-field matching (same validation-gap class as Phase 2's fix, different subsystem, not this ticket's diff surface).

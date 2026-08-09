@@ -39,12 +39,12 @@ use self::{
     num::NumOps,
     path::PathOps,
     query::QueryOps,
-    schema::SchemaOps,
+    schema::{SchemaContext, SchemaOps},
     string::StrOps,
     ui::UiOps,
 };
 use super::{loader::TemplateLoader, path::DeclaredOutputPath};
-use crate::{DialogProvider, config::Config};
+use crate::{DialogProvider, config::Config, index::FrontmatterFieldKeys};
 
 /// Renders template source through minijinja, backed by [`TemplateLoader`]'s
 /// `{% include %}` and `{% extends %}` resolution.
@@ -101,7 +101,8 @@ impl TemplateEngine {
             move |name| loader.load(name)
         });
         let root: Arc<Path> = Arc::from(config.root());
-        let class_field: Arc<str> = Arc::from(config.schemas().class_field());
+        let class_field: Arc<str> =
+            Arc::from(config.schemas().class_field_name());
         let schemas_dir: Arc<Path> =
             Arc::from(config.root().join(config.schemas().directory()));
         FileOps::new(Arc::clone(&root)).register(&mut env);
@@ -111,18 +112,26 @@ impl TemplateEngine {
             Arc::clone(&schemas_dir),
         )
         .register(&mut env);
-        QueryOps::task(Arc::clone(&root), class_field, schemas_dir)
-            .register(&mut env);
+        QueryOps::task(
+            Arc::clone(&root),
+            class_field,
+            Arc::clone(&schemas_dir),
+        )
+        .register(&mut env);
         QueryOps::register_terminal_filters(&mut env);
-        PathOps::new(root).register(&mut env);
+        PathOps::new(Arc::clone(&root)).register(&mut env);
         UiOps::new(provider).register(&mut env);
         DateOps.register(&mut env);
         StrOps::register(&mut env);
         NumOps::register(&mut env);
-        SchemaOps::new(Arc::from(
-            config.root().join(config.schemas().directory()),
-        ))
-        .register(&mut env);
+        let field_keys = FrontmatterFieldKeys::new(
+            config.schemas().class_field().clone(),
+            config.frontmatter().title().clone(),
+            config.frontmatter().aliases().clone(),
+        );
+        let schema_ctx =
+            Arc::new(SchemaContext::new(root, schemas_dir, field_keys));
+        SchemaOps::new(schema_ctx).register(&mut env);
         env.add_function("uuid", uuid);
         Self {
             env,
@@ -130,14 +139,13 @@ impl TemplateEngine {
     }
 
     /// Compiles and renders template `source` identified by `name` with an
-    /// empty context, returning a [`RenderOutput`] containing the rendered
-    /// text and any path captured by `file.write_to()`.
+    /// empty context, returning a [`RenderOutput`] containing the rendered text
+    /// and any path captured by `file.write_to()`.
     ///
     /// The template `name` is passed to minijinja as the template identifier so
     /// diagnostic errors report the actual template name rather than defaulting
-    /// to `<string>`. Captured state from `file.write_to()` is collected
-    /// across the entire render tree, including any included or extended
-    /// templates.
+    /// to `<string>`. Captured state from `file.write_to()` is collected across
+    /// the entire render tree, including any included or extended templates.
     ///
     /// # Errors
     ///
@@ -516,6 +524,106 @@ mod tests {
                 .expect("render succeeds");
 
             assert_eq!(rendered.content, "reading");
+        }
+
+        #[test]
+        fn schema_file_field_uses_configured_aliases_field() {
+            use crate::config::FrontmatterConfig;
+
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::create_dir_all(temp.path().join(".traces/schemas"))
+                .expect("create schemas dir");
+            fs::write(
+                temp.path().join(".traces/schemas/book.toml"),
+                "[fields.cover]\ntype = \"file\"\nfolders = [\"covers\"]\next \
+                 = \"md\"\nclass = [\"book\"]\n",
+            )
+            .expect("write schema fixture");
+            fs::create_dir_all(temp.path().join("covers"))
+                .expect("create covers dir");
+            // `title` is present with a distinct value so a title/aliases
+            // wiring swap would surface as a wrong rendered label instead of
+            // silently resolving the same way through fallback.
+            fs::write(
+                temp.path().join("covers/custom.md"),
+                "---\ntitle: Wrong Label\naka: Custom Alias\nclass: \
+                 book\n---\n",
+            )
+            .expect("write note fixture");
+            let config = Config::for_test(
+                temp.path().to_path_buf(),
+                None,
+                None,
+                temp.path().to_path_buf(),
+            )
+            .with_frontmatter(FrontmatterConfig::for_test("title", "aka"));
+            let engine = TemplateEngine::new(
+                &loader_from_dir(temp.path()),
+                preset_provider(),
+                &config,
+            );
+
+            let rendered = engine
+                .render(
+                    "{% for item in schema.get('book').field('cover') %}{{ \
+                     item.label }}={{ item.value }}{% endfor %}",
+                    "test.md",
+                )
+                .expect("render succeeds");
+
+            assert_eq!(rendered.content, "Custom Alias=covers/custom.md");
+        }
+
+        #[test]
+        fn schema_file_field_uses_configured_title_field() {
+            use crate::config::FrontmatterConfig;
+
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::create_dir_all(temp.path().join(".traces/schemas"))
+                .expect("create schemas dir");
+            fs::write(
+                temp.path().join(".traces/schemas/book.toml"),
+                "[fields.cover]\ntype = \"file\"\nfolders = [\"covers\"]\next \
+                 = \"md\"\nclass = [\"book\"]\n",
+            )
+            .expect("write schema fixture");
+            fs::create_dir_all(temp.path().join("covers"))
+                .expect("create covers dir");
+            // No `aliases:` key present, so label resolution falls through to
+            // the configured *title* key (`heading`, not the default `title`) —
+            // proves title_field wiring specifically, which
+            // `schema_file_field_uses_configured_aliases_field` cannot: that
+            // test's alias always resolves first, so a title/aliases wiring
+            // swap wouldn't be caught by a title-absent scenario alone.
+            fs::write(
+                temp.path().join("covers/custom.md"),
+                "---\nheading: Custom Title\nclass: book\n---\n",
+            )
+            .expect("write note fixture");
+            let config = Config::for_test(
+                temp.path().to_path_buf(),
+                None,
+                None,
+                temp.path().to_path_buf(),
+            )
+            .with_frontmatter(FrontmatterConfig::for_test(
+                "heading", "aliases",
+            ));
+            let engine = TemplateEngine::new(
+                &loader_from_dir(temp.path()),
+                preset_provider(),
+                &config,
+            );
+
+            let rendered = engine
+                .render(
+                    "{% for item in schema.get('book').field('cover') %}{{ \
+                     item.label }}={{ item.value }}{% endfor %}",
+                    "test.md",
+                )
+                .expect("render succeeds");
+
+            assert_eq!(rendered.content, "Custom Title=covers/custom.md");
         }
 
         #[test]

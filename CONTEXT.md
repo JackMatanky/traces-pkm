@@ -62,8 +62,8 @@ TOML files at two levels. Local (`.traces/config.toml`) and global (`~/.config/t
 # Frontmatter keys for canonical metadata roles
 # title        = "title"
 # aliases      = "aliases"   # read for file-field display labels
-# date_created = { name = "date_created", format = "%Y-%m-%d" }
-# date_modified = { name = "date_modified", format = "%Y-%m-%d" }
+# date_created = { name = "date_created", format = "%Y-%m-%dT%H:%M:%S" }
+# date_modified = { name = "date_modified", format = "%Y-%m-%dT%H:%M:%S" }
 ```
 
 ### Dry-run
@@ -189,7 +189,7 @@ A key in a Field Definition pointing at another definition used as its base: `#g
 _Avoid_: reference, field alias
 
 ### schema namespace
-The minijinja global exposing Schemas to templates. `schema.get("book")` binds a Schema, exposing `.name` (its own name) and `.field("status")`, which returns its selectable values — plain strings for `select` fields, `None` for every other type today, including `file` (file-field label/value pairs land in ticket 04). Unknown schema or field names are errors. Schemas supply values only — templates choose the interactive function themselves.
+The minijinja global exposing Schemas to templates. `schema.get("book")` binds a Schema, exposing `.name` (its own name) and `.field("status")`, which returns its selectable values — plain strings for `select` fields, label/value objects for `file` fields, and `None` for every other type. Unknown schema or field names are errors. Schemas supply values only — templates choose the interactive function themselves.
 _Avoid_: schema api, metadata menu function
 
 #### descendants

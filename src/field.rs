@@ -255,7 +255,6 @@ impl FieldKey {
     /// Returns the original key text.
     #[inline]
     #[must_use]
-    #[cfg_attr(not(test), expect(dead_code, reason = "used in tests"))]
     pub(crate) fn name(&self) -> &str {
         &self.name
     }

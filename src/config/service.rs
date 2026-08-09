@@ -175,6 +175,9 @@ impl ConfigService {
     ///   path validation, tracking/trust transition, or parsing
     /// - [`ConfigBuilderError::Merge`] when the merged local/global config
     ///   cannot be re-extracted for its output directory
+    /// - [`ConfigBuilderError::InvalidFieldKey`] when a `[frontmatter]` or
+    ///   `[schemas]` key name is empty, whitespace-only, or canonicalizes to
+    ///   nothing
     fn build(
         &self,
         discovered: DiscoveryOutcome,
@@ -214,11 +217,24 @@ impl ConfigService {
         let output =
             merged.templates.output_dir.unwrap_or_else(|| root.clone());
 
+        let schemas =
+            SchemasConfig::try_from(merged.schemas).map_err(|source| {
+                ConfigBuilderError::InvalidFieldKey {
+                    table: "schemas",
+                    source,
+                }
+            })?;
+        let frontmatter = FrontmatterConfig::try_from(merged.frontmatter)
+            .map_err(|source| ConfigBuilderError::InvalidFieldKey {
+                table: "frontmatter",
+                source,
+            })?;
+
         Ok(Config::new(
             root,
             TemplateConfig::new(local_dir, global_dir, output),
-            SchemasConfig::from(merged.schemas),
-            FrontmatterConfig::from(merged.frontmatter),
+            schemas,
+            frontmatter,
         ))
     }
 
@@ -358,9 +374,9 @@ impl ConfigService {
     /// Serialises `directory`/`output_dir` as the local template config and
     /// writes it to `root.join(LOCAL_CONFIG_FILE)`.
     ///
-    /// `[schemas]` and `[frontmatter]` are written as empty tables (their
-    /// serde defaults), so a freshly scaffolded config behaves identically
-    /// to one that omits those tables entirely.
+    /// `[schemas]` and `[frontmatter]` are written as empty tables (their serde
+    /// defaults), so a freshly scaffolded config behaves identically to one
+    /// that omits those tables entirely.
     ///
     /// Uses [`File::create_new`] rather than [`std::fs::write`] so this fails
     /// atomically if the file already exists. This prevents a concurrent
@@ -1440,6 +1456,32 @@ mod tests {
                     ))
                 ));
             }
+
+            #[test]
+            fn falls_back_to_global_output_dir_when_local_omits_output_dir() {
+                let fixture = Fixture::new();
+                let local_path = fixture.write_config(
+                    "project/.traces/config.toml",
+                    "[templates]\ndirectory = \"local_tmpl\"",
+                );
+                let global_path = fixture.write_config(
+                    "global/config.toml",
+                    "[templates]\noutput_dir = \"global_out\"",
+                );
+                let local =
+                    LocalConfigFile::<FileDiscovered>::try_new(local_path)
+                        .unwrap();
+                let global =
+                    GlobalConfigFile::<FileDiscovered>::try_new(global_path)
+                        .unwrap();
+
+                // Act
+                let config =
+                    build(&fixture, local, Some(global)).expect("build");
+
+                // Assert
+                assert_eq!(config.output_dir(), Path::new("global_out"));
+            }
         }
 
         mod schemas {
@@ -1462,7 +1504,7 @@ mod tests {
                 let config = build(&fixture, local, None).expect("build");
 
                 // Assert
-                assert_eq!(config.schemas().class_field(), "kind");
+                assert_eq!(config.schemas().class_field_name(), "kind");
             }
 
             #[test]
@@ -1478,7 +1520,7 @@ mod tests {
                 let config = build(&fixture, local, None).expect("build");
 
                 // Assert
-                assert_eq!(config.schemas().class_field(), "class");
+                assert_eq!(config.schemas().class_field_name(), "class");
             }
 
             #[test]
@@ -1544,7 +1586,36 @@ mod tests {
                     build(&fixture, local, Some(global)).expect("build");
 
                 // Assert
-                assert_eq!(config.schemas().class_field(), "local_kind");
+                assert_eq!(config.schemas().class_field_name(), "local_kind");
+            }
+
+            #[test]
+            fn falls_back_to_global_directory_when_local_omits_directory() {
+                let fixture = Fixture::new();
+                let local_path = fixture.write_config(
+                    "project/.traces/config.toml",
+                    "[schemas]\nclass_field = \"local_kind\"",
+                );
+                let global_path = fixture.write_config(
+                    "global/config.toml",
+                    "[schemas]\ndirectory = \"global/schemas\"",
+                );
+                let local =
+                    LocalConfigFile::<FileDiscovered>::try_new(local_path)
+                        .unwrap();
+                let global =
+                    GlobalConfigFile::<FileDiscovered>::try_new(global_path)
+                        .unwrap();
+
+                // Act
+                let config =
+                    build(&fixture, local, Some(global)).expect("build");
+
+                // Assert
+                assert_eq!(
+                    config.schemas().directory(),
+                    Path::new("global/schemas")
+                );
             }
 
             #[test]
@@ -1569,6 +1640,30 @@ mod tests {
                     ))
                 ));
             }
+
+            #[test]
+            fn rejects_empty_class_field() {
+                let fixture = Fixture::new();
+                let local_path = fixture.write_config(
+                    "project/.traces/config.toml",
+                    "[schemas]\nclass_field = \"   \"",
+                );
+                let local =
+                    LocalConfigFile::<FileDiscovered>::try_new(local_path)
+                        .unwrap();
+
+                // Act
+                let result = build(&fixture, local, None);
+
+                // Assert
+                assert!(matches!(
+                    result,
+                    Err(ConfigBuilderError::InvalidFieldKey {
+                        table: "schemas",
+                        ..
+                    })
+                ));
+            }
         }
 
         mod frontmatter {
@@ -1591,7 +1686,7 @@ mod tests {
                 let config = build(&fixture, local, None).expect("build");
 
                 // Assert
-                assert_eq!(config.frontmatter().title(), Some("Title"));
+                assert_eq!(config.frontmatter().title_name(), "Title");
             }
 
             #[test]
@@ -1609,11 +1704,11 @@ mod tests {
                 let config = build(&fixture, local, None).expect("build");
 
                 // Assert
-                assert_eq!(config.frontmatter().aliases(), Some("Aliases"));
+                assert_eq!(config.frontmatter().aliases_name(), "Aliases");
             }
 
             #[test]
-            fn defaults_title_to_none_when_unconfigured() {
+            fn defaults_title_when_unconfigured() {
                 let fixture = Fixture::new();
                 let local_path = fixture
                     .write_config("project/.traces/config.toml", "[templates]");
@@ -1625,11 +1720,11 @@ mod tests {
                 let config = build(&fixture, local, None).expect("build");
 
                 // Assert
-                assert_eq!(config.frontmatter().title(), None);
+                assert_eq!(config.frontmatter().title_name(), "title");
             }
 
             #[test]
-            fn defaults_aliases_to_none_when_unconfigured() {
+            fn defaults_aliases_when_unconfigured() {
                 let fixture = Fixture::new();
                 let local_path = fixture
                     .write_config("project/.traces/config.toml", "[templates]");
@@ -1641,7 +1736,7 @@ mod tests {
                 let config = build(&fixture, local, None).expect("build");
 
                 // Assert
-                assert_eq!(config.frontmatter().aliases(), None);
+                assert_eq!(config.frontmatter().aliases_name(), "aliases");
             }
 
             #[test]
@@ -1660,10 +1755,7 @@ mod tests {
                 let config = build(&fixture, local, None).expect("build");
 
                 // Assert
-                let created = config
-                    .frontmatter()
-                    .date_created()
-                    .expect("date_created configured");
+                let created = config.frontmatter().date_created();
                 assert_eq!(created.name(), "created");
                 assert_eq!(created.format(), "%Y-%m-%d");
             }
@@ -1684,16 +1776,13 @@ mod tests {
                 let config = build(&fixture, local, None).expect("build");
 
                 // Assert
-                let modified = config
-                    .frontmatter()
-                    .date_modified()
-                    .expect("date_modified configured");
+                let modified = config.frontmatter().date_modified();
                 assert_eq!(modified.name(), "modified");
                 assert_eq!(modified.format(), "%Y-%m-%dT%H:%M:%S");
             }
 
             #[test]
-            fn defaults_date_created_to_none_when_unconfigured() {
+            fn defaults_date_created_when_unconfigured() {
                 let fixture = Fixture::new();
                 let local_path = fixture
                     .write_config("project/.traces/config.toml", "[templates]");
@@ -1705,11 +1794,13 @@ mod tests {
                 let config = build(&fixture, local, None).expect("build");
 
                 // Assert
-                assert!(config.frontmatter().date_created().is_none());
+                let created = config.frontmatter().date_created();
+                assert_eq!(created.name(), "date_created");
+                assert_eq!(created.format(), "%Y-%m-%dT%H:%M:%S");
             }
 
             #[test]
-            fn defaults_date_modified_to_none_when_unconfigured() {
+            fn defaults_date_modified_when_unconfigured() {
                 let fixture = Fixture::new();
                 let local_path = fixture
                     .write_config("project/.traces/config.toml", "[templates]");
@@ -1721,7 +1812,9 @@ mod tests {
                 let config = build(&fixture, local, None).expect("build");
 
                 // Assert
-                assert!(config.frontmatter().date_modified().is_none());
+                let modified = config.frontmatter().date_modified();
+                assert_eq!(modified.name(), "date_modified");
+                assert_eq!(modified.format(), "%Y-%m-%dT%H:%M:%S");
             }
 
             #[test]
@@ -1771,11 +1864,51 @@ mod tests {
             }
 
             #[test]
-            fn rejects_date_field_missing_required_key() {
+            fn defaults_date_created_format_when_only_name_configured() {
                 let fixture = Fixture::new();
                 let local_path = fixture.write_config(
                     "project/.traces/config.toml",
-                    "[frontmatter.date_created]\nname = \"created\"",
+                    "[frontmatter.date_created]\nname = \"created_at\"",
+                );
+                let local =
+                    LocalConfigFile::<FileDiscovered>::try_new(local_path)
+                        .unwrap();
+
+                // Act
+                let config = build(&fixture, local, None).expect("build");
+
+                // Assert
+                let created = config.frontmatter().date_created();
+                assert_eq!(created.name(), "created_at");
+                assert_eq!(created.format(), "%Y-%m-%dT%H:%M:%S");
+            }
+
+            #[test]
+            fn defaults_date_modified_name_when_only_format_configured() {
+                let fixture = Fixture::new();
+                let local_path = fixture.write_config(
+                    "project/.traces/config.toml",
+                    "[frontmatter.date_modified]\nformat = \"%Y-%m-%d\"",
+                );
+                let local =
+                    LocalConfigFile::<FileDiscovered>::try_new(local_path)
+                        .unwrap();
+
+                // Act
+                let config = build(&fixture, local, None).expect("build");
+
+                // Assert
+                let modified = config.frontmatter().date_modified();
+                assert_eq!(modified.name(), "date_modified");
+                assert_eq!(modified.format(), "%Y-%m-%d");
+            }
+
+            #[test]
+            fn rejects_empty_date_created_name() {
+                let fixture = Fixture::new();
+                let local_path = fixture.write_config(
+                    "project/.traces/config.toml",
+                    "[frontmatter.date_created]\nname = \"   \"",
                 );
                 let local =
                     LocalConfigFile::<FileDiscovered>::try_new(local_path)
@@ -1787,9 +1920,10 @@ mod tests {
                 // Assert
                 assert!(matches!(
                     result,
-                    Err(ConfigBuilderError::ConfigFile(
-                        ConfigFileError::Read { .. }
-                    ))
+                    Err(ConfigBuilderError::InvalidFieldKey {
+                        table: "frontmatter",
+                        ..
+                    })
                 ));
             }
 
@@ -1816,7 +1950,108 @@ mod tests {
                     build(&fixture, local, Some(global)).expect("build");
 
                 // Assert
-                assert_eq!(config.frontmatter().title(), Some("local_title"));
+                assert_eq!(config.frontmatter().title_name(), "local_title");
+            }
+
+            #[test]
+            fn prioritizes_local_aliases_over_global() {
+                let fixture = Fixture::new();
+                let local_path = fixture.write_config(
+                    "project/.traces/config.toml",
+                    "[frontmatter]\naliases = \"aka\"",
+                );
+                let global_path = fixture.write_config(
+                    "global/config.toml",
+                    "[frontmatter]\naliases = \"aliases\"",
+                );
+                let local =
+                    LocalConfigFile::<FileDiscovered>::try_new(local_path)
+                        .unwrap();
+                let global =
+                    GlobalConfigFile::<FileDiscovered>::try_new(global_path)
+                        .unwrap();
+
+                // Act
+                let config =
+                    build(&fixture, local, Some(global)).expect("build");
+
+                // Assert
+                assert_eq!(config.frontmatter().aliases_name(), "aka");
+            }
+
+            #[test]
+            fn falls_back_to_global_aliases_when_local_omits_aliases() {
+                let fixture = Fixture::new();
+                let local_path = fixture.write_config(
+                    "project/.traces/config.toml",
+                    "[frontmatter]\ntitle = \"local_title\"",
+                );
+                let global_path = fixture.write_config(
+                    "global/config.toml",
+                    "[frontmatter]\naliases = \"aka\"",
+                );
+                let local =
+                    LocalConfigFile::<FileDiscovered>::try_new(local_path)
+                        .unwrap();
+                let global =
+                    GlobalConfigFile::<FileDiscovered>::try_new(global_path)
+                        .unwrap();
+
+                // Act
+                let config =
+                    build(&fixture, local, Some(global)).expect("build");
+
+                // Assert
+                assert_eq!(config.frontmatter().title_name(), "local_title");
+                assert_eq!(config.frontmatter().aliases_name(), "aka");
+            }
+
+            #[test]
+            fn rejects_empty_title() {
+                let fixture = Fixture::new();
+                let local_path = fixture.write_config(
+                    "project/.traces/config.toml",
+                    "[frontmatter]\ntitle = \"\"",
+                );
+                let local =
+                    LocalConfigFile::<FileDiscovered>::try_new(local_path)
+                        .unwrap();
+
+                // Act
+                let result = build(&fixture, local, None);
+
+                // Assert
+                assert!(matches!(
+                    result,
+                    Err(ConfigBuilderError::InvalidFieldKey {
+                        table: "frontmatter",
+                        ..
+                    })
+                ));
+            }
+
+            #[test]
+            fn rejects_whitespace_only_aliases() {
+                let fixture = Fixture::new();
+                let local_path = fixture.write_config(
+                    "project/.traces/config.toml",
+                    "[frontmatter]\naliases = \"   \"",
+                );
+                let local =
+                    LocalConfigFile::<FileDiscovered>::try_new(local_path)
+                        .unwrap();
+
+                // Act
+                let result = build(&fixture, local, None);
+
+                // Assert
+                assert!(matches!(
+                    result,
+                    Err(ConfigBuilderError::InvalidFieldKey {
+                        table: "frontmatter",
+                        ..
+                    })
+                ));
             }
         }
     }

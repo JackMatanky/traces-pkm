@@ -122,16 +122,15 @@ impl FieldDefinition {
         &self.options
     }
 
-    /// Returns this field's selectable values for the `schema` minijinja
-    /// namespace's `.field()` method, or `None` if this field type has none to
-    /// offer.
+    /// Returns this field's static selectable values for the `schema`
+    /// minijinja namespace's `.field()` method, or `None` if this field type
+    /// has none to offer without consulting the file index.
     ///
     /// By field type:
     ///
     /// - `select`: returns the declared `values` list.
-    /// - `file`: list-bearing in principle, but options resolve live from the
-    ///   `FileIndex` which this method does not yet consult; returns `None`
-    ///   until that's wired up.
+    /// - `file`: returns `None` here because options resolve live from the
+    ///   `FileIndex`; use [`Self::file_filter`] for its index filter.
     /// - All other types: `None`.
     #[inline]
     #[must_use]
@@ -150,6 +149,29 @@ impl FieldDefinition {
         }
     }
 
+    /// Returns this file field's `FileIndex` filter parts.
+    ///
+    /// The tuple is `(folders, ext, class)`. Returns `None` for every
+    /// non-`file` field type.
+    #[inline]
+    #[must_use]
+    pub(crate) fn file_filter(&self) -> Option<FileFilterParts<'_>> {
+        match &self.options {
+            FieldOptions::File {
+                folders,
+                ext,
+                class,
+            } => Some((folders, ext.as_deref(), class)),
+            FieldOptions::Input
+            | FieldOptions::Select {
+                ..
+            }
+            | FieldOptions::Boolean
+            | FieldOptions::Number
+            | FieldOptions::Date => None,
+        }
+    }
+
     /// Returns `true` if this field must be set. Always `false` on the reserved
     /// Global Schema, regardless of its own TOML.
     #[inline]
@@ -165,6 +187,9 @@ impl FieldDefinition {
         self.multi
     }
 }
+
+/// Borrowed `(folders, ext, class)` filter parts from a `file` field.
+type FileFilterParts<'a> = (&'a [String], Option<&'a str>, &'a [String]);
 
 /// Type-specific Field Definition options.
 ///

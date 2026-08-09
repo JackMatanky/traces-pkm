@@ -348,7 +348,7 @@ impl Object for CachedRegistry {}
 /// # Errors
 ///
 /// - Any error [`FileIndex::refresh`] returns.
-fn cached_refresh(
+pub(super) fn cached_refresh(
     state: &State,
     root: &Path,
 ) -> Result<FileIndex, FileIndexError> {
@@ -373,7 +373,7 @@ fn cached_refresh(
 /// `dialog_error`.
 ///
 /// [`source`]: std::error::Error::source
-fn index_error(source: FileIndexError) -> Error {
+pub(super) fn index_error(source: FileIndexError) -> Error {
     super::error::invalid_operation("failed to refresh the file index", source)
 }
 

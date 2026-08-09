@@ -59,8 +59,8 @@ pub enum QuerySource {
     Class {
         /// Frontmatter field naming the Note's File Class(es).
         class_field: Arc<str>,
-        /// Resolved match set: the queried class names plus every Schema
-        /// that transitively `extends` one of them.
+        /// Resolved match set: the queried class names plus every Schema that
+        /// transitively `extends` one of them.
         classes: BTreeSet<String>,
     },
 }
@@ -99,35 +99,6 @@ impl QuerySource {
                 .any(|value| classes.contains(value)),
         }
     }
-}
-
-/// Yields a Note's File Class values: the strings held by the frontmatter
-/// field named `class_field`.
-///
-/// - A single string yields one element.
-/// - A list of strings yields each string element.
-/// - A missing field, a non-string scalar, or non-string list elements yield
-///   nothing.
-fn class_values<'a>(
-    note: &'a Note,
-    class_field: &str,
-) -> impl Iterator<Item = &'a str> {
-    let value = note.frontmatter().and_then(|frontmatter| {
-        let field = frontmatter
-            .fields()
-            .iter()
-            .find(|field| field.key().is_match(class_field))?;
-        Some(field.value())
-    });
-    let list = match value {
-        Some(FieldValue::List(items)) => items.as_slice(),
-        _ => &[],
-    };
-    let scalar = match value {
-        Some(FieldValue::List(_)) | None => None,
-        Some(other) => other.as_str(),
-    };
-    list.iter().filter_map(FieldValue::as_str).chain(scalar)
 }
 
 /// Represents a query row pairing a [`FileRecord`] with parsed [`Note`]
@@ -422,8 +393,8 @@ impl QueryOutcome {
     ///
     /// Uses Rust raw identifier syntax (`r#where`) because `where` is a
     /// reserved keyword; `where` is this query API's name for the same
-    /// operation as `filter`. Refer to [`Self::filter`] for full syntax
-    /// details and matching behavior.
+    /// operation as `filter`. Refer to [`Self::filter`] for full syntax details
+    /// and matching behavior.
     ///
     /// # Errors
     ///
@@ -682,6 +653,35 @@ impl<'a> IntoIterator for &'a QueryOutcome {
     fn into_iter(self) -> Self::IntoIter {
         self.records.iter()
     }
+}
+
+/// Yields a Note's File Class values: the strings held by the frontmatter field
+/// named `class_field`.
+///
+/// - A single string yields one element.
+/// - A list of strings yields each string element.
+/// - A missing field, a non-string scalar, or non-string list elements yield
+///   nothing.
+pub(super) fn class_values<'a>(
+    note: &'a Note,
+    class_field: &str,
+) -> impl Iterator<Item = &'a str> {
+    let value = note.frontmatter().and_then(|frontmatter| {
+        let field = frontmatter
+            .fields()
+            .iter()
+            .find(|field| field.key().is_match(class_field))?;
+        Some(field.value())
+    });
+    let list = match value {
+        Some(FieldValue::List(items)) => items.as_slice(),
+        _ => &[],
+    };
+    let scalar = match value {
+        Some(FieldValue::List(_)) | None => None,
+        Some(other) => other.as_str(),
+    };
+    list.iter().filter_map(FieldValue::as_str).chain(scalar)
 }
 
 /// Converts a resolved [`FieldValue`] to plain text for list and table
