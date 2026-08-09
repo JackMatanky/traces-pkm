@@ -1,8 +1,13 @@
-//! Hash-keyed file and path state store.
+//! Store canonical file paths by path hash.
 //!
-//! Stores canonical paths as BLAKE3-named entries under a caller-provided root:
-//! symlinks on Unix, plain files on Windows. Domain modules choose the root;
-//! this module owns the cross-platform storage mechanics.
+//! Main types:
+//! - [`FileStateStore`] - Hash-keyed store for canonical file paths
+//! - [`FileStateStoreError`] - I/O failure from store operations
+//! - [`FileStoreCleanMode`] - Cleanup policy for stale entries
+//!
+//! Entries are named with [`Blake3PathHash`]. Unix entries are symlinks whose
+//! targets are the recorded paths. Windows entries are plain files whose
+//! contents are the recorded paths.
 
 use std::{
     fs, io,
@@ -13,10 +18,10 @@ use thiserror::Error;
 
 use crate::{Blake3PathHash, dirs::StateDirRoot};
 
-/// Error returned by [`FileStateStore`] operations.
+/// Reports a [`FileStateStore`] operation failure.
 #[derive(Debug, Error)]
 pub enum FileStateStoreError {
-    /// The target path could not be canonicalized before store-key hashing.
+    /// Fails before hashing when a target path cannot be canonicalized.
     #[error("failed to canonicalize path {path}")]
     Canonicalize {
         /// Path that could not be canonicalized.
@@ -25,7 +30,7 @@ pub enum FileStateStoreError {
         #[source]
         source: io::Error,
     },
-    /// A store operation on `path` failed.
+    /// Fails while creating, checking, reading, or removing a store entry.
     #[error("file state store operation failed for {path}")]
     StoreIo {
         /// Path the failing operation targeted (a directory or an entry).
@@ -34,7 +39,7 @@ pub enum FileStateStoreError {
         #[source]
         source: io::Error,
     },
-    /// A companion file could not be read.
+    /// Fails while reading a companion file.
     #[error("failed to read companion file {path}")]
     CompanionRead {
         /// Companion file path.
@@ -43,7 +48,7 @@ pub enum FileStateStoreError {
         #[source]
         source: io::Error,
     },
-    /// A companion file could not be written.
+    /// Fails while writing a companion file.
     #[error("failed to write companion file {path}")]
     CompanionWrite {
         /// Companion file path.
@@ -52,7 +57,7 @@ pub enum FileStateStoreError {
         #[source]
         source: io::Error,
     },
-    /// A companion file could not be removed.
+    /// Fails while removing a companion file.
     #[error("failed to remove companion file {path}")]
     CompanionRemove {
         /// Companion file path.
@@ -63,11 +68,15 @@ pub enum FileStateStoreError {
     },
 }
 
-/// Hash-keyed store for canonical file paths.
+/// Stores canonical file paths under hash-named entries.
 ///
-/// Entries are stored as symlinks on Unix or plain files containing the target
-/// path on Windows, named by their [`Blake3PathHash`]. Domain modules choose
-/// the root; this module owns the cross-platform storage mechanics.
+/// Entry behavior by platform:
+/// - Unix creates a symbolic link named by [`Blake3PathHash`] and pointing at
+///   the canonical target path
+/// - Windows writes a plain file named by [`Blake3PathHash`] whose contents are
+///   the canonical target path bytes
+///
+/// Companion files are separate files with suffixes appended to the entry path.
 #[derive(Clone, Debug)]
 pub(crate) struct FileStateStore {
     root: StateDirRoot,
@@ -86,12 +95,20 @@ impl FileStateStore {
 
     /// Records `target`'s canonical path in this store.
     ///
-    /// Recording an already-stored path is a no-op.
+    /// Canonicalizes `target`, hashes the canonical path, and creates the store
+    /// root if needed. Recording an already-stored path is a no-op.
+    ///
+    /// Platform behavior:
+    /// - Unix writes a symlink from the hash entry to the canonical target
+    /// - Windows writes a file at the hash entry containing the canonical
+    ///   target path bytes
     ///
     /// # Errors
     ///
-    /// - [`FileStateStoreError`] if `target` cannot be canonicalized, the store
-    ///   root cannot be created, or the entry cannot be written.
+    /// - [`FileStateStoreError::Canonicalize`] if `target` cannot be
+    ///   canonicalized
+    /// - [`FileStateStoreError::StoreIo`] if the store root cannot be created
+    ///   or the entry cannot be written
     #[inline]
     pub(crate) fn record(
         &self,
@@ -124,12 +141,18 @@ impl FileStateStore {
         })
     }
 
-    /// Checks whether `target` has a live entry in this store.
+    /// Checks whether `target` has an entry in this store.
+    ///
+    /// Canonicalizes `target` before hashing, so relative spellings of the same
+    /// existing path check the same entry. The platform entry format is the
+    /// same as [`Self::record`].
     ///
     /// # Errors
     ///
-    /// - [`FileStateStoreError`] if `target` cannot be canonicalized or the
-    ///   entry's existence cannot be checked.
+    /// - [`FileStateStoreError::Canonicalize`] if `target` cannot be
+    ///   canonicalized
+    /// - [`FileStateStoreError::StoreIo`] if the entry's existence cannot be
+    ///   checked
     #[inline]
     pub(crate) fn contains(
         &self,
@@ -145,13 +168,15 @@ impl FileStateStore {
 
     /// Lists the canonical paths of all live entries in this store.
     ///
-    /// A live entry has a readable target that still exists on disk. Dangling
-    /// or unreadable entries are omitted. An absent or non-directory root
-    /// returns an empty list.
+    /// Reads recorded targets from symlinks on Unix and path-bearing files on
+    /// Windows. A live entry has a readable target that still exists on disk.
+    /// Dangling or unreadable entries are omitted. An absent or non-directory
+    /// root returns an empty list.
     ///
     /// # Errors
     ///
-    /// - [`FileStateStoreError`] if the store root exists but cannot be read.
+    /// - [`FileStateStoreError::StoreIo`] if the store root exists but cannot
+    ///   be read or a child entry cannot be inspected
     #[inline]
     pub(crate) fn list_all(&self) -> Result<Vec<PathBuf>, FileStateStoreError> {
         if !self.root.is_dir() {
@@ -171,12 +196,17 @@ impl FileStateStore {
 
     /// Removes stale entries and returns the number removed.
     ///
-    /// An absent or non-directory root removes nothing.
+    /// Reads recorded targets from symlinks on Unix and path-bearing files on
+    /// Windows. A stale entry has a readable target that no longer exists.
+    /// Unreadable entries are ignored. An absent or non-directory root removes
+    /// nothing.
     ///
     /// # Errors
     ///
-    /// - [`FileStateStoreError`] if the store root cannot be read, a stale
-    ///   entry cannot be removed, or a companion cannot be removed.
+    /// - [`FileStateStoreError::StoreIo`] if the store root cannot be read, a
+    ///   child entry cannot be inspected, or a stale entry cannot be removed
+    /// - [`FileStateStoreError::CompanionRemove`] if a companion file cannot be
+    ///   removed
     #[inline]
     pub(crate) fn clean(
         &self,
@@ -207,10 +237,16 @@ impl FileStateStore {
 
     /// Writes a companion file next to `target`'s store entry.
     ///
+    /// Canonicalizes and hashes `target` to find the same entry path used by
+    /// [`Self::record`]. The companion path is independent of whether the entry
+    /// itself is a Unix symlink or a Windows path-bearing file.
+    ///
     /// # Errors
     ///
-    /// - [`FileStateStoreError`] if `target` cannot be canonicalized or the
-    ///   companion cannot be written.
+    /// - [`FileStateStoreError::Canonicalize`] if `target` cannot be
+    ///   canonicalized
+    /// - [`FileStateStoreError::CompanionWrite`] if the companion cannot be
+    ///   written
     #[inline]
     pub(crate) fn write_companion(
         &self,
@@ -231,12 +267,17 @@ impl FileStateStore {
 
     /// Reads a companion file next to `target`'s store entry.
     ///
-    /// Returns `Ok(None)` when the companion file is absent.
+    /// Canonicalizes and hashes `target` to find the same entry path used by
+    /// [`Self::record`]. Returns `Ok(None)` when the companion file is absent.
+    /// The companion path is independent of whether the entry itself is a Unix
+    /// symlink or a Windows path-bearing file.
     ///
     /// # Errors
     ///
-    /// - [`FileStateStoreError`] if `target` cannot be canonicalized or the
-    ///   companion cannot be read.
+    /// - [`FileStateStoreError::Canonicalize`] if `target` cannot be
+    ///   canonicalized
+    /// - [`FileStateStoreError::CompanionRead`] if the companion exists but
+    ///   cannot be read
     #[inline]
     pub(crate) fn read_companion(
         &self,
@@ -258,13 +299,19 @@ impl FileStateStore {
 
     /// Removes `target`'s entry and its companion files.
     ///
-    /// Returns `1` when the root entry was removed and `0` when it was already
-    /// absent.
+    /// Canonicalizes and hashes `target` to find the same entry path used by
+    /// [`Self::record`]. Removes the Unix symlink or Windows path-bearing file,
+    /// then removes any listed companions. Returns `1` when the root entry was
+    /// removed and `0` when it was already absent.
     ///
     /// # Errors
     ///
-    /// - [`FileStateStoreError`] if `target` cannot be canonicalized, the root
-    ///   entry cannot be removed, or a companion cannot be removed.
+    /// - [`FileStateStoreError::Canonicalize`] if `target` cannot be
+    ///   canonicalized
+    /// - [`FileStateStoreError::StoreIo`] if the root entry exists but cannot
+    ///   be removed
+    /// - [`FileStateStoreError::CompanionRemove`] if a companion file cannot be
+    ///   removed
     #[inline]
     pub(crate) fn remove_with_companions(
         &self,
@@ -341,12 +388,15 @@ impl From<StateDirRoot> for FileStateStore {
     }
 }
 
-/// Stale-entry cleanup policy for [`FileStateStore::clean`].
+/// Selects how [`FileStateStore::clean`] removes stale data.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(crate) enum FileStoreCleanMode<'a> {
-    /// Remove only stale root entries.
+    /// Removes only stale hash entries.
     EntriesOnly,
-    /// Remove stale root entries and same-named companion files.
+    /// Removes stale hash entries and companion files for each suffix.
+    ///
+    /// A suffix is appended to the hash entry path, such as `.hash` producing
+    /// `<entry>.hash`.
     WithCompanions(&'a [&'a str]),
 }
 
