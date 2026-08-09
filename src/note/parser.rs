@@ -185,8 +185,8 @@ impl ParserContext {
 
     /// Starts a paragraph or heading text block.
     ///
-    /// Top-level text fills `body_buffer`. Text in list items is separated by
-    /// newlines in that item's scan buffer.
+    /// Top-level text fills `body_buffer`. Text within list items is
+    /// separated by newlines in the active item's scan buffer.
     fn start_text_block(&mut self) {
         self.block = BlockContext::Text;
         if !self.list_nesting.start_nested_text_block() {

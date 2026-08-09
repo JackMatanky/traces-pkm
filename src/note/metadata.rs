@@ -306,7 +306,8 @@ impl InlineField {
         self.metadata.value()
     }
 
-    /// Returns the inline field syntax.
+    /// Returns the inline field's source form (body, visible key, or hidden
+    /// key).
     #[inline]
     #[must_use]
     #[cfg_attr(

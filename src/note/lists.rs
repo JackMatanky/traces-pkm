@@ -154,9 +154,9 @@ impl ListItem {
 
     /// Attaches inline fields parsed from this item's own text.
     ///
-    /// [`Note::inline_fields`] also includes
-    /// these fields for page-level queries. This per-item list preserves the
-    /// field-to-item relationship for task and list queries.
+    /// [`Note::inline_fields`] also includes these fields for page-level
+    /// queries. This per-item list preserves the field-to-item relationship
+    /// for task and list queries.
     ///
     /// [`Note::inline_fields`]: crate::note::Note::inline_fields
     #[inline]
