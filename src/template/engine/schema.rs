@@ -247,7 +247,7 @@ fn unknown_schema_error(name: &str) -> Error {
 fn unknown_field_error(schema: &str, field: &str) -> Error {
     Error::new(
         ErrorKind::InvalidOperation,
-        format!("Schema {schema:?} has no field {field:?}"),
+        format!("schema {schema:?} has no field {field:?}"),
     )
 }
 
