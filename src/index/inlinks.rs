@@ -220,20 +220,17 @@ fn find_nearest_by_stem<'a>(
 /// Computes the path-segment distance between `a`'s and `b`'s containing
 /// folders.
 ///
-/// Steps up from `a`'s folder to its nearest shared ancestor with `b`'s folder,
-/// then back down to `b`'s folder; files in the same folder are distance `0`.
-/// This is [`resolve_target`]'s proximity tie-break for ambiguous wikilink stem
-/// matches.
+/// Steps up from `a`'s folder to its nearest shared ancestor with `b`'s
+/// folder, then back down to `b`'s folder; files in the same folder are
+/// distance `0`. This is [`resolve_target`]'s proximity tie-break for
+/// ambiguous wikilink stem matches.
 ///
-/// Reads folder placement straight from each Note's own `path()` rather than
-/// joining [`super::FileRecord`]'s precomputed `folder`/`name` fields.
-/// `Note::path()` already encodes the full project-relative location, so
-/// `Path::parent()` and `components()` give the same folder data `FileRecord`
-/// would, without pulling a second, independently sorted collection into a
-/// resolution pass that only ever needed `&[Note]`.
-///
-/// See [`super::matched_pairs`] for where `FileRecord` and `Note` do need
-/// joining (page-level query output); this pass is not that case.
+/// Reads folder placement from each Note's own `path()` rather than
+/// [`super::FileRecord`]'s precomputed `folder`/`name` fields, because
+/// this resolution pass only needs `&[Note]` and pulling in a second
+/// sorted collection for folder data that `Note::path()` already provides
+/// would be redundant. See [`super::matched_pairs`] for where `FileRecord`
+/// and `Note` do need joining (page-level query output).
 fn folder_distance(a: &Path, b: &Path) -> usize {
     let a_folder = a.parent().unwrap_or_else(|| Path::new(""));
     let b_folder = b.parent().unwrap_or_else(|| Path::new(""));

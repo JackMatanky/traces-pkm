@@ -103,9 +103,12 @@ impl QuerySource {
 }
 
 /// Yields a Note's File Class values: the strings held by the frontmatter
-/// field named `class_field`, whether that field is a single string or a
-/// list of strings. A missing field, a non-string scalar, and non-string
-/// list elements yield nothing.
+/// field named `class_field`.
+///
+/// - A single string yields one element.
+/// - A list of strings yields each string element.
+/// - A missing field, a non-string scalar, or non-string list elements yield
+///   nothing.
 fn class_values<'a>(
     note: &'a Note,
     class_field: &str,
@@ -379,22 +382,26 @@ impl QueryOutcome {
 
     /// Retains only records matching the filter expression `expr`.
     ///
-    /// Expression syntax supports:
-    /// - Comparisons: `<field> <op> <value>` with `==`, `!=`, `>=`, `<=`, `>`,
-    ///   or `<`.
-    /// - Functions: `contains(field, value)` checks list membership, tag
+    /// Supported syntax:
+    ///
+    /// - **Comparisons:** `<field> <op> <value>` with `==`, `!=`, `>=`, `<=`,
+    ///   `>`, or `<`.
+    /// - **Functions:** `contains(field, value)` checks list membership, tag
     ///   hierarchy (for example `#book` matching `#book/fiction`), or substring
     ///   containment.
-    /// - Logical operators: `AND` / `and` / `&&`, `OR` / `or` / `||`, and `NOT`
-    ///   / `not` / `!`.
-    /// - Grouping: `( ... )` overrides default operator precedence.
-    /// - Literals: quoted strings with `"` escapes, numbers, booleans
+    /// - **Logical operators:** `AND` / `and` / `&&`, `OR` / `or` / `||`, and
+    ///   `NOT` / `not` / `!`.
+    /// - **Grouping:** `( ... )` overrides default operator precedence.
+    /// - **Literals:** quoted strings with `\` escapes, numbers, booleans
     ///   (`true`/`false`), and `null`/`Null`.
-    /// - Text normalization: `==` and `!=` compare `String`, `Date`, and
-    ///   `Duration` values by text.
-    /// - Type mismatches: mismatched data types never match except under `!=`.
-    /// - Null handling: records missing a field (`Null`) fail equality and
-    ///   ordering checks, but match `!=`.
+    ///
+    /// Matching rules:
+    ///
+    /// - `==` and `!=` compare [`String`], [`Date`], and [`Duration`] values by
+    ///   text.
+    /// - Mismatched data types never match except under `!=`.
+    /// - Records missing a field ([`Null`]) fail equality and ordering checks,
+    ///   but match `!=`.
     ///
     /// # Errors
     ///
@@ -489,10 +496,9 @@ impl QueryOutcome {
         Ok(Self::new(self.records.into_iter().take(n).collect()))
     }
 
-    /// Groups records by sorting them ascending on the field at `path`.
-    ///
-    /// Groups records by field value so template loops or terminal renderers
-    /// can detect group transitions by comparing adjacent records.
+    /// Groups records by sorting them ascending on the field at `path`, so
+    /// template loops or terminal renderers can detect group transitions by
+    /// comparing adjacent records.
     ///
     /// # Errors
     ///
@@ -507,14 +513,15 @@ impl QueryOutcome {
     /// Explodes records containing a list at `path` into one row per list
     /// element.
     ///
-    /// Behavior rules:
-    /// - List fields: applies to fields resolving to [`FieldValue::List`] (such
-    ///   as frontmatter lists, inline list fields, or `tags`).
-    /// - Non-list fields: records with scalar values pass through unmodified.
-    /// - Empty lists: records with empty list values yield no rows in the
-    ///   output.
-    /// - Field resolution: exploded rows resolve `path` to the individual list
-    ///   element, retaining all other fields from the source record.
+    /// Behavior:
+    ///
+    /// - **List fields:** applies to fields resolving to [`FieldValue::List`]
+    ///   (such as frontmatter lists, inline list fields, or `tags`).
+    /// - **Non-list fields:** records with scalar values pass through
+    ///   unmodified.
+    /// - **Empty lists:** records with empty list values yield no rows.
+    /// - **Field resolution:** exploded rows resolve `path` to the individual
+    ///   list element, retaining all other fields from the source record.
     ///
     /// # Errors
     ///

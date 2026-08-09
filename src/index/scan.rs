@@ -8,8 +8,7 @@ use super::{INDEX_FILE, error::FileIndexError, file::FileRecord};
 
 /// Recursively scans `root` for regular files and returns sorted records.
 ///
-/// Skips `.git` directories, the index database itself, and symlinks. Symlink
-/// support can be added when PKM projects need linked note trees.
+/// Skips `.git` directories, the index database itself, and symlinks.
 ///
 /// # Errors
 ///

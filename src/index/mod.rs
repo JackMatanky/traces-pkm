@@ -52,8 +52,9 @@ pub struct FileIndex {
     records: Vec<FileRecord>,
     notes: Vec<Note>,
     /// Inbound links, keyed by target path; see [`inlinks::derive_inlinks`].
-    /// Recomputed in full whenever [`Self::refresh`] finds changed content,
-    /// otherwise reused unchanged from the last persisted computation.
+    ///
+    /// - Recomputed in full whenever [`Self::refresh`] finds changed content.
+    /// - Reused unchanged from the last persisted computation otherwise.
     inlinks: InlinkMap,
 }
 
@@ -93,23 +94,22 @@ impl FileIndex {
     /// Re-scans `root` and compares each current file's `(created_at,
     /// modified_at, size)` tuple against the previously persisted
     /// [`FileRecord`]:
+    ///
     /// - Unchanged markdown Notes reuse their parsed [`Note`].
     /// - Added or changed markdown Notes are parsed from disk.
     /// - Deleted files disappear because they are absent from the fresh scan.
     ///
-    /// Derived inlinks are recomputed in full only when something changed (any
-    /// added, changed, or deleted file or Note); otherwise the previously
-    /// persisted computation is reused unchanged.
-    ///
-    /// A full recompute, not a per-note patch, is required for correctness.
-    /// Link target resolution considers every indexed Note (see
-    /// [`inlinks::derive_inlinks`]), so an unedited Note's *resolved* target
-    /// can still change when an unrelated Note is added or removed elsewhere in
-    /// the index. For example, a wikilink that was ambiguous becomes resolvable
-    /// once one of the ambiguous candidates is deleted.
-    ///
     /// Returns the fresh [`FileIndex`] and persists it only when contents
     /// changed.
+    ///
+    /// Derived inlinks are recomputed in full only when something changed;
+    /// otherwise the previously persisted computation is reused unchanged. A
+    /// full recompute (not a per-note patch) is required because link target
+    /// resolution considers every indexed Note (see
+    /// [`inlinks::derive_inlinks`]): an unedited Note's *resolved* target can
+    /// change when an unrelated Note is added or removed. For example, a
+    /// wikilink that was ambiguous becomes resolvable once one of the
+    /// ambiguous candidates is deleted.
     ///
     /// # Errors
     ///

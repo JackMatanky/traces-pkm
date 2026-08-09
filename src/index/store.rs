@@ -166,8 +166,8 @@ impl IndexStore {
     /// table.
     ///
     /// [`Self::replace_all`] uses this instead of [`Self::store_table`]
-    /// because [`LINKS`] holds multiple values per key natively, rather than
-    /// one serialized `Vec` per key.
+    /// because [`LINKS`] is a multimap that holds multiple values per key
+    /// natively.
     ///
     /// # Errors
     ///
