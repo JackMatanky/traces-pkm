@@ -28,27 +28,36 @@ pub(crate) struct RawConfig {
 }
 
 /// Represents the raw `[templates]` table exactly as written in TOML.
+///
+/// Every field skips serialization when `None`, for the same Figment merge
+/// reason as [`RawFrontmatterConfig`].
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct RawTemplateConfig {
     /// Template directory as configured, before joining against the config
     /// file's root.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) directory: Option<PathBuf>,
     /// Output directory for rendered templates. Relative values stay relative;
     /// absent values fall back to the config root.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) output_dir: Option<PathBuf>,
 }
 
 /// Represents the raw `[schemas]` table exactly as written in TOML.
+///
+/// Every field skips serialization when `None`, for the same Figment merge
+/// reason as [`RawFrontmatterConfig`].
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct RawSchemasConfig {
     /// Frontmatter key naming a Note's File Class(es), before the `class`
     /// default is applied.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) class_field: Option<String>,
     /// Schema registry directory, before the `.traces/schemas/` default is
     /// applied.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) directory: Option<PathBuf>,
 }
 

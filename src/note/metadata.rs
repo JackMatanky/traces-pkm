@@ -63,6 +63,16 @@ impl Frontmatter {
         &self.fields
     }
 
+    /// Returns the value of the field matching `key`, if present.
+    #[inline]
+    #[must_use]
+    pub(crate) fn get(&self, key: &FieldKey) -> Option<&FieldValue> {
+        self.fields
+            .iter()
+            .find(|field| field.key() == key)
+            .map(MetadataField::value)
+    }
+
     /// Returns `true` if no structured fields were parsed.
     #[inline]
     #[must_use]

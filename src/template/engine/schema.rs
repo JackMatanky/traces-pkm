@@ -54,7 +54,7 @@ use minijinja::{
 use crate::{
     field,
     field::FieldKey,
-    index::FileOption,
+    index::{FileOption, FrontmatterFieldKeys},
     schema::{Schema, SchemaError, SchemaRegistry},
 };
 
@@ -72,9 +72,9 @@ const REGISTRY_CACHE_KEY: &str = "schema.registry_cache";
 
 /// Shared runtime state for the `schema` namespace: the project root and Schema
 /// registry directory used to load/refresh render-scoped data, plus the
-/// frontmatter keys used by file-field label resolution. Held once in
+/// frontmatter keys used by file-field label/class resolution. Held once in
 /// [`SchemaOps`] and cloned as a single `Arc` into every [`SchemaBinding`]
-/// instead of threading four separate `Arc` fields through both types.
+/// instead of threading separate fields through both types.
 ///
 /// `Arc`, not `Rc`: minijinja `Object` values are reference-counted through
 /// `Arc<Self>`, and the existing namespace objects already use `Arc` to support
@@ -85,12 +85,9 @@ pub(super) struct SchemaContext {
     root: Arc<Path>,
     /// The Schema registry directory, resolved against the project root.
     directory: Arc<Path>,
-    /// Frontmatter field naming a Note's File Class(es).
-    class_field: Arc<str>,
-    /// Frontmatter field holding a Note's display title.
-    title_field: Arc<str>,
-    /// Frontmatter field holding a Note's display aliases.
-    aliases_field: Arc<str>,
+    /// Frontmatter keys used by file-field class filtering and label
+    /// resolution.
+    keys: FrontmatterFieldKeys,
 }
 
 impl SchemaContext {
@@ -98,19 +95,15 @@ impl SchemaContext {
     /// configured frontmatter keys used by file-field option resolution.
     #[inline]
     #[must_use]
-    pub(super) fn new(
+    pub(super) const fn new(
         root: Arc<Path>,
         directory: Arc<Path>,
-        class_field: Arc<str>,
-        title_field: Arc<str>,
-        aliases_field: Arc<str>,
+        keys: FrontmatterFieldKeys,
     ) -> Self {
         Self {
             root,
             directory,
-            class_field,
-            title_field,
-            aliases_field,
+            keys,
         }
     }
 }
@@ -250,13 +243,11 @@ impl SchemaBinding {
         let options = index.file_options(crate::index::FileOptionFilter::new(
             folders,
             ext,
-            &self.ctx.class_field,
             class_matches.as_ref(),
-            &self.ctx.title_field,
-            &self.ctx.aliases_field,
+            &self.ctx.keys,
         ));
         Ok(Value::from(
-            options.iter().map(file_option_value).collect::<Vec<_>>(),
+            options.into_iter().map(file_option_value).collect::<Vec<_>>(),
         ))
     }
 }
@@ -327,10 +318,11 @@ impl Object for CachedRegistry {}
 
 /// Converts an index-derived file option into the label/value object shape
 /// `ui.select` expects by default.
-fn file_option_value(option: &FileOption) -> Value {
+fn file_option_value(option: FileOption) -> Value {
+    let (label, value) = option.into_parts();
     minijinja::context! {
-        label => option.label().to_owned(),
-        value => option.value().to_owned(),
+        label => label,
+        value => value,
     }
 }
 
@@ -419,12 +411,15 @@ mod tests {
     fn schema_ops(directory: &Path) -> SchemaOps {
         let root =
             directory.parent().and_then(Path::parent).unwrap_or(directory);
+        let keys = FrontmatterFieldKeys::new(
+            FieldKey::try_new("class").expect("valid field key"),
+            FieldKey::try_new("title").expect("valid field key"),
+            FieldKey::try_new("aliases").expect("valid field key"),
+        );
         SchemaOps::new(Arc::new(SchemaContext::new(
             Arc::from(root),
             Arc::from(directory),
-            Arc::from("class"),
-            Arc::from("title"),
-            Arc::from("aliases"),
+            keys,
         )))
     }
 

@@ -455,6 +455,12 @@ fn config_build_help(source: &ConfigBuilderError) -> Box<dyn Display + '_> {
             "this is an internal error — the local and global config could \
              not be merged to resolve the output directory",
         ),
+        ConfigBuilderError::InvalidFieldKey {
+            ..
+        } => Box::new(
+            "check that [frontmatter] and [schemas] key names in the config \
+             file are non-empty",
+        ),
     }
 }
 
@@ -507,6 +513,9 @@ fn config_load_code(source: &ConfigLoadError) -> &'static str {
         ConfigLoadError::Build(ConfigBuilderError::Merge {
             ..
         }) => "traces::cli::config_build_merge_failed",
+        ConfigLoadError::Build(ConfigBuilderError::InvalidFieldKey {
+            ..
+        }) => "traces::cli::config_build_invalid_field_key",
     }
 }
 

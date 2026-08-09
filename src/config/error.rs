@@ -16,7 +16,7 @@ use super::{
     file::{LocalConfigFile, Tracked},
     trust::ConfigTrustStatus,
 };
-use crate::{FileStateStoreError, hash::HashError};
+use crate::{FileStateStoreError, field::FieldKeyError, hash::HashError};
 
 /// Errors from the full config-loading pipeline.
 #[derive(Debug, Error)]
@@ -114,6 +114,17 @@ pub(crate) enum ConfigBuilderError {
     /// Config file lifecycle validation failed.
     #[error(transparent)]
     ConfigFile(#[from] ConfigFileError),
+    /// A `[frontmatter]` or `[schemas]` config table named an invalid field
+    /// key: empty, whitespace-only, or canonicalizing to nothing.
+    #[error("invalid `{table}` config")]
+    InvalidFieldKey {
+        /// The TOML table that failed validation (`"frontmatter"` or
+        /// `"schemas"`).
+        table: &'static str,
+        /// The underlying validation failure.
+        #[source]
+        source: FieldKeyError,
+    },
 }
 
 /// Errors raised while validating config paths, trust state, or TOML content.

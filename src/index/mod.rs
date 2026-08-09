@@ -37,7 +37,10 @@ pub(crate) use query::{FileField, QueryError, SortOrder};
 pub use query::{IndexRecord, QueryOutcome, QuerySource};
 use store::IndexStore;
 
-use crate::note::{FieldValue, Note, parse_markdown};
+use crate::{
+    field::FieldKey,
+    note::{FieldValue, Note, parse_markdown},
+};
 
 /// Project-relative path of the persisted [`FileIndex`] database.
 const INDEX_FILE: &str = ".traces/index.redb";
@@ -75,7 +78,7 @@ impl FileIndex {
 
         for record in &records {
             if record.format() == FileFormat::Note {
-                notes.push(parse_note_file(root, record)?);
+                notes.push(Self::parse_note_file(root, record)?);
             }
         }
         notes.sort_by(|a, b| a.path().cmp(b.path()));
@@ -135,7 +138,7 @@ impl FileIndex {
                 .flatten();
             notes.push(match reused {
                 Some(note) => note,
-                None => parse_note_file(root, record)?,
+                None => Self::parse_note_file(root, record)?,
             });
         }
         notes.sort_by(|a, b| a.path().cmp(b.path()));
@@ -195,116 +198,6 @@ impl FileIndex {
             notes,
             inlinks,
         })
-    }
-
-    /// Returns indexed [`FileRecord`]s, sorted by path.
-    #[inline]
-    #[must_use]
-    pub fn records(&self) -> &[FileRecord] {
-        &self.records
-    }
-
-    /// Returns indexed [`Note`] records, sorted by path.
-    #[inline]
-    #[must_use]
-    #[cfg_attr(
-        not(any(test, feature = "test-utils")),
-        expect(
-            dead_code,
-            reason = "no current caller outside tests; CLI exposes \
-                      FileIndex::records but not the parsed Note view yet"
-        )
-    )]
-    pub fn notes(&self) -> &[Note] {
-        &self.notes
-    }
-
-    /// Returns the [`Note`] for the note at `path`, if indexed.
-    ///
-    /// # Performance
-    ///
-    /// O(log n): [`Self::notes`] is kept sorted by path, so this binary
-    /// searches rather than scanning.
-    #[inline]
-    #[must_use]
-    pub(crate) fn note(&self, path: &Path) -> Option<&Note> {
-        find_by_path(&self.notes, path)
-    }
-
-    /// Returns the [`FileRecord`] for the file at `path`, if indexed.
-    ///
-    /// # Performance
-    ///
-    /// O(log n): [`Self::records`] is kept sorted by path, so this binary
-    /// searches rather than scanning.
-    #[inline]
-    #[must_use]
-    pub(crate) fn record(&self, path: &Path) -> Option<&FileRecord> {
-        self.records
-            .binary_search_by(|r| r.path().cmp(path))
-            .ok()
-            .and_then(|idx| self.records.get(idx))
-    }
-
-    /// Returns file-field options matching an AND-composed Schema filter.
-    ///
-    /// Empty `folders`, `ext`, or `classes` values skip that filter dimension;
-    /// within `folders`, matching is any-of, a record matches when its
-    /// project-relative folder starts with any configured folder. `classes` is
-    /// already the transitive is-a match set from
-    /// [`SchemaRegistry::matching_classes`].
-    ///
-    /// Label resolution is not a filter dimension: every matched record gets a
-    /// label, trying the configured aliases key, then the configured title key,
-    /// then falling back to the filename stem.
-    ///
-    /// [`SchemaRegistry::matching_classes`]: crate::schema::SchemaRegistry::matching_classes
-    #[must_use]
-    pub(crate) fn file_options(
-        &self,
-        filter: FileOptionFilter<'_>,
-    ) -> Vec<FileOption> {
-        let ext = filter.ext.map(|value| value.trim_start_matches('.'));
-        let mut options = Vec::new();
-        for record in &self.records {
-            if !filter.folders.is_empty()
-                && !filter
-                    .folders
-                    .iter()
-                    .any(|folder| record.folder().starts_with(folder))
-            {
-                continue;
-            }
-            if let Some(ext) = ext
-                && record
-                    .path()
-                    .extension()
-                    .and_then(|raw_ext| raw_ext.to_str())
-                    != Some(ext)
-            {
-                continue;
-            }
-            let note = self.note(record.path());
-            if let Some(classes) = filter.classes
-                && !note.is_some_and(|note| {
-                    query::class_values(note, filter.class_field)
-                        .any(|class| classes.contains(class))
-                })
-            {
-                continue;
-            }
-            let label = note
-                .and_then(|note| {
-                    option_label(note, filter.title_field, filter.aliases_field)
-                })
-                .unwrap_or_else(|| record.name().as_str())
-                .to_owned();
-            options.push(FileOption {
-                label,
-                value: record.path().to_string_lossy().into_owned(),
-            });
-        }
-        options
     }
 
     /// Executes a page-level query over `source`, consuming this index.
@@ -390,6 +283,129 @@ impl FileIndex {
         }
         QueryOutcome::new(matched)
     }
+
+    /// Returns file-field options matching an AND-composed Schema filter.
+    ///
+    /// Empty `folders`/`classes`, or an absent `ext`, skips that filter
+    /// dimension; within `folders`, matching is any-of, a record matches when
+    /// its project-relative folder starts with any configured folder. `classes`
+    /// is already the transitive is-a match set from
+    /// [`SchemaRegistry::matching_classes`].
+    ///
+    /// Label resolution is not a filter dimension: every matched record gets a
+    /// label, trying the configured aliases key, then the configured title key,
+    /// then falling back to the filename stem.
+    ///
+    /// [`SchemaRegistry::matching_classes`]: crate::schema::SchemaRegistry::matching_classes
+    #[must_use]
+    pub(crate) fn file_options(
+        &self,
+        filter: FileOptionFilter<'_>,
+    ) -> Vec<FileOption> {
+        let ext = filter.ext.map(|value| value.trim_start_matches('.'));
+        let mut options = Vec::new();
+        for record in &self.records {
+            if !filter.folders.is_empty()
+                && !filter
+                    .folders
+                    .iter()
+                    .any(|folder| record.folder().starts_with(folder))
+            {
+                continue;
+            }
+            if let Some(ext) = ext
+                && record
+                    .path()
+                    .extension()
+                    .and_then(|raw_ext| raw_ext.to_str())
+                    != Some(ext)
+            {
+                continue;
+            }
+            let note = self.note(record.path());
+            if let Some(classes) = filter.classes
+                && !note.is_some_and(|note| {
+                    query::class_values(note, filter.keys.class().name())
+                        .any(|class| classes.contains(class))
+                })
+            {
+                continue;
+            }
+            options.push(FileOption::for_record(record, note, filter.keys));
+        }
+        options
+    }
+
+    /// Returns indexed [`FileRecord`]s, sorted by path.
+    #[inline]
+    #[must_use]
+    pub fn records(&self) -> &[FileRecord] {
+        &self.records
+    }
+
+    /// Returns indexed [`Note`] records, sorted by path.
+    #[inline]
+    #[must_use]
+    #[cfg_attr(
+        not(any(test, feature = "test-utils")),
+        expect(
+            dead_code,
+            reason = "no current caller outside tests; CLI exposes \
+                      FileIndex::records but not the parsed Note view yet"
+        )
+    )]
+    pub fn notes(&self) -> &[Note] {
+        &self.notes
+    }
+
+    /// Returns the [`Note`] for the note at `path`, if indexed.
+    ///
+    /// # Performance
+    ///
+    /// O(log n): [`Self::notes`] is kept sorted by path, so this binary
+    /// searches rather than scanning.
+    #[inline]
+    #[must_use]
+    pub(crate) fn note(&self, path: &Path) -> Option<&Note> {
+        find_by_path(&self.notes, path)
+    }
+
+    /// Returns the [`FileRecord`] for the file at `path`, if indexed.
+    ///
+    /// # Performance
+    ///
+    /// O(log n): [`Self::records`] is kept sorted by path, so this binary
+    /// searches rather than scanning.
+    #[inline]
+    #[must_use]
+    pub(crate) fn record(&self, path: &Path) -> Option<&FileRecord> {
+        self.records
+            .binary_search_by(|r| r.path().cmp(path))
+            .ok()
+            .and_then(|idx| self.records.get(idx))
+    }
+
+    /// Reads and parses the markdown file for `record` into a [`Note`].
+    ///
+    /// Shared by [`Self::build`] (parses every markdown file from scratch) and
+    /// [`Self::refresh`] (parses only added or changed markdown files).
+    ///
+    /// # Errors
+    ///
+    /// - [`FileIndexError::Io`] if the file cannot be read.
+    fn parse_note_file(
+        root: &Path,
+        record: &FileRecord,
+    ) -> Result<Note, FileIndexError> {
+        let full_path = root.join(record.path());
+        let content = fs::read_to_string(&full_path).map_err(|source| {
+            FileIndexError::Io {
+                path: full_path,
+                source,
+            }
+        })?;
+        Ok(parse_markdown(record.path(), &content))
+    }
 }
 
 /// One selectable file option derived from the current [`FileIndex`].
@@ -400,18 +416,55 @@ pub(crate) struct FileOption {
 }
 
 impl FileOption {
-    /// Returns the display label shown by `ui.select`.
+    /// Builds the option for `record`: label resolution tries `note`'s
+    /// configured aliases key, then its title key (via `keys`), falling back to
+    /// `record`'s filename stem when neither resolves or `note` is `None`. The
+    /// value is always `record`'s project-relative path.
     #[inline]
     #[must_use]
-    pub(crate) fn label(&self) -> &str {
-        &self.label
+    fn for_record(
+        record: &FileRecord,
+        note: Option<&Note>,
+        keys: &FrontmatterFieldKeys,
+    ) -> Self {
+        let label = note
+            .and_then(|note| Self::frontmatter_label(note, keys))
+            .unwrap_or_else(|| record.name().as_str())
+            .to_owned();
+        Self {
+            label,
+            value: record.path().to_string_lossy().into_owned(),
+        }
     }
 
-    /// Returns the project-relative path stored as the option's `value`.
+    /// Returns the display label for `note`: the first usable configured
+    /// aliases value, falling back to a scalar configured title value.
+    /// Callers fall back further to the filename stem when this returns
+    /// `None`.
+    fn frontmatter_label<'a>(
+        note: &'a Note,
+        keys: &FrontmatterFieldKeys,
+    ) -> Option<&'a str> {
+        let frontmatter = note.frontmatter()?;
+        let alias =
+            frontmatter.get(keys.aliases()).and_then(|value| match value {
+                FieldValue::List(items) => {
+                    items.iter().find_map(FieldValue::as_str)
+                }
+                value => value.as_str(),
+            });
+        alias.or_else(|| {
+            frontmatter.get(keys.title()).and_then(FieldValue::as_str)
+        })
+    }
+
+    /// Consumes the option, returning its `(label, value)` text without
+    /// re-allocating: the caller (minijinja value construction) needs owned
+    /// `String`s anyway, and this option is never read again afterward.
     #[inline]
     #[must_use]
-    pub(crate) fn value(&self) -> &str {
-        &self.value
+    pub(crate) fn into_parts(self) -> (String, String) {
+        (self.label, self.value)
     }
 }
 
@@ -420,38 +473,82 @@ impl FileOption {
 pub(crate) struct FileOptionFilter<'a> {
     folders: &'a [String],
     ext: Option<&'a str>,
-    class_field: &'a str,
     classes: Option<&'a BTreeSet<String>>,
-    title_field: &'a str,
-    aliases_field: &'a str,
+    keys: &'a FrontmatterFieldKeys,
 }
 
 impl<'a> FileOptionFilter<'a> {
     /// Builds a borrowed file-option filter.
     #[inline]
     #[must_use]
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "borrows six independent filter/label dimensions; bundling \
-                  them into a params struct would only move the field count, \
-                  not reduce it"
-    )]
     pub(crate) const fn new(
         folders: &'a [String],
         ext: Option<&'a str>,
-        class_field: &'a str,
         classes: Option<&'a BTreeSet<String>>,
-        title_field: &'a str,
-        aliases_field: &'a str,
+        keys: &'a FrontmatterFieldKeys,
     ) -> Self {
         Self {
             folders,
             ext,
-            class_field,
             classes,
-            title_field,
-            aliases_field,
+            keys,
         }
+    }
+}
+
+/// The `[frontmatter] title`/`aliases` and `[schemas] class_field` keys used
+/// together to resolve `file`-typed Schema field options: label resolution
+/// needs `title`+`aliases`, class filtering needs `class`. Bundled because
+/// every render-path consumer needs at least two of the three, each already
+/// validated once at config load (`FrontmatterConfig`/`SchemasConfig` in
+/// `crate::config`) — this just carries that guarantee forward instead of
+/// re-threading three loose parameters. Lives here, not in `crate::field`,
+/// because it's a config-resolved aggregate specific to file-option
+/// matching, not a field-name/key primitive.
+#[derive(Clone, Debug)]
+pub(crate) struct FrontmatterFieldKeys {
+    class: FieldKey,
+    title: FieldKey,
+    aliases: FieldKey,
+}
+
+impl FrontmatterFieldKeys {
+    /// Bundles three already-validated field keys. Infallible: validation
+    /// happens once, upstream, when each [`FieldKey`] is first constructed
+    /// from config.
+    #[inline]
+    #[must_use]
+    pub(crate) const fn new(
+        class: FieldKey,
+        title: FieldKey,
+        aliases: FieldKey,
+    ) -> Self {
+        Self {
+            class,
+            title,
+            aliases,
+        }
+    }
+
+    /// Returns the frontmatter key naming a Note's File Class(es).
+    #[inline]
+    #[must_use]
+    pub(crate) fn class(&self) -> &FieldKey {
+        &self.class
+    }
+
+    /// Returns the frontmatter key holding a Note's display title.
+    #[inline]
+    #[must_use]
+    pub(crate) fn title(&self) -> &FieldKey {
+        &self.title
+    }
+
+    /// Returns the frontmatter key holding a Note's aliases.
+    #[inline]
+    #[must_use]
+    pub(crate) fn aliases(&self) -> &FieldKey {
+        &self.aliases
     }
 }
 
@@ -494,71 +591,11 @@ fn record_with_inlinks(
     IndexRecord::new(file, note).with_inlinks(links)
 }
 
-/// Returns the display label for `note`: the first usable configured aliases
-/// value, falling back to a scalar configured title value. Callers fall back
-/// further to the filename stem when this returns `None`.
-fn option_label<'a>(
-    note: &'a Note,
-    title_field: &str,
-    aliases_field: &str,
-) -> Option<&'a str> {
-    alias_label(note, aliases_field)
-        .or_else(|| scalar_frontmatter(note, title_field))
-}
-
-/// Returns the first usable alias label for `note`.
-fn alias_label<'a>(note: &'a Note, aliases_field: &str) -> Option<&'a str> {
-    let value = note.frontmatter().and_then(|frontmatter| {
-        let field = frontmatter
-            .fields()
-            .iter()
-            .find(|field| field.key().is_match(aliases_field))?;
-        Some(field.value())
-    })?;
-    match value {
-        FieldValue::List(items) => items.iter().find_map(FieldValue::as_str),
-        value => value.as_str(),
-    }
-}
-
-/// Returns `note`'s frontmatter value for `field_name` when it is a scalar
-/// string, ignoring lists and non-string scalars.
-fn scalar_frontmatter<'a>(note: &'a Note, field_name: &str) -> Option<&'a str> {
-    let frontmatter = note.frontmatter()?;
-    let field = frontmatter
-        .fields()
-        .iter()
-        .find(|field| field.key().is_match(field_name))?;
-    field.value().as_str()
-}
-
-/// Reads and parses the markdown file for `record` into a [`Note`].
-///
-/// Shared by [`FileIndex::build`] (parses every markdown file from scratch) and
-/// [`FileIndex::refresh`] (parses only added or changed markdown files).
-///
-/// # Errors
-///
-/// - [`FileIndexError::Io`] if the file cannot be read.
-fn parse_note_file(
-    root: &Path,
-    record: &FileRecord,
-) -> Result<Note, FileIndexError> {
-    let full_path = root.join(record.path());
-    let content = fs::read_to_string(&full_path).map_err(|source| {
-        FileIndexError::Io {
-            path: full_path,
-            source,
-        }
-    })?;
-    Ok(parse_markdown(record.path(), &content))
-}
-
 /// Binary-searches path-sorted `notes` for an exact path match.
 ///
 /// Shared by [`FileIndex::note`], which does this lookup once `self` exists,
-/// and the [`inlinks`] submodule, which needs the same search over
-/// a bare `&[Note]` slice while resolving link targets during
+/// and the [`inlinks`] submodule, which needs the same search over a bare
+/// `&[Note]` slice while resolving link targets during
 /// [`FileIndex::build`]/[`FileIndex::refresh`].
 ///
 /// [`inlinks`]: mod@inlinks
@@ -1553,7 +1590,7 @@ mod tests {
         }
     }
 
-    mod option_label {
+    mod frontmatter_label {
         use pretty_assertions::assert_eq;
         use rstest::rstest;
 
@@ -1573,13 +1610,34 @@ mod tests {
             "No frontmatter here.",
             None
         )]
+        #[case::scalar_aliases_value(
+            "---\naliases: Solo Name\n---\n",
+            Some("Solo Name")
+        )]
+        #[case::aliases_list_with_no_strings_falls_through_to_title(
+            "---\ntitle: Title Value\naliases: [42, true]\n---\n",
+            Some("Title Value")
+        )]
+        #[case::aliases_list_skips_leading_non_strings(
+            "---\naliases: [42, Real Alias]\n---\n",
+            Some("Real Alias")
+        )]
+        #[case::non_string_aliases_scalar_falls_through_to_title(
+            "---\ntitle: Title Value\naliases: 42\n---\n",
+            Some("Title Value")
+        )]
         fn resolves_precedence(
             #[case] source: &str,
             #[case] expected: Option<&str>,
         ) {
             let note = parse_markdown("note.md", source);
+            let keys = FrontmatterFieldKeys::new(
+                FieldKey::try_new("class").expect("valid field key"),
+                FieldKey::try_new("title").expect("valid field key"),
+                FieldKey::try_new("aliases").expect("valid field key"),
+            );
 
-            assert_eq!(option_label(&note, "title", "aliases"), expected);
+            assert_eq!(FileOption::frontmatter_label(&note, &keys), expected);
         }
     }
 }

@@ -75,7 +75,9 @@ File Classes form hierarchies via `extends` (is-a) and `excludes`, resolved dete
   3. **Schema resolution engine (pure logic)** — Kahn's topo sort, own-fields-override-parents, first-listed-wins, `excludes`, bounded `$ref`, and cycle/missing-target detection as a pure function over Schema fixtures, mirroring how `index/query/filter.rs` and `operators.rs` unit-test their expression machinery. No vault, no minijinja.
   4. **CLI dispatch** — `traces template` from parsed command arguments through output, using the existing `cli/template.rs` test pattern (`ConfigService::at` with isolated trust stores, `CwdGuard::enter`, a trusted project fixture with templates and Schemas). Asserts Schema-driven Templates render and write through the real config-loading + trust pipeline.
 - Template tests must assert render errors (not panics) for unknown Schema/field names, mirroring `template/engine/query.rs`'s `errors` module.
-- File-field label resolution tests assert the label comes from frontmatter aliases when present, else the filename stem, and that the returned value is the path (per ADR-0003).
+- File-field label resolution tests assert the label comes from frontmatter
+  aliases when present, else the configured title key, else the filename
+  stem, and that the returned value is the path (per ADR-0003).
 - Prior art: `template/engine/query.rs` (render seam, namespace registration, error surfacing), `config/service.rs` (config fixtures), `index/query.rs` + `filter.rs` (pure logic over fixtures), `cli/template.rs` (command dispatch with trusted projects).
 
 ## Out of Scope
