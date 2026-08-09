@@ -259,12 +259,13 @@ impl<'a> LinkTarget<'a> {
     /// `archive/Project Alpha`.
     ///
     /// This is the shape Obsidian's wikilink-by-name search resolves, so it
-    /// corresponds to whether a whole-index stem search is eligible as a
-    /// fallback. `false` in two cases:
-    /// - [`Self::AnchorOnly`], which has no path at all.
-    /// - A path with an explicit directory component. Such a path that fails to
-    ///   match exactly stays unresolved rather than falling back to a
-    ///   whole-index name search that could match an unrelated Note elsewhere.
+    /// determines whether a whole-index stem search is eligible as a
+    /// fallback. Returns `false` for:
+    ///
+    /// - [`Self::AnchorOnly`], which has no path.
+    /// - Paths with an explicit directory component. A qualified path that
+    ///   fails to match exactly stays unresolved rather than falling back to a
+    ///   whole-index name search that could match an unrelated Note.
     #[must_use]
     pub(crate) fn is_basename(self) -> bool {
         self.has_path() && self.path().is_some_and(|path| !path.contains('/'))

@@ -144,7 +144,7 @@ impl Note {
         &self.tags
     }
 
-    /// Iterates over task list items at every list depth.
+    /// Iterates over task list items across all nesting depths.
     #[inline]
     #[must_use]
     pub fn tasks(&self) -> TaskIter<'_> {

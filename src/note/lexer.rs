@@ -377,10 +377,9 @@ impl<'a> ValueParser<'a> {
 
     /// Parses one or more `,`-separated atoms starting at position `0`.
     ///
-    /// Returns `None` unless the first atom is followed by a `,`, confirming
-    /// this is a list and not a single atom, and every subsequent atom
-    /// parses successfully. A trailing `,` followed only by whitespace ends
-    /// the list.
+    /// Returns `Some` only when a `,` follows the first atom (confirming this
+    /// is a list, not a single atom) and every subsequent atom parses
+    /// successfully. A trailing `,` followed by whitespace ends the list.
     fn parse_comma_list(&self) -> Option<Vec<FieldValue>> {
         let (first, mut pos) = self.parse_atom_at(0)?;
         pos = self.skip_whitespace(pos);
@@ -526,9 +525,8 @@ impl<'a> ValueParser<'a> {
         self.parse_keyword_at(pos, "null").map(|end| (FieldValue::Null, end))
     }
 
-    /// Finds the end offset of `keyword` at `pos` if it matches
-    /// case-insensitively and the position immediately after it satisfies
-    /// [`Self::is_atom_boundary`].
+    /// Finds the end offset of `keyword` at `pos` on a case-insensitive match
+    /// followed by an [`Self::is_atom_boundary`] position.
     fn parse_keyword_at(&self, pos: usize, keyword: &str) -> Option<usize> {
         let end = self.source.advance(pos, keyword.len());
         let token = self.source.get(pos..end)?;

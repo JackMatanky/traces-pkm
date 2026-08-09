@@ -9,9 +9,10 @@
 //! per top-level paragraph or heading, and one per list item. The buffers
 //! exclude fenced code blocks, indented code blocks, and inline code.
 //!
-//! Standard Markdown link text is copied into the surrounding scan buffer with
-//! literal `[` and `]` delimiters. That lets `[Key:: Value](url)` become a
-//! visible-key inline field while [`ListItem::text`] remains display text.
+//! Standard Markdown link text is copied into the surrounding scan buffer
+//! wrapped in literal `[` and `]` delimiters, so `[Key:: Value](url)`
+//! becomes a visible-key inline field while [`ListItem::text`] retains the
+//! plain display text.
 
 use std::{mem, path::PathBuf};
 
@@ -144,8 +145,9 @@ impl ParserContext {
 
     /// Starts tracking a Markdown or wikilink outlink.
     ///
-    /// Standard Markdown links push `[` into the scan buffer so visible-key
-    /// inline fields can be detected in link text.
+    /// Standard Markdown links push `[` into the scan buffer (and `]` in
+    /// [`Self::end_link`]) so visible-key inline fields can be detected in
+    /// link text.
     fn start_link(&mut self, link_type: CmarkLinkType, dest_url: CowStr<'_>) {
         let kind = if matches!(link_type, CmarkLinkType::WikiLink { .. }) {
             LinkType::Wikilink
@@ -364,8 +366,8 @@ impl ListTracker {
     /// Lexes and clears the active list item's scan buffer.
     ///
     /// Returns the inline fields and tags yielded by that buffer, or `None` if
-    /// no item is active or the buffer is empty. Called before nested lists and
-    /// when an item closes so metadata preserves document order.
+    /// no item is active or the buffer is empty. Called before nested lists
+    /// start and when an item closes, both to preserve document-order metadata.
     fn flush_active_item_scan_buffer(&mut self) -> FlushedFields {
         let item = self.item_stack.last_mut()?;
         if item.scan_buffer.is_empty() {
@@ -388,7 +390,7 @@ impl ListTracker {
         Some((fields, tags))
     }
 
-    /// Pushes a list frame and flushes any active parent item metadata.
+    /// Pushes a list frame and flushes any active parent item's scan buffer.
     ///
     /// Returns the flushed inline fields and tags, if any.
     fn start_list(&mut self, is_ordered: bool) -> FlushedFields {
