@@ -23,10 +23,10 @@ impl Tag {
 
     /// Returns `true` if this tag equals `other` or is nested below it.
     ///
-    /// A tag matches itself exactly, or matches a longer tag nested below it
-    /// at a `/` boundary: `#projects` matches `#projects/active`, but
-    /// `#project` does not match `#projects` because nesting must start at
-    /// `/`, not merely share a prefix.
+    /// A tag matches itself exactly, or matches a longer tag nested below it at
+    /// a `/` boundary: `#projects` matches `#projects/active`, but `#project`
+    /// does not match `#projects` because nesting must start at `/`, not merely
+    /// share a prefix.
     #[inline]
     #[must_use]
     pub(crate) fn is_nested_under(&self, other: &str) -> bool {

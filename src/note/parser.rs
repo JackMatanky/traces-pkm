@@ -10,9 +10,9 @@
 //! exclude fenced code blocks, indented code blocks, and inline code.
 //!
 //! Standard Markdown link text is copied into the surrounding scan buffer
-//! wrapped in literal `[` and `]` delimiters, so `[Key:: Value](url)`
-//! becomes a visible-key inline field while [`ListItem::text`] retains the
-//! plain display text.
+//! wrapped in literal `[` and `]` delimiters, so `[Key:: Value](url)` becomes a
+//! visible-key inline field while [`ListItem::text`] retains the plain display
+//! text.
 
 use std::{mem, path::PathBuf};
 
@@ -185,8 +185,8 @@ impl ParserContext {
 
     /// Starts a paragraph or heading text block.
     ///
-    /// Top-level text fills `body_buffer`. Text within list items is
-    /// separated by newlines in the active item's scan buffer.
+    /// Top-level text fills `body_buffer`. Text within list items is separated
+    /// by newlines in the active item's scan buffer.
     fn start_text_block(&mut self) {
         self.block = BlockContext::Text;
         if !self.list_nesting.start_nested_text_block() {

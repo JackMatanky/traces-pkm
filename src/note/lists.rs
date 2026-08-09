@@ -155,8 +155,8 @@ impl ListItem {
     /// Attaches inline fields parsed from this item's own text.
     ///
     /// [`Note::inline_fields`] also includes these fields for page-level
-    /// queries. This per-item list preserves the field-to-item relationship
-    /// for task and list queries.
+    /// queries. This per-item list preserves the field-to-item relationship for
+    /// task and list queries.
     ///
     /// [`Note::inline_fields`]: crate::note::Note::inline_fields
     #[inline]
@@ -168,8 +168,8 @@ impl ListItem {
 
     /// Returns the inline fields parsed from this item's own text.
     ///
-    /// Task items also recognize date shorthand emoji such as `🗓️`, `➕`,
-    /// `🛫`, `⏳`, and `✅`.
+    /// Task items also recognize date shorthand emoji such as `🗓️`, `➕`, `🛫`,
+    /// `⏳`, and `✅`.
     #[inline]
     #[must_use]
     #[cfg_attr(

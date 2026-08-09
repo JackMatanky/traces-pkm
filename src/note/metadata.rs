@@ -119,7 +119,7 @@ impl From<&RawFrontmatter> for Frontmatter {
 }
 
 /// Distinguishes an inline field's source syntax: bare, bracket-wrapped, or
-/// paren-wrapped.
+/// parentheses-wrapped.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub enum InlineFieldForm {
     /// `Key:: Value`, filling an entire line.
@@ -355,9 +355,8 @@ pub enum FieldValue {
 }
 
 impl FieldValue {
-    /// Returns the inner text for [`FieldValue::String`],
-    /// [`FieldValue::Date`], and [`FieldValue::Duration`] variants, or
-    /// `None` for any other kind.
+    /// Returns the inner text for [`FieldValue::String`], [`FieldValue::Date`],
+    /// and [`FieldValue::Duration`] variants, or `None` for any other kind.
     #[inline]
     #[must_use]
     pub(crate) fn as_str(&self) -> Option<&str> {

@@ -46,9 +46,9 @@ impl Link {
 
     /// Parses `s` as a complete Obsidian wikilink such as `[[target|text]]`.
     ///
-    /// Unlike [`Self::parse_wikilink_prefix`], `s` must contain nothing but
-    /// the wikilink itself: any trailing text after the closing `]]` makes
-    /// this return `None`. Also returns `None` for any input
+    /// Unlike [`Self::parse_wikilink_prefix`], `s` must contain nothing but the
+    /// wikilink itself: any trailing text after the closing `]]` makes this
+    /// return `None`. Also returns `None` for any input
     /// [`Self::parse_wikilink_prefix`] rejects.
     #[must_use]
     pub(crate) fn parse_wikilink(s: &str) -> Option<Self> {
@@ -255,12 +255,12 @@ impl<'a> LinkTarget<'a> {
     }
 
     /// Returns whether this target's path segment is a bare name with no
-    /// directory prefix, such as `Project Alpha` rather than
-    /// `archive/Project Alpha`.
+    /// directory prefix, such as `Project Alpha` rather than `archive/Project
+    /// Alpha`.
     ///
     /// This is the shape Obsidian's wikilink-by-name search resolves, so it
-    /// determines whether a whole-index stem search is eligible as a
-    /// fallback. Returns `false` for:
+    /// determines whether a whole-index stem search is eligible as a fallback.
+    /// Returns `false` for:
     ///
     /// - [`Self::AnchorOnly`], which has no path.
     /// - Paths with an explicit directory component. A qualified path that

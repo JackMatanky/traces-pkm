@@ -336,8 +336,8 @@ fn parse_inline_value_str(raw: &str) -> FieldValue {
 /// Recursive-descent parser for inline-field value text.
 ///
 /// [`Self::parse`] is the entry point: it tries a comma-separated list of
-/// atoms, then a single atom spanning the whole value, falling back to a
-/// raw [`FieldValue::String`] when neither matches.
+/// atoms, then a single atom spanning the whole value, falling back to a raw
+/// [`FieldValue::String`] when neither matches.
 struct ValueParser<'a> {
     text: &'a str,
     source: SourceText<'a>,
@@ -409,8 +409,8 @@ impl<'a> ValueParser<'a> {
     /// trying each value kind in priority order: quoted string, wikilink,
     /// duration, bool, null, ISO date, number, then tag.
     ///
-    /// Returns the parsed value paired with the exclusive byte offset
-    /// following it, or `None` if no kind matches at `pos`.
+    /// Returns the parsed value paired with the exclusive byte offset following
+    /// it, or `None` if no kind matches at `pos`.
     fn parse_atom_at(&self, pos: usize) -> Option<Atom> {
         let pos = self.skip_whitespace(pos);
         self.parse_quoted_string_at(pos)
@@ -450,8 +450,7 @@ impl<'a> ValueParser<'a> {
         None
     }
 
-    /// Parses a wikilink or embed atom (`[[target]]`, `![[target]]`) at
-    /// `pos`.
+    /// Parses a wikilink or embed atom (`[[target]]`, `![[target]]`) at `pos`.
     fn parse_link_at(&self, pos: usize) -> Option<Atom> {
         let (link, consumed) =
             Link::parse_wikilink_prefix(self.source.from(pos)?)?;
@@ -461,10 +460,9 @@ impl<'a> ValueParser<'a> {
     /// Parses a duration atom at `pos`.
     ///
     /// Recognizes one or more `<number><unit>` parts, such as `4h15m` or
-    /// `4 yrs, 6 wks`. Parts are validated by
-    /// [`Self::parse_duration_part_end`] and may be comma- and
-    /// whitespace-separated. Returns the raw matched text as
-    /// [`FieldValue::Duration`].
+    /// `4 yrs, 6 wks`. Parts are validated by [`Self::parse_duration_part_end`]
+    /// and may be comma- and whitespace-separated. Returns the raw matched text
+    /// as [`FieldValue::Duration`].
     fn parse_duration_at(&self, pos: usize) -> Option<Atom> {
         let mut end = self.parse_duration_part_end(pos)?;
         loop {
@@ -568,9 +566,9 @@ impl<'a> ValueParser<'a> {
 
     /// Parses a `#tag`-shaped atom (`#book`, `#projects/active`) at `pos`.
     ///
-    /// Requires `#` followed by an alphabetic character. The match is
-    /// returned as [`FieldValue::String`] holding the tag text, including
-    /// the leading `#`, since there's no dedicated tag value kind.
+    /// Requires `#` followed by an alphabetic character. The match is returned
+    /// as [`FieldValue::String`] holding the tag text, including the leading
+    /// `#`, since there's no dedicated tag value kind.
     fn parse_tag_at(&self, pos: usize) -> Option<Atom> {
         let rest = self.source.from(pos)?.strip_prefix('#')?;
         let mut chars = rest.chars();
@@ -590,10 +588,9 @@ impl<'a> ValueParser<'a> {
         Some((FieldValue::String(raw.to_owned()), end))
     }
 
-    /// Whether `pos` is at the end of the text, immediately before
-    /// whitespace, or immediately before a `,`. An atom must end at such a
-    /// position to avoid greedily consuming into the next atom or trailing
-    /// text.
+    /// Whether `pos` is at the end of the text, immediately before whitespace,
+    /// or immediately before a `,`. An atom must end at such a position to
+    /// avoid greedily consuming into the next atom or trailing text.
     fn is_atom_boundary(&self, pos: usize) -> bool {
         self.source.from(pos).is_some_and(|source| {
             source
