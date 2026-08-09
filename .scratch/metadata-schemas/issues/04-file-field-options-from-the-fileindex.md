@@ -40,12 +40,12 @@ When a template calls `schema.get("book").field("cover")` on a `file`-typed fiel
 - Integration into `SchemaBinding::field()` — the `FieldType::File` arm currently returns `Value::NONE`; it should call the resolver and return the pair list.
 
 **Acceptance criteria:**
-- [ ] `file` fields resolve options via AND-composed `folders`/`ext`/`class` filter; no regex.
-- [ ] `class` filter matches transitively.
-- [ ] `.field()` on a `file` field returns label/value pairs (aliases label else stem; value path).
-- [ ] Pairs feed `ui.select` directly.
-- [ ] Options reflect current index state.
-- [ ] Render-seam tests cover label resolution and path values.
+- [x] `file` fields resolve options via AND-composed `folders`/`ext`/`class` filter; no regex.
+- [x] `class` filter matches transitively.
+- [x] `.field()` on a `file` field returns label/value pairs (aliases label, else configured title, else stem; value path).
+- [x] Pairs feed `ui.select` directly.
+- [x] Options reflect current index state.
+- [x] Render-seam tests cover label resolution and path values.
 
 **Out of scope:**
 - Regex support in filters (explicitly excluded).
@@ -66,17 +66,20 @@ When a template calls `schema.get("book").field("cover")` on a `file`-typed fiel
 - Class filters reuse `SchemaRegistry::matching_classes()` so subclasses match parent class filters transitively.
 - Labels use `aliases -> title -> filename stem` precedence, using the resolved `[frontmatter]` key names (both now concrete defaults, not `Option`-wrapped): the configured aliases field's scalar value or first list string, else the configured title field's scalar value, else the indexed filename stem. Values are project-relative paths.
 
+**Update (2026-08-09, `59162d6`/`75fa8c2`):** `FrontmatterConfig`'s `title`/`aliases`/`date_created`/`date_modified` now resolve to concrete defaults instead of `None` (see ticket 01's implementation notes). That closed a real gap this ticket had inherited: a Note's default Obsidian-style `aliases:` frontmatter was silently ignored by file-field labels unless a user explicitly set `aliases = "aliases"` in config, because the resolved model kept the key `Option`-wrapped. `FileOptionFilter::new`/`option_label` (renamed from `alias_label`) now take both `title_field` and `aliases_field` as plain `&str`, always active — label resolution is no longer a skippable filter dimension. The four `root`/`directory`/`class_field`/`aliases_field` `Arc` fields duplicated across `SchemaOps` and `SchemaBinding` (`template/engine/schema.rs`) were unified into one shared `SchemaContext`, which now also carries `title_field`; `SchemaBinding::file_field_values` reads `ctx.title_field`/`ctx.aliases_field` instead of a lone `Option<Arc<str>>` alias field.
+
 ### Key design decisions
 
 - Reused `template::engine::query::cached_refresh()` so `schema`, `query`, and `tasks` share one render-scoped FileIndex refresh.
 - Kept minijinja value construction in `template::engine::schema`; the index returns plain Rust `FileOption` data and stays minijinja-free.
 - Did not add regex, file watching, or a new selection API. Existing `ui.select` already reads the `label` attribute by default and returns the selected object by index; consumers read `.value` for the path.
+- Label precedence is `aliases -> title -> filename stem`, not just `aliases -> stem`: once `title`/`aliases` stopped resolving to `None`, every Note effectively has a usable title even without a Schema-aware alias, so falling straight to the filename stem was needlessly poor UX. `option_label` in `index/mod.rs` composes `alias_label` and a new `scalar_frontmatter` helper for this; `FieldKey::is_match` stays the only key-matching mechanism (no new key type introduced).
 
 ### Verification
 
 - Red check: `mise run test -- file_field` failed on the two new render-seam tests before implementation.
-- Focused green check: `mise run check`; `mise run test -- file_field`.
-- Full verification and two-axis review pending.
+- Focused green check (2026-08-09): `mise run test -- config::service::tests::builder::frontmatter` (15/15), `mise run test -- file_field` (8/8).
+- Full green check (2026-08-09): `mise run check`, `mise run clippy`, `mise run verify` (fmt -> lint -> clippy -> test-all -> audit) all clean; full suite 1424/1424 passed. `gitnexus_detect_changes` confirmed the touched-symbol set stayed within config defaults/frontmatter accessors, schema runtime context, file-option labels, tests, and issue/domain notes.
 
 ### Out of scope (unchanged)
 
@@ -84,6 +87,14 @@ When a template calls `schema.get("book").field("cover")` on a `file`-typed fiel
 - A file watcher/daemon to keep the index continuously fresh.
 - Editing Notes through Schema output.
 
-## Adversarial re-review
+## Adversarial re-review (2026-08-09)
 
-Pending final `/code-review` pass after full verification.
+Prompted by reviewing the `date_created`/`date_modified` dead_code `expect` reasons, which promised consumption by "later frontmatter-aware tickets" that never existed. Traced against `metadata-schemas/spec.md`: User Story 24 only asks for the config keys to be declared ("canonical metadata roles are configurable"); no consumer is specified anywhere in the spec's Implementation Decisions, Testing Decisions, or Out of Scope. Confirmed nothing was missing from this feature — just corrected the misleading comment in `config/model.rs`.
+
+Also audited every `dead_code` suppression in the crate (30 sites / 37 individual field/method spans): mechanically stripped each `expect(dead_code)`, ran `cargo clippy --workspace`, and confirmed all 37 still fire when unsuppressed. None stale, none removable as of this pass.
+
+Found `FrontmatterConfig::date_created`/`date_modified` and `DateFieldConfig::name`/`format` carried a field-level `expect(dead_code)` duplicating the one already on their accessors. Verified empirically: `#[expect(dead_code)]` on an accessor makes rustc treat it as a reachability root, so the accessor's own body (`&self.date_created`) already marks the backing field as read — the field-level suppression was redundant. Removed it, keeping the suppression only on the accessors.
+
+Replaced `Config::for_test_with_frontmatter` (a second, overlapping test constructor) with a chainable `Config::for_test(...).with_frontmatter(...)`, so there is exactly one `for_test` entry point; all prior `for_test(...)` call sites were unaffected.
+
+Commits: `59162d6` (concrete defaults, title fallback, `SchemaContext`, Figment merge-null fix), `75fa8c2` (`for_test` consolidation, dead_code trim).
