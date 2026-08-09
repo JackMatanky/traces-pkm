@@ -20,15 +20,6 @@ pub(super) struct Tracked {
     action: TrackedAction,
 }
 
-/// Nested `traces tracked` subcommands.
-#[derive(Debug, Subcommand)]
-enum TrackedAction {
-    /// List all tracked local config paths.
-    List,
-    /// Remove stale tracked config entries.
-    Clean,
-}
-
 impl Tracked {
     /// Runs `traces tracked` with the selected action.
     ///
@@ -81,6 +72,15 @@ impl Tracked {
         }
         Ok(())
     }
+}
+
+/// Nested `traces tracked` subcommands.
+#[derive(Debug, Subcommand)]
+enum TrackedAction {
+    /// List all tracked local config paths.
+    List,
+    /// Remove stale tracked config entries.
+    Clean,
 }
 
 #[cfg(test)]

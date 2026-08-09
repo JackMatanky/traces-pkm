@@ -29,15 +29,6 @@ pub(super) struct Trust {
     path: Option<PathBuf>,
 }
 
-/// Nested `traces trust` subcommands.
-#[derive(Debug, Subcommand)]
-enum TrustAction {
-    /// List all trusted directories.
-    List,
-    /// Remove stale trust entries.
-    Clean,
-}
-
 impl Trust {
     /// Runs `traces trust` with the selected trust action.
     ///
@@ -165,6 +156,15 @@ impl Trust {
         }
         Ok(())
     }
+}
+
+/// Nested `traces trust` subcommands.
+#[derive(Debug, Subcommand)]
+enum TrustAction {
+    /// List all trusted directories.
+    List,
+    /// Remove stale trust entries.
+    Clean,
 }
 
 #[cfg(test)]

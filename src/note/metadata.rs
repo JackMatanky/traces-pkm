@@ -138,13 +138,6 @@ pub struct MetadataField {
     value: FieldValue,
 }
 
-/// Represents a `Key:: Value` inline field with its source syntax.
-#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
-pub struct InlineField {
-    metadata: MetadataField,
-    form: InlineFieldForm,
-}
-
 impl MetadataField {
     /// Creates a metadata field from an already-validated `key` and `value`.
     #[inline]
@@ -183,6 +176,13 @@ impl MetadataField {
     pub(crate) fn value(&self) -> &FieldValue {
         &self.value
     }
+}
+
+/// Represents a `Key:: Value` inline field with its source syntax.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+pub struct InlineField {
+    metadata: MetadataField,
+    form: InlineFieldForm,
 }
 
 impl InlineField {

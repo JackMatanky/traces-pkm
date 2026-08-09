@@ -25,77 +25,6 @@ use yaml_serde as serde_yaml;
 #[derive(Clone, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub(crate) struct FieldName(String);
 
-/// Borrowed counterpart to [`FieldName`]: a field name borrowed from parsed
-/// TOML data or a `$ref` string, mirroring the [`str`]/[`String`] split used by
-/// `SchemaNameRef`.
-#[derive(Copy, Clone, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub(crate) struct FieldNameRef<'a>(&'a str);
-
-/// A forgiving field identifier shared by Note frontmatter and inline fields:
-/// stores the original key text for display and a canonical form for
-/// case-insensitive, whitespace-normalized matching.
-#[derive(Clone, Debug, Eq)]
-pub(crate) struct FieldKey {
-    /// Original key text as written by the user.
-    name: String,
-    /// Canonical form for case-insensitive matching.
-    canonical: String,
-}
-
-/// A [`FieldName`] failed to parse.
-#[derive(Debug, Error)]
-pub(crate) enum FieldNameError {
-    /// The raw name was empty or whitespace-only.
-    #[error("field name is empty")]
-    Empty,
-    /// The raw name contained a `/`, which would be ambiguous alongside
-    /// `$ref` path segments.
-    #[error("field name {name:?} cannot contain `/`")]
-    ContainsSlash {
-        name: String,
-    },
-    /// The raw name's [`FieldKey`] canonical form stripped to nothing.
-    #[error("field name {name:?} has no searchable characters")]
-    EmptyCanonical {
-        name: String,
-    },
-    /// The source YAML value cannot stand as a field name.
-    #[error("YAML value cannot be used as a field name")]
-    UnsupportedYamlKey,
-}
-
-/// A [`FieldKey`] failed to parse.
-#[derive(Debug, Error)]
-pub(crate) enum FieldKeyError {
-    /// The raw key was empty or whitespace-only.
-    #[error("field key is empty")]
-    Empty,
-    /// The raw key's canonical form stripped to nothing.
-    #[error("field key {name:?} has no searchable characters")]
-    EmptyCanonical {
-        name: String,
-    },
-    /// The source YAML value cannot stand as a field key.
-    #[error("YAML value cannot be used as a field key")]
-    UnsupportedYamlKey,
-}
-
-/// Coerces a YAML scalar into raw text usable as a field key/name.
-///
-/// Returns `None` for YAML values that cannot stand as a key: `Null`,
-/// `Sequence`, `Mapping`, and `Tagged`.
-fn yaml_scalar_to_string(value: serde_yaml::Value) -> Option<String> {
-    match value {
-        serde_yaml::Value::String(s) => Some(s),
-        serde_yaml::Value::Number(n) => Some(n.to_string()),
-        serde_yaml::Value::Bool(b) => Some(b.to_string()),
-        serde_yaml::Value::Null
-        | serde_yaml::Value::Sequence(_)
-        | serde_yaml::Value::Mapping(_)
-        | serde_yaml::Value::Tagged(_) => None,
-    }
-}
-
 impl FieldName {
     /// Returns this name as a string slice.
     #[inline]
@@ -205,18 +134,6 @@ impl From<FieldNameRef<'_>> for FieldName {
     }
 }
 
-impl From<FieldName> for FieldKey {
-    /// Converts an owned [`FieldName`] into a [`FieldKey`], consuming its text
-    /// and allocating only the canonical form.
-    fn from(name: FieldName) -> Self {
-        let canonical = Self::canonicalize(&name.0);
-        Self {
-            name: name.0,
-            canonical,
-        }
-    }
-}
-
 impl Borrow<str> for FieldName {
     fn borrow(&self) -> &str {
         &self.0
@@ -251,6 +168,11 @@ impl<'de> Deserialize<'de> for FieldName {
         Self::try_from(raw).map_err(D::Error::custom)
     }
 }
+/// Borrowed counterpart to [`FieldName`]: a field name borrowed from parsed
+/// TOML data or a `$ref` string, mirroring the [`str`]/[`String`] split used by
+/// `SchemaNameRef`.
+#[derive(Copy, Clone, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub(crate) struct FieldNameRef<'a>(&'a str);
 
 impl<'a> FieldNameRef<'a> {
     /// Returns this name as a string slice.
@@ -292,46 +214,18 @@ impl fmt::Display for FieldNameRef<'_> {
         fmt::Display::fmt(self.0, f)
     }
 }
+/// A forgiving field identifier shared by Note frontmatter and inline fields:
+/// stores the original key text for display and a canonical form for
+/// case-insensitive, whitespace-normalized matching.
+#[derive(Clone, Debug, Eq)]
+pub(crate) struct FieldKey {
+    /// Original key text as written by the user.
+    name: String,
+    /// Canonical form for case-insensitive matching.
+    canonical: String,
+}
 
 impl FieldKey {
-    /// Normalizes a raw key string for case-insensitive matching.
-    ///
-    /// Transformations:
-    /// - ASCII whitespace -> `-`
-    /// - `_`, `-`, ASCII alphanumeric -> kept, lowercased
-    /// - Non-ASCII (emoji, Unicode letters) -> kept, lowercased
-    /// - Everything else (`!`, `@`, `(`, etc.) -> stripped
-    fn canonicalize(raw: &str) -> String {
-        let mut result = String::with_capacity(raw.len());
-        for ch in raw.chars() {
-            if ch.is_ascii_whitespace() {
-                result.push('-');
-                continue;
-            }
-            if Self::is_kept(ch) {
-                for c in ch.to_lowercase() {
-                    result.push(c);
-                }
-            }
-            // strip everything else
-        }
-        result
-    }
-
-    /// Returns `true` if `ch` survives [`Self::canonicalize`] as itself, rather
-    /// than being substituted with `-` or stripped: `_`, `-`, ASCII
-    /// alphanumeric, or non-ASCII.
-    #[inline]
-    fn is_kept(ch: char) -> bool {
-        ch == '_' || ch == '-' || ch.is_ascii_alphanumeric() || !ch.is_ascii()
-    }
-
-    /// Returns `true` if [`Self::canonicalize`] would strip `raw` to an empty
-    /// string, without allocating the canonical form.
-    fn is_canonical_empty(raw: &str) -> bool {
-        raw.chars().all(|ch| !ch.is_ascii_whitespace() && !Self::is_kept(ch))
-    }
-
     /// Parses `raw` into a validated field key.
     ///
     /// # Errors
@@ -406,6 +300,56 @@ impl FieldKey {
     #[cfg_attr(not(test), expect(dead_code, reason = "used in tests"))]
     pub(crate) fn is_name_match(&self, candidate: &FieldName) -> bool {
         self.name == candidate.as_str()
+    }
+
+    /// Normalizes a raw key string for case-insensitive matching.
+    ///
+    /// Transformations:
+    /// - ASCII whitespace -> `-`
+    /// - `_`, `-`, ASCII alphanumeric -> kept, lowercased
+    /// - Non-ASCII (emoji, Unicode letters) -> kept, lowercased
+    /// - Everything else (`!`, `@`, `(`, etc.) -> stripped
+    fn canonicalize(raw: &str) -> String {
+        let mut result = String::with_capacity(raw.len());
+        for ch in raw.chars() {
+            if ch.is_ascii_whitespace() {
+                result.push('-');
+                continue;
+            }
+            if Self::is_kept(ch) {
+                for c in ch.to_lowercase() {
+                    result.push(c);
+                }
+            }
+            // strip everything else
+        }
+        result
+    }
+
+    /// Returns `true` if `ch` survives [`Self::canonicalize`] as itself, rather
+    /// than being substituted with `-` or stripped: `_`, `-`, ASCII
+    /// alphanumeric, or non-ASCII.
+    #[inline]
+    fn is_kept(ch: char) -> bool {
+        ch == '_' || ch == '-' || ch.is_ascii_alphanumeric() || !ch.is_ascii()
+    }
+
+    /// Returns `true` if [`Self::canonicalize`] would strip `raw` to an empty
+    /// string, without allocating the canonical form.
+    fn is_canonical_empty(raw: &str) -> bool {
+        raw.chars().all(|ch| !ch.is_ascii_whitespace() && !Self::is_kept(ch))
+    }
+}
+
+impl From<FieldName> for FieldKey {
+    /// Converts an owned [`FieldName`] into a [`FieldKey`], consuming its text
+    /// and allocating only the canonical form.
+    fn from(name: FieldName) -> Self {
+        let canonical = Self::canonicalize(&name.0);
+        Self {
+            name: name.0,
+            canonical,
+        }
     }
 }
 
@@ -491,18 +435,72 @@ impl<'de> Deserialize<'de> for FieldKey {
     }
 }
 
+/// A [`FieldName`] failed to parse.
+#[derive(Debug, Error)]
+pub(crate) enum FieldNameError {
+    /// The raw name was empty or whitespace-only.
+    #[error("field name is empty")]
+    Empty,
+    /// The raw name contained a `/`, which would be ambiguous alongside
+    /// `$ref` path segments.
+    #[error("field name {name:?} cannot contain `/`")]
+    ContainsSlash {
+        name: String,
+    },
+    /// The raw name's [`FieldKey`] canonical form stripped to nothing.
+    #[error("field name {name:?} has no searchable characters")]
+    EmptyCanonical {
+        name: String,
+    },
+    /// The source YAML value cannot stand as a field name.
+    #[error("YAML value cannot be used as a field name")]
+    UnsupportedYamlKey,
+}
+
+/// A [`FieldKey`] failed to parse.
+#[derive(Debug, Error)]
+pub(crate) enum FieldKeyError {
+    /// The raw key was empty or whitespace-only.
+    #[error("field key is empty")]
+    Empty,
+    /// The raw key's canonical form stripped to nothing.
+    #[error("field key {name:?} has no searchable characters")]
+    EmptyCanonical {
+        name: String,
+    },
+    /// The source YAML value cannot stand as a field key.
+    #[error("YAML value cannot be used as a field key")]
+    UnsupportedYamlKey,
+}
+
+/// Coerces a YAML scalar into raw text usable as a field key/name.
+///
+/// Returns `None` for YAML values that cannot stand as a key: `Null`,
+/// `Sequence`, `Mapping`, and `Tagged`.
+fn yaml_scalar_to_string(value: serde_yaml::Value) -> Option<String> {
+    match value {
+        serde_yaml::Value::String(s) => Some(s),
+        serde_yaml::Value::Number(n) => Some(n.to_string()),
+        serde_yaml::Value::Bool(b) => Some(b.to_string()),
+        serde_yaml::Value::Null
+        | serde_yaml::Value::Sequence(_)
+        | serde_yaml::Value::Mapping(_)
+        | serde_yaml::Value::Tagged(_) => None,
+    }
+}
+
 /// Finds the item with the smallest edit distance to `input` among
 /// `candidates`, each paired with the text to compare `input` against.
 ///
-/// The matching threshold is half of `input`'s character count rounded up,
-/// with a minimum threshold of 1 (`input.chars().count().div_ceil(2).max(1)`).
-/// This threshold ensures single-character typos (such as `"nam"` for
-/// `"name"`) match while preventing unrelated words (such as `"bogus"`) from
-/// matching any candidate.
+/// The matching threshold is half of `input`'s character count rounded up, with
+/// a minimum threshold of 1 (`input.chars().count().div_ceil(2).max(1)`). This
+/// threshold ensures single-character typos (such as `"nam"` for `"name"`)
+/// match while preventing unrelated words (such as `"bogus"`) from matching any
+/// candidate.
 ///
-/// Returns the candidate item with the smallest edit distance if that
-/// distance does not exceed the calculated threshold. Returns [`None`] if
-/// `candidates` is empty or no candidate falls within the matching threshold.
+/// Returns the candidate item with the smallest edit distance if that distance
+/// does not exceed the calculated threshold. Returns [`None`] if `candidates`
+/// is empty or no candidate falls within the matching threshold.
 pub(crate) fn closest_match<'a, T>(
     candidates: impl Iterator<Item = (T, &'a str)>,
     input: &str,
@@ -518,8 +516,8 @@ pub(crate) fn closest_match<'a, T>(
 /// Calculates the Levenshtein edit distance between two strings.
 ///
 /// Computes the minimum number of single-character insertions, deletions, or
-/// substitutions required to transform `a` into `b` using an iterative
-/// two-row Wagner-Fischer algorithm.
+/// substitutions required to transform `a` into `b` using an iterative two-row
+/// Wagner-Fischer algorithm.
 ///
 /// Returns the edit distance as a [`usize`].
 pub(crate) fn edit_distance(a: &str, b: &str) -> usize {

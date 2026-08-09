@@ -70,28 +70,6 @@ pub(crate) struct FieldRef {
     field: FieldName,
 }
 
-/// A [`FieldRef`] failed to parse.
-#[derive(Debug, Error)]
-pub(crate) enum FieldRefError {
-    /// `reference` was not shaped `#<schema>/<field>` with both segments
-    /// non-empty.
-    #[error("malformed $ref {reference:?}: expected `#<schema>/<field>`")]
-    Malformed {
-        reference: String,
-    },
-    /// The field segment failed [`FieldName`] validation.
-    #[error(transparent)]
-    FieldName(#[from] FieldNameError),
-}
-
-/// A `RawFieldDef` declared neither `type` nor `$ref`.
-#[derive(Debug, Error)]
-pub(crate) enum RawFieldDefError {
-    /// Neither `type` nor `$ref` was present.
-    #[error("field definition has neither `type` nor `$ref`")]
-    MissingSource,
-}
-
 impl FieldRef {
     /// Returns the referenced Schema's name.
     #[inline]
@@ -194,6 +172,28 @@ impl<'de> Deserialize<'de> for FieldRef {
     }
 }
 
+/// A [`FieldRef`] failed to parse.
+#[derive(Debug, Error)]
+pub(crate) enum FieldRefError {
+    /// `reference` was not shaped `#<schema>/<field>` with both segments
+    /// non-empty.
+    #[error("malformed $ref {reference:?}: expected `#<schema>/<field>`")]
+    Malformed {
+        reference: String,
+    },
+    /// The field segment failed [`FieldName`] validation.
+    #[error(transparent)]
+    FieldName(#[from] FieldNameError),
+}
+
+/// A `RawFieldDef` declared neither `type` nor `$ref`.
+#[derive(Debug, Error)]
+pub(crate) enum RawFieldDefError {
+    /// Neither `type` nor `$ref` was present.
+    #[error("field definition has neither `type` nor `$ref`")]
+    MissingSource,
+}
+
 /// Raw Field Definition data exactly as written in TOML, with `type`/`$ref`
 /// already parsed into a validated [`FieldSource`].
 #[derive(Clone, Debug)]
@@ -214,29 +214,6 @@ pub(crate) struct RawFieldDef {
     pub(crate) ext: Option<String>,
     /// `file`-type filter: File Classes to match, is-a transitive.
     pub(crate) class: Option<Vec<String>>,
-}
-
-/// Wire shape for one `.traces/schemas/<name>.toml` `[fields.<name>]` table:
-/// mirrors the TOML exactly (`type`/`$ref` still optional and separate), so
-/// `#[serde(deny_unknown_fields)]` still rejects a typo'd key. [`RawFieldDef`]
-/// itself converts this into a validated [`FieldSource`] during
-/// deserialization; nothing outside this module ever sees a `RawFieldDefToml`.
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RawFieldDefToml {
-    /// The field's kind. Optional only when `reference` supplies it.
-    #[serde(rename = "type")]
-    field_type: Option<RawFieldType>,
-    /// A bounded `$ref` to a base definition: `#global/<field>` or
-    /// `#<ancestor-schema>/<field>`.
-    #[serde(rename = "$ref")]
-    reference: Option<FieldRef>,
-    required: Option<bool>,
-    multi: Option<bool>,
-    values: Option<Vec<String>>,
-    folders: Option<Vec<String>>,
-    ext: Option<String>,
-    class: Option<Vec<String>>,
 }
 
 impl<'de> Deserialize<'de> for RawFieldDef {
@@ -279,6 +256,29 @@ impl<'de> Deserialize<'de> for RawFieldDef {
             class: wire.class,
         })
     }
+}
+
+/// Wire shape for one `.traces/schemas/<name>.toml` `[fields.<name>]` table:
+/// mirrors the TOML exactly (`type`/`$ref` still optional and separate), so
+/// `#[serde(deny_unknown_fields)]` still rejects a typo'd key. [`RawFieldDef`]
+/// itself converts this into a validated [`FieldSource`] during
+/// deserialization; nothing outside this module ever sees a `RawFieldDefToml`.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawFieldDefToml {
+    /// The field's kind. Optional only when `reference` supplies it.
+    #[serde(rename = "type")]
+    field_type: Option<RawFieldType>,
+    /// A bounded `$ref` to a base definition: `#global/<field>` or
+    /// `#<ancestor-schema>/<field>`.
+    #[serde(rename = "$ref")]
+    reference: Option<FieldRef>,
+    required: Option<bool>,
+    multi: Option<bool>,
+    values: Option<Vec<String>>,
+    folders: Option<Vec<String>>,
+    ext: Option<String>,
+    class: Option<Vec<String>>,
 }
 
 impl RawFieldDef {

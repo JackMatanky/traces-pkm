@@ -73,59 +73,6 @@ pub(crate) struct FileStateStore {
     root: StateDirRoot,
 }
 
-/// Stale-entry cleanup policy for [`FileStateStore::clean`].
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub(crate) enum FileStoreCleanMode<'a> {
-    /// Remove only stale root entries.
-    EntriesOnly,
-    /// Remove stale root entries and same-named companion files.
-    WithCompanions(&'a [&'a str]),
-}
-
-struct StoreEntry {
-    canonical_target: PathBuf,
-    hash: Blake3PathHash,
-}
-
-impl StoreEntry {
-    #[inline]
-    fn path_in(&self, root: &Path) -> PathBuf {
-        root.join(self.hash.as_str())
-    }
-}
-
-impl TryFrom<&Path> for StoreEntry {
-    type Error = FileStateStoreError;
-
-    #[inline]
-    #[expect(
-        clippy::disallowed_methods,
-        reason = "file-store entries must canonicalize targets before hashing"
-    )]
-    fn try_from(target: &Path) -> Result<Self, Self::Error> {
-        let canonical_target = fs::canonicalize(target).map_err(|source| {
-            FileStateStoreError::Canonicalize {
-                path: target.to_path_buf(),
-                source,
-            }
-        })?;
-        let hash = Blake3PathHash::from(canonical_target.as_path());
-        Ok(Self {
-            canonical_target,
-            hash,
-        })
-    }
-}
-
-impl From<StateDirRoot> for FileStateStore {
-    #[inline]
-    fn from(root: StateDirRoot) -> Self {
-        Self {
-            root,
-        }
-    }
-}
-
 impl FileStateStore {
     /// Creates a store rooted at an arbitrary path for tests.
     #[cfg(any(test, feature = "test-utils"))]
@@ -382,6 +329,59 @@ impl FileStateStore {
             }
         }
         Ok(removed)
+    }
+}
+
+impl From<StateDirRoot> for FileStateStore {
+    #[inline]
+    fn from(root: StateDirRoot) -> Self {
+        Self {
+            root,
+        }
+    }
+}
+
+/// Stale-entry cleanup policy for [`FileStateStore::clean`].
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub(crate) enum FileStoreCleanMode<'a> {
+    /// Remove only stale root entries.
+    EntriesOnly,
+    /// Remove stale root entries and same-named companion files.
+    WithCompanions(&'a [&'a str]),
+}
+
+struct StoreEntry {
+    canonical_target: PathBuf,
+    hash: Blake3PathHash,
+}
+
+impl StoreEntry {
+    #[inline]
+    fn path_in(&self, root: &Path) -> PathBuf {
+        root.join(self.hash.as_str())
+    }
+}
+
+impl TryFrom<&Path> for StoreEntry {
+    type Error = FileStateStoreError;
+
+    #[inline]
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "file-store entries must canonicalize targets before hashing"
+    )]
+    fn try_from(target: &Path) -> Result<Self, Self::Error> {
+        let canonical_target = fs::canonicalize(target).map_err(|source| {
+            FileStateStoreError::Canonicalize {
+                path: target.to_path_buf(),
+                source,
+            }
+        })?;
+        let hash = Blake3PathHash::from(canonical_target.as_path());
+        Ok(Self {
+            canonical_target,
+            hash,
+        })
     }
 }
 
