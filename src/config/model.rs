@@ -79,9 +79,10 @@ impl Config {
     /// Returns the configured output directory, or [`root`] when not
     /// configured.
     ///
-    /// May be relative (preserved unresolved from the config file) or absolute
-    /// (the [`root`] fallback); callers needing an absolute path resolve a
-    /// relative result against [`root`] themselves.
+    /// The value is preserved as-is from the config file:
+    ///
+    /// - **Relative** — the caller resolves it against [`root`].
+    /// - **Absolute** — this is the [`root`] fallback.
     ///
     /// [`root`]: Self::root
     #[inline]
@@ -137,8 +138,8 @@ impl Config {
 
 /// Template directories and output path from merged config.
 ///
-/// Keeps local and global directories separate so template lookup can preserve
-/// local-first precedence without re-reading config files.
+/// Local and global directories are kept separate so template lookup
+/// preserves local-first precedence without re-reading config files.
 #[derive(Clone, Debug)]
 pub(super) struct TemplateConfig {
     local: Option<PathBuf>,

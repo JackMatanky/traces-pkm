@@ -28,6 +28,13 @@ use crate::{DialogProvider, config::Config};
 ///
 /// Holds a borrowed [`Config`], an internal [`TemplateLoader`], and a
 /// [`TemplateEngine`] constructed from the configuration.
+///
+/// ## Interaction with WriteMode
+///
+/// `WriteMode` controls disk writes, not prompt execution: the
+/// [`DialogProvider`] receives all `ui.*` calls regardless of mode. Callers
+/// enforce non-interactive execution by choosing an appropriate
+/// [`DialogProvider`], not by setting [`WriteMode::DryRun`].
 pub struct TemplateService<'a> {
     config: &'a Config,
     loader: TemplateLoader,
@@ -38,10 +45,8 @@ pub struct TemplateService<'a> {
 impl<'a> TemplateService<'a> {
     /// Constructs a new [`TemplateService`] for `config`.
     ///
-    /// The `provider` receives all interactive `ui.*` prompt calls, including
-    /// under [`WriteMode::DryRun`]. The [`WriteMode`] controls whether output
-    /// files are written to disk, not whether prompts execute. Callers enforce
-    /// non-interactive execution by choosing an appropriate [`DialogProvider`].
+    /// See the struct-level docs for how [`WriteMode`] interacts with the
+    /// [`DialogProvider`].
     #[inline]
     #[must_use]
     pub fn new(config: &'a Config, provider: Arc<dyn DialogProvider>) -> Self {

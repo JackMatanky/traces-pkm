@@ -46,8 +46,9 @@ pub(super) struct Template {
     pub(super) list: bool,
     /// Output path overriding any `file.write_to()` call inside the template.
     ///
-    /// Falls back to the template-declared `write_to` path, then the
-    /// config-derived default.
+    /// Falls back in this order:
+    /// 1. The template-declared `write_to` path.
+    /// 2. The config-derived default output directory.
     #[arg(short = 'o', long, value_name = "PATH")]
     pub(super) output: Option<PathBuf>,
     /// Overwrite the output path if it already exists.

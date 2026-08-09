@@ -5,12 +5,15 @@
 //! converted from CLI flags via [`WriteMode::from_flags`], but
 //! [`TemplateService::write`] is the only place that matches on it.
 //!
-//! [`TemplateWriteTarget`] gathers output-destination candidates from `-o`
-//! (`requested`) and `file.write_to()` ([`DeclaredOutputPath`]), then resolves
-//! them by precedence: `requested`, `declared`, caller-supplied default.
-//! `requested`/`declared` are runtime values confined to [`Config::root`] via
-//! [`RootConfinedPath::parse`]. The default comes from an already
-//! trust-gated [`Config::output_dir`].
+//! [`TemplateWriteTarget`] gathers output-destination candidates and resolves
+//! them by precedence:
+//!
+//! 1. `-o` / `--output` (`requested`) — a runtime value confined to
+//!    [`Config::root`] via [`RootConfinedPath::parse`].
+//! 2. `file.write_to()` ([`DeclaredOutputPath`]) — also a runtime value
+//!    confined to [`Config::root`].
+//! 3. Caller-supplied default — from an already trust-gated
+//!    [`Config::output_dir`].
 //!
 //! [`TemplateService::write`]: super::service::TemplateService::write
 //! [`Config::root`]: crate::config::Config::root

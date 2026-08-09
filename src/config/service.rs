@@ -86,8 +86,9 @@ impl TryFrom<DiscoveryOutcome> for ConfigBuilderInput {
 
 /// Entry point for config loading and trust administration.
 ///
-/// Keeps filesystem discovery (`load`) separate from trust operations such as
-/// `trust` and [`Self::untrust`].
+/// Filesystem discovery ([`load`](Self::load)) and trust operations
+/// ([`trust`](Self::trust), [`untrust`](Self::untrust)) are separate
+/// surfaces on this type.
 #[derive(Clone, Debug)]
 pub struct ConfigService {
     state: ConfigStateStore,
@@ -153,17 +154,15 @@ impl ConfigService {
     /// Builds a [`Config`] from discovered candidates.
     ///
     /// Selects the local and optional global config files according to
-    /// [`ConfigBuilderInput`]'s precedence rules. Tracks the local config path
-    /// and verifies its trust baseline. Parses and merges global settings
-    /// before local settings, resolving the final output directory.
+    /// [`ConfigBuilderInput`]'s precedence rules. Parses and merges global
+    /// settings before local settings, resolving the final output directory.
     ///
-    /// Recording the candidate in the tracking store is best-effort; a write
-    /// failure does not fail the build. The local candidate's root is checked
-    /// against the trust store before parsing; a global candidate is never
-    /// checked.
+    /// Trust and tracking notes:
     ///
-    /// The pipeline is intentionally linear. This is the only call site, so a
-    /// staged typestate builder would not add useful ordering safety.
+    /// - The local candidate's root is checked against the trust store before
+    ///   parsing; a global candidate is never checked.
+    /// - Recording the candidate in the tracking store is best-effort; a write
+    ///   failure does not fail the build.
     ///
     /// # Errors
     ///
@@ -365,11 +364,9 @@ impl ConfigService {
     /// to one that omits those tables entirely.
     ///
     /// Uses [`File::create_new`] rather than [`std::fs::write`] so this fails
-    /// atomically if the file already exists instead of silently truncating it.
-    /// `traces init` already refuses to run when `.traces/` exists, but that
-    /// check and this write are two separate filesystem operations: a
-    /// concurrent `traces init`, or a file planted in between, would otherwise
-    /// let a plain `fs::write` clobber it unnoticed.
+    /// atomically if the file already exists. This prevents a concurrent
+    /// `traces init` or a file planted between the existence check and write
+    /// from being silently clobbered.
     ///
     /// [`File::create_new`]: std::fs::File::create_new
     ///

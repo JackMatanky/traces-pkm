@@ -178,13 +178,12 @@ impl ConfigStateStore {
 
     /// Checks config-file trust and returns content only when trusted.
     ///
-    /// Requires both `root` and `config_path` directly. A root-only
-    /// [`TrustRequest`] has no config path, while trusted config-file parsing
-    /// must always carry content.
+    /// Takes `root` and `config_path` directly because a root-only
+    /// [`TrustRequest`] has no config path, while trusted parsing must carry
+    /// content.
     ///
-    /// Reads content once into memory and hashes that buffer before returning
-    /// it for parsing, avoiding a second filesystem read between trust check
-    /// and use.
+    /// Reads the config file once and hashes the buffer in memory, returning
+    /// the same content for parsing to avoid a second filesystem read.
     ///
     /// # Errors
     ///

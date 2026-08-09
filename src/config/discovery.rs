@@ -229,11 +229,12 @@ impl DiscoveryEngine {
     /// Resolves trust requests from one user-supplied filesystem path.
     ///
     /// Resolution rules:
-    /// - file paths resolve to that local config;
-    /// - directories with [`NearestLocal`] resolve to the nearest local config,
-    ///   falling back to a root-only request when none is found;
-    /// - directories with [`LocalSubtree`] yield discovered config requests
-    ///   only.
+    ///
+    /// - A **file path** resolves to that local config.
+    /// - A **directory** with [`NearestLocal`] resolves to the nearest local
+    ///   config, falling back to a root-only request when none is found.
+    /// - A **directory** with [`LocalSubtree`] yields only discovered config
+    ///   requests.
     ///
     /// # Errors
     ///
