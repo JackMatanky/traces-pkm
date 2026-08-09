@@ -2,7 +2,7 @@
 
 **What to build:** A `file`-typed Field Definition in a Schema resolves its option list live from the FileIndex: an AND-composed filter of `folders` (array), `ext`, and `class` (array). `.field()` on such a field returns label/value pairs — label from the `[frontmatter]` aliases key or the filename stem, value the path — so `ui.select` shows a friendly label and returns the path (per ADR-0003). The `class` filter matches transitively through extends. Option lists are index-derived at use-time, so only as fresh as the index. No regex in filters.
 
-**Blocked by:** 03 — Schema minijinja Namespace
+**Blocked by:** 03 — Schema minijinja Namespace (done on `feat/schema-namespace`, branch from there)
 
 **Status:** ready-for-agent
 
@@ -19,26 +19,25 @@
 
 `file`-field consumption per spec User Stories 8, 12, 13, 23 and Implementation Decisions (FileIndex AND-composed filter of `folders`/`ext`/`class`, no regex; label from frontmatter aliases or stem; value path; reuses ADR-0003 index-based selection). This is the predicate-reference surface where class degradation applies (a missing class target degrades to exact match with a warning). Testing Decision seam 1 is authoritative for the label/value behavior. Blocked on the `schema` namespace (03) because the values are exposed through `schema.get(...).field(...)`.
 
+Key integration decision: the `class` filter in the file-option resolver reuses `SchemaRegistry::matching_classes()` from ticket 05, which expands queried class names into the full is-a match set. The resolver itself is index-side logic — it reads `FileRecord` data and applies the AND-composed filter, so it belongs near `FileIndex`, not in the schema module.
+
 ## Agent Brief
 
 **Category:** enhancement
 **Summary:** Make `file`-typed Field Definitions resolve live label/value options from the FileIndex, filterable by folders/ext/class with transitive class matching.
 
 **Current behavior:**
-Field Definitions from ticket 02 support a `file` type, but `.field()` on such a field does not yet produce options. No code resolves file options from the index, and no label/value pair construction exists for `file` fields.
+Ticket 03's `SchemaBinding::field()` returns `Value::NONE` for `FieldType::File` fields. No code consults the FileIndex for file options, and no label/value pair construction exists for file fields. The `FieldOptions::File { folders, ext, class }` filter spec is fully resolved by ticket 02's engine but inert — nothing reads it.
 
 **Desired behavior:**
-- `file` fields build their option list from the FileIndex via an AND-composed filter of `folders` (array), `ext`, and `class` (array). No regex.
-- The `class` filter matches is-a transitively (reusing ticket 02's predicate).
-- Each option is a label/value pair: label = frontmatter `aliases` value when present else filename stem; value = path.
-- The pair list plugs straight into `ui.select` (ADR-0003), and `.field()` on the `schema` namespace returns these pairs.
-- Options are index-derived at use-time, so as fresh as the index.
+When a template calls `schema.get("book").field("cover")` on a `file`-typed field, it gets a list of label/value pairs ready for `ui.select`: label = frontmatter `aliases` value when present, else filename stem; value = the file path. The list is filtered by the field's `folders`, `ext`, and `class` constraints (AND-composed), with `class` matching transitively via `SchemaRegistry::matching_classes()`. Options reflect current index state at render time.
 
 **Key interfaces:**
-- A file-option resolver over the FileIndex + the field's filter spec, producing label/value pairs.
-- Integration into the `schema` namespace's `.field()` so a `file` field returns the pair list.
-- Frontmatter aliases/title keys read from config (ticket 01).
-- Transitive class matching from ticket 02.
+- `FieldOptions::File { folders: Vec<String>, ext: Option<String>, class: Vec<String> }` — the resolved filter spec from ticket 02, consumed by the resolver.
+- `FileRecord` — the index's per-file data (`path`, `name`, `folder`, `format()`), the source material for filtering.
+- `SchemaRegistry::matching_classes(&self, queried: &[String]) -> BTreeSet<String>` — expands class filter values into the full transitive is-a set (from ticket 05).
+- Frontmatter `aliases`/`title` config keys (from ticket 01) — determine the label for each option.
+- Integration into `SchemaBinding::field()` — the `FieldType::File` arm currently returns `Value::NONE`; it should call the resolver and return the pair list.
 
 **Acceptance criteria:**
 - [ ] `file` fields resolve options via AND-composed `folders`/`ext`/`class` filter; no regex.
@@ -52,3 +51,21 @@ Field Definitions from ticket 02 support a `file` type, but `.field()` on such a
 - Regex support in filters (explicitly excluded).
 - A file watcher/daemon to keep the index continuously fresh.
 - Editing Notes through Schema output.
+
+## Implementation notes
+
+**Date**:
+**Implemented in**:
+**Branch**:
+
+### What was built
+
+### Key design decisions
+
+### Verification
+
+### Out of scope (unchanged)
+
+## Adversarial re-review
+
+_(Fill after implementation — re-derive ACs from the issue text, cross-check against diff and test suite, run rust-code-review/rust-skills/rust-testing/rust-doc pass.)_
