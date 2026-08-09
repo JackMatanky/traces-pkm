@@ -6,8 +6,8 @@
 //! - `schema.get(name)`: binds the resolved [`Schema`] named `name` as a
 //!   [`SchemaBinding`], hard-erroring if no Schema by that name resolves.
 //!
-//! The bound [`SchemaBinding`] is itself a minijinja object exposing one
-//! plain attribute and two methods:
+//! The bound [`SchemaBinding`] is itself a minijinja object exposing one plain
+//! attribute and two methods:
 //!
 //! - `.name`: the Schema's own name (its source file's stem).
 //! - `.field(name)`: the named field's selectable values, as plain strings for
@@ -21,25 +21,25 @@
 //!   `.descendants()` again). Empty, not an error, when nothing extends this
 //!   Schema.
 //!
-//! `schema.get` and `.field` are structural references: a typo in either
-//! name surfaces as a render error carrying template context, not a panic,
-//! mirroring [`super::query`]'s `errors` module. Class-based predicate
-//! references (`from_class`, `file`-field filters) are not supported by this
-//! namespace; the Schema supplies values only, and the template author still
-//! picks the interactive `ui.*` function.
+//! `schema.get` and `.field` are structural references: a typo in either name
+//! surfaces as a render error carrying template context, not a panic, mirroring
+//! [`super::query`]'s `errors` module. Class-based predicate references
+//! (`from_class`, `file`-field filters) are not supported by this namespace;
+//! the Schema supplies values only, and the template author still picks the
+//! interactive `ui.*` function.
 //!
 //! # Registry Loading and Caching
 //!
 //! No Schema TOML is read or resolved until a template actually calls
 //! `schema.get(...)`: a Template that never touches the `schema` namespace
-//! never reads the registry directory, so a broken Schema file elsewhere in
-//! it only breaks the Template that reaches into `schema`. Once loaded, the
+//! never reads the registry directory, so a broken Schema file elsewhere in it
+//! only breaks the Template that reaches into `schema`. Once loaded, the
 //! resolved [`SchemaRegistry`] is cached in [`State`]'s temp storage for the
-//! remainder of the render, mirroring [`super::query`]'s `cached_refresh`, so
-//! a Template calling `schema.get` several times pays for one registry load.
-//! [`SchemaRegistry`] itself stores each Schema behind an `Arc`, so binding
-//! one via [`SchemaBinding`] shares that Schema's field map instead of
-//! deep-cloning it per call.
+//! remainder of the render, mirroring [`super::query`]'s `cached_refresh`, so a
+//! Template calling `schema.get` several times pays for one registry load.
+//! [`SchemaRegistry`] itself stores each Schema behind an `Arc`, so binding one
+//! via [`SchemaBinding`] shares that Schema's field map instead of deep-cloning
+//! it per call.
 
 use std::{path::Path, sync::Arc};
 
@@ -53,13 +53,13 @@ use crate::schema::{Schema, SchemaError, SchemaRegistry};
 /// Method names `schema` exposes, for [`SchemaOps::enumerate`].
 const METHODS: &[&str] = &["get"];
 
-/// Keys a bound [`SchemaBinding`] exposes: `field`/`descendants` are called
-/// as methods, `name` is a plain attribute. Backs [`Object::enumerate`].
+/// Keys a bound [`SchemaBinding`] exposes: `field`/`descendants` are called as
+/// methods, `name` is a plain attribute. Backs [`Object::enumerate`].
 const SCHEMA_METHODS: &[&str] = &["field", "name", "descendants"];
 
-/// The [`State::set_temp`] key used to cache one loaded [`SchemaRegistry`]
-/// for the current render. See the module docs' "Registry Loading and
-/// Caching" section.
+/// The [`State::set_temp`] key used to cache one loaded [`SchemaRegistry`] for
+/// the current render. See the module docs' "Registry Loading and Caching"
+/// section.
 const REGISTRY_CACHE_KEY: &str = "schema.registry_cache";
 
 /// Backs the `schema` namespace object.
@@ -155,10 +155,9 @@ impl Object for SchemaOps {
     }
 }
 
-/// Wraps [`SchemaRegistry`] only so it can round-trip through [`State`]'s
-/// temp storage via [`Value::from_object`]/[`Value::downcast_object_ref`].
-/// Never exposed to templates: no global registers it, unlike
-/// [`SchemaBinding`].
+/// Wraps [`SchemaRegistry`] only so it can round-trip through [`State`]'s temp
+/// storage via [`Value::from_object`]/[`Value::downcast_object_ref`]. Never
+/// exposed to templates: no global registers it, unlike [`SchemaBinding`].
 #[derive(Debug)]
 struct CachedRegistry(Arc<SchemaRegistry>);
 
@@ -169,8 +168,8 @@ impl Object for CachedRegistry {}
 /// itself stays registry-unaware (see the module docs): this wrapper, not
 /// [`crate::schema`], is where minijinja-facing tree-walking lives.
 ///
-/// Gets its [`Object`] impl here instead of in [`crate::schema`], mirroring
-/// how [`super::query`] wires up [`crate::index::QueryOutcome`].
+/// Gets its [`Object`] impl here instead of in [`crate::schema`], mirroring how
+/// [`super::query`] wires up [`crate::index::QueryOutcome`].
 #[derive(Debug)]
 struct SchemaBinding {
     schema: Arc<Schema>,
@@ -255,8 +254,7 @@ mod tests {
 
     use super::*;
 
-    /// A minimal [`Environment`] with `schema` registered against
-    /// `directory`.
+    /// A minimal [`Environment`] with `schema` registered against `directory`.
     fn env(directory: &Path) -> Environment<'static> {
         let mut env = Environment::new();
         SchemaOps::new(Arc::from(directory)).register(&mut env);
@@ -631,6 +629,30 @@ mod tests {
             .expect("render succeeds");
 
             assert_eq!(rendered, "reading");
+        }
+
+        #[test]
+        fn a_descendants_own_descendants_are_also_reachable() {
+            // Proves the "descendants" branch threads the same registry
+            // into each returned SchemaBinding (schema.rs's `.descendants`
+            // arm clones `binding.registry`, not a fresh/empty one) — the
+            // registry-level `descendants_of` test already proves the
+            // underlying data is transitively correct; this proves the
+            // render-facing chain (`.descendants().descendants()`) the
+            // module docs promise actually works.
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_schema(temp.path(), "thing", "");
+            write_schema(temp.path(), "book", r#"extends = ["thing"]"#);
+            write_schema(temp.path(), "sci_fi", r#"extends = ["book"]"#);
+
+            let rendered = render(
+                &temp.path().join(".traces/schemas"),
+                "{{ schema.get('thing').descendants()[0].descendants() | \
+                 map(attribute='name') | join(',') }}",
+            )
+            .expect("render succeeds");
+
+            assert_eq!(rendered, "sci_fi");
         }
     }
 

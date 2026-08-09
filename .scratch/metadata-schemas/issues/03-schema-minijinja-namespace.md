@@ -200,7 +200,7 @@ feature:
   — inherent to ticket 02's load contract, already documented and tested,
   out of scope for this ticket to redesign.
 
-New test count: `template::engine::schema` 17 → 22 (5 new: 4 `descendants`,
+New test count: `template::engine::schema` 17 → 23 (6 new: 5 `descendants`,
 1 `name`), `schema::registry` +5 (`get::returns_the_same_arc_backed_schema_on_repeated_calls`,
 4 `descendants_of` cases), `template::engine::tests::utilities` +1
 (`schema_get_is_reachable`). Full re-verification: `cargo check`/`clippy`
@@ -211,3 +211,59 @@ run reproduced as the same pre-existing build-ordering artifact noted in the
 prior session, not a regression); `cargo doc --no-deps --document-private-items
 --features test-utils` warning count unchanged (46, identical set before/after
 via diff — zero new warnings); `cargo deny check` clean.
+
+### Adversarial re-review #2 (2026-08-08): case-surface audit of the refinement pass
+
+Applied `rust-unit-testing`'s case-enumeration method to the refinement
+pass above (Arc-sharing, `descendants()`, Config-wiring test) rather than
+trusting the pass's own coverage claims. One gap found and closed; every
+other finding checked against direct codebase precedent and ruled out.
+
+**Gap closed:** `.descendants()` chaining was documented
+(`schema.rs`'s module doc and `SchemaBinding`'s doc both promise a
+Template can walk "the whole subtree" via repeated `.descendants()`) but
+never exercised — every existing `mod descendants` test called
+`.descendants()` exactly once per render. The registry-level
+`descendants_of` test already proved the underlying transitive data is
+correct; nothing proved `SchemaBinding`'s `"descendants"` arm actually
+threads `Arc::clone(&binding.registry)` into each returned child rather
+than a stale/empty one. Added
+`descendants::a_descendants_own_descendants_are_also_reachable`
+(`thing → book → sci_fi`, asserts
+`schema.get('thing').descendants()[0].descendants()` reaches `sci_fi`).
+Verified it actually catches the regression it targets: swapped the
+registry clone for one loaded from a nonexistent directory (degrades to
+empty per `SchemaRegistry::load`'s missing-directory contract), confirmed
+only the new test failed while all four pre-existing `descendants` tests
+stayed green, then restored.
+
+**Checked and ruled out** (real questions, resolved against direct
+evidence, not assumption):
+- `SchemaRegistry::get() -> Option<&Arc<Schema>>` — matches
+  `BTreeMap<K, Arc<V>>::get`'s standard shape; one caller derefs without
+  cloning (`is_a`), the other clones (`schema.rs`) — correct as-is, not a
+  "don't return `&Arc<T>`" smell.
+- `SchemaOps { directory: Arc<Path> }` inside an object already
+  `Arc`-wrapped by minijinja looked redundant — confirmed via grep that
+  `FileOps`, `PathOps`, and `QueryOps` all use the identical shape;
+  established crate convention, not a deviation.
+- No isolated `enumerate()`/`get_value()` round-trip test for
+  `SchemaBinding`'s `SCHEMA_METHODS`, unlike `SchemaOps`'s own
+  `every_enumerated_method_resolves_via_get_value` — checked the actual
+  analogous precedent (`query.rs`'s `FileFields`/`TaskFields`, second-level
+  bound objects with fixed enumerate lists, not `IndexRecord`, which has an
+  open dynamic key space and isn't comparable): they lack this test too.
+  Consistent with existing codebase discipline, not new debt.
+- Global Schema's interaction with `descendants_of` — verified via
+  `resolve.rs`: `ancestors` accumulates only through explicit `extends`,
+  Global is never auto-injected. `descendants_of("global")` correctly
+  returns only Schemas that opt in via `extends = ["global"]`.
+
+AC6 nuance (whole-registry vs. per-Schema failure granularity) re-flagged,
+unchanged from the prior review — still accurate, still out of scope for
+this ticket.
+
+23 tests in `template::engine::schema` (17 → 22 from the refinement pass
+above, → 23 with this pass's chaining test). Re-verified: `cargo check`,
+both clippy gates, `fmt --check` clean; `cargo test --workspace --features
+test-utils` 1344 lib + 4 bin + 5 integration + 10 doctests pass.
