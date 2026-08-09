@@ -16,9 +16,9 @@ use super::file::{Discovered, LocalConfigFile, Tracked};
 
 /// Targets a workspace root or config file for a trust operation.
 ///
-/// Use [`TrustRequest::from(&Path)`] for root-only trust, or
-/// [`TrustRequest::from(&LocalConfigFile<Discovered>)`] for config-file
-/// trust that also records a content baseline.
+/// Create via `TrustRequest::from` with a `&Path` for root-only trust, or
+/// with a `&LocalConfigFile<Discovered>` for config-file trust that also
+/// records a content baseline.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum TrustRequest {
     /// Trust a workspace root without binding to a config file.

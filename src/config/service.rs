@@ -90,9 +90,8 @@ impl TryFrom<DiscoveryOutcome> for ConfigBuilderInput {
 
 /// Entry point for config loading and trust administration.
 ///
-/// Filesystem discovery ([`load`](Self::load)) and [`TrustRequest`]
-/// operations ([`trust`](Self::trust), [`untrust`](Self::untrust)) are
-/// separate surfaces on this type.
+/// Filesystem discovery (`load`) and `TrustRequest` operations (`trust`,
+/// `untrust`) are separate surfaces on this type.
 #[derive(Clone, Debug)]
 pub struct ConfigService {
     state: ConfigStateStore,

@@ -376,7 +376,7 @@ impl FrontmatterConfig {
     ///
     /// # Panics
     ///
-    /// If `title` or `aliases` fails [`FieldKey`] validation (empty or
+    /// If `title` or `aliases` fails `FieldKey` validation (empty or
     /// whitespace-only) — a test-fixture bug, not a runtime error path.
     #[cfg(any(test, feature = "test-utils"))]
     #[inline]
