@@ -547,13 +547,13 @@ mod tests {
                 "---\naka: Custom Alias\nclass: book\n---\n",
             )
             .expect("write note fixture");
-            let config = Config::for_test_with_frontmatter(
+            let config = Config::for_test(
                 temp.path().to_path_buf(),
                 None,
                 None,
                 temp.path().to_path_buf(),
-                FrontmatterConfig::for_test("title", "aka"),
-            );
+            )
+            .with_frontmatter(FrontmatterConfig::for_test("title", "aka"));
             let engine = TemplateEngine::new(
                 &loader_from_dir(temp.path()),
                 preset_provider(),

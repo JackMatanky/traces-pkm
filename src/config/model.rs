@@ -132,24 +132,14 @@ impl Config {
         }
     }
 
-    /// Builds config directly for tests that need a non-default `[frontmatter]`
-    /// resolution.
+    /// Overrides the `[frontmatter]` resolution on a test-built config, for
+    /// tests that exercise non-default label resolution.
     #[cfg(any(test, feature = "test-utils"))]
     #[inline]
     #[must_use]
-    pub fn for_test_with_frontmatter(
-        root: PathBuf,
-        local: Option<PathBuf>,
-        global: Option<PathBuf>,
-        output: PathBuf,
-        frontmatter: FrontmatterConfig,
-    ) -> Self {
-        Self {
-            templates: TemplateConfig::new(local, global, output),
-            schemas: SchemasConfig::default(),
-            frontmatter,
-            root,
-        }
+    pub fn with_frontmatter(mut self, frontmatter: FrontmatterConfig) -> Self {
+        self.frontmatter = frontmatter;
+        self
     }
 }
 
@@ -258,25 +248,7 @@ impl From<RawSchemasConfig> for SchemasConfig {
 pub struct FrontmatterConfig {
     title: String,
     aliases: String,
-    #[cfg_attr(
-        not(any(test, feature = "test-utils")),
-        expect(
-            dead_code,
-            reason = "declared by the config-surface ticket; read by later \
-                      frontmatter-aware tickets \
-                      (.scratch/metadata-schemas/issues/01-config-surface.md)"
-        )
-    )]
     date_created: DateFieldConfig,
-    #[cfg_attr(
-        not(any(test, feature = "test-utils")),
-        expect(
-            dead_code,
-            reason = "declared by the config-surface ticket; read by later \
-                      frontmatter-aware tickets \
-                      (.scratch/metadata-schemas/issues/01-config-surface.md)"
-        )
-    )]
     date_modified: DateFieldConfig,
 }
 
@@ -302,9 +274,9 @@ impl FrontmatterConfig {
         not(any(test, feature = "test-utils")),
         expect(
             dead_code,
-            reason = "declared by the config-surface ticket; read by later \
-                      frontmatter-aware tickets \
-                      (.scratch/metadata-schemas/issues/01-config-surface.md)"
+            reason = "canonical-metadata-role declaration only; \
+                      metadata-schemas spec.md User Story 24 specifies no \
+                      consumer for these values, so nothing reads them yet"
         )
     )]
     pub fn date_created(&self) -> &DateFieldConfig {
@@ -318,9 +290,9 @@ impl FrontmatterConfig {
         not(any(test, feature = "test-utils")),
         expect(
             dead_code,
-            reason = "declared by the config-surface ticket; read by later \
-                      frontmatter-aware tickets \
-                      (.scratch/metadata-schemas/issues/01-config-surface.md)"
+            reason = "canonical-metadata-role declaration only; \
+                      metadata-schemas spec.md User Story 24 specifies no \
+                      consumer for these values, so nothing reads them yet"
         )
     )]
     pub fn date_modified(&self) -> &DateFieldConfig {
@@ -383,25 +355,7 @@ impl From<RawFrontmatterConfig> for FrontmatterConfig {
 /// A frontmatter key name and its date format string.
 #[derive(Clone, Debug)]
 pub struct DateFieldConfig {
-    #[cfg_attr(
-        not(any(test, feature = "test-utils")),
-        expect(
-            dead_code,
-            reason = "declared by the config-surface ticket; read by later \
-                      frontmatter-aware tickets \
-                      (.scratch/metadata-schemas/issues/01-config-surface.md)"
-        )
-    )]
     name: String,
-    #[cfg_attr(
-        not(any(test, feature = "test-utils")),
-        expect(
-            dead_code,
-            reason = "declared by the config-surface ticket; read by later \
-                      frontmatter-aware tickets \
-                      (.scratch/metadata-schemas/issues/01-config-surface.md)"
-        )
-    )]
     format: String,
 }
 
@@ -413,9 +367,9 @@ impl DateFieldConfig {
         not(any(test, feature = "test-utils")),
         expect(
             dead_code,
-            reason = "declared by the config-surface ticket; read by later \
-                      frontmatter-aware tickets \
-                      (.scratch/metadata-schemas/issues/01-config-surface.md)"
+            reason = "canonical-metadata-role declaration only; \
+                      metadata-schemas spec.md User Story 24 specifies no \
+                      consumer for these values, so nothing reads them yet"
         )
     )]
     pub fn name(&self) -> &str {
@@ -429,9 +383,9 @@ impl DateFieldConfig {
         not(any(test, feature = "test-utils")),
         expect(
             dead_code,
-            reason = "declared by the config-surface ticket; read by later \
-                      frontmatter-aware tickets \
-                      (.scratch/metadata-schemas/issues/01-config-surface.md)"
+            reason = "canonical-metadata-role declaration only; \
+                      metadata-schemas spec.md User Story 24 specifies no \
+                      consumer for these values, so nothing reads them yet"
         )
     )]
     pub fn format(&self) -> &str {
