@@ -91,8 +91,9 @@ pub(crate) enum SchemaError {
 pub(crate) enum SchemaWarning {
     /// Report an `extends` target with no corresponding Schema file.
     ///
-    /// Resolution degrades `schema` to exact match: parent-provided fields are
-    /// dropped, but its own fields still resolve.
+    /// Resolution skips the missing parent. The Schema's own fields still
+    /// resolve, and any other valid `extends` parents still contribute their
+    /// inherited fields and ancestors.
     MissingExtendsTarget {
         schema: SchemaName,
         target: SchemaName,

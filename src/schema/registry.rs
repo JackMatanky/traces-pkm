@@ -51,8 +51,9 @@ impl SchemaRegistry {
     /// - [`SchemaError::ReadDirectory`] if `directory` exists but its entries
     ///   cannot be listed.
     /// - [`SchemaError::ReadFile`] if a `.toml` file cannot be read.
-    /// - [`SchemaError::Parse`] if a Schema file's TOML is malformed or
-    ///   contains an unknown key.
+    /// - [`SchemaError::Parse`] if a Schema file's TOML is malformed, contains
+    ///   an unknown key, has a malformed `$ref`, or defines a field with
+    ///   neither `type` nor `$ref`.
     /// - [`SchemaError::Cycle`] if the `extends` DAG contains a cycle.
     /// - [`SchemaError::RefOutOfBounds`] if a `$ref` target is outside the
     ///   Global Schema and transitive `extends` ancestor bound.
@@ -89,9 +90,9 @@ impl SchemaRegistry {
         self.schemas.get(name)
     }
 
-    /// Return every Schema that is-a `name` transitively.
+    /// Return every Schema that directly or transitively extends `name`.
     ///
-    /// Empty, not an error, if nothing extends `name`.
+    /// Excludes `name` itself. Empty, not an error, if nothing extends `name`.
     #[must_use]
     pub(crate) fn descendants_of(&self, name: &str) -> Vec<Arc<Schema>> {
         self.schemas
