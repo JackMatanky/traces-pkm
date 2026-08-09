@@ -1,8 +1,5 @@
-//! Template-driven personal knowledge management.
-//!
-//! `traces-pkm` provides CLI workflow dispatch, configuration resolution and
-//! trust verification, note indexing and querying, template execution, and
-//! root-confined filesystem writes.
+//! Dispatch CLI workflows, resolve and trust configs, index notes, execute
+//! templates, and perform root-confined filesystem writes.
 //!
 //! # Core Subsystems
 //!
@@ -67,10 +64,12 @@ pub use template::{
     classify_render_error,
 };
 
-/// Shared fixture builders for the crate's own `#[cfg(test)]` suites and,
+/// Build isolated fixtures for the crate's own `#[cfg(test)]` suites and,
 /// under the `test-utils` feature, for external `tests/`/`benches/`
-/// consumers. Does not replace `cli::tests::fixtures`, which keeps
-/// serving the crate's existing internal CLI dispatch tests unchanged.
+/// consumers. Use [`fixture_service`] to get a [`ConfigService`] backed by
+/// temporary directories, [`create_trusted_project`] to write a minimal
+/// config and trust it, [`write_note`] to create note files, and
+/// [`write_template`] to create template files.
 #[cfg(any(test, feature = "test-utils"))]
 mod test_support {
     #![expect(
@@ -88,6 +87,13 @@ mod test_support {
 
     /// Creates a [`ConfigService`] backed by isolated tracked-config and
     /// trust stores under `root`, never the real OS state directories.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::path::Path;
+    /// let svc = traces_pkm::fixture_service(Path::new("/tmp/test"));
+    /// ```
     #[inline]
     #[must_use]
     pub fn fixture_service(root: &Path) -> ConfigService {

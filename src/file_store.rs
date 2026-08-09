@@ -64,6 +64,10 @@ pub enum FileStateStoreError {
 }
 
 /// Hash-keyed store for canonical file paths.
+///
+/// Entries are stored as symlinks on Unix or plain files containing the target
+/// path on Windows, named by their [`Blake3PathHash`]. Domain modules choose
+/// the root; this module owns the cross-platform storage mechanics.
 #[derive(Clone, Debug)]
 pub(crate) struct FileStateStore {
     root: StateDirRoot,

@@ -1,7 +1,9 @@
-//! Concrete directories for configuration and persistent state.
+//! Resolve XDG and platform-specific directories for configuration and
+//! persistent state.
 //!
-//! `TRACES_STATE_DIR` overrides the platform state directory on every
-//! supported operating system.
+//! Each parent directory checks its standard override variable (e.g.,
+//! `$XDG_CONFIG_HOME`), then falls back to the platform default.
+//! `TRACKED_CONFIGS` and `TRUSTED_CONFIGS` live under `TRACES_STATE_DIR`.
 //!
 //! | Export              | Resolved path                       | Purpose                          |
 //! | ------------------- | ----------------------------------- | -------------------------------- |
