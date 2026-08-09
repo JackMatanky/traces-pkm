@@ -7,8 +7,8 @@
 //! `resolve::SchemaGraph`'s Kahn's algorithm bookkeeping and `FieldPath`.
 //!
 //! Ordering matches `str`'s: a derived `Ord`/`PartialOrd` on a single-field
-//! tuple struct delegates entirely to the wrapped field, which
-//! `SchemaGraph`'s determinism and its Global-first Kahn tie-break depend on.
+//! tuple struct delegates entirely to the wrapped field, which `SchemaGraph`'s
+//! determinism and its Global-first Kahn tie-break depend on.
 //!
 //! [`FileName`]: crate::file_name::FileName
 //! [`BaseName`]: crate::file_name::BaseName

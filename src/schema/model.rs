@@ -91,8 +91,8 @@ impl Schema {
 /// One resolved Field Definition: its type-specific [`FieldOptions`] plus
 /// `required`/`multi` flags.
 ///
-/// `required` and `multi` are currently inert; reserved for future
-/// LSP/MCP guardrails.
+/// `required` and `multi` are currently inert; reserved for future LSP/MCP
+/// guardrails.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct FieldDefinition {
     options: FieldOptions,
@@ -168,9 +168,9 @@ impl FieldDefinition {
 /// Type-specific Field Definition options.
 ///
 /// Pairs each [`FieldType`] with the options only that type carries, so a
-/// `select` field without `values`, or a `date` field with a stray
-/// `folders` list, cannot be represented. `select` and `file` are the only
-/// list-bearing kinds: every other variant is a unit variant.
+/// `select` field without `values`, or a `date` field with a stray `folders`
+/// list, cannot be represented. `select` and `file` are the only list-bearing
+/// kinds: every other variant is a unit variant.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum FieldOptions {
     Input,
@@ -211,9 +211,9 @@ impl FieldOptions {
     /// `base`'s options for any key `raw` leaves unset.
     ///
     /// `base` is only consulted when it is already the same [`FieldType`]; a
-    /// `$ref` that switches type starts with empty options instead of reusing
-    /// a mismatched base. For example, a `select`'s `values` never leaks
-    /// into an overriding `file` field.
+    /// `$ref` that switches type starts with empty options instead of reusing a
+    /// mismatched base. For example, a `select`'s `values` never leaks into an
+    /// overriding `file` field.
     ///
     /// # Examples
     ///

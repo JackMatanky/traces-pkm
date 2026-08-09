@@ -2,9 +2,9 @@
 //!
 //! The filesystem is the Schema registry: a Schema is a TOML file under
 //! `.traces/schemas/` whose filename stem is the Schema name.
-//! [`SchemaRegistry::load`] reads that directory and resolves the `extends`
-//! DAG via [`resolve::resolve`], the crate's pure Field Resolution engine
-//! (Kahn's topological sort, own-fields-override-parents, first-listed-wins,
+//! [`SchemaRegistry::load`] reads that directory and resolves the `extends` DAG
+//! via [`resolve::resolve`], the crate's pure Field Resolution engine (Kahn's
+//! topological sort, own-fields-override-parents, first-listed-wins,
 //! `excludes`, bounded `$ref`).
 //!
 //! # Main Types

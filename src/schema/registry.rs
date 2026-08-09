@@ -71,10 +71,10 @@ impl SchemaRegistry {
         ))
     }
 
-    /// Returns a reference to the named Schema, or `None` if no Schema by
-    /// that name resolved. Stored in `Arc` so repeated lookups (a Template
-    /// calling `schema.get(...)` many times in one render) share the
-    /// Schema's field map instead of deep-cloning it per call.
+    /// Returns a reference to the named Schema, or `None` if no Schema by that
+    /// name resolved. Stored in `Arc` so repeated lookups (a Template calling
+    /// `schema.get(...)` many times in one render) share the Schema's field map
+    /// instead of deep-cloning it per call.
     #[inline]
     #[must_use]
     pub(crate) fn get(&self, name: &str) -> Option<&Arc<Schema>> {
