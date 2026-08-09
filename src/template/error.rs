@@ -112,9 +112,9 @@ pub enum TemplateError {
         source: io::Error,
     },
 
-    /// A dialog prompt failed or was cancelled.
+    /// An interactive output-collision prompt failed or was cancelled.
     ///
-    /// Covers template `ui.*` helpers and interactive output-collision prompts.
+    /// Covers the writer prompt shown before replacing an existing output file.
     #[error(transparent)]
     Prompt(#[from] DialogError),
 }
