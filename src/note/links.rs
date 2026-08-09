@@ -199,8 +199,7 @@ impl Link {
 /// Represents the parts a [`Link`]'s raw target text splits into at its first
 /// `#`.
 ///
-/// Obsidian and Markdown links can point to three mutually exclusive shapes,
-/// not an optional path paired with an optional anchor:
+/// Obsidian and Markdown links can point to three mutually exclusive shapes:
 ///
 /// - A Note, by path ([`Self::Path`]).
 /// - A heading anchor within a Note ([`Self::PathWithAnchor`]).

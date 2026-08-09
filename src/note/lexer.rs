@@ -105,17 +105,16 @@ impl BracketPair {
     };
 }
 
-/// Field-token mode controlling whether task emoji shorthand fields are
-/// recognized.
+/// Field-token mode controlling whether task emoji shorthands are recognized.
 ///
 /// Used as [`FieldToken`]'s logos `extras` value so [`extract_inline_fields`]
 /// and [`extract_task_inline_fields`] choose their lexer behavior without
 /// passing a bare `bool`.
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
 enum TaskShorthands {
-    /// Task emoji shorthands are recognized.
+    /// Recognizes task emoji shorthands.
     Include,
-    /// Task emoji shorthands are ignored.
+    /// Ignores task emoji shorthands.
     #[default]
     Exclude,
 }
@@ -593,9 +592,10 @@ impl<'a> ValueParser<'a> {
         Some((FieldValue::String(raw.to_owned()), end))
     }
 
-    /// Whether `pos` is at the end of the text or immediately before
-    /// whitespace or a `,`: the position an atom must end at to avoid
-    /// greedily consuming into the next atom or trailing text.
+    /// Whether `pos` is at the end of the text, immediately before
+    /// whitespace, or immediately before a `,`. An atom must end at such a
+    /// position to avoid greedily consuming into the next atom or trailing
+    /// text.
     fn is_atom_boundary(&self, pos: usize) -> bool {
         self.source.from(pos).is_some_and(|source| {
             source
