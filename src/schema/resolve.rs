@@ -256,9 +256,9 @@ impl<'a> SchemaGraph<'a> {
     /// - Each Schema's `extends` list is filtered to targets `raw_schemas`
     ///   actually contains; a missing target emits
     ///   [`SchemaWarning::MissingExtendsTarget`].
-    /// - The reserved Global Schema is forced to in-degree zero and stripped of
-    ///   any declared `extends`. It is a flat `$ref`-able reference pool, not a
-    ///   link in the `extends` chain.
+    /// - The reserved Global Schema has no effective parents for resolution
+    ///   ordering or field inheritance. It is a flat `$ref`-able reference
+    ///   pool, not a link in the `extends` chain.
     /// - Kahn's sort only guarantees parent-before-child ordering along
     ///   `extends` edges, so several Schemas can tie at in-degree zero. The
     ///   ready queue reorders Global to the front of that tier so it resolves

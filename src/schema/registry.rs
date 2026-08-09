@@ -150,8 +150,9 @@ impl SchemaRegistry {
 /// - [`SchemaError::ReadDirectory`] if `directory` exists but its entries
 ///   cannot be listed.
 /// - [`SchemaError::ReadFile`] if a `.toml` file cannot be read.
-/// - [`SchemaError::Parse`] if a Schema file's TOML is malformed or contains an
-///   unknown key.
+/// - [`SchemaError::Parse`] if a Schema file's TOML is malformed, contains an
+///   unknown key, has a malformed `$ref`, or omits both `type` and `$ref` for a
+///   field.
 fn read_raw_schemas(
     directory: &Path,
 ) -> Result<BTreeMap<SchemaName, RawSchema>, SchemaError> {

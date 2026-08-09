@@ -141,8 +141,11 @@ struct RawFieldDefToml {
     /// Store the field kind. Optional only when `reference` supplies it.
     #[serde(rename = "type")]
     field_type: Option<RawFieldType>,
-    /// Store a bounded `$ref` to a base definition: `#global/<field>` or
-    /// `#<ancestor-schema>/<field>`.
+    /// Store a parsed `$ref` address shape.
+    ///
+    /// Raw deserialization only parses the address into a [`FieldAddress`].
+    /// [`RefResolver`](crate::schema::resolve::RefResolver) later checks that
+    /// it resolves to Global or an ancestor Schema field.
     #[serde(rename = "$ref")]
     reference: Option<FieldAddress>,
     required: Option<bool>,
@@ -200,11 +203,17 @@ impl RawFieldDef {
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum RawFieldType {
+    /// Free-form text input.
     Input,
+    /// Configured selectable values.
     Select,
+    /// Boolean value.
     Boolean,
+    /// Numeric value.
     Number,
+    /// Date value.
     Date,
+    /// File link with optional filters.
     File,
 }
 
