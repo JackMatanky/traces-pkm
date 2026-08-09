@@ -35,11 +35,11 @@ type ResolveOutput = (BTreeMap<SchemaName, Schema>, Vec<SchemaWarning>);
 
 /// Resolves `raw_schemas` into effective Field Definitions per Schema.
 ///
-/// Linearizes the `extends` DAG with Kahn's topological sort, so every
-/// Schema is resolved only after all of its (valid) parents. For each
-/// Schema, in order: parent fields are merged first-listed-wins, `excludes`
-/// drops named fields from that merge, then the Schema's own fields
-/// (`$ref`-resolved against already-resolved Schemas) override the result.
+/// Linearizes the `extends` DAG with Kahn's topological sort, so every Schema
+/// is resolved only after all of its (valid) parents. For each Schema, in
+/// order: parent fields are merged first-listed-wins, `excludes` drops named
+/// fields from that merge, then the Schema's own fields (`$ref`-resolved
+/// against already-resolved Schemas) override the result.
 ///
 /// # Errors
 ///
@@ -80,8 +80,8 @@ pub(crate) fn resolve(
 }
 
 /// Resolves one Schema's effective fields and transitive ancestors: merges
-/// `parents`' fields first-listed-wins, applies `raw.excludes`, then
-/// overrides the result with `raw`'s own (`$ref`-resolved) fields.
+/// `parents`' fields first-listed-wins, applies `raw.excludes`, then overrides
+/// the result with `raw`'s own (`$ref`-resolved) fields.
 ///
 /// `parents` must already be resolved in `resolved`: [`resolve`] guarantees
 /// this by calling in Kahn topological order.
@@ -190,9 +190,9 @@ fn build_field(
     ))
 }
 
-/// Global Schema fields can never be required: forces `required` to `false`
-/// and records a [`SchemaWarning::StrayGlobalRequired`] when `at.schema` is
-/// the Global Schema and it declared `required = true`.
+/// Global Schema fields can never be required: forces `required` to `false` and
+/// records a [`SchemaWarning::StrayGlobalRequired`] when `at.schema` is the
+/// Global Schema and it declared `required = true`.
 fn apply_global_degrade(
     at: FieldPath<'_>,
     required: bool,
@@ -229,8 +229,8 @@ impl<'a> SchemaGraph<'a> {
     /// miss. The reserved Global Schema is forced to in-degree zero and
     /// stripped of any declared `extends`: it is a flat,
     /// `$ref`-able-from-anywhere reference pool (ADR-7: refs point up the
-    /// extends DAG or to the Global Schema), not a link in the `extends`
-    /// chain itself.
+    /// extends DAG or to the Global Schema), not a link in the `extends` chain
+    /// itself.
     ///
     /// Kahn's sort only guarantees parent-before-child ordering along `extends`
     /// edges, so several Schemas can tie at in-degree zero with no defined
@@ -241,9 +241,9 @@ impl<'a> SchemaGraph<'a> {
         raw_schemas: &'a BTreeMap<SchemaName, RawSchema>,
         warnings: &mut Vec<SchemaWarning>,
     ) -> Self {
-        // `BTreeMap` iteration is name-sorted, so the parent order for a
-        // given schema matches declaration order in its own `extends` list
-        // while the overall processing order stays deterministic.
+        // `BTreeMap` iteration is name-sorted, so the parent order for a given
+        // schema matches declaration order in its own `extends` list while the
+        // overall processing order stays deterministic.
         let mut parents_by_name: BTreeMap<
             SchemaNameRef<'_>,
             Vec<SchemaNameRef<'_>>,
@@ -305,8 +305,8 @@ impl<'a> SchemaGraph<'a> {
         }
     }
 
-    /// Pops the next Schema whose in-degree reached zero, marking it
-    /// visited, or `None` once the ready queue drains.
+    /// Pops the next Schema whose in-degree reached zero, marking it visited,
+    /// or `None` once the ready queue drains.
     fn next_ready(&mut self) -> Option<SchemaNameRef<'a>> {
         let name = self.queue.pop_front()?;
         self.visited.insert(name);
@@ -318,8 +318,8 @@ impl<'a> SchemaGraph<'a> {
         self.parents_by_name.get(name.as_str()).map_or(&[], Vec::as_slice)
     }
 
-    /// Records `name` as resolved, releasing any children whose in-degree
-    /// just hit zero into the ready queue.
+    /// Records `name` as resolved, releasing any children whose in-degree just
+    /// hit zero into the ready queue.
     fn mark_resolved(&mut self, name: SchemaNameRef<'_>) {
         for &child in
             self.children_by_name.get(name.as_str()).into_iter().flatten()
@@ -386,9 +386,8 @@ impl<'a> RefResolver<'a> {
             }
         })?;
         // Rejecting an out-of-bounds target here, rather than only checking
-        // whether it happens to be resolved yet, keeps the bound
-        // spec-accurate and independent of Kahn's tie-breaking order among
-        // unrelated Schemas.
+        // whether it happens to be resolved yet, keeps the bound spec-accurate
+        // and independent of Kahn's tie-breaking order among unrelated Schemas.
         if target.schema.as_str() != GLOBAL_SCHEMA_NAME
             && !self.ancestors.contains(target.schema.as_str())
         {
@@ -410,10 +409,10 @@ impl<'a> RefResolver<'a> {
 }
 
 /// A field's address within a Schema: `<schema>.<field>`, mirroring what a
-/// `$ref` value (`#<schema>/<field>`) names. `schema` and `field` are
-/// distinct types (not just distinct names), so a construction site like
-/// `FieldPath { schema: field_name, field: name }` is a compile error, not
-/// a silent transposition.
+/// `$ref` value (`#<schema>/<field>`) names. `schema` and `field` are distinct
+/// types (not just distinct names), so a construction site like `FieldPath {
+/// schema: field_name, field: name }` is a compile error, not a silent
+/// transposition.
 #[derive(Copy, Clone, Debug)]
 struct FieldPath<'a> {
     schema: SchemaNameRef<'a>,
@@ -421,9 +420,9 @@ struct FieldPath<'a> {
 }
 
 impl<'a> FieldPath<'a> {
-    /// Parses a `$ref` value (`#<schema>/<field>`) into its target
-    /// `FieldPath`. Context-free: the caller attaches its own address on
-    /// failure (see [`RefResolver::resolve`]), mirroring
+    /// Parses a `$ref` value (`#<schema>/<field>`) into its target `FieldPath`.
+    /// Context-free: the caller attaches its own address on failure (see
+    /// [`RefResolver::resolve`]), mirroring
     /// `index::query::field::FieldPath::parse`, this crate's established
     /// `Type::parse(&str) -> Result<Self, Error>` idiom.
     ///
@@ -445,9 +444,9 @@ impl<'a> FieldPath<'a> {
 }
 
 /// `$ref` wasn't shaped `#<schema>/<field>` with both segments non-empty.
-/// Discarded by the one caller, which rebuilds
-/// [`SchemaError::MalformedRef`] with the referencing field's context
-/// (mirrors [`crate::file_name::MissingFileName`]).
+/// Discarded by the one caller, which rebuilds [`SchemaError::MalformedRef`]
+/// with the referencing field's context (mirrors
+/// [`crate::file_name::MissingFileName`]).
 #[derive(Debug)]
 struct ParseRefError;
 

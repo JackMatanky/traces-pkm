@@ -1,8 +1,8 @@
 //! Deserialization shapes for Schema TOML.
 //!
-//! These serde types match the on-disk `.traces/schemas/<name>.toml` shape
-//! and deny unknown fields, so a typo'd key fails at parse rather than
-//! silently vanishing.
+//! These serde types match the on-disk `.traces/schemas/<name>.toml` shape and
+//! deny unknown fields, so a typo'd key fails at parse rather than silently
+//! vanishing.
 //!
 //! # Boundary
 //!
@@ -38,10 +38,10 @@ pub(crate) struct RawSchema {
 /// Raw Field Definition data exactly as written in TOML.
 ///
 /// Either `field_type` or `reference` (`$ref`) must be present: a
-/// [`super::error::SchemaError::MissingFieldType`] is raised during
-/// resolution when both are absent. When `reference` is present, any other
-/// field set here overrides the same key on the referenced base definition;
-/// an absent key inherits the base's value.
+/// [`super::error::SchemaError::MissingFieldType`] is raised during resolution
+/// when both are absent. When `reference` is present, any other field set here
+/// overrides the same key on the referenced base definition; an absent key
+/// inherits the base's value.
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct RawFieldDef {
@@ -52,8 +52,8 @@ pub(crate) struct RawFieldDef {
     /// `#<ancestor-schema>/<field>`.
     #[serde(rename = "$ref")]
     pub(crate) reference: Option<String>,
-    /// Whether the field must be set. Ignored (with a warning) on the
-    /// reserved Global Schema.
+    /// Whether the field must be set. Ignored (with a warning) on the reserved
+    /// Global Schema.
     pub(crate) required: Option<bool>,
     /// Whether the field accepts multiple values.
     pub(crate) multi: Option<bool>,

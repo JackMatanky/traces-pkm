@@ -3,9 +3,9 @@
 //!
 //! These are the *output* shapes [`super::resolve::resolve`] produces from a
 //! parsed [`super::raw::RawSchema`] set (inheritance, `excludes`, and `$ref`
-//! already applied). Construction stays `pub(super)`: only
-//! [`super::resolve`] builds these; the rest of the crate only reads them
-//! through the `pub(crate)` accessors below.
+//! already applied). Construction stays `pub(super)`: only [`super::resolve`]
+//! builds these; the rest of the crate only reads them through the `pub(crate)`
+//! accessors below.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -54,8 +54,8 @@ impl Schema {
         &self.fields
     }
 
-    /// Returns the named Field Definition, or `None` if it does not resolve
-    /// for this Schema.
+    /// Returns the named Field Definition, or `None` if it does not resolve for
+    /// this Schema.
     #[inline]
     #[must_use]
     pub(crate) fn field(&self, name: &str) -> Option<&FieldDefinition> {
@@ -63,8 +63,8 @@ impl Schema {
     }
 
     /// Returns this Schema's transitive `extends` ancestors, used by
-    /// `resolve::resolve_one` to accumulate a child's own ancestor set from
-    /// its parents'.
+    /// `resolve::resolve_one` to accumulate a child's own ancestor set from its
+    /// parents'.
     #[inline]
     #[must_use]
     pub(super) fn ancestors(&self) -> &BTreeSet<SchemaName> {
@@ -83,8 +83,8 @@ impl Schema {
 /// One resolved Field Definition: its type-specific [`FieldOptions`] plus
 /// `required`/`multi` flags.
 ///
-/// `required` and `multi` are reserved for future LSP/MCP guardrails and
-/// stay inert here.
+/// `required` and `multi` are reserved for future LSP/MCP guardrails and stay
+/// inert here.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct FieldDefinition {
     options: FieldOptions,
@@ -114,14 +114,14 @@ impl FieldDefinition {
     }
 
     /// Returns this field's selectable values for the `schema` minijinja
-    /// namespace's `.field()` method, or `None` if this field type has none
-    /// to offer.
+    /// namespace's `.field()` method, or `None` if this field type has none to
+    /// offer.
     ///
     /// Only `select` carries a plain value list today. `file` is also
     /// list-bearing in principle, but its options resolve live from the
-    /// `FileIndex`, which this method does not yet consult; until that's
-    /// wired up, it returns `None` here too rather than a value list it
-    /// cannot yet honor.
+    /// `FileIndex`, which this method does not yet consult; until that's wired
+    /// up, it returns `None` here too rather than a value list it cannot yet
+    /// honor.
     #[inline]
     #[must_use]
     pub(crate) fn selectable_values(&self) -> Option<&[String]> {
@@ -139,8 +139,8 @@ impl FieldDefinition {
         }
     }
 
-    /// Returns `true` if this field must be set. Always `false` on the
-    /// reserved Global Schema, regardless of its own TOML.
+    /// Returns `true` if this field must be set. Always `false` on the reserved
+    /// Global Schema, regardless of its own TOML.
     #[inline]
     #[must_use]
     pub(crate) fn is_required(&self) -> bool {

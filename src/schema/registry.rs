@@ -1,11 +1,10 @@
 //! Reads and resolves every Schema under a registry directory.
 //!
 //! The filesystem is the Schema registry: a Schema is a TOML file whose
-//! filename stem is the Schema name. [`SchemaRegistry`] is the impure edge
-//! of the `schema` module: it walks a directory and parses TOML; everything
-//! past that (inheritance, `excludes`, `$ref`) is
-//! [`super::resolve::resolve`], a pure function tested with no filesystem at
-//! all.
+//! filename stem is the Schema name. [`SchemaRegistry`] is the impure edge of
+//! the `schema` module: it walks a directory and parses TOML; everything past
+//! that (inheritance, `excludes`, `$ref`) is [`super::resolve::resolve`], a
+//! pure function tested with no filesystem at all.
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -31,8 +30,8 @@ use crate::file_name::BaseNameRef;
 #[derive(Clone, Debug)]
 pub(crate) struct SchemaRegistry {
     /// Reference-counted per Schema, not owned outright: `.get()` and
-    /// `.descendants_of()` share one Schema's field map across every
-    /// caller in a render instead of deep-cloning it per lookup, mirroring
+    /// `.descendants_of()` share one Schema's field map across every caller in
+    /// a render instead of deep-cloning it per lookup, mirroring
     /// [`crate::index::IndexRecord`]'s `Arc<Note>`.
     schemas: BTreeMap<SchemaName, Arc<Schema>>,
 }
@@ -43,8 +42,8 @@ impl SchemaRegistry {
     /// `extends` DAG.
     ///
     /// A missing `directory` resolves to an empty registry rather than an
-    /// error: an unconfigured or not-yet-created Schema directory is
-    /// absence, not corruption.
+    /// error: an unconfigured or not-yet-created Schema directory is absence,
+    /// not corruption.
     ///
     /// # Errors
     ///
@@ -72,20 +71,19 @@ impl SchemaRegistry {
         ))
     }
 
-    /// Returns the named Schema, or `None` if no Schema by that name
-    /// resolved. Wrapped in `Arc` so repeated lookups (a Template calling
-    /// `schema.get(...)` many times in one render) share the Schema's field
-    /// map instead of deep-cloning it per call.
+    /// Returns the named Schema, or `None` if no Schema by that name resolved.
+    /// Wrapped in `Arc` so repeated lookups (a Template calling
+    /// `schema.get(...)` many times in one render) share the Schema's field map
+    /// instead of deep-cloning it per call.
     #[inline]
     #[must_use]
     pub(crate) fn get(&self, name: &str) -> Option<&Arc<Schema>> {
         self.schemas.get(name)
     }
 
-    /// Every Schema that is-a `name` transitively (extends it directly or
-    /// via an ancestor), excluding `name` itself. Empty — not an error — if
-    /// nothing extends `name`, mirroring [`Self::is_a`]'s soft-degrade
-    /// style.
+    /// Every Schema that is-a `name` transitively (extends it directly or via
+    /// an ancestor), excluding `name` itself. Empty — not an error — if nothing
+    /// extends `name`, mirroring [`Self::is_a`]'s soft-degrade style.
     #[must_use]
     pub(crate) fn descendants_of(&self, name: &str) -> Vec<Arc<Schema>> {
         self.schemas
@@ -104,10 +102,10 @@ impl SchemaRegistry {
     ///   matches itself).
     /// - Every resolved Schema that is-a one of the queried names.
     ///
-    /// This is the match set a `from_class` query tests each Note's File
-    /// Class against: a Note matches when any of its class values is in the
-    /// returned set. Transitive `extends` is folded in here, so the caller
-    /// compares plain strings without consulting the registry per Note.
+    /// This is the match set a `from_class` query tests each Note's File Class
+    /// against: a Note matches when any of its class values is in the returned
+    /// set. Transitive `extends` is folded in here, so the caller compares
+    /// plain strings without consulting the registry per Note.
     #[must_use]
     pub(crate) fn matching_classes(
         &self,
@@ -127,8 +125,8 @@ impl SchemaRegistry {
 /// [`RawSchema`] keyed by filename stem.
 ///
 /// Walks only `directory`'s immediate entries (`min_depth(1).max_depth(1)`):
-/// Schemas do not nest. A `directory` that does not exist yields an empty
-/// map rather than [`SchemaError::ReadDirectory`].
+/// Schemas do not nest. A `directory` that does not exist yields an empty map
+/// rather than [`SchemaError::ReadDirectory`].
 ///
 /// # Errors
 ///
@@ -186,8 +184,8 @@ fn is_missing_root(error: &walkdir::Error) -> bool {
 /// Wraps a [`walkdir::Error`] with path context as a
 /// [`SchemaError::ReadDirectory`].
 ///
-/// Falls back to `directory` if the underlying error carries no path of its
-/// own (some I/O errors surface without `DirEntry` context).
+/// Falls back to `directory` if the underlying error carries no path of its own
+/// (some I/O errors surface without `DirEntry` context).
 fn walk_error(directory: &Path, source: walkdir::Error) -> SchemaError {
     let path = source.path().unwrap_or(directory).to_path_buf();
     SchemaError::ReadDirectory {
