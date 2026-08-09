@@ -1,6 +1,6 @@
 # 04 — File-Field Options from the FileIndex
 
-**What to build:** A `file`-typed Field Definition in a Schema resolves its option list live from the FileIndex: an AND-composed filter of `folders` (array), `ext`, and `class` (array). `.field()` on such a field returns label/value pairs — label from the `[frontmatter]` aliases key or the filename stem, value the path — so `ui.select` shows a friendly label and returns the path (per ADR-0003). The `class` filter matches transitively through extends. Option lists are index-derived at use-time, so only as fresh as the index. No regex in filters.
+**What to build:** A `file`-typed Field Definition in a Schema resolves its option list live from the FileIndex: an AND-composed filter of `folders` (array), `ext`, and `class` (array). `.field()` on such a field returns label/value pairs — label from the `[frontmatter]` aliases key, else the configured title key, else the filename stem; value the path — so `ui.select` shows a friendly label and returns the path (per ADR-0003). The `class` filter matches transitively through extends. Option lists are index-derived at use-time, so only as fresh as the index. No regex in filters.
 
 **Blocked by:** 03 — Schema minijinja Namespace (done on `feat/schema-namespace`, branch from there)
 
