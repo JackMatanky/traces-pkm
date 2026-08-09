@@ -683,6 +683,82 @@ mod tests {
         }
     }
 
+    mod schema {
+        use std::{fs, path::PathBuf};
+
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+        use crate::cli::CwdGuard;
+
+        #[test]
+        fn schema_backed_template_renders_and_writes_through_the_cli() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let (root, service) = create_test_project(
+                temp.path(),
+                "status={{ schema.get('book').field('status') | join(',') \
+                 }};cover={% for item in schema.get('book').field('cover') \
+                 %}{{ item.label }}={{ item.value }}{% endfor %};query={{ \
+                 query.from_class('book') | length }};tasks={{ \
+                 tasks.from_class('book') | length }}",
+            );
+            fs::create_dir_all(root.join(".traces/schemas"))
+                .expect("create schemas dir");
+            fs::write(
+                root.join(".traces/schemas/book.toml"),
+                "[fields.status]\ntype = \"select\"\nvalues = [\"reading\", \
+                 \"read\"]\n\n[fields.cover]\ntype = \"file\"\nfolders = \
+                 [\"covers\"]\next = \"md\"\nclass = [\"book\"]\n",
+            )
+            .expect("write schema fixture");
+            fs::create_dir_all(root.join("covers")).expect("create covers dir");
+            fs::write(
+                root.join("covers/dune.md"),
+                "---\ntitle: Dune\nclass: book\n---\n# Dune\n",
+            )
+            .expect("write cover note");
+            fs::create_dir_all(root.join("journal"))
+                .expect("create journal dir");
+            fs::write(
+                root.join("journal/dune-log.md"),
+                "---\nclass: book\n---\n# Dune Log\n- [ ] finish reading\n",
+            )
+            .expect("write journal note");
+            let _guard = CwdGuard::enter(&root);
+
+            Template::new(PathBuf::from("daily"))
+                .run(&service, preset_provider())
+                .expect("schema-backed template renders and writes");
+
+            let written =
+                fs::read_to_string(root.join("daily.md")).expect("read output");
+            assert_eq!(
+                written,
+                "status=reading,read;cover=Dune=covers/dune.md;query=2;tasks=1"
+            );
+        }
+
+        #[test]
+        fn unknown_schema_name_surfaces_as_a_render_error_not_a_panic() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let (root, service) = create_test_project(
+                temp.path(),
+                "{{ schema.get('missing').field('status') }}",
+            );
+            let _guard = CwdGuard::enter(&root);
+
+            let error = Template::new(PathBuf::from("daily"))
+                .run(&service, preset_provider())
+                .expect_err("unknown Schema name fails render, not panics");
+
+            assert!(matches!(error, CliError::TemplateInstantiate {
+                source: TemplateError::Render { .. },
+                ..
+            }));
+            assert!(!root.join("daily.md").exists());
+        }
+    }
+
     mod parse {
         use clap::Parser as _;
 

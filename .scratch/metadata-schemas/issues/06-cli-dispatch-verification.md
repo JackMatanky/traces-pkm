@@ -4,10 +4,10 @@
 
 **Blocked by:** 04 — File-Field Options from the FileIndex
 
-**Status:** ready-for-agent
+**Status:** implemented
 
-- [ ] A Schema-backed template that exercises all three consumer surfaces (schema namespace, file-field options, class queries) renders and writes through `traces template` on an isolated trusted project fixture.
-- [ ] A structural Schema error (unknown Schema name) surfaces as a CLI render error through `traces template`, not a panic.
+- [x] A Schema-backed template that exercises all three consumer surfaces (schema namespace, file-field options, class queries) renders and writes through `traces template` on an isolated trusted project fixture.
+- [x] A structural Schema error (unknown Schema name) surfaces as a CLI render error through `traces template`, not a panic.
 
 ## Comments
 
@@ -39,3 +39,63 @@ A Schema-backed Template — one that calls `schema.get(...).field(...)`, consum
 - New CLI commands (a Schema authoring/validation command is explicitly out of scope for the feature).
 - A file watcher/daemon.
 - JSON output.
+
+
+## Implementation notes
+
+**Date**: 2026-08-10
+**Implemented in**: `.worktrees/cli-dispatch-verification`
+**Branch**: `feat/cli-dispatch-verification`
+
+### What was built
+
+Pure verification, per the ticket's brief: no production code changed. Two new
+tests in `src/cli/template.rs`'s existing `mod tests` (a new `mod schema`
+alongside `run`/`picker`/`parse`), reusing the established
+`create_test_project` / `preset_provider` / `CwdGuard::enter` /
+`Template::new(...).run(...)` fixture pattern:
+
+- `schema_backed_template_renders_and_writes_through_the_cli`: a trusted
+  project fixture with `.traces/schemas/book.toml` (a `select` field and a
+  `file` field filtered by `folders`/`ext`/`class`) and two Notes carrying
+  `class: book` frontmatter (one under `covers/` matching the file-field
+  filter, one under `journal/` with a task line). The template combines all
+  three consumer surfaces in one render: `schema.get('book').field('status')`,
+  `schema.get('book').field('cover')` (file-field label/value pairs),
+  `query.from_class('book')`, and `tasks.from_class('book')`. Asserts the
+  exact written output.
+- `unknown_schema_name_surfaces_as_a_render_error_not_a_panic`: a template
+  calling `schema.get('missing')` with no `.traces/schemas/` directory at
+  all (registry degrades to empty, so `.get()` naturally hits the unknown-name
+  path). Asserts `CliError::TemplateInstantiate { source:
+  TemplateError::Render { .. }, .. }` and that nothing was written.
+
+### Key design decisions
+
+- Confirmed the CLI needed no new error-handling: `TemplateService::render`
+  already wraps every minijinja failure (including Schema errors) in
+  `TemplateError::Render`, and `Template::run` already maps that into
+  `CliError::TemplateInstantiate`. The generic render-error path was already
+  proven for query/index/dialog failures — this ticket adds the Schema-surface
+  coverage of that same path, not a new path.
+- Reused the exact fixture literals proven by the render-seam tests this
+  ticket depends on (`template/engine.rs`'s `schema_get_is_reachable` /
+  `schema_file_field_*` tests, `template/engine/query.rs`'s `from_class`
+  tests) rather than inventing new TOML/frontmatter shapes.
+
+### Verification
+
+- `cargo test --lib cli::template::tests::schema`: 2/2 passed.
+- `mise run check`, `mise run fmt`, `mise run lint`, `mise run clippy`: all
+  clean.
+- `mise run test` (nextest, full suite): 1437/1437 passed.
+- `mise run verify`'s doc-test stage fails on
+  `template::path::TemplatePathInput::parse`'s doctest, but only under
+  `--features test-utils` — reproduced identically on `main` before this
+  change (unrelated merged-doctest interaction with the
+  `test-utils`-gated `fixture_service` doctest). Not touched by this ticket's
+  diff; out of scope to fix here.
+- `gitnexus_detect_changes` reported zero changed/affected symbols (GitNexus's
+  index tracks the main worktree path, not this dedicated `.worktrees/`
+  checkout) — expected given this diff is test-only and adds no new public
+  symbols.
