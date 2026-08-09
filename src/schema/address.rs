@@ -1,4 +1,4 @@
-//! Schema-field addresses shared by raw `$ref` parsing and resolution.
+//! Field address types for `$ref` parsing and resolution.
 //!
 //! [`FieldAddress`] owns a `#<schema>/<field>` coordinate parsed from TOML.
 //! [`FieldAddressRef`] borrows the same shape while resolving a current field,
@@ -12,7 +12,7 @@ use thiserror::Error;
 use super::name::{SchemaName, SchemaNameRef};
 use crate::field::{FieldName, FieldNameError, FieldNameRef};
 
-/// An owned Schema field address: `#<schema>/<field>`.
+/// An owned field address: `#<schema>/<field>`.
 #[derive(Clone, Eq, PartialEq)]
 pub(crate) struct FieldAddress {
     schema: SchemaName,

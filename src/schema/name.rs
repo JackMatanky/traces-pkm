@@ -1,18 +1,14 @@
-//! Schema-name newtypes: keeps a Schema's identity from being mixed up with an
-//! unrelated `&str`/`String` anywhere it is threaded through the module.
+//! Schema name newtypes preventing identity mix-ups.
 //!
-//! Mirrors the crate's [`FileName`]/[`BaseName`]/[`BaseNameRef`] split:
-//! [`SchemaName`] owns its data for storage (`Schema.name`, map keys);
-//! [`SchemaNameRef`] borrows for zero-allocation comparisons in
+//! Mirrors the crate's [`FileName`](crate::file_name::FileName)/
+//! [`BaseName`](crate::file_name::BaseName)/
+//! [`BaseNameRef`](crate::file_name::BaseNameRef) split: [`SchemaName`] owns
+//! for storage; [`SchemaNameRef`] borrows for zero-allocation comparisons in
 //! `resolve::SchemaGraph` and `address::FieldAddressRef`.
 //!
-//! Ordering matches `str`'s: a derived `Ord`/`PartialOrd` on a single-field
-//! tuple struct delegates entirely to the wrapped field, which `SchemaGraph`'s
+//! Ordering matches `str`'s: derived `Ord`/`PartialOrd` on a single-field
+//! tuple struct delegates to the wrapped field, which `SchemaGraph`'s
 //! determinism and its Global-first Kahn tie-break depend on.
-//!
-//! [`FileName`]: crate::file_name::FileName
-//! [`BaseName`]: crate::file_name::BaseName
-//! [`BaseNameRef`]: crate::file_name::BaseNameRef
 
 use std::{borrow::Borrow, fmt};
 
@@ -70,8 +66,8 @@ impl fmt::Display for SchemaName {
     }
 }
 
-/// Borrowed counterpart to [`SchemaName`]: a Schema name borrowed from parsed
-/// TOML data or a `$ref` string, mirroring the `&str`/`String` split
+/// Borrowed counterpart to [`SchemaName`]: a name borrowed from parsed TOML
+/// data or a `$ref` string, mirroring the `&str`/`String` split
 /// ([`crate::file_name::BaseNameRef`]).
 #[derive(Copy, Clone, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub(crate) struct SchemaNameRef<'a>(&'a str);

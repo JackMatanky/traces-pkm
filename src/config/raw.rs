@@ -86,10 +86,9 @@ pub(crate) struct RawFrontmatterConfig {
 
 /// A `{name, format}` pair naming a date-valued frontmatter key.
 ///
-/// Both fields are optional; missing values are resolved to role-aware
-/// defaults by [`super::model::DateFieldConfig`]. Fields skip serialization
-/// when `None` to avoid overwriting a configured global value during Figment
-/// merge.
+/// Both fields are optional; missing values are resolved to role-aware defaults
+/// by [`super::model::DateFieldConfig`]. Fields skip serialization when `None`
+/// to avoid overwriting a configured global value during Figment merge.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct RawDateFieldConfig {

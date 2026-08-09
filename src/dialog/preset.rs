@@ -64,8 +64,8 @@ impl PresetDialogProvider {
 
     /// Queue a response for the next [`DialogProvider::text`] call.
     ///
-    /// Text responses are consumed first-in-first-out. When the queue is
-    /// empty, `text` falls back to the `default` parameter.
+    /// Text responses are consumed first-in-first-out. When the queue is empty,
+    /// `text` falls back to the `default` parameter.
     ///
     /// # Examples
     ///
@@ -133,8 +133,7 @@ impl PresetDialogProvider {
         self
     }
 
-    /// Queue chosen indices for the next [`DialogProvider::multi_select`]
-    /// call.
+    /// Queue chosen indices for the next [`DialogProvider::multi_select`] call.
     ///
     /// # Examples
     ///

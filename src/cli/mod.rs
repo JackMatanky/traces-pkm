@@ -1,7 +1,7 @@
 //! CLI entry point and command dispatch.
 //!
-//! Parses process arguments via [`clap`], routes to the selected subcommand
-//! (or the default `-i` template dispatch), and translates domain errors into
+//! Parses process arguments via [`clap`], routes to the selected subcommand (or
+//! the default `-i` template dispatch), and translates domain errors into
 //! [`CliError`] diagnostics.
 //!
 //! Key types:
@@ -59,8 +59,8 @@ pub enum CommandOutcome {
 
 /// User gesture that ended an interactive command.
 ///
-/// Extracted from dialog-layer cancellation or interruption errors in the
-/// error source chain.
+/// Extracted from dialog-layer cancellation or interruption errors in the error
+/// source chain.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum UserAbort {
     /// The user pressed Escape to cancel an interactive prompt.
@@ -72,8 +72,8 @@ pub enum UserAbort {
 /// Root command-line parser for `traces`.
 ///
 /// Dispatches to a subcommand when one is present, or to the default
-/// `-i`/`--input` template instantiation path when the flag is given.
-/// Returns [`CliError::NoCommand`] when neither is provided.
+/// `-i`/`--input` template instantiation path when the flag is given. Returns
+/// [`CliError::NoCommand`] when neither is provided.
 #[derive(Debug, Parser)]
 #[command(
     name = "traces",

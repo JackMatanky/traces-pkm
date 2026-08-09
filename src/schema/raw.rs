@@ -1,4 +1,4 @@
-//! Deserialization shapes for Schema TOML.
+//! Deserialization shapes for Schema TOML files.
 //!
 //! These serde types match the on-disk `.traces/schemas/<name>.toml` shape and
 //! deny unknown fields, so a typo'd key fails at parse rather than silently
@@ -6,10 +6,10 @@
 //!
 //! # Boundary
 //!
-//! This module preserves the TOML values exactly as configured, but parses
-//! `$ref` strings and a Field Definition's `type`/`$ref` source into validated
-//! shapes ([`FieldAddress`](super::address::FieldAddress), [`RawFieldSource`])
-//! at deserialization time: a `RawFieldDef` with neither `type` nor `$ref`
+//! Preserves TOML values exactly as configured, but parses `$ref` strings and
+//! a Field Definition's `type`/`$ref` source into validated shapes
+//! ([`FieldAddress`](super::address::FieldAddress), [`RawFieldSource`]) at
+//! deserialization time: a `RawFieldDef` with neither `type` nor `$ref`
 //! cannot exist past parsing. Inheritance, `$ref` resolution against other
 //! Schemas, and the reserved Global Schema's `required` degrade are applied
 //! later in [`super::resolve`].
@@ -22,10 +22,10 @@ use thiserror::Error;
 use super::{address::FieldAddress, name::SchemaName};
 use crate::field::FieldName;
 
-/// Raw Schema data deserialized from one `.traces/schemas/<name>.toml` file.
+/// Raw Schema data from one `.traces/schemas/<name>.toml` file.
 ///
 /// The filename stem (not any field on this type) is the Schema name; see
-/// [`super::SchemaRegistry::load`].
+/// [`super::SchemaRegistry::load`](super::registry::SchemaRegistry::load).
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct RawSchema {
@@ -41,10 +41,10 @@ pub(crate) struct RawSchema {
     pub(crate) fields: BTreeMap<FieldName, RawFieldDef>,
 }
 
-/// A raw Field Definition's declared source: either a direct `type`, or a
-/// `$ref` to a base definition, optionally overriding its `type` locally.
+/// A raw field's declared source: either a direct `type`, or a `$ref` to a
+/// base definition, optionally overriding its `type` locally.
 ///
-/// Parsed once at TOML deserialization time, so a `RawFieldDef` with neither
+/// Parsed once at TOML deserialization time so a [`RawFieldDef`] with neither
 /// `type` nor `$ref` cannot exist past parsing (see [`RawFieldDefError`]).
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum RawFieldSource {
@@ -58,7 +58,7 @@ pub(crate) enum RawFieldSource {
     },
 }
 
-/// A `RawFieldDef` declared neither `type` nor `$ref`.
+/// A [`RawFieldDef`] declared neither `type` nor `$ref`.
 #[derive(Debug, Error)]
 pub(crate) enum RawFieldDefError {
     /// Neither `type` nor `$ref` was present.
@@ -66,7 +66,7 @@ pub(crate) enum RawFieldDefError {
     MissingSource,
 }
 
-/// Raw Field Definition data exactly as written in TOML, with `type`/`$ref`
+/// Raw field definition data exactly as written in TOML, with `type`/`$ref`
 /// already parsed into a validated [`RawFieldSource`].
 #[derive(Clone, Debug)]
 pub(crate) struct RawFieldDef {
@@ -130,11 +130,11 @@ impl<'de> Deserialize<'de> for RawFieldDef {
     }
 }
 
-/// Wire shape for one `.traces/schemas/<name>.toml` `[fields.<name>]` table:
-/// mirrors the TOML exactly (`type`/`$ref` still optional and separate), so
-/// `#[serde(deny_unknown_fields)]` still rejects a typo'd key. [`RawFieldDef`]
-/// itself converts this into a validated [`RawFieldSource`] during
-/// deserialization; nothing outside this module ever sees a `RawFieldDefToml`.
+/// Wire shape for one `[fields.<name>]` table: mirrors the TOML exactly
+/// (`type`/`$ref` still optional and separate) so
+/// `#[serde(deny_unknown_fields)]` rejects a typo'd key. [`RawFieldDef`]
+/// converts this into a validated [`RawFieldSource`] during deserialization;
+/// nothing outside this module ever sees a `RawFieldDefToml`.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawFieldDefToml {
@@ -154,13 +154,12 @@ struct RawFieldDefToml {
 }
 
 impl RawFieldDef {
-    /// Builds a direct (non-`$ref`) Field Definition of `field_type`, with
+    /// Builds a direct (non-`$ref`) field definition of `field_type`, with
     /// every optional key unset.
     ///
     /// Test/pub(crate) convenience constructor: tests needing `required`,
     /// `multi`, or type-specific options use struct-update syntax from the
-    /// result (`RawFieldDef { values: Some(...), ..RawFieldDef::direct(...)
-    /// }`).
+    /// result.
     #[inline]
     #[must_use]
     #[cfg_attr(not(test), expect(dead_code, reason = "used in tests"))]
@@ -176,7 +175,7 @@ impl RawFieldDef {
         }
     }
 
-    /// Builds a `$ref`-only Field Definition targeting `address`, with every
+    /// Builds a `$ref`-only field definition targeting `address`, with every
     /// optional key unset.
     #[inline]
     #[must_use]
@@ -197,7 +196,7 @@ impl RawFieldDef {
     }
 }
 
-/// The `type` key of a raw Field Definition.
+/// The `type` key of a raw field definition.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum RawFieldType {

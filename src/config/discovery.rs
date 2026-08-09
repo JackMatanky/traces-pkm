@@ -1,8 +1,8 @@
 //! Turns a filesystem anchor into typed config-file candidates.
 //!
-//! Discovery reads the filesystem to locate `.traces/config.toml` files
-//! without reading TOML content. It produces [`DiscoveryOutcome`], which the
-//! builder pipeline consumes.
+//! Discovery reads the filesystem to locate `.traces/config.toml` files without
+//! reading TOML content. It produces [`DiscoveryOutcome`], which the builder
+//! pipeline consumes.
 //!
 //! # Scopes
 //!
@@ -121,9 +121,9 @@ type OutcomeParts = (
 
 /// Config-file candidates handed to the builder pipeline.
 ///
-/// Carries the discovery kind, filesystem anchor, and files found on disk.
-/// Pass this token through unchanged to the builder, or parse it into
-/// validated downstream input.
+/// Carries the discovery kind, filesystem anchor, and files found on disk. Pass
+/// this token through unchanged to the builder, or parse it into validated
+/// downstream input.
 #[derive(Clone, Debug)]
 pub(crate) struct DiscoveryOutcome {
     kind: DiscoveryScope,
@@ -201,8 +201,8 @@ impl DiscoveryOutcome {
 
 /// Routes discovery requests to the matching filesystem traversal.
 ///
-/// Stateless: every method is an associated function called via `Self::`,
-/// not an instance method.
+/// Stateless: every method is an associated function called via `Self::`, not
+/// an instance method.
 pub(crate) struct DiscoveryEngine;
 
 impl DiscoveryEngine {

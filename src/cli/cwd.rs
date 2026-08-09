@@ -11,8 +11,8 @@ use std::{
 
 /// Process current working directory captured at construction time.
 ///
-/// Wraps [`env::current_dir`] to keep cwd access auditable at a single
-/// boundary (enforced by `clippy.toml`).
+/// Wraps [`env::current_dir`] to keep cwd access auditable at a single boundary
+/// (enforced by `clippy.toml`).
 #[derive(Clone, Debug)]
 pub(crate) struct Cwd(PathBuf);
 

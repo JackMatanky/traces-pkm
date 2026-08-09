@@ -16,9 +16,9 @@ use super::file::{Discovered, LocalConfigFile, Tracked};
 
 /// Targets a workspace root or config file for a trust operation.
 ///
-/// Create via `TrustRequest::from` with a `&Path` for root-only trust, or
-/// with a `&LocalConfigFile<Discovered>` for config-file trust that also
-/// records a content baseline.
+/// Create via `TrustRequest::from` with a `&Path` for root-only trust, or with
+/// a `&LocalConfigFile<Discovered>` for config-file trust that also records a
+/// content baseline.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum TrustRequest {
     /// Trust a workspace root without binding to a config file.
@@ -135,8 +135,8 @@ pub(crate) enum ConfigTrustStatus {
     /// The workspace root is trusted, but no content-hash baseline was ever
     /// recorded for this config file.
     MissingBaseline,
-    /// The workspace root is trusted and a baseline hash exists, but the
-    /// config file's current content no longer matches it.
+    /// The workspace root is trusted and a baseline hash exists, but the config
+    /// file's current content no longer matches it.
     Stale,
 }
 

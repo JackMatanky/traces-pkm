@@ -1,7 +1,7 @@
 //! Error types for dialog prompt failures.
 //!
-//! [`DialogError`] groups prompt failures by caller-visible outcome so CLI
-//! code can choose the right diagnostic.
+//! [`DialogError`] groups prompt failures by caller-visible outcome so CLI code
+//! can choose the right diagnostic.
 
 /// Error returned by [`DialogProvider`] methods.
 ///
@@ -75,10 +75,10 @@ impl From<std::io::Error> for DialogError {
 }
 
 /// Maps each `inquire` outcome to its matching [`DialogError`] variant rather
-/// than folding everything into [`BackendFailure`]: cancellation,
-/// interruption, missing TTY, I/O, and configuration errors each need a
-/// distinct caller-visible outcome, and only truly unrecognized backend
-/// failures fall through to [`BackendFailure`].
+/// than folding everything into [`BackendFailure`]: cancellation, interruption,
+/// missing TTY, I/O, and configuration errors each need a distinct
+/// caller-visible outcome, and only truly unrecognized backend failures fall
+/// through to [`BackendFailure`].
 ///
 /// [`BackendFailure`]: DialogError::BackendFailure
 impl From<inquire::InquireError> for DialogError {

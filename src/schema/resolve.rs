@@ -9,11 +9,10 @@
 //! # Main Type
 //!
 //! - [`resolve`]: linearizes the `extends` DAG into [`super::model::Schema`]s.
-//!   See [`super::model`] for the resolved domain shapes ([`Schema`],
-//!   [`super::model::FieldDefinition`], [`super::model::FieldOptions`]) this
-//!   produces.
-//!
-//! [`Schema`]: super::model::Schema
+//!   See [`super::model`] for the resolved shapes
+//!   ([`Schema`](super::model::Schema),
+//!   [`FieldDefinition`](super::model::FieldDefinition),
+//!   [`FieldOptions`](super::model::FieldOptions)) this produces.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
@@ -33,11 +32,13 @@ type ResolveOutput = (BTreeMap<SchemaName, Schema>, Vec<SchemaWarning>);
 
 /// Resolves `raw_schemas` into effective Field Definitions per Schema.
 ///
-/// Linearizes the `extends` DAG with Kahn's topological sort, so every Schema
-/// is resolved only after all of its (valid) parents. For each Schema, in
-/// order: parent fields are merged first-listed-wins, `excludes` drops named
-/// fields from that merge, then the Schema's own fields (`$ref`-resolved
-/// against already-resolved Schemas) override the result.
+/// Linearizes the `extends` DAG with Kahn's topological sort so every Schema
+/// is resolved only after all of its valid parents. For each Schema, in order:
+///
+/// - Parent fields are merged first-listed-wins.
+/// - `excludes` drops named fields from that merge.
+/// - The Schema's own fields (`$ref`-resolved against already-resolved Schemas)
+///   override the result.
 ///
 /// # Errors
 ///
@@ -96,7 +97,7 @@ pub(crate) fn resolve(
 ///
 /// # Errors
 ///
-/// Propagates any [`SchemaError`] [`build_field`] returns while resolving
+/// Propagates any [`SchemaError`] that [`build_field`] returns while resolving
 /// `raw`'s own fields, or [`SchemaError::AmbiguousFieldName`] if two of the
 /// resolved fields share a [`FieldKey`](crate::field::FieldKey) canonical form.
 fn resolve_one(
@@ -174,7 +175,7 @@ fn reject_ambiguous_canonical_names(
 ///
 /// # Errors
 ///
-/// Any error [`RefResolver::resolve`] returns while resolving a `$ref`.
+/// Any error that [`RefResolver::resolve`] returns while resolving a `$ref`.
 fn build_field(
     address: FieldAddressRef<'_>,
     raw: &RawFieldDef,
@@ -212,9 +213,11 @@ fn build_field(
     ))
 }
 
-/// Global Schema fields can never be required: forces `required` to `false` and
-/// records a [`SchemaWarning::StrayGlobalRequired`] when `address.schema()` is
-/// the Global Schema and it declared `required = true`.
+/// Forces `required` to `false` and records a
+/// [`SchemaWarning::StrayGlobalRequired`] when `address.schema()` is the
+/// Global Schema and it declared `required = true`.
+///
+/// Global Schema fields can never be required.
 fn apply_global_degrade(
     address: FieldAddressRef<'_>,
     required: bool,
@@ -232,6 +235,7 @@ fn apply_global_degrade(
 
 /// Kahn's-algorithm bookkeeping for linearizing the `extends` DAG: adjacency,
 /// in-degrees, the ready queue, and which Schemas have been popped.
+///
 /// Isolates the Global-first tie-break from the field-merge logic in
 /// [`resolve_one`].
 struct SchemaGraph<'a> {
@@ -355,7 +359,7 @@ impl<'a> SchemaGraph<'a> {
     }
 
     /// Returns every Schema name that never reached in-degree zero (a cycle
-    /// membership), or `None` if every Schema in `raw_schemas` was visited.
+    /// member), or `None` if every Schema in `raw_schemas` was visited.
     fn cyclic_remainder(
         &self,
         raw_schemas: &BTreeMap<SchemaName, RawSchema>,
@@ -375,8 +379,10 @@ impl<'a> SchemaGraph<'a> {
 
 /// Resolves a Schema's `$ref` values to their base [`FieldDefinition`]s,
 /// bounded to the Global Schema or the referencing Schema's transitive
-/// `extends` ancestors: `$ref`s point up the `extends` DAG or to the Global
-/// Schema, so they are acyclic by construction.
+/// `extends` ancestors.
+///
+/// `$ref`s point up the `extends` DAG or to the Global Schema, so they are
+/// acyclic by construction.
 struct RefResolver<'a> {
     ancestors: &'a BTreeSet<SchemaName>,
     resolved: &'a BTreeMap<SchemaName, Schema>,

@@ -209,8 +209,8 @@ impl SchemasConfig {
     /// Returns the frontmatter key naming a Note's File Class(es) as a
     /// validated [`FieldKey`].
     ///
-    /// Used for canonical-form matching against Note frontmatter. Defaults to
-    /// `class`.
+    /// Used for canonical-form matching against Note frontmatter.
+    /// Defaults to `class`.
     #[inline]
     #[must_use]
     pub(crate) fn class_field(&self) -> &FieldKey {

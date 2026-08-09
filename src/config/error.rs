@@ -1,11 +1,10 @@
 //! Errors from config discovery, file validation, loading, and trust-state
 //! operations.
 //!
-//! Every variant here crosses a `config` submodule boundary: raised in one
-//! file and consumed in another, or composed by [`ConfigLoadError`] into the
-//! result [`crate::cli::CliError`] reports. File-local parsing or
-//! construction failures that never propagate past their origin file stay
-//! defined there.
+//! Every variant here crosses a `config` submodule boundary: raised in one file
+//! and consumed in another, or composed by [`ConfigLoadError`] into the result
+//! [`crate::cli::CliError`] reports. File-local parsing or construction
+//! failures that never propagate past their origin file stay defined there.
 
 use std::{io, path::PathBuf};
 
@@ -49,8 +48,8 @@ pub(crate) enum DiscoveryError {
     },
     /// [`DiscoveryScope::Full`] does not accept a file anchor.
     ///
-    /// Full discovery always requires a directory root so it can walk
-    /// ancestors to find the nearest local config.
+    /// Full discovery always requires a directory root so it can walk ancestors
+    /// to find the nearest local config.
     #[error("{kind:?} discovery cannot be anchored at file {path}")]
     UnsupportedFileAnchor {
         /// Discovery kind that rejected the anchor.
@@ -107,8 +106,8 @@ pub(crate) enum ConfigBuilderError {
         /// The trust status that caused the halt.
         status: ConfigTrustStatus,
     },
-    /// The merged local/global config could not be re-extracted to resolve
-    /// the effective output directory.
+    /// The merged local/global config could not be re-extracted to resolve the
+    /// effective output directory.
     #[error("failed to merge local and global config")]
     Merge {
         /// Source figment error.
@@ -136,8 +135,8 @@ pub(crate) enum ConfigBuilderError {
 pub(crate) enum ConfigFileError {
     /// The path is not a local `.traces/config.toml` file.
     ///
-    /// Local config paths must end with `.traces/config.toml` and have a
-    /// parent directory named `.traces`.
+    /// Local config paths must end with `.traces/config.toml` and have a parent
+    /// directory named `.traces`.
     #[error("unsupported local config file {path}")]
     UnsupportedLocalConfigFile {
         /// Rejected local config path.
@@ -184,8 +183,8 @@ pub enum ConfigStateError {
 /// Errors raised while scaffolding a local config file on disk.
 #[derive(Debug, Error)]
 pub(crate) enum ConfigScaffoldError {
-    /// The collected template and output directories could not be
-    /// serialised to TOML.
+    /// The collected template and output directories could not be serialised to
+    /// TOML.
     #[error("failed to serialise local config")]
     Serialize {
         /// Source TOML serialization error.

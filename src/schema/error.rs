@@ -1,9 +1,8 @@
-//! Errors and warnings produced while reading and resolving the Schema
-//! registry.
+//! Errors and warnings from Schema registry loading and resolution.
 //!
-//! - [`SchemaError`]: a hard failure; registry loading and resolution stop.
-//! - [`SchemaWarning`]: a recoverable defect; resolution continues after
-//!   degrading to a documented fallback.
+//! - [`SchemaError`]: a hard failure; loading or resolution stops.
+//! - [`SchemaWarning`]: a recoverable defect; resolution continues with a
+//!   documented fallback.
 
 use std::{fmt, path::PathBuf};
 
@@ -12,15 +11,14 @@ use thiserror::Error;
 use super::{address::FieldAddress, name::SchemaName};
 use crate::field::FieldName;
 
-/// Represents a hard failure while reading, parsing, or resolving the Schema
-/// registry.
+/// Hard failure while reading, parsing, or resolving the Schema registry.
 ///
 /// Contrast [`SchemaWarning`], which is emitted for a defect resolution
 /// recovers from (a missing `extends` target, a stray `required = true` on the
 /// reserved Global Schema).
 ///
 /// A malformed `$ref` or a Field Definition declaring neither `type` nor `$ref`
-/// both fail earlier, during TOML parsing (surfacing as [`Self::Parse`]): see
+/// fails earlier during TOML parsing as [`Self::Parse`]: see
 /// [`super::address::FieldAddress`] and [`super::raw::RawFieldDefError`].
 #[derive(Debug, Error)]
 pub(crate) enum SchemaError {
@@ -87,8 +85,8 @@ pub(crate) enum SchemaError {
     },
 }
 
-/// Represents a recoverable defect during Schema registry resolution:
-/// resolution continues, degrading to the documented fallback.
+/// Recoverable defect during Schema resolution: resolution continues,
+/// degrading to a documented fallback.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum SchemaWarning {
     /// `schema`'s `extends` list named `target`, which has no corresponding

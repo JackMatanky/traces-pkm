@@ -1,7 +1,7 @@
 //! Orchestrates config loading and trust administration.
 //!
-//! [`ConfigService`] is the single entry point for discovering, building,
-//! and trusting config files.
+//! [`ConfigService`] is the single entry point for discovering, building, and
+//! trusting config files.
 //!
 //! # Loading Pipeline
 //!
@@ -111,8 +111,8 @@ impl ConfigService {
     /// Creates a service backed by explicit tracked-config and trust-store
     /// roots.
     ///
-    /// Test-only constructor for `crate::cli::trust` tests that need
-    /// isolated stores instead of real OS state directories.
+    /// Test-only constructor for `crate::cli::trust` tests that need isolated
+    /// stores instead of real OS state directories.
     #[cfg(any(test, feature = "test-utils"))]
     #[inline]
     #[must_use]
@@ -384,9 +384,9 @@ impl ConfigService {
     /// Serialises `directory`/`output_dir` as the local template config and
     /// writes it to `root.join(LOCAL_CONFIG_FILE)`.
     ///
-    /// `[schemas]` and `[frontmatter]` are written as empty tables (their
-    /// serde defaults), so a freshly scaffolded config behaves identically to
-    /// one that omits those tables entirely.
+    /// `[schemas]` and `[frontmatter]` are written as empty tables (their serde
+    /// defaults), so a freshly scaffolded config behaves identically to one
+    /// that omits those tables entirely.
     ///
     /// Uses [`std::fs::File::create_new`] rather than [`std::fs::write`] so
     /// this fails atomically if the file already exists, preventing a

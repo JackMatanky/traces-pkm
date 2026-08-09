@@ -1,8 +1,8 @@
 //! I/O seam separating template rendering from user interaction.
 //!
 //! This module defines the [`DialogProvider`] trait, the object-safe contract
-//! for prompting users and collecting responses. Two implementations cover
-//! the supported runtime modes:
+//! for prompting users and collecting responses. Two implementations cover the
+//! supported runtime modes:
 //!
 //! - [`PresetDialogProvider`] replays queued responses for tests and
 //!   non-interactive MCP execution.
@@ -15,6 +15,7 @@
 //! indices into the `items` slice, not copied labels. Index-based selection
 //! lets callers recover non-string values from a parallel list and keeps
 //! duplicate labels distinguishable.
+
 mod error;
 mod preset;
 mod terminal;
@@ -104,8 +105,8 @@ pub trait DialogProvider: Send + Sync {
     ///
     /// Index-based selection lets the caller recover the chosen entry from a
     /// parallel list, supporting non-string item types and disambiguating
-    /// duplicate labels. See the module-level documentation for the
-    /// full rationale.
+    /// duplicate labels. See the module-level documentation for the full
+    /// rationale.
     ///
     /// # Errors
     ///
@@ -137,8 +138,8 @@ pub trait DialogProvider: Send + Sync {
 
     /// Display a freeform text prompt and return the user's input.
     ///
-    /// When the user submits an empty string, `default` is returned if
-    /// present; otherwise an empty string is returned.
+    /// When the user submits an empty string, `default` is returned if present;
+    /// otherwise an empty string is returned.
     ///
     /// # Errors
     ///

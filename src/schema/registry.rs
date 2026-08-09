@@ -2,7 +2,7 @@
 //!
 //! The filesystem is the Schema registry: a Schema is a TOML file whose
 //! filename stem is the Schema name. [`SchemaRegistry`] is the impure edge of
-//! the `schema` module: it walks a directory and parses TOML; everything past
+//! the `schema` module: it walks a directory and parses TOML. Everything past
 //! that (inheritance, `excludes`, `$ref`) is [`super::resolve::resolve`], a
 //! pure function tested with no filesystem at all.
 
@@ -72,9 +72,11 @@ impl SchemaRegistry {
     }
 
     /// Returns a reference to the named Schema, or `None` if no Schema by that
-    /// name resolved. Stored in `Arc` so repeated lookups (a Template calling
-    /// `schema.get(...)` many times in one render) share the Schema's field map
-    /// instead of deep-cloning it per call.
+    /// name resolved.
+    ///
+    /// Stored in [`Arc`] so repeated lookups (a Template calling `schema.get()`
+    /// many times in one render) share the Schema's field map instead of
+    /// deep-cloning per call.
     #[inline]
     #[must_use]
     pub(crate) fn get(&self, name: &str) -> Option<&Arc<Schema>> {
@@ -82,8 +84,9 @@ impl SchemaRegistry {
     }
 
     /// Every Schema that is-a `name` transitively (extends it directly or via
-    /// an ancestor), excluding `name` itself. Empty, not an error, if nothing
-    /// extends `name`.
+    /// an ancestor), excluding `name` itself.
+    ///
+    /// Empty, not an error, if nothing extends `name`.
     #[must_use]
     pub(crate) fn descendants_of(&self, name: &str) -> Vec<Arc<Schema>> {
         self.schemas
@@ -103,7 +106,7 @@ impl SchemaRegistry {
     ///
     /// This is the match set a `from_class` query tests each Note's File Class
     /// against: a Note matches when any of its class values is in the returned
-    /// set. Transitive `extends` is folded in here, so the caller compares
+    /// set. Transitive `extends` is folded in here so the caller compares
     /// plain strings without consulting the registry per Note.
     ///
     /// # Examples
