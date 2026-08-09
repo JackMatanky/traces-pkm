@@ -164,7 +164,7 @@ fn reject_ambiguous_canonical_names(
             return Err(SchemaError::AmbiguousFieldName {
                 schema: SchemaName::from(name),
                 first: first.clone(),
-                second: field_name.clone(),
+                second: Box::new(field_name.clone()),
             });
         }
         seen.insert(canonical, field_name.clone());
@@ -807,6 +807,22 @@ mod tests {
                     ("status", input_field()),
                     ("Status", input_field()),
                 ]),
+            );
+
+            let err = resolve(&raw).expect_err("ambiguous field name rejected");
+            assert!(matches!(err, SchemaError::AmbiguousFieldName { .. }));
+        }
+
+        #[test]
+        fn an_own_field_colliding_with_an_inherited_field_is_a_hard_error() {
+            let mut raw = BTreeMap::new();
+            raw.insert(
+                SchemaName::from("book"),
+                schema(&[], &[("Due Date", input_field())]),
+            );
+            raw.insert(
+                SchemaName::from("sci_fi"),
+                schema(&["book"], &[("due-date", input_field())]),
             );
 
             let err = resolve(&raw).expect_err("ambiguous field name rejected");

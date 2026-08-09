@@ -1,13 +1,12 @@
-//! Validated field-name/key primitives shared across Note metadata and
-//! Schema.
+//! Validated field-name/key primitives shared across Note metadata and Schema.
 //!
 //! [`FieldName`] is the exact identifier Schemas use: two field names are equal
 //! only if their raw text matches byte-for-byte (`"status"` and `"Status"` are
 //! distinct identities). [`FieldKey`] is the forgiving identifier Note
 //! frontmatter and inline fields use: it additionally tracks a canonical form
-//! so `"Status"`, `"status"`, and `"  status  "` all *match* (via
-//! [`FieldKey::is_match`] and friends) without being interchangeable as raw
-//! text.
+//! so `"Status"`, `"status"`, and `"Due-Date"`/`"due date"`-style variants all
+//! *match* (via [`FieldKey::is_match`] and friends) without being
+//! interchangeable as raw text.
 //!
 //! Both types are constructed only through fallible conversions
 //! (`TryFrom`/`FromStr`): an empty name, a name whose canonical form strips to
@@ -115,7 +114,6 @@ impl FieldName {
     /// Converts this name into a forgiving [`FieldKey`], allocating its
     /// canonical form. Borrowed counterpart to `impl From<FieldName> for
     /// FieldKey`, for call sites that only have a `&FieldName`.
-    #[inline]
     #[must_use]
     pub(crate) fn to_key(&self) -> FieldKey {
         let canonical = FieldKey::canonicalize(&self.0);
@@ -480,6 +478,67 @@ impl<'de> Deserialize<'de> for FieldKey {
     }
 }
 
+/// Finds the item with the smallest edit distance to `input` among
+/// `candidates`, each paired with the text to compare `input` against.
+///
+/// The matching threshold is half of `input`'s character count rounded up,
+/// with a minimum threshold of 1 (`input.chars().count().div_ceil(2).max(1)`).
+/// This threshold ensures single-character typos (such as `"nam"` for
+/// `"name"`) match while preventing unrelated words (such as `"bogus"`) from
+/// matching any candidate.
+///
+/// Returns the candidate item with the smallest edit distance if that
+/// distance does not exceed the calculated threshold. Returns [`None`] if
+/// `candidates` is empty or no candidate falls within the matching threshold.
+pub(crate) fn closest_match<'a, T>(
+    candidates: impl Iterator<Item = (T, &'a str)>,
+    input: &str,
+) -> Option<T> {
+    let threshold = input.chars().count().div_ceil(2).max(1);
+    candidates
+        .map(|(item, name)| (item, edit_distance(input, name)))
+        .min_by_key(|&(_, distance)| distance)
+        .filter(|&(_, distance)| distance <= threshold)
+        .map(|(item, _)| item)
+}
+
+/// Calculates the Levenshtein edit distance between two strings.
+///
+/// Computes the minimum number of single-character insertions, deletions, or
+/// substitutions required to transform `a` into `b` using an iterative
+/// two-row Wagner-Fischer algorithm.
+///
+/// Returns the edit distance as a [`usize`].
+pub(crate) fn edit_distance(a: &str, b: &str) -> usize {
+    let b_chars: Vec<char> = b.chars().collect();
+    let mut row: Vec<usize> = (0..=b_chars.len()).collect();
+    for (i, ch_a) in a.chars().enumerate() {
+        let mut next_row = Vec::with_capacity(row.len());
+        next_row.push(i.saturating_add(1));
+        for (j, &ch_b) in b_chars.iter().enumerate() {
+            let substitution_cost = usize::from(ch_a != ch_b);
+            let deletion = row
+                .get(j.saturating_add(1))
+                .copied()
+                .unwrap_or(usize::MAX)
+                .saturating_add(1);
+            let insertion = next_row
+                .get(j)
+                .copied()
+                .unwrap_or(usize::MAX)
+                .saturating_add(1);
+            let substitution = row
+                .get(j)
+                .copied()
+                .unwrap_or(usize::MAX)
+                .saturating_add(substitution_cost);
+            next_row.push(deletion.min(insertion).min(substitution));
+        }
+        row = next_row;
+    }
+    row.last().copied().unwrap_or(0)
+}
+
 #[cfg(test)]
 mod tests {
     mod field_name {
@@ -658,6 +717,68 @@ mod tests {
             let key = FieldKey::from(name);
             assert_eq!(key.name(), "Status");
             assert_eq!(key.canonical(), "status");
+        }
+    }
+
+    mod suggest {
+        use pretty_assertions::assert_eq;
+        use rstest::rstest;
+
+        use super::super::*;
+
+        #[rstest]
+        #[case::identical("name", "name", 0)]
+        #[case::classic_kitten_sitting("kitten", "sitting", 3)]
+        #[case::empty_a("", "abc", 3)]
+        #[case::empty_b("abc", "", 3)]
+        #[case::single_insertion("nam", "name", 1)]
+        #[case::single_deletion("name", "nam", 1)]
+        #[case::single_substitution("cat", "hat", 1)]
+        fn edit_distance_computes_the_minimum_operation_count(
+            #[case] a: &str,
+            #[case] b: &str,
+            #[case] expected: usize,
+        ) {
+            assert_eq!(edit_distance(a, b), expected);
+        }
+
+        #[test]
+        fn closest_match_matches_within_the_half_length_threshold() {
+            let candidates = ["path", "name", "folder"];
+            assert_eq!(
+                closest_match(candidates.into_iter().map(|c| (c, c)), "nam"),
+                Some("name")
+            );
+        }
+
+        #[test]
+        fn closest_match_rejects_a_match_past_the_threshold() {
+            // "na" has threshold ceil(2/2).max(1) = 1, but its distance to
+            // "name" is 2 (insert "m", "e"): too far to suggest.
+            let candidates = ["name"];
+            assert_eq!(
+                closest_match(candidates.into_iter().map(|c| (c, c)), "na"),
+                None
+            );
+        }
+
+        #[test]
+        fn closest_match_returns_none_for_an_empty_candidate_list() {
+            assert_eq!(
+                closest_match(std::iter::empty::<(&str, &str)>(), "name"),
+                None
+            );
+        }
+
+        #[test]
+        fn closest_match_breaks_ties_by_iteration_order() {
+            // Both "cat" and "bat" are distance 1 from "mat"; the first
+            // candidate in iteration order wins.
+            let candidates = ["cat", "bat"];
+            assert_eq!(
+                closest_match(candidates.into_iter().map(|c| (c, c)), "mat"),
+                Some("cat")
+            );
         }
     }
 }

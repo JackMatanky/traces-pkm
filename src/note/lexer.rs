@@ -191,7 +191,8 @@ fn body_field_callback(lex: &mut Lexer<'_, FieldToken>) -> Filter<InlineField> {
 ///
 /// Rejects, skipping only the opening delimiter, when:
 /// - there is no `::` separator before the text ends,
-/// - the key is empty or contains a bracket character, or
+/// - the key is empty, contains a bracket character, or has an empty canonical
+///   form (punctuation-only text), or
 /// - [`find_closing_delimiter`] finds no matching closing delimiter.
 fn wrapped_field_callback(
     lex: &mut Lexer<'_, FieldToken>,
@@ -930,6 +931,13 @@ mod tests {
                 fields.first().and_then(|field| field.value().as_str()),
                 Some(r"\[value")
             );
+        }
+
+        #[test]
+        fn drops_a_wrapped_field_whose_key_has_no_searchable_characters() {
+            let fields = extract_inline_fields("Hello [!!!:: value]");
+
+            assert!(fields.is_empty());
         }
 
         #[test]

@@ -9,7 +9,7 @@
 //! - A frontmatter or inline metadata field key
 
 use super::{super::file::FileRecord, error::QueryError};
-use crate::{field::FieldKey, note::FieldValue};
+use crate::{field, field::FieldKey, note::FieldValue};
 
 /// Represents a `file.<field>` accessor backed by [`FileRecord`] metadata.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -271,69 +271,21 @@ fn accessor_typo_error(
     )
 }
 
-/// Finds the accessor name with the smallest edit distance to an input string.
+/// Finds the accessor name with the smallest edit distance to an input
+/// string.
 ///
-/// Evaluates `input` against each candidate in `candidates` using
-/// [`edit_distance`].
+/// Thin wrapper over [`crate::field::closest_match`]: see its doc for the
+/// matching threshold.
 ///
-/// The matching threshold is half of `input`'s character count rounded up, with
-/// a minimum threshold of 1 (`input.chars().count().div_ceil(2).max(1)`). This
-/// threshold ensures single-character typos (such as `"nam"` for `"name"`)
-/// match while preventing unrelated words (such as `"bogus"`) from matching any
-/// candidate accessor.
-///
-/// Returns `Some(&'static str)` containing the candidate with the smallest edit
-/// distance if that distance does not exceed the calculated threshold. Returns
-/// [`None`] if `candidates` is empty or no candidate falls within the matching
-/// threshold.
+/// Returns `Some(&'static str)` containing the candidate with the smallest
+/// edit distance if that distance does not exceed the calculated threshold.
+/// Returns [`None`] if `candidates` is empty or no candidate falls within the
+/// matching threshold.
 fn closest_accessor(
     candidates: &[&'static str],
     input: &str,
 ) -> Option<&'static str> {
-    let threshold = input.chars().count().div_ceil(2).max(1);
-    candidates
-        .iter()
-        .map(|&name| (name, edit_distance(input, name)))
-        .min_by_key(|&(_, distance)| distance)
-        .filter(|&(_, distance)| distance <= threshold)
-        .map(|(name, _)| name)
-}
-
-/// Calculates the Levenshtein edit distance between two strings.
-///
-/// Computes the minimum number of single-character insertions, deletions, or
-/// substitutions required to transform `a` into `b` using an iterative two-row
-/// Wagner-Fischer algorithm.
-///
-/// Returns the edit distance as a [`usize`].
-fn edit_distance(a: &str, b: &str) -> usize {
-    let b_chars: Vec<char> = b.chars().collect();
-    let mut row: Vec<usize> = (0..=b_chars.len()).collect();
-    for (i, ch_a) in a.chars().enumerate() {
-        let mut next_row = Vec::with_capacity(row.len());
-        next_row.push(i.saturating_add(1));
-        for (j, &ch_b) in b_chars.iter().enumerate() {
-            let substitution_cost = usize::from(ch_a != ch_b);
-            let deletion = row
-                .get(j.saturating_add(1))
-                .copied()
-                .unwrap_or(usize::MAX)
-                .saturating_add(1);
-            let insertion = next_row
-                .get(j)
-                .copied()
-                .unwrap_or(usize::MAX)
-                .saturating_add(1);
-            let substitution = row
-                .get(j)
-                .copied()
-                .unwrap_or(usize::MAX)
-                .saturating_add(substitution_cost);
-            next_row.push(deletion.min(insertion).min(substitution));
-        }
-        row = next_row;
-    }
-    row.last().copied().unwrap_or(0)
+    field::closest_match(candidates.iter().map(|&name| (name, name)), input)
 }
 
 #[cfg(test)]
@@ -393,25 +345,8 @@ mod tests {
 
     mod accessor_matching {
         use pretty_assertions::assert_eq;
-        use rstest::rstest;
 
         use super::*;
-
-        #[rstest]
-        #[case::identical("name", "name", 0)]
-        #[case::classic_kitten_sitting("kitten", "sitting", 3)]
-        #[case::empty_a("", "abc", 3)]
-        #[case::empty_b("abc", "", 3)]
-        #[case::single_insertion("nam", "name", 1)]
-        #[case::single_deletion("name", "nam", 1)]
-        #[case::single_substitution("cat", "hat", 1)]
-        fn edit_distance_computes_the_minimum_operation_count(
-            #[case] a: &str,
-            #[case] b: &str,
-            #[case] expected: usize,
-        ) {
-            assert_eq!(edit_distance(a, b), expected);
-        }
 
         #[test]
         fn closest_accessor_matches_within_the_half_length_threshold() {
@@ -492,6 +427,7 @@ mod tests {
         #[case::unknown_task_accessor("task.bogus")]
         #[case::extra_task_segment("task.completed.extra")]
         #[case::dotted_metadata_path("a.b")]
+        #[case::canonical_empty_bare_key("!!!")]
         fn rejects_malformed_paths(#[case] path: &str) {
             assert_eq!(
                 FieldPath::parse(path),

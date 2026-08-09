@@ -52,6 +52,7 @@ use minijinja::{
 };
 
 use crate::{
+    field,
     field::FieldKey,
     schema::{Schema, SchemaError, SchemaRegistry},
 };
@@ -286,57 +287,17 @@ fn closest_field_suggestion<'a>(
     }
 }
 
-/// Finds the field name in `schema` with the smallest edit distance to `field`,
-/// for a `did you mean` suggestion when no field canonically matches.
+/// Finds the field name in `schema` with the smallest edit distance to
+/// `field`, for a `did you mean` suggestion when no field canonically
+/// matches.
 ///
-/// Mirrors `index::query::field::closest_accessor`'s threshold: half of
-/// `field`'s character count rounded up, minimum 1.
+/// Thin wrapper over [`crate::field::closest_match`]: see its doc for the
+/// matching threshold.
 fn closest_field_name<'a>(schema: &'a Schema, field: &str) -> Option<&'a str> {
-    let threshold = field.chars().count().div_ceil(2).max(1);
-    schema
-        .fields()
-        .keys()
-        .map(|name| (name.as_str(), edit_distance(field, name.as_str())))
-        .min_by_key(|&(_, distance)| distance)
-        .filter(|&(_, distance)| distance <= threshold)
-        .map(|(name, _)| name)
-}
-
-/// Calculates the Levenshtein edit distance between two strings.
-///
-/// Computes the minimum number of single-character insertions, deletions, or
-/// substitutions required to transform `a` into `b` using an iterative two-row
-/// Wagner-Fischer algorithm.
-///
-/// Returns the edit distance as a [`usize`].
-fn edit_distance(a: &str, b: &str) -> usize {
-    let b_chars: Vec<char> = b.chars().collect();
-    let mut row: Vec<usize> = (0..=b_chars.len()).collect();
-    for (i, ch_a) in a.chars().enumerate() {
-        let mut next_row = Vec::with_capacity(row.len());
-        next_row.push(i.saturating_add(1));
-        for (j, &ch_b) in b_chars.iter().enumerate() {
-            let substitution_cost = usize::from(ch_a != ch_b);
-            let deletion = row
-                .get(j.saturating_add(1))
-                .copied()
-                .unwrap_or(usize::MAX)
-                .saturating_add(1);
-            let insertion = next_row
-                .get(j)
-                .copied()
-                .unwrap_or(usize::MAX)
-                .saturating_add(1);
-            let substitution = row
-                .get(j)
-                .copied()
-                .unwrap_or(usize::MAX)
-                .saturating_add(substitution_cost);
-            next_row.push(deletion.min(insertion).min(substitution));
-        }
-        row = next_row;
-    }
-    row.last().copied().unwrap_or(0)
+    field::closest_match(
+        schema.fields().keys().map(|name| (name.as_str(), name.as_str())),
+        field,
+    )
 }
 
 #[cfg(test)]

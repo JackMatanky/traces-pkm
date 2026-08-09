@@ -83,7 +83,7 @@ pub(crate) enum SchemaError {
     AmbiguousFieldName {
         schema: SchemaName,
         first: FieldName,
-        second: FieldName,
+        second: Box<FieldName>,
     },
 }
 
@@ -237,7 +237,9 @@ mod tests {
             let error = SchemaError::AmbiguousFieldName {
                 schema: SchemaName::from("book"),
                 first: FieldName::try_from("status").expect("valid name"),
-                second: FieldName::try_from("Status").expect("valid name"),
+                second: Box::new(
+                    FieldName::try_from("Status").expect("valid name"),
+                ),
             };
 
             assert_display(
@@ -255,11 +257,16 @@ mod tests {
             // shows verbatim. `RefOutOfBounds`/`RefFieldNotFound` box their
             // `FieldRef` payload for the same reason now that a `$ref` is a
             // validated `SchemaName` + `FieldName` pair rather than a single
-            // `String`. Keep every variant's payload small enough that
-            // `Result<_, SchemaError>` stays cheap to move through the
-            // resolution call chain.
+            // `String`. `AmbiguousFieldName` boxes `second` for the same
+            // reason: two owned `FieldName`s alongside `schema` would have
+            // tied it for the largest variant again (measured: boxing one
+            // field lands the enum at 64 bytes, not the payload-only 56,
+            // since no variant's layout leaves the discriminant a free
+            // niche once two variants tie for largest). Keep every variant's
+            // payload small enough that `Result<_, SchemaError>` stays cheap
+            // to move through the resolution call chain.
             assert!(
-                std::mem::size_of::<SchemaError>() <= 88,
+                std::mem::size_of::<SchemaError>() <= 64,
                 "SchemaError grew to {} bytes; box or trim the offending \
                  variant",
                 std::mem::size_of::<SchemaError>()
