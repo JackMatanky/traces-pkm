@@ -1,10 +1,8 @@
-//! Deserialization shapes for config TOML.
-//!
-//! These serde types match the on-disk schema and deny unknown fields.
+//! Deserializes TOML config into serde types that deny unknown fields.
 //!
 //! # Boundary
 //!
-//! This module preserves TOML values exactly as configured. Path resolution and
+//! Preserves TOML values exactly as configured. Path resolution and
 //! local-over-global precedence are applied later by the builder pipeline.
 
 use std::path::PathBuf;

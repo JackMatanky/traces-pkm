@@ -1,7 +1,5 @@
-//! Config-file discovery before trust checks and parsing.
-//!
-//! This module turns a filesystem anchor into typed config-file candidates
-//! without reading TOML content.
+//! Turns a filesystem anchor into typed config-file candidates without
+//! reading TOML content.
 //!
 //! # Discovery Modes
 //!

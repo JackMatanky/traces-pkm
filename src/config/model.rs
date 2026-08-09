@@ -1,20 +1,12 @@
-//! Defines the resolved configuration model for downstream consumers.
+//! Resolved configuration model produced by the builder pipeline.
 //!
-//! # Main Types
+//! # Types
 //!
-//! - [`Config`] - Exposes the project root, template directories, output
-//!   directory, Schema registry settings, and frontmatter key names after
-//!   discovery, trust checks, and merging.
-//! - [`TemplateConfig`] - Preserves local and global template directories so
-//!   template lookup can stay local-first.
-//! - [`SchemasConfig`] - The `[schemas]` class field name and registry
-//!   directory. The directory feeds the `schema` minijinja namespace's Schema
-//!   registry lookup and is resolved for `query.from_class`/`tasks.from_class`.
-//! - [`FrontmatterConfig`] - The `[frontmatter]` key names for title, aliases,
-//!   and the `{name, format}` date roles, declared here and consumed by later
-//!   frontmatter-aware work.
-//! - [`DateFieldConfig`] - A `{name, format}` pair for one frontmatter date
-//!   role, held by [`FrontmatterConfig`].
+//! - [`Config`] merges local/global settings into read-only resolved values.
+//! - [`TemplateConfig`] preserves local and global template directories.
+//! - [`SchemasConfig`] resolves the `[schemas]` class field and registry path.
+//! - [`FrontmatterConfig`] resolves `[frontmatter]` key names.
+//! - [`DateFieldConfig`] pairs a date frontmatter key with its format.
 
 use std::path::{Path, PathBuf};
 
@@ -26,7 +18,8 @@ const DEFAULT_CLASS_FIELD: &str = "class";
 /// Default `[schemas] directory` when unconfigured.
 const DEFAULT_SCHEMAS_DIR: &str = ".traces/schemas/";
 
-/// Merged local/global configuration ready for consumers.
+/// Resolved config ready for consumers after discovery, trust checks, and
+/// merging.
 #[derive(Clone, Debug)]
 pub struct Config {
     root: PathBuf,
@@ -191,13 +184,8 @@ impl TemplateConfig {
     }
 }
 
-/// Resolved `[schemas]` settings: the class field name and registry
-/// directory.
-///
-/// The template engine reads the class field for `query.from_class`/
-/// `tasks.from_class` and joins the registry directory against
-/// [`Config::root`] to build the Schema registry path for the `schema`
-/// minijinja namespace.
+/// Resolved `[schemas]` settings providing the class field name and registry
+/// directory for template lookup.
 #[derive(Clone, Debug)]
 pub struct SchemasConfig {
     class_field: String,
@@ -246,11 +234,8 @@ impl From<RawSchemasConfig> for SchemasConfig {
     }
 }
 
-/// Resolved `[frontmatter]` settings: key names for title, aliases, and the
-/// `{name, format}` date roles.
-///
-/// Every key is optional; absence means no consumer-facing default is
-/// declared yet. Frontmatter-aware consumers read these once they exist.
+/// Resolved `[frontmatter]` settings mapping key names for title, aliases,
+/// and date roles.
 #[derive(Clone, Debug, Default)]
 pub struct FrontmatterConfig {
     #[cfg_attr(
@@ -376,7 +361,7 @@ impl From<RawFrontmatterConfig> for FrontmatterConfig {
     }
 }
 
-/// A `{name, format}` pair naming a date-valued frontmatter key.
+/// A frontmatter key name and its date format string.
 #[derive(Clone, Debug)]
 pub struct DateFieldConfig {
     #[cfg_attr(

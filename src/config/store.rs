@@ -1,4 +1,4 @@
-//! Persistent config tracking and trust state.
+//! Persists config tracking and trust state across runs.
 //!
 //! [`ConfigStateStore`] wraps the durable stores used by config loading and
 //! trust administration.
@@ -62,9 +62,9 @@ impl ConfigTrustCheck {
 
 const COMPANION_SUFFIX: &str = ".hash";
 
-/// Manages the backing store for config tracking and trust records.
+/// Backs config tracking and trust records with two hash-keyed
+/// [`FileStateStore`] values.
 ///
-/// Wraps two independent hash-keyed [`FileStateStore`] values:
 /// - `tracked` records config files discovery has seen;
 /// - `trusted` records workspace roots and config content baselines.
 #[derive(Clone, Debug)]

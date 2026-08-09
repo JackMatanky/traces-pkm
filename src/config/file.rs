@@ -1,4 +1,4 @@
-//! Typed config-file lifecycle states.
+//! Tracks config-file lifecycle states using typestate markers.
 //!
 //! [`ConfigFile`] pairs a config path with source and lifecycle markers so the
 //! loader can express valid transitions in types.
@@ -110,7 +110,7 @@ pub(crate) type LocalConfigFile<State> = ConfigFile<IsLocal, State>;
 /// A global user config file.
 pub(crate) type GlobalConfigFile<State> = ConfigFile<IsGlobal, State>;
 
-/// Config file path plus source and lifecycle state.
+/// A config file tracked through its lifecycle via typestate markers.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct ConfigFile<Source, State> {
     root: PathBuf,

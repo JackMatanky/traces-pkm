@@ -1,11 +1,12 @@
-//! Config loading and trust service.
+//! Orchestrates config loading and trust administration.
 //!
-//! [`ConfigService`] is the operational entry point for config work.
+//! [`ConfigService`] is the single entry point for discovering, building, and
+//! trusting config files.
 //!
-//! # Operations
+//! # Pipeline
 //!
 //! - Loading discovers candidates, records local sightings, checks trust,
-//!   parses TOML, and merges global config before local config.
+//!   parses TOML, and merges global before local.
 //! - Trust administration resolves subjects and delegates durable state to
 //!   [`super::store::ConfigStateStore`].
 
@@ -39,10 +40,8 @@ use super::{
     trust::{ConfigTrustStatus, TrustRequest, TrustRequests},
 };
 
-/// Files selected for full config loading.
-///
-/// The deepest local config containing the discovery anchor is selected, then
-/// the optional global config is merged before it.
+/// Selects the deepest local config containing the discovery anchor, plus the
+/// optional global config merged before it.
 #[derive(Debug)]
 struct ConfigBuilderInput {
     /// Selected local config; this is merged after `global`.
@@ -85,11 +84,10 @@ impl TryFrom<DiscoveryOutcome> for ConfigBuilderInput {
     }
 }
 
-/// Service boundary for config loading and trust-admin commands.
+/// Entry point for config loading and trust administration.
 ///
-/// Holds the shared state store while keeping filesystem discovery
-/// (`load`) separate from trust operations such as `trust` and
-/// [`Self::untrust`].
+/// Keeps filesystem discovery (`load`) separate from trust operations such as
+/// `trust` and [`Self::untrust`].
 #[derive(Clone, Debug)]
 pub struct ConfigService {
     state: ConfigStateStore,

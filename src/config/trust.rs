@@ -1,10 +1,10 @@
-//! Defines the trust request target types and trust status models.
+//! Trust request targets and trust status models.
 //!
-//! # Concepts
+//! # Types
 //!
 //! - [`TrustRequest`] names either a workspace root or one local config file.
 //! - [`WorkspaceTrustStatus`] describes root trust.
-//! - [`ConfigTrustStatus`] adds config-baseline states used to detect stale
+//! - [`ConfigTrustStatus`] adds config-baseline states for detecting stale
 //!   local config files.
 
 use std::{
@@ -14,7 +14,7 @@ use std::{
 
 use super::file::{Discovered, LocalConfigFile, Tracked};
 
-/// Represents the target of a trust or untrust operation.
+/// Targets a workspace root or config file for a trust operation.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum TrustRequest {
     /// Trust a workspace root without binding to a config file.
@@ -111,14 +111,14 @@ impl IntoIterator for TrustRequests {
     }
 }
 
-/// Describes the trust state for a workspace root.
+/// Trust state for a workspace root.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(crate) enum WorkspaceTrustStatus {
     Trusted,
     Untrusted,
 }
 
-/// Describes the trust state for a config file relative to its workspace root.
+/// Trust state for a config file relative to its workspace root.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(crate) enum ConfigTrustStatus {
     /// The workspace root is trusted and, when a baseline hash exists,
