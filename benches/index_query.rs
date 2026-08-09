@@ -1,6 +1,6 @@
 //! Benches `traces_pkm::QueryOutcome::{filter, sort}` over a pre-built
-//! 1000-record index, the transformation chain every `traces list`/`table`/
-//! `task` command and every template `query`/`tasks` call runs.
+//! 1000-record index, the transformation chain every `traces
+//! list`/`table`/`task` command and every template `query`/`tasks` call runs.
 //!
 //! Run via `mise run bench`, not bare `cargo bench`: this crate's
 //! `test-utils`-gated public surface (`FileIndex`, `QueryOutcome`) is only
@@ -27,9 +27,9 @@ fn built_index() -> FileIndex {
 
 /// Filters a pre-built 1000-record index on `rating >= 50`.
 ///
-/// The transformation every `--where` and template `.filter()` call runs
-/// (see module docs); a correctness test would pass regardless of a silent
-/// slowdown here.
+/// The transformation every `--where` and template `.filter()` call runs (see
+/// module docs); a correctness test would pass regardless of a silent slowdown
+/// here.
 fn bench_filter(c: &mut Criterion) {
     c.bench_function("QueryOutcome::filter", |b| {
         b.iter_batched(

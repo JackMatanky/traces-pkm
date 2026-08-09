@@ -39,10 +39,9 @@ fn large() -> String {
 
 /// Parses small, medium, and large synthetic notes through `parse_markdown`.
 ///
-/// Every indexed file passes through this lexer (see module docs); scaling
-/// by field/task density, not just byte count, catches a cost regression
-/// that a correctness test — which only checks the parsed result — would
-/// miss.
+/// Every indexed file passes through this lexer (see module docs); scaling by
+/// field/task density, not just byte count, catches a cost regression that a
+/// correctness test — which only checks the parsed result — would miss.
 fn bench_parse_markdown(c: &mut Criterion) {
     let mut group = c.benchmark_group("parse_markdown");
     for (label, source) in

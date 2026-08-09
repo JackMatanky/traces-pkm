@@ -40,9 +40,9 @@ fn populate(n: usize) -> std::path::PathBuf {
 
 /// Builds a `FileIndex` over 10, 100, and 1000 notes.
 ///
-/// The full-scan path every `traces index` and first-run `list`/`table`/
-/// `task`/`template` call pays (see module docs); scaling by note count
-/// catches an accidental O(n²) creeping into this hot path, which a
+/// The full-scan path every `traces index` and first-run
+/// `list`/`table`/`task`/`template` call pays (see module docs); scaling by
+/// note count catches an accidental O(n²) creeping into this hot path, which a
 /// correctness test would pass regardless.
 fn bench_file_index_build(c: &mut Criterion) {
     let mut group = c.benchmark_group("FileIndex::build");

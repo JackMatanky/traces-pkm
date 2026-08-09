@@ -46,12 +46,12 @@ fn prepared_root() -> std::path::PathBuf {
     root
 }
 
-/// Renders a template listing every path over a pre-built 1000-note
-/// project, in `WriteMode::DryRun`.
+/// Renders a template listing every path over a pre-built 1000-note project, in
+/// `WriteMode::DryRun`.
 ///
-/// The render path every `traces template`/`-i` invocation pays (see
-/// module docs); `DryRun` isolates render cost from disk-write cost so a
-/// regression here is unambiguous rather than muddied by I/O variance.
+/// The render path every `traces template`/`-i` invocation pays (see module
+/// docs); `DryRun` isolates render cost from disk-write cost so a regression
+/// here is unambiguous rather than muddied by I/O variance.
 fn bench_render(c: &mut Criterion) {
     c.bench_function("TemplateService::render_to_file", |b| {
         b.iter_batched(
