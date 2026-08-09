@@ -15,6 +15,10 @@ use std::{
 use super::file::{Discovered, LocalConfigFile, Tracked};
 
 /// Targets a workspace root or config file for a trust operation.
+///
+/// Use [`TrustRequest::from(&Path)`] for root-only trust, or
+/// [`TrustRequest::from(&LocalConfigFile<Discovered>)`] for config-file
+/// trust that also records a content baseline.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum TrustRequest {
     /// Trust a workspace root without binding to a config file.
@@ -114,20 +118,22 @@ impl IntoIterator for TrustRequests {
 /// Trust state for a workspace root.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(crate) enum WorkspaceTrustStatus {
+    /// The workspace root is trusted.
     Trusted,
+    /// The workspace root is not trusted.
     Untrusted,
 }
 
 /// Trust state for a config file relative to its workspace root.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(crate) enum ConfigTrustStatus {
-    /// The workspace root is trusted and, when a baseline hash exists,
-    /// the config file's content still matches it.
+    /// The workspace root is trusted and, when a baseline hash exists, the
+    /// config file's content still matches it.
     Trusted,
     /// The workspace root is not trusted.
     Untrusted,
-    /// The workspace root is trusted, but no content-hash baseline was
-    /// ever recorded for this config file.
+    /// The workspace root is trusted, but no content-hash baseline was ever
+    /// recorded for this config file.
     MissingBaseline,
     /// The workspace root is trusted and a baseline hash exists, but the
     /// config file's current content no longer matches it.

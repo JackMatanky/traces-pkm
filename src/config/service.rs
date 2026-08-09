@@ -1,14 +1,18 @@
 //! Orchestrates config loading and trust administration.
 //!
-//! [`ConfigService`] is the single entry point for discovering, building, and
-//! trusting config files.
+//! [`ConfigService`] is the single entry point for discovering, building,
+//! and trusting config files.
 //!
-//! # Pipeline
+//! # Loading Pipeline
 //!
-//! - Loading discovers candidates, records local sightings, checks trust,
-//!   parses TOML, and merges global before local.
-//! - Trust administration resolves subjects and delegates durable state to
-//!   [`super::store::ConfigStateStore`].
+//! 1. Discover local and global TOML candidates from `cwd`.
+//! 2. Record local candidates in the tracking store.
+//! 3. Verify trust before parsing local content.
+//! 4. Parse TOML into [`RawConfig`].
+//! 5. Merge global before local so local values win.
+//!
+//! Trust administration resolves subjects and delegates durable state to
+//! [`super::store::ConfigStateStore`].
 
 use std::{
     fs,
@@ -86,8 +90,9 @@ impl TryFrom<DiscoveryOutcome> for ConfigBuilderInput {
 
 /// Entry point for config loading and trust administration.
 ///
-/// Filesystem discovery (`load`) and [`TrustRequest`] operations (`trust`,
-/// `untrust`) are separate surfaces on this type.
+/// Filesystem discovery ([`load`](Self::load)) and [`TrustRequest`]
+/// operations ([`trust`](Self::trust), [`untrust`](Self::untrust)) are
+/// separate surfaces on this type.
 #[derive(Clone, Debug)]
 pub struct ConfigService {
     state: ConfigStateStore,
@@ -107,8 +112,8 @@ impl ConfigService {
     /// Creates a service backed by explicit tracked-config and trust-store
     /// roots.
     ///
-    /// Test-only constructor for `crate::cli::trust` tests that need isolated
-    /// stores instead of real OS state directories.
+    /// Test-only constructor for `crate::cli::trust` tests that need
+    /// isolated stores instead of real OS state directories.
     #[cfg(any(test, feature = "test-utils"))]
     #[inline]
     #[must_use]
@@ -123,9 +128,9 @@ impl ConfigService {
     /// # Errors
     ///
     /// - [`ConfigLoadError::Discovery`] when no local config is found or
-    ///   discovery cannot inspect a path
+    ///   discovery cannot inspect a path.
     /// - [`ConfigLoadError::Build`] when trust, parsing, or merging fails after
-    ///   discovery succeeds
+    ///   discovery succeeds.
     #[inline]
     pub(crate) fn load(&self, cwd: &Path) -> Result<Config, ConfigLoadError> {
         let discovered = Self::discover(cwd)?;
@@ -138,9 +143,9 @@ impl ConfigService {
     ///
     /// # Errors
     ///
-    /// - [`DiscoveryError::LocalConfigAbsent`] when local config is absent
-    /// - [`DiscoveryError::PathInaccessible`] when a path cannot be accessed
-    ///   during discovery
+    /// - [`DiscoveryError::LocalConfigAbsent`] when no local config exists in
+    ///   any ancestor directory.
+    /// - [`DiscoveryError::PathInaccessible`] when a path cannot be accessed.
     #[inline]
     fn discover(cwd: &Path) -> Result<DiscoveryOutcome, DiscoveryError> {
         let ctx = DiscoveryContext::new(
@@ -168,16 +173,16 @@ impl ConfigService {
     /// - [`ConfigBuilderError::WrongDiscoveryKindForBuild`],
     ///   [`ConfigBuilderError::FullDiscoveryWithoutLocal`], or
     ///   [`ConfigBuilderError::FullDiscoveryWithoutAnchorLocal`] when discovery
-    ///   output is not valid builder input
+    ///   output is not valid builder input.
     /// - [`ConfigBuilderError::Untrusted`] when the local config's workspace is
-    ///   not trusted, is missing its baseline hash, or is stale
+    ///   not trusted, is missing its baseline hash, or is stale.
     /// - [`ConfigBuilderError::ConfigFile`] when a selected config file fails
-    ///   path validation, tracking/trust transition, or parsing
+    ///   path validation, tracking, trust transition, or parsing.
     /// - [`ConfigBuilderError::Merge`] when the merged local/global config
-    ///   cannot be re-extracted for its output directory
+    ///   cannot be re-extracted for its output directory.
     /// - [`ConfigBuilderError::InvalidFieldKey`] when a `[frontmatter]` or
     ///   `[schemas]` key name is empty, whitespace-only, or canonicalizes to
-    ///   nothing
+    ///   nothing.
     fn build(
         &self,
         discovered: DiscoveryOutcome,
@@ -242,16 +247,14 @@ impl ConfigService {
     ///
     /// # Errors
     ///
-    /// - [`DiscoveryError::PathInaccessible`] when discovery cannot inspect the
-    ///   path
-    /// - [`DiscoveryError::UnsupportedTrustScope`] when `scope` is [`Full`],
-    ///   which trust resolution does not support
-    /// - [`DiscoveryError::ConfigFile`] when a config-file anchor is invalid
-    /// - [`DiscoveryError::LocalConfigAbsent`] when [`LocalSubtree`] discovery
-    ///   has no local root to walk from
-    ///
-    /// [`Full`]: DiscoveryScope::Full
-    /// [`LocalSubtree`]: DiscoveryScope::LocalSubtree
+    /// - [`DiscoveryError::PathInaccessible`] when the path cannot be
+    ///   inspected.
+    /// - [`DiscoveryError::UnsupportedTrustScope`] when `scope` is
+    ///   [`DiscoveryScope::Full`], which trust resolution does not support.
+    /// - [`DiscoveryError::ConfigFile`] when a config-file anchor is invalid.
+    /// - [`DiscoveryError::LocalConfigAbsent`] when
+    ///   [`DiscoveryScope::LocalSubtree`] discovery has no local root to walk
+    ///   from.
     #[inline]
     #[expect(
         clippy::unused_self,
@@ -266,13 +269,15 @@ impl ConfigService {
         DiscoveryEngine::trust_requests(path, scope)
     }
 
-    /// Grants trust for a workspace root, and for config subjects also records
-    /// the config file's current content hash.
+    /// Grants trust for a workspace root.
+    ///
+    /// When `subject` carries a config file, also records the file's current
+    /// content hash as the trust baseline.
     ///
     /// # Errors
     ///
-    /// - [`ConfigStateError::Store`] when trust cannot be recorded
-    /// - [`ConfigStateError::Hash`] when the config file cannot be hashed
+    /// - [`ConfigStateError::Store`] when trust cannot be recorded.
+    /// - [`ConfigStateError::Hash`] when the config file cannot be hashed.
     #[inline]
     pub(crate) fn trust(
         &self,
@@ -283,10 +288,13 @@ impl ConfigService {
 
     /// Returns the trust status for `subject`.
     ///
+    /// For config-file subjects, checks the baseline hash. For root-only
+    /// subjects, checks only workspace presence.
+    ///
     /// # Errors
     ///
-    /// - [`ConfigStateError::Store`] when the trust store cannot be read
-    /// - [`ConfigStateError::Hash`] when the config file cannot be hashed
+    /// - [`ConfigStateError::Store`] when the trust store cannot be read.
+    /// - [`ConfigStateError::Hash`] when the config file cannot be hashed.
     #[inline]
     pub(crate) fn trust_status(
         &self,
@@ -301,12 +309,14 @@ impl ConfigService {
         }
     }
 
-    /// Removes trust for `subject`'s workspace root and returns how many root
-    /// entries were removed.
+    /// Removes trust for `subject`'s workspace root.
+    ///
+    /// Returns the number of root entries removed.
     ///
     /// # Errors
     ///
-    /// - `ConfigStateError::Store` when the trust entry cannot be removed
+    /// Returns [`ConfigStateError::Store`] when the trust entry cannot be
+    /// removed.
     #[inline]
     pub fn untrust(
         &self,
@@ -319,8 +329,8 @@ impl ConfigService {
     ///
     /// # Errors
     ///
-    /// - [`ConfigStateError::Store`] when the tracking store exists but cannot
-    ///   be read
+    /// Returns [`ConfigStateError::Store`] when the tracking store exists but
+    /// cannot be read.
     #[inline]
     pub(crate) fn list_tracked(
         &self,
@@ -328,13 +338,14 @@ impl ConfigService {
         self.state.list_tracked_configs()
     }
 
-    /// Removes dangling tracked-config entries and returns how many entries
-    /// were removed.
+    /// Removes dangling tracked-config entries.
+    ///
+    /// Returns the number of entries removed.
     ///
     /// # Errors
     ///
-    /// - [`ConfigStateError::Store`] when the tracking store exists but cannot
-    ///   be read, or a stale entry cannot be removed
+    /// Returns [`ConfigStateError::Store`] when the tracking store exists but
+    /// cannot be read, or a stale entry cannot be removed.
     #[inline]
     pub(crate) fn clean_tracked_store(
         &self,
@@ -346,8 +357,8 @@ impl ConfigService {
     ///
     /// # Errors
     ///
-    /// - [`ConfigStateError::Store`] when the trust store exists but cannot be
-    ///   read
+    /// Returns [`ConfigStateError::Store`] when the trust store exists but
+    /// cannot be read.
     #[inline]
     pub(crate) fn list_trusted(
         &self,
@@ -361,9 +372,9 @@ impl ConfigService {
     ///
     /// # Errors
     ///
-    /// - [`ConfigStateError::Store`] when the trust store exists but cannot be
-    ///   read, a stale root entry cannot be removed, or an existing
-    ///   content-hash companion cannot be removed
+    /// Returns [`ConfigStateError::Store`] when the trust store exists but
+    /// cannot be read, a stale root entry cannot be removed, or an existing
+    /// content-hash companion cannot be removed.
     #[inline]
     pub(crate) fn clean_trusted_store(
         &self,
@@ -374,22 +385,20 @@ impl ConfigService {
     /// Serialises `directory`/`output_dir` as the local template config and
     /// writes it to `root.join(LOCAL_CONFIG_FILE)`.
     ///
-    /// `[schemas]` and `[frontmatter]` are written as empty tables (their serde
-    /// defaults), so a freshly scaffolded config behaves identically to one
-    /// that omits those tables entirely.
+    /// `[schemas]` and `[frontmatter]` are written as empty tables (their
+    /// serde defaults), so a freshly scaffolded config behaves identically to
+    /// one that omits those tables entirely.
     ///
-    /// Uses [`File::create_new`] rather than [`std::fs::write`] so this fails
-    /// atomically if the file already exists. This prevents a concurrent
-    /// `traces init` or a file planted between the existence check and write
-    /// from being silently clobbered.
-    ///
-    /// [`File::create_new`]: std::fs::File::create_new
+    /// Uses [`std::fs::File::create_new`] rather than [`std::fs::write`] so
+    /// this fails atomically if the file already exists, preventing a
+    /// concurrent `traces init` or a file planted between the existence check
+    /// and write from being silently clobbered.
     ///
     /// # Errors
     ///
-    /// - [`ConfigScaffoldError::Serialize`] if TOML serialization fails
-    /// - [`ConfigScaffoldError::Write`] if the file already exists, or creating
-    ///   or writing it fails
+    /// - [`ConfigScaffoldError::Serialize`] when TOML serialization fails.
+    /// - [`ConfigScaffoldError::Write`] when the file already exists, or
+    ///   creating or writing it fails.
     #[inline]
     pub(crate) fn scaffold_local(
         root: &Path,

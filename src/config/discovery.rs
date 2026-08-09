@@ -1,14 +1,15 @@
-//! Turns a filesystem anchor into typed config-file candidates without reading
-//! TOML content.
+//! Turns a filesystem anchor into typed config-file candidates.
 //!
-//! # Discovery Modes
+//! Discovery reads the filesystem to locate `.traces/config.toml` files
+//! without reading TOML content. It produces [`DiscoveryOutcome`], which the
+//! builder pipeline consumes.
 //!
-//! - [`DiscoveryScope::Full`] selects local and global candidates for loading.
-//! - [`DiscoveryScope::NearestLocal`] resolves one trust target.
+//! # Scopes
+//!
+//! - [`DiscoveryScope::Full`] selects local and global candidates for config
+//!   loading.
+//! - [`DiscoveryScope::NearestLocal`] resolves a single trust target.
 //! - [`DiscoveryScope::LocalSubtree`] resolves descendant trust targets.
-//!
-//! [`DiscoveryOutcome`] is the handoff to the builder pipeline, keeping
-//! traversal state private and downstream inputs typed.
 
 use std::{
     io,
@@ -37,6 +38,9 @@ pub(crate) const LOCAL_CONFIG_FILE: &str = ".traces/config.toml";
 const GLOBAL_CONFIG_FILE: &str = "traces/config.toml";
 
 /// Validated scope and filesystem anchor for one discovery run.
+///
+/// Combines a [`DiscoveryScope`] with a [`DiscoveryAnchor`] after checking
+/// their compatibility.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct DiscoveryContext {
     kind: DiscoveryScope,
@@ -48,12 +52,9 @@ impl DiscoveryContext {
     ///
     /// # Errors
     ///
-    /// - [`DiscoveryError::UnsupportedFileAnchor`] when `kind` is [`Full`] and
-    ///   `anchor` is a file; full loading is always directory-rooted, while
-    ///   focused local discovery may root at either a directory or a concrete
-    ///   local config file
-    ///
-    /// [`Full`]: DiscoveryScope::Full
+    /// Returns [`DiscoveryError::UnsupportedFileAnchor`] when `kind` is
+    /// [`DiscoveryScope::Full`] and `anchor` is a [`DiscoveryAnchor::File`].
+    /// Full discovery always requires a directory root.
     #[inline]
     pub(crate) fn new(
         kind: DiscoveryScope,
@@ -80,7 +81,7 @@ impl DiscoveryContext {
     }
 }
 
-/// Discovery operation to run.
+/// Operation describing which config files to discover.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(crate) enum DiscoveryScope {
     /// Find the nearest local config and optional global config.
@@ -91,7 +92,7 @@ pub(crate) enum DiscoveryScope {
     LocalSubtree,
 }
 
-/// Filesystem anchor for a discovery operation.
+/// Filesystem starting point for a discovery operation.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum DiscoveryAnchor {
     /// Directory-rooted discovery.
@@ -120,9 +121,9 @@ type OutcomeParts = (
 
 /// Config-file candidates handed to the builder pipeline.
 ///
-/// Carries the discovery kind, original filesystem anchor, and files found on
-/// disk. Fields stay private so callers pass this token through unchanged or
-/// parse it into validated downstream input.
+/// Carries the discovery kind, filesystem anchor, and files found on disk.
+/// Pass this token through unchanged to the builder, or parse it into
+/// validated downstream input.
 #[derive(Clone, Debug)]
 pub(crate) struct DiscoveryOutcome {
     kind: DiscoveryScope,
@@ -200,9 +201,8 @@ impl DiscoveryOutcome {
 
 /// Routes discovery requests to the matching filesystem traversal.
 ///
-/// A stateless namespace: every method is an associated function called via
-/// `Self::`, not an instance method, since no discovery operation depends on
-/// per-call state.
+/// Stateless: every method is an associated function called via `Self::`,
+/// not an instance method.
 pub(crate) struct DiscoveryEngine;
 
 impl DiscoveryEngine {
@@ -210,10 +210,10 @@ impl DiscoveryEngine {
     ///
     /// # Errors
     ///
-    /// - [`DiscoveryError::LocalConfigAbsent`] when required local config is
-    ///   absent
-    /// - [`DiscoveryError::PathInaccessible`] when discovery cannot inspect a
-    ///   filesystem path
+    /// - [`DiscoveryError::LocalConfigAbsent`] when no local config exists in
+    ///   any ancestor directory.
+    /// - [`DiscoveryError::PathInaccessible`] when a filesystem path cannot be
+    ///   inspected.
     #[inline]
     pub(crate) fn process(
         ctx: DiscoveryContext,
@@ -231,24 +231,22 @@ impl DiscoveryEngine {
     /// Resolution rules:
     ///
     /// - A **file path** resolves to that local config.
-    /// - A **directory** with [`NearestLocal`] resolves to the nearest local
-    ///   config, falling back to a root-only request when none is found.
-    /// - A **directory** with [`LocalSubtree`] yields only discovered config
-    ///   requests.
+    /// - A **directory** with [`DiscoveryScope::NearestLocal`] resolves to the
+    ///   nearest local config, falling back to a root-only request when none is
+    ///   found.
+    /// - A **directory** with [`DiscoveryScope::LocalSubtree`] yields only
+    ///   discovered config requests.
     ///
     /// # Errors
     ///
-    /// - [`DiscoveryError::PathInaccessible`] when discovery cannot inspect a
-    ///   filesystem path
-    /// - [`DiscoveryError::UnsupportedTrustScope`] when `scope` is [`Full`],
-    ///   which trust resolution does not support
-    /// - [`DiscoveryError::ConfigFile`] when a config-file anchor is invalid
-    /// - [`DiscoveryError::LocalConfigAbsent`] when [`LocalSubtree`] discovery
-    ///   has no local root to walk from
-    ///
-    /// [`NearestLocal`]: DiscoveryScope::NearestLocal
-    /// [`LocalSubtree`]: DiscoveryScope::LocalSubtree
-    /// [`Full`]: DiscoveryScope::Full
+    /// - [`DiscoveryError::PathInaccessible`] when a filesystem path cannot be
+    ///   inspected.
+    /// - [`DiscoveryError::UnsupportedTrustScope`] when `scope` is
+    ///   [`DiscoveryScope::Full`], which trust resolution does not support.
+    /// - [`DiscoveryError::ConfigFile`] when a config-file anchor is invalid.
+    /// - [`DiscoveryError::LocalConfigAbsent`] when
+    ///   [`DiscoveryScope::LocalSubtree`] discovery has no local root to walk
+    ///   from.
     #[inline]
     pub(crate) fn trust_requests(
         path: &Path,

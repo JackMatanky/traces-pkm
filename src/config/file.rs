@@ -1,12 +1,14 @@
 //! Tracks config-file lifecycle states using typestate markers.
 //!
-//! [`ConfigFile`] pairs a config path with source and lifecycle markers so the
-//! loader can express valid transitions in types.
+//! [`ConfigFile`] pairs a config path with source and lifecycle markers so
+//! the loader expresses valid transitions in types.
 //!
 //! # Lifecycle
 //!
-//! - [`Discovered`] means the path exists but has not been tracked or trusted.
-//! - [`Tracked`] means local discovery recorded the path as best-effort state.
+//! - [`Discovered`] means the path exists on disk but has not been tracked or
+//!   trusted.
+//! - [`Tracked`] means local discovery recorded the path in the best-effort
+//!   store.
 //! - [`Trusted`] carries local TOML content verified against a trust baseline.
 //! - [`Parsed`] carries TOML decoded into [`RawConfig`].
 
@@ -65,8 +67,8 @@ impl Parsed {
     ///
     /// # Errors
     ///
-    /// - [`ConfigFileError::Read`] when `path` cannot be read or its content
-    ///   cannot be parsed as TOML
+    /// Returns [`ConfigFileError::Read`] when `path` cannot be read or its
+    /// content cannot be parsed as TOML.
     fn read(path: &Path) -> Result<Self, ConfigFileError> {
         let raw = Figment::from(Toml::file_exact(path))
             .extract::<RawConfig>()
@@ -82,12 +84,13 @@ impl Parsed {
     /// Parses already-read `content` for `path`.
     ///
     /// `path` is used only for error context. Local config content was read
-    /// while verifying trust, so this avoids a second independent read through
-    /// [`Self::read`].
+    /// while verifying trust, so this avoids a second independent read
+    /// through [`Self::read`].
     ///
     /// # Errors
     ///
-    /// - [`ConfigFileError::Read`] when `content` cannot be parsed as TOML
+    /// Returns [`ConfigFileError::Read`] when `content` cannot be parsed as
+    /// TOML.
     fn from_content(
         path: &Path,
         content: &str,
@@ -111,6 +114,9 @@ pub(crate) type LocalConfigFile<State> = ConfigFile<IsLocal, State>;
 pub(crate) type GlobalConfigFile<State> = ConfigFile<IsGlobal, State>;
 
 /// A config file tracked through its lifecycle via typestate markers.
+///
+/// `Source` distinguishes local from global files; `State` enforces valid
+/// transitions at compile time.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct ConfigFile<Source, State> {
     root: PathBuf,
@@ -121,6 +127,9 @@ pub(crate) struct ConfigFile<Source, State> {
 
 impl<Source, State> ConfigFile<Source, State> {
     /// Root directory used for path resolution.
+    ///
+    /// For a local config this is the project root; for a global config it is
+    /// the global config directory.
     #[inline]
     #[must_use]
     pub(crate) fn root(&self) -> &Path {
@@ -158,12 +167,16 @@ impl<Source, State> ConfigFile<Source, State> {
 }
 
 impl LocalConfigFile<Discovered> {
-    /// Creates a discovered local config file from `.traces/config.toml`.
+    /// Creates a discovered local config file from a `.traces/config.toml`
+    /// path.
+    ///
+    /// Derives the project root from the parent of the `.traces` directory.
     ///
     /// # Errors
     ///
-    /// - [`ConfigFileError::UnsupportedLocalConfigFile`] when `path` is not
-    ///   shaped like a local `.traces/config.toml` path
+    /// Returns [`ConfigFileError::UnsupportedLocalConfigFile`] when `path`
+    /// does not end with `.traces/config.toml` or has no parent `.traces`
+    /// directory.
     #[inline]
     pub(crate) fn try_new(path: PathBuf) -> Result<Self, ConfigFileError> {
         let Some(traces_dir) = path.parent() else {
@@ -190,10 +203,12 @@ impl LocalConfigFile<Discovered> {
 impl GlobalConfigFile<Discovered> {
     /// Creates a discovered global config file from a `config.toml` path.
     ///
+    /// Derives the root directory from the file's parent.
+    ///
     /// # Errors
     ///
-    /// - [`ConfigFileError::UnsupportedGlobalConfigFile`] when `path` has no
-    ///   parent directory or is not named `config.toml`
+    /// Returns [`ConfigFileError::UnsupportedGlobalConfigFile`] when `path`
+    /// is not named `config.toml` or has no parent directory.
     #[inline]
     pub(super) fn try_new(path: PathBuf) -> Result<Self, ConfigFileError> {
         if path.file_name() != Some("config.toml".as_ref()) {
@@ -221,14 +236,15 @@ pub(crate) enum TrustOutcome {
 impl LocalConfigFile<Tracked> {
     /// Verifies the trust status of this tracked config file.
     ///
-    /// Yields [`TrustOutcome::Trusted`] for a fully trusted file.
-    /// Yields [`TrustOutcome::Halted`] when trust is absent or stale, allowing
-    /// the caller to prompt the user.
+    /// Yields [`TrustOutcome::Trusted`] when the workspace is trusted and the
+    /// content hash matches the baseline. Yields [`TrustOutcome::Halted`]
+    /// when trust is absent, the baseline is missing, or the content is
+    /// stale, allowing the caller to prompt the user.
     ///
     /// # Errors
     ///
-    /// - [`ConfigFileError::TrustCheckFailed`] when the underlying state store
-    ///   fails
+    /// Returns [`ConfigFileError::TrustCheckFailed`] when the underlying
+    /// state store fails.
     pub(crate) fn verify_trust(
         self,
         state: &ConfigStateStore,

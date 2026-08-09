@@ -26,7 +26,7 @@ use crate::{
     Blake3FileHash, FileStateStore, FileStoreCleanMode, dirs, hash::HashError,
 };
 
-/// Represents the parse permission result for a local config file.
+/// Result of checking whether a local config file may be parsed.
 ///
 /// Only [`Self::Trusted`] carries already-read content. Keeping content and
 /// status together prevents callers from pairing trusted status with missing
@@ -35,14 +35,17 @@ use crate::{
 pub(crate) enum ConfigTrustCheck {
     /// The workspace root is not trusted.
     Untrusted,
-    /// The workspace root is trusted and a baseline hash exists, but the config
-    /// file's current content no longer matches it.
+    /// The workspace root is trusted and a baseline hash exists, but the
+    /// config file's current content no longer matches it.
     Stale,
     /// The workspace root is trusted, but no content-hash baseline was ever
     /// recorded for this config file.
     MissingBaseline,
-    /// The workspace root is trusted and the config file's content matches its
-    /// baseline hash. Carries the content read while verifying it.
+    /// The workspace root is trusted and the config file's content matches
+    /// its baseline hash.
+    ///
+    /// Carries the content read while verifying it, so parsing can reuse the
+    /// same buffer without a second filesystem read.
     Trusted(String),
 }
 
@@ -65,7 +68,7 @@ const COMPANION_SUFFIX: &str = ".hash";
 /// Backs config tracking and trust records with two hash-keyed
 /// [`FileStateStore`] values.
 ///
-/// - `tracked` records config files discovery has seen;
+/// - `tracked` records config files discovery has seen.
 /// - `trusted` records workspace roots and config content baselines.
 #[derive(Clone, Debug)]
 pub(crate) struct ConfigStateStore {
@@ -97,8 +100,8 @@ impl ConfigStateStore {
 
     /// Records that discovery saw a config file.
     ///
-    /// Best-effort: tracking is bookkeeping, so write failures warn and do not
-    /// fail config loading.
+    /// Best-effort: tracking is bookkeeping, so write failures warn and do
+    /// not fail config loading.
     #[inline]
     pub(crate) fn track_seen_config(
         &self,
@@ -115,10 +118,13 @@ impl ConfigStateStore {
 
     /// Grants trust for a workspace, optionally recording a config baseline.
     ///
+    /// When `subject` carries a config file, hashes its content and stores
+    /// the digest as a companion entry.
+    ///
     /// # Errors
     ///
-    /// - [`ConfigStateError::Store`] when trust cannot be recorded
-    /// - [`ConfigStateError::Hash`] when the config file cannot be hashed
+    /// - [`ConfigStateError::Store`] when trust cannot be recorded.
+    /// - [`ConfigStateError::Hash`] when the config file cannot be hashed.
     #[inline]
     pub(crate) fn grant_trust(
         &self,
@@ -141,7 +147,8 @@ impl ConfigStateStore {
     ///
     /// # Errors
     ///
-    /// - [`ConfigStateError::Store`] when the trust store cannot be read
+    /// Returns [`ConfigStateError::Store`] when the trust store cannot be
+    /// read.
     #[inline]
     pub(crate) fn workspace_trust_status(
         &self,
@@ -158,8 +165,8 @@ impl ConfigStateStore {
     ///
     /// # Errors
     ///
-    /// - [`ConfigStateError::Store`] when the trust store cannot be read
-    /// - [`ConfigStateError::Hash`] when the config file cannot be hashed
+    /// - [`ConfigStateError::Store`] when the trust store cannot be read.
+    /// - [`ConfigStateError::Hash`] when the config file cannot be hashed.
     #[inline]
     pub(crate) fn config_trust_status(
         &self,
@@ -187,8 +194,8 @@ impl ConfigStateStore {
     ///
     /// # Errors
     ///
-    /// - [`ConfigStateError::Store`] when the trust store cannot be read
-    /// - [`ConfigStateError::Hash`] when the config file cannot be read
+    /// - [`ConfigStateError::Store`] when the trust store cannot be read.
+    /// - [`ConfigStateError::Hash`] when the config file cannot be read.
     pub(crate) fn config_file_trust_check(
         &self,
         root: &Path,
@@ -220,7 +227,8 @@ impl ConfigStateStore {
     ///
     /// # Errors
     ///
-    /// - [`ConfigStateError::Store`] when the trust entry cannot be removed
+    /// Returns [`ConfigStateError::Store`] when the trust entry cannot be
+    /// removed.
     #[inline]
     pub(crate) fn revoke_trust(
         &self,
@@ -235,8 +243,8 @@ impl ConfigStateStore {
     ///
     /// # Errors
     ///
-    /// - [`ConfigStateError::Store`] when the tracked-config store cannot be
-    ///   read
+    /// Returns [`ConfigStateError::Store`] when the tracked-config store
+    /// cannot be read.
     #[inline]
     pub(crate) fn list_tracked_configs(
         &self,
@@ -248,7 +256,8 @@ impl ConfigStateStore {
     ///
     /// # Errors
     ///
-    /// - [`ConfigStateError::Store`] when stale entries cannot be cleaned
+    /// Returns [`ConfigStateError::Store`] when stale entries cannot be
+    /// cleaned.
     #[inline]
     pub(crate) fn clean_tracked_configs(
         &self,
@@ -260,7 +269,8 @@ impl ConfigStateStore {
     ///
     /// # Errors
     ///
-    /// - [`ConfigStateError::Store`] when the trust store cannot be read
+    /// Returns [`ConfigStateError::Store`] when the trust store cannot be
+    /// read.
     #[inline]
     pub(crate) fn list_trusted_workspaces(
         &self,
@@ -273,7 +283,8 @@ impl ConfigStateStore {
     ///
     /// # Errors
     ///
-    /// - [`ConfigStateError::Store`] when stale entries cannot be cleaned
+    /// Returns [`ConfigStateError::Store`] when stale entries cannot be
+    /// cleaned.
     #[inline]
     pub(crate) fn clean_trusted_workspaces(
         &self,

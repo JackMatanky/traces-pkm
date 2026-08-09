@@ -1,20 +1,28 @@
-//! Discovers, tracks, trusts, parses, and merges TOML config files into a
-//! resolved [`Config`].
-//!
-//! # Types
-//!
-//! - [`ConfigService`] orchestrates the full load pipeline and trust
-//!   administration.
-//! - [`Config`] holds merged local/global settings for consumers.
-//! - [`TrustRequest`] targets a workspace root or config file for trust
-//!   operations.
+//! Loads TOML configuration from the filesystem into a resolved [`Config`].
 //!
 //! # Pipeline
 //!
-//! 1. Discover local and global TOML files from a filesystem anchor.
-//! 2. Track discovered local configs as best-effort state.
-//! 3. Reject untrusted or stale local config content before parsing.
-//! 4. Merge global config before local config so local values win.
+//! 1. **Discover** local `.traces/config.toml` and optional global
+//!    `traces/config.toml` from a directory anchor ([`discovery`]).
+//! 2. **Track** discovered local configs in a best-effort store
+//!    ([`store::ConfigStateStore`]).
+//! 3. **Verify trust** before parsing local content; reject untrusted or stale
+//!    files ([`trust`]).
+//! 4. **Parse** TOML into [`raw::RawConfig`] ([`file`]).
+//! 5. **Merge** global config before local so local values win
+//!    ([`service::ConfigService`]).
+//!
+//! Path resolution and default filling happen in [`model`], which produces
+//! the final [`Config`].
+//!
+//! # Main Types
+//!
+//! - [`ConfigService`] owns the load pipeline and trust administration.
+//! - [`Config`] holds merged settings ready for consumers.
+//! - [`TrustRequest`] names a workspace root or config file for trust
+//!   operations.
+//!
+//! Filesystem paths are resolved by the [`crate::dirs`] module.
 
 mod discovery;
 mod error;
@@ -39,10 +47,8 @@ pub(crate) use file::{Discovered, LocalConfigFile};
 pub use model::Config;
 #[cfg(any(test, feature = "test-utils"))]
 pub use model::{DateFieldConfig, FrontmatterConfig, SchemasConfig};
-/// Orchestrates config loading and trust administration.
 pub use service::ConfigService;
 #[cfg(test)]
 pub(crate) use trust::ConfigTrustStatus;
-/// Target of a trust or untrust operation.
 pub use trust::TrustRequest;
 pub(crate) use trust::TrustRequests;
