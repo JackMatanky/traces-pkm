@@ -183,14 +183,6 @@ impl Object for SchemaOps {
     }
 }
 
-/// Wraps [`SchemaRegistry`] only so it can round-trip through [`State`]'s temp
-/// storage via [`Value::from_object`]/[`Value::downcast_object_ref`]. Never
-/// exposed to templates: no global registers it, unlike [`SchemaBinding`].
-#[derive(Debug)]
-struct CachedRegistry(Arc<SchemaRegistry>);
-
-impl Object for CachedRegistry {}
-
 /// Pairs a bound [`Schema`] with the [`SchemaRegistry`] it resolved from, so
 /// `.descendants()` can look up other Schemas by is-a relationship. [`Schema`]
 /// itself stays registry-unaware (see the module docs): this wrapper, not
@@ -205,6 +197,44 @@ struct SchemaBinding {
     root: Arc<Path>,
     class_field: Arc<str>,
     aliases_field: Option<Arc<str>>,
+}
+
+impl SchemaBinding {
+    /// Resolves a file-typed field against the render-scoped `FileIndex`.
+    fn file_field_values(
+        &self,
+        state: &State,
+        folders: &[String],
+        ext: Option<&str>,
+        classes: &[String],
+    ) -> Result<Value, Error> {
+        let index = super::query::cached_refresh(state, &self.root)
+            .map_err(super::query::index_error)?;
+        let class_matches = if classes.is_empty() {
+            None
+        } else {
+            for class in classes {
+                if self.registry.get(class).is_none() {
+                    tracing::warn!(
+                        class = %class,
+                        "file field references a class with no Schema; \
+                         degrading to exact match"
+                    );
+                }
+            }
+            Some(self.registry.matching_classes(classes))
+        };
+        let options = index.file_options(crate::index::FileOptionFilter::new(
+            folders,
+            ext,
+            &self.class_field,
+            class_matches.as_ref(),
+            self.aliases_field.as_deref(),
+        ));
+        Ok(Value::from(
+            options.iter().map(file_option_value).collect::<Vec<_>>(),
+        ))
+    }
 }
 
 impl Object for SchemaBinding {
@@ -269,43 +299,13 @@ impl Object for SchemaBinding {
     }
 }
 
-impl SchemaBinding {
-    /// Resolves a file-typed field against the render-scoped `FileIndex`.
-    fn file_field_values(
-        &self,
-        state: &State,
-        folders: &[String],
-        ext: Option<&str>,
-        classes: &[String],
-    ) -> Result<Value, Error> {
-        let index = super::query::cached_refresh(state, &self.root)
-            .map_err(super::query::index_error)?;
-        let class_matches = if classes.is_empty() {
-            None
-        } else {
-            for class in classes {
-                if self.registry.get(class).is_none() {
-                    tracing::warn!(
-                        class = %class,
-                        "file field references a class with no Schema; \
-                         degrading to exact match"
-                    );
-                }
-            }
-            Some(self.registry.matching_classes(classes))
-        };
-        let options = index.file_options(crate::index::FileOptionFilter::new(
-            folders,
-            ext,
-            &self.class_field,
-            class_matches.as_ref(),
-            self.aliases_field.as_deref(),
-        ));
-        Ok(Value::from(
-            options.iter().map(file_option_value).collect::<Vec<_>>(),
-        ))
-    }
-}
+/// Wraps [`SchemaRegistry`] only so it can round-trip through [`State`]'s temp
+/// storage via [`Value::from_object`]/[`Value::downcast_object_ref`]. Never
+/// exposed to templates: no global registers it, unlike [`SchemaBinding`].
+#[derive(Debug)]
+struct CachedRegistry(Arc<SchemaRegistry>);
+
+impl Object for CachedRegistry {}
 
 /// Converts an index-derived file option into the label/value object shape
 /// `ui.select` expects by default.

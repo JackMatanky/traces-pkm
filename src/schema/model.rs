@@ -101,9 +101,6 @@ pub(crate) struct FieldDefinition {
     multi: bool,
 }
 
-/// Borrowed `(folders, ext, class)` filter parts from a `file` field.
-type FileFilterParts<'a> = (&'a [String], Option<&'a str>, &'a [String]);
-
 impl FieldDefinition {
     /// Builds a resolved Field Definition from its already-merged parts.
     pub(super) fn new(
@@ -190,6 +187,9 @@ impl FieldDefinition {
         self.multi
     }
 }
+
+/// Borrowed `(folders, ext, class)` filter parts from a `file` field.
+type FileFilterParts<'a> = (&'a [String], Option<&'a str>, &'a [String]);
 
 /// Type-specific Field Definition options.
 ///

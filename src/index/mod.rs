@@ -58,60 +58,6 @@ pub struct FileIndex {
     inlinks: InlinkMap,
 }
 
-/// One selectable file option derived from the current [`FileIndex`].
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct FileOption {
-    label: String,
-    value: String,
-}
-
-impl FileOption {
-    /// Returns the display label shown by `ui.select`.
-    #[inline]
-    #[must_use]
-    pub(crate) fn label(&self) -> &str {
-        &self.label
-    }
-
-    /// Returns the project-relative path stored as the option's `value`.
-    #[inline]
-    #[must_use]
-    pub(crate) fn value(&self) -> &str {
-        &self.value
-    }
-}
-
-/// Borrowed filter values for [`FileIndex::file_options`].
-#[derive(Copy, Clone)]
-pub(crate) struct FileOptionFilter<'a> {
-    folders: &'a [String],
-    ext: Option<&'a str>,
-    class_field: &'a str,
-    classes: Option<&'a BTreeSet<String>>,
-    aliases_field: Option<&'a str>,
-}
-
-impl<'a> FileOptionFilter<'a> {
-    /// Builds a borrowed file-option filter.
-    #[inline]
-    #[must_use]
-    pub(crate) const fn new(
-        folders: &'a [String],
-        ext: Option<&'a str>,
-        class_field: &'a str,
-        classes: Option<&'a BTreeSet<String>>,
-        aliases_field: Option<&'a str>,
-    ) -> Self {
-        Self {
-            folders,
-            ext,
-            class_field,
-            classes,
-            aliases_field,
-        }
-    }
-}
-
 impl FileIndex {
     /// Scans `root` and builds a [`FileIndex`] in memory.
     ///
@@ -440,6 +386,60 @@ impl FileIndex {
             matched.push(base.with_task(completed, text));
         }
         QueryOutcome::new(matched)
+    }
+}
+
+/// One selectable file option derived from the current [`FileIndex`].
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct FileOption {
+    label: String,
+    value: String,
+}
+
+impl FileOption {
+    /// Returns the display label shown by `ui.select`.
+    #[inline]
+    #[must_use]
+    pub(crate) fn label(&self) -> &str {
+        &self.label
+    }
+
+    /// Returns the project-relative path stored as the option's `value`.
+    #[inline]
+    #[must_use]
+    pub(crate) fn value(&self) -> &str {
+        &self.value
+    }
+}
+
+/// Borrowed filter values for [`FileIndex::file_options`].
+#[derive(Copy, Clone)]
+pub(crate) struct FileOptionFilter<'a> {
+    folders: &'a [String],
+    ext: Option<&'a str>,
+    class_field: &'a str,
+    classes: Option<&'a BTreeSet<String>>,
+    aliases_field: Option<&'a str>,
+}
+
+impl<'a> FileOptionFilter<'a> {
+    /// Builds a borrowed file-option filter.
+    #[inline]
+    #[must_use]
+    pub(crate) const fn new(
+        folders: &'a [String],
+        ext: Option<&'a str>,
+        class_field: &'a str,
+        classes: Option<&'a BTreeSet<String>>,
+        aliases_field: Option<&'a str>,
+    ) -> Self {
+        Self {
+            folders,
+            ext,
+            class_field,
+            classes,
+            aliases_field,
+        }
     }
 }
 
