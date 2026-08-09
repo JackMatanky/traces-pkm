@@ -20,6 +20,7 @@
 mod config;
 mod dialog;
 mod dirs;
+mod field;
 mod file_name;
 mod file_store;
 mod hash;

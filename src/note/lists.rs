@@ -229,11 +229,12 @@ mod tests {
     fn stores_fields_when_attached_with_with_fields() {
         use crate::note::{FieldValue, InlineFieldForm};
 
-        let field = InlineField::new(
+        let field = InlineField::try_new(
             "priority",
             FieldValue::String("high".to_owned()),
             InlineFieldForm::VisibleKey,
-        );
+        )
+        .expect("valid test field key");
         let item = ListItem::new("task item", Some(TaskStatus::Incomplete))
             .with_fields(vec![field.clone()]);
 

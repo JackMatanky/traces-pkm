@@ -15,6 +15,7 @@
 //! - [`InlineField`], [`InlineFieldForm`], and [`FieldValue`] - Represent
 //!   inline-field metadata parsed from note body text.
 //! - [`Tag`] - Stores Markdown tags.
+
 mod cursor;
 mod lexer;
 mod links;
@@ -26,7 +27,6 @@ mod tag;
 
 pub use links::{Link, LinkTarget, LinkType};
 pub use lists::{List, ListItem, TaskStatus};
-pub(crate) use metadata::FieldKey;
 pub use metadata::{
     FieldValue, Frontmatter, InlineField, InlineFieldForm, RawFrontmatter,
 };

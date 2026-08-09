@@ -51,7 +51,10 @@ use minijinja::{
     value::{Enumerator, Object, Value},
 };
 
-use crate::schema::{Schema, SchemaError, SchemaRegistry};
+use crate::{
+    field::FieldKey,
+    schema::{Schema, SchemaError, SchemaRegistry},
+};
 
 /// Method names `schema` exposes, for [`SchemaOps::enumerate`].
 const METHODS: &[&str] = &["get"];
@@ -188,7 +191,7 @@ impl Object for SchemaBinding {
                 Some(Value::from_function(
                     move |name: &str| -> Result<Value, Error> {
                         let field = schema.field(name).ok_or_else(|| {
-                            unknown_field_error(schema.name(), name)
+                            unknown_field_error(&schema, name)
                         })?;
                         Ok(field.selectable_values().map_or_else(
                             || Value::from(()),
@@ -244,11 +247,96 @@ fn unknown_schema_error(name: &str) -> Error {
 
 /// Builds the error for `.field(name)` naming a field absent from `schema`'s
 /// resolved fields.
-fn unknown_field_error(schema: &str, field: &str) -> Error {
-    Error::new(
-        ErrorKind::InvalidOperation,
-        format!("schema {schema:?} has no field {field:?}"),
-    )
+///
+/// Appends a `; did you mean "..."?` hint when [`closest_field_suggestion`]
+/// finds exactly one plausible candidate; omits the hint otherwise. Never
+/// changes whether the lookup itself succeeds: suggestions are diagnostic text
+/// only.
+fn unknown_field_error(schema: &Schema, field: &str) -> Error {
+    let base = format!("schema {:?} has no field {field:?}", schema.name());
+    let message = closest_field_suggestion(schema, field).map_or_else(
+        || base.clone(),
+        |name| format!("{base}; did you mean {name:?}?"),
+    );
+    Error::new(ErrorKind::InvalidOperation, message)
+}
+
+/// Finds the single field name in `schema` that best matches `field`, for a
+/// `did you mean` suggestion on the unknown-field error path only. Never
+/// consulted on a successful `.field(name)` lookup, which stays exact: this
+/// makes the namespace more user-friendly on typos without silently forgiving
+/// `.field("Status")` to match `status`.
+///
+/// Prefers a canonical (`FieldKey`) match over an edit-distance match. Suggests
+/// nothing when `field` itself fails `FieldKey` validation, when no field
+/// canonically or approximately matches, or when more than one field
+/// canonically matches (schema resolution already rejects two fields sharing a
+/// canonical form within one Schema, so this last case is defensive).
+fn closest_field_suggestion<'a>(
+    schema: &'a Schema,
+    field: &str,
+) -> Option<&'a str> {
+    let input_key = FieldKey::try_from(field).ok()?;
+    let mut canonical_matches =
+        schema.fields().keys().filter(|name| input_key.is_match(name.as_str()));
+    match (canonical_matches.next(), canonical_matches.next()) {
+        (Some(only), None) => Some(only.as_str()),
+        (Some(_), Some(_)) => None,
+        (None, _) => closest_field_name(schema, field),
+    }
+}
+
+/// Finds the field name in `schema` with the smallest edit distance to `field`,
+/// for a `did you mean` suggestion when no field canonically matches.
+///
+/// Mirrors `index::query::field::closest_accessor`'s threshold: half of
+/// `field`'s character count rounded up, minimum 1.
+fn closest_field_name<'a>(schema: &'a Schema, field: &str) -> Option<&'a str> {
+    let threshold = field.chars().count().div_ceil(2).max(1);
+    schema
+        .fields()
+        .keys()
+        .map(|name| (name.as_str(), edit_distance(field, name.as_str())))
+        .min_by_key(|&(_, distance)| distance)
+        .filter(|&(_, distance)| distance <= threshold)
+        .map(|(name, _)| name)
+}
+
+/// Calculates the Levenshtein edit distance between two strings.
+///
+/// Computes the minimum number of single-character insertions, deletions, or
+/// substitutions required to transform `a` into `b` using an iterative two-row
+/// Wagner-Fischer algorithm.
+///
+/// Returns the edit distance as a [`usize`].
+fn edit_distance(a: &str, b: &str) -> usize {
+    let b_chars: Vec<char> = b.chars().collect();
+    let mut row: Vec<usize> = (0..=b_chars.len()).collect();
+    for (i, ch_a) in a.chars().enumerate() {
+        let mut next_row = Vec::with_capacity(row.len());
+        next_row.push(i.saturating_add(1));
+        for (j, &ch_b) in b_chars.iter().enumerate() {
+            let substitution_cost = usize::from(ch_a != ch_b);
+            let deletion = row
+                .get(j.saturating_add(1))
+                .copied()
+                .unwrap_or(usize::MAX)
+                .saturating_add(1);
+            let insertion = next_row
+                .get(j)
+                .copied()
+                .unwrap_or(usize::MAX)
+                .saturating_add(1);
+            let substitution = row
+                .get(j)
+                .copied()
+                .unwrap_or(usize::MAX)
+                .saturating_add(substitution_cost);
+            next_row.push(deletion.min(insertion).min(substitution));
+        }
+        row = next_row;
+    }
+    row.last().copied().unwrap_or(0)
 }
 
 #[cfg(test)]
@@ -725,6 +813,75 @@ mod tests {
             .expect_err("unknown field should error");
 
             assert!(error.to_string().contains("has no field"));
+        }
+
+        #[test]
+        fn unknown_field_with_a_canonical_typo_suggests_the_exact_field() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_schema(
+                temp.path(),
+                "book",
+                r#"
+                [fields.status]
+                type = "select"
+                values = ["draft"]
+                "#,
+            );
+
+            let error = render(
+                &temp.path().join(".traces/schemas"),
+                "{{ schema.get('book').field('Status') }}",
+            )
+            .expect_err("unknown field should error");
+
+            assert!(error.to_string().contains(r#"did you mean "status"?"#));
+        }
+
+        #[test]
+        fn unknown_field_with_an_edit_distance_typo_suggests_the_closest_field()
+        {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_schema(
+                temp.path(),
+                "book",
+                r#"
+                [fields.status]
+                type = "select"
+                values = ["draft"]
+                "#,
+            );
+
+            let error = render(
+                &temp.path().join(".traces/schemas"),
+                "{{ schema.get('book').field('statu') }}",
+            )
+            .expect_err("unknown field should error");
+
+            assert!(error.to_string().contains(r#"did you mean "status"?"#));
+        }
+
+        #[test]
+        fn unknown_field_with_no_close_candidate_has_no_suggestion() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_schema(
+                temp.path(),
+                "book",
+                r#"
+                [fields.status]
+                type = "select"
+                values = ["draft"]
+                "#,
+            );
+
+            let error = render(
+                &temp.path().join(".traces/schemas"),
+                "{{ schema.get('book').field('completely_unrelated') }}",
+            )
+            .expect_err("unknown field should error");
+
+            let message = error.to_string();
+            assert!(message.contains("has no field"));
+            assert!(!message.contains("did you mean"));
         }
 
         #[test]

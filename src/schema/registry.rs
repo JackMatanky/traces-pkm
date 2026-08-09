@@ -294,6 +294,42 @@ mod tests {
         }
 
         #[test]
+        fn rejects_a_malformed_ref_at_parse() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_schema(
+                temp.path(),
+                "book",
+                r#"
+                [fields.status]
+                "$ref" = "global/status"
+                "#,
+            );
+
+            let err = SchemaRegistry::load(temp.path())
+                .expect_err("malformed $ref rejected");
+
+            assert!(matches!(err, SchemaError::Parse { .. }));
+        }
+
+        #[test]
+        fn rejects_a_field_with_neither_type_nor_ref_at_parse() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_schema(
+                temp.path(),
+                "book",
+                r#"
+                [fields.status]
+                required = true
+                "#,
+            );
+
+            let err = SchemaRegistry::load(temp.path())
+                .expect_err("missing type/$ref rejected");
+
+            assert!(matches!(err, SchemaError::Parse { .. }));
+        }
+
+        #[test]
         fn propagates_a_resolve_error_when_the_extends_dag_has_a_cycle() {
             let temp = tempfile::tempdir().expect("create temp dir");
             write_schema(temp.path(), "a", r#"extends = ["b"]"#);

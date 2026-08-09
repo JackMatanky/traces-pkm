@@ -9,7 +9,8 @@ use std::{fmt, path::PathBuf};
 
 use thiserror::Error;
 
-use super::name::SchemaName;
+use super::{name::SchemaName, raw::FieldRef};
+use crate::field::FieldName;
 
 /// Represents a hard failure while reading, parsing, or resolving the Schema
 /// registry.
@@ -17,6 +18,10 @@ use super::name::SchemaName;
 /// Contrast [`SchemaWarning`], which is emitted for a defect resolution
 /// recovers from (a missing `extends` target, a stray `required = true` on the
 /// reserved Global Schema).
+///
+/// A malformed `$ref` or a Field Definition declaring neither `type` nor `$ref`
+/// both fail earlier, during TOML parsing (surfacing as [`Self::Parse`]): see
+/// [`super::raw::FieldRef`] and [`super::raw::RawFieldDefError`].
 #[derive(Debug, Error)]
 pub(crate) enum SchemaError {
     /// The Schema registry directory exists but could not be read.
@@ -33,37 +38,19 @@ pub(crate) enum SchemaError {
         #[source]
         source: std::io::Error,
     },
-    /// A Schema TOML file failed to parse: malformed TOML or an unknown key.
+    /// A Schema TOML file failed to parse: malformed TOML, an unknown key, a
+    /// malformed `$ref`, or a Field Definition with neither `type` nor `$ref`.
     #[error("failed to parse Schema {schema}: {source}")]
     Parse {
         schema: SchemaName,
         #[source]
         source: Box<toml::de::Error>,
     },
-    /// A Field Definition declared neither `type` nor `$ref`, so its type
-    /// cannot be determined.
-    #[error(
-        "field {field:?} in Schema {schema:?} has neither `type` nor `$ref`"
-    )]
-    MissingFieldType {
-        schema: SchemaName,
-        field: String,
-    },
     /// The `extends` DAG contains a cycle; Kahn's topological sort could not
     /// order every Schema.
     #[error("cycle detected among Schemas: {}", .schemas.join(", "))]
     Cycle {
         schemas: Vec<SchemaName>,
-    },
-    /// A `$ref` value was not shaped `#<schema>/<field>`.
-    #[error(
-        "malformed $ref {reference:?} in field {field:?} of Schema \
-         {schema:?}: expected `#<schema>/<field>`"
-    )]
-    MalformedRef {
-        schema: SchemaName,
-        field: String,
-        reference: String,
     },
     /// A `$ref` named a Schema that is neither the Global Schema nor a
     /// transitive `extends` ancestor of the referencing Schema.
@@ -73,8 +60,8 @@ pub(crate) enum SchemaError {
     )]
     RefOutOfBounds {
         schema: SchemaName,
-        field: String,
-        reference: String,
+        field: FieldName,
+        reference: Box<FieldRef>,
     },
     /// A `$ref` named an in-bounds Schema, but that Schema has no such field.
     #[error(
@@ -83,8 +70,20 @@ pub(crate) enum SchemaError {
     )]
     RefFieldNotFound {
         schema: SchemaName,
-        field: String,
-        reference: String,
+        field: FieldName,
+        reference: Box<FieldRef>,
+    },
+    /// Two of a Schema's effective fields share a
+    /// [`FieldKey`](crate::field::FieldKey) canonical form: Note metadata could
+    /// never disambiguate which one a value belongs to.
+    #[error(
+        "Schema {schema:?} has ambiguous fields {first:?} and {second:?}: \
+         both canonicalize to the same metadata key"
+    )]
+    AmbiguousFieldName {
+        schema: SchemaName,
+        first: FieldName,
+        second: FieldName,
     },
 }
 
@@ -190,20 +189,6 @@ mod tests {
         }
 
         #[test]
-        fn missing_field_type_formats_display_message() {
-            let error = SchemaError::MissingFieldType {
-                schema: SchemaName::from("book"),
-                field: "status".to_owned(),
-            };
-
-            assert_display(
-                &error,
-                "field \"status\" in Schema \"book\" has neither `type` nor \
-                 `$ref`",
-            );
-        }
-
-        #[test]
         fn cycle_formats_display_message_joining_every_schema() {
             let error = SchemaError::Cycle {
                 schemas: vec![SchemaName::from("a"), SchemaName::from("b")],
@@ -213,26 +198,13 @@ mod tests {
         }
 
         #[test]
-        fn malformed_ref_formats_display_message() {
-            let error = SchemaError::MalformedRef {
-                schema: SchemaName::from("book"),
-                field: "status".to_owned(),
-                reference: "book/status".to_owned(),
-            };
-
-            assert_display(
-                &error,
-                "malformed $ref \"book/status\" in field \"status\" of Schema \
-                 \"book\": expected `#<schema>/<field>`",
-            );
-        }
-
-        #[test]
         fn ref_out_of_bounds_formats_display_message() {
             let error = SchemaError::RefOutOfBounds {
                 schema: SchemaName::from("movie"),
-                field: "status".to_owned(),
-                reference: "#book/status".to_owned(),
+                field: FieldName::try_from("status").expect("valid name"),
+                reference: Box::new(
+                    FieldRef::try_from("#book/status").expect("valid ref"),
+                ),
             };
 
             assert_display(
@@ -247,8 +219,10 @@ mod tests {
         fn ref_field_not_found_formats_display_message() {
             let error = SchemaError::RefFieldNotFound {
                 schema: SchemaName::from("book"),
-                field: "status".to_owned(),
-                reference: "#book/status".to_owned(),
+                field: FieldName::try_from("status").expect("valid name"),
+                reference: Box::new(
+                    FieldRef::try_from("#book/status").expect("valid ref"),
+                ),
             };
 
             assert_display(
@@ -259,15 +233,33 @@ mod tests {
         }
 
         #[test]
+        fn ambiguous_field_name_formats_display_message() {
+            let error = SchemaError::AmbiguousFieldName {
+                schema: SchemaName::from("book"),
+                first: FieldName::try_from("status").expect("valid name"),
+                second: FieldName::try_from("Status").expect("valid name"),
+            };
+
+            assert_display(
+                &error,
+                "Schema \"book\" has ambiguous fields \"status\" and \
+                 \"Status\": both canonicalize to the same metadata key",
+            );
+        }
+
+        #[test]
         fn stays_small() {
             // Regression guard (mem-assert-type-size): `UnresolvedRef` used
             // to carry 5 owned Strings (120 bytes) because
             // `ref_schema`/`ref_field` duplicated what `reference` already
-            // shows verbatim. Keep every variant's payload small enough
-            // that `Result<_, SchemaError>` stays cheap to move through the
+            // shows verbatim. `RefOutOfBounds`/`RefFieldNotFound` box their
+            // `FieldRef` payload for the same reason now that a `$ref` is a
+            // validated `SchemaName` + `FieldName` pair rather than a single
+            // `String`. Keep every variant's payload small enough that
+            // `Result<_, SchemaError>` stays cheap to move through the
             // resolution call chain.
             assert!(
-                std::mem::size_of::<SchemaError>() <= 80,
+                std::mem::size_of::<SchemaError>() <= 88,
                 "SchemaError grew to {} bytes; box or trim the offending \
                  variant",
                 std::mem::size_of::<SchemaError>()

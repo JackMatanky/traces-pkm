@@ -18,6 +18,7 @@ use super::{
     FieldValue, InlineField, InlineFieldForm, Link, Tag, cursor::SourceText,
     metadata::is_iso_date,
 };
+use crate::field::FieldKey;
 
 /// Extracts inline fields from `text` in encounter order.
 ///
@@ -173,7 +174,10 @@ fn body_field_callback(lex: &mut Lexer<'_, FieldToken>) -> Filter<InlineField> {
     let remainder = lex.remainder();
     let value_end = remainder.find('\n').unwrap_or(remainder.len());
     let value = remainder.get(..value_end).unwrap_or_default().trim();
-    let field = InlineField::new(
+    let Ok(key) = FieldKey::try_from(key) else {
+        return Filter::Skip;
+    };
+    let field = InlineField::from_key(
         key,
         parse_inline_value_str(value),
         InlineFieldForm::Body,
@@ -207,13 +211,16 @@ fn wrapped_field_callback(
     let Some(close) = find_closing_delimiter(after_sep, pair) else {
         return Filter::Skip;
     };
+    let Ok(key) = FieldKey::try_from(key) else {
+        return Filter::Skip;
+    };
     let value = after_sep.get(..close).unwrap_or_default().trim();
     let consumed = sep
         .saturating_add(2)
         .saturating_add(close)
         .saturating_add(pair.close.len_utf8());
     lex.bump(consumed);
-    Filter::Emit(InlineField::new(
+    Filter::Emit(InlineField::from_key(
         key,
         parse_inline_value_str(value),
         pair.form,
@@ -279,8 +286,11 @@ fn task_field_callback(
     if !is_iso_date(candidate) {
         return Filter::Skip;
     }
+    let Ok(key) = FieldKey::try_from(key) else {
+        return Filter::Skip;
+    };
     lex.bump(ws_end.saturating_add(ISO_DATE_LEN));
-    Filter::Emit(InlineField::new(
+    Filter::Emit(InlineField::from_key(
         key,
         FieldValue::Date(candidate.to_owned()),
         InlineFieldForm::Body,

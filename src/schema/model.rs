@@ -13,13 +13,14 @@ use super::{
     name::SchemaName,
     raw::{RawFieldDef, RawFieldType},
 };
+use crate::field::FieldName;
 
 /// A Schema's effective Field Definitions after inheritance, `excludes`, and
 /// `$ref` are applied.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct Schema {
     name: SchemaName,
-    fields: BTreeMap<String, FieldDefinition>,
+    fields: BTreeMap<FieldName, FieldDefinition>,
     /// Transitive `extends` targets, filtered to targets that resolved (a
     /// missing target never reaches here; see
     /// [`super::error::SchemaWarning::MissingExtendsTarget`]).
@@ -30,7 +31,7 @@ impl Schema {
     /// Builds a resolved Schema from its already-merged parts.
     pub(super) fn new(
         name: SchemaName,
-        fields: BTreeMap<String, FieldDefinition>,
+        fields: BTreeMap<FieldName, FieldDefinition>,
         ancestors: BTreeSet<SchemaName>,
     ) -> Self {
         Self {
@@ -50,7 +51,7 @@ impl Schema {
     /// Returns this Schema's effective Field Definitions, keyed by name.
     #[inline]
     #[must_use]
-    pub(crate) fn fields(&self) -> &BTreeMap<String, FieldDefinition> {
+    pub(crate) fn fields(&self) -> &BTreeMap<FieldName, FieldDefinition> {
         &self.fields
     }
 
@@ -324,7 +325,10 @@ mod tests {
         #[test]
         fn new_stores_the_given_name_fields_and_ancestors() {
             let mut fields = BTreeMap::new();
-            fields.insert("title".to_owned(), field(FieldOptions::Input));
+            fields.insert(
+                FieldName::try_from("title").expect("valid test field name"),
+                field(FieldOptions::Input),
+            );
             let mut ancestors = BTreeSet::new();
             ancestors.insert(SchemaName::from("thing"));
 
@@ -342,7 +346,10 @@ mod tests {
         #[test]
         fn field_returns_the_named_definition_when_present() {
             let mut fields = BTreeMap::new();
-            fields.insert("title".to_owned(), field(FieldOptions::Input));
+            fields.insert(
+                FieldName::try_from("title").expect("valid test field name"),
+                field(FieldOptions::Input),
+            );
             let schema =
                 Schema::new(SchemaName::from("book"), fields, BTreeSet::new());
 
@@ -479,27 +486,27 @@ mod tests {
             #[rstest]
             #[case::input(
                 FieldType::Input,
-                RawFieldDef::default(),
+                RawFieldDef::direct(RawFieldType::Input),
                 FieldOptions::Input
             )]
             #[case::select(
                 FieldType::Select,
-                RawFieldDef { values: Some(vec!["draft".to_owned(), "done".to_owned()]), ..RawFieldDef::default() },
+                RawFieldDef { values: Some(vec!["draft".to_owned(), "done".to_owned()]), ..RawFieldDef::direct(RawFieldType::Input) },
                 FieldOptions::Select { values: vec!["draft".to_owned(), "done".to_owned()] }
             )]
             #[case::boolean(
                 FieldType::Boolean,
-                RawFieldDef::default(),
+                RawFieldDef::direct(RawFieldType::Input),
                 FieldOptions::Boolean
             )]
             #[case::number(
                 FieldType::Number,
-                RawFieldDef::default(),
+                RawFieldDef::direct(RawFieldType::Input),
                 FieldOptions::Number
             )]
             #[case::date(
                 FieldType::Date,
-                RawFieldDef::default(),
+                RawFieldDef::direct(RawFieldType::Input),
                 FieldOptions::Date
             )]
             #[case::file(
@@ -508,7 +515,7 @@ mod tests {
                     folders: Some(vec!["assets".to_owned()]),
                     ext: Some("png".to_owned()),
                     class: Some(vec!["image".to_owned()]),
-                    ..RawFieldDef::default()
+                    ..RawFieldDef::direct(RawFieldType::Input)
                 },
                 FieldOptions::File {
                     folders: vec!["assets".to_owned()],
@@ -528,7 +535,7 @@ mod tests {
             fn select_defaults_to_empty_values_when_raw_omits_them() {
                 let options = FieldOptions::from_raw(
                     FieldType::Select,
-                    &RawFieldDef::default(),
+                    &RawFieldDef::direct(RawFieldType::Input),
                 );
 
                 assert_eq!(options, FieldOptions::Select {
@@ -540,7 +547,7 @@ mod tests {
             fn file_defaults_to_empty_filter_fields_when_raw_omits_them() {
                 let options = FieldOptions::from_raw(
                     FieldType::File,
-                    &RawFieldDef::default(),
+                    &RawFieldDef::direct(RawFieldType::Input),
                 );
 
                 assert_eq!(options, FieldOptions::File {
@@ -563,7 +570,7 @@ mod tests {
                 };
                 let raw = RawFieldDef {
                     values: Some(vec!["new".to_owned()]),
-                    ..RawFieldDef::default()
+                    ..RawFieldDef::direct(RawFieldType::Input)
                 };
 
                 let merged =
@@ -579,7 +586,7 @@ mod tests {
                 let base = FieldOptions::Select {
                     values: vec!["old".to_owned()],
                 };
-                let raw = RawFieldDef::default();
+                let raw = RawFieldDef::direct(RawFieldType::Input);
 
                 let merged =
                     FieldOptions::merged(&base, FieldType::Select, &raw);
@@ -590,7 +597,7 @@ mod tests {
             #[test]
             fn select_falls_back_to_empty_when_base_is_not_select() {
                 let base = FieldOptions::Input;
-                let raw = RawFieldDef::default();
+                let raw = RawFieldDef::direct(RawFieldType::Input);
 
                 let merged =
                     FieldOptions::merged(&base, FieldType::Select, &raw);
@@ -611,7 +618,7 @@ mod tests {
                     folders: Some(vec!["new".to_owned()]),
                     ext: Some("new".to_owned()),
                     class: Some(vec!["new".to_owned()]),
-                    ..RawFieldDef::default()
+                    ..RawFieldDef::direct(RawFieldType::Input)
                 };
 
                 let merged = FieldOptions::merged(&base, FieldType::File, &raw);
@@ -630,7 +637,7 @@ mod tests {
                     ext: Some("old".to_owned()),
                     class: vec!["old".to_owned()],
                 };
-                let raw = RawFieldDef::default();
+                let raw = RawFieldDef::direct(RawFieldType::Input);
 
                 let merged = FieldOptions::merged(&base, FieldType::File, &raw);
 
@@ -640,7 +647,7 @@ mod tests {
             #[test]
             fn file_falls_back_to_empty_when_base_is_not_file() {
                 let base = FieldOptions::Input;
-                let raw = RawFieldDef::default();
+                let raw = RawFieldDef::direct(RawFieldType::Input);
 
                 let merged = FieldOptions::merged(&base, FieldType::File, &raw);
 
@@ -664,7 +671,7 @@ mod tests {
                     folders: Some(vec!["raw-folder".to_owned()]),
                     ext: None,
                     class: None,
-                    ..RawFieldDef::default()
+                    ..RawFieldDef::direct(RawFieldType::Input)
                 };
 
                 let merged = FieldOptions::merged(&base, FieldType::File, &raw);
@@ -681,7 +688,7 @@ mod tests {
                 let base = FieldOptions::Select {
                     values: vec!["leaked?".to_owned()],
                 };
-                let raw = RawFieldDef::default();
+                let raw = RawFieldDef::direct(RawFieldType::Input);
 
                 let merged =
                     FieldOptions::merged(&base, FieldType::Input, &raw);

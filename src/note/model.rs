@@ -236,11 +236,12 @@ mod tests {
 
         #[test]
         fn with_inline_fields_attaches_the_given_fields() {
-            let field = InlineField::new(
+            let field = InlineField::try_new(
                 "Status",
                 FieldValue::String("Draft".to_owned()),
                 InlineFieldForm::Body,
-            );
+            )
+            .expect("valid test field key");
 
             let note = Note::new("notes/a.md", None, Vec::new(), Vec::new())
                 .with_inline_fields(vec![field.clone()]);
@@ -271,15 +272,19 @@ mod tests {
 
         #[test]
         fn yields_frontmatter_fields_before_inline_fields() {
-            let frontmatter = Frontmatter::new(vec![MetadataField::new(
-                "title",
-                FieldValue::String("Note".to_owned()),
-            )]);
-            let inline_field = InlineField::new(
+            let frontmatter = Frontmatter::new(vec![
+                MetadataField::try_new(
+                    "title",
+                    FieldValue::String("Note".to_owned()),
+                )
+                .expect("valid test field key"),
+            ]);
+            let inline_field = InlineField::try_new(
                 "Status",
                 FieldValue::String("Draft".to_owned()),
                 InlineFieldForm::Body,
-            );
+            )
+            .expect("valid test field key");
 
             let note = Note::new(
                 "notes/a.md",

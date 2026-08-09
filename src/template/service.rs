@@ -29,7 +29,7 @@ use crate::{DialogProvider, config::Config};
 /// Holds a borrowed [`Config`], an internal [`TemplateLoader`], and a
 /// [`TemplateEngine`] constructed from the configuration.
 ///
-/// ## Interaction with WriteMode
+/// ## Interaction with `WriteMode`
 ///
 /// `WriteMode` controls disk writes, not prompt execution: the
 /// [`DialogProvider`] receives all `ui.*` calls regardless of mode. Callers

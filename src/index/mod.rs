@@ -564,7 +564,7 @@ mod tests {
                 .and_then(Note::frontmatter)
                 .into_iter()
                 .flat_map(Frontmatter::fields)
-                .find(|field| field.key() == "related")
+                .find(|field| field.key().is_canonical_match("related"))
                 .expect("related field");
             assert_eq!(
                 field.value(),
@@ -617,7 +617,7 @@ mod tests {
                 .inline_fields()
                 .first()
                 .expect("inline field present");
-            assert_eq!(field.key(), expected_key);
+            assert!(field.key().is_canonical_match(expected_key));
             assert_eq!(field.value().as_str(), Some(expected_value));
             assert_eq!(field.form(), expected_form);
         }
@@ -1154,7 +1154,7 @@ mod tests {
                     .note()
                     .inline_fields()
                     .iter()
-                    .map(crate::note::InlineField::key)
+                    .map(|field| field.key().canonical())
                     .collect::<Vec<_>>(),
                 ["genre"]
             );

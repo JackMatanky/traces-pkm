@@ -648,7 +648,7 @@ mod tests {
                 .frontmatter()
                 .into_iter()
                 .flat_map(Frontmatter::fields)
-                .find(|field| field.key() == "related")
+                .find(|field| field.key().is_canonical_match("related"))
                 .expect("related field");
             assert_eq!(
                 field.value(),
@@ -851,7 +851,7 @@ mod tests {
 
             assert_eq!(note.inline_fields().len(), 1);
             let field = note.inline_fields().first().expect("field present");
-            assert_eq!(field.key(), expected_key);
+            assert!(field.key().is_canonical_match(expected_key));
             assert_eq!(field.value().as_str(), Some(expected_value));
             assert_eq!(field.form(), expected_form);
         }
@@ -879,7 +879,7 @@ mod tests {
             assert_eq!(item.text(), "Status:: Draft");
 
             let field = note.inline_fields().first().expect("field present");
-            assert_eq!(field.key(), "status");
+            assert!(field.key().is_canonical_match("status"));
             assert_eq!(field.value().as_str(), Some("Draft"));
             assert_eq!(field.form(), InlineFieldForm::Body);
         }
@@ -900,14 +900,14 @@ mod tests {
             let first_priority = first
                 .fields()
                 .iter()
-                .find(|field| field.key() == "priority")
+                .find(|field| field.key().is_canonical_match("priority"))
                 .expect("first item field present");
             assert_eq!(first_priority.value().as_str(), Some("high"));
 
             let second_priority = second
                 .fields()
                 .iter()
-                .find(|field| field.key() == "priority")
+                .find(|field| field.key().is_canonical_match("priority"))
                 .expect("second item field present");
             assert_eq!(second_priority.value().as_str(), Some("low"));
 
@@ -928,7 +928,7 @@ mod tests {
             let second = items.next().expect("second item present");
 
             let first_due = first.fields().first().expect("first due field");
-            assert_eq!(first_due.key(), "due");
+            assert!(first_due.key().is_canonical_match("due"));
             assert_eq!(first_due.value().as_str(), Some("2026-01-01"));
 
             let second_due = second.fields().first().expect("second due field");
@@ -979,7 +979,7 @@ mod tests {
 
             assert_eq!(note.inline_fields().len(), 1);
             let field = note.inline_fields().first().expect("field present");
-            assert_eq!(field.key(), expected_key);
+            assert!(field.key().is_canonical_match(expected_key));
             assert_eq!(
                 field.value(),
                 &FieldValue::Date(expected_date.to_owned())
@@ -1072,7 +1072,7 @@ mod tests {
 
             assert_eq!(note.inline_fields().len(), 1);
             let field = note.inline_fields().first().expect("field present");
-            assert_eq!(field.key(), "status");
+            assert!(field.key().is_canonical_match("status"));
             assert_eq!(field.value().as_str(), Some("Draft"));
         }
 
@@ -1148,7 +1148,7 @@ mod tests {
 
             assert_eq!(note.inline_fields().len(), 1);
             let field = note.inline_fields().first().expect("field present");
-            assert_eq!(field.key(), "status");
+            assert!(field.key().is_canonical_match("status"));
             assert_eq!(field.value().as_str(), Some("Draft #urgent"));
 
             assert_eq!(note.tags(), [Tag::new("#urgent")]);
@@ -1188,7 +1188,7 @@ mod tests {
 
             assert_eq!(note.inline_fields().len(), 1);
             let field = note.inline_fields().first().expect("field present");
-            assert_eq!(field.key(), "status");
+            assert!(field.key().is_canonical_match("status"));
             assert_eq!(field.value().as_str(), Some("Draft more text"));
         }
 
@@ -1205,7 +1205,7 @@ mod tests {
 
             assert_eq!(note.inline_fields().len(), 1);
             let field = note.inline_fields().first().expect("field present");
-            assert_eq!(field.key(), "status");
+            assert!(field.key().is_canonical_match("status"));
             assert_eq!(field.value().as_str(), Some("Draft"));
         }
 
@@ -1219,7 +1219,7 @@ mod tests {
             assert_eq!(note.inline_fields().len(), 1);
             assert_eq!(note.outlinks().len(), 1);
             let field = note.inline_fields().first().expect("field present");
-            assert_eq!(field.key(), "status");
+            assert!(field.key().is_canonical_match("status"));
             assert_eq!(field.value().as_str(), Some("Draft"));
             assert_eq!(field.form(), InlineFieldForm::VisibleKey);
 
@@ -1237,7 +1237,7 @@ mod tests {
 
             assert_eq!(note.inline_fields().len(), 1);
             let field = note.inline_fields().first().expect("field present");
-            assert_eq!(field.key(), "status");
+            assert!(field.key().is_canonical_match("status"));
             assert_eq!(field.value().as_str(), Some("Draft"));
             assert_eq!(field.form(), InlineFieldForm::VisibleKey);
         }

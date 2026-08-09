@@ -11,6 +11,7 @@ use tracing::warn;
 use yaml_serde as serde_yaml;
 
 use super::Link;
+use crate::field::{FieldKey, FieldKeyError};
 
 /// Represents a raw YAML frontmatter block from a Markdown note.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -109,10 +110,10 @@ impl From<&RawFrontmatter> for Frontmatter {
         };
         let mut fields = Vec::with_capacity(map.len());
         for (k, v) in map {
-            let Some(key) = yaml_key_to_string(k) else {
+            let Ok(key) = FieldKey::try_from(k) else {
                 continue;
             };
-            fields.push(MetadataField::new(key, FieldValue::from(v)));
+            fields.push(MetadataField::from_key(key, FieldValue::from(v)));
         }
         Self::new(fields)
     }
@@ -130,97 +131,6 @@ pub enum InlineFieldForm {
     HiddenKey,
 }
 
-/// A metadata key shared by frontmatter and inline fields.
-///
-/// Stores the original key text for display and a canonical form for
-/// case-insensitive, whitespace-normalized matching.
-#[derive(Clone, Debug, Eq, Deserialize, Serialize)]
-pub(crate) struct FieldKey {
-    /// Original key text as written by the user.
-    name: String,
-    /// Canonical form for case-insensitive matching.
-    canonical: String,
-}
-
-impl FieldKey {
-    /// Creates a field key from `raw`, computing its canonical form.
-    #[inline]
-    #[must_use]
-    pub(crate) fn new(raw: impl Into<String>) -> Self {
-        let name = raw.into();
-        let canonical = Self::canonicalize(&name);
-        Self {
-            name,
-            canonical,
-        }
-    }
-
-    /// Returns the original key text.
-    #[inline]
-    #[must_use]
-    #[allow(dead_code, reason = "used in tests")]
-    pub(crate) fn name(&self) -> &str {
-        &self.name
-    }
-
-    /// Returns the canonical key form for matching.
-    #[inline]
-    #[must_use]
-    #[allow(dead_code, reason = "used in tests")]
-    pub(crate) fn canonical(&self) -> &str {
-        &self.canonical
-    }
-
-    /// Normalizes a raw key string for case-insensitive matching.
-    ///
-    /// Transformations:
-    /// - ASCII whitespace → `-`
-    /// - `_`, `-`, ASCII alphanumeric → kept, lowercased
-    /// - Non-ASCII (emoji, Unicode letters) → kept, lowercased
-    /// - Everything else (`!`, `@`, `(`, etc.) → stripped
-    fn canonicalize(raw: &str) -> String {
-        let mut result = String::with_capacity(raw.len());
-        for ch in raw.chars() {
-            if ch.is_ascii_whitespace() {
-                result.push('-');
-                continue;
-            }
-            if ch == '_'
-                || ch == '-'
-                || ch.is_ascii_alphanumeric()
-                || !ch.is_ascii()
-            {
-                for c in ch.to_lowercase() {
-                    result.push(c);
-                }
-            }
-            // strip everything else
-        }
-        result
-    }
-}
-
-impl PartialEq for FieldKey {
-    #[inline]
-    fn eq(&self, other: &Self) -> bool {
-        self.canonical == other.canonical
-    }
-}
-
-impl PartialEq<str> for FieldKey {
-    #[inline]
-    fn eq(&self, other: &str) -> bool {
-        self.canonical == Self::canonicalize(other)
-    }
-}
-
-impl PartialEq<&str> for FieldKey {
-    #[inline]
-    fn eq(&self, other: &&str) -> bool {
-        self.canonical == Self::canonicalize(other)
-    }
-}
-
 /// Represents key-value metadata from frontmatter or Markdown body text.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct MetadataField {
@@ -228,15 +138,36 @@ pub struct MetadataField {
     value: FieldValue,
 }
 
+/// Represents a `Key:: Value` inline field with its source syntax.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+pub struct InlineField {
+    metadata: MetadataField,
+    form: InlineFieldForm,
+}
+
 impl MetadataField {
-    /// Creates a metadata field from `key` and `value`.
+    /// Creates a metadata field from an already-validated `key` and `value`.
     #[inline]
     #[must_use]
-    pub(crate) fn new(key: impl Into<String>, value: FieldValue) -> Self {
+    pub(crate) fn from_key(key: FieldKey, value: FieldValue) -> Self {
         Self {
-            key: FieldKey::new(key),
+            key,
             value,
         }
+    }
+
+    /// Parses `key` into a [`FieldKey`] and creates a metadata field.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`FieldKeyError`] if `key` fails to parse; see
+    /// [`FieldKey::try_new`].
+    #[cfg_attr(not(test), expect(dead_code, reason = "used in tests"))]
+    pub(crate) fn try_new(
+        key: impl Into<String>,
+        value: FieldValue,
+    ) -> Result<Self, FieldKeyError> {
+        Ok(Self::from_key(FieldKey::try_new(key)?, value))
     }
 
     /// Returns the field key.
@@ -254,26 +185,35 @@ impl MetadataField {
     }
 }
 
-/// Represents a `Key:: Value` inline field with its source syntax.
-#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
-pub struct InlineField {
-    metadata: MetadataField,
-    form: InlineFieldForm,
-}
-
 impl InlineField {
-    /// Creates an inline field from its key, value, and source syntax.
+    /// Creates an inline field from an already-validated `key`, `value`, and
+    /// source syntax.
     #[inline]
     #[must_use]
-    pub(crate) fn new(
-        key: impl Into<String>,
+    pub(crate) fn from_key(
+        key: FieldKey,
         value: FieldValue,
         form: InlineFieldForm,
     ) -> Self {
         Self {
-            metadata: MetadataField::new(key, value),
+            metadata: MetadataField::from_key(key, value),
             form,
         }
+    }
+
+    /// Parses `key` into a [`FieldKey`] and creates an inline field.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`FieldKeyError`] if `key` fails to parse; see
+    /// [`FieldKey::try_new`].
+    #[cfg_attr(not(test), expect(dead_code, reason = "used in tests"))]
+    pub(crate) fn try_new(
+        key: impl Into<String>,
+        value: FieldValue,
+        form: InlineFieldForm,
+    ) -> Result<Self, FieldKeyError> {
+        Ok(Self::from_key(FieldKey::try_new(key)?, value, form))
     }
 
     /// Returns the field key.
@@ -410,7 +350,7 @@ impl From<serde_yaml::Value> for FieldValue {
             serde_yaml::Value::Mapping(map) => {
                 let mut btree = BTreeMap::new();
                 for (k, v) in map {
-                    let Some(key) = yaml_key_to_string(k) else {
+                    let Some(key) = yaml_payload_key_to_string(k) else {
                         continue;
                     };
                     btree.insert(key, Self::from(v));
@@ -422,12 +362,16 @@ impl From<serde_yaml::Value> for FieldValue {
     }
 }
 
-/// Coerces a YAML scalar key into a metadata object key.
+/// Coerces a YAML scalar key into a nested [`FieldValue::Object`] payload key.
 ///
 /// Returns `None` for YAML values that cannot stand as keys: `Null`,
 /// `Sequence`, `Mapping`, and `Tagged`. Callers skip those entries rather than
 /// failing the whole document.
-fn yaml_key_to_string(key: serde_yaml::Value) -> Option<String> {
+///
+/// Top-level frontmatter keys use [`FieldKey`] instead; this helper is only for
+/// keys nested inside a [`FieldValue::Object`] payload, which are structure,
+/// not queryable field identity.
+fn yaml_payload_key_to_string(key: serde_yaml::Value) -> Option<String> {
     match key {
         serde_yaml::Value::String(s) => Some(s),
         serde_yaml::Value::Number(n) => Some(n.to_string()),
@@ -461,8 +405,11 @@ mod tests {
             let fm = Frontmatter::from(&raw);
 
             assert_eq!(fm.fields().len(), 2);
-            let title =
-                fm.fields().iter().find(|f| f.key() == "title").expect("title");
+            let title = fm
+                .fields()
+                .iter()
+                .find(|f| f.key().is_canonical_match("title"))
+                .expect("title");
             assert_eq!(title.value(), &FieldValue::String("Test".to_owned()));
         }
 
@@ -580,11 +527,12 @@ mod tests {
         #[case::visible_key(InlineFieldForm::VisibleKey)]
         #[case::hidden_key(InlineFieldForm::HiddenKey)]
         fn stores_key_value_and_form(#[case] form: InlineFieldForm) {
-            let field = InlineField::new(
+            let field = InlineField::try_new(
                 "Author",
                 FieldValue::String("Jane Doe".to_owned()),
                 form,
-            );
+            )
+            .expect("valid test field key");
 
             assert_eq!(field.key().name(), "Author");
             assert_eq!(field.key().canonical(), "author");
@@ -602,11 +550,12 @@ mod tests {
         fn round_trips_through_postcard_encoding(
             #[case] form: InlineFieldForm,
         ) {
-            let field = InlineField::new(
+            let field = InlineField::try_new(
                 "Author",
                 FieldValue::String("Jane Doe".to_owned()),
                 form,
-            );
+            )
+            .expect("valid test field key");
 
             let bytes =
                 postcard::to_allocvec(&field).expect("encode inline field");
@@ -614,68 +563,6 @@ mod tests {
                 postcard::from_bytes(&bytes).expect("decode inline field");
 
             assert_eq!(decoded, field);
-        }
-    }
-
-    mod field_key {
-        use pretty_assertions::assert_eq;
-
-        use super::*;
-
-        #[test]
-        fn stores_original_name() {
-            let key = FieldKey::new("Status");
-            assert_eq!(key.name(), "Status");
-        }
-
-        #[test]
-        fn computes_canonical_form() {
-            let key = FieldKey::new("Time Played");
-            assert_eq!(key.canonical(), "time-played");
-        }
-
-        #[test]
-        fn lowercases_ascii() {
-            let key = FieldKey::new("Status");
-            assert_eq!(key.canonical(), "status");
-        }
-
-        #[test]
-        fn replaces_whitespace_with_hyphens() {
-            let key = FieldKey::new("due date");
-            assert_eq!(key.canonical(), "due-date");
-        }
-
-        #[test]
-        fn strips_special_characters() {
-            let key = FieldKey::new("field-name!");
-            assert_eq!(key.canonical(), "field-name");
-        }
-
-        #[test]
-        fn preserves_underscores_and_hyphens() {
-            let key = FieldKey::new("my_field-name");
-            assert_eq!(key.canonical(), "my_field-name");
-        }
-
-        #[test]
-        fn preserves_emoji() {
-            let key = FieldKey::new("🗓️due");
-            assert_eq!(key.canonical(), "🗓️due");
-        }
-
-        #[test]
-        fn partial_eq_str_uses_canonical() {
-            let key = FieldKey::new("Status");
-            assert_eq!(key, "status");
-            assert_eq!(key, "Status");
-        }
-
-        #[test]
-        fn partial_eq_field_key_uses_canonical() {
-            let a = FieldKey::new("Status");
-            let b = FieldKey::new("status");
-            assert_eq!(a, b);
         }
     }
 }

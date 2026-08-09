@@ -23,8 +23,9 @@ use super::{
     error::{SchemaError, SchemaWarning},
     model::{FieldDefinition, FieldOptions, FieldType, Schema},
     name::{SchemaName, SchemaNameRef},
-    raw::{RawFieldDef, RawSchema},
+    raw::{FieldRef, FieldSource, RawFieldDef, RawSchema},
 };
+use crate::field::{FieldName, FieldNameRef};
 
 /// Every Schema resolved by [`resolve`], keyed by name, alongside the
 /// [`SchemaWarning`]s degraded resolution accumulated along the way.
@@ -40,12 +41,12 @@ type ResolveOutput = (BTreeMap<SchemaName, Schema>, Vec<SchemaWarning>);
 ///
 /// # Errors
 ///
-/// - [`SchemaError::MalformedRef`] if a `$ref` is not shaped
-///   `#<schema>/<field>`.
 /// - [`SchemaError::RefOutOfBounds`] if a `$ref` names a Schema outside its
 ///   bound (the Global Schema or a transitive `extends` ancestor).
 /// - [`SchemaError::RefFieldNotFound`] if a `$ref` names an in-bounds Schema
 ///   that has no such field.
+/// - [`SchemaError::AmbiguousFieldName`] if two of a Schema's effective fields
+///   share a [`FieldKey`] canonical form.
 pub(crate) fn resolve(
     raw_schemas: &BTreeMap<SchemaName, RawSchema>,
 ) -> Result<ResolveOutput, SchemaError> {
@@ -96,7 +97,8 @@ pub(crate) fn resolve(
 /// # Errors
 ///
 /// Propagates any [`SchemaError`] [`build_field`] returns while resolving
-/// `raw`'s own fields.
+/// `raw`'s own fields, or [`SchemaError::AmbiguousFieldName`] if two of the
+/// resolved fields share a [`FieldKey`] canonical form.
 fn resolve_one(
     name: SchemaNameRef<'_>,
     raw: &RawSchema,
@@ -131,14 +133,43 @@ fn resolve_one(
     for (field_name, raw_field) in &raw.fields {
         let at = FieldPath {
             schema: name,
-            field: field_name,
+            field: field_name.as_ref(),
         };
         let field = build_field(at, raw_field, &refs, warnings)?;
         own_fields.insert(field_name.clone(), field);
     }
     fields.extend(own_fields);
 
+    reject_ambiguous_canonical_names(name, &fields)?;
+
     Ok(Schema::new(SchemaName::from(name), fields, ancestors))
+}
+
+/// Rejects `fields` if two entries share a [`FieldKey`] canonical form:
+/// ambiguous field identities would make later note-vs-schema field matching
+/// and unknown-field suggestions unreliable.
+///
+/// # Errors
+///
+/// Returns [`SchemaError::AmbiguousFieldName`] naming the first two
+/// (name-sorted) colliding field names.
+fn reject_ambiguous_canonical_names(
+    name: SchemaNameRef<'_>,
+    fields: &BTreeMap<FieldName, FieldDefinition>,
+) -> Result<(), SchemaError> {
+    let mut seen: BTreeMap<String, FieldName> = BTreeMap::new();
+    for field_name in fields.keys() {
+        let canonical = field_name.to_key().canonical().to_owned();
+        if let Some(first) = seen.get(&canonical) {
+            return Err(SchemaError::AmbiguousFieldName {
+                schema: SchemaName::from(name),
+                first: first.clone(),
+                second: field_name.clone(),
+            });
+        }
+        seen.insert(canonical, field_name.clone());
+    }
+    Ok(())
 }
 
 /// Builds one resolved [`FieldDefinition`] for `at`, resolving its `$ref`
@@ -146,38 +177,35 @@ fn resolve_one(
 ///
 /// # Errors
 ///
-/// - [`SchemaError::MissingFieldType`] if `raw` declares neither `type` nor
-///   `$ref`.
-/// - Any error [`RefResolver::resolve`] returns while resolving a `$ref`.
+/// Any error [`RefResolver::resolve`] returns while resolving a `$ref`.
 fn build_field(
     at: FieldPath<'_>,
     raw: &RawFieldDef,
     refs: &RefResolver<'_>,
     warnings: &mut Vec<SchemaWarning>,
 ) -> Result<FieldDefinition, SchemaError> {
-    let (options, required, multi) = if let Some(reference) = &raw.reference {
-        let base = refs.resolve(at, reference)?;
-        let field_type = raw
-            .field_type
-            .map_or_else(|| base.options().kind(), FieldType::from);
-        (
-            FieldOptions::merged(base.options(), field_type, raw),
-            raw.required.unwrap_or(base.is_required()),
-            raw.multi.unwrap_or(base.is_multi()),
-        )
-    } else {
-        let field_type =
-            raw.field_type.map(FieldType::from).ok_or_else(|| {
-                SchemaError::MissingFieldType {
-                    schema: SchemaName::from(at.schema),
-                    field: at.field.to_owned(),
-                }
-            })?;
-        (
-            FieldOptions::from_raw(field_type, raw),
-            raw.required.unwrap_or(false),
-            raw.multi.unwrap_or(false),
-        )
+    let (options, required, multi) = match &raw.source {
+        FieldSource::Ref {
+            reference,
+            override_type,
+        } => {
+            let base = refs.resolve(at, reference)?;
+            let field_type = (*override_type)
+                .map_or_else(|| base.options().kind(), FieldType::from);
+            (
+                FieldOptions::merged(base.options(), field_type, raw),
+                raw.required.unwrap_or(base.is_required()),
+                raw.multi.unwrap_or(base.is_multi()),
+            )
+        }
+        FieldSource::Direct(raw_type) => {
+            let field_type = FieldType::from(*raw_type);
+            (
+                FieldOptions::from_raw(field_type, raw),
+                raw.required.unwrap_or(false),
+                raw.multi.unwrap_or(false),
+            )
+        }
     };
 
     Ok(FieldDefinition::new(
@@ -197,7 +225,7 @@ fn apply_global_degrade(
 ) -> bool {
     if at.schema.as_str() == GLOBAL_SCHEMA_NAME && required {
         warnings.push(SchemaWarning::StrayGlobalRequired {
-            field: at.field.to_owned(),
+            field: at.field.as_str().to_owned(),
         });
         false
     } else {
@@ -358,13 +386,11 @@ struct RefResolver<'a> {
 }
 
 impl<'a> RefResolver<'a> {
-    /// Resolves `reference` (`at`'s own `$ref` value) to its base
-    /// [`FieldDefinition`].
+    /// Resolves `reference` (`at`'s own already-parsed `$ref` value) to its
+    /// base [`FieldDefinition`].
     ///
     /// # Errors
     ///
-    /// - [`SchemaError::MalformedRef`] if `reference` is not shaped
-    ///   `#<schema>/<field>`.
     /// - [`SchemaError::RefOutOfBounds`] if the named Schema is neither the
     ///   Global Schema nor a transitive `extends` ancestor of `at.schema`.
     /// - [`SchemaError::RefFieldNotFound`] if the named Schema is in bounds but
@@ -372,34 +398,27 @@ impl<'a> RefResolver<'a> {
     fn resolve(
         &self,
         at: FieldPath<'_>,
-        reference: &str,
+        reference: &FieldRef,
     ) -> Result<&'a FieldDefinition, SchemaError> {
-        let target = FieldPath::parse(reference).map_err(|ParseRefError| {
-            SchemaError::MalformedRef {
-                schema: SchemaName::from(at.schema),
-                field: at.field.to_owned(),
-                reference: reference.to_owned(),
-            }
-        })?;
         // Rejecting an out-of-bounds target here, rather than only checking
         // whether it happens to be resolved yet, keeps the bound spec-accurate
         // and independent of Kahn's tie-breaking order among unrelated Schemas.
-        if target.schema.as_str() != GLOBAL_SCHEMA_NAME
-            && !self.ancestors.contains(target.schema.as_str())
+        if reference.schema().as_str() != GLOBAL_SCHEMA_NAME
+            && !self.ancestors.contains(reference.schema().as_str())
         {
             return Err(SchemaError::RefOutOfBounds {
                 schema: SchemaName::from(at.schema),
-                field: at.field.to_owned(),
-                reference: reference.to_owned(),
+                field: FieldName::from(at.field),
+                reference: Box::new(reference.clone()),
             });
         }
         self.resolved
-            .get(target.schema.as_str())
-            .and_then(|schema| schema.field(target.field))
+            .get(reference.schema().as_str())
+            .and_then(|schema| schema.field(reference.field().as_str()))
             .ok_or_else(|| SchemaError::RefFieldNotFound {
                 schema: SchemaName::from(at.schema),
-                field: at.field.to_owned(),
-                reference: reference.to_owned(),
+                field: FieldName::from(at.field),
+                reference: Box::new(reference.clone()),
             })
     }
 }
@@ -412,60 +431,37 @@ impl<'a> RefResolver<'a> {
 #[derive(Copy, Clone, Debug)]
 struct FieldPath<'a> {
     schema: SchemaNameRef<'a>,
-    field: &'a str,
+    field: FieldNameRef<'a>,
 }
-
-impl<'a> FieldPath<'a> {
-    /// Parses a `$ref` value (`#<schema>/<field>`) into its target `FieldPath`.
-    /// Context-free: the caller attaches its own address on failure (see
-    /// [`RefResolver::resolve`]), mirroring
-    /// `index::query::field::FieldPath::parse`, this crate's established
-    /// `Type::parse(&str) -> Result<Self, Error>` idiom.
-    ///
-    /// # Errors
-    ///
-    /// - [`ParseRefError`] if `reference` is not shaped `#<schema>/<field>`
-    ///   with both segments non-empty.
-    fn parse(reference: &'a str) -> Result<Self, ParseRefError> {
-        let stripped = reference.strip_prefix('#').ok_or(ParseRefError)?;
-        let (schema, field) = stripped.split_once('/').ok_or(ParseRefError)?;
-        if schema.is_empty() || field.is_empty() {
-            return Err(ParseRefError);
-        }
-        Ok(Self {
-            schema: SchemaNameRef::from(schema),
-            field,
-        })
-    }
-}
-
-/// `$ref` wasn't shaped `#<schema>/<field>` with both segments non-empty.
-/// Discarded by the one caller, which rebuilds [`SchemaError::MalformedRef`]
-/// with the referencing field's context (mirrors
-/// [`crate::file_name::MissingFileName`]).
-#[derive(Debug)]
-struct ParseRefError;
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::schema::raw::RawFieldType;
 
+    /// Parses `name` into a [`FieldName`], panicking on an invalid test
+    /// fixture.
+    fn field_name(name: &str) -> FieldName {
+        FieldName::try_from(name).expect("valid test field name")
+    }
+
+    /// Parses `reference` into a [`FieldRef`], panicking on an invalid test
+    /// fixture.
+    fn field_ref(reference: &str) -> FieldRef {
+        FieldRef::try_from(reference).expect("valid test $ref")
+    }
+
     /// Builds a `select`-type [`RawFieldDef`] with the given `values`.
     fn select_field(values: &[&str]) -> RawFieldDef {
         RawFieldDef {
-            field_type: Some(RawFieldType::Select),
             values: Some(values.iter().map(|&v| v.to_owned()).collect()),
-            ..RawFieldDef::default()
+            ..RawFieldDef::direct(RawFieldType::Select)
         }
     }
 
     /// Builds an `input`-type [`RawFieldDef`].
     fn input_field() -> RawFieldDef {
-        RawFieldDef {
-            field_type: Some(RawFieldType::Input),
-            ..RawFieldDef::default()
-        }
+        RawFieldDef::direct(RawFieldType::Input)
     }
 
     /// Builds a `file`-type [`RawFieldDef`] with the given filter.
@@ -475,11 +471,10 @@ mod tests {
         class: &[&str],
     ) -> RawFieldDef {
         RawFieldDef {
-            field_type: Some(RawFieldType::File),
             folders: Some(folders.iter().map(|&f| f.to_owned()).collect()),
             ext: ext.map(str::to_owned),
             class: Some(class.iter().map(|&c| c.to_owned()).collect()),
-            ..RawFieldDef::default()
+            ..RawFieldDef::direct(RawFieldType::File)
         }
     }
 
@@ -487,9 +482,8 @@ mod tests {
     /// `required` override.
     fn ref_field(reference: &str, required: Option<bool>) -> RawFieldDef {
         RawFieldDef {
-            reference: Some(reference.to_owned()),
             required,
-            ..RawFieldDef::default()
+            ..RawFieldDef::reference(field_ref(reference))
         }
     }
 
@@ -500,7 +494,7 @@ mod tests {
             fields: fields
                 .iter()
                 .cloned()
-                .map(|(name, def)| (name.to_owned(), def))
+                .map(|(name, def)| (field_name(name), def))
                 .collect(),
         }
     }
@@ -511,7 +505,7 @@ mod tests {
         fields: &[(&str, RawFieldDef)],
     ) -> RawSchema {
         RawSchema {
-            excludes: excludes.iter().map(|&s| s.to_owned()).collect(),
+            excludes: excludes.iter().map(|&s| field_name(s)).collect(),
             ..schema(extends, fields)
         }
     }
@@ -613,8 +607,29 @@ mod tests {
             assert!(sci_fi.field("status").is_none());
             assert!(sci_fi.field("author").is_some());
             let field_names: Vec<&str> =
-                sci_fi.fields().keys().map(String::as_str).collect();
+                sci_fi.fields().keys().map(FieldName::as_str).collect();
             assert_eq!(field_names, vec!["author"]);
+        }
+
+        #[test]
+        fn excludes_is_exact_and_does_not_drop_a_different_case_field() {
+            // `excludes` uses exact `FieldName` identity, not canonical
+            // `FieldKey` matching: `excludes = ["Status"]` must not remove an
+            // inherited `status`.
+            let mut raw = BTreeMap::new();
+            raw.insert(
+                SchemaName::from("book"),
+                schema(&[], &[("status", select_field(&["draft"]))]),
+            );
+            raw.insert(
+                SchemaName::from("sci_fi"),
+                schema_with_excludes(&["book"], &["Status"], &[]),
+            );
+
+            let (resolved, _) = resolve(&raw).expect("resolves");
+
+            let sci_fi = resolved.get("sci_fi").expect("sci_fi resolved");
+            assert!(sci_fi.field("status").is_some());
         }
 
         #[test]
@@ -748,18 +763,6 @@ mod tests {
         }
 
         #[test]
-        fn a_malformed_ref_is_a_hard_error() {
-            let mut raw = BTreeMap::new();
-            raw.insert(
-                SchemaName::from("book"),
-                schema(&[], &[("status", ref_field("book/status", None))]),
-            );
-
-            let err = resolve(&raw).expect_err("malformed ref rejected");
-            assert!(matches!(err, SchemaError::MalformedRef { .. }));
-        }
-
-        #[test]
         fn a_ref_to_an_unknown_field_is_a_hard_error() {
             let mut raw = BTreeMap::new();
             raw.insert(SchemaName::from("book"), schema(&[], &[]));
@@ -796,15 +799,18 @@ mod tests {
         }
 
         #[test]
-        fn a_field_with_neither_type_nor_ref_is_a_hard_error() {
+        fn defining_both_status_and_status_cased_differently_is_a_hard_error() {
             let mut raw = BTreeMap::new();
             raw.insert(
                 SchemaName::from("book"),
-                schema(&[], &[("status", RawFieldDef::default())]),
+                schema(&[], &[
+                    ("status", input_field()),
+                    ("Status", input_field()),
+                ]),
             );
 
-            let err = resolve(&raw).expect_err("missing type rejected");
-            assert!(matches!(err, SchemaError::MissingFieldType { .. }));
+            let err = resolve(&raw).expect_err("ambiguous field name rejected");
+            assert!(matches!(err, SchemaError::AmbiguousFieldName { .. }));
         }
 
         #[test]
@@ -815,18 +821,9 @@ mod tests {
                 schema(&[], &[
                     ("title", input_field()),
                     ("status", select_field(&["draft", "done"])),
-                    ("archived", RawFieldDef {
-                        field_type: Some(RawFieldType::Boolean),
-                        ..RawFieldDef::default()
-                    }),
-                    ("rating", RawFieldDef {
-                        field_type: Some(RawFieldType::Number),
-                        ..RawFieldDef::default()
-                    }),
-                    ("published", RawFieldDef {
-                        field_type: Some(RawFieldType::Date),
-                        ..RawFieldDef::default()
-                    }),
+                    ("archived", RawFieldDef::direct(RawFieldType::Boolean)),
+                    ("rating", RawFieldDef::direct(RawFieldType::Number)),
+                    ("published", RawFieldDef::direct(RawFieldType::Date)),
                     (
                         "cover",
                         file_field(&["assets/covers"], Some("png"), &["image"]),
@@ -903,9 +900,8 @@ mod tests {
             raw.insert(
                 SchemaName::from("book"),
                 schema(&[], &[("cover", RawFieldDef {
-                    reference: Some("#global/cover".to_owned()),
                     folders: Some(vec!["assets/covers".to_owned()]),
-                    ..RawFieldDef::default()
+                    ..RawFieldDef::reference(field_ref("#global/cover"))
                 })]),
             );
 
@@ -1034,10 +1030,12 @@ mod tests {
             raw.insert(
                 SchemaName::from("sci_fi"),
                 schema(&["book"], &[("status", RawFieldDef {
-                    reference: Some("#book/status".to_owned()),
-                    field_type: Some(RawFieldType::File),
+                    source: FieldSource::Ref {
+                        reference: field_ref("#book/status"),
+                        override_type: Some(RawFieldType::File),
+                    },
                     folders: Some(vec!["assets".to_owned()]),
-                    ..RawFieldDef::default()
+                    ..RawFieldDef::direct(RawFieldType::Input)
                 })]),
             );
 
@@ -1081,56 +1079,21 @@ mod tests {
         }
     }
 
-    mod field_path {
-        use pretty_assertions::assert_eq;
-
-        use super::super::*;
-
-        #[test]
-        fn parses_a_well_formed_reference() {
-            let target = FieldPath::parse("#book/status").expect("parses");
-
-            assert_eq!(target.schema, SchemaNameRef::from("book"));
-            assert_eq!(target.field, "status");
-        }
-
-        #[test]
-        fn rejects_a_reference_missing_the_hash_prefix() {
-            assert!(FieldPath::parse("book/status").is_err());
-        }
-
-        #[test]
-        fn rejects_a_reference_missing_the_slash_separator() {
-            assert!(FieldPath::parse("#bookstatus").is_err());
-        }
-
-        #[test]
-        fn rejects_a_reference_with_an_empty_schema_segment() {
-            assert!(FieldPath::parse("#/status").is_err());
-        }
-
-        #[test]
-        fn rejects_a_reference_with_an_empty_field_segment() {
-            assert!(FieldPath::parse("#book/").is_err());
-        }
-    }
-
     mod ref_resolver {
         use pretty_assertions::assert_eq;
 
-        use super::super::*;
+        use super::*;
 
-        /// Builds a resolved [`Schema`] named `name` with one `field_name`
-        /// field of the given `options`, keyed by `name` for a `resolved`
-        /// map.
+        /// Builds a resolved [`Schema`] named `name` with one `field` field
+        /// of the given `options`, keyed by `name` for a `resolved` map.
         fn schema_with_field(
             name: &str,
-            field_name: &str,
+            field: &str,
             options: FieldOptions,
         ) -> (SchemaName, Schema) {
             let mut fields = BTreeMap::new();
             fields.insert(
-                field_name.to_owned(),
+                field_name(field),
                 FieldDefinition::new(options, false, false),
             );
             (
@@ -1153,10 +1116,12 @@ mod tests {
             };
             let at = FieldPath {
                 schema: SchemaNameRef::from("sci_fi"),
-                field: "status",
+                field: FieldNameRef::try_from("status")
+                    .expect("valid field name"),
             };
 
-            let field = refs.resolve(at, "#book/status").expect("resolves");
+            let field =
+                refs.resolve(at, &field_ref("#book/status")).expect("resolves");
 
             assert_eq!(field.options(), &FieldOptions::Input);
         }
@@ -1177,32 +1142,15 @@ mod tests {
             };
             let at = FieldPath {
                 schema: SchemaNameRef::from("task"),
-                field: "priority",
+                field: FieldNameRef::try_from("priority")
+                    .expect("valid field name"),
             };
 
-            let field = refs.resolve(at, "#global/priority").expect("resolves");
+            let field = refs
+                .resolve(at, &field_ref("#global/priority"))
+                .expect("resolves");
 
             assert_eq!(field.options(), &FieldOptions::Input);
-        }
-
-        #[test]
-        fn rejects_a_malformed_reference() {
-            let resolved = BTreeMap::new();
-            let ancestors = BTreeSet::new();
-            let refs = RefResolver {
-                ancestors: &ancestors,
-                resolved: &resolved,
-            };
-            let at = FieldPath {
-                schema: SchemaNameRef::from("book"),
-                field: "status",
-            };
-
-            let err = refs
-                .resolve(at, "book/status")
-                .expect_err("malformed rejected");
-
-            assert!(matches!(err, SchemaError::MalformedRef { .. }));
         }
 
         #[test]
@@ -1218,11 +1166,12 @@ mod tests {
             };
             let at = FieldPath {
                 schema: SchemaNameRef::from("book"),
-                field: "status",
+                field: FieldNameRef::try_from("status")
+                    .expect("valid field name"),
             };
 
             let err = refs
-                .resolve(at, "#movie/status")
+                .resolve(at, &field_ref("#movie/status"))
                 .expect_err("out-of-bounds rejected");
 
             assert!(matches!(err, SchemaError::RefOutOfBounds { .. }));
@@ -1243,11 +1192,12 @@ mod tests {
             };
             let at = FieldPath {
                 schema: SchemaNameRef::from("sci_fi"),
-                field: "status",
+                field: FieldNameRef::try_from("status")
+                    .expect("valid field name"),
             };
 
             let err = refs
-                .resolve(at, "#book/status")
+                .resolve(at, &field_ref("#book/status"))
                 .expect_err("missing field rejected");
 
             assert!(matches!(err, SchemaError::RefFieldNotFound { .. }));

@@ -117,7 +117,7 @@ fn class_values<'a>(
         let field = frontmatter
             .fields()
             .iter()
-            .find(|field| field.key() == class_field)?;
+            .find(|field| field.key().is_match(class_field))?;
         Some(field.value())
     });
     let list = match value {
@@ -300,7 +300,7 @@ impl IndexRecord {
             FieldPath::Metadata(key) => self
                 .note
                 .fields()
-                .find(|field| field.key() == key.as_str())
+                .find(|field| field.key().is_match(key.as_str()))
                 .map_or(FieldValue::Null, |field| field.value().clone()),
         }
     }

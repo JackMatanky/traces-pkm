@@ -36,10 +36,9 @@ pub(crate) use error::{
 };
 #[cfg(any(test, feature = "test-utils"))]
 pub(crate) use file::{Discovered, LocalConfigFile};
-/// Merged local/global settings for note schemas.
-pub use model::{Config, SchemasConfig};
+pub use model::Config;
 #[cfg(any(test, feature = "test-utils"))]
-pub use model::{DateFieldConfig, FrontmatterConfig};
+pub use model::{DateFieldConfig, FrontmatterConfig, SchemasConfig};
 /// Orchestrates config loading and trust administration.
 pub use service::ConfigService;
 #[cfg(test)]
