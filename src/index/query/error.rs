@@ -13,8 +13,8 @@ use thiserror::Error;
 /// [`FieldValue::Null`]: crate::note::FieldValue::Null
 #[derive(Clone, Debug, Eq, PartialEq, Error)]
 pub enum QueryError {
-    /// Indicates that a field path was empty, used an unknown accessor, or
-    /// contained an unexpected structure.
+    /// A field path was empty, used an unknown accessor, or contained an
+    /// unexpected structure.
     ///
     /// The `suggestion` field holds [`Some`] with the closest matching `file.*`
     /// or `task.*` accessor name when `path` resembles a typo, or [`None`] when
@@ -37,7 +37,7 @@ pub enum QueryError {
         /// close match exists.
         suggestion: Option<String>,
     },
-    /// Indicates that a filter expression failed to match the expected
+    /// A filter expression failed to match the expected
     /// `<field> <op> <value>` structure.
     #[error(
         "invalid filter expression {expr:?}; expected `<field> <op> <value>` \
@@ -48,15 +48,14 @@ pub enum QueryError {
         /// The raw filter expression string that failed to parse.
         expr: String,
     },
-    /// Indicates that a query limit count was negative or exceeded platform
-    /// [`usize`] bounds.
+    /// A query limit count was negative or exceeded platform [`usize`] bounds.
     #[error("invalid limit {n}; expected a non-negative row count")]
     NegativeLimit {
         /// The rejected limit count value.
         n: i64,
     },
-    /// Indicates that [`super::QueryOutcome::task_list`] was invoked on
-    /// page-level records lacking task fields.
+    /// [`super::QueryOutcome::task_list`] was invoked on page-level records
+    /// lacking task fields.
     ///
     /// Page-level records are constructed by [`FileIndex::query`], whereas
     /// task-list transformations require task-level records produced by
@@ -69,8 +68,8 @@ pub enum QueryError {
          got page-level records with no task fields"
     )]
     TaskListOnPageRecords,
-    /// Indicates that the `headers` and `columns` passed to
-    /// [`super::QueryOutcome::table`] had unequal lengths.
+    /// The `headers` and `columns` passed to [`super::QueryOutcome::table`]
+    /// had unequal lengths.
     #[error(
         "table headers ({headers}) and columns ({columns}) must have the same \
          length"

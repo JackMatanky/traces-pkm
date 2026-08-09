@@ -1,21 +1,28 @@
-//! Project file index and markdown Note query support.
+//! Build, persist, load, and query a file index over a project root.
 //!
-//! [`FileIndex`] stores a sorted [`FileRecord`] for every regular file under a
-//! trusted project root. Markdown files also get parsed into [`Note`] metadata.
-//! Persistence lives in [`store`]; callers use [`FileIndex`]'s methods instead
-//! of redb tables. Inbound links between Notes are derived from outlinks and
-//! persisted alongside them; see [`inlinks`].
+//! [`FileIndex`] is the main entry point. It stores a sorted [`FileRecord`]
+//! for every regular file under a project root. Markdown files also contribute
+//! parsed [`Note`] metadata. Persistence uses a redb-backed database managed
+//! by the [`store`] submodule; callers use [`FileIndex`]'s methods instead of
+//! touching redb tables directly.
 //!
-//! # Main Entry Points
+//! Inbound links between Notes are derived from outlinks during build and
+//! refresh, then persisted alongside them; see [`inlinks`].
 //!
-//! - [`FileIndex::build`], [`FileIndex::refresh`], [`FileIndex::persist`], and
-//!   [`FileIndex::load`] - Build, refresh, save, and reload the index.
-//!   Rendering caches one refresh per render instead of calling `refresh` per
-//!   query; see `template::engine::query::cached_refresh`.
-//! - [`FileIndex::query`] and [`FileIndex::query_tasks`] - Run page-level and
-//!   task-level queries.
-//! - [`FileIndex::records`] and [`FileIndex::notes`] - Expose sorted indexed
-//!   records for direct inspection.
+//! # Lifecycle
+//!
+//! - Build the index: [`FileIndex::build`]
+//! - Persist to disk: [`FileIndex::persist`]
+//! - Load from disk: [`FileIndex::load`]
+//! - Refresh against the filesystem: [`FileIndex::refresh`]
+//!
+//! # Querying
+//!
+//! - [`FileIndex::query`] runs a page-level query (one row per Note).
+//! - [`FileIndex::query_tasks`] runs a task-level query (one row per task
+//!   item).
+//! - [`FileIndex::records`] and [`FileIndex::notes`] expose sorted indexed data
+//!   for direct inspection.
 //!
 //! [`store`]: mod@store
 //! [`inlinks`]: mod@inlinks
@@ -48,8 +55,11 @@ const INDEX_FILE: &str = ".traces/index.redb";
 /// Persisted cache of file records, parsed Note metadata, and derived
 /// inbound links.
 ///
-/// Every regular file contributes a [`FileRecord`]. Markdown files also
-/// contribute a [`Note`], accessible through [`Self::notes`] or `Self::note`.
+/// Every regular file under the project root contributes a [`FileRecord`].
+/// Markdown files also contribute a [`Note`], accessible through
+/// [`Self::notes`] or [`Self::note`]. Use [`Self::build`] to create an index
+/// from scratch, [`Self::persist`] to save it, [`Self::load`] to reload it, or
+/// [`Self::refresh`] to update it against the current filesystem state.
 #[derive(Clone, Debug)]
 pub struct FileIndex {
     records: Vec<FileRecord>,

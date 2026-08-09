@@ -27,14 +27,14 @@ pub enum FileIndexError {
         source: io::Error,
     },
     /// Opening, reading, or writing the redb-backed index database failed.
+    ///
+    /// `redb::Error` is boxed to keep this enum small; `Store` is by far the
+    /// rarest variant.
     #[error("failed to access the index database at {path}")]
     Store {
         /// The index database file.
         path: PathBuf,
-        /// Source redb error, boxed to keep this enum and `CliError` small.
-        ///
-        /// `redb::Error` is a large, many-variant enum, and `Store` is by far
-        /// the rarest path here.
+        /// Source redb error.
         #[source]
         source: Box<redb::Error>,
     },
@@ -49,15 +49,15 @@ pub enum FileIndexError {
     },
     /// A stored record could not be deserialized.
     ///
-    /// Occurs when a stored [`super::FileRecord`] or [`super::Note`]'s bytes
-    /// are corrupt or were written by an incompatible encoding.
+    /// Occurs when stored bytes are corrupt or were written by an incompatible
+    /// encoding.
     #[error("failed to deserialize the record for {path}")]
     Deserialize {
         /// The record's project-relative path (its key in the index database).
         path: PathBuf,
         /// Source postcard deserialization error. Not boxed: `postcard::Error`
         /// is a small, fieldless, non-exhaustive enum with no parse-diagnostic
-        /// payload, unlike the `toml::de::Error` this replaces.
+        /// payload.
         #[source]
         source: postcard::Error,
     },

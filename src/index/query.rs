@@ -14,9 +14,7 @@
 //!   [`QueryOutcome::limit`], [`QueryOutcome::group_by`],
 //!   [`QueryOutcome::flatten`]), and renders terminal Markdown output
 //!   ([`QueryOutcome::table`], [`QueryOutcome::list`],
-//!   [`QueryOutcome::task_list`]). Terminal renderers are plain Rust methods
-//!   with no minijinja dependency, enabling reuse across template namespaces
-//!   and CLI query commands.
+//!   [`QueryOutcome::task_list`]).
 //! - [`QueryError`]: Reports malformed field paths and query expressions.
 
 mod error;
@@ -375,8 +373,12 @@ impl QueryOutcome {
     ///
     /// # Errors
     ///
-    /// - `UnparsableFilterExpression` if `expr` cannot be parsed.
-    /// - `UnknownFieldPath` if a field path referenced in `expr` is malformed.
+    /// - [`UnparsableFilterExpression`] if `expr` cannot be parsed.
+    /// - [`UnknownFieldPath`] if a field path referenced in `expr` is
+    ///   malformed.
+    ///
+    /// [`UnparsableFilterExpression`]: QueryError::UnparsableFilterExpression
+    /// [`UnknownFieldPath`]: QueryError::UnknownFieldPath
     #[inline]
     pub fn filter(self, expr: &str) -> Result<Self, QueryError> {
         let expr = FilterExpr::parse(expr)?;
@@ -432,7 +434,9 @@ impl QueryOutcome {
     ///
     /// # Errors
     ///
-    /// - `UnknownFieldPath` if `path` cannot be parsed as a valid field path.
+    /// - [`UnknownFieldPath`] if `path` cannot be parsed as a valid field path.
+    ///
+    /// [`UnknownFieldPath`]: QueryError::UnknownFieldPath
     #[inline]
     pub fn sort(
         self,
@@ -446,8 +450,10 @@ impl QueryOutcome {
     ///
     /// # Errors
     ///
-    /// - `NegativeLimit` if `n` is negative or exceeds platform pointer width
+    /// - [`NegativeLimit`] if `n` is negative or exceeds platform pointer width
     ///   limits.
+    ///
+    /// [`NegativeLimit`]: QueryError::NegativeLimit
     #[inline]
     pub fn limit(self, n: i64) -> Result<Self, QueryError> {
         let n = usize::try_from(n).map_err(|_source| {
@@ -488,6 +494,8 @@ impl QueryOutcome {
     /// # Errors
     ///
     /// - [`UnknownFieldPath`] if `path` cannot be parsed as a valid field path.
+    ///
+    /// [`UnknownFieldPath`]: QueryError::UnknownFieldPath
     ///
     /// [`UnknownFieldPath`]: QueryError::UnknownFieldPath
     pub(crate) fn flatten(self, path: &str) -> Result<Self, QueryError> {
@@ -565,6 +573,8 @@ impl QueryOutcome {
     /// - [`UnknownFieldPath`] if `path` cannot be parsed as a valid field path.
     ///
     /// [`UnknownFieldPath`]: QueryError::UnknownFieldPath
+    ///
+    /// [`UnknownFieldPath`]: QueryError::UnknownFieldPath
     pub(crate) fn list(&self, path: &str) -> Result<String, QueryError> {
         let field_path = FieldPath::parse(path)?;
         let mut out = String::new();
@@ -611,13 +621,15 @@ impl QueryOutcome {
     ///
     /// # Performance
     ///
-    /// Runs key resolution in `O(n)` time using [`slice::sort_by_cached_key`],
+    /// Runs key resolution in O(n) time using [`slice::sort_by_cached_key`],
     /// resolving `path` once per record rather than on every comparison made
     /// by a standard `sort_by` closure.
     ///
     /// # Errors
     ///
     /// - [`UnknownFieldPath`] if `path` cannot be parsed as a valid field path.
+    ///
+    /// [`UnknownFieldPath`]: QueryError::UnknownFieldPath
     ///
     /// [`UnknownFieldPath`]: QueryError::UnknownFieldPath
     fn sort_by_field(
