@@ -1,9 +1,9 @@
 //! Markdown event parser for [`Note`] records.
 //!
-//! [`parse_markdown`] walks the `pulldown-cmark` event stream once. Parser
-//! state lives in [`ParserContext`], while [`ListTracker`] handles explicit
-//! list and list-item stacks so nested Markdown never recurses through the
-//! call stack.
+//! [`parse_markdown`] converts Markdown source into a [`Note`]. It walks the
+//! `pulldown-cmark` event stream once. Parser state lives in [`ParserContext`],
+//! while [`ListTracker`] handles explicit list and list-item stacks so nested
+//! Markdown never recurses through the call stack.
 //!
 //! Inline fields and tags are lexed from parser-built plain-text buffers: one
 //! per top-level paragraph or heading, and one per list item. The buffers

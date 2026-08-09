@@ -1,4 +1,8 @@
 //! Markdown list, list item, and task-list structures.
+//!
+//! - [`List`] - An ordered or unordered Markdown list.
+//! - [`ListItem`] - A list item with optional task state and child lists.
+//! - [`TaskStatus`] - The completion state of a task list item.
 
 use serde::{Deserialize, Serialize};
 

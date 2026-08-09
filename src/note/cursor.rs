@@ -1,4 +1,7 @@
 //! UTF-8 byte-offset helpers for parser-owned source text.
+//!
+//! [`SourceText`] wraps a borrowed string and exposes validated byte-offset
+//! arithmetic used by the lexer and wikilink parser.
 
 use std::ops::Range;
 
