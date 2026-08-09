@@ -8,7 +8,7 @@
 //!
 //! Preserves TOML values exactly as configured, but parses `$ref` strings and
 //! a Field Definition's `type`/`$ref` source into validated shapes
-//! ([`FieldAddress`](super::address::FieldAddress), [`RawFieldSource`]) at
+//! ([`FieldAddress`], [`RawFieldSource`]) at
 //! deserialization time: a `RawFieldDef` with neither `type` nor `$ref`
 //! cannot exist past parsing. Inheritance, `$ref` resolution against other
 //! Schemas, and the reserved Global Schema's `required` degrade are applied
@@ -144,8 +144,8 @@ struct RawFieldDefToml {
     /// Store a parsed `$ref` address shape.
     ///
     /// Raw deserialization only parses the address into a [`FieldAddress`].
-    /// [`RefResolver`](crate::schema::resolve::RefResolver) later checks that
-    /// it resolves to Global or an ancestor Schema field.
+    /// `RefResolver` later checks that it resolves to Global or an ancestor
+    /// Schema field.
     #[serde(rename = "$ref")]
     reference: Option<FieldAddress>,
     required: Option<bool>,

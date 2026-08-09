@@ -183,7 +183,7 @@ impl<'a> TemplateService<'a> {
     /// # Errors
     ///
     /// - [`OutputPathEscapesRoot`] if a declared `file.write_to()` or explicit
-    ///   `output` path escapes the workspace root. Never returned for
+    ///   `output` path escapes the project root. Never returned for
     ///   [`WriteMode::DryRun`].
     /// - [`OutputFileAlreadyExists`] if the target output file exists and
     ///   `mode` specifies [`CommitPolicy::CreateNew`]. Never returned for

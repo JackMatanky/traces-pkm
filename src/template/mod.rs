@@ -36,6 +36,7 @@
 //!
 //! [`TemplatePath`]: path::TemplatePath
 //! [`DeclaredOutputPath`]: path::DeclaredOutputPath
+//! [`CommitPolicy`]: writer::CommitPolicy
 
 mod engine;
 mod error;

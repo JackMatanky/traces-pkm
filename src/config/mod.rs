@@ -8,7 +8,7 @@
 //!    ([`store::ConfigStateStore`]).
 //! 3. **Verify trust** before parsing local content; reject untrusted or stale
 //!    files ([`trust`]).
-//! 4. **Parse** TOML into [`raw::RawConfig`] ([`file`]).
+//! 4. **Parse** TOML into [`raw::RawConfig`] ([`mod@file`]).
 //! 5. **Merge** global config before local so local values win
 //!    ([`service::ConfigService`]).
 //!

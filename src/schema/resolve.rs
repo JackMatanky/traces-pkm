@@ -9,10 +9,8 @@
 //! # Main Type
 //!
 //! - [`resolve`]: linearizes the `extends` DAG into [`super::model::Schema`]s.
-//!   See [`super::model`] for the resolved shapes
-//!   ([`Schema`](super::model::Schema),
-//!   [`FieldDefinition`](super::model::FieldDefinition),
-//!   [`FieldOptions`](super::model::FieldOptions)) this produces.
+//!   See [`super::model`] for the resolved shapes ([`Schema`],
+//!   [`FieldDefinition`], [`FieldOptions`]) this produces.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
