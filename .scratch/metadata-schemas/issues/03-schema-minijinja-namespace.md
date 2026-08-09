@@ -51,7 +51,8 @@ Template consumption surface per spec User Stories 4–11, 14 and Implementation
 
 ### What was built
 
-- `src/template/engine/schema.rs`: `SchemaOps`, the `schema` namespace Object, mirroring `QueryOps`/`UiOps`'s `get_value`/`enumerate` pattern. Holds the resolved Schema registry directory (`config.root().join(config.schemas().directory())`) as an `Arc<Path>`. `.get(name)` loads the registry (cached per render in `State`'s temp storage via a `CachedRegistry(Arc<SchemaRegistry>)` wrapper, mirroring `query.rs`'s `cached_refresh`/`CachedIndex`) and binds the named `Schema`, hard-erroring via `unknown_schema_error` if absent. `impl Object for Schema` lives here (not in `crate::schema`), mirroring how `query.rs` gives `QueryOutcome`/`IndexRecord` their `Object` impls — keeps `crate::schema` independent of minijinja. `.field(name)` resolves through a new `FieldDefinition::selectable_values(&self) -> Option<&[String]>` accessor on `crate::schema::model` (only `select` returns `Some`; every other type, including `file` pending ticket 04, returns `None`), hard-erroring via `unknown_field_error` if the field name doesn't resolve.
+- `src/template/engine/schema.rs`: `SchemaOps`, the `schema` namespace Object, mirroring `QueryOps`/`UiOps`'s `get_value`/`enumerate` pattern. Holds the resolved Schema registry directory (`config.root().join(config.schemas().directory())`) as an `Arc<Path>`. `.get(name)` loads the registry (cached per render in `State`'s temp storage via a `CachedRegistry(Arc<SchemaRegistry>)` wrapper, mirroring `query.rs`'s `cached_refresh`/`CachedIndex`) and binds the named Schema as a `SchemaBinding` — a wrapper pairing `Arc<Schema>` with `Arc<SchemaRegistry>` — hard-erroring via `unknown_schema_error` if absent. `impl Object for SchemaBinding` lives here (not in `crate::schema`), mirroring how `query.rs` gives `QueryOutcome`/`IndexRecord` their `Object` impls — keeps `crate::schema` independent of minijinja and registry-unaware. A bound `SchemaBinding` exposes three things: `.name` (plain attribute, the Schema's own name), `.field(name)` (selectable values or `none`, hard-erroring via `unknown_field_error` on an unknown field), and `.descendants()` (every Schema that is-a this one transitively, each itself a chainable `SchemaBinding`, via `SchemaRegistry::descendants_of`).
+- `src/schema/registry.rs`: `SchemaRegistry` stores `Arc<Schema>`, not owned `Schema`, so repeated `.get()`/`.descendants_of()` calls within one render share a Schema's field map instead of deep-cloning it per call — mirroring `crate::index::IndexRecord`'s `Arc<Note>` for the identical problem. Added `descendants_of(name) -> Vec<Arc<Schema>>`, the registry-level is-a-transitively primitive symmetric with the existing `Schema::ancestors()`.
 - `src/template/engine.rs`: `TemplateEngine::new`'s third parameter changed from `root: &Path` to `config: &Config`, since the `schema` namespace needs the config-resolved registry directory alongside the project root every other namespace already used. Registers `SchemaOps` alongside the existing namespaces. All 17 existing test call sites updated to build a `Config` via a new `config_for` test helper instead of passing a bare root path.
 - `src/template/service.rs`: `TemplateService::new` passes `config` straight through instead of `config.root()`.
 - `src/schema/model.rs`: added `FieldDefinition::selectable_values()`. Kept the `FieldOptions` enum `pub(crate)`-but-module-private (not re-exported crate-wide) rather than exposing it to `template::engine::schema` for a `match`, since the mapping from "field type" to "does `.field()` have values" is exactly the kind of internal-representation query the owning module should answer, not something callers should reimplement by matching on `FieldOptions` variants themselves.
@@ -267,3 +268,21 @@ this ticket.
 above, → 23 with this pass's chaining test). Re-verified: `cargo check`,
 both clippy gates, `fmt --check` clean; `cargo test --workspace --features
 test-utils` 1344 lib + 4 bin + 5 integration + 10 doctests pass.
+
+### Final state (current)
+
+The namespace's shipped surface, superseding the per-session deltas above:
+
+- `schema.get(name)` → `SchemaBinding` (`Arc<Schema>` + `Arc<SchemaRegistry>`), hard-erroring on an unknown name.
+- `.name` — plain attribute, the Schema's own name.
+- `.field(name)` — selectable values (`select` only; `file` deferred to ticket 04) or `none`; hard-errors on an unknown field.
+- `.descendants()` — every Schema that is-a this one transitively, each a chainable `SchemaBinding` (`.field(...)`/`.descendants()` again); empty, not an error, for a leaf.
+- Registry load is lazy (first `schema.get(...)` in a render) and cached per render (`State` temp storage); `SchemaRegistry` stores `Arc<Schema>` so repeated lookups share field maps instead of deep-cloning.
+
+Files: `src/template/engine/schema.rs` (`SchemaOps`, `SchemaBinding`, `CachedRegistry`), `src/schema/registry.rs` (`Arc<Schema>` storage, `descendants_of`), `src/schema/model.rs` (`FieldDefinition::selectable_values`), `src/template/engine.rs` + `src/template/service.rs` (Config-based wiring).
+
+Test count: 23 in `template::engine::schema`, 5 new in `schema::registry` (`get`/`descendants_of`), 8 in `schema::model::tests::field_definition::selectable_values`, 1 in `template::engine::tests::utilities` (`schema_get_is_reachable`).
+
+Verified clean as of the latest commit: `cargo check --workspace --all-targets --features test-utils`, `cargo clippy --workspace -- -D warnings` (both the default and `--all-targets --features test-utils` gates), `cargo fmt --all -- --check`, `cargo deny check`. `cargo test --workspace --features test-utils`: 1344 lib + 4 bin + 18 e2e + 5 integration + 10 doctests, all pass. `cargo doc --no-deps --document-private-items --features test-utils`: warning count unchanged from pre-ticket baseline (46, identical set, diffed).
+
+All 7 original ACs satisfied; AC6 has a documented granularity caveat (whole-registry, not per-Schema-file, failure isolation) inherited from ticket 02's load contract — out of scope here. `.name`/`.descendants()` are shipped, tested capabilities beyond the original 7 ACs, added on request during the refinement pass.
