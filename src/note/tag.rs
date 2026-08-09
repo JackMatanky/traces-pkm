@@ -2,7 +2,12 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Represents a Markdown tag value, including its leading `#`.
+/// A Markdown tag value, including its leading `#`.
+///
+/// Tags are extracted from paragraphs, headings, and list items. Mid-word
+/// occurrences like `foo#bar` are rejected. Nested tags such as
+/// `#projects/active` are stored as a single string; use
+/// [`Self::is_nested_under`] for prefix matching at `/` boundaries.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct Tag(String);
 

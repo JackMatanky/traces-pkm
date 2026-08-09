@@ -1,9 +1,11 @@
 //! Markdown event parser for [`Note`] records.
 //!
-//! [`parse_markdown`] converts Markdown source into a [`Note`]. It walks the
-//! `pulldown-cmark` event stream once. Parser state lives in [`ParserContext`],
-//! while [`ListTracker`] handles explicit list and list-item stacks so nested
-//! Markdown never recurses through the call stack.
+//! [`parse_markdown`] walks a `pulldown-cmark` event stream once, building a
+//! [`Note`] from frontmatter, lists, outlinks, inline fields, and tags.
+//!
+//! Parser state lives in [`ParserContext`], while [`ListTracker`] handles
+//! explicit list and list-item stacks so nested Markdown never recurses
+//! through the call stack.
 //!
 //! Inline fields and tags are lexed from parser-built plain-text buffers: one
 //! per top-level paragraph or heading, and one per list item. The buffers
@@ -29,6 +31,21 @@ use super::{
 /// Parses Markdown source into a [`Note`].
 ///
 /// Enables task lists, YAML frontmatter blocks, and Obsidian wikilinks.
+///
+/// The parser walks the `pulldown-cmark` event stream once, collecting
+/// frontmatter, lists, outlinks, inline fields, and tags in document order.
+/// Inline fields and tags are excluded from fenced code blocks, indented code
+/// blocks, and inline code spans.
+///
+/// # Examples
+///
+/// ```ignore
+/// use traces_pkm::parse_markdown;
+///
+/// let note = parse_markdown("note.md", "# Hello\nStatus:: Draft");
+/// assert!(note.outlinks().is_empty());
+/// assert_eq!(note.tags().len(), 0);
+/// ```
 #[inline]
 #[must_use]
 pub fn parse_markdown<P: Into<PathBuf>>(path: P, src: &str) -> Note {
@@ -44,7 +61,7 @@ pub fn parse_markdown<P: Into<PathBuf>>(path: P, src: &str) -> Note {
     ctx.into_note(path)
 }
 
-/// Represents the top-level block currently being parsed.
+/// The top-level block currently being parsed.
 ///
 /// Metadata, code, and text blocks are mutually exclusive.
 #[derive(Default, Eq, PartialEq)]
@@ -59,7 +76,7 @@ enum BlockContext {
 /// Inline fields and tags flushed from a closed list item's scan buffer.
 type FlushedFields = Option<(Vec<InlineField>, Vec<Tag>)>;
 
-/// Represents state accumulated while walking Markdown events for one note.
+/// State accumulated while walking Markdown events for one note.
 #[derive(Default)]
 struct ParserContext {
     frontmatter: Option<Frontmatter>,
@@ -306,7 +323,7 @@ impl ParserContext {
     }
 }
 
-/// Represents a link currently being walked, accumulating its display text.
+/// A link currently being walked, accumulating its display text.
 struct ActiveLink {
     target: String,
     kind: LinkType,
@@ -323,7 +340,7 @@ impl ActiveLink {
     }
 }
 
-/// Manages nested list and list-item state for one Markdown event stream.
+/// Nested list and list-item state for one Markdown event stream.
 ///
 /// Completed top-level lists live in `lists`; still-open lists and items live
 /// on explicit stacks.
@@ -491,13 +508,13 @@ impl ListTracker {
     }
 }
 
-/// Represents an active list frame on the parser stack.
+/// An active list frame on the parser stack.
 struct ListFrame {
     is_ordered: bool,
     items: Vec<ListItem>,
 }
 
-/// Represents an active list item frame on the parser stack.
+/// An active list item frame on the parser stack.
 struct ItemFrame {
     task_status: Option<TaskStatus>,
     text_buffer: String,
