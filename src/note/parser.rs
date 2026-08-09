@@ -39,12 +39,15 @@ use super::{
 ///
 /// # Examples
 ///
-/// ```ignore
+/// ```rust
+/// # #[cfg(feature = "test-utils")]
+/// # {
 /// use traces_pkm::parse_markdown;
 ///
 /// let note = parse_markdown("note.md", "# Hello\nStatus:: Draft");
 /// assert!(note.outlinks().is_empty());
 /// assert_eq!(note.tags().len(), 0);
+/// # }
 /// ```
 #[inline]
 #[must_use]

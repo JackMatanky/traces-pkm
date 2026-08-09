@@ -53,7 +53,9 @@ impl TemplatePathInput {
     ///
     /// # Examples
     ///
-    /// ```ignore
+    /// ```rust
+    /// # #[cfg(feature = "test-utils")]
+    /// # {
     /// use std::path::Path;
     ///
     /// use traces_pkm::TemplatePathInput;
@@ -61,6 +63,7 @@ impl TemplatePathInput {
     /// let input = TemplatePathInput::parse(Path::new("daily.md"))?;
     /// assert_eq!(input.as_ref(), Path::new("daily.md"));
     /// # Ok::<_, traces_pkm::TemplatePathError>(())
+    /// # }
     /// ```
     ///
     /// [`Component::Normal`]: std::path::Component::Normal

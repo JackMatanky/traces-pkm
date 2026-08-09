@@ -155,12 +155,15 @@ pub enum RenderFailureKind {
 ///
 /// # Examples
 ///
-/// ```ignore
+/// ```rust
+/// # #[cfg(feature = "test-utils")]
+/// # {
 /// use minijinja::{Error, ErrorKind};
 /// use traces_pkm::{RenderFailureKind, classify_render_error};
 ///
 /// let error = Error::new(ErrorKind::SyntaxError, "bad syntax");
 /// assert_eq!(classify_render_error(&error), RenderFailureKind::Syntax);
+/// # }
 /// ```
 #[inline]
 #[must_use]
