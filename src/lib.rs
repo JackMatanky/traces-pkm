@@ -7,22 +7,44 @@
 //!   command execution flow.
 //! - `config` - Project configuration loading, discovery, TOML parsing, and
 //!   trust verification.
-//! - `index` - Persistent file index, note parsing, link graph construction,
-//!   and query execution.
-//! - `note` - Markdown note parsing, YAML frontmatter extraction, and task
-//!   processing.
-//! - `schema` - Schema registry and Field Resolution: parses
-//!   `.traces/schemas/*.toml` and linearizes the `extends` DAG into effective
-//!   field definitions.
-//! - `template` - Template loading, path expansion, custom engine bindings, and
-//!   note rendering.
 //! - `dialog` - Object-safe dialog prompts for interactive and preset input.
 //! - `dirs` - XDG and platform-specific directory resolution for configuration
 //!   and persistent state.
 //! - `field` - Validated field-name and field-key primitives shared across note
 //!   metadata and schemas.
+//! - `file_name` - File-name newtypes shared by the index, template, and schema
+//!   layers.
+//! - `file_store` - Hash-keyed file and path state store using BLAKE3-named
+//!   entries.
 //! - `hash` - BLAKE3 hashing for file contents and canonicalized paths.
+//! - `index` - Persistent file index, note parsing, link graph construction,
+//!   and query execution.
+//! - `note` - Markdown note parsing, YAML frontmatter extraction, and task
+//!   processing.
 //! - `path` - Root-relative path validation and confinement.
+//! - `schema` - Schema registry and field resolution: parses
+//!   `.traces/schemas/*.toml` and linearizes the `extends` DAG into effective
+//!   field definitions.
+//! - `template` - Template loading, path expansion, custom engine bindings, and
+//!   note rendering.
+//!
+//! # Key Types
+//!
+//! Available with the `test-utils` feature:
+//!
+//! - [`Config`], [`ConfigService`], [`TrustRequest`] - project configuration
+//!   and trust verification.
+//! - [`Note`], [`Frontmatter`], [`FieldValue`], [`InlineField`], [`Link`] -
+//!   parsed note data structures.
+//! - [`FileIndex`], [`QueryOutcome`] - persistent index and query execution.
+//! - [`TemplateService`], [`CommitPolicy`], [`WriteMode`] - template rendering
+//!   and write operations.
+//! - [`Blake3FileHash`], [`Blake3PathHash`] - BLAKE3 hashing primitives.
+//!
+//! Always available:
+//!
+//! - [`DialogProvider`], [`PresetDialogProvider`], [`TerminalDialogProvider`] -
+//!   interactive and preset dialog prompts.
 
 mod config;
 mod dialog;
