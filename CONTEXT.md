@@ -189,8 +189,12 @@ A key in a Field Definition pointing at another definition used as its base: `#g
 _Avoid_: reference, field alias
 
 ### schema namespace
-The minijinja global exposing Schemas to templates. `schema.get("book")` binds a Schema; `book.field("status")` returns its selectable values — plain strings, or label/value pairs for `file` fields (label from the `[frontmatter]` aliases key, else filename stem; value is the path). Unknown schema or field names are errors; a non-list field type returns `None`. Schemas supply values only — templates choose the interactive function themselves.
+The minijinja global exposing Schemas to templates. `schema.get("book")` binds a Schema, exposing `.name` (its own name) and `.field("status")`, which returns its selectable values — plain strings for `select` fields, `None` for every other type today, including `file` (file-field label/value pairs land in ticket 04). Unknown schema or field names are errors. Schemas supply values only — templates choose the interactive function themselves.
 _Avoid_: schema api, metadata menu function
+
+#### descendants
+`schema.get("book").descendants()` returns every Schema that is-a `book` transitively (extends it directly or via an ancestor), each itself a bound Schema so `.field(...)`/`.descendants()` chain further. Excludes `book` itself; an empty list, not an error, when nothing extends it.
+_Avoid_: children (implies direct extends only; this is transitive), subclasses
 
 #### from_class
 A page-level query source, `query.from_class("book")` or `query.from_class(["book", "movie"])`, selecting notes whose File Class matches any listed name with Extends is-a matching applied. A class with no Schema degrades to exact match with a warning.

@@ -234,6 +234,7 @@ impl FieldPath {
         Ok(Self::Metadata(FieldKey::new(path).canonical().to_owned()))
     }
 }
+
 /// Constructs an [`UnknownFieldPath`] error containing a suggestion hint.
 ///
 /// Evaluates `field` against `candidates` using [`closest_accessor`] and

@@ -46,12 +46,8 @@ impl<'a> TemplateService<'a> {
     #[must_use]
     pub fn new(config: &'a Config, provider: Arc<dyn DialogProvider>) -> Self {
         let loader = TemplateLoader::from(config);
-        let engine = TemplateEngine::new(
-            &loader,
-            Arc::clone(&provider),
-            config.root(),
-            config.schemas(),
-        );
+        let engine =
+            TemplateEngine::new(&loader, Arc::clone(&provider), config);
         Self {
             config,
             loader,

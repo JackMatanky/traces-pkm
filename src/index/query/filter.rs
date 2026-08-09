@@ -149,7 +149,7 @@ fn tokenize_filter_expr(expr: &str) -> Result<Vec<FilterToken>, QueryError> {
 /// [`FieldValue::String`].
 ///
 /// Every `\X` pair pushes `X` verbatim: `\"` becomes `"` and `\\` becomes
-/// `\`, but there is no escape table beyond that — `\n` produces the letter
+/// `\`, but there is no escape table beyond that; `\n` produces the letter
 /// `n`, not a newline.
 fn string_callback(lex: &mut Lexer<'_, FilterToken>) -> FieldValue {
     let inner = lex

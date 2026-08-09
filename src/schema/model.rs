@@ -43,16 +43,6 @@ impl Schema {
     /// Returns the Schema name (the source file's stem).
     #[inline]
     #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "declared by the schema-registry ticket; consumed by the \
-                      schema-namespace ticket \
-                      (.scratch/metadata-schemas/issues/\
-                      03-schema-minijinja-namespace.md)"
-        )
-    )]
     pub(crate) fn name(&self) -> &str {
         self.name.as_str()
     }
@@ -121,6 +111,32 @@ impl FieldDefinition {
     #[must_use]
     pub(crate) fn options(&self) -> &FieldOptions {
         &self.options
+    }
+
+    /// Returns this field's selectable values for the `schema` minijinja
+    /// namespace's `.field()` method, or `None` if this field type has none
+    /// to offer.
+    ///
+    /// Only `select` carries a plain value list today. `file` is also
+    /// list-bearing in principle, but its options resolve live from the
+    /// `FileIndex`, which this method does not yet consult; until that's
+    /// wired up, it returns `None` here too rather than a value list it
+    /// cannot yet honor.
+    #[inline]
+    #[must_use]
+    pub(crate) fn selectable_values(&self) -> Option<&[String]> {
+        match &self.options {
+            FieldOptions::Select {
+                values,
+            } => Some(values),
+            FieldOptions::Input
+            | FieldOptions::Boolean
+            | FieldOptions::Number
+            | FieldOptions::Date
+            | FieldOptions::File {
+                ..
+            } => None,
+        }
     }
 
     /// Returns `true` if this field must be set. Always `false` on the
@@ -377,6 +393,60 @@ mod tests {
             assert_eq!(definition.options(), &FieldOptions::Boolean);
             assert!(definition.is_required());
             assert!(definition.is_multi());
+        }
+
+        mod selectable_values {
+            use pretty_assertions::assert_eq;
+            use rstest::rstest;
+
+            use super::super::super::*;
+
+            #[test]
+            fn returns_the_values_list_for_a_select_field() {
+                let field = FieldDefinition::new(
+                    FieldOptions::Select {
+                        values: vec!["draft".to_owned(), "done".to_owned()],
+                    },
+                    false,
+                    false,
+                );
+
+                assert_eq!(
+                    field.selectable_values(),
+                    Some(["draft".to_owned(), "done".to_owned()].as_slice())
+                );
+            }
+
+            #[test]
+            fn returns_an_empty_slice_for_a_select_field_with_no_values() {
+                let field = FieldDefinition::new(
+                    FieldOptions::Select {
+                        values: Vec::new(),
+                    },
+                    false,
+                    false,
+                );
+
+                assert_eq!(field.selectable_values(), Some([].as_slice()));
+            }
+
+            #[rstest]
+            #[case::input(FieldOptions::Input)]
+            #[case::boolean(FieldOptions::Boolean)]
+            #[case::number(FieldOptions::Number)]
+            #[case::date(FieldOptions::Date)]
+            #[case::file(FieldOptions::File {
+                folders: vec!["assets".to_owned()],
+                ext: Some("png".to_owned()),
+                class: vec!["image".to_owned()],
+            })]
+            fn returns_none_for_a_non_select_field_type(
+                #[case] options: FieldOptions,
+            ) {
+                let field = FieldDefinition::new(options, false, false);
+
+                assert_eq!(field.selectable_values(), None);
+            }
         }
     }
 

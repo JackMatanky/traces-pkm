@@ -9,9 +9,8 @@
 //! - `ui.multi_select(label, items)`
 //!
 //! Each call delegates to the shared [`DialogProvider`] used to build the
-//! engine: a real [`TerminalDialogProvider`] for
-//! live renders, or a defaults-only
-//! [`PresetDialogProvider`] under `--no-input`.
+//! engine: a real [`TerminalDialogProvider`] for live renders, or a
+//! defaults-only [`PresetDialogProvider`] under `--no-input`.
 //!
 //! `select` and `multi_select` derive display labels like minijinja's `map`,
 //! `sort`, and `groupby` filters. An optional `attribute=` kwarg names a dotted
@@ -39,8 +38,7 @@ const DEFAULT_ATTRIBUTE: &str = "label";
 
 /// Backs the `ui` namespace object.
 ///
-/// Holds the interactive provider selected by
-/// [`TemplateService`].
+/// Holds the interactive provider selected by [`TemplateService`].
 ///
 /// [`TemplateService`]: super::super::service::TemplateService
 pub(super) struct UiOps {
@@ -170,7 +168,7 @@ impl SelectOptions {
     ///   is undefined. Without it, missing attributes fall back to
     ///   `item.to_string()`, which lets plain arrays such as `["a", "b"]` work
     ///   without `attribute=`.
-    /// - any other kwarg is rejected via [`Kwargs::assert_all_used`].
+    /// - Any other kwarg is rejected via [`Kwargs::assert_all_used`].
     ///
     /// # Errors
     ///
@@ -233,10 +231,9 @@ impl SelectOptions {
 
 /// Maps a [`DialogError`] into a [`minijinja::Error`].
 ///
-/// The original dialog error is preserved as
-/// [`source`]. The minijinja message stays generic
-/// so crate-level error reporting can print the source chain without repeating
-/// the same user-facing message twice.
+/// The original dialog error is preserved as [`source`]. The minijinja
+/// message stays generic so crate-level error reporting can print the source
+/// chain without repeating the same user-facing message twice.
 ///
 /// [`source`]: std::error::Error::source
 fn dialog_error(source: DialogError) -> Error {

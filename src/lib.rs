@@ -102,7 +102,7 @@ mod test_support {
     /// # Panics
     ///
     /// Panics if `root` cannot be created, the config file cannot be
-    /// written, or trust cannot be recorded — this is fixture setup code,
+    /// written, or trust cannot be recorded: this is fixture setup code,
     /// so any such failure means the test itself is broken.
     #[inline]
     #[must_use]
@@ -133,7 +133,7 @@ mod test_support {
     ///
     /// # Panics
     ///
-    /// Panics if parent directories or the note file cannot be written —
+    /// Panics if parent directories or the note file cannot be written:
     /// this is fixture setup code, so any such failure means the test
     /// itself is broken.
     #[inline]
@@ -150,7 +150,7 @@ mod test_support {
     /// # Panics
     ///
     /// Panics if the `templates` directory or the template file cannot be
-    /// written — this is fixture setup code, so any such failure means the
+    /// written: this is fixture setup code, so any such failure means the
     /// test itself is broken.
     #[inline]
     pub fn write_template(root: &Path, name: &str, source: &str) {

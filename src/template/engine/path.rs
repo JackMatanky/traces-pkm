@@ -81,8 +81,8 @@ impl PathOps {
     ///
     /// The closure calls [`inspect`], the shared implementation behind
     /// `path_exists`, `is_file_path`, and `is_dir_path`. It clones `root`
-    /// because [`Value::from_function`]
-    /// requires a `Send + Sync + 'static` closure.
+    /// because [`Value::from_function`] requires a `Send + Sync + 'static`
+    /// closure.
     ///
     /// [`Value::from_function`]: minijinja::value::Value::from_function
     fn register_test(

@@ -8,7 +8,8 @@
 //! - [`TemplateConfig`] - Preserves local and global template directories so
 //!   template lookup can stay local-first.
 //! - [`SchemasConfig`] - The `[schemas]` class field name and registry
-//!   directory, resolved for `query.from_class`/`tasks.from_class`.
+//!   directory. The directory feeds the `schema` minijinja namespace's Schema
+//!   registry lookup and is resolved for `query.from_class`/`tasks.from_class`.
 //! - [`FrontmatterConfig`] - The `[frontmatter]` key names for title, aliases,
 //!   and the `{name, format}` date roles, declared here and consumed by later
 //!   frontmatter-aware work.
@@ -193,9 +194,10 @@ impl TemplateConfig {
 /// Resolved `[schemas]` settings: the class field name and registry
 /// directory.
 ///
-/// The template engine reads the class field and joins the registry
-/// directory against [`Config::root`] to resolve a Note's File Class(es)
-/// for `query.from_class`/`tasks.from_class`.
+/// The template engine reads the class field for `query.from_class`/
+/// `tasks.from_class` and joins the registry directory against
+/// [`Config::root`] to build the Schema registry path for the `schema`
+/// minijinja namespace.
 #[derive(Clone, Debug)]
 pub struct SchemasConfig {
     class_field: String,
@@ -248,7 +250,7 @@ impl From<RawSchemasConfig> for SchemasConfig {
 /// `{name, format}` date roles.
 ///
 /// Every key is optional; absence means no consumer-facing default is
-/// declared yet (later frontmatter-aware tickets read these).
+/// declared yet. Frontmatter-aware consumers read these once they exist.
 #[derive(Clone, Debug, Default)]
 pub struct FrontmatterConfig {
     #[cfg_attr(

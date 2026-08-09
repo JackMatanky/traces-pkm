@@ -767,9 +767,8 @@ mod tests {
         }
     }
 
-    /// End-to-end coverage for ticket #12, exercised together against one
-    /// shared project instead of each command's isolated per-behavior
-    /// tests:
+    /// End-to-end coverage exercised together against one shared project
+    /// instead of each command's isolated per-behavior tests:
     ///
     /// - Indexing.
     /// - Page and task CLI queries.

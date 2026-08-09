@@ -6,6 +6,7 @@
 //! - [`path`]
 //! - [`num`]
 //! - [`query`]
+//! - [`mod@schema`]
 //! - [`string`]
 //! - [`ui`]
 //!
@@ -20,6 +21,7 @@ mod file;
 mod num;
 mod path;
 mod query;
+mod schema;
 mod string;
 mod ui;
 
@@ -37,11 +39,12 @@ use self::{
     num::NumOps,
     path::PathOps,
     query::QueryOps,
+    schema::SchemaOps,
     string::StrOps,
     ui::UiOps,
 };
 use super::{loader::TemplateLoader, path::DeclaredOutputPath};
-use crate::{DialogProvider, config::SchemasConfig};
+use crate::{DialogProvider, config::Config};
 
 /// Renders template source through minijinja, backed by [`TemplateLoader`]'s
 /// `{% include %}` and `{% extends %}` resolution.
@@ -62,9 +65,9 @@ impl TemplateEngine {
     /// submodule functions and the standalone [`uuid`] function.
     ///
     /// Registers functions from the [`date`], [`mod@file`], [`path`], [`num`],
-    /// [`query`], [`string`], and [`ui`] submodules. Enables debug mode on the
-    /// underlying minijinja environment to support line and column diagnostic
-    /// locations on render errors.
+    /// [`query`], [`mod@schema`], [`string`], and [`ui`] submodules. Enables
+    /// debug mode on the underlying minijinja environment to support line and
+    /// column diagnostic locations on render errors.
     ///
     /// # Arguments
     ///
@@ -72,22 +75,19 @@ impl TemplateEngine {
     ///   extends %}` resolution.
     /// * `provider` - The [`DialogProvider`] implementation handling `ui.*`
     ///   calls.
-    /// * `root` - The base [`Path`] confining file operations, queries, and
-    ///   path inspections.
-    /// * `schemas` - The `[schemas]` settings supplying the File Class
-    ///   frontmatter field and the Schema registry directory for
-    ///   `query.from_class`/`tasks.from_class`.
+    /// * `config` - Supplies the project root confining file operations,
+    ///   queries, and path inspections, the `[schemas]` settings for
+    ///   `query.from_class`/`tasks.from_class`, and the Schema registry
+    ///   directory for the `schema` namespace.
     ///
     /// [`uuid`]: fn@uuid
     /// [`DialogProvider`]: crate::DialogProvider
-    /// [`Path`]: std::path::Path
     #[inline]
     #[must_use]
     pub(super) fn new(
         loader: &TemplateLoader,
         provider: Arc<dyn DialogProvider>,
-        root: &Path,
-        schemas: &SchemasConfig,
+        config: &Config,
     ) -> Self {
         let mut env = Environment::new();
         // Powers `minijinja::Error::range()`/`template_source()`, which
@@ -100,9 +100,10 @@ impl TemplateEngine {
             let loader = loader.clone();
             move |name| loader.load(name)
         });
-        let root: Arc<Path> = Arc::from(root);
-        let class_field: Arc<str> = Arc::from(schemas.class_field());
-        let schemas_dir: Arc<Path> = Arc::from(root.join(schemas.directory()));
+        let root: Arc<Path> = Arc::from(config.root());
+        let class_field: Arc<str> = Arc::from(config.schemas().class_field());
+        let schemas_dir: Arc<Path> =
+            Arc::from(config.root().join(config.schemas().directory()));
         FileOps::new(Arc::clone(&root)).register(&mut env);
         QueryOps::page(
             Arc::clone(&root),
@@ -118,6 +119,10 @@ impl TemplateEngine {
         DateOps.register(&mut env);
         StrOps::register(&mut env);
         NumOps::register(&mut env);
+        SchemaOps::new(Arc::from(
+            config.root().join(config.schemas().directory()),
+        ))
+        .register(&mut env);
         env.add_function("uuid", uuid);
         Self {
             env,
@@ -183,12 +188,19 @@ fn uuid() -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
+    use std::{fs, path::Path};
 
     use super::*;
 
     fn loader_from_dir(path: &Path) -> TemplateLoader {
         TemplateLoader::new(Some(path.to_path_buf()), None)
+    }
+
+    /// Builds a [`Config`] rooted at `root` with no template directories and
+    /// default `[schemas]` settings, for tests that only need a project root
+    /// to pass to [`TemplateEngine::new`].
+    fn config_for(root: &Path) -> Config {
+        Config::for_test(root.to_path_buf(), None, None, root.to_path_buf())
     }
 
     /// Creates a cheap, deterministic [`DialogProvider`] for tests that do not
@@ -210,8 +222,7 @@ mod tests {
             let engine = TemplateEngine::new(
                 &loader_from_dir(temp.path()),
                 preset_provider(),
-                temp.path(),
-                &SchemasConfig::default(),
+                &config_for(temp.path()),
             );
 
             let rendered = engine
@@ -229,8 +240,7 @@ mod tests {
             let engine = TemplateEngine::new(
                 &loader_from_dir(temp.path()),
                 preset_provider(),
-                temp.path(),
-                &SchemasConfig::default(),
+                &config_for(temp.path()),
             );
 
             let rendered = engine
@@ -249,8 +259,7 @@ mod tests {
             let engine = TemplateEngine::new(
                 &loader_from_dir(&dir),
                 preset_provider(),
-                temp.path(),
-                &SchemasConfig::default(),
+                &config_for(temp.path()),
             );
 
             let rendered = engine
@@ -268,8 +277,7 @@ mod tests {
             let engine = TemplateEngine::new(
                 &loader_from_dir(temp.path()),
                 preset_provider(),
-                temp.path(),
-                &SchemasConfig::default(),
+                &config_for(temp.path()),
             );
 
             let rendered = engine
@@ -291,8 +299,7 @@ mod tests {
             let engine = TemplateEngine::new(
                 &TemplateLoader::new(Some(local_dir), Some(global_dir)),
                 preset_provider(),
-                temp.path(),
-                &SchemasConfig::default(),
+                &config_for(temp.path()),
             );
 
             let rendered = engine
@@ -310,8 +317,7 @@ mod tests {
             let engine = TemplateEngine::new(
                 &loader_from_dir(temp.path()),
                 preset_provider(),
-                temp.path(),
-                &SchemasConfig::default(),
+                &config_for(temp.path()),
             );
 
             let rendered = engine
@@ -329,8 +335,7 @@ mod tests {
             let engine = TemplateEngine::new(
                 &loader_from_dir(temp.path()),
                 preset_provider(),
-                temp.path(),
-                &SchemasConfig::default(),
+                &config_for(temp.path()),
             );
 
             let rendered = engine
@@ -362,8 +367,7 @@ mod tests {
             let engine = TemplateEngine::new(
                 &loader_from_dir(temp.path()),
                 preset_provider(),
-                temp.path(),
-                &SchemasConfig::default(),
+                &config_for(temp.path()),
             );
 
             let rendered = engine
@@ -379,8 +383,7 @@ mod tests {
             let engine = TemplateEngine::new(
                 &loader_from_dir(temp.path()),
                 preset_provider(),
-                temp.path(),
-                &SchemasConfig::default(),
+                &config_for(temp.path()),
             );
 
             let rendered = engine
@@ -399,8 +402,7 @@ mod tests {
             let engine = TemplateEngine::new(
                 &loader_from_dir(temp.path()),
                 preset_provider(),
-                temp.path(),
-                &SchemasConfig::default(),
+                &config_for(temp.path()),
             );
             engine
                 .render("{{ file.write_to(\"first.md\") }}", "test.md")
@@ -419,8 +421,7 @@ mod tests {
             let engine = TemplateEngine::new(
                 &loader_from_dir(temp.path()),
                 preset_provider(),
-                temp.path(),
-                &SchemasConfig::default(),
+                &config_for(temp.path()),
             );
 
             let error = engine
@@ -435,7 +436,7 @@ mod tests {
     /// [`TemplateEngine`].
     ///
     /// Exhaustive per-feature behavior lives in each collaborator's own tests
-    /// (`file`, `date`, `string`, `ui`).
+    /// (`file`, `date`, `string`, `ui`, `schema`).
     mod utilities {
         use pretty_assertions::assert_eq;
 
@@ -449,8 +450,7 @@ mod tests {
             let engine = TemplateEngine::new(
                 &loader_from_dir(temp.path()),
                 preset_provider(),
-                temp.path(),
-                &SchemasConfig::default(),
+                &config_for(temp.path()),
             );
 
             let rendered = engine
@@ -466,8 +466,7 @@ mod tests {
             let engine = TemplateEngine::new(
                 &loader_from_dir(temp.path()),
                 preset_provider(),
-                temp.path(),
-                &SchemasConfig::default(),
+                &config_for(temp.path()),
             );
 
             let rendered = engine
@@ -483,8 +482,7 @@ mod tests {
             let engine = TemplateEngine::new(
                 &loader_from_dir(temp.path()),
                 preset_provider(),
-                temp.path(),
-                &SchemasConfig::default(),
+                &config_for(temp.path()),
             );
 
             let rendered = engine
@@ -495,13 +493,38 @@ mod tests {
         }
 
         #[test]
+        fn schema_get_is_reachable() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::create_dir_all(temp.path().join(".traces/schemas"))
+                .expect("create schemas dir");
+            fs::write(
+                temp.path().join(".traces/schemas/book.toml"),
+                "[fields.status]\ntype = \"select\"\nvalues = [\"reading\"]\n",
+            )
+            .expect("write schema fixture");
+            let engine = TemplateEngine::new(
+                &loader_from_dir(temp.path()),
+                preset_provider(),
+                &config_for(temp.path()),
+            );
+
+            let rendered = engine
+                .render(
+                    "{{ schema.get('book').field('status') | join(',') }}",
+                    "test.md",
+                )
+                .expect("render succeeds");
+
+            assert_eq!(rendered.content, "reading");
+        }
+
+        #[test]
         fn uuid_function_returns_a_valid_v4_uuid() {
             let temp = tempfile::tempdir().expect("create temp dir");
             let engine = TemplateEngine::new(
                 &loader_from_dir(temp.path()),
                 preset_provider(),
-                temp.path(),
-                &SchemasConfig::default(),
+                &config_for(temp.path()),
             );
 
             let rendered = engine
@@ -519,8 +542,7 @@ mod tests {
             let engine = TemplateEngine::new(
                 &loader_from_dir(temp.path()),
                 preset_provider(),
-                temp.path(),
-                &SchemasConfig::default(),
+                &config_for(temp.path()),
             );
 
             let rendered = engine
@@ -536,8 +558,7 @@ mod tests {
             let engine = TemplateEngine::new(
                 &loader_from_dir(temp.path()),
                 preset_provider(),
-                temp.path(),
-                &SchemasConfig::default(),
+                &config_for(temp.path()),
             );
 
             let rendered = engine

@@ -12,8 +12,8 @@
 //!   directories through [`TemplateLoader::find`], used for both top-level `-i`
 //!   resolution and `{% include %}`/`{% extends %}` loading.
 //! - [`engine`][]: wraps minijinja's [`Environment`], registering the
-//!   template-facing `file`, `ui`, `date`, query, path, numeric, and string
-//!   helpers.
+//!   template-facing `file`, `ui`, `date`, `query`, `schema`, `path`, `num`,
+//!   and `string` helpers.
 //! - [`writer`][]: resolves a render's output path by precedence and writes it
 //!   through [`TemplateWriteTarget::write`].
 //! - [`service`][]: [`TemplateService`] chains resolve, render, and write into

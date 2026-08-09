@@ -4,15 +4,15 @@
 
 **Blocked by:** 01 — Config Surface; 02 — Schema Registry and Field Resolution
 
-**Status:** ready-for-agent
+**Status:** implemented
 
-- [ ] A `schema` namespace object is registered on the minijinja environment, alongside `file`/`ui`/`date`/`query`.
-- [ ] `schema.get("book")` binds a resolved Schema (fields resolved through inheritance/`$ref` from ticket 02).
-- [ ] `.field("status")` on a list-bearing field returns the selectable values (plain strings for `select` fields; `file` fields are ticket 04).
-- [ ] `.field(...)` on a non-list field type returns `None` (no selectable values to prompt).
-- [ ] `schema.get` of an unknown Schema, and `.field` of an unknown field, hard-error during render with template context — render error, not panic (mirroring the `query` namespace's `errors` module).
-- [ ] A broken Schema only breaks the Template that touches it (lazy validation; no `enabled` flag).
-- [ ] Render-seam tests (temp vault root with `.traces/schemas/*.toml` fixtures and Notes carrying `class:` frontmatter) assert values, `None`, and the error behavior.
+- [x] A `schema` namespace object is registered on the minijinja environment, alongside `file`/`ui`/`date`/`query`.
+- [x] `schema.get("book")` binds a resolved Schema (fields resolved through inheritance/`$ref` from ticket 02).
+- [x] `.field("status")` on a list-bearing field returns the selectable values (plain strings for `select` fields; `file` fields are ticket 04).
+- [x] `.field(...)` on a non-list field type returns `None` (no selectable values to prompt).
+- [x] `schema.get` of an unknown Schema, and `.field` of an unknown field, hard-error during render with template context — render error, not panic (mirroring the `query` namespace's `errors` module).
+- [x] A broken Schema only breaks the Template that touches it (lazy validation; no `enabled` flag). **Caveat: isolation is per-namespace-touch, not per-Schema-file** — any Template calling `schema.get` fails if *any* file in the registry directory is malformed (ticket 02's whole-directory `load()` contract), not only ones referencing the broken Schema. Fixing this needs ticket 02's `SchemaRegistry::load` to load lazily per-file, out of scope here.
+- [x] Render-seam tests (temp vault root with `.traces/schemas/*.toml` fixtures) assert values, `None`, and the error behavior.
 
 ## Comments
 
@@ -43,3 +43,246 @@ Template consumption surface per spec User Stories 4–11, 14 and Implementation
 - `file`-field label/value pairs and FileIndex filtering — ticket 04.
 - `query.from_class`/`tasks.from_class` — ticket 05.
 - Predicate-reference degradation (that's the query and file-field surfaces).
+
+## Implementation notes
+
+**Date**: 2026-08-08
+**Implemented in**: worktree `.worktrees/schema-namespace`, branch `feat/schema-namespace`
+
+### What was built
+
+- `src/template/engine/schema.rs`: `SchemaOps`, the `schema` namespace Object, mirroring `QueryOps`/`UiOps`'s `get_value`/`enumerate` pattern. Holds the resolved Schema registry directory (`config.root().join(config.schemas().directory())`) as an `Arc<Path>`. `.get(name)` loads the registry (cached per render in `State`'s temp storage via a `CachedRegistry(Arc<SchemaRegistry>)` wrapper, mirroring `query.rs`'s `cached_refresh`/`CachedIndex`) and binds the named Schema as a `SchemaBinding` — a wrapper pairing `Arc<Schema>` with `Arc<SchemaRegistry>` — hard-erroring via `unknown_schema_error` if absent. `impl Object for SchemaBinding` lives here (not in `crate::schema`), mirroring how `query.rs` gives `QueryOutcome`/`IndexRecord` their `Object` impls — keeps `crate::schema` independent of minijinja and registry-unaware. A bound `SchemaBinding` exposes three things: `.name` (plain attribute, the Schema's own name), `.field(name)` (selectable values or `none`, hard-erroring via `unknown_field_error` on an unknown field), and `.descendants()` (every Schema that is-a this one transitively, each itself a chainable `SchemaBinding`, via `SchemaRegistry::descendants_of`).
+- `src/schema/registry.rs`: `SchemaRegistry` stores `Arc<Schema>`, not owned `Schema`, so repeated `.get()`/`.descendants_of()` calls within one render share a Schema's field map instead of deep-cloning it per call — mirroring `crate::index::IndexRecord`'s `Arc<Note>` for the identical problem. Added `descendants_of(name) -> Vec<Arc<Schema>>`, the registry-level is-a-transitively primitive symmetric with the existing `Schema::ancestors()`.
+- `src/template/engine.rs`: `TemplateEngine::new`'s third parameter changed from `root: &Path` to `config: &Config`, since the `schema` namespace needs the config-resolved registry directory alongside the project root every other namespace already used. Registers `SchemaOps` alongside the existing namespaces. All 17 existing test call sites updated to build a `Config` via a new `config_for` test helper instead of passing a bare root path.
+- `src/template/service.rs`: `TemplateService::new` passes `config` straight through instead of `config.root()`.
+- `src/schema/model.rs`: added `FieldDefinition::selectable_values()`. Kept the `FieldOptions` enum `pub(crate)`-but-module-private (not re-exported crate-wide) rather than exposing it to `template::engine::schema` for a `match`, since the mapping from "field type" to "does `.field()` have values" is exactly the kind of internal-representation query the owning module should answer, not something callers should reimplement by matching on `FieldOptions` variants themselves.
+- Removed every `#[cfg_attr(not(test), expect(dead_code, reason = "...consumed by the schema-namespace ticket..."))]` (and the mirroring `expect(unused_imports, ...)` on `schema/mod.rs`'s `Schema`/`SchemaRegistry` re-exports, and `expect(dead_code, ...)` on `Config::schemas()`/`SchemasConfig::directory()` in `config/model.rs`) once wiring `SchemaRegistry::load` into a genuinely-reachable path made the whole ticket-02 call graph (`resolve()` → `resolve_one()` → `build_field()`, which already read `options()`/`is_required()`/`is_multi()`/`fields()`/`ancestors()` internally) live. Verified precisely via the compiler: each removal was driven by an actual `unfulfilled_lint_expectations` warning under `cargo clippy --workspace -- -D warnings`, not a guess — confirmed nothing left behind is still genuinely dead. `SchemasConfig::class_field()`/`Config::frontmatter()` and its fields stay dead-code-gated: this ticket never reads them (class_field is ticket 05's concern; frontmatter aliases are ticket 04's).
+- `src/config/model.rs`: fixed a stale `expect(dead_code)` reason string on `class_field`/`class_field()` left over from ticket 01 (it named the already-landed Schema-registry ticket as the pending consumer; retargeted to the actual pending consumer, the class-queries ticket), caught by an adversarial `/code-review` pass before commit.
+
+### Key design decisions
+
+- **Lazy, per-render-cached registry load, not eager at `TemplateEngine::new` time.** No Schema TOML is read until a template actually calls `schema.get(...)`; a Template that never touches `schema` never reads the registry directory, so a broken Schema file elsewhere in it can't break that Template. This is the literal, architecturally-honest reading of the "broken Schema only breaks the Template that touches it" AC given ticket 02's `resolve()` contract: `resolve()` returns one `Result` for the *entire* directory (a single malformed sibling Schema fails the whole load), so a Template that *does* call into `schema` still fails if any Schema file in the registry is broken — documented in the module doc and covered by `a_broken_sibling_schema_still_breaks_a_template_that_touches_schema` alongside `a_broken_schema_never_breaks_a_template_that_never_touches_schema`. Widening ticket 02's `resolve()` to isolate failures per-Schema was out of scope for this ticket (that's a ticket-02-shaped change, not a namespace-wiring one).
+- **`Arc<SchemaRegistry>` in the cache, not a clone-per-call.** `query.rs`'s `cached_refresh` clones the cached `FileIndex` on every call (cheap enough there); `SchemaRegistry` wraps a `BTreeMap<SchemaName, Schema>`, so `CachedRegistry` holds an `Arc<SchemaRegistry>` and clones the `Arc` instead, avoiding a deep map clone per `schema.get()` call within one render.
+- **`FieldDefinition::selectable_values()`, not a re-exported `FieldOptions`.** `template::engine::schema` never learns `FieldOptions`'s variants; it asks the one question it needs answered.
+
+### Verification
+
+```sh
+mise run check    # cargo check --workspace, clean
+mise run clippy   # cargo clippy --workspace -- -D warnings, clean
+cargo clippy --workspace --all-targets --features test-utils -- -D warnings   # clean
+mise run fmt      # cargo fmt --all, no diff
+mise run lint     # hk check, clean
+mise run test     # cargo nextest, 1344/1344 pass
+cargo test --workspace   # 1322 lib + 4 bin + 18 e2e + 10 doctests, all pass
+```
+
+14 new tests in `template::engine::schema`, covering `.get`/`.field` values, `None` for non-list and `file` types, unknown-Schema/unknown-field render errors (not panics), a malformed-Schema render error, the broken-sibling-schema case, per-render registry caching, and that a Template never touching `schema` survives a broken sibling Schema file.
+
+### Adversarial re-review (2026-08-08)
+
+Ran a `/code-review`-style Standards + Spec pass (two parallel reviewer sub-agents) before committing.
+
+- **Spec**: verdict "correct" — full ticket checklist satisfied, no ticket 04/05 scope creep, error/`None`/lazy-validation semantics all match.
+- **Standards**: one real finding (the stale `class_field` reason string above, fixed) and one low-confidence judgement call (the `State`-temp-cache shape in `cached_registry` structurally repeats `query.rs`'s `cached_refresh`) — left as-is: extracting a two-call-site generic cache helper would trade a small, obvious duplication for a new abstraction layer, the wrong direction per this repo's own precedent of one small `Cached*` wrapper per consuming module.
+
+### Test coverage audit (2026-08-08)
+
+Ran `rust-unit-testing`'s case-surface enumeration method (read the source,
+list every match arm/`Option` path/error site, map existing tests onto that
+list, then close what's unmapped) against both new units: `SchemaOps`'s
+`Object` impl (`template/engine/schema.rs`) and the new
+`FieldDefinition::selectable_values()` (`schema/model.rs`).
+
+**Gaps closed:**
+
+- `FieldDefinition::selectable_values()` had **zero** direct unit tests — it
+  was only exercised indirectly through `schema.rs`'s render-seam tests,
+  three call-frames from the actual logic (the same gap ticket 02's own
+  audit found and closed for `model.rs` generally). Added a `mod
+  selectable_values` under the existing `mod field_definition`: a `select`
+  field with values, a `select` field with an empty list (boundary), and an
+  `#[rstest]` table (matching this file's own `from_raw`/`kind` precedent)
+  covering all five non-`select` `FieldOptions` variants return `None`,
+  including `file` with populated sub-fields (proving `file`'s current
+  `None` isn't just because the fixture happened to be empty).
+- `enumerate::every_enumerated_method_resolves_via_get_value` — present in
+  both `query.rs` and `ui.rs` for their top-level namespace object, absent
+  here. Added the equivalent for `SchemaOps`.
+- `a_second_call_in_the_same_render_reuses_the_cached_registry` asserted
+  only that two `schema.get()` calls agreed, not that caching actually
+  happened (a non-cached reload would produce the same correct output,
+  just slower). Replaced with `caching::a_second_call_reuses_the_registry_cached_by_the_first`,
+  which calls the `get` closure directly against one `State`
+  (`env.empty_state()`, mirroring `query.rs`'s
+  `tasks_reuses_the_index_query_cached_in_the_same_render`), deletes the
+  schemas directory between calls, and asserts the second call still
+  succeeds — a genuine proof, since `SchemaRegistry::load` degrades a
+  missing directory to an *empty* registry rather than an error, so an
+  uncached reload would hard-error on the now-unknown Schema. Verified
+  this test actually catches a regression by temporarily short-circuiting
+  the cache-hit branch and confirming the test fails, then restoring.
+  The original correctness case survives, renamed
+  `get::two_calls_in_the_same_render_both_resolve_the_same_schema`.
+- The non-empty-`SchemaWarning`-list branch in `cached_registry` (the
+  `tracing::warn!` loop) was never exercised — every existing fixture
+  resolved with zero warnings. Added
+  `warnings::a_missing_extends_target_degrades_with_a_warning_instead_of_failing_the_render`,
+  an `extends` pointing at an unresolvable Schema name, asserting the
+  render still succeeds with the child's own fields intact.
+
+**Explicitly not flagged (checked against precedent, not gaps):** direct
+`get_value`/`enumerate`/`call_method` unit tests for the bound `Schema`
+object itself (mirroring `SchemaOps`) — `query.rs` doesn't give its own
+bound objects (`QueryOutcome`, `IndexRecord`) that treatment either, only
+indirect render-level coverage, and `Schema::new` is `pub(super)`
+(inaccessible outside `crate::schema`) so a same-file direct test would
+need a real `SchemaRegistry::load` anyway, at which point it's the render
+seam. Empty-string `schema.get("")`/`.field("")` arguments: same code path
+as any other unknown name, already covered.
+
+17 tests in `template::engine::schema` (was 14), 8 new in
+`schema::model::tests::field_definition::selectable_values`. Full suite
+re-verified: `mise run check`/`clippy` (both gates)/`fmt`/`lint`, `cargo
+test --workspace` (1332 lib + 4 bin + 18 e2e + 10 doctests), all green.
+
+### Refinement pass (2026-08-08): Arc-sharing, `descendants()`, Config-wiring test
+
+Follow-up to the adversarial re-review and test coverage audit above, driven
+by three findings from a fresh, more critical pass plus one user-requested
+feature:
+
+- **`SchemaRegistry` now stores `Arc<Schema>`, not `Schema`.** `.get()`
+  returned `Option<&Schema>`; `SchemaOps`'s `"get"` handler did
+  `.cloned().map(Value::from_object)`, deep-cloning the whole field map on
+  every `schema.get(...)` call despite the registry itself already being
+  `Arc`-cached per render. `IndexRecord` (`crate::index`) solved the
+  identical problem for its own heavy field via `Arc<Note>`; `Schema` never
+  got the same treatment. Fixed by storing `Arc<Schema>` in the registry's
+  map (`SchemaRegistry::load` wraps once per Schema after `resolve()`
+  returns) and swapping `Value::from_object` for `Value::from_dyn_object` at
+  the binding site — `.cloned()` is now an `Arc` refcount bump, not a field-map
+  copy. `resolve.rs` is untouched: Arc-wrapping happens only at the registry
+  boundary, so Field Resolution stays a pure function over owned `Schema`.
+  Proven by `registry::tests::get::returns_the_same_arc_backed_schema_on_repeated_calls`
+  (`Arc::ptr_eq`) — a test that only compiles because the storage is
+  `Arc`-backed.
+- **`schema.get("book").descendants()`** — new capability, not part of the
+  original 7 ACs above, added on request: every Schema that is-a `book`
+  transitively (extends it directly or via an ancestor), excluding `book`
+  itself, empty (not an error) if nothing extends it. Named `descendants`
+  rather than `children` deliberately: every other is-a relationship in this
+  feature (`Schema::is_a`, `SchemaRegistry::is_a`, ticket 05's `from_class`)
+  is transitive, and "children" implies direct-extends-only in plain English.
+  `SchemaRegistry::descendants_of(name)` is the new Rust-level primitive
+  (symmetric with the existing `Schema::ancestors()`). Bound Schemas gained a
+  `SchemaBinding` wrapper (pairing `Arc<Schema>` with `Arc<SchemaRegistry>`)
+  since `Schema` itself must stay registry-unaware — `impl Object for Schema`
+  moved to `impl Object for SchemaBinding`. Each `.descendants()` result is
+  itself a `SchemaBinding`, so a Template can chain `.field(...)`/
+  `.descendants()` arbitrarily deep. Also added a `.name` attribute (plain,
+  not called) to `SchemaBinding` — without it, `.descendants()` results would
+  be unidentifiable opaque objects a template could call `.field()` on but
+  never know which class each one represents; not part of the original
+  request but required for `.descendants()` to be usable at all.
+- **Closed a real test-coverage gap**: `config.root().join(config.schemas().directory())`
+  (`template/engine.rs`, `TemplateEngine::new`) had zero test coverage
+  anywhere — every `schema.rs` test hand-builds `SchemaOps` with an arbitrary
+  directory, bypassing `Config`, and `engine.rs`'s own `mod utilities`
+  reachability suite (which covers `ui`/`date`/`file`/`string`/`num`/`path`)
+  had no `schema` case. Added `schema_get_is_reachable`, following the
+  `ui_confirm_is_reachable`/`date_now_is_reachable` pattern exactly. Verified
+  it actually catches a regression: temporarily dropped the `.root().join(...)`
+  from the wiring, confirmed the test fails with `unknown Schema "book"`, then
+  restored.
+- **Not changed**: the AC6 nuance ("a broken Schema only breaks the Template
+  that touches it" is true at whole-namespace granularity, not per-Schema,
+  since `SchemaRegistry::load` returns one `Result` for the entire directory)
+  — inherent to ticket 02's load contract, already documented and tested,
+  out of scope for this ticket to redesign.
+
+New test count: `template::engine::schema` 17 → 23 (6 new: 5 `descendants`,
+1 `name`), `schema::registry` +5 (`get::returns_the_same_arc_backed_schema_on_repeated_calls`,
+4 `descendants_of` cases), `template::engine::tests::utilities` +1
+(`schema_get_is_reachable`). Full re-verification: `cargo check`/`clippy`
+(both gates)/`fmt --check` all clean; `cargo test --workspace --features
+test-utils` 1343 lib + 4 bin + 5 integration + 10 doctests pass, e2e 18/18
+pass on a clean build (one flaky failure under `mise run verify`'s combined
+run reproduced as the same pre-existing build-ordering artifact noted in the
+prior session, not a regression); `cargo doc --no-deps --document-private-items
+--features test-utils` warning count unchanged (46, identical set before/after
+via diff — zero new warnings); `cargo deny check` clean.
+
+### Adversarial re-review #2 (2026-08-08): case-surface audit of the refinement pass
+
+Applied `rust-unit-testing`'s case-enumeration method to the refinement
+pass above (Arc-sharing, `descendants()`, Config-wiring test) rather than
+trusting the pass's own coverage claims. One gap found and closed; every
+other finding checked against direct codebase precedent and ruled out.
+
+**Gap closed:** `.descendants()` chaining was documented
+(`schema.rs`'s module doc and `SchemaBinding`'s doc both promise a
+Template can walk "the whole subtree" via repeated `.descendants()`) but
+never exercised — every existing `mod descendants` test called
+`.descendants()` exactly once per render. The registry-level
+`descendants_of` test already proved the underlying transitive data is
+correct; nothing proved `SchemaBinding`'s `"descendants"` arm actually
+threads `Arc::clone(&binding.registry)` into each returned child rather
+than a stale/empty one. Added
+`descendants::a_descendants_own_descendants_are_also_reachable`
+(`thing → book → sci_fi`, asserts
+`schema.get('thing').descendants()[0].descendants()` reaches `sci_fi`).
+Verified it actually catches the regression it targets: swapped the
+registry clone for one loaded from a nonexistent directory (degrades to
+empty per `SchemaRegistry::load`'s missing-directory contract), confirmed
+only the new test failed while all four pre-existing `descendants` tests
+stayed green, then restored.
+
+**Checked and ruled out** (real questions, resolved against direct
+evidence, not assumption):
+- `SchemaRegistry::get() -> Option<&Arc<Schema>>` — matches
+  `BTreeMap<K, Arc<V>>::get`'s standard shape; one caller derefs without
+  cloning (`is_a`), the other clones (`schema.rs`) — correct as-is, not a
+  "don't return `&Arc<T>`" smell.
+- `SchemaOps { directory: Arc<Path> }` inside an object already
+  `Arc`-wrapped by minijinja looked redundant — confirmed via grep that
+  `FileOps`, `PathOps`, and `QueryOps` all use the identical shape;
+  established crate convention, not a deviation.
+- No isolated `enumerate()`/`get_value()` round-trip test for
+  `SchemaBinding`'s `SCHEMA_METHODS`, unlike `SchemaOps`'s own
+  `every_enumerated_method_resolves_via_get_value` — checked the actual
+  analogous precedent (`query.rs`'s `FileFields`/`TaskFields`, second-level
+  bound objects with fixed enumerate lists, not `IndexRecord`, which has an
+  open dynamic key space and isn't comparable): they lack this test too.
+  Consistent with existing codebase discipline, not new debt.
+- Global Schema's interaction with `descendants_of` — verified via
+  `resolve.rs`: `ancestors` accumulates only through explicit `extends`,
+  Global is never auto-injected. `descendants_of("global")` correctly
+  returns only Schemas that opt in via `extends = ["global"]`.
+
+AC6 nuance (whole-registry vs. per-Schema failure granularity) re-flagged,
+unchanged from the prior review — still accurate, still out of scope for
+this ticket.
+
+23 tests in `template::engine::schema` (17 → 22 from the refinement pass
+above, → 23 with this pass's chaining test). Re-verified: `cargo check`,
+both clippy gates, `fmt --check` clean; `cargo test --workspace --features
+test-utils` 1344 lib + 4 bin + 5 integration + 10 doctests pass.
+
+### Final state (current)
+
+The namespace's shipped surface, superseding the per-session deltas above:
+
+- `schema.get(name)` → `SchemaBinding` (`Arc<Schema>` + `Arc<SchemaRegistry>`), hard-erroring on an unknown name.
+- `.name` — plain attribute, the Schema's own name.
+- `.field(name)` — selectable values (`select` only; `file` deferred to ticket 04) or `none`; hard-errors on an unknown field.
+- `.descendants()` — every Schema that is-a this one transitively, each a chainable `SchemaBinding` (`.field(...)`/`.descendants()` again); empty, not an error, for a leaf.
+- Registry load is lazy (first `schema.get(...)` in a render) and cached per render (`State` temp storage); `SchemaRegistry` stores `Arc<Schema>` so repeated lookups share field maps instead of deep-cloning.
+
+Files: `src/template/engine/schema.rs` (`SchemaOps`, `SchemaBinding`, `CachedRegistry`), `src/schema/registry.rs` (`Arc<Schema>` storage, `descendants_of`), `src/schema/model.rs` (`FieldDefinition::selectable_values`), `src/template/engine.rs` + `src/template/service.rs` (Config-based wiring).
+
+Test count: 23 in `template::engine::schema`, 5 new in `schema::registry` (`get`/`descendants_of`), 8 in `schema::model::tests::field_definition::selectable_values`, 1 in `template::engine::tests::utilities` (`schema_get_is_reachable`).
+
+Verified clean as of the latest commit: `cargo check --workspace --all-targets --features test-utils`, `cargo clippy --workspace -- -D warnings` (both the default and `--all-targets --features test-utils` gates), `cargo fmt --all -- --check`, `cargo deny check`. `cargo test --workspace --features test-utils`: 1344 lib + 4 bin + 18 e2e + 5 integration + 10 doctests, all pass. `cargo doc --no-deps --document-private-items --features test-utils`: warning count unchanged from pre-ticket baseline (46, identical set, diffed).
+
+All 7 original ACs satisfied; AC6 has a documented granularity caveat (whole-registry, not per-Schema-file, failure isolation) inherited from ticket 02's load contract — out of scope here. `.name`/`.descendants()` are shipped, tested capabilities beyond the original 7 ACs, added on request during the refinement pass.

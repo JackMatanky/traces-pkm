@@ -12,6 +12,7 @@ use std::{
     ffi::OsStr,
     fs, io,
     path::Path,
+    sync::Arc,
 };
 
 use walkdir::WalkDir;
@@ -29,7 +30,11 @@ use crate::file_name::BaseNameRef;
 /// `excludes`, and `$ref`.
 #[derive(Clone, Debug)]
 pub(crate) struct SchemaRegistry {
-    schemas: BTreeMap<SchemaName, Schema>,
+    /// Reference-counted per Schema, not owned outright: `.get()` and
+    /// `.descendants_of()` share one Schema's field map across every
+    /// caller in a render instead of deep-cloning it per lookup, mirroring
+    /// [`crate::index::IndexRecord`]'s `Arc<Note>`.
+    schemas: BTreeMap<SchemaName, Arc<Schema>>,
 }
 
 impl SchemaRegistry {
@@ -55,6 +60,10 @@ impl SchemaRegistry {
     ) -> Result<(Self, Vec<SchemaWarning>), SchemaError> {
         let raw = read_raw_schemas(directory)?;
         let (schemas, warnings) = resolve::resolve(&raw)?;
+        let schemas = schemas
+            .into_iter()
+            .map(|(name, schema)| (name, Arc::new(schema)))
+            .collect();
         Ok((
             Self {
                 schemas,
@@ -64,14 +73,32 @@ impl SchemaRegistry {
     }
 
     /// Returns the named Schema, or `None` if no Schema by that name
-    /// resolved.
+    /// resolved. Wrapped in `Arc` so repeated lookups (a Template calling
+    /// `schema.get(...)` many times in one render) share the Schema's field
+    /// map instead of deep-cloning it per call.
     #[inline]
     #[must_use]
-    pub(crate) fn get(&self, name: &str) -> Option<&Schema> {
+    pub(crate) fn get(&self, name: &str) -> Option<&Arc<Schema>> {
         self.schemas.get(name)
     }
 
-    /// Expands `queried` File Class names into their full is-a match set:
+    /// Every Schema that is-a `name` transitively (extends it directly or
+    /// via an ancestor), excluding `name` itself. Empty — not an error — if
+    /// nothing extends `name`, mirroring [`Self::is_a`]'s soft-degrade
+    /// style.
+    #[must_use]
+    pub(crate) fn descendants_of(&self, name: &str) -> Vec<Arc<Schema>> {
+        self.schemas
+            .values()
+            .filter(|schema| schema.ancestors().contains(name))
+            .cloned()
+            .collect()
+    }
+
+    /// Returns `true` if `subject` is-a `queried`. For example,
+    /// `registry.is_a("sci_fi", "book")` is `true` when the `sci_fi` Schema
+    /// `extends` `book`; the reverse call, `registry.is_a("book", "sci_fi")`,
+    /// is `false`.
     ///
     /// - Every name in `queried` itself (so a class with no Schema still
     ///   matches itself).
@@ -336,6 +363,35 @@ mod tests {
         }
     }
 
+    mod get {
+        use super::*;
+
+        #[test]
+        fn returns_the_same_arc_backed_schema_on_repeated_calls() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_schema(
+                temp.path(),
+                "book",
+                r#"
+                [fields.status]
+                type = "select"
+                values = ["draft"]
+                "#,
+            );
+            let (registry, _) =
+                SchemaRegistry::load(temp.path()).expect("registry loads");
+
+            let first = registry.get("book").expect("book resolved");
+            let second = registry.get("book").expect("book resolved");
+
+            assert!(
+                Arc::ptr_eq(first, second),
+                "repeated lookups must share one Arc-backed Schema, not clone \
+                 a fresh one per call"
+            );
+        }
+    }
+
     mod matching_classes {
         use std::collections::BTreeSet;
 
@@ -413,6 +469,68 @@ mod tests {
             let matches = registry.matching_classes(&[]);
 
             assert!(matches.is_empty());
+        }
+    }
+
+    mod descendants_of {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn returns_a_direct_extender() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_schema(temp.path(), "book", "");
+            write_schema(temp.path(), "sci_fi", r#"extends = ["book"]"#);
+
+            let (registry, _) =
+                SchemaRegistry::load(temp.path()).expect("registry loads");
+
+            let descendants = registry.descendants_of("book");
+            let names: Vec<&str> =
+                descendants.iter().map(|schema| schema.name()).collect();
+
+            assert_eq!(names, vec!["sci_fi"]);
+        }
+
+        #[test]
+        fn returns_a_transitive_descendant_through_an_intermediate_schema() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_schema(temp.path(), "thing", "");
+            write_schema(temp.path(), "book", r#"extends = ["thing"]"#);
+            write_schema(temp.path(), "sci_fi", r#"extends = ["book"]"#);
+
+            let (registry, _) =
+                SchemaRegistry::load(temp.path()).expect("registry loads");
+
+            let descendants = registry.descendants_of("thing");
+            let names: Vec<&str> =
+                descendants.iter().map(|schema| schema.name()).collect();
+
+            assert_eq!(names, vec!["book", "sci_fi"]);
+        }
+
+        #[test]
+        fn returns_empty_for_a_leaf_schema() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_schema(temp.path(), "book", "");
+            write_schema(temp.path(), "sci_fi", r#"extends = ["book"]"#);
+
+            let (registry, _) =
+                SchemaRegistry::load(temp.path()).expect("registry loads");
+
+            assert!(registry.descendants_of("sci_fi").is_empty());
+        }
+
+        #[test]
+        fn returns_empty_for_a_name_with_no_schema() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_schema(temp.path(), "book", "");
+
+            let (registry, _) =
+                SchemaRegistry::load(temp.path()).expect("registry loads");
+
+            assert!(registry.descendants_of("ghost").is_empty());
         }
     }
 }
