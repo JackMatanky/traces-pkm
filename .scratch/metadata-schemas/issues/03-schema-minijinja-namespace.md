@@ -11,7 +11,7 @@
 - [x] `.field("status")` on a list-bearing field returns the selectable values (plain strings for `select` fields; `file` fields are ticket 04).
 - [x] `.field(...)` on a non-list field type returns `None` (no selectable values to prompt).
 - [x] `schema.get` of an unknown Schema, and `.field` of an unknown field, hard-error during render with template context — render error, not panic (mirroring the `query` namespace's `errors` module).
-- [x] A broken Schema only breaks the Template that touches it (lazy validation; no `enabled` flag).
+- [x] A broken Schema only breaks the Template that touches it (lazy validation; no `enabled` flag). **Caveat: isolation is per-namespace-touch, not per-Schema-file** — any Template calling `schema.get` fails if *any* file in the registry directory is malformed (ticket 02's whole-directory `load()` contract), not only ones referencing the broken Schema. Fixing this needs ticket 02's `SchemaRegistry::load` to load lazily per-file, out of scope here.
 - [x] Render-seam tests (temp vault root with `.traces/schemas/*.toml` fixtures) assert values, `None`, and the error behavior.
 
 ## Comments

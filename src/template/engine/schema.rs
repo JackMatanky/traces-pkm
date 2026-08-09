@@ -39,7 +39,10 @@
 //! Template calling `schema.get` several times pays for one registry load.
 //! [`SchemaRegistry`] itself stores each Schema behind an `Arc`, so binding one
 //! via [`SchemaBinding`] shares that Schema's field map instead of deep-cloning
-//! it per call.
+//! it per call. `.descendants()` itself is *not* memoized across calls within
+//! a render: each call re-scans the registry (`O(n)` in Schema count),
+//! including nested `.descendants().descendants()` chains. Fine at the small
+//! Schema counts this module assumes; revisit if that assumption changes.
 
 use std::{path::Path, sync::Arc};
 
@@ -671,6 +674,36 @@ mod tests {
             .expect_err("unknown Schema should error");
 
             assert!(error.to_string().contains("unknown Schema"));
+        }
+
+        #[test]
+        fn unknown_schema_error_carries_the_template_name_and_line() {
+            // AC5 promises template *context* (name/line/column), not just
+            // a message: the shared `render()` helper below never asserts
+            // on either, so no existing test proves minijinja actually
+            // attaches them to a `schema.*` error. `.name()`/`.line()` are
+            // populated unconditionally (verified: still `Some` with
+            // `set_debug(false)`, in both debug and release profiles) —
+            // only the byte-accurate column info `crate::cli::error` needs
+            // requires `set_debug(true)`. Calling it here anyway mirrors
+            // `TemplateEngine::new`'s production wiring exactly, so this
+            // test can't drift from it unnoticed.
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let mut env = Environment::new();
+            env.set_debug(true);
+            SchemaOps::new(Arc::from(temp.path().join(".traces/schemas")))
+                .register(&mut env);
+
+            let error = env
+                .render_named_str(
+                    "note.md",
+                    "line one\n{{ schema.get('missing') }}\n",
+                    minijinja::context!(),
+                )
+                .expect_err("unknown Schema should error");
+
+            assert_eq!(error.name(), Some("note.md"));
+            assert_eq!(error.line(), Some(2));
         }
 
         #[test]

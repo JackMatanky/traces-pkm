@@ -189,7 +189,7 @@ A key in a Field Definition pointing at another definition used as its base: `#g
 _Avoid_: reference, field alias
 
 ### schema namespace
-The minijinja global exposing Schemas to templates. `schema.get("book")` binds a Schema; `book.field("status")` returns its selectable values — plain strings, or label/value pairs for `file` fields (label from the `[frontmatter]` aliases key, else filename stem; value is the path). Unknown schema or field names are errors; a non-list field type returns `None`. Schemas supply values only — templates choose the interactive function themselves.
+The minijinja global exposing Schemas to templates. `schema.get("book")` binds a Schema, exposing `.name` (its own name) and `.field("status")`, which returns its selectable values — plain strings for `select` fields, `None` for every other type today, including `file` (file-field label/value pairs land in ticket 04). Unknown schema or field names are errors. Schemas supply values only — templates choose the interactive function themselves.
 _Avoid_: schema api, metadata menu function
 
 #### descendants
