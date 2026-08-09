@@ -1,9 +1,8 @@
-//! Errors and warnings produced while reading and resolving the Schema
-//! registry.
+//! Report Schema registry loading and resolution defects.
 //!
-//! - [`SchemaError`]: a hard failure; registry loading and resolution stop.
-//! - [`SchemaWarning`]: a recoverable defect; resolution continues after
-//!   degrading to a documented fallback.
+//! - [`SchemaError`]: a hard failure; loading or resolution stops.
+//! - [`SchemaWarning`]: a recoverable defect; resolution continues with a
+//!   documented fallback.
 
 use std::{fmt, path::PathBuf};
 
@@ -12,47 +11,47 @@ use thiserror::Error;
 use super::{address::FieldAddress, name::SchemaName};
 use crate::field::FieldName;
 
-/// Represents a hard failure while reading, parsing, or resolving the Schema
-/// registry.
+/// Stop Schema registry loading or resolution on a hard failure.
 ///
 /// Contrast [`SchemaWarning`], which is emitted for a defect resolution
 /// recovers from (a missing `extends` target, a stray `required = true` on the
 /// reserved Global Schema).
 ///
 /// A malformed `$ref` or a Field Definition declaring neither `type` nor `$ref`
-/// both fail earlier, during TOML parsing (surfacing as [`Self::Parse`]): see
+/// fails earlier during TOML parsing as [`Self::Parse`]: see
 /// [`super::address::FieldAddress`] and [`super::raw::RawFieldDefError`].
 #[derive(Debug, Error)]
 pub(crate) enum SchemaError {
-    /// The Schema registry directory exists but could not be read.
+    /// Report a registry directory that exists but could not be read.
     #[error("failed to read Schema registry directory {directory}: {source}")]
     ReadDirectory {
         directory: PathBuf,
         #[source]
         source: std::io::Error,
     },
-    /// A `.toml` file under the registry directory could not be read.
+    /// Report a Schema TOML file that could not be read.
     #[error("failed to read Schema file {path}: {source}")]
     ReadFile {
         path: PathBuf,
         #[source]
         source: std::io::Error,
     },
-    /// A Schema TOML file failed to parse: malformed TOML, an unknown key, a
-    /// malformed `$ref`, or a Field Definition with neither `type` nor `$ref`.
+    /// Report a Schema TOML file that failed to parse: malformed TOML, an
+    /// unknown key, a malformed `$ref`, or a Field Definition with neither
+    /// `type` nor `$ref`.
     #[error("failed to parse Schema {schema}: {source}")]
     Parse {
         schema: SchemaName,
         #[source]
         source: Box<toml::de::Error>,
     },
-    /// The `extends` DAG contains a cycle; Kahn's topological sort could not
+    /// Report an `extends` DAG cycle; Kahn's topological sort could not
     /// order every Schema.
     #[error("cycle detected among Schemas: {}", .schemas.join(", "))]
     Cycle {
         schemas: Vec<SchemaName>,
     },
-    /// A `$ref` named a Schema that is neither the Global Schema nor a
+    /// Report a `$ref` to a Schema that is neither the Global Schema nor a
     /// transitive `extends` ancestor of the referencing Schema.
     #[error(
         "$ref {reference:?} in field {field:?} of Schema {schema:?} is out of \
@@ -63,7 +62,7 @@ pub(crate) enum SchemaError {
         field: FieldName,
         reference: Box<FieldAddress>,
     },
-    /// A `$ref` named an in-bounds Schema, but that Schema has no such field.
+    /// Report a `$ref` to an in-bounds Schema that has no such field.
     #[error(
         "$ref {reference:?} in field {field:?} of Schema {schema:?} does not \
          resolve"
@@ -73,7 +72,7 @@ pub(crate) enum SchemaError {
         field: FieldName,
         reference: Box<FieldAddress>,
     },
-    /// Two of a Schema's effective fields share a
+    /// Report two effective fields that share a
     /// [`FieldKey`](crate::field::FieldKey) canonical form: Note metadata could
     /// never disambiguate which one a value belongs to.
     #[error(
@@ -87,20 +86,23 @@ pub(crate) enum SchemaError {
     },
 }
 
-/// Represents a recoverable defect during Schema registry resolution:
-/// resolution continues, degrading to the documented fallback.
+/// Report a recoverable Schema resolution defect.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum SchemaWarning {
-    /// `schema`'s `extends` list named `target`, which has no corresponding
-    /// Schema file. `schema` degrades to exact match: parent-provided fields
-    /// are dropped, but its own fields still resolve.
+    /// Report an `extends` target with no corresponding Schema file.
+    ///
+    /// Resolution skips the missing parent. The Schema's own fields still
+    /// resolve, and any other valid `extends` parents still contribute their
+    /// inherited fields and ancestors.
     MissingExtendsTarget {
         schema: SchemaName,
         target: SchemaName,
     },
-    /// The reserved Global Schema declared `field` as `required = true`. Global
-    /// Schema fields can never be required, so resolution treats it as `false`.
-    /// A Schema `$ref`-ing this field may still mark it required locally.
+    /// Report `required = true` on the reserved Global Schema.
+    ///
+    /// Global Schema fields can never be required, so resolution treats it as
+    /// `false`. A Schema `$ref`-ing this field may still mark it required
+    /// locally.
     StrayGlobalRequired {
         field: String,
     },

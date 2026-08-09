@@ -2,7 +2,8 @@
 //!
 //! # Types
 //!
-//! - [`Config`] merges local/global settings into read-only resolved values.
+//! - [`Config`] merges local and global settings into read-only resolved
+//!   values.
 //! - [`TemplateConfig`] preserves local and global template directories.
 //! - [`SchemasConfig`] resolves the `[schemas]` class field and registry path.
 //! - [`FrontmatterConfig`] resolves `[frontmatter]` key names.
@@ -63,6 +64,8 @@ impl Config {
     }
 
     /// Returns the project root directory used as the local resolution base.
+    ///
+    /// Relative template and output paths are resolved against this root.
     #[inline]
     #[must_use]
     pub fn root(&self) -> &Path {
@@ -89,7 +92,8 @@ impl Config {
     /// The value is preserved as-is from the config file:
     ///
     /// - **Relative**: the caller resolves it against [`root`].
-    /// - **Absolute**: this is the [`root`] fallback.
+    /// - **Absolute**: used as-is; [`root`] is the fallback only when no output
+    ///   directory is configured.
     ///
     /// [`root`]: Self::root
     #[inline]
@@ -203,8 +207,10 @@ pub struct SchemasConfig {
 
 impl SchemasConfig {
     /// Returns the frontmatter key naming a Note's File Class(es) as a
-    /// validated [`FieldKey`], for canonical-form matching against Note
-    /// frontmatter. Defaults to `class`.
+    /// validated [`FieldKey`].
+    ///
+    /// Used for canonical-form matching against Note frontmatter.
+    /// Defaults to `class`.
     #[inline]
     #[must_use]
     pub(crate) fn class_field(&self) -> &FieldKey {
@@ -212,15 +218,18 @@ impl SchemasConfig {
     }
 
     /// Returns the frontmatter key naming a Note's File Class(es).
-    /// Defaults to `class`.
+    ///
+    /// Defaults to `class` when unconfigured.
     #[inline]
     #[must_use]
     pub fn class_field_name(&self) -> &str {
         self.class_field.name()
     }
 
-    /// Returns the Schema registry directory, as configured (unresolved against
-    /// [`Config::root`]). Defaults to `.traces/schemas/`.
+    /// Returns the Schema registry directory as configured, unresolved against
+    /// [`Config::root`].
+    ///
+    /// Defaults to `.traces/schemas/` when unconfigured.
     #[inline]
     #[must_use]
     pub fn directory(&self) -> &Path {
@@ -269,8 +278,8 @@ impl TryFrom<RawSchemasConfig> for SchemasConfig {
     }
 }
 
-/// Resolved `[frontmatter]` settings mapping key names for title, aliases, and
-/// date roles.
+/// Resolved `[frontmatter]` settings mapping key names for title, aliases,
+/// and date roles.
 #[derive(Clone, Debug)]
 pub struct FrontmatterConfig {
     title: FieldKey,
@@ -281,8 +290,9 @@ pub struct FrontmatterConfig {
 
 impl FrontmatterConfig {
     /// Returns the frontmatter key holding a Note's display title as a
-    /// validated [`FieldKey`], for canonical-form matching against Note
-    /// frontmatter.
+    /// validated [`FieldKey`].
+    ///
+    /// Used for canonical-form matching against Note frontmatter.
     #[inline]
     #[must_use]
     pub(crate) fn title(&self) -> &FieldKey {
@@ -305,7 +315,9 @@ impl FrontmatterConfig {
     }
 
     /// Returns the frontmatter key holding a Note's aliases as a validated
-    /// [`FieldKey`], for canonical-form matching against Note frontmatter.
+    /// [`FieldKey`].
+    ///
+    /// Used for canonical-form matching against Note frontmatter.
     #[inline]
     #[must_use]
     pub(crate) fn aliases(&self) -> &FieldKey {
@@ -364,8 +376,8 @@ impl FrontmatterConfig {
     ///
     /// # Panics
     ///
-    /// If `title` or `aliases` fails [`FieldKey`] validation (empty or
-    /// whitespace-only) — a test-fixture bug, not a runtime error path.
+    /// If `title` or `aliases` fails `FieldKey` validation (empty or
+    /// whitespace-only): a test-fixture bug, not a runtime error path.
     #[cfg(any(test, feature = "test-utils"))]
     #[inline]
     #[must_use]

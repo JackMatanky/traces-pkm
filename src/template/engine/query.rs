@@ -1,4 +1,4 @@
-//! Registers the `query` and `tasks` namespaces for templates.
+//! Register the `query` and `tasks` namespaces for templates.
 //!
 //! Both namespaces are backed by [`QueryOps`], registered twice by
 //! [`super::TemplateEngine::new`]: [`QueryOps::page`] creates the `query`

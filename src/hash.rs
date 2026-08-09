@@ -1,8 +1,9 @@
-//! BLAKE3 hashing for file contents and canonicalized paths.
+//! Hash file contents and path bytes with BLAKE3.
 //!
-//! [`Blake3FileHash`] hashes file contents. [`Blake3PathHash`] hashes path
-//! bytes for state-store filenames. [`HashError`] stays domain-local so callers
-//! can wrap it in their own user-facing diagnostics.
+//! Main types:
+//! - [`Blake3FileHash`] - BLAKE3 digest of file contents
+//! - [`Blake3PathHash`] - BLAKE3 hex digest of path bytes
+//! - [`HashError`] - File-read failure while hashing contents
 
 use std::{
     fmt::{self, Display, Formatter},
@@ -12,7 +13,7 @@ use std::{
 
 use thiserror::Error;
 
-/// Error returned when a file's contents could not be read for hashing.
+/// Reports that a file could not be read for hashing.
 #[derive(Debug, Error)]
 #[error("failed to read {path} for hashing")]
 pub struct HashError {
@@ -23,11 +24,11 @@ pub struct HashError {
     pub(crate) source: io::Error,
 }
 
-/// BLAKE3 hash of a file's contents.
+/// Stores a BLAKE3 hash of file contents.
 ///
-/// Distinct from [`Blake3PathHash`], which hashes path bytes. Prefer hashing
-/// already-loaded content when the caller has it; hashing from a path and then
-/// reading that same path again opens a TOCTOU window between reads.
+/// Prefer hashing already-loaded content when the caller has it. Hashing a path
+/// and then reading the same path again creates a time-of-check to
+/// time-of-use window where the file contents can change between reads.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub struct Blake3FileHash(blake3::Hash);
 
@@ -36,12 +37,13 @@ impl TryFrom<&Path> for Blake3FileHash {
 
     /// Computes the BLAKE3 hash of `path`'s current contents.
     ///
-    /// Reads `path` fully into memory before hashing. This is acceptable for
-    /// the small template and config files this crate hashes.
+    /// Reads `path` fully into memory before hashing. Use this only when the
+    /// path read itself is the source of truth; otherwise hash the content that
+    /// was already read to avoid a time-of-check to time-of-use gap.
     ///
     /// # Errors
     ///
-    /// - `HashError` when `path` cannot be read.
+    /// - [`HashError`] if `path` cannot be read
     #[inline]
     fn try_from(path: &Path) -> Result<Self, HashError> {
         let contents = fs::read(path).map_err(|source| HashError {
@@ -66,14 +68,14 @@ impl Display for Blake3FileHash {
     }
 }
 
-/// BLAKE3 hex hash of a [`Path`] string.
+/// Stores a BLAKE3 hex hash of path bytes.
 ///
-/// Used as a hash-keyed store filename by `FileStateStore`. Callers
-/// that need canonical keys must canonicalize before constructing this value.
+/// Used as a hash-keyed store filename. Callers that need canonical keys must
+/// canonicalize before constructing this value.
 ///
-/// Stores the hex digest as a fixed-size byte array instead of a heap
-/// [`String`]. BLAKE3 hex encoding is always exactly 64 ASCII bytes, so a stack
-/// array avoids an allocation on store-entry construction.
+/// Stores the hex digest as `[u8; 64]` instead of a [`String`] because BLAKE3
+/// hex encoding is always exactly 64 ASCII bytes. The fixed array avoids a heap
+/// allocation while still exposing the digest as UTF-8 when needed.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub struct Blake3PathHash([u8; 64]);
 
@@ -92,8 +94,9 @@ impl Blake3PathHash {
     ///
     /// # Panics
     ///
-    /// Panics if the stored digest bytes are not valid UTF-8, which never
-    /// happens for a real blake3 hex digest.
+    /// Panics if the stored digest bytes are not valid UTF-8. BLAKE3 hex output
+    /// is always ASCII, so this can only happen if the invariant inside
+    /// [`Blake3PathHash`] is broken.
     #[inline]
     #[must_use]
     #[expect(

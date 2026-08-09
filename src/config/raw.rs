@@ -1,7 +1,5 @@
 //! Deserializes TOML config into serde types that deny unknown fields.
 //!
-//! # Boundary
-//!
 //! Preserves TOML values exactly as configured. Path resolution and
 //! local-over-global precedence are applied later by the builder pipeline.
 
@@ -27,10 +25,10 @@ pub(crate) struct RawConfig {
     pub(crate) frontmatter: RawFrontmatterConfig,
 }
 
-/// Represents the raw `[templates]` table exactly as written in TOML.
+/// Raw `[templates]` table exactly as written in TOML.
 ///
-/// Every field skips serialization when `None`, for the same Figment merge
-/// reason as [`RawFrontmatterConfig`].
+/// Fields skip serialization when `None` to avoid overwriting a configured
+/// global value with an explicit `null` during Figment merge.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct RawTemplateConfig {
@@ -38,16 +36,18 @@ pub(crate) struct RawTemplateConfig {
     /// file's root.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) directory: Option<PathBuf>,
-    /// Output directory for rendered templates. Relative values stay relative;
-    /// absent values fall back to the config root.
+    /// Output directory for rendered templates.
+    ///
+    /// Relative values stay relative; absent values fall back to the config
+    /// root.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) output_dir: Option<PathBuf>,
 }
 
-/// Represents the raw `[schemas]` table exactly as written in TOML.
+/// Raw `[schemas]` table exactly as written in TOML.
 ///
-/// Every field skips serialization when `None`, for the same Figment merge
-/// reason as [`RawFrontmatterConfig`].
+/// Fields skip serialization when `None` to avoid overwriting a configured
+/// global value with an explicit `null` during Figment merge.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct RawSchemasConfig {
@@ -61,12 +61,12 @@ pub(crate) struct RawSchemasConfig {
     pub(crate) directory: Option<PathBuf>,
 }
 
-/// Represents the raw `[frontmatter]` table exactly as written in TOML.
+/// Raw `[frontmatter]` table exactly as written in TOML.
 ///
-/// Every field skips serialization when `None`: [`super::service`]'s Figment
-/// merge re-serializes each parsed layer to overlay local onto global, and an
+/// Fields skip serialization when `None`: [`super::service`]'s Figment merge
+/// re-serializes each parsed layer to overlay local onto global, and an
 /// explicit `null` for an unconfigured local key would otherwise overwrite a
-/// configured global value for that same key instead of leaving it absent.
+/// configured global value for that same key.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct RawFrontmatterConfig {
@@ -84,10 +84,11 @@ pub(crate) struct RawFrontmatterConfig {
     pub(crate) date_modified: Option<RawDateFieldConfig>,
 }
 
-/// A `{name, format}` pair naming a date-valued frontmatter key. Both fields
-/// are optional; missing values are resolved to role-aware defaults by
-/// [`super::model::DateFieldConfig`]. Each field skips serialization when
-/// `None`, for the same Figment merge reason as [`RawFrontmatterConfig`].
+/// A `{name, format}` pair naming a date-valued frontmatter key.
+///
+/// Both fields are optional; missing values are resolved to role-aware defaults
+/// by [`super::model::DateFieldConfig`]. Fields skip serialization when `None`
+/// to avoid overwriting a configured global value during Figment merge.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct RawDateFieldConfig {

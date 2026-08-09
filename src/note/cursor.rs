@@ -1,11 +1,11 @@
-//! UTF-8 byte-offset helpers for parser-owned source text.
+//! UTF-8 byte-offset helpers for the parser and wikilink parser.
 //!
 //! [`SourceText`] wraps a borrowed string and exposes validated byte-offset
-//! arithmetic used by the lexer and wikilink parser.
+//! arithmetic used by the lexer and [`Link`](super::Link) parser.
 
 use std::ops::Range;
 
-/// Represents borrowed parser input addressed by validated byte offsets.
+/// Borrowed parser input addressed by validated byte offsets.
 pub(super) struct SourceText<'a>(&'a str);
 
 impl<'a> SourceText<'a> {
@@ -23,21 +23,21 @@ impl<'a> SourceText<'a> {
         self.0.len()
     }
 
-    /// Returns the suffix beginning at `pos`.
+    /// Returns the suffix beginning at `pos`, or `None` if out of bounds.
     #[inline]
     #[must_use]
     pub(super) fn from(&self, pos: usize) -> Option<&'a str> {
         self.0.get(pos..)
     }
 
-    /// Returns the source slice for `range`.
+    /// Returns the source slice for `range`, or `None` if out of bounds.
     #[inline]
     #[must_use]
     pub(super) fn get(&self, range: Range<usize>) -> Option<&'a str> {
         self.0.get(range)
     }
 
-    /// Checks whether the source at `pos` starts with `needle`.
+    /// Returns `true` if the source at `pos` starts with `needle`.
     #[inline]
     #[must_use]
     pub(super) fn starts_with(&self, pos: usize, needle: &str) -> bool {
@@ -56,7 +56,7 @@ impl<'a> SourceText<'a> {
         pos + bytes
     }
 
-    /// Advances `pos` past `ch` and returns the new offset.
+    /// Advances `pos` past one `char` and returns the new offset.
     #[inline]
     #[must_use]
     pub(super) fn advance_char(&self, pos: usize, ch: char) -> usize {

@@ -1,4 +1,4 @@
-//! Schema-field addresses shared by raw `$ref` parsing and resolution.
+//! Parse and carry `$ref` field addresses.
 //!
 //! [`FieldAddress`] owns a `#<schema>/<field>` coordinate parsed from TOML.
 //! [`FieldAddressRef`] borrows the same shape while resolving a current field,
@@ -12,7 +12,7 @@ use thiserror::Error;
 use super::name::{SchemaName, SchemaNameRef};
 use crate::field::{FieldName, FieldNameError, FieldNameRef};
 
-/// An owned Schema field address: `#<schema>/<field>`.
+/// Store an owned `#<schema>/<field>` address.
 #[derive(Clone, Eq, PartialEq)]
 pub(crate) struct FieldAddress {
     schema: SchemaName,
@@ -20,14 +20,14 @@ pub(crate) struct FieldAddress {
 }
 
 impl FieldAddress {
-    /// Returns the addressed Schema's name.
+    /// Return the addressed Schema's name.
     #[inline]
     #[must_use]
     pub(crate) fn schema(&self) -> &SchemaName {
         &self.schema
     }
 
-    /// Returns the addressed field's name.
+    /// Return the addressed field's name.
     #[inline]
     #[must_use]
     pub(crate) fn field(&self) -> &FieldName {
@@ -38,6 +38,8 @@ impl FieldAddress {
 impl TryFrom<&str> for FieldAddress {
     type Error = FieldAddressError;
 
+    /// Parse a string into an owned field address.
+    ///
     /// # Errors
     ///
     /// Returns [`FieldAddressError::Malformed`] when `raw` is not shaped
@@ -63,6 +65,8 @@ impl TryFrom<&str> for FieldAddress {
 impl TryFrom<String> for FieldAddress {
     type Error = FieldAddressError;
 
+    /// Parse an owned string into an owned field address.
+    ///
     /// # Errors
     ///
     /// See [`FieldAddress::try_from`].
@@ -83,6 +87,8 @@ impl From<FieldAddressRef<'_>> for FieldAddress {
 impl FromStr for FieldAddress {
     type Err = FieldAddressError;
 
+    /// Parse a string into an owned field address.
+    ///
     /// # Errors
     ///
     /// See [`FieldAddress::try_from`].
@@ -92,7 +98,7 @@ impl FromStr for FieldAddress {
 }
 
 impl fmt::Display for FieldAddress {
-    /// Writes `#<schema>/<field>` directly into the formatter, without
+    /// Write `#<schema>/<field>` directly into the formatter, without
     /// allocating an intermediate `String`.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "#{}/{}", self.schema, self.field)
@@ -100,7 +106,7 @@ impl fmt::Display for FieldAddress {
 }
 
 impl fmt::Debug for FieldAddress {
-    /// Matches `str`'s own `Debug` (quoted, escaped) applied to this address's
+    /// Match `str`'s own `Debug` (quoted, escaped) applied to this address's
     /// `#<schema>/<field>` display form, so wrapping a `$ref` in this type
     /// never changes an error message's text.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -109,7 +115,7 @@ impl fmt::Debug for FieldAddress {
 }
 
 impl<'de> Deserialize<'de> for FieldAddress {
-    /// Deserializes from a string shaped `#<schema>/<field>` and validates it.
+    /// Deserialize from a string shaped `#<schema>/<field>` and validate it.
     ///
     /// # Errors
     ///
@@ -123,7 +129,7 @@ impl<'de> Deserialize<'de> for FieldAddress {
     }
 }
 
-/// Borrowed counterpart to [`FieldAddress`].
+/// Borrow a `#<schema>/<field>` address.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(crate) struct FieldAddressRef<'a> {
     schema: SchemaNameRef<'a>,
@@ -131,7 +137,7 @@ pub(crate) struct FieldAddressRef<'a> {
 }
 
 impl<'a> FieldAddressRef<'a> {
-    /// Builds a borrowed Schema field address.
+    /// Build a borrowed Schema field address.
     #[inline]
     #[must_use]
     pub(crate) fn new(
@@ -144,14 +150,14 @@ impl<'a> FieldAddressRef<'a> {
         }
     }
 
-    /// Returns the addressed Schema's name.
+    /// Return the addressed Schema's name.
     #[inline]
     #[must_use]
     pub(crate) fn schema(self) -> SchemaNameRef<'a> {
         self.schema
     }
 
-    /// Returns the addressed field's name.
+    /// Return the addressed field's name.
     #[inline]
     #[must_use]
     pub(crate) fn field(self) -> FieldNameRef<'a> {
@@ -159,7 +165,7 @@ impl<'a> FieldAddressRef<'a> {
     }
 }
 
-/// A [`FieldAddress`] failed to parse.
+/// Describe why a [`FieldAddress`] failed to parse.
 #[derive(Debug, Error)]
 pub(crate) enum FieldAddressError {
     /// `reference` was not shaped `#<schema>/<field>` with both segments

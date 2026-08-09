@@ -1,36 +1,38 @@
-//! File-name newtypes shared by the index, template, and schema layers.
+//! Define file-name and base-name newtypes.
 //!
-//! - [`FileName`] keeps the final path component exactly as written, including
-//!   any extension.
-//! - [`BaseName`] stores the same name with the extension stripped.
-//! - [`BaseNameRef`] is [`BaseName`]'s borrowed counterpart, mirroring the
-//!   `&str`/`String` split, for callers that only need a stem for one
-//!   comparison or hash lookup.
+//! Main types:
+//! - [`FileName`] - Final path component including any extension
+//! - [`BaseName`] - Owned file stem with any extension stripped
+//! - [`BaseNameRef`] - Borrowed file stem
+//! - [`MissingFileName`] - Error for paths without a final component
 //!
-//! Keeping these types distinct avoids passing interchangeable strings through
-//! code that needs different stem, extension, or ownership semantics.
+//! Dotfiles follow [`Path::file_stem`]: `.gitignore` has no extension and keeps
+//! `.gitignore` as its base name.
 
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-/// A file's final path component, including any extension.
+/// Stores a file's final path component.
 ///
-/// For `todo.md`, this stores `todo.md`. Use [`BaseName`] when the extension
-/// should be stripped.
+/// Keeps the name exactly as returned by [`Path::file_name`], including any
+/// extension. For `todo.md`, stores `todo.md`.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct FileName(String);
 
 impl FileName {
-    /// Returns this name's extension, if any.
+    /// Returns this name's extension.
+    ///
+    /// Dotfiles without another extension return [`None`]. For example,
+    /// `.gitignore` has no extension, while `.env.local` returns `local`.
     #[must_use]
     pub(crate) fn extension(&self) -> Option<&str> {
         Path::new(&self.0).extension().and_then(|ext| ext.to_str())
     }
 }
 
-/// Error returned when a path has no final component.
+/// Reports that a path has no final component.
 #[derive(Debug, Error)]
 #[error("path has no file name")]
 pub(crate) struct MissingFileName;
@@ -43,7 +45,7 @@ impl TryFrom<&Path> for FileName {
     /// # Errors
     ///
     /// - [`MissingFileName`] if `path` has no final component, such as `/`,
-    ///   `..`, or an empty path.
+    ///   `..`, or an empty path
     fn try_from(path: &Path) -> Result<Self, Self::Error> {
         path.file_name()
             .map(|name| Self(name.to_string_lossy().into_owned()))
@@ -51,10 +53,11 @@ impl TryFrom<&Path> for FileName {
     }
 }
 
-/// A file name with any extension stripped.
+/// Stores a file name with any extension stripped.
 ///
-/// For `todo.md`, this stores `todo`. Dotfiles such as `.gitignore` keep their
-/// full text as the stem.
+/// Uses [`Path::file_stem`] on [`FileName`]'s stored text. For `todo.md`,
+/// stores `todo`. Dotfiles such as `.gitignore` keep their full text as the
+/// stem.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct BaseName(String);
 
@@ -78,18 +81,19 @@ impl From<&FileName> for BaseName {
     }
 }
 
-/// Borrowed counterpart to [`BaseName`]: a file stem borrowed from a [`Path`]
-/// instead of owned, mirroring the `&str`/`String` split.
+/// Borrows a file name with any extension stripped.
 ///
-/// Use this instead of [`BaseName`] where a stem is only needed for one
-/// comparison or hash lookup, such as the wikilink stem index in `inlinks`, so
-/// resolving many candidates doesn't allocate a [`BaseName`] per candidate.
+/// Use this instead of [`BaseName`] when one comparison or hash lookup can
+/// borrow directly from a [`Path`]. Dotfile behavior matches
+/// [`Path::file_stem`].
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub(crate) struct BaseNameRef<'a>(&'a str);
 
 impl<'a> BaseNameRef<'a> {
-    /// Borrows `path`'s file stem, with any extension stripped, or `None` if
-    /// `path` has no final component or a non-UTF-8 one.
+    /// Borrows `path`'s file stem.
+    ///
+    /// Returns [`None`] when `path` has no final component or the stem is not
+    /// valid UTF-8.
     #[must_use]
     pub(crate) fn from_path(path: &'a Path) -> Option<Self> {
         path.file_stem().and_then(|stem| stem.to_str()).map(Self)

@@ -1,16 +1,14 @@
-//! Resolve XDG and platform-specific directories for configuration and
-//! persistent state.
+//! Resolve configuration and persistent-state directories.
 //!
-//! Each parent directory checks its standard override variable (e.g.,
-//! `$XDG_CONFIG_HOME`), then falls back to the platform default.
-//! `TRACKED_CONFIGS` and `TRUSTED_CONFIGS` live under `TRACES_STATE_DIR`.
+//! Main exports:
+//! - [`StateDirRoot`] - Store-root path newtype under the state directory
+//! - [`CONFIG_HOME`] - Parent directory for global configuration
+//! - [`TRACKED_CONFIGS`] - Store for paths loaded by config discovery
+//! - [`TRUSTED_CONFIGS`] - Store for paths marked trusted by workspace config
 //!
-//! | Export              | Resolved path                       | Purpose                          |
-//! | ------------------- | ----------------------------------- | -------------------------------- |
-//! | [`CONFIG_HOME`]     | Platform config parent directory    | Global configuration parent      |
-//! | [`TRACKED_CONFIGS`] | `$TRACES_STATE_DIR/tracked-configs` | Config-tracking store            |
-//! | [`TRUSTED_CONFIGS`] | `$TRACES_STATE_DIR/trusted-configs` | Trust store                      |
-//! | [`StateDirRoot`]    | n/a                                 | Private-constructor path newtype |
+//! State stores live under `$TRACES_STATE_DIR` when that variable is set and
+//! non-empty. Otherwise they live under the platform state directory with the
+//! application name appended.
 
 use std::{
     ffi::OsString,
@@ -21,7 +19,7 @@ use std::{
 
 const APP_NAME: &str = "traces";
 
-/// Store directory rooted under the application state directory.
+/// Wraps a store directory rooted under the application state directory.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct StateDirRoot(PathBuf);
 
@@ -84,86 +82,110 @@ static HOME: LazyLock<PathBuf> = LazyLock::new(|| {
 static HOME: LazyLock<PathBuf> =
     LazyLock::new(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("test"));
 
-/// Global configuration parent directory on Unix.
+/// Resolves the global configuration parent directory on Unix.
 ///
-/// - Override: `$XDG_CONFIG_HOME`
-/// - Default: `$HOME/.config`
+/// Resolution order:
+/// - `$XDG_CONFIG_HOME` when set and non-empty
+/// - `$HOME/.config` when `$HOME` is set and non-empty
+/// - `/.config`
 #[cfg(all(unix, not(target_os = "macos")))]
 pub(crate) static CONFIG_HOME: LazyLock<PathBuf> = LazyLock::new(|| {
     var_path("XDG_CONFIG_HOME").unwrap_or_else(|| HOME.join(".config"))
 });
 
-/// Global configuration parent directory on macOS.
+/// Resolves the global configuration parent directory on macOS.
 ///
-/// - Override: `$XDG_CONFIG_HOME`
-/// - Default: `~/Library/Application Support`
+/// Resolution order:
+/// - `$XDG_CONFIG_HOME` when set and non-empty
+/// - `$HOME/Library/Application Support` when `$HOME` is set and non-empty
+/// - `/Library/Application Support`
 #[cfg(target_os = "macos")]
 pub(crate) static CONFIG_HOME: LazyLock<PathBuf> = LazyLock::new(|| {
     var_path("XDG_CONFIG_HOME")
         .unwrap_or_else(|| HOME.join("Library").join("Application Support"))
 });
 
-/// Global configuration parent directory on Windows.
+/// Resolves the global configuration parent directory on Windows.
 ///
-/// - Override: `%APPDATA%`
-/// - Default: `C:\Users\<user>\AppData\Roaming`
+/// Resolution order:
+/// - `%APPDATA%` when set and non-empty
+/// - `%USERPROFILE%\AppData\Roaming` when `%USERPROFILE%` is set and non-empty
+/// - `%HOMEDRIVE%%HOMEPATH%\AppData\Roaming` when both are set and non-empty
+/// - `C:\AppData\Roaming`
 #[cfg(windows)]
 pub(crate) static CONFIG_HOME: LazyLock<PathBuf> = LazyLock::new(|| {
     var_path("APPDATA").unwrap_or_else(|| HOME.join("AppData").join("Roaming"))
 });
 
-/// Persistent-state parent directory on Unix.
+/// Resolves the persistent-state parent directory on Unix.
 ///
-/// - Override: `$XDG_STATE_HOME`
-/// - Default: `$HOME/.local/state`
+/// Resolution order:
+/// - `$XDG_STATE_HOME` when set and non-empty
+/// - `$HOME/.local/state` when `$HOME` is set and non-empty
+/// - `/.local/state`
 #[cfg(all(unix, not(target_os = "macos")))]
 static STATE_HOME: LazyLock<PathBuf> = LazyLock::new(|| {
     var_path("XDG_STATE_HOME")
         .unwrap_or_else(|| HOME.join(".local").join("state"))
 });
 
-/// Persistent-state parent directory on macOS.
+/// Resolves the persistent-state parent directory on macOS.
 ///
-/// - Override: `$XDG_STATE_HOME`
-/// - Default: `~/Library/Application Support`
+/// Resolution order:
+/// - `$XDG_STATE_HOME` when set and non-empty
+/// - `$HOME/Library/Application Support` when `$HOME` is set and non-empty
+/// - `/Library/Application Support`
 #[cfg(target_os = "macos")]
 static STATE_HOME: LazyLock<PathBuf> = LazyLock::new(|| {
     var_path("XDG_STATE_HOME")
         .unwrap_or_else(|| HOME.join("Library").join("Application Support"))
 });
 
-/// Persistent-state parent directory on Windows.
+/// Resolves the persistent-state parent directory on Windows.
 ///
-/// - Override: `%LOCALAPPDATA%`
-/// - Default: `C:\Users\<user>\AppData\Local`
+/// Resolution order:
+/// - `%LOCALAPPDATA%` when set and non-empty
+/// - `%USERPROFILE%\AppData\Local` when `%USERPROFILE%` is set and non-empty
+/// - `%HOMEDRIVE%%HOMEPATH%\AppData\Local` when both are set and non-empty
+/// - `C:\AppData\Local`
 #[cfg(windows)]
 static STATE_HOME: LazyLock<PathBuf> = LazyLock::new(|| {
     var_path("LOCALAPPDATA")
         .unwrap_or_else(|| HOME.join("AppData").join("Local"))
 });
 
-/// Application-specific persistent-state directory.
+/// Resolves the application-specific persistent-state directory.
 ///
-/// Override via `$TRACES_STATE_DIR`; defaults to [`STATE_HOME`]`/traces`.
+/// Resolution order:
+/// - `$TRACES_STATE_DIR` when set and non-empty
+/// - [`STATE_HOME`] with `traces` appended
 static TRACES_STATE_DIR: LazyLock<PathBuf> = LazyLock::new(|| {
     var_path("TRACES_STATE_DIR").unwrap_or_else(|| STATE_HOME.join(APP_NAME))
 });
 
-/// Config-tracking store directory.
+/// Resolves the config-tracking store directory.
 ///
-/// Resolves to `$TRACES_STATE_DIR/tracked-configs`. Contains BLAKE3-keyed
-/// symbolic links, or path-bearing files where symbolic links are unavailable,
-/// for every config file [`ConfigService`] has loaded.
+/// Resolution order:
+/// - `$TRACES_STATE_DIR/tracked-configs` when `$TRACES_STATE_DIR` is set and
+///   non-empty
+/// - Platform state directory with `traces/tracked-configs` appended
+///
+/// Contains BLAKE3-keyed symbolic links on Unix and path-bearing files on
+/// Windows for every config file [`ConfigService`] has loaded.
 ///
 /// [`ConfigService`]: crate::config::ConfigService
 pub(crate) static TRACKED_CONFIGS: LazyLock<StateDirRoot> =
     LazyLock::new(|| StateDirRoot::new("tracked-configs"));
 
-/// Trust store directory.
+/// Resolves the trust store directory.
 ///
-/// Resolves to `$TRACES_STATE_DIR/trusted-configs`. Contains BLAKE3-keyed
-/// symbolic links, or path-bearing files where symbolic links are unavailable,
-/// for every workspace `ConfigStateStore` has marked trusted.
+/// Resolution order:
+/// - `$TRACES_STATE_DIR/trusted-configs` when `$TRACES_STATE_DIR` is set and
+///   non-empty
+/// - Platform state directory with `traces/trusted-configs` appended
+///
+/// Contains BLAKE3-keyed symbolic links on Unix and path-bearing files on
+/// Windows for every workspace config store has marked trusted.
 pub(crate) static TRUSTED_CONFIGS: LazyLock<StateDirRoot> =
     LazyLock::new(|| StateDirRoot::new("trusted-configs"));
 

@@ -10,6 +10,9 @@ use std::{
 };
 
 /// Process current working directory captured at construction time.
+///
+/// Wraps [`env::current_dir`] to keep cwd access auditable at a single boundary
+/// (enforced by `clippy.toml`).
 #[derive(Clone, Debug)]
 pub(crate) struct Cwd(PathBuf);
 
@@ -55,7 +58,8 @@ static CWD_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 /// Scoped guard that enters a directory and restores the original on drop.
 ///
 /// Tests that change the working directory should use this instead of calling
-/// [`env::set_current_dir`] directly.
+/// [`env::set_current_dir`] directly. Holding [`CWD_TEST_LOCK`] serializes
+/// concurrent cwd changes.
 #[cfg(test)]
 pub(crate) struct CwdGuard {
     original: PathBuf,

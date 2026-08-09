@@ -1,10 +1,18 @@
-//! Template paths validate and label path-shaped values in the template
-//! pipeline.
+//! Validate and label path values in the template pipeline.
 //!
-//! [`TemplatePath`] is built by [`TemplateLoader`]'s search immediately after
-//! confirming the file exists. Nothing later in the pipeline re-verifies it.
-//! [`DeclaredOutputPath`] labels the raw `file.write_to()` candidate before
-//! [`writer`] resolves it.
+//! Main types:
+//!
+//! - [`TemplatePathInput`] - Relative template identifier accepted at CLI and
+//!   include boundaries.
+//! - [`TemplatePath`] - Resolved template path produced after loader lookup.
+//! - [`DeclaredOutputPath`] - Raw `file.write_to()` value captured during
+//!   rendering.
+//! - [`TemplatePathError`] - Validation and lookup failures for template
+//!   identifiers.
+//!
+//! [`TemplatePath`] is created by [`TemplateLoader`] immediately after finding
+//! a real file. [`DeclaredOutputPath`] is intentionally not validated here;
+//! [`writer`] resolves and confines it alongside `-o` output paths.
 //!
 //! [`TemplateLoader`]: super::loader::TemplateLoader
 //! [`writer`]: super::writer
@@ -22,25 +30,41 @@ use crate::path::{PathError, SafeRelativePath};
 /// `-o`/`file.write_to()` override.
 const DEFAULT_EXTENSION: &str = "md";
 
-/// A validated but unresolved template path input.
+/// Holds a validated template identifier before loader resolution.
 ///
-/// Constructed only through [`Self::parse`], so unvalidated paths cannot reach
-/// template resolution. It guarantees the input path is relative, non-empty,
-/// and unable to escape through `..`; it does not prove the template exists.
+/// The identifier is relative, contains at least one normal path component, and
+/// cannot escape through parent traversal. It does not prove the template file
+/// exists.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TemplatePathInput(SafeRelativePath);
 
 impl TemplatePathInput {
-    /// Parses `path` as a template path input.
+    /// Parses a path as a template identifier.
     ///
-    /// Used by the CLI boundary before rendering and by `TemplateLoader::load`
-    /// before resolving minijinja includes.
+    /// Accepts relative names such as `daily`, `daily.md`, and
+    /// `folder/daily.md`. Rejects absolute paths, parent traversal, empty
+    /// paths, and paths without a normal component.
     ///
     /// # Errors
     ///
     /// - [`TemplatePathError::Absolute`] if `path` is absolute.
     /// - [`TemplatePathError::UnsafeComponent`] for `..`, any component that is
     ///   not a plain name or `.`, or a path with no [`Component::Normal`].
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # #[cfg(feature = "test-utils")]
+    /// # {
+    /// use std::path::Path;
+    ///
+    /// use traces_pkm::TemplatePathInput;
+    ///
+    /// let input = TemplatePathInput::parse(Path::new("daily.md"))?;
+    /// assert_eq!(input.as_ref(), Path::new("daily.md"));
+    /// # Ok::<_, traces_pkm::TemplatePathError>(())
+    /// # }
+    /// ```
     ///
     /// [`Component::Normal`]: std::path::Component::Normal
     #[inline]
@@ -160,39 +184,42 @@ impl DeclaredOutputPath {
     }
 }
 
-/// Every way producing a template path can fail: validation
-/// ([`Self::Absolute`], [`Self::UnsafeComponent`]) and search
-/// ([`Self::AmbiguousTemplate`], [`Self::TemplateNotFound`], or
-/// [`Self::DirectoryRead`]).
+/// Reports template identifier validation and lookup failures.
+///
+/// Validation errors are raised before any template directory is searched.
+/// Lookup errors are raised after validation succeeds.
 #[derive(Debug, Error)]
 pub enum TemplatePathError {
-    /// `name` is absolute. A template identifier must be relative to whichever
-    /// directory it is searched in.
+    /// The identifier was absolute.
+    ///
+    /// Template lookup only accepts paths relative to configured template
+    /// directories.
     #[error("template path {0} must be relative, not absolute")]
     Absolute(PathBuf),
-    /// `name` cannot stay inside a directory: some component could escape it
-    /// (most notably `..`), or there's no [`std::path::Component::Normal`]
-    /// component at all (an empty path, or a bare `.`).
+    /// The identifier was not a safe relative path.
+    ///
+    /// Covers parent traversal, unsupported components, an empty path, and a
+    /// bare `.` with no normal component.
     #[error("template path {0} is not a valid template identifier")]
     UnsafeComponent(PathBuf),
-    /// More than one file in a Template Directory matched the name.
+    /// Stem lookup matched more than one file in one template directory.
     #[error("template name \"{name}\" matched multiple files: {candidates:?}")]
     AmbiguousTemplate {
-        /// The identifier the user requested.
+        /// Requested identifier that produced multiple matches.
         name: PathBuf,
-        /// Matching paths relative to the Template Directory.
+        /// Matching paths relative to the searched template directory.
         candidates: Vec<PathBuf>,
     },
-    /// The configured Template Directory could not be read.
+    /// Reading a template directory failed during stem lookup.
     #[error("failed to read template directory {directory}")]
     DirectoryRead {
-        /// The Template Directory that could not be read.
+        /// Directory that could not be read.
         directory: PathBuf,
-        /// The underlying filesystem failure.
+        /// Filesystem error returned while reading the directory.
         #[source]
         source: io::Error,
     },
-    /// No searched Template Directory had a match.
+    /// No configured template directory contained the requested template.
     #[error("template \"{0}\" not found")]
     TemplateNotFound(PathBuf),
 }

@@ -1,20 +1,33 @@
-//! Markdown note domain model and parser.
+//! Parse Obsidian-style Markdown notes into structured records.
 //!
-//! [`parse_markdown`] converts Markdown source into a [`Note`] containing the
-//! frontmatter, lists, outgoing links, inline fields, and tags used by the
-//! index and query layers.
+//! [`parse_markdown`] walks a `pulldown-cmark` event stream once, building a
+//! [`Note`] that holds frontmatter, lists, outgoing links, inline fields, and
+//! tags.
+//!
+//! # Pipeline
+//!
+//! 1. `pulldown-cmark` tokenizes raw Markdown with task-list, YAML, and
+//!    wikilink extensions enabled.
+//! 2. `ParserContext` accumulates block-level state: frontmatter text, list
+//!    nesting, link targets, and plain-text scan buffers that exclude fenced
+//!    code blocks, indented code blocks, and inline code.
+//! 3. When a text block closes, the [`lexer`] scans its buffer for `Key::
+//!    Value`, `[Key:: Value]`, `(Key:: Value)`, and `#tag` tokens. Task items
+//!    also recognize date-shorthand emoji (`🗓️`, `➕`, `🛫`, `⏳`, `✅`).
+//! 4. The assembled [`Note`] stores all extracted data in document order.
 //!
 //! # Main Types
 //!
-//! - [`Note`] - Represents a parsed note record.
-//! - [`List`], [`ListItem`], and [`TaskStatus`] - Represent Markdown lists and
-//!   task items.
-//! - [`Link`], [`LinkType`], and [`LinkTarget`] - Represent Markdown links,
-//!   Obsidian wikilinks, and a link's split path/anchor target.
-//! - [`Frontmatter`] and [`RawFrontmatter`] - Preserve YAML metadata.
-//! - [`InlineField`], [`InlineFieldForm`], and [`FieldValue`] - Represent
-//!   inline-field metadata parsed from note body text.
-//! - [`Tag`] - Stores Markdown tags.
+//! - [`Note`]: parsed record for one Markdown file.
+//! - [`List`], [`ListItem`], [`TaskStatus`]: ordered and unordered lists,
+//!   including task items and nested child lists.
+//! - [`Link`], [`LinkType`], [`LinkTarget`]: outgoing links from Markdown
+//!   `[text](target)` and Obsidian `[[target|alias]]` syntax.
+//! - [`Frontmatter`], [`RawFrontmatter`]: YAML frontmatter as structured fields
+//!   or raw text.
+//! - [`InlineField`], [`InlineFieldForm`], [`FieldValue`]: body metadata parsed
+//!   from `Key:: Value` syntax.
+//! - [`Tag`]: Markdown tags such as `#book` and `#projects/active`.
 
 mod cursor;
 mod lexer;

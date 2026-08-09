@@ -1,18 +1,25 @@
-//! Builds and runs the minijinja environment used by [`TemplateService`].
+//! Build and run the minijinja environment used by [`TemplateService`].
 //!
-//! Most template-facing helpers live in submodules:
-//! - [`date`]
-//! - [`mod@file`]
-//! - [`path`]
-//! - [`num`]
-//! - [`query`]
-//! - [`mod@schema`]
-//! - [`string`]
-//! - [`ui`]
+//! [`TemplateEngine`] owns one [`Environment`] configured with the loader and
+//! helper surface used by templates. Rendering returns [`RenderOutput`], which
+//! includes the rendered text and an optional `file.write_to()` destination.
 //!
-//! The standalone [`uuid`] function is defined here.
+//! Helper modules:
+//!
+//! - [`date`] registers date generators, date filters, and date tests.
+//! - [`mod@file`] registers `file.write_to()` and `file.include()`.
+//! - [`path`] registers path tests and path-component filters.
+//! - [`num`] registers numeric filters.
+//! - [`query`] registers the `query` and `tasks` namespaces plus terminal query
+//!   filters.
+//! - [`mod@schema`] registers Schema registry access through `schema.get()`.
+//! - [`string`] registers case, trimming, truncation, repetition, and regex
+//!   filters.
+//! - [`ui`] registers dialog-backed `ui.*` helpers.
+//! - [`uuid`] registers the standalone UUID generator.
 //!
 //! [`TemplateService`]: super::service::TemplateService
+//! [`Environment`]: minijinja::Environment
 //! [`uuid`]: fn@uuid
 
 mod date;

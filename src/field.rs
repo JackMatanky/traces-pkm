@@ -1,17 +1,15 @@
-//! Validated field-name/key primitives shared across Note metadata and Schema.
+//! Validate exact and forgiving field identifiers.
 //!
-//! [`FieldName`] is the exact identifier Schemas use: two field names are equal
-//! only if their raw text matches byte-for-byte (`"status"` and `"Status"` are
-//! distinct identities). [`FieldKey`] is the forgiving identifier Note
-//! frontmatter and inline fields use: it additionally tracks a canonical form
-//! so `"Status"`, `"status"`, and `"Due-Date"`/`"due date"`-style variants all
-//! *match* (via [`FieldKey::is_match`] and friends) without being
-//! interchangeable as raw text.
+//! Main types:
+//! - [`FieldName`] - Exact schema field identity
+//! - [`FieldKey`] - Forgiving note field identity with a canonical form
+//! - [`FieldNameRef`] - Borrowed field-name identity
+//! - [`FieldNameError`] - Field-name parse failure
+//! - [`FieldKeyError`] - Field-key parse failure
 //!
-//! Both types are constructed only through fallible conversions
-//! (`TryFrom`/`FromStr`): an empty name, a name whose canonical form strips to
-//! nothing, or (for [`FieldName`]) a name containing `/` cannot be constructed
-//! at all ("parse, don't validate").
+//! [`FieldName`] preserves exact identity: `status` and `Status` are distinct.
+//! [`FieldKey`] preserves the original text for display and stores a canonical
+//! form for forgiving matches across case, whitespace, and punctuation changes.
 
 use std::{borrow::Borrow, fmt, str::FromStr};
 
@@ -19,9 +17,10 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};
 use thiserror::Error;
 use yaml_serde as serde_yaml;
 
-/// An exact field identifier: two [`FieldName`]s are equal only when their raw
-/// text matches byte-for-byte. Used for Schema field identities, where `status`
-/// and `Status` must stay distinct.
+/// Stores an exact schema field identifier.
+///
+/// Equality and ordering use the raw text. `status` and `Status` remain
+/// different identities.
 #[derive(Clone, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub(crate) struct FieldName(String);
 
@@ -40,9 +39,9 @@ impl FieldName {
         FieldNameRef(&self.0)
     }
 
-    /// Converts this name into a forgiving [`FieldKey`], allocating its
-    /// canonical form. Borrowed counterpart to `impl From<FieldName> for
-    /// FieldKey`, for call sites that only have a `&FieldName`.
+    /// Converts this name into a forgiving [`FieldKey`].
+    ///
+    /// Allocates the canonical form while preserving the exact name text.
     #[must_use]
     pub(crate) fn to_key(&self) -> FieldKey {
         let canonical = FieldKey::canonicalize(&self.0);
@@ -52,15 +51,14 @@ impl FieldName {
         }
     }
 
-    /// Validates `raw` as a [`FieldName`]: non-empty, no `/`, and a non-empty
-    /// canonical form.
+    /// Validates `raw` as a field name.
     ///
     /// # Errors
     ///
-    /// Returns [`FieldNameError::Empty`] when `raw` is empty or
-    /// whitespace-only, [`FieldNameError::ContainsSlash`] when `raw` contains
-    /// `/`, and [`FieldNameError::EmptyCanonical`] when `raw`'s [`FieldKey`]
-    /// canonical form would be empty.
+    /// - [`FieldNameError::Empty`] if `raw` is empty or whitespace-only
+    /// - [`FieldNameError::ContainsSlash`] if `raw` contains `/`
+    /// - [`FieldNameError::EmptyCanonical`] if `raw` has no searchable
+    ///   characters after [`FieldKey`] canonicalization
     fn validate(raw: &str) -> Result<(), FieldNameError> {
         if raw.trim().is_empty() {
             return Err(FieldNameError::Empty);
@@ -168,9 +166,10 @@ impl<'de> Deserialize<'de> for FieldName {
         Self::try_from(raw).map_err(D::Error::custom)
     }
 }
-/// Borrowed counterpart to [`FieldName`]: a field name borrowed from parsed
-/// TOML data or a `$ref` string, mirroring the [`str`]/[`String`] split used by
-/// `SchemaNameRef`.
+/// Borrows an exact schema field identifier.
+///
+/// Use this where a validated field name is needed without allocating an owned
+/// [`FieldName`].
 #[derive(Copy, Clone, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub(crate) struct FieldNameRef<'a>(&'a str);
 
@@ -214,9 +213,14 @@ impl fmt::Display for FieldNameRef<'_> {
         fmt::Display::fmt(self.0, f)
     }
 }
-/// A forgiving field identifier shared by Note frontmatter and inline fields:
-/// stores the original key text for display and a canonical form for
-/// case-insensitive, whitespace-normalized matching.
+/// Stores a forgiving note field identifier.
+///
+/// Keeps two forms:
+/// - `name` stores the original key text for display and serialization
+/// - `canonical` stores the normalized text used for matching
+///
+/// Equality compares canonical forms, so `Status`, `status`, and `status!`
+/// compare equal when their canonical forms match.
 #[derive(Clone, Debug, Eq)]
 pub(crate) struct FieldKey {
     /// Original key text as written by the user.
@@ -230,9 +234,9 @@ impl FieldKey {
     ///
     /// # Errors
     ///
-    /// Returns [`FieldKeyError::Empty`] when `raw` is empty or whitespace-only,
-    /// and [`FieldKeyError::EmptyCanonical`] when canonicalization strips every
-    /// searchable character.
+    /// - [`FieldKeyError::Empty`] if `raw` is empty or whitespace-only
+    /// - [`FieldKeyError::EmptyCanonical`] if canonicalization strips every
+    ///   searchable character
     pub(crate) fn try_new(
         raw: impl Into<String>,
     ) -> Result<Self, FieldKeyError> {
@@ -266,48 +270,50 @@ impl FieldKey {
         &self.canonical
     }
 
-    /// Returns `true` if `candidate` matches this key: an exact raw name match,
-    /// falling back to a canonical (case/whitespace-forgiving) match. The main
-    /// entry point for checking a raw string against a [`FieldKey`]; composes
-    /// [`Self::is_canonical_match`].
+    /// Checks whether `candidate` matches this key.
+    ///
+    /// Matching succeeds when either condition holds:
+    /// - `candidate` exactly equals [`Self::name`]
+    /// - `candidate` canonicalizes to [`Self::canonical`]
     #[inline]
     #[must_use]
     pub(crate) fn is_match(&self, candidate: &str) -> bool {
         self.name == candidate || self.is_canonical_match(candidate)
     }
 
-    /// Returns `true` if `candidate`'s canonical form matches `self`'s.
+    /// Checks whether `candidate` matches this key's canonical form.
     ///
-    /// Checks `candidate` against the stored canonical form literally first,
-    /// and only canonicalizes `candidate` (allocating) when that literal check
-    /// fails: most callers already pass an already-canonical string (a schema
-    /// field name, a prior canonical lookup key), so the common case never
-    /// allocates.
+    /// Checks `candidate` as already-canonical text first, then canonicalizes
+    /// it only if the literal check fails.
     #[must_use]
     pub(crate) fn is_canonical_match(&self, candidate: &str) -> bool {
         self.canonical == candidate
             || self.canonical == Self::canonicalize(candidate)
     }
 
-    /// Returns `true` if `candidate`'s raw text exactly matches `self`'s raw
-    /// name text.
+    /// Checks whether `candidate` exactly matches this key's raw name.
     ///
-    /// Unlike [`Self::is_match`]/[`Self::is_canonical_match`], this never
-    /// forgives a case/whitespace difference: [`FieldName`] is Schema's exact
-    /// identity type, so matching a [`FieldKey`] against one stays exact.
+    /// Does not canonicalize. A case or punctuation difference fails even when
+    /// [`Self::is_match`] would accept it.
     #[must_use]
     #[cfg_attr(not(test), expect(dead_code, reason = "used in tests"))]
     pub(crate) fn is_name_match(&self, candidate: &FieldName) -> bool {
         self.name == candidate.as_str()
     }
 
-    /// Normalizes a raw key string for case-insensitive matching.
+    /// Canonicalizes a raw key for forgiving field matching.
     ///
-    /// Transformations:
-    /// - ASCII whitespace -> `-`
-    /// - `_`, `-`, ASCII alphanumeric -> kept, lowercased
-    /// - Non-ASCII (emoji, Unicode letters) -> kept, lowercased
-    /// - Everything else (`!`, `@`, `(`, etc.) -> stripped
+    /// Character transformations, applied left to right:
+    /// - ASCII whitespace is substituted with `-`
+    /// - `_` and `-` are kept unchanged
+    /// - ASCII letters are kept and lowercased
+    /// - ASCII digits are kept unchanged
+    /// - Non-ASCII characters are kept and lowercased with
+    ///   [`char::to_lowercase`]
+    /// - All other ASCII punctuation and symbols are stripped
+    ///
+    /// Consecutive whitespace produces consecutive `-` characters. Existing
+    /// `-` characters are not collapsed with substituted whitespace.
     fn canonicalize(raw: &str) -> String {
         let mut result = String::with_capacity(raw.len());
         for ch in raw.chars() {
@@ -434,40 +440,41 @@ impl<'de> Deserialize<'de> for FieldKey {
     }
 }
 
-/// A [`FieldName`] failed to parse.
+/// Reports why a [`FieldName`] could not be parsed.
 #[derive(Debug, Error)]
 pub(crate) enum FieldNameError {
-    /// The raw name was empty or whitespace-only.
+    /// Rejects an empty or whitespace-only name.
     #[error("field name is empty")]
     Empty,
-    /// The raw name contained a `/`, which would be ambiguous alongside
-    /// `$ref` path segments.
+    /// Rejects a name containing `/`.
+    ///
+    /// Slash is reserved for `$ref` path segments.
     #[error("field name {name:?} cannot contain `/`")]
     ContainsSlash {
         name: String,
     },
-    /// The raw name's [`FieldKey`] canonical form stripped to nothing.
+    /// Rejects a name with no searchable canonical characters.
     #[error("field name {name:?} has no searchable characters")]
     EmptyCanonical {
         name: String,
     },
-    /// The source YAML value cannot stand as a field name.
+    /// Rejects a YAML value that cannot be represented as scalar field text.
     #[error("YAML value cannot be used as a field name")]
     UnsupportedYamlKey,
 }
 
-/// A [`FieldKey`] failed to parse.
+/// Reports why a [`FieldKey`] could not be parsed.
 #[derive(Debug, Error)]
 pub(crate) enum FieldKeyError {
-    /// The raw key was empty or whitespace-only.
+    /// Rejects an empty or whitespace-only key.
     #[error("field key is empty")]
     Empty,
-    /// The raw key's canonical form stripped to nothing.
+    /// Rejects a key with no searchable canonical characters.
     #[error("field key {name:?} has no searchable characters")]
     EmptyCanonical {
         name: String,
     },
-    /// The source YAML value cannot stand as a field key.
+    /// Rejects a YAML value that cannot be represented as scalar field text.
     #[error("YAML value cannot be used as a field key")]
     UnsupportedYamlKey,
 }
@@ -488,18 +495,18 @@ fn yaml_scalar_to_string(value: serde_yaml::Value) -> Option<String> {
     }
 }
 
-/// Finds the item with the smallest edit distance to `input` among
-/// `candidates`, each paired with the text to compare `input` against.
+/// Finds the candidate nearest to `input` by edit distance.
 ///
-/// The matching threshold is half of `input`'s character count rounded up, with
-/// a minimum threshold of 1 (`input.chars().count().div_ceil(2).max(1)`). This
-/// threshold ensures single-character typos (such as `"nam"` for `"name"`)
-/// match while preventing unrelated words (such as `"bogus"`) from matching any
+/// Algorithm:
+/// - Compute [`edit_distance`] from `input` to each candidate name
+/// - Select the candidate with the smallest distance
+/// - Accept it only when distance is at most half of `input`'s character count,
+///   rounded up, with a minimum threshold of 1
+///
+/// Ties keep iterator order through [`Iterator::min_by_key`]. Complexity is
+/// `O(n * a * b)` time, where `n` is the number of candidates and `a` and `b`
+/// are input and candidate character counts. Extra space is `O(b)` per
 /// candidate.
-///
-/// Returns the candidate item with the smallest edit distance if that distance
-/// does not exceed the calculated threshold. Returns [`None`] if `candidates`
-/// is empty or no candidate falls within the matching threshold.
 pub(crate) fn closest_match<'a, T>(
     candidates: impl Iterator<Item = (T, &'a str)>,
     input: &str,
@@ -514,11 +521,12 @@ pub(crate) fn closest_match<'a, T>(
 
 /// Calculates the Levenshtein edit distance between two strings.
 ///
-/// Computes the minimum number of single-character insertions, deletions, or
-/// substitutions required to transform `a` into `b` using an iterative two-row
-/// Wagner-Fischer algorithm.
+/// Uses the two-row Wagner-Fischer dynamic-programming algorithm over Unicode
+/// scalar values. The result is the minimum number of single-character
+/// insertions, deletions, or substitutions needed to transform `a` into `b`.
 ///
-/// Returns the edit distance as a [`usize`].
+/// Complexity is `O(a * b)` time and `O(b)` extra space, where `a` and `b` are
+/// the character counts of the inputs.
 pub(crate) fn edit_distance(a: &str, b: &str) -> usize {
     let b_chars: Vec<char> = b.chars().collect();
     let mut row: Vec<usize> = (0..=b_chars.len()).collect();

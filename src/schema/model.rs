@@ -1,11 +1,11 @@
-//! Resolved Schema domain types: [`Schema`], its [`FieldDefinition`]s, and
-//! their type-specific [`FieldOptions`].
+//! Store resolved Schema domain types.
 //!
-//! These are the *output* shapes [`super::resolve::resolve`] produces from a
-//! parsed [`super::raw::RawSchema`] set (inheritance, `excludes`, and `$ref`
-//! already applied). Construction stays `pub(super)`: only [`super::resolve`]
-//! builds these; the rest of the crate only reads them through the `pub(crate)`
-//! accessors below.
+//! [`Schema`] holds effective [`FieldDefinition`]s after inheritance,
+//! `excludes`, and `$ref` are applied. Each [`FieldDefinition`] pairs
+//! type-specific [`FieldOptions`] with `required`/`multi` flags.
+//!
+//! Construction stays `pub(super)`: only [`super::resolve`] builds these; the
+//! rest of the crate reads them through `pub(crate)` accessors.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -15,8 +15,9 @@ use super::{
 };
 use crate::field::FieldName;
 
-/// A Schema's effective Field Definitions after inheritance, `excludes`, and
-/// `$ref` are applied.
+/// Store one Schema's effective [`FieldDefinition`]s.
+///
+/// Fields are resolved after inheritance, `excludes`, and `$ref` application.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct Schema {
     name: SchemaName,
@@ -28,7 +29,7 @@ pub(crate) struct Schema {
 }
 
 impl Schema {
-    /// Builds a resolved Schema from its already-merged parts.
+    /// Build a resolved Schema from already-merged parts.
     pub(super) fn new(
         name: SchemaName,
         fields: BTreeMap<FieldName, FieldDefinition>,
@@ -41,21 +42,21 @@ impl Schema {
         }
     }
 
-    /// Returns the Schema name (the source file's stem).
+    /// Return the Schema name from the source file stem.
     #[inline]
     #[must_use]
     pub(crate) fn name(&self) -> &str {
         self.name.as_str()
     }
 
-    /// Returns this Schema's effective Field Definitions, keyed by name.
+    /// Return this Schema's effective Field Definitions, keyed by name.
     #[inline]
     #[must_use]
     pub(crate) fn fields(&self) -> &BTreeMap<FieldName, FieldDefinition> {
         &self.fields
     }
 
-    /// Returns the named Field Definition, or `None` if it does not resolve for
+    /// Return the named Field Definition, or `None` if it does not resolve for
     /// this Schema.
     #[inline]
     #[must_use]
@@ -63,7 +64,7 @@ impl Schema {
         self.fields.get(name)
     }
 
-    /// Returns this Schema's transitive `extends` ancestors, used by
+    /// Return this Schema's transitive `extends` ancestors, used by
     /// `resolve::resolve_one` to accumulate a child's own ancestor set from its
     /// parents'.
     #[inline]
@@ -72,16 +73,19 @@ impl Schema {
         &self.ancestors
     }
 
-    /// Returns `true` if this Schema is-a `queried`: equal, or `queried` is a
-    /// transitive `extends` ancestor.
+    /// Test whether this Schema is-a queried class name.
+    ///
+    /// The `ancestors` set includes all transitive `extends` targets that
+    /// resolved during [`super::resolve::resolve`], so this check covers
+    /// indirect inheritance chains, such as `sci_fi` to `book` to `thing`.
     ///
     /// # Examples
     ///
     /// A `sci_fi` Schema that transitively extends `book`:
     ///
-    /// - `sci_fi.is_a("sci_fi")` → `true` (self)
-    /// - `sci_fi.is_a("book")` → `true` (ancestor)
-    /// - `sci_fi.is_a("movie")` → `false` (unrelated)
+    /// - `sci_fi.is_a("sci_fi")` returns `true` for itself.
+    /// - `sci_fi.is_a("book")` returns `true` for an ancestor.
+    /// - `sci_fi.is_a("movie")` returns `false` for an unrelated class.
     #[inline]
     #[must_use]
     pub(crate) fn is_a(&self, queried: &str) -> bool {
@@ -89,8 +93,7 @@ impl Schema {
     }
 }
 
-/// One resolved Field Definition: its type-specific [`FieldOptions`] plus
-/// `required`/`multi` flags.
+/// Store one resolved field definition.
 ///
 /// `required` and `multi` are currently inert; reserved for future LSP/MCP
 /// guardrails.
@@ -102,7 +105,7 @@ pub(crate) struct FieldDefinition {
 }
 
 impl FieldDefinition {
-    /// Builds a resolved Field Definition from its already-merged parts.
+    /// Build a resolved field definition from already-merged parts.
     pub(super) fn new(
         options: FieldOptions,
         required: bool,
@@ -115,14 +118,14 @@ impl FieldDefinition {
         }
     }
 
-    /// Returns this field's type-specific options.
+    /// Return this field's type-specific options.
     #[inline]
     #[must_use]
     pub(crate) fn options(&self) -> &FieldOptions {
         &self.options
     }
 
-    /// Returns this field's static selectable values for the `schema`
+    /// Return this field's static selectable values for the `schema`
     /// minijinja namespace's `.field()` method, or `None` if this field type
     /// has none to offer without consulting the file index.
     ///
@@ -149,7 +152,7 @@ impl FieldDefinition {
         }
     }
 
-    /// Returns this file field's `FileIndex` filter parts.
+    /// Return this file field's `FileIndex` filter parts.
     ///
     /// The tuple is `(folders, ext, class)`. Returns `None` for every
     /// non-`file` field type.
@@ -172,7 +175,7 @@ impl FieldDefinition {
         }
     }
 
-    /// Returns `true` if this field must be set. Always `false` on the reserved
+    /// Return `true` if this field must be set. Always `false` on the reserved
     /// Global Schema, regardless of its own TOML.
     #[inline]
     #[must_use]
@@ -180,7 +183,7 @@ impl FieldDefinition {
         self.required
     }
 
-    /// Returns `true` if this field accepts multiple values.
+    /// Return `true` if this field accepts multiple values.
     #[inline]
     #[must_use]
     pub(crate) fn is_multi(&self) -> bool {
@@ -188,24 +191,30 @@ impl FieldDefinition {
     }
 }
 
-/// Borrowed `(folders, ext, class)` filter parts from a `file` field.
+/// Borrow `(folders, ext, class)` filter parts from a `file` field.
 type FileFilterParts<'a> = (&'a [String], Option<&'a str>, &'a [String]);
 
-/// Type-specific Field Definition options.
+/// Represent type-specific field options.
 ///
-/// Pairs each [`FieldType`] with the options only that type carries, so a
+/// Pairs each [`FieldType`] with the options only that type carries: a
 /// `select` field without `values`, or a `date` field with a stray `folders`
 /// list, cannot be represented. `select` and `file` are the only list-bearing
-/// kinds: every other variant is a unit variant.
+/// kinds; every other variant is a unit variant.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum FieldOptions {
+    /// Accept free-form text input.
     Input,
+    /// Accept one value from a configured list.
     Select {
         values: Vec<String>,
     },
+    /// Accept a boolean value.
     Boolean,
+    /// Accept a numeric value.
     Number,
+    /// Accept a date value.
     Date,
+    /// Accept a link to files matched by folder, extension, and class filters.
     File {
         folders: Vec<String>,
         ext: Option<String>,
@@ -214,8 +223,10 @@ pub(crate) enum FieldOptions {
 }
 
 impl FieldOptions {
-    /// Builds fresh options for `field_type` from `raw`'s own keys, with no
-    /// base definition to fall back on. Absent keys default to empty.
+    /// Build fresh options for `field_type` from `raw`'s own keys, with no
+    /// base definition to fall back on.
+    ///
+    /// Absent keys default to empty.
     pub(super) fn from_raw(field_type: FieldType, raw: &RawFieldDef) -> Self {
         match field_type {
             FieldType::Input => Self::Input,
@@ -233,21 +244,21 @@ impl FieldOptions {
         }
     }
 
-    /// Builds options for `field_type` from `raw`'s keys, falling back to
+    /// Build options for `field_type` from `raw`'s keys, falling back to
     /// `base`'s options for any key `raw` leaves unset.
     ///
-    /// `base` is only consulted when it is already the same [`FieldType`]; a
-    /// `$ref` that switches type starts with empty options instead of reusing a
-    /// mismatched base. For example, a `select`'s `values` never leaks into an
-    /// overriding `file` field.
+    /// `base` is only consulted when it is the same [`FieldType`]; a `$ref`
+    /// that switches type starts with empty options instead of reusing a
+    /// mismatched base. For example, a `select`'s `values` never leaks into
+    /// an overriding `file` field.
     ///
     /// # Examples
     ///
     /// A `select` field inheriting from a parent with `values = ["draft",
     /// "done"]`, where the child only overrides `required`:
     ///
-    /// - `raw.values` is `None` → falls back to parent's `["draft", "done"]`
-    /// - `raw.values` is `Some(["todo"])` → uses `["todo"]`
+    /// - `raw.values` is `None`: falls back to parent's `["draft", "done"]`.
+    /// - `raw.values` is `Some(["todo"])`: uses `["todo"]`.
     pub(super) fn merged(
         base: &Self,
         field_type: FieldType,
@@ -289,7 +300,7 @@ impl FieldOptions {
         }
     }
 
-    /// Returns the [`FieldType`] this variant represents.
+    /// Return the [`FieldType`] this variant represents.
     #[inline]
     #[must_use]
     pub(super) fn kind(&self) -> FieldType {
@@ -308,15 +319,20 @@ impl FieldOptions {
     }
 }
 
-/// A Field Definition's kind, mirroring [`RawFieldType`] after `$ref`
-/// resolution has settled on one.
+/// Represent a field kind after `$ref` resolution.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(crate) enum FieldType {
+    /// Free-form text input.
     Input,
+    /// Configured selectable values.
     Select,
+    /// Boolean value.
     Boolean,
+    /// Numeric value.
     Number,
+    /// Date value.
     Date,
+    /// File link with optional filters.
     File,
 }
 

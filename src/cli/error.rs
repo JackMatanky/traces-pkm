@@ -29,6 +29,10 @@ use crate::{
 };
 
 /// Unified error type for all `traces` CLI operations.
+///
+/// Maps domain failures to stable diagnostic codes, help text, and deliberate
+/// [`UserAbort`] detection. Command modules return [`CliError`] instead of
+/// exposing lower-level domain errors directly.
 #[derive(Debug, Error)]
 #[expect(
     private_interfaces,

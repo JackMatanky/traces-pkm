@@ -1,15 +1,16 @@
-//! Inline-field and Markdown tag lexer.
+//! Scan plain-text buffers for inline fields and Markdown tags.
 //!
-//! Scans plain-text buffers produced by the Markdown parser. Those buffers
-//! already exclude fenced code blocks, indented code blocks, and inline code.
+//! Operates on text already filtered by the Markdown parser: fenced code
+//! blocks, indented code blocks, and inline code spans are excluded before
+//! these functions run.
 //!
 //! # Main Functions
 //!
-//! - [`extract_inline_fields`] - Extracts `Key:: Value`, `[Key:: Value]`, and
+//! - [`extract_inline_fields`]: extracts `Key:: Value`, `[Key:: Value]`, and
 //!   `(Key:: Value)` body metadata.
-//! - [`extract_task_inline_fields`] - Also recognizes task emoji shorthand
-//!   fields, such as `🗓️2026-01-01`.
-//! - [`extract_tags`] - Extracts Markdown tags such as `#book` and
+//! - [`extract_task_inline_fields`]: also recognizes task emoji shorthand
+//!   fields such as `🗓️2026-01-01`.
+//! - [`extract_tags`]: extracts Markdown tags such as `#book` and
 //!   `#projects/active`.
 
 use logos::{Filter, Lexer, Logos};

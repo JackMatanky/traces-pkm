@@ -16,7 +16,10 @@ use crate::{config::ConfigService, index::SortOrder};
 /// Field path rendered for each `traces list` bullet.
 const LIST_FIELD: &str = "file.path";
 
-/// Command-line arguments for `traces list`.
+/// Arguments for `traces list`.
+///
+/// Queries pages from the trusted project root and prints matching file paths
+/// as a Markdown bullet list.
 #[derive(Debug, Args)]
 pub(super) struct List {
     /// Page source: a `#tag` (including nested sub-tags) or a folder path.

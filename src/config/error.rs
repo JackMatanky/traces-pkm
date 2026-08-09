@@ -1,11 +1,10 @@
 //! Errors from config discovery, file validation, loading, and trust-state
 //! operations.
 //!
-//! Every variant here crosses a `config` submodule boundary: either raised in
-//! one file and consumed in another, or composed by [`ConfigLoadError`] into
-//! the result [`crate::cli::CliError`] reports. File-local parsing/construction
-//! failures that never propagate past the file that raises them stay defined
-//! there instead.
+//! Every variant here crosses a `config` submodule boundary: raised in one file
+//! and consumed in another, or composed by [`ConfigLoadError`] into the result
+//! [`crate::cli::CliError`] reports. File-local parsing or construction
+//! failures that never propagate past their origin file stay defined there.
 
 use std::{io, path::PathBuf};
 
@@ -38,7 +37,7 @@ pub(crate) enum DiscoveryError {
         /// The working directory from which discovery started.
         cwd: PathBuf,
     },
-    /// Discovery could not access a path.
+    /// A filesystem path could not be inspected during discovery.
     #[error("failed to access path {path} during discovery")]
     PathInaccessible {
         /// Path that could not be accessed.
@@ -47,27 +46,27 @@ pub(crate) enum DiscoveryError {
         #[source]
         source: io::Error,
     },
-    /// Rejects a file anchor for [`DiscoveryScope::Full`], which always
-    /// requires a directory anchor.
+    /// [`DiscoveryScope::Full`] does not accept a file anchor.
+    ///
+    /// Full discovery always requires a directory root so it can walk ancestors
+    /// to find the nearest local config.
     #[error("{kind:?} discovery cannot be anchored at file {path}")]
     UnsupportedFileAnchor {
-        /// Discovery kind.
+        /// Discovery kind that rejected the anchor.
         kind: DiscoveryScope,
         /// Unsupported file anchor path.
         path: PathBuf,
     },
-    /// Rejects [`Full`] for trust-request resolution, which only supports
-    /// [`NearestLocal`] and [`LocalSubtree`].
+    /// [`DiscoveryScope::Full`] cannot be used for trust-request resolution.
     ///
-    /// [`Full`]: DiscoveryScope::Full
-    /// [`NearestLocal`]: DiscoveryScope::NearestLocal
-    /// [`LocalSubtree`]: DiscoveryScope::LocalSubtree
+    /// Trust resolution supports only [`DiscoveryScope::NearestLocal`] and
+    /// [`DiscoveryScope::LocalSubtree`].
     #[error("{scope:?} discovery cannot be used for trust request resolution")]
     UnsupportedTrustScope {
         /// Unsupported discovery scope.
         scope: DiscoveryScope,
     },
-    /// A discovered config file path/source combination was invalid.
+    /// A discovered config file path or source combination was invalid.
     #[error(transparent)]
     ConfigFile(#[from] ConfigFileError),
 }
@@ -75,18 +74,22 @@ pub(crate) enum DiscoveryError {
 /// Errors raised while building a [`super::Config`] from discovered files.
 #[derive(Debug, Error)]
 pub(crate) enum ConfigBuilderError {
-    /// Only full discovery output can feed config loading.
+    /// The builder requires [`DiscoveryScope::Full`] output but received a
+    /// different scope.
     #[error(
         "config builder input requires full discovery output, got {actual:?}"
     )]
     WrongDiscoveryKindForBuild {
-        /// Actual discovery kind.
+        /// Actual discovery kind received.
         actual: DiscoveryScope,
     },
-    /// Full discovery found no local config candidates.
+    /// Full discovery produced no local config candidates.
     #[error("full discovery output did not contain a local config")]
     FullDiscoveryWithoutLocal,
-    /// Full discovery found locals, but none contains the discovery anchor.
+    /// Full discovery produced locals, but none contains the discovery anchor.
+    ///
+    /// This means the anchor directory is not under any discovered local
+    /// config's root.
     #[error(
         "full discovery output did not contain a local config for anchor \
          {anchor}"
@@ -103,15 +106,15 @@ pub(crate) enum ConfigBuilderError {
         /// The trust status that caused the halt.
         status: ConfigTrustStatus,
     },
-    /// The merged local/global config could not be re-extracted to resolve
-    /// the effective output directory.
+    /// The merged local/global config could not be re-extracted to resolve the
+    /// effective output directory.
     #[error("failed to merge local and global config")]
     Merge {
         /// Source figment error.
         #[source]
         source: Box<figment::Error>,
     },
-    /// Config file lifecycle validation failed.
+    /// A config file failed path validation, tracking, or parsing.
     #[error(transparent)]
     ConfigFile(#[from] ConfigFileError),
     /// A `[frontmatter]` or `[schemas]` config table named an invalid field
@@ -131,18 +134,23 @@ pub(crate) enum ConfigBuilderError {
 #[derive(Debug, Error)]
 pub(crate) enum ConfigFileError {
     /// The path is not a local `.traces/config.toml` file.
+    ///
+    /// Local config paths must end with `.traces/config.toml` and have a parent
+    /// directory named `.traces`.
     #[error("unsupported local config file {path}")]
     UnsupportedLocalConfigFile {
         /// Rejected local config path.
         path: PathBuf,
     },
     /// The path is not a supported global `config.toml` file.
+    ///
+    /// Global config paths must end with `config.toml`.
     #[error("unsupported global config file {path}")]
     UnsupportedGlobalConfigFile {
         /// Rejected global config path.
         path: PathBuf,
     },
-    /// The config file could not be read or parsed.
+    /// The config file could not be read or parsed as TOML.
     #[error("failed to load config file {path}")]
     Read {
         /// File that failed to load.
@@ -172,11 +180,11 @@ pub enum ConfigStateError {
     Hash(#[from] HashError),
 }
 
-/// Errors raised while scaffolding a local config file's on-disk content.
+/// Errors raised while scaffolding a local config file on disk.
 #[derive(Debug, Error)]
 pub(crate) enum ConfigScaffoldError {
-    /// The collected template and output directories could not be
-    /// serialised to TOML.
+    /// The collected template and output directories could not be serialised to
+    /// TOML.
     #[error("failed to serialise local config")]
     Serialize {
         /// Source TOML serialization error.
@@ -184,6 +192,9 @@ pub(crate) enum ConfigScaffoldError {
         source: toml::ser::Error,
     },
     /// The serialised local config could not be written to disk.
+    ///
+    /// This includes the case where the file already exists, since
+    /// [`std::fs::File::create_new`] is used to prevent silent clobbering.
     #[error("failed to write local config file")]
     Write {
         /// Source filesystem error.

@@ -1,8 +1,5 @@
-//! Implement a preset-backed [`DialogProvider`] for deterministic prompts.
-//!
-//! [`PresetDialogProvider`] stores responses in FIFO queues. Each prompt pops
-//! one queued answer, then falls back to the call site's default when its queue
-//! is empty.
+//! Deterministic [`DialogProvider`] that replays queued responses for tests
+//! and non-interactive execution.
 
 use std::{
     collections::VecDeque,
@@ -28,12 +25,13 @@ fn get_mut<T>(m: &mut Mutex<T>) -> &mut T {
 
 /// Deterministic [`DialogProvider`] that replays queued responses.
 ///
-/// Queue answers with builder methods such as [`with_text`] and
-/// [`with_confirm`]. Each dialog call consumes one queued value, then falls
-/// back to the prompt's default or the provider's hard-coded fallback.
+/// Queue answers with builder methods such as [`with_text`](Self::with_text)
+/// and [`with_confirm`](Self::with_confirm). Each dialog call consumes one
+/// queued value, then falls back to the prompt's default or the provider's
+/// hard-coded fallback.
 ///
-/// This provider is used where prompts must not touch the terminal: tests,
-/// automation, and MCP execution.
+/// Used where prompts must not touch the terminal: tests, automation, and MCP
+/// execution.
 ///
 /// # Examples
 ///
@@ -45,9 +43,6 @@ fn get_mut<T>(m: &mut Mutex<T>) -> &mut T {
 /// assert!(p.confirm("proceed?", None)?);
 /// # Ok::<_, traces_pkm::DialogError>(())
 /// ```
-///
-/// [`with_text`]: Self::with_text
-/// [`with_confirm`]: Self::with_confirm
 #[derive(Debug, Default)]
 pub struct PresetDialogProvider {
     texts: Mutex<VecDeque<String>>,
@@ -57,7 +52,7 @@ pub struct PresetDialogProvider {
 }
 
 impl PresetDialogProvider {
-    /// Creates a [`PresetDialogProvider`] with no queued responses.
+    /// Create a [`PresetDialogProvider`] with no queued responses.
     ///
     /// Dialog calls fall through to their `default` parameter, or to the
     /// provider's hard-coded fallback when no default is available.
@@ -67,10 +62,10 @@ impl PresetDialogProvider {
         Self::default()
     }
 
-    /// Queues a response for the next [`DialogProvider::text`] call.
+    /// Queue a response for the next [`DialogProvider::text`] call.
     ///
     /// Text responses are consumed first-in-first-out. When the queue is empty,
-    /// [`text`] falls back to the `default` parameter.
+    /// `text` falls back to the `default` parameter.
     ///
     /// # Examples
     ///
@@ -82,8 +77,6 @@ impl PresetDialogProvider {
     /// assert_eq!(p.text("name", None)?, "bob");
     /// # Ok::<_, traces_pkm::DialogError>(())
     /// ```
-    ///
-    /// [`text`]: DialogProvider::text
     #[inline]
     #[must_use]
     pub fn with_text<S: Into<String>>(mut self, response: S) -> Self {
@@ -91,7 +84,7 @@ impl PresetDialogProvider {
         self
     }
 
-    /// Queues a response for the next [`DialogProvider::confirm`] call.
+    /// Queue a response for the next [`DialogProvider::confirm`] call.
     ///
     /// # Examples
     ///
@@ -110,13 +103,18 @@ impl PresetDialogProvider {
         self
     }
 
-    /// Queues a chosen index for the next [`DialogProvider::select`] call.
+    /// Queue a chosen index for the next [`DialogProvider::select`] call.
     ///
     /// The queued index is validated only when [`DialogProvider::select`]
     /// consumes it. An index at or beyond the prompted items' length returns
     /// [`DialogError::InvalidConfiguration`] instead of an out-of-range
     /// `usize`, mirroring how the real prompt can never return an invalid
     /// choice.
+    ///
+    /// # Errors
+    ///
+    /// - [`DialogError::EmptySelectionInput`] if `items` is empty (returned by
+    ///   [`DialogProvider::select`], not at queue time).
     ///
     /// # Examples
     ///
@@ -135,8 +133,7 @@ impl PresetDialogProvider {
         self
     }
 
-    /// Queues chosen indices for the next [`DialogProvider::multi_select`]
-    /// call.
+    /// Queue chosen indices for the next [`DialogProvider::multi_select`] call.
     ///
     /// # Examples
     ///

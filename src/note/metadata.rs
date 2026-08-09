@@ -13,7 +13,9 @@ use yaml_serde as serde_yaml;
 use super::Link;
 use crate::field::{FieldKey, FieldKeyError};
 
-/// Represents a raw YAML frontmatter block from a Markdown note.
+/// Raw YAML frontmatter text from a Markdown note.
+///
+/// Preserves the unparsed YAML between frontmatter delimiters (`---`).
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct RawFrontmatter(String);
 
@@ -40,7 +42,11 @@ impl RawFrontmatter {
     }
 }
 
-/// Represents structured frontmatter fields parsed from [`RawFrontmatter`].
+/// Structured frontmatter fields parsed from [`RawFrontmatter`].
+///
+/// Converts raw YAML into a list of [`MetadataField`] entries. Malformed or
+/// non-mapping YAML produces an empty frontmatter after logging the parse
+/// failure.
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct Frontmatter {
     fields: Vec<MetadataField>,
@@ -129,8 +135,7 @@ impl From<&RawFrontmatter> for Frontmatter {
     }
 }
 
-/// Distinguishes an inline field's source syntax: bare, bracket-wrapped, or
-/// parentheses-wrapped.
+/// The syntax form of an inline field.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub enum InlineFieldForm {
     /// `Key:: Value`, filling an entire line.
@@ -141,7 +146,7 @@ pub enum InlineFieldForm {
     HiddenKey,
 }
 
-/// Represents key-value metadata from frontmatter or Markdown body text.
+/// Key-value metadata from frontmatter or Markdown body text.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct MetadataField {
     key: FieldKey,
@@ -188,7 +193,7 @@ impl MetadataField {
     }
 }
 
-/// Represents a `Key:: Value` inline field with its source syntax.
+/// A `Key:: Value` inline field with its source syntax.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct InlineField {
     metadata: MetadataField,
@@ -280,27 +285,26 @@ impl InlineField {
     }
 }
 
-/// Represents a metadata value parsed from YAML frontmatter or inline field
-/// text.
+/// A metadata value parsed from YAML frontmatter or inline field text.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub enum FieldValue {
     /// Empty or missing value.
     Null,
-    /// Boolean value.
+    /// Boolean value (`true` or `false`).
     Bool(bool),
-    /// Numeric value.
+    /// Numeric value stored as `f64`.
     Number(f64),
-    /// Text value.
+    /// Plain text value.
     String(String),
-    /// ISO date string.
+    /// ISO `YYYY-MM-DD` date string.
     Date(String),
     /// Duration literal in source spelling, such as `4h15m` or `4 yrs, 6 wks`.
     Duration(String),
-    /// Link value.
+    /// A link parsed from wikilink or Markdown link syntax.
     Link(Link),
-    /// Ordered list value stored in a [`Vec`].
+    /// Ordered list value.
     List(Vec<FieldValue>),
-    /// Keyed object value stored in a deterministically ordered [`BTreeMap`].
+    /// Keyed object value stored in a deterministically ordered map.
     Object(BTreeMap<String, FieldValue>),
 }
 

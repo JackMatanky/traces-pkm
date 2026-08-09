@@ -1,21 +1,21 @@
-//! Root-relative path validation and confinement.
+//! Validate relative paths and confine them to a root.
 //!
-//! Shared by subsystems that resolve caller-supplied paths against a trusted
-//! root directory.
+//! Main types:
+//! - [`SafeRelativePath`] - Relative path accepted by lexical checks only
+//! - [`RootConfinedPath`] - Path accepted by lexical and filesystem checks
+//! - [`PathError`] - Path validation failure
 //!
-//! - [`SafeRelativePath`] performs a lexical check: no `..`, no absolute path,
-//!   and at least one [`Component::Normal`] segment. It does not touch the
-//!   filesystem.
-//! - [`RootConfinedPath`] adds the filesystem check: canonicalize the longest
-//!   existing ancestor of `root.join(candidate)` and confirm it remains inside
-//!   `root`.
+//! Confinement happens in two phases:
+//! - Lexical validation rejects absolute paths, parent-directory components,
+//!   non-normal components other than `.`, and paths without a named component
+//! - Filesystem validation canonicalizes `root` and the longest existing
+//!   ancestor of `root.join(candidate)`, then checks that the ancestor remains
+//!   inside `root`
 //!
-//! The returned confined path is the plain join, not the canonicalized form.
-//! Later I/O resolves the same symlinks, and the plain join preserves `root`'s
-//! original spelling, such as `/tmp` instead of `/private/tmp`.
-//!
-//! A symlink planted between validation and a later write is the inherent race
-//! in any path-confinement check.
+//! The returned confined path is the plain join, not the canonicalized path. A
+//! symlink changed after validation and before later I/O can still redirect the
+//! operation; callers that need race-free writes must use directory handles or
+//! platform-specific open-at APIs.
 
 use std::{
     io,
@@ -24,37 +24,38 @@ use std::{
 
 use thiserror::Error;
 
-/// Error returned by safe relative path and root confinement parsing.
+/// Reports why path validation failed.
 #[derive(Debug, Error)]
 pub(crate) enum PathError {
-    /// The candidate is absolute.
+    /// Rejects an absolute candidate path.
     #[error("path is absolute, expected a relative path")]
     Absolute,
-    /// The candidate contains `..`, a component that is not a plain name or
-    /// `.`, or has no plain-name component at all.
+    /// Rejects a lexically unsafe relative path.
+    ///
+    /// Returned when the candidate contains `..`, contains a component other
+    /// than a plain name or `.`, or has no plain-name component.
     #[error(
         "path contains an unsafe component (such as `..`) or has no named \
          component"
     )]
     UnsafeComponent,
-    /// The candidate's existing ancestor resolves outside `root`.
+    /// Rejects a candidate whose existing ancestor resolves outside `root`.
     #[error("path escapes the root directory")]
     EscapesRoot,
-    /// Canonicalizing `root` or the candidate's existing ancestor failed for a
-    /// reason other than not existing. Fails closed.
+    /// Reports that filesystem validation could not be completed.
+    ///
+    /// Returned when canonicalizing `root` or the candidate's existing ancestor
+    /// fails. Validation fails closed.
     #[error("failed to verify path is inside the root directory")]
     Verify(#[source] io::Error),
 }
 
 impl PathError {
-    /// Routes a confinement failure to one of two outcomes: `escape` for
-    /// [`Self::Absolute`]/[`Self::UnsafeComponent`]/[`Self::EscapesRoot`],
-    /// `unverifiable` for [`Self::Verify`] (with its [`io::Error`] recovered).
+    /// Routes a confinement failure to an escape or verification outcome.
     ///
-    /// Every root-confinement call site across the crate treats the first two
-    /// variants as one user-facing failure and [`Self::Verify`] as a separate,
-    /// unconfirmed one; this is the single place that grouping lives, instead
-    /// of each call site re-deriving it.
+    /// Uses `escape` for [`Self::Absolute`], [`Self::UnsafeComponent`], and
+    /// [`Self::EscapesRoot`]. Uses `unverifiable` for [`Self::Verify`] and
+    /// passes through the source [`io::Error`].
     #[must_use]
     pub(crate) fn fold_confinement<T>(
         self,
@@ -70,21 +71,25 @@ impl PathError {
     }
 }
 
-/// Relative path proven safe by its components alone.
+/// Stores a relative path proven safe by lexical checks.
+///
+/// Does not touch the filesystem and does not resolve symlinks.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct SafeRelativePath(PathBuf);
 
 impl SafeRelativePath {
-    /// Validates `candidate`: not absolute, only
-    /// [`Component::Normal`]/[`Component::CurDir`] components, and at least one
-    /// `Normal` component.
+    /// Validates `candidate` by inspecting path components only.
+    ///
+    /// Accepts paths that are relative, contain only [`Component::Normal`] and
+    /// [`Component::CurDir`] components, and contain at least one normal
+    /// component.
     ///
     /// # Errors
     ///
-    /// - [`PathError::Absolute`] if `candidate` is absolute.
+    /// - [`PathError::Absolute`] if `candidate` is absolute
     /// - [`PathError::UnsafeComponent`] if `candidate` contains `..`, a
     ///   component that is not a plain name or `.`, or has no plain-name
-    ///   component at all.
+    ///   component at all
     pub(crate) fn parse(candidate: &Path) -> Result<Self, PathError> {
         if candidate.is_absolute() {
             return Err(PathError::Absolute);
@@ -112,26 +117,37 @@ impl AsRef<Path> for SafeRelativePath {
     }
 }
 
-/// Path proven by filesystem inspection to resolve inside `root`.
+/// Stores a path proven to resolve inside a root directory.
 ///
-/// The path itself may not exist yet; [`Self::parse`] validates the longest
-/// existing ancestor.
+/// The path itself may not exist yet. [`Self::parse`] validates the longest
+/// existing ancestor and returns `root.join(candidate)`, preserving the root's
+/// original spelling.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct RootConfinedPath(PathBuf);
 
 impl RootConfinedPath {
     /// Validates `candidate` and returns its plain join with `root`.
     ///
-    /// First validates lexical safety with [`SafeRelativePath::parse`], then
-    /// canonicalizes the longest existing ancestor of the joined path to
-    /// confirm it remains inside `root`.
+    /// Uses two-phase validation:
+    /// - Lexical check: [`SafeRelativePath::parse`] rejects absolute paths,
+    ///   parent-directory components, non-normal components other than `.`, and
+    ///   paths without a named component
+    /// - Filesystem check: canonicalizes `root` and the longest existing
+    ///   ancestor of `root.join(candidate)`, then rejects the candidate if that
+    ///   ancestor is outside canonical `root`
+    ///
+    /// The returned path is not canonicalized. A symlink changed after this
+    /// function returns and before later I/O can still race the confinement
+    /// check.
     ///
     /// # Errors
     ///
-    /// - [`PathError::Absolute`] or [`PathError::UnsafeComponent`] if
-    ///   `candidate` fails [`SafeRelativePath::parse`]
+    /// - [`PathError::Absolute`] if `candidate` is absolute
+    /// - [`PathError::UnsafeComponent`] if `candidate` contains an unsafe
+    ///   component or has no named component
     /// - [`PathError::EscapesRoot`] if the ancestor resolves outside `root`
-    /// - [`PathError::Verify`] if canonicalizing `root` or the ancestor fails
+    /// - [`PathError::Verify`] if canonicalizing `root` or the longest existing
+    ///   ancestor fails
     pub(crate) fn parse(
         root: &Path,
         candidate: &Path,

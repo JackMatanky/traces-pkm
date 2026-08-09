@@ -1,24 +1,21 @@
-//! Implement a terminal-backed [`DialogProvider`] for interactive prompts.
+//! Interactive terminal [`DialogProvider`] backed by [`inquire`].
 
 use super::{DialogError, DialogProvider};
 
 /// [`DialogProvider`] that prompts through an interactive terminal.
 ///
-/// This provider delegates to [`inquire`](https://docs.rs/inquire) when stdin
-/// is a TTY. In non-TTY contexts such as CI, pipes, scripts, and dry runs, it
-/// returns fallback values instead of blocking:
+/// Delegates to [`inquire`](https://docs.rs/inquire) when stdin is a TTY. In
+/// non-TTY contexts (CI, pipes, scripts, dry runs), returns fallback values
+/// instead of blocking:
 ///
-/// | method           | fallback           |
-/// | ---------------- | ------------------ |
-/// | [`text`]         | default or `""`    |
-/// | [`confirm`]      | default or `false` |
-/// | [`select`]       | index `0`          |
-/// | [`multi_select`] | empty [`Vec`]      |
+/// - [`text`](DialogProvider::text): default or `""`
+/// - [`confirm`](DialogProvider::confirm): default or `false`
+/// - [`select`](DialogProvider::select): index `0`
+/// - [`multi_select`](DialogProvider::multi_select): empty [`Vec`]
 ///
-/// # Empty Selection
-///
-/// [`select`] checks for empty `items` before the TTY guard and returns
-/// [`DialogError::EmptySelectionInput`] in every runtime mode.
+/// [`select`](DialogProvider::select) checks for empty `items` before the TTY
+/// guard and returns [`DialogError::EmptySelectionInput`] in every runtime
+/// mode.
 ///
 /// # Examples
 ///
@@ -31,16 +28,11 @@ use super::{DialogError, DialogProvider};
 /// assert_eq!(name, "carol");
 /// # Ok::<_, traces_pkm::DialogError>(())
 /// ```
-///
-/// [`text`]: DialogProvider::text
-/// [`confirm`]: DialogProvider::confirm
-/// [`select`]: DialogProvider::select
-/// [`multi_select`]: DialogProvider::multi_select
 #[derive(Copy, Clone, Debug, Default)]
 pub struct TerminalDialogProvider;
 
 impl TerminalDialogProvider {
-    /// Creates a [`TerminalDialogProvider`] with default prompt behavior.
+    /// Create a [`TerminalDialogProvider`] with default prompt behavior.
     #[inline]
     #[must_use]
     pub fn new() -> Self {

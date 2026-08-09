@@ -1,4 +1,4 @@
-//! Parsed Markdown note records.
+//! Parsed Markdown note record.
 
 use std::path::{Path, PathBuf};
 
@@ -11,7 +11,7 @@ use super::{
     tag::Tag,
 };
 
-/// Represents parsed metadata and structure for one Markdown note.
+/// A parsed Markdown note.
 ///
 /// Stores page-level frontmatter, top-level lists, outgoing links, inline
 /// fields, and tags. [`Self::tasks`] derives task items from stored lists
@@ -152,7 +152,7 @@ impl Note {
     }
 }
 
-/// Represents a depth-first iterator over task list items in a [`Note`].
+/// Depth-first iterator over task list items in a [`Note`].
 pub struct TaskIter<'a> {
     stack: Vec<std::slice::Iter<'a, ListItem>>,
 }

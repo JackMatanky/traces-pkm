@@ -1,4 +1,4 @@
-//! Registers interactive `ui.*` helpers for templates.
+//! Register interactive `ui.*` helpers for templates.
 //!
 //! [`UiOps`] is the `ui` namespace object registered as a minijinja global by
 //! [`super::TemplateEngine`]. It exposes four methods:

@@ -13,7 +13,10 @@ use clap::Args;
 use super::error::CliError;
 use crate::config::ConfigService;
 
-/// Command-line arguments for `traces task`.
+/// Arguments for `traces task`.
+///
+/// Queries tasks from the trusted project root and prints matching checkbox
+/// lines.
 #[derive(Debug, Args)]
 pub(super) struct Task {
     /// Task source: a `#tag` (including nested sub-tags) or a folder path.

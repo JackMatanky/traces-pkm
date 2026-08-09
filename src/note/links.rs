@@ -1,14 +1,14 @@
-//! Markdown and Obsidian link targets extracted from notes.
+//! Outgoing links from Markdown and Obsidian wikilink syntax.
 //!
 //! [`Link`] pairs a raw target string with its [`LinkType`] (Markdown or
 //! wikilink syntax); [`LinkTarget`] splits that raw target into its path and
-//! heading-anchor parts for resolution against indexed Notes.
+//! heading-anchor parts for resolution against indexed notes.
 
 use serde::{Deserialize, Serialize};
 
 use super::cursor::SourceText;
 
-/// Represents the link syntax for an extracted [`Link`].
+/// The syntax used by an extracted [`Link`].
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub enum LinkType {
     /// Standard Markdown `[text](target)` link.
@@ -17,7 +17,10 @@ pub enum LinkType {
     Wikilink,
 }
 
-/// Represents an outgoing Markdown link or Obsidian wikilink.
+/// An outgoing Markdown link or Obsidian wikilink.
+///
+/// Holds the raw target string, display text (or alias for wikilinks), link
+/// syntax kind, and an embedded flag for `![[target]]` embeds.
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct Link {
     target: String,
@@ -196,14 +199,13 @@ impl Link {
     }
 }
 
-/// Represents the parts a [`Link`]'s raw target text splits into at its first
-/// `#`.
+/// The parts a [`Link`]'s raw target text splits into at its first `#`.
 ///
 /// Obsidian and Markdown links can point to three mutually exclusive shapes:
 ///
-/// - A Note, by path ([`Self::Path`]).
-/// - A heading anchor within a Note ([`Self::PathWithAnchor`]).
-/// - An in-page anchor with no Note path at all, such as `[[#Heading]]`
+/// - A note, by path ([`Self::Path`]).
+/// - A heading anchor within a note ([`Self::PathWithAnchor`]).
+/// - An in-page anchor with no note path at all, such as `[[#Heading]]`
 ///   ([`Self::AnchorOnly`]).
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum LinkTarget<'a> {
@@ -265,7 +267,7 @@ impl<'a> LinkTarget<'a> {
     /// - [`Self::AnchorOnly`], which has no path.
     /// - Paths with an explicit directory component. A qualified path that
     ///   fails to match exactly stays unresolved rather than falling back to a
-    ///   whole-index name search that could match an unrelated Note.
+    ///   whole-index name search that could match an unrelated note.
     #[must_use]
     pub(crate) fn is_basename(self) -> bool {
         self.has_path() && self.path().is_some_and(|path| !path.contains('/'))

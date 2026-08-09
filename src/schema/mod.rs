@@ -1,28 +1,27 @@
-//! Schema registry and Field Resolution.
+//! Resolve typed frontmatter Schemas into effective field definitions.
 //!
-//! The filesystem is the Schema registry: a Schema is a TOML file under
-//! `.traces/schemas/` whose filename stem is the Schema name.
-//! [`SchemaRegistry::load`] reads that directory and resolves the `extends` DAG
-//! via [`resolve::resolve`], the crate's pure Field Resolution engine (Kahn's
-//! topological sort, own-fields-override-parents, first-listed-wins,
-//! `excludes`, bounded `$ref`).
+//! Schema TOML files live under `.traces/schemas/`; each filename stem becomes
+//! the Schema name. [`SchemaRegistry::load`] reads that directory and passes
+//! the parsed TOML to [`resolve::resolve`]. The resolver linearizes the
+//! `extends` DAG with Kahn's topological sort, resolves parents before
+//! children, merges parent fields in declaration order, applies `excludes`, and
+//! lets own fields override inherited fields. `$ref` targets are bounded to the
+//! Global Schema or a transitive `extends` ancestor.
 //!
 //! # Main Types
 //!
-//! - [`SchemaRegistry`]: reads and resolves every Schema under a directory
-//!   (`registry.rs`, the module's only filesystem access).
-//! - [`Schema`]: one Schema's effective Field Definitions plus its transitive
-//!   `extends` ancestors for is-a matching, alongside
-//!   [`model::FieldDefinition`]/[`model::FieldOptions`]/[`model::FieldType`]
-//!   (`model.rs`, the resolved domain shapes).
-//! - [`SchemaError`]/[`SchemaWarning`]: hard failures and recoverable degrades.
-//!   See [`resolve::resolve`] for which conditions produce each.
+//! - [`SchemaRegistry`] reads and resolves every Schema under a directory.
+//! - [`Schema`] stores effective [`model::FieldDefinition`]s and transitive
+//!   `extends` ancestors for is-a matching.
+//! - [`model::FieldOptions`] and [`model::FieldType`] describe resolved
+//!   type-specific field shapes.
+//! - [`SchemaError`] and [`SchemaWarning`] describe hard failures and recovered
+//!   defects.
 //!
 //! # Scope
 //!
-//! This module resolves Schemas from the filesystem only. It does not expose
-//! them to minijinja templates, filter `file`-typed fields against a note
-//! index, or run is-a class queries over notes; those integrations consume
+//! Resolves Schemas from the filesystem only. Template exposure, `file` field
+//! filtering against the note index, and note class queries consume
 //! [`SchemaRegistry`] and [`Schema::is_a`] from outside this module.
 
 mod address;
@@ -37,10 +36,9 @@ pub(crate) use error::{SchemaError, SchemaWarning};
 pub(crate) use model::Schema;
 pub(crate) use registry::SchemaRegistry;
 
-/// The reserved Global Schema name (`global.toml`).
+/// Name the reserved Global Schema file stem.
 ///
-/// The Global Schema is a flat `$ref`-able reference pool: never itself a
-/// Note's File Class, never inherits via its own `extends`, and its
-/// `required = true` fields degrade to `false` with a
-/// [`SchemaWarning::StrayGlobalRequired`] during resolution.
+/// A flat `$ref`-able reference pool: never a Note's File Class, never inherits
+/// via its own `extends`, and `required = true` fields degrade to `false` with
+/// a [`SchemaWarning::StrayGlobalRequired`] during resolution.
 pub(crate) const GLOBAL_SCHEMA_NAME: &str = "global";

@@ -1,4 +1,4 @@
-//! Coordinates template resolution, rendering, and file output.
+//! Coordinate template resolution, rendering, and file output.
 //!
 //! [`TemplateService`] manages the top-to-bottom pipeline for a [`Config`]:
 //!
@@ -24,10 +24,10 @@ use super::{
 };
 use crate::{DialogProvider, config::Config};
 
-/// Entry point for resolving, rendering, and writing one template.
+/// Resolves, renders, and writes templates for one configuration.
 ///
-/// Holds a borrowed [`Config`], an internal template loader, and a template
-/// engine constructed from the configuration.
+/// Holds the configured template loader and minijinja engine. A service can be
+/// reused for multiple renders against the same [`Config`].
 ///
 /// ## Interaction with [`WriteMode`]
 ///
@@ -43,10 +43,11 @@ pub struct TemplateService<'a> {
 }
 
 impl<'a> TemplateService<'a> {
-    /// Constructs a new [`TemplateService`] for `config`.
+    /// Constructs a template service for a configuration and dialog provider.
     ///
-    /// See the struct-level docs for how [`WriteMode`] interacts with the
-    /// [`DialogProvider`].
+    /// `provider` handles all `ui.*` template calls and interactive output
+    /// collision prompts. [`WriteMode::DryRun`] skips file writes but does not
+    /// skip `ui.*` calls.
     #[inline]
     #[must_use]
     pub fn new(config: &'a Config, provider: Arc<dyn DialogProvider>) -> Self {
@@ -61,23 +62,25 @@ impl<'a> TemplateService<'a> {
         }
     }
 
-    /// Lists available template names configured in `config`.
+    /// Lists available template names for a configuration.
     ///
     /// Returns all top-level `.md` file stems from the local template directory
     /// followed by the global template directory, excluding local duplicates.
     ///
-    /// This is an associated function requiring only [`Config`], allowing
-    /// candidates to be listed before constructing a full [`TemplateService`].
+    /// This only reports top-level `.md` files. Missing or unreadable template
+    /// directories are skipped by the loader.
     #[inline]
     #[must_use]
     pub fn list_available(config: &Config) -> Vec<String> {
         TemplateLoader::from(config).list_available()
     }
 
-    /// Resolves, renders, and outputs a template in a single pass.
+    /// Resolves, renders, and writes or previews a template.
     ///
-    /// Renders and writes directly for callers that do not need to inspect the
-    /// intermediate rendered template before writing.
+    /// The output target is chosen by [`Self::write`]: explicit `output`, then
+    /// `file.write_to()`, then the configured default output path. Dry-run mode
+    /// returns rendered content without resolving or validating the output
+    /// path.
     ///
     /// # Arguments
     ///
@@ -88,8 +91,24 @@ impl<'a> TemplateService<'a> {
     ///
     /// # Errors
     ///
-    /// - Any [`TemplateError`] produced during resolution or rendering.
-    /// - Any [`TemplateError`] produced during path resolution or file writing.
+    /// - [`TemplateError::Resolve`] if `name` is invalid, ambiguous, unreadable
+    ///   during directory lookup, or not found.
+    /// - [`TemplateError::Read`] if the resolved template source cannot be
+    ///   read.
+    /// - [`TemplateError::Render`] if parsing, rendering, includes, helper
+    ///   calls, queries, schema access, file includes, or `ui.*` calls fail.
+    /// - [`TemplateError::OutputPathEscapesRoot`] if committed output from
+    ///   `output` or `file.write_to()` escapes the project root.
+    /// - [`TemplateError::OutputPathUnverifiable`] if committed output
+    ///   confinement cannot be verified.
+    /// - [`TemplateError::Prompt`] if an interactive collision prompt fails or
+    ///   is cancelled.
+    /// - [`TemplateError::OutputFileAlreadyExists`] if commit mode uses
+    ///   [`CommitPolicy::CreateNew`] and the target exists.
+    /// - [`TemplateError::Write`] if creating parent directories, creating the
+    ///   output file, or writing rendered content fails.
+    ///
+    /// [`CommitPolicy::CreateNew`]: super::writer::CommitPolicy::CreateNew
     #[inline]
     pub fn render_to_file(
         &self,
@@ -140,7 +159,7 @@ impl<'a> TemplateService<'a> {
         })
     }
 
-    /// Writes or previews a [`RenderedTemplate`].
+    /// Writes or previews a rendered template.
     ///
     /// When `mode` is [`WriteMode::DryRun`], returns
     /// [`WriteOutcome::Previewed`] immediately without resolving an output
@@ -164,16 +183,22 @@ impl<'a> TemplateService<'a> {
     /// # Errors
     ///
     /// - [`OutputPathEscapesRoot`] if a declared `file.write_to()` or explicit
-    ///   `output` path escapes the workspace root. Never returned for
+    ///   `output` path escapes the project root. Never returned for
     ///   [`WriteMode::DryRun`].
     /// - [`OutputFileAlreadyExists`] if the target output file exists and
     ///   `mode` specifies [`CommitPolicy::CreateNew`]. Never returned for
     ///   [`WriteMode::DryRun`].
-    /// - [`Write`] if creating parent directories or writing to the target file
-    ///   fails.
+    /// - [`OutputPathUnverifiable`] if output path confinement cannot be
+    ///   verified. Never returned for [`WriteMode::DryRun`].
+    /// - [`Prompt`] if an interactive collision prompt fails or is cancelled.
+    ///   Never returned for [`WriteMode::DryRun`].
+    /// - [`Write`] if creating parent directories, creating the target file, or
+    ///   writing rendered content fails.
     ///
     /// [`OutputPathEscapesRoot`]: TemplateError::OutputPathEscapesRoot
+    /// [`OutputPathUnverifiable`]: TemplateError::OutputPathUnverifiable
     /// [`OutputFileAlreadyExists`]: TemplateError::OutputFileAlreadyExists
+    /// [`Prompt`]: TemplateError::Prompt
     /// [`Write`]: TemplateError::Write
     /// [`CommitPolicy::CreateNew`]: super::writer::CommitPolicy::CreateNew
     #[inline]

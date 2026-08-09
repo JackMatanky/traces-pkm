@@ -1,4 +1,4 @@
-//! Registers path tests and filters for templates.
+//! Register path tests and filters for templates.
 //!
 //! [`PathOps`] adds three minijinja [`Environment::add_test`] tests:
 //!

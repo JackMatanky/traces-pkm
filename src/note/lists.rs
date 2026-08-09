@@ -1,14 +1,15 @@
 //! Markdown list, list item, and task-list structures.
 //!
-//! - [`List`] - An ordered or unordered Markdown list.
-//! - [`ListItem`] - A list item with optional task state and child lists.
-//! - [`TaskStatus`] - The completion state of a task list item.
+//! - [`List`]: an ordered or unordered Markdown list.
+//! - [`ListItem`]: a list item with optional task state, inline fields, and
+//!   child lists.
+//! - [`TaskStatus`]: the completion state of a task list item.
 
 use serde::{Deserialize, Serialize};
 
 use super::metadata::InlineField;
 
-/// Represents an ordered or unordered Markdown list.
+/// An ordered or unordered Markdown list.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct List {
     is_ordered: bool,
@@ -49,15 +50,17 @@ impl List {
     }
 }
 
-/// Represents the completion state of a Markdown task list item.
+/// The completion state of a Markdown task list item.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub enum TaskStatus {
+    /// `- [ ]` incomplete task.
     Incomplete,
+    /// `- [x]` completed task.
     Complete,
 }
 
-/// Represents a Markdown list item with optional task state, child lists, and
-/// item fields.
+/// A Markdown list item with optional task state, child lists, and inline
+/// fields.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct ListItem {
     text: String,

@@ -1,11 +1,7 @@
-//! Model error outcomes for interactive dialog prompts.
+//! Error types for dialog prompt failures.
 //!
-//! [`DialogError`] groups prompt failures by caller-visible outcome:
-//!
-//! - user cancellation or interruption;
-//! - invalid prompt configuration;
-//! - unavailable interactive input;
-//! - I/O or backend failures with preserved sources.
+//! [`DialogError`] groups prompt failures by caller-visible outcome so CLI code
+//! can choose the right diagnostic.
 
 /// Error returned by [`DialogProvider`] methods.
 ///
@@ -18,19 +14,20 @@
 pub enum DialogError {
     /// A single-selection prompt received no options.
     ///
-    /// [`select`] cannot return an item without at least one choice.
-    /// [`multi_select`] accepts an empty list and returns an empty [`Vec`].
+    /// [`DialogProvider::select`] cannot return an item without at least one
+    /// choice. [`DialogProvider::multi_select`] accepts an empty list and
+    /// returns an empty [`Vec`] instead.
     ///
-    /// [`select`]: super::DialogProvider::select
-    /// [`multi_select`]: super::DialogProvider::multi_select
+    /// [`DialogProvider::select`]: super::DialogProvider::select
+    /// [`DialogProvider::multi_select`]: super::DialogProvider::multi_select
     #[error("cannot select from an empty list")]
     EmptySelectionInput,
 
-    /// The user cancelled the dialog, for example by pressing Esc.
+    /// The user cancelled the prompt (e.g. pressing Esc).
     #[error("dialog user cancelled the operation")]
     UserCancelled,
 
-    /// The user interrupted the dialog, for example by pressing Ctrl-C.
+    /// The user interrupted the prompt (e.g. pressing Ctrl-C).
     #[error("dialog user interrupted the operation")]
     UserInterrupted,
 
@@ -42,10 +39,10 @@ pub enum DialogError {
 
     /// The input stream does not support interactive prompts.
     ///
-    /// Returned when the backend reports that stdin is not a terminal and the
-    /// caller did not provide fallback defaults. This should not occur when
-    /// using [`TerminalDialogProvider`] because its TTY guard catches this
-    /// condition before invoking the backend.
+    /// Returned when stdin is not a terminal and the caller did not provide
+    /// fallback defaults. [`TerminalDialogProvider`] catches this condition
+    /// before invoking the backend, so this variant should not appear when
+    /// using that provider.
     ///
     /// [`TerminalDialogProvider`]: super::TerminalDialogProvider
     #[error("interactive dialog not available, stdin is not a terminal")]
@@ -78,10 +75,10 @@ impl From<std::io::Error> for DialogError {
 }
 
 /// Maps each `inquire` outcome to its matching [`DialogError`] variant rather
-/// than folding everything into [`BackendFailure`]: cancellation,
-/// interruption, missing TTY, I/O, and configuration errors each need a
-/// distinct caller-visible outcome, and only truly unrecognized backend
-/// failures fall through to [`BackendFailure`].
+/// than folding everything into [`BackendFailure`]: cancellation, interruption,
+/// missing TTY, I/O, and configuration errors each need a distinct
+/// caller-visible outcome, and only truly unrecognized backend failures fall
+/// through to [`BackendFailure`].
 ///
 /// [`BackendFailure`]: DialogError::BackendFailure
 impl From<inquire::InquireError> for DialogError {
