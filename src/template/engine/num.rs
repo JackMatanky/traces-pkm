@@ -56,8 +56,6 @@ fn sqrt(value: f64) -> Result<f64, Error> {
     Ok(value.sqrt())
 }
 
-/// Formats `value` with a fixed number of decimal places.
-///
 /// Formats `value` with `decimals` decimal places using Rust's `{:.N$}`
 /// precision formatting.
 fn num_format(value: f64, decimals: usize) -> String {

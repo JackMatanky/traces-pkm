@@ -133,9 +133,7 @@ enum Commands {
     Trust(trust::Trust),
     /// Revoke trust from project roots.
     Untrust(untrust::Untrust),
-    /// Build or rebuild the persisted [`FileIndex`].
-    ///
-    /// [`FileIndex`]: crate::index::FileIndex
+    /// Build or rebuild the persisted [`FileIndex`](crate::index::FileIndex).
     Index(index::Index),
     /// Run a page-level query and print list output.
     List(list::List),
@@ -309,8 +307,8 @@ fn query_error(root: &Path, source: QueryError) -> CliError {
     }
 }
 
-/// Resolves trust subjects for `path` (or the current directory when
-/// absent) at `all`'s scope.
+/// Resolves trust subjects for `path` (or the current directory when absent) at
+/// `all`'s scope.
 ///
 /// Shared by `traces trust` and `traces untrust`.
 ///

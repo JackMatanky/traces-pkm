@@ -12,8 +12,7 @@
 //! rendering completes.
 //!
 //! `file.include()` confines its `path` argument to `root` via
-//! [`RootConfinedPath::parse`], the same
-//! seam [`TemplateWriteTarget`] uses
+//! [`RootConfinedPath::parse`], the same seam [`TemplateWriteTarget`] uses
 //! for `-o` and `file.write_to()` candidates. Symlink escapes are rejected the
 //! same way on the read and write sides.
 //!

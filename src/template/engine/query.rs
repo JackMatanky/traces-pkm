@@ -33,8 +33,8 @@
 //! [`QueryOutcome::table`], [`QueryOutcome::list`],
 //! [`QueryOutcome::task_list`], and `count` (an alias for
 //! [`QueryOutcome::len`]) are terminal instead: they render final
-//! markdown/scalar output and end a chain rather than continue it. Per
-//! ADR-0005, each is reachable both as a `call_method`
+//! markdown/scalar output and end a chain rather than continue it. Each is
+//! reachable both as a `call_method`
 //! (`outcome.table(["Name"], ["file.name"])`) and as a pipeline filter,
 //! registered once by [`QueryOps::register_terminal_filters`] (`outcome |
 //! table(["Name"], ["file.name"])`). Both forms call the same [`QueryOutcome`]

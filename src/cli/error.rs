@@ -210,8 +210,8 @@ impl CliError {
     /// Extracts a deliberate [`UserAbort`] from the error source chain, if
     /// present.
     ///
-    /// Returns `Some` if the chain contains a [`DialogError::UserCancelled`]
-    /// or [`DialogError::UserInterrupted`] source, or `None` if no deliberate
+    /// Returns `Some` if the chain contains a [`DialogError::UserCancelled`] or
+    /// [`DialogError::UserInterrupted`] source, or `None` if no deliberate
     /// abort caused this error.
     pub(super) fn user_abort(&self) -> Option<UserAbort> {
         let mut error: &(dyn StdError + 'static) = self;

@@ -224,10 +224,9 @@ impl<'a> SchemaGraph<'a> {
     /// Filters each Schema's `extends` list to targets `raw_schemas` actually
     /// contains, pushing a [`SchemaWarning::MissingExtendsTarget`] for each
     /// miss. The reserved Global Schema is forced to in-degree zero and
-    /// stripped of any declared `extends`: it is a flat,
-    /// `$ref`-able-from-anywhere reference pool (ADR-7: refs point up the
-    /// extends DAG or to the Global Schema), not a link in the `extends` chain
-    /// itself.
+    /// stripped of any declared `extends`: it is a flat
+    /// `$ref`-able-from-anywhere reference pool (refs point up the extends DAG
+    /// or to the Global Schema), not a link in the `extends` chain itself.
     ///
     /// Kahn's sort only guarantees parent-before-child ordering along `extends`
     /// edges, so several Schemas can tie at in-degree zero with no defined
@@ -925,10 +924,10 @@ mod tests {
 
         #[test]
         fn global_does_not_inherit_fields_from_its_own_declared_extends() {
-            // Global is a flat reference pool (ADR-7), not a link in the
-            // `extends` chain: a declared `extends` on `global.toml` itself
-            // must not be honored, and not even warned about (`book` is a
-            // real Schema, so this isn't a `MissingExtendsTarget`).
+            // Global is a flat reference pool, not a link in the `extends`
+            // chain: a declared `extends` on `global.toml` itself must not be
+            // honored, and not even warned about (`book` is a real Schema, so
+            // this isn't a `MissingExtendsTarget`).
             let mut raw = BTreeMap::new();
             raw.insert(
                 SchemaName::from("book"),

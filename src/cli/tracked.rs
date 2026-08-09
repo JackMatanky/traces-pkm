@@ -2,8 +2,9 @@
 //!
 //! Handles `traces tracked` by listing or cleaning the best-effort store of
 //! local config files [`crate::config::ConfigService::load`] has seen, kept
-//! separate from [`traces trust`](super::trust)'s trust decisions. See ADR
-//! 0002 (config trust and tracking) for the tracked/trusted split.
+//! separate from [`traces trust`](super::trust)'s trust decisions. Tracking
+//! records which config files traces has loaded; trust controls whether config
+//! and templates are allowed to run from a workspace.
 
 use std::path::PathBuf;
 
