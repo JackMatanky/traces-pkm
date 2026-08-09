@@ -38,19 +38,25 @@ use super::file::FileRecord;
 use crate::note::{FieldValue, Note};
 
 /// Selects which Markdown Notes a page-level or task-level query includes.
+///
+/// Each variant defines its own matching behavior applied to every indexed
+/// Note. Passing `None` from CLI flags selects [`Self::All`].
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum QuerySource {
-    /// Includes every indexed Markdown Note.
+    /// Matches every indexed Markdown Note regardless of tags, folder, or
+    /// class.
     All,
-    /// Includes Notes tagged with `tag` or a sub-tag nested under it (for
-    /// example, `#projects` also matches `#projects/active`).
+    /// Matches Notes whose tags include `tag` exactly, or a sub-tag nested
+    /// under it (for example, `#projects` also matches `#projects/active`).
     Tag(String),
-    /// Includes Notes located in `folder` or a directory nested under it.
+    /// Matches Notes whose project-relative path starts with `folder`,
+    /// including the folder itself and every directory nested under it.
     Folder(PathBuf),
-    /// Includes Notes whose File Class matches. A Note's File Class(es) are
-    /// read from the frontmatter field named `class_field`; the Note matches
-    /// when any of those values is in `classes`, the resolved is-a match set
-    /// built by [`crate::schema::SchemaRegistry::matching_classes`].
+    /// Matches Notes whose File Class(es) overlap the resolved `classes` set.
+    /// A Note's File Class(es) are read from the frontmatter field named
+    /// `class_field`; the Note matches when any of those values is in
+    /// `classes`, the resolved is-a match set built by
+    /// [`crate::schema::SchemaRegistry::matching_classes`].
     Class {
         /// Frontmatter field naming the Note's File Class(es).
         class_field: Arc<str>,
@@ -185,16 +191,17 @@ impl IndexRecord {
         self
     }
 
-    /// Returns task completion state if this is a task-level record, or `None`
-    /// for page-level records.
+    /// Returns task completion state (`true` for `- [x]`, `false` for
+    /// `- [ ]`) if this is a task-level record, or `None` for page-level
+    /// records.
     #[inline]
     #[must_use]
     pub fn task_completed(&self) -> Option<bool> {
         self.task.as_ref().map(|task| task.completed)
     }
 
-    /// Returns task text if this is a task-level record, or `None` for
-    /// page-level records.
+    /// Returns the task item's text if this is a task-level record, or `None`
+    /// for page-level records.
     #[inline]
     #[must_use]
     pub(crate) fn task_text(&self) -> Option<&str> {
@@ -215,8 +222,8 @@ impl IndexRecord {
         self.note.as_ref()
     }
 
-    /// Returns project-relative paths of Notes linking to this record's Note,
-    /// or an empty slice if unlinked.
+    /// Returns project-relative paths of Notes whose outlinks resolve to this
+    /// record's Note, or an empty slice if no Notes link to it.
     #[inline]
     #[must_use]
     #[cfg_attr(
