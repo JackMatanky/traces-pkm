@@ -1,4 +1,4 @@
-//! Writes rendered template content to disk.
+//! Resolve output paths and write rendered template content.
 //!
 //! [`TemplateWriteTarget::write`] resolves a render's output path and writes
 //! `content` under a [`CommitPolicy`]. [`WriteMode`] is defined here and
@@ -28,22 +28,24 @@ use std::{
 use super::{error::TemplateError, path::DeclaredOutputPath};
 use crate::{DialogError, DialogProvider, path::RootConfinedPath};
 
-/// Whether a render's output is written to disk or only previewed.
+/// Controls whether rendered output is returned or written.
 ///
-/// Produced once from CLI flags via `WriteMode::from_flags`; only template
-/// writing matches on it.
+/// Produced once from CLI flags via [`Self::from_flags`]. Rendering still runs
+/// in both modes, including `ui.*` template helpers.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum WriteMode {
-    /// Render only. Template writing returns [`WriteOutcome::Previewed`]
-    /// without touching disk.
+    /// Return rendered content without resolving an output path or touching
+    /// disk.
     DryRun,
-    /// Write to disk under this [`CommitPolicy`].
+    /// Resolve the output path and write rendered content under this policy.
     Commit(CommitPolicy),
 }
 
 impl WriteMode {
-    /// Converts the CLI's `--dry-run` and `--force` flags into one mode.
-    /// `dry_run` wins: when set, `force` is never consulted.
+    /// Converts dry-run and force flags into a write mode.
+    ///
+    /// `dry_run` wins over `force` because dry-run never creates or overwrites
+    /// an output file.
     #[inline]
     #[must_use]
     pub(crate) fn from_flags(dry_run: bool, force: bool) -> Self {
@@ -55,16 +57,18 @@ impl WriteMode {
     }
 }
 
-/// How a disk write should treat an existing target.
+/// Selects how committed writes handle an existing target.
 ///
 /// This is [`WriteMode::Commit`]'s payload, produced once from CLI flags and
 /// then threaded through output resolution and the final write.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum CommitPolicy {
-    /// Fail with [`TemplateError::OutputFileAlreadyExists`] if the target
-    /// already exists. The default, safe mode.
+    /// Create a new file and fail if the target already exists.
+    ///
+    /// Uses [`std::fs::File::create_new`] so the existence check and creation
+    /// are atomic.
     CreateNew,
-    /// Truncate and overwrite the target unconditionally, matching `--force`.
+    /// Truncate and overwrite the target, matching `--force`.
     Overwrite,
 }
 
@@ -114,14 +118,12 @@ impl CommitPolicy {
     }
 }
 
-/// What template writing did with rendered content: wrote it to disk, or handed
-/// it back unwritten under [`WriteMode::DryRun`].
+/// Reports what happened to rendered content.
 #[derive(Debug, Eq, PartialEq)]
 pub enum WriteOutcome {
-    /// Written to disk at this path.
+    /// Wrote rendered content to this path.
     Written(PathBuf),
-    /// [`WriteMode::DryRun`]: the content for the caller to print, with nothing
-    /// written to disk.
+    /// Returned rendered content without writing it to disk.
     Previewed(String),
 }
 

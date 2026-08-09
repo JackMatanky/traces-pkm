@@ -1,33 +1,41 @@
-//! Template rendering resolves a configured template name, renders it, and
-//! writes a Markdown note.
+//! Resolve, render, and write Markdown templates.
 //!
-//! [`TemplateService`] is the entry point used by `crate::cli::template`. The
-//! supporting modules keep each pipeline stage small:
+//! The template pipeline has four stages:
 //!
-//! - [`path`][]: [`TemplatePathInput`] validates raw template path inputs
-//!   before they reach rendering, [`TemplatePath`] tracks a found file proven
-//!   to exist, and [`DeclaredOutputPath`] labels a raw `file.write_to()`
-//!   candidate before writing.
-//! - [`loader`][]: [`TemplateLoader`] searches the configured template
-//!   directories through [`TemplateLoader::find`], used for both top-level `-i`
-//!   resolution and `{% include %}`/`{% extends %}` loading.
-//! - [`engine`][]: wraps minijinja's [`Environment`], registering the
-//!   template-facing `file`, `ui`, `date`, `query`, `schema`, `path`, `num`,
-//!   and `string` helpers.
-//! - [`writer`][]: resolves a render's output path by precedence and writes it
-//!   through [`TemplateWriteTarget::write`].
-//! - [`service`][]: [`TemplateService`] chains resolve, render, and write into
-//!   the single CLI-facing call.
+//! - Validate a [`TemplatePathInput`] before lookup.
+//! - Resolve the template through [`loader`] using local-before-global search.
+//! - Render with [`engine`], which wraps minijinja and registers the template
+//!   helper namespaces.
+//! - Resolve and write the output through [`writer`], honoring dry-run and
+//!   commit modes.
 //!
-//! Everything below `service` is `pub(super)` at most, except the `pub(crate)`
-//! re-exports below, consumed by `crate::cli`.
+//! Main types:
+//!
+//! - [`TemplateService`] - Entry point that chains resolution, rendering, and
+//!   writing for the CLI.
+//! - [`TemplatePathInput`] - Validated relative template identifier.
+//! - [`TemplateError`] - User-facing error for resolve, read, render, and write
+//!   failures.
+//! - [`WriteMode`] - Choice between previewing rendered content and committing
+//!   it to disk.
+//! - [`WriteOutcome`] - Output produced by a write-mode decision.
+//! - [`CommitPolicy`] - Existing-file behavior for committed writes.
+//!
+//! Submodules:
+//!
+//! - [`path`] validates input paths and labels resolved template and declared
+//!   output paths.
+//! - [`loader`] searches configured template directories and backs minijinja
+//!   include and extends loading.
+//! - [`engine`] builds the minijinja environment and registers `file`, `ui`,
+//!   `date`, `query`, `tasks`, `schema`, path, numeric, and string helpers.
+//! - [`writer`] chooses the output destination and performs dry-run or commit
+//!   writes.
+//! - [`service`] coordinates the full pipeline for callers.
+//! - [`error`] defines template-level errors and render-error classification.
 //!
 //! [`TemplatePath`]: path::TemplatePath
 //! [`DeclaredOutputPath`]: path::DeclaredOutputPath
-//! [`TemplateLoader`]: loader::TemplateLoader
-//! [`TemplateLoader::find`]: loader::TemplateLoader::find
-//! [`Environment`]: minijinja::Environment
-//! [`TemplateWriteTarget::write`]: writer::TemplateWriteTarget::write
 
 mod engine;
 mod error;

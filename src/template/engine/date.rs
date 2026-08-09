@@ -1,4 +1,4 @@
-//! Registers date/time helpers for templates.
+//! Register date and time helpers for templates.
 //!
 //! [`DateOps`] provides the `date` namespace object registered as a minijinja
 //! global by [`super::TemplateEngine`]. It also registers the flat `date_*`

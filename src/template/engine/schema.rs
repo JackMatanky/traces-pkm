@@ -1,4 +1,4 @@
-//! Registers the `schema` namespace for templates.
+//! Register the `schema` namespace for templates.
 //!
 //! [`SchemaOps`] is the `schema` namespace object registered as a minijinja
 //! global by [`super::TemplateEngine`]. It exposes one method:

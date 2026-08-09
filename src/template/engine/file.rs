@@ -1,4 +1,4 @@
-//! Registers `file.*` helpers for templates.
+//! Register `file.*` helpers for templates.
 //!
 //! [`FileOps`] is the `file` namespace object registered as a minijinja global
 //! by [`super::TemplateEngine`]. It exposes two methods:

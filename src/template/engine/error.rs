@@ -1,4 +1,8 @@
-//! Maps path-confinement failures into minijinja errors.
+//! Map helper failures into minijinja errors.
+//!
+//! Engine helpers return [`minijinja::Error`] so template diagnostics keep
+//! name, line, and column context. This module centralizes common conversions
+//! for path-confinement and source-preserving invalid-operation errors.
 
 use minijinja::{Error, ErrorKind};
 

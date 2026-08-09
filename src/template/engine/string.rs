@@ -1,4 +1,4 @@
-//! Registers string filters for templates.
+//! Register string filters for templates.
 //!
 //! [`StrOps`] adds thirteen stateless filters:
 //!

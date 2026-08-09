@@ -1,4 +1,4 @@
-//! Registers numeric filters for templates.
+//! Register numeric filters for templates.
 //!
 //! [`NumOps`] adds four stateless filters:
 //!
