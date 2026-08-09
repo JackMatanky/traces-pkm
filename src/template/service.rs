@@ -62,8 +62,7 @@ impl<'a> TemplateService<'a> {
     /// followed by the global template directory, excluding local duplicates.
     ///
     /// This is an associated function requiring only [`Config`], allowing
-    /// candidates to be listed before constructing a full
-    /// [`TemplateService`].
+    /// candidates to be listed before constructing a full [`TemplateService`].
     #[inline]
     #[must_use]
     pub fn list_available(config: &Config) -> Vec<String> {

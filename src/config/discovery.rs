@@ -1,5 +1,5 @@
-//! Turns a filesystem anchor into typed config-file candidates without
-//! reading TOML content.
+//! Turns a filesystem anchor into typed config-file candidates without reading
+//! TOML content.
 //!
 //! # Discovery Modes
 //!
@@ -27,8 +27,8 @@ use crate::dirs;
 /// Relative path to the local project config directory.
 ///
 /// Re-exported at [`super::LOCAL_CONFIG_DIR`] for `crate::cli::init`, which
-/// needs the bare directory without deriving it from
-/// [`LOCAL_CONFIG_FILE`]'s parent.
+/// needs the bare directory without deriving it from [`LOCAL_CONFIG_FILE`]'s
+/// parent.
 pub(crate) const LOCAL_CONFIG_DIR: &str = ".traces";
 /// Relative path to a local project config file.
 ///

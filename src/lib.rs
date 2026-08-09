@@ -64,12 +64,12 @@ pub use template::{
     classify_render_error,
 };
 
-/// Build isolated fixtures for the crate's own `#[cfg(test)]` suites and,
-/// under the `test-utils` feature, for external `tests/`/`benches/`
-/// consumers. Use [`fixture_service`] to get a [`ConfigService`] backed by
-/// temporary directories, [`create_trusted_project`] to write a minimal
-/// config and trust it, [`write_note`] to create note files, and
-/// [`write_template`] to create template files.
+/// Build isolated fixtures for the crate's own `#[cfg(test)]` suites and, under
+/// the `test-utils` feature, for external `tests/`/`benches/` consumers. Use
+/// [`fixture_service`] to get a [`ConfigService`] backed by temporary
+/// directories, [`create_trusted_project`] to write a minimal config and trust
+/// it, [`write_note`] to create note files, and [`write_template`] to create
+/// template files.
 #[cfg(any(test, feature = "test-utils"))]
 mod test_support {
     #![expect(
@@ -85,8 +85,8 @@ mod test_support {
         config::{Discovered, LocalConfigFile, TrustRequest},
     };
 
-    /// Creates a [`ConfigService`] backed by isolated tracked-config and
-    /// trust stores under `root`, never the real OS state directories.
+    /// Creates a [`ConfigService`] backed by isolated tracked-config and trust
+    /// stores under `root`, never the real OS state directories.
     ///
     /// # Examples
     ///
@@ -100,16 +100,16 @@ mod test_support {
         ConfigService::at(root.join("tracked-store"), root.join("trust-store"))
     }
 
-    /// Writes a minimal local config at `root/.traces/config.toml`
-    /// pointing at `root/templates` (creating that directory), and
-    /// records `root` as trusted in `service`'s trust store. Returns the
-    /// written config file path.
+    /// Writes a minimal local config at `root/.traces/config.toml` pointing at
+    /// `root/templates` (creating that directory), and records `root` as
+    /// trusted in `service`'s trust store. Returns the written config file
+    /// path.
     ///
     /// # Panics
     ///
-    /// Panics if `root` cannot be created, the config file cannot be
-    /// written, or trust cannot be recorded: this is fixture setup code,
-    /// so any such failure means the test itself is broken.
+    /// Panics if `root` cannot be created, the config file cannot be written,
+    /// or trust cannot be recorded: this is fixture setup code, so any such
+    /// failure means the test itself is broken.
     #[inline]
     #[must_use]
     pub fn create_trusted_project(
@@ -134,14 +134,13 @@ mod test_support {
         config_path
     }
 
-    /// Writes a Note at `root.join(rel_path)`, creating parent
-    /// directories as needed.
+    /// Writes a Note at `root.join(rel_path)`, creating parent directories as
+    /// needed.
     ///
     /// # Panics
     ///
-    /// Panics if parent directories or the note file cannot be written:
-    /// this is fixture setup code, so any such failure means the test
-    /// itself is broken.
+    /// Panics if parent directories or the note file cannot be written: this is
+    /// fixture setup code, so any such failure means the test itself is broken.
     #[inline]
     pub fn write_note(root: &Path, rel_path: &str, content: &str) {
         let path = root.join(rel_path);
@@ -156,8 +155,8 @@ mod test_support {
     /// # Panics
     ///
     /// Panics if the `templates` directory or the template file cannot be
-    /// written: this is fixture setup code, so any such failure means the
-    /// test itself is broken.
+    /// written: this is fixture setup code, so any such failure means the test
+    /// itself is broken.
     #[inline]
     pub fn write_template(root: &Path, name: &str, source: &str) {
         std::fs::create_dir_all(root.join("templates"))

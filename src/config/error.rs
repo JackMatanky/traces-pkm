@@ -1,11 +1,11 @@
 //! Errors from config discovery, file validation, loading, and trust-state
 //! operations.
 //!
-//! Every variant here crosses a `config` submodule boundary: either raised
-//! in one file and consumed in another, or composed by [`ConfigLoadError`]
-//! into the result [`crate::cli::CliError`] reports. File-local
-//! parsing/construction failures that never propagate past the file that
-//! raises them stay defined there instead.
+//! Every variant here crosses a `config` submodule boundary: either raised in
+//! one file and consumed in another, or composed by [`ConfigLoadError`] into
+//! the result [`crate::cli::CliError`] reports. File-local parsing/construction
+//! failures that never propagate past the file that raises them stay defined
+//! there instead.
 
 use std::{io, path::PathBuf};
 

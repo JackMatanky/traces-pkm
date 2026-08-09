@@ -76,8 +76,7 @@ pub(crate) enum SchemaError {
         field: String,
         reference: String,
     },
-    /// A `$ref` named an in-bounds Schema, but that Schema has no such
-    /// field.
+    /// A `$ref` named an in-bounds Schema, but that Schema has no such field.
     #[error(
         "$ref {reference:?} in field {field:?} of Schema {schema:?} does not \
          resolve"

@@ -82,9 +82,8 @@ impl From<&FileName> for BaseName {
 /// instead of owned, mirroring the `&str`/`String` split.
 ///
 /// Use this instead of [`BaseName`] where a stem is only needed for one
-/// comparison or hash lookup, such as the wikilink stem index in `inlinks`,
-/// so resolving many candidates doesn't allocate a [`BaseName`] per
-/// candidate.
+/// comparison or hash lookup, such as the wikilink stem index in `inlinks`, so
+/// resolving many candidates doesn't allocate a [`BaseName`] per candidate.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub(crate) struct BaseNameRef<'a>(&'a str);
 

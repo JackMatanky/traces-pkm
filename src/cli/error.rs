@@ -189,8 +189,7 @@ pub enum CliError {
         source: TemplateError,
     },
     /// The interactive picker (`traces template`/`traces -i` with no name)
-    /// found no `.md` files in either the local or global template
-    /// directory.
+    /// found no `.md` files in either the local or global template directory.
     #[error("no templates found")]
     NoTemplates,
     /// The interactive picker prompt itself failed: an I/O error, or the user
