@@ -18,6 +18,21 @@ const DEFAULT_CLASS_FIELD: &str = "class";
 /// Default `[schemas] directory` when unconfigured.
 const DEFAULT_SCHEMAS_DIR: &str = ".traces/schemas/";
 
+/// Default `[frontmatter] title` key when unconfigured.
+const DEFAULT_TITLE_FIELD: &str = "title";
+
+/// Default `[frontmatter] aliases` key when unconfigured.
+const DEFAULT_ALIASES_FIELD: &str = "aliases";
+
+/// Default `[frontmatter] date_created.name` key when unconfigured.
+const DEFAULT_DATE_CREATED_FIELD: &str = "date_created";
+
+/// Default `[frontmatter] date_modified.name` key when unconfigured.
+const DEFAULT_DATE_MODIFIED_FIELD: &str = "date_modified";
+
+/// Default date format applied to both date roles when unconfigured.
+const DEFAULT_DATE_FORMAT: &str = "%Y-%m-%dT%H:%M:%S";
+
 /// Resolved config ready for consumers after discovery, trust checks, and
 /// merging.
 #[derive(Clone, Debug)]
@@ -116,6 +131,26 @@ impl Config {
             root,
         }
     }
+
+    /// Builds config directly for tests that need a non-default `[frontmatter]`
+    /// resolution.
+    #[cfg(any(test, feature = "test-utils"))]
+    #[inline]
+    #[must_use]
+    pub fn for_test_with_frontmatter(
+        root: PathBuf,
+        local: Option<PathBuf>,
+        global: Option<PathBuf>,
+        output: PathBuf,
+        frontmatter: FrontmatterConfig,
+    ) -> Self {
+        Self {
+            templates: TemplateConfig::new(local, global, output),
+            schemas: SchemasConfig::default(),
+            frontmatter,
+            root,
+        }
+    }
 }
 
 /// Template directories and output path from merged config.
@@ -176,8 +211,8 @@ pub struct SchemasConfig {
 }
 
 impl SchemasConfig {
-    /// Returns the frontmatter key naming a Note's File Class(es). Defaults
-    /// to `class`.
+    /// Returns the frontmatter key naming a Note's File Class(es).
+    /// Defaults to `class`.
     #[inline]
     #[must_use]
     pub fn class_field(&self) -> &str {
@@ -219,8 +254,10 @@ impl From<RawSchemasConfig> for SchemasConfig {
 
 /// Resolved `[frontmatter]` settings mapping key names for title, aliases, and
 /// date roles.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct FrontmatterConfig {
+    title: String,
+    aliases: String,
     #[cfg_attr(
         not(any(test, feature = "test-utils")),
         expect(
@@ -230,8 +267,7 @@ pub struct FrontmatterConfig {
                       (.scratch/metadata-schemas/issues/01-config-surface.md)"
         )
     )]
-    title: Option<String>,
-    aliases: Option<String>,
+    date_created: DateFieldConfig,
     #[cfg_attr(
         not(any(test, feature = "test-utils")),
         expect(
@@ -241,22 +277,25 @@ pub struct FrontmatterConfig {
                       (.scratch/metadata-schemas/issues/01-config-surface.md)"
         )
     )]
-    date_created: Option<DateFieldConfig>,
-    #[cfg_attr(
-        not(any(test, feature = "test-utils")),
-        expect(
-            dead_code,
-            reason = "declared by the config-surface ticket; read by later \
-                      frontmatter-aware tickets \
-                      (.scratch/metadata-schemas/issues/01-config-surface.md)"
-        )
-    )]
-    date_modified: Option<DateFieldConfig>,
+    date_modified: DateFieldConfig,
 }
 
 impl FrontmatterConfig {
-    /// Returns the frontmatter key holding a Note's display title, if
-    /// configured.
+    /// Returns the frontmatter key holding a Note's display title.
+    #[inline]
+    #[must_use]
+    pub fn title(&self) -> &str {
+        &self.title
+    }
+
+    /// Returns the frontmatter key holding a Note's aliases.
+    #[inline]
+    #[must_use]
+    pub fn aliases(&self) -> &str {
+        &self.aliases
+    }
+
+    /// Returns the creation-timestamp frontmatter key and date format.
     #[inline]
     #[must_use]
     #[cfg_attr(
@@ -268,19 +307,11 @@ impl FrontmatterConfig {
                       (.scratch/metadata-schemas/issues/01-config-surface.md)"
         )
     )]
-    pub fn title(&self) -> Option<&str> {
-        self.title.as_deref()
+    pub fn date_created(&self) -> &DateFieldConfig {
+        &self.date_created
     }
 
-    /// Returns the frontmatter key holding a Note's aliases, if configured.
-    #[inline]
-    #[must_use]
-    pub fn aliases(&self) -> Option<&str> {
-        self.aliases.as_deref()
-    }
-
-    /// Returns the creation-timestamp frontmatter key and date format, if
-    /// configured.
+    /// Returns the modification-timestamp frontmatter key and date format.
     #[inline]
     #[must_use]
     #[cfg_attr(
@@ -292,25 +323,40 @@ impl FrontmatterConfig {
                       (.scratch/metadata-schemas/issues/01-config-surface.md)"
         )
     )]
-    pub fn date_created(&self) -> Option<&DateFieldConfig> {
-        self.date_created.as_ref()
+    pub fn date_modified(&self) -> &DateFieldConfig {
+        &self.date_modified
     }
 
-    /// Returns the modification-timestamp frontmatter key and date format,
-    /// if configured.
+    /// Builds a frontmatter config with custom title/aliases keys for tests
+    /// that exercise non-default label resolution.
+    #[cfg(any(test, feature = "test-utils"))]
     #[inline]
     #[must_use]
-    #[cfg_attr(
-        not(any(test, feature = "test-utils")),
-        expect(
-            dead_code,
-            reason = "declared by the config-surface ticket; read by later \
-                      frontmatter-aware tickets \
-                      (.scratch/metadata-schemas/issues/01-config-surface.md)"
-        )
-    )]
-    pub fn date_modified(&self) -> Option<&DateFieldConfig> {
-        self.date_modified.as_ref()
+    pub fn for_test(
+        title: impl Into<String>,
+        aliases: impl Into<String>,
+    ) -> Self {
+        Self {
+            title: title.into(),
+            aliases: aliases.into(),
+            ..Self::default()
+        }
+    }
+}
+
+impl Default for FrontmatterConfig {
+    #[inline]
+    fn default() -> Self {
+        Self {
+            title: DEFAULT_TITLE_FIELD.to_owned(),
+            aliases: DEFAULT_ALIASES_FIELD.to_owned(),
+            date_created: DateFieldConfig::default_for(
+                DEFAULT_DATE_CREATED_FIELD,
+            ),
+            date_modified: DateFieldConfig::default_for(
+                DEFAULT_DATE_MODIFIED_FIELD,
+            ),
+        }
     }
 }
 
@@ -318,10 +364,18 @@ impl From<RawFrontmatterConfig> for FrontmatterConfig {
     #[inline]
     fn from(raw: RawFrontmatterConfig) -> Self {
         Self {
-            title: raw.title,
-            aliases: raw.aliases,
-            date_created: raw.date_created.map(DateFieldConfig::from),
-            date_modified: raw.date_modified.map(DateFieldConfig::from),
+            title: raw.title.unwrap_or_else(|| DEFAULT_TITLE_FIELD.to_owned()),
+            aliases: raw
+                .aliases
+                .unwrap_or_else(|| DEFAULT_ALIASES_FIELD.to_owned()),
+            date_created: DateFieldConfig::from_raw_or_default(
+                raw.date_created,
+                DEFAULT_DATE_CREATED_FIELD,
+            ),
+            date_modified: DateFieldConfig::from_raw_or_default(
+                raw.date_modified,
+                DEFAULT_DATE_MODIFIED_FIELD,
+            ),
         }
     }
 }
@@ -383,14 +437,32 @@ impl DateFieldConfig {
     pub fn format(&self) -> &str {
         &self.format
     }
-}
 
-impl From<RawDateFieldConfig> for DateFieldConfig {
+    /// Builds a default date field config for `name` using the shared
+    /// default date format.
     #[inline]
-    fn from(raw: RawDateFieldConfig) -> Self {
+    fn default_for(name: &str) -> Self {
         Self {
-            name: raw.name,
-            format: raw.format,
+            name: name.to_owned(),
+            format: DEFAULT_DATE_FORMAT.to_owned(),
         }
+    }
+
+    /// Resolves a raw date-role table into a concrete config, filling missing
+    /// `name`/`format` from role-aware defaults.
+    #[inline]
+    fn from_raw_or_default(
+        raw: Option<RawDateFieldConfig>,
+        default_name: &str,
+    ) -> Self {
+        raw.map_or_else(
+            || Self::default_for(default_name),
+            |raw| Self {
+                name: raw.name.unwrap_or_else(|| default_name.to_owned()),
+                format: raw
+                    .format
+                    .unwrap_or_else(|| DEFAULT_DATE_FORMAT.to_owned()),
+            },
+        )
     }
 }

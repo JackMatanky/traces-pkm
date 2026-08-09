@@ -1591,7 +1591,7 @@ mod tests {
                 let config = build(&fixture, local, None).expect("build");
 
                 // Assert
-                assert_eq!(config.frontmatter().title(), Some("Title"));
+                assert_eq!(config.frontmatter().title(), "Title");
             }
 
             #[test]
@@ -1609,11 +1609,11 @@ mod tests {
                 let config = build(&fixture, local, None).expect("build");
 
                 // Assert
-                assert_eq!(config.frontmatter().aliases(), Some("Aliases"));
+                assert_eq!(config.frontmatter().aliases(), "Aliases");
             }
 
             #[test]
-            fn defaults_title_to_none_when_unconfigured() {
+            fn defaults_title_when_unconfigured() {
                 let fixture = Fixture::new();
                 let local_path = fixture
                     .write_config("project/.traces/config.toml", "[templates]");
@@ -1625,11 +1625,11 @@ mod tests {
                 let config = build(&fixture, local, None).expect("build");
 
                 // Assert
-                assert_eq!(config.frontmatter().title(), None);
+                assert_eq!(config.frontmatter().title(), "title");
             }
 
             #[test]
-            fn defaults_aliases_to_none_when_unconfigured() {
+            fn defaults_aliases_when_unconfigured() {
                 let fixture = Fixture::new();
                 let local_path = fixture
                     .write_config("project/.traces/config.toml", "[templates]");
@@ -1641,7 +1641,7 @@ mod tests {
                 let config = build(&fixture, local, None).expect("build");
 
                 // Assert
-                assert_eq!(config.frontmatter().aliases(), None);
+                assert_eq!(config.frontmatter().aliases(), "aliases");
             }
 
             #[test]
@@ -1660,10 +1660,7 @@ mod tests {
                 let config = build(&fixture, local, None).expect("build");
 
                 // Assert
-                let created = config
-                    .frontmatter()
-                    .date_created()
-                    .expect("date_created configured");
+                let created = config.frontmatter().date_created();
                 assert_eq!(created.name(), "created");
                 assert_eq!(created.format(), "%Y-%m-%d");
             }
@@ -1684,16 +1681,13 @@ mod tests {
                 let config = build(&fixture, local, None).expect("build");
 
                 // Assert
-                let modified = config
-                    .frontmatter()
-                    .date_modified()
-                    .expect("date_modified configured");
+                let modified = config.frontmatter().date_modified();
                 assert_eq!(modified.name(), "modified");
                 assert_eq!(modified.format(), "%Y-%m-%dT%H:%M:%S");
             }
 
             #[test]
-            fn defaults_date_created_to_none_when_unconfigured() {
+            fn defaults_date_created_when_unconfigured() {
                 let fixture = Fixture::new();
                 let local_path = fixture
                     .write_config("project/.traces/config.toml", "[templates]");
@@ -1705,11 +1699,13 @@ mod tests {
                 let config = build(&fixture, local, None).expect("build");
 
                 // Assert
-                assert!(config.frontmatter().date_created().is_none());
+                let created = config.frontmatter().date_created();
+                assert_eq!(created.name(), "date_created");
+                assert_eq!(created.format(), "%Y-%m-%dT%H:%M:%S");
             }
 
             #[test]
-            fn defaults_date_modified_to_none_when_unconfigured() {
+            fn defaults_date_modified_when_unconfigured() {
                 let fixture = Fixture::new();
                 let local_path = fixture
                     .write_config("project/.traces/config.toml", "[templates]");
@@ -1721,7 +1717,9 @@ mod tests {
                 let config = build(&fixture, local, None).expect("build");
 
                 // Assert
-                assert!(config.frontmatter().date_modified().is_none());
+                let modified = config.frontmatter().date_modified();
+                assert_eq!(modified.name(), "date_modified");
+                assert_eq!(modified.format(), "%Y-%m-%dT%H:%M:%S");
             }
 
             #[test]
@@ -1771,26 +1769,43 @@ mod tests {
             }
 
             #[test]
-            fn rejects_date_field_missing_required_key() {
+            fn defaults_date_created_format_when_only_name_configured() {
                 let fixture = Fixture::new();
                 let local_path = fixture.write_config(
                     "project/.traces/config.toml",
-                    "[frontmatter.date_created]\nname = \"created\"",
+                    "[frontmatter.date_created]\nname = \"created_at\"",
                 );
                 let local =
                     LocalConfigFile::<FileDiscovered>::try_new(local_path)
                         .unwrap();
 
                 // Act
-                let result = build(&fixture, local, None);
+                let config = build(&fixture, local, None).expect("build");
 
                 // Assert
-                assert!(matches!(
-                    result,
-                    Err(ConfigBuilderError::ConfigFile(
-                        ConfigFileError::Read { .. }
-                    ))
-                ));
+                let created = config.frontmatter().date_created();
+                assert_eq!(created.name(), "created_at");
+                assert_eq!(created.format(), "%Y-%m-%dT%H:%M:%S");
+            }
+
+            #[test]
+            fn defaults_date_modified_name_when_only_format_configured() {
+                let fixture = Fixture::new();
+                let local_path = fixture.write_config(
+                    "project/.traces/config.toml",
+                    "[frontmatter.date_modified]\nformat = \"%Y-%m-%d\"",
+                );
+                let local =
+                    LocalConfigFile::<FileDiscovered>::try_new(local_path)
+                        .unwrap();
+
+                // Act
+                let config = build(&fixture, local, None).expect("build");
+
+                // Assert
+                let modified = config.frontmatter().date_modified();
+                assert_eq!(modified.name(), "date_modified");
+                assert_eq!(modified.format(), "%Y-%m-%d");
             }
 
             #[test]
@@ -1816,7 +1831,60 @@ mod tests {
                     build(&fixture, local, Some(global)).expect("build");
 
                 // Assert
-                assert_eq!(config.frontmatter().title(), Some("local_title"));
+                assert_eq!(config.frontmatter().title(), "local_title");
+            }
+
+            #[test]
+            fn prioritizes_local_aliases_over_global() {
+                let fixture = Fixture::new();
+                let local_path = fixture.write_config(
+                    "project/.traces/config.toml",
+                    "[frontmatter]\naliases = \"aka\"",
+                );
+                let global_path = fixture.write_config(
+                    "global/config.toml",
+                    "[frontmatter]\naliases = \"aliases\"",
+                );
+                let local =
+                    LocalConfigFile::<FileDiscovered>::try_new(local_path)
+                        .unwrap();
+                let global =
+                    GlobalConfigFile::<FileDiscovered>::try_new(global_path)
+                        .unwrap();
+
+                // Act
+                let config =
+                    build(&fixture, local, Some(global)).expect("build");
+
+                // Assert
+                assert_eq!(config.frontmatter().aliases(), "aka");
+            }
+
+            #[test]
+            fn falls_back_to_global_aliases_when_local_omits_aliases() {
+                let fixture = Fixture::new();
+                let local_path = fixture.write_config(
+                    "project/.traces/config.toml",
+                    "[frontmatter]\ntitle = \"local_title\"",
+                );
+                let global_path = fixture.write_config(
+                    "global/config.toml",
+                    "[frontmatter]\naliases = \"aka\"",
+                );
+                let local =
+                    LocalConfigFile::<FileDiscovered>::try_new(local_path)
+                        .unwrap();
+                let global =
+                    GlobalConfigFile::<FileDiscovered>::try_new(global_path)
+                        .unwrap();
+
+                // Act
+                let config =
+                    build(&fixture, local, Some(global)).expect("build");
+
+                // Assert
+                assert_eq!(config.frontmatter().title(), "local_title");
+                assert_eq!(config.frontmatter().aliases(), "aka");
             }
         }
     }

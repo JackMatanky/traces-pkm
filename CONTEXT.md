@@ -62,8 +62,8 @@ TOML files at two levels. Local (`.traces/config.toml`) and global (`~/.config/t
 # Frontmatter keys for canonical metadata roles
 # title        = "title"
 # aliases      = "aliases"   # read for file-field display labels
-# date_created = { name = "date_created", format = "%Y-%m-%d" }
-# date_modified = { name = "date_modified", format = "%Y-%m-%d" }
+# date_created = { name = "date_created", format = "%Y-%m-%dT%H:%M:%S" }
+# date_modified = { name = "date_modified", format = "%Y-%m-%dT%H:%M:%S" }
 ```
 
 ### Dry-run

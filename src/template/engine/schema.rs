@@ -13,8 +13,9 @@
 //! - `.field(name)`: the named field's selectable values, as plain strings for
 //!   a `select` field, label/value objects for a `file` field, or `none` for
 //!   every other type. `file` fields resolve live from the render-scoped
-//!   `FileIndex`: labels use the configured `[frontmatter]` aliases key when
-//!   present, falling back to the filename stem; values are paths.
+//!   `FileIndex`: labels use the configured `[frontmatter]` aliases key,
+//!   falling back to the configured title key, then the filename stem; values
+//!   are paths.
 //! - `.descendants()`: every Schema that is-a this one transitively (extends it
 //!   directly or via an ancestor), each itself a [`SchemaBinding`] so a
 //!   Template can walk the whole subtree (`.name`, `.field(...)`, and
@@ -69,35 +70,65 @@ const SCHEMA_METHODS: &[&str] = &["field", "name", "descendants"];
 /// section.
 const REGISTRY_CACHE_KEY: &str = "schema.registry_cache";
 
-/// Backs the `schema` namespace object.
+/// Shared runtime state for the `schema` namespace: the project root and Schema
+/// registry directory used to load/refresh render-scoped data, plus the
+/// frontmatter keys used by file-field label resolution. Held once in
+/// [`SchemaOps`] and cloned as a single `Arc` into every [`SchemaBinding`]
+/// instead of threading four separate `Arc` fields through both types.
+///
+/// `Arc`, not `Rc`: minijinja `Object` values are reference-counted through
+/// `Arc<Self>`, and the existing namespace objects already use `Arc` to support
+/// cached object values without tying the engine to a single-thread-only type.
 #[derive(Debug)]
-pub(super) struct SchemaOps {
+pub(super) struct SchemaContext {
     /// Project root used to refresh the render-scoped `FileIndex`.
     root: Arc<Path>,
     /// The Schema registry directory, resolved against the project root.
     directory: Arc<Path>,
     /// Frontmatter field naming a Note's File Class(es).
     class_field: Arc<str>,
-    /// Frontmatter field holding display aliases, when configured.
-    aliases_field: Option<Arc<str>>,
+    /// Frontmatter field holding a Note's display title.
+    title_field: Arc<str>,
+    /// Frontmatter field holding a Note's display aliases.
+    aliases_field: Arc<str>,
 }
 
-impl SchemaOps {
+impl SchemaContext {
     /// Wraps the project `root`, resolved Schema registry `directory`, and
     /// configured frontmatter keys used by file-field option resolution.
     #[inline]
     #[must_use]
-    pub(super) const fn new(
+    pub(super) fn new(
         root: Arc<Path>,
         directory: Arc<Path>,
         class_field: Arc<str>,
-        aliases_field: Option<Arc<str>>,
+        title_field: Arc<str>,
+        aliases_field: Arc<str>,
     ) -> Self {
         Self {
             root,
             directory,
             class_field,
+            title_field,
             aliases_field,
+        }
+    }
+}
+
+/// Backs the `schema` namespace object.
+#[derive(Debug)]
+pub(super) struct SchemaOps {
+    ctx: Arc<SchemaContext>,
+}
+
+impl SchemaOps {
+    /// Wraps the shared [`SchemaContext`] used to load the Schema registry and
+    /// resolve file-field options.
+    #[inline]
+    #[must_use]
+    pub(super) fn new(ctx: Arc<SchemaContext>) -> Self {
+        Self {
+            ctx,
         }
     }
 
@@ -108,9 +139,9 @@ impl SchemaOps {
     }
 
     /// Returns the render's cached [`SchemaRegistry`], loading and caching it
-    /// in `state`'s temp storage first if not already cached this render.
-    /// Logs each accumulated [`SchemaWarning`](crate::schema::SchemaWarning)
-    /// once, at load time.
+    /// in `state`'s temp storage first if not already cached this render. Logs
+    /// each accumulated [`SchemaWarning`](crate::schema::SchemaWarning) once,
+    /// at load time.
     ///
     /// # Errors
     ///
@@ -130,8 +161,8 @@ impl SchemaOps {
         {
             return Ok(registry);
         }
-        let (registry, warnings) =
-            SchemaRegistry::load(&self.directory).map_err(registry_error)?;
+        let (registry, warnings) = SchemaRegistry::load(&self.ctx.directory)
+            .map_err(registry_error)?;
         for warning in &warnings {
             tracing::warn!(%warning, "Schema registry resolved with a warning");
         }
@@ -160,13 +191,7 @@ impl Object for SchemaOps {
                                     SchemaBinding {
                                         schema,
                                         registry: Arc::clone(&registry),
-                                        root: Arc::clone(&ops.root),
-                                        class_field: Arc::clone(
-                                            &ops.class_field,
-                                        ),
-                                        aliases_field: ops
-                                            .aliases_field
-                                            .clone(),
+                                        ctx: Arc::clone(&ops.ctx),
                                     },
                                 ))
                             })
@@ -194,9 +219,7 @@ impl Object for SchemaOps {
 struct SchemaBinding {
     schema: Arc<Schema>,
     registry: Arc<SchemaRegistry>,
-    root: Arc<Path>,
-    class_field: Arc<str>,
-    aliases_field: Option<Arc<str>>,
+    ctx: Arc<SchemaContext>,
 }
 
 impl SchemaBinding {
@@ -208,7 +231,7 @@ impl SchemaBinding {
         ext: Option<&str>,
         classes: &[String],
     ) -> Result<Value, Error> {
-        let index = super::query::cached_refresh(state, &self.root)
+        let index = super::query::cached_refresh(state, &self.ctx.root)
             .map_err(super::query::index_error)?;
         let class_matches = if classes.is_empty() {
             None
@@ -227,9 +250,10 @@ impl SchemaBinding {
         let options = index.file_options(crate::index::FileOptionFilter::new(
             folders,
             ext,
-            &self.class_field,
+            &self.ctx.class_field,
             class_matches.as_ref(),
-            self.aliases_field.as_deref(),
+            &self.ctx.title_field,
+            &self.ctx.aliases_field,
         ));
         Ok(Value::from(
             options.iter().map(file_option_value).collect::<Vec<_>>(),
@@ -276,13 +300,7 @@ impl Object for SchemaBinding {
                                     SchemaBinding {
                                         schema,
                                         registry: Arc::clone(&binding.registry),
-                                        root: Arc::clone(&binding.root),
-                                        class_field: Arc::clone(
-                                            &binding.class_field,
-                                        ),
-                                        aliases_field: binding
-                                            .aliases_field
-                                            .clone(),
+                                        ctx: Arc::clone(&binding.ctx),
                                     },
                                 ))
                             })
@@ -373,9 +391,8 @@ fn closest_field_suggestion<'a>(
     }
 }
 
-/// Finds the field name in `schema` with the smallest edit distance to
-/// `field`, for a `did you mean` suggestion when no field canonically
-/// matches.
+/// Finds the field name in `schema` with the smallest edit distance to `field`,
+/// for a `did you mean` suggestion when no field canonically matches.
 ///
 /// Thin wrapper over [`crate::field::closest_match`]: see its doc for the
 /// matching threshold.
@@ -402,12 +419,13 @@ mod tests {
     fn schema_ops(directory: &Path) -> SchemaOps {
         let root =
             directory.parent().and_then(Path::parent).unwrap_or(directory);
-        SchemaOps::new(
+        SchemaOps::new(Arc::new(SchemaContext::new(
             Arc::from(root),
             Arc::from(directory),
             Arc::from("class"),
-            Some(Arc::from("aliases")),
-        )
+            Arc::from("title"),
+            Arc::from("aliases"),
+        )))
     }
 
     fn render(directory: &Path, source: &str) -> Result<String, Error> {
@@ -697,6 +715,11 @@ mod tests {
             );
             write_note(
                 temp.path(),
+                "covers/titled.md",
+                "---\ntitle: Titled Cover\nclass: book\n---\n",
+            );
+            write_note(
+                temp.path(),
                 "misc/ignored.md",
                 "---\nclass: book\n---\n",
             );
@@ -712,7 +735,8 @@ mod tests {
 
             assert_eq!(
                 rendered,
-                "Friendly Dune=covers/dune.md|plain=covers/plain.md"
+                "Friendly Dune=covers/dune.md|plain=covers/plain.md|Titled \
+                 Cover=covers/titled.md"
             );
         }
 

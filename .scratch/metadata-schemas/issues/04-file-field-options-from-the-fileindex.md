@@ -8,7 +8,7 @@
 
 - [x] `file` fields resolve their options from the FileIndex through an AND-composed filter of `folders` (array), `ext`, and `class` (array); no regex in filters.
 - [x] `class` filter values match transitively through is-a (a note whose class extends the filtered class is included), using ticket 02's matching.
-- [x] `.field()` on a `file` field returns label/value pairs: label from `[frontmatter]` aliases when present, else the filename stem; value the path.
+- [x] `.field()` on a `file` field returns label/value pairs: label from `[frontmatter]` aliases when present, else the configured title key, else the filename stem; value the path.
 - [x] The pair list feeds `ui.select` directly (ADR-0003 index-based selection).
 - [x] The options reflect the current index state at render time.
 - [x] Render-seam tests assert label resolution (aliases present vs absent) and that the returned value is the path.
@@ -64,7 +64,7 @@ When a template calls `schema.get("book").field("cover")` on a `file`-typed fiel
 - `SchemaBinding::field()` now resolves `FieldType::File` through the render-scoped FileIndex cache and returns `[{ label, value }, ...]` objects.
 - File filters are AND-composed across `folders`, `ext`, and `class`; array filters are any-of within their dimension.
 - Class filters reuse `SchemaRegistry::matching_classes()` so subclasses match parent class filters transitively.
-- Labels use the configured `[frontmatter] aliases` field's scalar value or first list string, else the indexed filename stem. Values are project-relative paths.
+- Labels use `aliases -> title -> filename stem` precedence, using the resolved `[frontmatter]` key names (both now concrete defaults, not `Option`-wrapped): the configured aliases field's scalar value or first list string, else the configured title field's scalar value, else the indexed filename stem. Values are project-relative paths.
 
 ### Key design decisions
 

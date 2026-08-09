@@ -53,7 +53,7 @@ The config service resolves `[templates]` (directory, output_dir) from local and
 
 ### Key design decisions
 
-- **Frontmatter keys default to `None`, not a synthesized string.** The ticket only specifies concrete defaults for `[schemas] class_field`/`directory`; `title`/`aliases`/`date_created`/`date_modified` have no stated default value, so absence resolves to `Option::None` rather than inventing a convention (e.g. `"title"`) ahead of the consuming ticket.
+- **Frontmatter keys resolve to concrete defaults, not `None`.** `title` defaults to `"title"`, `aliases` to `"aliases"`, `date_created`/`date_modified` to `{name: "date_created"/"date_modified", format: "%Y-%m-%dT%H:%M:%S"}`. Matches `[schemas] class_field`/`directory`'s existing concrete-default pattern instead of leaving the resolved model's frontmatter keys `Option`-wrapped for callers to unwrap. (Superseded by the `feat/file-field-options` config-defaults-correction pass; see that ticket's implementation notes for the accessor/`Default`/`From` changes.)
 - **Merge semantics match `[templates]`.** `RawSchemasConfig`/`RawFrontmatterConfig` fields stay `Option<T>` (not `#[serde(default = "...")]`-materialized) so figment's per-layer "local wins, missing key falls through to the lower layer" merge behaves identically to the existing `output_dir` field — local partially overriding global was verified in `prioritizes_local_class_field_over_global`.
 - **Dead-code suppression, not deferred accessors.** The ticket's Agent Brief explicitly asks for the `Config` accessors now even though no consumer reads them yet. Since `cargo clippy --workspace` (the repo's clippy gate) compiles the lib without `cfg(test)`, every new field/accessor carries `#[cfg_attr(not(any(test, feature = "test-utils")), expect(dead_code, reason = "..."))]` — the same reachability condition already used to gate the crate's test-only-visible public API in `lib.rs`/`config/mod.rs`. Verified `expect` stays fulfilled under plain `cargo clippy --workspace` and does not misfire under `cargo clippy --all-targets --features test-utils` or `cargo test` (where the new tests genuinely use the accessors).
 
@@ -76,16 +76,19 @@ missing-required-key case and a frontmatter precedence test were added.
 | `schemas` | `rejects_unknown_key` | deny-unknown-fields on `[schemas]` |
 | `frontmatter` | `parses_title` | `[frontmatter] title` |
 | `frontmatter` | `parses_aliases` | `[frontmatter] aliases` |
-| `frontmatter` | `defaults_title_to_none_when_unconfigured` | absence → `None` |
-| `frontmatter` | `defaults_aliases_to_none_when_unconfigured` | absence → `None` |
+| `frontmatter` | `defaults_title_when_unconfigured` | defaults to `"title"` |
+| `frontmatter` | `defaults_aliases_when_unconfigured` | defaults to `"aliases"` |
 | `frontmatter` | `parses_date_created` | `{name, format}` sub-table |
 | `frontmatter` | `parses_date_modified` | `{name, format}` sub-table |
-| `frontmatter` | `defaults_date_created_to_none_when_unconfigured` | absence → `None` |
-| `frontmatter` | `defaults_date_modified_to_none_when_unconfigured` | absence → `None` |
+| `frontmatter` | `defaults_date_created_when_unconfigured` | defaults to `{name: "date_created", format: "%Y-%m-%dT%H:%M:%S"}` |
+| `frontmatter` | `defaults_date_modified_when_unconfigured` | defaults to `{name: "date_modified", format: "%Y-%m-%dT%H:%M:%S"}` |
 | `frontmatter` | `rejects_unknown_key` | deny-unknown-fields on `[frontmatter]` |
 | `frontmatter` | `rejects_unknown_date_field_key` | deny-unknown-fields on the nested `{name, format}` object |
-| `frontmatter` | `rejects_date_field_missing_required_key` | `{name, format}` both required |
+| `frontmatter` | `defaults_date_created_format_when_only_name_configured` | partial `{name}` resolves `format` from default |
+| `frontmatter` | `defaults_date_modified_name_when_only_format_configured` | partial `{format}` resolves `name` from default |
 | `frontmatter` | `prioritizes_local_title_over_global` | local-over-global merge precedence (parity with `schemas`) |
+| `frontmatter` | `prioritizes_local_aliases_over_global` | local-over-global merge precedence |
+| `frontmatter` | `falls_back_to_global_aliases_when_local_omits_aliases` | global fills a key local's table omits |
 
 ### Verification (updated `d503a4c`)
 

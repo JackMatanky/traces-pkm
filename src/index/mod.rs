@@ -107,9 +107,8 @@ impl FileIndex {
     /// full recompute (not a per-note patch) is required because link target
     /// resolution considers every indexed Note: an unedited Note's *resolved*
     /// target can change when an unrelated Note is added or removed. For
-    /// example, a
-    /// wikilink that was ambiguous becomes resolvable once one of the
-    /// ambiguous candidates is deleted.
+    /// example, a wikilink that was ambiguous becomes resolvable once one of
+    /// the ambiguous candidates is deleted.
     ///
     /// # Errors
     ///
@@ -249,11 +248,17 @@ impl FileIndex {
 
     /// Returns file-field options matching an AND-composed Schema filter.
     ///
-    /// Empty `folders`, `ext`, `classes`, or `aliases_field` values skip that
-    /// filter dimension. Within `folders`, matching is any-of; a record matches
-    /// when its project-relative folder starts with any configured folder.
-    /// `classes` is already the transitive is-a match set from
-    /// [`SchemaRegistry::matching_classes`](crate::schema::SchemaRegistry::matching_classes).
+    /// Empty `folders`, `ext`, or `classes` values skip that filter dimension;
+    /// within `folders`, matching is any-of, a record matches when its
+    /// project-relative folder starts with any configured folder. `classes` is
+    /// already the transitive is-a match set from
+    /// [`SchemaRegistry::matching_classes`].
+    ///
+    /// Label resolution is not a filter dimension: every matched record gets a
+    /// label, trying the configured aliases key, then the configured title key,
+    /// then falling back to the filename stem.
+    ///
+    /// [`SchemaRegistry::matching_classes`]: crate::schema::SchemaRegistry::matching_classes
     #[must_use]
     pub(crate) fn file_options(
         &self,
@@ -290,9 +295,7 @@ impl FileIndex {
             }
             let label = note
                 .and_then(|note| {
-                    filter
-                        .aliases_field
-                        .and_then(|field| alias_label(note, field))
+                    option_label(note, filter.title_field, filter.aliases_field)
                 })
                 .unwrap_or_else(|| record.name().as_str())
                 .to_owned();
@@ -311,9 +314,9 @@ impl FileIndex {
     /// [`Self::build`] and [`Self::refresh`] add one for every parsed Note), so
     /// a Note found without one is skipped rather than causing a panic.
     ///
-    /// Every matched [`IndexRecord`]'s `inlinks` reflects every indexed
-    /// Note, not just Notes matching `source`: a Note outside `source` can
-    /// still link to one inside it.
+    /// Every matched [`IndexRecord`]'s `inlinks` reflects every indexed Note,
+    /// not just Notes matching `source`: a Note outside `source` can still link
+    /// to one inside it.
     ///
     /// # Performance
     ///
@@ -419,25 +422,34 @@ pub(crate) struct FileOptionFilter<'a> {
     ext: Option<&'a str>,
     class_field: &'a str,
     classes: Option<&'a BTreeSet<String>>,
-    aliases_field: Option<&'a str>,
+    title_field: &'a str,
+    aliases_field: &'a str,
 }
 
 impl<'a> FileOptionFilter<'a> {
     /// Builds a borrowed file-option filter.
     #[inline]
     #[must_use]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "borrows six independent filter/label dimensions; bundling \
+                  them into a params struct would only move the field count, \
+                  not reduce it"
+    )]
     pub(crate) const fn new(
         folders: &'a [String],
         ext: Option<&'a str>,
         class_field: &'a str,
         classes: Option<&'a BTreeSet<String>>,
-        aliases_field: Option<&'a str>,
+        title_field: &'a str,
+        aliases_field: &'a str,
     ) -> Self {
         Self {
             folders,
             ext,
             class_field,
             classes,
+            title_field,
             aliases_field,
         }
     }
@@ -482,6 +494,18 @@ fn record_with_inlinks(
     IndexRecord::new(file, note).with_inlinks(links)
 }
 
+/// Returns the display label for `note`: the first usable configured aliases
+/// value, falling back to a scalar configured title value. Callers fall back
+/// further to the filename stem when this returns `None`.
+fn option_label<'a>(
+    note: &'a Note,
+    title_field: &str,
+    aliases_field: &str,
+) -> Option<&'a str> {
+    alias_label(note, aliases_field)
+        .or_else(|| scalar_frontmatter(note, title_field))
+}
+
 /// Returns the first usable alias label for `note`.
 fn alias_label<'a>(note: &'a Note, aliases_field: &str) -> Option<&'a str> {
     let value = note.frontmatter().and_then(|frontmatter| {
@@ -495,6 +519,17 @@ fn alias_label<'a>(note: &'a Note, aliases_field: &str) -> Option<&'a str> {
         FieldValue::List(items) => items.iter().find_map(FieldValue::as_str),
         value => value.as_str(),
     }
+}
+
+/// Returns `note`'s frontmatter value for `field_name` when it is a scalar
+/// string, ignoring lists and non-string scalars.
+fn scalar_frontmatter<'a>(note: &'a Note, field_name: &str) -> Option<&'a str> {
+    let frontmatter = note.frontmatter()?;
+    let field = frontmatter
+        .fields()
+        .iter()
+        .find(|field| field.key().is_match(field_name))?;
+    field.value().as_str()
 }
 
 /// Reads and parses the markdown file for `record` into a [`Note`].
@@ -1515,6 +1550,36 @@ mod tests {
             // must keep only the matching task row, not both rows from the
             // one Note that has at least one match.
             assert_eq!(task_rows(&outcome), [(Some(true), "pay rent")]);
+        }
+    }
+
+    mod option_label {
+        use pretty_assertions::assert_eq;
+        use rstest::rstest;
+
+        use super::*;
+
+        #[rstest]
+        #[case::alias_wins_over_title(
+            "---\ntitle: Title Value\naliases: [Alias Value]\n---\n",
+            Some("Alias Value")
+        )]
+        #[case::title_wins_over_stem_fallback(
+            "---\ntitle: Title Value\n---\n",
+            Some("Title Value")
+        )]
+        #[case::non_string_title_is_ignored("---\ntitle: 42\n---\n", None)]
+        #[case::no_frontmatter_falls_through_to_stem(
+            "No frontmatter here.",
+            None
+        )]
+        fn resolves_precedence(
+            #[case] source: &str,
+            #[case] expected: Option<&str>,
+        ) {
+            let note = parse_markdown("note.md", source);
+
+            assert_eq!(option_label(&note, "title", "aliases"), expected);
         }
     }
 }

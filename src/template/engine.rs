@@ -39,7 +39,7 @@ use self::{
     num::NumOps,
     path::PathOps,
     query::QueryOps,
-    schema::SchemaOps,
+    schema::{SchemaContext, SchemaOps},
     string::StrOps,
     ui::UiOps,
 };
@@ -102,7 +102,8 @@ impl TemplateEngine {
         });
         let root: Arc<Path> = Arc::from(config.root());
         let class_field: Arc<str> = Arc::from(config.schemas().class_field());
-        let aliases_field = config.frontmatter().aliases().map(Arc::from);
+        let title_field: Arc<str> = Arc::from(config.frontmatter().title());
+        let aliases_field: Arc<str> = Arc::from(config.frontmatter().aliases());
         let schemas_dir: Arc<Path> =
             Arc::from(config.root().join(config.schemas().directory()));
         FileOps::new(Arc::clone(&root)).register(&mut env);
@@ -124,8 +125,14 @@ impl TemplateEngine {
         DateOps.register(&mut env);
         StrOps::register(&mut env);
         NumOps::register(&mut env);
-        SchemaOps::new(root, schemas_dir, class_field, aliases_field)
-            .register(&mut env);
+        let schema_ctx = Arc::new(SchemaContext::new(
+            root,
+            schemas_dir,
+            class_field,
+            title_field,
+            aliases_field,
+        ));
+        SchemaOps::new(schema_ctx).register(&mut env);
         env.add_function("uuid", uuid);
         Self {
             env,
@@ -133,14 +140,13 @@ impl TemplateEngine {
     }
 
     /// Compiles and renders template `source` identified by `name` with an
-    /// empty context, returning a [`RenderOutput`] containing the rendered
-    /// text and any path captured by `file.write_to()`.
+    /// empty context, returning a [`RenderOutput`] containing the rendered text
+    /// and any path captured by `file.write_to()`.
     ///
     /// The template `name` is passed to minijinja as the template identifier so
     /// diagnostic errors report the actual template name rather than defaulting
-    /// to `<string>`. Captured state from `file.write_to()` is collected
-    /// across the entire render tree, including any included or extended
-    /// templates.
+    /// to `<string>`. Captured state from `file.write_to()` is collected across
+    /// the entire render tree, including any included or extended templates.
     ///
     /// # Errors
     ///
@@ -519,6 +525,50 @@ mod tests {
                 .expect("render succeeds");
 
             assert_eq!(rendered.content, "reading");
+        }
+
+        #[test]
+        fn schema_file_field_uses_configured_aliases_field() {
+            use crate::config::FrontmatterConfig;
+
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::create_dir_all(temp.path().join(".traces/schemas"))
+                .expect("create schemas dir");
+            fs::write(
+                temp.path().join(".traces/schemas/book.toml"),
+                "[fields.cover]\ntype = \"file\"\nfolders = [\"covers\"]\next \
+                 = \"md\"\nclass = [\"book\"]\n",
+            )
+            .expect("write schema fixture");
+            fs::create_dir_all(temp.path().join("covers"))
+                .expect("create covers dir");
+            fs::write(
+                temp.path().join("covers/custom.md"),
+                "---\naka: Custom Alias\nclass: book\n---\n",
+            )
+            .expect("write note fixture");
+            let config = Config::for_test_with_frontmatter(
+                temp.path().to_path_buf(),
+                None,
+                None,
+                temp.path().to_path_buf(),
+                FrontmatterConfig::for_test("title", "aka"),
+            );
+            let engine = TemplateEngine::new(
+                &loader_from_dir(temp.path()),
+                preset_provider(),
+                &config,
+            );
+
+            let rendered = engine
+                .render(
+                    "{% for item in schema.get('book').field('cover') %}{{ \
+                     item.label }}={{ item.value }}{% endfor %}",
+                    "test.md",
+                )
+                .expect("render succeeds");
+
+            assert_eq!(rendered.content, "Custom Alias=covers/custom.md");
         }
 
         #[test]
