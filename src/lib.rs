@@ -32,14 +32,14 @@
 //!
 //! Available with the `test-utils` feature:
 //!
-//! - [`Config`], [`ConfigService`], [`TrustRequest`] - project configuration
-//!   and trust verification.
-//! - [`Note`], [`Frontmatter`], [`FieldValue`], [`InlineField`], [`Link`] -
-//!   parsed note data structures.
-//! - [`FileIndex`], [`QueryOutcome`] - persistent index and query execution.
-//! - [`TemplateService`], [`CommitPolicy`], [`WriteMode`] - template rendering
-//!   and write operations.
-//! - [`Blake3FileHash`], [`Blake3PathHash`] - BLAKE3 hashing primitives.
+//! - `Config`, `ConfigService`, `TrustRequest` - project configuration and
+//!   trust verification.
+//! - `Note`, `Frontmatter`, `FieldValue`, `InlineField`, `Link` - parsed note
+//!   data structures.
+//! - `FileIndex`, `QueryOutcome` - persistent index and query execution.
+//! - `TemplateService`, `CommitPolicy`, `WriteMode` - template rendering and
+//!   write operations.
+//! - `Blake3FileHash`, `Blake3PathHash` - BLAKE3 hashing primitives.
 //!
 //! Always available:
 //!
@@ -97,10 +97,11 @@ pub use template::{
 /// Build isolated fixtures for the crate's own `#[cfg(test)]` suites and,
 /// under the `test-utils` feature, for external `tests/`/`benches/` consumers.
 ///
-/// Use [`fixture_service`] to get a [`ConfigService`] backed by temporary
-/// directories, [`create_trusted_project`] to write a minimal config and trust
-/// it, [`write_note`] to create note files, and [`write_template`] to create
-/// template files.
+/// - [`fixture_service`] returns a [`ConfigService`] backed by temporary
+///   directories.
+/// - [`create_trusted_project`] writes a minimal config and trusts it.
+/// - [`write_note`] creates note files.
+/// - [`write_template`] creates template files.
 #[cfg(any(test, feature = "test-utils"))]
 mod test_support {
     #![expect(
@@ -138,8 +139,6 @@ mod test_support {
     /// Writes a minimal local config at `root/.traces/config.toml` pointing
     /// at `root/templates` (creating that directory), and records `root` as
     /// trusted in `service`'s trust store.
-    ///
-    /// Returns the written config file path.
     ///
     /// # Panics
     ///
