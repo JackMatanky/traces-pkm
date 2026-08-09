@@ -1,9 +1,9 @@
-//! Resolves raw Schema sets into effective Field Definitions via Kahn's
+//! Resolve raw Schema sets into effective Field Definitions via Kahn's
 //! topological sort.
 //!
 //! No filesystem or minijinja access: [`resolve`] is a pure function over an
-//! already-parsed Schema set. Reads top-down: the pipeline ([`resolve`] ->
-//! [`resolve_one`] -> [`build_field`]) comes first; [`SchemaGraph`] (DAG
+//! already-parsed Schema set. Reads top-down: the pipeline ([`resolve`] to
+//! [`resolve_one`] to [`build_field`]) comes first; [`SchemaGraph`] (DAG
 //! bookkeeping) and [`RefResolver`] (`$ref` bounds-checking) follow below.
 //!
 //! # Main Type
@@ -26,11 +26,11 @@ use super::{
 };
 use crate::field::FieldName;
 
-/// Every Schema resolved by [`resolve`], keyed by name, alongside the
+/// Return every Schema resolved by [`resolve`], keyed by name, alongside the
 /// [`SchemaWarning`]s degraded resolution accumulated along the way.
 type ResolveOutput = (BTreeMap<SchemaName, Schema>, Vec<SchemaWarning>);
 
-/// Resolves `raw_schemas` into effective Field Definitions per Schema.
+/// Resolve `raw_schemas` into effective Field Definitions per Schema.
 ///
 /// Linearizes the `extends` DAG with Kahn's topological sort so every Schema
 /// is resolved only after all of its valid parents. For each Schema, in order:
@@ -42,6 +42,7 @@ type ResolveOutput = (BTreeMap<SchemaName, Schema>, Vec<SchemaWarning>);
 ///
 /// # Errors
 ///
+/// - [`SchemaError::Cycle`] if the `extends` DAG contains a cycle.
 /// - [`SchemaError::RefOutOfBounds`] if a `$ref` names a Schema outside its
 ///   bound (the Global Schema or a transitive `extends` ancestor).
 /// - [`SchemaError::RefFieldNotFound`] if a `$ref` names an in-bounds Schema
@@ -78,9 +79,10 @@ pub(crate) fn resolve(
     }
 }
 
-/// Resolves one Schema's effective fields and transitive ancestors: merges
-/// `parents`' fields first-listed-wins, applies `raw.excludes`, then overrides
-/// the result with `raw`'s own (`$ref`-resolved) fields.
+/// Resolve one Schema's effective fields and transitive ancestors.
+///
+/// Merges `parents`' fields first-listed-wins, applies `raw.excludes`, then
+/// overrides the result with `raw`'s own (`$ref`-resolved) fields.
 ///
 /// `parents` must already be resolved in `resolved`: [`resolve`] guarantees
 /// this by calling in Kahn topological order.
@@ -143,7 +145,7 @@ fn resolve_one(
     Ok(Schema::new(SchemaName::from(name), fields, ancestors))
 }
 
-/// Rejects `fields` if two entries share a [`FieldKey`](crate::field::FieldKey)
+/// Reject `fields` if two entries share a [`FieldKey`](crate::field::FieldKey)
 /// canonical form: ambiguous field identities would make later note-vs-schema
 /// field matching and unknown-field suggestions unreliable.
 ///
@@ -170,7 +172,7 @@ fn reject_ambiguous_canonical_names(
     Ok(())
 }
 
-/// Builds one resolved [`FieldDefinition`] for `address`, resolving its `$ref`
+/// Build one resolved [`FieldDefinition`] for `address`, resolving its `$ref`
 /// (if any) via `refs` and applying the Global Schema's `required` degrade.
 ///
 /// # Errors
@@ -213,7 +215,7 @@ fn build_field(
     ))
 }
 
-/// Forces `required` to `false` and records a
+/// Force `required` to `false` and record a
 /// [`SchemaWarning::StrayGlobalRequired`] when `address.schema()` is the
 /// Global Schema and it declared `required = true`.
 ///
@@ -233,8 +235,7 @@ fn apply_global_degrade(
     }
 }
 
-/// Kahn's-algorithm bookkeeping for linearizing the `extends` DAG: adjacency,
-/// in-degrees, the ready queue, and which Schemas have been popped.
+/// Track Kahn's-algorithm state for linearizing the `extends` DAG.
 ///
 /// Isolates the Global-first tie-break from the field-merge logic in
 /// [`resolve_one`].
@@ -247,7 +248,7 @@ struct SchemaGraph<'a> {
 }
 
 impl<'a> SchemaGraph<'a> {
-    /// Builds `raw_schemas`' `extends` adjacency (parent -> children) and Kahn
+    /// Build `raw_schemas`' `extends` adjacency (parent to children) and Kahn
     /// in-degrees, seeding the ready queue with every in-degree-zero Schema.
     ///
     /// Filtering and tie-breaking:
@@ -330,7 +331,7 @@ impl<'a> SchemaGraph<'a> {
         }
     }
 
-    /// Pops the next Schema whose in-degree reached zero, marking it visited,
+    /// Pop the next Schema whose in-degree reached zero, marking it visited,
     /// or `None` once the ready queue drains.
     fn next_ready(&mut self) -> Option<SchemaNameRef<'a>> {
         let name = self.queue.pop_front()?;
@@ -338,12 +339,12 @@ impl<'a> SchemaGraph<'a> {
         Some(name)
     }
 
-    /// Borrows `name`'s (filtered) parent list.
+    /// Borrow `name`'s filtered parent list.
     fn parents_of(&self, name: SchemaNameRef<'_>) -> &[SchemaNameRef<'a>] {
         self.parents_by_name.get(name.as_str()).map_or(&[], Vec::as_slice)
     }
 
-    /// Records `name` as resolved, releasing any children whose in-degree just
+    /// Record `name` as resolved, releasing any children whose in-degree just
     /// hit zero into the ready queue.
     fn mark_resolved(&mut self, name: SchemaNameRef<'_>) {
         for &child in
@@ -358,7 +359,7 @@ impl<'a> SchemaGraph<'a> {
         }
     }
 
-    /// Returns every Schema name that never reached in-degree zero (a cycle
+    /// Return every Schema name that never reached in-degree zero (a cycle
     /// member), or `None` if every Schema in `raw_schemas` was visited.
     fn cyclic_remainder(
         &self,
@@ -377,7 +378,7 @@ impl<'a> SchemaGraph<'a> {
     }
 }
 
-/// Resolves a Schema's `$ref` values to their base [`FieldDefinition`]s,
+/// Resolve a Schema's `$ref` values to their base [`FieldDefinition`]s,
 /// bounded to the Global Schema or the referencing Schema's transitive
 /// `extends` ancestors.
 ///
@@ -389,7 +390,7 @@ struct RefResolver<'a> {
 }
 
 impl<'a> RefResolver<'a> {
-    /// Resolves `base_address` (`address`'s own already-parsed `$ref` value)
+    /// Resolve `base_address`, `address`'s own already-parsed `$ref` value,
     /// to its base [`FieldDefinition`].
     ///
     /// # Errors

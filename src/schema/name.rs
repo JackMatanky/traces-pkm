@@ -1,4 +1,4 @@
-//! Schema name newtypes preventing identity mix-ups.
+//! Distinguish Schema names from other string identifiers.
 //!
 //! Mirrors the crate's [`FileName`](crate::file_name::FileName)/
 //! [`BaseName`](crate::file_name::BaseName)/
@@ -14,19 +14,19 @@ use std::{borrow::Borrow, fmt};
 
 use serde::Deserialize;
 
-/// A Schema's name: its source file's stem.
+/// Store a Schema name from its source file stem.
 #[derive(Clone, Default, Eq, Hash, Ord, PartialEq, PartialOrd, Deserialize)]
 pub(crate) struct SchemaName(String);
 
 impl SchemaName {
-    /// Returns this name as a string slice.
+    /// Return this name as a string slice.
     #[inline]
     #[must_use]
     pub(crate) fn as_str(&self) -> &str {
         &self.0
     }
 
-    /// Borrows this name as a [`SchemaNameRef`].
+    /// Borrow this name as a [`SchemaNameRef`].
     #[inline]
     #[must_use]
     pub(crate) fn as_ref(&self) -> SchemaNameRef<'_> {
@@ -53,7 +53,7 @@ impl Borrow<str> for SchemaName {
 }
 
 impl fmt::Debug for SchemaName {
-    /// Matches `str`'s own `Debug` (quoted, escaped) so wrapping a Schema name
+    /// Match `str`'s own `Debug` (quoted, escaped) so wrapping a Schema name
     /// in this type never changes an error or warning message's text.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Debug::fmt(&self.0, f)
@@ -66,14 +66,12 @@ impl fmt::Display for SchemaName {
     }
 }
 
-/// Borrowed counterpart to [`SchemaName`]: a name borrowed from parsed TOML
-/// data or a `$ref` string, mirroring the `&str`/`String` split
-/// ([`crate::file_name::BaseNameRef`]).
+/// Borrow a Schema name from parsed TOML data or a `$ref` string.
 #[derive(Copy, Clone, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub(crate) struct SchemaNameRef<'a>(&'a str);
 
 impl<'a> SchemaNameRef<'a> {
-    /// Returns this name as a string slice.
+    /// Return this name as a string slice.
     #[inline]
     #[must_use]
     pub(crate) fn as_str(self) -> &'a str {
@@ -94,7 +92,7 @@ impl Borrow<str> for SchemaNameRef<'_> {
 }
 
 impl fmt::Debug for SchemaNameRef<'_> {
-    /// Matches `str`'s own `Debug` (quoted, escaped); see [`SchemaName`]'s
+    /// Match `str`'s own `Debug` (quoted, escaped); see [`SchemaName`]'s
     /// `Debug` impl for why this matters.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Debug::fmt(self.0, f)

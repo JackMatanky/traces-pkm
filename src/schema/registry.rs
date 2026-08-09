@@ -1,4 +1,4 @@
-//! Reads and resolves every Schema under a registry directory.
+//! Read and resolve every Schema under a registry directory.
 //!
 //! The filesystem is the Schema registry: a Schema is a TOML file whose
 //! filename stem is the Schema name. [`SchemaRegistry`] is the impure edge of
@@ -25,8 +25,7 @@ use super::{
 };
 use crate::file_name::BaseNameRef;
 
-/// Every Schema under a registry directory, resolved through `extends`,
-/// `excludes`, and `$ref`.
+/// Store every resolved Schema under a registry directory.
 #[derive(Clone, Debug)]
 pub(crate) struct SchemaRegistry {
     /// Reference-counted per Schema, not owned outright: `.get()` and
@@ -37,6 +36,8 @@ pub(crate) struct SchemaRegistry {
 }
 
 impl SchemaRegistry {
+    /// Load every Schema TOML file directly under `directory`.
+    ///
     /// Reads every `*.toml` file directly under `directory` (non-recursive),
     /// parses each as a Schema keyed by its filename stem, and resolves the
     /// `extends` DAG.
@@ -52,8 +53,13 @@ impl SchemaRegistry {
     /// - [`SchemaError::ReadFile`] if a `.toml` file cannot be read.
     /// - [`SchemaError::Parse`] if a Schema file's TOML is malformed or
     ///   contains an unknown key.
-    /// - Any error [`resolve::resolve`] returns while linearizing the `extends`
-    ///   DAG.
+    /// - [`SchemaError::Cycle`] if the `extends` DAG contains a cycle.
+    /// - [`SchemaError::RefOutOfBounds`] if a `$ref` target is outside the
+    ///   Global Schema and transitive `extends` ancestor bound.
+    /// - [`SchemaError::RefFieldNotFound`] if a `$ref` target is in bounds but
+    ///   the target field does not exist.
+    /// - [`SchemaError::AmbiguousFieldName`] if two effective fields share the
+    ///   same canonical metadata key.
     pub(crate) fn load(
         directory: &Path,
     ) -> Result<(Self, Vec<SchemaWarning>), SchemaError> {
@@ -71,7 +77,7 @@ impl SchemaRegistry {
         ))
     }
 
-    /// Returns a reference to the named Schema, or `None` if no Schema by that
+    /// Return a reference to the named Schema, or `None` if no Schema by that
     /// name resolved.
     ///
     /// Stored in [`Arc`] so repeated lookups (a Template calling `schema.get()`
@@ -83,8 +89,7 @@ impl SchemaRegistry {
         self.schemas.get(name)
     }
 
-    /// Every Schema that is-a `name` transitively (extends it directly or via
-    /// an ancestor), excluding `name` itself.
+    /// Return every Schema that is-a `name` transitively.
     ///
     /// Empty, not an error, if nothing extends `name`.
     #[must_use]
@@ -96,7 +101,7 @@ impl SchemaRegistry {
             .collect()
     }
 
-    /// Returns the set of Schema names that match `queried`.
+    /// Return the set of Schema names that match `queried`.
     ///
     /// The set includes:
     ///
@@ -104,8 +109,8 @@ impl SchemaRegistry {
     ///   matches itself).
     /// - Every resolved Schema that is-a one of the queried names.
     ///
-    /// This is the match set a `from_class` query tests each Note's File Class
-    /// against: a Note matches when any of its class values is in the returned
+    /// A `from_class` query tests each Note's File Class against this set: a
+    /// Note matches when any of its class values is in the returned
     /// set. Transitive `extends` is folded in here so the caller compares
     /// plain strings without consulting the registry per Note.
     ///
@@ -113,9 +118,9 @@ impl SchemaRegistry {
     ///
     /// Given `sci_fi` extending `book`, and `movie` unrelated:
     ///
-    /// - `matching_classes(&["book"])` → `{"book", "sci_fi"}`
-    /// - `matching_classes(&["movie"])` → `{"movie"}`
-    /// - `matching_classes(&["ghost"])` → `{"ghost"}` (no Schema, still
+    /// - `matching_classes(&["book"])` returns `{"book", "sci_fi"}`.
+    /// - `matching_classes(&["movie"])` returns `{"movie"}`.
+    /// - `matching_classes(&["ghost"])` returns `{"ghost"}` (no Schema, still
     ///   matches)
     #[must_use]
     pub(crate) fn matching_classes(
@@ -132,7 +137,7 @@ impl SchemaRegistry {
     }
 }
 
-/// Reads and parses every `*.toml` file directly under `directory` into a
+/// Read and parse every `*.toml` file directly under `directory` into a
 /// [`RawSchema`] keyed by filename stem.
 ///
 /// Walks only `directory`'s immediate entries (`min_depth(1).max_depth(1)`):
@@ -183,7 +188,7 @@ fn read_raw_schemas(
     Ok(schemas)
 }
 
-/// Returns `true` if `error` reports that the walk's root itself does not
+/// Return `true` if `error` reports that the walk's root itself does not
 /// exist, so [`read_raw_schemas`] can degrade to an empty registry.
 fn is_missing_root(error: &walkdir::Error) -> bool {
     error.depth() == 0
@@ -192,7 +197,7 @@ fn is_missing_root(error: &walkdir::Error) -> bool {
             .is_some_and(|source| source.kind() == io::ErrorKind::NotFound)
 }
 
-/// Wraps a [`walkdir::Error`] with path context as a
+/// Wrap a [`walkdir::Error`] with path context as a
 /// [`SchemaError::ReadDirectory`].
 ///
 /// Falls back to `directory` if the underlying error carries no path of its own
