@@ -102,6 +102,7 @@ impl TemplateEngine {
         });
         let root: Arc<Path> = Arc::from(config.root());
         let class_field: Arc<str> = Arc::from(config.schemas().class_field());
+        let aliases_field = config.frontmatter().aliases().map(Arc::from);
         let schemas_dir: Arc<Path> =
             Arc::from(config.root().join(config.schemas().directory()));
         FileOps::new(Arc::clone(&root)).register(&mut env);
@@ -111,18 +112,20 @@ impl TemplateEngine {
             Arc::clone(&schemas_dir),
         )
         .register(&mut env);
-        QueryOps::task(Arc::clone(&root), class_field, schemas_dir)
-            .register(&mut env);
+        QueryOps::task(
+            Arc::clone(&root),
+            Arc::clone(&class_field),
+            Arc::clone(&schemas_dir),
+        )
+        .register(&mut env);
         QueryOps::register_terminal_filters(&mut env);
-        PathOps::new(root).register(&mut env);
+        PathOps::new(Arc::clone(&root)).register(&mut env);
         UiOps::new(provider).register(&mut env);
         DateOps.register(&mut env);
         StrOps::register(&mut env);
         NumOps::register(&mut env);
-        SchemaOps::new(Arc::from(
-            config.root().join(config.schemas().directory()),
-        ))
-        .register(&mut env);
+        SchemaOps::new(root, schemas_dir, class_field, aliases_field)
+            .register(&mut env);
         env.add_function("uuid", uuid);
         Self {
             env,

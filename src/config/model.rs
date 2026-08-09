@@ -25,15 +25,6 @@ pub struct Config {
     root: PathBuf,
     templates: TemplateConfig,
     schemas: SchemasConfig,
-    #[cfg_attr(
-        not(any(test, feature = "test-utils")),
-        expect(
-            dead_code,
-            reason = "declared by the config-surface ticket; read by later \
-                      frontmatter-aware tickets \
-                      (.scratch/metadata-schemas/issues/01-config-surface.md)"
-        )
-    )]
     frontmatter: FrontmatterConfig,
 }
 
@@ -101,15 +92,6 @@ impl Config {
     /// Returns the resolved `[frontmatter]` settings.
     #[inline]
     #[must_use]
-    #[cfg_attr(
-        not(any(test, feature = "test-utils")),
-        expect(
-            dead_code,
-            reason = "declared by the config-surface ticket; read by later \
-                      frontmatter-aware tickets \
-                      (.scratch/metadata-schemas/issues/01-config-surface.md)"
-        )
-    )]
     pub fn frontmatter(&self) -> &FrontmatterConfig {
         &self.frontmatter
     }
@@ -249,15 +231,6 @@ pub struct FrontmatterConfig {
         )
     )]
     title: Option<String>,
-    #[cfg_attr(
-        not(any(test, feature = "test-utils")),
-        expect(
-            dead_code,
-            reason = "declared by the config-surface ticket; read by later \
-                      frontmatter-aware tickets \
-                      (.scratch/metadata-schemas/issues/01-config-surface.md)"
-        )
-    )]
     aliases: Option<String>,
     #[cfg_attr(
         not(any(test, feature = "test-utils")),
@@ -302,15 +275,6 @@ impl FrontmatterConfig {
     /// Returns the frontmatter key holding a Note's aliases, if configured.
     #[inline]
     #[must_use]
-    #[cfg_attr(
-        not(any(test, feature = "test-utils")),
-        expect(
-            dead_code,
-            reason = "declared by the config-surface ticket; read by later \
-                      frontmatter-aware tickets \
-                      (.scratch/metadata-schemas/issues/01-config-surface.md)"
-        )
-    )]
     pub fn aliases(&self) -> Option<&str> {
         self.aliases.as_deref()
     }

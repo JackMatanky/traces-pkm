@@ -108,7 +108,7 @@ impl QuerySource {
 /// - A list of strings yields each string element.
 /// - A missing field, a non-string scalar, or non-string list elements yield
 ///   nothing.
-fn class_values<'a>(
+pub(super) fn class_values<'a>(
     note: &'a Note,
     class_field: &str,
 ) -> impl Iterator<Item = &'a str> {

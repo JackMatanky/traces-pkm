@@ -4,14 +4,14 @@
 
 **Blocked by:** 03 — Schema minijinja Namespace (done on `feat/schema-namespace`, branch from there)
 
-**Status:** ready-for-agent
+**Status:** implemented
 
-- [ ] `file` fields resolve their options from the FileIndex through an AND-composed filter of `folders` (array), `ext`, and `class` (array); no regex in filters.
-- [ ] `class` filter values match transitively through is-a (a note whose class extends the filtered class is included), using ticket 02's matching.
-- [ ] `.field()` on a `file` field returns label/value pairs: label from `[frontmatter]` aliases when present, else the filename stem; value the path.
-- [ ] The pair list feeds `ui.select` directly (ADR-0003 index-based selection).
-- [ ] The options reflect the current index state at render time.
-- [ ] Render-seam tests assert label resolution (aliases present vs absent) and that the returned value is the path.
+- [x] `file` fields resolve their options from the FileIndex through an AND-composed filter of `folders` (array), `ext`, and `class` (array); no regex in filters.
+- [x] `class` filter values match transitively through is-a (a note whose class extends the filtered class is included), using ticket 02's matching.
+- [x] `.field()` on a `file` field returns label/value pairs: label from `[frontmatter]` aliases when present, else the filename stem; value the path.
+- [x] The pair list feeds `ui.select` directly (ADR-0003 index-based selection).
+- [x] The options reflect the current index state at render time.
+- [x] Render-seam tests assert label resolution (aliases present vs absent) and that the returned value is the path.
 
 ## Comments
 
@@ -54,18 +54,36 @@ When a template calls `schema.get("book").field("cover")` on a `file`-typed fiel
 
 ## Implementation notes
 
-**Date**:
-**Implemented in**:
-**Branch**:
+**Date**: 2026-08-09
+**Implemented in**: `.worktrees/file-field-options`
+**Branch**: `feat/file-field-options`
 
 ### What was built
 
+- `FileIndex::file_options(...)` now returns deterministic label/value file options from the current index.
+- `SchemaBinding::field()` now resolves `FieldType::File` through the render-scoped FileIndex cache and returns `[{ label, value }, ...]` objects.
+- File filters are AND-composed across `folders`, `ext`, and `class`; array filters are any-of within their dimension.
+- Class filters reuse `SchemaRegistry::matching_classes()` so subclasses match parent class filters transitively.
+- Labels use the configured `[frontmatter] aliases` field's scalar value or first list string, else the indexed filename stem. Values are project-relative paths.
+
 ### Key design decisions
+
+- Reused `template::engine::query::cached_refresh()` so `schema`, `query`, and `tasks` share one render-scoped FileIndex refresh.
+- Kept minijinja value construction in `template::engine::schema`; the index returns plain Rust `FileOption` data and stays minijinja-free.
+- Did not add regex, file watching, or a new selection API. Existing `ui.select` already reads the `label` attribute by default and returns the selected object by index; consumers read `.value` for the path.
 
 ### Verification
 
+- Red check: `mise run test -- file_field` failed on the two new render-seam tests before implementation.
+- Focused green check: `mise run check`; `mise run test -- file_field`.
+- Full verification and two-axis review pending.
+
 ### Out of scope (unchanged)
+
+- Regex support in filters.
+- A file watcher/daemon to keep the index continuously fresh.
+- Editing Notes through Schema output.
 
 ## Adversarial re-review
 
-_(Fill after implementation — re-derive ACs from the issue text, cross-check against diff and test suite, run rust-code-review/rust-skills/rust-testing/rust-doc pass.)_
+Pending final `/code-review` pass after full verification.

@@ -27,7 +27,7 @@ mod query;
 mod scan;
 mod store;
 
-use std::{fs, path::Path};
+use std::{collections::BTreeSet, fs, path::Path};
 
 pub use error::FileIndexError;
 pub(crate) use file::FileFormat;
@@ -37,7 +37,7 @@ pub(crate) use query::{FileField, QueryError, SortOrder};
 pub use query::{IndexRecord, QueryOutcome, QuerySource};
 use store::IndexStore;
 
-use crate::note::{Note, parse_markdown};
+use crate::note::{FieldValue, Note, parse_markdown};
 
 /// Project-relative path of the persisted [`FileIndex`] database.
 const INDEX_FILE: &str = ".traces/index.redb";
@@ -56,6 +56,60 @@ pub struct FileIndex {
     /// - Recomputed in full whenever [`Self::refresh`] finds changed content.
     /// - Reused unchanged from the last persisted computation otherwise.
     inlinks: InlinkMap,
+}
+
+/// One selectable file option derived from the current [`FileIndex`].
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct FileOption {
+    label: String,
+    value: String,
+}
+
+impl FileOption {
+    /// Returns the display label shown by `ui.select`.
+    #[inline]
+    #[must_use]
+    pub(crate) fn label(&self) -> &str {
+        &self.label
+    }
+
+    /// Returns the project-relative path stored as the option's `value`.
+    #[inline]
+    #[must_use]
+    pub(crate) fn value(&self) -> &str {
+        &self.value
+    }
+}
+
+/// Borrowed filter values for [`FileIndex::file_options`].
+#[derive(Copy, Clone)]
+pub(crate) struct FileOptionFilter<'a> {
+    folders: &'a [String],
+    ext: Option<&'a str>,
+    class_field: &'a str,
+    classes: Option<&'a BTreeSet<String>>,
+    aliases_field: Option<&'a str>,
+}
+
+impl<'a> FileOptionFilter<'a> {
+    /// Builds a borrowed file-option filter.
+    #[inline]
+    #[must_use]
+    pub(crate) const fn new(
+        folders: &'a [String],
+        ext: Option<&'a str>,
+        class_field: &'a str,
+        classes: Option<&'a BTreeSet<String>>,
+        aliases_field: Option<&'a str>,
+    ) -> Self {
+        Self {
+            folders,
+            ext,
+            class_field,
+            classes,
+            aliases_field,
+        }
+    }
 }
 
 impl FileIndex {
@@ -247,6 +301,63 @@ impl FileIndex {
             .and_then(|idx| self.records.get(idx))
     }
 
+    /// Returns file-field options matching an AND-composed Schema filter.
+    ///
+    /// Empty `folders`, `ext`, `classes`, or `aliases_field` values skip that
+    /// filter dimension. Within `folders`, matching is any-of; a record matches
+    /// when its project-relative folder starts with any configured folder.
+    /// `classes` is already the transitive is-a match set from
+    /// [`SchemaRegistry::matching_classes`](crate::schema::SchemaRegistry::matching_classes).
+    #[must_use]
+    pub(crate) fn file_options(
+        &self,
+        filter: FileOptionFilter<'_>,
+    ) -> Vec<FileOption> {
+        let ext = filter.ext.map(|value| value.trim_start_matches('.'));
+        let mut options = Vec::new();
+        for record in &self.records {
+            if !filter.folders.is_empty()
+                && !filter
+                    .folders
+                    .iter()
+                    .any(|folder| record.folder().starts_with(folder))
+            {
+                continue;
+            }
+            if let Some(ext) = ext
+                && record
+                    .path()
+                    .extension()
+                    .and_then(|raw_ext| raw_ext.to_str())
+                    != Some(ext)
+            {
+                continue;
+            }
+            let note = self.note(record.path());
+            if let Some(classes) = filter.classes
+                && !note.is_some_and(|note| {
+                    query::class_values(note, filter.class_field)
+                        .any(|class| classes.contains(class))
+                })
+            {
+                continue;
+            }
+            let label = note
+                .and_then(|note| {
+                    filter
+                        .aliases_field
+                        .and_then(|field| alias_label(note, field))
+                })
+                .unwrap_or_else(|| record.name().as_str())
+                .to_owned();
+            options.push(FileOption {
+                label,
+                value: record.path().to_string_lossy().into_owned(),
+            });
+        }
+        options
+    }
+
     /// Executes a page-level query over `source`, consuming this index.
     ///
     /// Call [`Self::refresh`] first so results reflect the current filesystem.
@@ -369,6 +480,21 @@ fn record_with_inlinks(
 ) -> IndexRecord {
     let links = inlinks.remove(file.path()).unwrap_or_default();
     IndexRecord::new(file, note).with_inlinks(links)
+}
+
+/// Returns the first usable alias label for `note`.
+fn alias_label<'a>(note: &'a Note, aliases_field: &str) -> Option<&'a str> {
+    let value = note.frontmatter().and_then(|frontmatter| {
+        let field = frontmatter
+            .fields()
+            .iter()
+            .find(|field| field.key().is_match(aliases_field))?;
+        Some(field.value())
+    })?;
+    match value {
+        FieldValue::List(items) => items.iter().find_map(FieldValue::as_str),
+        value => value.as_str(),
+    }
 }
 
 /// Reads and parses the markdown file for `record` into a [`Note`].

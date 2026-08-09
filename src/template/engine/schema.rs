@@ -11,10 +11,10 @@
 //!
 //! - `.name`: the Schema's own name (its source file's stem).
 //! - `.field(name)`: the named field's selectable values, as plain strings for
-//!   a `select` field, or `none` for every other type. `file` fields currently
-//!   always resolve to `none` here; their selectable options come from the
-//!   `FileIndex`, which this namespace does not yet consult. An unknown field
-//!   name hard-errors, mirroring `.get`.
+//!   a `select` field, label/value objects for a `file` field, or `none` for
+//!   every other type. `file` fields resolve live from the render-scoped
+//!   `FileIndex`: labels use the configured `[frontmatter]` aliases key when
+//!   present, falling back to the filename stem; values are paths.
 //! - `.descendants()`: every Schema that is-a this one transitively (extends it
 //!   directly or via an ancestor), each itself a [`SchemaBinding`] so a
 //!   Template can walk the whole subtree (`.name`, `.field(...)`, and
@@ -24,9 +24,8 @@
 //! `schema.get` and `.field` are structural references: a typo in either name
 //! surfaces as a render error carrying template context, not a panic, mirroring
 //! [`super::query`]'s `errors` module. Class-based predicate references
-//! (`from_class`, `file`-field filters) are not supported by this namespace;
-//! the Schema supplies values only, and the template author still picks the
-//! interactive `ui.*` function.
+//! (`from_class`, `file`-field filters) degrade missing class targets to exact
+//! matching with a warning; structural Schema and field names still hard-error.
 //!
 //! # Registry Loading and Caching
 //!
@@ -35,7 +34,7 @@
 //! never reads the registry directory, so a broken Schema file elsewhere in it
 //! only breaks the Template that reaches into `schema`. Once loaded, the
 //! resolved [`SchemaRegistry`] is cached in [`State`]'s temp storage for the
-//! remainder of the render, mirroring [`super::query`]'s `cached_refresh`, so a
+//! remainder of the render, mirroring [`super::query::cached_refresh`], so a
 //! Template calling `schema.get` several times pays for one registry load.
 //! [`SchemaRegistry`] itself stores each Schema behind an `Arc`, so binding one
 //! via [`SchemaBinding`] shares that Schema's field map instead of deep-cloning
@@ -54,6 +53,7 @@ use minijinja::{
 use crate::{
     field,
     field::FieldKey,
+    index::FileOption,
     schema::{Schema, SchemaError, SchemaRegistry},
 };
 
@@ -72,18 +72,32 @@ const REGISTRY_CACHE_KEY: &str = "schema.registry_cache";
 /// Backs the `schema` namespace object.
 #[derive(Debug)]
 pub(super) struct SchemaOps {
-    /// The Schema registry directory, resolved against the render's project
-    /// root.
+    /// Project root used to refresh the render-scoped `FileIndex`.
+    root: Arc<Path>,
+    /// The Schema registry directory, resolved against the project root.
     directory: Arc<Path>,
+    /// Frontmatter field naming a Note's File Class(es).
+    class_field: Arc<str>,
+    /// Frontmatter field holding display aliases, when configured.
+    aliases_field: Option<Arc<str>>,
 }
 
 impl SchemaOps {
-    /// Wraps `directory`, the resolved Schema registry directory.
+    /// Wraps the project `root`, resolved Schema registry `directory`, and
+    /// configured frontmatter keys used by file-field option resolution.
     #[inline]
     #[must_use]
-    pub(super) const fn new(directory: Arc<Path>) -> Self {
+    pub(super) const fn new(
+        root: Arc<Path>,
+        directory: Arc<Path>,
+        class_field: Arc<str>,
+        aliases_field: Option<Arc<str>>,
+    ) -> Self {
         Self {
+            root,
             directory,
+            class_field,
+            aliases_field,
         }
     }
 
@@ -146,6 +160,13 @@ impl Object for SchemaOps {
                                     SchemaBinding {
                                         schema,
                                         registry: Arc::clone(&registry),
+                                        root: Arc::clone(&ops.root),
+                                        class_field: Arc::clone(
+                                            &ops.class_field,
+                                        ),
+                                        aliases_field: ops
+                                            .aliases_field
+                                            .clone(),
                                     },
                                 ))
                             })
@@ -181,6 +202,9 @@ impl Object for CachedRegistry {}
 struct SchemaBinding {
     schema: Arc<Schema>,
     registry: Arc<SchemaRegistry>,
+    root: Arc<Path>,
+    class_field: Arc<str>,
+    aliases_field: Option<Arc<str>>,
 }
 
 impl Object for SchemaBinding {
@@ -188,12 +212,20 @@ impl Object for SchemaBinding {
         match key.as_str()? {
             "name" => Some(Value::from(self.schema.name())),
             "field" => {
-                let schema = Arc::clone(&self.schema);
+                let binding = Arc::clone(self);
                 Some(Value::from_function(
-                    move |name: &str| -> Result<Value, Error> {
-                        let field = schema.field(name).ok_or_else(|| {
-                            unknown_field_error(&schema, name)
-                        })?;
+                    move |state: &State, name: &str| -> Result<Value, Error> {
+                        let field =
+                            binding.schema.field(name).ok_or_else(|| {
+                                unknown_field_error(&binding.schema, name)
+                            })?;
+                        if let Some((folders, ext, classes)) =
+                            field.file_filter()
+                        {
+                            return binding.file_field_values(
+                                state, folders, ext, classes,
+                            );
+                        }
                         Ok(field.selectable_values().map_or_else(
                             || Value::from(()),
                             |values| Value::from(values.to_vec()),
@@ -214,6 +246,13 @@ impl Object for SchemaBinding {
                                     SchemaBinding {
                                         schema,
                                         registry: Arc::clone(&binding.registry),
+                                        root: Arc::clone(&binding.root),
+                                        class_field: Arc::clone(
+                                            &binding.class_field,
+                                        ),
+                                        aliases_field: binding
+                                            .aliases_field
+                                            .clone(),
                                     },
                                 ))
                             })
@@ -227,6 +266,53 @@ impl Object for SchemaBinding {
 
     fn enumerate(self: &Arc<Self>) -> Enumerator {
         Enumerator::Str(SCHEMA_METHODS)
+    }
+}
+
+impl SchemaBinding {
+    /// Resolves a file-typed field against the render-scoped `FileIndex`.
+    fn file_field_values(
+        &self,
+        state: &State,
+        folders: &[String],
+        ext: Option<&str>,
+        classes: &[String],
+    ) -> Result<Value, Error> {
+        let index = super::query::cached_refresh(state, &self.root)
+            .map_err(super::query::index_error)?;
+        let class_matches = if classes.is_empty() {
+            None
+        } else {
+            for class in classes {
+                if self.registry.get(class).is_none() {
+                    tracing::warn!(
+                        class = %class,
+                        "file field references a class with no Schema; \
+                         degrading to exact match"
+                    );
+                }
+            }
+            Some(self.registry.matching_classes(classes))
+        };
+        let options = index.file_options(crate::index::FileOptionFilter::new(
+            folders,
+            ext,
+            &self.class_field,
+            class_matches.as_ref(),
+            self.aliases_field.as_deref(),
+        ));
+        Ok(Value::from(
+            options.iter().map(file_option_value).collect::<Vec<_>>(),
+        ))
+    }
+}
+
+/// Converts an index-derived file option into the label/value object shape
+/// `ui.select` expects by default.
+fn file_option_value(option: &FileOption) -> Value {
+    minijinja::context! {
+        label => option.label().to_owned(),
+        value => option.value().to_owned(),
     }
 }
 
@@ -309,8 +395,19 @@ mod tests {
     /// A minimal [`Environment`] with `schema` registered against `directory`.
     fn env(directory: &Path) -> Environment<'static> {
         let mut env = Environment::new();
-        SchemaOps::new(Arc::from(directory)).register(&mut env);
+        schema_ops(directory).register(&mut env);
         env
+    }
+
+    fn schema_ops(directory: &Path) -> SchemaOps {
+        let root =
+            directory.parent().and_then(Path::parent).unwrap_or(directory);
+        SchemaOps::new(
+            Arc::from(root),
+            Arc::from(directory),
+            Arc::from("class"),
+            Some(Arc::from("aliases")),
+        )
     }
 
     fn render(directory: &Path, source: &str) -> Result<String, Error> {
@@ -328,8 +425,18 @@ mod tests {
             fs::write(dir.join(format!("{name}.toml")), content)
                 .expect("write schema");
         }
+
+        /// Writes `content` as a project-relative Markdown file under `root`,
+        /// creating parent directories if needed.
+        pub(super) fn write_note(root: &Path, path: &str, content: &str) {
+            let path = root.join(path);
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent).expect("create note parent dir");
+            }
+            fs::write(path, content).expect("write note");
+        }
     }
-    use fixtures::write_schema;
+    use fixtures::{write_note, write_schema};
 
     mod get_value {
         use super::*;
@@ -337,7 +444,7 @@ mod tests {
         #[test]
         fn returns_none_for_an_unknown_key() {
             let temp = tempfile::tempdir().expect("create temp dir");
-            let ops = Arc::new(SchemaOps::new(Arc::from(temp.path())));
+            let ops = Arc::new(schema_ops(temp.path()));
 
             assert!(ops.get_value(&Value::from("unknown")).is_none());
         }
@@ -345,7 +452,7 @@ mod tests {
         #[test]
         fn returns_none_for_a_non_string_key() {
             let temp = tempfile::tempdir().expect("create temp dir");
-            let ops = Arc::new(SchemaOps::new(Arc::from(temp.path())));
+            let ops = Arc::new(schema_ops(temp.path()));
 
             assert!(ops.get_value(&Value::from(1)).is_none());
         }
@@ -357,7 +464,7 @@ mod tests {
         #[test]
         fn lists_every_method() {
             let temp = tempfile::tempdir().expect("create temp dir");
-            let ops = Arc::new(SchemaOps::new(Arc::from(temp.path())));
+            let ops = Arc::new(schema_ops(temp.path()));
 
             assert!(matches!(ops.enumerate(), Enumerator::Str(METHODS)));
         }
@@ -365,7 +472,7 @@ mod tests {
         #[test]
         fn every_enumerated_method_resolves_via_get_value() {
             let temp = tempfile::tempdir().expect("create temp dir");
-            let ops = Arc::new(SchemaOps::new(Arc::from(temp.path())));
+            let ops = Arc::new(schema_ops(temp.path()));
 
             for method in METHODS {
                 assert!(
@@ -475,8 +582,7 @@ mod tests {
                 values = ["reading"]
                 "#,
             );
-            let ops =
-                Arc::new(SchemaOps::new(Arc::from(schemas_dir.as_path())));
+            let ops = Arc::new(schema_ops(&schemas_dir));
             let get = ops
                 .get_value(&Value::from("get"))
                 .expect("get is a known method");
@@ -565,7 +671,7 @@ mod tests {
         }
 
         #[test]
-        fn returns_none_for_a_file_field_type_pending_the_fileindex_ticket() {
+        fn file_field_returns_index_derived_label_value_pairs() {
             let temp = tempfile::tempdir().expect("create temp dir");
             write_schema(
                 temp.path(),
@@ -573,16 +679,72 @@ mod tests {
                 r#"
                 [fields.cover]
                 type = "file"
+                folders = ["covers"]
+                ext = "md"
+                class = ["book"]
                 "#,
             );
+            write_schema(temp.path(), "sci_fi", r#"extends = ["book"]"#);
+            write_note(
+                temp.path(),
+                "covers/dune.md",
+                "---\naliases:\n  - Friendly Dune\nclass: sci_fi\n---\n",
+            );
+            write_note(
+                temp.path(),
+                "covers/plain.md",
+                "---\nclass: book\n---\n",
+            );
+            write_note(
+                temp.path(),
+                "misc/ignored.md",
+                "---\nclass: book\n---\n",
+            );
+            write_note(temp.path(), "covers/ignored.txt", "");
 
             let rendered = render(
                 &temp.path().join(".traces/schemas"),
-                "{{ schema.get('book').field('cover') is none }}",
+                "{% for item in schema.get('book').field('cover') %}{{ \
+                 item.label }}={{ item.value }}{% if not loop.last %}|{% \
+                 endif %}{% endfor %}",
             )
             .expect("render succeeds");
 
-            assert_eq!(rendered, "true");
+            assert_eq!(
+                rendered,
+                "Friendly Dune=covers/dune.md|plain=covers/plain.md"
+            );
+        }
+
+        #[test]
+        fn file_field_options_refresh_between_renders() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let schemas_dir = temp.path().join(".traces/schemas");
+            write_schema(
+                temp.path(),
+                "book",
+                r#"
+                [fields.cover]
+                type = "file"
+                folders = ["covers"]
+                ext = "md"
+                "#,
+            );
+            let env = env(&schemas_dir);
+            let source = "{{ schema.get('book').field('cover') | \
+                          map(attribute='value') | join(',') }}";
+            write_note(temp.path(), "covers/first.md", "");
+
+            let first = env
+                .render_str(source, minijinja::context!())
+                .expect("first render succeeds");
+            write_note(temp.path(), "covers/second.md", "");
+            let second = env
+                .render_str(source, minijinja::context!())
+                .expect("second render succeeds");
+
+            assert_eq!(first, "covers/first.md");
+            assert_eq!(second, "covers/first.md,covers/second.md");
         }
     }
 
@@ -740,8 +902,7 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             let mut env = Environment::new();
             env.set_debug(true);
-            SchemaOps::new(Arc::from(temp.path().join(".traces/schemas")))
-                .register(&mut env);
+            schema_ops(&temp.path().join(".traces/schemas")).register(&mut env);
 
             let error = env
                 .render_named_str(
