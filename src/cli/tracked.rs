@@ -13,7 +13,10 @@ use clap::{Args, Subcommand};
 use super::error::CliError;
 use crate::config::ConfigService;
 
-/// Command-line arguments for `traces tracked`.
+/// Arguments for `traces tracked`.
+///
+/// Inspects or cleans the best-effort store of local config files that
+/// [`ConfigService::load`] has seen.
 #[derive(Debug, Args)]
 pub(super) struct Tracked {
     #[command(subcommand)]

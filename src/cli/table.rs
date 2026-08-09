@@ -13,7 +13,10 @@ use clap::Args;
 use super::error::CliError;
 use crate::{config::ConfigService, index::SortOrder};
 
-/// Command-line arguments for `traces table`.
+/// Arguments for `traces table`.
+///
+/// Queries pages from the trusted project root and prints matching records as
+/// a Markdown table with one column per `--column` flag.
 #[derive(Debug, Args)]
 pub(super) struct Table {
     /// Page source: a `#tag` (including nested sub-tags) or a folder path.

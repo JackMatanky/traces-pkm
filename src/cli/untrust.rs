@@ -10,7 +10,10 @@ use clap::Args;
 use super::error::CliError;
 use crate::config::ConfigService;
 
-/// Command-line arguments for `traces untrust`.
+/// Arguments for `traces untrust`.
+///
+/// Revokes trust from a project root (default) or from all descendant configs
+/// when `--all` is passed.
 #[derive(Debug, Args)]
 pub(super) struct Untrust {
     /// Apply untrust to descendant configurations too.

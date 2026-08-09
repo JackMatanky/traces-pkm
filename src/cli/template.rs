@@ -21,7 +21,10 @@ use crate::{
     },
 };
 
-/// Command-line arguments for `traces template`.
+/// Arguments for `traces template`.
+///
+/// Renders a named template to disk or stdout. Supports interactive template
+/// selection when no name is given, dry-run preview, and output-path override.
 #[derive(Debug, Args)]
 #[command(group(ArgGroup::new("mode").args(["list"]).multiple(false)))]
 #[expect(

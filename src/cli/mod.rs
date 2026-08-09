@@ -1,8 +1,17 @@
-//! Provides the CLI entry point and command dispatch.
+//! CLI entry point and command dispatch.
 //!
-//! Owns the clap parser, default `-i` template dispatch, command routing, and
-//! [`CliError`] export. Submodules contain command-specific behavior so this
-//! module stays limited to argument flow and shared helpers.
+//! Parses process arguments via [`clap`], routes to the selected subcommand
+//! (or the default `-i` template dispatch), and translates domain errors into
+//! [`CliError`] diagnostics.
+//!
+//! Key types:
+//!
+//! - [`CommandOutcome`] -- top-level result of a successful command.
+//! - [`UserAbort`] -- deliberate user cancellation or interruption.
+//! - [`CliError`] -- unified diagnostic error for all CLI operations.
+//!
+//! Submodules contain command-specific logic; this module stays limited to
+//! argument flow and shared helpers.
 
 mod completions;
 mod cwd;
@@ -34,31 +43,37 @@ use crate::{
     index::{FileIndex, QueryError, QueryOutcome, QuerySource},
 };
 
-/// Outcome of a successful CLI command.
+/// Top-level result of a successful CLI command.
 ///
-/// Distinguishes normal completion from deliberate user cancellation or
-/// interruption.
+/// Returned by [`run`] to distinguish normal completion from deliberate user
+/// cancellation or interruption. The process exit code is `0` for both
+/// variants; callers that need different behavior can match on the variant.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum CommandOutcome {
-    /// The command completed normally.
+    /// The command completed its work without interruption.
     Completed,
-    /// The user deliberately ended an interactive command.
+    /// The user cancelled or interrupted an interactive prompt before the
+    /// command could finish.
     Aborted(UserAbort),
 }
 
 /// User gesture that ended an interactive command.
+///
+/// Extracted from dialog-layer cancellation or interruption errors in the
+/// error source chain.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum UserAbort {
-    /// Escape canceled the command.
+    /// The user pressed Escape to cancel an interactive prompt.
     Cancelled,
-    /// Ctrl-C interrupted the command.
+    /// The user pressed Ctrl-C to interrupt an interactive prompt.
     Interrupted,
 }
 
 /// Root command-line parser for `traces`.
 ///
-/// When no subcommand is specified, `-i`/`--input` dispatches to template
-/// instantiation.
+/// Dispatches to a subcommand when one is present, or to the default
+/// `-i`/`--input` template instantiation path when the flag is given.
+/// Returns [`CliError::NoCommand`] when neither is provided.
 #[derive(Debug, Parser)]
 #[command(
     name = "traces",
@@ -127,27 +142,27 @@ impl Cli {
 /// Top-level `traces` subcommands.
 #[derive(Debug, Subcommand)]
 enum Commands {
-    /// Initialize local traces configuration.
+    /// Initialize local traces configuration in the current directory.
     Init(init::Init),
-    /// Manage trusted project roots.
+    /// Grant trust to one or more project roots.
     Trust(trust::Trust),
-    /// Revoke trust from project roots.
+    /// Revoke trust from one or more project roots.
     Untrust(untrust::Untrust),
     /// Build or rebuild the persisted [`FileIndex`].
     Index(index::Index),
-    /// Run a page-level query and print list output.
+    /// Query pages and print matching file paths as a Markdown bullet list.
     List(list::List),
-    /// Run a page-level query and print tabular output.
+    /// Query pages and print matching records as a Markdown table.
     Table(table::Table),
-    /// Run a task-level query and print task output.
+    /// Query tasks and print matching checkbox lines.
     Task(task::Task),
-    /// Render a template and write it to disk.
+    /// Render a template and write it to disk, or list available templates.
     #[command(alias = "tmpl")]
     Template(template::Template),
-    /// Generate shell completions or list available template names.
+    /// Generate shell completion scripts or list available template names.
     #[command(alias = "completion")]
     Completions(completions::Completions),
-    /// Manage tracked (best-effort seen) local configs.
+    /// Inspect or clean the tracked-config store.
     Tracked(tracked::Tracked),
 }
 
@@ -179,13 +194,16 @@ impl Commands {
 
 /// Parses process arguments and runs the selected `traces` command.
 ///
-/// On success, yields the top-level [`CommandOutcome`].
+/// Yields [`CommandOutcome::Completed`] on success, or
+/// [`CommandOutcome::Aborted`] if the user cancelled or interrupted an
+/// interactive prompt.
 ///
 /// # Errors
 ///
-/// - [`CliError::NoCommand`] if neither a subcommand nor `-i`/`--input` was
+/// - [`CliError::NoCommand`] when neither a subcommand nor `-i`/`--input` is
 ///   provided.
-/// - [`CliError`] if command execution fails.
+/// - [`CliError`] for any command-level failure (config load, indexing, query,
+///   template rendering, trust store, etc.).
 #[inline]
 pub fn run() -> Result<CommandOutcome, CliError> {
     let provider: Arc<dyn DialogProvider> =
@@ -197,7 +215,8 @@ pub fn run() -> Result<CommandOutcome, CliError> {
 ///
 /// # Errors
 ///
-/// - [`CliError::CurrentDirectory`] if the current directory cannot be read.
+/// Returns [`CliError::CurrentDirectory`] if the directory does not exist or
+/// cannot be accessed.
 fn current_dir() -> Result<Cwd, CliError> {
     Cwd::new().map_err(|source| CliError::CurrentDirectory {
         source,
@@ -208,7 +227,7 @@ fn current_dir() -> Result<Cwd, CliError> {
 ///
 /// # Errors
 ///
-/// - [`CliError::CurrentDirectory`] if the current directory cannot be read.
+/// - [`CliError::CurrentDirectory`] if reading the current directory fails.
 /// - [`CliError::ConfigLoad`] if configuration discovery or loading fails.
 fn load_config(service: &ConfigService) -> Result<Config, CliError> {
     let cwd = current_dir()?.into_inner();
@@ -221,11 +240,11 @@ fn load_config(service: &ConfigService) -> Result<Config, CliError> {
 /// Refreshes `root`'s [`FileIndex`] and returns page-level records selected
 /// by `from`.
 ///
-/// Shared by `traces table` and `traces list`.
+/// Shared by [`list::List`] and [`table::Table`].
 ///
 /// # Errors
 ///
-/// - [`CliError::Index`] if refreshing the [`FileIndex`] fails.
+/// Returns [`CliError::Index`] if refreshing the [`FileIndex`] fails.
 fn refresh_page_query(
     root: &Path,
     from: Option<&str>,
@@ -240,11 +259,11 @@ fn refresh_page_query(
 /// Refreshes `root`'s [`FileIndex`] and returns task-level records selected
 /// by `from`.
 ///
-/// Shared by `traces task`.
+/// Shared by [`task::Task`].
 ///
 /// # Errors
 ///
-/// - [`CliError::Index`] if refreshing the [`FileIndex`] fails.
+/// Returns [`CliError::Index`] if refreshing the [`FileIndex`] fails.
 fn refresh_task_query(
     root: &Path,
     from: Option<&str>,
@@ -258,11 +277,11 @@ fn refresh_task_query(
 
 /// Applies an optional `--where` filter expression to `outcome`.
 ///
-/// Shared by `traces table`, `traces list`, and `traces task`.
+/// Shared by [`list::List`], [`table::Table`], and [`task::Task`].
 ///
 /// # Errors
 ///
-/// - [`CliError::Query`] if `filter` is an unparsable filter expression.
+/// Returns [`CliError::Query`] if `filter` is an unparsable expression.
 fn apply_filter(
     outcome: QueryOutcome,
     root: &Path,
@@ -278,11 +297,11 @@ fn apply_filter(
 
 /// Applies an optional `--sort` field path to `outcome`.
 ///
-/// Shared by `traces table` and `traces list`.
+/// Shared by [`list::List`] and [`table::Table`].
 ///
 /// # Errors
 ///
-/// - [`CliError::Query`] if `sort` names a malformed field path.
+/// Returns [`CliError::Query`] if `sort` names a malformed field path.
 fn apply_sort(
     outcome: QueryOutcome,
     root: &Path,
@@ -298,8 +317,6 @@ fn apply_sort(
 }
 
 /// Wraps a [`QueryError`] as a [`CliError::Query`] against `root`.
-///
-/// Shared by every query-command outcome transformation and render call.
 fn query_error(root: &Path, source: QueryError) -> CliError {
     CliError::Query {
         root: root.to_path_buf(),
@@ -310,7 +327,7 @@ fn query_error(root: &Path, source: QueryError) -> CliError {
 /// Resolves trust subjects for `path` (or the current directory when absent) at
 /// `all`'s scope.
 ///
-/// Shared by `traces trust` and `traces untrust`.
+/// Shared by [`trust::Trust`] and [`untrust::Untrust`].
 ///
 /// # Errors
 ///

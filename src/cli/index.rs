@@ -9,7 +9,10 @@ use clap::Args;
 use super::error::CliError;
 use crate::{config::ConfigService, index::FileIndex};
 
-/// Command-line arguments for `traces index`.
+/// Arguments for `traces index`.
+///
+/// Takes no positional or optional arguments. Scans the trusted project root
+/// and persists a fresh [`FileIndex`].
 #[derive(Debug, Args)]
 pub(super) struct Index;
 

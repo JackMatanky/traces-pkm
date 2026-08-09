@@ -1,8 +1,8 @@
 //! Shell completion generation and template-name listing.
 //!
-//! Serves `traces completions` by either emitting a static completion script
-//! for a supported [`Shell`] or loading configuration to print available
-//! template names for dynamic completion.
+//! Serves `traces completions` by emitting a static completion script for a
+//! supported [`Shell`] or printing available template names for dynamic
+//! tab-completion.
 
 use clap::{ArgGroup, Args, CommandFactory as _};
 use clap_complete::{Shell, generate};
@@ -10,7 +10,9 @@ use clap_complete::{Shell, generate};
 use super::error::CliError;
 use crate::{config::ConfigService, template::TemplateService};
 
-/// Command-line arguments for `traces completions`.
+/// Arguments for `traces completions`.
+///
+/// Exactly one of `--shell` or `--list-templates` must be provided.
 #[derive(Debug, Args)]
 #[command(group(
     ArgGroup::new("completions_mode")
@@ -30,10 +32,13 @@ pub(super) struct Completions {
 impl Completions {
     /// Runs `traces completions`.
     ///
+    /// With `--shell`, writes a shell completion script to stdout. With
+    /// `--list-templates`, prints available template names.
+    ///
     /// # Errors
     ///
-    /// - [`CliError::CurrentDirectory`] if the current directory cannot be
-    ///   read.
+    /// - [`CliError::CurrentDirectory`] if `--list-templates` requires reading
+    ///   the current directory and it cannot be read.
     /// - [`CliError::ConfigLoad`] if loading configuration for
     ///   `--list-templates` fails.
     #[inline]
@@ -83,8 +88,7 @@ impl Completions {
     ///
     /// # Errors
     ///
-    /// - [`CliError::CurrentDirectory`] if the current directory cannot be
-    ///   read.
+    /// - [`CliError::CurrentDirectory`] if reading the current directory fails.
     /// - [`CliError::ConfigLoad`] if configuration discovery or loading fails.
     fn template_names(
         service: &ConfigService,
@@ -97,8 +101,7 @@ impl Completions {
     ///
     /// # Errors
     ///
-    /// - [`CliError::CurrentDirectory`] if the current directory cannot be
-    ///   read.
+    /// - [`CliError::CurrentDirectory`] if reading the current directory fails.
     /// - [`CliError::ConfigLoad`] if configuration discovery or loading fails.
     #[expect(
         clippy::print_stdout,

@@ -11,7 +11,11 @@ use clap::{Args, Subcommand};
 use super::error::CliError;
 use crate::config::{ConfigService, TrustRequest};
 
-/// Command-line arguments for `traces trust`.
+/// Arguments for `traces trust`.
+///
+/// Grants trust to a project root (default), lists trusted roots, shows trust
+/// status, or cleans stale entries. Pass `--all` to operate on descendant
+/// configs.
 #[derive(Debug, Args)]
 #[command(args_conflicts_with_subcommands = true)]
 pub(super) struct Trust {

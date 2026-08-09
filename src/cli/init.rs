@@ -1,8 +1,8 @@
 //! Local project scaffold command.
 //!
-//! Handles `traces init` by collecting template and output directories,
-//! creating `.traces/` plus its template directory, and writing the initial
-//! local config.
+//! Handles `traces init` by collecting template and output directories
+//! interactively, creating `.traces/` plus its template directory, and writing
+//! the initial local config.
 
 use std::{
     fs,
@@ -20,7 +20,10 @@ use crate::{
 const DEFAULT_TEMPLATE_DIRECTORY: &str = ".traces/templates";
 const DEFAULT_OUTPUT_DIRECTORY: &str = ".";
 
-/// Command-line arguments for `traces init`.
+/// Arguments for `traces init`.
+///
+/// Initializes traces configuration in the current directory by scaffolding
+/// `.traces/`, a template directory, and a local config file.
 #[derive(Debug, Args)]
 pub struct Init;
 
