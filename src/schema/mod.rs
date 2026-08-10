@@ -26,6 +26,7 @@
 
 mod address;
 mod error;
+mod graph;
 mod model;
 mod name;
 mod raw;
