@@ -18,7 +18,7 @@ use crate::field::FieldName;
 /// Store one Schema's effective [`FieldDefinition`]s.
 ///
 /// Fields are resolved after inheritance, `excludes`, and `$ref` application.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Schema {
     name: SchemaName,
     fields: BTreeMap<FieldName, FieldDefinition>,
@@ -97,7 +97,7 @@ impl Schema {
 ///
 /// `required` and `multi` are currently inert; reserved for future LSP/MCP
 /// guardrails.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct FieldDefinition {
     options: FieldOptions,
     required: bool,
@@ -144,8 +144,12 @@ impl FieldDefinition {
             } => Some(values),
             FieldOptions::Input
             | FieldOptions::Boolean
-            | FieldOptions::Number
-            | FieldOptions::Date
+            | FieldOptions::Number {
+                ..
+            }
+            | FieldOptions::Date {
+                ..
+            }
             | FieldOptions::File {
                 ..
             } => None,
@@ -172,8 +176,12 @@ impl FieldDefinition {
                 ..
             }
             | FieldOptions::Boolean
-            | FieldOptions::Number
-            | FieldOptions::Date => None,
+            | FieldOptions::Number {
+                ..
+            }
+            | FieldOptions::Date {
+                ..
+            } => None,
         }
     }
 
@@ -205,8 +213,9 @@ pub(crate) struct SchemaFileFieldFilter<'a> {
 /// Pairs each [`FieldType`] with the options only that type carries: a
 /// `select` field without `values`, or a `date` field with a stray `folders`
 /// list, cannot be represented. `select` and `file` are the only list-bearing
-/// kinds; every other variant is a unit variant.
-#[derive(Clone, Debug, Eq, PartialEq)]
+/// kinds; `number` carries `step`/`min`/`max` and `date` a `format`; the rest
+/// are unit variants.
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) enum FieldOptions {
     /// Accept free-form text input.
     Input,
@@ -217,9 +226,19 @@ pub(crate) enum FieldOptions {
     /// Accept a boolean value.
     Boolean,
     /// Accept a numeric value.
-    Number,
+    Number {
+        /// Inclusive minimum; `None` when unset.
+        min: Option<f64>,
+        /// Inclusive maximum; `None` when unset.
+        max: Option<f64>,
+        /// Increment step for the numeric value; `None` when unset.
+        step: Option<f64>,
+    },
     /// Accept a date value.
-    Date,
+    Date {
+        /// Display/parse format (strftime); `None` when unset.
+        format: Option<String>,
+    },
     /// Accept a link to files matched by folder, extension, and class filters.
     File {
         folders: Vec<String>,
@@ -262,8 +281,29 @@ impl FieldOptions {
                 }),
             },
             FieldType::Boolean => Self::Boolean,
-            FieldType::Number => Self::Number,
-            FieldType::Date => Self::Date,
+            FieldType::Number => {
+                let (base_step, base_min, base_max) = match base {
+                    Some(Self::Number {
+                        min,
+                        max,
+                        step,
+                    }) => (*min, *max, *step),
+                    _ => (None, None, None),
+                };
+                Self::Number {
+                    min: raw.min.or(base_min),
+                    max: raw.max.or(base_max),
+                    step: raw.step.or(base_step),
+                }
+            }
+            FieldType::Date => Self::Date {
+                format: raw.format.clone().or_else(|| match base {
+                    Some(Self::Date {
+                        format,
+                    }) => format.clone(),
+                    _ => None,
+                }),
+            },
             FieldType::File => Self::File {
                 folders: raw.folders.clone().unwrap_or_else(|| match base {
                     Some(Self::File {
@@ -300,8 +340,12 @@ impl FieldOptions {
                 ..
             } => FieldType::Select,
             Self::Boolean => FieldType::Boolean,
-            Self::Number => FieldType::Number,
-            Self::Date => FieldType::Date,
+            Self::Number {
+                ..
+            } => FieldType::Number,
+            Self::Date {
+                ..
+            } => FieldType::Date,
             Self::File {
                 ..
             } => FieldType::File,
@@ -490,8 +534,8 @@ mod tests {
             #[rstest]
             #[case::input(FieldOptions::Input)]
             #[case::boolean(FieldOptions::Boolean)]
-            #[case::number(FieldOptions::Number)]
-            #[case::date(FieldOptions::Date)]
+            #[case::number(FieldOptions::Number { min: None, max: None, step: None })]
+            #[case::date(FieldOptions::Date { format: None })]
             #[case::file(FieldOptions::File {
                 folders: vec!["assets".to_owned()],
                 ext: Some("png".to_owned()),
@@ -534,12 +578,12 @@ mod tests {
                 #[case::number(
                     FieldType::Number,
                     RawFieldDef::direct(RawFieldType::Input),
-                    FieldOptions::Number
+                    FieldOptions::Number { min: None, max: None, step: None }
                 )]
                 #[case::date(
                     FieldType::Date,
                     RawFieldDef::direct(RawFieldType::Input),
-                    FieldOptions::Date
+                    FieldOptions::Date { format: None }
                 )]
                 #[case::file(
                     FieldType::File,
@@ -576,6 +620,40 @@ mod tests {
 
                     assert_eq!(options, FieldOptions::Select {
                         values: Vec::new()
+                    });
+                }
+
+                #[test]
+                fn number_uses_raws_bounds_when_present() {
+                    let raw = RawFieldDef {
+                        min: Some(0.0),
+                        max: Some(1.0),
+                        step: Some(0.25),
+                        ..RawFieldDef::direct(RawFieldType::Number)
+                    };
+
+                    let options =
+                        FieldOptions::build(FieldType::Number, &raw, None);
+
+                    assert_eq!(options, FieldOptions::Number {
+                        min: Some(0.0),
+                        max: Some(1.0),
+                        step: Some(0.25),
+                    });
+                }
+
+                #[test]
+                fn date_uses_raws_format_when_present() {
+                    let raw = RawFieldDef {
+                        format: Some("%Y".to_owned()),
+                        ..RawFieldDef::direct(RawFieldType::Date)
+                    };
+
+                    let options =
+                        FieldOptions::build(FieldType::Date, &raw, None);
+
+                    assert_eq!(options, FieldOptions::Date {
+                        format: Some("%Y".to_owned()),
                     });
                 }
 
@@ -750,6 +828,82 @@ mod tests {
 
                     assert_eq!(merged, FieldOptions::Input);
                 }
+
+                #[test]
+                fn number_uses_raws_bounds_over_the_base() {
+                    let base = FieldOptions::Number {
+                        min: Some(0.0),
+                        max: Some(10.0),
+                        step: Some(1.0),
+                    };
+                    let raw = RawFieldDef {
+                        min: Some(1.0),
+                        max: Some(5.0),
+                        step: Some(0.5),
+                        ..RawFieldDef::direct(RawFieldType::Number)
+                    };
+
+                    let merged = FieldOptions::build(
+                        FieldType::Number,
+                        &raw,
+                        Some(&base),
+                    );
+
+                    assert_eq!(merged, FieldOptions::Number {
+                        min: Some(1.0),
+                        max: Some(5.0),
+                        step: Some(0.5),
+                    });
+                }
+
+                #[test]
+                fn number_falls_back_to_bases_bounds_when_raw_omits_them() {
+                    let base = FieldOptions::Number {
+                        min: Some(0.0),
+                        max: Some(10.0),
+                        step: Some(1.0),
+                    };
+                    let raw = RawFieldDef::direct(RawFieldType::Number);
+
+                    let merged = FieldOptions::build(
+                        FieldType::Number,
+                        &raw,
+                        Some(&base),
+                    );
+
+                    assert_eq!(merged, base);
+                }
+
+                #[test]
+                fn date_uses_raws_format_over_the_base() {
+                    let base = FieldOptions::Date {
+                        format: Some("%Y".to_owned()),
+                    };
+                    let raw = RawFieldDef {
+                        format: Some("%Y-%m-%d".to_owned()),
+                        ..RawFieldDef::direct(RawFieldType::Date)
+                    };
+
+                    let merged =
+                        FieldOptions::build(FieldType::Date, &raw, Some(&base));
+
+                    assert_eq!(merged, FieldOptions::Date {
+                        format: Some("%Y-%m-%d".to_owned()),
+                    });
+                }
+
+                #[test]
+                fn date_falls_back_to_bases_format_when_raw_omits_it() {
+                    let base = FieldOptions::Date {
+                        format: Some("%Y".to_owned()),
+                    };
+                    let raw = RawFieldDef::direct(RawFieldType::Date);
+
+                    let merged =
+                        FieldOptions::build(FieldType::Date, &raw, Some(&base));
+
+                    assert_eq!(merged, base);
+                }
             }
         }
 
@@ -763,8 +917,8 @@ mod tests {
             #[case::input(FieldOptions::Input, FieldType::Input)]
             #[case::select(FieldOptions::Select { values: Vec::new() }, FieldType::Select)]
             #[case::boolean(FieldOptions::Boolean, FieldType::Boolean)]
-            #[case::number(FieldOptions::Number, FieldType::Number)]
-            #[case::date(FieldOptions::Date, FieldType::Date)]
+            #[case::number(FieldOptions::Number { min: None, max: None, step: None }, FieldType::Number)]
+            #[case::date(FieldOptions::Date { format: None }, FieldType::Date)]
             #[case::file(
                 FieldOptions::File { folders: Vec::new(), ext: None, class: Vec::new() },
                 FieldType::File

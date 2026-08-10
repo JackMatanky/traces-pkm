@@ -856,11 +856,17 @@ mod tests {
             );
             assert_eq!(
                 book.field("rating").map(FieldDefinition::options),
-                Some(&FieldOptions::Number)
+                Some(&FieldOptions::Number {
+                    step: None,
+                    min: None,
+                    max: None,
+                })
             );
             assert_eq!(
                 book.field("published").map(FieldDefinition::options),
-                Some(&FieldOptions::Date)
+                Some(&FieldOptions::Date {
+                    format: None
+                })
             );
             assert_eq!(
                 book.field("cover").map(FieldDefinition::options),

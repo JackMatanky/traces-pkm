@@ -84,6 +84,19 @@ pub(crate) struct RawFieldDef {
     pub(crate) ext: Option<String>,
     /// `file`-type filter: File Classes to match, is-a transitive.
     pub(crate) class: Option<Vec<String>>,
+    /// `number`-type inclusive minimum.
+    /// Inert, stored for schema authoring.
+    pub(crate) min: Option<f64>,
+    /// `number`-type inclusive maximum.
+    /// Inert, stored for schema authoring.
+    pub(crate) max: Option<f64>,
+    /// `number`-type increment step.
+    /// Inert today, stored like `required`/`multi` for schema authoring and
+    /// future guardrails.
+    pub(crate) step: Option<f64>,
+    /// `date`-type display/parse format (strftime).
+    /// Inert, stored for schema authoring.
+    pub(crate) format: Option<String>,
 }
 
 impl<'de> Deserialize<'de> for RawFieldDef {
@@ -124,6 +137,10 @@ impl<'de> Deserialize<'de> for RawFieldDef {
             folders: wire.folders,
             ext: wire.ext,
             class: wire.class,
+            min: wire.min,
+            max: wire.max,
+            step: wire.step,
+            format: wire.format,
         })
     }
 }
@@ -154,6 +171,10 @@ struct RawFieldDefToml {
     folders: Option<Vec<String>>,
     ext: Option<String>,
     class: Option<Vec<String>>,
+    min: Option<f64>,
+    max: Option<f64>,
+    step: Option<f64>,
+    format: Option<String>,
 }
 
 impl RawFieldDef {
@@ -174,6 +195,10 @@ impl RawFieldDef {
             folders: None,
             ext: None,
             class: None,
+            min: None,
+            max: None,
+            step: None,
+            format: None,
         }
     }
 
@@ -194,6 +219,10 @@ impl RawFieldDef {
             folders: None,
             ext: None,
             class: None,
+            min: None,
+            max: None,
+            step: None,
+            format: None,
         }
     }
 }
@@ -284,6 +313,19 @@ mod tests {
                 err.to_string().contains("typo_key"),
                 "unexpected error: {err}"
             );
+        }
+
+        #[test]
+        fn deserializes_a_number_with_a_step() {
+            let raw: RawFieldDef =
+                toml::from_str("type = \"number\"\nstep = 0.5")
+                    .expect("valid toml");
+
+            assert_eq!(
+                raw.source,
+                RawFieldSource::Direct(RawFieldType::Number)
+            );
+            assert_eq!(raw.step, Some(0.5));
         }
     }
 }
