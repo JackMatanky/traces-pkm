@@ -35,3 +35,5 @@ docs/digests/
 # -------------------------- Claude --------------------------- #
 .claude/
 CLAUDE.md
+
+docs/vault/
