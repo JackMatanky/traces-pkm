@@ -165,7 +165,7 @@ fn build_field(
             let kind = (*override_type)
                 .map_or_else(|| base.options().kind(), FieldType::from);
             (
-                FieldOptions::build(kind, raw, Some(base.options())),
+                FieldOptions::from_raw(kind, raw, Some(base.options())),
                 raw.required.unwrap_or(base.is_required()),
                 raw.multi.unwrap_or(base.is_multi()),
             )
@@ -173,7 +173,7 @@ fn build_field(
         RawFieldSource::Direct(raw_type) => {
             let kind = FieldType::from(*raw_type);
             (
-                FieldOptions::build(kind, raw, None),
+                FieldOptions::from_raw(kind, raw, None),
                 raw.required.unwrap_or(false),
                 raw.multi.unwrap_or(false),
             )

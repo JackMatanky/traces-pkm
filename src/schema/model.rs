@@ -272,8 +272,8 @@ pub(crate) enum FieldOptions {
 }
 
 impl FieldOptions {
-    /// Build options for `kind` from `raw`'s keys, falling back to `base`'s
-    /// options for any key `raw` leaves unset. `base: None` builds fresh
+    /// Create options for `kind` from `raw`'s keys, falling back to `base`'s
+    /// options for any key `raw` leaves unset. `base: None` creates fresh
     /// options with no fallback: every key `raw` leaves unset defaults to
     /// empty.
     ///
@@ -289,7 +289,7 @@ impl FieldOptions {
     ///
     /// - `raw.values` is `None`: falls back to parent's `["draft", "done"]`.
     /// - `raw.values` is `Some(["todo"])`: uses `["todo"]`.
-    pub(super) fn build(
+    pub(super) fn from_raw(
         kind: FieldType,
         raw: &RawFieldDef,
         base: Option<&Self>,
@@ -552,7 +552,7 @@ mod tests {
     }
 
     mod field_options {
-        mod build {
+        mod from_raw {
             mod without_base {
                 use pretty_assertions::assert_eq;
                 use rstest::rstest;
@@ -604,12 +604,15 @@ mod tests {
                     #[case] raw: RawFieldDef,
                     #[case] expected: FieldOptions,
                 ) {
-                    assert_eq!(FieldOptions::build(kind, &raw, None), expected);
+                    assert_eq!(
+                        FieldOptions::from_raw(kind, &raw, None),
+                        expected
+                    );
                 }
 
                 #[test]
                 fn select_defaults_to_empty_values_when_raw_omits_them() {
-                    let options = FieldOptions::build(
+                    let options = FieldOptions::from_raw(
                         FieldType::Select,
                         &RawFieldDef::direct(RawFieldType::Input),
                         None,
@@ -630,7 +633,7 @@ mod tests {
                     };
 
                     let options =
-                        FieldOptions::build(FieldType::Number, &raw, None);
+                        FieldOptions::from_raw(FieldType::Number, &raw, None);
 
                     assert_eq!(options, FieldOptions::Number {
                         min: Some(0.0),
@@ -647,7 +650,7 @@ mod tests {
                     };
 
                     let options =
-                        FieldOptions::build(FieldType::Date, &raw, None);
+                        FieldOptions::from_raw(FieldType::Date, &raw, None);
 
                     assert_eq!(options, FieldOptions::Date {
                         format: Some("%Y".to_owned()),
@@ -656,7 +659,7 @@ mod tests {
 
                 #[test]
                 fn file_defaults_to_empty_filter_fields_when_raw_omits_them() {
-                    let options = FieldOptions::build(
+                    let options = FieldOptions::from_raw(
                         FieldType::File,
                         &RawFieldDef::direct(RawFieldType::Input),
                         None,
@@ -685,7 +688,7 @@ mod tests {
                         ..RawFieldDef::direct(RawFieldType::Input)
                     };
 
-                    let merged = FieldOptions::build(
+                    let merged = FieldOptions::from_raw(
                         FieldType::Select,
                         &raw,
                         Some(&base),
@@ -703,7 +706,7 @@ mod tests {
                     };
                     let raw = RawFieldDef::direct(RawFieldType::Input);
 
-                    let merged = FieldOptions::build(
+                    let merged = FieldOptions::from_raw(
                         FieldType::Select,
                         &raw,
                         Some(&base),
@@ -717,7 +720,7 @@ mod tests {
                     let base = FieldOptions::Input;
                     let raw = RawFieldDef::direct(RawFieldType::Input);
 
-                    let merged = FieldOptions::build(
+                    let merged = FieldOptions::from_raw(
                         FieldType::Select,
                         &raw,
                         Some(&base),
@@ -742,8 +745,11 @@ mod tests {
                         ..RawFieldDef::direct(RawFieldType::Input)
                     };
 
-                    let merged =
-                        FieldOptions::build(FieldType::File, &raw, Some(&base));
+                    let merged = FieldOptions::from_raw(
+                        FieldType::File,
+                        &raw,
+                        Some(&base),
+                    );
 
                     assert_eq!(merged, FieldOptions::File {
                         folders: vec!["new".to_owned()],
@@ -761,8 +767,11 @@ mod tests {
                     };
                     let raw = RawFieldDef::direct(RawFieldType::Input);
 
-                    let merged =
-                        FieldOptions::build(FieldType::File, &raw, Some(&base));
+                    let merged = FieldOptions::from_raw(
+                        FieldType::File,
+                        &raw,
+                        Some(&base),
+                    );
 
                     assert_eq!(merged, base);
                 }
@@ -772,8 +781,11 @@ mod tests {
                     let base = FieldOptions::Input;
                     let raw = RawFieldDef::direct(RawFieldType::Input);
 
-                    let merged =
-                        FieldOptions::build(FieldType::File, &raw, Some(&base));
+                    let merged = FieldOptions::from_raw(
+                        FieldType::File,
+                        &raw,
+                        Some(&base),
+                    );
 
                     assert_eq!(merged, FieldOptions::File {
                         folders: Vec::new(),
@@ -799,8 +811,11 @@ mod tests {
                         ..RawFieldDef::direct(RawFieldType::Input)
                     };
 
-                    let merged =
-                        FieldOptions::build(FieldType::File, &raw, Some(&base));
+                    let merged = FieldOptions::from_raw(
+                        FieldType::File,
+                        &raw,
+                        Some(&base),
+                    );
 
                     assert_eq!(merged, FieldOptions::File {
                         folders: vec!["raw-folder".to_owned()],
@@ -817,7 +832,7 @@ mod tests {
                     };
                     let raw = RawFieldDef::direct(RawFieldType::Input);
 
-                    let merged = FieldOptions::build(
+                    let merged = FieldOptions::from_raw(
                         FieldType::Input,
                         &raw,
                         Some(&base),
@@ -840,7 +855,7 @@ mod tests {
                         ..RawFieldDef::direct(RawFieldType::Number)
                     };
 
-                    let merged = FieldOptions::build(
+                    let merged = FieldOptions::from_raw(
                         FieldType::Number,
                         &raw,
                         Some(&base),
@@ -862,7 +877,7 @@ mod tests {
                     };
                     let raw = RawFieldDef::direct(RawFieldType::Number);
 
-                    let merged = FieldOptions::build(
+                    let merged = FieldOptions::from_raw(
                         FieldType::Number,
                         &raw,
                         Some(&base),
@@ -881,8 +896,11 @@ mod tests {
                         ..RawFieldDef::direct(RawFieldType::Date)
                     };
 
-                    let merged =
-                        FieldOptions::build(FieldType::Date, &raw, Some(&base));
+                    let merged = FieldOptions::from_raw(
+                        FieldType::Date,
+                        &raw,
+                        Some(&base),
+                    );
 
                     assert_eq!(merged, FieldOptions::Date {
                         format: Some("%Y-%m-%d".to_owned()),
@@ -896,8 +914,11 @@ mod tests {
                     };
                     let raw = RawFieldDef::direct(RawFieldType::Date);
 
-                    let merged =
-                        FieldOptions::build(FieldType::Date, &raw, Some(&base));
+                    let merged = FieldOptions::from_raw(
+                        FieldType::Date,
+                        &raw,
+                        Some(&base),
+                    );
 
                     assert_eq!(merged, base);
                 }
