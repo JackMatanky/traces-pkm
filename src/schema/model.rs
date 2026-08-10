@@ -282,7 +282,7 @@ impl FieldOptions {
             },
             FieldType::Boolean => Self::Boolean,
             FieldType::Number => {
-                let (base_step, base_min, base_max) = match base {
+                let (base_min, base_max, base_step) = match base {
                     Some(Self::Number {
                         min,
                         max,
