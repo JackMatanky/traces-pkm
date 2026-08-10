@@ -55,7 +55,7 @@ use crate::{
     field,
     field::FieldKey,
     index::{FileOption, FrontmatterFieldKeys},
-    schema::{Schema, SchemaError, SchemaRegistry},
+    schema::{Schema, SchemaError, SchemaFileFieldFilter, SchemaRegistry},
 };
 
 /// Method names `schema` exposes, for [`SchemaOps::enumerate`].
@@ -64,11 +64,6 @@ const METHODS: &[&str] = &["get"];
 /// Keys a bound [`SchemaBinding`] exposes: `field`/`descendants` are called as
 /// methods, `name` is a plain attribute. Backs [`Object::enumerate`].
 const SCHEMA_METHODS: &[&str] = &["field", "name", "descendants"];
-
-/// The [`State::set_temp`] key used to cache one loaded [`SchemaRegistry`] for
-/// the current render. See the module docs' "Registry Loading and Caching"
-/// section.
-const REGISTRY_CACHE_KEY: &str = "schema.registry_cache";
 
 /// Shared runtime state for the `schema` namespace: the project root and Schema
 /// registry directory used to load/refresh render-scoped data, plus the
@@ -106,6 +101,13 @@ impl SchemaContext {
             keys,
         }
     }
+
+    /// Returns the resolved Schema registry directory.
+    #[inline]
+    #[must_use]
+    pub(super) fn directory(&self) -> &Path {
+        &self.directory
+    }
 }
 
 /// Backs the `schema` namespace object.
@@ -131,10 +133,10 @@ impl SchemaOps {
         env.add_global("schema", Value::from_object(self));
     }
 
-    /// Returns the render's cached [`SchemaRegistry`], loading and caching it
-    /// in `state`'s temp storage first if not already cached this render. Logs
-    /// each accumulated [`SchemaWarning`](crate::schema::SchemaWarning) once,
-    /// at load time.
+    /// Returns the render's [`SchemaRegistry`] cached via [`super::cache`],
+    /// shared with the `query`/`tasks` namespaces so a render touching both
+    /// pays for one [`SchemaRegistry::load`]. Logs each recovered
+    /// `SchemaWarning` once, at load time.
     ///
     /// # Errors
     ///
@@ -145,26 +147,22 @@ impl SchemaOps {
         &self,
         state: &State,
     ) -> Result<Arc<SchemaRegistry>, Error> {
-        if let Some(registry) =
-            state.get_temp(REGISTRY_CACHE_KEY).and_then(|value| {
-                value
-                    .downcast_object_ref::<CachedRegistry>()
-                    .map(|cached| Arc::clone(&cached.0))
-            })
-        {
-            return Ok(registry);
-        }
-        let (registry, warnings) = SchemaRegistry::load(&self.ctx.directory)
-            .map_err(registry_error)?;
-        for warning in &warnings {
-            tracing::warn!(%warning, "Schema registry resolved with a warning");
-        }
-        let registry = Arc::new(registry);
-        state.set_temp(
-            REGISTRY_CACHE_KEY,
-            Value::from_object(CachedRegistry(Arc::clone(&registry))),
-        );
-        Ok(registry)
+        let directory = self.ctx.directory();
+        super::cache::cached(
+            state,
+            super::cache::SCHEMA_REGISTRY_CACHE_KEY,
+            || {
+                let (registry, warnings) =
+                    SchemaRegistry::load(directory).map_err(registry_error)?;
+                for warning in &warnings {
+                    tracing::warn!(
+                        %warning,
+                        "Schema registry resolved with a warning"
+                    );
+                }
+                Ok(Arc::new(registry))
+            },
+        )
     }
 }
 
@@ -264,8 +262,11 @@ impl Object for SchemaBinding {
                             binding.schema.field(name).ok_or_else(|| {
                                 unknown_field_error(&binding.schema, name)
                             })?;
-                        if let Some((folders, ext, classes)) =
-                            field.file_filter()
+                        if let Some(SchemaFileFieldFilter {
+                            folders,
+                            ext,
+                            class: classes,
+                        }) = field.file_filter()
                         {
                             return binding.file_field_values(
                                 state, folders, ext, classes,
@@ -307,14 +308,6 @@ impl Object for SchemaBinding {
         Enumerator::Str(SCHEMA_METHODS)
     }
 }
-
-/// Wraps [`SchemaRegistry`] only so it can round-trip through [`State`]'s temp
-/// storage via [`Value::from_object`]/[`Value::downcast_object_ref`]. Never
-/// exposed to templates: no global registers it, unlike [`SchemaBinding`].
-#[derive(Debug)]
-struct CachedRegistry(Arc<SchemaRegistry>);
-
-impl Object for CachedRegistry {}
 
 /// Converts an index-derived file option into the label/value object shape
 /// `ui.select` expects by default.
@@ -399,7 +392,7 @@ fn closest_field_name<'a>(schema: &'a Schema, field: &str) -> Option<&'a str> {
 mod tests {
     use minijinja::Environment;
 
-    use super::*;
+    use super::{super::query::QueryOps, *};
 
     /// A minimal [`Environment`] with `schema` registered against `directory`.
     fn env(directory: &Path) -> Environment<'static> {
@@ -580,6 +573,8 @@ mod tests {
     mod caching {
         use std::fs;
 
+        use pretty_assertions::assert_eq;
+
         use super::*;
 
         #[test]
@@ -617,6 +612,68 @@ mod tests {
                 second.is_ok(),
                 "a cached registry must not need to reread a now-missing \
                  directory"
+            );
+        }
+
+        #[test]
+        fn a_query_call_reuses_the_registry_schema_already_cached() {
+            // `sci_fi` transitively is-a `book` via `extends`. An empty,
+            // degraded registry (`SchemaRegistry::load` on a missing
+            // directory - see the sibling test above) has no Schemas at
+            // all, so `from_class("book")` would fall back to exact-match
+            // and miss a Note whose File Class is `sci_fi`. Asserting the
+            // Note still matches after the directory is gone proves
+            // `query` reused the registry `schema.get` already cached in
+            // this render, not a fresh (post-deletion) load of its own.
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let schemas_dir = temp.path().join(".traces/schemas");
+            write_schema(temp.path(), "book", "");
+            write_schema(temp.path(), "sci_fi", "extends = [\"book\"]\n");
+            write_note(
+                temp.path(),
+                "dune.md",
+                "---\nclass: sci_fi\n---\n# dune",
+            );
+            let ctx = Arc::new(SchemaContext::new(
+                Arc::from(temp.path()),
+                Arc::from(schemas_dir.as_path()),
+                FrontmatterFieldKeys::new(
+                    FieldKey::try_new("class").expect("valid field key"),
+                    FieldKey::try_new("title").expect("valid field key"),
+                    FieldKey::try_new("aliases").expect("valid field key"),
+                ),
+            ));
+            let schema_ops = Arc::new(SchemaOps::new(Arc::clone(&ctx)));
+            let get = schema_ops
+                .get_value(&Value::from("get"))
+                .expect("get is a known method");
+            let query_ops = Arc::new(QueryOps::page(
+                Arc::from(temp.path()),
+                Arc::from("class"),
+                Arc::clone(&ctx),
+            ));
+            let from_class = query_ops
+                .get_value(&Value::from("from_class"))
+                .expect("from_class is a known method");
+            let env = Environment::new();
+            let state = env.empty_state();
+
+            // Populates state's cached SchemaRegistry under `schema`.
+            get.call(&state, &[Value::from("book")])
+                .expect("schema.get loads and caches the registry");
+            fs::remove_dir_all(&schemas_dir).expect("remove schemas dir");
+
+            let matched =
+                from_class.call(&state, &[Value::from("book")]).expect(
+                    "query.from_class must reuse the cached registry, not \
+                     reread the now-missing directory",
+                );
+
+            assert_eq!(
+                matched.len().expect("from_class returns a sized sequence"),
+                1,
+                "sci_fi's is-a relationship to book only resolves through the \
+                 registry schema.get already cached"
             );
         }
     }

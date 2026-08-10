@@ -22,6 +22,7 @@
 //! [`Environment`]: minijinja::Environment
 //! [`uuid`]: fn@uuid
 
+mod cache;
 mod date;
 mod error;
 mod file;
@@ -112,32 +113,35 @@ impl TemplateEngine {
             Arc::from(config.schemas().class_field_name());
         let schemas_dir: Arc<Path> =
             Arc::from(config.root().join(config.schemas().directory()));
+        let field_keys = FrontmatterFieldKeys::new(
+            config.schemas().class_field().clone(),
+            config.frontmatter().title().clone(),
+            config.frontmatter().aliases().clone(),
+        );
+        // Built once and shared with `QueryOps` (below) so `query`/`tasks`
+        // `.from_class()` and `schema.get()` resolve the identical Schema
+        // registry directory by construction, not by coincidentally-equal
+        // `Arc<Path>` clones: see `cache::SCHEMA_REGISTRY_CACHE_KEY`'s docs.
+        let schema_ctx = Arc::new(SchemaContext::new(
+            Arc::clone(&root),
+            schemas_dir,
+            field_keys,
+        ));
         FileOps::new(Arc::clone(&root)).register(&mut env);
         QueryOps::page(
             Arc::clone(&root),
             Arc::clone(&class_field),
-            Arc::clone(&schemas_dir),
+            Arc::clone(&schema_ctx),
         )
         .register(&mut env);
-        QueryOps::task(
-            Arc::clone(&root),
-            class_field,
-            Arc::clone(&schemas_dir),
-        )
-        .register(&mut env);
+        QueryOps::task(Arc::clone(&root), class_field, Arc::clone(&schema_ctx))
+            .register(&mut env);
         QueryOps::register_terminal_filters(&mut env);
         PathOps::new(Arc::clone(&root)).register(&mut env);
         UiOps::new(provider).register(&mut env);
         DateOps.register(&mut env);
         StrOps::register(&mut env);
         NumOps::register(&mut env);
-        let field_keys = FrontmatterFieldKeys::new(
-            config.schemas().class_field().clone(),
-            config.frontmatter().title().clone(),
-            config.frontmatter().aliases().clone(),
-        );
-        let schema_ctx =
-            Arc::new(SchemaContext::new(root, schemas_dir, field_keys));
         SchemaOps::new(schema_ctx).register(&mut env);
         env.add_function("uuid", uuid);
         Self {

@@ -54,22 +54,17 @@ pub(crate) enum SchemaError {
     /// Report a `$ref` to a Schema that is neither the Global Schema nor a
     /// transitive `extends` ancestor of the referencing Schema.
     #[error(
-        "$ref {reference:?} in field {field:?} of Schema {schema:?} is out of \
-         bounds: not the Global Schema or a transitive `extends` ancestor"
+        "$ref {reference} in field {own} is out of bounds: not the Global \
+         Schema or a transitive `extends` ancestor"
     )]
     RefOutOfBounds {
-        schema: SchemaName,
-        field: FieldName,
+        own: Box<FieldAddress>,
         reference: Box<FieldAddress>,
     },
     /// Report a `$ref` to an in-bounds Schema that has no such field.
-    #[error(
-        "$ref {reference:?} in field {field:?} of Schema {schema:?} does not \
-         resolve"
-    )]
+    #[error("$ref {reference} in field {own} does not resolve")]
     RefFieldNotFound {
-        schema: SchemaName,
-        field: FieldName,
+        own: Box<FieldAddress>,
         reference: Box<FieldAddress>,
     },
     /// Report two effective fields that share a
@@ -202,8 +197,9 @@ mod tests {
         #[test]
         fn ref_out_of_bounds_formats_display_message() {
             let error = SchemaError::RefOutOfBounds {
-                schema: SchemaName::from("movie"),
-                field: FieldName::try_from("status").expect("valid name"),
+                own: Box::new(
+                    FieldAddress::try_from("#movie/status").expect("valid ref"),
+                ),
                 reference: Box::new(
                     FieldAddress::try_from("#book/status").expect("valid ref"),
                 ),
@@ -211,17 +207,17 @@ mod tests {
 
             assert_display(
                 &error,
-                "$ref \"#book/status\" in field \"status\" of Schema \
-                 \"movie\" is out of bounds: not the Global Schema or a \
-                 transitive `extends` ancestor",
+                "$ref #book/status in field #movie/status is out of bounds: \
+                 not the Global Schema or a transitive `extends` ancestor",
             );
         }
 
         #[test]
         fn ref_field_not_found_formats_display_message() {
             let error = SchemaError::RefFieldNotFound {
-                schema: SchemaName::from("book"),
-                field: FieldName::try_from("status").expect("valid name"),
+                own: Box::new(
+                    FieldAddress::try_from("#book/status").expect("valid ref"),
+                ),
                 reference: Box::new(
                     FieldAddress::try_from("#book/status").expect("valid ref"),
                 ),
@@ -229,8 +225,7 @@ mod tests {
 
             assert_display(
                 &error,
-                "$ref \"#book/status\" in field \"status\" of Schema \"book\" \
-                 does not resolve",
+                "$ref #book/status in field #book/status does not resolve",
             );
         }
 
@@ -254,19 +249,17 @@ mod tests {
         #[test]
         fn stays_small() {
             // Regression guard (mem-assert-type-size): `UnresolvedRef` used
-            // to carry 5 owned Strings (120 bytes) because
-            // `ref_schema`/`ref_field` duplicated what `reference` already
-            // shows verbatim. `RefOutOfBounds`/`RefFieldNotFound` box their
-            // `FieldAddress` payload for the same reason now that a `$ref` is a
+            // to carry 5 owned Strings (120 bytes) because `ref_schema`/
+            // `ref_field` duplicated what `reference` already shows
+            // verbatim. `RefOutOfBounds`/`RefFieldNotFound` box both their
+            // own referencing address (`own`) and the `$ref` target
+            // (`reference`) as `Box<FieldAddress>` now that a `$ref` is a
             // validated `SchemaName` + `FieldName` pair rather than a single
             // `String`. `AmbiguousFieldName` boxes `second` for the same
-            // reason: two owned `FieldName`s alongside `schema` would have
-            // tied it for the largest variant again (measured: boxing one
-            // field lands the enum at 64 bytes, not the payload-only 56,
-            // since no variant's layout leaves the discriminant a free
-            // niche once two variants tie for largest). Keep every variant's
-            // payload small enough that `Result<_, SchemaError>` stays cheap
-            // to move through the resolution call chain.
+            // reason: two owned `FieldName`s alongside `schema` would tie it
+            // for the largest variant. Keep every variant's payload small
+            // enough that `Result<_, SchemaError>` stays cheap to move
+            // through the resolution call chain.
             assert!(
                 std::mem::size_of::<SchemaError>() <= 64,
                 "SchemaError grew to {} bytes; box or trim the offending \

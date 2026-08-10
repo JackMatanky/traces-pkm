@@ -12,9 +12,9 @@
 //! - `.from_class(class)`: Notes whose File Class matches `class` (a single
 //!   name or a list of names), with transitive is-a matching.
 //!
-//! Each method reuses the render's cached [`FileIndex`], refreshing it once
-//! per render (see [`cached_refresh`]), and returns a [`QueryOutcome`]
-//! wrapped in a [`Value`].
+//! Each method reuses the render's cached [`FileIndex`], refreshing it once per
+//! render (see [`cached_refresh`]), and returns a [`QueryOutcome`] wrapped in a
+//! [`Value`].
 //!
 //! # Row Shape
 //!
@@ -75,13 +75,14 @@ use minijinja::{
     value::{Enumerator, Object, ObjectRepr, Value, from_args},
 };
 
+use super::schema::SchemaContext;
 use crate::{
     index::{
         FileField, FileIndex, FileIndexError, IndexRecord, QueryError,
         QueryOutcome, QuerySource,
     },
     note::FieldValue,
-    schema::{GLOBAL_SCHEMA_NAME, SchemaError, SchemaRegistry, SchemaWarning},
+    schema::{GLOBAL_SCHEMA_NAME, SchemaError, SchemaRegistry},
 };
 
 /// Method names `query` and `tasks` each expose, for [`QueryOps::enumerate`].
@@ -98,26 +99,22 @@ const METHODS: &[&str] = &["all", "from_tags", "from_folder", "from_class"];
 /// independent renders on a reused [`Environment`]/[`super::TemplateEngine`].
 const INDEX_CACHE_KEY: &str = "query.index_cache";
 
-/// The [`State::set_temp`] key caching one loaded [`SchemaRegistry`] for the
-/// current render, mirroring [`INDEX_CACHE_KEY`]: a render calling
-/// `from_class` several times pays for one [`SchemaRegistry::load`].
-const REGISTRY_CACHE_KEY: &str = "query.registry_cache";
-
 /// Backs both the `query` and `tasks` minijinja namespace objects: one instance
 /// per namespace, differing only in which global it registers as and which
 /// [`FileIndex`] method builds the [`QueryOutcome`]. See
 /// [`Self::page`]/[`Self::task`].
 #[derive(Debug)]
 pub(super) struct QueryOps {
+    /// The minijinja global this instance registers as.
+    name: &'static str,
     root: Arc<Path>,
     /// Frontmatter field naming a Note's File Class(es), from `[schemas]
     /// class_field`. Passed to [`QuerySource::Class`] by `from_class`.
     class_field: Arc<str>,
-    /// Resolved Schema registry directory (`root` joined with `[schemas]
-    /// directory`), loaded by `from_class` for transitive is-a matching.
-    schemas_dir: Arc<Path>,
-    /// The minijinja global this instance registers as.
-    name: &'static str,
+    /// Shared with `schema.get()` so both namespaces resolve the same Schema
+    /// registry directory by construction; see
+    /// [`super::cache::SCHEMA_REGISTRY_CACHE_KEY`]'s docs.
+    schema_ctx: Arc<SchemaContext>,
     /// [`FileIndex::query`] for `query`, [`FileIndex::query_tasks`] for
     /// `tasks`.
     query: fn(FileIndex, &QuerySource) -> QueryOutcome,
@@ -130,13 +127,13 @@ impl QueryOps {
     pub(super) const fn page(
         root: Arc<Path>,
         class_field: Arc<str>,
-        schemas_dir: Arc<Path>,
+        schema_ctx: Arc<SchemaContext>,
     ) -> Self {
         Self {
+            name: "query",
             root,
             class_field,
-            schemas_dir,
-            name: "query",
+            schema_ctx,
             query: FileIndex::query,
         }
     }
@@ -148,13 +145,13 @@ impl QueryOps {
     pub(super) const fn task(
         root: Arc<Path>,
         class_field: Arc<str>,
-        schemas_dir: Arc<Path>,
+        schema_ctx: Arc<SchemaContext>,
     ) -> Self {
         Self {
+            name: "tasks",
             root,
             class_field,
-            schemas_dir,
-            name: "tasks",
+            schema_ctx,
             query: FileIndex::query_tasks,
         }
     }
@@ -239,9 +236,10 @@ impl QueryOps {
         })
     }
 
-    /// Returns the render's cached [`SchemaRegistry`], loading and caching it
-    /// in `state`'s temp storage first if not already cached this render.
-    /// Logs each [`SchemaWarning`] once, at load time.
+    /// Returns the render's [`SchemaRegistry`] cached via [`super::cache`],
+    /// shared with the `schema` namespace so a render touching both pays for
+    /// one [`SchemaRegistry::load`]. Logs each recovered `SchemaWarning` once,
+    /// at load time.
     ///
     /// # Errors
     ///
@@ -252,26 +250,22 @@ impl QueryOps {
         &self,
         state: &State,
     ) -> Result<Arc<SchemaRegistry>, Error> {
-        if let Some(registry) =
-            state.get_temp(REGISTRY_CACHE_KEY).and_then(|value| {
-                value
-                    .downcast_object_ref::<CachedRegistry>()
-                    .map(|cached| Arc::clone(&cached.0))
-            })
-        {
-            return Ok(registry);
-        }
-        let (registry, warnings): (SchemaRegistry, Vec<SchemaWarning>) =
-            SchemaRegistry::load(&self.schemas_dir).map_err(registry_error)?;
-        for warning in &warnings {
-            tracing::warn!(%warning, "Schema registry resolved with a warning");
-        }
-        let registry = Arc::new(registry);
-        state.set_temp(
-            REGISTRY_CACHE_KEY,
-            Value::from_object(CachedRegistry(Arc::clone(&registry))),
-        );
-        Ok(registry)
+        let directory = self.schema_ctx.directory();
+        super::cache::cached(
+            state,
+            super::cache::SCHEMA_REGISTRY_CACHE_KEY,
+            || {
+                let (registry, warnings) =
+                    SchemaRegistry::load(directory).map_err(registry_error)?;
+                for warning in &warnings {
+                    tracing::warn!(
+                        %warning,
+                        "Schema registry resolved with a warning"
+                    );
+                }
+                Ok(Arc::new(registry))
+            },
+        )
     }
 }
 
@@ -326,22 +320,6 @@ impl Object for QueryOps {
     }
 }
 
-/// Wraps [`FileIndex`] only so it can round-trip through [`State`]'s temp
-/// storage via [`Value::from_object`]/[`Value::downcast_object_ref`]. Never
-/// exposed to templates: no global registers it, unlike
-/// [`IndexRecord`]/[`QueryOutcome`].
-#[derive(Debug)]
-struct CachedIndex(FileIndex);
-
-impl Object for CachedIndex {}
-
-/// Wraps [`SchemaRegistry`] so it can round-trip through [`State`]'s temp
-/// storage, mirroring [`CachedIndex`]. Never exposed to templates.
-#[derive(Debug)]
-struct CachedRegistry(Arc<SchemaRegistry>);
-
-impl Object for CachedRegistry {}
-
 /// Returns the render's cached [`FileIndex`], refreshing and caching it in
 /// `state`'s temp storage first if not already cached this render.
 ///
@@ -352,19 +330,7 @@ pub(super) fn cached_refresh(
     state: &State,
     root: &Path,
 ) -> Result<FileIndex, FileIndexError> {
-    if let Some(index) = state.get_temp(INDEX_CACHE_KEY).and_then(|value| {
-        value
-            .downcast_object_ref::<CachedIndex>()
-            .map(|cached| cached.0.clone())
-    }) {
-        return Ok(index);
-    }
-    let index = FileIndex::refresh(root)?;
-    state.set_temp(
-        INDEX_CACHE_KEY,
-        Value::from_object(CachedIndex(index.clone())),
-    );
-    Ok(index)
+    super::cache::cached(state, INDEX_CACHE_KEY, || FileIndex::refresh(root))
 }
 
 /// Maps a [`FileIndexError`] into a [`minijinja::Error`].
@@ -713,25 +679,37 @@ mod tests {
     use minijinja::Environment;
 
     use super::*;
-    use crate::{DialogProvider, PresetDialogProvider};
+    use crate::{
+        DialogProvider, PresetDialogProvider, field::FieldKey,
+        index::FrontmatterFieldKeys,
+    };
+
+    /// Builds a shared [`SchemaContext`] for `root`, backing both
+    /// [`page_ops`] and [`task_ops`] so both namespaces resolve the same
+    /// Schema registry directory (`root/.traces/schemas`), mirroring
+    /// [`super::super::TemplateEngine::new`]'s wiring.
+    fn schema_ctx(root: &Path) -> Arc<SchemaContext> {
+        let keys = FrontmatterFieldKeys::new(
+            FieldKey::try_new("class").expect("valid field key"),
+            FieldKey::try_new("title").expect("valid field key"),
+            FieldKey::try_new("aliases").expect("valid field key"),
+        );
+        Arc::new(SchemaContext::new(
+            Arc::from(root),
+            Arc::from(root.join(".traces/schemas")),
+            keys,
+        ))
+    }
 
     /// Builds a `query` [`QueryOps`] for `root` with the default class field
     /// (`class`) and Schema registry directory (`root/.traces/schemas`).
     fn page_ops(root: &Path) -> QueryOps {
-        QueryOps::page(
-            Arc::from(root),
-            Arc::from("class"),
-            Arc::from(root.join(".traces/schemas")),
-        )
+        QueryOps::page(Arc::from(root), Arc::from("class"), schema_ctx(root))
     }
 
     /// Builds a `tasks` [`QueryOps`], the [`page_ops`] counterpart.
     fn task_ops(root: &Path) -> QueryOps {
-        QueryOps::task(
-            Arc::from(root),
-            Arc::from("class"),
-            Arc::from(root.join(".traces/schemas")),
-        )
+        QueryOps::task(Arc::from(root), Arc::from("class"), schema_ctx(root))
     }
 
     /// A minimal [`Environment`] with `query` and `tasks` registered against
@@ -757,11 +735,11 @@ mod tests {
         source: &str,
     ) -> Result<String, Error> {
         let field: Arc<str> = Arc::from(class_field);
-        let dir: Arc<Path> = Arc::from(root.join(".traces/schemas"));
+        let ctx = schema_ctx(root);
         let mut env = Environment::new();
-        QueryOps::page(Arc::from(root), Arc::clone(&field), Arc::clone(&dir))
+        QueryOps::page(Arc::from(root), Arc::clone(&field), Arc::clone(&ctx))
             .register(&mut env);
-        QueryOps::task(Arc::from(root), field, dir).register(&mut env);
+        QueryOps::task(Arc::from(root), field, ctx).register(&mut env);
         QueryOps::register_terminal_filters(&mut env);
         env.render_str(source, minijinja::context!())
     }

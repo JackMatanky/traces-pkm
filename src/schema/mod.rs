@@ -32,8 +32,8 @@ mod raw;
 mod registry;
 mod resolve;
 
-pub(crate) use error::{SchemaError, SchemaWarning};
-pub(crate) use model::Schema;
+pub(crate) use error::SchemaError;
+pub(crate) use model::{Schema, SchemaFileFieldFilter};
 pub(crate) use registry::SchemaRegistry;
 
 /// Name the reserved Global Schema file stem.

@@ -160,12 +160,11 @@ impl RawFieldDef {
     /// Build a direct field definition of `field_type`, with
     /// every optional key unset.
     ///
-    /// Test/pub(crate) convenience constructor: tests needing `required`,
-    /// `multi`, or type-specific options use struct-update syntax from the
-    /// result.
+    /// Test-only convenience constructor: tests needing `required`, `multi`,
+    /// or type-specific options use struct-update syntax from the result.
+    #[cfg(test)]
     #[inline]
     #[must_use]
-    #[cfg_attr(not(test), expect(dead_code, reason = "used in tests"))]
     pub(crate) fn direct(field_type: RawFieldType) -> Self {
         Self {
             source: RawFieldSource::Direct(field_type),
@@ -180,9 +179,9 @@ impl RawFieldDef {
 
     /// Build a `$ref`-only field definition targeting `address`, with every
     /// optional key unset.
+    #[cfg(test)]
     #[inline]
     #[must_use]
-    #[cfg_attr(not(test), expect(dead_code, reason = "used in tests"))]
     pub(crate) fn reference(address: FieldAddress) -> Self {
         Self {
             source: RawFieldSource::Ref {

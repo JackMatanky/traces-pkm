@@ -164,7 +164,7 @@ fn build_field(
             let field_type = (*override_type)
                 .map_or_else(|| base.options().kind(), FieldType::from);
             (
-                FieldOptions::merged(base.options(), field_type, raw),
+                FieldOptions::build(field_type, raw, Some(base.options())),
                 raw.required.unwrap_or(base.is_required()),
                 raw.multi.unwrap_or(base.is_multi()),
             )
@@ -172,7 +172,7 @@ fn build_field(
         RawFieldSource::Direct(raw_type) => {
             let field_type = FieldType::from(*raw_type);
             (
-                FieldOptions::from_raw(field_type, raw),
+                FieldOptions::build(field_type, raw, None),
                 raw.required.unwrap_or(false),
                 raw.multi.unwrap_or(false),
             )
@@ -410,8 +410,7 @@ impl<'a> RefResolver<'a> {
             && !self.ancestors.contains(base_address.schema().as_str())
         {
             return Err(SchemaError::RefOutOfBounds {
-                schema: SchemaName::from(address.schema()),
-                field: FieldName::from(address.field()),
+                own: Box::new(FieldAddress::from(address)),
                 reference: Box::new(base_address.clone()),
             });
         }
@@ -419,8 +418,7 @@ impl<'a> RefResolver<'a> {
             .get(base_address.schema().as_str())
             .and_then(|schema| schema.field(base_address.field().as_str()))
             .ok_or_else(|| SchemaError::RefFieldNotFound {
-                schema: SchemaName::from(address.schema()),
-                field: FieldName::from(address.field()),
+                own: Box::new(FieldAddress::from(address)),
                 reference: Box::new(base_address.clone()),
             })
     }
