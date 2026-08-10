@@ -692,7 +692,7 @@ mod tests {
         use crate::cli::CwdGuard;
 
         #[test]
-        fn schema_backed_template_renders_and_writes_through_the_cli() {
+        fn writes_a_schema_backed_template_through_cli_dispatch() {
             let temp = tempfile::tempdir().expect("create temp dir");
             let (root, service) = create_test_project(
                 temp.path(),
@@ -739,7 +739,7 @@ mod tests {
         }
 
         #[test]
-        fn unknown_schema_name_surfaces_as_a_render_error_not_a_panic() {
+        fn fails_with_a_render_error_when_the_schema_name_is_unknown() {
             let temp = tempfile::tempdir().expect("create temp dir");
             let (root, service) = create_test_project(
                 temp.path(),

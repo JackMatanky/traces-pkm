@@ -55,7 +55,7 @@ alongside `run`/`picker`/`parse`), reusing the established
 `create_test_project` / `preset_provider` / `CwdGuard::enter` /
 `Template::new(...).run(...)` fixture pattern:
 
-- `schema_backed_template_renders_and_writes_through_the_cli`: a trusted
+- `writes_a_schema_backed_template_through_cli_dispatch`: a trusted
   project fixture with `.traces/schemas/book.toml` (a `select` field and a
   `file` field filtered by `folders`/`ext`/`class`) and two Notes carrying
   `class: book` frontmatter (one under `covers/` matching the file-field
@@ -64,7 +64,7 @@ alongside `run`/`picker`/`parse`), reusing the established
   `schema.get('book').field('cover')` (file-field label/value pairs),
   `query.from_class('book')`, and `tasks.from_class('book')`. Asserts the
   exact written output.
-- `unknown_schema_name_surfaces_as_a_render_error_not_a_panic`: a template
+- `fails_with_a_render_error_when_the_schema_name_is_unknown`: a template
   calling `schema.get('missing')` with no `.traces/schemas/` directory at
   all (registry degrades to empty, so `.get()` naturally hits the unknown-name
   path). Asserts `CliError::TemplateInstantiate { source:
@@ -99,3 +99,123 @@ alongside `run`/`picker`/`parse`), reusing the established
   index tracks the main worktree path, not this dedicated `.worktrees/`
   checkout) — expected given this diff is test-only and adds no new public
   symbols.
+
+## Adversarial re-review (2026-08-10)
+
+Independent re-verification against commit `bd4555c` (this file's earlier
+"implemented"/AC checkmarks and self-review were treated as unproven and
+re-derived from source, not trusted).
+
+### AC verification (re-derived from source, not test output)
+
+- **AC1** (three surfaces compose and write): traced every value the happy
+  path asserts back to producing code, not just re-running the test.
+  `schema.get('book').field('status')` → `SchemaBinding::get_value` `"field"`
+  arm (`template/engine/schema.rs:259-279`): no `file_filter`, so it returns
+  `field.selectable_values()` joined by the template's own `| join(',')` →
+  `"reading,read"`. `.field('cover')` → `file_filter` is `Some`, so
+  `file_field_values` (`schema.rs:220-252`) calls
+  `FileIndex::file_options` and maps each hit through `file_option_value`
+  (`schema.rs:321-327`), whose `value` is `FileRecord`'s path
+  **relative to the project root** (`index/file.rs:47`,
+  `path.strip_prefix(root)`) — confirms the asserted `covers/dune.md` (not an
+  absolute path). `query.from_class('book')` and `tasks.from_class('book')`
+  match `query/query.rs`'s own `from_class`/`tasks_from_class` semantics,
+  cross-checked against that module's existing
+  `tasks_from_class_selects_task_rows` test: `tasks.from_class` counts task
+  *rows*, not matching notes, so the fixture's single task line in
+  `journal/dune-log.md` correctly yields `tasks=1` while `query=2` counts
+  both class-tagged notes. AC1 holds — verified against implementation, not
+  assumed from the assertion string.
+- **AC2** (unknown Schema name → render error, not panic): traced
+  `schema.get('missing')` → `unknown_schema_error` (`schema.rs:341-343`,
+  plain `Error::new(ErrorKind::InvalidOperation, ..)`, no panic path) →
+  `TemplateEngine::render`'s `Err` propagates through
+  `TemplateService::render_template` (`template/service.rs:262-266`), which
+  wraps *every* minijinja `Error` in `TemplateError::Render` unconditionally
+  — confirms the test's `matches!` assertion is exercising the real mapping,
+  not a coincidence of this one error. Confirmed `render_to_file`
+  short-circuits on `self.render(name)?` (`service.rs:113-119`) before
+  `write` is ever called, so "nothing written" is structurally guaranteed,
+  not just empirically true in this fixture. Also checked whether the
+  "no `.traces/schemas/` directory at all" fixture is a weaker trigger than
+  "directory exists, name absent": `SchemaRegistry::read_raw_schemas`
+  degrades *both* to the same empty-registry state via `is_missing_root`
+  (`schema/registry.rs:156-197`), so `registry.get(name)` returns `None`
+  identically either way — the chosen fixture reaches the exact same
+  production branch, not a weaker one. AC2 holds.
+
+### rust-code-review / rust-skills audit
+
+No findings. The new code adds no production logic (pure test-only diff);
+`unwrap`/`expect` usage, error mapping, and `Arc` sharing were all reviewed
+as part of the AC trace above and match existing, already-reviewed
+production code paths. Nothing in the new test code itself violates
+ownership, error-handling, or API-design guidance (confirmed no `unsafe`,
+no new public API surface, no cloning beyond what fixtures already do
+file-wide).
+
+### rust-testing / rust-unit-testing audit
+
+- **Real finding, fixed**: both new test names violated the stated
+  verb-first-for-new-tests rule (`schema_backed_template_renders_and_...`,
+  `unknown_schema_name_surfaces_as_...` both led with a noun phrase) and one
+  additionally joined two behaviors with "and" (an explicit naming
+  anti-pattern). Cross-checked against this same file's dominant convention
+  (`writes_*`, `fails_when_*`, `overwrites_*` — 8 of 12 sibling tests in
+  `mod run` are verb-first) before concluding this was a real deviation, not
+  a defensible local-precedent match. Renamed to
+  `writes_a_schema_backed_template_through_cli_dispatch` and
+  `fails_with_a_render_error_when_the_schema_name_is_unknown` — both
+  verb-first, no bundled "and", and mirror the sibling `writes_*_to_*` /
+  `fails_when_*` shapes directly. Re-ran
+  `cargo test --lib cli::template::tests::schema` (2/2 pass under the new
+  names) and the full `mise run test` (1437/1437) after the rename.
+- **Considered, not a finding**: whether the happy-path test's single
+  combined assertion over four surfaces violates atomicity. The ticket's own
+  Fixture guidance explicitly sanctions this shape ("A single template
+  combining these proves the pieces compose") — the point of the test *is*
+  that composition, so bundling here is the specified behavior under test,
+  not an accidental "two unrelated behaviors joined by `and`". Left as one
+  test.
+- **Considered, not a finding**: `.expect()`/`.expect_err()` used directly on
+  the Act-position `run(...)` call rather than binding the `Result` first.
+  This matches literally every existing test in `mod run` (12/12,
+  `writes_the_rendered_template_to_the_default_output_path` etc.) — a
+  second convention beside the existing one would itself be the standards
+  violation.
+- No coverage gaps: both ACs map 1:1 to a test; no additional Schema-surface
+  branch is reachable through this CLI path that isn't already covered by
+  the render-seam tests in `template/engine.rs`/`engine/query.rs` this
+  ticket explicitly builds on rather than re-proves.
+- No lint suppressions (`#[allow]`/`#[expect]`) in the new code.
+
+### rust-doc audit
+
+- `mod schema` and its two `#[test]` fns carry no doc comments — spot-checked
+  against all three sibling test modules (`mod run`, `mod picker`,
+  `mod parse`): zero doc comments on any of them either. Confirmed this is
+  the file's actual convention for private `#[cfg(test)]` items, not an
+  oversight specific to this change.
+- Re-read `Template::run`'s `# Errors` doc (`src/cli/template.rs:108-119`):
+  `[CliError::TemplateInstantiate] if resolving, rendering, or writing
+  fails` already covers Schema errors without a Schema-specific callout,
+  because Schema resolution happens *during* the render call (per
+  `schema.rs`'s own module doc: "No Schema TOML is read... until a template
+  actually calls `schema.get(...)`" — i.e., inside rendering, not a separate
+  step). No drift; no other `TemplateError` variant gets an individual
+  callout in this doc either, so singling out Schema would be inconsistent
+  with the doc's own generalization level.
+- `schema.rs`'s module doc (the primary doc surface this ticket's tests
+  exercise) was checked claim-by-claim against the implementation it
+  documents: file-field label fallback order (aliases → title → stem),
+  hard-error-vs-degrade-to-exact-match distinction, and the `none` return
+  for non-selectable field types all matched the code read during the AC1
+  trace above. No drift found.
+
+### Outcome
+
+One real, actionable finding (test naming) — fixed in place, re-verified
+(fmt/clippy clean, 1437/1437 tests). No other Standards or Spec violations
+found after re-deriving both ACs from source rather than trusting the prior
+self-review's conclusions.
