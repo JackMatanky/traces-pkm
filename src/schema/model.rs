@@ -201,11 +201,35 @@ impl FieldDefinition {
     }
 }
 
-/// Borrow a `file` field's `FileIndex` filter parts.
-pub(crate) struct SchemaFileFieldFilter<'a> {
-    pub(crate) folders: &'a [String],
-    pub(crate) ext: Option<&'a str>,
-    pub(crate) class: &'a [String],
+/// Represent a field kind after `$ref` resolution.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub(crate) enum FieldType {
+    /// Free-form text input.
+    Input,
+    /// Configured selectable values.
+    Select,
+    /// Boolean value.
+    Boolean,
+    /// Numeric value.
+    Number,
+    /// Date value.
+    Date,
+    /// File link with optional filters.
+    File,
+}
+
+impl From<RawFieldType> for FieldType {
+    #[inline]
+    fn from(raw: RawFieldType) -> Self {
+        match raw {
+            RawFieldType::Input => Self::Input,
+            RawFieldType::Select => Self::Select,
+            RawFieldType::Boolean => Self::Boolean,
+            RawFieldType::Number => Self::Number,
+            RawFieldType::Date => Self::Date,
+            RawFieldType::File => Self::File,
+        }
+    }
 }
 
 /// Represent type-specific field options.
@@ -353,35 +377,11 @@ impl FieldOptions {
     }
 }
 
-/// Represent a field kind after `$ref` resolution.
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub(crate) enum FieldType {
-    /// Free-form text input.
-    Input,
-    /// Configured selectable values.
-    Select,
-    /// Boolean value.
-    Boolean,
-    /// Numeric value.
-    Number,
-    /// Date value.
-    Date,
-    /// File link with optional filters.
-    File,
-}
-
-impl From<RawFieldType> for FieldType {
-    #[inline]
-    fn from(raw: RawFieldType) -> Self {
-        match raw {
-            RawFieldType::Input => Self::Input,
-            RawFieldType::Select => Self::Select,
-            RawFieldType::Boolean => Self::Boolean,
-            RawFieldType::Number => Self::Number,
-            RawFieldType::Date => Self::Date,
-            RawFieldType::File => Self::File,
-        }
-    }
+/// Borrow a `file` field's `FileIndex` filter parts.
+pub(crate) struct SchemaFileFieldFilter<'a> {
+    pub(crate) folders: &'a [String],
+    pub(crate) ext: Option<&'a str>,
+    pub(crate) class: &'a [String],
 }
 
 #[cfg(test)]

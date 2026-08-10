@@ -41,30 +41,6 @@ pub(crate) struct RawSchema {
     pub(crate) fields: BTreeMap<FieldName, RawFieldDef>,
 }
 
-/// Identify a raw field's declared source.
-///
-/// Parsed once at TOML deserialization time so a [`RawFieldDef`] with neither
-/// `type` nor `$ref` cannot exist past parsing (see [`RawFieldDefError`]).
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) enum RawFieldSource {
-    /// Use a `type` key with no `$ref`.
-    Direct(RawFieldType),
-    /// Use a `$ref` address to a base definition, with an optional local `type`
-    /// override.
-    Ref {
-        address: FieldAddress,
-        override_type: Option<RawFieldType>,
-    },
-}
-
-/// Describe why a [`RawFieldDef`] failed to deserialize.
-#[derive(Debug, Error)]
-pub(crate) enum RawFieldDefError {
-    /// Neither `type` nor `$ref` was present.
-    #[error("field definition has neither `type` nor `$ref`")]
-    MissingSource,
-}
-
 /// Hold raw field definition data parsed from TOML.
 #[derive(Clone, Debug)]
 pub(crate) struct RawFieldDef {
@@ -145,38 +121,6 @@ impl<'de> Deserialize<'de> for RawFieldDef {
     }
 }
 
-/// Mirror the TOML wire shape for one `[fields.<name>]` table.
-///
-/// Mirrors the TOML exactly
-/// (`type`/`$ref` still optional and separate) so
-/// `#[serde(deny_unknown_fields)]` rejects a typo'd key. [`RawFieldDef`]
-/// converts this into a validated [`RawFieldSource`] during deserialization;
-/// nothing outside this module ever sees a `RawFieldDefToml`.
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RawFieldDefToml {
-    /// Store the field kind. Optional only when `reference` supplies it.
-    #[serde(rename = "type")]
-    field_type: Option<RawFieldType>,
-    /// Store a parsed `$ref` address shape.
-    ///
-    /// Raw deserialization only parses the address into a [`FieldAddress`].
-    /// `RefResolver` later checks that it resolves to Global or an ancestor
-    /// Schema field.
-    #[serde(rename = "$ref")]
-    reference: Option<FieldAddress>,
-    required: Option<bool>,
-    multi: Option<bool>,
-    values: Option<Vec<String>>,
-    folders: Option<Vec<String>>,
-    ext: Option<String>,
-    class: Option<Vec<String>>,
-    min: Option<f64>,
-    max: Option<f64>,
-    step: Option<f64>,
-    format: Option<String>,
-}
-
 impl RawFieldDef {
     /// Build a direct field definition of `field_type`, with
     /// every optional key unset.
@@ -243,6 +187,62 @@ pub(crate) enum RawFieldType {
     Date,
     /// File link with optional filters.
     File,
+}
+
+/// Identify a raw field's declared source.
+///
+/// Parsed once at TOML deserialization time so a [`RawFieldDef`] with neither
+/// `type` nor `$ref` cannot exist past parsing (see [`RawFieldDefError`]).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum RawFieldSource {
+    /// Use a `type` key with no `$ref`.
+    Direct(RawFieldType),
+    /// Use a `$ref` address to a base definition, with an optional local `type`
+    /// override.
+    Ref {
+        address: FieldAddress,
+        override_type: Option<RawFieldType>,
+    },
+}
+
+/// Describe why a [`RawFieldDef`] failed to deserialize.
+#[derive(Debug, Error)]
+pub(crate) enum RawFieldDefError {
+    /// Neither `type` nor `$ref` was present.
+    #[error("field definition has neither `type` nor `$ref`")]
+    MissingSource,
+}
+
+/// Mirror the TOML wire shape for one `[fields.<name>]` table.
+///
+/// Mirrors the TOML exactly
+/// (`type`/`$ref` still optional and separate) so
+/// `#[serde(deny_unknown_fields)]` rejects a typo'd key. [`RawFieldDef`]
+/// converts this into a validated [`RawFieldSource`] during deserialization;
+/// nothing outside this module ever sees a `RawFieldDefToml`.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawFieldDefToml {
+    /// Store the field kind. Optional only when `reference` supplies it.
+    #[serde(rename = "type")]
+    field_type: Option<RawFieldType>,
+    /// Store a parsed `$ref` address shape.
+    ///
+    /// Raw deserialization only parses the address into a [`FieldAddress`].
+    /// `RefResolver` later checks that it resolves to Global or an ancestor
+    /// Schema field.
+    #[serde(rename = "$ref")]
+    reference: Option<FieldAddress>,
+    required: Option<bool>,
+    multi: Option<bool>,
+    values: Option<Vec<String>>,
+    folders: Option<Vec<String>>,
+    ext: Option<String>,
+    class: Option<Vec<String>>,
+    min: Option<f64>,
+    max: Option<f64>,
+    step: Option<f64>,
+    format: Option<String>,
 }
 
 #[cfg(test)]
