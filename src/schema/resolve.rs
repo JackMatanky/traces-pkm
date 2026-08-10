@@ -162,18 +162,18 @@ fn build_field(
             override_type,
         } => {
             let base = refs.resolve(address, base_address)?;
-            let field_type = (*override_type)
+            let kind = (*override_type)
                 .map_or_else(|| base.options().kind(), FieldType::from);
             (
-                FieldOptions::build(field_type, raw, Some(base.options())),
+                FieldOptions::build(kind, raw, Some(base.options())),
                 raw.required.unwrap_or(base.is_required()),
                 raw.multi.unwrap_or(base.is_multi()),
             )
         }
         RawFieldSource::Direct(raw_type) => {
-            let field_type = FieldType::from(*raw_type);
+            let kind = FieldType::from(*raw_type);
             (
-                FieldOptions::build(field_type, raw, None),
+                FieldOptions::build(kind, raw, None),
                 raw.required.unwrap_or(false),
                 raw.multi.unwrap_or(false),
             )

@@ -197,8 +197,8 @@ impl QueryOps {
     ///
     /// `classes` is a single class name or a list of names. The render's
     /// Schema registry (cached, see [`Self::cached_registry`]) expands the
-    /// queried names into their is-a match set via
-    /// [`SchemaRegistry::matching_classes`]. A queried class with no Schema
+    /// queried names into their is-a match set via [`SchemaRegistry::matches`].
+    /// A queried class with no Schema
     /// degrades to exact match and logs a warning.
     ///
     /// # Errors
@@ -229,7 +229,7 @@ impl QueryOps {
                 );
             }
         }
-        let matches = registry.matching_classes(&queried);
+        let matches = registry.matches(&queried);
         self.run(state, &QuerySource::Class {
             class_field: Arc::clone(&self.class_field),
             classes: matches,

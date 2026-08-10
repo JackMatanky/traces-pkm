@@ -89,11 +89,11 @@ impl<'de> Deserialize<'de> for RawFieldDef {
         D: Deserializer<'de>,
     {
         let wire = RawFieldDefToml::deserialize(deserializer)?;
-        let source = match (wire.field_type, wire.reference) {
-            (Some(field_type), None) => RawFieldSource::Direct(field_type),
-            (Some(field_type), Some(address)) => RawFieldSource::Ref {
+        let source = match (wire.kind, wire.reference) {
+            (Some(kind), None) => RawFieldSource::Direct(kind),
+            (Some(kind), Some(address)) => RawFieldSource::Ref {
                 address,
-                override_type: Some(field_type),
+                override_type: Some(kind),
             },
             (None, Some(address)) => RawFieldSource::Ref {
                 address,
@@ -122,17 +122,17 @@ impl<'de> Deserialize<'de> for RawFieldDef {
 }
 
 impl RawFieldDef {
-    /// Build a direct field definition of `field_type`, with
-    /// every optional key unset.
+    /// Build a direct field definition of `kind`, with every optional key
+    /// unset.
     ///
-    /// Test-only convenience constructor: tests needing `required`, `multi`,
-    /// or type-specific options use struct-update syntax from the result.
+    /// Test-only convenience constructor: tests needing `required`, `multi`, or
+    /// type-specific options use struct-update syntax from the result.
     #[cfg(test)]
     #[inline]
     #[must_use]
-    pub(crate) fn direct(field_type: RawFieldType) -> Self {
+    pub(crate) fn direct(kind: RawFieldType) -> Self {
         Self {
-            source: RawFieldSource::Direct(field_type),
+            source: RawFieldSource::Direct(kind),
             required: None,
             multi: None,
             values: None,
@@ -225,7 +225,7 @@ pub(crate) enum RawFieldDefError {
 struct RawFieldDefToml {
     /// Store the field kind. Optional only when `reference` supplies it.
     #[serde(rename = "type")]
-    field_type: Option<RawFieldType>,
+    kind: Option<RawFieldType>,
     /// Store a parsed `$ref` address shape.
     ///
     /// Raw deserialization only parses the address into a [`FieldAddress`].

@@ -36,20 +36,20 @@ pub(crate) struct SchemaRegistry {
 }
 
 impl SchemaRegistry {
-    /// Load every Schema TOML file directly under `directory`.
+    /// Load every Schema TOML file directly under `dir`.
     ///
-    /// Reads every `*.toml` file directly under `directory` (non-recursive),
+    /// Reads every `*.toml` file directly under `dir` (non-recursive),
     /// parses each as a Schema keyed by its filename stem, and resolves the
     /// `extends` DAG.
     ///
-    /// A missing `directory` resolves to an empty registry rather than an
+    /// A missing `dir` resolves to an empty registry rather than an
     /// error: an unconfigured or not-yet-created Schema directory is absence,
     /// not corruption.
     ///
     /// # Errors
     ///
-    /// - [`SchemaError::ReadDirectory`] if `directory` exists but its entries
-    ///   cannot be listed.
+    /// - [`SchemaError::ReadDirectory`] if `dir` exists but its entries cannot
+    ///   be listed.
     /// - [`SchemaError::ReadFile`] if a `.toml` file cannot be read.
     /// - [`SchemaError::Parse`] if a Schema file's TOML is malformed, contains
     ///   an unknown key, has a malformed `$ref`, or defines a field with
@@ -62,9 +62,9 @@ impl SchemaRegistry {
     /// - [`SchemaError::AmbiguousFieldName`] if two effective fields share the
     ///   same canonical metadata key.
     pub(crate) fn load(
-        directory: &Path,
+        dir: &Path,
     ) -> Result<(Self, Vec<SchemaWarning>), SchemaError> {
-        let raw = read_raw_schemas(directory)?;
+        let raw = read_raw_schemas(dir)?;
         let (schemas, warnings) = resolve::resolve(&raw)?;
         let schemas = schemas
             .into_iter()
@@ -102,13 +102,13 @@ impl SchemaRegistry {
             .collect()
     }
 
-    /// Return the set of Schema names that match `queried`.
+    /// Return the set of Schema names that match `classes`.
     ///
     /// The set includes:
     ///
-    /// - Every name in `queried` itself (so a class with no Schema still
+    /// - Every name in `classes` itself (so a class with no Schema still
     ///   matches itself).
-    /// - Every resolved Schema that is-a one of the queried names.
+    /// - Every resolved Schema that is-a one of the class names.
     ///
     /// A `from_class` query tests each Note's File Class against this set: a
     /// Note matches when any of its class values is in the returned
@@ -119,18 +119,14 @@ impl SchemaRegistry {
     ///
     /// Given `sci_fi` extending `book`, and `movie` unrelated:
     ///
-    /// - `matching_classes(&["book"])` returns `{"book", "sci_fi"}`.
-    /// - `matching_classes(&["movie"])` returns `{"movie"}`.
-    /// - `matching_classes(&["ghost"])` returns `{"ghost"}` (no Schema, still
-    ///   matches)
+    /// - `matches(&["book"])` returns `{"book", "sci_fi"}`.
+    /// - `matches(&["movie"])` returns `{"movie"}`.
+    /// - `matches(&["ghost"])` returns `{"ghost"}` (no Schema, still matches)
     #[must_use]
-    pub(crate) fn matching_classes(
-        &self,
-        queried: &[String],
-    ) -> BTreeSet<String> {
-        let mut matches: BTreeSet<String> = queried.iter().cloned().collect();
+    pub(crate) fn matches(&self, classes: &[String]) -> BTreeSet<String> {
+        let mut matches: BTreeSet<String> = classes.iter().cloned().collect();
         for (name, schema) in &self.schemas {
-            if queried.iter().any(|class| schema.is_a(class)) {
+            if classes.iter().any(|class| schema.is_a(class)) {
                 matches.insert(name.as_str().to_owned());
             }
         }
@@ -138,25 +134,25 @@ impl SchemaRegistry {
     }
 }
 
-/// Read and parse every `*.toml` file directly under `directory` into a
-/// [`RawSchema`] keyed by filename stem.
+/// Read and parse every `*.toml` file directly under `dir` into a [`RawSchema`]
+/// keyed by filename stem.
 ///
-/// Walks only `directory`'s immediate entries (`min_depth(1).max_depth(1)`):
-/// Schemas do not nest. A `directory` that does not exist yields an empty map
-/// rather than [`SchemaError::ReadDirectory`].
+/// Walks only `dir`'s immediate entries (`min_depth(1).max_depth(1)`): Schemas
+/// do not nest. A `dir` that does not exist yields an empty map rather than
+/// [`SchemaError::ReadDirectory`].
 ///
 /// # Errors
 ///
-/// - [`SchemaError::ReadDirectory`] if `directory` exists but its entries
-///   cannot be listed.
+/// - [`SchemaError::ReadDirectory`] if `dir` exists but its entries cannot be
+///   listed.
 /// - [`SchemaError::ReadFile`] if a `.toml` file cannot be read.
 /// - [`SchemaError::Parse`] if a Schema file's TOML is malformed, contains an
 ///   unknown key, has a malformed `$ref`, or omits both `type` and `$ref` for a
 ///   field.
 fn read_raw_schemas(
-    directory: &Path,
+    dir: &Path,
 ) -> Result<BTreeMap<SchemaName, RawSchema>, SchemaError> {
-    let entries = WalkDir::new(directory).min_depth(1).max_depth(1);
+    let entries = WalkDir::new(dir).min_depth(1).max_depth(1);
     let mut schemas = BTreeMap::new();
     for entry in entries {
         let entry = match entry {
@@ -164,7 +160,7 @@ fn read_raw_schemas(
             Err(source) if is_missing_root(&source) => {
                 return Ok(BTreeMap::new());
             }
-            Err(source) => return Err(walk_error(directory, source)),
+            Err(source) => return Err(walk_error(dir, source)),
         };
         let path = entry.path();
         if path.extension().and_then(OsStr::to_str) != Some("toml") {
@@ -202,10 +198,10 @@ fn is_missing_root(error: &walkdir::Error) -> bool {
 /// Wrap a [`walkdir::Error`] with path context as a
 /// [`SchemaError::ReadDirectory`].
 ///
-/// Falls back to `directory` if the underlying error carries no path of its own
+/// Falls back to `root` if the underlying error carries no path of its own
 /// (some I/O errors surface without `DirEntry` context).
-fn walk_error(directory: &Path, source: walkdir::Error) -> SchemaError {
-    let path = source.path().unwrap_or(directory).to_path_buf();
+fn walk_error(root: &Path, source: walkdir::Error) -> SchemaError {
+    let path = source.path().unwrap_or(root).to_path_buf();
     SchemaError::ReadDirectory {
         directory: path,
         source: source.into(),
@@ -444,7 +440,7 @@ mod tests {
         }
     }
 
-    mod matching_classes {
+    mod matches {
         use std::collections::BTreeSet;
 
         use pretty_assertions::assert_eq;
@@ -456,18 +452,18 @@ mod tests {
         }
 
         #[test]
-        fn includes_a_queried_class_with_no_schema() {
+        fn includes_a_class_with_no_schema() {
             let temp = tempfile::tempdir().expect("create temp dir");
             let (registry, _) =
                 SchemaRegistry::load(temp.path()).expect("registry loads");
 
-            let matches = registry.matching_classes(&["ghost".to_owned()]);
+            let matches = registry.matches(&["ghost".to_owned()]);
 
             assert_eq!(matches, set(&["ghost"]));
         }
 
         #[test]
-        fn includes_transitive_subclasses_of_a_queried_class() {
+        fn includes_transitive_subclasses_of_a_class() {
             let temp = tempfile::tempdir().expect("create temp dir");
             write_schema(temp.path(), "book", "");
             write_schema(temp.path(), "sci_fi", r#"extends = ["book"]"#);
@@ -475,13 +471,13 @@ mod tests {
             let (registry, _) =
                 SchemaRegistry::load(temp.path()).expect("registry loads");
 
-            let matches = registry.matching_classes(&["book".to_owned()]);
+            let matches = registry.matches(&["book".to_owned()]);
 
             assert_eq!(matches, set(&["book", "sci_fi"]));
         }
 
         #[test]
-        fn excludes_classes_unrelated_to_the_queried_class() {
+        fn excludes_classes_unrelated_to_the_class() {
             let temp = tempfile::tempdir().expect("create temp dir");
             write_schema(temp.path(), "book", "");
             write_schema(temp.path(), "movie", "");
@@ -489,13 +485,13 @@ mod tests {
             let (registry, _) =
                 SchemaRegistry::load(temp.path()).expect("registry loads");
 
-            let matches = registry.matching_classes(&["book".to_owned()]);
+            let matches = registry.matches(&["book".to_owned()]);
 
             assert_eq!(matches, set(&["book"]));
         }
 
         #[test]
-        fn unions_the_matches_of_every_queried_class() {
+        fn unions_the_matches_of_every_class() {
             let temp = tempfile::tempdir().expect("create temp dir");
             write_schema(temp.path(), "book", "");
             write_schema(temp.path(), "sci_fi", r#"extends = ["book"]"#);
@@ -504,21 +500,21 @@ mod tests {
             let (registry, _) =
                 SchemaRegistry::load(temp.path()).expect("registry loads");
 
-            let matches = registry
-                .matching_classes(&["book".to_owned(), "movie".to_owned()]);
+            let matches =
+                registry.matches(&["book".to_owned(), "movie".to_owned()]);
 
             assert_eq!(matches, set(&["book", "movie", "sci_fi"]));
         }
 
         #[test]
-        fn returns_an_empty_set_for_no_queried_classes() {
+        fn returns_an_empty_set_for_no_classes() {
             let temp = tempfile::tempdir().expect("create temp dir");
             write_schema(temp.path(), "book", "");
 
             let (registry, _) =
                 SchemaRegistry::load(temp.path()).expect("registry loads");
 
-            let matches = registry.matching_classes(&[]);
+            let matches = registry.matches(&[]);
 
             assert!(matches.is_empty());
         }

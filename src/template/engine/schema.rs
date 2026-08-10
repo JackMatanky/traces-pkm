@@ -236,7 +236,7 @@ impl SchemaBinding {
                     );
                 }
             }
-            Some(self.registry.matching_classes(classes))
+            Some(self.registry.matches(classes))
         };
         let options = index.file_options(crate::index::FileOptionFilter::new(
             folders,

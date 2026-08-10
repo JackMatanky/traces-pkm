@@ -73,7 +73,7 @@ impl Schema {
         &self.ancestors
     }
 
-    /// Test whether this Schema is-a queried class name.
+    /// Test whether this Schema is-a class name.
     ///
     /// The `ancestors` set includes all transitive `extends` targets that
     /// resolved during [`super::resolve::resolve`], so this check covers
@@ -88,8 +88,8 @@ impl Schema {
     /// - `sci_fi.is_a("movie")` returns `false` for an unrelated class.
     #[inline]
     #[must_use]
-    pub(crate) fn is_a(&self, queried: &str) -> bool {
-        self.name.as_str() == queried || self.ancestors.contains(queried)
+    pub(crate) fn is_a(&self, class: &str) -> bool {
+        self.name.as_str() == class || self.ancestors.contains(class)
     }
 }
 
@@ -272,15 +272,15 @@ pub(crate) enum FieldOptions {
 }
 
 impl FieldOptions {
-    /// Build options for `field_type` from `raw`'s keys, falling back to
-    /// `base`'s options for any key `raw` leaves unset. `base: None` builds
-    /// fresh options with no fallback: every key `raw` leaves unset defaults
-    /// to empty.
+    /// Build options for `kind` from `raw`'s keys, falling back to `base`'s
+    /// options for any key `raw` leaves unset. `base: None` builds fresh
+    /// options with no fallback: every key `raw` leaves unset defaults to
+    /// empty.
     ///
-    /// `base` is only consulted when it is `Some` of the same [`FieldType`];
-    /// a `$ref` that switches type, or a field with no base at all, starts
-    /// from empty options instead of reusing a mismatched base. For example,
-    /// a `select`'s `values` never leaks into an overriding `file` field.
+    /// `base` is only consulted when it is `Some` of the same [`FieldType`]; a
+    /// `$ref` that switches type, or a field with no base at all, starts from
+    /// empty options instead of reusing a mismatched base. For example, a
+    /// `select`'s `values` never leaks into an overriding `file` field.
     ///
     /// # Examples
     ///
@@ -290,11 +290,11 @@ impl FieldOptions {
     /// - `raw.values` is `None`: falls back to parent's `["draft", "done"]`.
     /// - `raw.values` is `Some(["todo"])`: uses `["todo"]`.
     pub(super) fn build(
-        field_type: FieldType,
+        kind: FieldType,
         raw: &RawFieldDef,
         base: Option<&Self>,
     ) -> Self {
-        match field_type {
+        match kind {
             FieldType::Input => Self::Input,
             FieldType::Select => Self::Select {
                 values: raw.values.clone().unwrap_or_else(|| match base {
@@ -600,14 +600,11 @@ mod tests {
                     }
                 )]
                 fn maps_each_field_type_to_its_own_options(
-                    #[case] field_type: FieldType,
+                    #[case] kind: FieldType,
                     #[case] raw: RawFieldDef,
                     #[case] expected: FieldOptions,
                 ) {
-                    assert_eq!(
-                        FieldOptions::build(field_type, &raw, None),
-                        expected
-                    );
+                    assert_eq!(FieldOptions::build(kind, &raw, None), expected);
                 }
 
                 #[test]
