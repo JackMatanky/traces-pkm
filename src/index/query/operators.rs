@@ -2,6 +2,8 @@
 //!
 //! [`ComparisonExpr`] and [`LogicalExpr`] pair each operator with its operands.
 
+use std::str::FromStr;
+
 use super::{
     FieldPath, IndexRecord,
     filter::FilterExpr,
@@ -77,6 +79,13 @@ impl TryFrom<&str> for CompareOp {
         }
     }
 }
+impl FromStr for CompareOp {
+    type Err = ();
+
+    fn from_str(spelling: &str) -> Result<Self, Self::Err> {
+        Self::try_from(spelling)
+    }
+}
 
 /// Payload for a [`FilterExpr::Comparison`] node.
 #[derive(Clone, Debug, PartialEq)]
@@ -146,6 +155,13 @@ impl TryFrom<&str> for LogicalOp {
         }
     }
 }
+impl FromStr for LogicalOp {
+    type Err = ();
+
+    fn from_str(spelling: &str) -> Result<Self, Self::Err> {
+        Self::try_from(spelling)
+    }
+}
 
 /// Payload for a [`FilterExpr::Logical`] node.
 #[derive(Clone, Debug, PartialEq)]
@@ -199,23 +215,23 @@ mod tests {
 
     #[test]
     fn compare_op_parses_every_spelling() {
-        assert_eq!(CompareOp::try_from("=="), Ok(CompareOp::Eq));
-        assert_eq!(CompareOp::try_from("!="), Ok(CompareOp::Ne));
-        assert_eq!(CompareOp::try_from(">="), Ok(CompareOp::Ge));
-        assert_eq!(CompareOp::try_from("<="), Ok(CompareOp::Le));
-        assert_eq!(CompareOp::try_from(">"), Ok(CompareOp::Gt));
-        assert_eq!(CompareOp::try_from("<"), Ok(CompareOp::Lt));
-        assert_eq!(CompareOp::try_from("invalid"), Err(()));
+        assert_eq!("==".parse::<CompareOp>(), Ok(CompareOp::Eq));
+        assert_eq!("!=".parse::<CompareOp>(), Ok(CompareOp::Ne));
+        assert_eq!(">=".parse::<CompareOp>(), Ok(CompareOp::Ge));
+        assert_eq!("<=".parse::<CompareOp>(), Ok(CompareOp::Le));
+        assert_eq!(">".parse::<CompareOp>(), Ok(CompareOp::Gt));
+        assert_eq!("<".parse::<CompareOp>(), Ok(CompareOp::Lt));
+        assert_eq!("invalid".parse::<CompareOp>(), Err(()));
     }
 
     #[test]
     fn logical_op_parses_every_spelling_case_insensitively() {
-        assert_eq!(LogicalOp::try_from("&&"), Ok(LogicalOp::And));
-        assert_eq!(LogicalOp::try_from("and"), Ok(LogicalOp::And));
-        assert_eq!(LogicalOp::try_from("AND"), Ok(LogicalOp::And));
-        assert_eq!(LogicalOp::try_from("||"), Ok(LogicalOp::Or));
-        assert_eq!(LogicalOp::try_from("or"), Ok(LogicalOp::Or));
-        assert_eq!(LogicalOp::try_from("OR"), Ok(LogicalOp::Or));
-        assert_eq!(LogicalOp::try_from("invalid"), Err(()));
+        assert_eq!("&&".parse::<LogicalOp>(), Ok(LogicalOp::And));
+        assert_eq!("and".parse::<LogicalOp>(), Ok(LogicalOp::And));
+        assert_eq!("AND".parse::<LogicalOp>(), Ok(LogicalOp::And));
+        assert_eq!("||".parse::<LogicalOp>(), Ok(LogicalOp::Or));
+        assert_eq!("or".parse::<LogicalOp>(), Ok(LogicalOp::Or));
+        assert_eq!("OR".parse::<LogicalOp>(), Ok(LogicalOp::Or));
+        assert_eq!("invalid".parse::<LogicalOp>(), Err(()));
     }
 }
