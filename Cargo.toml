@@ -49,17 +49,22 @@ is-terminal = "0.4"
 logos = "0.16"
 miette = { version = "7.6.0", features = ["derive", "fancy"] }
 minijinja = "2.21.0"
-postcard = { version = "1.1.3", default-features = false, features = ["use-std"] }
+postcard = {
+  version = "1.1.3",
+  default-features = false,
+  features = ["use-std"]
+}
 pulldown-cmark = "0.13"
 redb = "4.1"
 regex = "1.13.1"
 serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.151"
 thiserror = "2"
 toml = "1.1"
 tracing = "0.1"
 uuid = { version = "1.24.0", features = ["v4"] }
 walkdir = "2.5"
-yaml_serde = { version = "0.10", package = "yaml_serde" }
+yaml_serde = { package = "yaml_serde", version = "0.10" }
 
 [dev-dependencies]
 criterion = { version = "0.8.2", features = ["html_reports"] }
