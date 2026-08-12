@@ -19,6 +19,15 @@ This ticket fixes the architecture. Ticket 08 (unchanged in intent) lands the ac
 
 ## Design
 
+### Relationship to ADR-0006 and ADR-0007
+
+Both ADRs stay `status: accepted` and are not a blocker to starting — their factual, decision-level content is the contract this ticket preserves, not an obstacle to the restructuring. Distinguish two kinds of statements in them:
+
+- **Behavioral contracts, held exactly, verified by the existing test suite:** Kahn's-sort determinism and cycle detection, `extends`-as-is-a transitive matching, `$ref` bounded to Global/ancestors and acyclic by construction, `excludes` dropping inherited fields by name, `.field()`'s observable return values (plain strings for `select`, label/value pairs for `file`, `None` for non-list types), `from_class`'s any-of matching, and the structural-hard-error-vs-predicate-degrade-with-warning error model. None of these change; the Behavior Preservation Contract below restates the parts most at risk of drifting during the restructuring.
+- **Implementation-level descriptions the ADRs happen to mention but don't bind:** module/file names (`registry.rs`, `resolve.rs`), `resolve()`'s free-function shape, `FieldOptions`/`FieldType`'s specific names. These aren't decisions in the ADR sense — they're how the code looked when the ADR was written — and this ticket supersedes them freely.
+
+The formal ADR update (see ADR follow-up below) is this ticket's *last* step, done once the code is real, not a precondition for starting it — both ADRs already carry a forward-pointing "Bad, because" bullet added during the review that led to this ticket.
+
 ### Target module layout
 
 ```
@@ -210,7 +219,10 @@ impl<'a> SchemaGraph<'a> {
 
 ### ADR follow-up
 
-After the code lands (an ADR should describe what was built, not what was rejected): supersede/amend ADR-0007's Confirmation section to scope "pure" to the `extends`/`$ref`/Kahn's-sort algorithm specifically (`graph.rs`, untouched by this ticket) rather than field construction generally; amend ADR-0006's Consequences to name the load-time-external-but-static phase `SchemaFieldBuilder` now represents as a first-class option alongside "declared in the TOML" and "index-derived at use-time."
+Split across the two tickets — each amendment should only assert what's actually true once its own ticket lands:
+
+- **This ticket:** supersede/amend ADR-0007's Confirmation section to scope "pure" to the `extends`/`$ref`/Kahn's-sort linearization specifically (`graph.rs`, untouched here) rather than field construction generally. True immediately after this ticket — `graph.rs` is the only genuinely pure part regardless of what ticket 08 later adds.
+- **Ticket 08, not this one:** amend ADR-0006's Consequences to name the load-time-external-but-static phase as a first-class option alongside "declared in the TOML" and "index-derived at use-time." `SchemaFieldBuilder` provides the *seam* for that phase here, but nothing exercises it — every `select` value stays a literal string array — until ticket 08 adds a real file-sourced case. Naming the phase as an established option before it has one working, tested instance would repeat the premature-documentation risk already declined when this tension was first flagged.
 
 ## Acceptance Criteria
 
@@ -226,13 +238,14 @@ After the code lands (an ADR should describe what was built, not what was reject
 - [ ] `Schema`, `SchemaService`, `SchemaFieldDef`, `SchemaFieldType` are `pub`; every other new/renamed type is `pub(crate)` or narrower.
 - [ ] Full existing test suite (`mise test`) passes with no test assertion changed except the one disclosed mismatched-key behavior change and any test rewritten to target the new `Schema*FieldDef`/`SchemaFieldBuilder` seam instead of the retired `FieldOptions::from_raw`.
 - [ ] `mise clippy` clean.
-- [ ] ADR-0006 and ADR-0007 updated per the ADR follow-up above.
+- [ ] ADR-0007's Confirmation section is amended to scope "pure" to the `extends`/`$ref`/Kahn's-sort linearization specifically. (ADR-0006's amendment — naming the load-time-external-but-static phase — is ticket 08's acceptance criterion, not this ticket's; do not write it here.)
 
 ## Out of Scope
 
 - Everything ticket 08 (`08-values-file-source.md`) adds: `RawSelectValues::Objects`/`File`, `RawValueObject`, `RawValuesFileSource`, `ValuesFileCache`, `order`-sorting, `value`/`label`/`order` key-name selectors, and the values-file authoring surface itself.
 - Any change to `extends`/`excludes`/`$ref` bounding semantics (ADR-0007's DAG mechanism) — untouched by this ticket.
 - Migrating `note::NoteFieldValue` or any other existing value representation onto `field.rs`'s `FieldValue`/`FieldValueRef` — a separate, later refactor per the user's own stated plan; this ticket is `FieldValue`'s first production consumer, not a crate-wide rollout.
+- Amending ADR-0006 to name the load-time-external-but-static phase as an established option — deferred to ticket 08, the first ticket to actually exercise it.
 
 ## Comments
 
