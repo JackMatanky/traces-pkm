@@ -54,6 +54,7 @@ Good, because:
 Bad, because:
 
 - Multiple inheritance with first-listed-wins is an authoring contract — declaration order matters and can surprise
+- The Confirmation section's "resolution is a pure function of the schema set" is stated unconditionally, but ADR-6's own `file` field type already resolves its options entirely outside `resolve()` (live, from the FileIndex) — this ADR round never reconciled the two. The unqualified claim should read as scoped to the `extends`/`$ref`/Kahn's-sort linearization specifically, not to field construction generally; a later Value Sources ticket exposed the gap this left (no seam for load-time-external-but-static data) by having to thread an ad hoc cache through `resolve()`'s parameters. See ticket `07-schema-service-refactor` for the scoped restatement and the follow-up amendment to both ADRs once it lands.
 - `$ref` is deliberately bounded to global + ancestors, so cross-schema field reuse outside the extends chain is not expressible (redefine or restructure instead)
 - The Global Schema adds a reserved name that cannot be used as a note's File Class
 
