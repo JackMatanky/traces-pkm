@@ -1,8 +1,9 @@
 //! Selects query sources, resolves record fields, and transforms query
 //! outcomes.
 //!
-//! This module powers page-level results from [`super::FileIndex::query`] and
-//! task-level rows from [`super::FileIndex::query_tasks`].
+//! This module powers page-level results from
+//! [`crate::index::FileIndex::query`] and task-level rows from
+//! [`crate::index::FileIndex::query_tasks`].
 //!
 //! # Main Types
 //!
@@ -21,82 +22,103 @@ mod error;
 mod field;
 mod filter;
 mod operators;
+mod option;
 mod sort;
+mod source;
 
-use std::{collections::BTreeSet, path::PathBuf, sync::Arc};
+use std::{path::PathBuf, sync::Arc};
 
 pub(crate) use error::QueryError;
 pub(crate) use field::FileField;
 use field::{FieldPath, TaskField};
 use filter::FilterExpr;
+pub(crate) use option::{FileOption, FileOptionFilter, FrontmatterFieldKeys};
 use sort::SortKey;
 pub(crate) use sort::SortOrder;
+pub(crate) use source::class_values;
+pub use source::{ClassExpansionMode, QuerySource, QuerySourceExpr};
 
-use super::file::FileRecord;
-use crate::note::{FieldValue, Note};
+use crate::{
+    index::{FileIndex, FileRecord},
+    note::{FieldValue, Note},
+};
 
-/// Selects which Markdown Notes a page-level or task-level query includes.
-///
-/// Each variant defines its own matching behavior applied to every indexed
-/// Note. Passing `None` from CLI flags selects [`Self::All`].
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum QuerySource {
-    /// Matches every indexed Markdown Note regardless of tags, folder, or
-    /// class.
-    All,
-    /// Matches Notes whose tags include `tag` exactly, or a sub-tag nested
-    /// under it (for example, `#projects` also matches `#projects/active`).
-    Tag(String),
-    /// Matches Notes whose project-relative path starts with `folder`,
-    /// including the folder itself and every directory nested under it.
-    Folder(PathBuf),
-    /// Matches Notes whose File Class(es) overlap the resolved `classes` set.
-    /// A Note's File Class(es) are read from the frontmatter field named
-    /// `class_field`; the Note matches when any of those values is in
-    /// `classes`, the resolved is-a match set built by the schema registry.
-    Class {
-        /// Frontmatter field naming the Note's File Class(es).
-        class_field: Arc<str>,
-        /// Resolved match set: the queried class names plus every Schema that
-        /// transitively `extends` one of them.
-        classes: BTreeSet<String>,
-    },
+/// Executes a page-level source query using `class_field` for File Class
+/// matching.
+#[must_use]
+pub(crate) fn query(
+    index: FileIndex,
+    source: &QuerySource,
+    class_field: &str,
+) -> QueryOutcome {
+    let FileIndex {
+        records,
+        notes,
+        mut inlinks,
+    } = index;
+    let records = matched_pairs(records, notes, source, class_field)
+        .map(|(file, note)| record_with_inlinks(file, note, &mut inlinks))
+        .collect();
+    QueryOutcome::new(records)
 }
 
-impl QuerySource {
-    /// Builds a [`QuerySource`] from a `--from`-style CLI flag value.
-    ///
-    /// Passing `None` selects [`Self::All`]. A string starting with `#` selects
-    /// [`Self::Tag`] (matching nested sub-tags such as `#book/fiction` for
-    /// `#book`), while any other string selects [`Self::Folder`].
-    #[must_use]
-    pub(crate) fn from_flag(flag: Option<&str>) -> Self {
-        match flag {
-            None => Self::All,
-            Some(value) if value.starts_with('#') => {
-                Self::Tag(value.to_owned())
-            }
-            Some(value) => Self::Folder(PathBuf::from(value)),
-        }
+/// Executes a task-level source query using `class_field` for File Class
+/// matching.
+#[must_use]
+pub(crate) fn query_tasks(
+    index: FileIndex,
+    source: &QuerySource,
+    class_field: &str,
+) -> QueryOutcome {
+    let FileIndex {
+        records: files,
+        notes,
+        mut inlinks,
+    } = index;
+    let mut records = Vec::new();
+    for (file, note) in matched_pairs(files, notes, source, class_field) {
+        let base = record_with_inlinks(file, note, &mut inlinks);
+        let mut tasks: Vec<(bool, String)> = base
+            .note()
+            .tasks()
+            .map(|item| (item.is_completed(), item.text().to_owned()))
+            .collect();
+        let Some((completed, text)) = tasks.pop() else {
+            continue;
+        };
+        records.extend(
+            tasks
+                .into_iter()
+                .map(|(done, task)| base.clone().with_task(done, task)),
+        );
+        records.push(base.with_task(completed, text));
     }
+    QueryOutcome::new(records)
+}
 
-    /// Returns `true` if `file` and its parsed `note` belong to this source.
-    #[inline]
-    #[must_use]
-    pub(super) fn is_match(&self, file: &FileRecord, note: &Note) -> bool {
-        match self {
-            Self::All => true,
-            Self::Tag(tag) => {
-                note.tags().iter().any(|t| t.is_nested_under(tag))
-            }
-            Self::Folder(folder) => file.folder().starts_with(folder),
-            Self::Class {
-                class_field,
-                classes,
-            } => class_values(note, class_field)
-                .any(|value| classes.contains(value)),
+fn matched_pairs<'a>(
+    records: Vec<FileRecord>,
+    notes: Vec<Note>,
+    source: &'a QuerySource,
+    class_field: &'a str,
+) -> impl Iterator<Item = (FileRecord, Note)> + 'a {
+    let mut files = records.into_iter().peekable();
+    notes.into_iter().filter_map(move |note| {
+        while files.peek().is_some_and(|file| file.path() < note.path()) {
+            files.next();
         }
-    }
+        let file = files.next_if(|file| file.path() == note.path())?;
+        source.is_match(&file, &note, class_field).then_some((file, note))
+    })
+}
+
+fn record_with_inlinks(
+    file: FileRecord,
+    note: Note,
+    inlinks: &mut std::collections::HashMap<PathBuf, Vec<PathBuf>>,
+) -> IndexRecord {
+    let links = inlinks.remove(file.path()).unwrap_or_default();
+    IndexRecord::new(file, note).with_inlinks(links)
 }
 
 /// Represents a query row pairing a [`FileRecord`] with parsed [`Note`]
@@ -109,19 +131,19 @@ impl QuerySource {
 pub struct IndexRecord {
     file: FileRecord,
     /// Reference-counted, not owned outright: exploding one Note into
-    /// several rows (see [`super::FileIndex::query_tasks`] and
+    /// several rows (see [`crate::index::FileIndex::query_tasks`] and
     /// [`QueryOutcome::flatten`]) shares this field across every row instead
     /// of deep-cloning frontmatter, links, tags, and lists per row.
     note: Arc<Note>,
     /// Overrides field resolution for exploded rows produced by
     /// [`QueryOutcome::flatten`].
     flattened: Vec<(FieldPath, FieldValue)>,
-    /// Stores per-task fields set by [`super::FileIndex::query_tasks`], or
-    /// `None` for page-level records.
+    /// Stores per-task fields set by [`crate::index::FileIndex::query_tasks`],
+    /// or `None` for page-level records.
     task: Option<TaskInfo>,
     /// Stores project-relative paths of Notes whose outlinks resolve to this
-    /// row's Note, set by [`super::FileIndex::query`] and
-    /// [`super::FileIndex::query_tasks`].
+    /// row's Note, set by [`crate::index::FileIndex::query`] and
+    /// [`crate::index::FileIndex::query_tasks`].
     inlinks: Vec<PathBuf>,
 }
 
@@ -140,9 +162,9 @@ impl IndexRecord {
     /// Converts this record into a task-level row with specified completion
     /// state and text.
     ///
-    /// Used by [`super::FileIndex::query_tasks`] to turn a page-level record
-    /// into one row per task item while retaining parent Note metadata for
-    /// filtering and display via [`Self::field`].
+    /// Used by [`crate::index::FileIndex::query_tasks`] to turn a page-level
+    /// record into one row per task item while retaining parent Note
+    /// metadata for filtering and display via [`Self::field`].
     pub(super) fn with_task(
         mut self,
         completed: bool,
@@ -287,7 +309,7 @@ impl IndexRecord {
 }
 
 /// Represents per-task fields layered onto an [`IndexRecord`] by
-/// [`super::FileIndex::query_tasks`].
+/// [`crate::index::FileIndex::query_tasks`].
 ///
 /// Task-level rows retain parent [`Note`] file and metadata fields for
 /// filtering and display while attaching task completion and text attributes.
@@ -593,8 +615,8 @@ impl QueryOutcome {
     /// # Errors
     ///
     /// - [`TaskListOnPageRecords`] if any record lacks task fields (built by
-    ///   [`super::FileIndex::query`] instead of
-    ///   [`super::FileIndex::query_tasks`]).
+    ///   [`crate::index::FileIndex::query`] instead of
+    ///   [`crate::index::FileIndex::query_tasks`]).
     ///
     /// [`TaskListOnPageRecords`]: QueryError::TaskListOnPageRecords
     pub(crate) fn task_list(&self) -> Result<String, QueryError> {
@@ -665,35 +687,6 @@ impl<'a> IntoIterator for &'a QueryOutcome {
     fn into_iter(self) -> Self::IntoIter {
         self.records.iter()
     }
-}
-
-/// Yields a Note's File Class values: the strings held by the frontmatter field
-/// named `class_field`.
-///
-/// - A single string yields one element.
-/// - A list of strings yields each string element.
-/// - A missing field, a non-string scalar, or non-string list elements yield
-///   nothing.
-pub(super) fn class_values<'a>(
-    note: &'a Note,
-    class_field: &str,
-) -> impl Iterator<Item = &'a str> {
-    let value = note.frontmatter().and_then(|frontmatter| {
-        let field = frontmatter
-            .fields()
-            .iter()
-            .find(|field| field.key().is_match(class_field))?;
-        Some(field.value())
-    });
-    let list = match value {
-        Some(FieldValue::List(items)) => items.as_slice(),
-        _ => &[],
-    };
-    let scalar = match value {
-        Some(FieldValue::List(_)) | None => None,
-        Some(other) => other.as_str(),
-    };
-    list.iter().filter_map(FieldValue::as_str).chain(scalar)
 }
 
 /// Converts a resolved [`FieldValue`] to plain text for list and table
@@ -769,193 +762,6 @@ mod tests {
         }
     }
     use fixtures::*;
-
-    mod source_is_match {
-
-        use super::*;
-
-        #[test]
-        fn returns_true_for_all_source() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            fs::write(temp.path().join("a.md"), "# A").expect("write file");
-            let index = FileIndex::build(temp.path()).expect("build index");
-            let record = index.record(Path::new("a.md")).expect("record");
-            let note = index.note(Path::new("a.md")).expect("note");
-
-            assert!(QuerySource::All.is_match(record, note));
-        }
-
-        #[test]
-        fn returns_true_when_note_has_matching_or_sub_tag() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            fs::write(temp.path().join("a.md"), "Tracked in #projects/active.")
-                .expect("write file");
-            let index = FileIndex::build(temp.path()).expect("build index");
-            let record = index.record(Path::new("a.md")).expect("record");
-            let note = index.note(Path::new("a.md")).expect("note");
-
-            assert!(
-                QuerySource::Tag("#projects".to_owned()).is_match(record, note)
-            );
-            assert!(
-                !QuerySource::Tag("#books".to_owned()).is_match(record, note)
-            );
-        }
-
-        #[test]
-        fn returns_true_when_file_is_under_folder_source() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            fs::create_dir_all(temp.path().join("projects/active"))
-                .expect("mkdir");
-            fs::write(temp.path().join("projects/active/task.md"), "# Task")
-                .expect("write file");
-            let index = FileIndex::build(temp.path()).expect("build index");
-            let record = index
-                .record(Path::new("projects/active/task.md"))
-                .expect("record");
-            let note =
-                index.note(Path::new("projects/active/task.md")).expect("note");
-
-            assert!(
-                QuerySource::Folder(PathBuf::from("projects"))
-                    .is_match(record, note)
-            );
-            assert!(
-                !QuerySource::Folder(PathBuf::from("archive"))
-                    .is_match(record, note)
-            );
-        }
-
-        #[test]
-        fn returns_true_when_note_class_is_in_the_match_set() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            fs::write(temp.path().join("a.md"), "---\nclass: book\n---\n# A")
-                .expect("write file");
-            let index = FileIndex::build(temp.path()).expect("build index");
-            let record = index.record(Path::new("a.md")).expect("record");
-            let note = index.note(Path::new("a.md")).expect("note");
-
-            assert!(
-                QuerySource::Class {
-                    class_field: Arc::from("class"),
-                    classes: BTreeSet::from(["book".to_owned()]),
-                }
-                .is_match(record, note)
-            );
-            assert!(
-                !QuerySource::Class {
-                    class_field: Arc::from("class"),
-                    classes: BTreeSet::from(["movie".to_owned()]),
-                }
-                .is_match(record, note)
-            );
-        }
-
-        #[test]
-        fn matches_any_class_of_a_multi_class_note() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            fs::write(
-                temp.path().join("a.md"),
-                "---\nclass: [book, movie]\n---\n# A",
-            )
-            .expect("write file");
-            let index = FileIndex::build(temp.path()).expect("build index");
-            let record = index.record(Path::new("a.md")).expect("record");
-            let note = index.note(Path::new("a.md")).expect("note");
-
-            assert!(
-                QuerySource::Class {
-                    class_field: Arc::from("class"),
-                    classes: BTreeSet::from(["movie".to_owned()]),
-                }
-                .is_match(record, note)
-            );
-        }
-
-        #[test]
-        fn reads_the_class_from_the_configured_field() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            fs::write(temp.path().join("a.md"), "---\nkind: book\n---\n# A")
-                .expect("write file");
-            let index = FileIndex::build(temp.path()).expect("build index");
-            let record = index.record(Path::new("a.md")).expect("record");
-            let note = index.note(Path::new("a.md")).expect("note");
-
-            assert!(
-                QuerySource::Class {
-                    class_field: Arc::from("kind"),
-                    classes: BTreeSet::from(["book".to_owned()]),
-                }
-                .is_match(record, note)
-            );
-            assert!(
-                !QuerySource::Class {
-                    class_field: Arc::from("class"),
-                    classes: BTreeSet::from(["book".to_owned()]),
-                }
-                .is_match(record, note)
-            );
-        }
-
-        #[test]
-        fn returns_false_when_note_has_no_class_field() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            fs::write(temp.path().join("a.md"), "# A").expect("write file");
-            let index = FileIndex::build(temp.path()).expect("build index");
-            let record = index.record(Path::new("a.md")).expect("record");
-            let note = index.note(Path::new("a.md")).expect("note");
-
-            assert!(
-                !QuerySource::Class {
-                    class_field: Arc::from("class"),
-                    classes: BTreeSet::from(["book".to_owned()]),
-                }
-                .is_match(record, note)
-            );
-        }
-
-        #[test]
-        fn returns_false_when_class_value_is_not_a_string() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            fs::write(temp.path().join("a.md"), "---\nclass: 5\n---\n# A")
-                .expect("write file");
-            let index = FileIndex::build(temp.path()).expect("build index");
-            let record = index.record(Path::new("a.md")).expect("record");
-            let note = index.note(Path::new("a.md")).expect("note");
-
-            assert!(
-                !QuerySource::Class {
-                    class_field: Arc::from("class"),
-                    classes: BTreeSet::from(["5".to_owned()]),
-                }
-                .is_match(record, note)
-            );
-        }
-    }
-
-    mod source_from_flag {
-        use pretty_assertions::assert_eq;
-        use rstest::rstest;
-
-        use super::*;
-
-        #[rstest]
-        #[case::none_selects_all(None, QuerySource::All)]
-        #[case::hash_prefix_selects_tag(
-            Some("#projects"),
-            QuerySource::Tag("#projects".to_owned())
-        )]
-        #[case::other_value_selects_folder(
-            Some("books"),
-            QuerySource::Folder(PathBuf::from("books"))
-        )]
-        fn selects_the_expected_source_variant(
-            #[case] flag: Option<&str>,
-            #[case] expected: QuerySource,
-        ) {
-            assert_eq!(QuerySource::from_flag(flag), expected);
-        }
-    }
 
     mod index_record {
         use pretty_assertions::assert_eq;

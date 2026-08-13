@@ -48,6 +48,15 @@ pub enum QueryError {
         /// The raw filter expression string that failed to parse.
         expr: String,
     },
+    /// A source expression failed to match the source DSL.
+    #[error(
+        "invalid source expression {expr:?}; expected `#tag`, `folder/`, \
+         `@Class`, or `class(Name)`"
+    )]
+    UnparsableSourceExpression {
+        /// The raw source expression string that failed to parse.
+        expr: String,
+    },
     /// A query limit count was negative or exceeded platform [`usize`] bounds.
     #[error("invalid limit {n}; expected a non-negative row count")]
     NegativeLimit {
@@ -89,8 +98,15 @@ impl QueryError {
     /// This constructor is shared by the tokenizer and parser in
     /// [`super::filter`], where parse errors point at the entire filter
     /// expression rather than an individual sub-span.
-    pub(in crate::index::query) fn unparsable_filter(expr: &str) -> Self {
+    pub(in crate::query) fn unparsable_filter(expr: &str) -> Self {
         Self::UnparsableFilterExpression {
+            expr: expr.to_owned(),
+        }
+    }
+
+    /// Constructs a [`QueryError::UnparsableSourceExpression`] for `expr`.
+    pub(in crate::query) fn unparsable_source(expr: &str) -> Self {
+        Self::UnparsableSourceExpression {
             expr: expr.to_owned(),
         }
     }
@@ -107,7 +123,7 @@ impl QueryError {
     /// closest matching accessor name, whereas invalid frontmatter or inline
     /// field paths pass [`None`] because no fixed accessor list exists for
     /// custom fields.
-    pub(in crate::index::query) fn unknown_field_path(
+    pub(in crate::query) fn unknown_field_path(
         path: &str,
         suggestion: Option<&str>,
     ) -> Self {

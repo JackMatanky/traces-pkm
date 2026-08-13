@@ -123,12 +123,12 @@ fn init_trust_index_list_table_task_and_template_chain_through_one_project() {
     assert!(task.stdout.contains("- [ ] buy milk"), "stdout: {}", task.stdout);
 
     // Notes live under `notes/`, scoped away from `.traces/templates/` (default
-    // init's template directory): `query.all()` indexes every markdown file
+    // init's template directory): `query.from()` indexes every markdown file
     // under the project root, including the template file itself, so an
     // unscoped query here would also count `report.md`.
     std::fs::write(
         root.path().join(".traces/templates/report.md"),
-        "{{ query.from_folder(\"notes\") | length }} note(s)",
+        "{{ query.from(\"notes/\") | length }} note(s)",
     )
     .expect("write template");
 

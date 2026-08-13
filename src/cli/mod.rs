@@ -40,7 +40,9 @@ pub use error::CliError;
 use crate::{
     DialogProvider,
     config::{Config, ConfigService, DiscoveryScope, TrustRequests},
-    index::{FileIndex, QueryError, QueryOutcome, QuerySource},
+    index::FileIndex,
+    query::{self, QueryError, QueryOutcome, QuerySource},
+    schema::{SchemaRegistry, resolve_sources},
 };
 
 /// Top-level result of a successful CLI command.
@@ -246,14 +248,16 @@ fn load_config(service: &ConfigService) -> Result<Config, CliError> {
 ///
 /// Returns [`CliError::Index`] if refreshing the [`FileIndex`] fails.
 fn refresh_page_query(
-    root: &Path,
+    config: &Config,
     from: Option<&str>,
 ) -> Result<QueryOutcome, CliError> {
+    let root = config.root();
     let index = FileIndex::refresh(root).map_err(|source| CliError::Index {
         root: root.to_path_buf(),
         source,
     })?;
-    Ok(index.query(&QuerySource::from_flag(from)))
+    let source = parse_source(config, from)?;
+    Ok(query::query(index, &source, config.schemas().class_field_name()))
 }
 
 /// Refreshes `root`'s [`FileIndex`] and returns task-level records selected
@@ -265,14 +269,40 @@ fn refresh_page_query(
 ///
 /// Returns [`CliError::Index`] if refreshing the [`FileIndex`] fails.
 fn refresh_task_query(
-    root: &Path,
+    config: &Config,
     from: Option<&str>,
 ) -> Result<QueryOutcome, CliError> {
+    let root = config.root();
     let index = FileIndex::refresh(root).map_err(|source| CliError::Index {
         root: root.to_path_buf(),
         source,
     })?;
-    Ok(index.query_tasks(&QuerySource::from_flag(from)))
+    let source = parse_source(config, from)?;
+    Ok(query::query_tasks(index, &source, config.schemas().class_field_name()))
+}
+
+fn parse_source(
+    config: &Config,
+    from: Option<&str>,
+) -> Result<QuerySource, CliError> {
+    let root = config.root();
+    let mut source = QuerySource::parse(from.unwrap_or_default())
+        .map_err(|source| query_error(root, source))?;
+    if source.has_classes() {
+        let directory = root.join(config.schemas().directory());
+        let (registry, warnings) =
+            SchemaRegistry::load(&directory).map_err(|error| {
+                CliError::SchemaQuery {
+                    root: root.to_path_buf(),
+                    source: error,
+                }
+            })?;
+        for warning in warnings {
+            tracing::warn!(%warning, "Schema registry resolved with a warning");
+        }
+        resolve_sources(&mut source, &registry);
+    }
+    Ok(source)
 }
 
 /// Applies an optional `--where` filter expression to `outcome`.
@@ -820,7 +850,8 @@ mod tests {
                 TrustRequest,
             },
             dialog::PresetDialogProvider,
-            index::{FileIndex, QueryError, QuerySource},
+            index::FileIndex,
+            query::{QueryError, QuerySource},
             template::{
                 TemplateError, TemplatePathInput, TemplateService, WriteMode,
                 WriteOutcome,
@@ -937,7 +968,7 @@ mod tests {
             assert_eq!(list_outcome, CommandOutcome::Completed);
             let list = FileIndex::refresh(&project)
                 .expect("refresh index")
-                .query(&QuerySource::Tag("#book".to_owned()))
+                .query(&QuerySource::parse("#book").expect("valid source"))
                 .sort("rating", true)
                 .expect("valid sort")
                 .list("file.path")
@@ -991,14 +1022,14 @@ mod tests {
 
             let rendered = render_query_template(
                 &project,
-                "{{ query.from_tags(\"#book\").sort(\"rating\", \
+                "{{ query.from(\"#book\").sort(\"rating\", \
                  true).table([\"Name\", \"Rating\"], [\"file.name\", \
                  \"rating\"]) }}",
             );
 
             let expected = FileIndex::refresh(&project)
                 .expect("refresh index")
-                .query(&QuerySource::Tag("#book".to_owned()))
+                .query(&QuerySource::parse("#book").expect("valid source"))
                 .sort("rating", true)
                 .expect("valid sort")
                 .table(&["Name", "Rating"], &["file.name", "rating"])
@@ -1020,7 +1051,7 @@ mod tests {
             // inlinks list includes hyperion.md.
             let inlinks = FileIndex::refresh(&project)
                 .expect("refresh index")
-                .query(&QuerySource::Folder(PathBuf::from("books")))
+                .query(&QuerySource::parse("books/").expect("valid source"))
                 .sort("file.name", false)
                 .expect("valid sort")
                 .list("inlinks")
@@ -1029,7 +1060,7 @@ mod tests {
 
             let rendered = render_query_template(
                 &project,
-                "{{ query.from_folder(\"books\").sort(\"file.name\", \
+                "{{ query.from(\"books/\").sort(\"file.name\", \
                  false).list(\"inlinks\") }}",
             );
             assert_eq!(rendered, inlinks);
@@ -1082,7 +1113,7 @@ mod tests {
             let (service, project) = seed_book_project(temp.path());
             fs::write(
                 project.join("templates/report.md"),
-                "line one\n{{ query.all().sort(\"nope.bad\") }}\n",
+                "line one\n{{ query.from().sort(\"nope.bad\") }}\n",
             )
             .expect("write report.md");
             let _guard = CwdGuard::enter(&project);
@@ -1104,7 +1135,7 @@ mod tests {
             }));
             let help = error.help().map(|h| h.to_string()).unwrap_or_default();
             assert!(
-                help.contains("report.md:2:15"),
+                help.contains("report.md:2:16"),
                 "expected the failing template name, line, and column in help \
                  text, got: {help}"
             );

@@ -6,13 +6,13 @@
 //! starts a query with one of four methods, matching [`QuerySource`]'s
 //! variants:
 //!
-//! - `.all()`: every indexed Note.
-//! - `.from_tags(tag)`: Notes tagged `tag`.
-//! - `.from_folder(folder)`: Notes under `folder`.
-//! - `.from_class(class)`: Notes whose File Class matches `class` (a single
-//!   name or a list of names), with transitive is-a matching.
+//! - `.from()`: every indexed Note.
+//! - `.from("#tag")`: Notes with an exact or nested tag.
+//! - `.from("folder/")`: Notes under a folder.
+//! - `.from("@Class*")`: Notes whose File Class is `Class` or a transitive
+//!   descendant.
 //!
-//! Each method reuses the render's cached [`FileIndex`], refreshing it once per
+//! Each call reuses the render's cached [`FileIndex`], refreshing it once per
 //! render (see [`cached_refresh`]), and returns a [`QueryOutcome`] wrapped in a
 //! [`Value`].
 //!
@@ -65,10 +65,7 @@
 //! `dialog_error` and [`super::error::confine_error`]. Query failures carry
 //! template name, line, and column context like every other namespace.
 
-use std::{
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::{path::Path, sync::Arc};
 
 use minijinja::{
     Environment, Error, ErrorKind, State,
@@ -77,16 +74,16 @@ use minijinja::{
 
 use super::schema::SchemaContext;
 use crate::{
-    index::{
-        FileField, FileIndex, FileIndexError, IndexRecord, QueryError,
-        QueryOutcome, QuerySource,
-    },
+    index::{FileIndex, FileIndexError},
     note::FieldValue,
-    schema::{GLOBAL_SCHEMA_NAME, SchemaError, SchemaRegistry},
+    query::{
+        self, FileField, IndexRecord, QueryError, QueryOutcome, QuerySource,
+    },
+    schema::{SchemaError, SchemaRegistry, resolve_sources},
 };
 
 /// Method names `query` and `tasks` each expose, for [`QueryOps::enumerate`].
-const METHODS: &[&str] = &["all", "from_tags", "from_folder", "from_class"];
+const METHODS: &[&str] = &["from"];
 
 /// The [`State::set_temp`] key used to cache one refreshed [`FileIndex`] for
 /// the current render.
@@ -109,7 +106,7 @@ pub(super) struct QueryOps {
     name: &'static str,
     root: Arc<Path>,
     /// Frontmatter field naming a Note's File Class(es), from `[schemas]
-    /// class_field`. Passed to [`QuerySource::Class`] by `from_class`.
+    /// class_field`. Passed to source matching at execution time.
     class_field: Arc<str>,
     /// Shared with `schema.get()` so both namespaces resolve the same Schema
     /// registry directory by construction; see
@@ -117,7 +114,7 @@ pub(super) struct QueryOps {
     schema_ctx: Arc<SchemaContext>,
     /// [`FileIndex::query`] for `query`, [`FileIndex::query_tasks`] for
     /// `tasks`.
-    query: fn(FileIndex, &QuerySource) -> QueryOutcome,
+    query: fn(FileIndex, &QuerySource, &str) -> QueryOutcome,
 }
 
 impl QueryOps {
@@ -134,7 +131,7 @@ impl QueryOps {
             root,
             class_field,
             schema_ctx,
-            query: FileIndex::query,
+            query: query::query,
         }
     }
 
@@ -152,7 +149,7 @@ impl QueryOps {
             root,
             class_field,
             schema_ctx,
-            query: FileIndex::query_tasks,
+            query: query::query_tasks,
         }
     }
 
@@ -188,52 +185,7 @@ impl QueryOps {
     ///   access errors, and TOML (de)serialization errors on stored records.
     fn run(&self, state: &State, source: &QuerySource) -> Result<Value, Error> {
         let index = cached_refresh(state, &self.root).map_err(index_error)?;
-        Ok(Value::from_object((self.query)(index, source)))
-    }
-
-    /// Runs a `from_class` query for `classes` against `state`'s cached
-    /// [`FileIndex`], selecting Notes by File Class with transitive is-a
-    /// matching.
-    ///
-    /// `classes` is a single class name or a list of names. The render's
-    /// Schema registry (cached, see [`Self::cached_registry`]) expands the
-    /// queried names into their is-a match set via [`SchemaRegistry::matches`].
-    /// A queried class with no Schema
-    /// degrades to exact match and logs a warning.
-    ///
-    /// # Errors
-    ///
-    /// - [`ErrorKind::InvalidOperation`] if `classes` is neither a string nor a
-    ///   sequence of strings.
-    /// - [`ErrorKind::InvalidOperation`] if any queried class is the reserved
-    ///   `global` Schema, which is forbidden as a Note's File Class.
-    /// - [`ErrorKind::InvalidOperation`] via [`registry_error`] if loading the
-    ///   Schema registry fails.
-    /// - Any error [`Self::run`] returns.
-    fn run_class(
-        &self,
-        state: &State,
-        classes: &Value,
-    ) -> Result<Value, Error> {
-        let queried = class_arguments(classes)?;
-        if queried.iter().any(|class| class == GLOBAL_SCHEMA_NAME) {
-            return Err(reserved_class_error());
-        }
-        let registry = self.cached_registry(state)?;
-        for class in &queried {
-            if registry.get(class).is_none() {
-                tracing::warn!(
-                    class = %class,
-                    "from_class references a class with no Schema; degrading \
-                     to exact match"
-                );
-            }
-        }
-        let matches = registry.matches(&queried);
-        self.run(state, &QuerySource::Class {
-            class_field: Arc::clone(&self.class_field),
-            classes: matches,
-        })
+        Ok(Value::from_object((self.query)(index, source, &self.class_field)))
     }
 
     /// Returns the render's [`SchemaRegistry`] cached via [`super::cache`],
@@ -272,42 +224,20 @@ impl QueryOps {
 impl Object for QueryOps {
     fn get_value(self: &Arc<Self>, key: &Value) -> Option<Value> {
         match key.as_str()? {
-            "all" => {
-                let ops = Arc::clone(self);
-                Some(Value::from_function(
-                    move |state: &State| -> Result<Value, Error> {
-                        ops.run(state, &QuerySource::All)
-                    },
-                ))
-            }
-            "from_tags" => {
-                let ops = Arc::clone(self);
-                Some(Value::from_function(
-                    move |state: &State, tag: &str| -> Result<Value, Error> {
-                        ops.run(state, &QuerySource::Tag(tag.to_owned()))
-                    },
-                ))
-            }
-            "from_folder" => {
+            "from" => {
                 let ops = Arc::clone(self);
                 Some(Value::from_function(
                     move |state: &State,
-                          folder: &str|
+                          expr: Option<&str>|
                           -> Result<Value, Error> {
-                        ops.run(
-                            state,
-                            &QuerySource::Folder(PathBuf::from(folder)),
-                        )
-                    },
-                ))
-            }
-            "from_class" => {
-                let ops = Arc::clone(self);
-                Some(Value::from_function(
-                    move |state: &State,
-                          classes: Value|
-                          -> Result<Value, Error> {
-                        ops.run_class(state, &classes)
+                        let mut source =
+                            QuerySource::parse(expr.unwrap_or_default())
+                                .map_err(query_error)?;
+                        if source.has_classes() {
+                            let registry = ops.cached_registry(state)?;
+                            resolve_sources(&mut source, &registry);
+                        }
+                        ops.run(state, &source)
                     },
                 ))
             }
@@ -361,48 +291,6 @@ fn registry_error(source: SchemaError) -> Error {
     super::error::invalid_operation(
         "failed to load the Schema registry",
         source,
-    )
-}
-
-/// Collects a `from_class` argument into queried class names, accepting a
-/// single class name (`from_class("book")`) or a sequence of names
-/// (`from_class(["book", "movie"])`).
-///
-/// # Errors
-///
-/// - [`ErrorKind::InvalidOperation`] if `value` is neither a string nor a
-///   sequence, or a sequence element is not a string.
-fn class_arguments(value: &Value) -> Result<Vec<String>, Error> {
-    if let Some(single) = value.as_str() {
-        return Ok(vec![single.to_owned()]);
-    }
-    value
-        .try_iter()
-        .map_err(|_| class_argument_error())?
-        .map(|item| {
-            item.as_str().map(str::to_owned).ok_or_else(class_argument_error)
-        })
-        .collect()
-}
-
-/// Builds the error for a `from_class` argument that is not a class name or
-/// a list of class names.
-fn class_argument_error() -> Error {
-    Error::new(
-        ErrorKind::InvalidOperation,
-        "from_class expects a class name or a list of class names",
-    )
-}
-
-/// Builds the error for `from_class` naming the reserved `global` Schema,
-/// which is forbidden as a Note's File Class.
-fn reserved_class_error() -> Error {
-    Error::new(
-        ErrorKind::InvalidOperation,
-        format!(
-            "from_class cannot query the reserved `{GLOBAL_SCHEMA_NAME}` \
-             Schema: it is not a valid File Class"
-        ),
     )
 }
 
@@ -681,7 +569,7 @@ mod tests {
     use super::*;
     use crate::{
         DialogProvider, PresetDialogProvider, field::FieldKey,
-        index::FrontmatterFieldKeys,
+        query::FrontmatterFieldKeys,
     };
 
     /// Builds a shared [`SchemaContext`] for `root`, backing both
@@ -810,7 +698,7 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             write_note(temp.path(), "a.md", "# A");
 
-            let rendered = render(temp.path(), "{{ query.all() | length }}")
+            let rendered = render(temp.path(), "{{ query.from() | length }}")
                 .expect("render succeeds");
 
             assert_eq!(rendered, "1");
@@ -821,7 +709,7 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             write_note(temp.path(), "todo.md", "- [ ] buy milk\n");
 
-            let rendered = render(temp.path(), "{{ tasks.all() | length }}")
+            let rendered = render(temp.path(), "{{ tasks.from() | length }}")
                 .expect("render succeeds");
 
             assert_eq!(rendered, "1");
@@ -839,7 +727,7 @@ mod tests {
             write_note(temp.path(), "a.md", "# A");
             write_note(temp.path(), "b.md", "# B");
 
-            let rendered = render(temp.path(), "{{ query.all() | length }}")
+            let rendered = render(temp.path(), "{{ query.from() | length }}")
                 .expect("render succeeds");
 
             assert_eq!(rendered, "2");
@@ -853,7 +741,7 @@ mod tests {
 
             let rendered = render(
                 temp.path(),
-                r##"{% for n in query.from_tags("#book") %}{{ n.file.name }}{% endfor %}"##,
+                r##"{% for n in query.from("#book") %}{{ n.file.name }}{% endfor %}"##,
             )
             .expect("render succeeds");
 
@@ -869,7 +757,7 @@ mod tests {
 
             let rendered = render(
                 temp.path(),
-                r#"{% for n in query.from_folder("books") %}{{ n.file.name }}{% endfor %}"#,
+                r#"{% for n in query.from("books/") %}{{ n.file.name }}{% endfor %}"#,
             )
             .expect("render succeeds");
 
@@ -884,7 +772,7 @@ mod tests {
 
             let rendered = render(
                 temp.path(),
-                r##"{% for t in tasks.from_tags("#projects") %}{{ t.task.text }}{% endfor %}"##,
+                r##"{% for t in tasks.from("#projects") %}{{ t.task.text }}{% endfor %}"##,
             )
             .expect("render succeeds");
 
@@ -900,7 +788,7 @@ mod tests {
 
             let rendered = render(
                 temp.path(),
-                r#"{% for t in tasks.from_folder("projects") %}{{ t.task.text }}{% endfor %}"#,
+                r#"{% for t in tasks.from("projects/") %}{{ t.task.text }}{% endfor %}"#,
             )
             .expect("render succeeds");
 
@@ -921,7 +809,7 @@ mod tests {
 
             let rendered = render(
                 temp.path(),
-                r##"{% for n in query.from_tags("#book").where("rating > 5") %}{{ n.file.name }}{% endfor %}"##,
+                r##"{% for n in query.from("#book").where("rating > 5") %}{{ n.file.name }}{% endfor %}"##,
             )
             .expect("render succeeds");
 
@@ -937,7 +825,7 @@ mod tests {
 
             let rendered = render(
                 temp.path(),
-                r##"{% for n in query.from_tags("#book").sort("rating", true).limit(2) %}{{ n.file.name }} {% endfor %}"##,
+                r##"{% for n in query.from("#book").sort("rating", true).limit(2) %}{{ n.file.name }} {% endfor %}"##,
             )
             .expect("render succeeds");
 
@@ -952,7 +840,7 @@ mod tests {
 
             let rendered = render(
                 temp.path(),
-                r##"{% for n in query.from_tags("#book").group_by("rating") %}{{ n.file.name }} {% endfor %}"##,
+                r##"{% for n in query.from("#book").group_by("rating") %}{{ n.file.name }} {% endfor %}"##,
             )
             .expect("render succeeds");
 
@@ -966,7 +854,7 @@ mod tests {
 
             let rendered = render(
                 temp.path(),
-                "{{ query.all().flatten(\"tags\") | length }}",
+                "{{ query.from().flatten(\"tags\") | length }}",
             )
             .expect("render succeeds");
 
@@ -984,7 +872,7 @@ mod tests {
 
             let rendered = render(
                 temp.path(),
-                r#"{% for t in tasks.all().where("task.completed == true") %}{{ t.task.text }}{% endfor %}"#,
+                r#"{% for t in tasks.from().where("task.completed == true") %}{{ t.task.text }}{% endfor %}"#,
             )
             .expect("render succeeds");
 
@@ -1008,12 +896,12 @@ mod tests {
 
             let via_method = render(
                 temp.path(),
-                r#"{{ query.all().sort("file.name", false).table(["Name", "Rating"], ["file.name", "rating"]) }}"#,
+                r#"{{ query.from().sort("file.name", false).table(["Name", "Rating"], ["file.name", "rating"]) }}"#,
             )
             .expect("render succeeds");
             let via_filter = render(
                 temp.path(),
-                r#"{{ query.all().sort("file.name", false) | table(["Name", "Rating"], ["file.name", "rating"]) }}"#,
+                r#"{{ query.from().sort("file.name", false) | table(["Name", "Rating"], ["file.name", "rating"]) }}"#,
             )
             .expect("render succeeds");
 
@@ -1032,12 +920,12 @@ mod tests {
 
             let via_method = render(
                 temp.path(),
-                r#"{{ query.all().sort("file.name", false).list("rating") }}"#,
+                r#"{{ query.from().sort("file.name", false).list("rating") }}"#,
             )
             .expect("render succeeds");
             let via_filter = render(
                 temp.path(),
-                r#"{{ query.all().sort("file.name", false) | list("rating") }}"#,
+                r#"{{ query.from().sort("file.name", false) | list("rating") }}"#,
             )
             .expect("render succeeds");
 
@@ -1055,10 +943,10 @@ mod tests {
             );
 
             let via_method =
-                render(temp.path(), "{{ tasks.all().task_list() }}")
+                render(temp.path(), "{{ tasks.from().task_list() }}")
                     .expect("render succeeds");
             let via_filter =
-                render(temp.path(), "{{ tasks.all() | task_list }}")
+                render(temp.path(), "{{ tasks.from() | task_list }}")
                     .expect("render succeeds");
 
             assert_eq!(via_method, via_filter);
@@ -1071,9 +959,9 @@ mod tests {
             write_note(temp.path(), "a.md", "# A");
             write_note(temp.path(), "b.md", "# B");
 
-            let via_method = render(temp.path(), "{{ query.all().count() }}")
+            let via_method = render(temp.path(), "{{ query.from().count() }}")
                 .expect("render succeeds");
-            let via_filter = render(temp.path(), "{{ query.all() | count }}")
+            let via_filter = render(temp.path(), "{{ query.from() | count }}")
                 .expect("render succeeds");
 
             assert_eq!(via_method, via_filter);
@@ -1088,7 +976,7 @@ mod tests {
             // Chaining `{% for %}` after a terminal renderer is meaningless;
             // this only proves empty headers/columns lists do not panic.
             let rendered =
-                render(temp.path(), "{{ query.all().table([], []) }}")
+                render(temp.path(), "{{ query.from().table([], []) }}")
                     .expect("render succeeds");
             assert_eq!(rendered, "||\n");
         }
@@ -1113,8 +1001,8 @@ mod tests {
 
             let rendered = render(
                 temp.path(),
-                "{% for n in query.all() %}{{ n.file.name | upper }}{% endfor \
-                 %}",
+                "{% for n in query.from() %}{{ n.file.name | upper }}{% \
+                 endfor %}",
             )
             .expect("render succeeds");
 
@@ -1138,7 +1026,7 @@ mod tests {
 
             let rendered = render(
                 temp.path(),
-                "{% for n in query.all() %}{{ n.file.name }}|{{ n.rating \
+                "{% for n in query.from() %}{{ n.file.name }}|{{ n.rating \
                  }}|{{ n.Status }}|{{ n.tags | length }}{% endfor %}",
             )
             .expect("render succeeds");
@@ -1152,7 +1040,7 @@ mod tests {
             write_note(temp.path(), "only.md", "# Only");
 
             let rendered =
-                render(temp.path(), "{{ query.all()[0].file.name }}")
+                render(temp.path(), "{{ query.from()[0].file.name }}")
                     .expect("render succeeds");
 
             assert_eq!(rendered, "only");
@@ -1163,9 +1051,11 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             write_note(temp.path(), "note.md", "# No frontmatter");
 
-            let rendered =
-                render(temp.path(), "{{ query.all()[0].bogus_field is none }}")
-                    .expect("render succeeds");
+            let rendered = render(
+                temp.path(),
+                "{{ query.from()[0].bogus_field is none }}",
+            )
+            .expect("render succeeds");
 
             assert_eq!(rendered, "true");
         }
@@ -1177,7 +1067,7 @@ mod tests {
 
             let rendered = render(
                 temp.path(),
-                "{% for key in query.all()[0].file %}{{ key }},{% endfor %}",
+                "{% for key in query.from()[0].file %}{{ key }},{% endfor %}",
             )
             .expect("render succeeds");
 
@@ -1196,7 +1086,7 @@ mod tests {
 
             let rendered = render(
                 temp.path(),
-                "{% for t in tasks.all() %}{{ t.task.completed }}:{{ \
+                "{% for t in tasks.from() %}{{ t.task.completed }}:{{ \
                  t.task.text }} {% endfor %}",
             )
             .expect("render succeeds");
@@ -1216,8 +1106,8 @@ mod tests {
 
             let rendered = render(
                 temp.path(),
-                "{% for t in tasks.all() %}{{ t.file.name }}|{{ t.title }}|{{ \
-                 t.tags | length }}{% endfor %}",
+                "{% for t in tasks.from() %}{{ t.file.name }}|{{ t.title \
+                 }}|{{ t.tags | length }}{% endfor %}",
             )
             .expect("render succeeds");
 
@@ -1231,8 +1121,8 @@ mod tests {
 
             let rendered = render(
                 temp.path(),
-                "{{ query.all()[0].task.completed is none }}:{{ \
-                 query.all()[0].task.text is none }}",
+                "{{ query.from()[0].task.completed is none }}:{{ \
+                 query.from()[0].task.text is none }}",
             )
             .expect("render succeeds");
 
@@ -1259,7 +1149,7 @@ mod tests {
 
             let rendered = env
                 .render_str(
-                    r#"{% set picked = ui.select("pick", query.all(), attribute="file.name") %}{{ picked.file.name }}"#,
+                    r#"{% set picked = ui.select("pick", query.from(), attribute="file.name") %}{{ picked.file.name }}"#,
                     minijinja::context!(),
                 )
                 .expect("render succeeds");
@@ -1282,7 +1172,7 @@ mod tests {
 
             let rendered = env
                 .render_str(
-                    r#"{% set picked = ui.multi_select("pick", query.all(), attribute="file.name") %}{{ picked | map(attribute="file.name") | join(",") }}"#,
+                    r#"{% set picked = ui.multi_select("pick", query.from(), attribute="file.name") %}{{ picked | map(attribute="file.name") | join(",") }}"#,
                     minijinja::context!(),
                 )
                 .expect("render succeeds");
@@ -1301,7 +1191,7 @@ mod tests {
             write_note(temp.path(), "note.md", "# Note");
 
             let error =
-                render(temp.path(), r#"{{ query.all().filter("rating >") }}"#)
+                render(temp.path(), r#"{{ query.from().filter("rating >") }}"#)
                     .expect_err("malformed filter expression should error");
 
             assert!(error.to_string().contains("query failed"));
@@ -1312,9 +1202,11 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             write_note(temp.path(), "note.md", "# Note");
 
-            let error =
-                render(temp.path(), r#"{{ query.all().sort("a.b.c", true) }}"#)
-                    .expect_err("malformed field path should error");
+            let error = render(
+                temp.path(),
+                r#"{{ query.from().sort("a.b.c", true) }}"#,
+            )
+            .expect_err("malformed field path should error");
 
             assert!(error.to_string().contains("query failed"));
         }
@@ -1324,7 +1216,7 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             write_note(temp.path(), "note.md", "# Note");
 
-            let error = render(temp.path(), "{{ query.all().limit(-1) }}")
+            let error = render(temp.path(), "{{ query.from().limit(-1) }}")
                 .expect_err("negative limit should error");
 
             assert!(error.to_string().contains("query failed"));
@@ -1337,7 +1229,7 @@ mod tests {
 
             let error = render(
                 temp.path(),
-                r#"{{ tasks.all().filter("task.completed >") }}"#,
+                r#"{{ tasks.from().filter("task.completed >") }}"#,
             )
             .expect_err("malformed filter expression should error");
 
@@ -1349,7 +1241,7 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             write_note(temp.path(), "note.md", "# Note");
 
-            let error = render(temp.path(), "{{ query.all().task_list() }}")
+            let error = render(temp.path(), "{{ query.from().task_list() }}")
                 .expect_err("task_list on page-level records should error");
 
             assert!(error.to_string().contains("query failed"));
@@ -1362,7 +1254,7 @@ mod tests {
 
             let error = render(
                 temp.path(),
-                r#"{{ query.all().table(["Name", "Rating"], ["file.name"]) }}"#,
+                r#"{{ query.from().table(["Name", "Rating"], ["file.name"]) }}"#,
             )
             .expect_err("mismatched headers/columns length should error");
 
@@ -1392,7 +1284,7 @@ mod tests {
                 .expect("revoke read permission");
             let _restore = RestorePermissions(&locked);
 
-            let error = render(temp.path(), "{{ query.all() | length }}")
+            let error = render(temp.path(), "{{ query.from() | length }}")
                 .expect_err("unreadable subdirectory should fail the refresh");
 
             assert!(error.to_string().contains("failed to refresh"));
@@ -1411,13 +1303,19 @@ mod tests {
             let e = env(temp.path());
 
             let first = e
-                .render_str("{{ query.all() | length }}", minijinja::context!())
+                .render_str(
+                    "{{ query.from() | length }}",
+                    minijinja::context!(),
+                )
                 .expect("render succeeds");
             assert_eq!(first, "1");
 
             write_note(temp.path(), "b.md", "# B");
             let second = e
-                .render_str("{{ query.all() | length }}", minijinja::context!())
+                .render_str(
+                    "{{ query.from() | length }}",
+                    minijinja::context!(),
+                )
                 .expect("render succeeds");
             assert_eq!(second, "2");
         }
@@ -1434,22 +1332,23 @@ mod tests {
             write_note(temp.path(), "a.md", "# A");
             let page_ops = Arc::new(page_ops(temp.path()));
             let task_ops = Arc::new(task_ops(temp.path()));
-            let page_all = page_ops
-                .get_value(&Value::from("all"))
-                .expect("all is a known method");
-            let task_all = task_ops
-                .get_value(&Value::from("all"))
-                .expect("all is a known method");
+            let page_from = page_ops
+                .get_value(&Value::from("from"))
+                .expect("from is a known method");
+            let task_from = task_ops
+                .get_value(&Value::from("from"))
+                .expect("from is a known method");
             let env = Environment::new();
             let state = env.empty_state();
 
             // Populates state's cached FileIndex; both namespaces dispatch
             // through the same INDEX_CACHE_KEY.
-            page_all.call(&state, &[]).expect("query.all succeeds");
-            // Written after the index was cached: a cache-sharing tasks.all()
+            page_from.call(&state, &[]).expect("query.from succeeds");
+            // Written after the index was cached: a cache-sharing tasks.from()
             // call must not observe this new task.
             write_note(temp.path(), "todo.md", "- [ ] buy milk\n");
-            let tasks = task_all.call(&state, &[]).expect("tasks.all succeeds");
+            let tasks =
+                task_from.call(&state, &[]).expect("tasks.from succeeds");
 
             let count = tasks
                 .downcast_object_ref::<QueryOutcome>()
@@ -1475,9 +1374,9 @@ mod tests {
 
             // A page-level query over the same Note returns exactly one
             // row; the task-level query must not collapse back to it.
-            let pages = render(temp.path(), "{{ query.all() | length }}")
+            let pages = render(temp.path(), "{{ query.from() | length }}")
                 .expect("render succeeds");
-            let tasks = render(temp.path(), "{{ tasks.all() | length }}")
+            let tasks = render(temp.path(), "{{ tasks.from() | length }}")
                 .expect("render succeeds");
 
             assert_eq!(pages, "1");
@@ -1485,7 +1384,7 @@ mod tests {
         }
     }
 
-    mod from_class {
+    mod class_sources {
         use pretty_assertions::assert_eq;
 
         use super::*;
@@ -1515,11 +1414,9 @@ mod tests {
             write_class_note(temp.path(), "dune.md", "class: book");
             write_class_note(temp.path(), "diary.md", "class: journal");
 
-            let rendered = render(
-                temp.path(),
-                r#"{{ query.from_class("book") | length }}"#,
-            )
-            .expect("render succeeds");
+            let rendered =
+                render(temp.path(), r#"{{ query.from("@book") | length }}"#)
+                    .expect("render succeeds");
 
             assert_eq!(rendered, "1");
         }
@@ -1535,7 +1432,7 @@ mod tests {
 
             let rendered = render(
                 temp.path(),
-                r#"{{ query.from_class(["book", "movie"]) | length }}"#,
+                r#"{{ query.from("@book or @movie") | length }}"#,
             )
             .expect("render succeeds");
 
@@ -1549,11 +1446,9 @@ mod tests {
             write_schema(temp.path(), "sci_fi", "extends = [\"book\"]\n");
             write_class_note(temp.path(), "dune.md", "class: sci_fi");
 
-            let rendered = render(
-                temp.path(),
-                r#"{{ query.from_class("book") | length }}"#,
-            )
-            .expect("render succeeds");
+            let rendered =
+                render(temp.path(), r#"{{ query.from("@book*") | length }}"#)
+                    .expect("render succeeds");
 
             assert_eq!(rendered, "1");
         }
@@ -1566,31 +1461,15 @@ mod tests {
             write_class_note(temp.path(), "dune.md", "class: book");
             write_class_note(temp.path(), "unknown.md", "class: sci_fi");
 
-            let rendered = render(
-                temp.path(),
-                r#"{{ query.from_class("book") | length }}"#,
-            )
-            .expect("render succeeds");
+            let rendered =
+                render(temp.path(), r#"{{ query.from("@book*") | length }}"#)
+                    .expect("render succeeds");
 
             assert_eq!(rendered, "1");
         }
 
         #[test]
-        fn rejects_the_reserved_global_class() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            write_class_note(temp.path(), "dune.md", "class: book");
-
-            let error = render(
-                temp.path(),
-                r#"{{ query.from_class("global") | length }}"#,
-            )
-            .expect_err("global is a forbidden File Class");
-
-            assert_eq!(error.kind(), ErrorKind::InvalidOperation);
-        }
-
-        #[test]
-        fn tasks_from_class_selects_task_rows() {
+        fn tasks_from_class_source_selects_task_rows() {
             let temp = tempfile::tempdir().expect("create temp dir");
             write_schema(temp.path(), "book", "");
             write_note(
@@ -1599,11 +1478,9 @@ mod tests {
                 "---\nclass: book\n---\n# Dune\n- [ ] read part two\n",
             );
 
-            let rendered = render(
-                temp.path(),
-                r#"{{ tasks.from_class("book") | length }}"#,
-            )
-            .expect("render succeeds");
+            let rendered =
+                render(temp.path(), r#"{{ tasks.from("@book") | length }}"#)
+                    .expect("render succeeds");
 
             assert_eq!(rendered, "1");
         }
@@ -1617,41 +1494,37 @@ mod tests {
             let configured = render_with_class_field(
                 temp.path(),
                 "kind",
-                r#"{{ query.from_class("book") | length }}"#,
+                r#"{{ query.from("@book") | length }}"#,
             )
             .expect("render succeeds");
             // Under the default `class` field the `kind: book` Note carries
             // no File Class, so the same query must select nothing.
-            let default = render(
-                temp.path(),
-                r#"{{ query.from_class("book") | length }}"#,
-            )
-            .expect("render succeeds");
+            let default =
+                render(temp.path(), r#"{{ query.from("@book") | length }}"#)
+                    .expect("render succeeds");
 
             assert_eq!(configured, "1");
             assert_eq!(default, "0");
         }
 
         #[test]
-        fn rejects_a_non_string_class_argument() {
+        fn rejects_a_non_string_source_argument() {
             let temp = tempfile::tempdir().expect("create temp dir");
             write_class_note(temp.path(), "dune.md", "class: book");
 
-            let error =
-                render(temp.path(), "{{ query.from_class(5) | length }}")
-                    .expect_err("a non-string class argument is rejected");
+            let error = render(temp.path(), "{{ query.from(5) | length }}")
+                .expect_err("a non-string source argument is rejected");
 
             assert_eq!(error.kind(), ErrorKind::InvalidOperation);
         }
 
         #[test]
-        fn rejects_a_non_string_class_in_a_list() {
+        fn rejects_a_non_string_source_list() {
             let temp = tempfile::tempdir().expect("create temp dir");
             write_class_note(temp.path(), "dune.md", "class: book");
 
-            let error =
-                render(temp.path(), "{{ query.from_class([5]) | length }}")
-                    .expect_err("a non-string class in a list is rejected");
+            let error = render(temp.path(), "{{ query.from([5]) | length }}")
+                .expect_err("a source list is rejected");
 
             assert_eq!(error.kind(), ErrorKind::InvalidOperation);
         }

@@ -17,8 +17,10 @@
 //! - `file_store` - Hash-keyed file and path state store using BLAKE3-named
 //!   entries.
 //! - `hash` - BLAKE3 hashing for file contents and canonicalized paths.
-//! - `index` - Persistent file index, note parsing, link graph construction,
-//!   and query execution.
+//! - `index` - Persistent file index, note parsing, and link graph
+//!   construction.
+//! - `query` - Read-side source selection, record projection, transformations,
+//!   and output rendering.
 //! - `note` - Markdown note parsing, YAML frontmatter extraction, and task
 //!   processing.
 //! - `path` - Root-relative path validation and confinement.
@@ -56,6 +58,7 @@ mod hash;
 mod index;
 mod note;
 mod path;
+mod query;
 mod schema;
 mod template;
 
@@ -77,16 +80,15 @@ pub use hash::{Blake3FileHash, Blake3PathHash};
 #[cfg(not(any(test, feature = "test-utils")))]
 pub(crate) use hash::{Blake3FileHash, Blake3PathHash};
 #[cfg(any(test, feature = "test-utils"))]
-pub use index::{
-    FileIndex, FileIndexError, FileRecord, IndexRecord, QueryOutcome,
-    QuerySource,
-};
+pub use index::{FileIndex, FileIndexError, FileRecord};
 #[cfg(any(test, feature = "test-utils"))]
 pub use note::{
     FieldValue, Frontmatter, InlineField, InlineFieldForm, Link, LinkTarget,
     LinkType, List, ListItem, Note, RawFrontmatter, Tag, TaskStatus,
     parse_markdown,
 };
+#[cfg(any(test, feature = "test-utils"))]
+pub use query::{IndexRecord, QueryOutcome, QuerySource};
 #[cfg(any(test, feature = "test-utils"))]
 pub use template::{
     CommitPolicy, RenderFailureKind, TemplateError, TemplatePathError,

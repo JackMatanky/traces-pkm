@@ -8,8 +8,8 @@
 //! - The `inlinks` accessor
 //! - A frontmatter or inline metadata field key
 
-use super::{super::file::FileRecord, error::QueryError};
-use crate::{field, field::FieldKey, note::FieldValue};
+use super::error::QueryError;
+use crate::{field, field::FieldKey, index::FileRecord, note::FieldValue};
 
 /// Represents a `file.<field>` accessor backed by [`FileRecord`] metadata.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -109,7 +109,7 @@ impl FileField {
 ///
 /// Applied to task records produced by [`FileIndex::query_tasks`].
 ///
-/// [`FileIndex::query_tasks`]: super::super::FileIndex::query_tasks
+/// [`FileIndex::query_tasks`]: crate::index::FileIndex::query_tasks
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(super) enum TaskField {
     /// Accesses task completion state (`- [ ]` versus `- [x]`).

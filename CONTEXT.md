@@ -196,9 +196,9 @@ _Avoid_: schema api, metadata menu function
 `schema.get("book").descendants()` returns every Schema that is-a `book` transitively (extends it directly or via an ancestor), each itself a bound Schema so `.field(...)`/`.descendants()` chain further. Excludes `book` itself; an empty list, not an error, when nothing extends it.
 _Avoid_: children (implies direct extends only; this is transitive), subclasses
 
-#### from_class
-A page-level query source, `query.from_class("book")` or `query.from_class(["book", "movie"])`, selecting notes whose File Class matches any listed name with Extends is-a matching applied. A class with no Schema degrades to exact match with a warning.
-_Avoid_: from_schema, class source
+### Source Expression
+A query source parsed by the shared CLI/template DSL. Leaves select tags (`#book`), exact files or folder prefixes (`"books/"`), or File Classes (`@Book` exact, `@Book+` with direct children, `@Book*` with transitive descendants). `and`/`&&`, `or`/`||`, `not`/`!`, and parentheses compose leaves. `class(Book)`, `class(Book).with_children()`, and `class(Book).with_descendants()` are equivalent long forms. An unknown File Class degrades to exact matching with a warning.
+_Avoid_: from_class, from_tags, from_folder, DQL source
 
 ### QueryOutcome
 The type returned by a page-level (`query`) or task-level (`tasks`) query: an iterable, indexable collection of `IndexRecord`s. Supports `len`, indexing by integer position, and iteration via `{% for %}`. Registered as a minijinja type so pipeline filters compose against it.
@@ -211,20 +211,20 @@ _Avoid_: QueryRow, page, record
 ### Pipeline Query
 A template-side query composed by chaining methods on the `query` namespace Object and the `QueryOutcome` values it returns. Non-terminal methods (`where`/`filter`, `sort`, `limit`, `group_by`, `flatten`) accept and return a `QueryOutcome`; terminal methods (`table`, `list`, `task_list`, `count`) accept a `QueryOutcome` and return a string. Terminal methods are also exposed as pipeline filters for template authors who prefer that syntax; non-terminal transformations are method calls only — there is no pipeline-filter form of `where`/`sort`/`limit`/`group_by`/`flatten`.
 
-`query` mirrors `Source`'s variants: `query.all()` selects every indexed Note, `query.from_tags(...)` and `query.from_folder(...)` start a page-level query from a tag or folder source. `tasks.all()`/`tasks.from_tags(...)`/`tasks.from_folder(...)` is the parallel task-level namespace: each matched Note's `- [ ]`/`- [x]` items become one row per task instead of one row per Note, exposing `task.completed` (bool) and `task.text` (string) alongside that Note's `file.*`, frontmatter, inline-field, and tag metadata.
+`query.from([expr])` is the single page-level entry point; `tasks.from([expr])` applies the same Source Expression before expanding each matched Note's `- [ ]`/`- [x]` items into one row per task. Calling `from()` or `from("")` selects every indexed Note. Task rows expose `task.completed` (bool) and `task.text` (string) alongside their Note's `file.*`, frontmatter, inline-field, and tag metadata.
 
 ```jinja
-{% for note in query.from_tags("#book").where("rating > 7").sort("rating", true) %}
+{% for note in query.from("#book and not archive/").where("rating > 7").sort("rating", true) %}
   - {{ note.file.name }} ({{ note.rating }})
 {% endfor %}
 
-{{ query.from_tags("#book") | table(["Name", "Rating"], ["file.name", "rating"]) }}
+{{ query.from("@Book*") | table(["Name", "Rating"], ["file.name", "rating"]) }}
 
-{% set books = query.from_tags("#book") %}
+{% set books = query.from("@Book+") %}
 {% set idx = ui.select("Pick", books | map(attribute="file.name")) %}
 {{ books[idx].file.name }}
 
-{% for t in tasks.from_tags("#projects").where("task.completed == false") %}
+{% for t in tasks.from("#projects").where("task.completed == false") %}
   - [ ] {{ t.task.text }} ({{ t.file.name }})
 {% endfor %}
 ```
@@ -233,7 +233,7 @@ _Avoid_: DQL, dataview query
 ### CLI Query Commands
 
 #### list
-`traces list --from "#book" --where "rating > 7"`: page-level bullet list output.
+`traces list --from "#book and not archive/" --where "rating > 7"`: page-level bullet list output.
 
 #### table
 `traces table "rating, author" --from "#book" --sort "rating" --desc`: page-level tabular output.

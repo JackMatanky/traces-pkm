@@ -548,7 +548,7 @@ mod tests {
             let template_path = write_file(
                 &local_dir,
                 "broken-query.md",
-                "line one\n{{ query.all().sort(\"nope.bad\") }}\n",
+                "line one\n{{ query.from().sort(\"nope.bad\") }}\n",
             );
             let config = Config::for_test(
                 temp.path().to_path_buf(),

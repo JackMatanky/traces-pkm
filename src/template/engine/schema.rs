@@ -54,7 +54,7 @@ use minijinja::{
 use crate::{
     field,
     field::FieldKey,
-    index::{FileOption, FrontmatterFieldKeys},
+    query::{FileOption, FileOptionFilter, FrontmatterFieldKeys},
     schema::{Schema, SchemaError, SchemaFileFieldFilter, SchemaRegistry},
 };
 
@@ -205,7 +205,7 @@ impl Object for SchemaOps {
 /// [`crate::schema`], is where minijinja-facing tree-walking lives.
 ///
 /// Gets its [`Object`] impl here instead of in [`crate::schema`], mirroring how
-/// [`super::query`] wires up [`crate::index::QueryOutcome`].
+/// [`super::query`] wires up [`crate::query::QueryOutcome`].
 #[derive(Debug)]
 struct SchemaBinding {
     schema: Arc<Schema>,
@@ -238,7 +238,7 @@ impl SchemaBinding {
             }
             Some(self.registry.matches(classes))
         };
-        let options = index.file_options(crate::index::FileOptionFilter::new(
+        let options = index.file_options(FileOptionFilter::new(
             folders,
             ext,
             class_matches.as_ref(),
@@ -620,11 +620,11 @@ mod tests {
             // `sci_fi` transitively is-a `book` via `extends`. An empty,
             // degraded registry (`SchemaRegistry::load` on a missing
             // directory - see the sibling test above) has no Schemas at
-            // all, so `from_class("book")` would fall back to exact-match
-            // and miss a Note whose File Class is `sci_fi`. Asserting the
-            // Note still matches after the directory is gone proves
-            // `query` reused the registry `schema.get` already cached in
-            // this render, not a fresh (post-deletion) load of its own.
+            // all, so `from("@book*")` would fall back to exact-match and
+            // miss a Note whose File Class is `sci_fi`. Asserting the Note
+            // still matches after the directory is gone proves `query`
+            // reused the registry `schema.get` already cached in this render,
+            // not a fresh (post-deletion) load of its own.
             let temp = tempfile::tempdir().expect("create temp dir");
             let schemas_dir = temp.path().join(".traces/schemas");
             write_schema(temp.path(), "book", "");
@@ -652,9 +652,9 @@ mod tests {
                 Arc::from("class"),
                 Arc::clone(&ctx),
             ));
-            let from_class = query_ops
-                .get_value(&Value::from("from_class"))
-                .expect("from_class is a known method");
+            let from = query_ops
+                .get_value(&Value::from("from"))
+                .expect("from is a known method");
             let env = Environment::new();
             let state = env.empty_state();
 
@@ -663,14 +663,13 @@ mod tests {
                 .expect("schema.get loads and caches the registry");
             fs::remove_dir_all(&schemas_dir).expect("remove schemas dir");
 
-            let matched =
-                from_class.call(&state, &[Value::from("book")]).expect(
-                    "query.from_class must reuse the cached registry, not \
-                     reread the now-missing directory",
-                );
+            let matched = from.call(&state, &[Value::from("@book*")]).expect(
+                "query.from must reuse the cached registry, not reread the \
+                 now-missing directory",
+            );
 
             assert_eq!(
-                matched.len().expect("from_class returns a sized sequence"),
+                matched.len().expect("from returns a sized sequence"),
                 1,
                 "sci_fi's is-a relationship to book only resolves through the \
                  registry schema.get already cached"

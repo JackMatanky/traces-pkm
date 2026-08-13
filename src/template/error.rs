@@ -17,10 +17,7 @@ use std::{error::Error as StdError, io, path::PathBuf};
 use thiserror::Error;
 
 use super::path::TemplatePathError;
-use crate::{
-    DialogError,
-    index::{FileIndexError, QueryError},
-};
+use crate::{DialogError, index::FileIndexError, query::QueryError};
 
 /// Reports the failed stage of a template operation.
 ///

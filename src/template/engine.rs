@@ -52,7 +52,7 @@ use self::{
     ui::UiOps,
 };
 use super::{loader::TemplateLoader, path::DeclaredOutputPath};
-use crate::{DialogProvider, config::Config, index::FrontmatterFieldKeys};
+use crate::{DialogProvider, config::Config, query::FrontmatterFieldKeys};
 
 /// Renders template source through minijinja, backed by [`TemplateLoader`]'s
 /// `{% include %}` and `{% extends %}` resolution.
@@ -119,9 +119,9 @@ impl TemplateEngine {
             config.frontmatter().aliases().clone(),
         );
         // Built once and shared with `QueryOps` (below) so `query`/`tasks`
-        // `.from_class()` and `schema.get()` resolve the identical Schema
-        // registry directory by construction, not by coincidentally-equal
-        // `Arc<Path>` clones: see `cache::SCHEMA_REGISTRY_CACHE_KEY`'s docs.
+        // `.from()` and `schema.get()` resolve the identical Schema registry
+        // directory by construction, not by coincidentally-equal `Arc<Path>`
+        // clones: see `cache::SCHEMA_REGISTRY_CACHE_KEY`'s docs.
         let schema_ctx = Arc::new(SchemaContext::new(
             Arc::clone(&root),
             schemas_dir,

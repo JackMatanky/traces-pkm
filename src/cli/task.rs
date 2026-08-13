@@ -6,12 +6,10 @@
 //!
 //! [`FileIndex`]: crate::index::FileIndex
 
-use std::path::Path;
-
 use clap::Args;
 
 use super::error::CliError;
-use crate::config::ConfigService;
+use crate::config::{Config, ConfigService};
 
 /// Arguments for `traces task`.
 ///
@@ -19,8 +17,8 @@ use crate::config::ConfigService;
 /// lines.
 #[derive(Debug, Args)]
 pub(super) struct Task {
-    /// Task source: a `#tag` (including nested sub-tags) or a folder path.
-    /// Omit to query every indexed note's tasks.
+    /// Source expression, e.g. `#tag`, `folder/`, `@Class*`, or a boolean
+    /// combination. Omit to query every indexed note's tasks.
     #[arg(long)]
     from: Option<String>,
     /// Filter expression narrowing results, e.g. `"task.completed == false"`.
@@ -53,7 +51,7 @@ impl Task {
     pub(super) fn run(&self, service: &ConfigService) -> Result<(), CliError> {
         let config = super::load_config(service)?;
         let root = config.root();
-        let lines = self.lines(root)?;
+        let lines = self.lines(&config)?;
         let count = lines.len();
         for line in &lines {
             println!("{line}");
@@ -78,8 +76,9 @@ impl Task {
     /// - [`CliError::Query`] if `--where` is an unparsable filter expression.
     ///
     /// [`FileIndex`]: crate::index::FileIndex
-    fn lines(&self, root: &Path) -> Result<Vec<String>, CliError> {
-        let outcome = super::refresh_task_query(root, self.from.as_deref())?;
+    fn lines(&self, config: &Config) -> Result<Vec<String>, CliError> {
+        let root = config.root();
+        let outcome = super::refresh_task_query(config, self.from.as_deref())?;
         let outcome =
             super::apply_filter(outcome, root, self.filter.as_deref())?;
         Ok(outcome
@@ -106,12 +105,16 @@ mod tests {
     use crate::cli::tests::fixtures::{create_trusted_project, service};
 
     mod lines {
-        use std::fs;
+        use std::{fs, path::Path};
 
         use pretty_assertions::assert_eq;
 
         use super::*;
-        use crate::index::QueryError;
+        use crate::query::QueryError;
+
+        fn config(root: &Path) -> Config {
+            Config::for_test(root.to_path_buf(), None, None, root.to_path_buf())
+        }
 
         #[test]
         fn renders_a_checkbox_line_per_task_in_document_order() {
@@ -126,7 +129,7 @@ mod tests {
                 filter: None,
             };
 
-            let lines = task.lines(temp.path()).expect("valid query");
+            let lines = task.lines(&config(temp.path())).expect("valid query");
 
             assert_eq!(lines, [
                 "- [ ] buy milk (todo.md)",
@@ -146,7 +149,7 @@ mod tests {
                 filter: None,
             };
 
-            let lines = task.lines(temp.path()).expect("valid query");
+            let lines = task.lines(&config(temp.path())).expect("valid query");
 
             assert_eq!(lines, ["- [ ] a task (a.md)"]);
         }
@@ -167,7 +170,7 @@ mod tests {
                 filter: None,
             };
 
-            let lines = task.lines(temp.path()).expect("valid query");
+            let lines = task.lines(&config(temp.path())).expect("valid query");
 
             assert_eq!(lines, ["- [ ] project task (projects/a.md)"]);
         }
@@ -185,7 +188,7 @@ mod tests {
                 filter: Some("task.completed == false".to_owned()),
             };
 
-            let lines = task.lines(temp.path()).expect("valid query");
+            let lines = task.lines(&config(temp.path())).expect("valid query");
 
             // The Note has one matching and one non-matching task: filtering
             // keeps only the matching task row, not every task on the page.
@@ -202,8 +205,9 @@ mod tests {
                 filter: Some("not a valid expression".to_owned()),
             };
 
-            let error =
-                task.lines(temp.path()).expect_err("unparsable filter fails");
+            let error = task
+                .lines(&config(temp.path()))
+                .expect_err("unparsable filter fails");
 
             assert!(matches!(error, CliError::Query {
                 source: QueryError::UnparsableFilterExpression { .. },

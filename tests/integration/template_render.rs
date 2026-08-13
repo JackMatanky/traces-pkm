@@ -28,7 +28,7 @@ fn renders_a_query_over_real_indexed_notes_and_writes_the_result() {
     write_template(
         &root,
         "report.md",
-        "{{ query.from_folder(\"notes\") | length }} notes",
+        "{{ query.from(\"notes/\") | length }} notes",
     );
 
     let config = Config::for_test(

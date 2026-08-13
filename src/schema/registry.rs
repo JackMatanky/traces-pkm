@@ -17,13 +17,17 @@ use std::{
 use walkdir::WalkDir;
 
 use super::{
+    GLOBAL_SCHEMA_NAME,
     error::{SchemaError, SchemaWarning},
     model::Schema,
     name::SchemaName,
     raw::RawSchema,
     resolve,
 };
-use crate::file_name::BaseNameRef;
+use crate::{
+    file_name::BaseNameRef,
+    query::{ClassExpansionMode, QuerySource, QuerySourceExpr},
+};
 
 /// Store every resolved Schema under a registry directory.
 #[derive(Clone, Debug)]
@@ -31,8 +35,9 @@ pub(crate) struct SchemaRegistry {
     /// Reference-counted per Schema, not owned outright: `.get()` and
     /// `.descendants_of()` share one Schema's field map across every caller in
     /// a render instead of deep-cloning it per lookup, mirroring
-    /// [`crate::index::IndexRecord`]'s `Arc<Note>`.
+    /// [`crate::query::IndexRecord`]'s `Arc<Note>`.
     schemas: BTreeMap<SchemaName, Arc<Schema>>,
+    direct_children: BTreeMap<SchemaName, BTreeSet<SchemaName>>,
 }
 
 impl SchemaRegistry {
@@ -66,6 +71,25 @@ impl SchemaRegistry {
     ) -> Result<(Self, Vec<SchemaWarning>), SchemaError> {
         let raw = read_raw_schemas(dir)?;
         let (schemas, warnings) = resolve::resolve(&raw)?;
+        let direct_children = raw
+            .iter()
+            .flat_map(|(child, schema)| {
+                schema
+                    .extends
+                    .iter()
+                    .filter(|parent| {
+                        parent.as_str() != GLOBAL_SCHEMA_NAME
+                            && schemas.contains_key(*parent)
+                    })
+                    .map(|parent| (parent.clone(), child.clone()))
+            })
+            .fold(
+                BTreeMap::<SchemaName, BTreeSet<SchemaName>>::new(),
+                |mut children, (parent, child)| {
+                    children.entry(parent).or_default().insert(child);
+                    children
+                },
+            );
         let schemas = schemas
             .into_iter()
             .map(|(name, schema)| (name, Arc::new(schema)))
@@ -73,6 +97,7 @@ impl SchemaRegistry {
         Ok((
             Self {
                 schemas,
+                direct_children,
             },
             warnings,
         ))
@@ -102,6 +127,57 @@ impl SchemaRegistry {
             .collect()
     }
 
+    /// Return every Schema that directly extends `name`.
+    ///
+    /// Excludes `name` itself and all transitive descendants.
+    #[must_use]
+    pub(crate) fn children_of(&self, name: &str) -> Vec<Arc<Schema>> {
+        self.direct_children
+            .get(name)
+            .into_iter()
+            .flatten()
+            .filter_map(|child| self.schemas.get(child))
+            .cloned()
+            .collect()
+    }
+
+    /// Populate `mode`'s match set from `classes` at its requested depth.
+    ///
+    /// Unknown class names remain in the set so a Note may still use them even
+    /// without a corresponding Schema.
+    pub(crate) fn expand_classes(
+        &self,
+        classes: &[String],
+        mode: &mut ClassExpansionMode,
+    ) {
+        for class in classes {
+            if self.get(class).is_none() {
+                tracing::warn!(
+                    class,
+                    "query source names an unknown File Class; matching it \
+                     exactly"
+                );
+            }
+        }
+        let mut expanded: BTreeSet<String> = classes.iter().cloned().collect();
+        match mode {
+            ClassExpansionMode::Exact(_) => {}
+            ClassExpansionMode::Children(_) => {
+                for class in classes {
+                    expanded.extend(
+                        self.children_of(class)
+                            .iter()
+                            .map(|schema| schema.name().to_owned()),
+                    );
+                }
+            }
+            ClassExpansionMode::Descendants(_) => {
+                expanded = self.matches(classes);
+            }
+        }
+        mode.set_classes(expanded);
+    }
+
     /// Return the set of Schema names that match `classes`.
     ///
     /// The set includes:
@@ -110,10 +186,10 @@ impl SchemaRegistry {
     ///   matches itself).
     /// - Every resolved Schema that is-a one of the class names.
     ///
-    /// A `from_class` query tests each Note's File Class against this set: a
-    /// Note matches when any of its class values is in the returned
-    /// set. Transitive `extends` is folded in here so the caller compares
-    /// plain strings without consulting the registry per Note.
+    /// A File Class source query tests each Note's File Class against this set:
+    /// a Note matches when any of its class values is in the returned set.
+    /// Transitive `extends` is folded in here so the caller compares plain
+    /// strings without consulting the registry per Note.
     ///
     /// # Examples
     ///
@@ -131,6 +207,42 @@ impl SchemaRegistry {
             }
         }
         matches
+    }
+}
+
+/// Resolve every File Class leaf in `source` against `registry`.
+///
+/// This caller-side pre-pass keeps query parsing and matching independent of
+/// the Schema registry.
+pub(crate) fn resolve_sources(
+    source: &mut QuerySource,
+    registry: &SchemaRegistry,
+) {
+    let QuerySource::Expr(expression) = source else {
+        return;
+    };
+    resolve_expression(expression, registry);
+}
+
+fn resolve_expression(
+    expression: &mut QuerySourceExpr,
+    registry: &SchemaRegistry,
+) {
+    match expression {
+        QuerySourceExpr::Class {
+            names,
+            mode,
+        } => registry.expand_classes(names, mode),
+        QuerySourceExpr::And(expressions)
+        | QuerySourceExpr::Or(expressions) => {
+            for child in expressions {
+                resolve_expression(child, registry);
+            }
+        }
+        QuerySourceExpr::Not(expression) => {
+            resolve_expression(expression, registry);
+        }
+        QuerySourceExpr::Tag(_) | QuerySourceExpr::Path(_) => {}
     }
 }
 
@@ -517,6 +629,102 @@ mod tests {
             let matches = registry.matches(&[]);
 
             assert!(matches.is_empty());
+        }
+    }
+
+    mod expand_classes {
+        use std::collections::BTreeSet;
+
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+        use crate::query::{ClassExpansionMode, QuerySource, QuerySourceExpr};
+
+        fn set(names: &[&str]) -> BTreeSet<String> {
+            names.iter().map(|name| (*name).to_owned()).collect()
+        }
+
+        fn registry() -> SchemaRegistry {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_schema(temp.path(), "thing", "");
+            write_schema(temp.path(), "book", r#"extends = ["thing"]"#);
+            write_schema(temp.path(), "sci_fi", r#"extends = ["book"]"#);
+            write_schema(temp.path(), "space_opera", r#"extends = ["sci_fi"]"#);
+            SchemaRegistry::load(temp.path()).expect("registry loads").0
+        }
+
+        #[test]
+        fn children_of_returns_only_direct_extenders() {
+            let registry = registry();
+            let names: Vec<String> = registry
+                .children_of("thing")
+                .into_iter()
+                .map(|schema| schema.name().to_owned())
+                .collect();
+
+            assert_eq!(names, vec!["book".to_owned()]);
+        }
+
+        #[test]
+        fn expansion_modes_are_incremental() {
+            let registry = registry();
+            let names = vec!["thing".to_owned()];
+            let mut exact = ClassExpansionMode::Exact(BTreeSet::new());
+            let mut children = ClassExpansionMode::Children(BTreeSet::new());
+            let mut descendants =
+                ClassExpansionMode::Descendants(BTreeSet::new());
+
+            registry.expand_classes(&names, &mut exact);
+            registry.expand_classes(&names, &mut children);
+            registry.expand_classes(&names, &mut descendants);
+
+            assert_eq!(exact.classes(), &set(&["thing"]));
+            assert_eq!(children.classes(), &set(&["book", "thing"]));
+            assert_eq!(
+                descendants.classes(),
+                &set(&["book", "sci_fi", "space_opera", "thing"])
+            );
+        }
+
+        #[test]
+        fn resolve_sources_walks_nested_expressions_and_preserves_unknowns() {
+            let registry = registry();
+            let mut source = QuerySource::Expr(QuerySourceExpr::And(vec![
+                QuerySourceExpr::Class {
+                    names: vec!["thing".to_owned()],
+                    mode: ClassExpansionMode::Children(BTreeSet::new()),
+                },
+                QuerySourceExpr::Not(Box::new(QuerySourceExpr::Class {
+                    names: vec!["ghost".to_owned()],
+                    mode: ClassExpansionMode::Descendants(BTreeSet::new()),
+                })),
+            ]));
+
+            resolve_sources(&mut source, &registry);
+
+            let QuerySource::Expr(QuerySourceExpr::And(expressions)) = source
+            else {
+                panic!("expected and expression");
+            };
+            let QuerySourceExpr::Class {
+                mode: first,
+                ..
+            } = &expressions[0]
+            else {
+                panic!("expected class expression");
+            };
+            assert_eq!(first.classes(), &set(&["book", "thing"]));
+            let QuerySourceExpr::Not(negated) = &expressions[1] else {
+                panic!("expected not expression");
+            };
+            let QuerySourceExpr::Class {
+                mode: ghost,
+                ..
+            } = negated.as_ref()
+            else {
+                panic!("expected class expression");
+            };
+            assert_eq!(ghost.classes(), &set(&["ghost"]));
         }
     }
 

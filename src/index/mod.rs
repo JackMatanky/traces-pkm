@@ -30,23 +30,22 @@
 mod error;
 mod file;
 mod inlinks;
-mod query;
 mod scan;
 mod store;
 
-use std::{collections::BTreeSet, fs, path::Path};
+use std::{fs, path::Path};
 
 pub use error::FileIndexError;
 pub(crate) use file::FileFormat;
 pub use file::FileRecord;
 use inlinks::{InlinkMap, derive_inlinks};
-pub(crate) use query::{FileField, QueryError, SortOrder};
-pub use query::{IndexRecord, QueryOutcome, QuerySource};
 use store::IndexStore;
 
+#[cfg(test)]
+use crate::query::IndexRecord;
 use crate::{
-    field::FieldKey,
-    note::{FieldValue, Note, parse_markdown},
+    note::{Note, parse_markdown},
+    query::{FileOption, FileOptionFilter, QueryOutcome, QuerySource},
 };
 
 /// Project-relative path of the persisted [`FileIndex`] database.
@@ -62,13 +61,13 @@ const INDEX_FILE: &str = ".traces/index.redb";
 /// [`Self::refresh`] to update it against the current filesystem state.
 #[derive(Clone, Debug)]
 pub struct FileIndex {
-    records: Vec<FileRecord>,
-    notes: Vec<Note>,
+    pub(crate) records: Vec<FileRecord>,
+    pub(crate) notes: Vec<Note>,
     /// Inbound links, keyed by target path; see [`inlinks::derive_inlinks`].
     ///
     /// - Recomputed in full whenever [`Self::refresh`] finds changed content.
     /// - Reused unchanged from the last persisted computation otherwise.
-    inlinks: InlinkMap,
+    pub(crate) inlinks: InlinkMap,
 }
 
 impl FileIndex {
@@ -228,17 +227,16 @@ impl FileIndex {
     /// across `records` and `notes`, looking each matched Note's inlinks up by
     /// moving them out of the map instead of cloning.
     #[inline]
+    #[cfg_attr(
+        not(any(test, feature = "test-utils")),
+        expect(
+            dead_code,
+            reason = "read-side exit is exported only with the test-utils API"
+        )
+    )]
     #[must_use]
     pub fn query(self, source: &QuerySource) -> QueryOutcome {
-        let Self {
-            records,
-            notes,
-            mut inlinks,
-        } = self;
-        let matched = matched_pairs(records, notes, source)
-            .map(|(file, note)| record_with_inlinks(file, note, &mut inlinks))
-            .collect();
-        QueryOutcome::new(matched)
+        crate::query::query(self, source, "class")
     }
 
     /// Executes a task-level query over `source`, consuming this index.
@@ -268,30 +266,16 @@ impl FileIndex {
     ///
     /// [`Arc`]: std::sync::Arc
     #[inline]
+    #[cfg_attr(
+        not(any(test, feature = "test-utils")),
+        expect(
+            dead_code,
+            reason = "read-side exit is exported only with the test-utils API"
+        )
+    )]
     #[must_use]
     pub fn query_tasks(self, source: &QuerySource) -> QueryOutcome {
-        let Self {
-            records,
-            notes,
-            mut inlinks,
-        } = self;
-        let mut matched = Vec::new();
-        for (file, note) in matched_pairs(records, notes, source) {
-            let base = record_with_inlinks(file, note, &mut inlinks);
-            let mut tasks: Vec<(bool, String)> = base
-                .note()
-                .tasks()
-                .map(|item| (item.is_completed(), item.text().to_owned()))
-                .collect();
-            let Some((completed, text)) = tasks.pop() else {
-                continue; // No tasks: this Note contributes no rows.
-            };
-            matched.extend(
-                tasks.into_iter().map(|(c, t)| base.clone().with_task(c, t)),
-            );
-            matched.push(base.with_task(completed, text));
-        }
-        QueryOutcome::new(matched)
+        crate::query::query_tasks(self, source, "class")
     }
 
     /// Returns file-field options matching an AND-composed Schema filter.
@@ -335,7 +319,7 @@ impl FileIndex {
             let note = self.note(record.path());
             if let Some(classes) = filter.classes
                 && !note.is_some_and(|note| {
-                    query::class_values(note, filter.keys.class().name())
+                    crate::query::class_values(note, filter.keys.class().name())
                         .any(|class| classes.contains(class))
                 })
             {
@@ -416,189 +400,6 @@ impl FileIndex {
         })?;
         Ok(parse_markdown(record.path(), &content))
     }
-}
-
-/// One selectable file option derived from the current [`FileIndex`].
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct FileOption {
-    label: String,
-    value: String,
-}
-
-impl FileOption {
-    /// Builds the option for `record`: label resolution tries `note`'s
-    /// configured aliases key, then its title key (via `keys`), falling back to
-    /// `record`'s filename stem when neither resolves or `note` is `None`. The
-    /// value is always `record`'s project-relative path.
-    #[inline]
-    #[must_use]
-    fn for_record(
-        record: &FileRecord,
-        note: Option<&Note>,
-        keys: &FrontmatterFieldKeys,
-    ) -> Self {
-        let label = note
-            .and_then(|note| Self::frontmatter_label(note, keys))
-            .unwrap_or_else(|| record.name().as_str())
-            .to_owned();
-        Self {
-            label,
-            value: record.path().to_string_lossy().into_owned(),
-        }
-    }
-
-    /// Returns the display label for `note`: the first usable configured
-    /// aliases value, falling back to a scalar configured title value.
-    /// Callers fall back further to the filename stem when this returns
-    /// `None`.
-    fn frontmatter_label<'a>(
-        note: &'a Note,
-        keys: &FrontmatterFieldKeys,
-    ) -> Option<&'a str> {
-        let frontmatter = note.frontmatter()?;
-        let alias =
-            frontmatter.get(keys.aliases()).and_then(|value| match value {
-                FieldValue::List(items) => {
-                    items.iter().find_map(FieldValue::as_str)
-                }
-                value => value.as_str(),
-            });
-        alias.or_else(|| {
-            frontmatter.get(keys.title()).and_then(FieldValue::as_str)
-        })
-    }
-
-    /// Consumes the option, returning its `(label, value)` text without
-    /// re-allocating: the caller (minijinja value construction) needs owned
-    /// `String`s anyway, and this option is never read again afterward.
-    #[inline]
-    #[must_use]
-    pub(crate) fn into_parts(self) -> (String, String) {
-        (self.label, self.value)
-    }
-}
-
-/// Borrowed filter values for [`FileIndex::file_options`].
-#[derive(Copy, Clone)]
-pub(crate) struct FileOptionFilter<'a> {
-    folders: &'a [String],
-    ext: Option<&'a str>,
-    classes: Option<&'a BTreeSet<String>>,
-    keys: &'a FrontmatterFieldKeys,
-}
-
-impl<'a> FileOptionFilter<'a> {
-    /// Builds a borrowed file-option filter.
-    #[inline]
-    #[must_use]
-    pub(crate) const fn new(
-        folders: &'a [String],
-        ext: Option<&'a str>,
-        classes: Option<&'a BTreeSet<String>>,
-        keys: &'a FrontmatterFieldKeys,
-    ) -> Self {
-        Self {
-            folders,
-            ext,
-            classes,
-            keys,
-        }
-    }
-}
-
-/// The `[frontmatter] title`/`aliases` and `[schemas] class_field` keys used
-/// together to resolve `file`-typed Schema field options: label resolution
-/// needs `title`+`aliases`, class filtering needs `class`. Bundled because
-/// every render-path consumer needs at least two of the three, each already
-/// validated once at config load (`FrontmatterConfig`/`SchemasConfig` in
-/// `crate::config`) — this just carries that guarantee forward instead of
-/// re-threading three loose parameters. Lives here, not in `crate::field`,
-/// because it's a config-resolved aggregate specific to file-option
-/// matching, not a field-name/key primitive.
-#[derive(Clone, Debug)]
-pub(crate) struct FrontmatterFieldKeys {
-    class: FieldKey,
-    title: FieldKey,
-    aliases: FieldKey,
-}
-
-impl FrontmatterFieldKeys {
-    /// Bundles three already-validated field keys. Infallible: validation
-    /// happens once, upstream, when each [`FieldKey`] is first constructed
-    /// from config.
-    #[inline]
-    #[must_use]
-    pub(crate) const fn new(
-        class: FieldKey,
-        title: FieldKey,
-        aliases: FieldKey,
-    ) -> Self {
-        Self {
-            class,
-            title,
-            aliases,
-        }
-    }
-
-    /// Returns the frontmatter key naming a Note's File Class(es).
-    #[inline]
-    #[must_use]
-    pub(crate) fn class(&self) -> &FieldKey {
-        &self.class
-    }
-
-    /// Returns the frontmatter key holding a Note's display title.
-    #[inline]
-    #[must_use]
-    pub(crate) fn title(&self) -> &FieldKey {
-        &self.title
-    }
-
-    /// Returns the frontmatter key holding a Note's aliases.
-    #[inline]
-    #[must_use]
-    pub(crate) fn aliases(&self) -> &FieldKey {
-        &self.aliases
-    }
-}
-
-/// Merge-joins `records` and `notes` by path, yielding only the file/note pairs
-/// matching `source`. Shared by [`FileIndex::query`] and
-/// [`FileIndex::query_tasks`]. Both start from the same page-level selection;
-/// they differ only in what each matched pair becomes.
-///
-/// # Performance
-///
-/// O(n + m): single-pass iterator merge-join, no binary search or redundant
-/// allocation per note.
-fn matched_pairs(
-    records: Vec<FileRecord>,
-    notes: Vec<Note>,
-    source: &QuerySource,
-) -> impl Iterator<Item = (FileRecord, Note)> + '_ {
-    let mut files = records.into_iter().peekable();
-    notes.into_iter().filter_map(move |note| {
-        while files.peek().is_some_and(|file| file.path() < note.path()) {
-            files.next();
-        }
-        let file = files.next_if(|file| file.path() == note.path())?;
-        source.is_match(&file, &note).then_some((file, note))
-    })
-}
-
-/// Pairs `file` with its parsed `note` and looks up `file`'s inbound links out
-/// of `inlinks`, so each Note's derived links are moved into its row instead of
-/// cloned.
-///
-/// Shared by [`FileIndex::query`] and [`FileIndex::query_tasks`], which each
-/// look this up once per matched Note.
-fn record_with_inlinks(
-    file: FileRecord,
-    note: Note,
-    inlinks: &mut InlinkMap,
-) -> IndexRecord {
-    let links = inlinks.remove(file.path()).unwrap_or_default();
-    IndexRecord::new(file, note).with_inlinks(links)
 }
 
 /// Binary-searches path-sorted `notes` for an exact path match.
@@ -1277,7 +1078,8 @@ mod tests {
                 .expect("write other");
             let index = FileIndex::build(temp.path()).expect("build index");
 
-            let outcome = index.query(&QuerySource::Tag("#book".to_owned()));
+            let outcome = index
+                .query(&QuerySource::parse("#book").expect("valid source"));
 
             assert_eq!(note_paths(&outcome), [Path::new("book.md")]);
         }
@@ -1294,10 +1096,11 @@ mod tests {
                 .expect("write other");
             let index = FileIndex::build(temp.path()).expect("build index");
 
-            let exact = index
-                .clone()
-                .query(&QuerySource::Tag("#projects/active".to_owned()));
-            let parent = index.query(&QuerySource::Tag("#projects".to_owned()));
+            let exact = index.clone().query(
+                &QuerySource::parse("#projects/active").expect("valid source"),
+            );
+            let parent = index
+                .query(&QuerySource::parse("#projects").expect("valid source"));
 
             assert_eq!(note_paths(&exact), [Path::new("project.md")]);
             assert_eq!(note_paths(&parent), [Path::new("project.md")]);
@@ -1311,8 +1114,9 @@ mod tests {
                 .expect("write project");
             let index = FileIndex::build(temp.path()).expect("build index");
 
-            let outcome =
-                index.query(&QuerySource::Tag("#projects/active".to_owned()));
+            let outcome = index.query(
+                &QuerySource::parse("#projects/active").expect("valid source"),
+            );
 
             assert!(outcome.is_empty());
         }
@@ -1330,8 +1134,8 @@ mod tests {
                 .expect("write other");
             let index = FileIndex::build(temp.path()).expect("build index");
 
-            let outcome =
-                index.query(&QuerySource::Folder(PathBuf::from("books")));
+            let outcome = index
+                .query(&QuerySource::parse("books/").expect("valid source"));
 
             assert_eq!(note_paths(&outcome), [
                 Path::new("books/dune.md"),
@@ -1402,7 +1206,8 @@ mod tests {
             // `linker.md` has no `#book` tag, so it is excluded from this
             // tag-scoped query; its outlink to `target.md` must still show
             // up in the target's inlinks.
-            let outcome = index.query(&QuerySource::Tag("#book".to_owned()));
+            let outcome = index
+                .query(&QuerySource::parse("#book").expect("valid source"));
             let target = outcome.iter().next().expect("target record");
 
             assert_eq!(target.file().path(), Path::new("target.md"));
@@ -1552,8 +1357,9 @@ mod tests {
                 .expect("write b");
             let index = FileIndex::build(temp.path()).expect("build index");
 
-            let outcome =
-                index.query_tasks(&QuerySource::Tag("#projects".to_owned()));
+            let outcome = index.query_tasks(
+                &QuerySource::parse("#projects").expect("valid source"),
+            );
 
             assert_eq!(task_rows(&outcome), [(Some(false), "project task")]);
         }
@@ -1571,8 +1377,9 @@ mod tests {
                 .expect("write b");
             let index = FileIndex::build(temp.path()).expect("build index");
 
-            let outcome = index
-                .query_tasks(&QuerySource::Folder(PathBuf::from("projects")));
+            let outcome = index.query_tasks(
+                &QuerySource::parse("projects/").expect("valid source"),
+            );
 
             assert_eq!(task_rows(&outcome), [(Some(false), "project task")]);
         }
@@ -1597,57 +1404,6 @@ mod tests {
             // must keep only the matching task row, not both rows from the
             // one Note that has at least one match.
             assert_eq!(task_rows(&outcome), [(Some(true), "pay rent")]);
-        }
-    }
-
-    mod frontmatter_label {
-        use pretty_assertions::assert_eq;
-        use rstest::rstest;
-
-        use super::*;
-
-        #[rstest]
-        #[case::alias_wins_over_title(
-            "---\ntitle: Title Value\naliases: [Alias Value]\n---\n",
-            Some("Alias Value")
-        )]
-        #[case::title_wins_over_stem_fallback(
-            "---\ntitle: Title Value\n---\n",
-            Some("Title Value")
-        )]
-        #[case::non_string_title_is_ignored("---\ntitle: 42\n---\n", None)]
-        #[case::no_frontmatter_falls_through_to_stem(
-            "No frontmatter here.",
-            None
-        )]
-        #[case::scalar_aliases_value(
-            "---\naliases: Solo Name\n---\n",
-            Some("Solo Name")
-        )]
-        #[case::aliases_list_with_no_strings_falls_through_to_title(
-            "---\ntitle: Title Value\naliases: [42, true]\n---\n",
-            Some("Title Value")
-        )]
-        #[case::aliases_list_skips_leading_non_strings(
-            "---\naliases: [42, Real Alias]\n---\n",
-            Some("Real Alias")
-        )]
-        #[case::non_string_aliases_scalar_falls_through_to_title(
-            "---\ntitle: Title Value\naliases: 42\n---\n",
-            Some("Title Value")
-        )]
-        fn resolves_precedence(
-            #[case] source: &str,
-            #[case] expected: Option<&str>,
-        ) {
-            let note = parse_markdown("note.md", source);
-            let keys = FrontmatterFieldKeys::new(
-                FieldKey::try_new("class").expect("valid field key"),
-                FieldKey::try_new("title").expect("valid field key"),
-                FieldKey::try_new("aliases").expect("valid field key"),
-            );
-
-            assert_eq!(FileOption::frontmatter_label(&note, &keys), expected);
         }
     }
 }

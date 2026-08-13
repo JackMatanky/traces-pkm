@@ -699,8 +699,8 @@ mod tests {
                 "status={{ schema.get('book').field('status') | join(',') \
                  }};cover={% for item in schema.get('book').field('cover') \
                  %}{{ item.label }}={{ item.value }}{% endfor %};query={{ \
-                 query.from_class('book') | length }};tasks={{ \
-                 tasks.from_class('book') | length }}",
+                 query.from('@book') | length }};tasks={{ tasks.from('@book') \
+                 | length }}",
             );
             fs::create_dir_all(root.join(".traces/schemas"))
                 .expect("create schemas dir");
