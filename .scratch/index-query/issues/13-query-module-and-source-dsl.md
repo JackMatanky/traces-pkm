@@ -1,4 +1,4 @@
-# 13 — Composable QuerySource and Top-Level Query Module
+# 13 — Query Module Promotion and Source Expression DSL
 
 **What to build:** Restructure query execution into a top-level `src/query/` domain module, moving `QuerySource` into `src/query/source.rs` alongside a new composable `SourceExpr` AST, Logos tokenizer, and recursive-descent parser. Move `FileOption`, `FileOptionFilter`, and `FrontmatterFieldKeys` into `src/query/`. Replace `QuerySource`'s flat enum with `All | Expr(SourceExpr)`, supporting boolean combinators (`and`, `or`, `not`/`!`), parens, `#tag`, `"path"` (matching exact files or folder prefixes), and `class(Name)` leaves with explicit `.with_children()` (direct children) and `.with_descendants()` (transitive is-a) expansion modifiers. Consolidate template query namespaces (`query` and `tasks`) down to a single unified `.from([expr])` method (where `from()` or `from("")` defaults to all indexed items, matching SQL `FROM` intuition), deleting the redundant `.all()`, `.from_tags()`, `.from_folder()`, and `.from_class()` methods. Align CLI `--from` and template `.from()` to use the exact same `SourceExpr::parse` engine.
 
