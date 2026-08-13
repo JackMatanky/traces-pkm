@@ -26,13 +26,13 @@ src/
                  FileIndex::query(), query_tasks(), file_options() remain small read-exit
                  delegators to crate::query
   query/
-                 pub use source::{QuerySource, SourceExpr, ClassExpansionMode};
+                 pub use source::{QuerySource, QuerySourceExpr, ClassExpansionMode};
                  pub use outcome::QueryOutcome;
                  pub use record::IndexRecord;
                  pub use error::QueryError;
                  pub use option::{FileOption, FileOptionFilter, FrontmatterFieldKeys};
                  pub use field::{FileField, SortOrder};
-    source.rs    NEW — QuerySource, SourceExpr AST, SourceToken (Logos), SourceParser,
+    source.rs    NEW — QuerySource, QuerySourceExpr AST, SourceToken (Logos), SourceParser,
                  ClassExpansionMode (Exact, Children, Descendants), parse & matching tests
     option.rs    NEW — FileOption, FileOptionFilter, FrontmatterFieldKeys (moved from index/mod.rs)
     record.rs    IndexRecord and field resolution
@@ -48,38 +48,36 @@ src/
 ```rust
 pub enum QuerySource {
     All,
-    Expr(SourceExpr),
+    Expr(QuerySourceExpr),
 }
 
-pub enum SourceExpr {
+pub enum QuerySourceExpr {
     Tag(String),
     Path(PathBuf),
     Class {
         names: Vec<String>,
         mode: ClassExpansionMode,
-        classes: BTreeSet<String>,    // Resolved match set (populated post-parse via AST pre-pass)
-        class_field: Arc<str>,        // Frontmatter key for class lookup (populated post-parse via AST pre-pass)
     },
-    And(Vec<SourceExpr>),
-    Or(Vec<SourceExpr>),
-    Not(Box<SourceExpr>),
+    And(Vec<QuerySourceExpr>),
+    Or(Vec<QuerySourceExpr>),
+    Not(Box<QuerySourceExpr>),
 }
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Default)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ClassExpansionMode {
-    #[default]
-    Exact,
-    Children,
-    Descendants,
+    Exact(BTreeSet<String>),
+    Children(BTreeSet<String>),
+    Descendants(BTreeSet<String>),
 }
 ```
 
-- **Leaf matching:**
+- **Leaf matching (`is_match(&self, file: &FileRecord, note: &Note, class_field: &str)`):**
   - `Tag(String)`: matches `#tag` and nested sub-tags (`#tag/sub`).
   - `Path(PathBuf)`: matches exact file path or folder prefix (`file.path() == path || file.folder().starts_with(path)`).
-  - `Class { names, mode, classes }`: matches Note File Class(es) against `classes`.
+  - `Class { names, mode }`: matches Note File Class(es) read from `class_field` against `mode.classes()`.
+  - `class_field` is passed at execution time via `is_match`, keeping `QuerySourceExpr` free of runtime context state.
 - **Combinators:**
-  - `And(Vec<SourceExpr>)`, `Or(Vec<SourceExpr>)`, `Not(Box<SourceExpr>)`: evaluates boolean combinations of leaf `is_match` results using `LogicalOp`.
+  - `And(Vec<QuerySourceExpr>)`, `Or(Vec<QuerySourceExpr>)`, `Not(Box<QuerySourceExpr>)`: evaluates boolean combinations of leaf `is_match` results using `LogicalOp`.
 - **Incremental Depth Mental Model & DSL Syntax (Dual-Supported Forms):**
   - **Level 0 (Exact Self):** `@Book` / `class(Book)` (`ClassExpansionMode::Exact` — matches `Book` only).
   - **Level +1 (Self + Direct Children):** `@Book+` / `class(Book).with_children()` / `class(Book, children)` (`ClassExpansionMode::Children` — matches `Book` and immediate subclasses).
@@ -88,13 +86,12 @@ pub enum ClassExpansionMode {
   - **Paths:** `"path/to/folder"`, `"path/to/file.md"`, `projects/`
   - **Combinators:** `and` / `&&`, `or` / `||`, `not` / `!`, `( ... )`
 - **Registry-Free Boundary & AST Pre-pass (`resolve_sources`):**
-  - `SourceExpr::parse` parses raw class names and requested `ClassExpansionMode` into `SourceExpr::Class { names, mode, classes: BTreeSet::new(), class_field: Arc::from("") }`.
-  - A caller-side pre-pass (`resolve_sources`) walks the AST with `&SchemaRegistry` (or `&SchemaService`) and the configured `class_field: &Arc<str>`.
-  - `SchemaRegistry` exposes `children_of(&self, name: &str) -> Vec<Arc<Schema>>` and `expand_classes(&self, classes: &[String], mode: ClassExpansionMode) -> BTreeSet<String>`:
-    - `ClassExpansionMode::Exact`: returns `classes` as-is.
-    - `ClassExpansionMode::Children`: returns `classes` plus direct extender schemas (`children_of`).
-    - `ClassExpansionMode::Descendants`: returns `classes` plus all transitive extender schemas (`descendants_of`/`matches`).
-  - Non-existent class names degrade gracefully to exact matching (populating `classes` with the queried name itself) and log a `tracing::warn!` diagnostic.
+  - `QuerySourceExpr::parse` parses raw class names and requested `ClassExpansionMode` into `QuerySourceExpr::Class { names, mode: ClassExpansionMode::Exact(BTreeSet::new()) }` (or empty `Children`/`Descendants`).
+  - A caller-side pre-pass (`resolve_sources`) walks the AST with `&SchemaRegistry` (or `&SchemaService`) to resolve match sets:
+    - `ClassExpansionMode::Exact(set)`: populates `set` with `names` as-is.
+    - `ClassExpansionMode::Children(set)`: populates `set` with `names` plus direct extender schemas (`children_of`).
+    - `ClassExpansionMode::Descendants(set)`: populates `set` with `names` plus all transitive extender schemas (`descendants_of`/`matches`).
+  - Non-existent class names degrade gracefully to exact matching (populating `set` with the queried name itself) and log a `tracing::warn!` diagnostic.
   - `src/query/` stays completely independent of `src/schema/`.
 
 - **Logos Lexer & Parser Token Priority:**
@@ -106,22 +103,23 @@ pub enum ClassExpansionMode {
 ### Template & CLI Consistency
 - **Unified Template Seam:** Minijinja `query.from(...)` and `tasks.from(...)` are the SINGLE canonical entry point for template queries, deleting `.all()`, `.from_tags()`, `.from_folder()`, and `.from_class()`.
   - Zero arguments (`query.from()`) or empty string (`query.from("")`) evaluates to `QuerySource::All`.
-  - Single string argument (e.g. `query.from("#book")`, `query.from("books/")`, `query.from("@Book*")`, `query.from("class(Book).with_descendants()")`) parses via `SourceExpr::parse` and expands via `resolve_sources`.
-- **CLI & Template Parity:** `SourceExpr::parse` powers both CLI `--from '...'` and template `query.from('...')` / `tasks.from('...')`. Every DSL feature (sigils `@Book`, `@Book+`, `@Book*` and function/chaining forms `class(Book)`, `with_children()`, `with_descendants()`) is fully available in both CLI and templates.
-- **CLI `--from`:** Parses DSL expressions through `SourceExpr::parse`, expands Class leaves against `SchemaRegistry` via the `resolve_sources` pre-pass, and executes the query.
+  - Single string argument (e.g. `query.from("#book")`, `query.from("books/")`, `query.from("@Book*")`, `query.from("class(Book).with_descendants()")`) parses via `QuerySourceExpr::parse` and expands via `resolve_sources`.
+- **CLI & Template Parity:** `QuerySourceExpr::parse` powers both CLI `--from '...'` and template `query.from('...')` / `tasks.from('...')`. Every DSL feature (sigils `@Book`, `@Book+`, `@Book*` and function/chaining forms `class(Book)`, `with_children()`, `with_descendants()`) is fully available in both CLI and templates.
+- **CLI `--from`:** Parses DSL expressions through `QuerySourceExpr::parse`, expands Class leaves against `SchemaRegistry` via the `resolve_sources` pre-pass, and executes the query.
 - **Error Diagnostics:** Invalid syntax produces `QueryError::UnparsableSourceExpression { expr }` ("invalid source expression {expr:?}; expected `#tag`, `folder/`, `@Class`, or `class(Name)`").
 ## Acceptance Criteria
 
 - [ ] `src/query/` exists as a top-level module; `src/index/query/` is moved to `src/query/`.
 - [ ] `FileOption`, `FileOptionFilter`, and `FrontmatterFieldKeys` move from `src/index/mod.rs` into `src/query/option.rs` (or `src/query/`).
-- [ ] `QuerySource`, `SourceExpr`, `ClassExpansionMode`, and their Logos tokenizer / recursive-descent parser live in `src/query/source.rs` with unit tests covering all AST variants, combinators, parens, and error cases.
-- [ ] `ClassExpansionMode` supports `Exact` (default), `Children` (direct children via `children_of`), and `Descendants` (transitive via `descendants_of`/`matches`).
+- [ ] `QuerySource`, `QuerySourceExpr`, `ClassExpansionMode`, and their Logos tokenizer / recursive-descent parser live in `src/query/source.rs` with unit tests covering all AST variants, combinators, parens, and error cases.
+- [ ] `ClassExpansionMode` encapsulates the resolved `BTreeSet<String>` match set directly inside its `Exact(set)`, `Children(set)`, and `Descendants(set)` variants.
+- [ ] `is_match(&self, file, note, class_field)` accepts `class_field: &str` at execution time, decoupling AST expressions from global configuration state.
 - [ ] `SchemaRegistry` adds `children_of` and `expand_classes` helpers to expand class hierarchies for all three expansion modes.
-- [ ] Class expansion and `class_field` assignment are evaluated in a caller-side AST pre-pass (`resolve_sources`), preserving `src/query/`'s registry-free boundary.
-- [ ] Non-existent class names in `SourceExpr::Class` degrade gracefully to exact matching and log a `tracing::warn!`.
+- [ ] Class expansion is evaluated in a caller-side AST pre-pass (`resolve_sources`), preserving `src/query/`'s registry-free boundary.
+- [ ] Non-existent class names in `QuerySourceExpr::Class` degrade gracefully to exact matching and log a `tracing::warn!`.
 - [ ] Minijinja `query` and `tasks` template namespaces replace `.all()`, `.from_tags()`, `.from_folder()`, and `.from_class()` with a single unified `.from([expr])` method (where `from()` or `from("")` evaluates to `QuerySource::All`).
 - [ ] `ClassExpansionMode` implements the Incremental Depth Model: `Exact` (`@Book` / `class(Book)` — self only), `Children` (`@Book+` / `class(Book).with_children()` — self + direct children), and `Descendants` (`@Book*` / `class(Book).with_descendants()` — self + transitive descendants).
-- [ ] CLI `--from` parses complex source expressions — supporting both sigil forms (`@Book`, `@Book+`, `@Book*`) and function/chaining forms (`class(Book)`, `.with_children()`, `.with_descendants()`), alongside `#tag`, `"path"`, `and`/`or`/`not`, and parens — via `SourceExpr::parse`.
+- [ ] CLI `--from` parses complex source expressions — supporting both sigil forms (`@Book`, `@Book+`, `@Book*`) and function/chaining forms (`class(Book)`, `.with_children()`, `.with_descendants()`), alongside `#tag`, `"path"`, `and`/`or`/`not`, and parens — via `QuerySourceExpr::parse`.
 - [ ] `IndexerService` is deferred (not created in this ticket).
 - [ ] Full existing test suite (`mise test`) passes clean.
 - [ ] `mise clippy` clean.
