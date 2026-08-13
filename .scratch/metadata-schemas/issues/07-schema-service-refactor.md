@@ -114,15 +114,28 @@ Decision-rich shapes, trimmed to what matters — not a working diff:
 
 ```rust
 // config/specs.rs
-// Private fields, accessor methods — matches Config's own convention
-// (SchemasConfig/FrontmatterConfig: root()/schemas()/frontmatter(), each
-// chaining into the next), not SchemaFileFieldFilter's plain-projection
-// style. SchemaConfigSpec crosses a real module boundary (config/ ->
-// schema/ -> template/engine/) and is held for a render's lifetime by
-// SchemaService, not consumed immediately at one call site the way
-// SchemaFileFieldFilter is — its internals stay fully immutable and
-// hidden behind accessors, like every other Config-derived type callers
-// hold onto rather than read once and drop.
+// Owned, not borrowed, is not a style choice: every template/engine/
+// namespace object (SchemaOps, Schema's own Object impl, QueryOps, ...) is
+// wrapped via minijinja's Value::from_object<T: Object + Send + Sync +
+// 'static> (verified in minijinja 2.20.0's own source, value/mod.rs:848) —
+// the compiler rejects a borrowed &Config there, full stop. TemplateEngine
+// itself has no lifetime parameter (env: Environment<'static>,
+// template/engine.rs:67-69) and takes &Config only as a constructor-only
+// borrow, extracting owned data before returning; TemplateService<'a>'s own
+// &'a Config field never reaches TemplateEngine or any namespace object —
+// it's used solely for post-render write-target/output-dir resolution
+// (template/service.rs:214,278). So schema.rs's namespace objects were
+// never in a position to borrow &Config the way TemplateService does; some
+// owned snapshot is unavoidable. Private fields, accessor methods — matches
+// Config's own convention (SchemasConfig/FrontmatterConfig:
+// root()/schemas()/frontmatter(), each chaining into the next), not
+// SchemaFileFieldFilter's plain-projection style: SchemaFileFieldFilter is
+// read once at a single call site and dropped; SchemaConfigSpec is held by
+// SchemaService for a render's entire lifetime. Defined here, in config/,
+// not folded directly into SchemaService's own fields (schema/) — config/
+// has zero dependency on schema/ today (verified); keeping the owned
+// projection type in config/ is what lets Config::to_schema_spec() stay
+// self-contained instead of config/ importing schema::SchemaService.
 pub struct SchemaConfigSpec {
     root: Arc<Path>,
     directory: Arc<Path>,
@@ -386,3 +399,5 @@ Third course-correction: `SchemaFieldType::File.class` precomputation (previousl
 Fourth course-correction: `template/engine/schema.rs`'s `SchemaContext{root, directory, keys: FrontmatterFieldKeys}` is deleted — verified it duplicates `SchemaConfigSpec{root, directory, class_field, title_field, aliases_field}` field-for-field, predating `SchemaConfigSpec`'s introduction earlier in this same ticket and never reconciled with it. `SchemaService.spec` becomes `pub(crate)` (matching `SchemaConfigSpec`'s own already-established plain-projection convention: no invariants to protect, no accessor ceremony warranted) so the adapter reads `root`/`directory`/`class_field`/`title_field`/`aliases_field` directly off the render-cached `Arc<SchemaService>` instead of caching a second, redundant bundle. The one real difference — `SchemaContext.keys` was a precomposed `index::FrontmatterFieldKeys`, while `SchemaConfigSpec` keeps the three keys separate (deliberately: `schema/` doesn't depend on `crate::index`) — is resolved by having `.field()`'s File-branch compose the bundle on the fly, cheaply (three `FieldKey` clones), exactly once per call, at the one place (`template/engine/schema.rs`) that already imports `crate::index` for this purpose.
 
 Fifth course-correction: `SchemaConfigSpec` reverses the Fourth correction's own "plain projection, no accessor ceremony" framing — private fields, `pub(crate)` accessors (`root()`/`directory()`/`class_field()`/`title_field()`/`aliases_field()`), matching `Config`'s own convention (`SchemasConfig`/`FrontmatterConfig`) rather than `SchemaFileFieldFilter`'s. The distinguishing factor: `SchemaFileFieldFilter<'a>` is read once, at a single call site, and dropped — a `SchemaConfigSpec` is constructed once in `TemplateEngine::new`, wrapped in `SchemaService`, and held for a render's entire lifetime, crossing a real module boundary (`config/` → `schema/` → `template/engine/`) each time something reads it; full immutability and hidden internals matter here in a way they don't for a borrowed, single-use filter struct. `SchemaService.spec` reverts to a private field; `SchemaService::spec(&self) -> &SchemaConfigSpec` is the one new accessor, mirroring `Config::schemas()`/`Config::frontmatter()`'s own chain-into-a-substruct shape exactly.
+
+Sixth course-correction (grounding, not a design change): verified precisely why `SchemaConfigSpec` needs to be owned rather than borrowing `&Config` the way `TemplateService<'a>` does. `TemplateEngine{ env: Environment<'static> }` (`template/engine.rs:67-69`) has no lifetime parameter; `TemplateEngine::new(..., config: &Config)` (`template/engine.rs:95-99,111-120`) takes `&Config` only as a constructor-scoped borrow, extracting owned `Arc<Path>`/`FieldKey` values before returning. `TemplateService`'s own `&'a Config` field (`template/service.rs:38-43`) never reaches `TemplateEngine` or any namespace object — it's used exclusively for post-render write-target/output-dir resolution (`template/service.rs:214,278`). And even if it did reach that far, minijinja's own `Value::from_object<T: Object + Send + Sync + 'static>` (minijinja 2.20.0, `value/mod.rs:848`, verified directly against the dependency source) rejects a borrowed `&Config` at the type level — every namespace object, `SchemaOps`/`Schema`'s `Object` impl included, is compiler-required to be `'static`. `SchemaConfigSpec` staying in `config/` (not folded into `SchemaService`'s own fields in `schema/`) is what keeps `Config::to_schema_spec()` self-contained: `config/` has zero dependency on `schema/` today (verified), and inlining the fields into `SchemaService` would either invert that or leave the projection with no natural home. No design changed by this pass — the prior `SchemaConfigSpec`/`SchemaService::spec()` shape was already correct; this only replaces "held for a render's lifetime" with the actual, compiler-enforced reason.
