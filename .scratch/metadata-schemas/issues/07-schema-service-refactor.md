@@ -79,16 +79,15 @@ template/engine/
                already carry — predates SchemaConfigSpec's introduction, never
                revisited once it landed. schema.get(name) returns
                Value::from_dyn_object(Arc::clone(&schema)) directly. SchemaOps::get
-               seeds state's temp cache with the render's Arc<SchemaService> — spec
-               is pub(crate) (service.rs above), read directly by
-               .field()/.descendants(), no new accessor methods, matching
-               SchemaConfigSpec's own plain-projection convention — the same call
-               that seeds the cached SchemaRegistry, via cache.rs's existing
-               cached() helper. Schema's .field()/.descendants() closures (still
-               state-taking Value::from_function values, unchanged mechanism)
-               re-fetch both on demand instead of holding them per-instance.
-               .field()'s File-branch builds a FrontmatterFieldKeys on the fly
-               from service.spec.{class,title,aliases}_field (three cheap FieldKey
+               seeds state's temp cache with the render's Arc<SchemaService> — its
+               spec field stays private, reached via SchemaService::spec() (see
+               service.rs above) — the same call that seeds the cached
+               SchemaRegistry, via cache.rs's existing cached() helper. Schema's
+               .field()/.descendants() closures (still state-taking
+               Value::from_function values, unchanged mechanism) re-fetch both on
+               demand instead of holding them per-instance. .field()'s File-branch
+               builds a FrontmatterFieldKeys on the fly from
+               service.spec().{class,title,aliases}_field() (three cheap FieldKey
                clones) when calling into index::FileOptionFilter — schema/ itself
                still never imports FrontmatterFieldKeys or anything else from
                crate::index; only this adapter file does, same as today. File's
@@ -115,19 +114,28 @@ Decision-rich shapes, trimmed to what matters — not a working diff:
 
 ```rust
 // config/specs.rs
-// pub(crate) fields, no invariants to protect — a plain projection, matching
-// SchemaFileFieldFilter's own convention (model.rs:381-384) rather than
-// Config's private-fields-plus-accessors pattern (reserved for types that
-// enforce invariants). New in this codebase today: no existing *Service
-// consumes an owned *Spec projection of Config yet — TemplateService still
-// borrows &Config directly. Treat this as the reference shape for that
-// future migration, not as following an existing one.
+// Private fields, accessor methods — matches Config's own convention
+// (SchemasConfig/FrontmatterConfig: root()/schemas()/frontmatter(), each
+// chaining into the next), not SchemaFileFieldFilter's plain-projection
+// style. SchemaConfigSpec crosses a real module boundary (config/ ->
+// schema/ -> template/engine/) and is held for a render's lifetime by
+// SchemaService, not consumed immediately at one call site the way
+// SchemaFileFieldFilter is — its internals stay fully immutable and
+// hidden behind accessors, like every other Config-derived type callers
+// hold onto rather than read once and drop.
 pub struct SchemaConfigSpec {
-    pub(crate) root: Arc<Path>,
-    pub(crate) directory: Arc<Path>,
-    pub(crate) class_field: FieldKey,
-    pub(crate) title_field: FieldKey,
-    pub(crate) aliases_field: FieldKey,
+    root: Arc<Path>,
+    directory: Arc<Path>,
+    class_field: FieldKey,
+    title_field: FieldKey,
+    aliases_field: FieldKey,
+}
+impl SchemaConfigSpec {
+    pub(crate) fn root(&self) -> &Path;
+    pub(crate) fn directory(&self) -> &Path;
+    pub(crate) fn class_field(&self) -> &FieldKey;
+    pub(crate) fn title_field(&self) -> &FieldKey;
+    pub(crate) fn aliases_field(&self) -> &FieldKey;
 }
 impl From<&Config> for SchemaConfigSpec { … }
 impl Config {
@@ -135,15 +143,17 @@ impl Config {
 }
 
 // schema/service.rs
-// spec is pub(crate), not private: matches SchemaConfigSpec's own
-// plain-projection convention (no invariants to protect by hiding it), and
-// lets template/engine/schema.rs read root/directory/class_field/title_field/
-// aliases_field directly off a cached Arc<SchemaService> instead of
-// duplicating them into a second adapter-side type — this is what lets
-// SchemaContext be deleted entirely (see schema.rs above).
-pub struct SchemaService { pub(crate) spec: SchemaConfigSpec }
+pub struct SchemaService { spec: SchemaConfigSpec }
 impl SchemaService {
     pub fn new(spec: SchemaConfigSpec) -> Self;   // trivial, no I/O
+    /// Exposes the config projection this service was built from —
+    /// template/engine/schema.rs's only route to root() (FileIndex
+    /// refresh) and class_field()/title_field()/aliases_field() (building
+    /// a FrontmatterFieldKeys on the fly for file-field label resolution).
+    /// directory() is resolve()'s own internal concern, never needed
+    /// outside this module — this accessor is what replaces SchemaContext's
+    /// direct-field-access approach (see schema.rs above).
+    pub(crate) fn spec(&self) -> &SchemaConfigSpec;
     /// Reads TOML, builds every field via SchemaFieldBuilder, linearizes the
     /// extends DAG, computes each Schema's descendants. Returns every
     /// SchemaWarning collected along the way: same (data, warnings) shape as
@@ -338,7 +348,7 @@ Split across the two tickets — each amendment should only assert what's actual
 
 ## Acceptance Criteria
 
-- [ ] `config/specs.rs` exists with `SchemaConfigSpec` (`pub(crate)` fields, matching `SchemaFileFieldFilter`'s plain-projection convention, not `Config`'s private-fields-plus-accessors convention) and `Config::to_schema_spec()`; `template/engine.rs`'s hand-derived `class_field`/`schemas_dir`/`field_keys` construction is replaced by one call.
+- [ ] `config/specs.rs` exists with `SchemaConfigSpec` (private fields, `pub(crate)` accessor methods, matching `Config`'s own convention — not `SchemaFileFieldFilter`'s plain-projection style, since `SchemaConfigSpec` is held across a module boundary for a render's lifetime rather than read once at a single call site) and `Config::to_schema_spec()`; `template/engine.rs`'s hand-derived `class_field`/`schemas_dir`/`field_keys` construction is replaced by one call.
 - [ ] `src/schema/` matches the target layout above; `registry.rs` and `resolve.rs` no longer exist as standalone files.
 - [ ] `SchemaService::resolve()` returns `Result<(Arc<SchemaRegistry>, Vec<SchemaWarning>), SchemaError>` — same (data, warnings) shape as today's `SchemaRegistry::load`; `get()`/`descendants()`/`matches()` exist with the signatures above; `new()` is trivial and does no I/O. `SchemaService` has no `file_field_values` method — file-field resolution is not a schema-domain concern (see the `schema.rs` module layout above).
 - [ ] `RawSchemaFieldDef` holds `options: BTreeMap<String, FieldValue>`; `RawFieldDefToml`'s wire-level `deny_unknown_fields` protection is unchanged (verified: a genuinely unknown key still fails to parse with equivalent error text).
@@ -349,7 +359,7 @@ Split across the two tickets — each amendment should only assert what's actual
 - [ ] Both existing `cached_registry` implementations (`schema.rs`, `query.rs`) are deleted, replaced by one shared helper; both existing class-degrade-and-warn duplicates — `run_class` (`query.rs`) and the file-field class-matching code in `schema.rs` — are deleted, replaced by calling `SchemaService::matches()` directly, which now owns the degrade-and-warn logic itself. Both call sites keep today's live, per-call timing (see previous bullet) — `matches()` is not precomputed.
 - [ ] `Schema::suggest_field` exists on the domain type; `template/engine/schema.rs`'s `closest_field_suggestion`/`closest_field_name` are deleted.
 - [ ] `template/engine/schema.rs`'s `SchemaBinding` wrapper type no longer exists; `Schema` implements minijinja's `Object` directly (mirroring `query.rs`'s `impl Object for QueryOutcome`); `.field()`/`.descendants()` fetch the render-cached `SchemaService`/`SchemaRegistry` via `state`, not per-instance fields; `schema.get(name)` returns the bound `Arc<Schema>` directly.
-- [ ] `template/engine/schema.rs`'s `SchemaContext` type no longer exists; it duplicated `SchemaConfigSpec` field-for-field (root, directory, class/title/aliases keys) with nothing `SchemaConfigSpec` didn't already carry. `SchemaService`'s `spec` field is `pub(crate)`, read directly by the adapter instead of via new accessor methods; `.field()`'s File-branch builds a `FrontmatterFieldKeys` on the fly from `spec`'s three key fields when it needs one, rather than caching a precomposed bundle.
+- [ ] `template/engine/schema.rs`'s `SchemaContext` type no longer exists; it duplicated `SchemaConfigSpec` field-for-field (root, directory, class/title/aliases keys) with nothing `SchemaConfigSpec` didn't already carry. The adapter reaches that data through `SchemaService::spec()` and `SchemaConfigSpec`'s own accessors instead of a second, adapter-side struct; `.field()`'s File-branch builds a `FrontmatterFieldKeys` on the fly from `spec().{class,title,aliases}_field()` when it needs one, rather than caching a precomposed bundle.
 - [ ] `Schema` and `SchemaService` are `pub` in `schema/mod.rs` *and* re-exported from `lib.rs` under `#[cfg(any(test, feature = "test-utils"))]`, mirroring `config`'s/`template`'s gate; `SchemaFieldDef`, `SchemaFieldType`, and `SchemaSelectFieldEntry` stay `pub(crate)` with no `lib.rs` re-export; every other new/renamed type is `pub(crate)` or narrower.
 - [ ] Full existing test suite (`mise test`) passes with no test assertion changed except the disclosed mismatched-key/mismatched-value behavior change and any test rewritten to target the new `Schema*FieldDef`/`SchemaFieldBuilder` seam instead of the retired `FieldOptions::from_raw`.
 - [ ] `mise clippy` clean.
@@ -374,3 +384,5 @@ Second triage pass: `file_field_values` removed from `SchemaService` entirely �
 Third course-correction: `SchemaFieldType::File.class` precomputation (previously planned as a `resolve()`-time post-DAG pass producing `BTreeSet<SchemaName>`) is reverted — it depends on is-a expansion machinery (`with_descendants()`-style composition) that doesn't exist yet and shouldn't be built ad hoc inside this ticket. Split into `.scratch/index-query/issues/13-composable-query-source.md`, a general `QuerySource::And`/`Or`/`Not` refactor that this ticket's own file-field work, `query`/`tasks.from_class()`, and `.scratch/task-system/`'s CLI `--from` flag can all build on once it lands, instead of each growing its own composition mechanism. `SchemaFieldType::File.class` stays `Vec<String>`, file-field class matching stays exactly as implemented today (live `SchemaService::matches()`, unchanged timing) — this ticket makes zero behavioral change to file fields beyond decisions 1/5 (file_field_values off SchemaService's interface, SchemaBinding replaced by Schema's own Object impl). Also applied: `SchemaFieldOptionsError` renamed and split into `SchemaFieldBuilderError` (an enum, matching `ConfigBuilderError`'s precedent) with `UnknownAttributeKey`/`AttributeValueTypeMismatch` (dropping the disliked "Option" qualifier in favor of "Attribute"), plus `RefOutOfBounds`/`RefFieldNotFound` moved in from `SchemaError` since both only ever arise mid-field-build; `SchemaWarning` gains the parallel `UnknownOverrideKey`/`OverrideValueTypeMismatch` pair, replacing `MismatchedOverrideKey`.
 
 Fourth course-correction: `template/engine/schema.rs`'s `SchemaContext{root, directory, keys: FrontmatterFieldKeys}` is deleted — verified it duplicates `SchemaConfigSpec{root, directory, class_field, title_field, aliases_field}` field-for-field, predating `SchemaConfigSpec`'s introduction earlier in this same ticket and never reconciled with it. `SchemaService.spec` becomes `pub(crate)` (matching `SchemaConfigSpec`'s own already-established plain-projection convention: no invariants to protect, no accessor ceremony warranted) so the adapter reads `root`/`directory`/`class_field`/`title_field`/`aliases_field` directly off the render-cached `Arc<SchemaService>` instead of caching a second, redundant bundle. The one real difference — `SchemaContext.keys` was a precomposed `index::FrontmatterFieldKeys`, while `SchemaConfigSpec` keeps the three keys separate (deliberately: `schema/` doesn't depend on `crate::index`) — is resolved by having `.field()`'s File-branch compose the bundle on the fly, cheaply (three `FieldKey` clones), exactly once per call, at the one place (`template/engine/schema.rs`) that already imports `crate::index` for this purpose.
+
+Fifth course-correction: `SchemaConfigSpec` reverses the Fourth correction's own "plain projection, no accessor ceremony" framing — private fields, `pub(crate)` accessors (`root()`/`directory()`/`class_field()`/`title_field()`/`aliases_field()`), matching `Config`'s own convention (`SchemasConfig`/`FrontmatterConfig`) rather than `SchemaFileFieldFilter`'s. The distinguishing factor: `SchemaFileFieldFilter<'a>` is read once, at a single call site, and dropped — a `SchemaConfigSpec` is constructed once in `TemplateEngine::new`, wrapped in `SchemaService`, and held for a render's entire lifetime, crossing a real module boundary (`config/` → `schema/` → `template/engine/`) each time something reads it; full immutability and hidden internals matter here in a way they don't for a borrowed, single-use filter struct. `SchemaService.spec` reverts to a private field; `SchemaService::spec(&self) -> &SchemaConfigSpec` is the one new accessor, mirroring `Config::schemas()`/`Config::frontmatter()`'s own chain-into-a-substruct shape exactly.
