@@ -42,8 +42,8 @@ Expose secondary CLI query commands as top-level commands: `traces list`, `trace
 22. As a User, I want markdown tags indexed, so that I can query sources such as `#book` or `#projects/active`.
 23. As a Template author, I want a `query` namespace, so that query features live beside existing `file`, `ui`, and `date` namespaces.
 24. As a Template author, I want QueryOps method chaining, so that I can write readable query construction inside Templates.
-25. As a Template author, I want `query.from_tags("#book")`, so that I can start a page-level query from tags.
-26. As a Template author, I want `query.from_folder("books")`, so that I can start a page-level query from folders.
+25. As a Template author or CLI User, I want a single `from([expr])` source selection seam (`query.from` / `tasks.from` / CLI `--from`), so that I can filter source pages using tags (`#book`), paths (`books/`), classes (`@Book`), and boolean logic (`and`, `or`, `not`).
+26. As a User, I want class queries to support Incremental Depth (`@Book` for exact, `@Book+` for direct children, `@Book*` for all descendants), so that I have precise control over subclass matching.
 27. As a Template author, I want QueryOutcome to support `.where(...)` and `.filter(...)`, so that I can narrow query results.
 28. As a Template author, I want QueryOutcome to support `.sort(...)`, so that I can order query results.
 29. As a Template author, I want QueryOutcome to support `.limit(...)`, so that I can cap query output.
@@ -101,10 +101,11 @@ Expose secondary CLI query commands as top-level commands: `traces list`, `trace
 - Parser extraction should use markdown events and source ranges where useful, not ad hoc whole-file regexes.
 - A custom lexer may still be needed for Dataview Inline Field syntax and custom task metadata beyond `pulldown-cmark` events.
 - Inlinks are derived in a post-processing pass from indexed outlinks.
-- Template queries are exposed through a QueryOps minijinja namespace Object.
+- Query execution lives in a top-level `src/query/` domain module, establishing Command-Query Separation (CQS) between index persistence (`src/index/`) and query execution (`src/query/`).
+- Template queries and CLI queries share a single unified `from([expr])` entry point (`QueryOps::from`), replacing separate `.all()`, `.from_tags()`, `.from_folder()`, and `.from_class()` methods.
+- `query.from()` or `query.from("")` evaluates to `QuerySource::All`.
 - QueryOps follows the existing namespace Object pattern used by `file`, `ui`, and `date`.
 - QueryOps methods return QueryOutcome Objects.
-- QueryOutcome implements minijinja Object behavior for method chaining.
 - QueryOutcome supports methods including `where`, `filter`, `sort`, `limit`, `group_by`, and `flatten`.
 - QueryOutcome supports terminal methods including `table`, `list`, `task_list`, and `count`.
 - Terminal operations are also exposed as pipeline filters when that reads better in a Template.
@@ -161,11 +162,6 @@ Expose secondary CLI query commands as top-level commands: `traces list`, `trace
 - Terminal helpers are deliberately convenience features. Complex formatting belongs in Template loops.
 - The term FileIndex replaces NoteIndex everywhere in new design work.
 - ADR 5 is proposed and should be reviewed before acceptance.
-- `Source` (page-level query source selection, #04) intentionally stays at
-  `All` / `Tag` / `Folder` for this spec: each is a single fixed-shape
-  string value with no comparison-operator expression needed. General
-  metadata/frontmatter field filtering (`rating > 7`, etc.) is QueryOutcome's
-  `.where()`/`.filter()` (#05), not a source. A future File Class feature
-  modeled on Obsidian's Metadata Menu plugin is the concrete candidate for
-  extending `Source` further (`Source::FileClass`) — now speced separately in
-  `.scratch/metadata-schemas/spec.md` (`query.from_class`).
+- `QuerySource` uses a composable `QuerySourceExpr` AST (`Tag`, `Path`, `Class`, `And`, `Or`, `Not`), parsed via Logos tokenizer and recursive-descent parser.
+- Class querying uses an Incremental Depth Mental Model: `ClassExpansionMode::Exact` (`@Book` / `class(Book)` — self only), `ClassExpansionMode::Children` (`@Book+` / `class(Book).with_children()` — self + direct children), and `ClassExpansionMode::Descendants` (`@Book*` / `class(Book).with_descendants()` — self + transitive descendants).
+- Class expansion is evaluated in a caller-side AST pre-pass (`resolve_sources`) against `SchemaRegistry`, populating `ClassExpansionMode`'s `BTreeSet<String>` match set and keeping `src/query/` independent of `src/schema/`.
