@@ -1,6 +1,6 @@
 # 13 — Query Module Promotion and Source Expression DSL
 
-**What to build:** Restructure query execution into a top-level `src/query/` domain module, moving `QuerySource` into `src/query/source.rs` alongside a new composable `SourceExpr` AST, Logos tokenizer, and recursive-descent parser. Move `FileOption`, `FileOptionFilter`, and `FrontmatterFieldKeys` into `src/query/`. Replace `QuerySource`'s flat enum with `All | Expr(SourceExpr)`, supporting boolean combinators (`and`, `or`, `not`/`!`), parens, `#tag`, `"path"` (matching exact files or folder prefixes), and `class(Name)` leaves with explicit `.with_children()` (direct children) and `.with_descendants()` (transitive is-a) expansion modifiers. Consolidate template query namespaces (`query` and `tasks`) down to a single unified `.from([expr])` method (where `from()` or `from("")` defaults to all indexed items, matching SQL `FROM` intuition), deleting the redundant `.all()`, `.from_tags()`, `.from_folder()`, and `.from_class()` methods. Align CLI `--from` and template `.from()` to use the exact same `SourceExpr::parse` engine.
+**What to build:** Restructure query execution into a top-level `src/query/` domain module, moving `QuerySource` into `src/query/source.rs` alongside a new composable `QuerySourceExpr` AST, Logos tokenizer, and recursive-descent parser. Move `FileOption`, `FileOptionFilter`, and `FrontmatterFieldKeys` into `src/query/`. Replace `QuerySource`'s flat enum with `All | Expr(QuerySourceExpr)`, supporting boolean combinators (`and`, `or`, `not`/`!`), parens, `#tag`, `"path"` (matching exact files or folder prefixes), and `class(Name)` leaves with explicit `.with_children()` (direct children) and `.with_descendants()` (transitive is-a) expansion modifiers. Consolidate template query namespaces (`query` and `tasks`) down to a single unified `.from([expr])` method (where `from()` or `from("")` defaults to all indexed items, matching SQL `FROM` intuition), deleting the redundant `.all()`, `.from_tags()`, `.from_folder()`, and `.from_class()` methods. Align CLI `--from` and template `.from()` to use the exact same `QuerySourceExpr::parse` engine.
 
 **Blocked by:** 08 - CLI Page Query Commands, 09 - Task-Level Queries
 
@@ -11,13 +11,13 @@
 ## Agent Brief
 
 **Category:** enhancement
-**Summary:** Promote `src/index/query/` to a top-level `src/query/` module, replace `QuerySource`'s flat enum with a composable `SourceExpr` AST (Logos lexer + recursive-descent parser), and consolidate the template query API from four methods to a single unified `.from([expr])`.
+**Summary:** Promote `src/index/query/` to a top-level `src/query/` module, replace `QuerySource`'s flat enum with a composable `QuerySourceExpr` AST (Logos lexer + recursive-descent parser), and consolidate the template query API from four methods to a single unified `.from([expr])`.
 
 **Current behavior:**
 `QuerySource` is a flat enum (`All`, `Tag(String)`, `Folder(PathBuf)`, `Class { class_field, classes }`) living inside `src/index/query/`. CLI `--from` uses a crude two-way heuristic (`#tag` → Tag, else → Folder) with no support for file classes, specific files, or boolean combinators. Template authors have four separate entry points: `.all()`, `.from_tags()`, `.from_folder()`, `.from_class()`. Class queries always expand transitively — no control over depth.
 
 **Desired behavior:**
-A top-level `src/query/` domain module owns all read-side query types. `QuerySource` becomes `All | Expr(SourceExpr)` where `SourceExpr` supports:
+A top-level `src/query/` domain module owns all read-side query types. `QuerySource` becomes `All | Expr(QuerySourceExpr)` where `QuerySourceExpr` supports:
 - Leaves: `#tag`, `"path"` (exact file or folder prefix), `class(Name)` / `@Class`
 - Combinators: `and`/`&&`, `or`/`||`, `not`/`!`, parenthesized grouping
 - Class expansion modifiers: `@Book` (exact, self only), `@Book+` / `class(Book).with_children()` (self + direct children), `@Book*` / `class(Book).with_descendants()` (self + all transitive descendants)
@@ -29,30 +29,72 @@ CLI `--from` parses the same DSL expressions through the same parser engine as t
 Class expansion uses a caller-side AST pre-pass (`resolve_sources`) that walks the AST with `SchemaRegistry` to populate `ClassExpansionMode`'s `BTreeSet<String>` match set. `src/query/` stays completely independent of `src/schema/`. Non-existent class names degrade gracefully to exact matching with a `tracing::warn!`.
 
 **Key interfaces:**
-- `QuerySource` — becomes `All | Expr(SourceExpr)` (replaces current flat enum)
+- `QuerySource` — becomes `All | Expr(QuerySourceExpr)` (replaces current flat enum)
 - `QuerySourceExpr` — new composable AST: `Tag`, `Path`, `Class`, `And`, `Or`, `Not`
 - `ClassExpansionMode` — `Exact(BTreeSet<String>)`, `Children(BTreeSet<String>)`, `Descendants(BTreeSet<String>)` (encapsulates resolved match set)
-- `SourceExpr::parse(input: &str) -> Result<QuerySourceExpr, _>` — Logos tokenizer + recursive-descent parser, powers both CLI `--from` and template `.from()`
+- `QuerySourceExpr::parse(input: &str) -> Result<QuerySourceExpr, _>` — Logos tokenizer + recursive-descent parser, powers both CLI `--from` and template `.from()`
 - `resolve_sources(expr, registry)` — caller-side pre-pass resolving class names against `SchemaRegistry`
 - `SchemaRegistry` — adds `children_of(name)` returning direct extender schemas
 - `QueryOps` — template namespace replaces `all`/`from_tags`/`from_folder`/`from_class` with single `from` method
 - `QueryError::UnparsableSourceExpression { expr }` — new error variant
 
 **Acceptance criteria:**
-- [x] `src/query/` exists as a top-level module; `src/index/query/` content moves into `src/query/`
-- [x] `FileOption`, `FileOptionFilter`, and `FrontmatterFieldKeys` move from `src/index/mod.rs` into `src/query/`
-- [x] `QuerySource`, `QuerySourceExpr`, `ClassExpansionMode`, Logos tokenizer, and recursive-descent parser live in `src/query/source.rs` with unit tests covering all AST variants, combinators, parens, and error cases
-- [x] `ClassExpansionMode` encapsulates the resolved `BTreeSet<String>` match set inside its variants
-- [x] `is_match(&self, file, note, class_field)` accepts `class_field: &str` at execution time, decoupling AST from global config
-- [x] `SchemaRegistry` adds `children_of` and `expand_classes` helpers for the three expansion modes
-- [x] Class expansion is evaluated in a caller-side AST pre-pass (`resolve_sources`), keeping `src/query/` registry-free
-- [x] Non-existent class names degrade to exact matching with `tracing::warn!`
-- [x] Template `query` and `tasks` namespaces replace four methods with single `.from([expr])` (zero args or `""` → `QuerySource::All`)
-- [x] `ClassExpansionMode` implements Incremental Depth: `Exact` (self), `Children` (self + direct), `Descendants` (self + transitive)
-- [x] CLI `--from` supports full DSL: sigils (`@Book`, `@Book+`, `@Book*`), function forms (`class(Name)`, `.with_children()`, `.with_descendants()`), `#tag`, `"path"`, `and`/`or`/`not`, parens
-- [x] `IndexerService` is NOT created (write methods stay on `FileIndex`)
-- [x] Full existing test suite (`mise test`) passes clean
-- [x] `mise clippy` clean
+- [ ] `src/query/` exists as a top-level module; `src/index/query/` content moves into `src/query/`
+- [ ] `FileOption`, `FileOptionFilter`, and `FrontmatterFieldKeys` move from `src/index/mod.rs` into `src/query/`
+- [ ] `QuerySource`, `QuerySourceExpr`, `ClassExpansionMode`, Logos tokenizer, and recursive-descent parser live in `src/query/source.rs` with unit tests covering all AST variants, combinators, parens, and error cases
+- [ ] `ClassExpansionMode` encapsulates the resolved `BTreeSet<String>` match set inside its variants
+- [ ] `is_match(&self, file, note, class_field)` accepts `class_field: &str` at execution time, decoupling AST from global config
+- [ ] `SchemaRegistry` adds `children_of` and `expand_classes` helpers for the three expansion modes
+- [ ] Class expansion is evaluated in a caller-side AST pre-pass (`resolve_sources`), keeping `src/query/` registry-free
+- [ ] Non-existent class names degrade to exact matching with `tracing::warn!`
+- [ ] Template `query` and `tasks` namespaces replace four methods with single `.from([expr])` (zero args or `""` → `QuerySource::All`)
+- [ ] `ClassExpansionMode` implements Incremental Depth: `Exact` (self), `Children` (self + direct), `Descendants` (self + transitive)
+- [ ] CLI `--from` supports full DSL: sigils (`@Book`, `@Book+`, `@Book*`), function forms (`class(Name)`, `.with_children()`, `.with_descendants()`), `#tag`, `"path"`, `and`/`or`/`not`, parens
+- [ ] `IndexerService` is NOT created (write methods stay on `FileIndex`)
+- [ ] Full existing test suite (`mise test`) passes clean
+- [ ] `mise clippy` clean
+
+The acceptance checkboxes remain open for maintainer verification.
+
+## Implementation details
+
+Implemented on branch `issue-13-query-source-dsl` in three commits:
+
+- `3cb87f4` — `feat(query)!: add source expression DSL`
+- `95f84f8` — `refactor(query): follow module layout convention`
+- `195fb29` — `refactor(query): extract index record`
+
+### Delivered module boundary
+
+- `src/query/mod.rs` is the `crate::query` module root. It owns page/task query execution and `QueryOutcome`.
+- `src/query/record.rs` owns `IndexRecord`, private task-row state, and field resolution. The public type path remains `crate::query::IndexRecord`.
+- `src/query/source.rs` owns `QuerySource`, `QuerySourceExpr`, `ClassExpansionMode`, tokenization, parsing, and source matching.
+- `src/query/option.rs` owns `FileOption`, `FileOptionFilter`, and `FrontmatterFieldKeys`; no compatibility re-export remains under `src/index/`.
+- Existing filter, operator, sort, field, and error modules moved from `src/index/query/` under `src/query/`.
+- `QueryOutcome` remains in `src/query/mod.rs`; no `outcome.rs` was introduced.
+- `FileIndex::query`, `FileIndex::query_tasks`, and `FileIndex::file_options` remain thin read-side delegators. Index build, refresh, load, persistence, and other write ownership remain on `FileIndex`; no `IndexerService` was added.
+
+### Source parsing and matching
+
+- `QuerySource::parse` maps empty or whitespace-only input to `QuerySource::All`; non-empty input delegates to `QuerySourceExpr::parse`.
+- The Logos lexer and recursive-descent parser implement `not` > `and` > `or` precedence, parentheses, tag/path/class leaves, symbolic operators, class sigils, and class function/chaining forms.
+- Parsed class leaves retain raw requested names and an empty match set inside their requested `Exact`, `Children`, or `Descendants` mode.
+- Query matching receives the configured File Class field as `class_field: &str`; `src/query/` has no dependency on `src/schema/`.
+- `SchemaRegistry::children_of` returns only direct extenders. `SchemaRegistry::expand_classes` fills each mode's match set, while `resolve_sources` recursively pre-resolves every class leaf before execution.
+- Unknown class names stay in the exact match set and emit a `tracing::warn!`, allowing Notes to match even when no corresponding Schema exists.
+
+### CLI and template cutover
+
+- CLI list, table, and task commands share one `parse_source` path. It parses the same DSL, loads the Schema registry only for class-bearing expressions, resolves class leaves, and maps parse failures through `QueryError::UnparsableSourceExpression`.
+- Both Minijinja namespaces use the same `QueryOps` implementation and expose only `from`. `query.from()` / `tasks.from()` and empty strings select all Notes.
+- Template class queries reuse the render-scoped Schema registry cache shared with the `schema` namespace, avoiding a second registry load in the same render.
+- Legacy template methods (`all`, `from_tags`, `from_folder`, and `from_class`) were removed, and live templates, tests, and benchmark inputs were migrated to `from`.
+
+### Verification
+
+- Targeted source/parser, Schema expansion, CLI, template, record, flatten, and field-resolution tests passed.
+- Final `mise run verify` passed formatting, repository lint, Clippy, dependency audit, 1,478 library tests, 4 binary tests, 18 end-to-end tests, 5 integration tests, and 14 doctests.
+- Spec review found stale CLI `--from` help text; the help was updated to describe the shared source expression grammar before the implementation commit.
 
 **Out of scope:**
 - Creating an `IndexerService` — `FileIndex` write methods remain on `FileIndex`
@@ -75,25 +117,20 @@ Class expansion uses a caller-side AST pre-pass (`resolve_sources`) that walks t
 ```
 src/
   index/
-    mod.rs       FileIndex (build, refresh, persist, load), scan, store, inlinks, file
-                 FileIndex::query(), query_tasks(), file_options() remain small read-exit
-                 delegators to crate::query
+    mod.rs       FileIndex build/refresh/load/persist ownership plus thin
+                 query(), query_tasks(), and file_options() delegators
   query/
-                 pub use source::{QuerySource, QuerySourceExpr, ClassExpansionMode};
-                 pub use outcome::QueryOutcome;
-                 pub use record::IndexRecord;
-                 pub use error::QueryError;
-                 pub use option::{FileOption, FileOptionFilter, FrontmatterFieldKeys};
-                 pub use field::{FileField, SortOrder};
-    source.rs    NEW — QuerySource, QuerySourceExpr AST, SourceToken (Logos), SourceParser,
-                 ClassExpansionMode (Exact, Children, Descendants), parse & matching tests
-    option.rs    NEW — FileOption, FileOptionFilter, FrontmatterFieldKeys (moved from index/mod.rs)
-    record.rs    IndexRecord and field resolution
-    outcome.rs   QueryOutcome, filter, sort, limit, group_by, flatten, table/list/task_list
-    error.rs     QueryError + UnparsableSourceExpression variant
-    filter.rs    FilterExpr (unchanged)
-    operators.rs CompareOp, LogicalOp, ComparisonExpr, LogicalExpr (LogicalOp shared with source.rs)
-    sort.rs      SortKey, compare_field_values
+    mod.rs       Module root, query execution, QueryOutcome transformations,
+                 and terminal Markdown rendering
+    source.rs    QuerySource, QuerySourceExpr, ClassExpansionMode, Logos lexer,
+                 recursive-descent parser, and source matching
+    option.rs    FileOption, FileOptionFilter, FrontmatterFieldKeys
+    record.rs    IndexRecord, task-row state, and field resolution
+    error.rs     QueryError, including UnparsableSourceExpression
+    field.rs     FileField, TaskField, and FieldPath
+    filter.rs    FilterExpr
+    operators.rs CompareOp, LogicalOp, ComparisonExpr, and LogicalExpr
+    sort.rs      SortKey, SortOrder, and field-value comparison
 ```
 
 ### AST and Parser
