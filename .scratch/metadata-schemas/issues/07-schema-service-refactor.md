@@ -53,10 +53,10 @@ schema/
                RawFieldDefToml (wire shape — key enumeration unchanged)
   fields.rs    NEW — SchemaFieldType, SchemaFieldDef, SchemaSelectFieldEntry,
                Schema*FieldDef family, SchemaFieldBuilder, SchemaFieldBuilderError
-  model.rs     Schema only (name, fields, ancestors, descendants, suggest_field)
+  model.rs     Schema only (name, fields, ancestors, children, descendants,
+               suggest_field)
   service.rs   NEW — SchemaService; absorbs registry.rs's file walk and
                resolve.rs's DAG-walk orchestration
-  graph.rs     + descendants_by_name(); Kahn's sort itself untouched
   address.rs   unchanged
   name.rs      unchanged
   error.rs     + SchemaError::FieldBuilder(#[from] SchemaFieldBuilderError);
@@ -83,7 +83,7 @@ template/engine/
                spec field stays private, reached via SchemaService::spec() (see
                service.rs above) — the same call that seeds the cached
                SchemaRegistry, via cache.rs's existing cached() helper. Schema's
-               .field()/.descendants() closures (still state-taking
+               .field()/.children()/.descendants() closures (still state-taking
                Value::from_function values, unchanged mechanism) re-fetch both on
                demand instead of holding them per-instance. .field()'s File-branch
                builds a FrontmatterFieldKeys on the fly from
@@ -168,13 +168,15 @@ impl SchemaService {
     /// direct-field-access approach (see schema.rs above).
     pub(crate) fn spec(&self) -> &SchemaConfigSpec;
     /// Reads TOML, builds every field via SchemaFieldBuilder, linearizes the
-    /// extends DAG, computes each Schema's descendants. Returns every
-    /// SchemaWarning collected along the way: same (data, warnings) shape as
-    /// today's SchemaRegistry::load, so a caller/test asserts on warnings
-    /// directly instead of scraping tracing output. SchemaService still logs
-    /// each warning once via tracing for the render path.
+    /// extends DAG, computes each Schema's direct children and transitive
+    /// descendants. Returns every SchemaWarning collected along the way:
+    /// same (data, warnings) shape as today's SchemaRegistry::load, so a
+    /// caller/test asserts on warnings directly instead of scraping tracing
+    /// output. SchemaService still logs each warning once via tracing for the
+    /// render path.
     pub fn resolve(&self) -> Result<(Arc<SchemaRegistry>, Vec<SchemaWarning>), SchemaError>;
     pub fn get<'a>(&self, reg: &'a SchemaRegistry, name: &str) -> Option<&'a Arc<Schema>>;
+    pub fn children(&self, reg: &SchemaRegistry, name: &str) -> Vec<Arc<Schema>>;
     pub fn descendants(&self, reg: &SchemaRegistry, name: &str) -> Vec<Arc<Schema>>;
     /// Degrades a class with no resolved Schema, logs a warning, internally —
     /// replaces the identical logic duplicated today in schema.rs and query.rs.
@@ -191,13 +193,13 @@ impl SchemaService {
 pub struct Schema {
     name: SchemaName,
     fields: BTreeMap<FieldName, SchemaFieldDef>,
-    ancestors: BTreeSet<SchemaName>,     // unchanged, transitive
-    descendants: BTreeSet<SchemaName>,   // NEW — see SchemaGraph::descendants_by_name below
+    ancestors: BTreeSet<SchemaName>,     // unchanged, transitive parents
+    children: BTreeSet<SchemaName>,      // NEW — direct extenders only
+    descendants: BTreeSet<SchemaName>,   // NEW — transitive extenders
 }
 impl Schema {
-    // name(), field(), fields(), is_a(), ancestors() — unchanged
+    // name(), field(), fields(), is_a(), ancestors(), children(), descendants() — unchanged
     pub fn suggest_field(&self, field: &str) -> Option<&str>;   // moved in from
-                                                                 // template/engine/schema.rs
 }
 
 // schema/fields.rs — pub(crate): SchemaService's public methods never hand
@@ -333,6 +335,11 @@ struct RawSchemaFieldDef {   // was RawFieldDef
 
 // schema/graph.rs
 impl<'a> SchemaGraph<'a> {
+    /// Direct child adjacency: every Schema that declares this Schema in its
+    /// `extends` list, non-transitively. Used to populate Schema.children and
+    /// issue 13's `with_children()` class expansion without re-scanning the
+    /// registry.
+    pub(super) fn children_by_name(&self) -> &BTreeMap<SchemaName, BTreeSet<SchemaName>>;
     /// Every Schema's transitive descendants, memoized over the existing
     /// children_by_name adjacency (already built in SchemaGraph::new, before
     /// Kahn resolution even starts) — O(n + edges), not a second full-registry
@@ -363,15 +370,15 @@ Split across the two tickets — each amendment should only assert what's actual
 
 - [ ] `config/specs.rs` exists with `SchemaConfigSpec` (private fields, `pub(crate)` accessor methods, matching `Config`'s own convention — not `SchemaFileFieldFilter`'s plain-projection style, since `SchemaConfigSpec` is held across a module boundary for a render's lifetime rather than read once at a single call site) and `Config::to_schema_spec()`; `template/engine.rs`'s hand-derived `class_field`/`schemas_dir`/`field_keys` construction is replaced by one call.
 - [ ] `src/schema/` matches the target layout above; `registry.rs` and `resolve.rs` no longer exist as standalone files.
-- [ ] `SchemaService::resolve()` returns `Result<(Arc<SchemaRegistry>, Vec<SchemaWarning>), SchemaError>` — same (data, warnings) shape as today's `SchemaRegistry::load`; `get()`/`descendants()`/`matches()` exist with the signatures above; `new()` is trivial and does no I/O. `SchemaService` has no `file_field_values` method — file-field resolution is not a schema-domain concern (see the `schema.rs` module layout above).
+- [ ] `SchemaService::resolve()` returns `Result<(Arc<SchemaRegistry>, Vec<SchemaWarning>), SchemaError>` — same (data, warnings) shape as today's `SchemaRegistry::load`; `get()`/`children()`/`descendants()`/`matches()` exist with the signatures above; `new()` is trivial and does no I/O. `SchemaService` has no `file_field_values` method — file-field resolution is not a schema-domain concern (see the `schema.rs` module layout above).
 - [ ] `RawSchemaFieldDef` holds `options: BTreeMap<String, FieldValue>`; `RawFieldDefToml`'s wire-level `deny_unknown_fields` protection is unchanged (verified: a genuinely unknown key still fails to parse with equivalent error text).
 - [ ] `SchemaSelectFieldDef`/`SchemaFileFieldDef`/`SchemaNumberFieldDef`/`SchemaDateFieldDef` each implement `try_from_options`, used identically for a `Direct` field's own options and for validating a `$ref` override's keys.
 - [ ] A field declaring a key that doesn't belong to its resolved type is `SchemaFieldBuilderError::UnknownAttributeKey` (Direct/override_type, wrapped as `SchemaError::FieldBuilder`) or `SchemaWarning::UnknownOverrideKey` (bare override); a field declaring a valid key with a wrongly-shaped value is `AttributeValueTypeMismatch`/`OverrideValueTypeMismatch` respectively. All four carry `address`/`kind`/`key` (the value-mismatch pair also carry `value`/`expected`) — each covered by its own test, the value-mismatch pair asserting the message names both what was given and what was expected.
-- [ ] `Schema.descendants` is populated via `SchemaGraph::descendants_by_name()`, not a separate ancestors-inversion pass; `SchemaService::descendants()` no longer does an O(n) full-registry scan per call; `descendants_by_name()` itself is unit-tested against a diamond `extends` DAG and a 3+-level chain, asserting exact deduplicated descendant sets.
+- [ ] `Schema.children` is populated from `SchemaGraph::children_by_name()` as direct extenders only; `Schema.descendants` is populated via `SchemaGraph::descendants_by_name()` as the transitive closure. `SchemaService::children()` and `SchemaService::descendants()` no longer do O(n) full-registry scans per call; `children_by_name()`/`descendants_by_name()` are unit-tested against a diamond `extends` DAG and a 3+-level chain, asserting exact direct-child sets and exact deduplicated descendant sets.
 - [ ] `SchemaFieldType::File.class` stays `Vec<String>` (declared, unexpanded) — is-a matching for file-field class filters is unchanged from today, still live via `SchemaService::matches()` inside `template/engine/schema.rs`; not precomputed by this ticket (see Comments).
 - [ ] Both existing `cached_registry` implementations (`schema.rs`, `query.rs`) are deleted, replaced by one shared helper; both existing class-degrade-and-warn duplicates — `run_class` (`query.rs`) and the file-field class-matching code in `schema.rs` — are deleted, replaced by calling `SchemaService::matches()` directly, which now owns the degrade-and-warn logic itself. Both call sites keep today's live, per-call timing (see previous bullet) — `matches()` is not precomputed.
 - [ ] `Schema::suggest_field` exists on the domain type; `template/engine/schema.rs`'s `closest_field_suggestion`/`closest_field_name` are deleted.
-- [ ] `template/engine/schema.rs`'s `SchemaBinding` wrapper type no longer exists; `Schema` implements minijinja's `Object` directly (mirroring `query.rs`'s `impl Object for QueryOutcome`); `.field()`/`.descendants()` fetch the render-cached `SchemaService`/`SchemaRegistry` via `state`, not per-instance fields; `schema.get(name)` returns the bound `Arc<Schema>` directly.
+- [ ] `template/engine/schema.rs`'s `SchemaBinding` wrapper type no longer exists; `Schema` implements minijinja's `Object` directly (mirroring `query.rs`'s `impl Object for QueryOutcome`); `.field()`/`.children()`/`.descendants()` fetch the render-cached `SchemaService`/`SchemaRegistry` via `state`, not per-instance fields; `schema.get(name)` returns the bound `Arc<Schema>` directly.
 - [ ] `template/engine/schema.rs`'s `SchemaContext` type no longer exists; it duplicated `SchemaConfigSpec` field-for-field (root, directory, class/title/aliases keys) with nothing `SchemaConfigSpec` didn't already carry. The adapter reaches that data through `SchemaService::spec()` and `SchemaConfigSpec`'s own accessors instead of a second, adapter-side struct; `.field()`'s File-branch builds a `FrontmatterFieldKeys` on the fly from `spec().{class,title,aliases}_field()` when it needs one, rather than caching a precomposed bundle.
 - [ ] `Schema` and `SchemaService` are `pub` in `schema/mod.rs` *and* re-exported from `lib.rs` under `#[cfg(any(test, feature = "test-utils"))]`, mirroring `config`'s/`template`'s gate; `SchemaFieldDef`, `SchemaFieldType`, and `SchemaSelectFieldEntry` stay `pub(crate)` with no `lib.rs` re-export; every other new/renamed type is `pub(crate)` or narrower.
 - [ ] Full existing test suite (`mise test`) passes with no test assertion changed except the disclosed mismatched-key/mismatched-value behavior change and any test rewritten to target the new `Schema*FieldDef`/`SchemaFieldBuilder` seam instead of the retired `FieldOptions::from_raw`.
@@ -394,10 +401,12 @@ Adversarially triaged post-`ccff263` (six findings: enum-variant visibility leak
 
 Second triage pass: `file_field_values` removed from `SchemaService` entirely — it required a `&FileIndex` parameter no other `SchemaService` method needs (the first real `schema/`→`index/` dependency in the crate), returned `Vec<SchemaSelectFieldEntry>` for data that is not a select/multi value-source entry (ticket 08 explicitly keeps `file` fields on a narrower `{label, value}` shape), and duplicated ticket 04's own already-implemented, already-correct `FileOption`/`file_option_value` path — none of that changes. Separately, `SchemaBinding` (a wrapper struct existing only to bundle `Schema` with ambient registry/context state) is deleted in favor of `Schema` implementing `Object` directly, matching `query.rs`'s `impl Object for QueryOutcome` precedent exactly, with render-scoped context threaded via `State`'s existing temp-cache mechanism instead of a bespoke per-instance struct.
 
-Third course-correction: `SchemaFieldType::File.class` precomputation (previously planned as a `resolve()`-time post-DAG pass producing `BTreeSet<SchemaName>`) is reverted — it depends on is-a expansion machinery (`with_descendants()`-style composition) that doesn't exist yet and shouldn't be built ad hoc inside this ticket. Split into `.scratch/index-query/issues/13-query-module-and-source-dsl.md`, a general `QuerySource::And`/`Or`/`Not` refactor that this ticket's own file-field work, `query`/`tasks.from_class()`, and `.scratch/task-system/`'s CLI `--from` flag can all build on once it lands, instead of each growing its own composition mechanism. `SchemaFieldType::File.class` stays `Vec<String>`, file-field class matching stays exactly as implemented today (live `SchemaService::matches()`, unchanged timing) — this ticket makes zero behavioral change to file fields beyond decisions 1/5 (file_field_values off SchemaService's interface, SchemaBinding replaced by Schema's own Object impl). Also applied: `SchemaFieldOptionsError` renamed and split into `SchemaFieldBuilderError` (an enum, matching `ConfigBuilderError`'s precedent) with `UnknownAttributeKey`/`AttributeValueTypeMismatch` (dropping the disliked "Option" qualifier in favor of "Attribute"), plus `RefOutOfBounds`/`RefFieldNotFound` moved in from `SchemaError` since both only ever arise mid-field-build; `SchemaWarning` gains the parallel `UnknownOverrideKey`/`OverrideValueTypeMismatch` pair, replacing `MismatchedOverrideKey`.
+Third course-correction: `SchemaFieldType::File.class` precomputation (previously planned as a `resolve()`-time post-DAG pass producing `BTreeSet<SchemaName>`) is reverted — it depends on is-a expansion machinery (`with_children()`/`with_descendants()`-style composition) that doesn't exist yet and shouldn't be built ad hoc inside this ticket. Split into `.scratch/index-query/issues/13-query-module-and-source-dsl.md`, a general `QuerySource::And`/`Or`/`Not` refactor that this ticket's own file-field work, `query`/`tasks.from_class()`, and `.scratch/task-system/`'s CLI `--from` flag can all build on once it lands, instead of each growing its own composition mechanism. `SchemaFieldType::File.class` stays `Vec<String>`, file-field class matching stays exactly as implemented today (live `SchemaService::matches()`, unchanged timing) — this ticket makes zero behavioral change to file fields beyond decisions 1/5 (file_field_values off SchemaService's interface, SchemaBinding replaced by Schema's own Object impl). Also applied: `SchemaFieldOptionsError` renamed and split into `SchemaFieldBuilderError` (an enum, matching `ConfigBuilderError`'s precedent) with `UnknownAttributeKey`/`AttributeValueTypeMismatch` (dropping the disliked "Option" qualifier in favor of "Attribute"), plus `RefOutOfBounds`/`RefFieldNotFound` moved in from `SchemaError` since both only ever arise mid-field-build; `SchemaWarning` gains the parallel `UnknownOverrideKey`/`OverrideValueTypeMismatch` pair, replacing `MismatchedOverrideKey`.
 
 Fourth course-correction: `template/engine/schema.rs`'s `SchemaContext{root, directory, keys: FrontmatterFieldKeys}` is deleted — verified it duplicates `SchemaConfigSpec{root, directory, class_field, title_field, aliases_field}` field-for-field, predating `SchemaConfigSpec`'s introduction earlier in this same ticket and never reconciled with it. `SchemaService.spec` becomes `pub(crate)` (matching `SchemaConfigSpec`'s own already-established plain-projection convention: no invariants to protect, no accessor ceremony warranted) so the adapter reads `root`/`directory`/`class_field`/`title_field`/`aliases_field` directly off the render-cached `Arc<SchemaService>` instead of caching a second, redundant bundle. The one real difference — `SchemaContext.keys` was a precomposed `index::FrontmatterFieldKeys`, while `SchemaConfigSpec` keeps the three keys separate (deliberately: `schema/` doesn't depend on `crate::index`) — is resolved by having `.field()`'s File-branch compose the bundle on the fly, cheaply (three `FieldKey` clones), exactly once per call, at the one place (`template/engine/schema.rs`) that already imports `crate::index` for this purpose.
 
 Fifth course-correction: `SchemaConfigSpec` reverses the Fourth correction's own "plain projection, no accessor ceremony" framing — private fields, `pub(crate)` accessors (`root()`/`directory()`/`class_field()`/`title_field()`/`aliases_field()`), matching `Config`'s own convention (`SchemasConfig`/`FrontmatterConfig`) rather than `SchemaFileFieldFilter`'s. The distinguishing factor: `SchemaFileFieldFilter<'a>` is read once, at a single call site, and dropped — a `SchemaConfigSpec` is constructed once in `TemplateEngine::new`, wrapped in `SchemaService`, and held for a render's entire lifetime, crossing a real module boundary (`config/` → `schema/` → `template/engine/`) each time something reads it; full immutability and hidden internals matter here in a way they don't for a borrowed, single-use filter struct. `SchemaService.spec` reverts to a private field; `SchemaService::spec(&self) -> &SchemaConfigSpec` is the one new accessor, mirroring `Config::schemas()`/`Config::frontmatter()`'s own chain-into-a-substruct shape exactly.
 
 Sixth course-correction (grounding, not a design change): verified precisely why `SchemaConfigSpec` needs to be owned rather than borrowing `&Config` the way `TemplateService<'a>` does. `TemplateEngine{ env: Environment<'static> }` (`template/engine.rs:67-69`) has no lifetime parameter; `TemplateEngine::new(..., config: &Config)` (`template/engine.rs:95-99,111-120`) takes `&Config` only as a constructor-scoped borrow, extracting owned `Arc<Path>`/`FieldKey` values before returning. `TemplateService`'s own `&'a Config` field (`template/service.rs:38-43`) never reaches `TemplateEngine` or any namespace object — it's used exclusively for post-render write-target/output-dir resolution (`template/service.rs:214,278`). And even if it did reach that far, minijinja's own `Value::from_object<T: Object + Send + Sync + 'static>` (minijinja 2.20.0, `value/mod.rs:848`, verified directly against the dependency source) rejects a borrowed `&Config` at the type level — every namespace object, `SchemaOps`/`Schema`'s `Object` impl included, is compiler-required to be `'static`. `SchemaConfigSpec` staying in `config/` (not folded into `SchemaService`'s own fields in `schema/`) is what keeps `Config::to_schema_spec()` self-contained: `config/` has zero dependency on `schema/` today (verified), and inlining the fields into `SchemaService` would either invert that or leave the projection with no natural home. No design changed by this pass — the prior `SchemaConfigSpec`/`SchemaService::spec()` shape was already correct; this only replaces "held for a render's lifetime" with the actual, compiler-enforced reason.
+
+Seventh course-correction: after `.scratch/index-query/issues/13-query-module-and-source-dsl.md`, `Schema` needs both depth-one and transitive child metadata. `children` is added as a first-class resolved attribute alongside `descendants`: `children` means direct extenders only, `descendants` means the transitive closure. This is static schema graph metadata, computed from `SchemaGraph` once during `resolve()`, not file-field class expansion and not query runtime state. It gives issue 13's `ClassExpansionMode::Children` a cheap, exact source of truth and makes the template-facing object coherent: if `schema.get("Book").descendants` exists, `schema.get("Book").children` should exist too. No `parents` field is added — direct parents are still the authored `extends` relation, and no caller has asked for that read-side projection.
