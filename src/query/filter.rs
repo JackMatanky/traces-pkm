@@ -431,296 +431,361 @@ mod tests {
             .collect()
     }
 
-    #[rstest]
-    #[case::greater_than("rating > 5", &["high"])]
-    #[case::greater_or_equal("rating >= 7", &["high"])]
-    #[case::less_than("rating < 5", &["low"])]
-    #[case::less_or_equal("rating <= 3", &["low"])]
-    #[case::numeric_equal("rating == 7", &["high"])]
-    #[case::string_equal("status == \"done\"", &["high", "unrated"])]
-    #[case::string_not_equal("status != \"done\"", &["low"])]
-    fn keeps_only_matching_records(
-        #[case] expr: &str,
-        #[case] expected: &[&str],
-    ) {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let outcome = rated_outcome(temp.path());
+    mod parse {
+        use miette::SourceSpan;
+        use pretty_assertions::assert_eq;
+        use rstest::rstest;
 
-        let filtered = outcome.filter(expr).expect("valid filter");
+        use super::*;
 
-        assert_eq!(names(&filtered), expected);
+        #[rstest]
+        #[case::no_operator("rating")]
+        #[case::empty_field(" > 5")]
+        #[case::empty_value("rating >")]
+        #[case::unquoted_string("status == done")]
+        #[case::unknown_function("unknown(tags, \"#book\")")]
+        #[case::function_missing_target("contains(tags)")]
+        fn rejects_malformed_expressions(#[case] expr: &str) {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let outcome = rated_outcome(temp.path());
+
+            assert!(matches!(outcome.filter(expr), Err(QueryError::Syntax(_))));
+        }
+
+        #[rstest]
+        #[case::empty("")]
+        #[case::trailing_operator("rating > 5 and")]
+        #[case::unmatched_left_parenthesis("(rating > 5")]
+        #[case::unmatched_right_parenthesis("rating > 5)")]
+        #[case::adjacent_expressions("rating > 5 status == \"done\"")]
+        fn rejects_incomplete_boolean_logic(#[case] expr: &str) {
+            assert!(matches!(
+                FilterExpr::parse(expr),
+                Err(QueryError::Syntax(_))
+            ));
+        }
+
+        #[rstest]
+        #[case::nan("rating > NaN", 9, 3)]
+        #[case::positive_infinity("rating > inf", 9, 3)]
+        #[case::negative_infinity("rating > -inf", 9, 4)]
+        fn rejects_non_finite_numeric_literals(
+            #[case] expr: &str,
+            #[case] offset: usize,
+            #[case] length: usize,
+        ) {
+            let Err(QueryError::Syntax(error)) = FilterExpr::parse(expr) else {
+                panic!("expected non-finite literal to fail");
+            };
+
+            assert_eq!(error.expected, "a finite numeric literal");
+            assert_eq!(error.span, SourceSpan::from((offset, length)));
+        }
+
+        #[test]
+        fn rejects_malformed_field_path_in_expression() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let outcome = rated_outcome(temp.path());
+
+            assert_eq!(
+                outcome.filter("file.bogus == 1"),
+                Err(QueryError::FieldPath(FieldPathError::new(
+                    "file.bogus",
+                    None
+                )))
+            );
+        }
+
+        #[test]
+        fn rejects_malformed_field_path_in_function() {
+            assert_eq!(
+                FilterExpr::parse("contains(file.bogus, \"x\")"),
+                Err(QueryError::FieldPath(FieldPathError::new(
+                    "file.bogus",
+                    None
+                )))
+            );
+        }
     }
 
-    #[test]
-    fn missing_field_never_matches_equality_or_ordering() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let outcome = rated_outcome(temp.path());
+    mod filter {
+        use pretty_assertions::assert_eq;
+        use rstest::rstest;
 
-        let filtered = outcome.filter("rating > 0").expect("valid filter");
+        use super::*;
 
-        assert_eq!(names(&filtered), ["high", "low"]);
+        #[rstest]
+        #[case::greater_than("rating > 5", &["high"])]
+        #[case::greater_or_equal("rating >= 7", &["high"])]
+        #[case::less_than("rating < 5", &["low"])]
+        #[case::less_or_equal("rating <= 3", &["low"])]
+        #[case::numeric_equal("rating == 7", &["high"])]
+        #[case::string_equal("status == \"done\"", &["high", "unrated"])]
+        #[case::string_not_equal("status != \"done\"", &["low"])]
+        fn keeps_only_matching_records(
+            #[case] expr: &str,
+            #[case] expected: &[&str],
+        ) {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let outcome = rated_outcome(temp.path());
+
+            let filtered = outcome.filter(expr).expect("valid filter");
+
+            assert_eq!(names(&filtered), expected);
+        }
+
+        #[test]
+        fn missing_field_never_matches_equality_or_ordering() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let outcome = rated_outcome(temp.path());
+
+            let filtered = outcome.filter("rating > 0").expect("valid filter");
+
+            assert_eq!(names(&filtered), ["high", "low"]);
+        }
+
+        #[test]
+        fn missing_field_matches_not_equal() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let outcome = rated_outcome(temp.path());
+
+            let filtered = outcome.filter("rating != 7").expect("valid filter");
+
+            assert_eq!(names(&filtered), ["low", "unrated"]);
+        }
+
+        #[test]
+        fn type_mismatch_never_matches_ordering_or_equality() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let outcome = rated_outcome(temp.path());
+
+            let filtered = outcome.filter("status > 5").expect("valid filter");
+
+            assert!(filtered.is_empty());
+        }
+
+        #[test]
+        fn chains_across_multiple_filter_calls() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let outcome = rated_outcome(temp.path());
+
+            let filtered = outcome
+                .filter("status == \"done\"")
+                .expect("valid filter")
+                .filter("rating >= 7")
+                .expect("valid filter");
+
+            assert_eq!(names(&filtered), ["high"]);
+        }
+
+        #[test]
+        fn equal_matches_a_date_field_against_a_string_literal() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let outcome = outcome_for(temp.path(), "---\ndue: 2026-01-01\n---");
+
+            let filtered =
+                outcome.filter("due == \"2026-01-01\"").expect("valid filter");
+
+            assert_eq!(filtered.len(), 1);
+        }
+
+        #[test]
+        fn filters_with_null_literal() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let outcome = rated_outcome(temp.path());
+
+            let with_null =
+                outcome.clone().filter("rating == null").expect("valid filter");
+            let without_null =
+                outcome.filter("rating != null").expect("valid filter");
+
+            assert_eq!(names(&with_null), ["unrated"]);
+            assert_eq!(names(&without_null), ["high", "low"]);
+        }
+
+        #[test]
+        fn r_where_alias_filters_records_identically_to_filter() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let outcome = rated_outcome(temp.path());
+
+            let filtered = outcome.r#where("rating >= 7").expect("valid where");
+
+            assert_eq!(names(&filtered), ["high"]);
+        }
+
+        #[test]
+        fn and_combination_keeps_only_records_matching_both_sides() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let outcome = rated_outcome(temp.path());
+
+            let filtered = outcome
+                .filter("rating > 5 AND status == \"done\"")
+                .expect("valid filter");
+
+            assert_eq!(names(&filtered), ["high"]);
+        }
+
+        #[test]
+        fn or_combination_keeps_records_matching_either_side() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let outcome = rated_outcome(temp.path());
+
+            let filtered = outcome
+                .filter("rating == 3 OR status == \"done\"")
+                .expect("valid filter");
+
+            assert_eq!(names(&filtered), ["high", "low", "unrated"]);
+        }
+
+        #[test]
+        fn not_combination_reverses_the_matching_condition() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let outcome = rated_outcome(temp.path());
+
+            let filtered =
+                outcome.filter("NOT status == \"done\"").expect("valid filter");
+
+            assert_eq!(names(&filtered), ["low"]);
+        }
+
+        #[test]
+        fn default_boolean_precedence_evaluates_correctly() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let outcome = rated_outcome(temp.path());
+
+            let filtered = outcome
+                .filter(
+                    "status == \"done\" OR rating == 3 AND status == \"draft\"",
+                )
+                .expect("valid filter");
+
+            assert_eq!(names(&filtered), ["high", "low", "unrated"]);
+        }
+
+        #[test]
+        fn nested_parentheses_override_precedence() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let outcome = rated_outcome(temp.path());
+
+            let nested = outcome
+                .filter(
+                    "(rating > 5 OR status == \"draft\") AND NOT rating == 3",
+                )
+                .expect("valid filter");
+
+            assert_eq!(names(&nested), ["high"]);
+        }
+
+        #[test]
+        fn logical_op_spellings_do_not_swallow_identifier_prefixes() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let outcome =
+                outcome_for(temp.path(), "---\norder: 5\nandrew: 3\n---");
+
+            let lower = outcome
+                .clone()
+                .filter("order == 5 and andrew == 3")
+                .expect("valid filter: lowercase and");
+            assert_eq!(lower.len(), 1);
+
+            let symbolic_and = outcome
+                .clone()
+                .filter("order == 5 && andrew == 3")
+                .expect("valid filter: &&");
+            assert_eq!(symbolic_and.len(), 1);
+
+            let symbolic_or = outcome
+                .clone()
+                .filter("order == 999 || andrew == 3")
+                .expect("valid filter: ||");
+            assert_eq!(symbolic_or.len(), 1);
+
+            let lower_or = outcome
+                .clone()
+                .filter("order == 999 or andrew == 3")
+                .expect("valid filter: lowercase or");
+            assert_eq!(lower_or.len(), 1);
+
+            // Fields literally named `order`/`andrew` must resolve as whole
+            // identifiers, not get truncated by the Logical token's "or"/"and"
+            // prefix.
+            let ident_prefix =
+                outcome.filter("order == 5").expect("valid filter: bare field");
+            assert_eq!(ident_prefix.len(), 1);
+        }
     }
 
-    #[test]
-    fn missing_field_matches_not_equal() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let outcome = rated_outcome(temp.path());
+    mod contains {
+        use pretty_assertions::assert_eq;
 
-        let filtered = outcome.filter("rating != 7").expect("valid filter");
+        use super::*;
 
-        assert_eq!(names(&filtered), ["low", "unrated"]);
-    }
+        #[test]
+        fn contains_matches_tags_by_prefix_hierarchy() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let outcome = outcome_for_files(temp.path(), &[
+                (
+                    "book.md",
+                    "---\ntitle: Rust Handbook\n---\nFiled under #book/fiction",
+                ),
+                (
+                    "article.md",
+                    "---\ntitle: Async Guide\n---\nFiled under #article",
+                ),
+            ]);
 
-    #[test]
-    fn type_mismatch_never_matches_ordering_or_equality() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let outcome = rated_outcome(temp.path());
+            let filtered = outcome
+                .filter("contains(tags, \"#book\")")
+                .expect("valid filter");
 
-        let filtered = outcome.filter("status > 5").expect("valid filter");
+            assert_eq!(names(&filtered), ["book"]);
+        }
 
-        assert!(filtered.is_empty());
-    }
+        #[test]
+        fn contains_matches_string_fields_by_substring() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let outcome = outcome_for_files(temp.path(), &[
+                (
+                    "book.md",
+                    "---\ntitle: Rust Handbook\n---\nFiled under #book/fiction",
+                ),
+                (
+                    "article.md",
+                    "---\ntitle: Async Guide\n---\nFiled under #article",
+                ),
+            ]);
 
-    #[rstest]
-    #[case::no_operator("rating")]
-    #[case::empty_field(" > 5")]
-    #[case::empty_value("rating >")]
-    #[case::unquoted_string("status == done")]
-    #[case::unknown_function("unknown(tags, \"#book\")")]
-    #[case::function_missing_target("contains(tags)")]
-    fn rejects_malformed_expressions(#[case] expr: &str) {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let outcome = rated_outcome(temp.path());
+            let filtered = outcome
+                .filter("contains(title, \"Async\")")
+                .expect("valid filter");
 
-        assert!(matches!(outcome.filter(expr), Err(QueryError::Syntax(_))));
-    }
+            assert_eq!(names(&filtered), ["article"]);
+        }
 
-    #[rstest]
-    #[case::empty("")]
-    #[case::trailing_operator("rating > 5 and")]
-    #[case::unmatched_left_parenthesis("(rating > 5")]
-    #[case::unmatched_right_parenthesis("rating > 5)")]
-    #[case::adjacent_expressions("rating > 5 status == \"done\"")]
-    fn rejects_incomplete_boolean_logic(#[case] expr: &str) {
-        assert!(matches!(
-            super::FilterExpr::parse(expr),
-            Err(QueryError::Syntax(_))
-        ));
-    }
+        #[test]
+        fn contains_distinguishes_list_values_from_tag_hierarchy() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let outcome = outcome_for_files(temp.path(), &[
+                (
+                    "handbook.md",
+                    "---\ncategories: [handbook]\n---\nTagged #bookworm",
+                ),
+                (
+                    "book.md",
+                    "---\ncategories: [book]\n---\nTagged #book/fiction",
+                ),
+            ]);
 
-    #[rstest]
-    #[case::nan("rating > NaN", 9, 3)]
-    #[case::positive_infinity("rating > inf", 9, 3)]
-    #[case::negative_infinity("rating > -inf", 9, 4)]
-    fn rejects_non_finite_numeric_literals(
-        #[case] expr: &str,
-        #[case] offset: usize,
-        #[case] length: usize,
-    ) {
-        let Err(QueryError::Syntax(error)) = super::FilterExpr::parse(expr)
-        else {
-            panic!("expected non-finite literal to fail");
-        };
+            let category_match = outcome
+                .clone()
+                .filter("contains(categories, \"book\")")
+                .expect("valid filter");
+            assert_eq!(names(&category_match), ["book"]);
 
-        assert_eq!(error.expected, "a finite numeric literal");
-        assert_eq!(error.span, SourceSpan::from((offset, length)));
-    }
-
-    #[test]
-    fn rejects_malformed_field_path_in_expression() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let outcome = rated_outcome(temp.path());
-
-        assert_eq!(
-            outcome.filter("file.bogus == 1"),
-            Err(QueryError::FieldPath(FieldPathError::new("file.bogus", None)))
-        );
-    }
-
-    #[test]
-    fn rejects_malformed_field_path_in_function() {
-        assert_eq!(
-            super::FilterExpr::parse("contains(file.bogus, \"x\")"),
-            Err(QueryError::FieldPath(FieldPathError::new("file.bogus", None)))
-        );
-    }
-
-    #[test]
-    fn chains_across_multiple_filter_calls() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let outcome = rated_outcome(temp.path());
-
-        let filtered = outcome
-            .filter("status == \"done\"")
-            .expect("valid filter")
-            .filter("rating >= 7")
-            .expect("valid filter");
-
-        assert_eq!(names(&filtered), ["high"]);
-    }
-
-    #[test]
-    fn equal_matches_a_date_field_against_a_string_literal() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let outcome = outcome_for(temp.path(), "---\ndue: 2026-01-01\n---");
-
-        let filtered =
-            outcome.filter("due == \"2026-01-01\"").expect("valid filter");
-
-        assert_eq!(filtered.len(), 1);
-    }
-
-    #[test]
-    fn filters_with_null_literal() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let outcome = rated_outcome(temp.path());
-
-        let with_null =
-            outcome.clone().filter("rating == null").expect("valid filter");
-        let without_null =
-            outcome.filter("rating != null").expect("valid filter");
-
-        assert_eq!(names(&with_null), ["unrated"]);
-        assert_eq!(names(&without_null), ["high", "low"]);
-    }
-
-    #[test]
-    fn r_where_alias_filters_records_identically_to_filter() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let outcome = rated_outcome(temp.path());
-
-        let filtered = outcome.r#where("rating >= 7").expect("valid where");
-
-        assert_eq!(names(&filtered), ["high"]);
-    }
-
-    #[test]
-    fn boolean_and_or_not_combinations() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let outcome = rated_outcome(temp.path());
-
-        let and_match = outcome
-            .clone()
-            .filter("rating > 5 AND status == \"done\"")
-            .expect("valid filter");
-        assert_eq!(names(&and_match), ["high"]);
-
-        let or_match = outcome
-            .clone()
-            .filter("rating == 3 OR status == \"done\"")
-            .expect("valid filter");
-        assert_eq!(names(&or_match), ["high", "low", "unrated"]);
-
-        let not_match =
-            outcome.filter("NOT status == \"done\"").expect("valid filter");
-        assert_eq!(names(&not_match), ["low"]);
-    }
-
-    #[test]
-    fn default_boolean_precedence_evaluates_correctly() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let outcome = rated_outcome(temp.path());
-
-        let filtered = outcome
-            .filter("status == \"done\" OR rating == 3 AND status == \"draft\"")
-            .expect("valid filter");
-
-        assert_eq!(names(&filtered), ["high", "low", "unrated"]);
-    }
-
-    #[test]
-    fn nested_parentheses_override_precedence() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let outcome = rated_outcome(temp.path());
-
-        let nested = outcome
-            .filter("(rating > 5 OR status == \"draft\") AND NOT rating == 3")
-            .expect("valid filter");
-
-        assert_eq!(names(&nested), ["high"]);
-    }
-
-    #[test]
-    fn logical_op_spellings_do_not_swallow_identifier_prefixes() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let outcome = outcome_for(temp.path(), "---\norder: 5\nandrew: 3\n---");
-
-        let lower = outcome
-            .clone()
-            .filter("order == 5 and andrew == 3")
-            .expect("valid filter: lowercase and");
-        assert_eq!(lower.len(), 1);
-
-        let symbolic_and = outcome
-            .clone()
-            .filter("order == 5 && andrew == 3")
-            .expect("valid filter: &&");
-        assert_eq!(symbolic_and.len(), 1);
-
-        let symbolic_or = outcome
-            .clone()
-            .filter("order == 999 || andrew == 3")
-            .expect("valid filter: ||");
-        assert_eq!(symbolic_or.len(), 1);
-
-        let lower_or = outcome
-            .clone()
-            .filter("order == 999 or andrew == 3")
-            .expect("valid filter: lowercase or");
-        assert_eq!(lower_or.len(), 1);
-
-        // Fields literally named `order`/`andrew` must resolve as whole
-        // identifiers, not get truncated by the Logical token's "or"/"and"
-        // prefix.
-        let ident_prefix =
-            outcome.filter("order == 5").expect("valid filter: bare field");
-        assert_eq!(ident_prefix.len(), 1);
-    }
-
-    #[test]
-    fn contains_function_on_tags_and_string_fields() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let outcome = outcome_for_files(temp.path(), &[
-            (
-                "book.md",
-                "---\ntitle: Rust Handbook\n---\nFiled under #book/fiction",
-            ),
-            (
-                "article.md",
-                "---\ntitle: Async Guide\n---\nFiled under #article",
-            ),
-        ]);
-
-        let tag_match = outcome
-            .clone()
-            .filter("contains(tags, \"#book\")")
-            .expect("valid filter");
-        assert_eq!(names(&tag_match), ["book"]);
-
-        let title_match =
-            outcome.filter("contains(title, \"Async\")").expect("valid filter");
-        assert_eq!(names(&title_match), ["article"]);
-    }
-
-    #[test]
-    fn contains_distinguishes_list_values_from_tag_hierarchy() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let outcome = outcome_for_files(temp.path(), &[
-            (
-                "handbook.md",
-                "---\ncategories: [handbook]\n---\nTagged #bookworm",
-            ),
-            ("book.md", "---\ncategories: [book]\n---\nTagged #book/fiction"),
-        ]);
-
-        let category_match = outcome
-            .clone()
-            .filter("contains(categories, \"book\")")
-            .expect("valid filter");
-        assert_eq!(names(&category_match), ["book"]);
-
-        let tag_match =
-            outcome.filter("contains(tags, \"#book\")").expect("valid filter");
-        assert_eq!(names(&tag_match), ["book"]);
+            let tag_match = outcome
+                .filter("contains(tags, \"#book\")")
+                .expect("valid filter");
+            assert_eq!(names(&tag_match), ["book"]);
+        }
     }
 }

@@ -546,7 +546,7 @@ mod tests {
         use super::*;
 
         #[test]
-        fn accessors_return_file_record_and_note() {
+        fn file_accessor_returns_the_bundled_file_record() {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("a.md"), "Filed under #tag.")
                 .expect("write file");
@@ -554,14 +554,27 @@ mod tests {
             let file = index.record(Path::new("a.md")).expect("record").clone();
             let note = index.note(Path::new("a.md")).expect("note").clone();
 
-            let record = IndexRecord::new(file.clone(), note.clone());
+            let record = IndexRecord::new(file.clone(), note);
 
             assert_eq!(record.file(), &file);
+        }
+
+        #[test]
+        fn note_accessor_returns_the_bundled_note() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("a.md"), "Filed under #tag.")
+                .expect("write file");
+            let index = FileIndex::build(temp.path()).expect("build index");
+            let file = index.record(Path::new("a.md")).expect("record").clone();
+            let note = index.note(Path::new("a.md")).expect("note").clone();
+
+            let record = IndexRecord::new(file, note.clone());
+
             assert_eq!(record.note(), &note);
         }
 
         #[test]
-        fn with_task_sets_task_completed_and_task_text() {
+        fn with_task_sets_task_completed() {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("a.md"), "body").expect("write file");
             let index = FileIndex::build(temp.path()).expect("build index");
@@ -572,6 +585,19 @@ mod tests {
                 IndexRecord::new(file, note).with_task(true, "Buy milk");
 
             assert_eq!(record.task_completed(), Some(true));
+        }
+
+        #[test]
+        fn with_task_sets_task_text() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("a.md"), "body").expect("write file");
+            let index = FileIndex::build(temp.path()).expect("build index");
+            let file = index.record(Path::new("a.md")).expect("record").clone();
+            let note = index.note(Path::new("a.md")).expect("note").clone();
+
+            let record =
+                IndexRecord::new(file, note).with_task(false, "Buy milk");
+
             assert_eq!(record.task_text(), Some("Buy milk"));
         }
 
@@ -606,7 +632,6 @@ mod tests {
 
     mod field_path {
         use pretty_assertions::assert_eq;
-        use rstest::rstest;
 
         use super::*;
 
@@ -752,28 +777,6 @@ mod tests {
             let record = outcome.get(0).expect("record");
 
             assert_eq!(record.field("no_such_field"), Ok(FieldValue::Null));
-        }
-
-        #[rstest]
-        #[case::empty("")]
-        #[case::bare_file("file")]
-        #[case::trailing_dot("file.")]
-        #[case::unknown_file_accessor("file.bogus")]
-        #[case::extra_file_segment("file.name.extra")]
-        #[case::bare_task("task")]
-        #[case::trailing_dot_task("task.")]
-        #[case::unknown_task_accessor("task.bogus")]
-        #[case::extra_task_segment("task.completed.extra")]
-        #[case::dotted_metadata_path("a.b")]
-        fn rejects_malformed_field_paths(#[case] path: &str) {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            let outcome = outcome_for(temp.path(), "body");
-            let record = outcome.get(0).expect("record");
-
-            assert_eq!(
-                record.field(path),
-                Err(QueryError::FieldPath(FieldPathError::new(path, None)))
-            );
         }
 
         #[test]
@@ -1307,18 +1310,35 @@ mod tests {
         use super::*;
 
         #[test]
-        fn reports_len_and_is_empty() {
+        fn len_returns_zero_for_an_empty_outcome() {
+            let empty = QueryOutcome::default();
+            assert_eq!(empty.len(), 0);
+        }
+
+        #[test]
+        fn is_empty_returns_true_for_an_empty_outcome() {
             let empty = QueryOutcome::default();
             assert!(empty.is_empty());
-            assert_eq!(empty.len(), 0);
+        }
 
+        #[test]
+        fn len_returns_record_count_for_a_non_empty_outcome() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("a.md"), "# A").expect("write file");
+            let index = FileIndex::build(temp.path()).expect("build index");
+            let outcome = index.query(&QuerySource::All);
+
+            assert_eq!(outcome.len(), 1);
+        }
+
+        #[test]
+        fn is_empty_returns_false_for_a_non_empty_outcome() {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("a.md"), "# A").expect("write file");
             let index = FileIndex::build(temp.path()).expect("build index");
             let outcome = index.query(&QuerySource::All);
 
             assert!(!outcome.is_empty());
-            assert_eq!(outcome.len(), 1);
         }
 
         #[test]
