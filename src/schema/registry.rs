@@ -26,7 +26,7 @@ use super::{
 };
 use crate::{
     file_name::BaseNameRef,
-    query::{ClassExpansionMode, QuerySource, QuerySourceExpr},
+    query::{ClassExpansionMode, QuerySource, SourceAtom},
 };
 
 /// Store every resolved Schema under a registry directory.
@@ -221,29 +221,15 @@ pub(crate) fn resolve_sources(
     let QuerySource::Expr(expression) = source else {
         return;
     };
-    resolve_expression(expression, registry);
-}
-
-fn resolve_expression(
-    expression: &mut QuerySourceExpr,
-    registry: &SchemaRegistry,
-) {
-    match expression {
-        QuerySourceExpr::Class {
+    expression.visit_atoms_mut(&mut |atom| {
+        if let SourceAtom::Class {
             names,
             mode,
-        } => registry.expand_classes(names, mode),
-        QuerySourceExpr::And(expressions)
-        | QuerySourceExpr::Or(expressions) => {
-            for child in expressions {
-                resolve_expression(child, registry);
-            }
+        } = atom
+        {
+            registry.expand_classes(names, mode);
         }
-        QuerySourceExpr::Not(expression) => {
-            resolve_expression(expression, registry);
-        }
-        QuerySourceExpr::Tag(_) | QuerySourceExpr::Path(_) => {}
-    }
+    });
 }
 
 /// Read and parse every `*.toml` file directly under `dir` into a [`RawSchema`]
@@ -638,7 +624,7 @@ mod tests {
         use pretty_assertions::assert_eq;
 
         use super::*;
-        use crate::query::{ClassExpansionMode, QuerySource, QuerySourceExpr};
+        use crate::query::{ClassExpansionMode, QuerySource, SourceAtom};
 
         fn set(names: &[&str]) -> BTreeSet<String> {
             names.iter().map(|name| (*name).to_owned()).collect()
@@ -689,42 +675,28 @@ mod tests {
         #[test]
         fn resolve_sources_walks_nested_expressions_and_preserves_unknowns() {
             let registry = registry();
-            let mut source = QuerySource::Expr(QuerySourceExpr::And(vec![
-                QuerySourceExpr::Class {
-                    names: vec!["thing".to_owned()],
-                    mode: ClassExpansionMode::Children(BTreeSet::new()),
-                },
-                QuerySourceExpr::Not(Box::new(QuerySourceExpr::Class {
-                    names: vec!["ghost".to_owned()],
-                    mode: ClassExpansionMode::Descendants(BTreeSet::new()),
-                })),
-            ]));
+            let mut source = QuerySource::parse("@thing+ and not @ghost*")
+                .expect("source parses");
 
             resolve_sources(&mut source, &registry);
 
-            let QuerySource::Expr(QuerySourceExpr::And(expressions)) = source
-            else {
-                panic!("expected and expression");
+            let QuerySource::Expr(expression) = &mut source else {
+                panic!("expected expression source");
             };
-            let QuerySourceExpr::Class {
-                mode: first,
-                ..
-            } = &expressions[0]
-            else {
-                panic!("expected class expression");
-            };
-            assert_eq!(first.classes(), &set(&["book", "thing"]));
-            let QuerySourceExpr::Not(negated) = &expressions[1] else {
-                panic!("expected not expression");
-            };
-            let QuerySourceExpr::Class {
-                mode: ghost,
-                ..
-            } = negated.as_ref()
-            else {
-                panic!("expected class expression");
-            };
-            assert_eq!(ghost.classes(), &set(&["ghost"]));
+            let mut classes = Vec::new();
+            expression.visit_atoms_mut(&mut |atom| {
+                if let SourceAtom::Class {
+                    names,
+                    mode,
+                } = atom
+                {
+                    classes.push((names.clone(), mode.classes().clone()));
+                }
+            });
+            assert_eq!(classes, vec![
+                (vec!["thing".to_owned()], set(&["book", "thing"]),),
+                (vec!["ghost".to_owned()], set(&["ghost"])),
+            ]);
         }
     }
 

@@ -1,77 +1,67 @@
 //! Parses and evaluates `.filter()`/`.where()` expressions.
-//!
-//! # Main Types
-//!
-//! - [`FilterExpr`]: Parsed AST for a filter expression.
-//! - [`FilterToken`]: Token stream produced from a filter expression by
-//!   [`tokenize_filter_expr`].
-//! - [`FilterFunction`]: Recognized calls such as `contains(tags, "#book")`.
 
 use logos::{Lexer, Logos};
+use miette::SourceSpan;
 
 use super::{
     FieldPath, IndexRecord, QueryError,
-    operators::{CompareOp, ComparisonExpr, LogicalExpr, LogicalOp},
-    parser::{BooleanControl, BooleanGrammar, TokenCursor, parse_boolean},
+    comparison::{CompareOp, ComparisonExpr},
+    error::{QueryDialect, QuerySyntaxError},
+    logic::{
+        LogicalControl, LogicalExpr, LogicalGrammar, LogicalOp, Spanned,
+        TokenCursor, parse_logical_expression,
+    },
     sort::fields_equal,
 };
 use crate::note::FieldValue;
 
 /// A parsed `.filter()`/`.where()` expression AST.
-///
-/// Built by [`Self::parse`] and evaluated against a record by
-/// [`Self::matches`]; see [`Self::parse`] for the supported syntax.
+pub(super) type FilterExpr = LogicalExpr<FilterAtom>;
+
+/// Domain-local filter-expression leaves.
 #[derive(Clone, Debug, PartialEq)]
-pub(super) enum FilterExpr {
+pub(super) enum FilterAtom {
     /// `<field> <op> <value>` comparison.
     Comparison(ComparisonExpr),
     /// Recognized function call, such as `contains(tags, "#book")`.
     Function(FilterFunction),
-    /// `AND`/`OR` combination of two or more expressions.
-    Logical(LogicalExpr),
-    /// `NOT` negation of a single expression.
-    Not(Box<FilterExpr>),
 }
 
-impl FilterExpr {
-    /// Parses a filter expression string into a [`FilterExpr`] AST.
-    ///
-    /// Supports:
-    /// - Comparisons: `<field> <op> <value>` with `==`, `!=`, `>=`, `<=`, `>`,
-    ///   or `<`.
-    /// - Functions: `contains(field, value)`.
-    /// - Boolean logic: `AND` / `and` / `&&`, `OR` / `or` / `||`, and `NOT` /
-    ///   `not` / `!`.
-    /// - Parentheses: `( ... )`.
-    ///
-    /// # Errors
-    ///
-    /// - [`QueryError::UnparsableFilterExpression`] if `expr` is malformed.
-    /// - [`QueryError::UnknownFieldPath`] if a field path is malformed.
-    pub(super) fn parse(expr: &str) -> Result<Self, QueryError> {
-        parse_boolean(expr, tokenize_filter_expr(expr)?, FilterGrammar)
+impl FilterAtom {
+    fn matches(&self, record: &IndexRecord) -> bool {
+        match self {
+            Self::Comparison(comparison) => comparison.matches(record),
+            Self::Function(function) => function.matches(record),
+        }
+    }
+}
+
+impl LogicalExpr<FilterAtom> {
+    /// Parses a filter expression string into a logical expression tree.
+    pub(super) fn parse(input: &str) -> Result<Self, QueryError> {
+        parse_logical_expression(
+            input,
+            tokenize_filter_expr(input)?,
+            FilterGrammar,
+        )
     }
 
     /// Whether `record` satisfies this expression.
     pub(super) fn matches(&self, record: &IndexRecord) -> bool {
         match self {
-            Self::Comparison(cmp) => cmp.matches(record),
-            Self::Function(function) => function.matches(record),
-            Self::Logical(logical) => logical.matches(record),
-            Self::Not(expr) => !expr.matches(record),
+            Self::Atom(atom) => atom.matches(record),
+            Self::And(expressions) => {
+                expressions.iter().all(|expression| expression.matches(record))
+            }
+            Self::Or(expressions) => {
+                expressions.iter().any(|expression| expression.matches(record))
+            }
+            Self::Not(expression) => !expression.matches(record),
         }
     }
 }
 
 /// Tokens parsed from a filter expression.
-///
-/// - `true`/`false`/`null`/`Null` are matched directly by their own
-///   [`Self::Literal`] token pattern, so every spelling is visible here.
-/// - [`Self::Op`] and [`Self::Logical`] delegate their spellings to
-///   [`CompareOp`] and [`LogicalOp`] respectively, so this enum never repeats
-///   operator semantics those types already own.
-/// - Numbers cannot be matched by a fixed-literal pattern; they lex as
-///   [`Self::Ident`] and are reclassified by [`Self::reclassify`].
 #[derive(Logos, Clone, Debug, PartialEq)]
 #[logos(skip r"[ \t\n\r\f]+")]
 enum FilterToken {
@@ -102,54 +92,65 @@ enum FilterToken {
     Ident(String),
 }
 
-impl FilterToken {
-    /// Reclassifies numeric identifiers into [`Self::Literal`] values.
-    ///
-    /// Identifiers that parse as [`f64`] become numeric literals. Genuine field
-    /// identifiers and other token kinds pass through unchanged. This relies on
-    /// `f64`'s parser instead of duplicating support for exponents, signs, and
-    /// edge cases in a regex.
-    fn reclassify(self) -> Self {
-        match self {
-            Self::Ident(word) => match word.parse::<f64>() {
-                Ok(num) => Self::Literal(FieldValue::Number(num)),
-                Err(_) => Self::Ident(word),
-            },
-            other => other,
-        }
-    }
+fn syntax_error(
+    input: &str,
+    span: SourceSpan,
+    expected: &'static str,
+) -> QueryError {
+    QuerySyntaxError::new(QueryDialect::Filter, input, span, expected).into()
 }
 
-/// Tokenizes `expr` into a vector of [`FilterToken`]s.
-///
-/// Bare words that are not recognized keywords or literal tokens lex as
-/// [`FilterToken::Ident`] and are reclassified by [`FilterToken::reclassify`],
-/// since numeric literals cannot be matched by a fixed-literal pattern.
-///
-/// # Errors
-///
-/// - [`QueryError::UnparsableFilterExpression`] if `expr` contains a character
-///   sequence no token pattern matches.
-fn tokenize_filter_expr(expr: &str) -> Result<Vec<FilterToken>, QueryError> {
-    FilterToken::lexer(expr)
-        .collect::<Result<Vec<_>, _>>()
-        .map(|tokens| tokens.into_iter().map(FilterToken::reclassify).collect())
-        .map_err(|()| QueryError::unparsable_filter(expr))
+fn cursor_span(
+    input: &str,
+    tokens: &mut TokenCursor<Spanned<FilterToken>>,
+) -> SourceSpan {
+    tokens
+        .peek()
+        .map_or_else(|| SourceSpan::from((input.len(), 0)), |token| token.span)
+}
+
+/// Tokenizes `input`, preserving each token's original byte span.
+fn tokenize_filter_expr(
+    input: &str,
+) -> Result<Vec<Spanned<FilterToken>>, QueryError> {
+    let mut lexer = FilterToken::lexer(input);
+    let mut tokens = Vec::new();
+    while let Some(result) = lexer.next() {
+        let range = lexer.span();
+        let span = SourceSpan::from((range.start, range.len()));
+        let value =
+            result.map_err(|()| syntax_error(input, span, "a filter term"))?;
+        let token = match value {
+            FilterToken::Ident(word) => match word.parse::<f64>() {
+                Ok(number) if number.is_finite() => Spanned::new(
+                    FilterToken::Literal(FieldValue::Number(number)),
+                    span,
+                ),
+                Ok(_) => {
+                    return Err(syntax_error(
+                        input,
+                        span,
+                        "a finite numeric literal",
+                    ));
+                }
+                Err(_) => Spanned::new(FilterToken::Ident(word), span),
+            },
+            other => Spanned::new(other, span),
+        };
+        tokens.push(token);
+    }
+    Ok(tokens)
 }
 
 /// Unescapes a lexed double-quoted string literal into a
 /// [`FieldValue::String`].
-///
-/// Every `\X` pair pushes `X` verbatim: `\"` becomes `"` and `\\` becomes
-/// `\`, but there is no escape table beyond that; `\n` produces the letter
-/// `n`, not a newline.
 fn string_callback(lex: &mut Lexer<'_, FilterToken>) -> FieldValue {
     let inner = lex
         .slice()
         .strip_prefix('"')
         .and_then(|rest| rest.strip_suffix('"'))
         .unwrap_or_default();
-    let mut value = String::new();
+    let mut value = String::with_capacity(inner.len());
     let mut chars = inner.chars();
     while let Some(ch) = chars.next() {
         if ch == '\\' {
@@ -165,18 +166,18 @@ fn string_callback(lex: &mut Lexer<'_, FilterToken>) -> FieldValue {
 
 struct FilterGrammar;
 
-impl BooleanGrammar for FilterGrammar {
-    type Expr = FilterExpr;
+impl LogicalGrammar for FilterGrammar {
+    type Atom = FilterAtom;
     type Token = FilterToken;
 
-    fn control(&self, token: &Self::Token) -> Option<BooleanControl> {
+    fn control(&self, token: &Self::Token) -> Option<LogicalControl> {
         match token {
             FilterToken::Logical(operator) => {
-                Some(BooleanControl::Logical(*operator))
+                Some(LogicalControl::Operator(*operator))
             }
-            FilterToken::Not => Some(BooleanControl::Not),
-            FilterToken::LParen => Some(BooleanControl::LeftParen),
-            FilterToken::RParen => Some(BooleanControl::RightParen),
+            FilterToken::Not => Some(LogicalControl::Not),
+            FilterToken::LParen => Some(LogicalControl::LeftParen),
+            FilterToken::RParen => Some(LogicalControl::RightParen),
             FilterToken::Comma
             | FilterToken::Op(_)
             | FilterToken::Literal(_)
@@ -187,92 +188,126 @@ impl BooleanGrammar for FilterGrammar {
     fn parse_atom(
         &self,
         input: &str,
-        tokens: &mut TokenCursor<Self::Token>,
-    ) -> Result<Self::Expr, QueryError> {
+        tokens: &mut TokenCursor<Spanned<Self::Token>>,
+    ) -> Result<Self::Atom, QueryError> {
         match tokens.next() {
-            Some(FilterToken::Ident(name))
-                if tokens.peek() == Some(&FilterToken::LParen) =>
+            Some(Spanned {
+                value: FilterToken::Ident(name),
+                ..
+            }) if tokens
+                .peek()
+                .is_some_and(|token| token.value == FilterToken::LParen) =>
             {
                 parse_function_call(input, tokens, &name)
-                    .map(FilterExpr::Function)
+                    .map(FilterAtom::Function)
             }
-            Some(FilterToken::Ident(name)) => {
-                parse_comparison(input, tokens, &name)
+            Some(Spanned {
+                value: FilterToken::Ident(name),
+                ..
+            }) => parse_comparison(input, tokens, &name)
+                .map(FilterAtom::Comparison),
+            Some(token) => {
+                Err(syntax_error(input, token.span, "a filter term"))
             }
-            Some(
-                FilterToken::LParen
-                | FilterToken::RParen
-                | FilterToken::Comma
-                | FilterToken::Logical(_)
-                | FilterToken::Not
-                | FilterToken::Op(_)
-                | FilterToken::Literal(_),
-            )
-            | None => Err(self.invalid(input)),
+            None => Err(syntax_error(
+                input,
+                SourceSpan::from((input.len(), 0)),
+                "a filter term",
+            )),
         }
     }
 
-    fn logical(
+    fn syntax_error(
         &self,
-        operator: LogicalOp,
-        expressions: Vec<Self::Expr>,
-    ) -> Self::Expr {
-        FilterExpr::Logical(LogicalExpr::new(operator, expressions))
-    }
-
-    fn not(&self, expression: Self::Expr) -> Self::Expr {
-        FilterExpr::Not(Box::new(expression))
-    }
-
-    fn invalid(&self, input: &str) -> QueryError {
-        QueryError::unparsable_filter(input)
+        input: &str,
+        span: SourceSpan,
+        expected: &'static str,
+    ) -> QuerySyntaxError {
+        QuerySyntaxError::new(QueryDialect::Filter, input, span, expected)
     }
 }
 
 fn parse_literal_arg(
     input: &str,
-    tokens: &mut TokenCursor<FilterToken>,
+    tokens: &mut TokenCursor<Spanned<FilterToken>>,
 ) -> Result<FieldValue, QueryError> {
     match tokens.next() {
-        Some(FilterToken::Literal(value)) => Ok(value),
-        _ => Err(QueryError::unparsable_filter(input)),
+        Some(Spanned {
+            value: FilterToken::Literal(value),
+            ..
+        }) => Ok(value),
+        Some(token) => Err(syntax_error(input, token.span, "a literal value")),
+        None => Err(syntax_error(
+            input,
+            SourceSpan::from((input.len(), 0)),
+            "a literal value",
+        )),
     }
 }
 
 fn parse_function_call(
     input: &str,
-    tokens: &mut TokenCursor<FilterToken>,
+    tokens: &mut TokenCursor<Spanned<FilterToken>>,
     name: &str,
 ) -> Result<FilterFunction, QueryError> {
-    let invalid = || QueryError::unparsable_filter(input);
     if !tokens.take(&FilterToken::LParen) {
-        return Err(invalid());
+        return Err(syntax_error(
+            input,
+            cursor_span(input, tokens),
+            "`(` after a function name",
+        ));
     }
-    let Some(FilterToken::Ident(field_ident)) = tokens.next() else {
-        return Err(invalid());
+    let Some(Spanned {
+        value: FilterToken::Ident(field_ident),
+        ..
+    }) = tokens.next()
+    else {
+        return Err(syntax_error(
+            input,
+            cursor_span(input, tokens),
+            "a field path",
+        ));
     };
     let field = FieldPath::parse(&field_ident)?;
     if !tokens.take(&FilterToken::Comma) {
-        return Err(invalid());
+        return Err(syntax_error(
+            input,
+            cursor_span(input, tokens),
+            "`,` after the field path",
+        ));
     }
     let target = parse_literal_arg(input, tokens)?;
     if !tokens.take(&FilterToken::RParen) {
-        return Err(invalid());
+        return Err(syntax_error(
+            input,
+            cursor_span(input, tokens),
+            "`)` after the function arguments",
+        ));
     }
-    FilterFunction::build(name, field, target).ok_or_else(invalid)
+    FilterFunction::build(name, field, target).ok_or_else(|| {
+        syntax_error(input, SourceSpan::from((0, name.len())), "`contains`")
+    })
 }
 
 fn parse_comparison(
     input: &str,
-    tokens: &mut TokenCursor<FilterToken>,
+    tokens: &mut TokenCursor<Spanned<FilterToken>>,
     field_ident: &str,
-) -> Result<FilterExpr, QueryError> {
-    let Some(FilterToken::Op(operator)) = tokens.next() else {
-        return Err(QueryError::unparsable_filter(input));
+) -> Result<ComparisonExpr, QueryError> {
+    let Some(Spanned {
+        value: FilterToken::Op(operator),
+        ..
+    }) = tokens.next()
+    else {
+        return Err(syntax_error(
+            input,
+            cursor_span(input, tokens),
+            "a comparison operator",
+        ));
     };
     let field = FieldPath::parse(field_ident)?;
     let value = parse_literal_arg(input, tokens)?;
-    Ok(FilterExpr::Comparison(ComparisonExpr::new(field, operator, value)))
+    Ok(ComparisonExpr::new(field, operator, value))
 }
 
 /// Recognized filter function call.
@@ -363,6 +398,7 @@ fn tag_or_value_matches(item: &FieldValue, target: &FieldValue) -> bool {
 mod tests {
     use std::{fs, path::Path};
 
+    use miette::SourceSpan;
     use pretty_assertions::assert_eq;
     use rstest::rstest;
 
@@ -456,12 +492,7 @@ mod tests {
         let temp = tempfile::tempdir().expect("create temp dir");
         let outcome = rated_outcome(temp.path());
 
-        assert_eq!(
-            outcome.filter(expr),
-            Err(QueryError::UnparsableFilterExpression {
-                expr: expr.to_owned()
-            })
-        );
+        assert!(matches!(outcome.filter(expr), Err(QueryError::Syntax(_))));
     }
 
     #[rstest]
@@ -471,12 +502,28 @@ mod tests {
     #[case::unmatched_right_parenthesis("rating > 5)")]
     #[case::adjacent_expressions("rating > 5 status == \"done\"")]
     fn rejects_incomplete_boolean_logic(#[case] expr: &str) {
-        assert_eq!(
+        assert!(matches!(
             super::FilterExpr::parse(expr),
-            Err(QueryError::UnparsableFilterExpression {
-                expr: expr.to_owned()
-            })
-        );
+            Err(QueryError::Syntax(_))
+        ));
+    }
+
+    #[rstest]
+    #[case::nan("rating > NaN", 9, 3)]
+    #[case::positive_infinity("rating > inf", 9, 3)]
+    #[case::negative_infinity("rating > -inf", 9, 4)]
+    fn rejects_non_finite_numeric_literals(
+        #[case] expr: &str,
+        #[case] offset: usize,
+        #[case] length: usize,
+    ) {
+        let Err(QueryError::Syntax(error)) = super::FilterExpr::parse(expr)
+        else {
+            panic!("expected non-finite literal to fail");
+        };
+
+        assert_eq!(error.expected, "a finite numeric literal");
+        assert_eq!(error.span, SourceSpan::from((offset, length)));
     }
 
     #[test]
@@ -486,7 +533,7 @@ mod tests {
 
         assert_eq!(
             outcome.filter("file.bogus == 1"),
-            Err(QueryError::unknown_field_path("file.bogus", None))
+            Err(QueryError::FieldPath(FieldPathError::new("file.bogus", None)))
         );
     }
 
@@ -494,7 +541,7 @@ mod tests {
     fn rejects_malformed_field_path_in_function() {
         assert_eq!(
             super::FilterExpr::parse("contains(file.bogus, \"x\")"),
-            Err(QueryError::unknown_field_path("file.bogus", None))
+            Err(QueryError::FieldPath(FieldPathError::new("file.bogus", None)))
         );
     }
 

@@ -257,12 +257,11 @@ impl FileIndex {
     /// - O(n + m + t), where `t` is the total task-item count across matched
     ///   Notes. [`Self::refresh`]/[`Self::load`] already produced
     ///   `self.inlinks`.
-    /// - Each Note's task items are collected into a small `(bool, String)`
-    ///   buffer once, so its last row moves the shared [`IndexRecord`] base
-    ///   instead of cloning it, mirroring `query::QueryOutcome::flatten`'s
-    ///   last-item handling.
-    /// - Every earlier row still clones the base, but that clone is O(1):
-    ///   [`IndexRecord`]'s `note` field is an [`Arc`], not a deep clone.
+    /// - The task iterator is peeked to identify its final item, so only
+    ///   earlier rows clone the base record.
+    /// - The final row moves the shared [`IndexRecord`] base. Earlier clones
+    ///   remain O(1) because [`IndexRecord`]'s `note` field is an [`Arc`], not
+    ///   a deep clone.
     ///
     /// [`Arc`]: std::sync::Arc
     #[inline]

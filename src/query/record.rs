@@ -137,9 +137,8 @@ impl IndexRecord {
     ///
     /// # Errors
     ///
-    /// - [`UnknownFieldPath`] if `path` cannot be parsed as a valid field path.
-    ///
-    /// [`UnknownFieldPath`]: QueryError::UnknownFieldPath
+    /// - [`QueryError::FieldPath`] if `path` cannot be parsed as a valid field
+    ///   path.
     #[inline]
     pub(crate) fn field(&self, path: &str) -> Result<FieldValue, QueryError> {
         Ok(self.resolve(&FieldPath::parse(path)?))

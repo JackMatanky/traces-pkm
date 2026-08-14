@@ -210,7 +210,7 @@ mod tests {
                 .expect_err("unparsable filter fails");
 
             assert!(matches!(error, CliError::Query {
-                source: QueryError::UnparsableFilterExpression { .. },
+                source: QueryError::Syntax(_),
                 ..
             }));
         }

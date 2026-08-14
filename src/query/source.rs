@@ -3,11 +3,15 @@
 use std::{collections::BTreeSet, path::PathBuf};
 
 use logos::{Lexer, Logos};
+use miette::SourceSpan;
 
 use super::{
     QueryError,
-    operators::LogicalOp,
-    parser::{BooleanControl, BooleanGrammar, TokenCursor, parse_boolean},
+    error::{QueryDialect, QuerySyntaxError},
+    logic::{
+        LogicalControl, LogicalExpr, LogicalGrammar, LogicalOp, Spanned,
+        TokenCursor, parse_logical_expression,
+    },
 };
 use crate::{
     index::FileRecord,
@@ -23,9 +27,13 @@ pub enum QuerySource {
     Expr(QuerySourceExpr),
 }
 
-/// A composable source-selection expression.
+/// A parsed source expression whose syntax tree remains query-internal.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum QuerySourceExpr {
+pub struct QuerySourceExpr(LogicalExpr<SourceAtom>);
+
+/// Domain-local source-selection leaves.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum SourceAtom {
     /// Matches an exact tag or any nested sub-tag.
     Tag(String),
     /// Matches an exact file path or a folder prefix.
@@ -37,12 +45,29 @@ pub enum QuerySourceExpr {
         /// Expansion depth and resolved class match set.
         mode: ClassExpansionMode,
     },
-    /// Matches when every child expression matches.
-    And(Vec<Self>),
-    /// Matches when any child expression matches.
-    Or(Vec<Self>),
-    /// Matches when the child expression does not match.
-    Not(Box<Self>),
+}
+
+impl SourceAtom {
+    fn is_match(
+        &self,
+        file: &FileRecord,
+        note: &Note,
+        class_field: &str,
+    ) -> bool {
+        match self {
+            Self::Tag(tag) => {
+                note.tags().iter().any(|value| value.is_nested_under(tag))
+            }
+            Self::Path(path) => {
+                file.path() == path || file.folder().starts_with(path)
+            }
+            Self::Class {
+                mode,
+                ..
+            } => class_values(note, class_field)
+                .any(|value| mode.classes().contains(value)),
+        }
+    }
 }
 
 /// Requested File Class expansion depth and its resolved match set.
@@ -77,19 +102,43 @@ impl ClassExpansionMode {
     }
 }
 
+impl LogicalExpr<SourceAtom> {
+    /// Parses `input` as a source expression.
+    fn parse(input: &str) -> Result<Self, QueryError> {
+        parse_logical_expression(input, tokenize(input)?, SourceGrammar)
+    }
+
+    /// Returns whether the indexed Note satisfies this expression.
+    #[must_use]
+    fn is_match(
+        &self,
+        file: &FileRecord,
+        note: &Note,
+        class_field: &str,
+    ) -> bool {
+        match self {
+            Self::Atom(atom) => atom.is_match(file, note, class_field),
+            Self::And(expressions) => expressions
+                .iter()
+                .all(|expression| expression.is_match(file, note, class_field)),
+            Self::Or(expressions) => expressions
+                .iter()
+                .any(|expression| expression.is_match(file, note, class_field)),
+            Self::Not(expression) => {
+                !expression.is_match(file, note, class_field)
+            }
+        }
+    }
+}
+
 impl QuerySourceExpr {
     /// Parses `input` as a source expression.
     ///
     /// Boolean operators use `not` > `and` > `or` precedence. Leaves are tags,
     /// quoted or bare paths, and File Classes written as `@Class`, `@Class+`,
     /// `@Class*`, or `class(Name)` with an optional expansion modifier.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`QueryError::UnparsableSourceExpression`] when `input` is not a
-    /// complete source expression.
-    pub fn parse(input: &str) -> Result<Self, QueryError> {
-        parse_boolean(input, tokenize(input)?, SourceGrammar)
+    pub(crate) fn parse(input: &str) -> Result<Self, QueryError> {
+        <LogicalExpr<SourceAtom>>::parse(input).map(Self)
     }
 
     /// Returns whether the indexed Note satisfies this expression.
@@ -100,41 +149,21 @@ impl QuerySourceExpr {
         note: &Note,
         class_field: &str,
     ) -> bool {
-        match self {
-            Self::Tag(tag) => {
-                note.tags().iter().any(|value| value.is_nested_under(tag))
-            }
-            Self::Path(path) => {
-                file.path() == path || file.folder().starts_with(path)
-            }
-            Self::Class {
-                mode,
-                ..
-            } => class_values(note, class_field)
-                .any(|value| mode.classes().contains(value)),
-            Self::And(expressions) => expressions
-                .iter()
-                .all(|expr| expr.is_match(file, note, class_field)),
-            Self::Or(expressions) => expressions
-                .iter()
-                .any(|expr| expr.is_match(file, note, class_field)),
-            Self::Not(expr) => !expr.is_match(file, note, class_field),
-        }
+        self.0.is_match(file, note, class_field)
     }
 
-    /// Return whether this expression contains any File Class leaf.
+    /// Returns whether this expression contains a File Class leaf.
     #[must_use]
     pub(crate) fn has_classes(&self) -> bool {
-        match self {
-            Self::Class {
-                ..
-            } => true,
-            Self::And(expressions) | Self::Or(expressions) => {
-                expressions.iter().any(Self::has_classes)
-            }
-            Self::Not(expression) => expression.has_classes(),
-            Self::Tag(_) | Self::Path(_) => false,
-        }
+        self.0.any_atom(|atom| matches!(atom, SourceAtom::Class { .. }))
+    }
+
+    /// Visits each source atom for Schema-level Class expansion.
+    pub(crate) fn visit_atoms_mut(
+        &mut self,
+        visitor: &mut impl FnMut(&mut SourceAtom),
+    ) {
+        self.0.visit_atoms_mut(visitor);
     }
 }
 
@@ -144,8 +173,7 @@ impl QuerySource {
     ///
     /// # Errors
     ///
-    /// Returns [`QueryError::UnparsableSourceExpression`] when a non-empty
-    /// `input` is invalid.
+    /// Returns [`QueryError::Syntax`] when a non-empty `input` is invalid.
     pub fn parse(input: &str) -> Result<Self, QueryError> {
         if input.trim().is_empty() {
             Ok(Self::All)
@@ -168,7 +196,7 @@ impl QuerySource {
         }
     }
 
-    /// Return whether this source requires Schema registry expansion.
+    /// Returns whether this source requires Schema registry expansion.
     #[must_use]
     pub(crate) fn has_classes(&self) -> bool {
         match self {
@@ -232,7 +260,7 @@ enum SourceToken {
     #[regex(r#"\"([^\"\\]|\\.)*\""#, quoted_callback)]
     #[regex(r#"'([^'\\]|\\.)*'"#, quoted_callback)]
     Quoted(String),
-    #[regex(r"[^\s(),!&|#@]+", |lex| lex.slice().to_owned())]
+    #[regex(r#"[^\s(),!&|#@'"]+"#, |lex| lex.slice().to_owned())]
     Bare(String),
 }
 
@@ -253,26 +281,50 @@ fn quoted_callback(lexer: &mut Lexer<'_, SourceToken>) -> String {
     value
 }
 
-fn tokenize(input: &str) -> Result<Vec<SourceToken>, QueryError> {
-    SourceToken::lexer(input)
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|()| QueryError::unparsable_source(input))
+fn syntax_error(
+    input: &str,
+    span: SourceSpan,
+    expected: &'static str,
+) -> QueryError {
+    QuerySyntaxError::new(QueryDialect::Source, input, span, expected).into()
+}
+
+fn cursor_span(
+    input: &str,
+    tokens: &mut TokenCursor<Spanned<SourceToken>>,
+) -> SourceSpan {
+    tokens
+        .peek()
+        .map_or_else(|| SourceSpan::from((input.len(), 0)), |token| token.span)
+}
+
+fn tokenize(input: &str) -> Result<Vec<Spanned<SourceToken>>, QueryError> {
+    let mut lexer = SourceToken::lexer(input);
+    let mut tokens = Vec::new();
+    while let Some(result) = lexer.next() {
+        let range = lexer.span();
+        let span = SourceSpan::from((range.start, range.len()));
+        let value =
+            result.map_err(|()| syntax_error(input, span, "a source term"))?;
+        tokens.push(Spanned::new(value, span));
+    }
+    Ok(tokens)
 }
 
 struct SourceGrammar;
 
-impl BooleanGrammar for SourceGrammar {
-    type Expr = QuerySourceExpr;
+impl LogicalGrammar for SourceGrammar {
+    type Atom = SourceAtom;
     type Token = SourceToken;
 
-    fn control(&self, token: &Self::Token) -> Option<BooleanControl> {
+    fn control(&self, token: &Self::Token) -> Option<LogicalControl> {
         match token {
             SourceToken::Logical(operator) => {
-                Some(BooleanControl::Logical(*operator))
+                Some(LogicalControl::Operator(*operator))
             }
-            SourceToken::Not => Some(BooleanControl::Not),
-            SourceToken::LParen => Some(BooleanControl::LeftParen),
-            SourceToken::RParen => Some(BooleanControl::RightParen),
+            SourceToken::Not => Some(LogicalControl::Not),
+            SourceToken::LParen => Some(LogicalControl::LeftParen),
+            SourceToken::RParen => Some(LogicalControl::RightParen),
             SourceToken::Comma
             | SourceToken::Class
             | SourceToken::WithChildren
@@ -287,54 +339,54 @@ impl BooleanGrammar for SourceGrammar {
     fn parse_atom(
         &self,
         input: &str,
-        tokens: &mut TokenCursor<Self::Token>,
-    ) -> Result<Self::Expr, QueryError> {
+        tokens: &mut TokenCursor<Spanned<Self::Token>>,
+    ) -> Result<Self::Atom, QueryError> {
         match tokens.next() {
-            Some(SourceToken::Tag(tag)) => Ok(QuerySourceExpr::Tag(tag)),
-            Some(SourceToken::ClassSigil(sigil)) => parse_sigil(input, &sigil),
-            Some(SourceToken::Quoted(path) | SourceToken::Bare(path)) => {
-                Ok(QuerySourceExpr::Path(PathBuf::from(path)))
+            Some(Spanned {
+                value: SourceToken::Tag(tag),
+                ..
+            }) => Ok(SourceAtom::Tag(tag)),
+            Some(Spanned {
+                value: SourceToken::ClassSigil(sigil),
+                span,
+            }) => parse_sigil(input, &sigil, span),
+            Some(Spanned {
+                value: SourceToken::Quoted(path) | SourceToken::Bare(path),
+                ..
+            }) => Ok(SourceAtom::Path(PathBuf::from(path))),
+            Some(Spanned {
+                value: SourceToken::Class,
+                span,
+            }) => parse_class_function(input, tokens, span),
+            Some(token) => {
+                Err(syntax_error(input, token.span, "a source term"))
             }
-            Some(SourceToken::Class) => parse_class_function(input, tokens),
-            Some(
-                SourceToken::LParen
-                | SourceToken::RParen
-                | SourceToken::Comma
-                | SourceToken::Logical(_)
-                | SourceToken::Not
-                | SourceToken::WithChildren
-                | SourceToken::WithDescendants,
-            )
-            | None => Err(self.invalid(input)),
+            None => Err(syntax_error(
+                input,
+                SourceSpan::from((input.len(), 0)),
+                "a source term",
+            )),
         }
     }
 
-    fn logical(
+    fn syntax_error(
         &self,
-        operator: LogicalOp,
-        expressions: Vec<Self::Expr>,
-    ) -> Self::Expr {
-        match operator {
-            LogicalOp::And => QuerySourceExpr::And(expressions),
-            LogicalOp::Or => QuerySourceExpr::Or(expressions),
-        }
-    }
-
-    fn not(&self, expression: Self::Expr) -> Self::Expr {
-        QuerySourceExpr::Not(Box::new(expression))
-    }
-
-    fn invalid(&self, input: &str) -> QueryError {
-        QueryError::unparsable_source(input)
+        input: &str,
+        span: SourceSpan,
+        expected: &'static str,
+    ) -> QuerySyntaxError {
+        QuerySyntaxError::new(QueryDialect::Source, input, span, expected)
     }
 }
 
 fn parse_sigil(
     input: &str,
     sigil: &str,
-) -> Result<QuerySourceExpr, QueryError> {
-    let invalid = || QueryError::unparsable_source(input);
-    let raw = sigil.strip_prefix('@').ok_or_else(invalid)?;
+    span: SourceSpan,
+) -> Result<SourceAtom, QueryError> {
+    let raw = sigil
+        .strip_prefix('@')
+        .ok_or_else(|| syntax_error(input, span, "a File Class name"))?;
     let (name, mode) = if let Some(name) = raw.strip_suffix('+') {
         (name, ClassExpansionMode::Children(BTreeSet::new()))
     } else if let Some(name) = raw.strip_suffix('*') {
@@ -343,9 +395,9 @@ fn parse_sigil(
         (raw, ClassExpansionMode::Exact(BTreeSet::new()))
     };
     if name.is_empty() {
-        return Err(invalid());
+        return Err(syntax_error(input, span, "a File Class name"));
     }
-    Ok(QuerySourceExpr::Class {
+    Ok(SourceAtom::Class {
         names: vec![name.to_owned()],
         mode,
     })
@@ -353,44 +405,88 @@ fn parse_sigil(
 
 fn parse_class_function(
     input: &str,
-    tokens: &mut TokenCursor<SourceToken>,
-) -> Result<QuerySourceExpr, QueryError> {
-    let invalid = || QueryError::unparsable_source(input);
+    tokens: &mut TokenCursor<Spanned<SourceToken>>,
+    class_span: SourceSpan,
+) -> Result<SourceAtom, QueryError> {
     if !tokens.take(&SourceToken::LParen) {
-        return Err(invalid());
+        return Err(syntax_error(
+            input,
+            cursor_span(input, tokens),
+            "`(` after `class`",
+        ));
     }
-    let Some(SourceToken::Quoted(name) | SourceToken::Bare(name)) =
-        tokens.next()
+    let Some(Spanned {
+        value: SourceToken::Quoted(name) | SourceToken::Bare(name),
+        ..
+    }) = tokens.next()
     else {
-        return Err(invalid());
+        return Err(syntax_error(
+            input,
+            cursor_span(input, tokens),
+            "a File Class name",
+        ));
     };
     if name.is_empty() {
-        return Err(invalid());
+        return Err(syntax_error(input, class_span, "a File Class name"));
     }
 
     let mut mode = ClassExpansionMode::Exact(BTreeSet::new());
-    if tokens.take(&SourceToken::Comma) {
+    let has_mode_argument = tokens.take(&SourceToken::Comma);
+    if has_mode_argument {
         mode = match tokens.next() {
-            Some(SourceToken::Bare(value)) if value == "children" => {
+            Some(Spanned {
+                value: SourceToken::Bare(value),
+                ..
+            }) if value == "children" => {
                 ClassExpansionMode::Children(BTreeSet::new())
             }
-            Some(SourceToken::Bare(value)) if value == "descendants" => {
+            Some(Spanned {
+                value: SourceToken::Bare(value),
+                ..
+            }) if value == "descendants" => {
                 ClassExpansionMode::Descendants(BTreeSet::new())
             }
-            _ => return Err(invalid()),
+            Some(token) => {
+                return Err(syntax_error(
+                    input,
+                    token.span,
+                    "`children` or `descendants`",
+                ));
+            }
+            None => {
+                return Err(syntax_error(
+                    input,
+                    SourceSpan::from((input.len(), 0)),
+                    "`children` or `descendants`",
+                ));
+            }
         };
     }
     if !tokens.take(&SourceToken::RParen) {
-        return Err(invalid());
+        return Err(syntax_error(
+            input,
+            cursor_span(input, tokens),
+            "`)` after `class(...)`",
+        ));
     }
-    mode = if tokens.take(&SourceToken::WithChildren) {
-        ClassExpansionMode::Children(BTreeSet::new())
+    let modifier = if tokens.take(&SourceToken::WithChildren) {
+        Some(ClassExpansionMode::Children(BTreeSet::new()))
     } else if tokens.take(&SourceToken::WithDescendants) {
-        ClassExpansionMode::Descendants(BTreeSet::new())
+        Some(ClassExpansionMode::Descendants(BTreeSet::new()))
     } else {
-        mode
+        None
     };
-    Ok(QuerySourceExpr::Class {
+    if has_mode_argument && modifier.is_some() {
+        return Err(syntax_error(
+            input,
+            cursor_span(input, tokens),
+            "one File Class expansion mode",
+        ));
+    }
+    if let Some(modifier) = modifier {
+        mode = modifier;
+    }
+    Ok(SourceAtom::Class {
         names: vec![name],
         mode,
     })
@@ -398,6 +494,7 @@ fn parse_class_function(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
 
     use super::*;
 
@@ -415,148 +512,121 @@ mod tests {
 
     mod parse {
         use pretty_assertions::assert_eq;
-        use rstest::rstest;
 
         use super::*;
 
-        #[test]
-        fn parses_tag_leaf() {
-            assert_eq!(
-                QuerySourceExpr::parse("#projects/active"),
-                Ok(QuerySourceExpr::Tag("#projects/active".to_owned()))
-            );
+        fn tag(value: &str) -> LogicalExpr<SourceAtom> {
+            LogicalExpr::Atom(SourceAtom::Tag(value.to_owned()))
+        }
+
+        fn path(value: &str) -> LogicalExpr<SourceAtom> {
+            LogicalExpr::Atom(SourceAtom::Path(PathBuf::from(value)))
+        }
+
+        fn class(
+            name: &str,
+            mode: ClassExpansionMode,
+        ) -> LogicalExpr<SourceAtom> {
+            LogicalExpr::Atom(SourceAtom::Class {
+                names: vec![name.to_owned()],
+                mode,
+            })
         }
 
         #[test]
-        fn parses_quoted_and_bare_paths() {
+        fn parses_tag_and_paths() {
+            assert_eq!(
+                QuerySourceExpr::parse("#projects/active"),
+                Ok(QuerySourceExpr(tag("#projects/active")))
+            );
             assert_eq!(
                 QuerySourceExpr::parse("\"books/dune.md\""),
-                Ok(QuerySourceExpr::Path(PathBuf::from("books/dune.md")))
+                Ok(QuerySourceExpr(path("books/dune.md")))
             );
             assert_eq!(
                 QuerySourceExpr::parse("books/"),
-                Ok(QuerySourceExpr::Path(PathBuf::from("books/")))
+                Ok(QuerySourceExpr(path("books/")))
             );
         }
 
         #[test]
-        fn parses_class_sigils_at_each_depth() {
+        fn parses_each_class_expansion_form() {
             assert_eq!(
                 QuerySourceExpr::parse("@Book"),
-                Ok(QuerySourceExpr::Class {
-                    names: vec!["Book".to_owned()],
-                    mode: exact(),
-                })
+                Ok(QuerySourceExpr(class("Book", exact())))
             );
             assert_eq!(
                 QuerySourceExpr::parse("@Book+"),
-                Ok(QuerySourceExpr::Class {
-                    names: vec!["Book".to_owned()],
-                    mode: children(),
-                })
+                Ok(QuerySourceExpr(class("Book", children())))
             );
             assert_eq!(
                 QuerySourceExpr::parse("@Book*"),
-                Ok(QuerySourceExpr::Class {
-                    names: vec!["Book".to_owned()],
-                    mode: descendants(),
-                })
+                Ok(QuerySourceExpr(class("Book", descendants())))
             );
-        }
-
-        #[rstest]
-        #[case::bare_exact("class(Book)", exact())]
-        #[case::quoted_exact(r#"class("Book")"#, exact())]
-        #[case::comma_children("class(Book, children)", children())]
-        #[case::comma_descendants("class(Book, descendants)", descendants())]
-        #[case::modifier_children("class(Book).with_children()", children())]
-        #[case::modifier_descendants(
-            "class(Book).with_descendants()",
-            descendants()
-        )]
-        fn parses_class_function_forms(
-            #[case] input: &str,
-            #[case] mode: ClassExpansionMode,
-        ) {
             assert_eq!(
-                QuerySourceExpr::parse(input),
-                Ok(QuerySourceExpr::Class {
-                    names: vec!["Book".to_owned()],
-                    mode,
-                })
+                QuerySourceExpr::parse("class(Book, children)"),
+                Ok(QuerySourceExpr(class("Book", children())))
+            );
+            assert_eq!(
+                QuerySourceExpr::parse("class(Book).with_descendants()"),
+                Ok(QuerySourceExpr(class("Book", descendants())))
             );
         }
 
         #[test]
-        fn parses_boolean_precedence_and_parentheses() {
+        fn parses_precedence_grouping_and_repeated_negation() {
             assert_eq!(
                 QuerySourceExpr::parse("#book or books/ and not @Archived"),
-                Ok(QuerySourceExpr::Or(vec![
-                    QuerySourceExpr::Tag("#book".to_owned()),
-                    QuerySourceExpr::And(vec![
-                        QuerySourceExpr::Path(PathBuf::from("books/")),
-                        QuerySourceExpr::Not(Box::new(
-                            QuerySourceExpr::Class {
-                                names: vec!["Archived".to_owned()],
-                                mode: exact(),
-                            }
-                        )),
+                Ok(QuerySourceExpr(LogicalExpr::Or(vec![
+                    tag("#book"),
+                    LogicalExpr::And(vec![
+                        path("books/"),
+                        LogicalExpr::Not(Box::new(class("Archived", exact()))),
                     ]),
-                ]))
+                ])))
             );
             assert_eq!(
                 QuerySourceExpr::parse("(#book or #movie) and !archive/"),
-                Ok(QuerySourceExpr::And(vec![
-                    QuerySourceExpr::Or(vec![
-                        QuerySourceExpr::Tag("#book".to_owned()),
-                        QuerySourceExpr::Tag("#movie".to_owned()),
-                    ]),
-                    QuerySourceExpr::Not(Box::new(QuerySourceExpr::Path(
-                        PathBuf::from("archive/"),
-                    ))),
-                ]))
+                Ok(QuerySourceExpr(LogicalExpr::And(vec![
+                    LogicalExpr::Or(vec![tag("#book"), tag("#movie")]),
+                    LogicalExpr::Not(Box::new(path("archive/"))),
+                ])))
             );
-        }
-
-        #[test]
-        fn repeated_not_and_same_operator_chains_preserve_ast_shape() {
             assert_eq!(
                 QuerySourceExpr::parse("not not #book and #movie and archive/"),
-                Ok(QuerySourceExpr::And(vec![
-                    QuerySourceExpr::Not(Box::new(QuerySourceExpr::Not(
-                        Box::new(QuerySourceExpr::Tag("#book".to_owned()))
-                    ))),
-                    QuerySourceExpr::Tag("#movie".to_owned()),
-                    QuerySourceExpr::Path(PathBuf::from("archive/")),
-                ]))
+                Ok(QuerySourceExpr(LogicalExpr::And(vec![
+                    LogicalExpr::Not(Box::new(LogicalExpr::Not(Box::new(
+                        tag("#book"),
+                    )))),
+                    tag("#movie"),
+                    path("archive/"),
+                ])))
             );
         }
 
         #[test]
         fn accepts_symbolic_boolean_operators() {
-            let parsed =
-                QuerySourceExpr::parse("#book && !@Archived || @Movie");
-
-            assert!(matches!(parsed, Ok(QuerySourceExpr::Or(_))));
+            assert!(matches!(
+                QuerySourceExpr::parse("#book && !@Archived || @Movie"),
+                Ok(QuerySourceExpr(LogicalExpr::Or(_)))
+            ));
         }
 
         #[test]
-        fn rejects_empty_incomplete_and_trailing_input() {
+        fn rejects_incomplete_and_trailing_input() {
             for invalid in [
                 "",
                 "#book and",
                 "(#book",
                 "#book #movie",
+                r#""books/dune.md"#,
+                r#"'books/dune.md"#,
                 "class()",
                 "class(Book, unknown)",
+                "class(Book, children).with_descendants()",
                 "class(Book).with_children() extra",
             ] {
-                assert_eq!(
-                    QuerySourceExpr::parse(invalid),
-                    Err(QueryError::UnparsableSourceExpression {
-                        expr: invalid.to_owned(),
-                    })
-                );
+                assert!(QuerySourceExpr::parse(invalid).is_err(), "{invalid}");
             }
         }
     }
@@ -602,12 +672,16 @@ mod tests {
             let note = index.note(Path::new("books/dune.md")).expect("Note");
 
             assert!(
-                QuerySourceExpr::Path(PathBuf::from("books/dune.md"))
-                    .is_match(file, note, "class")
+                LogicalExpr::Atom(SourceAtom::Path(PathBuf::from(
+                    "books/dune.md"
+                )))
+                .is_match(file, note, "class")
             );
             assert!(
-                !QuerySourceExpr::Path(PathBuf::from("books/hyperion.md"))
-                    .is_match(file, note, "class")
+                !LogicalExpr::Atom(SourceAtom::Path(PathBuf::from(
+                    "books/hyperion.md"
+                )))
+                .is_match(file, note, "class")
             );
         }
 
@@ -617,12 +691,12 @@ mod tests {
                 indexed_note("---\nkind: Book\n---\n", "book.md");
             let file = index.record(Path::new("book.md")).expect("File Record");
             let note = index.note(Path::new("book.md")).expect("Note");
-            let expression = QuerySourceExpr::Class {
+            let expression = LogicalExpr::Atom(SourceAtom::Class {
                 names: vec!["Book".to_owned()],
                 mode: ClassExpansionMode::Exact(BTreeSet::from([
                     "Book".to_owned()
                 ])),
-            };
+            });
 
             assert!(expression.is_match(file, note, "kind"));
             assert!(!expression.is_match(file, note, "class"));

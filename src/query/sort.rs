@@ -80,9 +80,11 @@ pub(super) fn fields_equal(a: &FieldValue, b: &FieldValue) -> bool {
 /// - Null values: [`FieldValue::Null`] acts as the minimum value.
 /// - Direction: `descending` reverses the comparator uniformly, so
 ///   [`FieldValue::Null`] leads ascending and trails descending.
-/// - Non-null ordering: Values are ordered by [`compare_field_values`], falling
-///   back to [`Ordering::Equal`] to preserve stable relative order for
-///   incomparable kinds.
+/// - Numeric values use [`f64::total_cmp`], including non-finite values and
+///   signed zero.
+/// - Other non-null values use [`compare_field_values`], falling back to
+///   [`Ordering::Equal`] to preserve stable relative order for incomparable
+///   kinds.
 pub(super) fn sort_key_cmp(
     a: &FieldValue,
     b: &FieldValue,
@@ -92,6 +94,7 @@ pub(super) fn sort_key_cmp(
         (FieldValue::Null, FieldValue::Null) => Ordering::Equal,
         (FieldValue::Null, _) => Ordering::Less,
         (_, FieldValue::Null) => Ordering::Greater,
+        (FieldValue::Number(x), FieldValue::Number(y)) => x.total_cmp(y),
         _ => compare_field_values(a, b).unwrap_or(Ordering::Equal),
     };
     if descending {
@@ -135,12 +138,10 @@ impl Ord for SortKey {
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, path::Path};
+    use std::{cmp::Ordering, fs, path::Path};
 
-    use pretty_assertions::assert_eq;
-
-    use super::super::*;
-    use crate::index::FileIndex;
+    use super::{super::*, sort_key_cmp};
+    use crate::{index::FileIndex, note::FieldValue};
 
     fn outcome_for_files(temp: &Path, files: &[(&str, &str)]) -> QueryOutcome {
         for (name, content) in files {
@@ -218,13 +219,27 @@ mod tests {
     }
 
     #[test]
+    fn sorts_non_finite_and_signed_zero_numbers_totally() {
+        let nan = FieldValue::Number(f64::NAN);
+        let infinity = FieldValue::Number(f64::INFINITY);
+        let negative_zero = FieldValue::Number(-0.0);
+        let zero = FieldValue::Number(0.0);
+
+        assert_eq!(
+            sort_key_cmp(&nan, &infinity, false),
+            f64::NAN.total_cmp(&f64::INFINITY)
+        );
+        assert_eq!(sort_key_cmp(&negative_zero, &zero, false), Ordering::Less);
+    }
+
+    #[test]
     fn rejects_malformed_field_path() {
         let temp = tempfile::tempdir().expect("create temp dir");
         let outcome = outcome_for(temp.path(), "body");
 
         assert_eq!(
             outcome.sort("file.bogus", false),
-            Err(QueryError::unknown_field_path("file.bogus", None))
+            Err(QueryError::FieldPath(FieldPathError::new("file.bogus", None)))
         );
     }
 

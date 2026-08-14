@@ -1,141 +1,142 @@
 //! Defines errors returned during field resolution and query transformations.
 
+use std::fmt;
+
+use miette::{Diagnostic, SourceSpan};
 use thiserror::Error;
 
-/// Represents errors encountered during field resolution or query
-/// transformations.
-///
-/// These errors report malformed inputs, such as invalid field paths or filter
-/// expressions. A well-formed field path for which a [`super::IndexRecord`]
-/// has no value resolves to [`FieldValue::Null`] rather than
-/// producing an error.
-///
-/// [`FieldValue::Null`]: crate::note::FieldValue::Null
-#[derive(Clone, Debug, Eq, PartialEq, Error)]
-pub enum QueryError {
-    /// A field path was empty, used an unknown accessor, or contained an
-    /// unexpected structure.
-    ///
-    /// The `suggestion` field holds [`Some`] with the closest matching `file.*`
-    /// or `task.*` accessor name when `path` resembles a typo, or [`None`] when
-    /// no close match exists or `path` targets arbitrary frontmatter or inline
-    /// fields.
-    #[error(
-        "invalid field path {path:?}; expected `file.<field>` (path, name, \
-         folder, size, ctime, cdate, mtime, mdate), `task.<field>` \
-         (completed, text), or a single frontmatter, inline field, or `tags` \
-         name{}",
-        suggestion.as_deref().map_or_else(String::new, |name| format!(
-            " (did you mean `{name}`?)"
-        ))
-    )]
-    UnknownFieldPath {
-        /// The raw, unparsable field path string.
-        path: String,
-        /// The closest matching `file.*` or `task.*` accessor name when `path`
-        /// resembles a typo of a known accessor (`Some`), or [`None`] when no
-        /// close match exists.
-        suggestion: Option<String>,
-    },
-    /// A filter expression failed to match the expected
-    /// `<field> <op> <value>` structure.
-    #[error(
-        "invalid filter expression {expr:?}; expected `<field> <op> <value>` \
-         with op one of ==, !=, >=, <=, >, < and value a quoted string, \
-         number, or boolean"
-    )]
-    UnparsableFilterExpression {
-        /// The raw filter expression string that failed to parse.
-        expr: String,
-    },
-    /// A source expression failed to match the source DSL.
-    #[error(
-        "invalid source expression {expr:?}; expected `#tag`, `folder/`, \
-         `@Class`, or `class(Name)`"
-    )]
-    UnparsableSourceExpression {
-        /// The raw source expression string that failed to parse.
-        expr: String,
-    },
-    /// A query limit count was negative or exceeded platform [`usize`] bounds.
-    #[error("invalid limit {n}; expected a non-negative row count")]
-    NegativeLimit {
-        /// The rejected limit count value.
-        n: i64,
-    },
-    /// [`super::QueryOutcome::task_list`] was invoked on page-level records
-    /// lacking task fields.
-    ///
-    /// Page-level records are constructed by [`FileIndex::query`], whereas
-    /// task-list transformations require task-level records produced by
-    /// [`FileIndex::query_tasks`].
-    ///
-    /// [`FileIndex::query`]: crate::index::FileIndex::query
-    /// [`FileIndex::query_tasks`]: crate::index::FileIndex::query_tasks
-    #[error(
-        "task_list requires task-level records from the `tasks` namespace; \
-         got page-level records with no task fields"
-    )]
-    TaskListOnPageRecords,
-    /// The `headers` and `columns` passed to [`super::QueryOutcome::table`]
-    /// had unequal lengths.
-    #[error(
-        "table headers ({headers}) and columns ({columns}) must have the same \
-         length"
-    )]
-    TableColumnMismatch {
-        /// The number of header titles provided.
-        headers: usize,
-        /// The number of column field-path strings provided.
-        columns: usize,
-    },
+/// The query language that rejected an expression.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum QueryDialect {
+    /// The `--from` source-selection language.
+    Source,
+    /// The `--where` record-filtering language.
+    Filter,
 }
 
-impl QueryError {
-    /// Constructs a [`QueryError::UnparsableFilterExpression`] error for
-    /// `expr`.
-    ///
-    /// This constructor is shared by the tokenizer and parser in
-    /// [`super::filter`], where parse errors point at the entire filter
-    /// expression rather than an individual sub-span.
-    pub(in crate::query) fn unparsable_filter(expr: &str) -> Self {
-        Self::UnparsableFilterExpression {
-            expr: expr.to_owned(),
+impl fmt::Display for QueryDialect {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Source => formatter.write_str("source"),
+            Self::Filter => formatter.write_str("filter"),
         }
     }
+}
 
-    /// Constructs a [`QueryError::UnparsableSourceExpression`] for `expr`.
-    pub(in crate::query) fn unparsable_source(expr: &str) -> Self {
-        Self::UnparsableSourceExpression {
-            expr: expr.to_owned(),
-        }
-    }
+/// A syntax error in a source or filter expression.
+#[derive(Clone, Debug, Diagnostic, Eq, Error, PartialEq)]
+#[error("invalid {dialect} expression")]
+pub struct QuerySyntaxError {
+    /// The query language that rejected the expression.
+    pub(crate) dialect: QueryDialect,
+    /// The complete input expression.
+    #[source_code]
+    pub(crate) input: String,
+    /// The invalid token range, or the end of input when a token is missing.
+    #[label("{expected}")]
+    pub(crate) span: SourceSpan,
+    /// Concrete repair text supplied by the parser.
+    pub(crate) expected: &'static str,
+}
 
-    /// Constructs a [`QueryError::UnknownFieldPath`] error for `path`,
-    /// optionally attaching a did-you-mean `suggestion`.
-    ///
-    /// When `suggestion` is [`Some`], it supplies a known accessor name (such
-    /// as `"file.name"`) to be rendered as a did-you-mean hint. When
-    /// `suggestion` is [`None`], no close match exists.
-    ///
-    /// This constructor is shared across all [`super::field::FieldPath::parse`]
-    /// failure sites: malformed `file.*` or `task.*` accessors supply their
-    /// closest matching accessor name, whereas invalid frontmatter or inline
-    /// field paths pass [`None`] because no fixed accessor list exists for
-    /// custom fields.
-    pub(in crate::query) fn unknown_field_path(
-        path: &str,
-        suggestion: Option<&str>,
+impl QuerySyntaxError {
+    /// Builds a syntax diagnostic for a single expression range.
+    pub(crate) fn new(
+        dialect: QueryDialect,
+        input: &str,
+        span: SourceSpan,
+        expected: &'static str,
     ) -> Self {
-        Self::UnknownFieldPath {
+        Self {
+            dialect,
+            input: input.to_owned(),
+            span,
+            expected,
+        }
+    }
+}
+
+/// A malformed field path and its optional closest accessor suggestion.
+#[derive(Clone, Debug, Eq, Error, PartialEq)]
+#[error(
+    "invalid field path {path:?}; expected `file.<field>` (path, name, \
+     folder, size, ctime, cdate, mtime, mdate), `task.<field>` \
+     (completed, text), or a single frontmatter, inline field, or `tags` \
+     name{}",
+    suggestion.as_deref().map_or_else(String::new, |name| format!(
+        " (did you mean `{name}`?)"
+    ))
+)]
+pub struct FieldPathError {
+    /// The raw, unparsable field path string.
+    pub(crate) path: String,
+    /// The closest matching accessor when `path` resembles a typo.
+    pub(crate) suggestion: Option<String>,
+}
+
+impl FieldPathError {
+    /// Constructs a field-path error with an optional repair suggestion.
+    pub(in crate::query) fn new(path: &str, suggestion: Option<&str>) -> Self {
+        Self {
             path: path.to_owned(),
             suggestion: suggestion.map(str::to_owned),
         }
     }
 }
 
+/// Errors returned during query parsing and transformation.
+#[derive(Clone, Debug, Eq, Error, PartialEq)]
+pub enum QueryError {
+    /// A source or filter expression has invalid syntax.
+    #[error(transparent)]
+    Syntax(#[from] QuerySyntaxError),
+    /// A field path is malformed.
+    #[error(transparent)]
+    FieldPath(#[from] FieldPathError),
+    /// A query limit was negative or exceeded platform [`usize`] bounds.
+    #[error("invalid limit {value}; expected a non-negative row count")]
+    LimitOutOfRange {
+        /// The rejected limit count.
+        value: i64,
+    },
+    /// [`super::QueryOutcome::task_list`] received page-level records.
+    #[error(
+        "task_list requires task-level records from the `tasks` namespace; \
+         got page-level records with no task fields"
+    )]
+    TaskListRequiresTaskRows,
+    /// `headers` and `columns` had unequal lengths.
+    #[error(
+        "table headers ({headers}) and columns ({columns}) must have the same \
+         length"
+    )]
+    TableColumnCountMismatch {
+        /// The number of header titles provided.
+        headers: usize,
+        /// The number of column field paths provided.
+        columns: usize,
+    },
+}
+
+impl Diagnostic for QueryError {
+    fn diagnostic_source(&self) -> Option<&dyn Diagnostic> {
+        match self {
+            Self::Syntax(source) => Some(source),
+            Self::FieldPath(_)
+            | Self::LimitOutOfRange {
+                ..
+            }
+            | Self::TaskListRequiresTaskRows
+            | Self::TableColumnCountMismatch {
+                ..
+            } => None,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use miette::{Diagnostic, SourceSpan};
     use pretty_assertions::assert_eq;
 
     use super::*;
@@ -149,11 +150,49 @@ mod tests {
     }
 
     #[test]
-    fn unknown_field_path_formats_display_message() {
-        let error = QueryError::UnknownFieldPath {
-            path: "file.bogus".to_owned(),
-            suggestion: None,
-        };
+    fn syntax_error_preserves_dialect_input_span_and_label() {
+        let error = QuerySyntaxError::new(
+            QueryDialect::Filter,
+            "rating >",
+            SourceSpan::from((7, 0)),
+            "a literal value",
+        );
+
+        assert_eq!(error.dialect, QueryDialect::Filter);
+        assert_eq!(error.input, "rating >");
+        assert_eq!(error.span, SourceSpan::from((7, 0)));
+        assert_eq!(error.expected, "a literal value");
+        assert_eq!(
+            error
+                .labels()
+                .expect("syntax diagnostic has a label")
+                .map(|label| (
+                    label.offset(),
+                    label.len(),
+                    label.label().map(str::to_owned)
+                ))
+                .collect::<Vec<_>>(),
+            vec![(7, 0, Some("a literal value".to_owned()))]
+        );
+        assert!(error.source_code().is_some());
+    }
+
+    #[test]
+    fn query_error_exposes_nested_syntax_diagnostic() {
+        let error = QueryError::from(QuerySyntaxError::new(
+            QueryDialect::Source,
+            "#book and",
+            SourceSpan::from((9, 0)),
+            "a source term",
+        ));
+
+        assert_eq!(error.to_string(), "invalid source expression");
+        assert!(error.diagnostic_source().is_some());
+    }
+
+    #[test]
+    fn field_path_error_formats_display_message() {
+        let error = QueryError::from(FieldPathError::new("file.bogus", None));
 
         assert_display(
             &error,
@@ -165,10 +204,11 @@ mod tests {
     }
 
     #[test]
-    fn unknown_field_path_appends_a_did_you_mean_suggestion_when_built_with_one()
-     {
-        let error =
-            QueryError::unknown_field_path("file.nam", Some("file.name"));
+    fn field_path_error_appends_a_did_you_mean_suggestion() {
+        let error = QueryError::from(FieldPathError::new(
+            "file.nam",
+            Some("file.name"),
+        ));
 
         assert_display(
             &error,
@@ -180,44 +220,20 @@ mod tests {
     }
 
     #[test]
-    fn unparsable_filter_expression_formats_display_message() {
-        let error = QueryError::UnparsableFilterExpression {
-            expr: "rating >".to_owned(),
-        };
-
+    fn direct_operation_errors_format_display_messages() {
         assert_display(
-            &error,
-            "invalid filter expression \"rating >\"; expected `<field> <op> \
-             <value>` with op one of ==, !=, >=, <=, >, < and value a quoted \
-             string, number, or boolean",
-        );
-    }
-
-    #[test]
-    fn negative_limit_formats_display_message() {
-        let error = QueryError::NegativeLimit {
-            n: -5,
-        };
-
-        assert_display(
-            &error,
+            &QueryError::LimitOutOfRange {
+                value: -5,
+            },
             "invalid limit -5; expected a non-negative row count",
         );
-    }
-
-    #[test]
-    fn task_list_on_page_records_formats_display_message() {
         assert_display(
-            &QueryError::TaskListOnPageRecords,
+            &QueryError::TaskListRequiresTaskRows,
             "task_list requires task-level records from the `tasks` \
              namespace; got page-level records with no task fields",
         );
-    }
-
-    #[test]
-    fn table_column_mismatch_formats_display_message() {
         assert_display(
-            &QueryError::TableColumnMismatch {
+            &QueryError::TableColumnCountMismatch {
                 headers: 2,
                 columns: 1,
             },

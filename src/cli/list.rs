@@ -195,7 +195,7 @@ mod tests {
                 .expect_err("malformed sort fails");
 
             assert!(matches!(error, CliError::Query {
-                source: QueryError::UnknownFieldPath { .. },
+                source: QueryError::FieldPath(_),
                 ..
             }));
         }
@@ -295,7 +295,7 @@ mod tests {
                 list.render(&config(temp.path())).expect_err("invalid source");
 
             assert!(matches!(error, CliError::Query {
-                source: QueryError::UnparsableSourceExpression { .. },
+                source: QueryError::Syntax(_),
                 ..
             }));
         }
@@ -337,7 +337,7 @@ mod tests {
                 .expect_err("unparsable filter fails");
 
             assert!(matches!(error, CliError::Query {
-                source: QueryError::UnparsableFilterExpression { .. },
+                source: QueryError::Syntax(_),
                 ..
             }));
         }

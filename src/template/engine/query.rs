@@ -465,7 +465,7 @@ impl Object for IndexRecord {
     ///
     /// A rejected key, such as a dotted, empty, or unknown `file.*`/`task.*`
     /// accessor, resolves to `None` like any other missing attribute instead of
-    /// surfacing `QueryError::UnknownFieldPath` as a render error.
+    /// surfacing [`QueryError::FieldPath`] as a render error.
     #[inline]
     fn get_value(self: &Arc<Self>, key: &Value) -> Option<Value> {
         let key = key.as_str()?;

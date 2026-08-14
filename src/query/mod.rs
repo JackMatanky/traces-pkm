@@ -18,28 +18,30 @@
 //!   [`QueryOutcome::task_list`]).
 //! - [`QueryError`]: Reports malformed field paths and query expressions.
 
+mod choice;
+mod comparison;
 mod error;
 mod field;
 mod filter;
-mod operators;
-mod option;
-mod parser;
+mod logic;
 mod record;
 mod sort;
 mod source;
 
 use std::path::PathBuf;
 
-pub(crate) use error::QueryError;
+pub(crate) use choice::{FileOption, FileOptionFilter, FrontmatterFieldKeys};
+#[cfg(test)]
+pub(crate) use error::{FieldPathError, QuerySyntaxError};
+pub use error::{QueryDialect, QueryError};
 use field::FieldPath;
 pub(crate) use field::FileField;
 use filter::FilterExpr;
-pub(crate) use option::{FileOption, FileOptionFilter, FrontmatterFieldKeys};
 pub use record::IndexRecord;
 use sort::SortKey;
 pub(crate) use sort::SortOrder;
-pub(crate) use source::class_values;
-pub use source::{ClassExpansionMode, QuerySource, QuerySourceExpr};
+pub use source::{ClassExpansionMode, QuerySource};
+pub(crate) use source::{SourceAtom, class_values};
 
 use crate::{
     index::{FileIndex, FileRecord},
@@ -81,20 +83,18 @@ pub(crate) fn query_tasks(
     let mut records = Vec::new();
     for (file, note) in matched_pairs(files, notes, source, class_field) {
         let base = record_with_inlinks(file, note, &mut inlinks);
-        let mut tasks: Vec<(bool, String)> = base
-            .note()
-            .tasks()
-            .map(|item| (item.is_completed(), item.text().to_owned()))
-            .collect();
-        let Some((completed, text)) = tasks.pop() else {
-            continue;
-        };
-        records.extend(
-            tasks
-                .into_iter()
-                .map(|(done, task)| base.clone().with_task(done, task)),
-        );
-        records.push(base.with_task(completed, text));
+        let mut tasks = base.note().tasks().peekable();
+        while let Some(item) = tasks.next() {
+            let completed = item.is_completed();
+            let text = item.text().to_owned();
+            if tasks.peek().is_some() {
+                records.push(base.clone().with_task(completed, text));
+            } else {
+                drop(tasks);
+                records.push(base.with_task(completed, text));
+                break;
+            }
+        }
     }
     QueryOutcome::new(records)
 }
@@ -198,21 +198,14 @@ impl QueryOutcome {
     ///
     /// # Errors
     ///
-    /// - [`UnparsableFilterExpression`] if `expr` cannot be parsed.
-    /// - [`UnknownFieldPath`] if a field path referenced in `expr` is
+    /// - [`QueryError::Syntax`] if `expr` cannot be parsed.
+    /// - [`QueryError::FieldPath`] if a field path referenced in `expr` is
     ///   malformed.
-    ///
-    /// [`UnparsableFilterExpression`]: QueryError::UnparsableFilterExpression
-    /// [`UnknownFieldPath`]: QueryError::UnknownFieldPath
     #[inline]
-    pub fn filter(self, expr: &str) -> Result<Self, QueryError> {
+    pub fn filter(mut self, expr: &str) -> Result<Self, QueryError> {
         let expr = FilterExpr::parse(expr)?;
-        let records = self
-            .records
-            .into_iter()
-            .filter(|record| expr.matches(record))
-            .collect();
-        Ok(Self::new(records))
+        self.records.retain(|record| expr.matches(record));
+        Ok(self)
     }
 
     /// Filters records matching `expr`, serving as an alias for
@@ -225,12 +218,9 @@ impl QueryOutcome {
     ///
     /// # Errors
     ///
-    /// - [`UnparsableFilterExpression`] if `expr` cannot be parsed.
-    /// - [`UnknownFieldPath`] if a field path referenced in `expr` is
+    /// - [`QueryError::Syntax`] if `expr` cannot be parsed.
+    /// - [`QueryError::FieldPath`] if a field path referenced in `expr` is
     ///   malformed.
-    ///
-    /// [`UnparsableFilterExpression`]: QueryError::UnparsableFilterExpression
-    /// [`UnknownFieldPath`]: QueryError::UnknownFieldPath
     #[inline]
     #[cfg_attr(
         not(test),
@@ -259,9 +249,8 @@ impl QueryOutcome {
     ///
     /// # Errors
     ///
-    /// - [`UnknownFieldPath`] if `path` cannot be parsed as a valid field path.
-    ///
-    /// [`UnknownFieldPath`]: QueryError::UnknownFieldPath
+    /// - [`QueryError::FieldPath`] if `path` cannot be parsed as a valid field
+    ///   path.
     #[inline]
     pub fn sort(
         self,
@@ -275,18 +264,17 @@ impl QueryOutcome {
     ///
     /// # Errors
     ///
-    /// - [`NegativeLimit`] if `n` is negative or exceeds platform pointer width
-    ///   limits.
-    ///
-    /// [`NegativeLimit`]: QueryError::NegativeLimit
+    /// - [`QueryError::LimitOutOfRange`] if `n` is negative or exceeds platform
+    ///   pointer-width limits.
     #[inline]
-    pub fn limit(self, n: i64) -> Result<Self, QueryError> {
+    pub fn limit(mut self, n: i64) -> Result<Self, QueryError> {
         let n = usize::try_from(n).map_err(|_source| {
-            QueryError::NegativeLimit {
-                n,
+            QueryError::LimitOutOfRange {
+                value: n,
             }
         })?;
-        Ok(Self::new(self.records.into_iter().take(n).collect()))
+        self.records.truncate(n);
+        Ok(self)
     }
 
     /// Groups records by sorting them ascending on the field at `path`, so
@@ -295,9 +283,8 @@ impl QueryOutcome {
     ///
     /// # Errors
     ///
-    /// - [`UnknownFieldPath`] if `path` cannot be parsed as a valid field path.
-    ///
-    /// [`UnknownFieldPath`]: QueryError::UnknownFieldPath
+    /// - [`QueryError::FieldPath`] if `path` cannot be parsed as a valid field
+    ///   path.
     #[inline]
     pub(crate) fn group_by(self, path: &str) -> Result<Self, QueryError> {
         self.sort_by_field(path, false)
@@ -318,11 +305,8 @@ impl QueryOutcome {
     ///
     /// # Errors
     ///
-    /// - [`UnknownFieldPath`] if `path` cannot be parsed as a valid field path.
-    ///
-    /// [`UnknownFieldPath`]: QueryError::UnknownFieldPath
-    ///
-    /// [`UnknownFieldPath`]: QueryError::UnknownFieldPath
+    /// - [`QueryError::FieldPath`] if `path` cannot be parsed as a valid field
+    ///   path.
     pub(crate) fn flatten(self, path: &str) -> Result<Self, QueryError> {
         let field_path = FieldPath::parse(path)?;
         let mut records = Vec::with_capacity(self.records.len());
@@ -353,21 +337,19 @@ impl QueryOutcome {
     ///
     /// # Errors
     ///
-    /// - [`TableColumnMismatch`] if `headers` and `columns` slices differ in
-    ///   length.
-    /// - [`UnknownFieldPath`] if any field path string in `columns` is
+    /// - [`QueryError::TableColumnCountMismatch`] if `headers` and `columns`
+    ///   slices differ in length.
+    /// - [`QueryError::FieldPath`] if any field path string in `columns` is
     ///   malformed.
     ///
     /// [`ASCII_MARKDOWN`]: comfy_table::presets::ASCII_MARKDOWN
-    /// [`TableColumnMismatch`]: QueryError::TableColumnMismatch
-    /// [`UnknownFieldPath`]: QueryError::UnknownFieldPath
     pub(crate) fn table(
         &self,
         headers: &[&str],
         columns: &[&str],
     ) -> Result<String, QueryError> {
         if headers.len() != columns.len() {
-            return Err(QueryError::TableColumnMismatch {
+            return Err(QueryError::TableColumnCountMismatch {
                 headers: headers.len(),
                 columns: columns.len(),
             });
@@ -395,11 +377,8 @@ impl QueryOutcome {
     ///
     /// # Errors
     ///
-    /// - [`UnknownFieldPath`] if `path` cannot be parsed as a valid field path.
-    ///
-    /// [`UnknownFieldPath`]: QueryError::UnknownFieldPath
-    ///
-    /// [`UnknownFieldPath`]: QueryError::UnknownFieldPath
+    /// - [`QueryError::FieldPath`] if `path` cannot be parsed as a valid field
+    ///   path.
     pub(crate) fn list(&self, path: &str) -> Result<String, QueryError> {
         let field_path = FieldPath::parse(path)?;
         let mut out = String::new();
@@ -417,16 +396,14 @@ impl QueryOutcome {
     ///
     /// # Errors
     ///
-    /// - [`TaskListOnPageRecords`] if any record lacks task fields (built by
-    ///   [`crate::index::FileIndex::query`] instead of
+    /// - [`QueryError::TaskListRequiresTaskRows`] if any record lacks task
+    ///   fields (built by [`crate::index::FileIndex::query`] instead of
     ///   [`crate::index::FileIndex::query_tasks`]).
-    ///
-    /// [`TaskListOnPageRecords`]: QueryError::TaskListOnPageRecords
     pub(crate) fn task_list(&self) -> Result<String, QueryError> {
         let mut out = String::new();
         for record in &self.records {
             let Some(completed) = record.task_completed() else {
-                return Err(QueryError::TaskListOnPageRecords);
+                return Err(QueryError::TaskListRequiresTaskRows);
             };
             out.push_str(if completed {
                 "- [x] "
@@ -452,11 +429,8 @@ impl QueryOutcome {
     ///
     /// # Errors
     ///
-    /// - [`UnknownFieldPath`] if `path` cannot be parsed as a valid field path.
-    ///
-    /// [`UnknownFieldPath`]: QueryError::UnknownFieldPath
-    ///
-    /// [`UnknownFieldPath`]: QueryError::UnknownFieldPath
+    /// - [`QueryError::FieldPath`] if `path` cannot be parsed as a valid field
+    ///   path.
     fn sort_by_field(
         self,
         path: &str,
@@ -798,7 +772,7 @@ mod tests {
 
             assert_eq!(
                 record.field(path),
-                Err(QueryError::unknown_field_path(path, None))
+                Err(QueryError::FieldPath(FieldPathError::new(path, None)))
             );
         }
 
@@ -876,8 +850,8 @@ mod tests {
 
             assert_eq!(
                 outcome.limit(-1),
-                Err(QueryError::NegativeLimit {
-                    n: -1
+                Err(QueryError::LimitOutOfRange {
+                    value: -1
                 })
             );
         }
@@ -917,7 +891,10 @@ mod tests {
 
             assert_eq!(
                 outcome.group_by("file.bogus"),
-                Err(QueryError::unknown_field_path("file.bogus", None))
+                Err(QueryError::FieldPath(FieldPathError::new(
+                    "file.bogus",
+                    None
+                )))
             );
         }
     }
@@ -1003,7 +980,10 @@ mod tests {
 
             assert_eq!(
                 outcome.flatten("file.bogus"),
-                Err(QueryError::unknown_field_path("file.bogus", None))
+                Err(QueryError::FieldPath(FieldPathError::new(
+                    "file.bogus",
+                    None
+                )))
             );
         }
 
@@ -1154,7 +1134,10 @@ mod tests {
 
             assert_eq!(
                 outcome.table(&["Name"], &["file.bogus"]),
-                Err(QueryError::unknown_field_path("file.bogus", None))
+                Err(QueryError::FieldPath(FieldPathError::new(
+                    "file.bogus",
+                    None
+                )))
             );
         }
 
@@ -1165,7 +1148,7 @@ mod tests {
 
             assert_eq!(
                 outcome.table(&["Name", "Rating"], &["file.name"]),
-                Err(QueryError::TableColumnMismatch {
+                Err(QueryError::TableColumnCountMismatch {
                     headers: 2,
                     columns: 1,
                 })
@@ -1209,7 +1192,10 @@ mod tests {
 
             assert_eq!(
                 outcome.list("file.bogus"),
-                Err(QueryError::unknown_field_path("file.bogus", None))
+                Err(QueryError::FieldPath(FieldPathError::new(
+                    "file.bogus",
+                    None
+                )))
             );
         }
 
@@ -1310,7 +1296,7 @@ mod tests {
 
             assert_eq!(
                 outcome.task_list(),
-                Err(QueryError::TaskListOnPageRecords)
+                Err(QueryError::TaskListRequiresTaskRows)
             );
         }
     }

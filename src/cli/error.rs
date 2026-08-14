@@ -22,7 +22,7 @@ use crate::{
         ConfigStateError, DiscoveryError,
     },
     index::FileIndexError,
-    query::QueryError,
+    query::{QueryDialect, QueryError},
     schema::SchemaError,
     template::{
         RenderFailureKind, TemplateError, TemplatePathError,
@@ -184,8 +184,8 @@ pub enum CliError {
         #[source]
         source: SchemaError,
     },
-    /// Running a task-level query under `root` failed: an unparsable field
-    /// path, filter expression, or negative limit.
+    /// Running a query under `root` failed: an unparsable source or filter
+    /// expression, field path, or negative limit.
     #[error("failed to run query in {root}")]
     Query {
         /// The project root the query ran against.
@@ -367,12 +367,24 @@ impl Diagnostic for CliError {
                 ..
             } => Some(root_help(root, "has valid Schema files")),
             Self::Query {
+                source,
                 ..
-            } => Some(query_help()),
+            } => Some(query_help(source)),
             Self::TemplateInstantiate {
                 source,
                 ..
             } => Some(template_instantiate_help(source)),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    fn diagnostic_source(&self) -> Option<&dyn Diagnostic> {
+        match self {
+            Self::Query {
+                source,
+                ..
+            } => Some(source),
             _ => None,
         }
     }
@@ -507,12 +519,29 @@ fn init_config_write_help(
     }
 }
 
-/// Builds diagnostic help text for [`CliError::Query`].
-fn query_help() -> Box<dyn Display + 'static> {
-    Box::new(
-        "check the `--where` filter expression syntax and the field paths it \
-         references",
-    )
+/// Builds typed diagnostic help text for [`CliError::Query`].
+fn query_help(source: &QueryError) -> Box<dyn Display + 'static> {
+    let help = match source {
+        QueryError::Syntax(error) => match error.dialect {
+            QueryDialect::Source => {
+                "check the `--from` source expression syntax"
+            }
+            QueryDialect::Filter => {
+                "check the `--where` filter expression syntax"
+            }
+        },
+        QueryError::FieldPath(_) => "check every referenced field path",
+        QueryError::LimitOutOfRange {
+            ..
+        } => "pass a non-negative query row limit",
+        QueryError::TaskListRequiresTaskRows => {
+            "render a task list from the `tasks` namespace"
+        }
+        QueryError::TableColumnCountMismatch {
+            ..
+        } => "pass the same number of table headers and columns",
+    };
+    Box::new(help)
 }
 
 /// Selects the diagnostic code for a [`CliError::ConfigLoad`] source.
@@ -748,6 +777,7 @@ mod tests {
         use serde::ser::Error as SerdeError;
 
         use super::*;
+        use crate::query::QuerySyntaxError;
 
         #[test]
         fn current_directory() {
@@ -1483,6 +1513,24 @@ mod tests {
                 )
             );
         }
+        #[test]
+        fn query_error_help_selects_the_typed_repair() {
+            let error = CliError::Query {
+                root: PathBuf::from("/some/project"),
+                source: QueryError::Syntax(QuerySyntaxError::new(
+                    QueryDialect::Source,
+                    "#book and",
+                    (9, 0).into(),
+                    "a source term",
+                )),
+            };
+
+            assert_eq!(
+                error.help().map(|help| help.to_string()),
+                Some("check the `--from` source expression syntax".to_owned())
+            );
+            assert!(error.diagnostic_source().is_some());
+        }
     }
 
     mod location {
@@ -1616,7 +1664,7 @@ mod tests {
                         minijinja::ErrorKind::InvalidOperation,
                         "query failed",
                     )
-                    .with_source(QueryError::TaskListOnPageRecords),
+                    .with_source(QueryError::TaskListRequiresTaskRows),
                 },
             };
 
