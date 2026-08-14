@@ -1,18 +1,29 @@
-//! Equality and ordering for resolved [`FieldValue`] instances, used by
-//! query filtering, sorting, and grouping.
+//! Equality, ordering, and sort-key utilities for resolved [`FieldValue`]
+//! instances.
+//!
+//! This module provides the comparison and ordering primitives used by
+//! [`super::QueryOutcome::filter`], [`super::QueryOutcome::sort`], and
+//! [`super::QueryOutcome::group_by`]. Value ordering rules:
+//!
+//! - Numbers are ordered by magnitude.
+//! - Strings, dates, and durations are ordered lexicographically.
+//! - Booleans are ordered with `false < true`.
+//! - [`FieldValue::Null`] acts as the minimum value in sort operations.
+//!
+//! [`FieldValue`]: crate::note::FieldValue
 
 use std::cmp::Ordering;
 
 use crate::note::FieldValue;
 
-/// Defines the sort direction for [`super::QueryOutcome::sort`] and CLI
-/// `--order` flags.
+/// Sort direction for [`super::QueryOutcome::sort`] and CLI `--order`
+/// flags.
 ///
-/// [`super::QueryOutcome::sort`]'s Rust and Template-facing signature takes
-/// a plain `descending: bool`; [`Self::is_descending`] bridges this enum to
-/// that bool for internal reuse. CLI commands use this type directly as a
-/// [`clap::ValueEnum`], enabling `--order` to accept `asc` or `desc` without
-/// per-command enum duplication.
+/// The Rust and Template-facing API takes a plain `descending: bool`;
+/// [`Self::is_descending`] bridges this enum to that bool for internal
+/// reuse. CLI commands use this type directly as a [`clap::ValueEnum`],
+/// enabling `--order` to accept `asc` or `desc` without per-command enum
+/// duplication.
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq, clap::ValueEnum)]
 pub(crate) enum SortOrder {
     /// Ascending order (the default).
@@ -33,16 +44,17 @@ impl SortOrder {
     }
 }
 
-/// Compares two resolved [`FieldValue`] instances, `a` and `b`, of the same
-/// comparable kind.
+/// Compares two resolved [`FieldValue`] instances of the same comparable
+/// kind.
 ///
 /// Value ordering rules:
 /// - Numbers are ordered by magnitude.
 /// - Strings, dates, and durations are ordered lexicographically.
 /// - Booleans are ordered with `false < true`.
 ///
-/// Returns `Some` with the [`Ordering`] of `a` relative to `b` when they can be
-/// compared, or `None` if they have differing kinds or unorderable values.
+/// Returns `Some` with the [`Ordering`] of `a` relative to `b` when they
+/// can be compared, or `None` if they have differing kinds or unorderable
+/// values.
 pub(super) fn compare_field_values(
     a: &FieldValue,
     b: &FieldValue,
@@ -57,18 +69,20 @@ pub(super) fn compare_field_values(
     }
 }
 
-/// Returns `true` if two resolved [`FieldValue`] instances, `a` and `b`,
-/// represent equal values under filter comparison (`==` and `!=`).
+/// Returns whether two resolved [`FieldValue`] instances represent equal
+/// values under filter comparison (`==` and `!=`).
 ///
 /// Returns `true` when structural equality (`a == b`) holds, or when
-/// [`compare_field_values`] returns `Some(Ordering::Equal)`. This cross-kind
-/// text normalization allows string literals to match date or duration fields.
+/// [`compare_field_values`] returns [`Some(Ordering::Equal)`]. This
+/// cross-kind text normalization allows string literals to match date or
+/// duration fields.
 pub(super) fn fields_equal(a: &FieldValue, b: &FieldValue) -> bool {
     a == b || compare_field_values(a, b) == Some(Ordering::Equal)
 }
 
-/// Compares two resolved [`FieldValue`] instances to establish a total order
-/// for [`super::QueryOutcome::sort`] and [`super::QueryOutcome::group_by`].
+/// Compares two resolved [`FieldValue`] instances to establish a total
+/// order for [`super::QueryOutcome::sort`] and
+/// [`super::QueryOutcome::group_by`].
 ///
 /// # Arguments
 ///
@@ -77,9 +91,9 @@ pub(super) fn fields_equal(a: &FieldValue, b: &FieldValue) -> bool {
 /// * `descending` - Whether to reverse the comparison result.
 ///
 /// Returns the [`Ordering`] of `a` relative to `b`:
-/// - Null values: [`FieldValue::Null`] acts as the minimum value.
-/// - Direction: `descending` reverses the comparator uniformly, so
-///   [`FieldValue::Null`] leads ascending and trails descending.
+/// - [`FieldValue::Null`] acts as the minimum value.
+/// - `descending` reverses the comparator uniformly, so null leads ascending
+///   and trails descending.
 /// - Numeric values use [`f64::total_cmp`], including non-finite values and
 ///   signed zero.
 /// - Other non-null values use [`compare_field_values`], falling back to
@@ -104,13 +118,14 @@ pub(super) fn sort_key_cmp(
     }
 }
 
-/// Wraps a resolved [`FieldValue`] so [`slice::sort_by_cached_key`] can order
-/// by it using [`sort_key_cmp`].
+/// Wraps a resolved [`FieldValue`] so [`slice::sort_by_cached_key`] can
+/// order by it using [`sort_key_cmp`].
 ///
 /// [`FieldValue`] does not implement [`Ord`] directly because comparison
-/// requires a `descending` flag and null-as-minimum fallback rules that depend
-/// on sort options. [`SortKey`] provides an [`Ord`] implementation scoped to a
-/// single sorting operation for [`super::QueryOutcome::sort_by_field`].
+/// requires a `descending` flag and null-as-minimum fallback rules that
+/// depend on sort options. `SortKey` provides an [`Ord`] implementation
+/// scoped to a single sorting operation for
+/// [`super::QueryOutcome::sort_by_field`].
 pub(super) struct SortKey {
     pub(super) value: FieldValue,
     pub(super) descending: bool,

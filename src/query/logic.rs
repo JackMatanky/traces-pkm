@@ -1,4 +1,21 @@
 //! Shared logical-expression tree and precedence parser.
+//!
+//! This module provides the generic [`LogicalExpr`] AST and
+//! [`parse_logical_expression`] parser used by both the source selection
+//! language ([`super::source`]) and the filter expression language
+//! ([`super::filter`]). The parser enforces `not` > `and` > `or`
+//! precedence with parenthetical grouping.
+//!
+//! # Main Types
+//!
+//! - [`LogicalExpr`] is a generic expression tree parameterized over a
+//!   domain-specific atom type.
+//! - [`LogicalOp`] represents the binary `AND`/`OR` operators.
+//! - [`LogicalControl`] distinguishes logical control syntax from domain atoms.
+//! - [`TokenCursor`] provides one-token lookahead over a materialized token
+//!   stream.
+//! - [`LogicalGrammar`] is the trait that domain-specific parsers implement to
+//!   plug into the shared parser.
 
 use std::{iter::Peekable, vec};
 
@@ -6,7 +23,10 @@ use miette::SourceSpan;
 
 use super::{QueryError, error::QuerySyntaxError};
 
-/// Logical `AND`/`OR` operators shared by source and filter expressions.
+/// Binary logical operators shared by source and filter expressions.
+///
+/// Each variant corresponds to multiple syntactic spellings: `AND`/`and`/`&&`
+/// for conjunction, `OR`/`or`/`||` for disjunction.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(super) enum LogicalOp {
     /// `AND` / `and` / `&&`.
@@ -29,7 +49,10 @@ impl TryFrom<&str> for LogicalOp {
     }
 }
 
-/// One token and its original byte span.
+/// A token paired with its original byte span in the source expression.
+///
+/// Used throughout the parser to produce span-aware error diagnostics via
+/// [`super::error::QuerySyntaxError`].
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct Spanned<T> {
     /// The parsed token value.
@@ -48,7 +71,10 @@ impl<T> Spanned<T> {
     }
 }
 
-/// Logical control syntax recognized independently of source/filter atoms.
+/// Logical control syntax recognized independently of domain-specific atoms.
+///
+/// The shared parser uses these to build the expression tree without
+/// knowing the specifics of the source or filter language.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(super) enum LogicalControl {
     /// A binary logical operator.
@@ -61,7 +87,11 @@ pub(super) enum LogicalControl {
     RightParen,
 }
 
-/// A parsed logical expression over domain-local atom type `A`.
+/// A parsed logical expression tree over domain-local atom type `A`.
+///
+/// The tree preserves the original precedence and grouping of the parsed
+/// expression. Domain-specific evaluation is delegated to atom predicates
+/// via [`Self::evaluate`], [`Self::any_atom`], and [`Self::visit_atoms_mut`].
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum LogicalExpr<A> {
     /// A domain-local atom.
@@ -136,7 +166,14 @@ impl<A> LogicalExpr<A> {
     }
 }
 
-/// Owning one-token-lookahead cursor for a materialized token stream.
+/// Owning one-token-lookahead cursor over a materialized token stream.
+///
+/// Wraps a `Vec<T>` into a [`Peekable`] iterator, providing [`peek`],
+/// [`next`], and [`take`] for the recursive-descent parser.
+///
+/// [`peek`]: Self::peek
+/// [`next`]: Self::next
+/// [`take`]: Self::take
 pub(super) struct TokenCursor<T> {
     tokens: Peekable<vec::IntoIter<T>>,
 }
@@ -180,6 +217,11 @@ impl<T> AsRef<T> for Spanned<T> {
 }
 
 /// Domain-specific atom parsing hooks for the shared logical grammar.
+///
+/// Implement this trait to plug a domain-specific token type and atom
+/// parser into [`parse_logical_expression`]. The shared parser handles
+/// operator precedence, grouping, and error recovery, delegating atom
+/// recognition to the implementor.
 pub(super) trait LogicalGrammar {
     /// The source/filter token type.
     type Token;
@@ -203,7 +245,11 @@ pub(super) trait LogicalGrammar {
     ) -> QuerySyntaxError;
 }
 
-/// Parses a complete expression with `not > and > or` precedence.
+/// Parses a complete expression with `not` > `and` > `or` precedence.
+///
+/// Accepts a pre-tokenized stream and a domain-specific [`LogicalGrammar`]
+/// that handles atom recognition. Returns a [`LogicalExpr`] tree, or a
+/// [`QueryError::Syntax`] diagnostic when the expression is malformed.
 pub(super) fn parse_logical_expression<G>(
     input: &str,
     tokens: Vec<Spanned<G::Token>>,
@@ -398,108 +444,120 @@ mod tests {
         Spanned::new(value, SourceSpan::from((offset, 1)))
     }
 
-    #[test]
-    fn parses_precedence_repeated_negation_and_flattened_chains() {
-        use LogicalControl::{Not, Operator};
-        use LogicalOp::{And, Or};
-        use TestToken::{Atom, Control};
+    mod parse {
+        use pretty_assertions::assert_eq;
+        use rstest::rstest;
 
-        let parsed = parse_logical_expression(
-            "a or b and not not c and d",
-            vec![
-                token(Atom("a"), 0),
-                token(Control(Operator(Or)), 2),
-                token(Atom("b"), 5),
-                token(Control(Operator(And)), 7),
-                token(Control(Not), 11),
-                token(Control(Not), 15),
-                token(Atom("c"), 19),
-                token(Control(Operator(And)), 21),
-                token(Atom("d"), 25),
-            ],
-            TestGrammar,
-        );
+        use super::*;
 
-        assert_eq!(
-            parsed,
-            Ok(LogicalExpr::Or(vec![
-                LogicalExpr::Atom("a"),
-                LogicalExpr::And(vec![
-                    LogicalExpr::Atom("b"),
-                    LogicalExpr::Not(Box::new(LogicalExpr::Not(Box::new(
-                        LogicalExpr::Atom("c")
-                    )))),
-                    LogicalExpr::Atom("d"),
-                ]),
-            ]))
-        );
-    }
+        #[test]
+        fn parses_precedence_repeated_negation_and_flattened_chains() {
+            use LogicalControl::{Not, Operator};
+            use LogicalOp::{And, Or};
+            use TestToken::{Atom, Control};
 
-    #[test]
-    fn grouping_overrides_precedence() {
-        use LogicalControl::{LeftParen, Operator, RightParen};
-        use LogicalOp::{And, Or};
-        use TestToken::{Atom, Control};
-
-        assert_eq!(
-            parse_logical_expression(
-                "(a or b) and c",
+            let parsed = parse_logical_expression(
+                "a or b and not not c and d",
                 vec![
-                    token(Control(LeftParen), 0),
-                    token(Atom("a"), 1),
-                    token(Control(Operator(Or)), 3),
-                    token(Atom("b"), 6),
-                    token(Control(RightParen), 7),
-                    token(Control(Operator(And)), 9),
-                    token(Atom("c"), 13),
+                    token(Atom("a"), 0),
+                    token(Control(Operator(Or)), 2),
+                    token(Atom("b"), 5),
+                    token(Control(Operator(And)), 7),
+                    token(Control(Not), 11),
+                    token(Control(Not), 15),
+                    token(Atom("c"), 19),
+                    token(Control(Operator(And)), 21),
+                    token(Atom("d"), 25),
                 ],
                 TestGrammar,
-            ),
-            Ok(LogicalExpr::And(vec![
-                LogicalExpr::Or(vec![
+            );
+
+            assert_eq!(
+                parsed,
+                Ok(LogicalExpr::Or(vec![
                     LogicalExpr::Atom("a"),
-                    LogicalExpr::Atom("b"),
-                ]),
-                LogicalExpr::Atom("c"),
-            ]))
-        );
+                    LogicalExpr::And(vec![
+                        LogicalExpr::Atom("b"),
+                        LogicalExpr::Not(Box::new(LogicalExpr::Not(Box::new(
+                            LogicalExpr::Atom("c")
+                        )))),
+                        LogicalExpr::Atom("d"),
+                    ]),
+                ]))
+            );
+        }
+
+        #[test]
+        fn grouping_overrides_precedence() {
+            use LogicalControl::{LeftParen, Operator, RightParen};
+            use LogicalOp::{And, Or};
+            use TestToken::{Atom, Control};
+
+            assert_eq!(
+                parse_logical_expression(
+                    "(a or b) and c",
+                    vec![
+                        token(Control(LeftParen), 0),
+                        token(Atom("a"), 1),
+                        token(Control(Operator(Or)), 3),
+                        token(Atom("b"), 6),
+                        token(Control(RightParen), 7),
+                        token(Control(Operator(And)), 9),
+                        token(Atom("c"), 13),
+                    ],
+                    TestGrammar,
+                ),
+                Ok(LogicalExpr::And(vec![
+                    LogicalExpr::Or(vec![
+                        LogicalExpr::Atom("a"),
+                        LogicalExpr::Atom("b"),
+                    ]),
+                    LogicalExpr::Atom("c"),
+                ]))
+            );
+        }
+
+        #[rstest]
+        #[case::empty(vec![])]
+        #[case::trailing_operator(vec![
+            token(TestToken::Atom("a"), 0),
+            token(TestToken::Control(LogicalControl::Operator(LogicalOp::And)), 2),
+        ])]
+        #[case::unmatched_left_parenthesis(vec![
+            token(TestToken::Control(LogicalControl::LeftParen), 0),
+            token(TestToken::Atom("a"), 1),
+        ])]
+        #[case::unmatched_right_parenthesis(vec![
+            token(TestToken::Control(LogicalControl::RightParen), 0),
+        ])]
+        #[case::adjacent_atoms(vec![
+            token(TestToken::Atom("a"), 0),
+            token(TestToken::Atom("b"), 2),
+        ])]
+        fn rejects_incomplete_or_adjacent_tokens(
+            #[case] tokens: Vec<Spanned<TestToken>>,
+        ) {
+            assert!(
+                parse_logical_expression("fixture", tokens, TestGrammar)
+                    .is_err()
+            );
+        }
     }
 
-    #[rstest]
-    #[case::empty(vec![])]
-    #[case::trailing_operator(vec![
-        token(TestToken::Atom("a"), 0),
-        token(TestToken::Control(LogicalControl::Operator(LogicalOp::And)), 2),
-    ])]
-    #[case::unmatched_left_parenthesis(vec![
-        token(TestToken::Control(LogicalControl::LeftParen), 0),
-        token(TestToken::Atom("a"), 1),
-    ])]
-    #[case::unmatched_right_parenthesis(vec![
-        token(TestToken::Control(LogicalControl::RightParen), 0),
-    ])]
-    #[case::adjacent_atoms(vec![
-        token(TestToken::Atom("a"), 0),
-        token(TestToken::Atom("b"), 2),
-    ])]
-    fn rejects_incomplete_or_adjacent_tokens(
-        #[case] tokens: Vec<Spanned<TestToken>>,
-    ) {
-        assert!(
-            parse_logical_expression("fixture", tokens, TestGrammar).is_err()
-        );
-    }
+    mod evaluation {
+        use super::*;
 
-    #[test]
-    fn tree_operations_delegate_without_allocating_leaf_collections() {
-        let mut expression = LogicalExpr::And(vec![
-            LogicalExpr::Atom(1),
-            LogicalExpr::Not(Box::new(LogicalExpr::Atom(2))),
-        ]);
+        #[test]
+        fn tree_operations_delegate_without_allocating_leaf_collections() {
+            let mut expression = LogicalExpr::And(vec![
+                LogicalExpr::Atom(1),
+                LogicalExpr::Not(Box::new(LogicalExpr::Atom(2))),
+            ]);
 
-        assert!(expression.evaluate(|atom| *atom == 1));
-        assert!(expression.any_atom(|atom| *atom == 2));
-        expression.visit_atoms_mut(&mut |atom| *atom += 1);
-        assert!(expression.evaluate(|atom| *atom == 2));
+            assert!(expression.evaluate(|atom| *atom == 1));
+            assert!(expression.any_atom(|atom| *atom == 2));
+            expression.visit_atoms_mut(&mut |atom| *atom += 1);
+            assert!(expression.evaluate(|atom| *atom == 2));
+        }
     }
 }

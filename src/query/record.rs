@@ -1,4 +1,19 @@
-//! Query rows and field resolution.
+//! Query rows and field resolution for [`super::QueryOutcome`].
+//!
+//! This module implements [`IndexRecord`], which pairs a [`FileRecord`]
+//! with its parsed [`Note`] and resolves field paths for template rendering
+//! and CLI output. Each record resolves `file.*`, `task.*`, frontmatter,
+//! inline fields, `tags`, and derived inlinks.
+//!
+//! # Main Types
+//!
+//! - [`IndexRecord`] is the primary query row, produced by [`super::query`] or
+//!   [`super::query_tasks`].
+//! - [`TaskInfo`] carries per-task fields layered onto an `IndexRecord` by
+//!   [`crate::index::FileIndex::query_tasks`].
+//!
+//! [`FileRecord`]: crate::index::FileRecord
+//! [`Note`]: crate::note::Note
 
 use std::{path::PathBuf, sync::Arc};
 
@@ -11,12 +26,16 @@ use crate::{
     note::{FieldValue, Note},
 };
 
-/// Represents a query row pairing a [`FileRecord`] with parsed [`Note`]
-/// metadata.
+/// A query row pairing a [`FileRecord`] with parsed [`Note`] metadata.
 ///
-/// Task-level rows also carry fields for a single task item. Each row resolves
-/// `file.*`, `task.*`, frontmatter, inline fields, tags, and derived inlinks
-/// for template rendering and CLI output.
+/// Task-level rows also carry fields for a single task item. Each row
+/// resolves `file.*`, `task.*`, frontmatter, inline fields, `tags`, and
+/// derived inlinks for template rendering and CLI output.
+///
+/// The [`Note`] is reference-counted via [`Arc`] to share data efficiently
+/// when exploding one Note into several task-level rows (see
+/// [`crate::index::FileIndex::query_tasks`] and
+/// [`super::QueryOutcome::flatten`]).
 #[derive(Clone, Debug, PartialEq)]
 pub struct IndexRecord {
     file: FileRecord,
@@ -50,10 +69,10 @@ impl IndexRecord {
         }
     }
 
-    /// Converts this record into a task-level row with specified completion
-    /// state and text.
+    /// Converts this record into a task-level row.
     ///
-    /// Used by [`crate::index::FileIndex::query_tasks`] to turn a page-level
+    /// Attaches task completion state and text, used by
+    /// [`crate::index::FileIndex::query_tasks`] to expand a page-level
     /// record into one row per task item while retaining parent Note
     /// metadata for filtering and display via [`Self::field`].
     pub(super) fn with_task(
@@ -68,24 +87,25 @@ impl IndexRecord {
         self
     }
 
-    /// Attaches project-relative paths of Notes whose outlinks resolve to this
-    /// record's Note.
+    /// Attaches project-relative paths of Notes whose wikilinks resolve to
+    /// this record's Note.
     pub(super) fn with_inlinks(mut self, inlinks: Vec<PathBuf>) -> Self {
         self.inlinks = inlinks;
         self
     }
 
-    /// Returns task completion state (`true` for `- [x]`, `false` for
-    /// `- [ ]`) if this is a task-level record, or `None` for page-level
-    /// records.
+    /// Returns task completion state if this is a task-level record, or
+    /// `None` for page-level records.
+    ///
+    /// Returns `true` for `- [x]` and `false` for `- [ ]`.
     #[inline]
     #[must_use]
     pub fn task_completed(&self) -> Option<bool> {
         self.task.as_ref().map(|task| task.completed)
     }
 
-    /// Returns the task item's text if this is a task-level record, or `None`
-    /// for page-level records.
+    /// Returns the task item's text if this is a task-level record, or
+    /// `None` for page-level records.
     #[inline]
     #[must_use]
     pub(crate) fn task_text(&self) -> Option<&str> {
@@ -100,14 +120,17 @@ impl IndexRecord {
     }
 
     /// Returns parsed [`Note`] metadata for the indexed file.
+    ///
+    /// The returned reference shares the underlying [`Arc`] allocation with
+    /// any task-level rows derived from the same Note.
     #[inline]
     #[must_use]
     pub(crate) fn note(&self) -> &Note {
         self.note.as_ref()
     }
 
-    /// Returns project-relative paths of Notes whose outlinks resolve to this
-    /// record's Note, or an empty slice if no Notes link to it.
+    /// Returns project-relative paths of Notes whose wikilinks resolve to
+    /// this record's Note, or an empty slice if no Notes link to it.
     #[inline]
     #[must_use]
     #[cfg_attr(
@@ -144,8 +167,10 @@ impl IndexRecord {
         Ok(self.resolve(&FieldPath::parse(path)?))
     }
 
-    /// Resolves a parsed [`FieldPath`], applying any [`Self::flattened`]
-    /// overrides.
+    /// Resolves a parsed [`FieldPath`], applying any flatten overrides.
+    ///
+    /// Checks flattened overrides first, then delegates to the appropriate
+    /// accessor based on the [`FieldPath`] variant.
     pub(super) fn resolve(&self, path: &FieldPath) -> FieldValue {
         if let Some((_, value)) = self.flattened.iter().find(|(p, _)| p == path)
         {
@@ -185,8 +210,11 @@ impl IndexRecord {
         }
     }
 
-    /// Returns a copy of this record with `path` overridden to `value` for
-    /// exploded [`super::QueryOutcome::flatten`] rows.
+    /// Returns a copy of this record with `path` overridden to `value`.
+    ///
+    /// Used by [`super::QueryOutcome::flatten`] to set the resolved value for
+    /// exploded list rows. If `path` already has an override, the value is
+    /// updated in place.
     pub(super) fn with_flattened(
         mut self,
         path: FieldPath,
@@ -202,13 +230,13 @@ impl IndexRecord {
     }
 }
 
-/// Represents per-task fields layered onto an [`IndexRecord`] by
+/// Per-task fields layered onto an [`IndexRecord`] by
 /// [`crate::index::FileIndex::query_tasks`].
 ///
 /// Task-level rows retain parent [`Note`] file and metadata fields for
-/// filtering and display while attaching task completion and text attributes.
-/// This is distinct from [`IndexRecord::flattened`], which overrides existing
-/// field paths rather than adding new ones.
+/// filtering and display while attaching task completion and text. This is
+/// distinct from [`IndexRecord::flattened`], which overrides existing field
+/// paths rather than adding new ones.
 #[derive(Clone, Debug, PartialEq)]
 struct TaskInfo {
     completed: bool,

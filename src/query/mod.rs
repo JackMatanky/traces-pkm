@@ -1,22 +1,188 @@
-//! Selects query sources, resolves record fields, and transforms query
-//! outcomes.
+//! Query source selection, field resolution, and result transformation.
 //!
 //! This module powers page-level results from
 //! [`crate::index::FileIndex::query`] and task-level rows from
-//! [`crate::index::FileIndex::query_tasks`].
+//! [`crate::index::FileIndex::query_tasks`]. It provides a pipeline that
+//! selects Notes via [`QuerySource`], pairs each matching Note with its
+//! [`FileRecord`] as an [`IndexRecord`], and applies chained transformations
+//! through [`QueryOutcome`].
+//!
+//! # Source Expression Language
+//!
+//! A source expression is a boolean combination of **leaves** joined by
+//! **logical operators** and grouped with **parentheses**.
+//!
+//! ## Leaves
+//!
+//! ### Tags
+//!
+//! A `#`-prefixed identifier matches Notes carrying that tag or any
+//! nested sub-tag. Tag names may contain letters, digits, underscores,
+//! hyphens, dots, and forward slashes.
+//!
+//! ```text
+//! #book              — matches #book, #book/fiction, #book/science
+//! #projects/active   — matches #projects/active, #projects/active/rust
+//! ```
+//!
+//! ### Paths
+//!
+//! A path leaf matches either an exact file path or every file under a
+//! folder prefix. Paths may be bare (unquoted) or enclosed in single or
+//! double quotes. Quoted paths support `\` escape sequences.
+//!
+//! ```text
+//! books/             — matches every file under books/
+//! books/dune.md      — matches only books/dune.md
+//! "books/dune.md"    — same as above (quoted form)
+//! ```
+//!
+//! A trailing `/` signals a folder prefix match. Without it, the path
+//! matches only an exact file.
+//!
+//! ### File Classes
+//!
+//! File Class leaves match Notes whose frontmatter class field contains
+//! the named class. Three syntax forms are available, each offering the
+//! same three expansion depths.
+//!
+//! **Sigil form** (shorthand):
+//!
+//! ```text
+//! @Book              — exact: matches only Book
+//! @Book+             — children: matches Book and its direct subclasses
+//! @Book*             — descendants: matches Book and all transitive subclasses
+//! ```
+//!
+//! **Function form** (explicit):
+//!
+//! ```text
+//! class(Book)                        — exact (default)
+//! class(Book, children)              — children (positional argument)
+//! class(Book, descendants)           — descendants (positional argument)
+//! class(Book).with_children()        — children (chaining form)
+//! class(Book).with_descendants()     — descendants (chaining form)
+//! ```
+//!
+//! The positional argument and chaining form are mutually exclusive;
+//! providing both is a syntax error.
+//!
+//! ## Logical Operators
+//!
+//! | Operator | Aliases         | Associativity |
+//! |----------|-----------------|---------------|
+//! | `NOT`    | `not`, `!`      | unary prefix  |
+//! | `AND`    | `and`, `&&`     | left          |
+//! | `OR`     | `or`, `\|\|`    | left          |
+//!
+//! Precedence from highest to lowest: `NOT` > `AND` > `OR`. Use
+//! parentheses to override:
+//!
+//! ```text
+//! #book and books/                   — AND binds tighter than OR
+//! (#book or #movie) and !archive/    — parentheses override precedence
+//! not not #book                      — repeated negation is allowed
+//! ```
+//!
+//! ## Precedence Examples
+//!
+//! ```text
+//! #book or books/ and not @Archived
+//! ```
+//! Parses as: `#book OR (books/ AND (NOT @Archived))`
+//!
+//! ```text
+//! #book && !@Archived || @Movie
+//! ```
+//! Parses as: `(#book AND (NOT @Archived)) OR @Movie`
+//!
+//! ## Quoted Strings
+//!
+//! Double-quoted (`"..."`) and single-quoted (`'...'`) strings bypass
+//! keyword classification. Backslash escapes are recognized:
+//!
+//! ```text
+//! "path/with spaces"     — literal path with spaces
+//! 'path\'s file.md'      — escaped single quote
+//! ```
+//!
+//! ## Token Priority and Collisions
+//!
+//! Keywords (`class`, `and`, `or`, `not`) take priority over bare
+//! identifiers. A file path segment that collides with a keyword (for
+//! example, a folder named `class/` or `and/`) must be quoted:
+//!
+//! ```text
+//! class/          — syntax error (lexes as keyword `class` + `/`)
+//! "class/"        — lexes as a path
+//! ```
+//!
+//! ## Matching Rules
+//!
+//! - **Tags:** A Note matches if any of its tags is exactly the leaf tag or is
+//!   nested under it (for example, `#book` matches `#book/fiction`).
+//! - **Paths:** A Note matches if its file path equals the leaf path exactly,
+//!   or if its folder starts with the leaf path (for example, `books/` matches
+//!   `books/dune.md`).
+//! - **Classes:** A Note matches if any of its File Class values (read from the
+//!   configured class field) appears in the resolved match set for the
+//!   requested expansion mode.
+//! - **Conjunction (`AND`):** All sub-expressions must match.
+//! - **Disjunction (`OR`):** At least one sub-expression must match.
+//! - **Negation (`NOT`):** The sub-expression must not match.
+//!
+//! ## Error Recovery
+//!
+//! Invalid expressions produce a [`QueryError::Syntax`] diagnostic
+//! pinpointing the offending token with a repair hint. Common errors:
+//!
+//! - Missing operand: `#book and`
+//! - Unmatched parenthesis: `(#book`
+//! - Empty class name: `class()`
+//! - Duplicate expansion mode: `class(Book, children).with_descendants()`
+//! - Trailing tokens: `class(Book).with_children() extra`
 //!
 //! # Main Types
 //!
-//! - [`QuerySource`]: Selects which Notes a query includes.
-//! - [`IndexRecord`]: Pairs a [`FileRecord`] with its parsed [`Note`] and
-//!   resolves `file.*`, `task.*`, frontmatter, tag, and inlinks fields.
-//! - [`QueryOutcome`]: Stores result rows, applies chained transformations
-//!   ([`QueryOutcome::filter`], [`QueryOutcome::sort`],
-//!   [`QueryOutcome::limit`], [`QueryOutcome::group_by`],
-//!   [`QueryOutcome::flatten`]), and renders terminal Markdown output
-//!   ([`QueryOutcome::table`], [`QueryOutcome::list`],
-//!   [`QueryOutcome::task_list`]).
-//! - [`QueryError`]: Reports malformed field paths and query expressions.
+//! - [`QuerySource`] is the top-level entry point: either all Notes or a parsed
+//!   expression.
+//! - [`QuerySourceExpr`] wraps the expression AST and exposes parsing,
+//!   matching, and class-expansion mutation.
+//! - [`SourceAtom`] is the leaf enum (tag, path, class) used by the expression
+//!   tree.
+//! - [`ClassExpansionMode`] controls the incremental depth model for File Class
+//!   matching.
+//! - [`IndexRecord`] pairs a [`FileRecord`] with its parsed [`Note`] and
+//!   resolves `file.*`, `task.*`, frontmatter, tag, and inlinks fields for
+//!   template rendering and CLI output.
+//! - [`QueryOutcome`] stores result rows and provides chained transformation
+//!   methods: [`filter`][`QueryOutcome::filter`],
+//!   [`sort`][`QueryOutcome::sort`], [`limit`][`QueryOutcome::limit`],
+//!   [`group_by`][`QueryOutcome::group_by`],
+//!   [`flatten`][`QueryOutcome::flatten`]. Terminal rendering methods include
+//!   [`table`][`QueryOutcome::table`], [`list`][`QueryOutcome::list`], and
+//!   [`task_list`][`QueryOutcome::task_list`].
+//! - [`QueryError`] reports malformed field paths, invalid expressions, and
+//!   transformation constraint violations.
+//!
+//! # Submodules
+//!
+//! - [`choice`] builds selectable file options and borrowed filters.
+//! - [`comparison`] implements filter comparison operators and expressions.
+//! - [`error`] defines error types for field resolution and query
+//!   transformations.
+//! - [`field`] parses and resolves query field paths.
+//! - [`filter`] parses and evaluates `.filter()`/`.where()` expressions.
+//! - [`logic`] provides the shared logical-expression tree and precedence
+//!   parser.
+//! - [`record`] implements query rows and field resolution.
+//! - [`sort`] defines equality and ordering for resolved [`FieldValue`]
+//!   instances.
+//! - [`source`] parses and evaluates page source expressions.
+//!
+//! [`FieldValue`]: crate::note::FieldValue
+//! [`FileRecord`]: crate::index::FileRecord
+//! [`Note`]: crate::note::Note
 
 mod choice;
 mod comparison;
@@ -48,8 +214,13 @@ use crate::{
     note::{FieldValue, Note},
 };
 
-/// Executes a page-level source query using `class_field` for File Class
-/// matching.
+/// Executes a page-level source query, returning one [`IndexRecord`] per
+/// Note matching `source`.
+///
+/// Consumes the [`FileIndex`] to pair [`FileRecord`] and [`Note`] entries,
+/// resolving inlinks from the provided map. Uses `class_field` to read File
+/// Class values from each Note's frontmatter when `source` contains class
+/// atoms.
 #[must_use]
 pub(crate) fn query(
     index: FileIndex,
@@ -67,8 +238,12 @@ pub(crate) fn query(
     QueryOutcome::new(records)
 }
 
-/// Executes a task-level source query using `class_field` for File Class
-/// matching.
+/// Executes a task-level source query, returning one [`IndexRecord`] per
+/// task item across all Notes matching `source`.
+///
+/// Each matching Note is expanded into multiple task-level rows via
+/// [`IndexRecord::with_task`]. Uses `class_field` to read File Class values
+/// from each Note's frontmatter when `source` contains class atoms.
 #[must_use]
 pub(crate) fn query_tasks(
     index: FileIndex,
@@ -124,13 +299,16 @@ fn record_with_inlinks(
     IndexRecord::new(file, note).with_inlinks(links)
 }
 
-/// Represents an ordered collection of [`IndexRecord`] rows produced by an
-/// index query.
+/// An ordered collection of [`IndexRecord`] rows produced by an index
+/// query.
 ///
 /// Page-level outcomes contain one row per Note, while task-level outcomes
-/// contain one row per task item. Transformation methods consume and return a
-/// [`QueryOutcome`], enabling method chaining such as `outcome.filter("rating >
-/// 7")?.sort("rating", true)?.limit(10)?`.
+/// contain one row per task item. Transformation methods consume and return
+/// a [`QueryOutcome`], enabling method chaining such as:
+///
+/// ```text
+/// outcome.filter("rating > 7")?.sort("rating", true)?.limit(10)?
+/// ```
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct QueryOutcome {
     records: Vec<IndexRecord>,
@@ -494,8 +672,8 @@ fn field_text(value: &FieldValue) -> String {
     }
 }
 
-/// Escapes pipes (`|`) and collapses newlines to spaces to preserve table row
-/// formatting.
+/// Escapes pipes (`|`) and collapses newlines to spaces to preserve table
+/// row formatting.
 fn escape_table_text(text: &str) -> String {
     text.replace('\n', " ").replace('|', "\\|")
 }

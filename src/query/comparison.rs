@@ -1,4 +1,10 @@
-//! Filter comparison operators and expressions.
+//! Comparison operators and expressions for filter evaluation.
+//!
+//! This module implements the six comparison operators (`==`, `!=`, `<`,
+//! `<=`, `>`, `>=`) used in `.filter()` expressions. Equality operators
+//! are total: every value kind, including [`FieldValue::Null`], compares
+//! using cross-kind text normalization so string, date, and duration fields
+//! match same-text literals interchangeably.
 
 use super::{
     FieldPath, IndexRecord,
@@ -6,8 +12,13 @@ use super::{
 };
 use crate::note::FieldValue;
 
-/// Comparison operator parsed from a [`super::QueryOutcome::filter`]
-/// expression.
+/// A comparison operator parsed from a
+/// [`QueryOutcome::filter`][`super::QueryOutcome::filter`] expression.
+///
+/// Each variant maps to a syntactic operator in the filter language.
+/// [`Self::Eq`] and [`Self::Ne`] are total: they compare every value kind
+/// including [`FieldValue::Null`]. Ordering operators (`<`, `<=`, `>`, `>=`)
+/// return `false` for unorderable or incomparable value pairs.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(super) enum CompareOp {
     /// `==`
@@ -25,12 +36,15 @@ pub(super) enum CompareOp {
 }
 
 impl CompareOp {
-    /// Whether `field` matches `literal` under this operator.
+    /// Returns whether `field` satisfies this operator against `literal`.
     ///
-    /// `==` and `!=` are total: every value kind, including
-    /// [`FieldValue::Null`], compares. They use [`fields_equal`], not raw
-    /// [`FieldValue`] equality, so a `String`, `Date`, or `Duration` field
-    /// matches a same-text literal of any of those three kinds.
+    /// [`Self::Eq`] and [`Self::Ne`] are total: they use
+    /// [`fields_equal`][`super::sort::fields_equal`] for cross-kind text
+    /// normalization, so a [`String`], `Date`, or `Duration` field matches a
+    /// same-text literal of any of those three kinds. Ordering operators
+    /// compare via
+    /// [`compare_field_values`][`super::sort::compare_field_values`],
+    /// returning `false` for mismatched or unorderable value pairs.
     pub(super) fn is_satisfied_by(
         self,
         field: &FieldValue,
@@ -75,7 +89,10 @@ impl TryFrom<&str> for CompareOp {
     }
 }
 
-/// Payload for a [`FilterExpr::Comparison`] node.
+/// A parsed `<field> <op> <value>` comparison node in a filter expression.
+///
+/// Pairs an already-parsed [`FieldPath`] with a [`CompareOp`] and a literal
+/// [`FieldValue`] to evaluate against each record's resolved field.
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct ComparisonExpr {
     field: FieldPath,
@@ -84,8 +101,8 @@ pub(super) struct ComparisonExpr {
 }
 
 impl ComparisonExpr {
-    /// Pairs `op` with the `field` it resolves from a record and the literal
-    /// `value` it compares that resolution against.
+    /// Pairs `op` with the `field` path it resolves from a record and the
+    /// literal `value` it compares that resolution against.
     pub(super) fn new(
         field: FieldPath,
         op: CompareOp,
@@ -98,7 +115,7 @@ impl ComparisonExpr {
         }
     }
 
-    /// Whether `record` satisfies this comparison.
+    /// Returns whether `record` satisfies this comparison.
     pub(super) fn matches(&self, record: &IndexRecord) -> bool {
         self.op.is_satisfied_by(&record.resolve(&self.field), &self.value)
     }
@@ -108,38 +125,66 @@ impl ComparisonExpr {
 mod tests {
     use super::*;
 
-    #[test]
-    fn compare_op_is_satisfied_by() {
-        let num_5 = FieldValue::Number(5.0);
-        let num_10 = FieldValue::Number(10.0);
+    mod is_satisfied_by {
+        use pretty_assertions::assert_eq;
+        use rstest::rstest;
 
-        assert!(CompareOp::Eq.is_satisfied_by(&num_5, &num_5));
-        assert!(!CompareOp::Eq.is_satisfied_by(&num_5, &num_10));
+        use super::*;
 
-        assert!(CompareOp::Ne.is_satisfied_by(&num_5, &num_10));
-        assert!(!CompareOp::Ne.is_satisfied_by(&num_5, &num_5));
+        #[rstest]
+        #[case(CompareOp::Eq, 5.0, 5.0, true)]
+        #[case(CompareOp::Eq, 5.0, 10.0, false)]
+        #[case(CompareOp::Ne, 5.0, 10.0, true)]
+        #[case(CompareOp::Ne, 5.0, 5.0, false)]
+        #[case(CompareOp::Lt, 5.0, 10.0, true)]
+        #[case(CompareOp::Lt, 10.0, 5.0, false)]
+        #[case(CompareOp::Le, 5.0, 5.0, true)]
+        #[case(CompareOp::Le, 5.0, 10.0, true)]
+        #[case(CompareOp::Gt, 10.0, 5.0, true)]
+        #[case(CompareOp::Gt, 5.0, 10.0, false)]
+        #[case(CompareOp::Ge, 5.0, 5.0, true)]
+        #[case(CompareOp::Ge, 10.0, 5.0, true)]
+        fn evaluates_number_comparisons(
+            #[case] op: CompareOp,
+            #[case] left: f64,
+            #[case] right: f64,
+            #[case] expected: bool,
+        ) {
+            // Arrange
+            let left_val = FieldValue::Number(left);
+            let right_val = FieldValue::Number(right);
 
-        assert!(CompareOp::Lt.is_satisfied_by(&num_5, &num_10));
-        assert!(!CompareOp::Lt.is_satisfied_by(&num_10, &num_5));
+            // Act
+            let result = op.is_satisfied_by(&left_val, &right_val);
 
-        assert!(CompareOp::Le.is_satisfied_by(&num_5, &num_5));
-        assert!(CompareOp::Le.is_satisfied_by(&num_5, &num_10));
-
-        assert!(CompareOp::Gt.is_satisfied_by(&num_10, &num_5));
-        assert!(!CompareOp::Gt.is_satisfied_by(&num_5, &num_10));
-
-        assert!(CompareOp::Ge.is_satisfied_by(&num_5, &num_5));
-        assert!(CompareOp::Ge.is_satisfied_by(&num_10, &num_5));
+            // Assert
+            assert_eq!(result, expected);
+        }
     }
 
-    #[test]
-    fn compare_op_accepts_every_lexer_spelling() {
-        assert_eq!(CompareOp::try_from("=="), Ok(CompareOp::Eq));
-        assert_eq!(CompareOp::try_from("!="), Ok(CompareOp::Ne));
-        assert_eq!(CompareOp::try_from(">="), Ok(CompareOp::Ge));
-        assert_eq!(CompareOp::try_from("<="), Ok(CompareOp::Le));
-        assert_eq!(CompareOp::try_from(">"), Ok(CompareOp::Gt));
-        assert_eq!(CompareOp::try_from("<"), Ok(CompareOp::Lt));
-        assert_eq!(CompareOp::try_from("invalid"), Err(()));
+    mod parse {
+        use pretty_assertions::assert_eq;
+        use rstest::rstest;
+
+        use super::*;
+
+        #[rstest]
+        #[case("==", Ok(CompareOp::Eq))]
+        #[case("!=", Ok(CompareOp::Ne))]
+        #[case(">=", Ok(CompareOp::Ge))]
+        #[case("<=", Ok(CompareOp::Le))]
+        #[case(">", Ok(CompareOp::Gt))]
+        #[case("<", Ok(CompareOp::Lt))]
+        #[case("invalid", Err(()))]
+        fn parses_from_lexer_spelling(
+            #[case] spelling: &str,
+            #[case] expected: Result<CompareOp, ()>,
+        ) {
+            // Act
+            let result = CompareOp::try_from(spelling);
+
+            // Assert
+            assert_eq!(result, expected);
+        }
     }
 }

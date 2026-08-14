@@ -1,4 +1,22 @@
-//! Parses and evaluates `.filter()`/`.where()` expressions.
+//! Parsing and evaluation of `.filter()`/`.where()` expressions.
+//!
+//! This module implements the filter expression language used by
+//! [`super::QueryOutcome::filter`]. Expressions combine comparisons,
+//! function calls, and boolean operators into an AST that is evaluated
+//! against each record.
+//!
+//! # Syntax
+//!
+//! - **Comparisons:** `<field> <op> <value>` with `==`, `!=`, `>=`, `<=`, `>`,
+//!   or `<`.
+//! - **Function calls:** `contains(field, value)` checks list membership, tag
+//!   hierarchy (for example `#book` matching `#book/fiction`), or substring
+//!   containment.
+//! - **Logical operators:** `AND`/`and`/`&&`, `OR`/`or`/`||`, and
+//!   `NOT`/`not`/`!`.
+//! - **Grouping:** `( ... )` overrides default operator precedence.
+//! - **Literals:** quoted strings with `\` escapes, numbers, booleans
+//!   (`true`/`false`), and `null`/`Null`.
 
 use logos::{Lexer, Logos};
 use miette::SourceSpan;
@@ -16,9 +34,16 @@ use super::{
 use crate::note::FieldValue;
 
 /// A parsed `.filter()`/`.where()` expression AST.
+///
+/// Wraps [`LogicalExpr`] with [`FilterAtom`] leaves, providing the concrete
+/// type used by [`super::QueryOutcome::filter`].
 pub(super) type FilterExpr = LogicalExpr<FilterAtom>;
 
 /// Domain-local filter-expression leaves.
+///
+/// Each variant represents one atomic predicate in a filter expression:
+/// either a comparison between a field and a literal value, or a recognized
+/// function call.
 #[derive(Clone, Debug, PartialEq)]
 pub(super) enum FilterAtom {
     /// `<field> <op> <value>` comparison.
@@ -310,9 +335,9 @@ fn parse_comparison(
     Ok(ComparisonExpr::new(field, operator, value))
 }
 
-/// Recognized filter function call.
+/// A recognized filter function call.
 ///
-/// Adding a function means adding a variant here, a name check in
+/// Adding a function requires adding a variant here, a name check in
 /// [`Self::build`], and matching logic in [`Self::matches`].
 #[derive(Clone, Debug, PartialEq)]
 pub(super) enum FilterFunction {
@@ -335,6 +360,8 @@ impl FilterFunction {
     /// * `name` - Function name to match, case-insensitively.
     /// * `field` - Already-parsed field path for the built call.
     /// * `target` - Comparison or membership target for the built call.
+    ///
+    /// Returns `None` when `name` does not match any known function.
     fn build(name: &str, field: FieldPath, target: FieldValue) -> Option<Self> {
         if name.eq_ignore_ascii_case("contains") {
             Some(Self::Contains {
@@ -346,7 +373,7 @@ impl FilterFunction {
         }
     }
 
-    /// Whether `record` satisfies this function call.
+    /// Returns whether `record` satisfies this function call.
     fn matches(&self, record: &IndexRecord) -> bool {
         match self {
             Self::Contains {
@@ -359,10 +386,9 @@ impl FilterFunction {
 
 /// Evaluates a `contains(field_val, target)` call.
 ///
-/// - Lists match by exact value or tag prefix, such as `#book` matching
-///   `#book/fiction`.
-/// - Other field kinds fall back to substring containment on stringified
-///   values.
+/// For list fields, matches by exact value or tag prefix (for example,
+/// `#book` matching `#book/fiction`). For other field kinds, falls back
+/// to substring containment on stringified values.
 fn eval_contains(field_val: &FieldValue, target: &FieldValue) -> bool {
     match field_val {
         FieldValue::List(items) => {
@@ -375,10 +401,11 @@ fn eval_contains(field_val: &FieldValue, target: &FieldValue) -> bool {
     }
 }
 
-/// Evaluates whether list element `item` matches `target`.
+/// Returns whether list element `item` matches `target`.
 ///
-/// Values match exactly. Tag values also match when `item` is nested directly
-/// or transitively under `target`, such as `#book/fiction` under `#book`.
+/// Values match exactly. Tag values also match when `item` is nested
+/// directly or transitively under `target` (for example, `#book/fiction`
+/// under `#book`).
 fn tag_or_value_matches(item: &FieldValue, target: &FieldValue) -> bool {
     if fields_equal(item, target) {
         return true;

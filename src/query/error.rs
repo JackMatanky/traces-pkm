@@ -1,11 +1,29 @@
-//! Defines errors returned during field resolution and query transformations.
+//! Error types for query parsing, field resolution, and result transformation.
+//!
+//! This module defines the error hierarchy returned by [`super::QuerySource`]
+//! parsing, [`super::QueryOutcome`] transformation methods, and
+//! [`super::IndexRecord`] field resolution.
+//!
+//! # Main Types
+//!
+//! - [`QueryDialect`] identifies whether an error originated from source
+//!   selection or filter expression parsing.
+//! - [`QuerySyntaxError`] captures a syntax error with source location and
+//!   repair hint, implementing [`miette::Diagnostic`] for rich error rendering.
+//! - [`FieldPathError`] reports a malformed field path with an optional
+//!   closest-match suggestion.
+//! - [`QueryError`] is the top-level error enum covering all query failure
+//!   modes.
 
 use std::fmt;
 
 use miette::{Diagnostic, SourceSpan};
 use thiserror::Error;
 
-/// The query language that rejected an expression.
+/// Identifies the query language that rejected an expression.
+///
+/// Used by [`QuerySyntaxError`] to produce a human-readable message that
+/// names the failing dialect (for example, "invalid filter expression").
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum QueryDialect {
     /// The `--from` source-selection language.
@@ -24,6 +42,14 @@ impl fmt::Display for QueryDialect {
 }
 
 /// A syntax error in a source or filter expression.
+///
+/// Implements [`miette::Diagnostic`] to provide source-location-aware error
+/// rendering with labeled spans and repair hints. The [`input`] field
+/// contains the complete expression, and [`span`] pinpoints the invalid
+/// token range.
+///
+/// [`input`]: Self::input
+/// [`span`]: Self::span
 #[derive(Clone, Debug, Diagnostic, Eq, Error, PartialEq)]
 #[error("invalid {dialect} expression")]
 pub struct QuerySyntaxError {
@@ -40,7 +66,7 @@ pub struct QuerySyntaxError {
 }
 
 impl QuerySyntaxError {
-    /// Builds a syntax diagnostic for a single expression range.
+    /// Constructs a syntax diagnostic for a single expression range.
     pub(crate) fn new(
         dialect: QueryDialect,
         input: &str,
@@ -56,7 +82,11 @@ impl QuerySyntaxError {
     }
 }
 
-/// A malformed field path and its optional closest accessor suggestion.
+/// A malformed field path with an optional closest-accessor suggestion.
+///
+/// The error message lists all valid accessor prefixes (`file.<field>`,
+/// `task.<field>`, frontmatter keys, `tags`, `inlinks`) and appends a
+/// "did you mean" hint when the input resembles a known accessor.
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
 #[error(
     "invalid field path {path:?}; expected `file.<field>` (path, name, \
@@ -84,13 +114,17 @@ impl FieldPathError {
     }
 }
 
-/// Errors returned during query parsing and transformation.
+/// Top-level error enum for query parsing and transformation.
+///
+/// Covers all failure modes from expression parsing through field resolution
+/// to result rendering. Implements [`miette::Diagnostic`] by delegating to
+/// the inner [`QuerySyntaxError`] for syntax errors.
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
 pub enum QueryError {
     /// A source or filter expression has invalid syntax.
     #[error(transparent)]
     Syntax(#[from] QuerySyntaxError),
-    /// A field path is malformed.
+    /// A field path cannot be parsed or names an unknown accessor.
     #[error(transparent)]
     FieldPath(#[from] FieldPathError),
     /// A query limit was negative or exceeded platform [`usize`] bounds.
@@ -99,13 +133,16 @@ pub enum QueryError {
         /// The rejected limit count.
         value: i64,
     },
-    /// [`super::QueryOutcome::task_list`] received page-level records.
+    /// [`super::QueryOutcome::task_list`] received page-level records instead
+    /// of task-level records produced by
+    /// [`crate::index::FileIndex::query_tasks`].
     #[error(
         "task_list requires task-level records from the `tasks` namespace; \
          got page-level records with no task fields"
     )]
     TaskListRequiresTaskRows,
-    /// `headers` and `columns` had unequal lengths.
+    /// [`super::QueryOutcome::table`] received `headers` and `columns` slices
+    /// of unequal length.
     #[error(
         "table headers ({headers}) and columns ({columns}) must have the same \
          length"

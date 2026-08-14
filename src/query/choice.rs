@@ -1,4 +1,18 @@
-//! File options and borrowed filters produced from the `FileIndex`.
+//! Selectable file options and borrowed filters for
+//! [`crate::index::FileIndex::file_options`].
+//!
+//! This module provides types for building dropdown or autocomplete lists of
+//! indexable files. Each option pairs a human-readable label (resolved from
+//! frontmatter title or aliases) with a project-relative path value.
+//!
+//! # Main Types
+//!
+//! - [`FileOption`] represents one selectable file derived from the current
+//!   index.
+//! - [`FileOptionFilter`] carries borrowed filter parameters for narrowing the
+//!   option set.
+//! - [`FrontmatterFieldKeys`] bundles the validated frontmatter keys used for
+//!   label resolution and class filtering.
 
 use std::collections::BTreeSet;
 
@@ -8,7 +22,12 @@ use crate::{
     note::{FieldValue, Note},
 };
 
-/// One selectable file option derived from the current [`FileIndex`].
+/// A selectable file option derived from the current
+/// [`FileIndex`][`crate::index::FileIndex`].
+///
+/// Each option pairs a display label with a project-relative path value. The
+/// label resolves from the Note's frontmatter aliases, then its title, and
+/// finally falls back to the filename stem.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct FileOption {
     label: String,
@@ -16,10 +35,12 @@ pub(crate) struct FileOption {
 }
 
 impl FileOption {
-    /// Builds the option for `record`: label resolution tries `note`'s
-    /// configured aliases key, then its title key (via `keys`), falling back to
-    /// `record`'s filename stem when neither resolves or `note` is `None`. The
-    /// value is always `record`'s project-relative path.
+    /// Builds an option for `record`.
+    ///
+    /// Label resolution tries the configured aliases key first, then the
+    /// title key (via `keys`), falling back to `record`'s filename stem when
+    /// neither resolves or `note` is `None`. The value is always `record`'s
+    /// project-relative path.
     #[inline]
     #[must_use]
     pub(crate) fn for_record(
@@ -37,10 +58,11 @@ impl FileOption {
         }
     }
 
-    /// Returns the display label for `note`: the first usable configured
-    /// aliases value, falling back to a scalar configured title value.
-    /// Callers fall back further to the filename stem when this returns
-    /// `None`.
+    /// Returns the display label for `note`.
+    ///
+    /// Tries the first usable configured aliases value, then falls back to
+    /// a scalar configured title value. Returns `None` when neither resolves,
+    /// in which case callers fall back further to the filename stem.
     fn frontmatter_label<'a>(
         note: &'a Note,
         keys: &FrontmatterFieldKeys,
@@ -58,9 +80,10 @@ impl FileOption {
         })
     }
 
-    /// Consumes the option, returning its `(label, value)` text without
-    /// re-allocating: the caller (minijinja value construction) needs owned
-    /// `String`s anyway, and this option is never read again afterward.
+    /// Consumes the option, returning its `(label, value)` text pair.
+    ///
+    /// The caller (minijinja value construction) needs owned [`String`]s, and
+    /// this option is never read again afterward.
     #[inline]
     #[must_use]
     pub(crate) fn into_parts(self) -> (String, String) {
@@ -69,6 +92,10 @@ impl FileOption {
 }
 
 /// Borrowed filter values for [`crate::index::FileIndex::file_options`].
+///
+/// Carries folder, extension, and class filters alongside the validated
+/// frontmatter field keys needed for label resolution. Passed by reference
+/// to avoid cloning filter data on each option build.
 #[derive(Copy, Clone)]
 pub(crate) struct FileOptionFilter<'a> {
     pub(crate) folders: &'a [String],
@@ -77,7 +104,7 @@ pub(crate) struct FileOptionFilter<'a> {
     pub(crate) keys: &'a FrontmatterFieldKeys,
 }
 impl<'a> FileOptionFilter<'a> {
-    /// Builds a borrowed file-option filter.
+    /// Builds a borrowed file-option filter from pre-validated parameters.
     #[inline]
     #[must_use]
     pub(crate) const fn new(
@@ -95,15 +122,15 @@ impl<'a> FileOptionFilter<'a> {
     }
 }
 
-/// The `[frontmatter] title`/`aliases` and `[schemas] class_field` keys used
-/// together to resolve `file`-typed Schema field options: label resolution
-/// needs `title`+`aliases`, class filtering needs `class`. Bundled because
-/// every render-path consumer needs at least two of the three, each already
-/// validated once at config load (`FrontmatterConfig`/`SchemasConfig` in
-/// `crate::config`) — this just carries that guarantee forward instead of
-/// re-threading three loose parameters. Lives here, not in `crate::field`,
-/// because it's a config-resolved aggregate specific to file-option
-/// matching, not a field-name/key primitive.
+/// Bundled frontmatter keys for file-option label resolution and class
+/// filtering.
+///
+/// Every render-path consumer needs at least two of the three keys (title,
+/// aliases, class). Each key is validated once at config load, and this
+/// struct carries that guarantee forward instead of re-threading three loose
+/// parameters. Lives here rather than in [`crate::field`] because it is a
+/// config-resolved aggregate specific to file-option matching, not a
+/// field-name/key primitive.
 #[derive(Clone, Debug)]
 pub(crate) struct FrontmatterFieldKeys {
     class: FieldKey,
@@ -112,9 +139,10 @@ pub(crate) struct FrontmatterFieldKeys {
 }
 
 impl FrontmatterFieldKeys {
-    /// Bundles three already-validated field keys. Infallible: validation
-    /// happens once, upstream, when each [`FieldKey`] is first constructed
-    /// from config.
+    /// Bundles three already-validated field keys.
+    ///
+    /// Infallible: validation happens upstream when each [`FieldKey`] is first
+    /// constructed from config.
     #[inline]
     #[must_use]
     pub(crate) const fn new(

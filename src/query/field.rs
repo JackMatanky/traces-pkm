@@ -1,17 +1,28 @@
-//! Parses and resolves query field paths.
+//! Query field path parsing and resolution.
 //!
-//! A query field path string resolves to a [`FieldPath`], which represents one
-//! of:
-//! - A `file.<field>` accessor ([`FileField`])
-//! - A `task.<field>` accessor ([`TaskField`])
-//! - The `tags` accessor
-//! - The `inlinks` accessor
-//! - A frontmatter or inline metadata field key
+//! A query field path string (for example, `file.name`, `task.completed`,
+//! `tags`, or a bare frontmatter key) resolves to a [`FieldPath`] variant
+//! that can be applied to each [`super::IndexRecord`] to extract a
+//! [`FieldValue`].
+//!
+//! # Supported Accessors
+//!
+//! - `file.<field>`: [`FileField`] accessors backed by [`FileRecord`] metadata
+//!   (path, name, folder, size, timestamps).
+//! - `task.<field>`: [`TaskField`] accessors valid on task-level records only
+//!   (completed, text).
+//! - `tags`: Note tags as a list of tag strings.
+//! - `inlinks`: Project-relative paths of Notes linking to this Note.
+//! - Bare keys: frontmatter or inline metadata field keys.
 
 use super::error::FieldPathError;
 use crate::{field, field::FieldKey, index::FileRecord, note::FieldValue};
 
-/// Represents a `file.<field>` accessor backed by [`FileRecord`] metadata.
+/// A `file.<field>` accessor backed by [`FileRecord`] metadata.
+///
+/// Each variant maps to a specific accessor name (for example, `file.name`,
+/// `file.mtime`) and resolves to a [`FieldValue`] by reading the
+/// corresponding [`FileRecord`] method.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(crate) enum FileField {
     /// Accesses [`FileRecord::path`].
@@ -51,8 +62,8 @@ impl FileField {
 
     /// Parses a `file.<field>` accessor name string.
     ///
-    /// Returns [`None`] when `name` is unknown. Callers retain the full
-    /// `file.<field>` path for a [`FieldPathError`].
+    /// Returns `None` when `name` is unknown, allowing the caller to retain
+    /// the full `file.<field>` path for a [`FieldPathError`].
     pub(crate) fn parse(name: &str) -> Option<Self> {
         match name {
             "path" => Some(Self::Path),
@@ -67,9 +78,10 @@ impl FileField {
         }
     }
 
-    /// Resolves this accessor's value for a [`FileRecord`].
+    /// Resolves this accessor's value for `file`.
     ///
-    /// Returns the evaluated [`FieldValue`].
+    /// Returns the evaluated [`FieldValue`] from the corresponding
+    /// [`FileRecord`] method.
     pub(crate) fn resolve(self, file: &FileRecord) -> FieldValue {
         match self {
             Self::Path => {
@@ -102,11 +114,13 @@ impl FileField {
     }
 }
 
-/// Represents a `task.<field>` accessor valid on task-level records.
+/// A `task.<field>` accessor valid on task-level records.
 ///
-/// Applied to task records produced by [`FileIndex::query_tasks`].
+/// Applied to task records produced by
+/// [`crate::index::FileIndex::query_tasks`]. Resolves to
+/// [`FieldValue::Null`] on page-level records.
 ///
-/// [`FileIndex::query_tasks`]: crate::index::FileIndex::query_tasks
+/// [`crate::index::FileIndex::query_tasks`]: crate::index::FileIndex::query_tasks
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(super) enum TaskField {
     /// Accesses task completion state (`- [ ]` versus `- [x]`).
@@ -122,9 +136,9 @@ impl TaskField {
 
     /// Parses the field portion of a `task.<field>` accessor string.
     ///
-    /// Returns [`None`] if `name` is not a recognized accessor name. Mirrors
-    /// [`FileField::parse`], allowing the caller to retain the full
-    /// `task.<field>` path for a [`FieldPathError`].
+    /// Returns `None` if `name` is not a recognized accessor name, allowing
+    /// the caller to retain the full `task.<field>` path for a
+    /// [`FieldPathError`].
     pub(super) fn parse(name: &str) -> Option<Self> {
         match name {
             "completed" => Some(Self::Completed),
@@ -134,10 +148,11 @@ impl TaskField {
     }
 }
 
-/// Represents a resolved query field path.
+/// A resolved query field path.
 ///
-/// A [`FieldPath`] is resolved once per [`QueryOutcome`] transformation and
-/// subsequently applied to each [`IndexRecord`].
+/// A `FieldPath` is parsed once per [`QueryOutcome`][`super::QueryOutcome`]
+/// transformation and subsequently applied to each
+/// [`IndexRecord`][`super::IndexRecord`] to extract a [`FieldValue`].
 ///
 /// [`QueryOutcome`]: super::QueryOutcome
 /// [`IndexRecord`]: super::IndexRecord
@@ -230,7 +245,8 @@ impl FieldPath {
     }
 }
 
-/// Constructs a [`FieldPathError`] containing an optional suggestion hint.
+/// Constructs a [`FieldPathError`] containing an optional "did you mean"
+/// suggestion for a typo in a `file.<field>` or `task.<field>` accessor.
 fn accessor_typo_error(
     path: &str,
     prefix: &str,
@@ -245,16 +261,12 @@ fn accessor_typo_error(
     )
 }
 
-/// Finds the accessor name with the smallest edit distance to an input
-/// string.
+/// Finds the accessor name with the smallest edit distance to `input`.
 ///
-/// Thin wrapper over [`crate::field::closest_match`]: see its doc for the
-/// matching threshold.
-///
-/// Returns `Some(&'static str)` containing the candidate with the smallest
-/// edit distance if that distance does not exceed the calculated threshold.
-/// Returns [`None`] if `candidates` is empty or no candidate falls within the
-/// matching threshold.
+/// Delegates to [`crate::field::closest_match`] for the matching threshold
+/// calculation. Returns `Some(&'static str)` when the closest candidate
+/// falls within the threshold, or `None` when no candidate is close enough
+/// or `candidates` is empty.
 fn closest_accessor(
     candidates: &[&'static str],
     input: &str,
