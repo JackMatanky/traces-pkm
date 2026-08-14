@@ -6,6 +6,54 @@
 
 **Status:** ready-for-agent
 
+## Agent Brief
+
+**Category:** enhancement
+**Summary:** Restructure `src/schema/` into a deep domain module fronted by `SchemaService`, replacing the flat `FieldOptions`/`RawFieldDef` bag and duplicated template-engine wiring with a clean adapter pattern matching `config`/`ConfigService` and `template`/`TemplateService`.
+
+**Current behavior:**
+`src/schema/` exposes `SchemaRegistry::load(dir)` as a free function doing impure I/O and resolution in one call. `RawFieldDef` is a flat struct where every field type's keys (`values`, `folders`/`ext`/`class`, `min`/`max`/`step`, `format`) sit as siblings — nothing prevents declaring `values` on a `date` field; the match silently drops it. `template/engine/schema.rs` and `template/engine/query.rs` each independently implement "load and cache the Schema registry" (`cached_registry`, duplicated verbatim) and "degrade a class with no Schema" (duplicated between `file_field_values` and `run_class`). `SchemaBinding` wraps a `Schema` with ambient registry/context state instead of `Schema` implementing `Object` directly. `SchemaContext` duplicates `SchemasConfig`/`FrontmatterConfig` fields without owning the projection. `schema.get(name)` returns `Value::from_dyn_object(Arc::new(SchemaBinding { ... }))` — a per-instance wrapper instead of the domain type itself.
+
+**Desired behavior:**
+`src/schema/` is a self-contained domain module with one public facade, `SchemaService`. A new `SchemaConfigSpec` in `config/` owns an immutable, owned snapshot of `[schemas]` and `[frontmatter]` config (required because minijinja's `Object` bound requires `'static` — borrowed `&Config` is rejected at the type level). `SchemaService` wraps `SchemaConfigSpec`, exposing `resolve()`, `get()`, `children()`, `descendants()`, and `matches()` with the same semantics as today's `SchemaRegistry` methods plus the class-degrade-and-warn logic currently duplicated in the template layer. `RawFieldDef`'s flat option bag becomes `RawSchemaFieldDef` with an `options: BTreeMap<String, FieldValue>` map; type-specific validation lives on `SchemaFieldType` variants via `try_from_options`. `SchemaFieldBuilder` replaces the free functions `build_schema`/`build_field`, producing `SchemaFieldDef` instances. `Schema.children` and `Schema.descendants` are first-class resolved attributes populated from `SchemaGraph::children_by_name()` and `descendants_by_name()` during `resolve()` — no more O(n) full-registry scans per call. `Schema` implements minijinja's `Object` directly (mirroring `QueryOutcome` in `query.rs`); `SchemaBinding` and `SchemaContext` are deleted. Both duplicated `cached_registry` implementations are replaced by one shared helper. Both duplicated class-degrade-and-warn call sites call `SchemaService::matches()` directly. `Schema::suggest_field` moves from the template adapter to the domain type.
+
+**Key interfaces:**
+
+- `SchemaConfigSpec` — owned config projection (`root`, `directory`, `class_field`, `title_field`, `aliases_field`) with `pub(crate)` accessor methods matching `SchemasConfig`/`FrontmatterConfig` convention; `Config::to_schema_spec()` returns one
+- `SchemaService` — wraps `SchemaConfigSpec`; `new(spec)` is trivial (no I/O); `resolve()` returns `Result<(Arc<SchemaRegistry>, Vec<SchemaWarning>), SchemaError>` (same shape as today's `SchemaRegistry::load`); `get()`/`children()`/`descendants()`/`matches()` carry the same semantics as today's `SchemaRegistry` methods; `spec()` accessor exposes the config projection to the template adapter
+- `SchemaFieldType` — enum replacing `FieldType`+`FieldOptions`: `Input`, `Boolean`, `Select { values: Vec<SchemaSelectFieldEntry> }`, `Number { min, max, step }`, `Date { format }`, `File { folders, ext, class }`
+- `SchemaSelectFieldEntry` — `{ value: FieldValue, label: FieldValue, extra: BTreeMap<String, FieldValue> }` (flat string case under this ticket; structured sources deferred to ticket 08)
+- `SchemaFieldBuilderError` — builder-owned enum: `UnknownAttributeKey`, `AttributeValueTypeMismatch`, `RefOutOfBounds`, `RefFieldNotFound`; wrapped into `SchemaError::FieldBuilder` via `#[from]`
+- `SchemaWarning` — gains `UnknownOverrideKey { address, kind, key }` and `OverrideValueTypeMismatch { address, kind, key, value, expected }`
+- `Schema.children` — `BTreeSet<SchemaName>`, direct extenders only (from `SchemaGraph::children_by_name()`)
+- `Schema.descendants` — `BTreeSet<SchemaName>`, transitive closure (from `SchemaGraph::descendants_by_name()`)
+
+**Acceptance criteria:**
+
+- [ ] `config/specs.rs` exists with `SchemaConfigSpec` (private fields, `pub(crate)` accessors) and `Config::to_schema_spec()`; the hand-derived `class_field`/`schemas_dir`/`field_keys` construction in the template engine is replaced by one call
+- [ ] `src/schema/` matches the target module layout; `registry.rs` and `resolve.rs` no longer exist as standalone files
+- [ ] `SchemaService::resolve()` returns `Result<(Arc<SchemaRegistry>, Vec<SchemaWarning>), SchemaError>`; `get()`/`children()`/`descendants()`/`matches()` exist with the signatures above; `new()` is trivial and does no I/O; `SchemaService` has no `file_field_values` method
+- [ ] `RawSchemaFieldDef` holds `options: BTreeMap<String, FieldValue>`; `RawFieldDefToml`'s wire-level `deny_unknown_fields` protection is unchanged
+- [ ] `SchemaSelectFieldDef`/`SchemaFileFieldDef`/`SchemaNumberFieldDef`/`SchemaDateFieldDef` each implement `try_from_options`, used identically for a `Direct` field's own options and for validating a `$ref` override's keys
+- [ ] A field declaring a key that doesn't belong to its resolved type is `SchemaFieldBuilderError::UnknownAttributeKey` (Direct/override_type) or `SchemaWarning::UnknownOverrideKey` (bare override); a field declaring a valid key with a wrongly-shaped value is `AttributeValueTypeMismatch`/`OverrideValueTypeMismatch` respectively — each covered by its own test
+- [ ] `Schema.children` is populated from `SchemaGraph::children_by_name()` as direct extenders only; `Schema.descendants` is populated via `SchemaGraph::descendants_by_name()` as the transitive closure. `SchemaService::children()` and `SchemaService::descendants()` no longer do O(n) full-registry scans per call; `children_by_name()`/`descendants_by_name()` are unit-tested against a diamond `extends` DAG and a 3+-level chain, asserting exact direct-child sets and exact deduplicated descendant sets
+- [ ] `SchemaFieldType::File.class` stays `Vec<String>` (declared, unexpanded) — is-a matching for file-field class filters is unchanged from today, still live via `SchemaService::matches()` inside `template/engine/schema.rs`; not precomputed by this ticket
+- [ ] Both existing `cached_registry` implementations are deleted, replaced by one shared helper; both existing class-degrade-and-warn duplicates are replaced by calling `SchemaService::matches()` directly — same live, per-call timing
+- [ ] `Schema::suggest_field` exists on the domain type; the template adapter's `closest_field_suggestion`/`closest_field_name` are deleted
+- [ ] `SchemaBinding` wrapper type no longer exists; `Schema` implements minijinja's `Object` directly (mirroring `query.rs`'s `impl Object for QueryOutcome`); `.field()`/`.children()`/`.descendants()` fetch the render-cached `SchemaService`/`SchemaRegistry` via `State`, not per-instance fields; `schema.get(name)` returns the bound `Arc<Schema>` directly
+- [ ] `SchemaContext` type no longer exists; the adapter reaches root/directory/class/title/aliases data through `SchemaService::spec()` and `SchemaConfigSpec`'s own accessors; `.field()`'s File-branch builds a `FrontmatterFieldKeys` on the fly from `spec().{class,title,aliases}_field()` when it needs one, rather than caching a precomposed bundle
+- [ ] `Schema` and `SchemaService` are `pub` in `schema/mod.rs` *and* re-exported from `lib.rs` under `#[cfg(any(test, feature = "test-utils"))]`, mirroring `config`'s/`template`'s gate; `SchemaFieldDef`, `SchemaFieldType`, and `SchemaSelectFieldEntry` stay `pub(crate)` with no `lib.rs` re-export; every other new/renamed type is `pub(crate)` or narrower
+- [ ] Full existing test suite (`mise test`) passes with no test assertion changed except the disclosed mismatched-key/mismatched-value behavior change
+- [ ] `mise clippy` clean; ADR-0007's Confirmation section is amended to scope "pure" to the `extends`/`$ref`/Kahn's-sort linearization specifically (ADR-0006's amendment is deferred to ticket 08)
+
+**Out of scope:**
+
+- Everything ticket 08 adds: `RawSelectValues`/`RawValueObject`/`RawValuesFileSource`, `ValuesFileCache`, `order`-sorting, `value`/`label`/`order` key-name selectors, values-file authoring surface
+- Any change to `extends`/`excludes`/`$ref` bounding semantics (ADR-0007's DAG mechanism)
+- Migrating `note::NoteFieldValue` onto `field.rs`'s `FieldValue`/`FieldValueRef`
+- Precomputing `SchemaFieldType::File.class` is-a expansion (depends on ticket 13 landing first)
+- Amending ADR-0006 to name the load-time-external-but-static phase (deferred to ticket 08)
+
 ## Motivation
 
 A first-principles review of `src/schema/` (informed by the abandoned worktree) found four compounding root causes, all present on `main` today, none introduced by that attempt:
@@ -365,33 +413,6 @@ Split across the two tickets — each amendment should only assert what's actual
 
 - **This ticket:** supersede/amend ADR-0007's Confirmation section to scope "pure" to the `extends`/`$ref`/Kahn's-sort linearization specifically (`graph.rs`, untouched here) rather than field construction generally. True immediately after this ticket — `graph.rs` is the only genuinely pure part regardless of what ticket 08 later adds.
 - **Ticket 08, not this one:** amend ADR-0006's Consequences to name the load-time-external-but-static phase as a first-class option alongside "declared in the TOML" and "index-derived at use-time." `SchemaFieldBuilder` provides the *seam* for that phase here, but nothing exercises it — every `select` value stays a literal string array — until ticket 08 adds a real file-sourced case. Naming the phase as an established option before it has one working, tested instance would repeat the premature-documentation risk already declined when this tension was first flagged.
-
-## Acceptance Criteria
-
-- [ ] `config/specs.rs` exists with `SchemaConfigSpec` (private fields, `pub(crate)` accessor methods, matching `Config`'s own convention — not `SchemaFileFieldFilter`'s plain-projection style, since `SchemaConfigSpec` is held across a module boundary for a render's lifetime rather than read once at a single call site) and `Config::to_schema_spec()`; `template/engine.rs`'s hand-derived `class_field`/`schemas_dir`/`field_keys` construction is replaced by one call.
-- [ ] `src/schema/` matches the target layout above; `registry.rs` and `resolve.rs` no longer exist as standalone files.
-- [ ] `SchemaService::resolve()` returns `Result<(Arc<SchemaRegistry>, Vec<SchemaWarning>), SchemaError>` — same (data, warnings) shape as today's `SchemaRegistry::load`; `get()`/`children()`/`descendants()`/`matches()` exist with the signatures above; `new()` is trivial and does no I/O. `SchemaService` has no `file_field_values` method — file-field resolution is not a schema-domain concern (see the `schema.rs` module layout above).
-- [ ] `RawSchemaFieldDef` holds `options: BTreeMap<String, FieldValue>`; `RawFieldDefToml`'s wire-level `deny_unknown_fields` protection is unchanged (verified: a genuinely unknown key still fails to parse with equivalent error text).
-- [ ] `SchemaSelectFieldDef`/`SchemaFileFieldDef`/`SchemaNumberFieldDef`/`SchemaDateFieldDef` each implement `try_from_options`, used identically for a `Direct` field's own options and for validating a `$ref` override's keys.
-- [ ] A field declaring a key that doesn't belong to its resolved type is `SchemaFieldBuilderError::UnknownAttributeKey` (Direct/override_type, wrapped as `SchemaError::FieldBuilder`) or `SchemaWarning::UnknownOverrideKey` (bare override); a field declaring a valid key with a wrongly-shaped value is `AttributeValueTypeMismatch`/`OverrideValueTypeMismatch` respectively. All four carry `address`/`kind`/`key` (the value-mismatch pair also carry `value`/`expected`) — each covered by its own test, the value-mismatch pair asserting the message names both what was given and what was expected.
-- [ ] `Schema.children` is populated from `SchemaGraph::children_by_name()` as direct extenders only; `Schema.descendants` is populated via `SchemaGraph::descendants_by_name()` as the transitive closure. `SchemaService::children()` and `SchemaService::descendants()` no longer do O(n) full-registry scans per call; `children_by_name()`/`descendants_by_name()` are unit-tested against a diamond `extends` DAG and a 3+-level chain, asserting exact direct-child sets and exact deduplicated descendant sets.
-- [ ] `SchemaFieldType::File.class` stays `Vec<String>` (declared, unexpanded) — is-a matching for file-field class filters is unchanged from today, still live via `SchemaService::matches()` inside `template/engine/schema.rs`; not precomputed by this ticket (see Comments).
-- [ ] Both existing `cached_registry` implementations (`schema.rs`, `query.rs`) are deleted, replaced by one shared helper; both existing class-degrade-and-warn duplicates — `run_class` (`query.rs`) and the file-field class-matching code in `schema.rs` — are deleted, replaced by calling `SchemaService::matches()` directly, which now owns the degrade-and-warn logic itself. Both call sites keep today's live, per-call timing (see previous bullet) — `matches()` is not precomputed.
-- [ ] `Schema::suggest_field` exists on the domain type; `template/engine/schema.rs`'s `closest_field_suggestion`/`closest_field_name` are deleted.
-- [ ] `template/engine/schema.rs`'s `SchemaBinding` wrapper type no longer exists; `Schema` implements minijinja's `Object` directly (mirroring `query.rs`'s `impl Object for QueryOutcome`); `.field()`/`.children()`/`.descendants()` fetch the render-cached `SchemaService`/`SchemaRegistry` via `state`, not per-instance fields; `schema.get(name)` returns the bound `Arc<Schema>` directly.
-- [ ] `template/engine/schema.rs`'s `SchemaContext` type no longer exists; it duplicated `SchemaConfigSpec` field-for-field (root, directory, class/title/aliases keys) with nothing `SchemaConfigSpec` didn't already carry. The adapter reaches that data through `SchemaService::spec()` and `SchemaConfigSpec`'s own accessors instead of a second, adapter-side struct; `.field()`'s File-branch builds a `FrontmatterFieldKeys` on the fly from `spec().{class,title,aliases}_field()` when it needs one, rather than caching a precomposed bundle.
-- [ ] `Schema` and `SchemaService` are `pub` in `schema/mod.rs` *and* re-exported from `lib.rs` under `#[cfg(any(test, feature = "test-utils"))]`, mirroring `config`'s/`template`'s gate; `SchemaFieldDef`, `SchemaFieldType`, and `SchemaSelectFieldEntry` stay `pub(crate)` with no `lib.rs` re-export; every other new/renamed type is `pub(crate)` or narrower.
-- [ ] Full existing test suite (`mise test`) passes with no test assertion changed except the disclosed mismatched-key/mismatched-value behavior change and any test rewritten to target the new `Schema*FieldDef`/`SchemaFieldBuilder` seam instead of the retired `FieldOptions::from_raw`.
-- [ ] `mise clippy` clean.
-- [ ] ADR-0007's Confirmation section is amended to scope "pure" to the `extends`/`$ref`/Kahn's-sort linearization specifically. (ADR-0006's amendment — naming the load-time-external-but-static phase — is ticket 08's acceptance criterion, not this ticket's; do not write it here.)
-
-## Out of Scope
-
-- Everything ticket 08 (`08-values-file-source.md`) adds: `RawSelectValues::Objects`/`File`, `RawValueObject`, `RawValuesFileSource`, `ValuesFileCache`, `order`-sorting, `value`/`label`/`order` key-name selectors, and the values-file authoring surface itself.
-- Any change to `extends`/`excludes`/`$ref` bounding semantics (ADR-0007's DAG mechanism) — untouched by this ticket.
-- Migrating `note::NoteFieldValue` or any other existing value representation onto `field.rs`'s `FieldValue`/`FieldValueRef` — a separate, later refactor per the user's own stated plan; this ticket is `FieldValue`'s first production consumer, not a crate-wide rollout.
-- Amending ADR-0006 to name the load-time-external-but-static phase as an established option — deferred to ticket 08, the first ticket to actually exercise it.
-- Precomputing `SchemaFieldType::File.class`'s is-a expansion, or otherwise touching file-field class-matching timing — depends on `.scratch/index-query/issues/13-query-module-and-source-dsl.md` (a general composable `QuerySource`) landing first; building a one-off expansion mechanism here would repeat the exact duplication this ticket exists to remove elsewhere. File-field class matching stays exactly as implemented today.
 
 ## Comments
 
