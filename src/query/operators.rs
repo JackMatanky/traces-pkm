@@ -1,6 +1,7 @@
-//! Filter comparison and logical operators.
+//! Operators shared by query parsing and filter evaluation.
 //!
-//! [`ComparisonExpr`] and [`LogicalExpr`] pair each operator with its operands.
+//! Comparison operators are filter-specific; logical operators are shared by
+//! the source and filter Boolean grammars.
 
 use std::str::FromStr;
 
@@ -116,10 +117,10 @@ impl ComparisonExpr {
     }
 }
 
-/// Logical `AND`/`OR` combinator for two or more [`FilterExpr`]s.
+/// Logical `AND`/`OR` operator shared by query Boolean grammars.
 ///
-/// `NOT` negates exactly one sub-expression, so it stays in [`FilterExpr::Not`]
-/// instead of sharing this multi-expression operator.
+/// Filter evaluation stores it in [`LogicalExpr`]. `NOT` stays in each
+/// domain's AST because it negates exactly one sub-expression.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(super) enum LogicalOp {
     /// `AND` / `and` / `&&`

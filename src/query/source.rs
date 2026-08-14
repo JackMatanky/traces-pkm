@@ -1,10 +1,14 @@
 //! Parse and evaluate page source expressions.
 
-use std::{collections::BTreeSet, path::PathBuf, vec};
+use std::{collections::BTreeSet, path::PathBuf};
 
 use logos::{Lexer, Logos};
 
-use super::{QueryError, operators::LogicalOp};
+use super::{
+    QueryError,
+    operators::LogicalOp,
+    parser::{BooleanControl, BooleanGrammar, TokenCursor, parse_boolean},
+};
 use crate::{
     index::FileRecord,
     note::{FieldValue, Note},
@@ -85,13 +89,7 @@ impl QuerySourceExpr {
     /// Returns [`QueryError::UnparsableSourceExpression`] when `input` is not a
     /// complete source expression.
     pub fn parse(input: &str) -> Result<Self, QueryError> {
-        let tokens = tokenize(input)?;
-        let mut parser = SourceParser::new(input, tokens);
-        let expression = parser.parse_expr()?;
-        if parser.peek().is_some() {
-            return Err(QueryError::unparsable_source(input));
-        }
-        Ok(expression)
+        parse_boolean(input, tokenize(input)?, SourceGrammar)
     }
 
     /// Returns whether the indexed Note satisfies this expression.
@@ -261,157 +259,141 @@ fn tokenize(input: &str) -> Result<Vec<SourceToken>, QueryError> {
         .map_err(|()| QueryError::unparsable_source(input))
 }
 
-struct SourceParser<'a> {
-    input: &'a str,
-    tokens: std::iter::Peekable<vec::IntoIter<SourceToken>>,
-}
+struct SourceGrammar;
 
-impl<'a> SourceParser<'a> {
-    fn new(input: &'a str, tokens: Vec<SourceToken>) -> Self {
-        Self {
-            input,
-            tokens: tokens.into_iter().peekable(),
+impl BooleanGrammar for SourceGrammar {
+    type Expr = QuerySourceExpr;
+    type Token = SourceToken;
+
+    fn control(&self, token: &Self::Token) -> Option<BooleanControl> {
+        match token {
+            SourceToken::Logical(operator) => {
+                Some(BooleanControl::Logical(*operator))
+            }
+            SourceToken::Not => Some(BooleanControl::Not),
+            SourceToken::LParen => Some(BooleanControl::LeftParen),
+            SourceToken::RParen => Some(BooleanControl::RightParen),
+            SourceToken::Comma
+            | SourceToken::Class
+            | SourceToken::WithChildren
+            | SourceToken::WithDescendants
+            | SourceToken::Tag(_)
+            | SourceToken::ClassSigil(_)
+            | SourceToken::Quoted(_)
+            | SourceToken::Bare(_) => None,
         }
     }
 
-    fn invalid(&self) -> QueryError {
-        QueryError::unparsable_source(self.input)
-    }
-
-    fn peek(&mut self) -> Option<&SourceToken> {
-        self.tokens.peek()
-    }
-
-    fn next(&mut self) -> Option<SourceToken> {
-        self.tokens.next()
-    }
-
-    fn expect(&mut self, expected: SourceToken) -> Result<(), QueryError> {
-        if self.next() == Some(expected) {
-            Ok(())
-        } else {
-            Err(self.invalid())
-        }
-    }
-
-    fn parse_expr(&mut self) -> Result<QuerySourceExpr, QueryError> {
-        self.parse_or()
-    }
-
-    fn parse_or(&mut self) -> Result<QuerySourceExpr, QueryError> {
-        self.parse_logical_chain(LogicalOp::Or, Self::parse_and)
-    }
-
-    fn parse_and(&mut self) -> Result<QuerySourceExpr, QueryError> {
-        self.parse_logical_chain(LogicalOp::And, Self::parse_not)
-    }
-
-    fn parse_logical_chain(
-        &mut self,
-        operator: LogicalOp,
-        mut parse_term: impl FnMut(&mut Self) -> Result<QuerySourceExpr, QueryError>,
-    ) -> Result<QuerySourceExpr, QueryError> {
-        let first = parse_term(self)?;
-        if self.peek() != Some(&SourceToken::Logical(operator)) {
-            return Ok(first);
-        }
-        self.next();
-        let second = parse_term(self)?;
-        let mut expressions = vec![first, second];
-        while self.peek() == Some(&SourceToken::Logical(operator)) {
-            self.next();
-            expressions.push(parse_term(self)?);
-        }
-        Ok(match operator {
-            LogicalOp::And => QuerySourceExpr::And(expressions),
-            LogicalOp::Or => QuerySourceExpr::Or(expressions),
-        })
-    }
-
-    fn parse_not(&mut self) -> Result<QuerySourceExpr, QueryError> {
-        if self.peek() == Some(&SourceToken::Not) {
-            self.next();
-            Ok(QuerySourceExpr::Not(Box::new(self.parse_not()?)))
-        } else {
-            self.parse_primary()
-        }
-    }
-
-    fn parse_primary(&mut self) -> Result<QuerySourceExpr, QueryError> {
-        match self.next() {
+    fn parse_atom(
+        &self,
+        input: &str,
+        tokens: &mut TokenCursor<Self::Token>,
+    ) -> Result<Self::Expr, QueryError> {
+        match tokens.next() {
             Some(SourceToken::Tag(tag)) => Ok(QuerySourceExpr::Tag(tag)),
-            Some(SourceToken::ClassSigil(sigil)) => self.parse_sigil(&sigil),
+            Some(SourceToken::ClassSigil(sigil)) => parse_sigil(input, &sigil),
             Some(SourceToken::Quoted(path) | SourceToken::Bare(path)) => {
                 Ok(QuerySourceExpr::Path(PathBuf::from(path)))
             }
-            Some(SourceToken::Class) => self.parse_class_function(),
-            Some(SourceToken::LParen) => {
-                let expression = self.parse_expr()?;
-                self.expect(SourceToken::RParen)?;
-                Ok(expression)
-            }
-            _ => Err(self.invalid()),
+            Some(SourceToken::Class) => parse_class_function(input, tokens),
+            Some(
+                SourceToken::LParen
+                | SourceToken::RParen
+                | SourceToken::Comma
+                | SourceToken::Logical(_)
+                | SourceToken::Not
+                | SourceToken::WithChildren
+                | SourceToken::WithDescendants,
+            )
+            | None => Err(self.invalid(input)),
         }
     }
 
-    fn parse_sigil(&self, sigil: &str) -> Result<QuerySourceExpr, QueryError> {
-        let raw = sigil.strip_prefix('@').ok_or_else(|| self.invalid())?;
-        let (name, mode) = if let Some(name) = raw.strip_suffix('+') {
-            (name, ClassExpansionMode::Children(BTreeSet::new()))
-        } else if let Some(name) = raw.strip_suffix('*') {
-            (name, ClassExpansionMode::Descendants(BTreeSet::new()))
-        } else {
-            (raw, ClassExpansionMode::Exact(BTreeSet::new()))
-        };
-        if name.is_empty() {
-            return Err(self.invalid());
+    fn logical(
+        &self,
+        operator: LogicalOp,
+        expressions: Vec<Self::Expr>,
+    ) -> Self::Expr {
+        match operator {
+            LogicalOp::And => QuerySourceExpr::And(expressions),
+            LogicalOp::Or => QuerySourceExpr::Or(expressions),
         }
-        Ok(QuerySourceExpr::Class {
-            names: vec![name.to_owned()],
-            mode,
-        })
     }
 
-    fn parse_class_function(&mut self) -> Result<QuerySourceExpr, QueryError> {
-        self.expect(SourceToken::LParen)?;
-        let Some(SourceToken::Quoted(name) | SourceToken::Bare(name)) =
-            self.next()
-        else {
-            return Err(self.invalid());
-        };
-        if name.is_empty() {
-            return Err(self.invalid());
-        }
-        let mut mode = ClassExpansionMode::Exact(BTreeSet::new());
-        if self.peek() == Some(&SourceToken::Comma) {
-            self.next();
-            mode = match self.next() {
-                Some(SourceToken::Bare(value)) if value == "children" => {
-                    ClassExpansionMode::Children(BTreeSet::new())
-                }
-                Some(SourceToken::Bare(value)) if value == "descendants" => {
-                    ClassExpansionMode::Descendants(BTreeSet::new())
-                }
-                _ => return Err(self.invalid()),
-            };
-        }
-        self.expect(SourceToken::RParen)?;
-        mode = match self.peek() {
-            Some(SourceToken::WithChildren) => {
-                self.next();
+    fn not(&self, expression: Self::Expr) -> Self::Expr {
+        QuerySourceExpr::Not(Box::new(expression))
+    }
+
+    fn invalid(&self, input: &str) -> QueryError {
+        QueryError::unparsable_source(input)
+    }
+}
+
+fn parse_sigil(
+    input: &str,
+    sigil: &str,
+) -> Result<QuerySourceExpr, QueryError> {
+    let invalid = || QueryError::unparsable_source(input);
+    let raw = sigil.strip_prefix('@').ok_or_else(invalid)?;
+    let (name, mode) = if let Some(name) = raw.strip_suffix('+') {
+        (name, ClassExpansionMode::Children(BTreeSet::new()))
+    } else if let Some(name) = raw.strip_suffix('*') {
+        (name, ClassExpansionMode::Descendants(BTreeSet::new()))
+    } else {
+        (raw, ClassExpansionMode::Exact(BTreeSet::new()))
+    };
+    if name.is_empty() {
+        return Err(invalid());
+    }
+    Ok(QuerySourceExpr::Class {
+        names: vec![name.to_owned()],
+        mode,
+    })
+}
+
+fn parse_class_function(
+    input: &str,
+    tokens: &mut TokenCursor<SourceToken>,
+) -> Result<QuerySourceExpr, QueryError> {
+    let invalid = || QueryError::unparsable_source(input);
+    if !tokens.take(&SourceToken::LParen) {
+        return Err(invalid());
+    }
+    let Some(SourceToken::Quoted(name) | SourceToken::Bare(name)) =
+        tokens.next()
+    else {
+        return Err(invalid());
+    };
+    if name.is_empty() {
+        return Err(invalid());
+    }
+
+    let mut mode = ClassExpansionMode::Exact(BTreeSet::new());
+    if tokens.take(&SourceToken::Comma) {
+        mode = match tokens.next() {
+            Some(SourceToken::Bare(value)) if value == "children" => {
                 ClassExpansionMode::Children(BTreeSet::new())
             }
-            Some(SourceToken::WithDescendants) => {
-                self.next();
+            Some(SourceToken::Bare(value)) if value == "descendants" => {
                 ClassExpansionMode::Descendants(BTreeSet::new())
             }
-            _ => mode,
+            _ => return Err(invalid()),
         };
-        Ok(QuerySourceExpr::Class {
-            names: vec![name],
-            mode,
-        })
     }
+    if !tokens.take(&SourceToken::RParen) {
+        return Err(invalid());
+    }
+    mode = if tokens.take(&SourceToken::WithChildren) {
+        ClassExpansionMode::Children(BTreeSet::new())
+    } else if tokens.take(&SourceToken::WithDescendants) {
+        ClassExpansionMode::Descendants(BTreeSet::new())
+    } else {
+        mode
+    };
+    Ok(QuerySourceExpr::Class {
+        names: vec![name],
+        mode,
+    })
 }
 
 #[cfg(test)]
@@ -433,6 +415,7 @@ mod tests {
 
     mod parse {
         use pretty_assertions::assert_eq;
+        use rstest::rstest;
 
         use super::*;
 
@@ -481,27 +464,25 @@ mod tests {
             );
         }
 
-        #[test]
-        fn parses_class_function_forms_at_each_depth() {
+        #[rstest]
+        #[case::bare_exact("class(Book)", exact())]
+        #[case::quoted_exact(r#"class("Book")"#, exact())]
+        #[case::comma_children("class(Book, children)", children())]
+        #[case::comma_descendants("class(Book, descendants)", descendants())]
+        #[case::modifier_children("class(Book).with_children()", children())]
+        #[case::modifier_descendants(
+            "class(Book).with_descendants()",
+            descendants()
+        )]
+        fn parses_class_function_forms(
+            #[case] input: &str,
+            #[case] mode: ClassExpansionMode,
+        ) {
             assert_eq!(
-                QuerySourceExpr::parse("class(Book)"),
+                QuerySourceExpr::parse(input),
                 Ok(QuerySourceExpr::Class {
                     names: vec!["Book".to_owned()],
-                    mode: exact(),
-                })
-            );
-            assert_eq!(
-                QuerySourceExpr::parse("class(Book, children)"),
-                Ok(QuerySourceExpr::Class {
-                    names: vec!["Book".to_owned()],
-                    mode: children(),
-                })
-            );
-            assert_eq!(
-                QuerySourceExpr::parse("class(Book).with_descendants()"),
-                Ok(QuerySourceExpr::Class {
-                    names: vec!["Book".to_owned()],
-                    mode: descendants(),
+                    mode,
                 })
             );
         }
@@ -533,6 +514,20 @@ mod tests {
                     QuerySourceExpr::Not(Box::new(QuerySourceExpr::Path(
                         PathBuf::from("archive/"),
                     ))),
+                ]))
+            );
+        }
+
+        #[test]
+        fn repeated_not_and_same_operator_chains_preserve_ast_shape() {
+            assert_eq!(
+                QuerySourceExpr::parse("not not #book and #movie and archive/"),
+                Ok(QuerySourceExpr::And(vec![
+                    QuerySourceExpr::Not(Box::new(QuerySourceExpr::Not(
+                        Box::new(QuerySourceExpr::Tag("#book".to_owned()))
+                    ))),
+                    QuerySourceExpr::Tag("#movie".to_owned()),
+                    QuerySourceExpr::Path(PathBuf::from("archive/")),
                 ]))
             );
         }

@@ -5,16 +5,14 @@
 //! - [`FilterExpr`]: Parsed AST for a filter expression.
 //! - [`FilterToken`]: Token stream produced from a filter expression by
 //!   [`tokenize_filter_expr`].
-//! - [`FilterParser`]: Turns tokens into a [`FilterExpr`].
 //! - [`FilterFunction`]: Recognized calls such as `contains(tags, "#book")`.
-
-use std::vec;
 
 use logos::{Lexer, Logos};
 
 use super::{
     FieldPath, IndexRecord, QueryError,
     operators::{CompareOp, ComparisonExpr, LogicalExpr, LogicalOp},
+    parser::{BooleanControl, BooleanGrammar, TokenCursor, parse_boolean},
     sort::fields_equal,
 };
 use crate::note::FieldValue;
@@ -51,13 +49,7 @@ impl FilterExpr {
     /// - [`QueryError::UnparsableFilterExpression`] if `expr` is malformed.
     /// - [`QueryError::UnknownFieldPath`] if a field path is malformed.
     pub(super) fn parse(expr: &str) -> Result<Self, QueryError> {
-        let tokens = tokenize_filter_expr(expr)?;
-        let mut parser = FilterParser::new(expr, tokens);
-        let ast = parser.parse_expr()?;
-        if parser.peek().is_some() {
-            return Err(QueryError::unparsable_filter(expr));
-        }
-        Ok(ast)
+        parse_boolean(expr, tokenize_filter_expr(expr)?, FilterGrammar)
     }
 
     /// Whether `record` satisfies this expression.
@@ -171,164 +163,116 @@ fn string_callback(lex: &mut Lexer<'_, FilterToken>) -> FieldValue {
     FieldValue::String(value)
 }
 
-/// Recursive descent parser for [`FilterExpr`] ASTs.
-struct FilterParser<'a> {
-    expr: &'a str,
-    tokens: std::iter::Peekable<vec::IntoIter<FilterToken>>,
+struct FilterGrammar;
+
+impl BooleanGrammar for FilterGrammar {
+    type Expr = FilterExpr;
+    type Token = FilterToken;
+
+    fn control(&self, token: &Self::Token) -> Option<BooleanControl> {
+        match token {
+            FilterToken::Logical(operator) => {
+                Some(BooleanControl::Logical(*operator))
+            }
+            FilterToken::Not => Some(BooleanControl::Not),
+            FilterToken::LParen => Some(BooleanControl::LeftParen),
+            FilterToken::RParen => Some(BooleanControl::RightParen),
+            FilterToken::Comma
+            | FilterToken::Op(_)
+            | FilterToken::Literal(_)
+            | FilterToken::Ident(_) => None,
+        }
+    }
+
+    fn parse_atom(
+        &self,
+        input: &str,
+        tokens: &mut TokenCursor<Self::Token>,
+    ) -> Result<Self::Expr, QueryError> {
+        match tokens.next() {
+            Some(FilterToken::Ident(name))
+                if tokens.peek() == Some(&FilterToken::LParen) =>
+            {
+                parse_function_call(input, tokens, &name)
+                    .map(FilterExpr::Function)
+            }
+            Some(FilterToken::Ident(name)) => {
+                parse_comparison(input, tokens, &name)
+            }
+            Some(
+                FilterToken::LParen
+                | FilterToken::RParen
+                | FilterToken::Comma
+                | FilterToken::Logical(_)
+                | FilterToken::Not
+                | FilterToken::Op(_)
+                | FilterToken::Literal(_),
+            )
+            | None => Err(self.invalid(input)),
+        }
+    }
+
+    fn logical(
+        &self,
+        operator: LogicalOp,
+        expressions: Vec<Self::Expr>,
+    ) -> Self::Expr {
+        FilterExpr::Logical(LogicalExpr::new(operator, expressions))
+    }
+
+    fn not(&self, expression: Self::Expr) -> Self::Expr {
+        FilterExpr::Not(Box::new(expression))
+    }
+
+    fn invalid(&self, input: &str) -> QueryError {
+        QueryError::unparsable_filter(input)
+    }
 }
 
-impl<'a> FilterParser<'a> {
-    fn new(expr: &'a str, tokens: Vec<FilterToken>) -> Self {
-        Self {
-            expr,
-            tokens: tokens.into_iter().peekable(),
-        }
+fn parse_literal_arg(
+    input: &str,
+    tokens: &mut TokenCursor<FilterToken>,
+) -> Result<FieldValue, QueryError> {
+    match tokens.next() {
+        Some(FilterToken::Literal(value)) => Ok(value),
+        _ => Err(QueryError::unparsable_filter(input)),
     }
+}
 
-    fn peek(&mut self) -> Option<&FilterToken> {
-        self.tokens.peek()
+fn parse_function_call(
+    input: &str,
+    tokens: &mut TokenCursor<FilterToken>,
+    name: &str,
+) -> Result<FilterFunction, QueryError> {
+    let invalid = || QueryError::unparsable_filter(input);
+    if !tokens.take(&FilterToken::LParen) {
+        return Err(invalid());
     }
+    let Some(FilterToken::Ident(field_ident)) = tokens.next() else {
+        return Err(invalid());
+    };
+    let field = FieldPath::parse(&field_ident)?;
+    if !tokens.take(&FilterToken::Comma) {
+        return Err(invalid());
+    }
+    let target = parse_literal_arg(input, tokens)?;
+    if !tokens.take(&FilterToken::RParen) {
+        return Err(invalid());
+    }
+    FilterFunction::build(name, field, target).ok_or_else(invalid)
+}
 
-    fn parse_expr(&mut self) -> Result<FilterExpr, QueryError> {
-        self.parse_or()
-    }
-
-    fn invalid(&self) -> QueryError {
-        QueryError::unparsable_filter(self.expr)
-    }
-
-    fn next(&mut self) -> Option<FilterToken> {
-        self.tokens.next()
-    }
-
-    fn expect(&mut self, expected: FilterToken) -> Result<(), QueryError> {
-        if self.next() == Some(expected) {
-            Ok(())
-        } else {
-            Err(self.invalid())
-        }
-    }
-
-    fn parse_or(&mut self) -> Result<FilterExpr, QueryError> {
-        self.parse_logical_chain(LogicalOp::Or, Self::parse_and)
-    }
-
-    fn parse_and(&mut self) -> Result<FilterExpr, QueryError> {
-        self.parse_logical_chain(LogicalOp::And, Self::parse_not)
-    }
-
-    /// Parses a left-associative chain of `term`s separated by `op`'s token
-    /// spelling, combining more than one term into a [`FilterExpr::Logical`]
-    /// under `op`. A lone term passes through unwrapped.
-    ///
-    /// # Errors
-    ///
-    /// - [`QueryError::UnparsableFilterExpression`] if a right-hand term or
-    ///   delimiter is invalid.
-    /// - [`QueryError::UnknownFieldPath`] if a nested term uses a malformed
-    ///   field path.
-    fn parse_logical_chain(
-        &mut self,
-        op: LogicalOp,
-        mut term: impl FnMut(&mut Self) -> Result<FilterExpr, QueryError>,
-    ) -> Result<FilterExpr, QueryError> {
-        let left = term(self)?;
-        let mut arms = Vec::new();
-        while self.peek() == Some(&FilterToken::Logical(op)) {
-            self.next();
-            let right = term(self)?;
-            if arms.is_empty() {
-                arms.push(left.clone());
-            }
-            arms.push(right);
-        }
-        if arms.is_empty() {
-            Ok(left)
-        } else {
-            Ok(FilterExpr::Logical(LogicalExpr::new(op, arms)))
-        }
-    }
-
-    fn parse_not(&mut self) -> Result<FilterExpr, QueryError> {
-        if self.peek() == Some(&FilterToken::Not) {
-            self.next();
-            let expr = self.parse_not()?;
-            Ok(FilterExpr::Not(Box::new(expr)))
-        } else {
-            self.parse_primary()
-        }
-    }
-
-    fn parse_literal_arg(&mut self) -> Result<FieldValue, QueryError> {
-        match self.next() {
-            Some(FilterToken::Literal(val)) => Ok(val),
-            _ => Err(self.invalid()),
-        }
-    }
-
-    fn parse_primary(&mut self) -> Result<FilterExpr, QueryError> {
-        let Some(tok) = self.next() else {
-            return Err(self.invalid());
-        };
-        match tok {
-            FilterToken::LParen => {
-                let expr = self.parse_expr()?;
-                self.expect(FilterToken::RParen)?;
-                Ok(expr)
-            }
-            FilterToken::Ident(name)
-                if self.peek() == Some(&FilterToken::LParen) =>
-            {
-                self.parse_function_call(&name).map(FilterExpr::Function)
-            }
-            FilterToken::Ident(name) => self.parse_comparison(&name),
-            _ => Err(self.invalid()),
-        }
-    }
-
-    /// Parses a function call's `(field, target)` argument list starting at the
-    /// opening `(`, dispatching on `name` to build the matching
-    /// [`FilterFunction`].
-    ///
-    /// # Errors
-    ///
-    /// - [`QueryError::UnparsableFilterExpression`] if the call is malformed or
-    ///   `name` does not match a known filter function.
-    /// - [`QueryError::UnknownFieldPath`] if the field argument is malformed.
-    fn parse_function_call(
-        &mut self,
-        name: &str,
-    ) -> Result<FilterFunction, QueryError> {
-        self.expect(FilterToken::LParen)?;
-        let Some(FilterToken::Ident(field_ident)) = self.next() else {
-            return Err(self.invalid());
-        };
-        let field = FieldPath::parse(&field_ident)?;
-        self.expect(FilterToken::Comma)?;
-        let target = self.parse_literal_arg()?;
-        self.expect(FilterToken::RParen)?;
-        FilterFunction::build(name, field, target).ok_or_else(|| self.invalid())
-    }
-
-    /// Parses a `<field> <op> <value>` comparison starting after the
-    /// already-consumed `field_ident` token.
-    ///
-    /// # Errors
-    ///
-    /// - [`QueryError::UnparsableFilterExpression`] if the operator or literal
-    ///   value is missing or invalid.
-    /// - [`QueryError::UnknownFieldPath`] if `field_ident` is malformed.
-    fn parse_comparison(
-        &mut self,
-        field_ident: &str,
-    ) -> Result<FilterExpr, QueryError> {
-        let Some(FilterToken::Op(op)) = self.next() else {
-            return Err(self.invalid());
-        };
-        let field = FieldPath::parse(field_ident)?;
-        let value = self.parse_literal_arg()?;
-        Ok(FilterExpr::Comparison(ComparisonExpr::new(field, op, value)))
-    }
+fn parse_comparison(
+    input: &str,
+    tokens: &mut TokenCursor<FilterToken>,
+    field_ident: &str,
+) -> Result<FilterExpr, QueryError> {
+    let Some(FilterToken::Op(operator)) = tokens.next() else {
+        return Err(QueryError::unparsable_filter(input));
+    };
+    let field = FieldPath::parse(field_ident)?;
+    let value = parse_literal_arg(input, tokens)?;
+    Ok(FilterExpr::Comparison(ComparisonExpr::new(field, operator, value)))
 }
 
 /// Recognized filter function call.
@@ -398,9 +342,8 @@ fn eval_contains(field_val: &FieldValue, target: &FieldValue) -> bool {
 
 /// Evaluates whether list element `item` matches `target`.
 ///
-/// Matches by exact equality. Tag-like strings also match when `item` equals
-/// `target` or nests under it as a sub-tag, such as `#book/fiction` under
-/// `#book`.
+/// Values match exactly. Tag values also match when `item` is nested directly
+/// or transitively under `target`, such as `#book/fiction` under `#book`.
 fn tag_or_value_matches(item: &FieldValue, target: &FieldValue) -> bool {
     if fields_equal(item, target) {
         return true;
@@ -409,7 +352,11 @@ fn tag_or_value_matches(item: &FieldValue, target: &FieldValue) -> bool {
     else {
         return false;
     };
-    item_str.starts_with(target_str) || item_str.contains(target_str)
+    item_str.starts_with('#')
+        && target_str.starts_with('#')
+        && item_str
+            .strip_prefix(target_str)
+            .is_some_and(|suffix| suffix.starts_with('/'))
 }
 
 #[cfg(test)]
@@ -517,6 +464,21 @@ mod tests {
         );
     }
 
+    #[rstest]
+    #[case::empty("")]
+    #[case::trailing_operator("rating > 5 and")]
+    #[case::unmatched_left_parenthesis("(rating > 5")]
+    #[case::unmatched_right_parenthesis("rating > 5)")]
+    #[case::adjacent_expressions("rating > 5 status == \"done\"")]
+    fn rejects_incomplete_boolean_logic(#[case] expr: &str) {
+        assert_eq!(
+            super::FilterExpr::parse(expr),
+            Err(QueryError::UnparsableFilterExpression {
+                expr: expr.to_owned()
+            })
+        );
+    }
+
     #[test]
     fn rejects_malformed_field_path_in_expression() {
         let temp = tempfile::tempdir().expect("create temp dir");
@@ -524,6 +486,14 @@ mod tests {
 
         assert_eq!(
             outcome.filter("file.bogus == 1"),
+            Err(QueryError::unknown_field_path("file.bogus", None))
+        );
+    }
+
+    #[test]
+    fn rejects_malformed_field_path_in_function() {
+        assert_eq!(
+            super::FilterExpr::parse("contains(file.bogus, \"x\")"),
             Err(QueryError::unknown_field_path("file.bogus", None))
         );
     }
@@ -600,6 +570,18 @@ mod tests {
     }
 
     #[test]
+    fn default_boolean_precedence_evaluates_correctly() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let outcome = rated_outcome(temp.path());
+
+        let filtered = outcome
+            .filter("status == \"done\" OR rating == 3 AND status == \"draft\"")
+            .expect("valid filter");
+
+        assert_eq!(names(&filtered), ["high", "low", "unrated"]);
+    }
+
+    #[test]
     fn nested_parentheses_override_precedence() {
         let temp = tempfile::tempdir().expect("create temp dir");
         let outcome = rated_outcome(temp.path());
@@ -671,5 +653,27 @@ mod tests {
         let title_match =
             outcome.filter("contains(title, \"Async\")").expect("valid filter");
         assert_eq!(names(&title_match), ["article"]);
+    }
+
+    #[test]
+    fn contains_distinguishes_list_values_from_tag_hierarchy() {
+        let temp = tempfile::tempdir().expect("create temp dir");
+        let outcome = outcome_for_files(temp.path(), &[
+            (
+                "handbook.md",
+                "---\ncategories: [handbook]\n---\nTagged #bookworm",
+            ),
+            ("book.md", "---\ncategories: [book]\n---\nTagged #book/fiction"),
+        ]);
+
+        let category_match = outcome
+            .clone()
+            .filter("contains(categories, \"book\")")
+            .expect("valid filter");
+        assert_eq!(names(&category_match), ["book"]);
+
+        let tag_match =
+            outcome.filter("contains(tags, \"#book\")").expect("valid filter");
+        assert_eq!(names(&tag_match), ["book"]);
     }
 }

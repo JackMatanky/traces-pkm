@@ -23,6 +23,7 @@ mod field;
 mod filter;
 mod operators;
 mod option;
+mod parser;
 mod record;
 mod sort;
 mod source;
