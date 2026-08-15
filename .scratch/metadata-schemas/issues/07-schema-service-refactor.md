@@ -105,7 +105,8 @@ schema/
   model.rs     Schema only (name, fields, ancestors, children, descendants,
                suggest_field)
   service.rs   NEW — SchemaService; absorbs registry.rs's file walk and
-               resolve.rs's DAG-walk orchestration
+               resolve.rs's DAG-walk orchestration; absorbs resolve_sources
+               (takes &SchemaService, not &SchemaRegistry)
   address.rs   unchanged
   name.rs      unchanged
   error.rs     + SchemaError::FieldBuilder(#[from] SchemaFieldBuilderError);
@@ -233,10 +234,20 @@ impl SchemaService {
     /// precomputed (is-a expansion for file-field class filters is
     /// explicitly deferred — see Comments).
     pub fn matches(&self, reg: &SchemaRegistry, classes: &[String]) -> BTreeSet<String>;
+    /// Populate `mode`'s match set from `classes` at its requested depth.
+    /// Absorbs SchemaRegistry::expand_classes — same logic, same timing.
+    pub fn expand_classes(&self, reg: &SchemaRegistry, classes: &[String], mode: &mut ClassExpansionMode);
 }
+// resolve_sources: moves from a free function taking &SchemaRegistry to
+// taking &SchemaService — the service is the facade, not the registry.
+pub(crate) fn resolve_sources(source: &mut QuerySource, service: &SchemaService);
 // SchemaRegistry: name kept (not renamed) — already referenced by name in
 // index/mod.rs and template/engine/cache.rs doc comments; "Registry" is more
 // precise than any alternative for "filesystem-backed, name-keyed lookup."
+// children_of, descendants_of, matches, and expand_classes move to
+// SchemaService. SchemaRegistry becomes a pure lookup table: get(name) + the
+// internal schemas map. The registry's own load/parse/walk logic stays here;
+// SchemaService::resolve() calls SchemaRegistry::load() internally.
 
 // schema/model.rs
 pub struct Schema {
@@ -384,17 +395,14 @@ struct RawSchemaFieldDef {   // was RawFieldDef
 
 // schema/graph.rs
 impl<'a> SchemaGraph<'a> {
-    /// Direct child adjacency: every Schema that declares this Schema in its
-    /// `extends` list, non-transitively. Used to populate Schema.children and
-    /// issue 13's `with_children()` class expansion without re-scanning the
-    /// registry.
+    /// Bulk accessors over the full adjacency — used by resolve() to populate
+    /// every Schema's children/descendants in one pass, not per-name lookups.
+    /// children_by_name is the existing field (already computed in
+    /// SchemaGraph::new); descendants_by_name is memoized DFS, O(V + E) total
+    /// across all schemas. resolve() iterates all names calling these once each;
+    /// per-name methods would hide the O(V + E) cost of the first descendants
+    /// call behind a cheap-looking per-name API.
     pub(super) fn children_by_name(&self) -> &BTreeMap<SchemaName, BTreeSet<SchemaName>>;
-    /// Every Schema's transitive descendants, memoized over the existing
-    /// children_by_name adjacency (already built in SchemaGraph::new, before
-    /// Kahn resolution even starts) — O(n + edges), not a second full-registry
-    /// scan or an ancestors-set inversion pass. Unit-tested against a diamond
-    /// extends DAG (A extends [B,C]; B,C extends D) and a 3+-level chain to
-    /// prove dedup, not just the mechanism swap.
     pub(super) fn descendants_by_name(&self) -> BTreeMap<SchemaName, BTreeSet<SchemaName>>;
 }
 ```
