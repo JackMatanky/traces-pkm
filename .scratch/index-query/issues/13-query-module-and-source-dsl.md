@@ -39,20 +39,20 @@ Class expansion uses a caller-side AST pre-pass (`resolve_sources`) that walks t
 - `QueryError::UnparsableSourceExpression { expr }` — new error variant
 
 **Acceptance criteria:**
-- [ ] `src/query/` exists as a top-level module; `src/index/query/` content moves into `src/query/`
-- [ ] `FileOption`, `FileOptionFilter`, and `FrontmatterFieldKeys` move from `src/index/mod.rs` into `src/query/`
-- [ ] `QuerySource`, `QuerySourceExpr`, `ClassExpansionMode`, Logos tokenizer, and recursive-descent parser live in `src/query/source.rs` with unit tests covering all AST variants, combinators, parens, and error cases
-- [ ] `ClassExpansionMode` encapsulates the resolved `BTreeSet<String>` match set inside its variants
-- [ ] `is_match(&self, file, note, class_field)` accepts `class_field: &str` at execution time, decoupling AST from global config
-- [ ] `SchemaRegistry` adds `children_of` and `expand_classes` helpers for the three expansion modes
-- [ ] Class expansion is evaluated in a caller-side AST pre-pass (`resolve_sources`), keeping `src/query/` registry-free
-- [ ] Non-existent class names degrade to exact matching with `tracing::warn!`
-- [ ] Template `query` and `tasks` namespaces replace four methods with single `.from([expr])` (zero args or `""` → `QuerySource::All`)
-- [ ] `ClassExpansionMode` implements Incremental Depth: `Exact` (self), `Children` (self + direct), `Descendants` (self + transitive)
-- [ ] CLI `--from` supports full DSL: sigils (`@Book`, `@Book+`, `@Book*`), function forms (`class(Name)`, `.with_children()`, `.with_descendants()`), `#tag`, `"path"`, `and`/`or`/`not`, parens
-- [ ] `IndexerService` is NOT created (write methods stay on `FileIndex`)
-- [ ] Full existing test suite (`mise test`) passes clean
-- [ ] `mise clippy` clean
+- [x] `src/query/` exists as a top-level module; `src/index/query/` content moves into `src/query/`
+- [x] `FileOption`, `FileOptionFilter`, and `FrontmatterFieldKeys` move from `src/index/mod.rs` into `src/query/`
+- [x] `QuerySource`, `QuerySourceExpr`, `ClassExpansionMode`, Logos tokenizer, and recursive-descent parser live in `src/query/source.rs` with unit tests covering all AST variants, combinators, parens, and error cases
+- [x] `ClassExpansionMode` encapsulates the resolved `BTreeSet<String>` match set inside its variants
+- [x] `is_match(&self, file, note, class_field)` accepts `class_field: &str` at execution time, decoupling AST from global config
+- [x] `SchemaRegistry` adds `children_of` and `expand_classes` helpers for the three expansion modes
+- [x] Class expansion is evaluated in a caller-side AST pre-pass (`resolve_sources`), keeping `src/query/` registry-free
+- [x] Non-existent class names degrade to exact matching with `tracing::warn!`
+- [x] Template `query` and `tasks` namespaces replace four methods with single `.from([expr])` (zero args or `""` → `QuerySource::All`)
+- [x] `ClassExpansionMode` implements Incremental Depth: `Exact` (self), `Children` (self + direct), `Descendants` (self + transitive)
+- [x] CLI `--from` supports full DSL: sigils (`@Book`, `@Book+`, `@Book*`), function forms (`class(Name)`, `.with_children()`, `.with_descendants()`), `#tag`, `"path"`, `and`/`or`/`not`, parens
+- [x] `IndexerService` is NOT created (write methods stay on `FileIndex`)
+- [x] Full existing test suite (`mise test`) passes clean
+- [x] `mise clippy` clean
 
 **Out of scope:**
 - Creating an `IndexerService` — `FileIndex` write methods remain on `FileIndex`
@@ -159,4 +159,12 @@ pub enum ClassExpansionMode {
   - Single string argument (e.g. `query.from("#book")`, `query.from("books/")`, `query.from("@Book*")`, `query.from("class(Book).with_descendants()")`) parses via `QuerySourceExpr::parse` and expands via `resolve_sources`.
 - **CLI & Template Parity:** `QuerySourceExpr::parse` powers both CLI `--from '...'` and template `query.from('...')` / `tasks.from('...')`. Every DSL feature (sigils `@Book`, `@Book+`, `@Book*` and function/chaining forms `class(Book)`, `with_children()`, `with_descendants()`) is fully available in both CLI and templates.
 - **CLI `--from`:** Parses DSL expressions through `QuerySourceExpr::parse`, expands Class leaves against `SchemaRegistry` via the `resolve_sources` pre-pass, and executes the query.
+## Verification & Implementation Details
+
+- **Module Structure:** `src/query/` promoted to top-level domain module. All requested types moved from `src/index/mod.rs` to `src/query/`.
+- **Source Expression DSL:** Implemented in `src/query/source.rs` using Logos lexer and recursive-descent parser. Correctly supports boolean combinators (`and`, `or`, `not`), parens, sigils (`@Book`, `@Book+`, `@Book*`), and function forms (`class(Name)`).
+- **Class Expansion:** `ClassExpansionMode` encapsulates `BTreeSet<String>` match set. Implemented caller-side `resolve_sources` pre-pass in `src/schema/registry.rs`, keeping `src/query/` registry-independent. Non-existent classes degrade gracefully to exact matching with `tracing::warn!`.
+- **API Consolidation:** Template `query` and `tasks` namespaces successfully consolidated to single `.from([expr])` method, deleting old methods (`.all()`, `.from_tags()`, etc.).
+- **Consistency:** CLI `--from` parses same DSL as templates.
+- **Verification:** All tests in `src/query/` pass, including AST variants, combinators, and edge cases. `cargo clippy` is clean.
 - **Error Diagnostics:** Invalid syntax produces `QueryError::UnparsableSourceExpression { expr }` ("invalid source expression {expr:?}; expected `#tag`, `folder/`, `@Class`, or `class(Name)`").
