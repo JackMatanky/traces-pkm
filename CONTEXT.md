@@ -160,6 +160,12 @@ _Avoid_: metadata tag, embedded field
 The classification of a note, read from the frontmatter key named by `[schemas] class_field` (default `class`). A note may carry several File Classes; each value names a Schema. Analogous to Metadata Menu's fileClass.
 _Avoid_: note type, kind, tag
 
+### Query Source
+A parsed `--from` expression selecting Notes by tag, folder, or File Class.
+A File Class selector names frontmatter values only; Schema is-a expansion is an
+optional live matching convenience, never part of parsing the Query Source.
+_Avoid_: resolved source, schema query
+
 ### Schema
 A TOML file in `.traces/schemas/<name>.toml` defining the Field Definitions that govern notes of a File Class. The filesystem is the registry — the filename stem is the schema name.
 _Avoid_: field preset, schema definition file, template schema
