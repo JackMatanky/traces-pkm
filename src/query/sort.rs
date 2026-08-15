@@ -1,29 +1,42 @@
 //! Equality, ordering, and sort-key utilities for resolved [`FieldValue`]
 //! instances.
 //!
-//! This module provides the comparison and ordering primitives used by
+//! This module provides comparison and ordering primitives used by
 //! [`super::QueryOutcome::filter`], [`super::QueryOutcome::sort`], and
-//! [`super::QueryOutcome::group_by`]. Value ordering rules:
+//! [`super::QueryOutcome::group_by`].
 //!
-//! - Numbers are ordered by magnitude.
-//! - Strings, dates, and durations are ordered lexicographically.
-//! - Booleans are ordered with `false < true`.
-//! - [`FieldValue::Null`] acts as the minimum value in sort operations.
+//! # Sorting Ordering and Null Precedence
 //!
-//! [`FieldValue`]: crate::note::FieldValue
+//! Values are ordered according to their comparable kind (numbers by magnitude,
+//! strings/dates/durations lexicographically, booleans with `false < true`).
+//!
+//! [`FieldValue::Null`] acts as the minimum value in sort operations. Under
+//! a total order, null values lead ascending sorts and trail descending sorts.
+//!
+//! # Examples
+//!
+//! ```ignore
+//! # use traces_pkm::query::SortOrder;
+//! let order = SortOrder::Ascending;
+//! assert!(!order.is_descending());
+//! ```
 
 use std::cmp::Ordering;
 
 use crate::note::FieldValue;
 
-/// Sort direction for [`super::QueryOutcome::sort`] and CLI `--order`
-/// flags.
+/// Sort direction for sorting operations and CLI configuration.
 ///
-/// The Rust and Template-facing API takes a plain `descending: bool`;
-/// [`Self::is_descending`] bridges this enum to that bool for internal
-/// reuse. CLI commands use this type directly as a [`clap::ValueEnum`],
-/// enabling `--order` to accept `asc` or `desc` without per-command enum
-/// duplication.
+/// The CLI commands use this type directly as a [`clap::ValueEnum`], enabling
+/// `--order` to accept `asc` or `desc` directly.
+///
+/// # Examples
+///
+/// ```ignore
+/// # use traces_pkm::query::SortOrder;
+/// let order = SortOrder::Ascending;
+/// assert!(!order.is_descending());
+/// ```
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq, clap::ValueEnum)]
 pub(crate) enum SortOrder {
     /// Ascending order (the default).
@@ -53,7 +66,7 @@ impl SortOrder {
 /// - Booleans are ordered with `false < true`.
 ///
 /// Returns `Some` with the [`Ordering`] of `a` relative to `b` when they
-/// can be compared, or `None` if they have differing kinds or unorderable
+/// can be compared, or `None` if they have different kinds or unorderable
 /// values.
 pub(super) fn compare_field_values(
     a: &FieldValue,
@@ -73,7 +86,7 @@ pub(super) fn compare_field_values(
 /// values under filter comparison (`==` and `!=`).
 ///
 /// Returns `true` when structural equality (`a == b`) holds, or when
-/// [`compare_field_values`] returns [`Some(Ordering::Equal)`]. This
+/// [`compare_field_values`] returns `Some(Ordering::Equal)`. This
 /// cross-kind text normalization allows string literals to match date or
 /// duration fields.
 pub(super) fn fields_equal(a: &FieldValue, b: &FieldValue) -> bool {
@@ -131,20 +144,24 @@ pub(super) struct SortKey {
     pub(super) descending: bool,
 }
 
+/// Compares two `SortKey` instances for equality based on their total ordering.
 impl PartialEq for SortKey {
     fn eq(&self, other: &Self) -> bool {
         self.cmp(other) == Ordering::Equal
     }
 }
 
+/// Establishes total equivalence for `SortKey`.
 impl Eq for SortKey {}
 
+/// Compares two `SortKey` instances for ordering based on their total ordering.
 impl PartialOrd for SortKey {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
 
+/// Compares two `SortKey` instances to establish their total ordering.
 impl Ord for SortKey {
     fn cmp(&self, other: &Self) -> Ordering {
         sort_key_cmp(&self.value, &other.value, self.descending)

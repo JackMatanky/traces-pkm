@@ -1,9 +1,15 @@
-//! Selectable file options and borrowed filters for
-//! [`crate::index::FileIndex::file_options`].
+//! Selectable file options and borrowed filters for the file query interface.
 //!
 //! This module provides types for building dropdown or autocomplete lists of
 //! indexable files. Each option pairs a human-readable label (resolved from
 //! frontmatter title or aliases) with a project-relative path value.
+//!
+//! # Label Resolution and Filtering
+//!
+//! The display label resolves by checking the note's frontmatter aliases first,
+//! then its title, and finally falling back to the filename stem. The option
+//! set is filtered by folder path prefixes, file extensions, and frontmatter
+//! classes using [`FileOptionFilter`].
 //!
 //! # Main Types
 //!
@@ -13,6 +19,19 @@
 //!   option set.
 //! - [`FrontmatterFieldKeys`] bundles the validated frontmatter keys used for
 //!   label resolution and class filtering.
+//!
+//! # Examples
+//!
+//! ```ignore
+//! # use traces_pkm::field::FieldKey;
+//! # use traces_pkm::query::choice::FrontmatterFieldKeys;
+//! let class_key = FieldKey::try_new("class").unwrap();
+//! let title_key = FieldKey::try_new("title").unwrap();
+//! let aliases_key = FieldKey::try_new("aliases").unwrap();
+//!
+//! let keys = FrontmatterFieldKeys::new(class_key, title_key, aliases_key);
+//! assert_eq!(keys.class().as_str(), "class");
+//! ```
 
 use std::collections::BTreeSet;
 
@@ -22,12 +41,19 @@ use crate::{
     note::{FieldValue, Note},
 };
 
-/// A selectable file option derived from the current
-/// [`FileIndex`][`crate::index::FileIndex`].
+/// A selectable file option derived from the current file index.
 ///
-/// Each option pairs a display label with a project-relative path value. The
-/// label resolves from the Note's frontmatter aliases, then its title, and
-/// finally falls back to the filename stem.
+/// Pairs a display label with a project-relative path value. The label resolves
+/// from the note's frontmatter aliases, then its title, and finally falls back
+/// to the filename stem.
+///
+/// # Examples
+///
+/// ```ignore
+/// # use traces_pkm::query::choice::FileOption;
+/// # use traces_pkm::index::FileRecord;
+/// // Displays filename stem, path value matches the file's project path.
+/// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct FileOption {
     label: String,
@@ -125,12 +151,19 @@ impl<'a> FileOptionFilter<'a> {
 /// Bundled frontmatter keys for file-option label resolution and class
 /// filtering.
 ///
-/// Every render-path consumer needs at least two of the three keys (title,
-/// aliases, class). Each key is validated once at config load, and this
-/// struct carries that guarantee forward instead of re-threading three loose
-/// parameters. Lives here rather than in [`crate::field`] because it is a
-/// config-resolved aggregate specific to file-option matching, not a
-/// field-name/key primitive.
+/// Ensures keys are validated once at configuration load and carried forward,
+/// avoiding redundant validation or loose parameter passing.
+///
+/// # Examples
+///
+/// ```ignore
+/// # use traces_pkm::field::FieldKey;
+/// # use traces_pkm::query::choice::FrontmatterFieldKeys;
+/// let class_key = FieldKey::try_new("class").unwrap();
+/// let title_key = FieldKey::try_new("title").unwrap();
+/// let aliases_key = FieldKey::try_new("aliases").unwrap();
+/// let keys = FrontmatterFieldKeys::new(class_key, title_key, aliases_key);
+/// ```
 #[derive(Clone, Debug)]
 pub(crate) struct FrontmatterFieldKeys {
     class: FieldKey,
@@ -142,7 +175,7 @@ impl FrontmatterFieldKeys {
     /// Bundles three already-validated field keys.
     ///
     /// Infallible: validation happens upstream when each [`FieldKey`] is first
-    /// constructed from config.
+    /// constructed from configuration.
     #[inline]
     #[must_use]
     pub(crate) const fn new(

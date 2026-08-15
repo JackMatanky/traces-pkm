@@ -2,18 +2,30 @@
 //!
 //! This module implements the parser and matcher for the source expression
 //! language documented in the [parent module](super). The entry point is
-//! [`QuerySource::parse`], which accepts a source expression string and
-//! returns either [`QuerySource::All`] (empty input) or a
-//! [`QuerySourceExpr`] wrapping the parsed AST.
+//! [`QuerySource::parse`], which accepts a source expression string and returns
+//! either [`QuerySource::All`] (empty input) or a [`QuerySourceExpr`] wrapping
+//! the parsed AST.
 //!
-//! # Main Types
+//! # Syntax and Grammar Reference
 //!
-//! - [`QuerySource`] — top-level selector: all Notes or a parsed expression.
-//! - [`QuerySourceExpr`] — opaque expression tree; exposes parsing, matching,
-//!   and class-expansion mutation.
-//! - [`SourceAtom`] — leaf predicates: tag, path, or class.
-//! - [`ClassExpansionMode`] — expansion depth (exact, children, descendants)
-//!   with a precomputed class-name set.
+//! Source expressions support boolean combinations of:
+//! - **Tags:** e.g. `#book`, `#projects/active` (nested tags match
+//!   automatically).
+//! - **Paths:** e.g. `books/`, `"books/dune.md"` (trailing `/` matches
+//!   folders).
+//! - **Classes:** e.g. `@Book`, `@Book+`, `@Book*`, or `class(Book)` with
+//!   modifiers.
+//!
+//! See the [parent module](super) for precedence and escaping rules.
+//!
+//! # Examples
+//!
+//! ```ignore
+//! use traces_pkm::query::QuerySource;
+//!
+//! let source = QuerySource::parse("#book or books/").unwrap();
+//! assert!(source.is_match_all() || !source.has_classes());
+//! ```
 
 use std::{collections::BTreeSet, path::PathBuf};
 
@@ -37,7 +49,7 @@ use crate::{
 ///
 /// The CLI and template system pass a `--from` / `.from(...)` string to
 /// [`QuerySource::parse`]. An empty or whitespace-only input yields
-/// [`Self::All`] (match everything); any non-empty input is parsed into a
+/// [`Self::All`] (match everything); any nonempty input is parsed into a
 /// [`QuerySourceExpr`].
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum QuerySource {
@@ -47,15 +59,13 @@ pub enum QuerySource {
     Expr(QuerySourceExpr),
 }
 
-/// Parsed source expression wrapping a boolean tree of [`SourceAtom`]
-/// leaves.
+/// Parsed source expression wrapping a boolean tree of [`SourceAtom`] leaves.
 ///
-/// Created by [`QuerySourceExpr::parse`] from a source expression string.
-/// The AST is opaque to callers; the only way to inspect it is through the
-/// provided methods: [`is_match`](Self::is_match) for evaluation,
-/// [`has_classes`](Self::has_classes) to check whether Schema-level class
-/// expansion is needed, and [`visit_atoms_mut`](Self::visit_atoms_mut) to
-/// resolve class names before matching.
+/// Created by `QuerySourceExpr::parse` from a source expression string. The AST
+/// is opaque to callers; the only way to inspect it is through the provided
+/// methods: [`is_match`](Self::is_match) for evaluation, expansion is needed,
+/// and [`visit_atoms_mut`](Self::visit_atoms_mut) to load class names before
+/// matching.
 ///
 /// Operator precedence is `NOT` > `AND` > `OR`; parentheses override.
 /// See the [module-level syntax reference](self) for the full grammar.
@@ -64,9 +74,9 @@ pub struct QuerySourceExpr(LogicalExpr<SourceAtom>);
 
 /// Leaf predicate in a source expression.
 ///
-/// Each variant represents one atomic match condition that a Note must
-/// satisfy (when not negated). Boolean operators combine these leaves into
-/// the full expression tree.
+/// Each variant represents one atomic match condition that a Note must satisfy
+/// (when not negated). Boolean operators combine these leaves into the full
+/// expression tree.
 ///
 /// # Matching Rules
 ///
@@ -82,13 +92,13 @@ pub struct QuerySourceExpr(LogicalExpr<SourceAtom>);
 pub(crate) enum SourceAtom {
     /// Matches an exact tag or any nested sub-tag.
     Tag(String),
-    /// Matches an exact file path or a folder prefix.
+    /// Matches an exact path of the file or a folder prefix.
     Path(PathBuf),
     /// Matches any named File Class under the requested expansion mode.
     Class {
         /// Raw class names requested by the user.
         names: Vec<String>,
-        /// Expansion depth and resolved class match set.
+        /// Expansion depth and the precomputed class match set.
         mode: ClassExpansionMode,
     },
 }
@@ -96,10 +106,10 @@ pub(crate) enum SourceAtom {
 impl SourceAtom {
     /// Returns whether `file` and `note` match this atom.
     ///
-    /// Tag matching is nested: `#book` also matches `#book/fiction`. Path
-    /// matching is prefix-based: `books/` also matches `books/dune.md`.
-    /// Class matching compares the Note's class field values against the
-    /// precomputed set in [`ClassExpansionMode::classes`].
+    /// - Tag matching is nested: `#book` also matches `#book/fiction`.
+    /// - Path matching is prefix-based: `books/` also matches `books/dune.md`.
+    /// - Class matching compares the Note's class field values against the
+    ///   precomputed set in [`ClassExpansionMode::classes`].
     fn is_match(
         &self,
         file: &FileRecord,
@@ -124,23 +134,22 @@ impl SourceAtom {
 
 /// Expansion depth for a File Class match.
 ///
-/// Controls whether a `@Class` leaf matches only the named class, its
-/// direct children, or every transitive descendant. The three modes are
-/// specified in the DSL via `@Class` / `@Class+` / `@Class*` (sigil form)
-/// or `class(Name)` / `class(Name, children)` / `class(Name, descendants)`
-/// (function form).
+/// Controls whether a `@Class` leaf matches only the named class, its direct
+/// children, or every transitive descendant. The three modes are specified in
+/// the DSL via `@Class` / `@Class+` / `@Class*` (sigil form) or `class(Name)` /
+/// `class(Name, children)` / `class(Name, descendants)` (function form).
 ///
-/// The inner [`BTreeSet`] holds the **resolved** class names for the mode.
+/// The inner [`BTreeSet`] holds the precomputed class names for the mode.
 /// Before matching, a caller must populate this set via
-/// [`set_classes`](Self::set_classes) with the output of the Schema
-/// registry's class expansion. The set is empty when the expression is
-/// first parsed; class names are resolved at query execution time.
+/// [`set_classes`](Self::set_classes) with the output of the Schema registry's
+/// class expansion. The set is empty when the expression is first parsed; class
+/// names are resolved at query execution time.
 ///
-/// | Mode          | Matches                                 | Sigil | Function            |
-/// |---------------|-----------------------------------------|-------|---------------------|
-/// | `Exact`       | Only the named class                    | `@C`  | `class(C)`          |
-/// | `Children`    | Named class and its direct subclasses   | `@C+` | `class(C, children)` |
-/// | `Descendants` | Named class and all transitive subclasses | `@C*` | `class(C, descendants)` |
+/// | Mode          | Matches                                    | Sigil | Function                |
+/// | ------------- | ------------------------------------------ | ----- | ----------------------- |
+/// | `Exact`       | Only the named class                       | `@C`  | `class(C)`              |
+/// | `Children`    | Named class and its direct sub-classes     | `@C+` | `class(C, children)`    |
+/// | `Descendants` | Named class and all transitive sub-classes | `@C*` | `class(C, descendants)` |
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ClassExpansionMode {
     /// Match only the named class.
@@ -169,8 +178,8 @@ impl ClassExpansionMode {
     /// Populates the resolved class names for this expansion mode.
     ///
     /// Called before matching with the output of the Schema registry's class
-    /// expansion. Replaces any existing set; does not alter the expansion
-    /// depth ([`Exact`](Self::Exact), [`Children`](Self::Children), or
+    /// expansion. Replaces any existing set; does not alter the expansion depth
+    /// ([`Exact`](Self::Exact), [`Children`](Self::Children), or
     /// [`Descendants`](Self::Descendants)).
     pub(crate) fn set_classes(&mut self, resolved: BTreeSet<String>) {
         match self {
@@ -184,16 +193,16 @@ impl ClassExpansionMode {
 impl LogicalExpr<SourceAtom> {
     /// Parses `input` as a source expression.
     ///
-    /// Tokenizes `input` and delegates to the shared logical-expression
-    /// parser with [`SourceGrammar`] as the leaf parser.
+    /// Tokenizes `input` and delegates to the shared logical-expression parser
+    /// with [`SourceGrammar`] as the leaf parser.
     fn parse(input: &str) -> Result<Self, QueryError> {
         parse_logical_expression(input, tokenize(input)?, SourceGrammar)
     }
 
     /// Returns whether `file` and `note` satisfy this boolean expression.
     ///
-    /// Evaluates the tree recursively: `And` requires all children to
-    /// match, `Or` requires at least one, and `Not` inverts its child.
+    /// Evaluates the tree recursively: `And` requires all children to match,
+    /// `Or` requires at least one, and `Not` inverts its child.
     #[must_use]
     fn is_match(
         &self,
@@ -219,15 +228,21 @@ impl LogicalExpr<SourceAtom> {
 impl QuerySourceExpr {
     /// Parses `input` as a source expression.
     ///
-    /// The full grammar is documented in the [module-level syntax
-    /// reference](self). Briefly: leaves are `#tag`, bare or quoted paths,
-    /// `@Class`/`@Class+`/`@Class*`, or `class(Name)` with optional
-    /// expansion modifiers. Operators are `not`/`!`, `and`/`&&`,
-    /// `or`/`||`, and parentheses.
+    /// The full grammar is documented in the [parent module](super). Briefly:
+    /// leaves are `#tag`, bare or quoted paths, `@Class`/`@Class+`/`@Class*`,
+    /// or `class(Name)` with optional expansion modifiers. Operators are
+    /// `not`/`!`, `and`/`&&`, `or`/`||`, and parentheses.
     ///
     /// # Errors
     ///
     /// Returns [`QueryError::Syntax`] on any tokenization or parse failure.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// # use traces_pkm::query::source::QuerySourceExpr;
+    /// let expr = QuerySourceExpr::parse("#book").unwrap();
+    /// ```
     pub(crate) fn parse(input: &str) -> Result<Self, QueryError> {
         <LogicalExpr<SourceAtom>>::parse(input).map(Self)
     }
@@ -259,7 +274,7 @@ impl QuerySourceExpr {
     /// Used by the query execution pipeline to populate
     /// [`ClassExpansionMode::set_classes`] on each
     /// [`Class`](SourceAtom::Class) atom before matching. The visitor is
-    /// called once per atom in tree order.
+    /// called once per atom by tree traversal.
     pub(crate) fn visit_atoms_mut(
         &mut self,
         visitor: &mut impl FnMut(&mut SourceAtom),
@@ -271,13 +286,22 @@ impl QuerySourceExpr {
 impl QuerySource {
     /// Parses `input` as a source expression.
     ///
-    /// An empty or whitespace-only `input` yields [`Self::All`], which
-    /// matches every indexed Note. Any non-empty input is parsed into a
+    /// An empty or whitespace-only `input` yields [`Self::All`], which matches
+    /// every indexed Note. Any nonempty input is parsed into a
     /// [`QuerySourceExpr`].
     ///
     /// # Errors
     ///
-    /// Returns [`QueryError::Syntax`] when a non-empty `input` is invalid.
+    /// Returns [`QueryError::Syntax`] when a nonempty `input` is invalid.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// use traces_pkm::query::QuerySource;
+    ///
+    /// let source = QuerySource::parse("#book").unwrap();
+    /// assert!(!source.has_classes());
+    /// ```
     pub fn parse(input: &str) -> Result<Self, QueryError> {
         if input.trim().is_empty() {
             Ok(Self::All)
@@ -315,12 +339,12 @@ impl QuerySource {
     }
 }
 
-/// Extracts string File Class values from `note`'s frontmatter.
+/// Extracts string File Class values from the frontmatter of a note.
 ///
-/// Returns the string values held by the field named `class_field`. The
-/// field may be a single string or a list of strings. Returns an empty
-/// iterator when the field is missing, is not a string or list, or
-/// contains no string elements.
+/// Returns the string values held by the field named `class_field`. The field
+/// may be a single string or a list of strings. Returns an empty iterator when
+/// the field is missing, is not a string or list, or contains no string
+/// elements.
 pub(crate) fn class_values<'a>(
     note: &'a Note,
     class_field: &str,
@@ -343,6 +367,7 @@ pub(crate) fn class_values<'a>(
     scalar.into_iter().chain(list.iter().filter_map(FieldValue::as_str))
 }
 
+/// Lexical tokens for the page source expression language.
 #[derive(Logos, Clone, Debug, PartialEq)]
 #[logos(skip r"[ \t\n\r\f]+")]
 enum SourceToken {
@@ -395,6 +420,8 @@ fn quoted_callback(lexer: &mut Lexer<'_, SourceToken>) -> String {
     value
 }
 
+/// Helper to construct a [`QueryError::Syntax`] diagnostic for this source
+/// dialect.
 fn syntax_error(
     input: &str,
     span: SourceSpan,
@@ -403,6 +430,7 @@ fn syntax_error(
     QuerySyntaxError::new(QueryDialect::Source, input, span, expected).into()
 }
 
+/// Returns the span of the next token in the cursor, or the end of input.
 fn cursor_span(
     input: &str,
     tokens: &mut TokenCursor<Spanned<SourceToken>>,
@@ -412,6 +440,11 @@ fn cursor_span(
         .map_or_else(|| SourceSpan::from((input.len(), 0)), |token| token.span)
 }
 
+/// Tokenizes the source expression input string.
+///
+/// # Errors
+///
+/// Returns [`QueryError::Syntax`] if invalid tokens are encountered.
 fn tokenize(input: &str) -> Result<Vec<Spanned<SourceToken>>, QueryError> {
     let mut lexer = SourceToken::lexer(input);
     let mut tokens = Vec::new();
@@ -425,6 +458,8 @@ fn tokenize(input: &str) -> Result<Vec<Spanned<SourceToken>>, QueryError> {
     Ok(tokens)
 }
 
+/// Grammatical implementation of [`LogicalGrammar`] for source selection
+/// expressions.
 struct SourceGrammar;
 
 impl LogicalGrammar for SourceGrammar {
@@ -493,6 +528,11 @@ impl LogicalGrammar for SourceGrammar {
     }
 }
 
+/// Parses a sigil-form File Class term (e.g., `@Class`, `@Class+`, `@Class*`).
+///
+/// # Errors
+///
+/// Returns [`QueryError::Syntax`] if the sigil format or class name is invalid.
 fn parse_sigil(
     input: &str,
     sigil: &str,
@@ -517,6 +557,13 @@ fn parse_sigil(
     })
 }
 
+/// Parses a function-form File Class term (e.g., `class(Name)`, `class(Name,
+/// children)`).
+///
+/// # Errors
+///
+/// Returns [`QueryError::Syntax`] if parameters, parentheses, or modifiers are
+/// invalid.
 fn parse_class_function(
     input: &str,
     tokens: &mut TokenCursor<Spanned<SourceToken>>,

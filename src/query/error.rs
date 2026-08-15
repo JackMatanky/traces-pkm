@@ -4,16 +4,28 @@
 //! parsing, [`super::QueryOutcome`] transformation methods, and
 //! [`super::IndexRecord`] field resolution.
 //!
-//! # Main Types
+//! # Error Hierarchy and Integration
 //!
-//! - [`QueryDialect`] identifies whether an error originated from source
-//!   selection or filter expression parsing.
-//! - [`QuerySyntaxError`] captures a syntax error with source location and
-//!   repair hint, implementing [`miette::Diagnostic`] for rich error rendering.
-//! - [`FieldPathError`] reports a malformed field path with an optional
-//!   closest-match suggestion.
-//! - [`QueryError`] is the top-level error enum covering all query failure
-//!   modes.
+//! - [`QueryError`] is the top-level error type.
+//! - [`QuerySyntaxError`] handles syntax errors and integrates with [`miette`]
+//!   using the [`Diagnostic`][`miette::Diagnostic`] trait to render rich
+//!   diagnostics.
+//! - [`FieldPathError`] represents invalid field paths or query namespace
+//!   errors.
+//!
+//! # Examples
+//!
+//! ```ignore
+//! use traces_pkm::query::QueryError;
+//!
+//! let error = QueryError::LimitOutOfRange {
+//!     value: -5,
+//! };
+//! assert_eq!(
+//!     error.to_string(),
+//!     "invalid limit -5; expected a non-negative row count"
+//! );
+//! ```
 
 use std::fmt;
 
@@ -22,8 +34,17 @@ use thiserror::Error;
 
 /// Identifies the query language that rejected an expression.
 ///
-/// Used by [`QuerySyntaxError`] to produce a human-readable message that
-/// names the failing dialect (for example, "invalid filter expression").
+/// Used by [`QuerySyntaxError`] to produce a human-readable message that names
+/// the failing dialect (for example, "invalid filter expression").
+///
+/// # Examples
+///
+/// ```ignore
+/// use traces_pkm::query::QueryDialect;
+///
+/// assert_eq!(QueryDialect::Source.to_string(), "source");
+/// assert_eq!(QueryDialect::Filter.to_string(), "filter");
+/// ```
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum QueryDialect {
     /// The `--from` source-selection language.
@@ -44,12 +65,24 @@ impl fmt::Display for QueryDialect {
 /// A syntax error in a source or filter expression.
 ///
 /// Implements [`miette::Diagnostic`] to provide source-location-aware error
-/// rendering with labeled spans and repair hints. The [`input`] field
-/// contains the complete expression, and [`span`] pinpoints the invalid
-/// token range.
+/// rendering with labeled spans and repair hints. The [`input`] field contains
+/// the complete expression, and [`span`] pinpoints the invalid token range.
 ///
 /// [`input`]: Self::input
 /// [`span`]: Self::span
+///
+/// # Examples
+///
+/// ```ignore
+/// # use miette::SourceSpan;
+/// # use traces_pkm::query::error::{QueryDialect, QuerySyntaxError};
+/// let error = QuerySyntaxError::new(
+///     QueryDialect::Source,
+///     "input",
+///     SourceSpan::from((0, 5)),
+///     "expected atom",
+/// );
+/// ```
 #[derive(Clone, Debug, Diagnostic, Eq, Error, PartialEq)]
 #[error("invalid {dialect} expression")]
 pub struct QuerySyntaxError {
@@ -67,6 +100,21 @@ pub struct QuerySyntaxError {
 
 impl QuerySyntaxError {
     /// Constructs a syntax diagnostic for a single expression range.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// # use miette::SourceSpan;
+    /// # use traces_pkm::query::error::{QueryDialect, QuerySyntaxError};
+    /// let error = QuerySyntaxError::new(
+    ///     QueryDialect::Source,
+    ///     "input",
+    ///     SourceSpan::from((0, 5)),
+    ///     "expected atom",
+    /// );
+    /// ```
+    ///
+    /// # Arguments
     pub(crate) fn new(
         dialect: QueryDialect,
         input: &str,
@@ -85,8 +133,15 @@ impl QuerySyntaxError {
 /// A malformed field path with an optional closest-accessor suggestion.
 ///
 /// The error message lists all valid accessor prefixes (`file.<field>`,
-/// `task.<field>`, frontmatter keys, `tags`, `inlinks`) and appends a
-/// "did you mean" hint when the input resembles a known accessor.
+/// `task.<field>`, frontmatter keys, `tags`, `inlinks`) and appends a "did you
+/// mean" hint when the input resembles a known accessor.
+///
+/// # Examples
+///
+/// ```ignore
+/// # use traces_pkm::query::error::FieldPathError;
+/// let error = FieldPathError::new("file.nmae", Some("file.name"));
+/// ```
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
 #[error(
     "invalid field path {path:?}; expected `file.<field>` (path, name, \
@@ -106,6 +161,13 @@ pub struct FieldPathError {
 
 impl FieldPathError {
     /// Constructs a field-path error with an optional repair suggestion.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// # use traces_pkm::query::error::FieldPathError;
+    /// let error = FieldPathError::new("file.nmae", Some("file.name"));
+    /// ```
     pub(in crate::query) fn new(path: &str, suggestion: Option<&str>) -> Self {
         Self {
             path: path.to_owned(),
@@ -116,9 +178,23 @@ impl FieldPathError {
 
 /// Top-level error enum for query parsing and transformation.
 ///
-/// Covers all failure modes from expression parsing through field resolution
-/// to result rendering. Implements [`miette::Diagnostic`] by delegating to
-/// the inner [`QuerySyntaxError`] for syntax errors.
+/// Covers all failure modes from expression parsing through field resolution to
+/// result rendering. Implements [`miette::Diagnostic`] by delegating to the
+/// inner [`QuerySyntaxError`] for syntax errors.
+///
+/// # Examples
+///
+/// ```ignore
+/// use traces_pkm::query::QueryError;
+///
+/// let error = QueryError::LimitOutOfRange {
+///     value: -1,
+/// };
+/// assert_eq!(
+///     error.to_string(),
+///     "invalid limit -1; expected a non-negative row count"
+/// );
+/// ```
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
 pub enum QueryError {
     /// A source or filter expression has invalid syntax.
@@ -155,6 +231,7 @@ pub enum QueryError {
     },
 }
 
+/// Establishes diagnostic capabilities for `QueryError`.
 impl Diagnostic for QueryError {
     fn diagnostic_source(&self) -> Option<&dyn Diagnostic> {
         match self {

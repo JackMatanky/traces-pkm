@@ -1,10 +1,34 @@
 //! Comparison operators and expressions for filter evaluation.
 //!
 //! This module implements the six comparison operators (`==`, `!=`, `<`,
-//! `<=`, `>`, `>=`) used in `.filter()` expressions. Equality operators
-//! are total: every value kind, including [`FieldValue::Null`], compares
-//! using cross-kind text normalization so string, date, and duration fields
-//! match same-text literals interchangeably.
+//! `<=`, `>`, `>=`) used in filter expressions.
+//!
+//! # Semantics and Type Normalization
+//!
+//! - **Equality (`==`, `!=`):** Equality checks are total and compare all types
+//!   (including [`FieldValue::Null`]). If the operands have different types,
+//!   the comparison normalizes them to a common textual representation (e.g.
+//!   comparing a date to its string equivalent evaluates to `true`).
+//! - **Ordering (`<`, `<=`, `>`, `>=`):** Ordering checks return `false` if the
+//!   two values are incomparable or of different types (no cross-type
+//!   normalization is performed for inequality).
+//!
+//! # Examples
+//!
+//! ```ignore
+//! # use traces_pkm::query::comparison::{CompareOp, ComparisonExpr};
+//! # use traces_pkm::field::FieldPath;
+//! # use traces_pkm::note::FieldValue;
+//! # use traces_pkm::query::IndexRecord;
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! let field = FieldPath::try_new("rating")?;
+//! let op = CompareOp::Gt;
+//! let value = FieldValue::Number(5.0);
+//!
+//! let expr = ComparisonExpr::new(field, op, value);
+//! # Ok(())
+//! # }
+//! ```
 
 use super::{
     FieldPath, IndexRecord,
@@ -12,13 +36,25 @@ use super::{
 };
 use crate::note::FieldValue;
 
-/// A comparison operator parsed from a
-/// [`QueryOutcome::filter`][`super::QueryOutcome::filter`] expression.
+/// A comparison operator parsed from a filter expression.
 ///
 /// Each variant maps to a syntactic operator in the filter language.
-/// [`Self::Eq`] and [`Self::Ne`] are total: they compare every value kind
-/// including [`FieldValue::Null`]. Ordering operators (`<`, `<=`, `>`, `>=`)
-/// return `false` for unorderable or incomparable value pairs.
+///
+/// # Examples
+///
+/// ```ignore
+/// # use traces_pkm::query::comparison::CompareOp;
+/// # use traces_pkm::note::FieldValue;
+/// let op = CompareOp::Eq;
+/// assert!(op.is_satisfied_by(&FieldValue::Number(5.0), &FieldValue::Number(5.0)));
+/// ```
+///
+/// # Operator Rules
+///
+/// - **Equality (`==`, `!=`):** [`Self::Eq`] and [`Self::Ne`] are total. They
+///   compare every value kind including [`FieldValue::Null`].
+/// - **Ordering (`<`, `<=`, `>`, `>=`):** Return `false` for unorderable or
+///   incomparable value pairs.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(super) enum CompareOp {
     /// `==`
@@ -36,15 +72,28 @@ pub(super) enum CompareOp {
 }
 
 impl CompareOp {
-    /// Returns whether `field` satisfies this operator against `literal`.
+    /// Returns whether a field value satisfies this operator against a literal.
     ///
-    /// [`Self::Eq`] and [`Self::Ne`] are total: they use
-    /// [`fields_equal`][`super::sort::fields_equal`] for cross-kind text
-    /// normalization, so a [`String`], `Date`, or `Duration` field matches a
-    /// same-text literal of any of those three kinds. Ordering operators
-    /// compare via
-    /// [`compare_field_values`][`super::sort::compare_field_values`],
-    /// returning `false` for mismatched or unorderable value pairs.
+    /// Checks the operator conditions using the provided field value and
+    /// literal.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// # use traces_pkm::query::comparison::CompareOp;
+    /// # use traces_pkm::note::FieldValue;
+    /// let op = CompareOp::Eq;
+    /// assert!(op.is_satisfied_by(&FieldValue::Number(5.0), &FieldValue::Number(5.0)));
+    /// ```
+    ///
+    /// # Behavior
+    ///
+    /// - **Equality (`==`, `!=`):** Uses
+    ///   [`fields_equal`][`super::sort::fields_equal`] to normalize values
+    ///   across different data types (such as comparing a date to a string).
+    /// - **Ordering (`<`, `<=`, `>`, `>=`):** Compares values via
+    ///   [`compare_field_values`][`super::sort::compare_field_values`],
+    ///   returning `false` for mismatched or incomparable kinds.
     pub(super) fn is_satisfied_by(
         self,
         field: &FieldValue,
@@ -76,6 +125,12 @@ impl CompareOp {
 impl TryFrom<&str> for CompareOp {
     type Error = ();
 
+    /// Attempts to parse a comparison operator from its string representation.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(())` if the spelling is not one of the six valid operators:
+    /// `==`, `!=`, `>=`, `<=`, `>`, `<`.
     fn try_from(spelling: &str) -> Result<Self, Self::Error> {
         match spelling {
             "==" => Ok(Self::Eq),
@@ -92,7 +147,20 @@ impl TryFrom<&str> for CompareOp {
 /// A parsed `<field> <op> <value>` comparison node in a filter expression.
 ///
 /// Pairs an already-parsed [`FieldPath`] with a [`CompareOp`] and a literal
-/// [`FieldValue`] to evaluate against each record's resolved field.
+/// [`FieldValue`] to evaluate against the resolved field of each record.
+///
+/// # Examples
+///
+/// ```ignore
+/// # use traces_pkm::query::comparison::{CompareOp, ComparisonExpr};
+/// # use traces_pkm::field::FieldPath;
+/// # use traces_pkm::note::FieldValue;
+/// let expr = ComparisonExpr::new(
+///     FieldPath::try_new("rating").unwrap(),
+///     CompareOp::Gt,
+///     FieldValue::Number(5.0),
+/// );
+/// ```
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct ComparisonExpr {
     field: FieldPath,
@@ -101,8 +169,20 @@ pub(super) struct ComparisonExpr {
 }
 
 impl ComparisonExpr {
-    /// Pairs `op` with the `field` path it resolves from a record and the
-    /// literal `value` it compares that resolution against.
+    /// Constructs a new [`ComparisonExpr`].
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// # use traces_pkm::query::comparison::{CompareOp, ComparisonExpr};
+    /// # use traces_pkm::field::FieldPath;
+    /// # use traces_pkm::note::FieldValue;
+    /// let expr = ComparisonExpr::new(
+    ///     FieldPath::try_new("rating").unwrap(),
+    ///     CompareOp::Gt,
+    ///     FieldValue::Number(5.0),
+    /// );
+    /// ```
     pub(super) fn new(
         field: FieldPath,
         op: CompareOp,
@@ -115,7 +195,8 @@ impl ComparisonExpr {
         }
     }
 
-    /// Returns whether `record` satisfies this comparison.
+    /// Returns whether the given index record satisfies this comparison
+    /// expression.
     pub(super) fn matches(&self, record: &IndexRecord) -> bool {
         self.op.is_satisfied_by(&record.resolve(&self.field), &self.value)
     }

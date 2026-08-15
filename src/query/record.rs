@@ -12,6 +12,20 @@
 //! - [`TaskInfo`] carries per-task fields layered onto an `IndexRecord` by
 //!   [`crate::index::FileIndex::query_tasks`].
 //!
+//! # Examples
+//!
+//! ```ignore
+//! use std::path::Path;
+//!
+//! use traces_pkm::{index::FileRecord, note::Note, query::IndexRecord};
+//!
+//! let file = FileRecord::new(Path::new("note.md"));
+//! let note = Note::default();
+//! let record = IndexRecord::new(file, note);
+//!
+//! assert_eq!(record.file().path().to_str(), Some("note.md"));
+//! ```
+//!
 //! [`FileRecord`]: crate::index::FileRecord
 //! [`Note`]: crate::note::Note
 
@@ -28,14 +42,23 @@ use crate::{
 
 /// A query row pairing a [`FileRecord`] with parsed [`Note`] metadata.
 ///
-/// Task-level rows also carry fields for a single task item. Each row
-/// resolves `file.*`, `task.*`, frontmatter, inline fields, `tags`, and
-/// derived inlinks for template rendering and CLI output.
+/// Each record resolves `file.*`, `task.*`, frontmatter, inline fields, `tags`,
+/// and derived inlinks for template rendering and CLI output.
 ///
 /// The [`Note`] is reference-counted via [`Arc`] to share data efficiently
-/// when exploding one Note into several task-level rows (see
-/// [`crate::index::FileIndex::query_tasks`] and
-/// [`super::QueryOutcome::flatten`]).
+/// when expanding one note into multiple task-level rows.
+///
+/// # Examples
+///
+/// ```ignore
+/// use std::path::Path;
+///
+/// use traces_pkm::{index::FileRecord, note::Note, query::IndexRecord};
+///
+/// let file = FileRecord::new(Path::new("note.md"));
+/// let note = Note::default();
+/// let record = IndexRecord::new(file, note);
+/// ```
 #[derive(Clone, Debug, PartialEq)]
 pub struct IndexRecord {
     file: FileRecord,
@@ -167,10 +190,8 @@ impl IndexRecord {
         Ok(self.resolve(&FieldPath::parse(path)?))
     }
 
-    /// Resolves a parsed [`FieldPath`], applying any flatten overrides.
-    ///
-    /// Checks flattened overrides first, then delegates to the appropriate
-    /// accessor based on the [`FieldPath`] variant.
+    /// Resolves a pre-parsed field path against this record, applying
+    /// overrides.
     pub(super) fn resolve(&self, path: &FieldPath) -> FieldValue {
         if let Some((_, value)) = self.flattened.iter().find(|(p, _)| p == path)
         {

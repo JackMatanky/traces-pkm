@@ -1,22 +1,24 @@
-//! Parsing and evaluation of `.filter()`/`.where()` expressions.
+//! Parsing and evaluation of record filter expressions.
 //!
 //! This module implements the filter expression language used by
-//! [`super::QueryOutcome::filter`]. Expressions combine comparisons,
-//! function calls, and boolean operators into an AST that is evaluated
-//! against each record.
+//! [`super::QueryOutcome::filter`].
 //!
-//! # Syntax
+//! # Record Filter Grammar
 //!
-//! - **Comparisons:** `<field> <op> <value>` with `==`, `!=`, `>=`, `<=`, `>`,
-//!   or `<`.
-//! - **Function calls:** `contains(field, value)` checks list membership, tag
-//!   hierarchy (for example `#book` matching `#book/fiction`), or substring
-//!   containment.
-//! - **Logical operators:** `AND`/`and`/`&&`, `OR`/`or`/`||`, and
-//!   `NOT`/`not`/`!`.
-//! - **Grouping:** `( ... )` overrides default operator precedence.
-//! - **Literals:** quoted strings with `\` escapes, numbers, booleans
-//!   (`true`/`false`), and `null`/`Null`.
+//! Expressions combine comparisons, function calls, and logical operators:
+//! - **Comparisons:** e.g., `rating > 5`, `status == "done"`, using `==`, `!=`,
+//!   `<`, `<=`, `>`, `>=`.
+//! - **Function Calls:** e.g., `contains(tags, "#book")` checks list/tag
+//!   membership or substring containment.
+//! - **Logical Operators:** `AND`/`and`/`&&`, `OR`/`or`/`||`, `NOT`/`not`/`!`,
+//!   and parentheses for grouping.
+//!
+//! # Examples
+//!
+//! ```ignore
+//! # use traces_pkm::query::FilterExpr;
+//! let expr = FilterExpr::parse("rating > 5 and status == \"done\"").unwrap();
+//! ```
 
 use logos::{Lexer, Logos};
 use miette::SourceSpan;
@@ -33,7 +35,7 @@ use super::{
 };
 use crate::note::FieldValue;
 
-/// A parsed `.filter()`/`.where()` expression AST.
+/// A parsed filter expression AST.
 ///
 /// Wraps [`LogicalExpr`] with [`FilterAtom`] leaves, providing the concrete
 /// type used by [`super::QueryOutcome::filter`].
@@ -44,6 +46,13 @@ pub(super) type FilterExpr = LogicalExpr<FilterAtom>;
 /// Each variant represents one atomic predicate in a filter expression:
 /// either a comparison between a field and a literal value, or a recognized
 /// function call.
+///
+/// # Examples
+///
+/// ```ignore
+/// # use traces_pkm::query::filter::FilterAtom;
+/// // Represents a comparison or function leaf
+/// ```
 #[derive(Clone, Debug, PartialEq)]
 pub(super) enum FilterAtom {
     /// `<field> <op> <value>` comparison.
@@ -63,6 +72,17 @@ impl FilterAtom {
 
 impl LogicalExpr<FilterAtom> {
     /// Parses a filter expression string into a logical expression tree.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`QueryError::Syntax`] if the expression syntax is invalid.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// # use traces_pkm::query::FilterExpr;
+    /// let expr = FilterExpr::parse("rating > 5").unwrap();
+    /// ```
     pub(super) fn parse(input: &str) -> Result<Self, QueryError> {
         parse_logical_expression(
             input,
@@ -86,7 +106,7 @@ impl LogicalExpr<FilterAtom> {
     }
 }
 
-/// Tokens parsed from a filter expression.
+/// Lexical tokens parsed from a filter expression.
 #[derive(Logos, Clone, Debug, PartialEq)]
 #[logos(skip r"[ \t\n\r\f]+")]
 enum FilterToken {
@@ -339,6 +359,13 @@ fn parse_comparison(
 ///
 /// Adding a function requires adding a variant here, a name check in
 /// [`Self::build`], and matching logic in [`Self::matches`].
+///
+/// # Examples
+///
+/// ```ignore
+/// # use traces_pkm::query::filter::FilterFunction;
+/// // e.g., FilterFunction::Contains
+/// ```
 #[derive(Clone, Debug, PartialEq)]
 pub(super) enum FilterFunction {
     /// `contains(field, target)`.
@@ -353,15 +380,15 @@ pub(super) enum FilterFunction {
 }
 
 impl FilterFunction {
-    /// Builds the function call named `name`, if it names a known function.
+    /// Builds the function call named `name` if it names a known function.
+    ///
+    /// Returns `None` if the name does not match any known function.
     ///
     /// # Arguments
     ///
     /// * `name` - Function name to match, case-insensitively.
     /// * `field` - Already-parsed field path for the built call.
     /// * `target` - Comparison or membership target for the built call.
-    ///
-    /// Returns `None` when `name` does not match any known function.
     fn build(name: &str, field: FieldPath, target: FieldValue) -> Option<Self> {
         if name.eq_ignore_ascii_case("contains") {
             Some(Self::Contains {
@@ -406,6 +433,11 @@ fn eval_contains(field_val: &FieldValue, target: &FieldValue) -> bool {
 /// Values match exactly. Tag values also match when `item` is nested
 /// directly or transitively under `target` (for example, `#book/fiction`
 /// under `#book`).
+///
+/// # Arguments
+///
+/// * `item` - The list element value to match.
+/// * `target` - The target literal value to compare against.
 fn tag_or_value_matches(item: &FieldValue, target: &FieldValue) -> bool {
     if fields_equal(item, target) {
         return true;

@@ -221,7 +221,7 @@ impl<T> AsRef<T> for Spanned<T> {
 /// Implement this trait to plug a domain-specific token type and atom
 /// parser into [`parse_logical_expression`]. The shared parser handles
 /// operator precedence, grouping, and error recovery, delegating atom
-/// recognition to the implementor.
+/// recognition to the implementer.
 pub(super) trait LogicalGrammar {
     /// The source/filter token type.
     type Token;

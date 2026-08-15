@@ -146,7 +146,7 @@
 //!
 //! - [`QuerySource`] is the top-level entry point: either all Notes or a parsed
 //!   expression.
-//! - [`QuerySourceExpr`] wraps the expression AST and exposes parsing,
+//! - [`source::QuerySourceExpr`] wraps the expression AST and exposes parsing,
 //!   matching, and class-expansion mutation.
 //! - [`SourceAtom`] is the leaf enum (tag, path, class) used by the expression
 //!   tree.
@@ -214,13 +214,23 @@ use crate::{
     note::{FieldValue, Note},
 };
 
-/// Executes a page-level source query, returning one [`IndexRecord`] per
-/// Note matching `source`.
+/// Executes a page-level source query, returning one [`IndexRecord`] per Note
+/// matching `source`.
 ///
 /// Consumes the [`FileIndex`] to pair [`FileRecord`] and [`Note`] entries,
 /// resolving inlinks from the provided map. Uses `class_field` to read File
 /// Class values from each Note's frontmatter when `source` contains class
 /// atoms.
+///
+/// # Examples
+///
+/// ```ignore
+/// # use traces_pkm::query::{query, QuerySource};
+/// # use traces_pkm::index::FileIndex;
+/// # let index = FileIndex::default();
+/// # let source = QuerySource::parse("#book").unwrap();
+/// # let outcome = query(index, &source, "class");
+/// ```
 #[must_use]
 pub(crate) fn query(
     index: FileIndex,
@@ -238,12 +248,22 @@ pub(crate) fn query(
     QueryOutcome::new(records)
 }
 
-/// Executes a task-level source query, returning one [`IndexRecord`] per
-/// task item across all Notes matching `source`.
+/// Executes a task-level source query, returning one [`IndexRecord`] per task
+/// item across all Notes matching `source`.
 ///
 /// Each matching Note is expanded into multiple task-level rows via
 /// [`IndexRecord::with_task`]. Uses `class_field` to read File Class values
 /// from each Note's frontmatter when `source` contains class atoms.
+///
+/// # Examples
+///
+/// ```ignore
+/// # use traces_pkm::query::{query_tasks, QuerySource};
+/// # use traces_pkm::index::FileIndex;
+/// # let index = FileIndex::default();
+/// # let source = QuerySource::parse("#book").unwrap();
+/// # let outcome = query_tasks(index, &source, "class");
+/// ```
 #[must_use]
 pub(crate) fn query_tasks(
     index: FileIndex,
@@ -274,6 +294,10 @@ pub(crate) fn query_tasks(
     QueryOutcome::new(records)
 }
 
+/// Zips and filters file records and note contents matching the given query
+/// source.
+///
+/// Assumes both vectors are sorted by file path to perform a linear-time scan.
 fn matched_pairs<'a>(
     records: Vec<FileRecord>,
     notes: Vec<Note>,
@@ -290,6 +314,8 @@ fn matched_pairs<'a>(
     })
 }
 
+/// Constructs a new [`IndexRecord`] with inbound link paths populated from
+/// `inlinks`.
 fn record_with_inlinks(
     file: FileRecord,
     note: Note,
@@ -299,21 +325,24 @@ fn record_with_inlinks(
     IndexRecord::new(file, note).with_inlinks(links)
 }
 
-/// An ordered collection of [`IndexRecord`] rows produced by an index
-/// query.
+/// An ordered collection of [`IndexRecord`] rows produced by an index query.
 ///
 /// Page-level outcomes contain one row per Note, while task-level outcomes
 /// contain one row per task item. Transformation methods consume and return
-/// a [`QueryOutcome`], enabling method chaining such as:
+/// a [`QueryOutcome`], enabling method chaining.
 ///
-/// ```text
-/// outcome.filter("rating > 7")?.sort("rating", true)?.limit(10)?
+/// # Examples
+///
+/// ```ignore
+/// use traces_pkm::query::QueryOutcome;
+///
+/// let outcome = QueryOutcome::default();
+/// assert!(outcome.is_empty());
 /// ```
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct QueryOutcome {
     records: Vec<IndexRecord>,
 }
-
 impl QueryOutcome {
     /// Wraps `records` into a new [`QueryOutcome`].
     pub(super) fn new(records: Vec<IndexRecord>) -> Self {
@@ -351,35 +380,41 @@ impl QueryOutcome {
         self.records.iter()
     }
 
-    /// Retains only records matching the filter expression `expr`.
+    /// Retains only records matching the filter expression.
     ///
-    /// Supported syntax:
+    /// # Syntax Specification
     ///
-    /// - **Comparisons:** `<field> <op> <value>` with `==`, `!=`, `>=`, `<=`,
-    ///   `>`, or `<`.
-    /// - **Functions:** `contains(field, value)` checks list membership, tag
-    ///   hierarchy (for example `#book` matching `#book/fiction`), or substring
-    ///   containment.
-    /// - **Logical operators:** `AND` / `and` / `&&`, `OR` / `or` / `||`, and
-    ///   `NOT` / `not` / `!`.
-    /// - **Grouping:** `( ... )` overrides default operator precedence.
-    /// - **Literals:** quoted strings with `\` escapes, numbers, booleans
-    ///   (`true`/`false`), and `null`/`Null`.
+    /// | Element | Syntax Example | Description |
+    /// |:-|:-|:-|
+    /// | **Comparisons** | `rating > 7` | Compares fields using `==`, `!=`, `>=`, `<=`, `>`, `<`. |
+    /// | **Functions** | `contains(tags, "#book")` | Checks list/tag membership or substring containment. |
+    /// | **Logical Operators** | `a and b or not c` | Standard logic (`and`/`&&`, `or`/`||`, `not`/`!`). |
+    /// | **Grouping** | `(rating > 5) and ok` | Overrides operator precedence. |
+    /// | **Literals** | `"text"`, `123`, `true`, `null` | Quoted strings, numbers, booleans, and nulls. |
     ///
-    /// Matching rules:
+    /// # Matching Rules
     ///
-    /// - `==` and `!=` compare [`String`], `Date`, and `Duration` values by
-    ///   text.
-    /// - Mismatched data types never match except under `!=`.
-    /// - Records missing a field (`Null`) fail equality and ordering checks,
-    ///   but match `!=`.
+    /// - **Text Equality:** `==` and `!=` compare [`String`], `Date`, and
+    ///   `Duration` values by text representation.
+    /// - **Type Mismatch:** Mismatched data types never match except under
+    ///   `!=`.
+    /// - **Missing Fields:** Records missing the requested field (`Null`) fail
+    ///   equality and ordering checks, but match `!=`.
     ///
     /// # Errors
     ///
-    /// - [`QueryError::Syntax`] if `expr` cannot be parsed.
-    /// - [`QueryError::FieldPath`] if a field path referenced in `expr` is
+    /// Returns a [`QueryError`] in the following cases:
+    ///
+    /// - **Syntax Error:** [`QueryError::Syntax`] if the expression is invalid.
+    /// - **Invalid Path:** [`QueryError::FieldPath`] if a field path is
     ///   malformed.
-    #[inline]
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// # use traces_pkm::query::QueryOutcome;
+    /// # // outcome.filter("rating > 5")
+    /// ```
     pub fn filter(mut self, expr: &str) -> Result<Self, QueryError> {
         let expr = FilterExpr::parse(expr)?;
         self.records.retain(|record| expr.matches(record));
@@ -429,6 +464,13 @@ impl QueryOutcome {
     ///
     /// - [`QueryError::FieldPath`] if `path` cannot be parsed as a valid field
     ///   path.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// # use traces_pkm::query::QueryOutcome;
+    /// # // outcome.sort("file.name", false)
+    /// ```
     #[inline]
     pub fn sort(
         self,
@@ -444,6 +486,16 @@ impl QueryOutcome {
     ///
     /// - [`QueryError::LimitOutOfRange`] if `n` is negative or exceeds platform
     ///   pointer-width limits.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// use traces_pkm::query::QueryOutcome;
+    ///
+    /// let outcome = QueryOutcome::default();
+    /// let limited = outcome.limit(10).unwrap();
+    /// assert_eq!(limited.len(), 0);
+    /// ```
     #[inline]
     pub fn limit(mut self, n: i64) -> Result<Self, QueryError> {
         let n = usize::try_from(n).map_err(|_source| {
@@ -455,9 +507,10 @@ impl QueryOutcome {
         Ok(self)
     }
 
-    /// Groups records by sorting them ascending on the field at `path`, so
-    /// template loops or terminal renderers can detect group transitions by
-    /// comparing adjacent records.
+    /// Groups records by sorting them ascending on the field at `path`.
+    ///
+    /// This enables template loops or terminal renderers to detect group
+    /// transitions by comparing adjacent records.
     ///
     /// # Errors
     ///
@@ -472,7 +525,6 @@ impl QueryOutcome {
     /// element.
     ///
     /// Behavior:
-    ///
     /// - **List fields:** applies to fields resolving to [`FieldValue::List`]
     ///   (such as frontmatter lists, inline list fields, or `tags`).
     /// - **Non-list fields:** records with scalar values pass through
@@ -509,9 +561,11 @@ impl QueryOutcome {
     /// column field paths.
     ///
     /// Pairs each `headers` label with the field path at the identical index in
-    /// `columns`. Table formatting uses `comfy-table`'s [`ASCII_MARKDOWN`]
-    /// preset to align column widths. Pipe characters (`|`) are escaped and
-    /// newlines collapse into spaces to prevent table layout corruption.
+    /// `columns`. Table formatting uses the
+    /// [`ASCII_MARKDOWN`][`comfy_table::presets::ASCII_MARKDOWN`] preset of
+    /// `comfy-table` to align column widths. Pipe characters (`|`)
+    /// are escaped and newlines collapse into spaces to prevent table layout
+    /// corruption.
     ///
     /// # Errors
     ///
@@ -519,8 +573,6 @@ impl QueryOutcome {
     ///   slices differ in length.
     /// - [`QueryError::FieldPath`] if any field path string in `columns` is
     ///   malformed.
-    ///
-    /// [`ASCII_MARKDOWN`]: comfy_table::presets::ASCII_MARKDOWN
     pub(crate) fn table(
         &self,
         headers: &[&str],
@@ -575,8 +627,7 @@ impl QueryOutcome {
     /// # Errors
     ///
     /// - [`QueryError::TaskListRequiresTaskRows`] if any record lacks task
-    ///   fields (built by [`crate::index::FileIndex::query`] instead of
-    ///   [`crate::index::FileIndex::query_tasks`]).
+    ///   fields (built by [`query`] instead of [`query_tasks`]).
     pub(crate) fn task_list(&self) -> Result<String, QueryError> {
         let mut out = String::new();
         for record in &self.records {
@@ -624,6 +675,8 @@ impl QueryOutcome {
     }
 }
 
+/// Converts the [`QueryOutcome`] into an iterator over owned [`IndexRecord`]
+/// rows.
 impl IntoIterator for QueryOutcome {
     type IntoIter = std::vec::IntoIter<Self::Item>;
     type Item = IndexRecord;
@@ -634,6 +687,8 @@ impl IntoIterator for QueryOutcome {
     }
 }
 
+/// Creates an iterator over borrowed [`IndexRecord`] rows from the
+/// [`QueryOutcome`].
 impl<'a> IntoIterator for &'a QueryOutcome {
     type IntoIter = std::slice::Iter<'a, IndexRecord>;
     type Item = &'a IndexRecord;
@@ -673,17 +728,15 @@ fn field_text(value: &FieldValue) -> String {
 }
 
 /// Escapes pipes (`|`) and collapses newlines to spaces to preserve table
-/// row formatting.
+/// formatting.
 fn escape_table_text(text: &str) -> String {
     text.replace('\n', " ").replace('|', "\\|")
 }
 
-/// Converts a [`FieldValue`] to plain text and escapes table formatting
-/// characters.
+/// Formats a [`FieldValue`] into plain text suitable for Markdown table cells.
 fn table_cell_text(value: &FieldValue) -> String {
     escape_table_text(&field_text(value))
 }
-
 #[cfg(test)]
 mod tests {
     use std::{fs, path::Path};
