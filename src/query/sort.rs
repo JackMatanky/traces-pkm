@@ -1,18 +1,42 @@
-//! Equality and ordering for resolved [`FieldValue`] instances, used by
-//! query filtering, sorting, and grouping.
+//! Equality, ordering, and sort-key utilities for resolved [`FieldValue`]
+//! instances.
+//!
+//! This module provides comparison and ordering primitives used by
+//! [`super::QueryOutcome::filter`], [`super::QueryOutcome::sort`], and
+//! [`super::QueryOutcome::group_by`].
+//!
+//! # Sorting Ordering and Null Precedence
+//!
+//! Values are ordered according to their comparable kind (numbers by magnitude,
+//! strings/dates/durations lexicographically, booleans with `false < true`).
+//!
+//! [`FieldValue::Null`] acts as the minimum value in sort operations. Under
+//! a total order, null values lead ascending sorts and trail descending sorts.
+//!
+//! # Examples
+//!
+//! ```ignore
+//! # use traces_pkm::query::SortOrder;
+//! let order = SortOrder::Ascending;
+//! assert!(!order.is_descending());
+//! ```
 
 use std::cmp::Ordering;
 
 use crate::note::FieldValue;
 
-/// Defines the sort direction for [`super::QueryOutcome::sort`] and CLI
-/// `--order` flags.
+/// Sort direction for sorting operations and CLI configuration.
 ///
-/// [`super::QueryOutcome::sort`]'s Rust and Template-facing signature takes
-/// a plain `descending: bool`; [`Self::is_descending`] bridges this enum to
-/// that bool for internal reuse. CLI commands use this type directly as a
-/// [`clap::ValueEnum`], enabling `--order` to accept `asc` or `desc` without
-/// per-command enum duplication.
+/// The CLI commands use this type directly as a [`clap::ValueEnum`], enabling
+/// `--order` to accept `asc` or `desc` directly.
+///
+/// # Examples
+///
+/// ```ignore
+/// # use traces_pkm::query::SortOrder;
+/// let order = SortOrder::Ascending;
+/// assert!(!order.is_descending());
+/// ```
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq, clap::ValueEnum)]
 pub(crate) enum SortOrder {
     /// Ascending order (the default).
@@ -33,8 +57,7 @@ impl SortOrder {
     }
 }
 
-/// Compares two resolved [`FieldValue`] instances, `a` and `b`, of the same
-/// comparable kind.
+/// Compares two resolved [`FieldValue`] instances of the same comparable kind.
 ///
 /// Value ordering rules:
 /// - Numbers are ordered by magnitude.
@@ -42,7 +65,7 @@ impl SortOrder {
 /// - Booleans are ordered with `false < true`.
 ///
 /// Returns `Some` with the [`Ordering`] of `a` relative to `b` when they can be
-/// compared, or `None` if they have differing kinds or unorderable values.
+/// compared, or `None` if they have different kinds or unorderable values.
 pub(super) fn compare_field_values(
     a: &FieldValue,
     b: &FieldValue,
@@ -57,8 +80,8 @@ pub(super) fn compare_field_values(
     }
 }
 
-/// Returns `true` if two resolved [`FieldValue`] instances, `a` and `b`,
-/// represent equal values under filter comparison (`==` and `!=`).
+/// Returns whether two resolved [`FieldValue`] instances represent equal values
+/// under filter comparison (`==` and `!=`).
 ///
 /// Returns `true` when structural equality (`a == b`) holds, or when
 /// [`compare_field_values`] returns `Some(Ordering::Equal)`. This cross-kind
@@ -77,12 +100,14 @@ pub(super) fn fields_equal(a: &FieldValue, b: &FieldValue) -> bool {
 /// * `descending` - Whether to reverse the comparison result.
 ///
 /// Returns the [`Ordering`] of `a` relative to `b`:
-/// - Null values: [`FieldValue::Null`] acts as the minimum value.
-/// - Direction: `descending` reverses the comparator uniformly, so
-///   [`FieldValue::Null`] leads ascending and trails descending.
-/// - Non-null ordering: Values are ordered by [`compare_field_values`], falling
-///   back to [`Ordering::Equal`] to preserve stable relative order for
-///   incomparable kinds.
+/// - [`FieldValue::Null`] acts as the minimum value.
+/// - `descending` reverses the comparator uniformly, so null leads ascending
+///   and trails descending.
+/// - Numeric values use [`f64::total_cmp`], including non-finite values and
+///   signed zero.
+/// - Other non-null values use [`compare_field_values`], falling back to
+///   [`Ordering::Equal`] to preserve stable relative order for incomparable
+///   kinds.
 pub(super) fn sort_key_cmp(
     a: &FieldValue,
     b: &FieldValue,
@@ -92,6 +117,7 @@ pub(super) fn sort_key_cmp(
         (FieldValue::Null, FieldValue::Null) => Ordering::Equal,
         (FieldValue::Null, _) => Ordering::Less,
         (_, FieldValue::Null) => Ordering::Greater,
+        (FieldValue::Number(x), FieldValue::Number(y)) => x.total_cmp(y),
         _ => compare_field_values(a, b).unwrap_or(Ordering::Equal),
     };
     if descending {
@@ -101,32 +127,36 @@ pub(super) fn sort_key_cmp(
     }
 }
 
-/// Wraps a resolved [`FieldValue`] so [`slice::sort_by_cached_key`] can order
-/// by it using [`sort_key_cmp`].
+/// Wraps a resolved [`FieldValue`] so [`slice::sort_by_cached_key`] can
+/// order by it using [`sort_key_cmp`].
 ///
 /// [`FieldValue`] does not implement [`Ord`] directly because comparison
 /// requires a `descending` flag and null-as-minimum fallback rules that depend
-/// on sort options. [`SortKey`] provides an [`Ord`] implementation scoped to a
+/// on sort options. `SortKey` provides an [`Ord`] implementation scoped to a
 /// single sorting operation for [`super::QueryOutcome::sort_by_field`].
 pub(super) struct SortKey {
     pub(super) value: FieldValue,
     pub(super) descending: bool,
 }
 
+/// Compares two `SortKey` instances for equality based on their total ordering.
 impl PartialEq for SortKey {
     fn eq(&self, other: &Self) -> bool {
         self.cmp(other) == Ordering::Equal
     }
 }
 
+/// Establishes total equivalence for `SortKey`.
 impl Eq for SortKey {}
 
+/// Compares two `SortKey` instances for ordering based on their total ordering.
 impl PartialOrd for SortKey {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
 
+/// Compares two `SortKey` instances to establish their total ordering.
 impl Ord for SortKey {
     fn cmp(&self, other: &Self) -> Ordering {
         sort_key_cmp(&self.value, &other.value, self.descending)
@@ -135,12 +165,10 @@ impl Ord for SortKey {
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, path::Path};
+    use std::{cmp::Ordering, fs, path::Path};
 
-    use pretty_assertions::assert_eq;
-
-    use super::super::*;
-    use crate::index::FileIndex;
+    use super::{super::*, sort_key_cmp};
+    use crate::{index::FileIndex, note::FieldValue};
 
     fn outcome_for_files(temp: &Path, files: &[(&str, &str)]) -> QueryOutcome {
         for (name, content) in files {
@@ -218,13 +246,27 @@ mod tests {
     }
 
     #[test]
+    fn sorts_non_finite_and_signed_zero_numbers_totally() {
+        let nan = FieldValue::Number(f64::NAN);
+        let infinity = FieldValue::Number(f64::INFINITY);
+        let negative_zero = FieldValue::Number(-0.0);
+        let zero = FieldValue::Number(0.0);
+
+        assert_eq!(
+            sort_key_cmp(&nan, &infinity, false),
+            f64::NAN.total_cmp(&f64::INFINITY)
+        );
+        assert_eq!(sort_key_cmp(&negative_zero, &zero, false), Ordering::Less);
+    }
+
+    #[test]
     fn rejects_malformed_field_path() {
         let temp = tempfile::tempdir().expect("create temp dir");
         let outcome = outcome_for(temp.path(), "body");
 
         assert_eq!(
             outcome.sort("file.bogus", false),
-            Err(QueryError::unknown_field_path("file.bogus", None))
+            Err(QueryError::FieldPath(FieldPathError::new("file.bogus", None)))
         );
     }
 

@@ -1,17 +1,43 @@
-//! Parses and resolves query field paths.
+//! Query field path parsing and resolution.
 //!
-//! A query field path string resolves to a [`FieldPath`], which represents one
-//! of:
-//! - A `file.<field>` accessor ([`FileField`])
-//! - A `task.<field>` accessor ([`TaskField`])
-//! - The `tags` accessor
-//! - The `inlinks` accessor
-//! - A frontmatter or inline metadata field key
+//! A query field path string (for example, `file.name`, `task.completed`,
+//! `tags`, or a bare frontmatter key) resolves to a [`FieldPath`] variant that
+//! can be applied to each [`IndexRecord`][`super::IndexRecord`] to extract a
+//! [`FieldValue`].
+//!
+//! # Supported Accessors
+//!
+//! - `file.<field>`: [`FileField`] accessors backed by [`FileRecord`] metadata
+//!   (path, name, folder, size, timestamps).
+//! - `task.<field>`: [`TaskField`] accessors valid on task-level records only
+//!   (completed, text).
+//! - `tags`: Note tags as a list of tag strings.
+//! - `inlinks`: Project-relative paths of Notes linking to this Note.
+//! - Bare keys: frontmatter or inline metadata field keys.
+//!
+//! # Examples
+//!
+//! ```ignore
+//! # use traces_pkm::query::FieldPath;
+//! let path = FieldPath::parse("file.name").unwrap();
+//! ```
 
-use super::{super::file::FileRecord, error::QueryError};
-use crate::{field, field::FieldKey, note::FieldValue};
+use super::error::FieldPathError;
+use crate::{field, field::FieldKey, index::FileRecord, note::FieldValue};
 
-/// Represents a `file.<field>` accessor backed by [`FileRecord`] metadata.
+/// A `file.<field>` accessor backed by [`FileRecord`] metadata.
+///
+/// Each variant maps to a specific accessor name (for example, `file.name`,
+/// `file.mtime`) and resolves to a [`FieldValue`] by reading the corresponding
+/// [`FileRecord`] method.
+///
+/// # Examples
+///
+/// ```ignore
+/// # use traces_pkm::query::field::FileField;
+/// let accessor = FileField::parse("name");
+/// assert_eq!(accessor, Some(FileField::Name));
+/// ```
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(crate) enum FileField {
     /// Accesses [`FileRecord::path`].
@@ -49,13 +75,18 @@ impl FileField {
         "mdate",
     ];
 
-    /// Parses a `file.<field>` accessor name string.
+    /// Parses the field portion of a `file.<field>` accessor string.
     ///
-    /// Returns [`None`] when `name` is unknown. Callers construct
-    /// [`UnknownFieldPath`] directly because they retain the full
-    /// `file.<field>` path.
+    /// Returns `None` when `name` is unknown, allowing the caller to retain the
+    /// full `file.<field>` path for a [`FieldPathError`].
     ///
-    /// [`UnknownFieldPath`]: QueryError::UnknownFieldPath
+    /// # Examples
+    ///
+    /// ```ignore
+    /// # use traces_pkm::query::field::FileField;
+    /// let field = FileField::parse("name");
+    /// assert_eq!(field, Some(FileField::Name));
+    /// ```
     pub(crate) fn parse(name: &str) -> Option<Self> {
         match name {
             "path" => Some(Self::Path),
@@ -70,9 +101,10 @@ impl FileField {
         }
     }
 
-    /// Resolves this accessor's value for a [`FileRecord`].
+    /// Resolves this accessor's value for the given [`FileRecord`].
     ///
-    /// Returns the evaluated [`FieldValue`].
+    /// Returns the evaluated [`FieldValue`] from the corresponding
+    /// [`FileRecord`] method.
     pub(crate) fn resolve(self, file: &FileRecord) -> FieldValue {
         match self {
             Self::Path => {
@@ -105,11 +137,19 @@ impl FileField {
     }
 }
 
-/// Represents a `task.<field>` accessor valid on task-level records.
+/// A `task.<field>` accessor valid on task-level records.
 ///
-/// Applied to task records produced by [`FileIndex::query_tasks`].
+/// Applied to task records produced by
+/// [`crate::index::FileIndex::query_tasks`]. Resolves to [`FieldValue::Null`]
+/// on page-level records.
 ///
-/// [`FileIndex::query_tasks`]: super::super::FileIndex::query_tasks
+/// # Examples
+///
+/// ```ignore
+/// # use traces_pkm::query::field::TaskField;
+/// let accessor = TaskField::parse("completed");
+/// assert_eq!(accessor, Some(TaskField::Completed));
+/// ```
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(super) enum TaskField {
     /// Accesses task completion state (`- [ ]` versus `- [x]`).
@@ -125,11 +165,17 @@ impl TaskField {
 
     /// Parses the field portion of a `task.<field>` accessor string.
     ///
-    /// Returns [`None`] if `name` is not a recognized accessor name. Mirrors
-    /// [`FileField::parse`], allowing the caller constructing
-    /// [`UnknownFieldPath`] to supply the full `task.<field>` path.
+    /// Returns `None` if `name` is not a recognized accessor name, allowing
+    /// the caller to retain the full `task.<field>` path for a
+    /// [`FieldPathError`].
     ///
-    /// [`UnknownFieldPath`]: QueryError::UnknownFieldPath
+    /// # Examples
+    ///
+    /// ```ignore
+    /// # use traces_pkm::query::field::TaskField;
+    /// let field = TaskField::parse("completed");
+    /// assert_eq!(field, Some(TaskField::Completed));
+    /// ```
     pub(super) fn parse(name: &str) -> Option<Self> {
         match name {
             "completed" => Some(Self::Completed),
@@ -139,13 +185,18 @@ impl TaskField {
     }
 }
 
-/// Represents a resolved query field path.
+/// A resolved query field path.
 ///
-/// A [`FieldPath`] is resolved once per [`QueryOutcome`] transformation and
-/// subsequently applied to each [`IndexRecord`].
+/// A `FieldPath` is parsed once per [`QueryOutcome`][`super::QueryOutcome`]
+/// transformation and subsequently applied to each
+/// [`IndexRecord`][`super::IndexRecord`] to extract a [`FieldValue`].
 ///
-/// [`QueryOutcome`]: super::QueryOutcome
-/// [`IndexRecord`]: super::IndexRecord
+/// # Examples
+///
+/// ```ignore
+/// # use traces_pkm::query::FieldPath;
+/// let path = FieldPath::parse("file.name").unwrap();
+/// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) enum FieldPath {
     /// Wraps a `file.<field>` accessor ([`FileField`]).
@@ -170,26 +221,24 @@ pub(super) enum FieldPath {
 impl FieldPath {
     /// Parses a query field path string into a [`FieldPath`].
     ///
-    /// Resolves `path` to one of:
-    /// - A `file.<field>` accessor ([`FileField`])
-    /// - A `task.<field>` accessor ([`TaskField`])
-    /// - The `tags` accessor ([`FieldPath::Tags`])
-    /// - The `inlinks` accessor ([`FieldPath::Inlinks`])
-    /// - A frontmatter or inline metadata field key ([`FieldPath::Metadata`])
+    /// Resolves `path` to one of the supported accessors or a metadata key.
     ///
     /// # Errors
     ///
-    /// Returns [`UnknownFieldPath`] if `path` meets any of the following
-    /// conditions:
-    /// - Is empty
-    /// - Contains invalid `.` structure
-    /// - Specifies an unrecognized `file.<field>` or `task.<field>` accessor
-    ///   name
+    /// Returns [`FieldPathError`] if `path` is empty, has invalid `.`
+    /// structure, or names an unknown `file.<field>` or `task.<field>`
+    /// accessor.
     ///
-    /// [`UnknownFieldPath`]: QueryError::UnknownFieldPath
-    pub(super) fn parse(path: &str) -> Result<Self, QueryError> {
+    /// # Examples
+    ///
+    /// ```ignore
+    /// # use traces_pkm::query::FieldPath;
+    /// let path = FieldPath::parse("file.name");
+    /// assert!(path.is_ok());
+    /// ```
+    pub(super) fn parse(path: &str) -> Result<Self, FieldPathError> {
         let path = path.trim();
-        let invalid = || QueryError::unknown_field_path(path, None);
+        let invalid = || FieldPathError::new(path, None);
         if let Some(field) = path.strip_prefix("file.") {
             return if field.is_empty() || field.contains('.') {
                 Err(invalid())
@@ -240,30 +289,15 @@ impl FieldPath {
     }
 }
 
-/// Constructs an [`UnknownFieldPath`] error containing a suggestion hint.
-///
-/// Evaluates `field` against `candidates` using [`closest_accessor`] and
-/// appends a "did you mean" suggestion hint to the returned [`QueryError`] if a
-/// plausible match exists.
-///
-/// # Arguments
-///
-/// * `path` - The full unparsable field path string (for example `"file.nam"`).
-/// * `prefix` - The accessor prefix string (`"file"` or `"task"`).
-/// * `candidates` - The slice of valid accessor names for this prefix.
-/// * `field` - The field name following `prefix`.
-///
-/// Returns a [`QueryError::UnknownFieldPath`] populated with the full path and
-/// an optional suggested accessor.
-///
-/// [`UnknownFieldPath`]: QueryError::UnknownFieldPath
+/// Constructs a [`FieldPathError`] containing an optional "did you mean"
+/// suggestion for a typo in a `file.<field>` or `task.<field>` accessor.
 fn accessor_typo_error(
     path: &str,
     prefix: &str,
     candidates: &[&'static str],
     field: &str,
-) -> QueryError {
-    QueryError::unknown_field_path(
+) -> FieldPathError {
+    FieldPathError::new(
         path,
         closest_accessor(candidates, field)
             .map(|name| format!("{prefix}.{name}"))
@@ -271,16 +305,12 @@ fn accessor_typo_error(
     )
 }
 
-/// Finds the accessor name with the smallest edit distance to an input
-/// string.
+/// Finds the accessor name with the smallest edit distance to `input`.
 ///
-/// Thin wrapper over [`crate::field::closest_match`]: see its doc for the
-/// matching threshold.
-///
-/// Returns `Some(&'static str)` containing the candidate with the smallest
-/// edit distance if that distance does not exceed the calculated threshold.
-/// Returns [`None`] if `candidates` is empty or no candidate falls within the
-/// matching threshold.
+/// Delegates to [`crate::field::closest_match`] for the matching threshold
+/// calculation. Returns `Some(&'static str)` when the closest candidate falls
+/// within the threshold, or `None` when no candidate is close enough or
+/// `candidates` is empty.
 fn closest_accessor(
     candidates: &[&'static str],
     input: &str,
@@ -431,7 +461,7 @@ mod tests {
         fn rejects_malformed_paths(#[case] path: &str) {
             assert_eq!(
                 FieldPath::parse(path),
-                Err(QueryError::unknown_field_path(path, None))
+                Err(FieldPathError::new(path, None))
             );
         }
 
@@ -439,10 +469,7 @@ mod tests {
         fn suggests_the_closest_file_accessor_for_a_typo() {
             assert_eq!(
                 FieldPath::parse("file.nam"),
-                Err(QueryError::unknown_field_path(
-                    "file.nam",
-                    Some("file.name")
-                ))
+                Err(FieldPathError::new("file.nam", Some("file.name")))
             );
         }
 
@@ -450,7 +477,7 @@ mod tests {
         fn suggests_the_closest_task_accessor_for_a_typo() {
             assert_eq!(
                 FieldPath::parse("task.complete"),
-                Err(QueryError::unknown_field_path(
+                Err(FieldPathError::new(
                     "task.complete",
                     Some("task.completed")
                 ))
@@ -461,7 +488,7 @@ mod tests {
         fn no_suggestion_for_an_unrelated_unknown_accessor() {
             assert_eq!(
                 FieldPath::parse("file.bogus"),
-                Err(QueryError::unknown_field_path("file.bogus", None))
+                Err(FieldPathError::new("file.bogus", None))
             );
         }
     }

@@ -6,12 +6,13 @@
 //!
 //! [`FileIndex`]: crate::index::FileIndex
 
-use std::path::Path;
-
 use clap::Args;
 
 use super::error::CliError;
-use crate::{config::ConfigService, index::SortOrder};
+use crate::{
+    config::{Config, ConfigService},
+    query::SortOrder,
+};
 
 /// Arguments for `traces table`.
 ///
@@ -19,8 +20,8 @@ use crate::{config::ConfigService, index::SortOrder};
 /// a Markdown table with one column per `--column` flag.
 #[derive(Debug, Args)]
 pub(super) struct Table {
-    /// Page source: a `#tag` (including nested sub-tags) or a folder path.
-    /// Omit to query every indexed page.
+    /// Source expression, e.g. `#tag`, `folder/`, `@Class*`, or a boolean
+    /// combination. Omit to query every indexed page.
     #[arg(long)]
     from: Option<String>,
     /// Filter expression narrowing results, e.g. `"file.folder == \"books\""`.
@@ -64,7 +65,7 @@ impl Table {
     pub(super) fn run(&self, service: &ConfigService) -> Result<(), CliError> {
         let config = super::load_config(service)?;
         let root = config.root();
-        let (rendered, count) = self.render(root)?;
+        let (rendered, count) = self.render(&config)?;
         print!("{rendered}");
         eprintln!("{count} page(s) from {}", root.display());
         Ok(())
@@ -84,8 +85,9 @@ impl Table {
     ///   field path.
     ///
     /// [`FileIndex`]: crate::index::FileIndex
-    fn render(&self, root: &Path) -> Result<(String, usize), CliError> {
-        let outcome = super::refresh_page_query(root, self.from.as_deref())?;
+    fn render(&self, config: &Config) -> Result<(String, usize), CliError> {
+        let root = config.root();
+        let outcome = super::refresh_page_query(config, self.from.as_deref())?;
         let outcome =
             super::apply_filter(outcome, root, self.filter.as_deref())?;
         let outcome = super::apply_sort(
@@ -113,12 +115,16 @@ mod tests {
     use crate::cli::tests::fixtures::{create_trusted_project, service};
 
     mod render {
-        use std::fs;
+        use std::{fs, path::Path};
 
         use pretty_assertions::assert_eq;
 
         use super::*;
-        use crate::index::{FileIndexError, QueryError};
+        use crate::{index::FileIndexError, query::QueryError};
+
+        fn config(root: &Path) -> Config {
+            Config::for_test(root.to_path_buf(), None, None, root.to_path_buf())
+        }
 
         #[test]
         fn renders_a_table_row_per_page_in_sorted_order() {
@@ -134,7 +140,7 @@ mod tests {
             };
 
             let (rendered, count) =
-                table.render(temp.path()).expect("valid query");
+                table.render(&config(temp.path())).expect("valid query");
 
             assert_eq!(
                 rendered,
@@ -159,7 +165,7 @@ mod tests {
             };
 
             let (rendered, count) =
-                table.render(temp.path()).expect("valid query");
+                table.render(&config(temp.path())).expect("valid query");
 
             assert_eq!(
                 rendered,
@@ -184,7 +190,7 @@ mod tests {
             };
 
             let (rendered, count) =
-                table.render(temp.path()).expect("valid query");
+                table.render(&config(temp.path())).expect("valid query");
 
             assert_eq!(
                 rendered,
@@ -205,11 +211,12 @@ mod tests {
                 columns: vec!["file.path".to_owned()],
             };
 
-            let error =
-                table.render(temp.path()).expect_err("malformed sort fails");
+            let error = table
+                .render(&config(temp.path()))
+                .expect_err("malformed sort fails");
 
             assert!(matches!(error, CliError::Query {
-                source: QueryError::UnknownFieldPath { .. },
+                source: QueryError::FieldPath(_),
                 ..
             }));
         }
@@ -228,7 +235,7 @@ mod tests {
             };
 
             let (rendered, count) =
-                table.render(temp.path()).expect("valid query");
+                table.render(&config(temp.path())).expect("valid query");
 
             assert_eq!(
                 rendered,
@@ -252,7 +259,7 @@ mod tests {
             };
 
             let (rendered, count) =
-                table.render(temp.path()).expect("valid query");
+                table.render(&config(temp.path())).expect("valid query");
 
             assert_eq!(rendered, "| a\\|b |\n|------|\n| 9    |\n");
             assert_eq!(count, 1);
@@ -274,7 +281,7 @@ mod tests {
             };
 
             let (rendered, count) =
-                table.render(temp.path()).expect("valid query");
+                table.render(&config(temp.path())).expect("valid query");
 
             assert_eq!(
                 rendered,
@@ -299,7 +306,7 @@ mod tests {
             };
 
             let (rendered, count) =
-                table.render(temp.path()).expect("valid query");
+                table.render(&config(temp.path())).expect("valid query");
 
             assert_eq!(
                 rendered,
@@ -320,11 +327,12 @@ mod tests {
                 columns: vec!["file.path".to_owned()],
             };
 
-            let error =
-                table.render(temp.path()).expect_err("unparsable filter fails");
+            let error = table
+                .render(&config(temp.path()))
+                .expect_err("unparsable filter fails");
 
             assert!(matches!(error, CliError::Query {
-                source: QueryError::UnparsableFilterExpression { .. },
+                source: QueryError::Syntax(_),
                 ..
             }));
         }
@@ -341,11 +349,12 @@ mod tests {
                 columns: vec!["file..bad".to_owned()],
             };
 
-            let error =
-                table.render(temp.path()).expect_err("malformed column fails");
+            let error = table
+                .render(&config(temp.path()))
+                .expect_err("malformed column fails");
 
             assert!(matches!(error, CliError::Query {
-                source: QueryError::UnknownFieldPath { .. },
+                source: QueryError::FieldPath(_),
                 ..
             }));
         }
@@ -381,7 +390,7 @@ mod tests {
             };
 
             let error = table
-                .render(temp.path())
+                .render(&config(temp.path()))
                 .expect_err("unreadable subdirectory fails");
 
             assert!(matches!(error, CliError::Index {

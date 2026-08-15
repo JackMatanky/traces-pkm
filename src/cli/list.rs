@@ -6,12 +6,13 @@
 //!
 //! [`FileIndex`]: crate::index::FileIndex
 
-use std::path::Path;
-
 use clap::Args;
 
 use super::error::CliError;
-use crate::{config::ConfigService, index::SortOrder};
+use crate::{
+    config::{Config, ConfigService},
+    query::SortOrder,
+};
 
 /// Field path rendered for each `traces list` bullet.
 const LIST_FIELD: &str = "file.path";
@@ -22,8 +23,8 @@ const LIST_FIELD: &str = "file.path";
 /// as a Markdown bullet list.
 #[derive(Debug, Args)]
 pub(super) struct List {
-    /// Page source: a `#tag` (including nested sub-tags) or a folder path.
-    /// Omit to query every indexed page.
+    /// Source expression, e.g. `#tag`, `folder/`, `@Class*`, or a boolean
+    /// combination. Omit to query every indexed page.
     #[arg(long)]
     from: Option<String>,
     /// Filter expression narrowing results, e.g. `"file.folder == \"books\""`.
@@ -62,7 +63,7 @@ impl List {
     pub(super) fn run(&self, service: &ConfigService) -> Result<(), CliError> {
         let config = super::load_config(service)?;
         let root = config.root();
-        let (rendered, count) = self.render(root)?;
+        let (rendered, count) = self.render(&config)?;
         print!("{rendered}");
         eprintln!("{count} page(s) from {}", root.display());
         Ok(())
@@ -81,8 +82,9 @@ impl List {
     ///   `--sort` names a malformed field path.
     ///
     /// [`FileIndex`]: crate::index::FileIndex
-    fn render(&self, root: &Path) -> Result<(String, usize), CliError> {
-        let outcome = super::refresh_page_query(root, self.from.as_deref())?;
+    fn render(&self, config: &Config) -> Result<(String, usize), CliError> {
+        let root = config.root();
+        let outcome = super::refresh_page_query(config, self.from.as_deref())?;
         let outcome =
             super::apply_filter(outcome, root, self.filter.as_deref())?;
         let outcome = super::apply_sort(
@@ -105,12 +107,16 @@ mod tests {
     use crate::cli::tests::fixtures::{create_trusted_project, service};
 
     mod render {
-        use std::fs;
+        use std::{fs, path::Path};
 
         use pretty_assertions::assert_eq;
 
         use super::*;
-        use crate::index::{FileIndexError, QueryError};
+        use crate::{index::FileIndexError, query::QueryError};
+
+        fn config(root: &Path) -> Config {
+            Config::for_test(root.to_path_buf(), None, None, root.to_path_buf())
+        }
 
         #[test]
         fn renders_a_bullet_per_page_path_in_sorted_order() {
@@ -125,7 +131,7 @@ mod tests {
             };
 
             let (rendered, count) =
-                list.render(temp.path()).expect("valid query");
+                list.render(&config(temp.path())).expect("valid query");
 
             assert_eq!(rendered, "- a.md\n- b.md\n");
             assert_eq!(count, 2);
@@ -146,7 +152,7 @@ mod tests {
             };
 
             let (rendered, count) =
-                list.render(temp.path()).expect("valid query");
+                list.render(&config(temp.path())).expect("valid query");
 
             assert_eq!(rendered, "- a.md\n- b.md\n");
             assert_eq!(count, 2);
@@ -167,7 +173,7 @@ mod tests {
             };
 
             let (rendered, count) =
-                list.render(temp.path()).expect("valid query");
+                list.render(&config(temp.path())).expect("valid query");
 
             assert_eq!(rendered, "- b.md\n- a.md\n");
             assert_eq!(count, 2);
@@ -184,11 +190,12 @@ mod tests {
                 order: SortOrder::Ascending,
             };
 
-            let error =
-                list.render(temp.path()).expect_err("malformed sort fails");
+            let error = list
+                .render(&config(temp.path()))
+                .expect_err("malformed sort fails");
 
             assert!(matches!(error, CliError::Query {
-                source: QueryError::UnknownFieldPath { .. },
+                source: QueryError::FieldPath(_),
                 ..
             }));
         }
@@ -208,7 +215,7 @@ mod tests {
             };
 
             let (rendered, count) =
-                list.render(temp.path()).expect("valid query");
+                list.render(&config(temp.path())).expect("valid query");
 
             assert_eq!(rendered, "- a.md\n");
             assert_eq!(count, 1);
@@ -229,10 +236,68 @@ mod tests {
             };
 
             let (rendered, count) =
-                list.render(temp.path()).expect("valid query");
+                list.render(&config(temp.path())).expect("valid query");
 
             assert_eq!(rendered, "- projects/a.md\n");
             assert_eq!(count, 1);
+        }
+
+        #[test]
+        fn from_parses_and_resolves_the_shared_source_dsl() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let schemas = temp.path().join(".traces/schemas");
+            fs::create_dir_all(&schemas).expect("create Schema registry");
+            fs::create_dir_all(temp.path().join("books"))
+                .expect("create books");
+            fs::write(schemas.join("book.toml"), "")
+                .expect("write book Schema");
+            fs::write(schemas.join("sci_fi.toml"), "extends = [\"book\"]\n")
+                .expect("write sci_fi Schema");
+            fs::write(
+                temp.path().join("books/dune.md"),
+                "---\nclass: sci_fi\n---\n#book\n",
+            )
+            .expect("write dune");
+            fs::write(
+                temp.path().join("books/movie.md"),
+                "---\nclass: movie\n---\n#movie\n",
+            )
+            .expect("write movie");
+            let list = List {
+                from: Some(
+                    "class(book).with_children() and \"books/dune.md\""
+                        .to_owned(),
+                ),
+                filter: None,
+                sort: None,
+                order: SortOrder::Ascending,
+            };
+
+            let (rendered, count) =
+                list.render(&config(temp.path())).expect("valid query");
+
+            assert_eq!(rendered, "- books/dune.md\n");
+            assert_eq!(count, 1);
+        }
+
+        #[test]
+        fn from_reports_an_unparsable_source_expression() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("a.md"), "#book\n").expect("write a.md");
+            let list = List {
+                from: Some("#book and".to_owned()),
+                filter: None,
+                sort: None,
+                order: SortOrder::Ascending,
+            };
+
+            let error =
+                list.render(&config(temp.path())).expect_err("invalid source");
+
+            assert!(matches!(error, CliError::Query {
+                source: QueryError::Syntax(_),
+                ..
+            }));
         }
 
         #[test]
@@ -250,7 +315,7 @@ mod tests {
             };
 
             let (rendered, count) =
-                list.render(temp.path()).expect("valid query");
+                list.render(&config(temp.path())).expect("valid query");
 
             assert_eq!(rendered, "- a.md\n");
             assert_eq!(count, 1);
@@ -267,11 +332,12 @@ mod tests {
                 order: SortOrder::Ascending,
             };
 
-            let error =
-                list.render(temp.path()).expect_err("unparsable filter fails");
+            let error = list
+                .render(&config(temp.path()))
+                .expect_err("unparsable filter fails");
 
             assert!(matches!(error, CliError::Query {
-                source: QueryError::UnparsableFilterExpression { .. },
+                source: QueryError::Syntax(_),
                 ..
             }));
         }
@@ -306,7 +372,7 @@ mod tests {
             };
 
             let error = list
-                .render(temp.path())
+                .render(&config(temp.path()))
                 .expect_err("unreadable subdirectory fails");
 
             assert!(matches!(error, CliError::Index {

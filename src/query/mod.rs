@@ -1,316 +1,348 @@
-//! Selects query sources, resolves record fields, and transforms query
-//! outcomes.
+//! Query source selection, field resolution, and result transformation.
 //!
-//! This module powers page-level results from [`super::FileIndex::query`] and
-//! task-level rows from [`super::FileIndex::query_tasks`].
+//! This module powers page-level results from
+//! [`crate::index::FileIndex::query`] and task-level rows from
+//! [`crate::index::FileIndex::query_tasks`]. It provides a pipeline that
+//! selects Notes via [`QuerySource`], pairs each matching Note with its
+//! [`FileRecord`] as an [`IndexRecord`], and applies chained transformations
+//! through [`QueryOutcome`].
+//!
+//! # Source Expression Language
+//!
+//! A source expression is a boolean combination of **leaves** joined by
+//! **logical operators** and grouped with **parentheses**.
+//!
+//! ## Leaves
+//!
+//! ### Tags
+//!
+//! A `#`-prefixed identifier matches Notes carrying that tag or any nested
+//! sub-tag. Tag names may contain letters, digits, underscores, hyphens, dots,
+//! and forward slashes.
+//!
+//! ```text
+//! #book              — matches #book, #book/fiction, #book/science
+//! #projects/active   — matches #projects/active, #projects/active/rust
+//! ```
+//!
+//! ### Paths
+//!
+//! A path leaf matches either an exact file path or every file under a folder
+//! prefix. Paths may be bare (unquoted) or enclosed in single or double quotes.
+//! Quoted paths support `\` escape sequences.
+//!
+//! ```text
+//! books/             — matches every file under books/
+//! books/dune.md      — matches only books/dune.md
+//! "books/dune.md"    — same as above (quoted form)
+//! ```
+//!
+//! A trailing `/` signals a folder prefix match. Without it, the path matches
+//! only an exact file.
+//!
+//! ### File Classes
+//!
+//! File Class leaves match Notes whose frontmatter class field contains the
+//! named class. Three syntax forms are available, each offering the same three
+//! expansion depths.
+//!
+//! **Sigil form** (shorthand):
+//!
+//! ```text
+//! @Book              — exact: matches only Book
+//! @Book+             — children: matches Book and its direct subclasses
+//! @Book*             — descendants: matches Book and all transitive subclasses
+//! ```
+//!
+//! **Function form** (explicit):
+//!
+//! ```text
+//! class(Book)                        — exact (default)
+//! class(Book, children)              — children (positional argument)
+//! class(Book, descendants)           — descendants (positional argument)
+//! class(Book).with_children()        — children (chaining form)
+//! class(Book).with_descendants()     — descendants (chaining form)
+//! ```
+//!
+//! The positional argument and chaining form are mutually exclusive; providing
+//! both is a syntax error.
+//!
+//! ## Logical Operators
+//!
+//! | Operator | Aliases         | Associativity |
+//! |----------|-----------------|---------------|
+//! | `NOT`    | `not`, `!`      | unary prefix  |
+//! | `AND`    | `and`, `&&`     | left          |
+//! | `OR`     | `or`, `\|\|`    | left          |
+//!
+//! Precedence from highest to lowest: `NOT` > `AND` > `OR`. Use parentheses to
+//! override:
+//!
+//! ```text
+//! #book and books/                   — AND binds tighter than OR
+//! (#book or #movie) and !archive/    — parentheses override precedence
+//! not not #book                      — repeated negation is allowed
+//! ```
+//!
+//! ## Precedence Examples
+//!
+//! ```text
+//! #book or books/ and not @Archived
+//! ```
+//! Parses as: `#book OR (books/ AND (NOT @Archived))`
+//!
+//! ```text
+//! #book && !@Archived || @Movie
+//! ```
+//! Parses as: `(#book AND (NOT @Archived)) OR @Movie`
+//!
+//! ## Quoted Strings
+//!
+//! Double-quoted (`"..."`) and single-quoted (`'...'`) strings bypass keyword
+//! classification. Backslash escapes are recognized:
+//!
+//! ```text
+//! "path/with spaces"     — literal path with spaces
+//! 'path\'s file.md'      — escaped single quote
+//! ```
+//!
+//! ## Token Priority and Collisions
+//!
+//! Keywords (`class`, `and`, `or`, `not`) take priority over bare identifiers.
+//! A file path segment that collides with a keyword (for example, a folder
+//! named `class/` or `and/`) must be quoted:
+//!
+//! ```text
+//! class/          — syntax error (lexes as keyword `class` + `/`)
+//! "class/"        — lexes as a path
+//! ```
+//!
+//! ## Matching Rules
+//!
+//! - **Tags:** A Note matches if any of its tags is exactly the leaf tag or is
+//!   nested under it (for example, `#book` matches `#book/fiction`).
+//! - **Paths:** A Note matches if its file path equals the leaf path exactly,
+//!   or if its folder starts with the leaf path (for example, `books/` matches
+//!   `books/dune.md`).
+//! - **Classes:** A Note matches if any of its File Class values (read from the
+//!   configured class field) appears in the resolved match set for the
+//!   requested expansion mode.
+//! - **Conjunction (`AND`):** All sub-expressions must match.
+//! - **Disjunction (`OR`):** At least one sub-expression must match.
+//! - **Negation (`NOT`):** The sub-expression must not match.
+//!
+//! ## Error Recovery
+//!
+//! Invalid expressions produce a [`QueryError::Syntax`] diagnostic pinpointing
+//! the offending token with a repair hint. Common errors:
+//!
+//! - Missing operand: `#book and`
+//! - Unmatched parenthesis: `(#book`
+//! - Empty class name: `class()`
+//! - Duplicate expansion mode: `class(Book, children).with_descendants()`
+//! - Trailing tokens: `class(Book).with_children() extra`
 //!
 //! # Main Types
 //!
-//! - [`QuerySource`]: Selects which Notes a query includes.
-//! - [`IndexRecord`]: Pairs a [`FileRecord`] with its parsed [`Note`] and
-//!   resolves `file.*`, `task.*`, frontmatter, tag, and inlinks fields.
-//! - [`QueryOutcome`]: Stores result rows, applies chained transformations
-//!   ([`QueryOutcome::filter`], [`QueryOutcome::sort`],
-//!   [`QueryOutcome::limit`], [`QueryOutcome::group_by`],
-//!   [`QueryOutcome::flatten`]), and renders terminal Markdown output
-//!   ([`QueryOutcome::table`], [`QueryOutcome::list`],
-//!   [`QueryOutcome::task_list`]).
-//! - [`QueryError`]: Reports malformed field paths and query expressions.
+//! - [`QuerySource`] is the top-level entry point: either all Notes or a parsed
+//!   expression.
+//! - [`source::QuerySourceExpr`] wraps the expression AST and exposes parsing,
+//!   matching, and class-expansion mutation.
+//! - [`SourceAtom`] is the leaf enum (tag, path, class) used by the expression
+//!   tree.
+//! - [`ClassExpansionMode`] controls the incremental depth model for File Class
+//!   matching.
+//! - [`IndexRecord`] pairs a [`FileRecord`] with its parsed [`Note`] and
+//!   resolves `file.*`, `task.*`, frontmatter, tag, and inlinks fields for
+//!   template rendering and CLI output.
+//! - [`QueryOutcome`] stores result rows and provides chained transformation
+//!   methods: [`filter`][`QueryOutcome::filter`],
+//!   [`sort`][`QueryOutcome::sort`], [`limit`][`QueryOutcome::limit`],
+//!   [`group_by`][`QueryOutcome::group_by`],
+//!   [`flatten`][`QueryOutcome::flatten`]. Terminal rendering methods include
+//!   [`table`][`QueryOutcome::table`], [`list`][`QueryOutcome::list`], and
+//!   [`task_list`][`QueryOutcome::task_list`].
+//! - [`QueryError`] reports malformed field paths, invalid expressions, and
+//!   transformation constraint violations.
+//!
+//! # Submodules
+//!
+//! - [`choice`] builds selectable file options and borrowed filters.
+//! - [`comparison`] implements filter comparison operators and expressions.
+//! - [`error`] defines error types for field resolution and query
+//!   transformations.
+//! - [`field`] parses and resolves query field paths.
+//! - [`filter`] parses and evaluates `.filter()`/`.where()` expressions.
+//! - [`logic`] provides the shared logical-expression tree and precedence
+//!   parser.
+//! - [`record`] implements query rows and field resolution.
+//! - [`sort`] defines equality and ordering for resolved [`FieldValue`]
+//!   instances.
+//! - [`source`] parses and evaluates page source expressions.
+//!
+//! [`FieldValue`]: crate::note::FieldValue
+//! [`FileRecord`]: crate::index::FileRecord
+//! [`Note`]: crate::note::Note
 
+mod choice;
+mod comparison;
 mod error;
 mod field;
 mod filter;
-mod operators;
+mod logic;
+mod record;
 mod sort;
+mod source;
 
-use std::{collections::BTreeSet, path::PathBuf, sync::Arc};
+use std::path::PathBuf;
 
-pub(crate) use error::QueryError;
+pub(crate) use choice::{FileOption, FileOptionFilter, FrontmatterFieldKeys};
+#[cfg(test)]
+pub(crate) use error::{FieldPathError, QuerySyntaxError};
+pub use error::{QueryDialect, QueryError};
+use field::FieldPath;
 pub(crate) use field::FileField;
-use field::{FieldPath, TaskField};
 use filter::FilterExpr;
+pub use record::IndexRecord;
 use sort::SortKey;
 pub(crate) use sort::SortOrder;
+pub use source::{ClassExpansionMode, QuerySource};
+pub(crate) use source::{SourceAtom, class_values};
 
-use super::file::FileRecord;
-use crate::note::{FieldValue, Note};
+use crate::{
+    index::{FileIndex, FileRecord},
+    note::{FieldValue, Note},
+};
 
-/// Selects which Markdown Notes a page-level or task-level query includes.
+/// Executes a page-level source query, returning one [`IndexRecord`] per Note
+/// matching `source`.
 ///
-/// Each variant defines its own matching behavior applied to every indexed
-/// Note. Passing `None` from CLI flags selects [`Self::All`].
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum QuerySource {
-    /// Matches every indexed Markdown Note regardless of tags, folder, or
-    /// class.
-    All,
-    /// Matches Notes whose tags include `tag` exactly, or a sub-tag nested
-    /// under it (for example, `#projects` also matches `#projects/active`).
-    Tag(String),
-    /// Matches Notes whose project-relative path starts with `folder`,
-    /// including the folder itself and every directory nested under it.
-    Folder(PathBuf),
-    /// Matches Notes whose File Class(es) overlap the resolved `classes` set.
-    /// A Note's File Class(es) are read from the frontmatter field named
-    /// `class_field`; the Note matches when any of those values is in
-    /// `classes`, the resolved is-a match set built by the schema registry.
-    Class {
-        /// Frontmatter field naming the Note's File Class(es).
-        class_field: Arc<str>,
-        /// Resolved match set: the queried class names plus every Schema that
-        /// transitively `extends` one of them.
-        classes: BTreeSet<String>,
-    },
+/// Consumes the [`FileIndex`] to pair [`FileRecord`] and [`Note`] entries,
+/// resolving inlinks from the provided map. Uses `class_field` to read File
+/// Class values from each Note's frontmatter when `source` contains class
+/// atoms.
+///
+/// # Examples
+///
+/// ```ignore
+/// # use traces_pkm::query::{query, QuerySource};
+/// # use traces_pkm::index::FileIndex;
+/// # let index = FileIndex::default();
+/// # let source = QuerySource::parse("#book").unwrap();
+/// # let outcome = query(index, &source, "class");
+/// ```
+#[must_use]
+pub(crate) fn query(
+    index: FileIndex,
+    source: &QuerySource,
+    class_field: &str,
+) -> QueryOutcome {
+    let FileIndex {
+        records,
+        notes,
+        mut inlinks,
+    } = index;
+    let records = matched_pairs(records, notes, source, class_field)
+        .map(|(file, note)| record_with_inlinks(file, note, &mut inlinks))
+        .collect();
+    QueryOutcome::new(records)
 }
 
-impl QuerySource {
-    /// Builds a [`QuerySource`] from a `--from`-style CLI flag value.
-    ///
-    /// Passing `None` selects [`Self::All`]. A string starting with `#` selects
-    /// [`Self::Tag`] (matching nested sub-tags such as `#book/fiction` for
-    /// `#book`), while any other string selects [`Self::Folder`].
-    #[must_use]
-    pub(crate) fn from_flag(flag: Option<&str>) -> Self {
-        match flag {
-            None => Self::All,
-            Some(value) if value.starts_with('#') => {
-                Self::Tag(value.to_owned())
+/// Executes a task-level source query, returning one [`IndexRecord`] per task
+/// item across all Notes matching `source`.
+///
+/// Each matching Note is expanded into multiple task-level rows via
+/// [`IndexRecord::with_task`]. Uses `class_field` to read File Class values
+/// from each Note's frontmatter when `source` contains class atoms.
+///
+/// # Examples
+///
+/// ```ignore
+/// # use traces_pkm::query::{query_tasks, QuerySource};
+/// # use traces_pkm::index::FileIndex;
+/// # let index = FileIndex::default();
+/// # let source = QuerySource::parse("#book").unwrap();
+/// # let outcome = query_tasks(index, &source, "class");
+/// ```
+#[must_use]
+pub(crate) fn query_tasks(
+    index: FileIndex,
+    source: &QuerySource,
+    class_field: &str,
+) -> QueryOutcome {
+    let FileIndex {
+        records: files,
+        notes,
+        mut inlinks,
+    } = index;
+    let mut records = Vec::new();
+    for (file, note) in matched_pairs(files, notes, source, class_field) {
+        let base = record_with_inlinks(file, note, &mut inlinks);
+        let mut tasks = base.note().tasks().peekable();
+        while let Some(item) = tasks.next() {
+            let completed = item.is_completed();
+            let text = item.text().to_owned();
+            if tasks.peek().is_some() {
+                records.push(base.clone().with_task(completed, text));
+            } else {
+                drop(tasks);
+                records.push(base.with_task(completed, text));
+                break;
             }
-            Some(value) => Self::Folder(PathBuf::from(value)),
         }
     }
-
-    /// Returns `true` if `file` and its parsed `note` belong to this source.
-    #[inline]
-    #[must_use]
-    pub(super) fn is_match(&self, file: &FileRecord, note: &Note) -> bool {
-        match self {
-            Self::All => true,
-            Self::Tag(tag) => {
-                note.tags().iter().any(|t| t.is_nested_under(tag))
-            }
-            Self::Folder(folder) => file.folder().starts_with(folder),
-            Self::Class {
-                class_field,
-                classes,
-            } => class_values(note, class_field)
-                .any(|value| classes.contains(value)),
-        }
-    }
+    QueryOutcome::new(records)
 }
 
-/// Represents a query row pairing a [`FileRecord`] with parsed [`Note`]
-/// metadata.
+/// Zips and filters file records and note contents matching the given query
+/// source.
 ///
-/// Task-level rows also carry fields for a single task item. Each row resolves
-/// `file.*`, `task.*`, frontmatter, inline fields, tags, and derived inlinks
-/// for template rendering and CLI output.
-#[derive(Clone, Debug, PartialEq)]
-pub struct IndexRecord {
+/// Assumes both vectors are sorted by file path to perform a linear-time scan.
+fn matched_pairs<'a>(
+    records: Vec<FileRecord>,
+    notes: Vec<Note>,
+    source: &'a QuerySource,
+    class_field: &'a str,
+) -> impl Iterator<Item = (FileRecord, Note)> + 'a {
+    let mut files = records.into_iter().peekable();
+    notes.into_iter().filter_map(move |note| {
+        while files.peek().is_some_and(|file| file.path() < note.path()) {
+            files.next();
+        }
+        let file = files.next_if(|file| file.path() == note.path())?;
+        source.is_match(&file, &note, class_field).then_some((file, note))
+    })
+}
+
+/// Constructs a new [`IndexRecord`] with inbound link paths populated from
+/// `inlinks`.
+fn record_with_inlinks(
     file: FileRecord,
-    /// Reference-counted, not owned outright: exploding one Note into
-    /// several rows (see [`super::FileIndex::query_tasks`] and
-    /// [`QueryOutcome::flatten`]) shares this field across every row instead
-    /// of deep-cloning frontmatter, links, tags, and lists per row.
-    note: Arc<Note>,
-    /// Overrides field resolution for exploded rows produced by
-    /// [`QueryOutcome::flatten`].
-    flattened: Vec<(FieldPath, FieldValue)>,
-    /// Stores per-task fields set by [`super::FileIndex::query_tasks`], or
-    /// `None` for page-level records.
-    task: Option<TaskInfo>,
-    /// Stores project-relative paths of Notes whose outlinks resolve to this
-    /// row's Note, set by [`super::FileIndex::query`] and
-    /// [`super::FileIndex::query_tasks`].
-    inlinks: Vec<PathBuf>,
+    note: Note,
+    inlinks: &mut std::collections::HashMap<PathBuf, Vec<PathBuf>>,
+) -> IndexRecord {
+    let links = inlinks.remove(file.path()).unwrap_or_default();
+    IndexRecord::new(file, note).with_inlinks(links)
 }
 
-impl IndexRecord {
-    /// Creates a new [`IndexRecord`] pairing `file` with its parsed `note`.
-    pub(super) fn new(file: FileRecord, note: Note) -> Self {
-        Self {
-            file,
-            note: Arc::new(note),
-            flattened: Vec::new(),
-            task: None,
-            inlinks: Vec::new(),
-        }
-    }
-
-    /// Converts this record into a task-level row with specified completion
-    /// state and text.
-    ///
-    /// Used by [`super::FileIndex::query_tasks`] to turn a page-level record
-    /// into one row per task item while retaining parent Note metadata for
-    /// filtering and display via [`Self::field`].
-    pub(super) fn with_task(
-        mut self,
-        completed: bool,
-        text: impl Into<String>,
-    ) -> Self {
-        self.task = Some(TaskInfo {
-            completed,
-            text: text.into(),
-        });
-        self
-    }
-
-    /// Attaches project-relative paths of Notes whose outlinks resolve to this
-    /// record's Note.
-    pub(super) fn with_inlinks(mut self, inlinks: Vec<PathBuf>) -> Self {
-        self.inlinks = inlinks;
-        self
-    }
-
-    /// Returns task completion state (`true` for `- [x]`, `false` for
-    /// `- [ ]`) if this is a task-level record, or `None` for page-level
-    /// records.
-    #[inline]
-    #[must_use]
-    pub fn task_completed(&self) -> Option<bool> {
-        self.task.as_ref().map(|task| task.completed)
-    }
-
-    /// Returns the task item's text if this is a task-level record, or `None`
-    /// for page-level records.
-    #[inline]
-    #[must_use]
-    pub(crate) fn task_text(&self) -> Option<&str> {
-        self.task.as_ref().map(|task| task.text.as_str())
-    }
-
-    /// Returns general metadata for the indexed file.
-    #[inline]
-    #[must_use]
-    pub fn file(&self) -> &FileRecord {
-        &self.file
-    }
-
-    /// Returns parsed [`Note`] metadata for the indexed file.
-    #[inline]
-    #[must_use]
-    pub(crate) fn note(&self) -> &Note {
-        self.note.as_ref()
-    }
-
-    /// Returns project-relative paths of Notes whose outlinks resolve to this
-    /// record's Note, or an empty slice if no Notes link to it.
-    #[inline]
-    #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "no current caller outside tests; documented deliberate \
-                      API in index-query#10's derived-inlinks design \
-                      (Templates/CLI select or filter inlinks via \
-                      field(\"inlinks\") today; this direct accessor for \
-                      display output is not yet wired to a CLI/Template \
-                      renderer)"
-        )
-    )]
-    pub(crate) fn inlinks(&self) -> &[PathBuf] {
-        &self.inlinks
-    }
-
-    /// Resolves a field path string against this record's metadata.
-    ///
-    /// Resolves `file.*` accessors, `task.*` accessors, frontmatter fields,
-    /// inline fields, `tags`, and `inlinks`. Resolution rules include:
-    /// - Frontmatter fields take precedence over inline fields sharing the same
-    ///   key (see [`Note::fields`]).
-    /// - Well-formed paths without values (such as a missing key or a `task.*`
-    ///   accessor on a page-level record) resolve to [`FieldValue::Null`].
-    ///
-    /// # Errors
-    ///
-    /// - [`UnknownFieldPath`] if `path` cannot be parsed as a valid field path.
-    ///
-    /// [`UnknownFieldPath`]: QueryError::UnknownFieldPath
-    #[inline]
-    pub(crate) fn field(&self, path: &str) -> Result<FieldValue, QueryError> {
-        Ok(self.resolve(&FieldPath::parse(path)?))
-    }
-
-    /// Resolves a parsed [`FieldPath`], applying any [`Self::flattened`]
-    /// overrides.
-    fn resolve(&self, path: &FieldPath) -> FieldValue {
-        if let Some((_, value)) = self.flattened.iter().find(|(p, _)| p == path)
-        {
-            return value.clone();
-        }
-        match path {
-            FieldPath::File(field) => field.resolve(&self.file),
-            FieldPath::Task(field) => self.task.as_ref().map_or(
-                FieldValue::Null,
-                |task| match field {
-                    TaskField::Completed => FieldValue::Bool(task.completed),
-                    TaskField::Text => FieldValue::String(task.text.clone()),
-                },
-            ),
-            FieldPath::Tags => FieldValue::List(
-                self.note
-                    .tags()
-                    .iter()
-                    .map(|tag| FieldValue::String(tag.as_str().to_owned()))
-                    .collect(),
-            ),
-            FieldPath::Inlinks => FieldValue::List(
-                self.inlinks
-                    .iter()
-                    .map(|linking_note| {
-                        FieldValue::String(
-                            linking_note.to_string_lossy().into_owned(),
-                        )
-                    })
-                    .collect(),
-            ),
-            FieldPath::Metadata(key) => self
-                .note
-                .fields()
-                .find(|field| field.key().is_match(key.as_str()))
-                .map_or(FieldValue::Null, |field| field.value().clone()),
-        }
-    }
-
-    /// Returns a copy of this record with `path` overridden to `value` for
-    /// exploded [`QueryOutcome::flatten`] rows.
-    fn with_flattened(mut self, path: FieldPath, value: FieldValue) -> Self {
-        if let Some(entry) = self.flattened.iter_mut().find(|(p, _)| p == &path)
-        {
-            entry.1 = value;
-        } else {
-            self.flattened.push((path, value));
-        }
-        self
-    }
-}
-
-/// Represents per-task fields layered onto an [`IndexRecord`] by
-/// [`super::FileIndex::query_tasks`].
-///
-/// Task-level rows retain parent [`Note`] file and metadata fields for
-/// filtering and display while attaching task completion and text attributes.
-/// This is distinct from [`IndexRecord::flattened`], which overrides existing
-/// field paths rather than adding new ones.
-#[derive(Clone, Debug, PartialEq)]
-struct TaskInfo {
-    completed: bool,
-    text: String,
-}
-
-/// Represents an ordered collection of [`IndexRecord`] rows produced by an
-/// index query.
+/// An ordered collection of [`IndexRecord`] rows produced by an index query.
 ///
 /// Page-level outcomes contain one row per Note, while task-level outcomes
-/// contain one row per task item. Transformation methods consume and return a
-/// [`QueryOutcome`], enabling method chaining such as `outcome.filter("rating >
-/// 7")?.sort("rating", true)?.limit(10)?`.
+/// contain one row per task item. Transformation methods consume and return
+/// a [`QueryOutcome`], enabling method chaining.
+///
+/// # Examples
+///
+/// ```ignore
+/// use traces_pkm::query::QueryOutcome;
+///
+/// let outcome = QueryOutcome::default();
+/// assert!(outcome.is_empty());
+/// ```
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct QueryOutcome {
     records: Vec<IndexRecord>,
 }
-
 impl QueryOutcome {
     /// Wraps `records` into a new [`QueryOutcome`].
     pub(super) fn new(records: Vec<IndexRecord>) -> Self {
@@ -348,46 +380,35 @@ impl QueryOutcome {
         self.records.iter()
     }
 
-    /// Retains only records matching the filter expression `expr`.
+    /// Retains only records matching the filter expression.
     ///
-    /// Supported syntax:
+    /// # Syntax Specification
     ///
-    /// - **Comparisons:** `<field> <op> <value>` with `==`, `!=`, `>=`, `<=`,
-    ///   `>`, or `<`.
-    /// - **Functions:** `contains(field, value)` checks list membership, tag
-    ///   hierarchy (for example `#book` matching `#book/fiction`), or substring
-    ///   containment.
-    /// - **Logical operators:** `AND` / `and` / `&&`, `OR` / `or` / `||`, and
-    ///   `NOT` / `not` / `!`.
-    /// - **Grouping:** `( ... )` overrides default operator precedence.
-    /// - **Literals:** quoted strings with `\` escapes, numbers, booleans
-    ///   (`true`/`false`), and `null`/`Null`.
+    /// | Element | Syntax Example | Description |
+    /// |:-|:-|:-|
+    /// | **Comparisons** | `rating > 7` | Compares fields using `==`, `!=`, `>=`, `<=`, `>`, `<`. |
+    /// | **Functions** | `contains(tags, "#book")` | Checks list/tag membership or substring containment. |
+    /// | **Logical Operators** | `a and b or not c` | Standard logic (`and`/`&&`, `or`/`||`, `not`/`!`). |
+    /// | **Grouping** | `(rating > 5) and ok` | Overrides operator precedence. |
+    /// | **Literals** | `"text"`, `123`, `true`, `null` | Quoted strings, numbers, booleans, and nulls. |
     ///
-    /// Matching rules:
+    /// # Matching Rules
     ///
-    /// - `==` and `!=` compare [`String`], `Date`, and `Duration` values by
-    ///   text.
-    /// - Mismatched data types never match except under `!=`.
-    /// - Records missing a field (`Null`) fail equality and ordering checks,
-    ///   but match `!=`.
+    /// - **Text Equality:** `==` and `!=` compare [`String`], `Date`, and
+    ///   `Duration` values by text representation.
+    /// - **Type Mismatch:** Mismatched data types never match except under
+    ///   `!=`.
+    /// - **Missing Fields:** Records missing the requested field (`Null`) fail
+    ///   equality and ordering checks, but match `!=`.
     ///
     /// # Errors
     ///
-    /// - [`UnparsableFilterExpression`] if `expr` cannot be parsed.
-    /// - [`UnknownFieldPath`] if a field path referenced in `expr` is
-    ///   malformed.
-    ///
-    /// [`UnparsableFilterExpression`]: QueryError::UnparsableFilterExpression
-    /// [`UnknownFieldPath`]: QueryError::UnknownFieldPath
-    #[inline]
-    pub fn filter(self, expr: &str) -> Result<Self, QueryError> {
+    /// - [`QueryError::Syntax`] if the expression is invalid.
+    /// - [`QueryError::FieldPath`] if a field path is malformed.
+    pub fn filter(mut self, expr: &str) -> Result<Self, QueryError> {
         let expr = FilterExpr::parse(expr)?;
-        let records = self
-            .records
-            .into_iter()
-            .filter(|record| expr.matches(record))
-            .collect();
-        Ok(Self::new(records))
+        self.records.retain(|record| expr.matches(record));
+        Ok(self)
     }
 
     /// Filters records matching `expr`, serving as an alias for
@@ -400,12 +421,9 @@ impl QueryOutcome {
     ///
     /// # Errors
     ///
-    /// - [`UnparsableFilterExpression`] if `expr` cannot be parsed.
-    /// - [`UnknownFieldPath`] if a field path referenced in `expr` is
+    /// - [`QueryError::Syntax`] if `expr` cannot be parsed.
+    /// - [`QueryError::FieldPath`] if a field path referenced in `expr` is
     ///   malformed.
-    ///
-    /// [`UnparsableFilterExpression`]: QueryError::UnparsableFilterExpression
-    /// [`UnknownFieldPath`]: QueryError::UnknownFieldPath
     #[inline]
     #[cfg_attr(
         not(test),
@@ -434,9 +452,8 @@ impl QueryOutcome {
     ///
     /// # Errors
     ///
-    /// - [`UnknownFieldPath`] if `path` cannot be parsed as a valid field path.
-    ///
-    /// [`UnknownFieldPath`]: QueryError::UnknownFieldPath
+    /// - [`QueryError::FieldPath`] if `path` cannot be parsed as a valid field
+    ///   path.
     #[inline]
     pub fn sort(
         self,
@@ -450,29 +467,38 @@ impl QueryOutcome {
     ///
     /// # Errors
     ///
-    /// - [`NegativeLimit`] if `n` is negative or exceeds platform pointer width
-    ///   limits.
+    /// - [`QueryError::LimitOutOfRange`] if `n` is negative or exceeds platform
+    ///   pointer-width limits.
     ///
-    /// [`NegativeLimit`]: QueryError::NegativeLimit
+    /// # Examples
+    ///
+    /// ```ignore
+    /// use traces_pkm::query::QueryOutcome;
+    ///
+    /// let outcome = QueryOutcome::default();
+    /// let limited = outcome.limit(10).unwrap();
+    /// assert_eq!(limited.len(), 0);
+    /// ```
     #[inline]
-    pub fn limit(self, n: i64) -> Result<Self, QueryError> {
+    pub fn limit(mut self, n: i64) -> Result<Self, QueryError> {
         let n = usize::try_from(n).map_err(|_source| {
-            QueryError::NegativeLimit {
-                n,
+            QueryError::LimitOutOfRange {
+                value: n,
             }
         })?;
-        Ok(Self::new(self.records.into_iter().take(n).collect()))
+        self.records.truncate(n);
+        Ok(self)
     }
 
-    /// Groups records by sorting them ascending on the field at `path`, so
-    /// template loops or terminal renderers can detect group transitions by
-    /// comparing adjacent records.
+    /// Groups records by sorting them ascending on the field at `path`.
+    ///
+    /// This enables template loops or terminal renderers to detect group
+    /// transitions by comparing adjacent records.
     ///
     /// # Errors
     ///
-    /// - [`UnknownFieldPath`] if `path` cannot be parsed as a valid field path.
-    ///
-    /// [`UnknownFieldPath`]: QueryError::UnknownFieldPath
+    /// - [`QueryError::FieldPath`] if `path` cannot be parsed as a valid field
+    ///   path.
     #[inline]
     pub(crate) fn group_by(self, path: &str) -> Result<Self, QueryError> {
         self.sort_by_field(path, false)
@@ -482,7 +508,6 @@ impl QueryOutcome {
     /// element.
     ///
     /// Behavior:
-    ///
     /// - **List fields:** applies to fields resolving to [`FieldValue::List`]
     ///   (such as frontmatter lists, inline list fields, or `tags`).
     /// - **Non-list fields:** records with scalar values pass through
@@ -493,11 +518,8 @@ impl QueryOutcome {
     ///
     /// # Errors
     ///
-    /// - [`UnknownFieldPath`] if `path` cannot be parsed as a valid field path.
-    ///
-    /// [`UnknownFieldPath`]: QueryError::UnknownFieldPath
-    ///
-    /// [`UnknownFieldPath`]: QueryError::UnknownFieldPath
+    /// - [`QueryError::FieldPath`] if `path` cannot be parsed as a valid field
+    ///   path.
     pub(crate) fn flatten(self, path: &str) -> Result<Self, QueryError> {
         let field_path = FieldPath::parse(path)?;
         let mut records = Vec::with_capacity(self.records.len());
@@ -522,27 +544,25 @@ impl QueryOutcome {
     /// column field paths.
     ///
     /// Pairs each `headers` label with the field path at the identical index in
-    /// `columns`. Table formatting uses `comfy-table`'s [`ASCII_MARKDOWN`]
-    /// preset to align column widths. Pipe characters (`|`) are escaped and
-    /// newlines collapse into spaces to prevent table layout corruption.
+    /// `columns`. Table formatting uses the
+    /// [`ASCII_MARKDOWN`][`comfy_table::presets::ASCII_MARKDOWN`] preset of
+    /// `comfy-table` to align column widths. Pipe characters (`|`)
+    /// are escaped and newlines collapse into spaces to prevent table layout
+    /// corruption.
     ///
     /// # Errors
     ///
-    /// - [`TableColumnMismatch`] if `headers` and `columns` slices differ in
-    ///   length.
-    /// - [`UnknownFieldPath`] if any field path string in `columns` is
+    /// - [`QueryError::TableColumnCountMismatch`] if `headers` and `columns`
+    ///   slices differ in length.
+    /// - [`QueryError::FieldPath`] if any field path string in `columns` is
     ///   malformed.
-    ///
-    /// [`ASCII_MARKDOWN`]: comfy_table::presets::ASCII_MARKDOWN
-    /// [`TableColumnMismatch`]: QueryError::TableColumnMismatch
-    /// [`UnknownFieldPath`]: QueryError::UnknownFieldPath
     pub(crate) fn table(
         &self,
         headers: &[&str],
         columns: &[&str],
     ) -> Result<String, QueryError> {
         if headers.len() != columns.len() {
-            return Err(QueryError::TableColumnMismatch {
+            return Err(QueryError::TableColumnCountMismatch {
                 headers: headers.len(),
                 columns: columns.len(),
             });
@@ -570,11 +590,8 @@ impl QueryOutcome {
     ///
     /// # Errors
     ///
-    /// - [`UnknownFieldPath`] if `path` cannot be parsed as a valid field path.
-    ///
-    /// [`UnknownFieldPath`]: QueryError::UnknownFieldPath
-    ///
-    /// [`UnknownFieldPath`]: QueryError::UnknownFieldPath
+    /// - [`QueryError::FieldPath`] if `path` cannot be parsed as a valid field
+    ///   path.
     pub(crate) fn list(&self, path: &str) -> Result<String, QueryError> {
         let field_path = FieldPath::parse(path)?;
         let mut out = String::new();
@@ -588,20 +605,15 @@ impl QueryOutcome {
 
     /// Renders task-level records as a Markdown task list (`- [ ]` or `- [x]`).
     ///
-    /// Renders each record using its task completion state and text fields.
-    ///
     /// # Errors
     ///
-    /// - [`TaskListOnPageRecords`] if any record lacks task fields (built by
-    ///   [`super::FileIndex::query`] instead of
-    ///   [`super::FileIndex::query_tasks`]).
-    ///
-    /// [`TaskListOnPageRecords`]: QueryError::TaskListOnPageRecords
+    /// - [`QueryError::TaskListRequiresTaskRows`] if any record lacks task
+    ///   fields (built by [`query`] instead of [`query_tasks`]).
     pub(crate) fn task_list(&self) -> Result<String, QueryError> {
         let mut out = String::new();
         for record in &self.records {
             let Some(completed) = record.task_completed() else {
-                return Err(QueryError::TaskListOnPageRecords);
+                return Err(QueryError::TaskListRequiresTaskRows);
             };
             out.push_str(if completed {
                 "- [x] "
@@ -627,11 +639,8 @@ impl QueryOutcome {
     ///
     /// # Errors
     ///
-    /// - [`UnknownFieldPath`] if `path` cannot be parsed as a valid field path.
-    ///
-    /// [`UnknownFieldPath`]: QueryError::UnknownFieldPath
-    ///
-    /// [`UnknownFieldPath`]: QueryError::UnknownFieldPath
+    /// - [`QueryError::FieldPath`] if `path` cannot be parsed as a valid field
+    ///   path.
     fn sort_by_field(
         self,
         path: &str,
@@ -647,6 +656,8 @@ impl QueryOutcome {
     }
 }
 
+/// Converts the [`QueryOutcome`] into an iterator over owned [`IndexRecord`]
+/// rows.
 impl IntoIterator for QueryOutcome {
     type IntoIter = std::vec::IntoIter<Self::Item>;
     type Item = IndexRecord;
@@ -657,6 +668,8 @@ impl IntoIterator for QueryOutcome {
     }
 }
 
+/// Creates an iterator over borrowed [`IndexRecord`] rows from the
+/// [`QueryOutcome`].
 impl<'a> IntoIterator for &'a QueryOutcome {
     type IntoIter = std::slice::Iter<'a, IndexRecord>;
     type Item = &'a IndexRecord;
@@ -665,35 +678,6 @@ impl<'a> IntoIterator for &'a QueryOutcome {
     fn into_iter(self) -> Self::IntoIter {
         self.records.iter()
     }
-}
-
-/// Yields a Note's File Class values: the strings held by the frontmatter field
-/// named `class_field`.
-///
-/// - A single string yields one element.
-/// - A list of strings yields each string element.
-/// - A missing field, a non-string scalar, or non-string list elements yield
-///   nothing.
-pub(super) fn class_values<'a>(
-    note: &'a Note,
-    class_field: &str,
-) -> impl Iterator<Item = &'a str> {
-    let value = note.frontmatter().and_then(|frontmatter| {
-        let field = frontmatter
-            .fields()
-            .iter()
-            .find(|field| field.key().is_match(class_field))?;
-        Some(field.value())
-    });
-    let list = match value {
-        Some(FieldValue::List(items)) => items.as_slice(),
-        _ => &[],
-    };
-    let scalar = match value {
-        Some(FieldValue::List(_)) | None => None,
-        Some(other) => other.as_str(),
-    };
-    list.iter().filter_map(FieldValue::as_str).chain(scalar)
 }
 
 /// Converts a resolved [`FieldValue`] to plain text for list and table
@@ -724,18 +708,16 @@ fn field_text(value: &FieldValue) -> String {
     }
 }
 
-/// Escapes pipes (`|`) and collapses newlines to spaces to preserve table row
+/// Escapes pipes (`|`) and collapses newlines to spaces to preserve table
 /// formatting.
 fn escape_table_text(text: &str) -> String {
     text.replace('\n', " ").replace('|', "\\|")
 }
 
-/// Converts a [`FieldValue`] to plain text and escapes table formatting
-/// characters.
+/// Formats a [`FieldValue`] into plain text suitable for Markdown table cells.
 fn table_cell_text(value: &FieldValue) -> String {
     escape_table_text(&field_text(value))
 }
-
 #[cfg(test)]
 mod tests {
     use std::{fs, path::Path};
@@ -770,200 +752,13 @@ mod tests {
     }
     use fixtures::*;
 
-    mod source_is_match {
-
-        use super::*;
-
-        #[test]
-        fn returns_true_for_all_source() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            fs::write(temp.path().join("a.md"), "# A").expect("write file");
-            let index = FileIndex::build(temp.path()).expect("build index");
-            let record = index.record(Path::new("a.md")).expect("record");
-            let note = index.note(Path::new("a.md")).expect("note");
-
-            assert!(QuerySource::All.is_match(record, note));
-        }
-
-        #[test]
-        fn returns_true_when_note_has_matching_or_sub_tag() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            fs::write(temp.path().join("a.md"), "Tracked in #projects/active.")
-                .expect("write file");
-            let index = FileIndex::build(temp.path()).expect("build index");
-            let record = index.record(Path::new("a.md")).expect("record");
-            let note = index.note(Path::new("a.md")).expect("note");
-
-            assert!(
-                QuerySource::Tag("#projects".to_owned()).is_match(record, note)
-            );
-            assert!(
-                !QuerySource::Tag("#books".to_owned()).is_match(record, note)
-            );
-        }
-
-        #[test]
-        fn returns_true_when_file_is_under_folder_source() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            fs::create_dir_all(temp.path().join("projects/active"))
-                .expect("mkdir");
-            fs::write(temp.path().join("projects/active/task.md"), "# Task")
-                .expect("write file");
-            let index = FileIndex::build(temp.path()).expect("build index");
-            let record = index
-                .record(Path::new("projects/active/task.md"))
-                .expect("record");
-            let note =
-                index.note(Path::new("projects/active/task.md")).expect("note");
-
-            assert!(
-                QuerySource::Folder(PathBuf::from("projects"))
-                    .is_match(record, note)
-            );
-            assert!(
-                !QuerySource::Folder(PathBuf::from("archive"))
-                    .is_match(record, note)
-            );
-        }
-
-        #[test]
-        fn returns_true_when_note_class_is_in_the_match_set() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            fs::write(temp.path().join("a.md"), "---\nclass: book\n---\n# A")
-                .expect("write file");
-            let index = FileIndex::build(temp.path()).expect("build index");
-            let record = index.record(Path::new("a.md")).expect("record");
-            let note = index.note(Path::new("a.md")).expect("note");
-
-            assert!(
-                QuerySource::Class {
-                    class_field: Arc::from("class"),
-                    classes: BTreeSet::from(["book".to_owned()]),
-                }
-                .is_match(record, note)
-            );
-            assert!(
-                !QuerySource::Class {
-                    class_field: Arc::from("class"),
-                    classes: BTreeSet::from(["movie".to_owned()]),
-                }
-                .is_match(record, note)
-            );
-        }
-
-        #[test]
-        fn matches_any_class_of_a_multi_class_note() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            fs::write(
-                temp.path().join("a.md"),
-                "---\nclass: [book, movie]\n---\n# A",
-            )
-            .expect("write file");
-            let index = FileIndex::build(temp.path()).expect("build index");
-            let record = index.record(Path::new("a.md")).expect("record");
-            let note = index.note(Path::new("a.md")).expect("note");
-
-            assert!(
-                QuerySource::Class {
-                    class_field: Arc::from("class"),
-                    classes: BTreeSet::from(["movie".to_owned()]),
-                }
-                .is_match(record, note)
-            );
-        }
-
-        #[test]
-        fn reads_the_class_from_the_configured_field() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            fs::write(temp.path().join("a.md"), "---\nkind: book\n---\n# A")
-                .expect("write file");
-            let index = FileIndex::build(temp.path()).expect("build index");
-            let record = index.record(Path::new("a.md")).expect("record");
-            let note = index.note(Path::new("a.md")).expect("note");
-
-            assert!(
-                QuerySource::Class {
-                    class_field: Arc::from("kind"),
-                    classes: BTreeSet::from(["book".to_owned()]),
-                }
-                .is_match(record, note)
-            );
-            assert!(
-                !QuerySource::Class {
-                    class_field: Arc::from("class"),
-                    classes: BTreeSet::from(["book".to_owned()]),
-                }
-                .is_match(record, note)
-            );
-        }
-
-        #[test]
-        fn returns_false_when_note_has_no_class_field() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            fs::write(temp.path().join("a.md"), "# A").expect("write file");
-            let index = FileIndex::build(temp.path()).expect("build index");
-            let record = index.record(Path::new("a.md")).expect("record");
-            let note = index.note(Path::new("a.md")).expect("note");
-
-            assert!(
-                !QuerySource::Class {
-                    class_field: Arc::from("class"),
-                    classes: BTreeSet::from(["book".to_owned()]),
-                }
-                .is_match(record, note)
-            );
-        }
-
-        #[test]
-        fn returns_false_when_class_value_is_not_a_string() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            fs::write(temp.path().join("a.md"), "---\nclass: 5\n---\n# A")
-                .expect("write file");
-            let index = FileIndex::build(temp.path()).expect("build index");
-            let record = index.record(Path::new("a.md")).expect("record");
-            let note = index.note(Path::new("a.md")).expect("note");
-
-            assert!(
-                !QuerySource::Class {
-                    class_field: Arc::from("class"),
-                    classes: BTreeSet::from(["5".to_owned()]),
-                }
-                .is_match(record, note)
-            );
-        }
-    }
-
-    mod source_from_flag {
-        use pretty_assertions::assert_eq;
-        use rstest::rstest;
-
-        use super::*;
-
-        #[rstest]
-        #[case::none_selects_all(None, QuerySource::All)]
-        #[case::hash_prefix_selects_tag(
-            Some("#projects"),
-            QuerySource::Tag("#projects".to_owned())
-        )]
-        #[case::other_value_selects_folder(
-            Some("books"),
-            QuerySource::Folder(PathBuf::from("books"))
-        )]
-        fn selects_the_expected_source_variant(
-            #[case] flag: Option<&str>,
-            #[case] expected: QuerySource,
-        ) {
-            assert_eq!(QuerySource::from_flag(flag), expected);
-        }
-    }
-
     mod index_record {
         use pretty_assertions::assert_eq;
 
         use super::*;
 
         #[test]
-        fn accessors_return_file_record_and_note() {
+        fn file_accessor_returns_the_bundled_file_record() {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("a.md"), "Filed under #tag.")
                 .expect("write file");
@@ -971,14 +766,27 @@ mod tests {
             let file = index.record(Path::new("a.md")).expect("record").clone();
             let note = index.note(Path::new("a.md")).expect("note").clone();
 
-            let record = IndexRecord::new(file.clone(), note.clone());
+            let record = IndexRecord::new(file.clone(), note);
 
             assert_eq!(record.file(), &file);
+        }
+
+        #[test]
+        fn note_accessor_returns_the_bundled_note() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("a.md"), "Filed under #tag.")
+                .expect("write file");
+            let index = FileIndex::build(temp.path()).expect("build index");
+            let file = index.record(Path::new("a.md")).expect("record").clone();
+            let note = index.note(Path::new("a.md")).expect("note").clone();
+
+            let record = IndexRecord::new(file, note.clone());
+
             assert_eq!(record.note(), &note);
         }
 
         #[test]
-        fn with_task_sets_task_completed_and_task_text() {
+        fn with_task_sets_task_completed() {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("a.md"), "body").expect("write file");
             let index = FileIndex::build(temp.path()).expect("build index");
@@ -989,6 +797,19 @@ mod tests {
                 IndexRecord::new(file, note).with_task(true, "Buy milk");
 
             assert_eq!(record.task_completed(), Some(true));
+        }
+
+        #[test]
+        fn with_task_sets_task_text() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("a.md"), "body").expect("write file");
+            let index = FileIndex::build(temp.path()).expect("build index");
+            let file = index.record(Path::new("a.md")).expect("record").clone();
+            let note = index.note(Path::new("a.md")).expect("note").clone();
+
+            let record =
+                IndexRecord::new(file, note).with_task(false, "Buy milk");
+
             assert_eq!(record.task_text(), Some("Buy milk"));
         }
 
@@ -1023,7 +844,6 @@ mod tests {
 
     mod field_path {
         use pretty_assertions::assert_eq;
-        use rstest::rstest;
 
         use super::*;
 
@@ -1171,28 +991,6 @@ mod tests {
             assert_eq!(record.field("no_such_field"), Ok(FieldValue::Null));
         }
 
-        #[rstest]
-        #[case::empty("")]
-        #[case::bare_file("file")]
-        #[case::trailing_dot("file.")]
-        #[case::unknown_file_accessor("file.bogus")]
-        #[case::extra_file_segment("file.name.extra")]
-        #[case::bare_task("task")]
-        #[case::trailing_dot_task("task.")]
-        #[case::unknown_task_accessor("task.bogus")]
-        #[case::extra_task_segment("task.completed.extra")]
-        #[case::dotted_metadata_path("a.b")]
-        fn rejects_malformed_field_paths(#[case] path: &str) {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            let outcome = outcome_for(temp.path(), "body");
-            let record = outcome.get(0).expect("record");
-
-            assert_eq!(
-                record.field(path),
-                Err(QueryError::unknown_field_path(path, None))
-            );
-        }
-
         #[test]
         fn resolves_task_completed_and_task_text_on_task_rows() {
             let temp = tempfile::tempdir().expect("create temp dir");
@@ -1267,8 +1065,8 @@ mod tests {
 
             assert_eq!(
                 outcome.limit(-1),
-                Err(QueryError::NegativeLimit {
-                    n: -1
+                Err(QueryError::LimitOutOfRange {
+                    value: -1
                 })
             );
         }
@@ -1308,7 +1106,10 @@ mod tests {
 
             assert_eq!(
                 outcome.group_by("file.bogus"),
-                Err(QueryError::unknown_field_path("file.bogus", None))
+                Err(QueryError::FieldPath(FieldPathError::new(
+                    "file.bogus",
+                    None
+                )))
             );
         }
     }
@@ -1394,7 +1195,10 @@ mod tests {
 
             assert_eq!(
                 outcome.flatten("file.bogus"),
-                Err(QueryError::unknown_field_path("file.bogus", None))
+                Err(QueryError::FieldPath(FieldPathError::new(
+                    "file.bogus",
+                    None
+                )))
             );
         }
 
@@ -1545,7 +1349,10 @@ mod tests {
 
             assert_eq!(
                 outcome.table(&["Name"], &["file.bogus"]),
-                Err(QueryError::unknown_field_path("file.bogus", None))
+                Err(QueryError::FieldPath(FieldPathError::new(
+                    "file.bogus",
+                    None
+                )))
             );
         }
 
@@ -1556,7 +1363,7 @@ mod tests {
 
             assert_eq!(
                 outcome.table(&["Name", "Rating"], &["file.name"]),
-                Err(QueryError::TableColumnMismatch {
+                Err(QueryError::TableColumnCountMismatch {
                     headers: 2,
                     columns: 1,
                 })
@@ -1600,7 +1407,10 @@ mod tests {
 
             assert_eq!(
                 outcome.list("file.bogus"),
-                Err(QueryError::unknown_field_path("file.bogus", None))
+                Err(QueryError::FieldPath(FieldPathError::new(
+                    "file.bogus",
+                    None
+                )))
             );
         }
 
@@ -1701,7 +1511,7 @@ mod tests {
 
             assert_eq!(
                 outcome.task_list(),
-                Err(QueryError::TaskListOnPageRecords)
+                Err(QueryError::TaskListRequiresTaskRows)
             );
         }
     }
@@ -1712,18 +1522,35 @@ mod tests {
         use super::*;
 
         #[test]
-        fn reports_len_and_is_empty() {
+        fn len_returns_zero_for_an_empty_outcome() {
+            let empty = QueryOutcome::default();
+            assert_eq!(empty.len(), 0);
+        }
+
+        #[test]
+        fn is_empty_returns_true_for_an_empty_outcome() {
             let empty = QueryOutcome::default();
             assert!(empty.is_empty());
-            assert_eq!(empty.len(), 0);
+        }
 
+        #[test]
+        fn len_returns_record_count_for_a_non_empty_outcome() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("a.md"), "# A").expect("write file");
+            let index = FileIndex::build(temp.path()).expect("build index");
+            let outcome = index.query(&QuerySource::All);
+
+            assert_eq!(outcome.len(), 1);
+        }
+
+        #[test]
+        fn is_empty_returns_false_for_a_non_empty_outcome() {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("a.md"), "# A").expect("write file");
             let index = FileIndex::build(temp.path()).expect("build index");
             let outcome = index.query(&QuerySource::All);
 
             assert!(!outcome.is_empty());
-            assert_eq!(outcome.len(), 1);
         }
 
         #[test]

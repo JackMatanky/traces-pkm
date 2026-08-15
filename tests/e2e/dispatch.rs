@@ -74,14 +74,13 @@ mod trust_and_diagnostics {
         );
     }
 
-    /// Passes an invalid `--where` expression and checks the expected
-    /// grammar reaches captured stderr.
+    /// Passes an invalid `--where` expression and checks its precise repair
+    /// reaches captured stderr.
     ///
-    /// Same reasoning as the sort-suggestion test above: proves the
-    /// parser's error message survives Miette rendering, not just that it
-    /// constructs.
+    /// Proves the parser's span and help survive Miette rendering, not just
+    /// that the typed diagnostic constructs.
     #[test]
-    fn unparsable_filter_expression_reports_the_expected_grammar() {
+    fn invalid_filter_expression_reports_its_location_and_repair() {
         let sandbox = Sandbox::trusted();
         sandbox.write_note("a.md", "# A\n");
 
@@ -94,10 +93,7 @@ mod trust_and_diagnostics {
             list.stderr
         );
         assert!(
-            plain(&list.stderr).contains(
-                "expected `<field> <op> <value>` with op one of ==, !=, >=, \
-                 <=, >, < and value a quoted string, number, or boolean"
-            ),
+            plain(&list.stderr).contains("a comparison operator"),
             "stderr: {}",
             list.stderr
         );
@@ -200,13 +196,13 @@ mod template {
         let sandbox = Sandbox::trusted();
         // Notes live under `notes/`, scoped away from `templates/`: `FileIndex`
         // indexes every markdown file under the project root, including the
-        // template file itself, so an unscoped `query.all()` here would also
+        // template file itself, so an unscoped `query.from()` here would also
         // count `report.md`.
         sandbox.write_note("notes/a.md", "# A\n");
         sandbox.write_note("notes/b.md", "# B\n");
         sandbox.write_template(
             "report.md",
-            "{{ query.from_folder(\"notes\") | length }} notes",
+            "{{ query.from(\"notes/\") | length }} notes",
         );
 
         let template = sandbox.run(&[
@@ -235,7 +231,7 @@ mod template {
         let sandbox = Sandbox::trusted();
         sandbox.write_template(
             "broken.md",
-            "line one\n{{ query.all().sort(\"nope.bad\") }}\n",
+            "line one\n{{ query.from().sort(\"nope.bad\") }}\n",
         );
 
         let template = sandbox.run(&[

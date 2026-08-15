@@ -25,6 +25,18 @@ fn built_index() -> FileIndex {
     FileIndex::build(temp.path()).expect("build index")
 }
 
+fn built_task_index() -> FileIndex {
+    let temp = tempfile::tempdir().expect("create temp dir");
+    for i in 0..1000 {
+        std::fs::write(
+            temp.path().join(format!("note-{i}.md")),
+            "- [ ] first\n- [x] second\n- [ ] third\n",
+        )
+        .expect("write fixture note");
+    }
+    FileIndex::build(temp.path()).expect("build index")
+}
+
 /// Filters a pre-built 1000-record index on `rating >= 50`.
 ///
 /// The transformation every `--where` and template `.filter()` call runs (see
@@ -40,6 +52,19 @@ fn bench_filter(c: &mut Criterion) {
                     .filter("rating >= 50")
                     .expect("valid filter expression")
             },
+            BatchSize::LargeInput,
+        );
+    });
+}
+
+/// Expands a pre-built 1000-note index with three tasks per Note.
+///
+/// This captures task-row construction independently from filesystem indexing.
+fn bench_query_tasks(c: &mut Criterion) {
+    c.bench_function("FileIndex::query_tasks", |b| {
+        b.iter_batched(
+            built_task_index,
+            |index| index.query_tasks(&QuerySource::All),
             BatchSize::LargeInput,
         );
     });
@@ -63,5 +88,5 @@ fn bench_sort(c: &mut Criterion) {
     });
 }
 
-criterion_group!(benches, bench_filter, bench_sort);
+criterion_group!(benches, bench_filter, bench_query_tasks, bench_sort);
 criterion_main!(benches);

@@ -21,7 +21,9 @@ use crate::{
         ConfigBuilderError, ConfigLoadError, ConfigScaffoldError,
         ConfigStateError, DiscoveryError,
     },
-    index::{FileIndexError, QueryError},
+    index::FileIndexError,
+    query::{QueryDialect, QueryError},
+    schema::SchemaError,
     template::{
         RenderFailureKind, TemplateError, TemplatePathError,
         classify_render_error,
@@ -173,8 +175,17 @@ pub enum CliError {
         #[source]
         source: FileIndexError,
     },
-    /// Running a task-level query under `root` failed: an unparsable field
-    /// path, filter expression, or negative limit.
+    /// Loading Schemas needed to resolve a File Class query failed.
+    #[error("failed to load Schemas for query in {root}")]
+    SchemaQuery {
+        /// The project root the query ran against.
+        root: PathBuf,
+        /// Source Schema registry error.
+        #[source]
+        source: SchemaError,
+    },
+    /// Running a query under `root` failed: an unparsable source or filter
+    /// expression, field path, or negative limit.
     #[error("failed to run query in {root}")]
     Query {
         /// The project root the query ran against.
@@ -294,6 +305,9 @@ impl Diagnostic for CliError {
             Self::Index {
                 ..
             } => "traces::cli::index::failed",
+            Self::SchemaQuery {
+                ..
+            } => "traces::cli::query::schema_failed",
             Self::Query {
                 ..
             } => "traces::cli::query::failed",
@@ -312,12 +326,10 @@ impl Diagnostic for CliError {
 
     #[inline]
     fn help<'a>(&'a self) -> Option<Box<dyn Display + 'a>> {
+        if let Some(help) = static_help(self) {
+            return Some(Box::new(help));
+        }
         match self {
-            Self::CurrentDirectory {
-                ..
-            } => Some(Box::new(
-                "check that the current directory still exists and is readable",
-            )),
             Self::ConfigLoad {
                 cwd,
                 source: ConfigLoadError::Discovery(_),
@@ -326,12 +338,6 @@ impl Diagnostic for CliError {
                 source: ConfigLoadError::Build(source),
                 ..
             } => Some(config_build_help(source)),
-            Self::TrustTargetResolve {
-                ..
-            } => Some(Box::new(
-                "pass a project directory or .traces/config.toml; run `traces \
-                 init` first if no local config exists",
-            )),
             Self::Trust {
                 root,
                 ..
@@ -348,40 +354,6 @@ impl Diagnostic for CliError {
             } => {
                 Some(root_help(root, "exists and the trust store is readable"))
             }
-            Self::TrustList {
-                ..
-            } => Some(Box::new("check that the trust store is readable")),
-            Self::TrustClean {
-                ..
-            } => Some(Box::new(
-                "check that the trust store is readable and writable",
-            )),
-            Self::TrackedList {
-                ..
-            } => Some(Box::new(
-                "check that the tracked-config store is readable",
-            )),
-            Self::TrackedClean {
-                ..
-            } => Some(Box::new(
-                "check that the tracked-config store is readable and writable",
-            )),
-            Self::InitPrompt {
-                ..
-            } => Some(Box::new(
-                "the init prompt was cancelled or failed; try again",
-            )),
-            Self::InitAlreadyInitialized {
-                ..
-            } => Some(Box::new(
-                "remove the existing .traces directory or run init from a \
-                 different directory",
-            )),
-            Self::InitScaffold {
-                ..
-            } => Some(Box::new(
-                "check that the project directory is writable and try again",
-            )),
             Self::InitConfigWrite {
                 source,
                 ..
@@ -390,28 +362,88 @@ impl Diagnostic for CliError {
                 root,
                 ..
             } => Some(root_help(root, "is readable and writable")),
-            Self::Query {
+            Self::SchemaQuery {
+                root,
                 ..
-            } => Some(query_help()),
+            } => Some(root_help(root, "has valid Schema files")),
+            Self::Query {
+                source,
+                ..
+            } => Some(query_help(source)),
             Self::TemplateInstantiate {
                 source,
                 ..
             } => Some(template_instantiate_help(source)),
-            Self::NoTemplates => Some(Box::new(
-                "place template (.md) files in your template directory, or \
-                 run `traces init` to scaffold one",
-            )),
-            Self::TemplatePicker {
-                ..
-            } => Some(Box::new(
-                "the picker prompt was cancelled or failed; try again, or \
-                 pass a name directly with `-i <name>`",
-            )),
-            Self::NoCommand => Some(Box::new(
-                "run `traces template -i <name>` (or its `tmpl`/`-i` \
-                 shorthand), `traces init`, or `traces trust`",
-            )),
+            _ => None,
         }
+    }
+
+    #[inline]
+    fn diagnostic_source(&self) -> Option<&dyn Diagnostic> {
+        match self {
+            Self::Query {
+                source,
+                ..
+            } => Some(source),
+            _ => None,
+        }
+    }
+}
+
+fn static_help(error: &CliError) -> Option<&'static str> {
+    match error {
+        CliError::CurrentDirectory {
+            ..
+        } => Some(
+            "check that the current directory still exists and is readable",
+        ),
+        CliError::TrustTargetResolve {
+            ..
+        } => Some(
+            "pass a project directory or .traces/config.toml; run `traces \
+             init` first if no local config exists",
+        ),
+        CliError::TrustList {
+            ..
+        } => Some("check that the trust store is readable"),
+        CliError::TrustClean {
+            ..
+        } => Some("check that the trust store is readable and writable"),
+        CliError::TrackedList {
+            ..
+        } => Some("check that the tracked-config store is readable"),
+        CliError::TrackedClean {
+            ..
+        } => {
+            Some("check that the tracked-config store is readable and writable")
+        }
+        CliError::InitPrompt {
+            ..
+        } => Some("the init prompt was cancelled or failed; try again"),
+        CliError::InitAlreadyInitialized {
+            ..
+        } => Some(
+            "remove the existing .traces directory or run init from a \
+             different directory",
+        ),
+        CliError::InitScaffold {
+            ..
+        } => Some("check that the project directory is writable and try again"),
+        CliError::NoTemplates => Some(
+            "place template (.md) files in your template directory, or run \
+             `traces init` to scaffold one",
+        ),
+        CliError::TemplatePicker {
+            ..
+        } => Some(
+            "the picker prompt was cancelled or failed; try again, or pass a \
+             name directly with `-i <name>`",
+        ),
+        CliError::NoCommand => Some(
+            "run `traces template -i <name>` (or its `tmpl`/`-i` shorthand), \
+             `traces init`, or `traces trust`",
+        ),
+        _ => None,
     }
 }
 
@@ -487,12 +519,29 @@ fn init_config_write_help(
     }
 }
 
-/// Builds diagnostic help text for [`CliError::Query`].
-fn query_help() -> Box<dyn Display + 'static> {
-    Box::new(
-        "check the `--where` filter expression syntax and the field paths it \
-         references",
-    )
+/// Builds typed diagnostic help text for [`CliError::Query`].
+fn query_help(source: &QueryError) -> Box<dyn Display + 'static> {
+    let help = match source {
+        QueryError::Syntax(error) => match error.dialect {
+            QueryDialect::Source => {
+                "check the `--from` source expression syntax"
+            }
+            QueryDialect::Filter => {
+                "check the `--where` filter expression syntax"
+            }
+        },
+        QueryError::FieldPath(_) => "check every referenced field path",
+        QueryError::LimitOutOfRange {
+            ..
+        } => "pass a non-negative query row limit",
+        QueryError::TaskListRequiresTaskRows => {
+            "render a task list from the `tasks` namespace"
+        }
+        QueryError::TableColumnCountMismatch {
+            ..
+        } => "pass the same number of table headers and columns",
+    };
+    Box::new(help)
 }
 
 /// Selects the diagnostic code for a [`CliError::ConfigLoad`] source.
@@ -728,6 +777,7 @@ mod tests {
         use serde::ser::Error as SerdeError;
 
         use super::*;
+        use crate::query::QuerySyntaxError;
 
         #[test]
         fn current_directory() {
@@ -1463,6 +1513,24 @@ mod tests {
                 )
             );
         }
+        #[test]
+        fn query_error_help_selects_the_typed_repair() {
+            let error = CliError::Query {
+                root: PathBuf::from("/some/project"),
+                source: QueryError::Syntax(QuerySyntaxError::new(
+                    QueryDialect::Source,
+                    "#book and",
+                    (9, 0).into(),
+                    "a source term",
+                )),
+            };
+
+            assert_eq!(
+                error.help().map(|help| help.to_string()),
+                Some("check the `--from` source expression syntax".to_owned())
+            );
+            assert!(error.diagnostic_source().is_some());
+        }
     }
 
     mod location {
@@ -1596,7 +1664,7 @@ mod tests {
                         minijinja::ErrorKind::InvalidOperation,
                         "query failed",
                     )
-                    .with_source(QueryError::TaskListOnPageRecords),
+                    .with_source(QueryError::TaskListRequiresTaskRows),
                 },
             };
 

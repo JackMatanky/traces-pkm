@@ -36,7 +36,7 @@ fn prepared_root() -> std::path::PathBuf {
     write_template(
         &root,
         "report.md",
-        "{{ query.all() | list(\"file.path\") }}",
+        "{{ query.from() | list(\"file.path\") }}",
     );
     // `keep()` intentionally leaks the directory: the setup closure's directory
     // must outlive the measured `render_to_file` call below, so an ordinary
