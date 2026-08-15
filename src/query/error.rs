@@ -113,8 +113,6 @@ impl QuerySyntaxError {
     ///     "expected atom",
     /// );
     /// ```
-    ///
-    /// # Arguments
     pub(crate) fn new(
         dialect: QueryDialect,
         input: &str,

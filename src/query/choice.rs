@@ -63,9 +63,9 @@ pub(crate) struct FileOption {
 impl FileOption {
     /// Builds an option for `record`.
     ///
-    /// Label resolution tries the configured aliases key first, then the
-    /// title key (via `keys`), falling back to `record`'s filename stem when
-    /// neither resolves or `note` is `None`. The value is always `record`'s
+    /// Label resolution tries the configured aliases key first, then the title
+    /// key (via `keys`), falling back to `record`'s filename stem when neither
+    /// resolves or `note` is `None`. The value is always `record`'s
     /// project-relative path.
     #[inline]
     #[must_use]
@@ -86,9 +86,9 @@ impl FileOption {
 
     /// Returns the display label for `note`.
     ///
-    /// Tries the first usable configured aliases value, then falls back to
-    /// a scalar configured title value. Returns `None` when neither resolves,
-    /// in which case callers fall back further to the filename stem.
+    /// Tries the first usable configured aliases value, then falls back to a
+    /// scalar configured title value. Returns `None` when neither resolves, in
+    /// which case callers fall back further to the filename stem.
     fn frontmatter_label<'a>(
         note: &'a Note,
         keys: &FrontmatterFieldKeys,
@@ -120,8 +120,8 @@ impl FileOption {
 /// Borrowed filter values for [`crate::index::FileIndex::file_options`].
 ///
 /// Carries folder, extension, and class filters alongside the validated
-/// frontmatter field keys needed for label resolution. Passed by reference
-/// to avoid cloning filter data on each option build.
+/// frontmatter field keys needed for label resolution. Passed by reference to
+/// avoid cloning filter data on each option build.
 #[derive(Copy, Clone)]
 pub(crate) struct FileOptionFilter<'a> {
     pub(crate) folders: &'a [String],
@@ -153,17 +153,6 @@ impl<'a> FileOptionFilter<'a> {
 ///
 /// Ensures keys are validated once at configuration load and carried forward,
 /// avoiding redundant validation or loose parameter passing.
-///
-/// # Examples
-///
-/// ```ignore
-/// # use traces_pkm::field::FieldKey;
-/// # use traces_pkm::query::choice::FrontmatterFieldKeys;
-/// let class_key = FieldKey::try_new("class").unwrap();
-/// let title_key = FieldKey::try_new("title").unwrap();
-/// let aliases_key = FieldKey::try_new("aliases").unwrap();
-/// let keys = FrontmatterFieldKeys::new(class_key, title_key, aliases_key);
-/// ```
 #[derive(Clone, Debug)]
 pub(crate) struct FrontmatterFieldKeys {
     class: FieldKey,

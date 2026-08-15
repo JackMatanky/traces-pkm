@@ -1,9 +1,9 @@
 //! Query field path parsing and resolution.
 //!
 //! A query field path string (for example, `file.name`, `task.completed`,
-//! `tags`, or a bare frontmatter key) resolves to a [`FieldPath`] variant
-//! that can be applied to each [`IndexRecord`][`super::IndexRecord`] to extract
-//! a [`FieldValue`].
+//! `tags`, or a bare frontmatter key) resolves to a [`FieldPath`] variant that
+//! can be applied to each [`IndexRecord`][`super::IndexRecord`] to extract a
+//! [`FieldValue`].
 //!
 //! # Supported Accessors
 //!
@@ -28,8 +28,8 @@ use crate::{field, field::FieldKey, index::FileRecord, note::FieldValue};
 /// A `file.<field>` accessor backed by [`FileRecord`] metadata.
 ///
 /// Each variant maps to a specific accessor name (for example, `file.name`,
-/// `file.mtime`) and resolves to a [`FieldValue`] by reading the
-/// corresponding [`FileRecord`] method.
+/// `file.mtime`) and resolves to a [`FieldValue`] by reading the corresponding
+/// [`FileRecord`] method.
 ///
 /// # Examples
 ///
@@ -77,8 +77,8 @@ impl FileField {
 
     /// Parses the field portion of a `file.<field>` accessor string.
     ///
-    /// Returns `None` when `name` is unknown, allowing the caller to retain
-    /// the full `file.<field>` path for a [`FieldPathError`].
+    /// Returns `None` when `name` is unknown, allowing the caller to retain the
+    /// full `file.<field>` path for a [`FieldPathError`].
     ///
     /// # Examples
     ///
@@ -140,8 +140,8 @@ impl FileField {
 /// A `task.<field>` accessor valid on task-level records.
 ///
 /// Applied to task records produced by
-/// [`crate::index::FileIndex::query_tasks`]. Resolves to
-/// [`FieldValue::Null`] on page-level records.
+/// [`crate::index::FileIndex::query_tasks`]. Resolves to [`FieldValue::Null`]
+/// on page-level records.
 ///
 /// # Examples
 ///
@@ -308,9 +308,9 @@ fn accessor_typo_error(
 /// Finds the accessor name with the smallest edit distance to `input`.
 ///
 /// Delegates to [`crate::field::closest_match`] for the matching threshold
-/// calculation. Returns `Some(&'static str)` when the closest candidate
-/// falls within the threshold, or `None` when no candidate is close enough
-/// or `candidates` is empty.
+/// calculation. Returns `Some(&'static str)` when the closest candidate falls
+/// within the threshold, or `None` when no candidate is close enough or
+/// `candidates` is empty.
 fn closest_accessor(
     candidates: &[&'static str],
     input: &str,

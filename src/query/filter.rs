@@ -41,18 +41,10 @@ use crate::note::FieldValue;
 /// type used by [`super::QueryOutcome::filter`].
 pub(super) type FilterExpr = LogicalExpr<FilterAtom>;
 
-/// Domain-local filter-expression leaves.
+/// Atomic predicate in a filter expression.
 ///
-/// Each variant represents one atomic predicate in a filter expression:
-/// either a comparison between a field and a literal value, or a recognized
-/// function call.
-///
-/// # Examples
-///
-/// ```ignore
-/// # use traces_pkm::query::filter::FilterAtom;
-/// // Represents a comparison or function leaf
-/// ```
+/// Either a field-to-literal comparison or a recognized function call
+/// (such as `contains(tags, "#book")`).
 #[derive(Clone, Debug, PartialEq)]
 pub(super) enum FilterAtom {
     /// `<field> <op> <value>` comparison.
@@ -432,12 +424,8 @@ fn eval_contains(field_val: &FieldValue, target: &FieldValue) -> bool {
 ///
 /// Values match exactly. Tag values also match when `item` is nested
 /// directly or transitively under `target` (for example, `#book/fiction`
-/// under `#book`).
-///
-/// # Arguments
-///
-/// * `item` - The list element value to match.
-/// * `target` - The target literal value to compare against.
+/// under `#book`). Both parameters must be string values for tag prefix
+/// matching; non-string pairs fall through to exact equality only.
 fn tag_or_value_matches(item: &FieldValue, target: &FieldValue) -> bool {
     if fields_equal(item, target) {
         return true;

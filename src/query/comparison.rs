@@ -17,11 +17,11 @@
 //!
 //! ```ignore
 //! # use traces_pkm::query::comparison::{CompareOp, ComparisonExpr};
-//! # use traces_pkm::field::FieldPath;
+//! # use traces_pkm::query::FieldPath;
 //! # use traces_pkm::note::FieldValue;
 //! # use traces_pkm::query::IndexRecord;
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! let field = FieldPath::try_new("rating")?;
+//! let field = FieldPath::parse("rating")?;
 //! let op = CompareOp::Gt;
 //! let value = FieldValue::Number(5.0);
 //!

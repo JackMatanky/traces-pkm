@@ -16,9 +16,9 @@
 //!
 //! ### Tags
 //!
-//! A `#`-prefixed identifier matches Notes carrying that tag or any
-//! nested sub-tag. Tag names may contain letters, digits, underscores,
-//! hyphens, dots, and forward slashes.
+//! A `#`-prefixed identifier matches Notes carrying that tag or any nested
+//! sub-tag. Tag names may contain letters, digits, underscores, hyphens, dots,
+//! and forward slashes.
 //!
 //! ```text
 //! #book              — matches #book, #book/fiction, #book/science
@@ -27,9 +27,9 @@
 //!
 //! ### Paths
 //!
-//! A path leaf matches either an exact file path or every file under a
-//! folder prefix. Paths may be bare (unquoted) or enclosed in single or
-//! double quotes. Quoted paths support `\` escape sequences.
+//! A path leaf matches either an exact file path or every file under a folder
+//! prefix. Paths may be bare (unquoted) or enclosed in single or double quotes.
+//! Quoted paths support `\` escape sequences.
 //!
 //! ```text
 //! books/             — matches every file under books/
@@ -37,14 +37,14 @@
 //! "books/dune.md"    — same as above (quoted form)
 //! ```
 //!
-//! A trailing `/` signals a folder prefix match. Without it, the path
-//! matches only an exact file.
+//! A trailing `/` signals a folder prefix match. Without it, the path matches
+//! only an exact file.
 //!
 //! ### File Classes
 //!
-//! File Class leaves match Notes whose frontmatter class field contains
-//! the named class. Three syntax forms are available, each offering the
-//! same three expansion depths.
+//! File Class leaves match Notes whose frontmatter class field contains the
+//! named class. Three syntax forms are available, each offering the same three
+//! expansion depths.
 //!
 //! **Sigil form** (shorthand):
 //!
@@ -64,8 +64,8 @@
 //! class(Book).with_descendants()     — descendants (chaining form)
 //! ```
 //!
-//! The positional argument and chaining form are mutually exclusive;
-//! providing both is a syntax error.
+//! The positional argument and chaining form are mutually exclusive; providing
+//! both is a syntax error.
 //!
 //! ## Logical Operators
 //!
@@ -75,8 +75,8 @@
 //! | `AND`    | `and`, `&&`     | left          |
 //! | `OR`     | `or`, `\|\|`    | left          |
 //!
-//! Precedence from highest to lowest: `NOT` > `AND` > `OR`. Use
-//! parentheses to override:
+//! Precedence from highest to lowest: `NOT` > `AND` > `OR`. Use parentheses to
+//! override:
 //!
 //! ```text
 //! #book and books/                   — AND binds tighter than OR
@@ -98,8 +98,8 @@
 //!
 //! ## Quoted Strings
 //!
-//! Double-quoted (`"..."`) and single-quoted (`'...'`) strings bypass
-//! keyword classification. Backslash escapes are recognized:
+//! Double-quoted (`"..."`) and single-quoted (`'...'`) strings bypass keyword
+//! classification. Backslash escapes are recognized:
 //!
 //! ```text
 //! "path/with spaces"     — literal path with spaces
@@ -108,9 +108,9 @@
 //!
 //! ## Token Priority and Collisions
 //!
-//! Keywords (`class`, `and`, `or`, `not`) take priority over bare
-//! identifiers. A file path segment that collides with a keyword (for
-//! example, a folder named `class/` or `and/`) must be quoted:
+//! Keywords (`class`, `and`, `or`, `not`) take priority over bare identifiers.
+//! A file path segment that collides with a keyword (for example, a folder
+//! named `class/` or `and/`) must be quoted:
 //!
 //! ```text
 //! class/          — syntax error (lexes as keyword `class` + `/`)
@@ -133,8 +133,8 @@
 //!
 //! ## Error Recovery
 //!
-//! Invalid expressions produce a [`QueryError::Syntax`] diagnostic
-//! pinpointing the offending token with a repair hint. Common errors:
+//! Invalid expressions produce a [`QueryError::Syntax`] diagnostic pinpointing
+//! the offending token with a repair hint. Common errors:
 //!
 //! - Missing operand: `#book and`
 //! - Unmatched parenthesis: `(#book`
@@ -403,18 +403,8 @@ impl QueryOutcome {
     ///
     /// # Errors
     ///
-    /// Returns a [`QueryError`] in the following cases:
-    ///
-    /// - **Syntax Error:** [`QueryError::Syntax`] if the expression is invalid.
-    /// - **Invalid Path:** [`QueryError::FieldPath`] if a field path is
-    ///   malformed.
-    ///
-    /// # Examples
-    ///
-    /// ```ignore
-    /// # use traces_pkm::query::QueryOutcome;
-    /// # // outcome.filter("rating > 5")
-    /// ```
+    /// - [`QueryError::Syntax`] if the expression is invalid.
+    /// - [`QueryError::FieldPath`] if a field path is malformed.
     pub fn filter(mut self, expr: &str) -> Result<Self, QueryError> {
         let expr = FilterExpr::parse(expr)?;
         self.records.retain(|record| expr.matches(record));
@@ -464,13 +454,6 @@ impl QueryOutcome {
     ///
     /// - [`QueryError::FieldPath`] if `path` cannot be parsed as a valid field
     ///   path.
-    ///
-    /// # Examples
-    ///
-    /// ```ignore
-    /// # use traces_pkm::query::QueryOutcome;
-    /// # // outcome.sort("file.name", false)
-    /// ```
     #[inline]
     pub fn sort(
         self,
@@ -621,8 +604,6 @@ impl QueryOutcome {
     }
 
     /// Renders task-level records as a Markdown task list (`- [ ]` or `- [x]`).
-    ///
-    /// Renders each record using its task completion state and text fields.
     ///
     /// # Errors
     ///

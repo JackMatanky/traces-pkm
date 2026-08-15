@@ -3,8 +3,8 @@
 //! This module provides the generic [`LogicalExpr`] AST and
 //! [`parse_logical_expression`] parser used by both the source selection
 //! language ([`super::source`]) and the filter expression language
-//! ([`super::filter`]). The parser enforces `not` > `and` > `or`
-//! precedence with parenthetical grouping.
+//! ([`super::filter`]). The parser enforces `not` > `and` > `or` precedence
+//! with parenthetical grouping.
 //!
 //! # Main Types
 //!
@@ -73,8 +73,8 @@ impl<T> Spanned<T> {
 
 /// Logical control syntax recognized independently of domain-specific atoms.
 ///
-/// The shared parser uses these to build the expression tree without
-/// knowing the specifics of the source or filter language.
+/// The shared parser uses these to build the expression tree without knowing
+/// the specifics of the source or filter language.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(super) enum LogicalControl {
     /// A binary logical operator.
@@ -168,8 +168,8 @@ impl<A> LogicalExpr<A> {
 
 /// Owning one-token-lookahead cursor over a materialized token stream.
 ///
-/// Wraps a `Vec<T>` into a [`Peekable`] iterator, providing [`peek`],
-/// [`next`], and [`take`] for the recursive-descent parser.
+/// Wraps a `Vec<T>` into a [`Peekable`] iterator, providing [`peek`], [`next`],
+/// and [`take`] for the recursive-descent parser.
 ///
 /// [`peek`]: Self::peek
 /// [`next`]: Self::next
@@ -218,10 +218,10 @@ impl<T> AsRef<T> for Spanned<T> {
 
 /// Domain-specific atom parsing hooks for the shared logical grammar.
 ///
-/// Implement this trait to plug a domain-specific token type and atom
-/// parser into [`parse_logical_expression`]. The shared parser handles
-/// operator precedence, grouping, and error recovery, delegating atom
-/// recognition to the implementer.
+/// Implement this trait to plug a domain-specific token type and atom parser
+/// into [`parse_logical_expression`]. The shared parser handles operator
+/// precedence, grouping, and error recovery, delegating atom recognition to the
+/// implementer.
 pub(super) trait LogicalGrammar {
     /// The source/filter token type.
     type Token;
@@ -247,8 +247,8 @@ pub(super) trait LogicalGrammar {
 
 /// Parses a complete expression with `not` > `and` > `or` precedence.
 ///
-/// Accepts a pre-tokenized stream and a domain-specific [`LogicalGrammar`]
-/// that handles atom recognition. Returns a [`LogicalExpr`] tree, or a
+/// Accepts a pre-tokenized stream and a domain-specific [`LogicalGrammar`] that
+/// handles atom recognition. Returns a [`LogicalExpr`] tree, or a
 /// [`QueryError::Syntax`] diagnostic when the expression is malformed.
 pub(super) fn parse_logical_expression<G>(
     input: &str,
