@@ -445,10 +445,6 @@ fn tag_or_value_matches(item: &FieldValue, target: &FieldValue) -> bool {
 mod tests {
     use std::{fs, path::Path};
 
-    use miette::SourceSpan;
-    use pretty_assertions::assert_eq;
-    use rstest::rstest;
-
     use super::super::*;
     use crate::index::FileIndex;
 

@@ -383,8 +383,6 @@ impl<'input, G: LogicalGrammar> LogicalParser<'input, G> {
 
 #[cfg(test)]
 mod tests {
-    use pretty_assertions::assert_eq;
-    use rstest::rstest;
 
     use super::{super::QueryDialect, *};
 
