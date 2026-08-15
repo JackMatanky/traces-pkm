@@ -1,31 +1,21 @@
 //! Page source expression parsing and evaluation.
 //!
-//! This module implements the parser and matcher for the source expression
-//! language documented in the [parent module](super). The entry point is
-//! [`QuerySource::parse`], which accepts a source expression string and returns
-//! either [`QuerySource::All`] (empty input) or a [`QuerySourceExpr`] wrapping
-//! the parsed AST.
+//! Implements the parser and matcher for the source expression language
+//! documented in the [parent module](super).
 //!
-//! # Syntax and Grammar Reference
+//! The entry point is [`QuerySource::parse`]:
+//! - Empty input yields [`QuerySource::All`] (matches everything)
+//! - Nonempty input is parsed into a [`QuerySourceExpr`]
 //!
-//! Source expressions support boolean combinations of:
-//! - **Tags:** e.g. `#book`, `#projects/active` (nested tags match
-//!   automatically).
-//! - **Paths:** e.g. `books/`, `"books/dune.md"` (trailing `/` matches
-//!   folders).
-//! - **Classes:** e.g. `@Book`, `@Book+`, `@Book*`, or `class(Book)` with
-//!   modifiers.
+//! # Source expressions
 //!
-//! See the [parent module](super) for precedence and escaping rules.
+//! Boolean combinations of:
+//! - **Tags**: `#book`, `#projects/active` (nested match automatically)
+//! - **Paths**: `books/`, `"books/dune.md"` (trailing `/` matches folders)
+//! - **Classes**: `@Book`, `@Book+`, `@Book*`, or `class(Name)` with modifiers
 //!
-//! # Examples
-//!
-//! ```ignore
-//! use traces_pkm::query::QuerySource;
-//!
-//! let source = QuerySource::parse("#book or books/").unwrap();
-//! assert!(source.is_match_all() || !source.has_classes());
-//! ```
+//! Precedence: `NOT` > `AND` > `OR`; parentheses override.
+//! See the [parent module](super) for escaping rules.
 
 use std::{collections::BTreeSet, path::PathBuf};
 
@@ -72,27 +62,23 @@ pub enum QuerySource {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct QuerySourceExpr(LogicalExpr<SourceAtom>);
 
-/// Leaf predicate in a source expression.
+/// Atomic match predicate in a source expression.
 ///
-/// Each variant represents one atomic match condition that a Note must satisfy
-/// (when not negated). Boolean operators combine these leaves into the full
-/// expression tree.
+/// Combined into expression trees by boolean operators (`and`, `or`, `not`).
 ///
-/// # Matching Rules
+/// # Matching rules
 ///
-/// - [`Tag`](Self::Tag): matches if the Note carries the named tag or any
-///   nested sub-tag (for example, `#book` matches `#book/fiction`).
-/// - [`Path`](Self::Path): matches if the Note's file path equals the stored
-///   path exactly, or if its folder starts with it (for example, `books/`
-///   matches `books/dune.md`).
-/// - [`Class`](Self::Class): matches if any of the Note's File Class values
-///   (from the configured class field) appears in the resolved class set for
-///   the requested [`ClassExpansionMode`].
+/// - **[`Tag`]**: matches if the Note carries the named tag or any nested
+///   sub-tag (`#book` matches `#book/fiction`)
+/// - **[`Path`]**: matches if the file path equals the stored path exactly, or
+///   its folder starts with it (`books/` matches `books/dune.md`)
+/// - **[`Class`]**: matches if any of the Note's class field values appears in
+///   the resolved [`ClassExpansionMode`] set
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum SourceAtom {
     /// Matches an exact tag or any nested sub-tag.
     Tag(String),
-    /// Matches an exact path of the file or a folder prefix.
+    /// Matches an exact path or folder prefix.
     Path(PathBuf),
     /// Matches any named File Class under the requested expansion mode.
     Class {
@@ -105,11 +91,6 @@ pub(crate) enum SourceAtom {
 
 impl SourceAtom {
     /// Returns whether `file` and `note` match this atom.
-    ///
-    /// - Tag matching is nested: `#book` also matches `#book/fiction`.
-    /// - Path matching is prefix-based: `books/` also matches `books/dune.md`.
-    /// - Class matching compares the Note's class field values against the
-    ///   precomputed set in [`ClassExpansionMode::classes`].
     fn is_match(
         &self,
         file: &FileRecord,
@@ -134,22 +115,15 @@ impl SourceAtom {
 
 /// Expansion depth for a File Class match.
 ///
-/// Controls whether a `@Class` leaf matches only the named class, its direct
-/// children, or every transitive descendant. The three modes are specified in
-/// the DSL via `@Class` / `@Class+` / `@Class*` (sigil form) or `class(Name)` /
-/// `class(Name, children)` / `class(Name, descendants)` (function form).
-///
-/// The inner [`BTreeSet`] holds the precomputed class names for the mode.
-/// Before matching, a caller must populate this set via
-/// [`set_classes`](Self::set_classes) with the output of the Schema registry's
-/// class expansion. The set is empty when the expression is first parsed; class
-/// names are resolved at query execution time.
-///
 /// | Mode          | Matches                                    | Sigil | Function                |
 /// | ------------- | ------------------------------------------ | ----- | ----------------------- |
 /// | `Exact`       | Only the named class                       | `@C`  | `class(C)`              |
 /// | `Children`    | Named class and its direct sub-classes     | `@C+` | `class(C, children)`    |
 /// | `Descendants` | Named class and all transitive sub-classes | `@C*` | `class(C, descendants)` |
+///
+/// The inner [`BTreeSet`] holds precomputed class names. Populate via
+/// [`set_classes`](Self::set_classes) before matching; the set is empty
+/// after parsing and resolved at query execution time.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ClassExpansionMode {
     /// Match only the named class.
@@ -161,11 +135,9 @@ pub enum ClassExpansionMode {
 }
 
 impl ClassExpansionMode {
-    /// Returns the resolved class names for this expansion mode.
+    /// Returns the resolved class names.
     ///
-    /// The set is empty until populated by [`set_classes`](Self::set_classes).
-    /// During Note matching, this set is compared against the Note's class
-    /// field values.
+    /// Empty until populated by [`set_classes`](Self::set_classes).
     #[must_use]
     pub(crate) fn classes(&self) -> &BTreeSet<String> {
         match self {
@@ -175,12 +147,9 @@ impl ClassExpansionMode {
         }
     }
 
-    /// Populates the resolved class names for this expansion mode.
+    /// Populates the resolved class names.
     ///
-    /// Called before matching with the output of the Schema registry's class
-    /// expansion. Replaces any existing set; does not alter the expansion depth
-    /// ([`Exact`](Self::Exact), [`Children`](Self::Children), or
-    /// [`Descendants`](Self::Descendants)).
+    /// Replaces any existing set; does not alter the expansion depth.
     pub(crate) fn set_classes(&mut self, resolved: BTreeSet<String>) {
         match self {
             Self::Exact(classes)
@@ -192,17 +161,15 @@ impl ClassExpansionMode {
 
 impl LogicalExpr<SourceAtom> {
     /// Parses `input` as a source expression.
-    ///
-    /// Tokenizes `input` and delegates to the shared logical-expression parser
-    /// with [`SourceGrammar`] as the leaf parser.
     fn parse(input: &str) -> Result<Self, QueryError> {
         parse_logical_expression(input, tokenize(input)?, SourceGrammar)
     }
 
     /// Returns whether `file` and `note` satisfy this boolean expression.
     ///
-    /// Evaluates the tree recursively: `And` requires all children to match,
-    /// `Or` requires at least one, and `Not` inverts its child.
+    /// - `And` requires all children to match
+    /// - `Or` requires at least one to match
+    /// - `Not` inverts its child
     #[must_use]
     fn is_match(
         &self,
@@ -227,11 +194,6 @@ impl LogicalExpr<SourceAtom> {
 
 impl QuerySourceExpr {
     /// Parses `input` as a source expression.
-    ///
-    /// The full grammar is documented in the [parent module](super). Briefly:
-    /// leaves are `#tag`, bare or quoted paths, `@Class`/`@Class+`/`@Class*`,
-    /// or `class(Name)` with optional expansion modifiers. Operators are
-    /// `not`/`!`, `and`/`&&`, `or`/`||`, and parentheses.
     ///
     /// # Errors
     ///
@@ -261,7 +223,7 @@ impl QuerySourceExpr {
     /// Returns whether this expression contains any
     /// [`Class`](SourceAtom::Class) atom.
     ///
-    /// When `true`, the caller must resolve class names via
+    /// When `true`, resolve class names via
     /// [`visit_atoms_mut`](Self::visit_atoms_mut) before calling
     /// [`is_match`](Self::is_match).
     #[must_use]
@@ -273,8 +235,7 @@ impl QuerySourceExpr {
     ///
     /// Used by the query execution pipeline to populate
     /// [`ClassExpansionMode::set_classes`] on each
-    /// [`Class`](SourceAtom::Class) atom before matching. The visitor is
-    /// called once per atom by tree traversal.
+    /// [`Class`](SourceAtom::Class) atom before matching.
     pub(crate) fn visit_atoms_mut(
         &mut self,
         visitor: &mut impl FnMut(&mut SourceAtom),
@@ -286,9 +247,8 @@ impl QuerySourceExpr {
 impl QuerySource {
     /// Parses `input` as a source expression.
     ///
-    /// An empty or whitespace-only `input` yields [`Self::All`], which matches
-    /// every indexed Note. Any nonempty input is parsed into a
-    /// [`QuerySourceExpr`].
+    /// Empty or whitespace-only input yields [`Self::All`]; any nonempty input
+    /// is parsed into a [`QuerySourceExpr`].
     ///
     /// # Errors
     ///
@@ -326,7 +286,7 @@ impl QuerySource {
         }
     }
 
-    /// Returns whether this source contains any File Class atoms requiring
+    /// Returns whether this source contains File Class atoms requiring
     /// Schema-level class expansion.
     ///
     /// [`Self::All`] always returns `false`.
@@ -341,10 +301,9 @@ impl QuerySource {
 
 /// Extracts string File Class values from the frontmatter of a note.
 ///
-/// Returns the string values held by the field named `class_field`. The field
-/// may be a single string or a list of strings. Returns an empty iterator when
-/// the field is missing, is not a string or list, or contains no string
-/// elements.
+/// Returns string values from the field named `class_field` (single string or
+/// list of strings). Empty iterator when the field is missing, not a
+/// string/list, or contains no string elements.
 pub(crate) fn class_values<'a>(
     note: &'a Note,
     class_field: &str,

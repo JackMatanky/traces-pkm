@@ -1,9 +1,9 @@
 //! Query rows and field resolution for [`super::QueryOutcome`].
 //!
-//! This module implements [`IndexRecord`], which pairs a [`FileRecord`]
-//! with its parsed [`Note`] and resolves field paths for template rendering
-//! and CLI output. Each record resolves `file.*`, `task.*`, frontmatter,
-//! inline fields, `tags`, and derived inlinks.
+//! This module implements [`IndexRecord`], which pairs a [`FileRecord`] with
+//! its parsed [`Note`] and resolves field paths for template rendering and CLI
+//! output. Each record resolves `file.*`, `task.*`, frontmatter, inline fields,
+//! `tags`, and derived inlinks.
 //!
 //! # Main Types
 //!
@@ -45,8 +45,8 @@ use crate::{
 /// Each record resolves `file.*`, `task.*`, frontmatter, inline fields, `tags`,
 /// and derived inlinks for template rendering and CLI output.
 ///
-/// The [`Note`] is reference-counted via [`Arc`] to share data efficiently
-/// when expanding one note into multiple task-level rows.
+/// The [`Note`] is reference-counted via [`Arc`] to share data efficiently when
+/// expanding one note into multiple task-level rows.
 ///
 /// # Examples
 ///
@@ -62,11 +62,10 @@ use crate::{
 #[derive(Clone, Debug, PartialEq)]
 pub struct IndexRecord {
     file: FileRecord,
-    /// Reference-counted, not owned outright: exploding one Note into
-    /// several rows (see [`crate::index::FileIndex::query_tasks`] and
+    /// Reference-counted, not owned outright: exploding one Note into several
+    /// rows (see [`crate::index::FileIndex::query_tasks`] and
     /// [`super::QueryOutcome::flatten`]) shares this field across every row
-    /// instead of deep-cloning frontmatter, links, tags, and lists per
-    /// row.
+    /// instead of deep-cloning frontmatter, links, tags, and lists per row.
     note: Arc<Note>,
     /// Overrides field resolution for exploded rows produced by
     /// [`super::QueryOutcome::flatten`].
@@ -95,9 +94,9 @@ impl IndexRecord {
     /// Converts this record into a task-level row.
     ///
     /// Attaches task completion state and text, used by
-    /// [`crate::index::FileIndex::query_tasks`] to expand a page-level
-    /// record into one row per task item while retaining parent Note
-    /// metadata for filtering and display via [`Self::field`].
+    /// [`crate::index::FileIndex::query_tasks`] to expand a page-level record
+    /// into one row per task item while retaining parent Note metadata for
+    /// filtering and display via [`Self::field`].
     pub(super) fn with_task(
         mut self,
         completed: bool,

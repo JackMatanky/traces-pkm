@@ -57,17 +57,15 @@ impl SortOrder {
     }
 }
 
-/// Compares two resolved [`FieldValue`] instances of the same comparable
-/// kind.
+/// Compares two resolved [`FieldValue`] instances of the same comparable kind.
 ///
 /// Value ordering rules:
 /// - Numbers are ordered by magnitude.
 /// - Strings, dates, and durations are ordered lexicographically.
 /// - Booleans are ordered with `false < true`.
 ///
-/// Returns `Some` with the [`Ordering`] of `a` relative to `b` when they
-/// can be compared, or `None` if they have different kinds or unorderable
-/// values.
+/// Returns `Some` with the [`Ordering`] of `a` relative to `b` when they can be
+/// compared, or `None` if they have different kinds or unorderable values.
 pub(super) fn compare_field_values(
     a: &FieldValue,
     b: &FieldValue,
@@ -82,20 +80,18 @@ pub(super) fn compare_field_values(
     }
 }
 
-/// Returns whether two resolved [`FieldValue`] instances represent equal
-/// values under filter comparison (`==` and `!=`).
+/// Returns whether two resolved [`FieldValue`] instances represent equal values
+/// under filter comparison (`==` and `!=`).
 ///
 /// Returns `true` when structural equality (`a == b`) holds, or when
-/// [`compare_field_values`] returns `Some(Ordering::Equal)`. This
-/// cross-kind text normalization allows string literals to match date or
-/// duration fields.
+/// [`compare_field_values`] returns `Some(Ordering::Equal)`. This cross-kind
+/// text normalization allows string literals to match date or duration fields.
 pub(super) fn fields_equal(a: &FieldValue, b: &FieldValue) -> bool {
     a == b || compare_field_values(a, b) == Some(Ordering::Equal)
 }
 
-/// Compares two resolved [`FieldValue`] instances to establish a total
-/// order for [`super::QueryOutcome::sort`] and
-/// [`super::QueryOutcome::group_by`].
+/// Compares two resolved [`FieldValue`] instances to establish a total order
+/// for [`super::QueryOutcome::sort`] and [`super::QueryOutcome::group_by`].
 ///
 /// # Arguments
 ///
@@ -135,10 +131,9 @@ pub(super) fn sort_key_cmp(
 /// order by it using [`sort_key_cmp`].
 ///
 /// [`FieldValue`] does not implement [`Ord`] directly because comparison
-/// requires a `descending` flag and null-as-minimum fallback rules that
-/// depend on sort options. `SortKey` provides an [`Ord`] implementation
-/// scoped to a single sorting operation for
-/// [`super::QueryOutcome::sort_by_field`].
+/// requires a `descending` flag and null-as-minimum fallback rules that depend
+/// on sort options. `SortKey` provides an [`Ord`] implementation scoped to a
+/// single sorting operation for [`super::QueryOutcome::sort_by_field`].
 pub(super) struct SortKey {
     pub(super) value: FieldValue,
     pub(super) descending: bool,
