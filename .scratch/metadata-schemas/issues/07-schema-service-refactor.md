@@ -31,7 +31,7 @@
 **Acceptance criteria:**
 
 - [ ] `config/specs.rs` exists with `SchemaConfigSpec` (private fields, `pub(crate)` accessors) and `Config::to_schema_spec()`; the hand-derived `class_field`/`schemas_dir`/`field_keys` construction in the template engine is replaced by one call
-- [ ] `src/schema/` matches the target module layout; `registry.rs` and `resolve.rs` no longer exist as standalone files
+- [ ] `src/schema/` matches the target module layout; `registry.rs` and `resolve.rs` no longer exist as standalone files; their existing tests migrate into the new modules' test suites with no assertion dropped
 - [ ] `SchemaService::resolve()` returns `Result<(Arc<SchemaRegistry>, Vec<SchemaWarning>), SchemaError>`; `get()`/`children()`/`descendants()`/`matches()` exist with the signatures above; `new()` is trivial and does no I/O; `SchemaService` has no `file_field_values` method
 - [ ] `RawSchemaFieldDef` holds `options: BTreeMap<String, FieldValue>`; `RawFieldDefToml`'s wire-level `deny_unknown_fields` protection is unchanged
 - [ ] `SchemaSelectFieldDef`/`SchemaFileFieldDef`/`SchemaNumberFieldDef`/`SchemaDateFieldDef` each implement `try_from_options`, used identically for a `Direct` field's own options and for validating a `$ref` override's keys
@@ -44,7 +44,8 @@
 - [ ] `SchemaContext` type no longer exists; the adapter reaches root/directory/class/title/aliases data through `SchemaService::spec()` and `SchemaConfigSpec`'s own accessors; `.field()`'s File-branch builds a `FrontmatterFieldKeys` on the fly from `spec().{class,title,aliases}_field()` when it needs one, rather than caching a precomposed bundle
 - [ ] `Schema` and `SchemaService` are `pub` in `schema/mod.rs` *and* re-exported from `lib.rs` under `#[cfg(any(test, feature = "test-utils"))]`, mirroring `config`'s/`template`'s gate; `SchemaFieldDef`, `SchemaFieldType`, and `SchemaSelectFieldEntry` stay `pub(crate)` with no `lib.rs` re-export; every other new/renamed type is `pub(crate)` or narrower
 - [ ] Full existing test suite (`mise test`) passes with no test assertion changed except the disclosed mismatched-key/mismatched-value behavior change
-- [ ] `mise clippy` clean; ADR-0007's Confirmation section is amended to scope "pure" to the `extends`/`$ref`/Kahn's-sort linearization specifically (ADR-0006's amendment is deferred to ticket 08)
+- [ ] ADR-0007's Confirmation section is amended to scope "pure" to the `extends`/`$ref`/Kahn's-sort linearization specifically (ADR-0006's amendment is deferred to ticket 08)
+- [ ] `mise clippy` clean
 
 **Out of scope:**
 
