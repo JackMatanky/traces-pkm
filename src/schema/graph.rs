@@ -60,7 +60,7 @@ pub(super) struct SchemaGraph<'a> {
     /// parent (Kahn's algorithm needs that edge to release the child's
     /// in-degree, even though Global is never a real `extends` link for
     /// field-inheritance purposes).
-    kahn_children_by_name: BTreeMap<SchemaNameRef<'a>, Vec<SchemaNameRef<'a>>>,
+    children_by_name: BTreeMap<SchemaNameRef<'a>, Vec<SchemaNameRef<'a>>>,
     /// Count of not-yet-resolved parents per Schema; a Schema becomes ready
     /// when it reaches zero. The Global Schema is forced to zero at
     /// construction.
@@ -119,14 +119,14 @@ impl<'a> SchemaGraph<'a> {
         // An edge runs parent -> child, so a child's in-degree is its
         // (filtered) parent count.
         let mut in_degree: BTreeMap<SchemaNameRef<'_>, usize> = BTreeMap::new();
-        let mut kahn_children_by_name: BTreeMap<
+        let mut children_by_name: BTreeMap<
             SchemaNameRef<'_>,
             Vec<SchemaNameRef<'_>>,
         > = BTreeMap::new();
         for (&name, parents) in &parents_by_name {
             in_degree.insert(name, parents.len());
             for &parent in parents {
-                kahn_children_by_name.entry(parent).or_default().push(name);
+                children_by_name.entry(parent).or_default().push(name);
             }
         }
 
@@ -151,7 +151,7 @@ impl<'a> SchemaGraph<'a> {
 
         Self {
             parents_by_name,
-            kahn_children_by_name,
+            children_by_name,
             in_degree,
             queue,
             visited: BTreeSet::new(),
@@ -179,7 +179,7 @@ impl<'a> SchemaGraph<'a> {
     /// hit zero into the ready queue.
     pub(super) fn mark_resolved(&mut self, name: SchemaNameRef<'_>) {
         for &child in
-            self.kahn_children_by_name.get(name.as_str()).into_iter().flatten()
+            self.children_by_name.get(name.as_str()).into_iter().flatten()
         {
             if let Some(degree) = self.in_degree.get_mut(&child) {
                 *degree = degree.saturating_sub(1);

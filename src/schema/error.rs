@@ -11,7 +11,7 @@ use std::{fmt, path::PathBuf};
 
 use thiserror::Error;
 
-use super::{address::FieldAddress, name::SchemaName, raw::RawFieldType};
+use super::{address::FieldAddress, name::SchemaName, raw::RawSchemaFieldType};
 use crate::field::FieldName;
 
 /// Stop Schema loading or resolution on a hard failure.
@@ -102,7 +102,7 @@ pub(crate) enum SchemaFieldBuilderError {
     #[error("field {address} of type {kind} has no attribute {key:?}")]
     UnknownAttributeKey {
         address: FieldAddress,
-        kind: RawFieldType,
+        kind: RawSchemaFieldType,
         key: String,
     },
     /// `key` is a valid attribute for `kind`, but its declared value isn't
@@ -113,7 +113,7 @@ pub(crate) enum SchemaFieldBuilderError {
     )]
     AttributeValueTypeMismatch {
         address: FieldAddress,
-        kind: RawFieldType,
+        kind: RawSchemaFieldType,
         key: String,
         value: String,
         expected: &'static str,
@@ -164,7 +164,7 @@ pub(crate) enum SchemaWarning {
     /// treats this as a hard [`SchemaError::FieldBuilder`] instead.
     UnknownOverrideKey {
         address: FieldAddress,
-        kind: RawFieldType,
+        kind: RawSchemaFieldType,
         key: String,
     },
     /// Report a bare `$ref` override declaring a valid attribute key with a
@@ -174,7 +174,7 @@ pub(crate) enum SchemaWarning {
     /// that key; every other valid key in the same override still applies.
     OverrideValueTypeMismatch {
         address: FieldAddress,
-        kind: RawFieldType,
+        kind: RawSchemaFieldType,
         key: String,
         value: String,
         expected: &'static str,
@@ -314,7 +314,7 @@ mod tests {
             let inner = SchemaFieldBuilderError::UnknownAttributeKey {
                 address: FieldAddress::try_from("#book/status")
                     .expect("valid ref"),
-                kind: RawFieldType::Date,
+                kind: RawSchemaFieldType::Date,
                 key: "values".to_owned(),
             };
 
@@ -362,7 +362,7 @@ mod tests {
             let error = SchemaFieldBuilderError::UnknownAttributeKey {
                 address: FieldAddress::try_from("#book/published")
                     .expect("valid ref"),
-                kind: RawFieldType::Date,
+                kind: RawSchemaFieldType::Date,
                 key: "values".to_owned(),
             };
 
@@ -378,7 +378,7 @@ mod tests {
             let error = SchemaFieldBuilderError::AttributeValueTypeMismatch {
                 address: FieldAddress::try_from("#book/rating")
                     .expect("valid ref"),
-                kind: RawFieldType::Number,
+                kind: RawSchemaFieldType::Number,
                 key: "min".to_owned(),
                 value: "\"abc\"".to_owned(),
                 expected: "a number",
@@ -465,7 +465,7 @@ mod tests {
             let warning = SchemaWarning::UnknownOverrideKey {
                 address: FieldAddress::try_from("#sci_fi/cover")
                     .expect("valid ref"),
-                kind: RawFieldType::Select,
+                kind: RawSchemaFieldType::Select,
                 key: "folders".to_owned(),
             };
 
@@ -481,7 +481,7 @@ mod tests {
             let warning = SchemaWarning::OverrideValueTypeMismatch {
                 address: FieldAddress::try_from("#sci_fi/rating")
                     .expect("valid ref"),
-                kind: RawFieldType::Number,
+                kind: RawSchemaFieldType::Number,
                 key: "min".to_owned(),
                 value: "\"abc\"".to_owned(),
                 expected: "a number",

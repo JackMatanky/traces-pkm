@@ -133,7 +133,7 @@ impl RawSchemaFieldDef {
     #[cfg(test)]
     #[inline]
     #[must_use]
-    pub(crate) fn direct(kind: RawFieldType) -> Self {
+    pub(crate) fn direct(kind: RawSchemaFieldType) -> Self {
         Self {
             source: RawFieldSource::Direct(kind),
             required: None,
@@ -163,7 +163,7 @@ impl RawSchemaFieldDef {
 /// Represent the `type` key of a raw field definition.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Deserialize)]
 #[serde(rename_all = "lowercase")]
-pub(crate) enum RawFieldType {
+pub(crate) enum RawSchemaFieldType {
     /// Free-form text input.
     Input,
     /// Configured selectable values.
@@ -178,7 +178,7 @@ pub(crate) enum RawFieldType {
     File,
 }
 
-impl std::fmt::Display for RawFieldType {
+impl std::fmt::Display for RawSchemaFieldType {
     /// Writes the lowercase `type` key value a Schema author would write in
     /// TOML (`"select"`, not `"Select"`), so field-attribute error messages
     /// read like the source they describe.
@@ -202,12 +202,12 @@ impl std::fmt::Display for RawFieldType {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum RawFieldSource {
     /// Use a `type` key with no `$ref`.
-    Direct(RawFieldType),
+    Direct(RawSchemaFieldType),
     /// Use a `$ref` address to a base definition, with an optional local `type`
     /// override.
     Ref {
         address: FieldAddress,
-        override_type: Option<RawFieldType>,
+        override_type: Option<RawSchemaFieldType>,
     },
 }
 
@@ -235,7 +235,7 @@ pub(crate) enum RawFieldDefError {
 struct RawFieldDefToml {
     /// Store the field kind. Optional only when `reference` supplies it.
     #[serde(rename = "type")]
-    kind: Option<RawFieldType>,
+    kind: Option<RawSchemaFieldType>,
     /// Store a parsed `$ref` address shape.
     ///
     /// Raw deserialization only parses the address into a [`FieldAddress`].
@@ -267,7 +267,10 @@ mod tests {
             let raw: RawSchemaFieldDef =
                 toml::from_str(r#"type = "input""#).expect("valid toml");
 
-            assert_eq!(raw.source, RawFieldSource::Direct(RawFieldType::Input));
+            assert_eq!(
+                raw.source,
+                RawFieldSource::Direct(RawSchemaFieldType::Input)
+            );
         }
 
         #[test]
@@ -296,7 +299,7 @@ mod tests {
             assert_eq!(raw.source, RawFieldSource::Ref {
                 address: FieldAddress::try_from("#global/cover")
                     .expect("valid ref"),
-                override_type: Some(RawFieldType::File),
+                override_type: Some(RawSchemaFieldType::File),
             });
         }
 
@@ -375,7 +378,7 @@ mod tests {
 
             assert_eq!(
                 raw.source,
-                RawFieldSource::Direct(RawFieldType::Number)
+                RawFieldSource::Direct(RawSchemaFieldType::Number)
             );
             assert_eq!(raw.options.get("step"), Some(&FieldValue::Float(0.5)));
         }
@@ -388,14 +391,14 @@ mod tests {
         use super::super::*;
 
         #[rstest]
-        #[case::input(RawFieldType::Input, "input")]
-        #[case::select(RawFieldType::Select, "select")]
-        #[case::boolean(RawFieldType::Boolean, "boolean")]
-        #[case::number(RawFieldType::Number, "number")]
-        #[case::date(RawFieldType::Date, "date")]
-        #[case::file(RawFieldType::File, "file")]
+        #[case::input(RawSchemaFieldType::Input, "input")]
+        #[case::select(RawSchemaFieldType::Select, "select")]
+        #[case::boolean(RawSchemaFieldType::Boolean, "boolean")]
+        #[case::number(RawSchemaFieldType::Number, "number")]
+        #[case::date(RawSchemaFieldType::Date, "date")]
+        #[case::file(RawSchemaFieldType::File, "file")]
         fn display_matches_the_toml_type_key_value(
-            #[case] kind: RawFieldType,
+            #[case] kind: RawSchemaFieldType,
             #[case] expected: &str,
         ) {
             assert_eq!(kind.to_string(), expected);

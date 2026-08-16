@@ -72,6 +72,7 @@ pub use config::{
 pub use dialog::{
     DialogError, DialogProvider, PresetDialogProvider, TerminalDialogProvider,
 };
+pub(crate) use file_name::{BaseName, BaseNameRef, FileName};
 pub(crate) use file_store::{
     FileStateStore, FileStateStoreError, FileStoreCleanMode,
 };

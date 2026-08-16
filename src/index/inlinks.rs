@@ -17,7 +17,7 @@ use std::{
 
 use super::find_by_path;
 use crate::{
-    file_name::BaseNameRef,
+    BaseNameRef,
     note::{LinkTarget, Note},
 };
 

@@ -2,8 +2,8 @@
 //!
 //! [`SchemaFieldType`] absorbs what used to be a separate `FieldType` tag plus
 //! `FieldOptions`: no field type without its own options can exist, and no
-//! separate kind-only type shadows [`RawFieldType`], which already serves that
-//! role at both the wire layer and here.
+//! separate kind-only type shadows [`RawSchemaFieldType`], which already serves
+//! that role at both the wire layer and here.
 //!
 //! [`SchemaFieldBuilder`] is the one seam that resolves a raw field's
 //! type-specific `options` bag (a [`std::collections::BTreeMap<String,
@@ -27,7 +27,7 @@ use super::{
     error::{SchemaError, SchemaFieldBuilderError, SchemaWarning},
     model::Schema,
     name::SchemaName,
-    raw::{RawFieldSource, RawFieldType, RawSchemaFieldDef},
+    raw::{RawFieldSource, RawSchemaFieldDef, RawSchemaFieldType},
 };
 use crate::field::FieldValue;
 
@@ -37,16 +37,16 @@ use crate::field::FieldValue;
 /// guardrails.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct SchemaFieldDef {
-    field_type: SchemaFieldType,
+    kind: SchemaFieldType,
     required: bool,
     multi: bool,
 }
 
 impl SchemaFieldDef {
     /// Build a resolved field definition from already-merged parts.
-    fn new(field_type: SchemaFieldType, required: bool, multi: bool) -> Self {
+    fn new(kind: SchemaFieldType, required: bool, multi: bool) -> Self {
         Self {
-            field_type,
+            kind,
             required,
             multi,
         }
@@ -58,18 +58,18 @@ impl SchemaFieldDef {
     #[cfg(test)]
     #[must_use]
     pub(super) fn for_test(
-        field_type: SchemaFieldType,
+        kind: SchemaFieldType,
         required: bool,
         multi: bool,
     ) -> Self {
-        Self::new(field_type, required, multi)
+        Self::new(kind, required, multi)
     }
 
     /// Return this field's type-specific effective type.
     #[inline]
     #[must_use]
-    pub(crate) fn field_type(&self) -> &SchemaFieldType {
-        &self.field_type
+    pub(crate) fn kind(&self) -> &SchemaFieldType {
+        &self.kind
     }
 
     /// Return this field's static selectable entries for the `schema`
@@ -82,7 +82,7 @@ impl SchemaFieldDef {
     #[inline]
     #[must_use]
     pub(crate) fn select_values(&self) -> Option<&[SchemaSelectFieldEntry]> {
-        match &self.field_type {
+        match &self.kind {
             SchemaFieldType::Select {
                 values,
             } => Some(values),
@@ -105,7 +105,7 @@ impl SchemaFieldDef {
     #[inline]
     #[must_use]
     pub(crate) fn file_filter(&self) -> Option<SchemaFileFieldFilter<'_>> {
-        match &self.field_type {
+        match &self.kind {
             SchemaFieldType::File {
                 folders,
                 ext,
@@ -158,9 +158,9 @@ pub(crate) struct SchemaFileFieldFilter<'a> {
 /// without `values`, or a `date` field with a stray `folders` list, cannot be
 /// represented. `select` and `file` are the only list-bearing kinds; `number`
 /// carries `step`/`min`/`max` and `date` a `format`; the rest are unit
-/// variants. Replaces a separate `FieldType` tag: [`RawFieldType`] already
-/// names every kind at the wire layer, so [`Self::kind`] returns that instead
-/// of a second, schema-domain-only tag type.
+/// variants. Replaces a separate `FieldType` tag: [`RawSchemaFieldType`]
+/// already names every kind at the wire layer, so [`Self::kind`] returns that
+/// instead of a second, schema-domain-only tag type.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum SchemaFieldType {
     /// Accept free-form text input.
@@ -199,25 +199,25 @@ pub(crate) enum SchemaFieldType {
 }
 
 impl SchemaFieldType {
-    /// Return the [`RawFieldType`] this variant represents.
+    /// Return the [`RawSchemaFieldType`] this variant represents.
     #[inline]
     #[must_use]
-    fn kind(&self) -> RawFieldType {
+    fn raw_kind(&self) -> RawSchemaFieldType {
         match self {
-            Self::Input => RawFieldType::Input,
+            Self::Input => RawSchemaFieldType::Input,
             Self::Select {
                 ..
-            } => RawFieldType::Select,
-            Self::Boolean => RawFieldType::Boolean,
+            } => RawSchemaFieldType::Select,
+            Self::Boolean => RawSchemaFieldType::Boolean,
             Self::Number {
                 ..
-            } => RawFieldType::Number,
+            } => RawSchemaFieldType::Number,
             Self::Date {
                 ..
-            } => RawFieldType::Date,
+            } => RawSchemaFieldType::Date,
             Self::File {
                 ..
-            } => RawFieldType::File,
+            } => RawSchemaFieldType::File,
         }
     }
 }
@@ -281,12 +281,12 @@ impl SchemaSelectFieldEntry {
 enum AttributeError {
     UnknownKey {
         address: FieldAddress,
-        kind: RawFieldType,
+        kind: RawSchemaFieldType,
         key: String,
     },
     TypeMismatch {
         address: FieldAddress,
-        kind: RawFieldType,
+        kind: RawSchemaFieldType,
         key: String,
         value: String,
         expected: &'static str,
@@ -354,7 +354,7 @@ impl From<AttributeError> for SchemaWarning {
 /// Builds an [`AttributeError::UnknownKey`] for `key` on `kind`.
 fn unknown_key(
     address: FieldAddressRef<'_>,
-    kind: RawFieldType,
+    kind: RawSchemaFieldType,
     key: &str,
 ) -> AttributeError {
     AttributeError::UnknownKey {
@@ -369,7 +369,7 @@ fn unknown_key(
 /// message.
 fn type_mismatch(
     address: FieldAddressRef<'_>,
-    kind: RawFieldType,
+    kind: RawSchemaFieldType,
     key: &str,
     value: &FieldValue,
     expected: &'static str,
@@ -438,7 +438,7 @@ impl SchemaSelectFieldDef {
                     }
                     None => errors.push(type_mismatch(
                         address,
-                        RawFieldType::Select,
+                        RawSchemaFieldType::Select,
                         key,
                         value,
                         "an array of strings",
@@ -447,7 +447,7 @@ impl SchemaSelectFieldDef {
                 _ => {
                     errors.push(unknown_key(
                         address,
-                        RawFieldType::Select,
+                        RawSchemaFieldType::Select,
                         key,
                     ));
                 }
@@ -480,7 +480,7 @@ impl SchemaFileFieldDef {
                     Some(folders) => def.folders = Some(folders),
                     None => errors.push(type_mismatch(
                         address,
-                        RawFieldType::File,
+                        RawSchemaFieldType::File,
                         key,
                         value,
                         "an array of strings",
@@ -490,7 +490,7 @@ impl SchemaFileFieldDef {
                     Some(ext) => def.ext = Some(ext),
                     None => errors.push(type_mismatch(
                         address,
-                        RawFieldType::File,
+                        RawSchemaFieldType::File,
                         key,
                         value,
                         "a string",
@@ -500,14 +500,18 @@ impl SchemaFileFieldDef {
                     Some(class) => def.class = Some(class),
                     None => errors.push(type_mismatch(
                         address,
-                        RawFieldType::File,
+                        RawSchemaFieldType::File,
                         key,
                         value,
                         "an array of strings",
                     )),
                 },
                 _ => {
-                    errors.push(unknown_key(address, RawFieldType::File, key));
+                    errors.push(unknown_key(
+                        address,
+                        RawSchemaFieldType::File,
+                        key,
+                    ));
                 }
             }
         }
@@ -540,7 +544,7 @@ impl SchemaNumberFieldDef {
                 _ => {
                     errors.push(unknown_key(
                         address,
-                        RawFieldType::Number,
+                        RawSchemaFieldType::Number,
                         key,
                     ));
                     continue;
@@ -550,7 +554,7 @@ impl SchemaNumberFieldDef {
                 Some(number) => *slot = Some(number),
                 None => errors.push(type_mismatch(
                     address,
-                    RawFieldType::Number,
+                    RawSchemaFieldType::Number,
                     key,
                     value,
                     "a number",
@@ -582,14 +586,18 @@ impl SchemaDateFieldDef {
                     Some(format) => def.format = Some(format),
                     None => errors.push(type_mismatch(
                         address,
-                        RawFieldType::Date,
+                        RawSchemaFieldType::Date,
                         key,
                         value,
                         "a string",
                     )),
                 },
                 _ => {
-                    errors.push(unknown_key(address, RawFieldType::Date, key));
+                    errors.push(unknown_key(
+                        address,
+                        RawSchemaFieldType::Date,
+                        key,
+                    ));
                 }
             }
         }
@@ -601,10 +609,11 @@ impl SchemaDateFieldDef {
 /// `base`'s options for any key `options` leaves unset, and returns the
 /// resulting effective type alongside every per-key validation failure.
 ///
-/// `base` is only consulted when it is `Some` of the same [`RawFieldType`]
-/// kind; a `$ref` that switches type, or a field with no base at all, starts
-/// from empty options instead of reusing a mismatched base. For example, a
-/// `select`'s `values` never leaks into an overriding `file` field.
+/// `base` is only consulted when it is `Some` of the same
+/// [`RawSchemaFieldType`] kind; a `$ref` that switches type, or a field with no
+/// base at all, starts from empty options instead of reusing a mismatched base.
+/// For example, a `select`'s `values` never leaks into an overriding `file`
+/// field.
 ///
 /// `Input`/`Boolean` have no type-specific keys at all: every key in
 /// `options` is unrecognized for them, so each becomes its own
@@ -612,20 +621,20 @@ impl SchemaDateFieldDef {
 /// (empty) own-declaration struct.
 fn parse_field_type(
     address: FieldAddressRef<'_>,
-    kind: RawFieldType,
+    kind: RawSchemaFieldType,
     options: &BTreeMap<String, FieldValue>,
     base: Option<&SchemaFieldType>,
 ) -> (SchemaFieldType, Vec<AttributeError>) {
     match kind {
-        RawFieldType::Input => (
+        RawSchemaFieldType::Input => (
             SchemaFieldType::Input,
             options.keys().map(|key| unknown_key(address, kind, key)).collect(),
         ),
-        RawFieldType::Boolean => (
+        RawSchemaFieldType::Boolean => (
             SchemaFieldType::Boolean,
             options.keys().map(|key| unknown_key(address, kind, key)).collect(),
         ),
-        RawFieldType::Select => {
+        RawSchemaFieldType::Select => {
             let (def, errors) = SchemaSelectFieldDef::parse(address, options);
             let values = def.values.unwrap_or_else(|| match base {
                 Some(SchemaFieldType::Select {
@@ -640,7 +649,7 @@ fn parse_field_type(
                 errors,
             )
         }
-        RawFieldType::Number => {
+        RawSchemaFieldType::Number => {
             let (def, errors) = SchemaNumberFieldDef::parse(address, options);
             let (base_min, base_max, base_step) = match base {
                 Some(SchemaFieldType::Number {
@@ -659,7 +668,7 @@ fn parse_field_type(
                 errors,
             )
         }
-        RawFieldType::Date => {
+        RawSchemaFieldType::Date => {
             let (def, errors) = SchemaDateFieldDef::parse(address, options);
             let format = def.format.or_else(|| match base {
                 Some(SchemaFieldType::Date {
@@ -674,7 +683,7 @@ fn parse_field_type(
                 errors,
             )
         }
-        RawFieldType::File => {
+        RawSchemaFieldType::File => {
             let (def, errors) = SchemaFileFieldDef::parse(address, options);
             let folders = def.folders.unwrap_or_else(|| match base {
                 Some(SchemaFieldType::File {
@@ -821,7 +830,7 @@ impl SchemaFieldBuilder<'_> {
                     address,
                     *override_type,
                     &raw.options,
-                    Some(base.field_type()),
+                    Some(base.kind()),
                 );
                 if let Some(error) = errors.into_iter().next() {
                     return Err(SchemaFieldBuilderError::from(error).into());
@@ -839,9 +848,9 @@ impl SchemaFieldBuilder<'_> {
                 let base = self.refs.resolve(address, base_address)?;
                 let (field_type, errors) = parse_field_type(
                     address,
-                    base.field_type().kind(),
+                    base.kind().raw_kind(),
                     &raw.options,
-                    Some(base.field_type()),
+                    Some(base.kind()),
                 );
                 self.warnings.extend(errors.into_iter().map(Into::into));
                 (
@@ -886,17 +895,17 @@ mod tests {
     }
 
     /// Builds a resolved [`Schema`] named `name` with one field named `field`
-    /// with the given `field_type`, keyed by `name` for a `resolved` map.
+    /// with the given `kind`, keyed by `name` for a `resolved` map.
     fn schema_with_field(
         name: &str,
         field: &str,
-        field_type: SchemaFieldType,
+        kind: SchemaFieldType,
     ) -> (SchemaName, Schema) {
         let mut fields = BTreeMap::new();
         fields.insert(
             crate::field::FieldName::try_from(field)
                 .expect("valid test field name"),
-            SchemaFieldDef::new(field_type, false, false),
+            SchemaFieldDef::new(kind, false, false),
         );
         (
             SchemaName::from(name),
@@ -912,19 +921,22 @@ mod tests {
             use super::super::super::*;
 
             #[rstest]
-            #[case::input(SchemaFieldType::Input, RawFieldType::Input)]
+            #[case::input(SchemaFieldType::Input, RawSchemaFieldType::Input)]
             #[case::select(
                 SchemaFieldType::Select { values: Vec::new() },
-                RawFieldType::Select
+                RawSchemaFieldType::Select
             )]
-            #[case::boolean(SchemaFieldType::Boolean, RawFieldType::Boolean)]
+            #[case::boolean(
+                SchemaFieldType::Boolean,
+                RawSchemaFieldType::Boolean
+            )]
             #[case::number(
                 SchemaFieldType::Number { min: None, max: None, step: None },
-                RawFieldType::Number
+                RawSchemaFieldType::Number
             )]
             #[case::date(
                 SchemaFieldType::Date { format: None },
-                RawFieldType::Date
+                RawSchemaFieldType::Date
             )]
             #[case::file(
                 SchemaFieldType::File {
@@ -932,13 +944,13 @@ mod tests {
                     ext: None,
                     class: Vec::new(),
                 },
-                RawFieldType::File
+                RawSchemaFieldType::File
             )]
             fn returns_the_raw_field_type_matching_the_variant(
                 #[case] field_type: SchemaFieldType,
-                #[case] expected: RawFieldType,
+                #[case] expected: RawSchemaFieldType,
             ) {
-                assert_eq!(field_type.kind(), expected);
+                assert_eq!(field_type.raw_kind(), expected);
             }
         }
     }
@@ -974,7 +986,7 @@ mod tests {
 
                 let (field_type, errors) = parse_field_type(
                     address().as_ref(),
-                    RawFieldType::Select,
+                    RawSchemaFieldType::Select,
                     &opts,
                     None,
                 );
@@ -1004,7 +1016,7 @@ mod tests {
 
                 let (field_type, errors) = parse_field_type(
                     address().as_ref(),
-                    RawFieldType::Select,
+                    RawSchemaFieldType::Select,
                     &opts,
                     None,
                 );
@@ -1024,7 +1036,7 @@ mod tests {
 
                 let (_, errors) = parse_field_type(
                     address().as_ref(),
-                    RawFieldType::Select,
+                    RawSchemaFieldType::Select,
                     &opts,
                     None,
                 );
@@ -1045,7 +1057,7 @@ mod tests {
 
                 let (_, errors) = parse_field_type(
                     address().as_ref(),
-                    RawFieldType::Date,
+                    RawSchemaFieldType::Date,
                     &opts,
                     None,
                 );
@@ -1061,7 +1073,7 @@ mod tests {
 
                 let (_, errors) = parse_field_type(
                     address().as_ref(),
-                    RawFieldType::Number,
+                    RawSchemaFieldType::Number,
                     &opts,
                     None,
                 );
@@ -1079,7 +1091,7 @@ mod tests {
 
                 let (field_type, errors) = parse_field_type(
                     address().as_ref(),
-                    RawFieldType::Number,
+                    RawSchemaFieldType::Number,
                     &opts,
                     None,
                 );
@@ -1112,7 +1124,7 @@ mod tests {
 
                 let (field_type, errors) = parse_field_type(
                     address().as_ref(),
-                    RawFieldType::File,
+                    RawSchemaFieldType::File,
                     &opts,
                     None,
                 );
@@ -1131,7 +1143,7 @@ mod tests {
 
                 let (field_type, errors) = parse_field_type(
                     address().as_ref(),
-                    RawFieldType::Input,
+                    RawSchemaFieldType::Input,
                     &opts,
                     None,
                 );
@@ -1148,7 +1160,7 @@ mod tests {
 
                 let (field_type, errors) = parse_field_type(
                     address().as_ref(),
-                    RawFieldType::Boolean,
+                    RawSchemaFieldType::Boolean,
                     &opts,
                     None,
                 );
@@ -1178,7 +1190,7 @@ mod tests {
 
                 let (field_type, errors) = parse_field_type(
                     address().as_ref(),
-                    RawFieldType::Select,
+                    RawSchemaFieldType::Select,
                     &BTreeMap::new(),
                     Some(&base),
                 );
@@ -1193,7 +1205,7 @@ mod tests {
 
                 let (field_type, errors) = parse_field_type(
                     address().as_ref(),
-                    RawFieldType::Select,
+                    RawSchemaFieldType::Select,
                     &BTreeMap::new(),
                     Some(&base),
                 );
@@ -1221,7 +1233,7 @@ mod tests {
 
                 let (field_type, errors) = parse_field_type(
                     address().as_ref(),
-                    RawFieldType::File,
+                    RawSchemaFieldType::File,
                     &options,
                     Some(&base),
                 );
@@ -1263,7 +1275,7 @@ mod tests {
                 .resolve(address, &field_address("#book/status"))
                 .expect("resolves");
 
-            assert_eq!(field.field_type(), &SchemaFieldType::Input);
+            assert_eq!(field.kind(), &SchemaFieldType::Input);
         }
 
         #[test]
@@ -1290,7 +1302,7 @@ mod tests {
                 .resolve(address, &field_address("#global/priority"))
                 .expect("resolves");
 
-            assert_eq!(field.field_type(), &SchemaFieldType::Input);
+            assert_eq!(field.kind(), &SchemaFieldType::Input);
         }
 
         #[test]

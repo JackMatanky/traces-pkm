@@ -186,8 +186,8 @@ mod tests {
         use super::super::*;
         use crate::schema::fields::SchemaFieldType;
 
-        fn field(field_type: SchemaFieldType) -> SchemaFieldDef {
-            SchemaFieldDef::for_test(field_type, false, false)
+        fn field(kind: SchemaFieldType) -> SchemaFieldDef {
+            SchemaFieldDef::for_test(kind, false, false)
         }
 
         #[test]

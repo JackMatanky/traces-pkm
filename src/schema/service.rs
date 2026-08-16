@@ -39,9 +39,9 @@ use super::{
     raw::RawSchema,
 };
 use crate::{
+    BaseNameRef,
     config::SchemaConfigSpec,
     field::FieldName,
-    file_name::BaseNameRef,
     query::{ClassExpansionMode, QuerySource, SourceAtom},
 };
 
@@ -604,7 +604,7 @@ mod tests {
     use crate::schema::{
         error::SchemaFieldBuilderError,
         fields::{SchemaFieldType, SchemaSelectFieldEntry},
-        raw::{RawFieldSource, RawFieldType, RawSchemaFieldDef},
+        raw::{RawFieldSource, RawSchemaFieldDef, RawSchemaFieldType},
     };
 
     /// Resolves every Schema TOML file directly under `dir`, mirroring the
@@ -1135,13 +1135,13 @@ mod tests {
     fn select_field(values: &[&str]) -> RawSchemaFieldDef {
         RawSchemaFieldDef {
             options: options(&[("values", string_list(values))]),
-            ..RawSchemaFieldDef::direct(RawFieldType::Select)
+            ..RawSchemaFieldDef::direct(RawSchemaFieldType::Select)
         }
     }
 
     /// Builds an `input`-type [`RawSchemaFieldDef`].
     fn input_field() -> RawSchemaFieldDef {
-        RawSchemaFieldDef::direct(RawFieldType::Input)
+        RawSchemaFieldDef::direct(RawSchemaFieldType::Input)
     }
 
     /// Builds a `file`-type [`RawSchemaFieldDef`] with the given filter.
@@ -1162,7 +1162,7 @@ mod tests {
         }
         RawSchemaFieldDef {
             options: options(&pairs),
-            ..RawSchemaFieldDef::direct(RawFieldType::File)
+            ..RawSchemaFieldDef::direct(RawSchemaFieldType::File)
         }
     }
 
@@ -1229,7 +1229,7 @@ mod tests {
             let book = resolved.get("book").expect("book resolved");
             assert_eq!(book.name(), "book");
             let status = book.field("status").expect("status field");
-            assert_eq!(status.field_type(), &SchemaFieldType::Select {
+            assert_eq!(status.kind(), &SchemaFieldType::Select {
                 values: select_entries(&["draft", "done"])
             });
             assert!(!status.is_required());
@@ -1257,7 +1257,7 @@ mod tests {
                 .get("sci_fi")
                 .and_then(|s| s.field("status"))
                 .expect("status field");
-            assert_eq!(status.field_type(), &SchemaFieldType::Select {
+            assert_eq!(status.kind(), &SchemaFieldType::Select {
                 values: select_entries(&["outline", "shipped"])
             });
         }
@@ -1281,7 +1281,7 @@ mod tests {
                 .get("child")
                 .and_then(|s| s.field("shared"))
                 .expect("shared field");
-            assert_eq!(shared.field_type(), &SchemaFieldType::Select {
+            assert_eq!(shared.kind(), &SchemaFieldType::Select {
                 values: select_entries(&["from-a"])
             });
         }
@@ -1406,7 +1406,7 @@ mod tests {
                 .get("sci_fi")
                 .and_then(|s| s.field("status"))
                 .expect("status field");
-            assert_eq!(status.field_type(), &SchemaFieldType::Select {
+            assert_eq!(status.kind(), &SchemaFieldType::Select {
                 values: select_entries(&["draft", "done"])
             });
             assert!(status.is_required());
@@ -1433,7 +1433,7 @@ mod tests {
                 .get("task")
                 .and_then(|s| s.field("priority"))
                 .expect("priority field");
-            assert_eq!(priority.field_type(), &SchemaFieldType::Select {
+            assert_eq!(priority.kind(), &SchemaFieldType::Select {
                 values: select_entries(&["low", "high"])
             });
             assert!(priority.is_required());
@@ -1556,12 +1556,15 @@ mod tests {
                     ("status", select_field(&["draft", "done"])),
                     (
                         "archived",
-                        RawSchemaFieldDef::direct(RawFieldType::Boolean),
+                        RawSchemaFieldDef::direct(RawSchemaFieldType::Boolean),
                     ),
-                    ("rating", RawSchemaFieldDef::direct(RawFieldType::Number)),
+                    (
+                        "rating",
+                        RawSchemaFieldDef::direct(RawSchemaFieldType::Number),
+                    ),
                     (
                         "published",
-                        RawSchemaFieldDef::direct(RawFieldType::Date),
+                        RawSchemaFieldDef::direct(RawSchemaFieldType::Date),
                     ),
                     (
                         "cover",
@@ -1574,21 +1577,21 @@ mod tests {
             let book = resolved.get("book").expect("book resolved");
 
             assert_eq!(
-                book.field("title").map(|f| f.field_type()),
+                book.field("title").map(|f| f.kind()),
                 Some(&SchemaFieldType::Input)
             );
             assert_eq!(
-                book.field("status").map(|f| f.field_type()),
+                book.field("status").map(|f| f.kind()),
                 Some(&SchemaFieldType::Select {
                     values: select_entries(&["draft", "done"])
                 })
             );
             assert_eq!(
-                book.field("archived").map(|f| f.field_type()),
+                book.field("archived").map(|f| f.kind()),
                 Some(&SchemaFieldType::Boolean)
             );
             assert_eq!(
-                book.field("rating").map(|f| f.field_type()),
+                book.field("rating").map(|f| f.kind()),
                 Some(&SchemaFieldType::Number {
                     step: None,
                     min: None,
@@ -1596,13 +1599,13 @@ mod tests {
                 })
             );
             assert_eq!(
-                book.field("published").map(|f| f.field_type()),
+                book.field("published").map(|f| f.kind()),
                 Some(&SchemaFieldType::Date {
                     format: None
                 })
             );
             assert_eq!(
-                book.field("cover").map(|f| f.field_type()),
+                book.field("cover").map(|f| f.kind()),
                 Some(&SchemaFieldType::File {
                     folders: vec!["assets/covers".to_owned()],
                     ext: Some("png".to_owned()),
@@ -1661,7 +1664,7 @@ mod tests {
                 .and_then(|s| s.field("cover"))
                 .expect("cover field");
 
-            assert_eq!(cover.field_type(), &SchemaFieldType::File {
+            assert_eq!(cover.kind(), &SchemaFieldType::File {
                 folders: vec!["assets/covers".to_owned()],
                 ext: Some("png".to_owned()),
                 class: vec!["image".to_owned()],
@@ -1732,7 +1735,7 @@ mod tests {
                 .get("poem")
                 .and_then(|s| s.field("priority"))
                 .expect("priority field resolves via $ref to global");
-            assert_eq!(priority.field_type(), &SchemaFieldType::Select {
+            assert_eq!(priority.kind(), &SchemaFieldType::Select {
                 values: select_entries(&["low", "high"])
             });
         }
@@ -1761,7 +1764,7 @@ mod tests {
                 .get("author")
                 .and_then(|s| s.field("name"))
                 .expect("name field resolves via $ref to global");
-            assert_eq!(name.field_type(), &SchemaFieldType::Select {
+            assert_eq!(name.kind(), &SchemaFieldType::Select {
                 values: select_entries(&["anon"])
             });
         }
@@ -1782,10 +1785,10 @@ mod tests {
                 schema(&["book"], &[("status", RawSchemaFieldDef {
                     source: RawFieldSource::Ref {
                         address: field_address("#book/status"),
-                        override_type: Some(RawFieldType::File),
+                        override_type: Some(RawSchemaFieldType::File),
                     },
                     options: options(&[("folders", string_list(&["assets"]))]),
-                    ..RawSchemaFieldDef::direct(RawFieldType::Input)
+                    ..RawSchemaFieldDef::direct(RawSchemaFieldType::Input)
                 })]),
             );
 
@@ -1795,7 +1798,7 @@ mod tests {
                 .get("sci_fi")
                 .and_then(|s| s.field("status"))
                 .expect("status field");
-            assert_eq!(status.field_type(), &SchemaFieldType::File {
+            assert_eq!(status.kind(), &SchemaFieldType::File {
                 folders: vec!["assets".to_owned()],
                 ext: None,
                 class: Vec::new(),
@@ -1825,7 +1828,7 @@ mod tests {
                 .get("sci_fi")
                 .and_then(|s| s.field("status"))
                 .expect("status field still resolves from the base");
-            assert_eq!(status.field_type(), &SchemaFieldType::Select {
+            assert_eq!(status.kind(), &SchemaFieldType::Select {
                 values: select_entries(&["draft", "done"])
             });
             assert_eq!(warnings.len(), 1);
@@ -1843,7 +1846,7 @@ mod tests {
                 SchemaName::from("book"),
                 schema(&[], &[(
                     "rating",
-                    RawSchemaFieldDef::direct(RawFieldType::Number),
+                    RawSchemaFieldDef::direct(RawSchemaFieldType::Number),
                 )]),
             );
             raw.insert(
@@ -1865,7 +1868,7 @@ mod tests {
                 .get("sci_fi")
                 .and_then(|s| s.field("rating"))
                 .expect("rating field still resolves from the base");
-            assert_eq!(rating.field_type(), &SchemaFieldType::Number {
+            assert_eq!(rating.kind(), &SchemaFieldType::Number {
                 min: None,
                 max: None,
                 step: None,
@@ -1907,7 +1910,7 @@ mod tests {
                 .get("book")
                 .and_then(|s| s.field("cover"))
                 .expect("cover field still resolves from the base");
-            assert_eq!(cover.field_type(), &SchemaFieldType::File {
+            assert_eq!(cover.kind(), &SchemaFieldType::File {
                 // The valid override key applied...
                 folders: vec!["assets/covers".to_owned()],
                 // ...while the dropped key's own subfields fall back to the
@@ -1934,10 +1937,10 @@ mod tests {
                 schema(&["book"], &[("status", RawSchemaFieldDef {
                     source: RawFieldSource::Ref {
                         address: field_address("#book/status"),
-                        override_type: Some(RawFieldType::Date),
+                        override_type: Some(RawSchemaFieldType::Date),
                     },
                     options: options(&[("values", string_list(&["draft"]))]),
-                    ..RawSchemaFieldDef::direct(RawFieldType::Input)
+                    ..RawSchemaFieldDef::direct(RawSchemaFieldType::Input)
                 })]),
             );
 
@@ -1962,7 +1965,7 @@ mod tests {
                 SchemaName::from("book"),
                 schema(&[], &[("published", RawSchemaFieldDef {
                     options: options(&[("values", string_list(&["draft"]))]),
-                    ..RawSchemaFieldDef::direct(RawFieldType::Date)
+                    ..RawSchemaFieldDef::direct(RawSchemaFieldType::Date)
                 })]),
             );
 
@@ -1989,7 +1992,7 @@ mod tests {
                         "min",
                         crate::field::FieldValue::String("abc".to_owned()),
                     )]),
-                    ..RawSchemaFieldDef::direct(RawFieldType::Number)
+                    ..RawSchemaFieldDef::direct(RawSchemaFieldType::Number)
                 })]),
             );
 

@@ -13,7 +13,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use super::error::FileIndexError;
-use crate::file_name::{BaseName, FileName};
+use crate::{BaseName, FileName};
 
 /// Metadata captured for one regular file under a project root.
 ///
