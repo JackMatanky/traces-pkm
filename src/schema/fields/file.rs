@@ -1,4 +1,4 @@
-//! `file` field type definition and parsing.
+//! `file` field type definition, borrowed filter, and parsing.
 
 use std::collections::BTreeMap;
 
@@ -13,6 +13,13 @@ use super::{
 };
 use crate::field::FieldValue;
 
+/// Borrow a resolved `file` field's `FileIndex` filter parts.
+pub(crate) struct SchemaFileFieldDefRef<'a> {
+    pub(crate) folders: &'a [String],
+    pub(crate) ext: Option<&'a str>,
+    pub(crate) class: &'a [String],
+}
+
 /// Own declaration of a `file` field's type-specific options. See
 /// [`super::select::SchemaSelectFieldDef`]'s docs for why this is one level
 /// more `Option` than [`SchemaFieldType::File`].
@@ -24,6 +31,17 @@ pub(super) struct SchemaFileFieldDef {
 }
 
 impl SchemaFileFieldDef {
+    /// Borrow this definition's filter parts.
+    #[inline]
+    #[must_use]
+    pub(super) fn as_ref(&self) -> SchemaFileFieldDefRef<'_> {
+        SchemaFileFieldDefRef {
+            folders: &self.folders,
+            ext: self.ext.as_deref(),
+            class: &self.class,
+        }
+    }
+
     /// Parses every key in `options` against `file`'s valid attributes
     /// (`folders`, `ext`, `class`), merges with `base` when present, and
     /// returns the effective [`SchemaFieldType::File`] alongside every per-key

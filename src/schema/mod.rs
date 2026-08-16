@@ -39,7 +39,7 @@ mod raw;
 mod service;
 
 pub(crate) use error::SchemaError;
-pub(crate) use fields::{SchemaFileFieldFilter, SchemaSelectFieldEntry};
+pub(crate) use fields::{SchemaFileFieldDefRef, SchemaSelectFieldEntry};
 pub use model::Schema;
 pub use service::SchemaService;
 pub(crate) use service::{SchemaRegistry, resolve_sources};

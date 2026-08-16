@@ -28,6 +28,7 @@ pub(crate) use builder::{RefResolver, SchemaFieldBuilder};
 
 mod date;
 mod file;
+pub(crate) use file::SchemaFileFieldDefRef;
 mod number;
 mod select;
 
@@ -111,13 +112,15 @@ impl SchemaFieldDef {
     /// non-`file` field type.
     #[inline]
     #[must_use]
-    pub(crate) fn file_filter(&self) -> Option<SchemaFileFieldFilter<'_>> {
+    pub(crate) fn file_filter(
+        &self,
+    ) -> Option<file::SchemaFileFieldDefRef<'_>> {
         match &self.kind {
             SchemaFieldType::File {
                 folders,
                 ext,
                 class,
-            } => Some(SchemaFileFieldFilter {
+            } => Some(file::SchemaFileFieldDefRef {
                 folders,
                 ext: ext.as_deref(),
                 class,
@@ -150,13 +153,6 @@ impl SchemaFieldDef {
     pub(crate) fn is_multi(&self) -> bool {
         self.multi
     }
-}
-
-/// Borrow a `file` field's `FileIndex` filter parts.
-pub(crate) struct SchemaFileFieldFilter<'a> {
-    pub(crate) folders: &'a [String],
-    pub(crate) ext: Option<&'a str>,
-    pub(crate) class: &'a [String],
 }
 
 /// Represent a field's effective type and type-specific options.
