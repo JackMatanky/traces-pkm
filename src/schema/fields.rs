@@ -855,29 +855,29 @@ impl SchemaFieldBuilder<'_> {
 
         Ok(SchemaFieldDef::new(
             field_type,
-            apply_global_degrade(address, required, self.warnings),
+            self.apply_global_degrade(address, required),
             multi,
         ))
     }
-}
 
-/// Force `required` to `false` and record a
-/// [`SchemaWarning::StrayGlobalRequired`] when `address.schema()` is the
-/// Global Schema and it declared `required = true`.
-///
-/// Global Schema fields can never be required.
-fn apply_global_degrade(
-    address: FieldAddressRef<'_>,
-    required: bool,
-    warnings: &mut Vec<SchemaWarning>,
-) -> bool {
-    if address.schema().as_str() == GLOBAL_SCHEMA_NAME && required {
-        warnings.push(SchemaWarning::StrayGlobalRequired {
-            field: address.field().as_str().to_owned(),
-        });
-        false
-    } else {
-        required
+    /// Force `required` to `false` and record a
+    /// [`SchemaWarning::StrayGlobalRequired`] when `address.schema()` is the
+    /// Global Schema and it declared `required = true`.
+    ///
+    /// Global Schema fields can never be required.
+    fn apply_global_degrade(
+        &mut self,
+        address: FieldAddressRef<'_>,
+        required: bool,
+    ) -> bool {
+        if address.schema().as_str() == GLOBAL_SCHEMA_NAME && required {
+            self.warnings.push(SchemaWarning::StrayGlobalRequired {
+                field: address.field().as_str().to_owned(),
+            });
+            false
+        } else {
+            required
+        }
     }
 }
 
