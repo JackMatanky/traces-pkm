@@ -1,45 +1,69 @@
-//! Store resolved Schema domain types.
+//! Store the resolved Schema domain type.
 //!
-//! [`Schema`] holds effective [`FieldDefinition`]s after inheritance,
-//! `excludes`, and `$ref` are applied. Each [`FieldDefinition`] pairs
-//! type-specific [`FieldOptions`] with `required`/`multi` flags.
+//! [`Schema`] holds effective [`SchemaFieldDef`]s after inheritance,
+//! `excludes`, and `$ref` are applied, plus its transitive `extends`
+//! ancestors, direct extenders (`children`), and transitive extenders
+//! (`descendants`). Field construction lives in [`super::fields`]; this module
+//! is the plain data type and its own lookups.
 //!
-//! Construction stays `pub(super)`: only [`super::resolve`] builds these; the
+//! Construction stays `pub(super)`: only [`super::service`] builds these; the
 //! rest of the crate reads them through `pub(crate)` accessors.
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::{
-    name::SchemaName,
-    raw::{RawFieldDef, RawFieldType},
-};
-use crate::field::FieldName;
+use super::{fields::SchemaFieldDef, name::SchemaName};
+use crate::field::{FieldName, closest_match};
 
-/// Store one Schema's effective [`FieldDefinition`]s.
+/// Store one Schema's effective [`SchemaFieldDef`]s and its position in the
+/// `extends` DAG.
 ///
 /// Fields are resolved after inheritance, `excludes`, and `$ref` application.
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct Schema {
+pub struct Schema {
     name: SchemaName,
-    fields: BTreeMap<FieldName, FieldDefinition>,
+    fields: BTreeMap<FieldName, SchemaFieldDef>,
     /// Transitive `extends` targets, filtered to targets that resolved (a
     /// missing target never reaches here; see
     /// [`super::error::SchemaWarning::MissingExtendsTarget`]).
     ancestors: BTreeSet<SchemaName>,
+    /// Schemas that directly `extends` this one. Populated once, during
+    /// [`super::service::SchemaService::resolve`], from
+    /// [`super::graph::SchemaGraph::children_by_name`] — not an O(n)
+    /// per-lookup scan.
+    children: BTreeSet<SchemaName>,
+    /// Every Schema that transitively `extends` this one (its `children`,
+    /// their `children`, and so on). Populated the same way as `children`, via
+    /// [`super::graph::SchemaGraph::descendants_by_name`].
+    descendants: BTreeSet<SchemaName>,
 }
 
 impl Schema {
-    /// Build a resolved Schema from already-merged parts.
+    /// Build a resolved Schema from its merged fields and ancestors. `children`
+    /// and `descendants` start empty; [`Self::set_hierarchy`] fills them in
+    /// once the whole `extends` DAG is confirmed acyclic.
     pub(super) fn new(
         name: SchemaName,
-        fields: BTreeMap<FieldName, FieldDefinition>,
+        fields: BTreeMap<FieldName, SchemaFieldDef>,
         ancestors: BTreeSet<SchemaName>,
     ) -> Self {
         Self {
             name,
             fields,
             ancestors,
+            children: BTreeSet::new(),
+            descendants: BTreeSet::new(),
         }
+    }
+
+    /// Set this Schema's direct extenders and transitive extenders, computed
+    /// in bulk over the whole `extends` DAG once every Schema resolved.
+    pub(super) fn set_hierarchy(
+        &mut self,
+        children: BTreeSet<SchemaName>,
+        descendants: BTreeSet<SchemaName>,
+    ) {
+        self.children = children;
+        self.descendants = descendants;
     }
 
     /// Return the Schema name from the source file stem.
@@ -52,7 +76,7 @@ impl Schema {
     /// Return this Schema's effective Field Definitions, keyed by name.
     #[inline]
     #[must_use]
-    pub(crate) fn fields(&self) -> &BTreeMap<FieldName, FieldDefinition> {
+    pub(crate) fn fields(&self) -> &BTreeMap<FieldName, SchemaFieldDef> {
         &self.fields
     }
 
@@ -60,24 +84,39 @@ impl Schema {
     /// this Schema.
     #[inline]
     #[must_use]
-    pub(crate) fn field(&self, name: &str) -> Option<&FieldDefinition> {
+    pub(crate) fn field(&self, name: &str) -> Option<&SchemaFieldDef> {
         self.fields.get(name)
     }
 
     /// Return this Schema's transitive `extends` ancestors, used by
-    /// `resolve::build_schema` to accumulate a child's own ancestor set from
-    /// its parents'.
+    /// [`super::service`]'s per-schema build step to accumulate a child's own
+    /// ancestor set from its parents'.
     #[inline]
     #[must_use]
     pub(super) fn ancestors(&self) -> &BTreeSet<SchemaName> {
         &self.ancestors
     }
 
+    /// Return the Schemas that directly `extends` this one.
+    #[inline]
+    #[must_use]
+    pub(super) fn children(&self) -> &BTreeSet<SchemaName> {
+        &self.children
+    }
+
+    /// Return every Schema that transitively `extends` this one.
+    #[inline]
+    #[must_use]
+    pub(super) fn descendants(&self) -> &BTreeSet<SchemaName> {
+        &self.descendants
+    }
+
     /// Test whether this Schema is-a class name.
     ///
     /// The `ancestors` set includes all transitive `extends` targets that
-    /// resolved during [`super::resolve::resolve`], so this check covers
-    /// indirect inheritance chains, such as `sci_fi` to `book` to `thing`.
+    /// resolved during [`super::service::SchemaService::resolve`], so this
+    /// check covers indirect inheritance chains, such as `sci_fi` to `book` to
+    /// `thing`.
     ///
     /// # Examples
     ///
@@ -88,300 +127,53 @@ impl Schema {
     /// - `sci_fi.is_a("movie")` returns `false` for an unrelated class.
     #[inline]
     #[must_use]
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "is-a matching for class queries now goes through the \
+                      bulk SchemaService::matches()/descendants(), which read \
+                      the precomputed descendants set instead of calling \
+                      is_a() per Schema; kept as a per-instance domain check \
+                      for API completeness and direct is-a assertions"
+        )
+    )]
     pub(crate) fn is_a(&self, class: &str) -> bool {
         self.name.as_str() == class || self.ancestors.contains(class)
     }
-}
 
-/// Store one resolved field definition.
-///
-/// `required` and `multi` are currently inert; reserved for future LSP/MCP
-/// guardrails.
-#[derive(Clone, Debug, PartialEq)]
-pub(crate) struct FieldDefinition {
-    options: FieldOptions,
-    required: bool,
-    multi: bool,
-}
-
-impl FieldDefinition {
-    /// Build a resolved field definition from already-merged parts.
-    pub(super) fn new(
-        options: FieldOptions,
-        required: bool,
-        multi: bool,
-    ) -> Self {
-        Self {
-            options,
-            required,
-            multi,
+    /// Suggest the field name in this Schema that best matches `field`, for a
+    /// template adapter's `did you mean` hint on an unknown-field render
+    /// error. Never consulted on a successful field lookup, which stays
+    /// exact.
+    ///
+    /// Prefers a canonical ([`crate::field::FieldKey`]) match over an
+    /// edit-distance match. Suggests nothing when `field` itself fails
+    /// [`crate::field::FieldKey`] validation, when no field canonically or
+    /// approximately matches, or when more than one field canonically matches
+    /// (Schema resolution already rejects two fields sharing a canonical form
+    /// within one Schema, so this last case is defensive).
+    #[must_use]
+    pub(crate) fn suggest_field(&self, field: &str) -> Option<&str> {
+        let input_key = crate::field::FieldKey::try_from(field).ok()?;
+        let mut canonical_matches =
+            self.fields.keys().filter(|name| input_key.is_match(name.as_str()));
+        match (canonical_matches.next(), canonical_matches.next()) {
+            (Some(only), None) => Some(only.as_str()),
+            (Some(_), Some(_)) => None,
+            (None, _) => self.closest_field_name(field),
         }
     }
 
-    /// Return this field's type-specific options.
-    #[inline]
-    #[must_use]
-    pub(crate) fn options(&self) -> &FieldOptions {
-        &self.options
+    /// Find the field name in this Schema with the smallest edit distance to
+    /// `field`, for [`Self::suggest_field`]'s fallback when no field
+    /// canonically matches.
+    fn closest_field_name(&self, field: &str) -> Option<&str> {
+        closest_match(
+            self.fields.keys().map(|name| (name.as_str(), name.as_str())),
+            field,
+        )
     }
-
-    /// Return this field's static selectable values for the `schema`
-    /// minijinja namespace's `.field()` method, or `None` if this field type
-    /// has none to offer without consulting the file index.
-    ///
-    /// By field type:
-    ///
-    /// - `select`: returns the declared `values` list.
-    /// - `file`: returns `None` here because options resolve live from the
-    ///   `FileIndex`; use [`Self::file_filter`] for its index filter.
-    /// - All other types: `None`.
-    #[inline]
-    #[must_use]
-    pub(crate) fn selectable_values(&self) -> Option<&[String]> {
-        match &self.options {
-            FieldOptions::Select {
-                values,
-            } => Some(values),
-            FieldOptions::Input
-            | FieldOptions::Boolean
-            | FieldOptions::Number {
-                ..
-            }
-            | FieldOptions::Date {
-                ..
-            }
-            | FieldOptions::File {
-                ..
-            } => None,
-        }
-    }
-
-    /// Return this file field's `FileIndex` filter parts, or `None` for
-    /// every non-`file` field type.
-    #[inline]
-    #[must_use]
-    pub(crate) fn file_filter(&self) -> Option<SchemaFileFieldFilter<'_>> {
-        match &self.options {
-            FieldOptions::File {
-                folders,
-                ext,
-                class,
-            } => Some(SchemaFileFieldFilter {
-                folders,
-                ext: ext.as_deref(),
-                class,
-            }),
-            FieldOptions::Input
-            | FieldOptions::Select {
-                ..
-            }
-            | FieldOptions::Boolean
-            | FieldOptions::Number {
-                ..
-            }
-            | FieldOptions::Date {
-                ..
-            } => None,
-        }
-    }
-
-    /// Return `true` if this field must be set. Always `false` on the reserved
-    /// Global Schema, regardless of its own TOML.
-    #[inline]
-    #[must_use]
-    pub(crate) fn is_required(&self) -> bool {
-        self.required
-    }
-
-    /// Return `true` if this field accepts multiple values.
-    #[inline]
-    #[must_use]
-    pub(crate) fn is_multi(&self) -> bool {
-        self.multi
-    }
-}
-
-/// Represent a field kind after `$ref` resolution.
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub(crate) enum FieldType {
-    /// Free-form text input.
-    Input,
-    /// Configured selectable values.
-    Select,
-    /// Boolean value.
-    Boolean,
-    /// Numeric value.
-    Number,
-    /// Date value.
-    Date,
-    /// File link with optional filters.
-    File,
-}
-
-impl From<RawFieldType> for FieldType {
-    #[inline]
-    fn from(raw: RawFieldType) -> Self {
-        match raw {
-            RawFieldType::Input => Self::Input,
-            RawFieldType::Select => Self::Select,
-            RawFieldType::Boolean => Self::Boolean,
-            RawFieldType::Number => Self::Number,
-            RawFieldType::Date => Self::Date,
-            RawFieldType::File => Self::File,
-        }
-    }
-}
-
-/// Represent type-specific field options.
-///
-/// Pairs each [`FieldType`] with the options only that type carries: a
-/// `select` field without `values`, or a `date` field with a stray `folders`
-/// list, cannot be represented. `select` and `file` are the only list-bearing
-/// kinds; `number` carries `step`/`min`/`max` and `date` a `format`; the rest
-/// are unit variants.
-#[derive(Clone, Debug, PartialEq)]
-pub(crate) enum FieldOptions {
-    /// Accept free-form text input.
-    Input,
-    /// Accept one value from a configured list.
-    Select {
-        values: Vec<String>,
-    },
-    /// Accept a boolean value.
-    Boolean,
-    /// Accept a numeric value.
-    Number {
-        /// Inclusive minimum; `None` when unset.
-        min: Option<f64>,
-        /// Inclusive maximum; `None` when unset.
-        max: Option<f64>,
-        /// Increment step for the numeric value; `None` when unset.
-        step: Option<f64>,
-    },
-    /// Accept a date value.
-    Date {
-        /// Display/parse format (strftime); `None` when unset.
-        format: Option<String>,
-    },
-    /// Accept a link to files matched by folder, extension, and class filters.
-    File {
-        folders: Vec<String>,
-        ext: Option<String>,
-        class: Vec<String>,
-    },
-}
-
-impl FieldOptions {
-    /// Create options for `kind` from `raw`'s keys, falling back to `base`'s
-    /// options for any key `raw` leaves unset. `base: None` creates fresh
-    /// options with no fallback: every key `raw` leaves unset defaults to
-    /// empty.
-    ///
-    /// `base` is only consulted when it is `Some` of the same [`FieldType`]; a
-    /// `$ref` that switches type, or a field with no base at all, starts from
-    /// empty options instead of reusing a mismatched base. For example, a
-    /// `select`'s `values` never leaks into an overriding `file` field.
-    ///
-    /// # Examples
-    ///
-    /// A `select` field inheriting from a parent with `values = ["draft",
-    /// "done"]`, where the child only overrides `required`:
-    ///
-    /// - `raw.values` is `None`: falls back to parent's `["draft", "done"]`.
-    /// - `raw.values` is `Some(["todo"])`: uses `["todo"]`.
-    pub(super) fn from_raw(
-        kind: FieldType,
-        raw: &RawFieldDef,
-        base: Option<&Self>,
-    ) -> Self {
-        match kind {
-            FieldType::Input => Self::Input,
-            FieldType::Select => Self::Select {
-                values: raw.values.clone().unwrap_or_else(|| match base {
-                    Some(Self::Select {
-                        values,
-                    }) => values.clone(),
-                    _ => Vec::new(),
-                }),
-            },
-            FieldType::Boolean => Self::Boolean,
-            FieldType::Number => {
-                let (base_min, base_max, base_step) = match base {
-                    Some(Self::Number {
-                        min,
-                        max,
-                        step,
-                    }) => (*min, *max, *step),
-                    _ => (None, None, None),
-                };
-                Self::Number {
-                    min: raw.min.or(base_min),
-                    max: raw.max.or(base_max),
-                    step: raw.step.or(base_step),
-                }
-            }
-            FieldType::Date => Self::Date {
-                format: raw.format.clone().or_else(|| match base {
-                    Some(Self::Date {
-                        format,
-                    }) => format.clone(),
-                    _ => None,
-                }),
-            },
-            FieldType::File => Self::File {
-                folders: raw.folders.clone().unwrap_or_else(|| match base {
-                    Some(Self::File {
-                        folders,
-                        ..
-                    }) => folders.clone(),
-                    _ => Vec::new(),
-                }),
-                ext: raw.ext.clone().or_else(|| match base {
-                    Some(Self::File {
-                        ext,
-                        ..
-                    }) => ext.clone(),
-                    _ => None,
-                }),
-                class: raw.class.clone().unwrap_or_else(|| match base {
-                    Some(Self::File {
-                        class,
-                        ..
-                    }) => class.clone(),
-                    _ => Vec::new(),
-                }),
-            },
-        }
-    }
-
-    /// Return the [`FieldType`] this variant represents.
-    #[inline]
-    #[must_use]
-    pub(super) fn kind(&self) -> FieldType {
-        match self {
-            Self::Input => FieldType::Input,
-            Self::Select {
-                ..
-            } => FieldType::Select,
-            Self::Boolean => FieldType::Boolean,
-            Self::Number {
-                ..
-            } => FieldType::Number,
-            Self::Date {
-                ..
-            } => FieldType::Date,
-            Self::File {
-                ..
-            } => FieldType::File,
-        }
-    }
-}
-
-/// Borrow a `file` field's `FileIndex` filter parts.
-pub(crate) struct SchemaFileFieldFilter<'a> {
-    pub(crate) folders: &'a [String],
-    pub(crate) ext: Option<&'a str>,
-    pub(crate) class: &'a [String],
 }
 
 #[cfg(test)]
@@ -392,9 +184,10 @@ mod tests {
         use pretty_assertions::assert_eq;
 
         use super::super::*;
+        use crate::schema::fields::SchemaFieldType;
 
-        fn field(options: FieldOptions) -> FieldDefinition {
-            FieldDefinition::new(options, false, false)
+        fn field(field_type: SchemaFieldType) -> SchemaFieldDef {
+            SchemaFieldDef::for_test(field_type, false, false)
         }
 
         #[test]
@@ -402,7 +195,7 @@ mod tests {
             let mut fields = BTreeMap::new();
             fields.insert(
                 FieldName::try_from("title").expect("valid test field name"),
-                field(FieldOptions::Input),
+                field(SchemaFieldType::Input),
             );
             let mut ancestors = BTreeSet::new();
             ancestors.insert(SchemaName::from("thing"));
@@ -416,6 +209,27 @@ mod tests {
             assert_eq!(schema.name(), "book");
             assert_eq!(schema.fields(), &fields);
             assert_eq!(schema.ancestors(), &ancestors);
+            assert!(schema.children().is_empty());
+            assert!(schema.descendants().is_empty());
+        }
+
+        #[test]
+        fn set_hierarchy_stores_the_given_children_and_descendants() {
+            let mut schema = Schema::new(
+                SchemaName::from("thing"),
+                BTreeMap::new(),
+                BTreeSet::new(),
+            );
+            let mut children = BTreeSet::new();
+            children.insert(SchemaName::from("book"));
+            let mut descendants = BTreeSet::new();
+            descendants.insert(SchemaName::from("book"));
+            descendants.insert(SchemaName::from("sci_fi"));
+
+            schema.set_hierarchy(children.clone(), descendants.clone());
+
+            assert_eq!(schema.children(), &children);
+            assert_eq!(schema.descendants(), &descendants);
         }
 
         #[test]
@@ -423,14 +237,14 @@ mod tests {
             let mut fields = BTreeMap::new();
             fields.insert(
                 FieldName::try_from("title").expect("valid test field name"),
-                field(FieldOptions::Input),
+                field(SchemaFieldType::Input),
             );
             let schema =
                 Schema::new(SchemaName::from("book"), fields, BTreeSet::new());
 
             assert_eq!(
                 schema.field("title"),
-                Some(&field(FieldOptions::Input))
+                Some(&field(SchemaFieldType::Input))
             );
         }
 
@@ -481,493 +295,63 @@ mod tests {
         }
     }
 
-    mod field_definition {
+    mod suggest_field {
+        use std::collections::{BTreeMap, BTreeSet};
+
         use pretty_assertions::assert_eq;
 
         use super::super::*;
+        use crate::schema::fields::SchemaFieldType;
+
+        fn schema_with_fields(names: &[&str]) -> Schema {
+            let fields = names
+                .iter()
+                .map(|&name| {
+                    (
+                        FieldName::try_from(name)
+                            .expect("valid test field name"),
+                        SchemaFieldDef::for_test(
+                            SchemaFieldType::Input,
+                            false,
+                            false,
+                        ),
+                    )
+                })
+                .collect::<BTreeMap<_, _>>();
+            Schema::new(SchemaName::from("book"), fields, BTreeSet::new())
+        }
 
         #[test]
-        fn new_stores_the_given_options_required_and_multi() {
-            let definition =
-                FieldDefinition::new(FieldOptions::Boolean, true, true);
+        fn suggests_the_exact_canonical_match_for_a_casing_typo() {
+            let schema = schema_with_fields(&["status"]);
 
-            assert_eq!(definition.options(), &FieldOptions::Boolean);
-            assert!(definition.is_required());
-            assert!(definition.is_multi());
+            assert_eq!(schema.suggest_field("Status"), Some("status"));
         }
 
-        mod selectable_values {
-            use pretty_assertions::assert_eq;
-            use rstest::rstest;
+        #[test]
+        fn suggests_the_closest_field_for_an_edit_distance_typo() {
+            let schema = schema_with_fields(&["status"]);
 
-            use super::super::super::*;
-
-            #[test]
-            fn returns_the_values_list_for_a_select_field() {
-                let field = FieldDefinition::new(
-                    FieldOptions::Select {
-                        values: vec!["draft".to_owned(), "done".to_owned()],
-                    },
-                    false,
-                    false,
-                );
-
-                assert_eq!(
-                    field.selectable_values(),
-                    Some(["draft".to_owned(), "done".to_owned()].as_slice())
-                );
-            }
-
-            #[test]
-            fn returns_an_empty_slice_for_a_select_field_with_no_values() {
-                let field = FieldDefinition::new(
-                    FieldOptions::Select {
-                        values: Vec::new(),
-                    },
-                    false,
-                    false,
-                );
-
-                assert_eq!(field.selectable_values(), Some([].as_slice()));
-            }
-
-            #[rstest]
-            #[case::input(FieldOptions::Input)]
-            #[case::boolean(FieldOptions::Boolean)]
-            #[case::number(FieldOptions::Number { min: None, max: None, step: None })]
-            #[case::date(FieldOptions::Date { format: None })]
-            #[case::file(FieldOptions::File {
-                folders: vec!["assets".to_owned()],
-                ext: Some("png".to_owned()),
-                class: vec!["image".to_owned()],
-            })]
-            fn returns_none_for_a_non_select_field_type(
-                #[case] options: FieldOptions,
-            ) {
-                let field = FieldDefinition::new(options, false, false);
-
-                assert_eq!(field.selectable_values(), None);
-            }
-        }
-    }
-
-    mod field_options {
-        mod from_raw {
-            mod without_base {
-                use pretty_assertions::assert_eq;
-                use rstest::rstest;
-
-                use super::super::super::super::*;
-
-                #[rstest]
-                #[case::input(
-                    FieldType::Input,
-                    RawFieldDef::direct(RawFieldType::Input),
-                    FieldOptions::Input
-                )]
-                #[case::select(
-                    FieldType::Select,
-                    RawFieldDef { values: Some(vec!["draft".to_owned(), "done".to_owned()]), ..RawFieldDef::direct(RawFieldType::Input) },
-                    FieldOptions::Select { values: vec!["draft".to_owned(), "done".to_owned()] }
-                )]
-                #[case::boolean(
-                    FieldType::Boolean,
-                    RawFieldDef::direct(RawFieldType::Input),
-                    FieldOptions::Boolean
-                )]
-                #[case::number(
-                    FieldType::Number,
-                    RawFieldDef::direct(RawFieldType::Input),
-                    FieldOptions::Number { min: None, max: None, step: None }
-                )]
-                #[case::date(
-                    FieldType::Date,
-                    RawFieldDef::direct(RawFieldType::Input),
-                    FieldOptions::Date { format: None }
-                )]
-                #[case::file(
-                    FieldType::File,
-                    RawFieldDef {
-                        folders: Some(vec!["assets".to_owned()]),
-                        ext: Some("png".to_owned()),
-                        class: Some(vec!["image".to_owned()]),
-                        ..RawFieldDef::direct(RawFieldType::Input)
-                    },
-                    FieldOptions::File {
-                        folders: vec!["assets".to_owned()],
-                        ext: Some("png".to_owned()),
-                        class: vec!["image".to_owned()],
-                    }
-                )]
-                fn maps_each_field_type_to_its_own_options(
-                    #[case] kind: FieldType,
-                    #[case] raw: RawFieldDef,
-                    #[case] expected: FieldOptions,
-                ) {
-                    assert_eq!(
-                        FieldOptions::from_raw(kind, &raw, None),
-                        expected
-                    );
-                }
-
-                #[test]
-                fn select_defaults_to_empty_values_when_raw_omits_them() {
-                    let options = FieldOptions::from_raw(
-                        FieldType::Select,
-                        &RawFieldDef::direct(RawFieldType::Input),
-                        None,
-                    );
-
-                    assert_eq!(options, FieldOptions::Select {
-                        values: Vec::new()
-                    });
-                }
-
-                #[test]
-                fn number_uses_raws_bounds_when_present() {
-                    let raw = RawFieldDef {
-                        min: Some(0.0),
-                        max: Some(1.0),
-                        step: Some(0.25),
-                        ..RawFieldDef::direct(RawFieldType::Number)
-                    };
-
-                    let options =
-                        FieldOptions::from_raw(FieldType::Number, &raw, None);
-
-                    assert_eq!(options, FieldOptions::Number {
-                        min: Some(0.0),
-                        max: Some(1.0),
-                        step: Some(0.25),
-                    });
-                }
-
-                #[test]
-                fn date_uses_raws_format_when_present() {
-                    let raw = RawFieldDef {
-                        format: Some("%Y".to_owned()),
-                        ..RawFieldDef::direct(RawFieldType::Date)
-                    };
-
-                    let options =
-                        FieldOptions::from_raw(FieldType::Date, &raw, None);
-
-                    assert_eq!(options, FieldOptions::Date {
-                        format: Some("%Y".to_owned()),
-                    });
-                }
-
-                #[test]
-                fn file_defaults_to_empty_filter_fields_when_raw_omits_them() {
-                    let options = FieldOptions::from_raw(
-                        FieldType::File,
-                        &RawFieldDef::direct(RawFieldType::Input),
-                        None,
-                    );
-
-                    assert_eq!(options, FieldOptions::File {
-                        folders: Vec::new(),
-                        ext: None,
-                        class: Vec::new()
-                    });
-                }
-            }
-
-            mod with_base {
-                use pretty_assertions::assert_eq;
-
-                use super::super::super::super::*;
-
-                #[test]
-                fn select_uses_raws_values_when_present() {
-                    let base = FieldOptions::Select {
-                        values: vec!["old".to_owned()],
-                    };
-                    let raw = RawFieldDef {
-                        values: Some(vec!["new".to_owned()]),
-                        ..RawFieldDef::direct(RawFieldType::Input)
-                    };
-
-                    let merged = FieldOptions::from_raw(
-                        FieldType::Select,
-                        &raw,
-                        Some(&base),
-                    );
-
-                    assert_eq!(merged, FieldOptions::Select {
-                        values: vec!["new".to_owned()]
-                    });
-                }
-
-                #[test]
-                fn select_falls_back_to_bases_values_when_raw_omits_them() {
-                    let base = FieldOptions::Select {
-                        values: vec!["old".to_owned()],
-                    };
-                    let raw = RawFieldDef::direct(RawFieldType::Input);
-
-                    let merged = FieldOptions::from_raw(
-                        FieldType::Select,
-                        &raw,
-                        Some(&base),
-                    );
-
-                    assert_eq!(merged, base);
-                }
-
-                #[test]
-                fn select_falls_back_to_empty_when_base_is_not_select() {
-                    let base = FieldOptions::Input;
-                    let raw = RawFieldDef::direct(RawFieldType::Input);
-
-                    let merged = FieldOptions::from_raw(
-                        FieldType::Select,
-                        &raw,
-                        Some(&base),
-                    );
-
-                    assert_eq!(merged, FieldOptions::Select {
-                        values: Vec::new()
-                    });
-                }
-
-                #[test]
-                fn file_uses_raws_fields_when_present() {
-                    let base = FieldOptions::File {
-                        folders: vec!["old".to_owned()],
-                        ext: Some("old".to_owned()),
-                        class: vec!["old".to_owned()],
-                    };
-                    let raw = RawFieldDef {
-                        folders: Some(vec!["new".to_owned()]),
-                        ext: Some("new".to_owned()),
-                        class: Some(vec!["new".to_owned()]),
-                        ..RawFieldDef::direct(RawFieldType::Input)
-                    };
-
-                    let merged = FieldOptions::from_raw(
-                        FieldType::File,
-                        &raw,
-                        Some(&base),
-                    );
-
-                    assert_eq!(merged, FieldOptions::File {
-                        folders: vec!["new".to_owned()],
-                        ext: Some("new".to_owned()),
-                        class: vec!["new".to_owned()],
-                    });
-                }
-
-                #[test]
-                fn file_falls_back_to_bases_fields_when_raw_omits_them() {
-                    let base = FieldOptions::File {
-                        folders: vec!["old".to_owned()],
-                        ext: Some("old".to_owned()),
-                        class: vec!["old".to_owned()],
-                    };
-                    let raw = RawFieldDef::direct(RawFieldType::Input);
-
-                    let merged = FieldOptions::from_raw(
-                        FieldType::File,
-                        &raw,
-                        Some(&base),
-                    );
-
-                    assert_eq!(merged, base);
-                }
-
-                #[test]
-                fn file_falls_back_to_empty_when_base_is_not_file() {
-                    let base = FieldOptions::Input;
-                    let raw = RawFieldDef::direct(RawFieldType::Input);
-
-                    let merged = FieldOptions::from_raw(
-                        FieldType::File,
-                        &raw,
-                        Some(&base),
-                    );
-
-                    assert_eq!(merged, FieldOptions::File {
-                        folders: Vec::new(),
-                        ext: None,
-                        class: Vec::new()
-                    });
-                }
-
-                #[test]
-                fn file_fields_fall_back_independently_per_subfield() {
-                    // Each of folders/ext/class resolves raw-vs-base on its
-                    // own: overriding one must not force the others to fall
-                    // back too.
-                    let base = FieldOptions::File {
-                        folders: vec!["base-folder".to_owned()],
-                        ext: Some("base-ext".to_owned()),
-                        class: vec!["base-class".to_owned()],
-                    };
-                    let raw = RawFieldDef {
-                        folders: Some(vec!["raw-folder".to_owned()]),
-                        ext: None,
-                        class: None,
-                        ..RawFieldDef::direct(RawFieldType::Input)
-                    };
-
-                    let merged = FieldOptions::from_raw(
-                        FieldType::File,
-                        &raw,
-                        Some(&base),
-                    );
-
-                    assert_eq!(merged, FieldOptions::File {
-                        folders: vec!["raw-folder".to_owned()],
-                        ext: Some("base-ext".to_owned()),
-                        class: vec!["base-class".to_owned()],
-                    });
-                }
-
-                #[test]
-                fn non_list_types_ignore_base_and_default_to_the_bare_variant()
-                {
-                    let base = FieldOptions::Select {
-                        values: vec!["leaked?".to_owned()],
-                    };
-                    let raw = RawFieldDef::direct(RawFieldType::Input);
-
-                    let merged = FieldOptions::from_raw(
-                        FieldType::Input,
-                        &raw,
-                        Some(&base),
-                    );
-
-                    assert_eq!(merged, FieldOptions::Input);
-                }
-
-                #[test]
-                fn number_uses_raws_bounds_over_the_base() {
-                    let base = FieldOptions::Number {
-                        min: Some(0.0),
-                        max: Some(10.0),
-                        step: Some(1.0),
-                    };
-                    let raw = RawFieldDef {
-                        min: Some(1.0),
-                        max: Some(5.0),
-                        step: Some(0.5),
-                        ..RawFieldDef::direct(RawFieldType::Number)
-                    };
-
-                    let merged = FieldOptions::from_raw(
-                        FieldType::Number,
-                        &raw,
-                        Some(&base),
-                    );
-
-                    assert_eq!(merged, FieldOptions::Number {
-                        min: Some(1.0),
-                        max: Some(5.0),
-                        step: Some(0.5),
-                    });
-                }
-
-                #[test]
-                fn number_falls_back_to_bases_bounds_when_raw_omits_them() {
-                    let base = FieldOptions::Number {
-                        min: Some(0.0),
-                        max: Some(10.0),
-                        step: Some(1.0),
-                    };
-                    let raw = RawFieldDef::direct(RawFieldType::Number);
-
-                    let merged = FieldOptions::from_raw(
-                        FieldType::Number,
-                        &raw,
-                        Some(&base),
-                    );
-
-                    assert_eq!(merged, base);
-                }
-
-                #[test]
-                fn date_uses_raws_format_over_the_base() {
-                    let base = FieldOptions::Date {
-                        format: Some("%Y".to_owned()),
-                    };
-                    let raw = RawFieldDef {
-                        format: Some("%Y-%m-%d".to_owned()),
-                        ..RawFieldDef::direct(RawFieldType::Date)
-                    };
-
-                    let merged = FieldOptions::from_raw(
-                        FieldType::Date,
-                        &raw,
-                        Some(&base),
-                    );
-
-                    assert_eq!(merged, FieldOptions::Date {
-                        format: Some("%Y-%m-%d".to_owned()),
-                    });
-                }
-
-                #[test]
-                fn date_falls_back_to_bases_format_when_raw_omits_it() {
-                    let base = FieldOptions::Date {
-                        format: Some("%Y".to_owned()),
-                    };
-                    let raw = RawFieldDef::direct(RawFieldType::Date);
-
-                    let merged = FieldOptions::from_raw(
-                        FieldType::Date,
-                        &raw,
-                        Some(&base),
-                    );
-
-                    assert_eq!(merged, base);
-                }
-            }
+            assert_eq!(schema.suggest_field("statu"), Some("status"));
         }
 
-        mod kind {
-            use pretty_assertions::assert_eq;
-            use rstest::rstest;
+        #[test]
+        fn suggests_nothing_for_a_field_with_no_close_candidate() {
+            let schema = schema_with_fields(&["status"]);
 
-            use super::super::super::*;
-
-            #[rstest]
-            #[case::input(FieldOptions::Input, FieldType::Input)]
-            #[case::select(FieldOptions::Select { values: Vec::new() }, FieldType::Select)]
-            #[case::boolean(FieldOptions::Boolean, FieldType::Boolean)]
-            #[case::number(FieldOptions::Number { min: None, max: None, step: None }, FieldType::Number)]
-            #[case::date(FieldOptions::Date { format: None }, FieldType::Date)]
-            #[case::file(
-                FieldOptions::File { folders: Vec::new(), ext: None, class: Vec::new() },
-                FieldType::File
-            )]
-            fn returns_the_field_type_matching_the_variant(
-                #[case] options: FieldOptions,
-                #[case] expected: FieldType,
-            ) {
-                assert_eq!(options.kind(), expected);
-            }
+            assert_eq!(schema.suggest_field("completely_unrelated"), None);
         }
-    }
 
-    mod field_type {
-        use pretty_assertions::assert_eq;
-        use rstest::rstest;
+        #[test]
+        fn suggests_nothing_when_two_fields_canonically_match() {
+            // Defensive: Schema resolution already rejects two fields sharing
+            // a canonical form within one Schema (`SchemaError::
+            // AmbiguousFieldName`), so this never happens for a real
+            // resolved Schema — this test only proves `suggest_field` itself
+            // degrades safely if it ever did.
+            let schema = schema_with_fields(&["due date", "Due-Date"]);
 
-        use super::super::*;
-
-        #[rstest]
-        #[case::input(RawFieldType::Input, FieldType::Input)]
-        #[case::select(RawFieldType::Select, FieldType::Select)]
-        #[case::boolean(RawFieldType::Boolean, FieldType::Boolean)]
-        #[case::number(RawFieldType::Number, FieldType::Number)]
-        #[case::date(RawFieldType::Date, FieldType::Date)]
-        #[case::file(RawFieldType::File, FieldType::File)]
-        fn from_raw_field_type_maps_each_variant(
-            #[case] raw: RawFieldType,
-            #[case] expected: FieldType,
-        ) {
-            assert_eq!(FieldType::from(raw), expected);
+            assert_eq!(schema.suggest_field("due-date"), None);
         }
     }
 }

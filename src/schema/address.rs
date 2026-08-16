@@ -33,6 +33,20 @@ impl FieldAddress {
     pub(crate) fn field(&self) -> &FieldName {
         &self.field
     }
+
+    /// Borrow this address as a [`FieldAddressRef`].
+    ///
+    /// Test-only: production code always builds a [`FieldAddressRef`]
+    /// directly from its `SchemaNameRef`/`FieldNameRef` parts; this exists so
+    /// cross-module test fixtures (`schema::fields`, `schema::service`) can
+    /// turn an already-built [`FieldAddress`] test fixture into one without
+    /// duplicating [`FieldAddressRef::new`] call sites.
+    #[cfg(test)]
+    #[inline]
+    #[must_use]
+    pub(crate) fn as_ref(&self) -> FieldAddressRef<'_> {
+        FieldAddressRef::new(self.schema.as_ref(), self.field.as_ref())
+    }
 }
 
 impl TryFrom<&str> for FieldAddress {
@@ -245,5 +259,15 @@ mod tests {
         let address = FieldAddress::try_from("#book/status").expect("parses");
 
         assert_eq!(format!("{address:?}"), "\"#book/status\"");
+    }
+
+    #[test]
+    fn as_ref_round_trips_through_new() {
+        let address = FieldAddress::try_from("#book/status").expect("parses");
+
+        let reference = address.as_ref();
+
+        assert_eq!(reference.schema().as_str(), "book");
+        assert_eq!(reference.field().as_str(), "status");
     }
 }

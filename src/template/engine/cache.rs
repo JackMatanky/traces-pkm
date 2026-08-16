@@ -1,11 +1,16 @@
-//! Cache one render-scoped resource load in `State`'s temp storage.
+//! Cache render-scoped resources in `State`'s temp storage.
 //!
 //! [`cached`] backs `query.rs`'s [`FileIndex`](crate::index::FileIndex) cache
 //! and the [`SchemaRegistry`](crate::schema::SchemaRegistry) cache shared by
 //! the `query`, `tasks`, and `schema` namespaces: each stashes a load result
 //! behind a fixed key so a render calling into a namespace several times pays
 //! for one load, instead of hand-rolling its own downcastable wrapper and
-//! get-or-load body per resource.
+//! get-or-load body per resource. [`set_temp`]/[`get_temp`] are the same
+//! stash/retrieve mechanism without a load step, for a value that's cheap to
+//! build (an `Arc` clone) rather than expensive to load: `schema.rs` seeds the
+//! render's [`SchemaService`](crate::schema::SchemaService) this way so
+//! [`Schema`](crate::schema::Schema)'s own minijinja `Object` impl can reach
+//! it without holding a reference itself.
 
 use std::fmt;
 
@@ -18,14 +23,15 @@ use minijinja::{
 /// [`SchemaRegistry`](crate::schema::SchemaRegistry) for the current render.
 ///
 /// Shared by the `query`, `tasks`, and `schema` namespaces. This is sound only
-/// because [`super::TemplateEngine::new`] builds one
-/// [`SchemaContext`](super::schema::SchemaContext) and clones its `Arc` into
-/// every namespace that needs the Schema registry directory, instead of each
-/// namespace independently constructing its own `Arc<Path>` that merely
-/// happens to name the same directory today. A render touching both a
-/// `from_class` query and `schema.get` pays for one
-/// [`SchemaRegistry::load`](crate::schema::SchemaRegistry::load), not one per
-/// namespace.
+/// because every namespace resolves the identical Schema registry directory:
+/// [`super::TemplateEngine::new`] builds one
+/// [`SchemaService`](crate::schema::SchemaService) and clones its `Arc` into
+/// every namespace that needs it, instead of each namespace independently
+/// constructing its own config projection that merely happens to name the same
+/// directory today. A render touching both a `from_class` query and
+/// `schema.get` pays for one
+/// [`SchemaService::resolve`](crate::schema::SchemaService::resolve), not one
+/// per namespace.
 pub(super) const SCHEMA_REGISTRY_CACHE_KEY: &str = "schema.registry_cache";
 
 /// Wraps any render-scoped cacheable value so it can round-trip through
@@ -35,6 +41,27 @@ pub(super) const SCHEMA_REGISTRY_CACHE_KEY: &str = "schema.registry_cache";
 struct Cached<T>(T);
 
 impl<T: fmt::Debug + Send + Sync + 'static> Object for Cached<T> {}
+
+/// Stashes `value` in `state`'s temp storage under `key`, for later retrieval
+/// via [`get_temp`] within the same render. Overwrites any previous value
+/// under `key`.
+pub(super) fn set_temp<T>(state: &State, key: &'static str, value: T)
+where
+    T: Clone + fmt::Debug + Send + Sync + 'static,
+{
+    state.set_temp(key, Value::from_object(Cached(value)));
+}
+
+/// Returns the render-scoped value stashed under `key` via [`set_temp`], or
+/// `None` if nothing was ever stashed there this render.
+pub(super) fn get_temp<T>(state: &State, key: &'static str) -> Option<T>
+where
+    T: Clone + fmt::Debug + Send + Sync + 'static,
+{
+    state.get_temp(key).and_then(|value| {
+        value.downcast_object_ref::<Cached<T>>().map(|c| c.0.clone())
+    })
+}
 
 /// Returns the render-scoped value cached under `key`, loading it via `load`
 /// and caching the result first if not already cached this render.
@@ -55,62 +82,98 @@ pub(super) fn cached<T, E>(
 where
     T: Clone + fmt::Debug + Send + Sync + 'static,
 {
-    if let Some(value) = state.get_temp(key).and_then(|value| {
-        value.downcast_object_ref::<Cached<T>>().map(|cached| cached.0.clone())
-    }) {
+    if let Some(value) = get_temp(state, key) {
         return Ok(value);
     }
     let value = load()?;
-    state.set_temp(key, Value::from_object(Cached(value.clone())));
+    set_temp(state, key, value.clone());
     Ok(value)
 }
 
 #[cfg(test)]
 mod tests {
-    use std::cell::Cell;
+    mod cached {
+        use std::cell::Cell;
 
-    use minijinja::Environment;
-    use pretty_assertions::assert_eq;
+        use minijinja::Environment;
+        use pretty_assertions::assert_eq;
 
-    use super::*;
+        use super::super::*;
 
-    #[test]
-    fn second_call_reuses_the_cached_value_without_reloading() {
-        let env = Environment::new();
-        let state = env.empty_state();
-        let calls = Cell::new(0);
-        let load = || {
-            calls.set(calls.get() + 1);
-            Ok::<_, ()>(42_i32)
-        };
+        #[test]
+        fn second_call_reuses_the_cached_value_without_reloading() {
+            let env = Environment::new();
+            let state = env.empty_state();
+            let calls = Cell::new(0);
+            let load = || {
+                calls.set(calls.get() + 1);
+                Ok::<_, ()>(42_i32)
+            };
 
-        let first = cached(&state, "test.cache_key", load);
-        let second = cached(&state, "test.cache_key", load);
+            let first = cached(&state, "test.cache_key", load);
+            let second = cached(&state, "test.cache_key", load);
 
-        assert_eq!(first, Ok(42));
-        assert_eq!(second, Ok(42));
-        assert_eq!(calls.get(), 1, "load must run once, not per call");
+            assert_eq!(first, Ok(42));
+            assert_eq!(second, Ok(42));
+            assert_eq!(calls.get(), 1, "load must run once, not per call");
+        }
+
+        #[test]
+        fn a_failed_load_is_not_cached_and_retries_next_call() {
+            let env = Environment::new();
+            let state = env.empty_state();
+            let calls = Cell::new(0);
+            let load = || {
+                calls.set(calls.get() + 1);
+                if calls.get() == 1 {
+                    Err::<i32, _>("boom")
+                } else {
+                    Ok(7)
+                }
+            };
+
+            let first = cached(&state, "test.retry_key", load);
+            let second = cached(&state, "test.retry_key", load);
+
+            assert_eq!(first, Err("boom"));
+            assert_eq!(second, Ok(7));
+            assert_eq!(calls.get(), 2, "a failed load must not be cached");
+        }
     }
 
-    #[test]
-    fn a_failed_load_is_not_cached_and_retries_next_call() {
-        let env = Environment::new();
-        let state = env.empty_state();
-        let calls = Cell::new(0);
-        let load = || {
-            calls.set(calls.get() + 1);
-            if calls.get() == 1 {
-                Err::<i32, _>("boom")
-            } else {
-                Ok(7)
-            }
-        };
+    mod temp {
+        use minijinja::Environment;
+        use pretty_assertions::assert_eq;
 
-        let first = cached(&state, "test.retry_key", load);
-        let second = cached(&state, "test.retry_key", load);
+        use super::super::*;
 
-        assert_eq!(first, Err("boom"));
-        assert_eq!(second, Ok(7));
-        assert_eq!(calls.get(), 2, "a failed load must not be cached");
+        #[test]
+        fn get_temp_returns_none_before_any_set_temp_call() {
+            let env = Environment::new();
+            let state = env.empty_state();
+
+            assert_eq!(get_temp::<i32>(&state, "test.unset_key"), None);
+        }
+
+        #[test]
+        fn get_temp_returns_the_value_set_temp_stashed() {
+            let env = Environment::new();
+            let state = env.empty_state();
+
+            set_temp(&state, "test.stash_key", 99_i32);
+
+            assert_eq!(get_temp::<i32>(&state, "test.stash_key"), Some(99));
+        }
+
+        #[test]
+        fn set_temp_overwrites_a_previously_stashed_value() {
+            let env = Environment::new();
+            let state = env.empty_state();
+
+            set_temp(&state, "test.overwrite_key", 1_i32);
+            set_temp(&state, "test.overwrite_key", 2_i32);
+
+            assert_eq!(get_temp::<i32>(&state, "test.overwrite_key"), Some(2));
+        }
     }
 }

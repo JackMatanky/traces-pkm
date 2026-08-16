@@ -42,7 +42,7 @@ use crate::{
     config::{Config, ConfigService, DiscoveryScope, TrustRequests},
     index::FileIndex,
     query::{self, QueryError, QueryOutcome, QuerySource},
-    schema::{SchemaRegistry, resolve_sources},
+    schema::{SchemaService, resolve_sources},
 };
 
 /// Top-level result of a successful CLI command.
@@ -289,18 +289,16 @@ fn parse_source(
     let mut source = QuerySource::parse(from.unwrap_or_default())
         .map_err(|source| query_error(root, source))?;
     if source.has_classes() {
-        let directory = root.join(config.schemas().directory());
+        let service = SchemaService::new(config.to_schema_spec());
         let (registry, warnings) =
-            SchemaRegistry::load(&directory).map_err(|error| {
-                CliError::SchemaQuery {
-                    root: root.to_path_buf(),
-                    source: error,
-                }
+            service.resolve().map_err(|error| CliError::SchemaQuery {
+                root: root.to_path_buf(),
+                source: error,
             })?;
         for warning in warnings {
             tracing::warn!(%warning, "Schema registry resolved with a warning");
         }
-        resolve_sources(&mut source, &registry);
+        resolve_sources(&mut source, &service, &registry);
     }
     Ok(source)
 }

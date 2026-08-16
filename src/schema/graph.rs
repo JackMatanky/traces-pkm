@@ -2,9 +2,9 @@
 //! sort.
 //!
 //! [`SchemaGraph`] owns the DAG bookkeeping — parent/child adjacency, Kahn
-//! in-degrees, and the Global-first tie-break — so [`super::resolve`] can drive
-//! resolution order without tangling graph mechanics into its field-merge
-//! logic.
+//! in-degrees, and the Global-first tie-break — so [`super::service`] can
+//! drive resolution order without tangling graph mechanics into its
+//! field-merge logic.
 //!
 //! # Ordering
 //!
@@ -21,10 +21,18 @@
 //! [`mark_resolved`] once it is done to release its children. After the loop,
 //! [`cyclic_remainder`] reports any Schemas a cycle left unresolved.
 //!
+//! Once every Schema resolved (no cycle), [`children_by_name`] and
+//! [`descendants_by_name`] give the bulk direct-child and transitive-extender
+//! sets [`super::model::Schema::children`]/
+//! [`super::model::Schema::descendants`] are populated from — one pass over the
+//! whole DAG rather than an O(n)-per-lookup scan.
+//!
 //! [`next_ready`]: SchemaGraph::next_ready
 //! [`parents_of`]: SchemaGraph::parents_of
 //! [`mark_resolved`]: SchemaGraph::mark_resolved
 //! [`cyclic_remainder`]: SchemaGraph::cyclic_remainder
+//! [`children_by_name`]: SchemaGraph::children_by_name
+//! [`descendants_by_name`]: SchemaGraph::descendants_by_name
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
@@ -38,16 +46,21 @@ use super::{
 /// Track Kahn's-algorithm state for linearizing the `extends` DAG.
 ///
 /// Isolates the Global-first tie-break from the field-merge logic in
-/// [`super::resolve::build_schema`].
+/// [`super::service`].
 pub(super) struct SchemaGraph<'a> {
     /// Each Schema's `extends` parents, filtered to present targets and kept
     /// in declaration order; the Global Schema's list is force-emptied so it
-    /// never inherits. Backs [`parents_of`](Self::parents_of).
+    /// never inherits. Backs [`parents_of`](Self::parents_of) and the bulk
+    /// [`children_by_name`](Self::children_by_name) accessor.
     parents_by_name: BTreeMap<SchemaNameRef<'a>, Vec<SchemaNameRef<'a>>>,
     /// Reverse `extends` adjacency (parent to children), used by
     /// [`mark_resolved`](Self::mark_resolved) to decrement children's
-    /// in-degrees.
-    children_by_name: BTreeMap<SchemaNameRef<'a>, Vec<SchemaNameRef<'a>>>,
+    /// in-degrees. Unlike [`children_by_name`](Self::children_by_name), this
+    /// keeps an edge into the Global Schema when some Schema names it as a
+    /// parent (Kahn's algorithm needs that edge to release the child's
+    /// in-degree, even though Global is never a real `extends` link for
+    /// field-inheritance purposes).
+    kahn_children_by_name: BTreeMap<SchemaNameRef<'a>, Vec<SchemaNameRef<'a>>>,
     /// Count of not-yet-resolved parents per Schema; a Schema becomes ready
     /// when it reaches zero. The Global Schema is forced to zero at
     /// construction.
@@ -106,14 +119,14 @@ impl<'a> SchemaGraph<'a> {
         // An edge runs parent -> child, so a child's in-degree is its
         // (filtered) parent count.
         let mut in_degree: BTreeMap<SchemaNameRef<'_>, usize> = BTreeMap::new();
-        let mut children_by_name: BTreeMap<
+        let mut kahn_children_by_name: BTreeMap<
             SchemaNameRef<'_>,
             Vec<SchemaNameRef<'_>>,
         > = BTreeMap::new();
         for (&name, parents) in &parents_by_name {
             in_degree.insert(name, parents.len());
             for &parent in parents {
-                children_by_name.entry(parent).or_default().push(name);
+                kahn_children_by_name.entry(parent).or_default().push(name);
             }
         }
 
@@ -138,7 +151,7 @@ impl<'a> SchemaGraph<'a> {
 
         Self {
             parents_by_name,
-            children_by_name,
+            kahn_children_by_name,
             in_degree,
             queue,
             visited: BTreeSet::new(),
@@ -166,7 +179,7 @@ impl<'a> SchemaGraph<'a> {
     /// hit zero into the ready queue.
     pub(super) fn mark_resolved(&mut self, name: SchemaNameRef<'_>) {
         for &child in
-            self.children_by_name.get(name.as_str()).into_iter().flatten()
+            self.kahn_children_by_name.get(name.as_str()).into_iter().flatten()
         {
             if let Some(degree) = self.in_degree.get_mut(&child) {
                 *degree = degree.saturating_sub(1);
@@ -193,6 +206,82 @@ impl<'a> SchemaGraph<'a> {
                 .cloned()
                 .collect(),
         )
+    }
+
+    /// Return every Schema's direct `extends` children, keyed by parent name.
+    ///
+    /// Excludes the Global Schema as a parent: it is a flat reference pool,
+    /// never a real link in the `extends` chain, so a Schema that (unusually)
+    /// declares `extends = ["global"]` still contributes no entry here — the
+    /// same behavior [`super::model::Schema::is_a`]'s ancestor-based matching
+    /// already has today. Only callable once the DAG is known acyclic (after
+    /// [`cyclic_remainder`](Self::cyclic_remainder) returns `None`): the
+    /// underlying adjacency is otherwise still mid-resolution.
+    #[must_use]
+    pub(super) fn children_by_name(
+        &self,
+    ) -> BTreeMap<SchemaName, BTreeSet<SchemaName>> {
+        let mut children: BTreeMap<SchemaName, BTreeSet<SchemaName>> =
+            BTreeMap::new();
+        for (&name, parents) in &self.parents_by_name {
+            for &parent in parents {
+                if parent.as_str() != GLOBAL_SCHEMA_NAME {
+                    children
+                        .entry(SchemaName::from(parent))
+                        .or_default()
+                        .insert(SchemaName::from(name));
+                }
+            }
+        }
+        children
+    }
+
+    /// Return every Schema's transitive `extends` descendants, keyed by
+    /// ancestor name.
+    ///
+    /// Computed as a memoized depth-first walk over
+    /// [`children_by_name`](Self::children_by_name): each name's descendant
+    /// set is built once and reused by every ancestor that reaches it through
+    /// a different path, so the whole DAG resolves in `O(V + E)` total rather
+    /// than one full traversal per name. Only callable once the DAG is known
+    /// acyclic, same as [`children_by_name`](Self::children_by_name).
+    #[must_use]
+    pub(super) fn descendants_by_name(
+        &self,
+    ) -> BTreeMap<SchemaName, BTreeSet<SchemaName>> {
+        let children = self.children_by_name();
+        let mut memo: BTreeMap<SchemaName, BTreeSet<SchemaName>> =
+            BTreeMap::new();
+        for name in children.keys() {
+            Self::descendants_of(name, &children, &mut memo);
+        }
+        // Drops leaf entries (an empty descendant set) rather than keeping
+        // them: callers treat "no entry" and "an empty entry" identically
+        // (`unwrap_or_default()`), and a smaller map is one less allocation
+        // per Schema with no descendants.
+        memo.retain(|_, descendants| !descendants.is_empty());
+        memo
+    }
+
+    /// Return `name`'s transitive descendant set, computing and memoizing it
+    /// (and every descendant's own set, transitively) on first visit.
+    fn descendants_of(
+        name: &SchemaName,
+        children: &BTreeMap<SchemaName, BTreeSet<SchemaName>>,
+        memo: &mut BTreeMap<SchemaName, BTreeSet<SchemaName>>,
+    ) -> BTreeSet<SchemaName> {
+        if let Some(cached) = memo.get(name) {
+            return cached.clone();
+        }
+        let mut result = BTreeSet::new();
+        if let Some(direct) = children.get(name) {
+            for child in direct {
+                result.insert(child.clone());
+                result.extend(Self::descendants_of(child, children, memo));
+            }
+        }
+        memo.insert(name.clone(), result.clone());
+        result
     }
 }
 
@@ -231,6 +320,141 @@ mod tests {
             );
             assert_eq!(graph.next_ready(), Some(SchemaNameRef::from("author")));
             assert_eq!(graph.next_ready(), None);
+        }
+    }
+
+    mod children_by_name {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        fn set(names: &[&str]) -> BTreeSet<SchemaName> {
+            names.iter().map(|&name| SchemaName::from(name)).collect()
+        }
+
+        #[test]
+        fn returns_only_direct_extenders_for_a_branching_tree() {
+            // thing <- book <- {sci_fi, memoir}
+            let mut raw = BTreeMap::new();
+            raw.insert(SchemaName::from("thing"), schema(&[]));
+            raw.insert(SchemaName::from("book"), schema(&["thing"]));
+            raw.insert(SchemaName::from("sci_fi"), schema(&["book"]));
+            raw.insert(SchemaName::from("memoir"), schema(&["book"]));
+            let mut warnings = Vec::new();
+
+            let children =
+                SchemaGraph::new(&raw, &mut warnings).children_by_name();
+
+            assert_eq!(children.get("thing"), Some(&set(&["book"])));
+            assert_eq!(children.get("book"), Some(&set(&["memoir", "sci_fi"])));
+            assert_eq!(children.get("sci_fi"), None);
+            assert_eq!(children.get("memoir"), None);
+        }
+
+        #[test]
+        fn a_multi_parent_schema_appears_in_every_parents_direct_children() {
+            // thing <- {book, film} <- adaptation (both parents): the
+            // genuine diamond shape, distinct from the branching-tree fixture
+            // above — a node with two parents converging, not one parent
+            // fanning out to two children.
+            let mut raw = BTreeMap::new();
+            raw.insert(SchemaName::from("thing"), schema(&[]));
+            raw.insert(SchemaName::from("book"), schema(&["thing"]));
+            raw.insert(SchemaName::from("film"), schema(&["thing"]));
+            raw.insert(
+                SchemaName::from("adaptation"),
+                schema(&["book", "film"]),
+            );
+            let mut warnings = Vec::new();
+
+            let children =
+                SchemaGraph::new(&raw, &mut warnings).children_by_name();
+
+            assert_eq!(children.get("book"), Some(&set(&["adaptation"])));
+            assert_eq!(children.get("film"), Some(&set(&["adaptation"])));
+            assert_eq!(children.get("thing"), Some(&set(&["book", "film"])));
+        }
+
+        #[test]
+        fn excludes_the_global_schema_as_a_parent() {
+            let mut raw = BTreeMap::new();
+            raw.insert(SchemaName::from(GLOBAL_SCHEMA_NAME), schema(&[]));
+            raw.insert(SchemaName::from("book"), schema(&[GLOBAL_SCHEMA_NAME]));
+            let mut warnings = Vec::new();
+
+            let children =
+                SchemaGraph::new(&raw, &mut warnings).children_by_name();
+
+            assert_eq!(children.get(GLOBAL_SCHEMA_NAME), None);
+        }
+    }
+
+    mod descendants_by_name {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        fn set(names: &[&str]) -> BTreeSet<SchemaName> {
+            names.iter().map(|&name| SchemaName::from(name)).collect()
+        }
+
+        #[test]
+        fn deduplicates_a_diamond_dags_shared_descendant() {
+            // thing <- {book, film} <- adaptation (both parents)
+            let mut raw = BTreeMap::new();
+            raw.insert(SchemaName::from("thing"), schema(&[]));
+            raw.insert(SchemaName::from("book"), schema(&["thing"]));
+            raw.insert(SchemaName::from("film"), schema(&["thing"]));
+            raw.insert(
+                SchemaName::from("adaptation"),
+                schema(&["book", "film"]),
+            );
+            let mut warnings = Vec::new();
+
+            let descendants =
+                SchemaGraph::new(&raw, &mut warnings).descendants_by_name();
+
+            assert_eq!(
+                descendants.get("thing"),
+                Some(&set(&["adaptation", "book", "film"]))
+            );
+        }
+
+        #[test]
+        fn returns_the_full_transitive_closure_through_a_three_level_chain() {
+            let mut raw = BTreeMap::new();
+            raw.insert(SchemaName::from("thing"), schema(&[]));
+            raw.insert(SchemaName::from("book"), schema(&["thing"]));
+            raw.insert(SchemaName::from("sci_fi"), schema(&["book"]));
+            raw.insert(SchemaName::from("space_opera"), schema(&["sci_fi"]));
+            let mut warnings = Vec::new();
+
+            let descendants =
+                SchemaGraph::new(&raw, &mut warnings).descendants_by_name();
+
+            assert_eq!(
+                descendants.get("thing"),
+                Some(&set(&["book", "sci_fi", "space_opera"]))
+            );
+            assert_eq!(
+                descendants.get("book"),
+                Some(&set(&["sci_fi", "space_opera"]))
+            );
+            assert_eq!(descendants.get("sci_fi"), Some(&set(&["space_opera"])));
+            assert_eq!(descendants.get("space_opera"), None);
+        }
+
+        #[test]
+        fn returns_no_entry_for_a_leaf_schema() {
+            let mut raw = BTreeMap::new();
+            raw.insert(SchemaName::from("book"), schema(&[]));
+            raw.insert(SchemaName::from("sci_fi"), schema(&["book"]));
+            let mut warnings = Vec::new();
+
+            let descendants =
+                SchemaGraph::new(&raw, &mut warnings).descendants_by_name();
+
+            assert_eq!(descendants.get("sci_fi"), None);
         }
     }
 }

@@ -487,13 +487,6 @@ impl<'de> Deserialize<'de> for FieldKey {
 /// hand-authored passthrough keys. [`FieldValueRef`] is the zero-copy borrowed
 /// counterpart; convert one to the other with `.into()`.
 #[derive(Clone, Debug, PartialEq)]
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "consumer lands with the values-source redesign"
-    )
-)]
 pub(crate) enum FieldValue {
     /// Empty or missing value.
     Null,
@@ -509,6 +502,30 @@ pub(crate) enum FieldValue {
     List(Vec<FieldValue>),
     /// Keyed object value, stored in a deterministically ordered map.
     Object(BTreeMap<String, FieldValue>),
+}
+
+impl FieldValue {
+    /// Returns the inner value for [`FieldValue::Float`] or
+    /// [`FieldValue::Int`], converting an integer to `f64`, or `None` for any
+    /// other kind.
+    ///
+    /// Mirrors [`FieldValueRef::as_f64`]: schema field-attribute validation
+    /// (`schema::fields`) accepts a TOML integer or float interchangeably for
+    /// a `number`-type field's `min`/`max`/`step`.
+    #[inline]
+    #[must_use]
+    pub(crate) fn as_f64(&self) -> Option<f64> {
+        match *self {
+            Self::Float(f) => Some(f),
+            #[expect(
+                clippy::as_conversions,
+                clippy::cast_precision_loss,
+                reason = "integer field value converted to f64"
+            )]
+            Self::Int(i) => Some(i as f64),
+            _ => None,
+        }
+    }
 }
 
 impl From<FieldValueRef<'_>> for FieldValue {
@@ -583,13 +600,6 @@ impl<'de> Deserialize<'de> for FieldValue {
 /// Scoped to the source text's lifetime `'a`; convert to the owned
 /// [`FieldValue`] with `.into()` before a value must outlive that text.
 #[derive(Clone, Debug, PartialEq)]
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "consumer lands with the values-source redesign"
-    )
-)]
 pub(crate) enum FieldValueRef<'a> {
     /// Empty or missing value.
     Null,

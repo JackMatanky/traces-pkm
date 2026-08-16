@@ -72,14 +72,13 @@ use minijinja::{
     value::{Enumerator, Object, ObjectRepr, Value, from_args},
 };
 
-use super::schema::SchemaContext;
 use crate::{
     index::{FileIndex, FileIndexError},
     note::FieldValue,
     query::{
         self, FileField, IndexRecord, QueryError, QueryOutcome, QuerySource,
     },
-    schema::{SchemaError, SchemaRegistry, resolve_sources},
+    schema::{SchemaService, resolve_sources},
 };
 
 /// Method names `query` and `tasks` each expose, for [`QueryOps::enumerate`].
@@ -111,7 +110,7 @@ pub(super) struct QueryOps {
     /// Shared with `schema.get()` so both namespaces resolve the same Schema
     /// registry directory by construction; see
     /// [`super::cache::SCHEMA_REGISTRY_CACHE_KEY`]'s docs.
-    schema_ctx: Arc<SchemaContext>,
+    service: Arc<SchemaService>,
     /// [`FileIndex::query`] for `query`, [`FileIndex::query_tasks`] for
     /// `tasks`.
     query: fn(FileIndex, &QuerySource, &str) -> QueryOutcome,
@@ -124,13 +123,13 @@ impl QueryOps {
     pub(super) const fn page(
         root: Arc<Path>,
         class_field: Arc<str>,
-        schema_ctx: Arc<SchemaContext>,
+        service: Arc<SchemaService>,
     ) -> Self {
         Self {
             name: "query",
             root,
             class_field,
-            schema_ctx,
+            service,
             query: query::query,
         }
     }
@@ -142,13 +141,13 @@ impl QueryOps {
     pub(super) const fn task(
         root: Arc<Path>,
         class_field: Arc<str>,
-        schema_ctx: Arc<SchemaContext>,
+        service: Arc<SchemaService>,
     ) -> Self {
         Self {
             name: "tasks",
             root,
             class_field,
-            schema_ctx,
+            service,
             query: query::query_tasks,
         }
     }
@@ -187,38 +186,6 @@ impl QueryOps {
         let index = cached_refresh(state, &self.root).map_err(index_error)?;
         Ok(Value::from_object((self.query)(index, source, &self.class_field)))
     }
-
-    /// Returns the render's [`SchemaRegistry`] cached via [`super::cache`],
-    /// shared with the `schema` namespace so a render touching both pays for
-    /// one [`SchemaRegistry::load`]. Logs each recovered `SchemaWarning` once,
-    /// at load time.
-    ///
-    /// # Errors
-    ///
-    /// - [`ErrorKind::InvalidOperation`] via [`registry_error`] if
-    ///   [`SchemaRegistry::load`] fails: a malformed Schema file, a resolution
-    ///   cycle, or an out-of-bounds `$ref`.
-    fn cached_registry(
-        &self,
-        state: &State,
-    ) -> Result<Arc<SchemaRegistry>, Error> {
-        let directory = self.schema_ctx.directory();
-        super::cache::cached(
-            state,
-            super::cache::SCHEMA_REGISTRY_CACHE_KEY,
-            || {
-                let (registry, warnings) =
-                    SchemaRegistry::load(directory).map_err(registry_error)?;
-                for warning in &warnings {
-                    tracing::warn!(
-                        %warning,
-                        "Schema registry resolved with a warning"
-                    );
-                }
-                Ok(Arc::new(registry))
-            },
-        )
-    }
 }
 
 impl Object for QueryOps {
@@ -234,8 +201,15 @@ impl Object for QueryOps {
                             QuerySource::parse(expr.unwrap_or_default())
                                 .map_err(query_error)?;
                         if source.has_classes() {
-                            let registry = ops.cached_registry(state)?;
-                            resolve_sources(&mut source, &registry);
+                            let registry = super::schema::cached_schema_set(
+                                state,
+                                &ops.service,
+                            )?;
+                            resolve_sources(
+                                &mut source,
+                                &ops.service,
+                                &registry,
+                            );
                         }
                         ops.run(state, &source)
                     },
@@ -280,18 +254,6 @@ pub(super) fn index_error(source: FileIndexError) -> Error {
 /// [`source`]: std::error::Error::source
 fn query_error(source: QueryError) -> Error {
     super::error::invalid_operation("query failed", source)
-}
-
-/// Maps a [`SchemaError`] into a [`minijinja::Error`].
-///
-/// Keeps the original error as [`source`].
-///
-/// [`source`]: std::error::Error::source
-fn registry_error(source: SchemaError) -> Error {
-    super::error::invalid_operation(
-        "failed to load the Schema registry",
-        source,
-    )
 }
 
 impl Object for QueryOutcome {
@@ -568,36 +530,37 @@ mod tests {
 
     use super::*;
     use crate::{
-        DialogProvider, PresetDialogProvider, field::FieldKey,
-        query::FrontmatterFieldKeys,
+        DialogProvider, PresetDialogProvider, config::SchemaConfigSpec,
     };
 
-    /// Builds a shared [`SchemaContext`] for `root`, backing both
+    /// Builds a shared [`SchemaService`] for `root`, backing both
     /// [`page_ops`] and [`task_ops`] so both namespaces resolve the same
     /// Schema registry directory (`root/.traces/schemas`), mirroring
     /// [`super::super::TemplateEngine::new`]'s wiring.
-    fn schema_ctx(root: &Path) -> Arc<SchemaContext> {
-        let keys = FrontmatterFieldKeys::new(
-            FieldKey::try_new("class").expect("valid field key"),
-            FieldKey::try_new("title").expect("valid field key"),
-            FieldKey::try_new("aliases").expect("valid field key"),
-        );
-        Arc::new(SchemaContext::new(
-            Arc::from(root),
-            Arc::from(root.join(".traces/schemas")),
-            keys,
-        ))
+    fn schema_service(root: &Path) -> Arc<SchemaService> {
+        Arc::new(SchemaService::new(SchemaConfigSpec::for_test(
+            root,
+            &root.join(".traces/schemas"),
+        )))
     }
 
     /// Builds a `query` [`QueryOps`] for `root` with the default class field
     /// (`class`) and Schema registry directory (`root/.traces/schemas`).
     fn page_ops(root: &Path) -> QueryOps {
-        QueryOps::page(Arc::from(root), Arc::from("class"), schema_ctx(root))
+        QueryOps::page(
+            Arc::from(root),
+            Arc::from("class"),
+            schema_service(root),
+        )
     }
 
     /// Builds a `tasks` [`QueryOps`], the [`page_ops`] counterpart.
     fn task_ops(root: &Path) -> QueryOps {
-        QueryOps::task(Arc::from(root), Arc::from("class"), schema_ctx(root))
+        QueryOps::task(
+            Arc::from(root),
+            Arc::from("class"),
+            schema_service(root),
+        )
     }
 
     /// A minimal [`Environment`] with `query` and `tasks` registered against
@@ -623,11 +586,15 @@ mod tests {
         source: &str,
     ) -> Result<String, Error> {
         let field: Arc<str> = Arc::from(class_field);
-        let ctx = schema_ctx(root);
+        let service = schema_service(root);
         let mut env = Environment::new();
-        QueryOps::page(Arc::from(root), Arc::clone(&field), Arc::clone(&ctx))
-            .register(&mut env);
-        QueryOps::task(Arc::from(root), field, ctx).register(&mut env);
+        QueryOps::page(
+            Arc::from(root),
+            Arc::clone(&field),
+            Arc::clone(&service),
+        )
+        .register(&mut env);
+        QueryOps::task(Arc::from(root), field, service).register(&mut env);
         QueryOps::register_terminal_filters(&mut env);
         env.render_str(source, minijinja::context!())
     }

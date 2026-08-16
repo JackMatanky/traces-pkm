@@ -1,6 +1,9 @@
-//! Report Schema registry loading and resolution defects.
+//! Report Schema loading, resolution, and field-construction defects.
 //!
 //! - [`SchemaError`]: a hard failure; loading or resolution stops.
+//! - [`SchemaFieldBuilderError`]: a hard failure specific to building one
+//!   field's effective type from its declared attributes or `$ref`; wraps into
+//!   [`SchemaError::FieldBuilder`].
 //! - [`SchemaWarning`]: a recoverable defect; resolution continues with a
 //!   documented fallback.
 
@@ -8,14 +11,15 @@ use std::{fmt, path::PathBuf};
 
 use thiserror::Error;
 
-use super::{address::FieldAddress, name::SchemaName};
+use super::{address::FieldAddress, name::SchemaName, raw::RawFieldType};
 use crate::field::FieldName;
 
-/// Stop Schema registry loading or resolution on a hard failure.
+/// Stop Schema loading or resolution on a hard failure.
 ///
 /// Contrast [`SchemaWarning`], which is emitted for a defect resolution
 /// recovers from (a missing `extends` target, a stray `required = true` on the
-/// reserved Global Schema).
+/// reserved Global Schema, an unrecognized or wrongly-shaped attribute key on
+/// a bare `$ref` override).
 ///
 /// A malformed `$ref` or a Field Definition declaring neither `type` nor `$ref`
 /// fails earlier during TOML parsing as [`Self::Parse`]: see
@@ -51,22 +55,6 @@ pub(crate) enum SchemaError {
     Cycle {
         schemas: Vec<SchemaName>,
     },
-    /// Report a `$ref` to a Schema that is neither the Global Schema nor a
-    /// transitive `extends` ancestor of the referencing Schema.
-    #[error(
-        "$ref {reference} in field {own} is out of bounds: not the Global \
-         Schema or a transitive `extends` ancestor"
-    )]
-    RefOutOfBounds {
-        own: Box<FieldAddress>,
-        reference: Box<FieldAddress>,
-    },
-    /// Report a `$ref` to an in-bounds Schema that has no such field.
-    #[error("$ref {reference} in field {own} does not resolve")]
-    RefFieldNotFound {
-        own: Box<FieldAddress>,
-        reference: Box<FieldAddress>,
-    },
     /// Report two effective fields that share a
     /// [`FieldKey`](crate::field::FieldKey) canonical form: Note metadata could
     /// never disambiguate which one a value belongs to.
@@ -78,6 +66,73 @@ pub(crate) enum SchemaError {
         schema: SchemaName,
         first: FieldName,
         second: Box<FieldName>,
+    },
+    /// Report a field that failed to build: an attribute key that doesn't
+    /// belong to its resolved type, a wrongly-shaped attribute value, or a
+    /// `$ref` resolution failure. Boxed so a large
+    /// [`SchemaFieldBuilderError`] variant (it carries two owned `String`s)
+    /// cannot grow this enum's own size.
+    #[error(transparent)]
+    FieldBuilder(Box<SchemaFieldBuilderError>),
+}
+
+impl From<SchemaFieldBuilderError> for SchemaError {
+    fn from(error: SchemaFieldBuilderError) -> Self {
+        Self::FieldBuilder(Box::new(error))
+    }
+}
+
+/// Report why [`super::fields::SchemaFieldBuilder::build`] could not build one
+/// field's effective type.
+///
+/// [`Self::RefOutOfBounds`]/[`Self::RefFieldNotFound`] only ever arise while
+/// resolving a `$ref`'s base field, always a hard failure regardless of
+/// override kind. [`Self::UnknownAttributeKey`]/
+/// [`Self::AttributeValueTypeMismatch`] arise while validating a field's own
+/// type-specific attributes: a hard failure for a `Direct` field or a
+/// `$ref` with a local `type` override, degraded to
+/// [`SchemaWarning::UnknownOverrideKey`]/
+/// [`SchemaWarning::OverrideValueTypeMismatch`] for a bare `$ref` override (see
+/// [`super::fields::AttributeError`]).
+#[derive(Debug, Error)]
+pub(crate) enum SchemaFieldBuilderError {
+    /// `key` isn't a valid attribute for a field of type `kind` at all (e.g.
+    /// `values` declared on a `date` field). No `value` field: what was
+    /// assigned is irrelevant — the key itself is the mistake.
+    #[error("field {address} of type {kind} has no attribute {key:?}")]
+    UnknownAttributeKey {
+        address: FieldAddress,
+        kind: RawFieldType,
+        key: String,
+    },
+    /// `key` is a valid attribute for `kind`, but its declared value isn't
+    /// shaped like `expected` (e.g. `min = "abc"` on a `number` field).
+    #[error(
+        "field {address} of type {kind}'s {key:?} attribute must be \
+         {expected}, got {value}"
+    )]
+    AttributeValueTypeMismatch {
+        address: FieldAddress,
+        kind: RawFieldType,
+        key: String,
+        value: String,
+        expected: &'static str,
+    },
+    /// A `$ref` names a Schema that is neither the Global Schema nor a
+    /// transitive `extends` ancestor of the referencing Schema.
+    #[error(
+        "$ref {reference} in field {own} is out of bounds: not the Global \
+         Schema or a transitive `extends` ancestor"
+    )]
+    RefOutOfBounds {
+        own: Box<FieldAddress>,
+        reference: Box<FieldAddress>,
+    },
+    /// A `$ref` names an in-bounds Schema that has no such field.
+    #[error("$ref {reference} in field {own} does not resolve")]
+    RefFieldNotFound {
+        own: Box<FieldAddress>,
+        reference: Box<FieldAddress>,
     },
 }
 
@@ -101,6 +156,29 @@ pub(crate) enum SchemaWarning {
     StrayGlobalRequired {
         field: String,
     },
+    /// Report a bare `$ref` override (no local `type` override) declaring an
+    /// attribute key that doesn't belong to the resolved base field's type.
+    ///
+    /// The key is dropped; every other valid key in the same override still
+    /// applies. A `Direct` field or a `$ref` with a local `type` override
+    /// treats this as a hard [`SchemaError::FieldBuilder`] instead.
+    UnknownOverrideKey {
+        address: FieldAddress,
+        kind: RawFieldType,
+        key: String,
+    },
+    /// Report a bare `$ref` override declaring a valid attribute key with a
+    /// wrongly-shaped value.
+    ///
+    /// The key is dropped, falling back to the base field's own value for
+    /// that key; every other valid key in the same override still applies.
+    OverrideValueTypeMismatch {
+        address: FieldAddress,
+        kind: RawFieldType,
+        key: String,
+        value: String,
+        expected: &'static str,
+    },
 }
 
 impl fmt::Display for SchemaWarning {
@@ -121,6 +199,26 @@ impl fmt::Display for SchemaWarning {
                 "the reserved Global Schema declared field {field:?} as \
                  required; ignoring, since Global Schema fields can never be \
                  required"
+            ),
+            Self::UnknownOverrideKey {
+                address,
+                kind,
+                key,
+            } => write!(
+                f,
+                "$ref override {address} has no attribute {key:?} on its \
+                 resolved type {kind}; ignoring the key"
+            ),
+            Self::OverrideValueTypeMismatch {
+                address,
+                kind,
+                key,
+                value,
+                expected,
+            } => write!(
+                f,
+                "$ref override {address}'s {key:?} attribute on its resolved \
+                 type {kind} must be {expected}, got {value}; ignoring the key"
             ),
         }
     }
@@ -195,41 +293,6 @@ mod tests {
         }
 
         #[test]
-        fn ref_out_of_bounds_formats_display_message() {
-            let error = SchemaError::RefOutOfBounds {
-                own: Box::new(
-                    FieldAddress::try_from("#movie/status").expect("valid ref"),
-                ),
-                reference: Box::new(
-                    FieldAddress::try_from("#book/status").expect("valid ref"),
-                ),
-            };
-
-            assert_display(
-                &error,
-                "$ref #book/status in field #movie/status is out of bounds: \
-                 not the Global Schema or a transitive `extends` ancestor",
-            );
-        }
-
-        #[test]
-        fn ref_field_not_found_formats_display_message() {
-            let error = SchemaError::RefFieldNotFound {
-                own: Box::new(
-                    FieldAddress::try_from("#book/status").expect("valid ref"),
-                ),
-                reference: Box::new(
-                    FieldAddress::try_from("#book/status").expect("valid ref"),
-                ),
-            };
-
-            assert_display(
-                &error,
-                "$ref #book/status in field #book/status does not resolve",
-            );
-        }
-
-        #[test]
         fn ambiguous_field_name_formats_display_message() {
             let error = SchemaError::AmbiguousFieldName {
                 schema: SchemaName::from("book"),
@@ -247,6 +310,23 @@ mod tests {
         }
 
         #[test]
+        fn field_builder_delegates_display_to_the_wrapped_error() {
+            let inner = SchemaFieldBuilderError::UnknownAttributeKey {
+                address: FieldAddress::try_from("#book/status")
+                    .expect("valid ref"),
+                kind: RawFieldType::Date,
+                key: "values".to_owned(),
+            };
+
+            let error = SchemaError::from(inner);
+
+            assert_display(
+                &error,
+                "field #book/status of type date has no attribute \"values\"",
+            );
+        }
+
+        #[test]
         fn stays_small() {
             // Regression guard (mem-assert-type-size): `UnresolvedRef` used
             // to carry 5 owned Strings (120 bytes) because `ref_schema`/
@@ -257,14 +337,92 @@ mod tests {
             // validated `SchemaName` + `FieldName` pair rather than a single
             // `String`. `AmbiguousFieldName` boxes `second` for the same
             // reason: two owned `FieldName`s alongside `schema` would tie it
-            // for the largest variant. Keep every variant's payload small
-            // enough that `Result<_, SchemaError>` stays cheap to move
+            // for the largest variant. `FieldBuilder` boxes the whole wrapped
+            // `SchemaFieldBuilderError`, whose own `AttributeValueTypeMismatch`
+            // variant carries two owned `String`s and would otherwise be this
+            // enum's largest member by far. Keep every variant's payload
+            // small enough that `Result<_, SchemaError>` stays cheap to move
             // through the resolution call chain.
             assert!(
                 std::mem::size_of::<SchemaError>() <= 64,
                 "SchemaError grew to {} bytes; box or trim the offending \
                  variant",
                 std::mem::size_of::<SchemaError>()
+            );
+        }
+    }
+
+    mod schema_field_builder_error {
+        use pretty_assertions::assert_eq;
+
+        use super::super::*;
+
+        #[test]
+        fn unknown_attribute_key_formats_display_message() {
+            let error = SchemaFieldBuilderError::UnknownAttributeKey {
+                address: FieldAddress::try_from("#book/published")
+                    .expect("valid ref"),
+                kind: RawFieldType::Date,
+                key: "values".to_owned(),
+            };
+
+            assert_eq!(
+                error.to_string(),
+                "field #book/published of type date has no attribute \
+                 \"values\""
+            );
+        }
+
+        #[test]
+        fn attribute_value_type_mismatch_formats_display_message() {
+            let error = SchemaFieldBuilderError::AttributeValueTypeMismatch {
+                address: FieldAddress::try_from("#book/rating")
+                    .expect("valid ref"),
+                kind: RawFieldType::Number,
+                key: "min".to_owned(),
+                value: "\"abc\"".to_owned(),
+                expected: "a number",
+            };
+
+            assert_eq!(
+                error.to_string(),
+                "field #book/rating of type number's \"min\" attribute must \
+                 be a number, got \"abc\""
+            );
+        }
+
+        #[test]
+        fn ref_out_of_bounds_formats_display_message() {
+            let error = SchemaFieldBuilderError::RefOutOfBounds {
+                own: Box::new(
+                    FieldAddress::try_from("#movie/status").expect("valid ref"),
+                ),
+                reference: Box::new(
+                    FieldAddress::try_from("#book/status").expect("valid ref"),
+                ),
+            };
+
+            assert_eq!(
+                error.to_string(),
+                "$ref #book/status in field #movie/status is out of bounds: \
+                 not the Global Schema or a transitive `extends` ancestor"
+            );
+        }
+
+        #[test]
+        fn ref_field_not_found_formats_display_message() {
+            let error = SchemaFieldBuilderError::RefFieldNotFound {
+                own: Box::new(
+                    FieldAddress::try_from("#book/status").expect("valid ref"),
+                ),
+                reference: Box::new(
+                    FieldAddress::try_from("#book/status").expect("valid ref"),
+                ),
+            };
+
+            assert_eq!(
+                error.to_string(),
+                "$ref #book/status in field #book/status does not resolve"
             );
         }
     }
@@ -299,6 +457,41 @@ mod tests {
                 "the reserved Global Schema declared field \"priority\" as \
                  required; ignoring, since Global Schema fields can never be \
                  required"
+            );
+        }
+
+        #[test]
+        fn unknown_override_key_message_names_address_kind_and_key() {
+            let warning = SchemaWarning::UnknownOverrideKey {
+                address: FieldAddress::try_from("#sci_fi/cover")
+                    .expect("valid ref"),
+                kind: RawFieldType::Select,
+                key: "folders".to_owned(),
+            };
+
+            assert_eq!(
+                warning.to_string(),
+                "$ref override #sci_fi/cover has no attribute \"folders\" on \
+                 its resolved type select; ignoring the key"
+            );
+        }
+
+        #[test]
+        fn override_value_type_mismatch_message_names_every_field() {
+            let warning = SchemaWarning::OverrideValueTypeMismatch {
+                address: FieldAddress::try_from("#sci_fi/rating")
+                    .expect("valid ref"),
+                kind: RawFieldType::Number,
+                key: "min".to_owned(),
+                value: "\"abc\"".to_owned(),
+                expected: "a number",
+            };
+
+            assert_eq!(
+                warning.to_string(),
+                "$ref override #sci_fi/rating's \"min\" attribute on its \
+                 resolved type number must be a number, got \"abc\"; ignoring \
+                 the key"
             );
         }
     }

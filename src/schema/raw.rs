@@ -8,11 +8,15 @@
 //!
 //! Preserves TOML values exactly as configured, but parses `$ref` strings and
 //! a Field Definition's `type`/`$ref` source into validated shapes
-//! ([`FieldAddress`], [`RawFieldSource`]) at
-//! deserialization time: a `RawFieldDef` with neither `type` nor `$ref`
-//! cannot exist past parsing. Inheritance, `$ref` resolution against other
-//! Schemas, and the reserved Global Schema's `required` degrade are applied
-//! later in [`super::resolve`].
+//! ([`FieldAddress`], [`RawFieldSource`]) at deserialization time: a
+//! [`RawSchemaFieldDef`] with neither `type` nor `$ref` cannot exist past
+//! parsing. Every other type-specific key (`values`, `folders`/`ext`/`class`,
+//! `min`/`max`/`step`, `format`) lands in [`RawSchemaFieldDef::options`] as a
+//! generic [`FieldValue`], not a fixed Rust type: whether a key belongs to the
+//! field's resolved type, and whether its value is shaped correctly, is
+//! [`super::fields::SchemaFieldBuilder`]'s job, not this module's. Inheritance,
+//! `$ref` resolution against other Schemas, and the reserved Global Schema's
+//! `required` degrade are applied later in [`super::service`].
 
 use std::collections::BTreeMap;
 
@@ -20,12 +24,12 @@ use serde::{Deserialize, Deserializer};
 use thiserror::Error;
 
 use super::{address::FieldAddress, name::SchemaName};
-use crate::field::FieldName;
+use crate::field::{FieldName, FieldValue};
 
 /// Hold raw Schema data from one `.traces/schemas/<name>.toml` file.
 ///
 /// The filename stem (not any field on this type) is the Schema name; see
-/// [`super::SchemaRegistry::load`](super::registry::SchemaRegistry::load).
+/// [`super::SchemaService::resolve`](super::service::SchemaService::resolve).
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct RawSchema {
@@ -38,12 +42,12 @@ pub(crate) struct RawSchema {
     pub(crate) excludes: Vec<FieldName>,
     /// Store Field Definitions keyed by field name.
     #[serde(default)]
-    pub(crate) fields: BTreeMap<FieldName, RawFieldDef>,
+    pub(crate) fields: BTreeMap<FieldName, RawSchemaFieldDef>,
 }
 
 /// Hold raw field definition data parsed from TOML.
 #[derive(Clone, Debug)]
-pub(crate) struct RawFieldDef {
+pub(crate) struct RawSchemaFieldDef {
     /// Store the field's declared source: a direct `type`, or a `$ref`
     /// (optionally overriding its `type` locally).
     pub(crate) source: RawFieldSource,
@@ -52,32 +56,23 @@ pub(crate) struct RawFieldDef {
     pub(crate) required: Option<bool>,
     /// Whether the field accepts multiple values.
     pub(crate) multi: Option<bool>,
-    /// `select`-type selectable values.
-    pub(crate) values: Option<Vec<String>>,
-    /// `file`-type filter: folders to search under.
-    pub(crate) folders: Option<Vec<String>>,
-    /// `file`-type filter: file extension to match.
-    pub(crate) ext: Option<String>,
-    /// `file`-type filter: File Classes to match, is-a transitive.
-    pub(crate) class: Option<Vec<String>>,
-    /// `number`-type inclusive minimum.
-    /// Inert, stored for schema authoring.
-    pub(crate) min: Option<f64>,
-    /// `number`-type inclusive maximum.
-    /// Inert, stored for schema authoring.
-    pub(crate) max: Option<f64>,
-    /// `number`-type increment step.
-    /// Inert today, stored like `required`/`multi` for schema authoring and
-    /// future guardrails.
-    pub(crate) step: Option<f64>,
-    /// `date`-type display/parse format (strftime).
-    /// Inert, stored for schema authoring.
-    pub(crate) format: Option<String>,
+    /// Every type-specific key this field declared (`values`,
+    /// `folders`/`ext`/`class`, `min`/`max`/`step`, `format`), keyed by its
+    /// TOML name and preserved as a generic [`FieldValue`].
+    ///
+    /// A flat bag rather than one Rust field per key: whether a key belongs to
+    /// this field's resolved type, and whether its value is shaped correctly
+    /// for that key, is validated by
+    /// [`super::fields::SchemaFieldBuilder`] once the field's effective type
+    /// is known — a `date` field declaring `values`, or a `number` field
+    /// declaring `min = "abc"`, parses fine here and fails there.
+    pub(crate) options: BTreeMap<String, FieldValue>,
 }
 
-impl<'de> Deserialize<'de> for RawFieldDef {
+impl<'de> Deserialize<'de> for RawSchemaFieldDef {
     /// Deserialize the `[fields.<name>]` TOML table, converting its
-    /// `type`/`$ref` keys into a validated [`RawFieldSource`].
+    /// `type`/`$ref` keys into a validated [`RawFieldSource`] and every other
+    /// present key into [`RawSchemaFieldDef::options`].
     ///
     /// # Errors
     ///
@@ -105,28 +100,36 @@ impl<'de> Deserialize<'de> for RawFieldDef {
                 ));
             }
         };
+        let mut options = BTreeMap::new();
+        for (key, value) in [
+            ("values", wire.values),
+            ("folders", wire.folders),
+            ("ext", wire.ext),
+            ("class", wire.class),
+            ("min", wire.min),
+            ("max", wire.max),
+            ("step", wire.step),
+            ("format", wire.format),
+        ] {
+            if let Some(value) = value {
+                options.insert(key.to_owned(), value);
+            }
+        }
         Ok(Self {
             source,
             required: wire.required,
             multi: wire.multi,
-            values: wire.values,
-            folders: wire.folders,
-            ext: wire.ext,
-            class: wire.class,
-            min: wire.min,
-            max: wire.max,
-            step: wire.step,
-            format: wire.format,
+            options,
         })
     }
 }
 
-impl RawFieldDef {
-    /// Build a direct field definition of `kind`, with every optional key
-    /// unset.
+impl RawSchemaFieldDef {
+    /// Build a direct field definition of `kind`, with no type-specific
+    /// options.
     ///
-    /// Test-only convenience constructor: tests needing `required`, `multi`, or
-    /// type-specific options use struct-update syntax from the result.
+    /// Test-only convenience constructor: tests needing `required`, `multi`,
+    /// or type-specific options use struct-update syntax from the result.
     #[cfg(test)]
     #[inline]
     #[must_use]
@@ -135,19 +138,12 @@ impl RawFieldDef {
             source: RawFieldSource::Direct(kind),
             required: None,
             multi: None,
-            values: None,
-            folders: None,
-            ext: None,
-            class: None,
-            min: None,
-            max: None,
-            step: None,
-            format: None,
+            options: BTreeMap::new(),
         }
     }
 
-    /// Build a `$ref`-only field definition targeting `address`, with every
-    /// optional key unset.
+    /// Build a `$ref`-only field definition targeting `address`, with no
+    /// type-specific options.
     #[cfg(test)]
     #[inline]
     #[must_use]
@@ -159,14 +155,7 @@ impl RawFieldDef {
             },
             required: None,
             multi: None,
-            values: None,
-            folders: None,
-            ext: None,
-            class: None,
-            min: None,
-            max: None,
-            step: None,
-            format: None,
+            options: BTreeMap::new(),
         }
     }
 }
@@ -189,10 +178,27 @@ pub(crate) enum RawFieldType {
     File,
 }
 
+impl std::fmt::Display for RawFieldType {
+    /// Writes the lowercase `type` key value a Schema author would write in
+    /// TOML (`"select"`, not `"Select"`), so field-attribute error messages
+    /// read like the source they describe.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Input => "input",
+            Self::Select => "select",
+            Self::Boolean => "boolean",
+            Self::Number => "number",
+            Self::Date => "date",
+            Self::File => "file",
+        })
+    }
+}
+
 /// Identify a raw field's declared source.
 ///
-/// Parsed once at TOML deserialization time so a [`RawFieldDef`] with neither
-/// `type` nor `$ref` cannot exist past parsing (see [`RawFieldDefError`]).
+/// Parsed once at TOML deserialization time so a [`RawSchemaFieldDef`] with
+/// neither `type` nor `$ref` cannot exist past parsing (see
+/// [`RawFieldDefError`]).
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum RawFieldSource {
     /// Use a `type` key with no `$ref`.
@@ -205,7 +211,7 @@ pub(crate) enum RawFieldSource {
     },
 }
 
-/// Describe why a [`RawFieldDef`] failed to deserialize.
+/// Describe why a [`RawSchemaFieldDef`] failed to deserialize.
 #[derive(Debug, Error)]
 pub(crate) enum RawFieldDefError {
     /// Neither `type` nor `$ref` was present.
@@ -215,11 +221,15 @@ pub(crate) enum RawFieldDefError {
 
 /// Mirror the TOML wire shape for one `[fields.<name>]` table.
 ///
-/// Mirrors the TOML exactly
-/// (`type`/`$ref` still optional and separate) so
-/// `#[serde(deny_unknown_fields)]` rejects a typo'd key. [`RawFieldDef`]
-/// converts this into a validated [`RawFieldSource`] during deserialization;
-/// nothing outside this module ever sees a `RawFieldDefToml`.
+/// Mirrors the TOML exactly (`type`/`$ref` still optional and separate) so
+/// `#[serde(deny_unknown_fields)]` rejects a typo'd key. Every type-specific
+/// key deserializes as a generic [`FieldValue`], not a fixed Rust type: a
+/// `min = "abc"` on a `number` field parses fine here and fails validation
+/// later, in [`super::fields::SchemaFieldBuilder`], as
+/// `AttributeValueTypeMismatch` rather than a TOML parse error.
+/// [`RawSchemaFieldDef`] converts this into a validated [`RawFieldSource`] plus
+/// an `options` map during deserialization; nothing outside this module ever
+/// sees a `RawFieldDefToml`.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawFieldDefToml {
@@ -235,26 +245,26 @@ struct RawFieldDefToml {
     reference: Option<FieldAddress>,
     required: Option<bool>,
     multi: Option<bool>,
-    values: Option<Vec<String>>,
-    folders: Option<Vec<String>>,
-    ext: Option<String>,
-    class: Option<Vec<String>>,
-    min: Option<f64>,
-    max: Option<f64>,
-    step: Option<f64>,
-    format: Option<String>,
+    values: Option<FieldValue>,
+    folders: Option<FieldValue>,
+    ext: Option<FieldValue>,
+    class: Option<FieldValue>,
+    min: Option<FieldValue>,
+    max: Option<FieldValue>,
+    step: Option<FieldValue>,
+    format: Option<FieldValue>,
 }
 
 #[cfg(test)]
 mod tests {
-    mod raw_field_def {
+    mod raw_schema_field_def {
         use pretty_assertions::assert_eq;
 
         use super::super::*;
 
         #[test]
         fn deserializes_a_direct_type() {
-            let raw: RawFieldDef =
+            let raw: RawSchemaFieldDef =
                 toml::from_str(r#"type = "input""#).expect("valid toml");
 
             assert_eq!(raw.source, RawFieldSource::Direct(RawFieldType::Input));
@@ -262,7 +272,7 @@ mod tests {
 
         #[test]
         fn deserializes_a_ref_only_definition() {
-            let raw: RawFieldDef =
+            let raw: RawSchemaFieldDef =
                 toml::from_str(r##""$ref" = "#global/status""##)
                     .expect("valid toml");
 
@@ -275,7 +285,7 @@ mod tests {
 
         #[test]
         fn deserializes_a_ref_with_a_local_type_override() {
-            let raw: RawFieldDef = toml::from_str(
+            let raw: RawSchemaFieldDef = toml::from_str(
                 r##"
                 type = "file"
                 "$ref" = "#global/cover"
@@ -292,7 +302,7 @@ mod tests {
 
         #[test]
         fn rejects_a_definition_with_neither_type_nor_ref() {
-            let err = toml::from_str::<RawFieldDef>("required = true")
+            let err = toml::from_str::<RawSchemaFieldDef>("required = true")
                 .expect_err("missing source rejected");
 
             assert!(
@@ -304,7 +314,7 @@ mod tests {
 
         #[test]
         fn rejects_an_unknown_key() {
-            let err = toml::from_str::<RawFieldDef>(
+            let err = toml::from_str::<RawSchemaFieldDef>(
                 "type = \"input\"\ntypo_key = true",
             )
             .expect_err("unknown key rejected");
@@ -316,8 +326,50 @@ mod tests {
         }
 
         #[test]
+        fn collects_declared_type_specific_keys_into_options() {
+            let raw: RawSchemaFieldDef = toml::from_str(
+                "type = \"select\"\nvalues = [\"draft\", \"done\"]",
+            )
+            .expect("valid toml");
+
+            assert_eq!(
+                raw.options.get("values"),
+                Some(&FieldValue::List(vec![
+                    FieldValue::String("draft".to_owned()),
+                    FieldValue::String("done".to_owned()),
+                ]))
+            );
+        }
+
+        #[test]
+        fn omits_absent_type_specific_keys_from_options() {
+            let raw: RawSchemaFieldDef =
+                toml::from_str("type = \"input\"").expect("valid toml");
+
+            assert!(raw.options.is_empty());
+        }
+
+        #[test]
+        fn accepts_a_wrongly_shaped_value_at_parse_leaving_validation_to_the_builder()
+         {
+            // `min` is a `number`-type key, but nothing at this layer knows
+            // this field is (or isn't) a `number` field, or that "abc" is the
+            // wrong shape for `min`: both checks are
+            // `SchemaFieldBuilder`'s job once the field's resolved type is
+            // known (see `schema::fields`'s `AttributeValueTypeMismatch`).
+            let raw: RawSchemaFieldDef =
+                toml::from_str("type = \"number\"\nmin = \"abc\"")
+                    .expect("valid toml: value shape isn't validated here");
+
+            assert_eq!(
+                raw.options.get("min"),
+                Some(&FieldValue::String("abc".to_owned()))
+            );
+        }
+
+        #[test]
         fn deserializes_a_number_with_a_step() {
-            let raw: RawFieldDef =
+            let raw: RawSchemaFieldDef =
                 toml::from_str("type = \"number\"\nstep = 0.5")
                     .expect("valid toml");
 
@@ -325,7 +377,28 @@ mod tests {
                 raw.source,
                 RawFieldSource::Direct(RawFieldType::Number)
             );
-            assert_eq!(raw.step, Some(0.5));
+            assert_eq!(raw.options.get("step"), Some(&FieldValue::Float(0.5)));
+        }
+    }
+
+    mod raw_field_type {
+        use pretty_assertions::assert_eq;
+        use rstest::rstest;
+
+        use super::super::*;
+
+        #[rstest]
+        #[case::input(RawFieldType::Input, "input")]
+        #[case::select(RawFieldType::Select, "select")]
+        #[case::boolean(RawFieldType::Boolean, "boolean")]
+        #[case::number(RawFieldType::Number, "number")]
+        #[case::date(RawFieldType::Date, "date")]
+        #[case::file(RawFieldType::File, "file")]
+        fn display_matches_the_toml_type_key_value(
+            #[case] kind: RawFieldType,
+            #[case] expected: &str,
+        ) {
+            assert_eq!(kind.to_string(), expected);
         }
     }
 }

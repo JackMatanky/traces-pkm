@@ -1,13 +1,15 @@
-//! Register the `schema` namespace for templates.
+//! Register the `schema` namespace for templates, and wire
+//! [`crate::schema::Schema`] into minijinja directly.
 //!
 //! [`SchemaOps`] is the `schema` namespace object registered as a minijinja
 //! global by [`super::TemplateEngine`]. It exposes one method:
 //!
-//! - `schema.get(name)`: binds the resolved [`Schema`] named `name` as a
-//!   [`SchemaBinding`], hard-erroring if no Schema by that name resolves.
+//! - `schema.get(name)`: binds the resolved [`Schema`] named `name` directly
+//!   (`Schema` implements minijinja's [`Object`] itself, mirroring
+//!   [`super::query`]'s `impl Object for QueryOutcome`), hard-erroring if no
+//!   Schema by that name resolves.
 //!
-//! The bound [`SchemaBinding`] is itself a minijinja object exposing one plain
-//! attribute and two methods:
+//! The bound [`Schema`] exposes one plain attribute and three methods:
 //!
 //! - `.name`: the Schema's own name (its source file's stem).
 //! - `.field(name)`: the named field's selectable values, as plain strings for
@@ -16,9 +18,12 @@
 //!   `FileIndex`: labels use the configured `[frontmatter]` aliases key,
 //!   falling back to the configured title key, then the filename stem; values
 //!   are paths.
+//! - `.children()`: every Schema that directly `extends` this one, each itself
+//!   a bound `Schema`. Empty, not an error, when nothing directly extends this
+//!   Schema.
 //! - `.descendants()`: every Schema that is-a this one transitively (extends it
-//!   directly or via an ancestor), each itself a [`SchemaBinding`] so a
-//!   Template can walk the whole subtree (`.name`, `.field(...)`, and
+//!   directly or via an ancestor), each itself a bound `Schema` so a Template
+//!   can walk the whole subtree (`.name`, `.field(...)`, `.children()`, and
 //!   `.descendants()` again). Empty, not an error, when nothing extends this
 //!   Schema.
 //!
@@ -35,16 +40,22 @@
 //! never reads the registry directory, so a broken Schema file elsewhere in it
 //! only breaks the Template that reaches into `schema`. Once loaded, the
 //! resolved [`SchemaRegistry`] is cached in [`State`]'s temp storage for the
-//! remainder of the render, mirroring [`super::query::cached_refresh`], so a
-//! Template calling `schema.get` several times pays for one registry load.
-//! [`SchemaRegistry`] itself stores each Schema behind an `Arc`, so binding one
-//! via [`SchemaBinding`] shares that Schema's field map instead of deep-cloning
-//! it per call. `.descendants()` itself is *not* memoized across calls within
-//! a render: each call re-scans the registry (`O(n)` in Schema count),
-//! including nested `.descendants().descendants()` chains. Fine at the small
-//! Schema counts this module assumes; revisit if that assumption changes.
+//! remainder of the render via [`cached_schema_set`], mirroring
+//! [`super::query::cached_refresh`], so a Template calling `schema.get`
+//! several times pays for one registry load. [`SchemaRegistry`] itself stores
+//! each Schema behind an `Arc`, so `schema.get` shares that Schema's field map
+//! instead of deep-cloning it per call.
+//!
+//! [`Schema`]'s own `Object` impl carries no context fields (no per-instance
+//! registry/config bundle, unlike a wrapper type): `.field()`/`.children()`/
+//! `.descendants()` instead re-fetch the render's `Arc<SchemaService>` from
+//! `State`'s temp storage on demand, seeded once by `schema.get` (see
+//! [`cached_service`]). `.descendants()`/`.children()` themselves are *not*
+//! memoized across calls within a render: each call re-fetches the
+//! (`State`-cached) registry and reads the target Schema's already-precomputed
+//! `children`/`descendants` set — no per-call registry scan.
 
-use std::{path::Path, sync::Arc};
+use std::{collections::BTreeMap, sync::Arc};
 
 use minijinja::{
     Environment, Error, ErrorKind, State,
@@ -52,78 +63,46 @@ use minijinja::{
 };
 
 use crate::{
-    field,
-    field::FieldKey,
+    field::FieldValue,
     query::{FileOption, FileOptionFilter, FrontmatterFieldKeys},
-    schema::{Schema, SchemaError, SchemaFileFieldFilter, SchemaRegistry},
+    schema::{
+        Schema, SchemaError, SchemaFileFieldFilter, SchemaRegistry,
+        SchemaSelectFieldEntry, SchemaService,
+    },
 };
 
 /// Method names `schema` exposes, for [`SchemaOps::enumerate`].
 const METHODS: &[&str] = &["get"];
 
-/// Keys a bound [`SchemaBinding`] exposes: `field`/`descendants` are called as
-/// methods, `name` is a plain attribute. Backs [`Object::enumerate`].
-const SCHEMA_METHODS: &[&str] = &["field", "name", "descendants"];
+/// Keys a bound [`Schema`] exposes: `field`/`children`/`descendants` are
+/// called as methods, `name` is a plain attribute. Backs
+/// [`Object::enumerate`] on [`Schema`]'s own `impl Object` below.
+const SCHEMA_METHODS: &[&str] = &["children", "descendants", "field", "name"];
 
-/// Shared runtime state for the `schema` namespace: the project root and Schema
-/// registry directory used to load/refresh render-scoped data, plus the
-/// frontmatter keys used by file-field label/class resolution. Held once in
-/// [`SchemaOps`] and cloned as a single `Arc` into every [`SchemaBinding`]
-/// instead of threading separate fields through both types.
-///
-/// `Arc`, not `Rc`: minijinja `Object` values are reference-counted through
-/// `Arc<Self>`, and the existing namespace objects already use `Arc` to support
-/// cached object values without tying the engine to a single-thread-only type.
-#[derive(Debug)]
-pub(super) struct SchemaContext {
-    /// Project root used to refresh the render-scoped `FileIndex`.
-    root: Arc<Path>,
-    /// The Schema registry directory, resolved against the project root.
-    directory: Arc<Path>,
-    /// Frontmatter keys used by file-field class filtering and label
-    /// resolution.
-    keys: FrontmatterFieldKeys,
-}
-
-impl SchemaContext {
-    /// Wraps the project `root`, resolved Schema registry `directory`, and
-    /// configured frontmatter keys used by file-field option resolution.
-    #[inline]
-    #[must_use]
-    pub(super) const fn new(
-        root: Arc<Path>,
-        directory: Arc<Path>,
-        keys: FrontmatterFieldKeys,
-    ) -> Self {
-        Self {
-            root,
-            directory,
-            keys,
-        }
-    }
-
-    /// Returns the resolved Schema registry directory.
-    #[inline]
-    #[must_use]
-    pub(super) fn directory(&self) -> &Path {
-        &self.directory
-    }
-}
+/// The [`State::set_temp`] key seeding the render's `Arc<SchemaService>`, so
+/// [`Schema`]'s own [`Object`] impl can reach [`SchemaService::spec`]/
+/// [`SchemaService::matches`]/[`SchemaService::children`]/
+/// [`SchemaService::descendants`] without holding a context field itself.
+/// Seeded by [`SchemaOps::get_value`]'s `"get"` branch before it hands out
+/// any `Schema`-backed value, so every live `Schema` [`Value`] in a render is
+/// guaranteed to have this already stashed by the time `.field()`/
+/// `.children()`/`.descendants()` runs.
+const SCHEMA_SERVICE_CACHE_KEY: &str = "schema.service_cache";
 
 /// Backs the `schema` namespace object.
 #[derive(Debug)]
 pub(super) struct SchemaOps {
-    ctx: Arc<SchemaContext>,
+    service: Arc<SchemaService>,
 }
 
 impl SchemaOps {
-    /// Wraps the shared [`SchemaContext`] used to load the Schema registry and
-    /// resolve file-field options.
+    /// Wraps the shared [`SchemaService`] used to load Schemas and resolve
+    /// file-field options.
     #[inline]
     #[must_use]
-    pub(super) fn new(ctx: Arc<SchemaContext>) -> Self {
+    pub(super) fn new(service: Arc<SchemaService>) -> Self {
         Self {
-            ctx,
+            service,
         }
     }
 
@@ -131,38 +110,6 @@ impl SchemaOps {
     #[inline]
     pub(super) fn register(self, env: &mut Environment<'static>) {
         env.add_global("schema", Value::from_object(self));
-    }
-
-    /// Returns the render's [`SchemaRegistry`] cached via [`super::cache`],
-    /// shared with the `query`/`tasks` namespaces so a render touching both
-    /// pays for one [`SchemaRegistry::load`]. Logs each recovered
-    /// `SchemaWarning` once, at load time.
-    ///
-    /// # Errors
-    ///
-    /// - [`ErrorKind::InvalidOperation`] via [`registry_error`] if
-    ///   [`SchemaRegistry::load`] fails: a malformed Schema file, a resolution
-    ///   cycle, or an out-of-bounds `$ref`.
-    fn cached_registry(
-        &self,
-        state: &State,
-    ) -> Result<Arc<SchemaRegistry>, Error> {
-        let directory = self.ctx.directory();
-        super::cache::cached(
-            state,
-            super::cache::SCHEMA_REGISTRY_CACHE_KEY,
-            || {
-                let (registry, warnings) =
-                    SchemaRegistry::load(directory).map_err(registry_error)?;
-                for warning in &warnings {
-                    tracing::warn!(
-                        %warning,
-                        "Schema registry resolved with a warning"
-                    );
-                }
-                Ok(Arc::new(registry))
-            },
-        )
     }
 }
 
@@ -173,19 +120,16 @@ impl Object for SchemaOps {
                 let ops = Arc::clone(self);
                 Some(Value::from_function(
                     move |state: &State, name: &str| -> Result<Value, Error> {
-                        let registry = ops.cached_registry(state)?;
-                        registry
-                            .get(name)
+                        super::cache::set_temp(
+                            state,
+                            SCHEMA_SERVICE_CACHE_KEY,
+                            Arc::clone(&ops.service),
+                        );
+                        let registry = cached_schema_set(state, &ops.service)?;
+                        ops.service
+                            .get(&registry, name)
                             .cloned()
-                            .map(|schema| {
-                                Value::from_dyn_object(Arc::new(
-                                    SchemaBinding {
-                                        schema,
-                                        registry: Arc::clone(&registry),
-                                        ctx: Arc::clone(&ops.ctx),
-                                    },
-                                ))
-                            })
+                            .map(Value::from_dyn_object)
                             .ok_or_else(|| unknown_schema_error(name))
                     },
                 ))
@@ -199,106 +143,104 @@ impl Object for SchemaOps {
     }
 }
 
-/// Pairs a bound [`Schema`] with the [`SchemaRegistry`] it resolved from, so
-/// `.descendants()` can look up other Schemas by is-a relationship. [`Schema`]
-/// itself stays registry-unaware (see the module docs): this wrapper, not
-/// [`crate::schema`], is where minijinja-facing tree-walking lives.
+/// Returns the render's `Arc<SchemaService>`, seeded by
+/// [`SchemaOps::get_value`]'s `"get"` branch before it hands out any
+/// `Schema`-backed value.
 ///
-/// Gets its [`Object`] impl here instead of in [`crate::schema`], mirroring how
-/// [`super::query`] wires up [`crate::query::QueryOutcome`].
-#[derive(Debug)]
-struct SchemaBinding {
-    schema: Arc<Schema>,
-    registry: Arc<SchemaRegistry>,
-    ctx: Arc<SchemaContext>,
+/// # Errors
+///
+/// [`ErrorKind::InvalidOperation`] if no `Schema` value produced this render
+/// ever went through `schema.get` — cannot happen for a `Schema` bound the
+/// documented way, since that is the only route to one.
+fn cached_service(state: &State) -> Result<Arc<SchemaService>, Error> {
+    super::cache::get_temp(state, SCHEMA_SERVICE_CACHE_KEY).ok_or_else(|| {
+        Error::new(
+            ErrorKind::InvalidOperation,
+            "internal error: no Schema service cached for this render",
+        )
+    })
 }
 
-impl SchemaBinding {
-    /// Resolves a file-typed field against the render-scoped `FileIndex`.
-    fn file_field_values(
-        &self,
-        state: &State,
-        folders: &[String],
-        ext: Option<&str>,
-        classes: &[String],
-    ) -> Result<Value, Error> {
-        let index = super::query::cached_refresh(state, &self.ctx.root)
-            .map_err(super::query::index_error)?;
-        let class_matches = if classes.is_empty() {
-            None
-        } else {
-            for class in classes {
-                if self.registry.get(class).is_none() {
-                    tracing::warn!(
-                        class = %class,
-                        "file field references a class with no Schema; \
-                         degrading to exact match"
-                    );
-                }
-            }
-            Some(self.registry.matches(classes))
-        };
-        let options = index.file_options(FileOptionFilter::new(
-            folders,
-            ext,
-            class_matches.as_ref(),
-            &self.ctx.keys,
-        ));
-        Ok(Value::from(
-            options.into_iter().map(file_option_value).collect::<Vec<_>>(),
-        ))
-    }
+/// Returns the render's [`SchemaRegistry`] cached via [`super::cache`],
+/// shared with the `query`/`tasks` namespaces so a render touching both pays
+/// for one [`SchemaService::resolve`]. Logs each recovered `SchemaWarning`
+/// once, at load time.
+///
+/// The one `cached_schema_set` helper this module and `query.rs` both call,
+/// replacing what used to be two independently duplicated `cached_registry`
+/// methods.
+///
+/// # Errors
+///
+/// - [`ErrorKind::InvalidOperation`] via [`registry_error`] if
+///   [`SchemaService::resolve`] fails: a malformed Schema file, a resolution
+///   cycle, or an out-of-bounds `$ref`.
+pub(super) fn cached_schema_set(
+    state: &State,
+    service: &SchemaService,
+) -> Result<Arc<SchemaRegistry>, Error> {
+    super::cache::cached(state, super::cache::SCHEMA_REGISTRY_CACHE_KEY, || {
+        let (registry, warnings) = service.resolve().map_err(registry_error)?;
+        for warning in &warnings {
+            tracing::warn!(
+                %warning,
+                "Schema registry resolved with a warning"
+            );
+        }
+        Ok(registry)
+    })
 }
 
-impl Object for SchemaBinding {
+impl Object for Schema {
     fn get_value(self: &Arc<Self>, key: &Value) -> Option<Value> {
         match key.as_str()? {
-            "name" => Some(Value::from(self.schema.name())),
+            "name" => Some(Value::from(self.name())),
             "field" => {
-                let binding = Arc::clone(self);
+                let schema = Arc::clone(self);
                 Some(Value::from_function(
                     move |state: &State, name: &str| -> Result<Value, Error> {
-                        let field =
-                            binding.schema.field(name).ok_or_else(|| {
-                                unknown_field_error(&binding.schema, name)
-                            })?;
+                        let field = schema.field(name).ok_or_else(|| {
+                            unknown_field_error(&schema, name)
+                        })?;
                         if let Some(SchemaFileFieldFilter {
                             folders,
                             ext,
                             class: classes,
                         }) = field.file_filter()
                         {
-                            return binding.file_field_values(
+                            return file_field_values(
                                 state, folders, ext, classes,
                             );
                         }
-                        Ok(field.selectable_values().map_or_else(
+                        Ok(field.select_values().map_or_else(
                             || Value::from(()),
-                            |values| Value::from(values.to_vec()),
+                            |values| {
+                                Value::from(
+                                    values
+                                        .iter()
+                                        .map(select_entry_value)
+                                        .collect::<Vec<_>>(),
+                                )
+                            },
                         ))
                     },
                 ))
             }
+            "children" => {
+                let schema = Arc::clone(self);
+                Some(Value::from_function(
+                    move |state: &State| -> Result<Value, Error> {
+                        bind_related(state, &schema, SchemaService::children)
+                    },
+                ))
+            }
             "descendants" => {
-                let binding = Arc::clone(self);
-                Some(Value::from_function(move || -> Value {
-                    let descendants =
-                        binding.registry.descendants_of(binding.schema.name());
-                    Value::from(
-                        descendants
-                            .into_iter()
-                            .map(|schema| {
-                                Value::from_dyn_object(Arc::new(
-                                    SchemaBinding {
-                                        schema,
-                                        registry: Arc::clone(&binding.registry),
-                                        ctx: Arc::clone(&binding.ctx),
-                                    },
-                                ))
-                            })
-                            .collect::<Vec<_>>(),
-                    )
-                }))
+                let schema = Arc::clone(self);
+                Some(Value::from_function(
+                    move |state: &State| -> Result<Value, Error> {
+                        bind_related(state, &schema, SchemaService::descendants)
+                    },
+                ))
             }
             _ => None,
         }
@@ -307,6 +249,73 @@ impl Object for SchemaBinding {
     fn enumerate(self: &Arc<Self>) -> Enumerator {
         Enumerator::Str(SCHEMA_METHODS)
     }
+}
+
+/// A [`SchemaService`] hierarchy query (`children`/`descendants`), shared by
+/// [`bind_related`].
+type RelateFn = fn(&SchemaService, &SchemaRegistry, &str) -> Vec<Arc<Schema>>;
+
+/// Binds every Schema `relate` returns for `schema` as a `Value` list of
+/// bound `Schema` objects. Shared by `.children()`/`.descendants()`, which
+/// differ only in which [`SchemaService`] method they call.
+fn bind_related(
+    state: &State,
+    schema: &Arc<Schema>,
+    relate: RelateFn,
+) -> Result<Value, Error> {
+    let service = cached_service(state)?;
+    let registry = cached_schema_set(state, &service)?;
+    let related = relate(&service, &registry, schema.name());
+    Ok(Value::from(
+        related.into_iter().map(Value::from_dyn_object).collect::<Vec<_>>(),
+    ))
+}
+
+/// Converts a resolved `select`-field entry into the minijinja `Value` shape
+/// `.field()` returns: a plain string when `label == value` and `extra` is
+/// empty (always true under this ticket — see
+/// [`SchemaSelectFieldEntry`](crate::schema::SchemaSelectFieldEntry)'s docs),
+/// else a `{value, label, ...extra}` object for a future structured source.
+fn select_entry_value(entry: &SchemaSelectFieldEntry) -> Value {
+    if entry.label() == entry.value() && entry.extra().is_empty() {
+        return Value::from_serialize(entry.value());
+    }
+    let mut object: BTreeMap<String, FieldValue> = entry.extra().clone();
+    object.insert("value".to_owned(), entry.value().clone());
+    object.insert("label".to_owned(), entry.label().clone());
+    Value::from_serialize(&object)
+}
+
+/// Resolves a file-typed field against the render-scoped `FileIndex`.
+fn file_field_values(
+    state: &State,
+    folders: &[String],
+    ext: Option<&str>,
+    classes: &[String],
+) -> Result<Value, Error> {
+    let service = cached_service(state)?;
+    let index = super::query::cached_refresh(state, service.spec().root())
+        .map_err(super::query::index_error)?;
+    let class_matches = if classes.is_empty() {
+        None
+    } else {
+        let registry = cached_schema_set(state, &service)?;
+        Some(service.matches(&registry, classes))
+    };
+    let keys = FrontmatterFieldKeys::new(
+        service.spec().class_field().clone(),
+        service.spec().title_field().clone(),
+        service.spec().aliases_field().clone(),
+    );
+    let options = index.file_options(FileOptionFilter::new(
+        folders,
+        ext,
+        class_matches.as_ref(),
+        &keys,
+    ));
+    Ok(Value::from(
+        options.into_iter().map(file_option_value).collect::<Vec<_>>(),
+    ))
 }
 
 /// Converts an index-derived file option into the label/value object shape
@@ -338,61 +347,27 @@ fn unknown_schema_error(name: &str) -> Error {
 /// Builds the error for `.field(name)` naming a field absent from `schema`'s
 /// resolved fields.
 ///
-/// Appends a `; did you mean "..."?` hint when [`closest_field_suggestion`]
-/// finds exactly one plausible candidate; omits the hint otherwise. Never
-/// changes whether the lookup itself succeeds: suggestions are diagnostic text
-/// only.
+/// Appends a `; did you mean "..."?` hint when
+/// [`Schema::suggest_field`] finds exactly one plausible candidate; omits the
+/// hint otherwise. Never changes whether the lookup itself succeeds:
+/// suggestions are diagnostic text only.
 fn unknown_field_error(schema: &Schema, field: &str) -> Error {
     let base = format!("schema {:?} has no field {field:?}", schema.name());
-    let message = closest_field_suggestion(schema, field).map_or_else(
+    let message = schema.suggest_field(field).map_or_else(
         || base.clone(),
         |name| format!("{base}; did you mean {name:?}?"),
     );
     Error::new(ErrorKind::InvalidOperation, message)
 }
 
-/// Finds the single field name in `schema` that best matches `field`, for a
-/// `did you mean` suggestion on the unknown-field error path only. Never
-/// consulted on a successful `.field(name)` lookup, which stays exact: this
-/// makes the namespace more user-friendly on typos without silently forgiving
-/// `.field("Status")` to match `status`.
-///
-/// Prefers a canonical (`FieldKey`) match over an edit-distance match. Suggests
-/// nothing when `field` itself fails `FieldKey` validation, when no field
-/// canonically or approximately matches, or when more than one field
-/// canonically matches (schema resolution already rejects two fields sharing a
-/// canonical form within one Schema, so this last case is defensive).
-fn closest_field_suggestion<'a>(
-    schema: &'a Schema,
-    field: &str,
-) -> Option<&'a str> {
-    let input_key = FieldKey::try_from(field).ok()?;
-    let mut canonical_matches =
-        schema.fields().keys().filter(|name| input_key.is_match(name.as_str()));
-    match (canonical_matches.next(), canonical_matches.next()) {
-        (Some(only), None) => Some(only.as_str()),
-        (Some(_), Some(_)) => None,
-        (None, _) => closest_field_name(schema, field),
-    }
-}
-
-/// Finds the field name in `schema` with the smallest edit distance to `field`,
-/// for a `did you mean` suggestion when no field canonically matches.
-///
-/// Thin wrapper over [`crate::field::closest_match`]: see its doc for the
-/// matching threshold.
-fn closest_field_name<'a>(schema: &'a Schema, field: &str) -> Option<&'a str> {
-    field::closest_match(
-        schema.fields().keys().map(|name| (name.as_str(), name.as_str())),
-        field,
-    )
-}
-
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use minijinja::Environment;
 
     use super::{super::query::QueryOps, *};
+    use crate::config::SchemaConfigSpec;
 
     /// A minimal [`Environment`] with `schema` registered against `directory`.
     fn env(directory: &Path) -> Environment<'static> {
@@ -404,15 +379,8 @@ mod tests {
     fn schema_ops(directory: &Path) -> SchemaOps {
         let root =
             directory.parent().and_then(Path::parent).unwrap_or(directory);
-        let keys = FrontmatterFieldKeys::new(
-            FieldKey::try_new("class").expect("valid field key"),
-            FieldKey::try_new("title").expect("valid field key"),
-            FieldKey::try_new("aliases").expect("valid field key"),
-        );
-        SchemaOps::new(Arc::new(SchemaContext::new(
-            Arc::from(root),
-            Arc::from(directory),
-            keys,
+        SchemaOps::new(Arc::new(SchemaService::new(
+            SchemaConfigSpec::for_test(root, directory),
         )))
     }
 
@@ -601,7 +569,7 @@ mod tests {
             get.call(&state, &[Value::from("book")])
                 .expect("first call loads and caches the registry");
             // A missing registry directory degrades to an empty registry
-            // (SchemaRegistry::load), not an error: if the second call
+            // (SchemaService::resolve), not an error: if the second call
             // below re-read the directory instead of reusing the cache, it
             // would find no `book` Schema and hard-error.
             fs::remove_dir_all(&schemas_dir).expect("remove schemas dir");
@@ -618,7 +586,7 @@ mod tests {
         #[test]
         fn a_query_call_reuses_the_registry_schema_already_cached() {
             // `sci_fi` transitively is-a `book` via `extends`. An empty,
-            // degraded registry (`SchemaRegistry::load` on a missing
+            // degraded registry (`SchemaService::resolve` on a missing
             // directory - see the sibling test above) has no Schemas at
             // all, so `from("@book*")` would fall back to exact-match and
             // miss a Note whose File Class is `sci_fi`. Asserting the Note
@@ -634,23 +602,17 @@ mod tests {
                 "dune.md",
                 "---\nclass: sci_fi\n---\n# dune",
             );
-            let ctx = Arc::new(SchemaContext::new(
-                Arc::from(temp.path()),
-                Arc::from(schemas_dir.as_path()),
-                FrontmatterFieldKeys::new(
-                    FieldKey::try_new("class").expect("valid field key"),
-                    FieldKey::try_new("title").expect("valid field key"),
-                    FieldKey::try_new("aliases").expect("valid field key"),
-                ),
+            let service = Arc::new(SchemaService::new(
+                SchemaConfigSpec::for_test(temp.path(), &schemas_dir),
             ));
-            let schema_ops = Arc::new(SchemaOps::new(Arc::clone(&ctx)));
+            let schema_ops = Arc::new(SchemaOps::new(Arc::clone(&service)));
             let get = schema_ops
                 .get_value(&Value::from("get"))
                 .expect("get is a known method");
             let query_ops = Arc::new(QueryOps::page(
                 Arc::from(temp.path()),
                 Arc::from("class"),
-                Arc::clone(&ctx),
+                Arc::clone(&service),
             ));
             let from = query_ops
                 .get_value(&Value::from("from"))
@@ -685,9 +647,6 @@ mod tests {
         #[test]
         fn a_missing_extends_target_degrades_with_a_warning_instead_of_failing_the_render()
          {
-            // `sci_fi` extends an unresolvable Schema name: ticket 02's
-            // resolve() degrades this to a `SchemaWarning`, not a
-            // `SchemaError` — `sci_fi`'s own fields must still render.
             let temp = tempfile::tempdir().expect("create temp dir");
             write_schema(
                 temp.path(),
@@ -843,6 +802,60 @@ mod tests {
         }
     }
 
+    mod children {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn returns_a_direct_extender_as_a_bound_schema() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_schema(temp.path(), "thing", "");
+            write_schema(temp.path(), "book", r#"extends = ["thing"]"#);
+            write_schema(temp.path(), "sci_fi", r#"extends = ["book"]"#);
+
+            let rendered = render(
+                &temp.path().join(".traces/schemas"),
+                "{{ schema.get('thing').children() | map(attribute='name') | \
+                 join(',') }}",
+            )
+            .expect("render succeeds");
+
+            assert_eq!(rendered, "book");
+        }
+
+        #[test]
+        fn excludes_a_transitive_descendant() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_schema(temp.path(), "thing", "");
+            write_schema(temp.path(), "book", r#"extends = ["thing"]"#);
+            write_schema(temp.path(), "sci_fi", r#"extends = ["book"]"#);
+
+            let rendered = render(
+                &temp.path().join(".traces/schemas"),
+                "{{ schema.get('thing').children() | length }}",
+            )
+            .expect("render succeeds");
+
+            assert_eq!(rendered, "1");
+        }
+
+        #[test]
+        fn returns_an_empty_list_for_a_leaf_schema_not_none_or_an_error() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_schema(temp.path(), "book", "");
+            write_schema(temp.path(), "sci_fi", r#"extends = ["book"]"#);
+
+            let rendered = render(
+                &temp.path().join(".traces/schemas"),
+                "{{ schema.get('sci_fi').children() | length }}",
+            )
+            .expect("render succeeds");
+
+            assert_eq!(rendered, "0");
+        }
+    }
+
     mod descendants {
         use pretty_assertions::assert_eq;
 
@@ -922,13 +935,14 @@ mod tests {
 
         #[test]
         fn a_descendants_own_descendants_are_also_reachable() {
-            // Proves the "descendants" branch threads the same registry
-            // into each returned SchemaBinding (schema.rs's `.descendants`
-            // arm clones `binding.registry`, not a fresh/empty one) — the
-            // registry-level `descendants_of` test already proves the
-            // underlying data is transitively correct; this proves the
-            // render-facing chain (`.descendants().descendants()`) the
-            // module docs promise actually works.
+            // Proves the "descendants" branch threads the render-cached
+            // `SchemaService`/registry into each returned bound `Schema`
+            // (via `bind_related`'s own `cached_service`/`cached_schema_set`
+            // calls, not a fresh/empty one) — the service-level
+            // `descendants` test already proves the underlying data is
+            // transitively correct; this proves the render-facing chain
+            // (`.descendants().descendants()`) the module docs promise
+            // actually works.
             let temp = tempfile::tempdir().expect("create temp dir");
             write_schema(temp.path(), "thing", "");
             write_schema(temp.path(), "book", r#"extends = ["thing"]"#);
@@ -946,6 +960,8 @@ mod tests {
     }
 
     mod errors {
+        use pretty_assertions::assert_eq;
+
         use super::*;
 
         #[test]
@@ -1104,10 +1120,9 @@ mod tests {
         {
             // Directory-wide load failure is documented, not hidden: a
             // template that reaches into `schema` at all pays for every
-            // Schema file in the registry resolving, per ticket 02's
-            // `resolve()` contract. Lazy loading only isolates templates
-            // that never call `schema.get` in the first place (see the
-            // `register` module below).
+            // Schema file in the registry resolving. Lazy loading only
+            // isolates templates that never call `schema.get` in the first
+            // place (see the `register` module below).
             let temp = tempfile::tempdir().expect("create temp dir");
             write_schema(
                 temp.path(),

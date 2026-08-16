@@ -90,6 +90,8 @@ pub use note::{
 #[cfg(any(test, feature = "test-utils"))]
 pub use query::{IndexRecord, QueryOutcome, QuerySource};
 #[cfg(any(test, feature = "test-utils"))]
+pub use schema::{Schema, SchemaService};
+#[cfg(any(test, feature = "test-utils"))]
 pub use template::{
     CommitPolicy, RenderFailureKind, TemplateError, TemplatePathError,
     TemplatePathInput, TemplateService, WriteMode, WriteOutcome,
