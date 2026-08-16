@@ -14,55 +14,6 @@ use super::{
     address::{FieldAddress, FieldAddressRef},
 };
 
-/// Resolve a Schema's `$ref` values to their base [`SchemaFieldDef`]s, bounded
-/// to the Global Schema or the referencing Schema's transitive `extends`
-/// ancestors.
-///
-/// `$ref`s point up the `extends` DAG or to the Global Schema, so they are
-/// acyclic by construction.
-pub(crate) struct RefResolver<'a> {
-    pub(crate) ancestors: &'a BTreeSet<SchemaName>,
-    pub(crate) resolved: &'a BTreeMap<SchemaName, Schema>,
-}
-
-impl<'a> RefResolver<'a> {
-    /// Resolve `base_address`, `address`'s own already-parsed `$ref` value, to
-    /// its base [`SchemaFieldDef`].
-    ///
-    /// # Errors
-    ///
-    /// - [`SchemaError::RefOutOfBounds`] if the named Schema is neither the
-    ///   Global Schema nor a transitive `extends` ancestor of
-    ///   `address.schema()`.
-    /// - [`SchemaError::RefFieldNotFound`] if the named Schema is in bounds but
-    ///   has no such field.
-    fn resolve(
-        &self,
-        address: FieldAddressRef<'_>,
-        base_address: &FieldAddress,
-    ) -> Result<&'a SchemaFieldDef, SchemaError> {
-        if base_address.schema().as_str() != GLOBAL_SCHEMA_NAME
-            && !self.ancestors.contains(base_address.schema().as_str())
-        {
-            return Err(SchemaFieldBuilderError::RefOutOfBounds {
-                own: Box::new(FieldAddress::from(address)),
-                reference: Box::new(base_address.clone()),
-            }
-            .into());
-        }
-        self.resolved
-            .get(base_address.schema().as_str())
-            .and_then(|schema| schema.field(base_address.field().as_str()))
-            .ok_or_else(|| {
-                SchemaFieldBuilderError::RefFieldNotFound {
-                    own: Box::new(FieldAddress::from(address)),
-                    reference: Box::new(base_address.clone()),
-                }
-                .into()
-            })
-    }
-}
-
 /// Builds one resolved [`SchemaFieldDef`] from its raw declaration, resolving
 /// a `$ref` (if any) against already-resolved Schemas.
 pub(crate) struct SchemaFieldBuilder<'a> {
@@ -176,6 +127,55 @@ impl SchemaFieldBuilder<'_> {
         } else {
             required
         }
+    }
+}
+
+/// Resolve a Schema's `$ref` values to their base [`SchemaFieldDef`]s, bounded
+/// to the Global Schema or the referencing Schema's transitive `extends`
+/// ancestors.
+///
+/// `$ref`s point up the `extends` DAG or to the Global Schema, so they are
+/// acyclic by construction.
+pub(crate) struct RefResolver<'a> {
+    pub(crate) ancestors: &'a BTreeSet<SchemaName>,
+    pub(crate) resolved: &'a BTreeMap<SchemaName, Schema>,
+}
+
+impl<'a> RefResolver<'a> {
+    /// Resolve `base_address`, `address`'s own already-parsed `$ref` value, to
+    /// its base [`SchemaFieldDef`].
+    ///
+    /// # Errors
+    ///
+    /// - [`SchemaError::RefOutOfBounds`] if the named Schema is neither the
+    ///   Global Schema nor a transitive `extends` ancestor of
+    ///   `address.schema()`.
+    /// - [`SchemaError::RefFieldNotFound`] if the named Schema is in bounds but
+    ///   has no such field.
+    fn resolve(
+        &self,
+        address: FieldAddressRef<'_>,
+        base_address: &FieldAddress,
+    ) -> Result<&'a SchemaFieldDef, SchemaError> {
+        if base_address.schema().as_str() != GLOBAL_SCHEMA_NAME
+            && !self.ancestors.contains(base_address.schema().as_str())
+        {
+            return Err(SchemaFieldBuilderError::RefOutOfBounds {
+                own: Box::new(FieldAddress::from(address)),
+                reference: Box::new(base_address.clone()),
+            }
+            .into());
+        }
+        self.resolved
+            .get(base_address.schema().as_str())
+            .and_then(|schema| schema.field(base_address.field().as_str()))
+            .ok_or_else(|| {
+                SchemaFieldBuilderError::RefFieldNotFound {
+                    own: Box::new(FieldAddress::from(address)),
+                    reference: Box::new(base_address.clone()),
+                }
+                .into()
+            })
     }
 }
 
