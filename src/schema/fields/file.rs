@@ -1,4 +1,11 @@
 //! `file` field type definition, borrowed filter, and parsing.
+//!
+//! A `file` field links to notes matched by folder, extension, and class
+//! filters. Parsing validates the three attributes (`folders`, `ext`, `class`)
+//! and merges with a `$ref` base when present.
+//!
+//! [`SchemaFileFieldDefRef`] borrows the resolved filter parts for
+//! [`super::SchemaFieldDef::file_filter`].
 
 use std::collections::BTreeMap;
 
@@ -14,6 +21,9 @@ use super::{
 use crate::field::FieldValue;
 
 /// Borrow a resolved `file` field's `FileIndex` filter parts.
+///
+/// Returned by [`super::SchemaFieldDef::file_filter`] for `file` fields.
+/// Non-`file` fields return `None` from that method.
 pub(crate) struct SchemaFileFieldDefRef<'a> {
     pub(crate) folders: &'a [String],
     pub(crate) ext: Option<&'a str>,
