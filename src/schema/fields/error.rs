@@ -1,5 +1,4 @@
-//! Field-attribute validation errors produced during type-specific option
-//! parsing.
+//! Per-key field-attribute validation errors.
 
 use super::{
     super::{
@@ -9,14 +8,11 @@ use super::{
     address::{FieldAddress, FieldAddressRef},
 };
 
-/// One field-attribute key/value validation failure from parsing a field type's
-/// `options` bag: either the key doesn't belong to the field's resolved type,
-/// or its value isn't shaped like the key expects.
+/// One per-key validation failure from parsing a field type's `options`.
 ///
-/// Converts into a hard [`SchemaFieldBuilderError`] for a `Direct`/`$ref`
-/// `type`-override field ([`super::builder::SchemaFieldBuilder::build`]'s
-/// strict path), or a soft [`SchemaWarning`] for a bare `$ref` override (its
-/// lenient path) — see the module docs.
+/// Converts into [`SchemaFieldBuilderError`] (hard failure) for `Direct` fields
+/// and `$ref` fields with a local `type` override, or [`SchemaWarning`]
+/// (degraded) for bare `$ref` overrides.
 pub(crate) enum AttributeError {
     UnknownKey {
         address: FieldAddress,
@@ -90,7 +86,7 @@ impl From<AttributeError> for SchemaWarning {
     }
 }
 
-/// Builds an [`AttributeError::UnknownKey`] for `key` on `kind`.
+/// Build an [`AttributeError::UnknownKey`] for an unrecognized attribute key.
 pub(super) fn unknown_key(
     address: FieldAddressRef<'_>,
     kind: RawSchemaFieldType,
@@ -103,9 +99,7 @@ pub(super) fn unknown_key(
     }
 }
 
-/// Builds an [`AttributeError::TypeMismatch`] for `key`'s wrongly-shaped
-/// `value` on `kind`, rendering `value` via [`std::fmt::Debug`] for the error
-/// message.
+/// Build an [`AttributeError::TypeMismatch`] for a wrongly-shaped `value`.
 pub(super) fn type_mismatch(
     address: FieldAddressRef<'_>,
     kind: RawSchemaFieldType,
@@ -122,8 +116,8 @@ pub(super) fn type_mismatch(
     }
 }
 
-/// Returns `value` as an owned list of strings, or `None` if it isn't a list of
-/// nothing but strings.
+/// Return `value` as an owned list of strings, or `None` if it is not a list
+/// of strings.
 pub(super) fn expect_string_list(
     value: &crate::field::FieldValue,
 ) -> Option<Vec<String>> {
@@ -139,7 +133,7 @@ pub(super) fn expect_string_list(
         .collect()
 }
 
-/// Returns `value` as an owned string, or `None` if it isn't one.
+/// Return `value` as an owned string, or `None` if it is not.
 pub(super) fn expect_string(
     value: &crate::field::FieldValue,
 ) -> Option<String> {

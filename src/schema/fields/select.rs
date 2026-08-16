@@ -10,19 +10,16 @@ use super::{
 };
 use crate::field::FieldValue;
 
-/// Own declaration of a `select` field's type-specific options, not yet merged
-/// with an inherited `$ref` base.
+/// Raw `select` field options before `$ref` merge.
 #[derive(Default)]
 pub(super) struct SchemaSelectFieldDef {
     values: Vec<SchemaSelectFieldEntry>,
 }
 
 impl SchemaSelectFieldDef {
-    /// Parses every key in `options` against `select`'s one valid attribute
-    /// (`values`), merges with `base` when present, and returns the effective
-    /// [`SchemaFieldType::Select`] alongside every per-key failure encountered
-    /// — an unrecognized key or a wrongly-shaped value does not stop parsing
-    /// the rest.
+    /// Parse `options` against `select`'s `values` attribute, merging with
+    /// `base` when present. Returns the effective [`SchemaFieldType::Select`]
+    /// and every per-key validation failure.
     pub(super) fn parse(
         address: FieldAddressRef<'_>,
         options: &BTreeMap<String, FieldValue>,
@@ -75,13 +72,10 @@ impl SchemaSelectFieldDef {
     }
 }
 
-/// One selectable entry a `select`/`multi` field's `values` resolves to.
+/// One selectable entry a `select`/`multi` field resolves to.
 ///
-/// No memory of source: literal today (every entry built by
-/// [`SchemaSelectFieldEntry::literal`]); an inline object or values-file entry
-/// once ticket 08 lands. `template/engine/schema.rs` renders an entry as a
-/// plain string when `label == value` and `extra` is empty (always true under
-/// this ticket), else as `{value, label, ...extra}`.
+/// Rendered as a plain string when `label == value` and `extra` is empty,
+/// otherwise as `{value, label, ...extra}`.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct SchemaSelectFieldEntry {
     value: FieldValue,
@@ -90,9 +84,8 @@ pub(crate) struct SchemaSelectFieldEntry {
 }
 
 impl SchemaSelectFieldEntry {
-    /// Builds a flat entry from a plain declared string: `label` defaults to
-    /// `value`, `extra` is empty. The only shape a literal `values = [...]`
-    /// array produces.
+    /// Build a literal entry where `label` equals `value` and `extra` is
+    /// empty.
     pub(crate) fn literal(value: String) -> Self {
         Self {
             value: FieldValue::String(value.clone()),

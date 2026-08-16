@@ -10,9 +10,7 @@ use super::{
 };
 use crate::field::FieldValue;
 
-/// Own declaration of a `number` field's type-specific options. See
-/// [`super::select::SchemaSelectFieldDef`]'s docs for why this is one level
-/// more `Option` than [`SchemaFieldType::Number`].
+/// Raw `number` field options before `$ref` merge.
 #[derive(Default)]
 pub(super) struct SchemaNumberFieldDef {
     min: Option<f64>,
@@ -21,10 +19,8 @@ pub(super) struct SchemaNumberFieldDef {
 }
 
 impl SchemaNumberFieldDef {
-    /// Parses every key in `options` against `number`'s valid attributes
-    /// (`min`, `max`, `step`), merges with `base` when present, and returns
-    /// the effective [`SchemaFieldType::Number`] alongside every per-key
-    /// failure encountered.
+    /// Parse `options` against `number`'s `min`/`max`/`step` attributes,
+    /// merging with `base` when present.
     pub(super) fn parse(
         address: FieldAddressRef<'_>,
         options: &BTreeMap<String, FieldValue>,

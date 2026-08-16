@@ -10,18 +10,15 @@ use super::{
 };
 use crate::field::FieldValue;
 
-/// Own declaration of a `date` field's type-specific options. See
-/// [`super::select::SchemaSelectFieldDef`]'s docs for why this is one level
-/// more `Option` than [`SchemaFieldType::Date`].
+/// Raw `date` field options before `$ref` merge.
 #[derive(Default)]
 pub(super) struct SchemaDateFieldDef {
     format: Option<String>,
 }
 
 impl SchemaDateFieldDef {
-    /// Parses every key in `options` against `date`'s one valid attribute
-    /// (`format`), merges with `base` when present, and returns the effective
-    /// [`SchemaFieldType::Date`] alongside every per-key failure encountered.
+    /// Parse `options` against `date`'s `format` attribute, merging with `base`
+    /// when present.
     pub(super) fn parse(
         address: FieldAddressRef<'_>,
         options: &BTreeMap<String, FieldValue>,

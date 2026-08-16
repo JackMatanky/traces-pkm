@@ -1,23 +1,8 @@
-//! Load, resolve, and query Schemas: the `schema` domain's public facade.
+//! Schema loading, resolution, and query facade.
 //!
-//! [`SchemaService`] is the one type the rest of the crate constructs to work
-//! with Schemas. It wraps an owned [`SchemaConfigSpec`] (so `new` is trivial
-//! and does no I/O) and exposes:
-//!
-//! - [`SchemaService::resolve`]: the impure edge — reads every
-//!   `.traces/schemas/*.toml` file under the configured directory
-//!   ([`read_raw_schemas`]), then linearizes the `extends` DAG with Kahn's
-//!   topological sort ([`resolve_all`], driven by
-//!   [`super::graph::SchemaGraph`]) into a [`SchemaRegistry`].
-//! - [`SchemaService::get`]/[`SchemaService::children`]/
-//!   [`SchemaService::descendants`]/[`SchemaService::matches`]/
-//!   [`SchemaService::expand_classes`]: read-side queries over an already
-//!   [`SchemaService::resolve`]d [`SchemaRegistry`].
-//!
-//! [`SchemaRegistry`] itself is a pure lookup table (name to resolved
-//! [`super::model::Schema`]); every hierarchy/class-matching query lives on
-//! [`SchemaService`] instead, so a caller reaches one facade for both loading
-//! and querying.
+//! [`SchemaService`] loads `.traces/schemas/*.toml` files, linearizes the
+//! `extends` DAG, and exposes read-side queries over the resolved
+//! [`SchemaRegistry`].
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -44,12 +29,7 @@ use crate::{
     query::{ClassExpansionMode, QuerySource, SourceAtom},
 };
 
-/// Store every Schema [`SchemaService::resolve`] resolved, keyed by name.
-///
-/// A pure lookup table: reference-counted per Schema, not owned outright, so
-/// [`SchemaService`]'s hierarchy queries share one Schema's field map across
-/// every caller in a render instead of deep-cloning it per lookup, mirroring
-/// [`crate::query::IndexRecord`]'s `Arc<Note>`.
+/// Resolved Schemas keyed by name, reference-counted for cheap cloning.
 #[derive(Clone, Debug)]
 pub(crate) struct SchemaRegistry {
     schemas: BTreeMap<SchemaName, Arc<Schema>>,
@@ -71,11 +51,7 @@ impl SchemaRegistry {
     }
 }
 
-/// Facade over Schema loading, resolution, and hierarchy/class queries.
-///
-/// Wraps an owned [`SchemaConfigSpec`]; `new` is trivial and does no I/O.
-/// [`Self::resolve`] does the actual filesystem read and DAG linearization,
-/// returning a [`SchemaRegistry`] the rest of this type's methods query.
+/// Schema loading, resolution, and hierarchy/class query facade.
 #[derive(Debug)]
 pub struct SchemaService {
     spec: SchemaConfigSpec,
@@ -86,16 +62,8 @@ pub struct SchemaService {
 type SchemaResolution = (Arc<SchemaRegistry>, Vec<SchemaWarning>);
 
 impl SchemaService {
-    /// Wraps `spec`. Does no I/O; call [`Self::resolve`] to actually load
-    /// Schemas.
-    ///
-    /// `pub(crate)`, not `pub`, despite [`SchemaService`] itself being `pub`
-    /// (gated) at the crate root: [`SchemaConfigSpec`] stays `pub(crate)`
-    /// (see its own docs), so a constructor taking one by value can never be
-    /// more public than that without leaking a private type through a public
-    /// signature. The `pub` on the type itself exists so external code can
-    /// *name* and pass around a [`SchemaService`]/[`Schema`] it obtained some
-    /// other way, not to construct one directly.
+    /// Construct a [`SchemaService`] from its config projection.
+    /// Does no I/O; call [`Self::resolve`] to load Schemas.
     #[inline]
     #[must_use]
     pub(crate) fn new(spec: SchemaConfigSpec) -> Self {
@@ -104,50 +72,28 @@ impl SchemaService {
         }
     }
 
-    /// Returns the config projection this service was built from.
-    ///
-    /// `template/engine/schema.rs`'s only route to `root()` (`FileIndex`
-    /// refresh) and `class_field()`/`title_field()`/`aliases_field()`
-    /// (building a `FrontmatterFieldKeys` on the fly for `file`-field label
-    /// resolution).
+    /// Return the config projection this service was built from.
     #[inline]
     #[must_use]
     pub(crate) fn spec(&self) -> &SchemaConfigSpec {
         &self.spec
     }
 
-    /// Load every Schema TOML file directly under
+    /// Load every Schema TOML file under
     /// [`SchemaConfigSpec::directory`] and resolve the `extends` DAG.
     ///
-    /// Reads every `*.toml` file directly under the configured directory
-    /// (non-recursive), parses each as a Schema keyed by its filename stem,
-    /// resolves inheritance, and populates each Schema's `children`/
-    /// `descendants` from the whole DAG in one pass.
-    ///
-    /// A missing directory resolves to an empty registry rather than an
-    /// error: an unconfigured or not-yet-created Schema directory is absence,
-    /// not corruption.
+    /// A missing directory resolves to an empty registry.
     ///
     /// # Errors
     ///
-    /// - [`SchemaError::ReadDirectory`] if the directory exists but its entries
-    ///   cannot be listed.
+    /// - [`SchemaError::ReadDirectory`] if the directory exists but cannot be
+    ///   listed.
     /// - [`SchemaError::ReadFile`] if a `.toml` file cannot be read.
-    /// - [`SchemaError::Parse`] if a Schema file's TOML is malformed, contains
-    ///   an unknown key, has a malformed `$ref`, or defines a field with
-    ///   neither `type` nor `$ref`.
+    /// - [`SchemaError::Parse`] if a Schema file's TOML is malformed.
     /// - [`SchemaError::Cycle`] if the `extends` DAG contains a cycle.
-    /// - [`SchemaError::FieldBuilder`] if a `Direct` field or a `$ref` with a
-    ///   local `type` override declares an attribute key that doesn't belong to
-    ///   its type, a wrongly-shaped attribute value, an out-of-bounds `$ref`,
-    ///   or a `$ref` to a field that doesn't exist.
-    /// - [`SchemaError::AmbiguousFieldName`] if two effective fields share the
-    ///   same canonical metadata key.
-    ///
-    /// `pub(crate)`, not `pub`, for the same reason as [`Self::new`]:
-    /// [`SchemaRegistry`], [`SchemaError`], and [`SchemaWarning`] all stay
-    /// `pub(crate)`, so this method's return type can't be any more public
-    /// without leaking one of them.
+    /// - [`SchemaError::FieldBuilder`] if a field declaration is invalid.
+    /// - [`SchemaError::AmbiguousFieldName`] if two fields share a canonical
+    ///   metadata key.
     pub(crate) fn resolve(&self) -> Result<SchemaResolution, SchemaError> {
         let raw = read_raw_schemas(self.spec.directory())?;
         let (schemas, warnings) = resolve_all(&raw)?;
@@ -230,32 +176,19 @@ impl SchemaService {
             .collect()
     }
 
-    /// Return the set of Schema names in `registry` that match `classes`.
+    /// Return the set of Schema names matching `classes`, including
+    /// transitive descendants.
     ///
-    /// The set includes:
-    ///
-    /// - Every name in `classes` itself (so a class with no Schema still
-    ///   matches itself).
-    /// - Every resolved Schema that is-a one of the class names.
-    ///
-    /// A File Class source query tests each Note's File Class against this set:
-    /// a Note matches when any of its class values is in the returned set.
-    /// Transitive `extends` is folded in here (via each named class's
-    /// precomputed [`Schema::descendants`]) so the caller compares plain
-    /// strings without consulting the registry per Note.
-    ///
-    /// Warns once per name in `classes` with no corresponding Schema, so every
-    /// caller (a `from_class` query source, a `file`-field `class` filter)
-    /// gets the same degrade-to-exact-match diagnostic without each
-    /// implementing its own warning loop.
+    /// A class with no corresponding Schema still matches itself. Warns once
+    /// per unknown class name.
     ///
     /// # Examples
     ///
     /// Given `sci_fi` extending `book`, and `movie` unrelated:
     ///
-    /// - `matches(&["book"])` returns `{"book", "sci_fi"}`.
-    /// - `matches(&["movie"])` returns `{"movie"}`.
-    /// - `matches(&["ghost"])` returns `{"ghost"}` (no Schema, still matches)
+    /// - `matches(&["book"])` → `{"book", "sci_fi"}`
+    /// - `matches(&["movie"])` → `{"movie"}`
+    /// - `matches(&["ghost"])` → `{"ghost"}`
     #[must_use]
     #[expect(
         clippy::unused_self,
@@ -318,11 +251,7 @@ impl SchemaService {
     }
 }
 
-/// Warns once per name in `classes` with no corresponding Schema in
-/// `registry`. Shared by [`SchemaService::matches`] and
-/// [`SchemaService::expand_classes`]'s `Exact`/`Children` branches so every
-/// class-matching entry point emits the same diagnostic exactly once per
-/// call, regardless of which one a caller reaches.
+/// Warn once per unknown class name in `classes`.
 fn warn_unknown_classes(registry: &SchemaRegistry, classes: &[String]) {
     for class in classes {
         if registry.get(class).is_none() {

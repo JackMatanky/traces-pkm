@@ -14,8 +14,8 @@ use super::{
     address::{FieldAddress, FieldAddressRef},
 };
 
-/// Builds one resolved [`SchemaFieldDef`] from its raw declaration, resolving
-/// a `$ref` (if any) against already-resolved Schemas.
+/// Build one [`SchemaFieldDef`] from its raw declaration, resolving `$ref`
+/// targets against already-resolved Schemas.
 pub(crate) struct SchemaFieldBuilder<'a> {
     pub(crate) refs: &'a RefResolver<'a>,
     pub(crate) warnings: &'a mut Vec<SchemaWarning>,
@@ -24,27 +24,16 @@ pub(crate) struct SchemaFieldBuilder<'a> {
 impl SchemaFieldBuilder<'_> {
     /// Build `address`'s effective [`SchemaFieldDef`] from `raw`.
     ///
-    /// - `Direct(kind)`: builds fresh from `raw.options`, no base to merge.
-    /// - `Ref` with a local `type` override: builds fresh from `raw.options`
-    ///   against the override kind, ignoring the base's own type-specific
-    ///   options (see [`SchemaFieldType::try_parse`]'s docs on type-switching
-    ///   refs).
-    /// - Bare `Ref` (no override): resolves the base field via [`RefResolver`],
-    ///   then merges `raw.options` on top of the base's own options at the
-    ///   base's kind. An unrecognized key or wrongly-shaped value here degrades
-    ///   to a [`SchemaWarning`] and is dropped rather than failing the build.
+    /// - `Direct(kind)` or `Ref` with a `type` override: builds fresh from
+    ///   `raw.options` against the resolved kind.
+    /// - Bare `Ref` (no override): resolves the base via [`RefResolver`], then
+    ///   merges `raw.options` on top. Unrecognized or wrongly-shaped keys
+    ///   degrade to [`SchemaWarning`] rather than failing.
     ///
     /// # Errors
     ///
-    /// - Any error [`RefResolver::resolve`] returns while resolving a `$ref`
-    ///   ([`SchemaError::FieldBuilder`] wrapping
-    ///   [`SchemaFieldBuilderError::RefOutOfBounds`] or
-    ///   [`SchemaFieldBuilderError::RefFieldNotFound`]).
-    /// - [`SchemaError::FieldBuilder`] if a `Direct` field or a `$ref` with a
-    ///   local `type` override declares an unrecognized attribute key
-    ///   ([`SchemaFieldBuilderError::UnknownAttributeKey`]) or a wrongly-shaped
-    ///   attribute value
-    ///   ([`SchemaFieldBuilderError::AttributeValueTypeMismatch`]).
+    /// [`SchemaError::FieldBuilder`] on `$ref` resolution failure, unrecognized
+    /// attribute key, or wrongly-shaped attribute value.
     pub(crate) fn build(
         &mut self,
         address: FieldAddressRef<'_>,
@@ -114,11 +103,8 @@ impl SchemaFieldBuilder<'_> {
         ))
     }
 
-    /// Force `required` to `false` and record a
-    /// [`SchemaWarning::StrayGlobalRequired`] when `address.schema()` is the
-    /// Global Schema and it declared `required = true`.
-    ///
-    /// Global Schema fields can never be required.
+    /// Degrade `required` to `false` for Global Schema fields, which can
+    /// never be required.
     fn apply_global_degrade(
         &mut self,
         address: FieldAddressRef<'_>,
@@ -135,20 +121,15 @@ impl SchemaFieldBuilder<'_> {
     }
 }
 
-/// Resolve a Schema's `$ref` values to their base [`SchemaFieldDef`]s, bounded
-/// to the Global Schema or the referencing Schema's transitive `extends`
-/// ancestors.
-///
-/// `$ref`s point up the `extends` DAG or to the Global Schema, so they are
-/// acyclic by construction.
+/// Resolve `$ref` values to their base [`SchemaFieldDef`]s, bounded to the
+/// Global Schema or the referencing Schema's transitive `extends` ancestors.
 pub(crate) struct RefResolver<'a> {
     pub(crate) ancestors: &'a BTreeSet<SchemaName>,
     pub(crate) resolved: &'a BTreeMap<SchemaName, Schema>,
 }
 
 impl<'a> RefResolver<'a> {
-    /// Resolve `base_address`, `address`'s own already-parsed `$ref` value, to
-    /// its base [`SchemaFieldDef`].
+    /// Resolve `base_address` to its [`SchemaFieldDef`].
     ///
     /// # Errors
     ///

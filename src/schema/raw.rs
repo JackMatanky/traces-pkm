@@ -1,22 +1,11 @@
-//! Deserialize Schema TOML files into validated raw shapes.
+//! On-disk Schema TOML shapes and serde deserialization.
 //!
-//! These serde types match the on-disk `.traces/schemas/<name>.toml` shape and
-//! deny unknown fields, so a typo'd key fails at parse rather than silently
-//! vanishing.
-//!
-//! # Boundary
-//!
-//! Preserves TOML values exactly as configured, but parses `$ref` strings and
-//! a Field Definition's `type`/`$ref` source into validated shapes
-//! ([`FieldAddress`], [`RawFieldSource`]) at deserialization time: a
-//! [`RawSchemaFieldDef`] with neither `type` nor `$ref` cannot exist past
-//! parsing. Every other type-specific key (`values`, `folders`/`ext`/`class`,
-//! `min`/`max`/`step`, `format`) lands in [`RawSchemaFieldDef::options`] as a
-//! generic [`FieldValue`], not a fixed Rust type: whether a key belongs to the
-//! field's resolved type, and whether its value is shaped correctly, is
-//! [`super::fields::SchemaFieldBuilder`]'s job, not this module's. Inheritance,
-//! `$ref` resolution against other Schemas, and the reserved Global Schema's
-//! `required` degrade are applied later in [`super::service`].
+//! These types match `.traces/schemas/<name>.toml` and deny unknown fields.
+//! `$ref` strings and `type`/`$ref` source are parsed into validated shapes
+//! ([`FieldAddress`], [`RawFieldSource`]) at deserialization time.
+//! Type-specific keys land in [`RawSchemaFieldDef::options`] as generic
+//! [`FieldValue`]s; their validation is
+//! [`super::fields::SchemaFieldType::try_parse`]'s job.
 
 use std::collections::BTreeMap;
 
@@ -26,55 +15,41 @@ use thiserror::Error;
 use super::{fields::FieldAddress, name::SchemaName};
 use crate::field::{FieldName, FieldValue};
 
-/// Hold raw Schema data from one `.traces/schemas/<name>.toml` file.
+/// One `.traces/schemas/<name>.toml` file, parsed but not yet resolved.
 ///
-/// The filename stem (not any field on this type) is the Schema name; see
-/// [`super::SchemaService::resolve`](super::service::SchemaService::resolve).
+/// The filename stem (not any field on this type) is the Schema name.
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct RawSchema {
-    /// Store parent Schema names, first-listed wins when parents define the
-    /// same field.
+    /// Parent Schema names, first-listed wins on shared fields.
     #[serde(default)]
     pub(crate) extends: Vec<SchemaName>,
-    /// Store field names dropped from inherited Field Definitions.
+    /// Field names to drop from inherited definitions.
     #[serde(default)]
     pub(crate) excludes: Vec<FieldName>,
-    /// Store Field Definitions keyed by field name.
+    /// Field definitions keyed by name.
     #[serde(default)]
     pub(crate) fields: BTreeMap<FieldName, RawSchemaFieldDef>,
 }
 
-/// Hold raw field definition data parsed from TOML.
+/// A field definition parsed from TOML, before `$ref` resolution.
 #[derive(Clone, Debug)]
 pub(crate) struct RawSchemaFieldDef {
-    /// Store the field's declared source: a direct `type`, or a `$ref`
-    /// (optionally overriding its `type` locally).
+    /// The field's source: a direct `type` or a `$ref` with optional override.
     pub(crate) source: RawFieldSource,
-    /// Whether the field must be set. Ignored (with a warning) on the reserved
-    /// Global Schema.
+    /// Whether the field must be set. Ignored (with a warning) on the Global
+    /// Schema.
     pub(crate) required: Option<bool>,
     /// Whether the field accepts multiple values.
     pub(crate) multi: Option<bool>,
-    /// Every type-specific key this field declared (`values`,
-    /// `folders`/`ext`/`class`, `min`/`max`/`step`, `format`), keyed by its
-    /// TOML name and preserved as a generic [`FieldValue`].
-    ///
-    /// A flat bag rather than one Rust field per key: whether a key belongs to
-    /// this field's resolved type, and whether its value is shaped correctly
-    /// for that key, is validated by
-    /// [`super::fields::SchemaFieldBuilder`] once the field's effective type
-    /// is known — a `date` field declaring `values`, or a `number` field
-    /// declaring `min = "abc"`, parses fine here and fails there.
+    /// Type-specific options as raw [`FieldValue`]s, keyed by TOML name.
     pub(crate) options: BTreeMap<String, FieldValue>,
 }
 
 impl RawSchemaFieldDef {
-    /// Build a direct field definition of `kind`, with no type-specific
-    /// options.
+    /// Build a `Direct` field definition with no options.
     ///
-    /// Test-only convenience constructor: tests needing `required`, `multi`,
-    /// or type-specific options use struct-update syntax from the result.
+    /// Test-only: production code deserializes from TOML.
     #[cfg(test)]
     #[inline]
     #[must_use]
@@ -87,8 +62,7 @@ impl RawSchemaFieldDef {
         }
     }
 
-    /// Build a `$ref`-only field definition targeting `address`, with no
-    /// type-specific options.
+    /// Build a `$ref`-only field definition with no options.
     #[cfg(test)]
     #[inline]
     #[must_use]
@@ -160,7 +134,7 @@ impl<'de> Deserialize<'de> for RawSchemaFieldDef {
     }
 }
 
-/// Represent the `type` key of a raw field definition.
+/// The `type` key of a raw field definition.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum RawSchemaFieldType {
@@ -179,9 +153,6 @@ pub(crate) enum RawSchemaFieldType {
 }
 
 impl std::fmt::Display for RawSchemaFieldType {
-    /// Writes the lowercase `type` key value a Schema author would write in
-    /// TOML (`"select"`, not `"Select"`), so field-attribute error messages
-    /// read like the source they describe.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
             Self::Input => "input",
@@ -194,11 +165,8 @@ impl std::fmt::Display for RawSchemaFieldType {
     }
 }
 
-/// Identify a raw field's declared source.
-///
-/// Parsed once at TOML deserialization time so a [`RawSchemaFieldDef`] with
-/// neither `type` nor `$ref` cannot exist past parsing (see
-/// [`RawFieldDefError`]).
+/// How a raw field was declared: `type` alone, or `$ref` with optional
+/// `type` override.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum RawFieldSource {
     /// Use a `type` key with no `$ref`.
@@ -211,7 +179,7 @@ pub(crate) enum RawFieldSource {
     },
 }
 
-/// Describe why a [`RawSchemaFieldDef`] failed to deserialize.
+/// Why a [`RawSchemaFieldDef`] failed to deserialize.
 #[derive(Debug, Error)]
 pub(crate) enum RawFieldDefError {
     /// Neither `type` nor `$ref` was present.
@@ -219,28 +187,20 @@ pub(crate) enum RawFieldDefError {
     MissingSource,
 }
 
-/// Mirror the TOML wire shape for one `[fields.<name>]` table.
+/// Wire shape for one `[fields.<name>]` TOML table.
 ///
-/// Mirrors the TOML exactly (`type`/`$ref` still optional and separate) so
-/// `#[serde(deny_unknown_fields)]` rejects a typo'd key. Every type-specific
-/// key deserializes as a generic [`FieldValue`], not a fixed Rust type: a
-/// `min = "abc"` on a `number` field parses fine here and fails validation
-/// later, in [`super::fields::SchemaFieldBuilder`], as
-/// `AttributeValueTypeMismatch` rather than a TOML parse error.
-/// [`RawSchemaFieldDef`] converts this into a validated [`RawFieldSource`] plus
-/// an `options` map during deserialization; nothing outside this module ever
-/// sees a `RawFieldDefToml`.
+/// `type`/`$ref` are optional and separate; every type-specific key
+/// deserializes as a generic [`FieldValue`]. Converts into a validated
+/// [`RawFieldSource`] plus [`RawSchemaFieldDef::options`] during
+/// deserialization.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawFieldDefToml {
-    /// Store the field kind. Optional only when `reference` supplies it.
+    /// The field's `type` key. Optional when `reference` supplies it.
     #[serde(rename = "type")]
     kind: Option<RawSchemaFieldType>,
-    /// Store a parsed `$ref` address shape.
-    ///
-    /// Raw deserialization only parses the address into a [`FieldAddress`].
-    /// `RefResolver` later checks that it resolves to Global or an ancestor
-    /// Schema field.
+    /// A parsed `$ref` address. Resolution happens in
+    /// [`super::fields::RefResolver`].
     #[serde(rename = "$ref")]
     reference: Option<FieldAddress>,
     required: Option<bool>,

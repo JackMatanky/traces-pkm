@@ -1,31 +1,19 @@
-//! Linearize the `extends` DAG into a resolution order with Kahn's topological
-//! sort.
+//! `extends` DAG linearization via Kahn's topological sort.
 //!
-//! [`SchemaGraph`] owns the DAG bookkeeping — parent/child adjacency, Kahn
-//! in-degrees, and the Global-first tie-break — so [`super::service`] can
-//! drive resolution order without tangling graph mechanics into its
-//! field-merge logic.
+//! [`SchemaGraph`] owns the DAG bookkeeping so [`super::service`] can drive
+//! resolution order without tangling graph mechanics into field-merge logic.
 //!
 //! # Ordering
 //!
-//! A Schema is yielded only after all of its present `extends` parents, so a
-//! child always resolves against already-resolved parents. Schemas that tie at
-//! in-degree zero yield in name order, except the Global Schema, which is
-//! forced to the front of its tier so any sibling that `$ref`s it resolves
-//! afterward.
+//! A Schema is yielded after all its present `extends` parents. Tied in-degree
+//! Schemas yield in name order, with the Global Schema forced first.
 //!
 //! # Driving resolution
 //!
-//! [`SchemaGraph::new`] builds the graph; then loop [`next_ready`] to pop the
-//! next resolvable Schema, [`parents_of`] to read its parents, and
-//! [`mark_resolved`] once it is done to release its children. After the loop,
-//! [`cyclic_remainder`] reports any Schemas a cycle left unresolved.
-//!
-//! Once every Schema resolved (no cycle), [`children_by_name`] and
-//! [`descendants_by_name`] give the bulk direct-child and transitive-extender
-//! sets [`super::model::Schema::children`]/
-//! [`super::model::Schema::descendants`] are populated from — one pass over the
-//! whole DAG rather than an O(n)-per-lookup scan.
+//! Build with [`SchemaGraph::new`], then loop [`next_ready`]/[`parents_of`]/
+//! [`mark_resolved`]. After the loop, [`cyclic_remainder`] reports unresolved
+//! Schemas, and [`children_by_name`]/[`descendants_by_name`] give the bulk
+//! hierarchy sets.
 //!
 //! [`next_ready`]: SchemaGraph::next_ready
 //! [`parents_of`]: SchemaGraph::parents_of
@@ -43,53 +31,27 @@ use super::{
     raw::RawSchema,
 };
 
-/// Track Kahn's-algorithm state for linearizing the `extends` DAG.
-///
-/// Isolates the Global-first tie-break from the field-merge logic in
-/// [`super::service`].
+/// Kahn's-algorithm state for linearizing the `extends` DAG.
 pub(super) struct SchemaGraph<'a> {
-    /// Each Schema's `extends` parents, filtered to present targets and kept
-    /// in declaration order; the Global Schema's list is force-emptied so it
-    /// never inherits. Backs [`parents_of`](Self::parents_of) and the bulk
-    /// [`children_by_name`](Self::children_by_name) accessor.
+    /// Each Schema's `extends` parents, filtered to present targets, in
+    /// declaration order. The Global Schema's list is force-emptied.
     parents_by_name: BTreeMap<SchemaNameRef<'a>, Vec<SchemaNameRef<'a>>>,
-    /// Reverse `extends` adjacency (parent to children), used by
-    /// [`mark_resolved`](Self::mark_resolved) to decrement children's
-    /// in-degrees. Unlike [`children_by_name`](Self::children_by_name), this
-    /// keeps an edge into the Global Schema when some Schema names it as a
-    /// parent (Kahn's algorithm needs that edge to release the child's
-    /// in-degree, even though Global is never a real `extends` link for
-    /// field-inheritance purposes).
+    /// Reverse `extends` adjacency (parent → children), used by
+    /// [`mark_resolved`](Self::mark_resolved) to decrement in-degrees.
     children_by_name: BTreeMap<SchemaNameRef<'a>, Vec<SchemaNameRef<'a>>>,
-    /// Count of not-yet-resolved parents per Schema; a Schema becomes ready
-    /// when it reaches zero. The Global Schema is forced to zero at
-    /// construction.
+    /// Not-yet-resolved parent count per Schema; ready at zero.
     in_degree: BTreeMap<SchemaNameRef<'a>, usize>,
-    /// Schemas at in-degree zero awaiting resolution, with the Global Schema
-    /// reordered to the front so it resolves before any sibling that `$ref`s
-    /// it.
+    /// Ready Schemas, with Global forced to the front.
     queue: VecDeque<SchemaNameRef<'a>>,
-    /// Schemas already popped by [`next_ready`](Self::next_ready); its
-    /// complement in `raw_schemas` is the cyclic remainder.
+    /// Schemas already popped by [`next_ready`](Self::next_ready).
     visited: BTreeSet<SchemaNameRef<'a>>,
 }
 
 impl<'a> SchemaGraph<'a> {
-    /// Build `raw_schemas`' `extends` adjacency (parent to children) and Kahn
-    /// in-degrees, seeding the ready queue with every in-degree-zero Schema.
+    /// Build the `extends` adjacency and seed the ready queue.
     ///
-    /// Filtering and tie-breaking:
-    ///
-    /// - Each Schema's `extends` list is filtered to targets `raw_schemas`
-    ///   actually contains; a missing target emits
-    ///   [`SchemaWarning::MissingExtendsTarget`].
-    /// - The reserved Global Schema has no effective parents for resolution
-    ///   ordering or field inheritance. It is a flat `$ref`-able reference
-    ///   pool, not a link in the `extends` chain.
-    /// - Kahn's sort only guarantees parent-before-child ordering along
-    ///   `extends` edges, so several Schemas can tie at in-degree zero. The
-    ///   ready queue reorders Global to the front of that tier so it resolves
-    ///   before any sibling that might `$ref` it.
+    /// Missing `extends` targets emit [`SchemaWarning::MissingExtendsTarget`].
+    /// The Global Schema is forced to the front of its tier.
     pub(super) fn new(
         raw_schemas: &'a BTreeMap<SchemaName, RawSchema>,
         warnings: &mut Vec<SchemaWarning>,

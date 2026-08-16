@@ -1,20 +1,13 @@
-//! Distinguish Schema names from other string identifiers.
+//! Schema name newtypes: owned ([`SchemaName`]) and borrowed
+//! ([`SchemaNameRef`]).
 //!
-//! Mirrors the crate's [`FileName`](crate::file_name::FileName)/
-//! [`BaseName`](crate::file_name::BaseName)/
-//! [`BaseNameRef`](crate::file_name::BaseNameRef) split: [`SchemaName`] owns
-//! for storage; [`SchemaNameRef`] borrows for zero-allocation comparisons in
-//! `resolve::SchemaGraph` and `address::FieldAddressRef`.
-//!
-//! Ordering matches `str`'s: derived `Ord`/`PartialOrd` on a single-field
-//! tuple struct delegates to the wrapped field, which `SchemaGraph`'s
-//! determinism and its Global-first Kahn tie-break depend on.
+//! Ordering matches `str`'s, which `SchemaGraph`'s determinism depends on.
 
 use std::{borrow::Borrow, fmt};
 
 use serde::Deserialize;
 
-/// Store a Schema name from its source file stem.
+/// A Schema name from its source file stem.
 #[derive(Clone, Default, Eq, Hash, Ord, PartialEq, PartialOrd, Deserialize)]
 pub(crate) struct SchemaName(String);
 
@@ -53,8 +46,7 @@ impl Borrow<str> for SchemaName {
 }
 
 impl fmt::Debug for SchemaName {
-    /// Match `str`'s own `Debug` (quoted, escaped) so wrapping a Schema name
-    /// in this type never changes an error or warning message's text.
+    /// Match `str`'s `Debug` so wrapping never changes error messages.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Debug::fmt(&self.0, f)
     }
@@ -92,8 +84,7 @@ impl Borrow<str> for SchemaNameRef<'_> {
 }
 
 impl fmt::Debug for SchemaNameRef<'_> {
-    /// Match `str`'s own `Debug` (quoted, escaped); see [`SchemaName`]'s
-    /// `Debug` impl for why this matters.
+    /// Match `str`'s `Debug`; see [`SchemaName`].
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Debug::fmt(self.0, f)
     }

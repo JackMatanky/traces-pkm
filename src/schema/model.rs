@@ -1,46 +1,26 @@
-//! Store the resolved Schema domain type.
-//!
-//! [`Schema`] holds effective [`SchemaFieldDef`]s after inheritance,
-//! `excludes`, and `$ref` are applied, plus its transitive `extends`
-//! ancestors, direct extenders (`children`), and transitive extenders
-//! (`descendants`). Field construction lives in [`super::fields`]; this module
-//! is the plain data type and its own lookups.
-//!
-//! Construction stays `pub(super)`: only [`super::service`] builds these; the
-//! rest of the crate reads them through `pub(crate)` accessors.
+//! The resolved [`Schema`] domain type and its lookups.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::{fields::SchemaFieldDef, name::SchemaName};
 use crate::field::{FieldName, closest_match};
 
-/// Store one Schema's effective [`SchemaFieldDef`]s and its position in the
-/// `extends` DAG.
-///
-/// Fields are resolved after inheritance, `excludes`, and `$ref` application.
+/// A resolved Schema with its effective field definitions and position in
+/// the `extends` DAG.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Schema {
     name: SchemaName,
     fields: BTreeMap<FieldName, SchemaFieldDef>,
-    /// Transitive `extends` targets, filtered to targets that resolved (a
-    /// missing target never reaches here; see
-    /// [`super::error::SchemaWarning::MissingExtendsTarget`]).
+    /// Transitive `extends` targets that resolved.
     ancestors: BTreeSet<SchemaName>,
-    /// Schemas that directly `extends` this one. Populated once, during
-    /// [`super::service::SchemaService::resolve`], from
-    /// [`super::graph::SchemaGraph::children_by_name`] — not an O(n)
-    /// per-lookup scan.
+    /// Schemas that directly `extends` this one.
     children: BTreeSet<SchemaName>,
-    /// Every Schema that transitively `extends` this one (its `children`,
-    /// their `children`, and so on). Populated the same way as `children`, via
-    /// [`super::graph::SchemaGraph::descendants_by_name`].
+    /// Every Schema that transitively `extends` this one.
     descendants: BTreeSet<SchemaName>,
 }
 
 impl Schema {
-    /// Build a resolved Schema from its merged fields and ancestors. `children`
-    /// and `descendants` start empty; [`Self::set_hierarchy`] fills them in
-    /// once the whole `extends` DAG is confirmed acyclic.
+    /// Build a resolved Schema from its merged fields and ancestors.
     pub(super) fn new(
         name: SchemaName,
         fields: BTreeMap<FieldName, SchemaFieldDef>,
@@ -55,8 +35,7 @@ impl Schema {
         }
     }
 
-    /// Set this Schema's direct extenders and transitive extenders, computed
-    /// in bulk over the whole `extends` DAG once every Schema resolved.
+    /// Set this Schema's direct and transitive extenders.
     pub(super) fn set_hierarchy(
         &mut self,
         children: BTreeSet<SchemaName>,
@@ -88,9 +67,7 @@ impl Schema {
         self.fields.get(name)
     }
 
-    /// Return this Schema's transitive `extends` ancestors, used by
-    /// [`super::service`]'s per-schema build step to accumulate a child's own
-    /// ancestor set from its parents'.
+    /// Return this Schema's transitive `extends` ancestors.
     #[inline]
     #[must_use]
     pub(super) fn ancestors(&self) -> &BTreeSet<SchemaName> {
@@ -111,20 +88,15 @@ impl Schema {
         &self.descendants
     }
 
-    /// Test whether this Schema is-a class name.
-    ///
-    /// The `ancestors` set includes all transitive `extends` targets that
-    /// resolved during [`super::service::SchemaService::resolve`], so this
-    /// check covers indirect inheritance chains, such as `sci_fi` to `book` to
-    /// `thing`.
+    /// Test whether this Schema is a `class` name.
     ///
     /// # Examples
     ///
     /// A `sci_fi` Schema that transitively extends `book`:
     ///
-    /// - `sci_fi.is_a("sci_fi")` returns `true` for itself.
-    /// - `sci_fi.is_a("book")` returns `true` for an ancestor.
-    /// - `sci_fi.is_a("movie")` returns `false` for an unrelated class.
+    /// - `sci_fi.is_a("sci_fi")` → `true` (itself)
+    /// - `sci_fi.is_a("book")` → `true` (ancestor)
+    /// - `sci_fi.is_a("movie")` → `false` (unrelated)
     #[inline]
     #[must_use]
     #[cfg_attr(
@@ -142,17 +114,12 @@ impl Schema {
         self.name.as_str() == class || self.ancestors.contains(class)
     }
 
-    /// Suggest the field name in this Schema that best matches `field`, for a
-    /// template adapter's `did you mean` hint on an unknown-field render
-    /// error. Never consulted on a successful field lookup, which stays
-    /// exact.
+    /// Suggest the field name that best matches `field`, for a template
+    /// adapter's "did you mean" hint on an unknown-field error.
     ///
-    /// Prefers a canonical ([`crate::field::FieldKey`]) match over an
-    /// edit-distance match. Suggests nothing when `field` itself fails
-    /// [`crate::field::FieldKey`] validation, when no field canonically or
-    /// approximately matches, or when more than one field canonically matches
-    /// (Schema resolution already rejects two fields sharing a canonical form
-    /// within one Schema, so this last case is defensive).
+    /// Prefers a canonical ([`crate::field::FieldKey`]) match over edit
+    /// distance. Returns `None` when no candidate matches or more than one
+    /// field canonically matches.
     #[must_use]
     pub(crate) fn suggest_field(&self, field: &str) -> Option<&str> {
         let input_key = crate::field::FieldKey::try_from(field).ok()?;
@@ -165,9 +132,7 @@ impl Schema {
         }
     }
 
-    /// Find the field name in this Schema with the smallest edit distance to
-    /// `field`, for [`Self::suggest_field`]'s fallback when no field
-    /// canonically matches.
+    /// Find the field name with the smallest edit distance to `field`.
     fn closest_field_name(&self, field: &str) -> Option<&str> {
         closest_match(
             self.fields.keys().map(|name| (name.as_str(), name.as_str())),

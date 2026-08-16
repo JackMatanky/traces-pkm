@@ -1,8 +1,4 @@
-//! Parse and carry `$ref` field addresses.
-//!
-//! [`FieldAddress`] owns a `#<schema>/<field>` coordinate parsed from TOML.
-//! [`FieldAddressRef`] borrows the same shape while resolving a current field,
-//! following the crate's owned/borrowed newtype split.
+//! `#<schema>/<field>` address parsing and representation.
 
 use std::{fmt, str::FromStr};
 
@@ -12,7 +8,7 @@ use thiserror::Error;
 use super::super::name::{SchemaName, SchemaNameRef};
 use crate::field::{FieldName, FieldNameError, FieldNameRef};
 
-/// Store an owned `#<schema>/<field>` address.
+/// An owned `#<schema>/<field>` coordinate parsed from a `$ref` string.
 #[derive(Clone, Eq, PartialEq)]
 pub(crate) struct FieldAddress {
     schema: SchemaName,
@@ -36,11 +32,7 @@ impl FieldAddress {
 
     /// Borrow this address as a [`FieldAddressRef`].
     ///
-    /// Test-only: production code always builds a [`FieldAddressRef`] directly
-    /// from its `SchemaNameRef`/`FieldNameRef` parts; this exists so
-    /// cross-module test fixtures (`schema::fields`, `schema::service`) can
-    /// turn an already-built [`FieldAddress`] test fixture into one without
-    /// duplicating [`FieldAddressRef::new`] call sites.
+    /// Test-only: production code builds [`FieldAddressRef`] directly.
     #[cfg(test)]
     #[inline]
     #[must_use]
@@ -112,17 +104,12 @@ impl FromStr for FieldAddress {
 }
 
 impl fmt::Display for FieldAddress {
-    /// Write `#<schema>/<field>` directly into the formatter, without
-    /// allocating an intermediate `String`.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "#{}/{}", self.schema, self.field)
     }
 }
 
 impl fmt::Debug for FieldAddress {
-    /// Match `str`'s own `Debug` (quoted, escaped) applied to this address's
-    /// `#<schema>/<field>` display form, so wrapping a `$ref` in this type
-    /// never changes an error message's text.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Debug::fmt(&self.to_string(), f)
     }
@@ -143,7 +130,7 @@ impl<'de> Deserialize<'de> for FieldAddress {
     }
 }
 
-/// Borrow a `#<schema>/<field>` address.
+/// A borrowed `#<schema>/<field>` coordinate.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(crate) struct FieldAddressRef<'a> {
     schema: SchemaNameRef<'a>,
@@ -151,7 +138,7 @@ pub(crate) struct FieldAddressRef<'a> {
 }
 
 impl<'a> FieldAddressRef<'a> {
-    /// Build a borrowed Schema field address.
+    /// Build a borrowed field address from its schema and field parts.
     #[inline]
     #[must_use]
     pub(crate) fn new(
@@ -179,10 +166,10 @@ impl<'a> FieldAddressRef<'a> {
     }
 }
 
-/// Describe why a [`FieldAddress`] failed to parse.
+/// Why a [`FieldAddress`] failed to parse.
 #[derive(Debug, Error)]
 pub(crate) enum FieldAddressError {
-    /// `reference` was not shaped `#<schema>/<field>` with both segments
+    /// The input was not shaped `#<schema>/<field>` with both segments
     /// non-empty.
     #[error("malformed $ref {reference:?}: expected `#<schema>/<field>`")]
     Malformed {

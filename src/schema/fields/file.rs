@@ -20,19 +20,7 @@ use super::{
 };
 use crate::field::FieldValue;
 
-/// Borrow a resolved `file` field's `FileIndex` filter parts.
-///
-/// Returned by [`super::SchemaFieldDef::file_filter`] for `file` fields.
-/// Non-`file` fields return `None` from that method.
-pub(crate) struct SchemaFileFieldDefRef<'a> {
-    pub(crate) folders: &'a [String],
-    pub(crate) ext: Option<&'a str>,
-    pub(crate) class: &'a [String],
-}
-
-/// Own declaration of a `file` field's type-specific options. See
-/// [`super::select::SchemaSelectFieldDef`]'s docs for why this is one level
-/// more `Option` than [`SchemaFieldType::File`].
+/// Raw `file` field options before `$ref` merge.
 #[derive(Default)]
 pub(super) struct SchemaFileFieldDef {
     folders: Vec<String>,
@@ -41,7 +29,7 @@ pub(super) struct SchemaFileFieldDef {
 }
 
 impl SchemaFileFieldDef {
-    /// Borrow this definition's filter parts.
+    /// Borrow this definition as a [`SchemaFileFieldDefRef`].
     #[inline]
     #[must_use]
     pub(super) fn as_ref(&self) -> SchemaFileFieldDefRef<'_> {
@@ -52,10 +40,8 @@ impl SchemaFileFieldDef {
         }
     }
 
-    /// Parses every key in `options` against `file`'s valid attributes
-    /// (`folders`, `ext`, `class`), merges with `base` when present, and
-    /// returns the effective [`SchemaFieldType::File`] alongside every per-key
-    /// failure encountered.
+    /// Parse `options` against `file`'s `folders`/`ext`/`class` attributes,
+    /// merging with `base` when present.
     pub(super) fn parse(
         address: FieldAddressRef<'_>,
         options: &BTreeMap<String, FieldValue>,
@@ -142,4 +128,11 @@ impl SchemaFileFieldDef {
             errors,
         )
     }
+}
+
+/// A borrowed view of a resolved `file` field's filter parts.
+pub(crate) struct SchemaFileFieldDefRef<'a> {
+    pub(crate) folders: &'a [String],
+    pub(crate) ext: Option<&'a str>,
+    pub(crate) class: &'a [String],
 }

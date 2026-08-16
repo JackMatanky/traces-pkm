@@ -1,11 +1,7 @@
-//! Report Schema loading, resolution, and field-construction defects.
+//! Schema loading, resolution, and field-construction error types.
 //!
-//! - [`SchemaError`]: a hard failure; loading or resolution stops.
-//! - [`SchemaFieldBuilderError`]: a hard failure specific to building one
-//!   field's effective type from its declared attributes or `$ref`; wraps into
-//!   [`SchemaError::FieldBuilder`].
-//! - [`SchemaWarning`]: a recoverable defect; resolution continues with a
-//!   documented fallback.
+//! [`SchemaError`] is a hard failure that stops resolution. [`SchemaWarning`]
+//! is a recoverable defect that resolution degrades past.
 
 use std::{fmt, path::PathBuf};
 
@@ -14,50 +10,40 @@ use thiserror::Error;
 use super::{fields::FieldAddress, name::SchemaName, raw::RawSchemaFieldType};
 use crate::field::FieldName;
 
-/// Stop Schema loading or resolution on a hard failure.
+/// A hard failure that stops Schema loading or resolution.
 ///
-/// Contrast [`SchemaWarning`], which is emitted for a defect resolution
-/// recovers from (a missing `extends` target, a stray `required = true` on the
-/// reserved Global Schema, an unrecognized or wrongly-shaped attribute key on
-/// a bare `$ref` override).
-///
-/// A malformed `$ref` or a Field Definition declaring neither `type` nor `$ref`
-/// fails earlier during TOML parsing as [`Self::Parse`]: see
-/// [`super::fields::FieldAddress`] and [`super::raw::RawFieldDefError`].
+/// Contrast [`SchemaWarning`], which is emitted for defects resolution
+/// recovers from.
 #[derive(Debug, Error)]
 pub(crate) enum SchemaError {
-    /// Report a registry directory that exists but could not be read.
+    /// The registry directory exists but could not be read.
     #[error("failed to read Schema registry directory {directory}: {source}")]
     ReadDirectory {
         directory: PathBuf,
         #[source]
         source: std::io::Error,
     },
-    /// Report a Schema TOML file that could not be read.
+    /// A Schema TOML file could not be read.
     #[error("failed to read Schema file {path}: {source}")]
     ReadFile {
         path: PathBuf,
         #[source]
         source: std::io::Error,
     },
-    /// Report a Schema TOML file that failed to parse: malformed TOML, an
-    /// unknown key, a malformed `$ref`, or a Field Definition with neither
-    /// `type` nor `$ref`.
+    /// A Schema TOML file failed to parse.
     #[error("failed to parse Schema {schema}: {source}")]
     Parse {
         schema: SchemaName,
         #[source]
         source: Box<toml::de::Error>,
     },
-    /// Report an `extends` DAG cycle; Kahn's topological sort could not
-    /// order every Schema.
+    /// The `extends` DAG contains a cycle.
     #[error("cycle detected among Schemas: {}", .schemas.join(", "))]
     Cycle {
         schemas: Vec<SchemaName>,
     },
-    /// Report two effective fields that share a
-    /// [`FieldKey`](crate::field::FieldKey) canonical form: Note metadata could
-    /// never disambiguate which one a value belongs to.
+    /// Two effective fields share a [`FieldKey`](crate::field::FieldKey)
+    /// canonical form.
     #[error(
         "Schema {schema:?} has ambiguous fields {first:?} and {second:?}: \
          both canonicalize to the same metadata key"
@@ -67,11 +53,8 @@ pub(crate) enum SchemaError {
         first: FieldName,
         second: Box<FieldName>,
     },
-    /// Report a field that failed to build: an attribute key that doesn't
-    /// belong to its resolved type, a wrongly-shaped attribute value, or a
-    /// `$ref` resolution failure. Boxed so a large
-    /// [`SchemaFieldBuilderError`] variant (it carries two owned `String`s)
-    /// cannot grow this enum's own size.
+    /// A field failed to build: unrecognized attribute, wrongly-shaped value,
+    /// or `$ref` resolution failure.
     #[error(transparent)]
     FieldBuilder(Box<SchemaFieldBuilderError>),
 }
@@ -82,31 +65,24 @@ impl From<SchemaFieldBuilderError> for SchemaError {
     }
 }
 
-/// Report why [`super::fields::SchemaFieldBuilder::build`] could not build one
-/// field's effective type.
+/// Why [`super::fields::SchemaFieldBuilder::build`] failed.
 ///
-/// [`Self::RefOutOfBounds`]/[`Self::RefFieldNotFound`] only ever arise while
-/// resolving a `$ref`'s base field, always a hard failure regardless of
-/// override kind. [`Self::UnknownAttributeKey`]/
-/// [`Self::AttributeValueTypeMismatch`] arise while validating a field's own
-/// type-specific attributes: a hard failure for a `Direct` field or a
-/// `$ref` with a local `type` override, degraded to
-/// [`SchemaWarning::UnknownOverrideKey`]/
-/// [`SchemaWarning::OverrideValueTypeMismatch`] for a bare `$ref` override (see
-/// [`super::fields::AttributeError`]).
+/// [`Self::RefOutOfBounds`] and [`Self::RefFieldNotFound`] are always hard
+/// failures. [`Self::UnknownAttributeKey`] and
+/// [`Self::AttributeValueTypeMismatch`] are hard failures for `Direct` fields
+/// and `$ref` fields with a local `type` override, but degrade to
+/// [`SchemaWarning`] for bare `$ref` overrides.
 #[derive(Debug, Error)]
 pub(crate) enum SchemaFieldBuilderError {
-    /// `key` isn't a valid attribute for a field of type `kind` at all (e.g.
-    /// `values` declared on a `date` field). No `value` field: what was
-    /// assigned is irrelevant — the key itself is the mistake.
+    /// An attribute key is not valid for the field's resolved type.
     #[error("field {address} of type {kind} has no attribute {key:?}")]
     UnknownAttributeKey {
         address: FieldAddress,
         kind: RawSchemaFieldType,
         key: String,
     },
-    /// `key` is a valid attribute for `kind`, but its declared value isn't
-    /// shaped like `expected` (e.g. `min = "abc"` on a `number` field).
+    /// An attribute key is valid for the field's type, but its value is
+    /// wrongly shaped.
     #[error(
         "field {address} of type {kind}'s {key:?} attribute must be \
          {expected}, got {value}"
@@ -128,7 +104,7 @@ pub(crate) enum SchemaFieldBuilderError {
         own: Box<FieldAddress>,
         reference: Box<FieldAddress>,
     },
-    /// A `$ref` names an in-bounds Schema that has no such field.
+    /// A `$ref` names an in-bounds Schema that lacks the referenced field.
     #[error("$ref {reference} in field {own} does not resolve")]
     RefFieldNotFound {
         own: Box<FieldAddress>,
@@ -136,42 +112,30 @@ pub(crate) enum SchemaFieldBuilderError {
     },
 }
 
-/// Report a recoverable Schema resolution defect.
+/// A recoverable Schema resolution defect.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum SchemaWarning {
-    /// Report an `extends` target with no corresponding Schema file.
+    /// An `extends` target has no corresponding Schema file.
     ///
-    /// Resolution skips the missing parent. The Schema's own fields still
-    /// resolve, and any other valid `extends` parents still contribute their
-    /// inherited fields and ancestors.
+    /// Resolution skips the missing parent; the Schema's own fields still
+    /// resolve, and other valid parents still contribute.
     MissingExtendsTarget {
         schema: SchemaName,
         target: SchemaName,
     },
-    /// Report `required = true` on the reserved Global Schema.
-    ///
-    /// Global Schema fields can never be required, so resolution treats it as
-    /// `false`. A Schema `$ref`-ing this field may still mark it required
-    /// locally.
+    /// `required = true` on the Global Schema, which is ignored.
     StrayGlobalRequired {
         field: String,
     },
-    /// Report a bare `$ref` override (no local `type` override) declaring an
-    /// attribute key that doesn't belong to the resolved base field's type.
-    ///
-    /// The key is dropped; every other valid key in the same override still
-    /// applies. A `Direct` field or a `$ref` with a local `type` override
-    /// treats this as a hard [`SchemaError::FieldBuilder`] instead.
+    /// A bare `$ref` override declares an attribute key that does not belong
+    /// to the resolved base field's type. The key is dropped.
     UnknownOverrideKey {
         address: FieldAddress,
         kind: RawSchemaFieldType,
         key: String,
     },
-    /// Report a bare `$ref` override declaring a valid attribute key with a
-    /// wrongly-shaped value.
-    ///
-    /// The key is dropped, falling back to the base field's own value for
-    /// that key; every other valid key in the same override still applies.
+    /// A bare `$ref` override declares a valid attribute key with a
+    /// wrongly-shaped value. The key is dropped, falling back to the base.
     OverrideValueTypeMismatch {
         address: FieldAddress,
         kind: RawSchemaFieldType,

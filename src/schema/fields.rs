@@ -1,23 +1,19 @@
-//! Build resolved Field Definitions from raw Schema TOML and `$ref` bases.
+//! Resolved field definitions, type-specific options, and `$ref` building.
 //!
-//! [`SchemaFieldType`] absorbs what used to be a separate `FieldType` tag plus
-//! `FieldOptions`: no field type without its own options can exist, and no
-//! separate kind-only type shadows [`RawSchemaFieldType`], which already serves
-//! that role at both the wire layer and here.
+//! Each raw field's `type` and `options` bag are validated and merged into a
+//! [`SchemaFieldType`] by [`SchemaFieldType::try_parse`]. The same validation
+//! backs two severities: a hard failure for `Direct` fields and `$ref` fields
+//! with a local `type` override, or a degraded warning for bare `$ref`
+//! overrides that drops the offending key and keeps every other valid key.
 //!
-//! [`SchemaFieldType::try_parse`] is the one seam that resolves a raw field's
-//! type-specific `options` bag (a [`std::collections::BTreeMap<String,
-//! FieldValue>`](crate::field::FieldValue)) into a [`SchemaFieldType`],
-//! validating that every declared key belongs to the field's resolved type and
-//! every declared value is shaped correctly for that key. The same validation
-//! backs two severities: [`super::builder::SchemaFieldBuilder::build`]
-//! hard-fails a `Direct` field or a `$ref` with a local `type` override
-//! ([`SchemaFieldBuilderError::UnknownAttributeKey`]/
-//! [`SchemaFieldBuilderError::AttributeValueTypeMismatch`]), while a bare
-//! `$ref` override (no local `type` override) degrades the same failure to a
-//! warning ([`SchemaWarning::UnknownOverrideKey`]/
-//! [`SchemaWarning::OverrideValueTypeMismatch`]), drops the offending key, and
-//! keeps every other valid key.
+//! Submodules partition the per-type parsing:
+//!
+//! - [`select`] parses `values` into [`SchemaSelectFieldEntry`]s.
+//! - [`number`] parses `min`/`max`/`step`.
+//! - [`date`] parses `format`.
+//! - [`mod@file`] parses `folders`/`ext`/`class` and provides
+//!   [`SchemaFileFieldDefRef`] for `FileIndex` queries.
+//! - [`builder`] resolves `$ref` targets and builds [`SchemaFieldDef`]s.
 
 mod address;
 pub(crate) use address::{FieldAddress, FieldAddressRef};
@@ -39,10 +35,7 @@ use error::AttributeError;
 use super::raw::RawSchemaFieldType;
 use crate::field::FieldValue;
 
-/// Store one resolved field definition.
-///
-/// `required` and `multi` are currently inert; reserved for future LSP/MCP
-/// guardrails.
+/// One resolved field definition after inheritance and `$ref` application.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct SchemaFieldDef {
     kind: SchemaFieldType,
@@ -51,7 +44,6 @@ pub(crate) struct SchemaFieldDef {
 }
 
 impl SchemaFieldDef {
-    /// Build a resolved field definition from already-merged parts.
     fn new(kind: SchemaFieldType, required: bool, multi: bool) -> Self {
         Self {
             kind,
@@ -73,20 +65,15 @@ impl SchemaFieldDef {
         Self::new(kind, required, multi)
     }
 
-    /// Return this field's type-specific effective type.
+    /// Return this field's effective [`SchemaFieldType`].
     #[inline]
     #[must_use]
     pub(crate) fn kind(&self) -> &SchemaFieldType {
         &self.kind
     }
 
-    /// Return this field's static selectable entries for the `schema`
-    /// minijinja namespace's `.field()` method, or `None` if this field type
-    /// has none to offer without consulting the file index.
-    ///
-    /// Only `select` fields have entries here; `file` resolves live from the
-    /// `FileIndex` (see [`Self::file_filter`]), and every other type is not
-    /// list-bearing.
+    /// Return the static selectable entries for a `select` or `multi` field,
+    /// or `None` for every other field type.
     #[inline]
     #[must_use]
     pub(crate) fn select_values(&self) -> Option<&[SchemaSelectFieldEntry]> {
@@ -108,8 +95,8 @@ impl SchemaFieldDef {
         }
     }
 
-    /// Return this file field's `FileIndex` filter parts, or `None` for every
-    /// non-`file` field type.
+    /// Return the [`file::SchemaFileFieldDefRef`] for a `file` field, or
+    /// `None` for every other field type.
     #[inline]
     #[must_use]
     pub(crate) fn file_filter(
@@ -139,8 +126,7 @@ impl SchemaFieldDef {
         }
     }
 
-    /// Return `true` if this field must be set. Always `false` on the reserved
-    /// Global Schema, regardless of its own TOML.
+    /// Return `true` if this field must be set.
     #[inline]
     #[must_use]
     pub(crate) fn is_required(&self) -> bool {
@@ -155,45 +141,40 @@ impl SchemaFieldDef {
     }
 }
 
-/// Represent a field's effective type and type-specific options.
+/// A field's effective type and its type-specific options.
 ///
-/// Pairs each kind with the options only that kind carries: a `select` field
-/// without `values`, or a `date` field with a stray `folders` list, cannot be
-/// represented. `select` and `file` are the only list-bearing kinds; `number`
-/// carries `step`/`min`/`max` and `date` a `format`; the rest are unit
-/// variants. Replaces a separate `FieldType` tag: [`RawSchemaFieldType`]
-/// already names every kind at the wire layer, so [`Self::raw_kind`] returns
-/// that instead of a second, schema-domain-only tag type.
+/// Each variant carries only the options relevant to that kind: `select`
+/// carries `values`, `number` carries `min`/`max`/`step`, `date` carries
+/// `format`, and `file` carries `folders`/`ext`/`class`. [`Input`] and
+/// [`Boolean`] are unit variants with no options.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum SchemaFieldType {
-    /// Accept free-form text input.
+    /// Free-form text input.
     Input,
-    /// Accept one value from a configured list.
+    /// One value from a configured list.
     Select {
         values: Vec<SchemaSelectFieldEntry>,
     },
-    /// Accept a boolean value.
+    /// Boolean value.
     Boolean,
-    /// Accept a numeric value.
+    /// Numeric value with optional bounds and step.
     Number {
-        /// Inclusive minimum; `None` when unset.
+        /// Inclusive minimum bound.
         min: Option<f64>,
-        /// Inclusive maximum; `None` when unset.
+        /// Inclusive maximum bound.
         max: Option<f64>,
-        /// Increment step for the numeric value; `None` when unset.
+        /// Increment step.
         step: Option<f64>,
     },
-    /// Accept a date value.
+    /// Date value with an optional display format.
     Date {
-        /// Display/parse format (strftime); `None` when unset.
+        /// Display/parse format (strftime).
         format: Option<String>,
     },
-    /// Accept a link to files matched by folder, extension, and class filters.
+    /// A link to files matched by folder, extension, and class filters.
     ///
-    /// `class` stays the declared string list, unmatched against is-a
-    /// expansion here: [`super::SchemaService::matches`] applies is-a
-    /// expansion live, at render/query time, same as every other class
-    /// filter in this crate.
+    /// Class matching happens at query time via
+    /// [`super::SchemaService::matches`], not here.
     File {
         folders: Vec<String>,
         ext: Option<String>,
@@ -224,20 +205,14 @@ impl SchemaFieldType {
         }
     }
 
-    /// Parses every key in `options` for a field of `kind`, falling back to
-    /// `base`'s options for any key `options` leaves unset, and returns the
-    /// resulting effective type alongside every per-key validation failure.
+    /// Parse `options` for a field of `kind`, falling back to `base` for any
+    /// key `options` leaves unset. Returns the effective type and every per-key
+    /// validation failure.
     ///
-    /// `base` is only consulted when it is `Some` of the same
-    /// [`RawSchemaFieldType`] kind; a `$ref` that switches type, or a field
-    /// with no base at all, starts from empty options instead of reusing a
-    /// mismatched base. For example, a `select`'s `values` never leaks into an
-    /// overriding `file` field.
-    ///
-    /// `Input`/`Boolean` have no type-specific keys at all: every key in
-    /// `options` is unrecognized for them, so each becomes its own
-    /// [`AttributeError::UnknownKey`] rather than routing through a dedicated
-    /// (empty) own-declaration struct.
+    /// `base` is only consulted when it matches `kind`. A `$ref` that switches
+    /// type starts from empty options. `Input`/`Boolean` have no type-specific
+    /// keys, so every key in `options` becomes an
+    /// [`AttributeError::UnknownKey`].
     pub(super) fn try_parse(
         address: address::FieldAddressRef<'_>,
         kind: RawSchemaFieldType,
@@ -275,13 +250,10 @@ impl SchemaFieldType {
     }
 }
 
-/// One selectable entry a `select`/`multi` field's `values` resolves to.
+/// One selectable entry a `select`/`multi` field resolves its `values` to.
 ///
-/// No memory of source: literal today (every entry built by
-/// [`SchemaSelectFieldEntry::literal`]); an inline object or values-file
-/// entry once ticket 08 lands. `template/engine/schema.rs` renders an
-/// entry as a plain string when `label == value` and `extra` is empty
-/// (always true under this ticket), else as `{value, label, ...extra}`.
+/// Rendered as a plain string when `label == value` and `extra` is empty,
+/// otherwise as `{value, label, ...extra}`.
 pub(crate) use select::SchemaSelectFieldEntry;
 
 #[cfg(test)]
