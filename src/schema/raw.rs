@@ -4,8 +4,9 @@
 //! `$ref` strings and `type`/`$ref` source are parsed into validated shapes
 //! ([`FieldAddress`], [`RawFieldSource`]) at deserialization time.
 //! Type-specific keys land in [`RawSchemaFieldDef::options`] as generic
-//! [`FieldValue`]s; their validation is
-//! [`super::fields::SchemaFieldType::try_parse`]'s job.
+//! [`FieldValue`]s; their validation is [`try_parse`]'s job.
+//!
+//! [`try_parse`]: super::fields::SchemaFieldType::try_parse
 
 use std::collections::BTreeMap;
 

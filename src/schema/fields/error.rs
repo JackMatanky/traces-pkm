@@ -10,9 +10,10 @@ use super::{
 
 /// One per-key validation failure from parsing a field type's `options`.
 ///
-/// Converts into [`SchemaFieldBuilderError`] (hard failure) for `Direct` fields
-/// and `$ref` fields with a local `type` override, or [`SchemaWarning`]
-/// (degraded) for bare `$ref` overrides.
+/// Converts into:
+/// - [`SchemaFieldBuilderError`] (hard failure) for `Direct` fields and `$ref`
+///   with a `type` override.
+/// - [`SchemaWarning`] (degraded) for bare `$ref` overrides.
 pub(crate) enum AttributeError {
     UnknownKey {
         address: FieldAddress,

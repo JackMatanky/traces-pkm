@@ -12,8 +12,8 @@ use crate::field::FieldName;
 
 /// A hard failure that stops Schema loading or resolution.
 ///
-/// Contrast [`SchemaWarning`], which is emitted for defects resolution
-/// recovers from.
+/// Defects that resolution can recover from are emitted as [`SchemaWarning`]
+/// instead.
 #[derive(Debug, Error)]
 pub(crate) enum SchemaError {
     /// The registry directory exists but could not be read.
@@ -67,11 +67,14 @@ impl From<SchemaFieldBuilderError> for SchemaError {
 
 /// Why [`super::fields::SchemaFieldBuilder::build`] failed.
 ///
-/// [`Self::RefOutOfBounds`] and [`Self::RefFieldNotFound`] are always hard
-/// failures. [`Self::UnknownAttributeKey`] and
-/// [`Self::AttributeValueTypeMismatch`] are hard failures for `Direct` fields
-/// and `$ref` fields with a local `type` override, but degrade to
-/// [`SchemaWarning`] for bare `$ref` overrides.
+/// Always hard failures:
+/// - [`Self::RefOutOfBounds`]
+/// - [`Self::RefFieldNotFound`]
+///
+/// Hard failures for `Direct` fields and `$ref` with a `type` override,
+/// degraded to [`SchemaWarning`] for bare `$ref` overrides:
+/// - [`Self::UnknownAttributeKey`]
+/// - [`Self::AttributeValueTypeMismatch`]
 #[derive(Debug, Error)]
 pub(crate) enum SchemaFieldBuilderError {
     /// An attribute key is not valid for the field's resolved type.
@@ -113,6 +116,9 @@ pub(crate) enum SchemaFieldBuilderError {
 }
 
 /// A recoverable Schema resolution defect.
+///
+/// Resolution skips the offending key or parent and continues. Every warning
+/// is surfaced to the caller as diagnostic context.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum SchemaWarning {
     /// An `extends` target has no corresponding Schema file.

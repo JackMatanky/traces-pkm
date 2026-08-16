@@ -21,6 +21,12 @@ pub(super) struct SchemaNumberFieldDef {
 impl SchemaNumberFieldDef {
     /// Parse `options` against `number`'s `min`/`max`/`step` attributes,
     /// merging with `base` when present.
+    ///
+    /// # Arguments
+    ///
+    /// * `address`: field address for error context.
+    /// * `options`: raw key-value pairs from the TOML definition.
+    /// * `base`: inherited field type to fall back to for unset keys.
     pub(super) fn parse(
         address: FieldAddressRef<'_>,
         options: &BTreeMap<String, FieldValue>,

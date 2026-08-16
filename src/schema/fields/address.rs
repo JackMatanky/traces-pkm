@@ -71,11 +71,6 @@ impl TryFrom<&str> for FieldAddress {
 impl TryFrom<String> for FieldAddress {
     type Error = FieldAddressError;
 
-    /// Parse an owned string into an owned field address.
-    ///
-    /// # Errors
-    ///
-    /// See [`FieldAddress::try_from`].
     fn try_from(raw: String) -> Result<Self, Self::Error> {
         Self::try_from(raw.as_str())
     }
@@ -93,11 +88,6 @@ impl From<FieldAddressRef<'_>> for FieldAddress {
 impl FromStr for FieldAddress {
     type Err = FieldAddressError;
 
-    /// Parse a string into an owned field address.
-    ///
-    /// # Errors
-    ///
-    /// See [`FieldAddress::try_from`].
     fn from_str(raw: &str) -> Result<Self, Self::Err> {
         Self::try_from(raw)
     }
@@ -116,11 +106,6 @@ impl fmt::Debug for FieldAddress {
 }
 
 impl<'de> Deserialize<'de> for FieldAddress {
-    /// Deserialize from a string shaped `#<schema>/<field>` and validate it.
-    ///
-    /// # Errors
-    ///
-    /// See [`FieldAddress::try_from`].
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,

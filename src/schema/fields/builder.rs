@@ -32,8 +32,8 @@ impl SchemaFieldBuilder<'_> {
     ///
     /// # Errors
     ///
-    /// [`SchemaError::FieldBuilder`] on `$ref` resolution failure, unrecognized
-    /// attribute key, or wrongly-shaped attribute value.
+    /// - [`SchemaError::FieldBuilder`]: `$ref` resolution failure, unrecognized
+    ///   attribute key, or wrongly-shaped attribute value.
     pub(crate) fn build(
         &mut self,
         address: FieldAddressRef<'_>,
@@ -103,8 +103,8 @@ impl SchemaFieldBuilder<'_> {
         ))
     }
 
-    /// Degrade `required` to `false` for Global Schema fields, which can
-    /// never be required.
+    /// Degrade `required` to `false` for Global Schema fields, which can never
+    /// be required.
     fn apply_global_degrade(
         &mut self,
         address: FieldAddressRef<'_>,

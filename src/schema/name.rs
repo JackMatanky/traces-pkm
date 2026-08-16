@@ -46,7 +46,6 @@ impl Borrow<str> for SchemaName {
 }
 
 impl fmt::Debug for SchemaName {
-    /// Match `str`'s `Debug` so wrapping never changes error messages.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Debug::fmt(&self.0, f)
     }
@@ -84,7 +83,6 @@ impl Borrow<str> for SchemaNameRef<'_> {
 }
 
 impl fmt::Debug for SchemaNameRef<'_> {
-    /// Match `str`'s `Debug`; see [`SchemaName`].
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Debug::fmt(self.0, f)
     }

@@ -21,6 +21,11 @@ pub struct Schema {
 
 impl Schema {
     /// Build a resolved Schema from its merged fields and ancestors.
+    ///
+    /// Hierarchy links ([`children`](Self::children),
+    /// [`descendants`](Self::descendants)) are empty until
+    /// [`set_hierarchy`](Self::set_hierarchy) is called after full DAG
+    /// resolution.
     pub(super) fn new(
         name: SchemaName,
         fields: BTreeMap<FieldName, SchemaFieldDef>,
@@ -117,9 +122,11 @@ impl Schema {
     /// Suggest the field name that best matches `field`, for a template
     /// adapter's "did you mean" hint on an unknown-field error.
     ///
-    /// Prefers a canonical ([`crate::field::FieldKey`]) match over edit
-    /// distance. Returns `None` when no candidate matches or more than one
-    /// field canonically matches.
+    /// Prefers a canonical ([`FieldKey`]) match over edit distance. Returns
+    /// `None` when no candidate matches or more than one field canonically
+    /// matches.
+    ///
+    /// [`FieldKey`]: crate::field::FieldKey
     #[must_use]
     pub(crate) fn suggest_field(&self, field: &str) -> Option<&str> {
         let input_key = crate::field::FieldKey::try_from(field).ok()?;

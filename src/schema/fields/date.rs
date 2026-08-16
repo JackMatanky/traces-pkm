@@ -19,6 +19,12 @@ pub(super) struct SchemaDateFieldDef {
 impl SchemaDateFieldDef {
     /// Parse `options` against `date`'s `format` attribute, merging with `base`
     /// when present.
+    ///
+    /// # Arguments
+    ///
+    /// * `address`: field address for error context.
+    /// * `options`: raw key-value pairs from the TOML definition.
+    /// * `base`: inherited field type to fall back to for unset keys.
     pub(super) fn parse(
         address: FieldAddressRef<'_>,
         options: &BTreeMap<String, FieldValue>,

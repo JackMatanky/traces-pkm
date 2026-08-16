@@ -5,7 +5,9 @@
 //! and merges with a `$ref` base when present.
 //!
 //! [`SchemaFileFieldDefRef`] borrows the resolved filter parts for
-//! [`super::SchemaFieldDef::file_filter`].
+//! [`file_filter`].
+//!
+//! [`file_filter`]: super::SchemaFieldDef::file_filter
 
 use std::collections::BTreeMap;
 
@@ -42,6 +44,12 @@ impl SchemaFileFieldDef {
 
     /// Parse `options` against `file`'s `folders`/`ext`/`class` attributes,
     /// merging with `base` when present.
+    ///
+    /// # Arguments
+    ///
+    /// * `address`: field address for error context.
+    /// * `options`: raw key-value pairs from the TOML definition.
+    /// * `base`: inherited field type to fall back to for unset keys.
     pub(super) fn parse(
         address: FieldAddressRef<'_>,
         options: &BTreeMap<String, FieldValue>,
@@ -131,6 +139,10 @@ impl SchemaFileFieldDef {
 }
 
 /// A borrowed view of a resolved `file` field's filter parts.
+///
+/// Returned by [`file_filter`].
+///
+/// [`file_filter`]: super::SchemaFieldDef::file_filter
 pub(crate) struct SchemaFileFieldDefRef<'a> {
     pub(crate) folders: &'a [String],
     pub(crate) ext: Option<&'a str>,

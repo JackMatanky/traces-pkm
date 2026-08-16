@@ -86,13 +86,12 @@ impl SchemaService {
     ///
     /// # Errors
     ///
-    /// - [`SchemaError::ReadDirectory`] if the directory exists but cannot be
-    ///   listed.
-    /// - [`SchemaError::ReadFile`] if a `.toml` file cannot be read.
-    /// - [`SchemaError::Parse`] if a Schema file's TOML is malformed.
-    /// - [`SchemaError::Cycle`] if the `extends` DAG contains a cycle.
-    /// - [`SchemaError::FieldBuilder`] if a field declaration is invalid.
-    /// - [`SchemaError::AmbiguousFieldName`] if two fields share a canonical
+    /// - [`SchemaError::ReadDirectory`]: directory exists but cannot be listed.
+    /// - [`SchemaError::ReadFile`]: a `.toml` file cannot be read.
+    /// - [`SchemaError::Parse`]: a Schema file's TOML is malformed.
+    /// - [`SchemaError::Cycle`]: the `extends` DAG contains a cycle.
+    /// - [`SchemaError::FieldBuilder`]: a field declaration is invalid.
+    /// - [`SchemaError::AmbiguousFieldName`]: two fields share a canonical
     ///   metadata key.
     pub(crate) fn resolve(&self) -> Result<SchemaResolution, SchemaError> {
         let raw = read_raw_schemas(self.spec.directory())?;
@@ -217,8 +216,14 @@ impl SchemaService {
 
     /// Populate `mode`'s match set from `classes` at its requested depth.
     ///
-    /// Unknown class names remain in the set so a Note may still use them even
-    /// without a corresponding Schema.
+    /// Unknown class names remain in the set so a [`Note`](crate::note::Note)
+    /// may still use them without a corresponding Schema.
+    ///
+    /// # Arguments
+    ///
+    /// * `registry`: resolved Schema registry to match against.
+    /// * `classes`: File Class values to expand.
+    /// * `mode`: controls expansion depth (`Exact`, `Children`, `Descendants`).
     pub(crate) fn expand_classes(
         &self,
         registry: &SchemaRegistry,
@@ -267,6 +272,12 @@ fn warn_unknown_classes(registry: &SchemaRegistry, classes: &[String]) {
 ///
 /// This caller-side pre-pass keeps query parsing and matching independent of
 /// the Schema registry.
+///
+/// # Arguments
+///
+/// * `source`: query source expression to expand class atoms in.
+/// * `service`: schema service for class expansion.
+/// * `registry`: resolved Schema registry to match against.
 pub(crate) fn resolve_sources(
     source: &mut QuerySource,
     service: &SchemaService,
@@ -384,7 +395,9 @@ type ResolveOutput = (BTreeMap<SchemaName, Schema>, Vec<SchemaWarning>);
 /// - Any [`SchemaError`] [`SchemaFieldBuilder::build`] returns while resolving
 ///   a Schema's own fields.
 /// - [`SchemaError::AmbiguousFieldName`] if two of a Schema's effective fields
-///   share a [`crate::field::FieldKey`] canonical form.
+///   share a [`FieldKey`] canonical form.
+///
+/// [`FieldKey`]: crate::field::FieldKey
 fn resolve_all(
     raw_schemas: &BTreeMap<SchemaName, RawSchema>,
 ) -> Result<ResolveOutput, SchemaError> {
@@ -435,20 +448,20 @@ fn resolve_all(
 ///
 /// # Arguments
 ///
-/// * `name` - The Schema being resolved (its filename stem).
-/// * `raw` - `name`'s own parsed TOML: `extends`, `excludes`, and fields.
-/// * `parents` - `raw.extends`, filtered to targets that resolved.
-/// * `resolved` - Schemas already resolved earlier in Kahn order, keyed by
-///   name.
-/// * `warnings` - Accumulates degraded-resolution warnings raised while
-///   building `name`'s own fields.
+/// * `name`: the Schema being resolved (its filename stem).
+/// * `raw`: `name`'s own parsed TOML: `extends`, `excludes`, and fields.
+/// * `parents`: `raw.extends`, filtered to targets that resolved.
+/// * `resolved`: Schemas already resolved earlier in Kahn order, keyed by name.
+/// * `warnings`: accumulates degraded-resolution warnings raised while building
+///   `name`'s own fields.
 ///
 /// # Errors
 ///
 /// Propagates any [`SchemaError`] that [`SchemaFieldBuilder::build`] returns
 /// while resolving `raw`'s own fields, or [`SchemaError::AmbiguousFieldName`]
-/// if two of the resolved fields share a [`crate::field::FieldKey`] canonical
-/// form.
+/// if two of the resolved fields share a [`FieldKey`] canonical form.
+///
+/// [`FieldKey`]: crate::field::FieldKey
 fn build_schema(
     name: SchemaNameRef<'_>,
     raw: &RawSchema,
@@ -496,10 +509,11 @@ fn build_schema(
     Ok(Schema::new(SchemaName::from(name), fields, ancestors))
 }
 
-/// Reject `fields` if two entries share a
-/// [`FieldKey`](crate::field::FieldKey) canonical form: ambiguous field
-/// identities would make later note-vs-schema field matching and
-/// unknown-field suggestions unreliable.
+/// Reject `fields` if two entries share a [`FieldKey`] canonical form:
+/// ambiguous field identities would make later note-vs-schema field matching
+/// and unknown-field suggestions unreliable.
+///
+/// [`FieldKey`]: crate::field::FieldKey
 ///
 /// # Errors
 ///

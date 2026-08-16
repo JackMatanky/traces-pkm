@@ -1,10 +1,12 @@
 //! Resolved field definitions, type-specific options, and `$ref` building.
 //!
 //! Each raw field's `type` and `options` bag are validated and merged into a
-//! [`SchemaFieldType`] by [`SchemaFieldType::try_parse`]. The same validation
-//! backs two severities: a hard failure for `Direct` fields and `$ref` fields
-//! with a local `type` override, or a degraded warning for bare `$ref`
-//! overrides that drops the offending key and keeps every other valid key.
+//! [`SchemaFieldType`] by [`SchemaFieldType::try_parse`].
+//!
+//! Two severities back the same validation:
+//! - **Hard failure** for `Direct` fields and `$ref` with a `type` override.
+//! - **Degraded warning** for bare `$ref` overrides (offending key dropped,
+//!   every other valid key kept).
 //!
 //! Submodules partition the per-type parsing:
 //!
@@ -35,7 +37,10 @@ use error::AttributeError;
 use super::raw::RawSchemaFieldType;
 use crate::field::FieldValue;
 
-/// One resolved field definition after inheritance and `$ref` application.
+/// A resolved field definition after inheritance and `$ref` application.
+///
+/// Carries the effective type, whether the field is required, and whether it
+/// accepts multiple values.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct SchemaFieldDef {
     kind: SchemaFieldType,
@@ -72,8 +77,8 @@ impl SchemaFieldDef {
         &self.kind
     }
 
-    /// Return the static selectable entries for a `select` or `multi` field,
-    /// or `None` for every other field type.
+    /// Return the static selectable entries for a `select` or `multi` field, or
+    /// `None` for every other field type.
     #[inline]
     #[must_use]
     pub(crate) fn select_values(&self) -> Option<&[SchemaSelectFieldEntry]> {
@@ -95,8 +100,8 @@ impl SchemaFieldDef {
         }
     }
 
-    /// Return the [`file::SchemaFileFieldDefRef`] for a `file` field, or
-    /// `None` for every other field type.
+    /// Return the [`file::SchemaFileFieldDefRef`] for a `file` field, or `None`
+    /// for every other field type.
     #[inline]
     #[must_use]
     pub(crate) fn file_filter(
@@ -143,10 +148,13 @@ impl SchemaFieldDef {
 
 /// A field's effective type and its type-specific options.
 ///
-/// Each variant carries only the options relevant to that kind: `select`
-/// carries `values`, `number` carries `min`/`max`/`step`, `date` carries
-/// `format`, and `file` carries `folders`/`ext`/`class`. [`Input`] and
-/// [`Boolean`] are unit variants with no options.
+/// Each variant carries only the options relevant to that kind:
+/// - [`Select`][SchemaFieldType::Select]: `values`
+/// - [`Number`][SchemaFieldType::Number]: `min`/`max`/`step`
+/// - [`Date`][SchemaFieldType::Date]: `format`
+/// - [`File`][SchemaFieldType::File]: `folders`/`ext`/`class`
+/// - [`Input`][SchemaFieldType::Input] / [`Boolean`][SchemaFieldType::Boolean]:
+///   no options
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum SchemaFieldType {
     /// Free-form text input.
@@ -174,7 +182,7 @@ pub(crate) enum SchemaFieldType {
     /// A link to files matched by folder, extension, and class filters.
     ///
     /// Class matching happens at query time via
-    /// [`super::SchemaService::matches`], not here.
+    /// [`super::service::SchemaService::matches`], not here.
     File {
         folders: Vec<String>,
         ext: Option<String>,
@@ -213,6 +221,13 @@ impl SchemaFieldType {
     /// type starts from empty options. `Input`/`Boolean` have no type-specific
     /// keys, so every key in `options` becomes an
     /// [`AttributeError::UnknownKey`].
+    ///
+    /// # Arguments
+    ///
+    /// * `address`: field address for error context.
+    /// * `kind`: resolved field type to parse against.
+    /// * `options`: raw key-value pairs from the TOML definition.
+    /// * `base`: inherited field type to fall back to for unset keys.
     pub(super) fn try_parse(
         address: address::FieldAddressRef<'_>,
         kind: RawSchemaFieldType,
@@ -252,7 +267,7 @@ impl SchemaFieldType {
 
 /// One selectable entry a `select`/`multi` field resolves its `values` to.
 ///
-/// Rendered as a plain string when `label == value` and `extra` is empty,
+/// Rendered as a plain [`str`] when `label == value` and `extra` is empty,
 /// otherwise as `{value, label, ...extra}`.
 pub(crate) use select::SchemaSelectFieldEntry;
 

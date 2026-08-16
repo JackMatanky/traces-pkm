@@ -20,6 +20,12 @@ impl SchemaSelectFieldDef {
     /// Parse `options` against `select`'s `values` attribute, merging with
     /// `base` when present. Returns the effective [`SchemaFieldType::Select`]
     /// and every per-key validation failure.
+    ///
+    /// # Arguments
+    ///
+    /// * `address`: field address for error context.
+    /// * `options`: raw key-value pairs from the TOML definition.
+    /// * `base`: inherited field type to fall back to for unset keys.
     pub(super) fn parse(
         address: FieldAddressRef<'_>,
         options: &BTreeMap<String, FieldValue>,
@@ -84,8 +90,7 @@ pub(crate) struct SchemaSelectFieldEntry {
 }
 
 impl SchemaSelectFieldEntry {
-    /// Build a literal entry where `label` equals `value` and `extra` is
-    /// empty.
+    /// Build a literal entry where `label` equals `value` and `extra` is empty.
     pub(crate) fn literal(value: String) -> Self {
         Self {
             value: FieldValue::String(value.clone()),

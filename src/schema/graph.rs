@@ -34,14 +34,13 @@ use super::{
 /// Kahn's-algorithm state for linearizing the `extends` DAG.
 pub(super) struct SchemaGraph<'a> {
     /// Each Schema's `extends` parents, filtered to present targets, in
-    /// declaration order. The Global Schema's list is force-emptied.
+    /// declaration order. Global's list is force-emptied.
     parents_by_name: BTreeMap<SchemaNameRef<'a>, Vec<SchemaNameRef<'a>>>,
-    /// Reverse `extends` adjacency (parent → children), used by
-    /// [`mark_resolved`](Self::mark_resolved) to decrement in-degrees.
+    /// Reverse adjacency (parent → children) for decrementing in-degrees.
     children_by_name: BTreeMap<SchemaNameRef<'a>, Vec<SchemaNameRef<'a>>>,
-    /// Not-yet-resolved parent count per Schema; ready at zero.
+    /// Not-yet-resolved parent count; ready at zero.
     in_degree: BTreeMap<SchemaNameRef<'a>, usize>,
-    /// Ready Schemas, with Global forced to the front.
+    /// Ready queue, with Global forced to the front.
     queue: VecDeque<SchemaNameRef<'a>>,
     /// Schemas already popped by [`next_ready`](Self::next_ready).
     visited: BTreeSet<SchemaNameRef<'a>>,
@@ -173,12 +172,12 @@ impl<'a> SchemaGraph<'a> {
     /// Return every Schema's direct `extends` children, keyed by parent name.
     ///
     /// Excludes the Global Schema as a parent: it is a flat reference pool,
-    /// never a real link in the `extends` chain, so a Schema that (unusually)
-    /// declares `extends = ["global"]` still contributes no entry here — the
-    /// same behavior [`super::model::Schema::is_a`]'s ancestor-based matching
-    /// already has today. Only callable once the DAG is known acyclic (after
-    /// [`cyclic_remainder`](Self::cyclic_remainder) returns `None`): the
-    /// underlying adjacency is otherwise still mid-resolution.
+    /// never a real link in the `extends` chain. A Schema that (unusually)
+    /// declares `extends = ["global"]` still contributes no entry here.
+    ///
+    /// Only callable once the DAG is known acyclic (after
+    /// [`cyclic_remainder`](Self::cyclic_remainder) returns `None`):
+    /// the underlying adjacency is otherwise still mid-resolution.
     #[must_use]
     pub(super) fn children_by_name(
         &self,
@@ -204,9 +203,10 @@ impl<'a> SchemaGraph<'a> {
     /// Computed as a memoized depth-first walk over
     /// [`children_by_name`](Self::children_by_name): each name's descendant
     /// set is built once and reused by every ancestor that reaches it through
-    /// a different path, so the whole DAG resolves in `O(V + E)` total rather
-    /// than one full traversal per name. Only callable once the DAG is known
-    /// acyclic, same as [`children_by_name`](Self::children_by_name).
+    /// a different path, so the whole DAG resolves in `O(V + E)`.
+    ///
+    /// Only callable once the DAG is known acyclic, same as
+    /// [`children_by_name`](Self::children_by_name).
     #[must_use]
     pub(super) fn descendants_by_name(
         &self,
