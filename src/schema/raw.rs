@@ -69,6 +69,42 @@ pub(crate) struct RawSchemaFieldDef {
     pub(crate) options: BTreeMap<String, FieldValue>,
 }
 
+impl RawSchemaFieldDef {
+    /// Build a direct field definition of `kind`, with no type-specific
+    /// options.
+    ///
+    /// Test-only convenience constructor: tests needing `required`, `multi`,
+    /// or type-specific options use struct-update syntax from the result.
+    #[cfg(test)]
+    #[inline]
+    #[must_use]
+    pub(crate) fn direct(kind: RawSchemaFieldType) -> Self {
+        Self {
+            source: RawFieldSource::Direct(kind),
+            required: None,
+            multi: None,
+            options: BTreeMap::new(),
+        }
+    }
+
+    /// Build a `$ref`-only field definition targeting `address`, with no
+    /// type-specific options.
+    #[cfg(test)]
+    #[inline]
+    #[must_use]
+    pub(crate) fn reference(address: FieldAddress) -> Self {
+        Self {
+            source: RawFieldSource::Ref {
+                address,
+                override_type: None,
+            },
+            required: None,
+            multi: None,
+            options: BTreeMap::new(),
+        }
+    }
+}
+
 impl<'de> Deserialize<'de> for RawSchemaFieldDef {
     /// Deserialize the `[fields.<name>]` TOML table, converting its
     /// `type`/`$ref` keys into a validated [`RawFieldSource`] and every other
@@ -121,42 +157,6 @@ impl<'de> Deserialize<'de> for RawSchemaFieldDef {
             multi: wire.multi,
             options,
         })
-    }
-}
-
-impl RawSchemaFieldDef {
-    /// Build a direct field definition of `kind`, with no type-specific
-    /// options.
-    ///
-    /// Test-only convenience constructor: tests needing `required`, `multi`,
-    /// or type-specific options use struct-update syntax from the result.
-    #[cfg(test)]
-    #[inline]
-    #[must_use]
-    pub(crate) fn direct(kind: RawSchemaFieldType) -> Self {
-        Self {
-            source: RawFieldSource::Direct(kind),
-            required: None,
-            multi: None,
-            options: BTreeMap::new(),
-        }
-    }
-
-    /// Build a `$ref`-only field definition targeting `address`, with no
-    /// type-specific options.
-    #[cfg(test)]
-    #[inline]
-    #[must_use]
-    pub(crate) fn reference(address: FieldAddress) -> Self {
-        Self {
-            source: RawFieldSource::Ref {
-                address,
-                override_type: None,
-            },
-            required: None,
-            multi: None,
-            options: BTreeMap::new(),
-        }
     }
 }
 
