@@ -5,12 +5,12 @@
 //! separate kind-only type shadows [`RawSchemaFieldType`], which already serves
 //! that role at both the wire layer and here.
 //!
-//! [`SchemaFieldBuilder`] is the one seam that resolves a raw field's
+//! [`SchemaFieldType::try_parse`] is the one seam that resolves a raw field's
 //! type-specific `options` bag (a [`std::collections::BTreeMap<String,
 //! FieldValue>`](crate::field::FieldValue)) into a [`SchemaFieldType`],
 //! validating that every declared key belongs to the field's resolved type and
 //! every declared value is shaped correctly for that key. The same validation
-//! ([`parse_field_type`]) backs two severities: [`SchemaFieldBuilder::build`]
+//! backs two severities: [`super::builder::SchemaFieldBuilder::build`]
 //! hard-fails a `Direct` field or a `$ref` with a local `type` override
 //! ([`SchemaFieldBuilderError::UnknownAttributeKey`]/
 //! [`SchemaFieldBuilderError::AttributeValueTypeMismatch`]), while a bare
@@ -19,16 +19,23 @@
 //! [`SchemaWarning::OverrideValueTypeMismatch`]), drops the offending key, and
 //! keeps every other valid key.
 
-use std::collections::{BTreeMap, BTreeSet};
+mod address;
+pub(crate) use address::{FieldAddress, FieldAddressRef};
 
-use super::{
-    GLOBAL_SCHEMA_NAME,
-    address::{FieldAddress, FieldAddressRef},
-    error::{SchemaError, SchemaFieldBuilderError, SchemaWarning},
-    model::Schema,
-    name::SchemaName,
-    raw::{RawFieldSource, RawSchemaFieldDef, RawSchemaFieldType},
-};
+mod builder;
+mod error;
+pub(crate) use builder::{RefResolver, SchemaFieldBuilder};
+
+mod date;
+mod file;
+mod number;
+mod select;
+
+use std::collections::BTreeMap;
+
+use error::AttributeError;
+
+use super::raw::RawSchemaFieldType;
 use crate::field::FieldValue;
 
 /// Store one resolved field definition.
@@ -100,8 +107,8 @@ impl SchemaFieldDef {
         }
     }
 
-    /// Return this file field's `FileIndex` filter parts, or `None` for
-    /// every non-`file` field type.
+    /// Return this file field's `FileIndex` filter parts, or `None` for every
+    /// non-`file` field type.
     #[inline]
     #[must_use]
     pub(crate) fn file_filter(&self) -> Option<SchemaFileFieldFilter<'_>> {
@@ -159,8 +166,8 @@ pub(crate) struct SchemaFileFieldFilter<'a> {
 /// represented. `select` and `file` are the only list-bearing kinds; `number`
 /// carries `step`/`min`/`max` and `date` a `format`; the rest are unit
 /// variants. Replaces a separate `FieldType` tag: [`RawSchemaFieldType`]
-/// already names every kind at the wire layer, so [`Self::kind`] returns that
-/// instead of a second, schema-domain-only tag type.
+/// already names every kind at the wire layer, so [`Self::raw_kind`] returns
+/// that instead of a second, schema-domain-only tag type.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum SchemaFieldType {
     /// Accept free-form text input.
@@ -220,666 +227,66 @@ impl SchemaFieldType {
             } => RawSchemaFieldType::File,
         }
     }
+
+    /// Parses every key in `options` for a field of `kind`, falling back to
+    /// `base`'s options for any key `options` leaves unset, and returns the
+    /// resulting effective type alongside every per-key validation failure.
+    ///
+    /// `base` is only consulted when it is `Some` of the same
+    /// [`RawSchemaFieldType`] kind; a `$ref` that switches type, or a field
+    /// with no base at all, starts from empty options instead of reusing a
+    /// mismatched base. For example, a `select`'s `values` never leaks into an
+    /// overriding `file` field.
+    ///
+    /// `Input`/`Boolean` have no type-specific keys at all: every key in
+    /// `options` is unrecognized for them, so each becomes its own
+    /// [`AttributeError::UnknownKey`] rather than routing through a dedicated
+    /// (empty) own-declaration struct.
+    pub(super) fn try_parse(
+        address: address::FieldAddressRef<'_>,
+        kind: RawSchemaFieldType,
+        options: &BTreeMap<String, FieldValue>,
+        base: Option<&SchemaFieldType>,
+    ) -> (SchemaFieldType, Vec<AttributeError>) {
+        match kind {
+            RawSchemaFieldType::Input => (
+                SchemaFieldType::Input,
+                options
+                    .keys()
+                    .map(|key| error::unknown_key(address, kind, key))
+                    .collect(),
+            ),
+            RawSchemaFieldType::Boolean => (
+                SchemaFieldType::Boolean,
+                options
+                    .keys()
+                    .map(|key| error::unknown_key(address, kind, key))
+                    .collect(),
+            ),
+            RawSchemaFieldType::Select => {
+                select::SchemaSelectFieldDef::parse(address, options, base)
+            }
+            RawSchemaFieldType::Number => {
+                number::SchemaNumberFieldDef::parse(address, options, base)
+            }
+            RawSchemaFieldType::Date => {
+                date::SchemaDateFieldDef::parse(address, options, base)
+            }
+            RawSchemaFieldType::File => {
+                file::SchemaFileFieldDef::parse(address, options, base)
+            }
+        }
+    }
 }
 
 /// One selectable entry a `select`/`multi` field's `values` resolves to.
 ///
 /// No memory of source: literal today (every entry built by
-/// [`SchemaSelectFieldEntry::literal`]); an inline object or values-file entry
-/// once ticket 08 lands. `template/engine/schema.rs` renders an entry as a
-/// plain string when `label == value` and `extra` is empty (always true under
-/// this ticket), else as `{value, label, ...extra}`.
-#[derive(Clone, Debug, PartialEq)]
-pub(crate) struct SchemaSelectFieldEntry {
-    value: FieldValue,
-    label: FieldValue,
-    extra: BTreeMap<String, FieldValue>,
-}
-
-impl SchemaSelectFieldEntry {
-    /// Builds a flat entry from a plain declared string: `label` defaults to
-    /// `value`, `extra` is empty. The only shape a literal `values = [...]`
-    /// array produces.
-    pub(super) fn literal(value: String) -> Self {
-        Self {
-            value: FieldValue::String(value.clone()),
-            label: FieldValue::String(value),
-            extra: BTreeMap::new(),
-        }
-    }
-
-    /// Return this entry's value.
-    #[inline]
-    #[must_use]
-    pub(crate) fn value(&self) -> &FieldValue {
-        &self.value
-    }
-
-    /// Return this entry's display label.
-    #[inline]
-    #[must_use]
-    pub(crate) fn label(&self) -> &FieldValue {
-        &self.label
-    }
-
-    /// Return this entry's passthrough keys beyond `value`/`label`.
-    #[inline]
-    #[must_use]
-    pub(crate) fn extra(&self) -> &BTreeMap<String, FieldValue> {
-        &self.extra
-    }
-}
-
-/// One field-attribute key/value validation failure from parsing a field
-/// type's `options` bag: either the key doesn't belong to the field's
-/// resolved type, or its value isn't shaped like the key expects.
-///
-/// Converts into a hard [`SchemaFieldBuilderError`] for a `Direct`/`$ref`
-/// `type`-override field ([`SchemaFieldBuilder::build`]'s strict path), or a
-/// soft [`SchemaWarning`] for a bare `$ref` override (its lenient path) — see
-/// the module docs.
-enum AttributeError {
-    UnknownKey {
-        address: FieldAddress,
-        kind: RawSchemaFieldType,
-        key: String,
-    },
-    TypeMismatch {
-        address: FieldAddress,
-        kind: RawSchemaFieldType,
-        key: String,
-        value: String,
-        expected: &'static str,
-    },
-}
-
-impl From<AttributeError> for SchemaFieldBuilderError {
-    fn from(error: AttributeError) -> Self {
-        match error {
-            AttributeError::UnknownKey {
-                address,
-                kind,
-                key,
-            } => Self::UnknownAttributeKey {
-                address,
-                kind,
-                key,
-            },
-            AttributeError::TypeMismatch {
-                address,
-                kind,
-                key,
-                value,
-                expected,
-            } => Self::AttributeValueTypeMismatch {
-                address,
-                kind,
-                key,
-                value,
-                expected,
-            },
-        }
-    }
-}
-
-impl From<AttributeError> for SchemaWarning {
-    fn from(error: AttributeError) -> Self {
-        match error {
-            AttributeError::UnknownKey {
-                address,
-                kind,
-                key,
-            } => Self::UnknownOverrideKey {
-                address,
-                kind,
-                key,
-            },
-            AttributeError::TypeMismatch {
-                address,
-                kind,
-                key,
-                value,
-                expected,
-            } => Self::OverrideValueTypeMismatch {
-                address,
-                kind,
-                key,
-                value,
-                expected,
-            },
-        }
-    }
-}
-
-/// Builds an [`AttributeError::UnknownKey`] for `key` on `kind`.
-fn unknown_key(
-    address: FieldAddressRef<'_>,
-    kind: RawSchemaFieldType,
-    key: &str,
-) -> AttributeError {
-    AttributeError::UnknownKey {
-        address: FieldAddress::from(address),
-        kind,
-        key: key.to_owned(),
-    }
-}
-
-/// Builds an [`AttributeError::TypeMismatch`] for `key`'s wrongly-shaped
-/// `value` on `kind`, rendering `value` via [`std::fmt::Debug`] for the error
-/// message.
-fn type_mismatch(
-    address: FieldAddressRef<'_>,
-    kind: RawSchemaFieldType,
-    key: &str,
-    value: &FieldValue,
-    expected: &'static str,
-) -> AttributeError {
-    AttributeError::TypeMismatch {
-        address: FieldAddress::from(address),
-        kind,
-        key: key.to_owned(),
-        value: format!("{value:?}"),
-        expected,
-    }
-}
-
-/// Returns `value` as an owned list of strings, or `None` if it isn't a list
-/// of nothing but strings.
-fn expect_string_list(value: &FieldValue) -> Option<Vec<String>> {
-    let FieldValue::List(items) = value else {
-        return None;
-    };
-    items
-        .iter()
-        .map(|item| match item {
-            FieldValue::String(s) => Some(s.clone()),
-            _ => None,
-        })
-        .collect()
-}
-
-/// Returns `value` as an owned string, or `None` if it isn't one.
-fn expect_string(value: &FieldValue) -> Option<String> {
-    match value {
-        FieldValue::String(s) => Some(s.clone()),
-        _ => None,
-    }
-}
-
-/// Own declaration of a `select` field's type-specific options, one level
-/// more `Option` than [`SchemaFieldType::Select`]: not yet merged with an
-/// inherited `$ref` base.
-#[derive(Default)]
-struct SchemaSelectFieldDef {
-    values: Option<Vec<SchemaSelectFieldEntry>>,
-}
-
-impl SchemaSelectFieldDef {
-    /// Parses every key in `options` against `select`'s one valid attribute
-    /// (`values`), returning the best-effort parsed definition alongside every
-    /// per-key failure encountered — an unrecognized key or a wrongly-shaped
-    /// value does not stop parsing the rest.
-    fn parse(
-        address: FieldAddressRef<'_>,
-        options: &BTreeMap<String, FieldValue>,
-    ) -> (Self, Vec<AttributeError>) {
-        let mut def = Self::default();
-        let mut errors = Vec::new();
-        for (key, value) in options {
-            match key.as_str() {
-                "values" => match expect_string_list(value) {
-                    Some(values) => {
-                        def.values = Some(
-                            values
-                                .into_iter()
-                                .map(SchemaSelectFieldEntry::literal)
-                                .collect(),
-                        );
-                    }
-                    None => errors.push(type_mismatch(
-                        address,
-                        RawSchemaFieldType::Select,
-                        key,
-                        value,
-                        "an array of strings",
-                    )),
-                },
-                _ => {
-                    errors.push(unknown_key(
-                        address,
-                        RawSchemaFieldType::Select,
-                        key,
-                    ));
-                }
-            }
-        }
-        (def, errors)
-    }
-}
-
-/// Own declaration of a `file` field's type-specific options. See
-/// [`SchemaSelectFieldDef`]'s docs for why this is one level more `Option`
-/// than [`SchemaFieldType::File`].
-#[derive(Default)]
-struct SchemaFileFieldDef {
-    folders: Option<Vec<String>>,
-    ext: Option<String>,
-    class: Option<Vec<String>>,
-}
-
-impl SchemaFileFieldDef {
-    fn parse(
-        address: FieldAddressRef<'_>,
-        options: &BTreeMap<String, FieldValue>,
-    ) -> (Self, Vec<AttributeError>) {
-        let mut def = Self::default();
-        let mut errors = Vec::new();
-        for (key, value) in options {
-            match key.as_str() {
-                "folders" => match expect_string_list(value) {
-                    Some(folders) => def.folders = Some(folders),
-                    None => errors.push(type_mismatch(
-                        address,
-                        RawSchemaFieldType::File,
-                        key,
-                        value,
-                        "an array of strings",
-                    )),
-                },
-                "ext" => match expect_string(value) {
-                    Some(ext) => def.ext = Some(ext),
-                    None => errors.push(type_mismatch(
-                        address,
-                        RawSchemaFieldType::File,
-                        key,
-                        value,
-                        "a string",
-                    )),
-                },
-                "class" => match expect_string_list(value) {
-                    Some(class) => def.class = Some(class),
-                    None => errors.push(type_mismatch(
-                        address,
-                        RawSchemaFieldType::File,
-                        key,
-                        value,
-                        "an array of strings",
-                    )),
-                },
-                _ => {
-                    errors.push(unknown_key(
-                        address,
-                        RawSchemaFieldType::File,
-                        key,
-                    ));
-                }
-            }
-        }
-        (def, errors)
-    }
-}
-
-/// Own declaration of a `number` field's type-specific options. See
-/// [`SchemaSelectFieldDef`]'s docs for why this is one level more `Option`
-/// than [`SchemaFieldType::Number`].
-#[derive(Default)]
-struct SchemaNumberFieldDef {
-    min: Option<f64>,
-    max: Option<f64>,
-    step: Option<f64>,
-}
-
-impl SchemaNumberFieldDef {
-    fn parse(
-        address: FieldAddressRef<'_>,
-        options: &BTreeMap<String, FieldValue>,
-    ) -> (Self, Vec<AttributeError>) {
-        let mut def = Self::default();
-        let mut errors = Vec::new();
-        for (key, value) in options {
-            let slot = match key.as_str() {
-                "min" => &mut def.min,
-                "max" => &mut def.max,
-                "step" => &mut def.step,
-                _ => {
-                    errors.push(unknown_key(
-                        address,
-                        RawSchemaFieldType::Number,
-                        key,
-                    ));
-                    continue;
-                }
-            };
-            match value.as_f64() {
-                Some(number) => *slot = Some(number),
-                None => errors.push(type_mismatch(
-                    address,
-                    RawSchemaFieldType::Number,
-                    key,
-                    value,
-                    "a number",
-                )),
-            }
-        }
-        (def, errors)
-    }
-}
-
-/// Own declaration of a `date` field's type-specific options. See
-/// [`SchemaSelectFieldDef`]'s docs for why this is one level more `Option`
-/// than [`SchemaFieldType::Date`].
-#[derive(Default)]
-struct SchemaDateFieldDef {
-    format: Option<String>,
-}
-
-impl SchemaDateFieldDef {
-    fn parse(
-        address: FieldAddressRef<'_>,
-        options: &BTreeMap<String, FieldValue>,
-    ) -> (Self, Vec<AttributeError>) {
-        let mut def = Self::default();
-        let mut errors = Vec::new();
-        for (key, value) in options {
-            match key.as_str() {
-                "format" => match expect_string(value) {
-                    Some(format) => def.format = Some(format),
-                    None => errors.push(type_mismatch(
-                        address,
-                        RawSchemaFieldType::Date,
-                        key,
-                        value,
-                        "a string",
-                    )),
-                },
-                _ => {
-                    errors.push(unknown_key(
-                        address,
-                        RawSchemaFieldType::Date,
-                        key,
-                    ));
-                }
-            }
-        }
-        (def, errors)
-    }
-}
-
-/// Parses every key in `options` for a field of `kind`, falling back to
-/// `base`'s options for any key `options` leaves unset, and returns the
-/// resulting effective type alongside every per-key validation failure.
-///
-/// `base` is only consulted when it is `Some` of the same
-/// [`RawSchemaFieldType`] kind; a `$ref` that switches type, or a field with no
-/// base at all, starts from empty options instead of reusing a mismatched base.
-/// For example, a `select`'s `values` never leaks into an overriding `file`
-/// field.
-///
-/// `Input`/`Boolean` have no type-specific keys at all: every key in
-/// `options` is unrecognized for them, so each becomes its own
-/// [`AttributeError::UnknownKey`] rather than routing through a dedicated
-/// (empty) own-declaration struct.
-fn parse_field_type(
-    address: FieldAddressRef<'_>,
-    kind: RawSchemaFieldType,
-    options: &BTreeMap<String, FieldValue>,
-    base: Option<&SchemaFieldType>,
-) -> (SchemaFieldType, Vec<AttributeError>) {
-    match kind {
-        RawSchemaFieldType::Input => (
-            SchemaFieldType::Input,
-            options.keys().map(|key| unknown_key(address, kind, key)).collect(),
-        ),
-        RawSchemaFieldType::Boolean => (
-            SchemaFieldType::Boolean,
-            options.keys().map(|key| unknown_key(address, kind, key)).collect(),
-        ),
-        RawSchemaFieldType::Select => {
-            let (def, errors) = SchemaSelectFieldDef::parse(address, options);
-            let values = def.values.unwrap_or_else(|| match base {
-                Some(SchemaFieldType::Select {
-                    values,
-                }) => values.clone(),
-                _ => Vec::new(),
-            });
-            (
-                SchemaFieldType::Select {
-                    values,
-                },
-                errors,
-            )
-        }
-        RawSchemaFieldType::Number => {
-            let (def, errors) = SchemaNumberFieldDef::parse(address, options);
-            let (base_min, base_max, base_step) = match base {
-                Some(SchemaFieldType::Number {
-                    min,
-                    max,
-                    step,
-                }) => (*min, *max, *step),
-                _ => (None, None, None),
-            };
-            (
-                SchemaFieldType::Number {
-                    min: def.min.or(base_min),
-                    max: def.max.or(base_max),
-                    step: def.step.or(base_step),
-                },
-                errors,
-            )
-        }
-        RawSchemaFieldType::Date => {
-            let (def, errors) = SchemaDateFieldDef::parse(address, options);
-            let format = def.format.or_else(|| match base {
-                Some(SchemaFieldType::Date {
-                    format,
-                }) => format.clone(),
-                _ => None,
-            });
-            (
-                SchemaFieldType::Date {
-                    format,
-                },
-                errors,
-            )
-        }
-        RawSchemaFieldType::File => {
-            let (def, errors) = SchemaFileFieldDef::parse(address, options);
-            let folders = def.folders.unwrap_or_else(|| match base {
-                Some(SchemaFieldType::File {
-                    folders,
-                    ..
-                }) => folders.clone(),
-                _ => Vec::new(),
-            });
-            let ext = def.ext.or_else(|| match base {
-                Some(SchemaFieldType::File {
-                    ext,
-                    ..
-                }) => ext.clone(),
-                _ => None,
-            });
-            let class = def.class.unwrap_or_else(|| match base {
-                Some(SchemaFieldType::File {
-                    class,
-                    ..
-                }) => class.clone(),
-                _ => Vec::new(),
-            });
-            (
-                SchemaFieldType::File {
-                    folders,
-                    ext,
-                    class,
-                },
-                errors,
-            )
-        }
-    }
-}
-
-/// Resolve a Schema's `$ref` values to their base [`SchemaFieldDef`]s, bounded
-/// to the Global Schema or the referencing Schema's transitive `extends`
-/// ancestors.
-///
-/// `$ref`s point up the `extends` DAG or to the Global Schema, so they are
-/// acyclic by construction.
-pub(super) struct RefResolver<'a> {
-    pub(super) ancestors: &'a BTreeSet<SchemaName>,
-    pub(super) resolved: &'a BTreeMap<SchemaName, Schema>,
-}
-
-impl<'a> RefResolver<'a> {
-    /// Resolve `base_address`, `address`'s own already-parsed `$ref` value, to
-    /// its base [`SchemaFieldDef`].
-    ///
-    /// # Errors
-    ///
-    /// - [`SchemaError::RefOutOfBounds`] if the named Schema is neither the
-    ///   Global Schema nor a transitive `extends` ancestor of
-    ///   `address.schema()`.
-    /// - [`SchemaError::RefFieldNotFound`] if the named Schema is in bounds but
-    ///   has no such field.
-    fn resolve(
-        &self,
-        address: FieldAddressRef<'_>,
-        base_address: &FieldAddress,
-    ) -> Result<&'a SchemaFieldDef, SchemaError> {
-        // Rejecting an out-of-bounds target here, rather than only checking
-        // whether it happens to be resolved yet, keeps the bound spec-accurate
-        // and independent of Kahn's tie-breaking order among unrelated Schemas.
-        if base_address.schema().as_str() != GLOBAL_SCHEMA_NAME
-            && !self.ancestors.contains(base_address.schema().as_str())
-        {
-            return Err(SchemaFieldBuilderError::RefOutOfBounds {
-                own: Box::new(FieldAddress::from(address)),
-                reference: Box::new(base_address.clone()),
-            }
-            .into());
-        }
-        self.resolved
-            .get(base_address.schema().as_str())
-            .and_then(|schema| schema.field(base_address.field().as_str()))
-            .ok_or_else(|| {
-                SchemaFieldBuilderError::RefFieldNotFound {
-                    own: Box::new(FieldAddress::from(address)),
-                    reference: Box::new(base_address.clone()),
-                }
-                .into()
-            })
-    }
-}
-
-/// Builds one resolved [`SchemaFieldDef`] from its raw declaration, resolving
-/// a `$ref` (if any) against already-resolved Schemas.
-pub(super) struct SchemaFieldBuilder<'a> {
-    pub(super) refs: &'a RefResolver<'a>,
-    pub(super) warnings: &'a mut Vec<SchemaWarning>,
-}
-
-impl SchemaFieldBuilder<'_> {
-    /// Build `address`'s effective [`SchemaFieldDef`] from `raw`.
-    ///
-    /// - `Direct(kind)`: builds fresh from `raw.options`, no base to merge.
-    /// - `Ref` with a local `type` override: builds fresh from `raw.options`
-    ///   against the override kind, ignoring the base's own type-specific
-    ///   options (see [`parse_field_type`]'s docs on type-switching refs).
-    /// - Bare `Ref` (no override): resolves the base field via `refs`, then
-    ///   merges `raw.options` on top of the base's own options at the base's
-    ///   kind. An unrecognized key or wrongly-shaped value here degrades to a
-    ///   [`SchemaWarning`] and is dropped rather than failing the build.
-    ///
-    /// # Errors
-    ///
-    /// - Any error [`RefResolver::resolve`] returns while resolving a `$ref`.
-    /// - [`SchemaError::FieldBuilder`] if a `Direct` field or a `$ref` with a
-    ///   local `type` override declares an unrecognized attribute key or a
-    ///   wrongly-shaped attribute value.
-    pub(super) fn build(
-        &mut self,
-        address: FieldAddressRef<'_>,
-        raw: &RawSchemaFieldDef,
-    ) -> Result<SchemaFieldDef, SchemaError> {
-        let (field_type, required, multi) = match &raw.source {
-            RawFieldSource::Ref {
-                address: base_address,
-                override_type: Some(override_type),
-            } => {
-                let base = self.refs.resolve(address, base_address)?;
-                let (field_type, errors) = parse_field_type(
-                    address,
-                    *override_type,
-                    &raw.options,
-                    Some(base.kind()),
-                );
-                if let Some(error) = errors.into_iter().next() {
-                    return Err(SchemaFieldBuilderError::from(error).into());
-                }
-                (
-                    field_type,
-                    raw.required.unwrap_or(base.is_required()),
-                    raw.multi.unwrap_or(base.is_multi()),
-                )
-            }
-            RawFieldSource::Ref {
-                address: base_address,
-                override_type: None,
-            } => {
-                let base = self.refs.resolve(address, base_address)?;
-                let (field_type, errors) = parse_field_type(
-                    address,
-                    base.kind().raw_kind(),
-                    &raw.options,
-                    Some(base.kind()),
-                );
-                self.warnings.extend(errors.into_iter().map(Into::into));
-                (
-                    field_type,
-                    raw.required.unwrap_or(base.is_required()),
-                    raw.multi.unwrap_or(base.is_multi()),
-                )
-            }
-            RawFieldSource::Direct(raw_type) => {
-                let (field_type, errors) =
-                    parse_field_type(address, *raw_type, &raw.options, None);
-                if let Some(error) = errors.into_iter().next() {
-                    return Err(SchemaFieldBuilderError::from(error).into());
-                }
-                (
-                    field_type,
-                    raw.required.unwrap_or(false),
-                    raw.multi.unwrap_or(false),
-                )
-            }
-        };
-
-        Ok(SchemaFieldDef::new(
-            field_type,
-            self.apply_global_degrade(address, required),
-            multi,
-        ))
-    }
-
-    /// Force `required` to `false` and record a
-    /// [`SchemaWarning::StrayGlobalRequired`] when `address.schema()` is the
-    /// Global Schema and it declared `required = true`.
-    ///
-    /// Global Schema fields can never be required.
-    fn apply_global_degrade(
-        &mut self,
-        address: FieldAddressRef<'_>,
-        required: bool,
-    ) -> bool {
-        if address.schema().as_str() == GLOBAL_SCHEMA_NAME && required {
-            self.warnings.push(SchemaWarning::StrayGlobalRequired {
-                field: address.field().as_str().to_owned(),
-            });
-            false
-        } else {
-            required
-        }
-    }
-}
+/// [`SchemaSelectFieldEntry::literal`]); an inline object or values-file
+/// entry once ticket 08 lands. `template/engine/schema.rs` renders an
+/// entry as a plain string when `label == value` and `extra` is empty
+/// (always true under this ticket), else as `{value, label, ...extra}`.
+pub(crate) use select::SchemaSelectFieldEntry;
 
 #[cfg(test)]
 mod tests {
@@ -900,7 +307,7 @@ mod tests {
         name: &str,
         field: &str,
         kind: SchemaFieldType,
-    ) -> (SchemaName, Schema) {
+    ) -> (crate::schema::name::SchemaName, crate::schema::model::Schema) {
         let mut fields = BTreeMap::new();
         fields.insert(
             crate::field::FieldName::try_from(field)
@@ -908,8 +315,12 @@ mod tests {
             SchemaFieldDef::new(kind, false, false),
         );
         (
-            SchemaName::from(name),
-            Schema::new(SchemaName::from(name), fields, BTreeSet::new()),
+            crate::schema::name::SchemaName::from(name),
+            crate::schema::model::Schema::new(
+                crate::schema::name::SchemaName::from(name),
+                fields,
+                BTreeSet::new(),
+            ),
         )
     }
 
@@ -955,7 +366,7 @@ mod tests {
         }
     }
 
-    mod parse_field_type {
+    mod try_parse {
         mod without_base {
             use pretty_assertions::assert_eq;
 
@@ -984,7 +395,7 @@ mod tests {
                     ]),
                 )]);
 
-                let (field_type, errors) = parse_field_type(
+                let (field_type, errors) = SchemaFieldType::try_parse(
                     address().as_ref(),
                     RawSchemaFieldType::Select,
                     &opts,
@@ -1014,7 +425,7 @@ mod tests {
             fn select_defaults_to_empty_values_when_options_omit_them() {
                 let opts = options(&[]);
 
-                let (field_type, errors) = parse_field_type(
+                let (field_type, errors) = SchemaFieldType::try_parse(
                     address().as_ref(),
                     RawSchemaFieldType::Select,
                     &opts,
@@ -1034,7 +445,7 @@ mod tests {
                     FieldValue::String("draft".to_owned()),
                 )]);
 
-                let (_, errors) = parse_field_type(
+                let (_, errors) = SchemaFieldType::try_parse(
                     address().as_ref(),
                     RawSchemaFieldType::Select,
                     &opts,
@@ -1055,7 +466,7 @@ mod tests {
                     FieldValue::List(vec![FieldValue::String("x".to_owned())]),
                 )]);
 
-                let (_, errors) = parse_field_type(
+                let (_, errors) = SchemaFieldType::try_parse(
                     address().as_ref(),
                     RawSchemaFieldType::Date,
                     &opts,
@@ -1071,7 +482,7 @@ mod tests {
                 let opts =
                     options(&[("min", FieldValue::String("abc".to_owned()))]);
 
-                let (_, errors) = parse_field_type(
+                let (_, errors) = SchemaFieldType::try_parse(
                     address().as_ref(),
                     RawSchemaFieldType::Number,
                     &opts,
@@ -1089,7 +500,7 @@ mod tests {
             fn number_accepts_an_integer_min_as_a_float() {
                 let opts = options(&[("min", FieldValue::Int(0))]);
 
-                let (field_type, errors) = parse_field_type(
+                let (field_type, errors) = SchemaFieldType::try_parse(
                     address().as_ref(),
                     RawSchemaFieldType::Number,
                     &opts,
@@ -1122,7 +533,7 @@ mod tests {
                     ),
                 ]);
 
-                let (field_type, errors) = parse_field_type(
+                let (field_type, errors) = SchemaFieldType::try_parse(
                     address().as_ref(),
                     RawSchemaFieldType::File,
                     &opts,
@@ -1141,7 +552,7 @@ mod tests {
             fn input_declaring_any_key_is_an_unknown_key() {
                 let opts = options(&[("min", FieldValue::Int(1))]);
 
-                let (field_type, errors) = parse_field_type(
+                let (field_type, errors) = SchemaFieldType::try_parse(
                     address().as_ref(),
                     RawSchemaFieldType::Input,
                     &opts,
@@ -1158,7 +569,7 @@ mod tests {
                 let opts =
                     options(&[("ext", FieldValue::String("x".to_owned()))]);
 
-                let (field_type, errors) = parse_field_type(
+                let (field_type, errors) = SchemaFieldType::try_parse(
                     address().as_ref(),
                     RawSchemaFieldType::Boolean,
                     &opts,
@@ -1188,7 +599,7 @@ mod tests {
                     )],
                 };
 
-                let (field_type, errors) = parse_field_type(
+                let (field_type, errors) = SchemaFieldType::try_parse(
                     address().as_ref(),
                     RawSchemaFieldType::Select,
                     &BTreeMap::new(),
@@ -1203,7 +614,7 @@ mod tests {
             fn select_ignores_a_mismatched_base_type() {
                 let base = SchemaFieldType::Input;
 
-                let (field_type, errors) = parse_field_type(
+                let (field_type, errors) = SchemaFieldType::try_parse(
                     address().as_ref(),
                     RawSchemaFieldType::Select,
                     &BTreeMap::new(),
@@ -1231,7 +642,7 @@ mod tests {
                     )]),
                 );
 
-                let (field_type, errors) = parse_field_type(
+                let (field_type, errors) = SchemaFieldType::try_parse(
                     address().as_ref(),
                     RawSchemaFieldType::File,
                     &options,
@@ -1245,122 +656,6 @@ mod tests {
                     class: vec!["base-class".to_owned()],
                 });
             }
-        }
-    }
-
-    mod ref_resolver {
-        use pretty_assertions::assert_eq;
-
-        use super::*;
-
-        #[test]
-        fn resolves_a_field_from_an_ancestor_schema() {
-            let (name, book) =
-                schema_with_field("book", "status", SchemaFieldType::Input);
-            let mut resolved = BTreeMap::new();
-            resolved.insert(name.clone(), book);
-            let mut ancestors = BTreeSet::new();
-            ancestors.insert(name);
-            let refs = RefResolver {
-                ancestors: &ancestors,
-                resolved: &resolved,
-            };
-            let address = FieldAddressRef::new(
-                SchemaNameRef::from("sci_fi"),
-                crate::field::FieldNameRef::try_from("status")
-                    .expect("valid field name"),
-            );
-
-            let field = refs
-                .resolve(address, &field_address("#book/status"))
-                .expect("resolves");
-
-            assert_eq!(field.kind(), &SchemaFieldType::Input);
-        }
-
-        #[test]
-        fn resolves_a_field_from_the_global_schema() {
-            let (name, global) = schema_with_field(
-                GLOBAL_SCHEMA_NAME,
-                "priority",
-                SchemaFieldType::Input,
-            );
-            let mut resolved = BTreeMap::new();
-            resolved.insert(name, global);
-            let ancestors = BTreeSet::new();
-            let refs = RefResolver {
-                ancestors: &ancestors,
-                resolved: &resolved,
-            };
-            let address = FieldAddressRef::new(
-                SchemaNameRef::from("task"),
-                crate::field::FieldNameRef::try_from("priority")
-                    .expect("valid field name"),
-            );
-
-            let field = refs
-                .resolve(address, &field_address("#global/priority"))
-                .expect("resolves");
-
-            assert_eq!(field.kind(), &SchemaFieldType::Input);
-        }
-
-        #[test]
-        fn rejects_a_reference_outside_the_bound() {
-            let (name, movie) =
-                schema_with_field("movie", "status", SchemaFieldType::Input);
-            let mut resolved = BTreeMap::new();
-            resolved.insert(name, movie);
-            let ancestors = BTreeSet::new();
-            let refs = RefResolver {
-                ancestors: &ancestors,
-                resolved: &resolved,
-            };
-            let address = FieldAddressRef::new(
-                SchemaNameRef::from("book"),
-                crate::field::FieldNameRef::try_from("status")
-                    .expect("valid field name"),
-            );
-
-            let err = refs
-                .resolve(address, &field_address("#movie/status"))
-                .expect_err("out-of-bounds rejected");
-
-            assert!(matches!(
-                err,
-                SchemaError::FieldBuilder(inner)
-                    if matches!(*inner, SchemaFieldBuilderError::RefOutOfBounds { .. })
-            ));
-        }
-
-        #[test]
-        fn rejects_a_reference_to_a_field_that_does_not_exist() {
-            let name = SchemaName::from("book");
-            let book =
-                Schema::new(name.clone(), BTreeMap::new(), BTreeSet::new());
-            let mut resolved = BTreeMap::new();
-            resolved.insert(name.clone(), book);
-            let mut ancestors = BTreeSet::new();
-            ancestors.insert(name);
-            let refs = RefResolver {
-                ancestors: &ancestors,
-                resolved: &resolved,
-            };
-            let address = FieldAddressRef::new(
-                SchemaNameRef::from("sci_fi"),
-                crate::field::FieldNameRef::try_from("status")
-                    .expect("valid field name"),
-            );
-
-            let err = refs
-                .resolve(address, &field_address("#book/status"))
-                .expect_err("missing field rejected");
-
-            assert!(matches!(
-                err,
-                SchemaError::FieldBuilder(inner)
-                    if matches!(*inner, SchemaFieldBuilderError::RefFieldNotFound { .. })
-            ));
         }
     }
 }

@@ -30,7 +30,6 @@
 //! filtering against the note index, and note class queries consume
 //! [`SchemaService`] and [`Schema::is_a`] from outside this module.
 
-mod address;
 mod error;
 mod fields;
 mod graph;

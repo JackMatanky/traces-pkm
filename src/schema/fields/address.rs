@@ -9,7 +9,7 @@ use std::{fmt, str::FromStr};
 use serde::{Deserialize, Deserializer};
 use thiserror::Error;
 
-use super::name::{SchemaName, SchemaNameRef};
+use super::super::name::{SchemaName, SchemaNameRef};
 use crate::field::{FieldName, FieldNameError, FieldNameRef};
 
 /// Store an owned `#<schema>/<field>` address.
@@ -36,8 +36,8 @@ impl FieldAddress {
 
     /// Borrow this address as a [`FieldAddressRef`].
     ///
-    /// Test-only: production code always builds a [`FieldAddressRef`]
-    /// directly from its `SchemaNameRef`/`FieldNameRef` parts; this exists so
+    /// Test-only: production code always builds a [`FieldAddressRef`] directly
+    /// from its `SchemaNameRef`/`FieldNameRef` parts; this exists so
     /// cross-module test fixtures (`schema::fields`, `schema::service`) can
     /// turn an already-built [`FieldAddress`] test fixture into one without
     /// duplicating [`FieldAddressRef::new`] call sites.

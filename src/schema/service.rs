@@ -30,9 +30,8 @@ use std::{
 use walkdir::WalkDir;
 
 use super::{
-    address::FieldAddressRef,
     error::{SchemaError, SchemaWarning},
-    fields::{RefResolver, SchemaFieldBuilder},
+    fields::{FieldAddressRef, RefResolver, SchemaFieldBuilder},
     graph::SchemaGraph,
     model::Schema,
     name::{SchemaName, SchemaNameRef},
@@ -1107,10 +1106,10 @@ mod tests {
         FieldName::try_from(name).expect("valid test field name")
     }
 
-    /// Parses `reference` into a [`super::super::address::FieldAddress`],
+    /// Parses `reference` into a [`super::super::fields::FieldAddress`],
     /// panicking on an invalid test fixture.
-    fn field_address(reference: &str) -> super::super::address::FieldAddress {
-        super::super::address::FieldAddress::try_from(reference)
+    fn field_address(reference: &str) -> super::super::fields::FieldAddress {
+        super::super::fields::FieldAddress::try_from(reference)
             .expect("valid test $ref")
     }
 

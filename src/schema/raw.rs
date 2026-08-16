@@ -23,7 +23,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Deserializer};
 use thiserror::Error;
 
-use super::{address::FieldAddress, name::SchemaName};
+use super::{fields::FieldAddress, name::SchemaName};
 use crate::field::{FieldName, FieldValue};
 
 /// Hold raw Schema data from one `.traces/schemas/<name>.toml` file.

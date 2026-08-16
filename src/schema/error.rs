@@ -11,7 +11,7 @@ use std::{fmt, path::PathBuf};
 
 use thiserror::Error;
 
-use super::{address::FieldAddress, name::SchemaName, raw::RawSchemaFieldType};
+use super::{fields::FieldAddress, name::SchemaName, raw::RawSchemaFieldType};
 use crate::field::FieldName;
 
 /// Stop Schema loading or resolution on a hard failure.
@@ -23,7 +23,7 @@ use crate::field::FieldName;
 ///
 /// A malformed `$ref` or a Field Definition declaring neither `type` nor `$ref`
 /// fails earlier during TOML parsing as [`Self::Parse`]: see
-/// [`super::address::FieldAddress`] and [`super::raw::RawFieldDefError`].
+/// [`super::fields::FieldAddress`] and [`super::raw::RawFieldDefError`].
 #[derive(Debug, Error)]
 pub(crate) enum SchemaError {
     /// Report a registry directory that exists but could not be read.
