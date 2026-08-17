@@ -86,13 +86,20 @@ impl SchemaService {
     ///
     /// # Errors
     ///
-    /// - [`SchemaError::ReadDirectory`]: directory exists but cannot be listed.
-    /// - [`SchemaError::ReadFile`]: a `.toml` file cannot be read.
-    /// - [`SchemaError::Parse`]: a Schema file's TOML is malformed.
-    /// - [`SchemaError::Cycle`]: the `extends` DAG contains a cycle.
-    /// - [`SchemaError::FieldBuilder`]: a field declaration is invalid.
-    /// - [`SchemaError::AmbiguousFieldName`]: two fields share a canonical
-    ///   metadata key.
+    /// - [`ReadDirectory`] if the registry directory exists but cannot be
+    ///   listed.
+    /// - [`ReadFile`] if a `.toml` file cannot be read.
+    /// - [`Parse`] if a Schema file's TOML is malformed.
+    /// - [`Cycle`] if the `extends` DAG contains a cycle.
+    /// - [`FieldBuilder`] if a field declaration is invalid.
+    /// - [`AmbiguousFieldName`] if two fields share a canonical metadata key.
+    ///
+    /// [`ReadDirectory`]: SchemaError::ReadDirectory
+    /// [`ReadFile`]: SchemaError::ReadFile
+    /// [`Parse`]: SchemaError::Parse
+    /// [`Cycle`]: SchemaError::Cycle
+    /// [`FieldBuilder`]: SchemaError::FieldBuilder
+    /// [`AmbiguousFieldName`]: SchemaError::AmbiguousFieldName
     pub(crate) fn resolve(&self) -> Result<SchemaResolution, SchemaError> {
         let raw = read_raw_schemas(self.spec.directory())?;
         let (schemas, warnings) = resolve_all(&raw)?;
@@ -306,12 +313,14 @@ pub(crate) fn resolve_sources(
 ///
 /// # Errors
 ///
-/// - [`SchemaError::ReadDirectory`] if `dir` exists but its entries cannot be
-///   listed.
-/// - [`SchemaError::ReadFile`] if a `.toml` file cannot be read.
-/// - [`SchemaError::Parse`] if a Schema file's TOML is malformed, contains an
-///   unknown key, has a malformed `$ref`, or omits both `type` and `$ref` for a
-///   field.
+/// - [`ReadDirectory`] if `dir` exists but its entries cannot be listed.
+/// - [`ReadFile`] if a `.toml` file cannot be read.
+/// - [`Parse`] if a Schema file's TOML is malformed, contains an unknown key,
+///   has a malformed `$ref`, or omits both `type` and `$ref` for a field.
+///
+/// [`ReadDirectory`]: SchemaError::ReadDirectory
+/// [`ReadFile`]: SchemaError::ReadFile
+/// [`Parse`]: SchemaError::Parse
 fn read_raw_schemas(
     dir: &Path,
 ) -> Result<BTreeMap<SchemaName, RawSchema>, SchemaError> {
@@ -391,12 +400,14 @@ type ResolveOutput = (BTreeMap<SchemaName, Schema>, Vec<SchemaWarning>);
 ///
 /// # Errors
 ///
-/// - [`SchemaError::Cycle`] if the `extends` DAG contains a cycle.
-/// - Any [`SchemaError`] [`SchemaFieldBuilder::build`] returns while resolving
-///   a Schema's own fields.
-/// - [`SchemaError::AmbiguousFieldName`] if two of a Schema's effective fields
-///   share a [`FieldKey`] canonical form.
+/// - [`Cycle`] if the `extends` DAG contains a cycle.
+/// - Any [`SchemaError`] that [`SchemaFieldBuilder::build`] returns while
+///   resolving a Schema's own fields.
+/// - [`AmbiguousFieldName`] if two of a Schema's effective fields share a
+///   [`FieldKey`] canonical form.
 ///
+/// [`Cycle`]: SchemaError::Cycle
+/// [`AmbiguousFieldName`]: SchemaError::AmbiguousFieldName
 /// [`FieldKey`]: crate::field::FieldKey
 fn resolve_all(
     raw_schemas: &BTreeMap<SchemaName, RawSchema>,
@@ -457,10 +468,12 @@ fn resolve_all(
 ///
 /// # Errors
 ///
-/// Propagates any [`SchemaError`] that [`SchemaFieldBuilder::build`] returns
-/// while resolving `raw`'s own fields, or [`SchemaError::AmbiguousFieldName`]
-/// if two of the resolved fields share a [`FieldKey`] canonical form.
+/// - Any [`SchemaError`] that [`SchemaFieldBuilder::build`] returns while
+///   resolving `raw`'s own fields.
+/// - [`AmbiguousFieldName`] if two of the resolved fields share a [`FieldKey`]
+///   canonical form.
 ///
+/// [`AmbiguousFieldName`]: SchemaError::AmbiguousFieldName
 /// [`FieldKey`]: crate::field::FieldKey
 fn build_schema(
     name: SchemaNameRef<'_>,
@@ -517,8 +530,10 @@ fn build_schema(
 ///
 /// # Errors
 ///
-/// Returns [`SchemaError::AmbiguousFieldName`] naming the first two
-/// (name-sorted) colliding field names.
+/// - [`AmbiguousFieldName`] naming the first two (name-sorted) colliding field
+///   names.
+///
+/// [`AmbiguousFieldName`]: SchemaError::AmbiguousFieldName
 fn reject_ambiguous_canonical_names(
     name: SchemaNameRef<'_>,
     fields: &BTreeMap<FieldName, super::fields::SchemaFieldDef>,

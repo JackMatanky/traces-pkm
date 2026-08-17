@@ -34,16 +34,21 @@ impl SchemaFieldBuilder<'_> {
     ///
     /// # Errors
     ///
-    /// - [`SchemaFieldBuilderError::RefOutOfBounds`] if the `$ref` target is
-    ///   neither the Global Schema nor a transitive `extends` ancestor.
-    /// - [`SchemaFieldBuilderError::RefFieldNotFound`] if the `$ref` target
-    ///   Schema exists but lacks the named field.
-    /// - [`SchemaFieldBuilderError::UnknownAttributeKey`] if an option key does
-    ///   not belong to the resolved field type (hard failure for `Direct`
-    ///   fields and `$ref` with `type` override).
-    /// - [`SchemaFieldBuilderError::AttributeValueTypeMismatch`] if an option
-    ///   key is valid but its value has the wrong shape (hard failure for
-    ///   `Direct` fields and `$ref` with `type` override).
+    /// - [`RefOutOfBounds`] if the `$ref` target is neither the Global Schema
+    ///   nor a transitive `extends` ancestor.
+    /// - [`RefFieldNotFound`] if the `$ref` target Schema exists but lacks the
+    ///   named field.
+    /// - [`UnknownAttributeKey`] if an option key does not belong to the
+    ///   resolved field type (hard failure for `Direct` fields and `$ref` with
+    ///   `type` override).
+    /// - [`AttributeValueTypeMismatch`] if an option key is valid but its value
+    ///   has the wrong shape (hard failure for `Direct` fields and `$ref` with
+    ///   `type` override).
+    ///
+    /// [`RefOutOfBounds`]: SchemaFieldBuilderError::RefOutOfBounds
+    /// [`RefFieldNotFound`]: SchemaFieldBuilderError::RefFieldNotFound
+    /// [`UnknownAttributeKey`]: SchemaFieldBuilderError::UnknownAttributeKey
+    /// [`AttributeValueTypeMismatch`]: SchemaFieldBuilderError::AttributeValueTypeMismatch
     pub(crate) fn build(
         &mut self,
         address: FieldAddressRef<'_>,
@@ -198,11 +203,13 @@ impl<'a> RefAddressResolver<'a> {
     ///
     /// # Errors
     ///
-    /// - [`SchemaFieldBuilderError::RefOutOfBounds`] if the named Schema is
-    ///   neither the Global Schema nor a transitive `extends` ancestor of
-    ///   `address.schema()`.
-    /// - [`SchemaFieldBuilderError::RefFieldNotFound`] if the named Schema is
-    ///   in bounds but has no such field.
+    /// - [`RefOutOfBounds`] if the named Schema is neither the Global Schema
+    ///   nor a transitive `extends` ancestor of `address.schema()`.
+    /// - [`RefFieldNotFound`] if the named Schema is in bounds but has no such
+    ///   field.
+    ///
+    /// [`RefOutOfBounds`]: SchemaFieldBuilderError::RefOutOfBounds
+    /// [`RefFieldNotFound`]: SchemaFieldBuilderError::RefFieldNotFound
     fn resolve(
         &self,
         address: FieldAddressRef<'_>,

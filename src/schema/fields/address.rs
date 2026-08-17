@@ -48,10 +48,12 @@ impl TryFrom<&str> for FieldAddress {
     ///
     /// # Errors
     ///
-    /// Returns [`FieldAddressError::Malformed`] when `raw` is not shaped
-    /// `#<schema>/<field>` with both segments non-empty, and
-    /// [`FieldAddressError::FieldName`] when the field segment fails
-    /// [`FieldName`] validation.
+    /// - [`Malformed`] if `raw` is not shaped `#<schema>/<field>` with both
+    ///   segments non-empty.
+    /// - [`FieldName`] if the field segment fails [`FieldName`] validation.
+    ///
+    /// [`Malformed`]: FieldAddressError::Malformed
+    /// [`FieldName`]: FieldAddressError::FieldName
     fn try_from(raw: &str) -> Result<Self, Self::Error> {
         let malformed = || FieldAddressError::Malformed {
             reference: raw.to_owned(),

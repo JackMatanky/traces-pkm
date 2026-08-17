@@ -57,9 +57,10 @@ impl<'a> SchemaFieldParser<'a> {
     ///
     /// # Errors
     ///
-    /// Appends a [`SchemaFieldParserError::TypeMismatch`] to internal state if
-    /// `key` is present but the corresponding [`FieldValue`] is not a
-    /// [`FieldValue::String`].
+    /// - [`TypeMismatch`] if `key` is present but the corresponding
+    ///   [`FieldValue`] is not a [`FieldValue::String`].
+    ///
+    /// [`TypeMismatch`]: SchemaFieldParserError::TypeMismatch
     pub(super) fn string(
         &mut self,
         options: &BTreeMap<String, FieldValue>,
@@ -89,9 +90,11 @@ impl<'a> SchemaFieldParser<'a> {
     ///
     /// # Errors
     ///
-    /// Appends a [`SchemaFieldParserError::TypeMismatch`] to internal state if
-    /// `key` is present but the corresponding [`FieldValue`] is not a
-    /// [`FieldValue::List`] containing exclusively string values.
+    /// - [`TypeMismatch`] if `key` is present but the corresponding
+    ///   [`FieldValue`] is not a [`FieldValue::List`] containing exclusively
+    ///   string values.
+    ///
+    /// [`TypeMismatch`]: SchemaFieldParserError::TypeMismatch
     pub(super) fn string_list(
         &mut self,
         options: &BTreeMap<String, FieldValue>,
@@ -133,9 +136,10 @@ impl<'a> SchemaFieldParser<'a> {
     ///
     /// # Errors
     ///
-    /// Appends a [`SchemaFieldParserError::TypeMismatch`] to internal state if
-    /// `key` is present but the corresponding [`FieldValue`] cannot be
-    /// converted to an `f64`.
+    /// - [`TypeMismatch`] if `key` is present but the corresponding
+    ///   [`FieldValue`] cannot be converted to an `f64`.
+    ///
+    /// [`TypeMismatch`]: SchemaFieldParserError::TypeMismatch
     pub(super) fn f64(
         &mut self,
         options: &BTreeMap<String, FieldValue>,
