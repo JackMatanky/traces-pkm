@@ -57,8 +57,9 @@ impl<'a> SchemaFieldParser<'a> {
             Some(value) => match value {
                 FieldValue::String(s) => Some(s.clone()),
                 _ => {
-                    self.errors
-                        .push(self.type_mismatch(key, value, "a string"));
+                    self.errors.push(
+                        self.type_mismatch(&self.kind, key, value, "a string"),
+                    );
                     None
                 }
             },
@@ -92,6 +93,7 @@ impl<'a> SchemaFieldParser<'a> {
                         Some(list) => list,
                         None => {
                             self.errors.push(self.type_mismatch(
+                                &self.kind,
                                 key,
                                 value,
                                 "an array of strings",
@@ -102,6 +104,7 @@ impl<'a> SchemaFieldParser<'a> {
                 }
                 _ => {
                     self.errors.push(self.type_mismatch(
+                        &self.kind,
                         key,
                         value,
                         "an array of strings",
@@ -129,8 +132,9 @@ impl<'a> SchemaFieldParser<'a> {
             Some(value) => match value.as_f64() {
                 Some(number) => Some(number),
                 None => {
-                    self.errors
-                        .push(self.type_mismatch(key, value, "a number"));
+                    self.errors.push(
+                        self.type_mismatch(&self.kind, key, value, "a number"),
+                    );
                     None
                 }
             },
@@ -146,36 +150,32 @@ impl<'a> SchemaFieldParser<'a> {
         options: &BTreeMap<String, FieldValue>,
     ) -> Vec<SchemaFieldParserError> {
         let mut errors = std::mem::take(&mut self.errors);
+        let kind = self.kind.clone();
         errors.extend(
             options
                 .keys()
                 .filter(|key| !self.claimed.contains(key.as_str()))
-                .map(|key| self.unknown_key(key)),
+                .map(|key| SchemaFieldParserError::UnknownKey {
+                    address: FieldAddress::from(self.address),
+                    kind: kind.clone(),
+                    key: key.to_owned(),
+                }),
         );
         errors
-    }
-
-    /// Build a [`SchemaFieldParserError::UnknownKey`] for an unrecognized
-    /// attribute key.
-    fn unknown_key(&self, key: &str) -> SchemaFieldParserError {
-        SchemaFieldParserError::UnknownKey {
-            address: FieldAddress::from(self.address),
-            kind: self.kind.clone(),
-            key: key.to_owned(),
-        }
     }
 
     /// Build a [`SchemaFieldParserError::TypeMismatch`] for a wrongly-shaped
     /// `value`.
     fn type_mismatch(
         &self,
+        kind: &SchemaFieldType,
         key: &str,
         value: &FieldValue,
         expected: &'static str,
     ) -> SchemaFieldParserError {
         SchemaFieldParserError::TypeMismatch {
             address: FieldAddress::from(self.address),
-            kind: self.kind.clone(),
+            kind: kind.clone(),
             key: key.to_owned(),
             value: format!("{value:?}"),
             expected,
