@@ -81,19 +81,18 @@ impl<'a> SchemaFieldParser<'a> {
         self.claimed.insert(key);
         match options.get(key) {
             Some(value) => {
-                if let FieldValue::List(items) = value {
-                    if items
+                if let FieldValue::List(items) = value
+                    && items
                         .iter()
                         .all(|item| matches!(item, FieldValue::String(_)))
-                    {
-                        return items
-                            .iter()
-                            .filter_map(|item| match item {
-                                FieldValue::String(s) => Some(s.clone()),
-                                _ => None,
-                            })
-                            .collect();
-                    }
+                {
+                    return items
+                        .iter()
+                        .filter_map(|item| match item {
+                            FieldValue::String(s) => Some(s.clone()),
+                            _ => None,
+                        })
+                        .collect();
                 }
                 self.errors.push(self.type_mismatch(
                     &self.kind,
