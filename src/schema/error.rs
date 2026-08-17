@@ -125,7 +125,7 @@ pub(crate) enum SchemaFieldBuilderError {
 ///
 /// Resolution skips the offending key or parent and continues. Every warning
 /// is surfaced to the caller as diagnostic context.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) enum SchemaWarning {
     /// An `extends` target has no corresponding Schema file.
     ///

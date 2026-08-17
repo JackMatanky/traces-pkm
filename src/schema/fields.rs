@@ -78,7 +78,7 @@ impl SchemaFieldDef {
     /// Return this field's effective [`SchemaFieldType`].
     #[inline]
     #[must_use]
-    pub(crate) fn kind(&self) -> &SchemaFieldType {
+    pub(super) fn kind(&self) -> &SchemaFieldType {
         &self.kind
     }
 
