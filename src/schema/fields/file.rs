@@ -12,13 +12,8 @@
 use std::collections::BTreeMap;
 
 use super::{
-    super::raw::RawSchemaFieldType,
-    SchemaFieldType,
-    address::FieldAddressRef,
-    error::{
-        AttributeError, expect_string, expect_string_list, type_mismatch,
-        unknown_key,
-    },
+    super::raw::RawSchemaFieldType, SchemaFieldType, address::FieldAddressRef,
+    error::AttributeError, parser::SchemaFieldParser,
 };
 use crate::field::FieldValue;
 
@@ -90,71 +85,26 @@ impl SchemaFileField {
         options: &BTreeMap<String, FieldValue>,
         base: Option<&SchemaFieldType>,
     ) -> (SchemaFieldType, Vec<AttributeError>) {
-        let mut def = Self::default();
+        let (base_folders, base_ext, base_class) = match base {
+            Some(SchemaFieldType::File(base_def)) => (
+                base_def.folders.clone(),
+                base_def.ext.clone(),
+                base_def.class.clone(),
+            ),
+            _ => (Vec::new(), None, Vec::new()),
+        };
+
         let mut errors = Vec::new();
-        for (key, value) in options {
-            match key.as_str() {
-                "folders" => match expect_string_list(value) {
-                    Some(folders) => def.folders = folders,
-                    None => errors.push(type_mismatch(
-                        address,
-                        RawSchemaFieldType::File,
-                        key,
-                        value,
-                        "an array of strings",
-                    )),
-                },
-                "ext" => match expect_string(value) {
-                    Some(ext) => def.ext = Some(ext),
-                    None => errors.push(type_mismatch(
-                        address,
-                        RawSchemaFieldType::File,
-                        key,
-                        value,
-                        "a string",
-                    )),
-                },
-                "class" => match expect_string_list(value) {
-                    Some(class) => def.class = class,
-                    None => errors.push(type_mismatch(
-                        address,
-                        RawSchemaFieldType::File,
-                        key,
-                        value,
-                        "an array of strings",
-                    )),
-                },
-                _ => {
-                    errors.push(unknown_key(
-                        address,
-                        RawSchemaFieldType::File,
-                        key,
-                    ));
-                }
-            }
-        }
-        let folders = if def.folders.is_empty() {
-            match base {
-                Some(SchemaFieldType::File(base_def)) => {
-                    base_def.folders.clone()
-                }
-                _ => Vec::new(),
-            }
-        } else {
-            def.folders
-        };
-        let ext = def.ext.or_else(|| match base {
-            Some(SchemaFieldType::File(base_def)) => base_def.ext.clone(),
-            _ => None,
-        });
-        let class = if def.class.is_empty() {
-            match base {
-                Some(SchemaFieldType::File(base_def)) => base_def.class.clone(),
-                _ => Vec::new(),
-            }
-        } else {
-            def.class
-        };
+        let mut parser =
+            SchemaFieldParser::new(address, RawSchemaFieldType::File);
+
+        let folders =
+            parser.string_list(options, "folders", base_folders, &mut errors);
+        let ext = parser.string(options, "ext", base_ext, &mut errors);
+        let class =
+            parser.string_list(options, "class", base_class, &mut errors);
+
+        errors.extend(parser.finish(options));
         (
             SchemaFieldType::File(SchemaFileField {
                 folders,

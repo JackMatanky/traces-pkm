@@ -3,10 +3,8 @@
 use std::collections::BTreeMap;
 
 use super::{
-    super::raw::RawSchemaFieldType,
-    SchemaFieldType,
-    address::FieldAddressRef,
-    error::{AttributeError, expect_string_list, type_mismatch, unknown_key},
+    super::raw::RawSchemaFieldType, SchemaFieldType, address::FieldAddressRef,
+    error::AttributeError, parser::SchemaFieldParser,
 };
 use crate::field::FieldValue;
 
@@ -46,35 +44,13 @@ impl SchemaSelectField {
         options: &BTreeMap<String, FieldValue>,
         base: Option<&SchemaFieldType>,
     ) -> (SchemaFieldType, Vec<AttributeError>) {
-        let mut def = Self::default();
         let mut errors = Vec::new();
-        for (key, value) in options {
-            match key.as_str() {
-                "values" => match expect_string_list(value) {
-                    Some(values) => {
-                        def.values = values
-                            .into_iter()
-                            .map(SchemaSelectFieldEntry::literal)
-                            .collect();
-                    }
-                    None => errors.push(type_mismatch(
-                        address,
-                        RawSchemaFieldType::Select,
-                        key,
-                        value,
-                        "an array of strings",
-                    )),
-                },
-                _ => {
-                    errors.push(unknown_key(
-                        address,
-                        RawSchemaFieldType::Select,
-                        key,
-                    ));
-                }
-            }
-        }
-        let values = if def.values.is_empty() {
+        let mut parser =
+            SchemaFieldParser::new(address, RawSchemaFieldType::Select);
+
+        let values =
+            parser.string_list(options, "values", Vec::new(), &mut errors);
+        let values = if values.is_empty() {
             match base {
                 Some(SchemaFieldType::Select(base_def)) => {
                     base_def.values.clone()
@@ -82,8 +58,10 @@ impl SchemaSelectField {
                 _ => Vec::new(),
             }
         } else {
-            def.values
+            values.into_iter().map(SchemaSelectFieldEntry::literal).collect()
         };
+
+        errors.extend(parser.finish(options));
         (
             SchemaFieldType::Select(SchemaSelectField {
                 values,

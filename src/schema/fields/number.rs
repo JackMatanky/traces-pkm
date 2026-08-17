@@ -3,10 +3,8 @@
 use std::collections::BTreeMap;
 
 use super::{
-    super::raw::RawSchemaFieldType,
-    SchemaFieldType,
-    address::FieldAddressRef,
-    error::{AttributeError, type_mismatch, unknown_key},
+    super::raw::RawSchemaFieldType, SchemaFieldType, address::FieldAddressRef,
+    error::AttributeError, parser::SchemaFieldParser,
 };
 use crate::field::FieldValue;
 
@@ -67,44 +65,27 @@ impl SchemaNumberField {
         options: &BTreeMap<String, FieldValue>,
         base: Option<&SchemaFieldType>,
     ) -> (SchemaFieldType, Vec<AttributeError>) {
-        let mut def = Self::default();
-        let mut errors = Vec::new();
-        for (key, value) in options {
-            let slot = match key.as_str() {
-                "min" => &mut def.min,
-                "max" => &mut def.max,
-                "step" => &mut def.step,
-                _ => {
-                    errors.push(unknown_key(
-                        address,
-                        RawSchemaFieldType::Number,
-                        key,
-                    ));
-                    continue;
-                }
-            };
-            match value.as_f64() {
-                Some(number) => *slot = Some(number),
-                None => errors.push(type_mismatch(
-                    address,
-                    RawSchemaFieldType::Number,
-                    key,
-                    value,
-                    "a number",
-                )),
-            }
-        }
         let (base_min, base_max, base_step) = match base {
             Some(SchemaFieldType::Number(base_def)) => {
                 (base_def.min, base_def.max, base_def.step)
             }
             _ => (None, None, None),
         };
+
+        let mut errors = Vec::new();
+        let mut parser =
+            SchemaFieldParser::new(address, RawSchemaFieldType::Number);
+
+        let min = parser.f64(options, "min", base_min, &mut errors);
+        let max = parser.f64(options, "max", base_max, &mut errors);
+        let step = parser.f64(options, "step", base_step, &mut errors);
+
+        errors.extend(parser.finish(options));
         (
             SchemaFieldType::Number(SchemaNumberField {
-                min: def.min.or(base_min),
-                max: def.max.or(base_max),
-                step: def.step.or(base_step),
+                min,
+                max,
+                step,
             }),
             errors,
         )

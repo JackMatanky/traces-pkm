@@ -8,10 +8,11 @@ use super::{
         error::{SchemaError, SchemaFieldBuilderError, SchemaWarning},
         model::Schema,
         name::SchemaName,
-        raw::{RawFieldSource, RawSchemaFieldDef},
+        raw::{RawFieldSource, RawSchemaFieldDef, RawSchemaFieldType},
     },
     SchemaFieldDef, SchemaFieldType,
     address::{FieldAddress, FieldAddressRef},
+    parser,
 };
 
 /// Build one [`SchemaFieldDef`] from its raw declaration, resolving `$ref`
@@ -45,7 +46,7 @@ impl SchemaFieldBuilder<'_> {
                 override_type: Some(override_type),
             } => {
                 let base = self.refs.resolve(address, base_address)?;
-                let (field_type, errors) = SchemaFieldType::try_parse(
+                let (field_type, errors) = parse_field(
                     address,
                     *override_type,
                     &raw.options,
@@ -65,9 +66,18 @@ impl SchemaFieldBuilder<'_> {
                 override_type: None,
             } => {
                 let base = self.refs.resolve(address, base_address)?;
-                let (field_type, errors) = SchemaFieldType::try_parse(
+                let base_kind = base.kind().clone();
+                let raw_kind = match &base_kind {
+                    SchemaFieldType::Input => RawSchemaFieldType::Input,
+                    SchemaFieldType::Select(_) => RawSchemaFieldType::Select,
+                    SchemaFieldType::Boolean => RawSchemaFieldType::Boolean,
+                    SchemaFieldType::Number(_) => RawSchemaFieldType::Number,
+                    SchemaFieldType::Date(_) => RawSchemaFieldType::Date,
+                    SchemaFieldType::File(_) => RawSchemaFieldType::File,
+                };
+                let (field_type, errors) = parse_field(
                     address,
-                    base.kind().raw_kind(),
+                    raw_kind,
                     &raw.options,
                     Some(base.kind()),
                 );
@@ -79,12 +89,8 @@ impl SchemaFieldBuilder<'_> {
                 )
             }
             RawFieldSource::Direct(raw_type) => {
-                let (field_type, errors) = SchemaFieldType::try_parse(
-                    address,
-                    *raw_type,
-                    &raw.options,
-                    None,
-                );
+                let (field_type, errors) =
+                    parse_field(address, *raw_type, &raw.options, None);
                 if let Some(error) = errors.into_iter().next() {
                     return Err(SchemaFieldBuilderError::from(error).into());
                 }
@@ -117,6 +123,38 @@ impl SchemaFieldBuilder<'_> {
             false
         } else {
             required
+        }
+    }
+}
+
+/// Dispatch `options` parsing to the appropriate per-type `parse` function.
+fn parse_field(
+    address: FieldAddressRef<'_>,
+    kind: RawSchemaFieldType,
+    options: &std::collections::BTreeMap<String, crate::field::FieldValue>,
+    base: Option<&SchemaFieldType>,
+) -> (SchemaFieldType, Vec<super::error::AttributeError>) {
+    use super::{date, file, number, select};
+    match kind {
+        RawSchemaFieldType::Input => {
+            let unknowns = parser::parse_simple(address, kind, options);
+            (SchemaFieldType::Input, unknowns)
+        }
+        RawSchemaFieldType::Boolean => {
+            let unknowns = parser::parse_simple(address, kind, options);
+            (SchemaFieldType::Boolean, unknowns)
+        }
+        RawSchemaFieldType::Select => {
+            select::SchemaSelectField::parse(address, options, base)
+        }
+        RawSchemaFieldType::Number => {
+            number::SchemaNumberField::parse(address, options, base)
+        }
+        RawSchemaFieldType::Date => {
+            date::SchemaDateField::parse(address, options, base)
+        }
+        RawSchemaFieldType::File => {
+            file::SchemaFileField::parse(address, options, base)
         }
     }
 }

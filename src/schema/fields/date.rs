@@ -3,10 +3,8 @@
 use std::collections::BTreeMap;
 
 use super::{
-    super::raw::RawSchemaFieldType,
-    SchemaFieldType,
-    address::FieldAddressRef,
-    error::{AttributeError, expect_string, type_mismatch, unknown_key},
+    super::raw::RawSchemaFieldType, SchemaFieldType, address::FieldAddressRef,
+    error::AttributeError, parser::SchemaFieldParser,
 };
 use crate::field::FieldValue;
 
@@ -45,33 +43,18 @@ impl SchemaDateField {
         options: &BTreeMap<String, FieldValue>,
         base: Option<&SchemaFieldType>,
     ) -> (SchemaFieldType, Vec<AttributeError>) {
-        let mut def = Self::default();
-        let mut errors = Vec::new();
-        for (key, value) in options {
-            match key.as_str() {
-                "format" => match expect_string(value) {
-                    Some(format) => def.format = Some(format),
-                    None => errors.push(type_mismatch(
-                        address,
-                        RawSchemaFieldType::Date,
-                        key,
-                        value,
-                        "a string",
-                    )),
-                },
-                _ => {
-                    errors.push(unknown_key(
-                        address,
-                        RawSchemaFieldType::Date,
-                        key,
-                    ));
-                }
-            }
-        }
-        let format = def.format.or_else(|| match base {
+        let base_format = match base {
             Some(SchemaFieldType::Date(base_def)) => base_def.format.clone(),
             _ => None,
-        });
+        };
+
+        let mut errors = Vec::new();
+        let mut parser =
+            SchemaFieldParser::new(address, RawSchemaFieldType::Date);
+
+        let format = parser.string(options, "format", base_format, &mut errors);
+
+        errors.extend(parser.finish(options));
         (
             SchemaFieldType::Date(SchemaDateField {
                 format,

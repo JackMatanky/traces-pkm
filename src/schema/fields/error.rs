@@ -116,30 +116,3 @@ pub(super) fn type_mismatch(
         expected,
     }
 }
-
-/// Return `value` as an owned list of strings, or `None` if it is not a list
-/// of strings.
-pub(super) fn expect_string_list(
-    value: &crate::field::FieldValue,
-) -> Option<Vec<String>> {
-    let crate::field::FieldValue::List(items) = value else {
-        return None;
-    };
-    items
-        .iter()
-        .map(|item| match item {
-            crate::field::FieldValue::String(s) => Some(s.clone()),
-            _ => None,
-        })
-        .collect()
-}
-
-/// Return `value` as an owned string, or `None` if it is not.
-pub(super) fn expect_string(
-    value: &crate::field::FieldValue,
-) -> Option<String> {
-    match value {
-        crate::field::FieldValue::String(s) => Some(s.clone()),
-        _ => None,
-    }
-}
