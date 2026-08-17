@@ -17,10 +17,7 @@ impl SchemaNumberField {
     /// Return the inclusive minimum bound, if set.
     #[inline]
     #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "reserved for future schema consumers")
-    )]
+    #[expect(dead_code, reason = "reserved for future schema consumers")]
     pub(crate) fn min(&self) -> Option<f64> {
         self.min
     }
@@ -28,10 +25,7 @@ impl SchemaNumberField {
     /// Return the inclusive maximum bound, if set.
     #[inline]
     #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "reserved for future schema consumers")
-    )]
+    #[expect(dead_code, reason = "reserved for future schema consumers")]
     pub(crate) fn max(&self) -> Option<f64> {
         self.max
     }
@@ -39,10 +33,7 @@ impl SchemaNumberField {
     /// Return the increment step, if set.
     #[inline]
     #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "reserved for future schema consumers")
-    )]
+    #[expect(dead_code, reason = "reserved for future schema consumers")]
     pub(crate) fn step(&self) -> Option<f64> {
         self.step
     }
@@ -99,12 +90,12 @@ mod tests {
 
     use pretty_assertions::assert_eq;
 
-    use super::{
-        super::{
-            super::error::SchemaFieldParserError, address::FieldAddress,
-            parser::SchemaFieldParser,
+    use super::*;
+    use crate::schema::{
+        error::SchemaFieldParserError,
+        fields::{
+            SchemaNumberField, address::FieldAddress, parser::SchemaFieldParser,
         },
-        *,
     };
 
     fn address() -> FieldAddress {

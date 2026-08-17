@@ -107,12 +107,10 @@ mod tests {
 
     use pretty_assertions::assert_eq;
 
-    use super::{
-        super::{
-            super::error::SchemaFieldParserError, address::FieldAddress,
-            parser::SchemaFieldParser,
-        },
-        *,
+    use super::*;
+    use crate::schema::{
+        error::SchemaFieldParserError,
+        fields::{address::FieldAddress, parser::SchemaFieldParser},
     };
 
     fn address() -> FieldAddress {

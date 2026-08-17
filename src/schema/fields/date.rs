@@ -61,12 +61,12 @@ impl SchemaDateField {
 mod tests {
     use std::collections::BTreeMap;
 
-    use super::{
-        super::{
-            super::error::SchemaFieldParserError, address::FieldAddress,
-            parser::SchemaFieldParser,
+    use super::*;
+    use crate::schema::{
+        error::SchemaFieldParserError,
+        fields::{
+            SchemaDateField, address::FieldAddress, parser::SchemaFieldParser,
         },
-        *,
     };
 
     fn address() -> FieldAddress {

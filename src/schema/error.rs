@@ -405,7 +405,6 @@ mod tests {
 
     mod conversions {
         use super::super::*;
-        use crate::schema::fields::{SchemaDateField, SchemaNumberField};
 
         #[test]
         fn from_field_builder_error_wraps_in_field_builder_variant() {
