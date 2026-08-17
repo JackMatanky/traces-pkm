@@ -10,15 +10,50 @@ use super::{
 };
 use crate::field::FieldValue;
 
-/// Raw `number` field options before `$ref` merge.
-#[derive(Default)]
-pub(super) struct SchemaNumberFieldDef {
+/// Resolved `number` field options.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct SchemaNumberField {
     min: Option<f64>,
     max: Option<f64>,
     step: Option<f64>,
 }
 
-impl SchemaNumberFieldDef {
+impl SchemaNumberField {
+    /// Return the inclusive minimum bound, if set.
+    #[inline]
+    #[must_use]
+    pub(crate) fn min(&self) -> Option<f64> {
+        self.min
+    }
+
+    /// Return the inclusive maximum bound, if set.
+    #[inline]
+    #[must_use]
+    pub(crate) fn max(&self) -> Option<f64> {
+        self.max
+    }
+
+    /// Return the increment step, if set.
+    #[inline]
+    #[must_use]
+    pub(crate) fn step(&self) -> Option<f64> {
+        self.step
+    }
+
+    /// Build an instance for tests.
+    #[cfg(test)]
+    pub(crate) fn for_test(
+        min: Option<f64>,
+        max: Option<f64>,
+        step: Option<f64>,
+    ) -> Self {
+        Self {
+            min,
+            max,
+            step,
+        }
+    }
+
     /// Parse `options` against `number`'s `min`/`max`/`step` attributes,
     /// merging with `base` when present.
     ///
@@ -60,19 +95,17 @@ impl SchemaNumberFieldDef {
             }
         }
         let (base_min, base_max, base_step) = match base {
-            Some(SchemaFieldType::Number {
-                min,
-                max,
-                step,
-            }) => (*min, *max, *step),
+            Some(SchemaFieldType::Number(base_def)) => {
+                (base_def.min, base_def.max, base_def.step)
+            }
             _ => (None, None, None),
         };
         (
-            SchemaFieldType::Number {
+            SchemaFieldType::Number(SchemaNumberField {
                 min: def.min.or(base_min),
                 max: def.max.or(base_max),
                 step: def.step.or(base_step),
-            },
+            }),
             errors,
         )
     }

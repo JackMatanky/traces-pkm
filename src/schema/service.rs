@@ -545,7 +545,10 @@ mod tests {
     use super::{super::GLOBAL_SCHEMA_NAME, *};
     use crate::schema::{
         error::SchemaFieldBuilderError,
-        fields::{SchemaFieldType, SchemaSelectFieldEntry},
+        fields::{
+            SchemaDateField, SchemaFieldType, SchemaFileField,
+            SchemaNumberField, SchemaSelectField, SchemaSelectFieldEntry,
+        },
         raw::{RawFieldSource, RawSchemaFieldDef, RawSchemaFieldType},
     };
 
@@ -1171,9 +1174,12 @@ mod tests {
             let book = resolved.get("book").expect("book resolved");
             assert_eq!(book.name(), "book");
             let status = book.field("status").expect("status field");
-            assert_eq!(status.kind(), &SchemaFieldType::Select {
-                values: select_entries(&["draft", "done"])
-            });
+            assert_eq!(
+                status.kind(),
+                &SchemaFieldType::Select(SchemaSelectField::for_test(
+                    select_entries(&["draft", "done"])
+                ))
+            );
             assert!(!status.is_required());
             assert!(!status.is_multi());
         }
@@ -1199,9 +1205,12 @@ mod tests {
                 .get("sci_fi")
                 .and_then(|s| s.field("status"))
                 .expect("status field");
-            assert_eq!(status.kind(), &SchemaFieldType::Select {
-                values: select_entries(&["outline", "shipped"])
-            });
+            assert_eq!(
+                status.kind(),
+                &SchemaFieldType::Select(SchemaSelectField::for_test(
+                    select_entries(&["outline", "shipped"])
+                ))
+            );
         }
 
         #[test]
@@ -1223,9 +1232,12 @@ mod tests {
                 .get("child")
                 .and_then(|s| s.field("shared"))
                 .expect("shared field");
-            assert_eq!(shared.kind(), &SchemaFieldType::Select {
-                values: select_entries(&["from-a"])
-            });
+            assert_eq!(
+                shared.kind(),
+                &SchemaFieldType::Select(SchemaSelectField::for_test(
+                    select_entries(&["from-a"])
+                ))
+            );
         }
 
         #[test]
@@ -1348,9 +1360,12 @@ mod tests {
                 .get("sci_fi")
                 .and_then(|s| s.field("status"))
                 .expect("status field");
-            assert_eq!(status.kind(), &SchemaFieldType::Select {
-                values: select_entries(&["draft", "done"])
-            });
+            assert_eq!(
+                status.kind(),
+                &SchemaFieldType::Select(SchemaSelectField::for_test(
+                    select_entries(&["draft", "done"])
+                ))
+            );
             assert!(status.is_required());
         }
 
@@ -1375,9 +1390,12 @@ mod tests {
                 .get("task")
                 .and_then(|s| s.field("priority"))
                 .expect("priority field");
-            assert_eq!(priority.kind(), &SchemaFieldType::Select {
-                values: select_entries(&["low", "high"])
-            });
+            assert_eq!(
+                priority.kind(),
+                &SchemaFieldType::Select(SchemaSelectField::for_test(
+                    select_entries(&["low", "high"])
+                ))
+            );
             assert!(priority.is_required());
         }
 
@@ -1524,9 +1542,9 @@ mod tests {
             );
             assert_eq!(
                 book.field("status").map(|f| f.kind()),
-                Some(&SchemaFieldType::Select {
-                    values: select_entries(&["draft", "done"])
-                })
+                Some(&SchemaFieldType::Select(SchemaSelectField::for_test(
+                    select_entries(&["draft", "done"])
+                )))
             );
             assert_eq!(
                 book.field("archived").map(|f| f.kind()),
@@ -1534,25 +1552,21 @@ mod tests {
             );
             assert_eq!(
                 book.field("rating").map(|f| f.kind()),
-                Some(&SchemaFieldType::Number {
-                    step: None,
-                    min: None,
-                    max: None,
-                })
+                Some(&SchemaFieldType::Number(SchemaNumberField::for_test(
+                    None, None, None
+                )))
             );
             assert_eq!(
                 book.field("published").map(|f| f.kind()),
-                Some(&SchemaFieldType::Date {
-                    format: None
-                })
+                Some(&SchemaFieldType::Date(SchemaDateField::for_test(None)))
             );
             assert_eq!(
                 book.field("cover").map(|f| f.kind()),
-                Some(&SchemaFieldType::File {
-                    folders: vec!["assets/covers".to_owned()],
-                    ext: Some("png".to_owned()),
-                    class: vec!["image".to_owned()],
-                })
+                Some(&SchemaFieldType::File(SchemaFileField::for_test(
+                    vec!["assets/covers".to_owned()],
+                    Some("png".to_owned()),
+                    vec!["image".to_owned()],
+                )))
             );
         }
 
@@ -1606,11 +1620,14 @@ mod tests {
                 .and_then(|s| s.field("cover"))
                 .expect("cover field");
 
-            assert_eq!(cover.kind(), &SchemaFieldType::File {
-                folders: vec!["assets/covers".to_owned()],
-                ext: Some("png".to_owned()),
-                class: vec!["image".to_owned()],
-            });
+            assert_eq!(
+                cover.kind(),
+                &SchemaFieldType::File(SchemaFileField::for_test(
+                    vec!["assets/covers".to_owned()],
+                    Some("png".to_owned()),
+                    vec!["image".to_owned()],
+                ))
+            );
         }
 
         #[test]
@@ -1677,9 +1694,12 @@ mod tests {
                 .get("poem")
                 .and_then(|s| s.field("priority"))
                 .expect("priority field resolves via $ref to global");
-            assert_eq!(priority.kind(), &SchemaFieldType::Select {
-                values: select_entries(&["low", "high"])
-            });
+            assert_eq!(
+                priority.kind(),
+                &SchemaFieldType::Select(SchemaSelectField::for_test(
+                    select_entries(&["low", "high"])
+                ))
+            );
         }
 
         #[test]
@@ -1706,9 +1726,12 @@ mod tests {
                 .get("author")
                 .and_then(|s| s.field("name"))
                 .expect("name field resolves via $ref to global");
-            assert_eq!(name.kind(), &SchemaFieldType::Select {
-                values: select_entries(&["anon"])
-            });
+            assert_eq!(
+                name.kind(),
+                &SchemaFieldType::Select(SchemaSelectField::for_test(
+                    select_entries(&["anon"])
+                ))
+            );
         }
 
         #[test]
@@ -1740,11 +1763,14 @@ mod tests {
                 .get("sci_fi")
                 .and_then(|s| s.field("status"))
                 .expect("status field");
-            assert_eq!(status.kind(), &SchemaFieldType::File {
-                folders: vec!["assets".to_owned()],
-                ext: None,
-                class: Vec::new(),
-            });
+            assert_eq!(
+                status.kind(),
+                &SchemaFieldType::File(SchemaFileField::for_test(
+                    vec!["assets".to_owned()],
+                    None,
+                    Vec::new(),
+                ))
+            );
         }
 
         #[test]
@@ -1770,9 +1796,12 @@ mod tests {
                 .get("sci_fi")
                 .and_then(|s| s.field("status"))
                 .expect("status field still resolves from the base");
-            assert_eq!(status.kind(), &SchemaFieldType::Select {
-                values: select_entries(&["draft", "done"])
-            });
+            assert_eq!(
+                status.kind(),
+                &SchemaFieldType::Select(SchemaSelectField::for_test(
+                    select_entries(&["draft", "done"])
+                ))
+            );
             assert_eq!(warnings.len(), 1);
             assert!(matches!(
                 warnings[0],
@@ -1810,11 +1839,12 @@ mod tests {
                 .get("sci_fi")
                 .and_then(|s| s.field("rating"))
                 .expect("rating field still resolves from the base");
-            assert_eq!(rating.kind(), &SchemaFieldType::Number {
-                min: None,
-                max: None,
-                step: None,
-            });
+            assert_eq!(
+                rating.kind(),
+                &SchemaFieldType::Number(SchemaNumberField::for_test(
+                    None, None, None
+                ))
+            );
             assert_eq!(warnings.len(), 1);
             assert!(matches!(
                 warnings[0],
@@ -1852,14 +1882,14 @@ mod tests {
                 .get("book")
                 .and_then(|s| s.field("cover"))
                 .expect("cover field still resolves from the base");
-            assert_eq!(cover.kind(), &SchemaFieldType::File {
-                // The valid override key applied...
-                folders: vec!["assets/covers".to_owned()],
-                // ...while the dropped key's own subfields fall back to the
-                // base, untouched.
-                ext: Some("png".to_owned()),
-                class: vec!["image".to_owned()],
-            });
+            assert_eq!(
+                cover.kind(),
+                &SchemaFieldType::File(SchemaFileField::for_test(
+                    vec!["assets/covers".to_owned()],
+                    Some("png".to_owned()),
+                    vec!["image".to_owned()],
+                ))
+            );
             assert_eq!(warnings.len(), 1);
             assert!(matches!(
                 &warnings[0],

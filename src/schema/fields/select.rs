@@ -10,13 +10,28 @@ use super::{
 };
 use crate::field::FieldValue;
 
-/// Raw `select` field options before `$ref` merge.
-#[derive(Default)]
-pub(super) struct SchemaSelectFieldDef {
+/// Resolved `select` field options.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct SchemaSelectField {
     values: Vec<SchemaSelectFieldEntry>,
 }
 
-impl SchemaSelectFieldDef {
+impl SchemaSelectField {
+    /// Return the selectable entries.
+    #[inline]
+    #[must_use]
+    pub(crate) fn values(&self) -> &[SchemaSelectFieldEntry] {
+        &self.values
+    }
+
+    /// Build an instance for tests.
+    #[cfg(test)]
+    pub(crate) fn for_test(values: Vec<SchemaSelectFieldEntry>) -> Self {
+        Self {
+            values,
+        }
+    }
+
     /// Parse `options` against `select`'s `values` attribute, merging with
     /// `base` when present. Returns the effective [`SchemaFieldType::Select`]
     /// and every per-key validation failure.
@@ -61,18 +76,18 @@ impl SchemaSelectFieldDef {
         }
         let values = if def.values.is_empty() {
             match base {
-                Some(SchemaFieldType::Select {
-                    values,
-                }) => values.clone(),
+                Some(SchemaFieldType::Select(base_def)) => {
+                    base_def.values.clone()
+                }
                 _ => Vec::new(),
             }
         } else {
             def.values
         };
         (
-            SchemaFieldType::Select {
+            SchemaFieldType::Select(SchemaSelectField {
                 values,
-            },
+            }),
             errors,
         )
     }

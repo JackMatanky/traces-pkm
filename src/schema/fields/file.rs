@@ -4,7 +4,7 @@
 //! filters. Parsing validates the three attributes (`folders`, `ext`, `class`)
 //! and merges with a `$ref` base when present.
 //!
-//! [`SchemaFileFieldDefRef`] borrows the resolved filter parts for
+//! [`SchemaFileFieldRef`] borrows the resolved filter parts for
 //! [`file_filter`].
 //!
 //! [`file_filter`]: super::SchemaFieldDef::file_filter
@@ -22,23 +22,58 @@ use super::{
 };
 use crate::field::FieldValue;
 
-/// Raw `file` field options before `$ref` merge.
-#[derive(Default)]
-pub(super) struct SchemaFileFieldDef {
+/// Resolved `file` field options.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct SchemaFileField {
     folders: Vec<String>,
     ext: Option<String>,
     class: Vec<String>,
 }
 
-impl SchemaFileFieldDef {
-    /// Borrow this definition as a [`SchemaFileFieldDefRef`].
+impl SchemaFileField {
+    /// Return the matched folder paths.
     #[inline]
     #[must_use]
-    pub(super) fn as_ref(&self) -> SchemaFileFieldDefRef<'_> {
-        SchemaFileFieldDefRef {
+    pub(crate) fn folders(&self) -> &[String] {
+        &self.folders
+    }
+
+    /// Return the matched file extension, if set.
+    #[inline]
+    #[must_use]
+    pub(crate) fn ext(&self) -> Option<&str> {
+        self.ext.as_deref()
+    }
+
+    /// Return the matched class tags.
+    #[inline]
+    #[must_use]
+    pub(crate) fn class(&self) -> &[String] {
+        &self.class
+    }
+
+    /// Borrow this definition as a [`SchemaFileFieldRef`].
+    #[inline]
+    #[must_use]
+    pub(super) fn as_ref(&self) -> SchemaFileFieldRef<'_> {
+        SchemaFileFieldRef {
             folders: &self.folders,
             ext: self.ext.as_deref(),
             class: &self.class,
+        }
+    }
+
+    /// Build an instance for tests.
+    #[cfg(test)]
+    pub(crate) fn for_test(
+        folders: Vec<String>,
+        ext: Option<String>,
+        class: Vec<String>,
+    ) -> Self {
+        Self {
+            folders,
+            ext,
+            class,
         }
     }
 
@@ -100,39 +135,32 @@ impl SchemaFileFieldDef {
         }
         let folders = if def.folders.is_empty() {
             match base {
-                Some(SchemaFieldType::File {
-                    folders,
-                    ..
-                }) => folders.clone(),
+                Some(SchemaFieldType::File(base_def)) => {
+                    base_def.folders.clone()
+                }
                 _ => Vec::new(),
             }
         } else {
             def.folders
         };
         let ext = def.ext.or_else(|| match base {
-            Some(SchemaFieldType::File {
-                ext,
-                ..
-            }) => ext.clone(),
+            Some(SchemaFieldType::File(base_def)) => base_def.ext.clone(),
             _ => None,
         });
         let class = if def.class.is_empty() {
             match base {
-                Some(SchemaFieldType::File {
-                    class,
-                    ..
-                }) => class.clone(),
+                Some(SchemaFieldType::File(base_def)) => base_def.class.clone(),
                 _ => Vec::new(),
             }
         } else {
             def.class
         };
         (
-            SchemaFieldType::File {
+            SchemaFieldType::File(SchemaFileField {
                 folders,
                 ext,
                 class,
-            },
+            }),
             errors,
         )
     }
@@ -143,7 +171,7 @@ impl SchemaFileFieldDef {
 /// Returned by [`file_filter`].
 ///
 /// [`file_filter`]: super::SchemaFieldDef::file_filter
-pub(crate) struct SchemaFileFieldDefRef<'a> {
+pub(crate) struct SchemaFileFieldRef<'a> {
     pub(crate) folders: &'a [String],
     pub(crate) ext: Option<&'a str>,
     pub(crate) class: &'a [String],

@@ -14,7 +14,7 @@
 //! - [`number`] parses `min`/`max`/`step`.
 //! - [`date`] parses `format`.
 //! - [`mod@file`] parses `folders`/`ext`/`class` and provides
-//!   [`SchemaFileFieldDefRef`] for `FileIndex` queries.
+//!   [`SchemaFileFieldRef`] for `FileIndex` queries.
 //! - [`builder`] resolves `$ref` targets and builds [`SchemaFieldDef`]s.
 
 mod address;
@@ -25,14 +25,16 @@ mod error;
 pub(crate) use builder::{RefResolver, SchemaFieldBuilder};
 
 mod date;
+pub(crate) use date::SchemaDateField;
 mod file;
-pub(crate) use file::SchemaFileFieldDefRef;
+pub(crate) use file::{SchemaFileField, SchemaFileFieldRef};
 mod number;
+pub(crate) use number::SchemaNumberField;
 mod select;
-
 use std::collections::BTreeMap;
 
 use error::AttributeError;
+pub(crate) use select::{SchemaSelectField, SchemaSelectFieldEntry};
 
 use super::raw::RawSchemaFieldType;
 use crate::field::FieldValue;
@@ -83,51 +85,27 @@ impl SchemaFieldDef {
     #[must_use]
     pub(crate) fn select_values(&self) -> Option<&[SchemaSelectFieldEntry]> {
         match &self.kind {
-            SchemaFieldType::Select {
-                values,
-            } => Some(values),
+            SchemaFieldType::Select(def) => Some(def.values()),
             SchemaFieldType::Input
             | SchemaFieldType::Boolean
-            | SchemaFieldType::Number {
-                ..
-            }
-            | SchemaFieldType::Date {
-                ..
-            }
-            | SchemaFieldType::File {
-                ..
-            } => None,
+            | SchemaFieldType::Number(_)
+            | SchemaFieldType::Date(_)
+            | SchemaFieldType::File(_) => None,
         }
     }
 
-    /// Return the [`file::SchemaFileFieldDefRef`] for a `file` field, or `None`
+    /// Return the [`file::SchemaFileFieldRef`] for a `file` field, or `None`
     /// for every other field type.
     #[inline]
     #[must_use]
-    pub(crate) fn file_filter(
-        &self,
-    ) -> Option<file::SchemaFileFieldDefRef<'_>> {
+    pub(crate) fn file_filter(&self) -> Option<file::SchemaFileFieldRef<'_>> {
         match &self.kind {
-            SchemaFieldType::File {
-                folders,
-                ext,
-                class,
-            } => Some(file::SchemaFileFieldDefRef {
-                folders,
-                ext: ext.as_deref(),
-                class,
-            }),
+            SchemaFieldType::File(def) => Some(def.as_ref()),
             SchemaFieldType::Input
-            | SchemaFieldType::Select {
-                ..
-            }
+            | SchemaFieldType::Select(_)
             | SchemaFieldType::Boolean
-            | SchemaFieldType::Number {
-                ..
-            }
-            | SchemaFieldType::Date {
-                ..
-            } => None,
+            | SchemaFieldType::Number(_)
+            | SchemaFieldType::Date(_) => None,
         }
     }
 
@@ -148,11 +126,11 @@ impl SchemaFieldDef {
 
 /// A field's effective type and its type-specific options.
 ///
-/// Each variant carries only the options relevant to that kind:
-/// - [`Select`][SchemaFieldType::Select]: `values`
-/// - [`Number`][SchemaFieldType::Number]: `min`/`max`/`step`
-/// - [`Date`][SchemaFieldType::Date]: `format`
-/// - [`File`][SchemaFieldType::File]: `folders`/`ext`/`class`
+/// Each variant wraps the resolved options for that kind:
+/// - [`Select`][SchemaFieldType::Select]: [`SchemaSelectField`]
+/// - [`Number`][SchemaFieldType::Number]: [`SchemaNumberField`]
+/// - [`Date`][SchemaFieldType::Date]: [`SchemaDateField`]
+/// - [`File`][SchemaFieldType::File]: [`SchemaFileField`]
 /// - [`Input`][SchemaFieldType::Input] / [`Boolean`][SchemaFieldType::Boolean]:
 ///   no options
 #[derive(Clone, Debug, PartialEq)]
@@ -160,34 +138,18 @@ pub(crate) enum SchemaFieldType {
     /// Free-form text input.
     Input,
     /// One value from a configured list.
-    Select {
-        values: Vec<SchemaSelectFieldEntry>,
-    },
+    Select(SchemaSelectField),
     /// Boolean value.
     Boolean,
     /// Numeric value with optional bounds and step.
-    Number {
-        /// Inclusive minimum bound.
-        min: Option<f64>,
-        /// Inclusive maximum bound.
-        max: Option<f64>,
-        /// Increment step.
-        step: Option<f64>,
-    },
+    Number(SchemaNumberField),
     /// Date value with an optional display format.
-    Date {
-        /// Display/parse format (strftime).
-        format: Option<String>,
-    },
+    Date(SchemaDateField),
     /// A link to files matched by folder, extension, and class filters.
     ///
     /// Class matching happens at query time via
     /// [`super::service::SchemaService::matches`], not here.
-    File {
-        folders: Vec<String>,
-        ext: Option<String>,
-        class: Vec<String>,
-    },
+    File(SchemaFileField),
 }
 
 impl SchemaFieldType {
@@ -197,19 +159,11 @@ impl SchemaFieldType {
     fn raw_kind(&self) -> RawSchemaFieldType {
         match self {
             Self::Input => RawSchemaFieldType::Input,
-            Self::Select {
-                ..
-            } => RawSchemaFieldType::Select,
+            Self::Select(_) => RawSchemaFieldType::Select,
             Self::Boolean => RawSchemaFieldType::Boolean,
-            Self::Number {
-                ..
-            } => RawSchemaFieldType::Number,
-            Self::Date {
-                ..
-            } => RawSchemaFieldType::Date,
-            Self::File {
-                ..
-            } => RawSchemaFieldType::File,
+            Self::Number(_) => RawSchemaFieldType::Number,
+            Self::Date(_) => RawSchemaFieldType::Date,
+            Self::File(_) => RawSchemaFieldType::File,
         }
     }
 
@@ -250,26 +204,20 @@ impl SchemaFieldType {
                     .collect(),
             ),
             RawSchemaFieldType::Select => {
-                select::SchemaSelectFieldDef::parse(address, options, base)
+                select::SchemaSelectField::parse(address, options, base)
             }
             RawSchemaFieldType::Number => {
-                number::SchemaNumberFieldDef::parse(address, options, base)
+                number::SchemaNumberField::parse(address, options, base)
             }
             RawSchemaFieldType::Date => {
-                date::SchemaDateFieldDef::parse(address, options, base)
+                date::SchemaDateField::parse(address, options, base)
             }
             RawSchemaFieldType::File => {
-                file::SchemaFileFieldDef::parse(address, options, base)
+                file::SchemaFileField::parse(address, options, base)
             }
         }
     }
 }
-
-/// One selectable entry a `select`/`multi` field resolves its `values` to.
-///
-/// Rendered as a plain [`str`] when `label == value` and `extra` is empty,
-/// otherwise as `{value, label, ...extra}`.
-pub(crate) use select::SchemaSelectFieldEntry;
 
 #[cfg(test)]
 mod tests {
@@ -317,7 +265,7 @@ mod tests {
             #[rstest]
             #[case::input(SchemaFieldType::Input, RawSchemaFieldType::Input)]
             #[case::select(
-                SchemaFieldType::Select { values: Vec::new() },
+                SchemaFieldType::Select(SchemaSelectField::default()),
                 RawSchemaFieldType::Select
             )]
             #[case::boolean(
@@ -325,19 +273,15 @@ mod tests {
                 RawSchemaFieldType::Boolean
             )]
             #[case::number(
-                SchemaFieldType::Number { min: None, max: None, step: None },
+                SchemaFieldType::Number(SchemaNumberField::default()),
                 RawSchemaFieldType::Number
             )]
             #[case::date(
-                SchemaFieldType::Date { format: None },
+                SchemaFieldType::Date(SchemaDateField::default()),
                 RawSchemaFieldType::Date
             )]
             #[case::file(
-                SchemaFieldType::File {
-                    folders: Vec::new(),
-                    ext: None,
-                    class: Vec::new(),
-                },
+                SchemaFieldType::File(SchemaFileField::default()),
                 RawSchemaFieldType::File
             )]
             fn returns_the_raw_field_type_matching_the_variant(
@@ -386,22 +330,19 @@ mod tests {
                 );
 
                 assert!(errors.is_empty());
-                let SchemaFieldType::Select {
-                    values,
-                } = field_type
-                else {
+                let SchemaFieldType::Select(def) = field_type else {
                     panic!("expected Select");
                 };
-                assert_eq!(values.len(), 2);
+                assert_eq!(def.values().len(), 2);
                 assert_eq!(
-                    values[0].value(),
+                    def.values()[0].value(),
                     &FieldValue::String("draft".to_owned())
                 );
                 assert_eq!(
-                    values[0].label(),
+                    def.values()[0].label(),
                     &FieldValue::String("draft".to_owned())
                 );
-                assert!(values[0].extra().is_empty());
+                assert!(def.values()[0].extra().is_empty());
             }
 
             #[test]
@@ -416,9 +357,10 @@ mod tests {
                 );
 
                 assert!(errors.is_empty());
-                assert_eq!(field_type, SchemaFieldType::Select {
-                    values: Vec::new()
-                });
+                assert_eq!(
+                    field_type,
+                    SchemaFieldType::Select(SchemaSelectField::default())
+                );
             }
 
             #[test]
@@ -491,11 +433,14 @@ mod tests {
                 );
 
                 assert!(errors.is_empty());
-                assert_eq!(field_type, SchemaFieldType::Number {
-                    min: Some(0.0),
-                    max: None,
-                    step: None,
-                });
+                assert_eq!(
+                    field_type,
+                    SchemaFieldType::Number(SchemaNumberField::for_test(
+                        Some(0.0),
+                        None,
+                        None
+                    ))
+                );
             }
 
             #[test]
@@ -524,11 +469,14 @@ mod tests {
                 );
 
                 assert!(errors.is_empty());
-                assert_eq!(field_type, SchemaFieldType::File {
-                    folders: vec!["assets".to_owned()],
-                    ext: Some("png".to_owned()),
-                    class: vec!["image".to_owned()],
-                });
+                assert_eq!(
+                    field_type,
+                    SchemaFieldType::File(SchemaFileField::for_test(
+                        vec!["assets".to_owned()],
+                        Some("png".to_owned()),
+                        vec!["image".to_owned()],
+                    ))
+                );
             }
 
             #[test]
@@ -576,11 +524,10 @@ mod tests {
 
             #[test]
             fn select_falls_back_to_bases_values_when_options_omit_them() {
-                let base = SchemaFieldType::Select {
-                    values: vec![SchemaSelectFieldEntry::literal(
-                        "old".to_owned(),
-                    )],
-                };
+                let base =
+                    SchemaFieldType::Select(SchemaSelectField::for_test(vec![
+                        SchemaSelectFieldEntry::literal("old".to_owned()),
+                    ]));
 
                 let (field_type, errors) = SchemaFieldType::try_parse(
                     address().as_ref(),
@@ -605,18 +552,19 @@ mod tests {
                 );
 
                 assert!(errors.is_empty());
-                assert_eq!(field_type, SchemaFieldType::Select {
-                    values: Vec::new()
-                });
+                assert_eq!(
+                    field_type,
+                    SchemaFieldType::Select(SchemaSelectField::default())
+                );
             }
 
             #[test]
             fn file_falls_back_independently_per_subfield() {
-                let base = SchemaFieldType::File {
-                    folders: vec!["base-folder".to_owned()],
-                    ext: Some("base-ext".to_owned()),
-                    class: vec!["base-class".to_owned()],
-                };
+                let base = SchemaFieldType::File(SchemaFileField::for_test(
+                    vec!["base-folder".to_owned()],
+                    Some("base-ext".to_owned()),
+                    vec!["base-class".to_owned()],
+                ));
                 let mut options = BTreeMap::new();
                 options.insert(
                     "folders".to_owned(),
@@ -633,11 +581,14 @@ mod tests {
                 );
 
                 assert!(errors.is_empty());
-                assert_eq!(field_type, SchemaFieldType::File {
-                    folders: vec!["raw-folder".to_owned()],
-                    ext: Some("base-ext".to_owned()),
-                    class: vec!["base-class".to_owned()],
-                });
+                assert_eq!(
+                    field_type,
+                    SchemaFieldType::File(SchemaFileField::for_test(
+                        vec!["raw-folder".to_owned()],
+                        Some("base-ext".to_owned()),
+                        vec!["base-class".to_owned()],
+                    ))
+                );
             }
         }
     }

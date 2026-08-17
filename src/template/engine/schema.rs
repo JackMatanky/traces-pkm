@@ -66,7 +66,7 @@ use crate::{
     field::FieldValue,
     query::{FileOption, FileOptionFilter, FrontmatterFieldKeys},
     schema::{
-        Schema, SchemaError, SchemaFileFieldDefRef, SchemaRegistry,
+        Schema, SchemaError, SchemaFileFieldRef, SchemaRegistry,
         SchemaSelectFieldEntry, SchemaService,
     },
 };
@@ -202,7 +202,7 @@ impl Object for Schema {
                         let field = schema.field(name).ok_or_else(|| {
                             unknown_field_error(&schema, name)
                         })?;
-                        if let Some(SchemaFileFieldDefRef {
+                        if let Some(SchemaFileFieldRef {
                             folders,
                             ext,
                             class: classes,

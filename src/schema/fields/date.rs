@@ -10,13 +10,28 @@ use super::{
 };
 use crate::field::FieldValue;
 
-/// Raw `date` field options before `$ref` merge.
-#[derive(Default)]
-pub(super) struct SchemaDateFieldDef {
+/// Resolved `date` field options.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct SchemaDateField {
     format: Option<String>,
 }
 
-impl SchemaDateFieldDef {
+impl SchemaDateField {
+    /// Return the display/parse format, if set.
+    #[inline]
+    #[must_use]
+    pub(crate) fn format(&self) -> Option<&str> {
+        self.format.as_deref()
+    }
+
+    /// Build an instance for tests.
+    #[cfg(test)]
+    pub(crate) fn for_test(format: Option<String>) -> Self {
+        Self {
+            format,
+        }
+    }
+
     /// Parse `options` against `date`'s `format` attribute, merging with `base`
     /// when present.
     ///
@@ -54,15 +69,13 @@ impl SchemaDateFieldDef {
             }
         }
         let format = def.format.or_else(|| match base {
-            Some(SchemaFieldType::Date {
-                format,
-            }) => format.clone(),
+            Some(SchemaFieldType::Date(base_def)) => base_def.format.clone(),
             _ => None,
         });
         (
-            SchemaFieldType::Date {
+            SchemaFieldType::Date(SchemaDateField {
                 format,
-            },
+            }),
             errors,
         )
     }
