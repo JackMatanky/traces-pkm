@@ -2,10 +2,7 @@
 //!
 //! Each per-type [`parse`][super::select::SchemaSelectField::parse] function
 //! receives a [`SchemaFieldParser`], claims keys via typed extractors, and
-//! calls [`SchemaFieldParser::finish`] to detect unknown keys. This replaces
-//! the duplicated loop-and-match that previously existed in
-//! [`select`][super::select], [`number`][super::number],
-//! [`date`][super::date], and [`mod@super::file`].
+//! calls [`SchemaFieldParser::finish`] to detect unknown keys.
 
 use std::collections::{BTreeMap, BTreeSet};
 
