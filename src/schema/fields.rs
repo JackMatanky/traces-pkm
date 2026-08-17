@@ -368,6 +368,8 @@ mod tests {
     mod validation {
         use std::collections::BTreeMap;
 
+        use rstest::rstest;
+
         use super::super::{super::error::SchemaFieldParserError, *};
         use crate::field::FieldValue;
 
@@ -380,33 +382,16 @@ mod tests {
         ) -> BTreeMap<String, FieldValue> {
             pairs.iter().map(|(k, v)| ((*k).to_owned(), v.clone())).collect()
         }
-        #[test]
-        fn input_declaring_any_key_is_an_unknown_key() {
+        #[rstest]
+        #[case::input(SchemaFieldType::Input)]
+        #[case::boolean(SchemaFieldType::Boolean)]
+        fn type_with_no_extractor_treats_all_keys_as_unknown(
+            #[case] kind: SchemaFieldType,
+        ) {
             let opts = options(&[("min", FieldValue::Int(1))]);
 
             let addr = address();
-            let p = parser::SchemaFieldParser::new(
-                addr.as_ref(),
-                SchemaFieldType::Input,
-            );
-            let unknowns = p.finish(&opts);
-
-            assert_eq!(unknowns.len(), 1);
-            assert!(matches!(
-                unknowns[0],
-                SchemaFieldParserError::UnknownKey { .. }
-            ));
-        }
-
-        #[test]
-        fn boolean_declaring_any_key_is_an_unknown_key() {
-            let opts = options(&[("ext", FieldValue::String("x".to_owned()))]);
-
-            let addr = address();
-            let p = parser::SchemaFieldParser::new(
-                addr.as_ref(),
-                SchemaFieldType::Boolean,
-            );
+            let p = parser::SchemaFieldParser::new(addr.as_ref(), kind);
             let unknowns = p.finish(&opts);
 
             assert_eq!(unknowns.len(), 1);

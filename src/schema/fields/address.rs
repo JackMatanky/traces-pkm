@@ -170,6 +170,7 @@ pub(crate) enum FieldAddressError {
 #[cfg(test)]
 mod tests {
     use pretty_assertions::assert_eq;
+    use rstest::rstest;
 
     use super::*;
 
@@ -181,34 +182,14 @@ mod tests {
         assert_eq!(address.field().as_str(), "status");
     }
 
-    #[test]
-    fn rejects_a_reference_missing_the_hash_prefix() {
+    #[rstest]
+    #[case::missing_hash_prefix("book/status")]
+    #[case::missing_slash_separator("#bookstatus")]
+    #[case::empty_schema_segment("#/status")]
+    #[case::empty_field_segment("#book/")]
+    fn rejects_malformed_references(#[case] input: &str) {
         assert!(matches!(
-            FieldAddress::try_from("book/status"),
-            Err(FieldAddressError::Malformed { .. })
-        ));
-    }
-
-    #[test]
-    fn rejects_a_reference_missing_the_slash_separator() {
-        assert!(matches!(
-            FieldAddress::try_from("#bookstatus"),
-            Err(FieldAddressError::Malformed { .. })
-        ));
-    }
-
-    #[test]
-    fn rejects_a_reference_with_an_empty_schema_segment() {
-        assert!(matches!(
-            FieldAddress::try_from("#/status"),
-            Err(FieldAddressError::Malformed { .. })
-        ));
-    }
-
-    #[test]
-    fn rejects_a_reference_with_an_empty_field_segment() {
-        assert!(matches!(
-            FieldAddress::try_from("#book/"),
+            FieldAddress::try_from(input),
             Err(FieldAddressError::Malformed { .. })
         ));
     }

@@ -121,6 +121,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     use pretty_assertions::assert_eq;
+    use rstest::rstest;
 
     use super::*;
     use crate::schema::{
@@ -217,31 +218,14 @@ mod tests {
         assert!(matches!(errors[0], SchemaFieldParserError::UnknownKey { .. }));
     }
 
-    #[test]
-    fn returns_type_mismatch_when_folders_is_not_a_list() {
-        let opts = options(&[(
-            "folders",
-            FieldValue::String("not-a-list".to_owned()),
-        )]);
-
-        let addr = address();
-        let mut parser = SchemaFieldParser::new(
-            addr.as_ref(),
-            SchemaFieldType::File(SchemaFileField::default()),
-        );
-        let _ = SchemaFileField::parse(&mut parser, &opts, None);
-        let errors = parser.finish(&opts);
-
-        assert_eq!(errors.len(), 1);
-        assert!(matches!(
-            errors[0],
-            SchemaFieldParserError::TypeMismatch { .. }
-        ));
-    }
-
-    #[test]
-    fn returns_type_mismatch_when_ext_is_not_a_string() {
-        let opts = options(&[("ext", FieldValue::Int(123))]);
+    #[rstest]
+    #[case::folders_not_a_list("folders", FieldValue::String("not-a-list".to_owned()))]
+    #[case::ext_not_a_string("ext", FieldValue::Int(123))]
+    fn returns_type_mismatch_for_wrong_value_shape(
+        #[case] key: &str,
+        #[case] value: FieldValue,
+    ) {
+        let opts = options(&[(key, value)]);
 
         let addr = address();
         let mut parser = SchemaFieldParser::new(

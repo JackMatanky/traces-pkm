@@ -89,6 +89,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     use pretty_assertions::assert_eq;
+    use rstest::rstest;
 
     use super::*;
     use crate::schema::{
@@ -106,9 +107,11 @@ mod tests {
         pairs.iter().map(|(k, v)| ((*k).to_owned(), v.clone())).collect()
     }
 
-    #[test]
-    fn rejects_string_min_as_type_mismatch() {
-        let opts = options(&[("min", FieldValue::String("abc".to_owned()))]);
+    #[rstest]
+    #[case::min("min")]
+    #[case::max("max")]
+    fn rejects_string_value_as_type_mismatch(#[case] key: &str) {
+        let opts = options(&[(key, FieldValue::String("abc".to_owned()))]);
 
         let addr = address();
         let mut parser = SchemaFieldParser::new(
@@ -241,24 +244,5 @@ mod tests {
                 None, None, None,
             ))
         );
-    }
-
-    #[test]
-    fn returns_type_mismatch_when_max_is_not_a_number() {
-        let opts = options(&[("max", FieldValue::String("abc".to_owned()))]);
-
-        let addr = address();
-        let mut parser = SchemaFieldParser::new(
-            addr.as_ref(),
-            SchemaFieldType::Number(SchemaNumberField::default()),
-        );
-        let _ = SchemaNumberField::parse(&mut parser, &opts, None);
-        let errors = parser.finish(&opts);
-
-        assert_eq!(errors.len(), 1);
-        assert!(matches!(
-            errors[0],
-            SchemaFieldParserError::TypeMismatch { .. }
-        ));
     }
 }
