@@ -26,9 +26,9 @@ impl SchemaFileField {
     /// Return the matched folder paths.
     #[inline]
     #[must_use]
-    #[expect(
-        dead_code,
-        reason = "public accessor reserved for future schema consumers"
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "reserved for future schema consumers")
     )]
     pub(crate) fn folders(&self) -> &[String] {
         &self.folders
@@ -37,9 +37,9 @@ impl SchemaFileField {
     /// Return the matched file extension, if set.
     #[inline]
     #[must_use]
-    #[expect(
-        dead_code,
-        reason = "public accessor reserved for future schema consumers"
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "reserved for future schema consumers")
     )]
     pub(crate) fn ext(&self) -> Option<&str> {
         self.ext.as_deref()
@@ -48,9 +48,9 @@ impl SchemaFileField {
     /// Return the matched class tags.
     #[inline]
     #[must_use]
-    #[expect(
-        dead_code,
-        reason = "public accessor reserved for future schema consumers"
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "reserved for future schema consumers")
     )]
     pub(crate) fn class(&self) -> &[String] {
         &self.class
@@ -124,4 +124,148 @@ pub(crate) struct SchemaFileFieldRef<'a> {
     pub(crate) folders: &'a [String],
     pub(crate) ext: Option<&'a str>,
     pub(crate) class: &'a [String],
+}
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use pretty_assertions::assert_eq;
+
+    use super::{
+        super::{
+            super::error::SchemaFieldParserError, address::FieldAddress,
+            parser::SchemaFieldParser,
+        },
+        *,
+    };
+
+    fn address() -> FieldAddress {
+        FieldAddress::try_from("#book/field").expect("valid ref")
+    }
+
+    fn options(pairs: &[(&str, FieldValue)]) -> BTreeMap<String, FieldValue> {
+        pairs.iter().map(|(k, v)| ((*k).to_owned(), v.clone())).collect()
+    }
+
+    #[test]
+    fn collects_folders_ext_and_class() {
+        let opts = options(&[
+            (
+                "folders",
+                FieldValue::List(vec![FieldValue::String("assets".to_owned())]),
+            ),
+            ("ext", FieldValue::String("png".to_owned())),
+            (
+                "class",
+                FieldValue::List(vec![FieldValue::String("image".to_owned())]),
+            ),
+        ]);
+
+        let addr = address();
+        let mut parser = SchemaFieldParser::new(
+            addr.as_ref(),
+            SchemaFieldType::File(SchemaFileField::default()),
+        );
+        let field_type = SchemaFileField::parse(&mut parser, &opts, None);
+        let errors = parser.finish(&opts);
+
+        assert!(errors.is_empty());
+        assert_eq!(
+            field_type,
+            SchemaFieldType::File(SchemaFileField::for_test(
+                vec!["assets".to_owned()],
+                Some("png".to_owned()),
+                vec!["image".to_owned()],
+            ))
+        );
+    }
+
+    #[test]
+    fn falls_back_independently_per_subfield() {
+        let base = SchemaFieldType::File(SchemaFileField::for_test(
+            vec!["base-folder".to_owned()],
+            Some("base-ext".to_owned()),
+            vec!["base-class".to_owned()],
+        ));
+        let opts = options(&[(
+            "folders",
+            FieldValue::List(vec![FieldValue::String("raw-folder".to_owned())]),
+        )]);
+
+        let addr = address();
+        let mut parser = SchemaFieldParser::new(
+            addr.as_ref(),
+            SchemaFieldType::File(SchemaFileField::default()),
+        );
+        let field_type =
+            SchemaFileField::parse(&mut parser, &opts, Some(&base));
+        let errors = parser.finish(&opts);
+
+        assert!(errors.is_empty());
+        assert_eq!(
+            field_type,
+            SchemaFieldType::File(SchemaFileField::for_test(
+                vec!["raw-folder".to_owned()],
+                Some("base-ext".to_owned()),
+                vec!["base-class".to_owned()],
+            ))
+        );
+    }
+
+    #[test]
+    fn rejects_unknown_key() {
+        let opts = options(&[("bogus", FieldValue::String("x".to_owned()))]);
+
+        let addr = address();
+        let mut parser = SchemaFieldParser::new(
+            addr.as_ref(),
+            SchemaFieldType::File(SchemaFileField::default()),
+        );
+        let _ = SchemaFileField::parse(&mut parser, &opts, None);
+        let errors = parser.finish(&opts);
+
+        assert_eq!(errors.len(), 1);
+        assert!(matches!(errors[0], SchemaFieldParserError::UnknownKey { .. }));
+    }
+
+    #[test]
+    fn returns_type_mismatch_when_folders_is_not_a_list() {
+        let opts = options(&[(
+            "folders",
+            FieldValue::String("not-a-list".to_owned()),
+        )]);
+
+        let addr = address();
+        let mut parser = SchemaFieldParser::new(
+            addr.as_ref(),
+            SchemaFieldType::File(SchemaFileField::default()),
+        );
+        let _ = SchemaFileField::parse(&mut parser, &opts, None);
+        let errors = parser.finish(&opts);
+
+        assert_eq!(errors.len(), 1);
+        assert!(matches!(
+            errors[0],
+            SchemaFieldParserError::TypeMismatch { .. }
+        ));
+    }
+
+    #[test]
+    fn returns_type_mismatch_when_ext_is_not_a_string() {
+        let opts = options(&[("ext", FieldValue::Int(123))]);
+
+        let addr = address();
+        let mut parser = SchemaFieldParser::new(
+            addr.as_ref(),
+            SchemaFieldType::File(SchemaFileField::default()),
+        );
+        let _ = SchemaFileField::parse(&mut parser, &opts, None);
+        let errors = parser.finish(&opts);
+
+        assert_eq!(errors.len(), 1);
+        assert!(matches!(
+            errors[0],
+            SchemaFieldParserError::TypeMismatch { .. }
+        ));
+    }
 }

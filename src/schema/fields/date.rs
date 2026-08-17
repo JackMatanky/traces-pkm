@@ -15,9 +15,9 @@ impl SchemaDateField {
     /// Return the display/parse format, if set.
     #[inline]
     #[must_use]
-    #[expect(
-        dead_code,
-        reason = "public accessor reserved for future schema consumers"
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "reserved for future schema consumers")
     )]
     pub(crate) fn format(&self) -> Option<&str> {
         self.format.as_deref()
@@ -54,5 +54,126 @@ impl SchemaDateField {
         SchemaFieldType::Date(SchemaDateField {
             format,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use super::{
+        super::{
+            super::error::SchemaFieldParserError, address::FieldAddress,
+            parser::SchemaFieldParser,
+        },
+        *,
+    };
+
+    fn address() -> FieldAddress {
+        FieldAddress::try_from("#book/field").expect("valid ref")
+    }
+
+    fn options(pairs: &[(&str, FieldValue)]) -> BTreeMap<String, FieldValue> {
+        pairs.iter().map(|(k, v)| ((*k).to_owned(), v.clone())).collect()
+    }
+
+    #[test]
+    fn parses_a_valid_format_string() {
+        let opts =
+            options(&[("format", FieldValue::String("YYYY-MM-DD".to_owned()))]);
+
+        let addr = address();
+        let mut parser = SchemaFieldParser::new(
+            addr.as_ref(),
+            SchemaFieldType::Date(SchemaDateField::default()),
+        );
+        let field_type = SchemaDateField::parse(&mut parser, &opts, None);
+        let errors = parser.finish(&opts);
+
+        assert!(errors.is_empty());
+        let SchemaFieldType::Date(def) = field_type else {
+            panic!("expected Date");
+        };
+        assert_eq!(def.format(), Some("YYYY-MM-DD"));
+    }
+
+    #[test]
+    fn inherits_format_from_date_base() {
+        let base = SchemaFieldType::Date(SchemaDateField::for_test(Some(
+            "YYYY-MM-DD".to_owned(),
+        )));
+
+        let addr = address();
+        let mut parser = SchemaFieldParser::new(
+            addr.as_ref(),
+            SchemaFieldType::Date(SchemaDateField::default()),
+        );
+        let field_type =
+            SchemaDateField::parse(&mut parser, &BTreeMap::new(), Some(&base));
+        let errors = parser.finish(&BTreeMap::new());
+
+        assert!(errors.is_empty());
+        let SchemaFieldType::Date(def) = field_type else {
+            panic!("expected Date");
+        };
+        assert_eq!(def.format(), Some("YYYY-MM-DD"));
+    }
+
+    #[test]
+    fn ignores_non_date_base() {
+        let base = SchemaFieldType::Input;
+
+        let addr = address();
+        let mut parser = SchemaFieldParser::new(
+            addr.as_ref(),
+            SchemaFieldType::Date(SchemaDateField::default()),
+        );
+        let field_type =
+            SchemaDateField::parse(&mut parser, &BTreeMap::new(), Some(&base));
+        let errors = parser.finish(&BTreeMap::new());
+
+        assert!(errors.is_empty());
+        assert_eq!(
+            field_type,
+            SchemaFieldType::Date(SchemaDateField::default())
+        );
+    }
+
+    #[test]
+    fn returns_type_mismatch_when_format_is_not_a_string() {
+        let opts = options(&[("format", FieldValue::Int(123))]);
+
+        let addr = address();
+        let mut parser = SchemaFieldParser::new(
+            addr.as_ref(),
+            SchemaFieldType::Date(SchemaDateField::default()),
+        );
+        let _ = SchemaDateField::parse(&mut parser, &opts, None);
+        let errors = parser.finish(&opts);
+
+        assert_eq!(errors.len(), 1);
+        assert!(matches!(
+            errors[0],
+            SchemaFieldParserError::TypeMismatch { .. }
+        ));
+    }
+
+    #[test]
+    fn rejects_unknown_key() {
+        let opts = options(&[(
+            "values",
+            FieldValue::List(vec![FieldValue::String("x".to_owned())]),
+        )]);
+
+        let addr = address();
+        let mut parser = SchemaFieldParser::new(
+            addr.as_ref(),
+            SchemaFieldType::Date(SchemaDateField::default()),
+        );
+        let _ = SchemaDateField::parse(&mut parser, &opts, None);
+        let errors = parser.finish(&opts);
+
+        assert_eq!(errors.len(), 1);
+        assert!(matches!(errors[0], SchemaFieldParserError::UnknownKey { .. }));
     }
 }

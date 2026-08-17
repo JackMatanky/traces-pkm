@@ -100,3 +100,166 @@ impl SchemaSelectFieldEntry {
         &self.extra
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use pretty_assertions::assert_eq;
+
+    use super::{
+        super::{
+            super::error::SchemaFieldParserError, address::FieldAddress,
+            parser::SchemaFieldParser,
+        },
+        *,
+    };
+
+    fn address() -> FieldAddress {
+        FieldAddress::try_from("#book/field").expect("valid ref")
+    }
+
+    fn options(pairs: &[(&str, FieldValue)]) -> BTreeMap<String, FieldValue> {
+        pairs.iter().map(|(k, v)| ((*k).to_owned(), v.clone())).collect()
+    }
+
+    #[test]
+    fn collects_declared_values_as_literal_entries() {
+        let opts = options(&[(
+            "values",
+            FieldValue::List(vec![
+                FieldValue::String("draft".to_owned()),
+                FieldValue::String("done".to_owned()),
+            ]),
+        )]);
+
+        let addr = address();
+        let mut parser = SchemaFieldParser::new(
+            addr.as_ref(),
+            SchemaFieldType::Select(SchemaSelectField::default()),
+        );
+        let field_type = SchemaSelectField::parse(&mut parser, &opts, None);
+        let errors = parser.finish(&opts);
+
+        assert!(errors.is_empty());
+        let SchemaFieldType::Select(def) = field_type else {
+            panic!("expected Select");
+        };
+        assert_eq!(def.values().len(), 2);
+        assert_eq!(
+            def.values()[0].value(),
+            &FieldValue::String("draft".to_owned())
+        );
+        assert_eq!(
+            def.values()[0].label(),
+            &FieldValue::String("draft".to_owned())
+        );
+        assert!(def.values()[0].extra().is_empty());
+    }
+
+    #[test]
+    fn defaults_to_empty_values_when_options_omit_them() {
+        let opts = options(&[]);
+
+        let addr = address();
+        let mut parser = SchemaFieldParser::new(
+            addr.as_ref(),
+            SchemaFieldType::Select(SchemaSelectField::default()),
+        );
+        let field_type = SchemaSelectField::parse(&mut parser, &opts, None);
+        let errors = parser.finish(&opts);
+
+        assert!(errors.is_empty());
+        assert_eq!(
+            field_type,
+            SchemaFieldType::Select(SchemaSelectField::default())
+        );
+    }
+
+    #[test]
+    fn rejects_non_list_values_as_type_mismatch() {
+        let opts =
+            options(&[("values", FieldValue::String("draft".to_owned()))]);
+
+        let addr = address();
+        let mut parser = SchemaFieldParser::new(
+            addr.as_ref(),
+            SchemaFieldType::Select(SchemaSelectField::default()),
+        );
+        let _ = SchemaSelectField::parse(&mut parser, &opts, None);
+        let errors = parser.finish(&opts);
+
+        assert_eq!(errors.len(), 1);
+        assert!(matches!(
+            errors[0],
+            SchemaFieldParserError::TypeMismatch { .. }
+        ));
+    }
+
+    #[test]
+    fn falls_back_to_bases_values_when_options_omit_them() {
+        let base = SchemaFieldType::Select(SchemaSelectField::for_test(vec![
+            SchemaSelectFieldEntry::literal("old".to_owned()),
+        ]));
+
+        let addr = address();
+        let mut parser = SchemaFieldParser::new(
+            addr.as_ref(),
+            SchemaFieldType::Select(SchemaSelectField::default()),
+        );
+        let field_type = SchemaSelectField::parse(
+            &mut parser,
+            &BTreeMap::new(),
+            Some(&base),
+        );
+        let errors = parser.finish(&BTreeMap::new());
+
+        assert!(errors.is_empty());
+        assert_eq!(field_type, base);
+    }
+
+    #[test]
+    fn returns_type_mismatch_when_values_contains_non_strings() {
+        let opts = options(&[(
+            "values",
+            FieldValue::List(vec![FieldValue::Int(1), FieldValue::Int(2)]),
+        )]);
+
+        let addr = address();
+        let mut parser = SchemaFieldParser::new(
+            addr.as_ref(),
+            SchemaFieldType::Select(SchemaSelectField::default()),
+        );
+        let _ = SchemaSelectField::parse(&mut parser, &opts, None);
+        let errors = parser.finish(&opts);
+
+        assert_eq!(errors.len(), 1);
+        assert!(matches!(
+            errors[0],
+            SchemaFieldParserError::TypeMismatch { .. }
+        ));
+    }
+
+    #[test]
+    fn ignores_a_mismatched_base_type() {
+        let base = SchemaFieldType::Input;
+
+        let addr = address();
+        let mut parser = SchemaFieldParser::new(
+            addr.as_ref(),
+            SchemaFieldType::Select(SchemaSelectField::default()),
+        );
+        let field_type = SchemaSelectField::parse(
+            &mut parser,
+            &BTreeMap::new(),
+            Some(&base),
+        );
+        let errors = parser.finish(&BTreeMap::new());
+
+        assert!(errors.is_empty());
+        assert_eq!(
+            field_type,
+            SchemaFieldType::Select(SchemaSelectField::default())
+        );
+    }
+}

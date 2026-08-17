@@ -283,6 +283,7 @@ mod tests {
         use pretty_assertions::assert_eq;
 
         use super::super::*;
+        use crate::schema::fields::SchemaDateField;
 
         fn assert_display(error: &SchemaError, expected: &str) {
             assert_eq!(
@@ -407,6 +408,7 @@ mod tests {
         use pretty_assertions::assert_eq;
 
         use super::super::*;
+        use crate::schema::fields::{SchemaDateField, SchemaNumberField};
 
         #[test]
         fn unknown_attribute_key_formats_display_message() {
@@ -482,6 +484,7 @@ mod tests {
         use pretty_assertions::assert_eq;
 
         use super::super::*;
+        use crate::schema::fields::{SchemaNumberField, SchemaSelectField};
 
         #[test]
         fn missing_extends_target_message_names_schema_and_target() {

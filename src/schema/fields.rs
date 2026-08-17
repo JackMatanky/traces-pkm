@@ -172,9 +172,9 @@ impl std::fmt::Display for SchemaFieldType {
 impl SchemaFieldType {
     /// Return the inner [`SchemaSelectField`] if this is a
     /// [`Select`][Self::Select] variant.
-    #[expect(
-        dead_code,
-        reason = "typed accessor reserved for future schema consumers"
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "reserved for future schema consumers")
     )]
     pub(super) fn as_select(&self) -> Option<&SchemaSelectField> {
         match self {
@@ -185,9 +185,9 @@ impl SchemaFieldType {
 
     /// Return the inner [`SchemaNumberField`] if this is a
     /// [`Number`][Self::Number] variant.
-    #[expect(
-        dead_code,
-        reason = "typed accessor reserved for future schema consumers"
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "reserved for future schema consumers")
     )]
     pub(super) fn as_number(&self) -> Option<&SchemaNumberField> {
         match self {
@@ -198,9 +198,9 @@ impl SchemaFieldType {
 
     /// Return the inner [`SchemaDateField`] if this is a [`Date`][Self::Date]
     /// variant.
-    #[expect(
-        dead_code,
-        reason = "typed accessor reserved for future schema consumers"
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "reserved for future schema consumers")
     )]
     pub(super) fn as_date(&self) -> Option<&SchemaDateField> {
         match self {
@@ -211,9 +211,9 @@ impl SchemaFieldType {
 
     /// Return the inner [`SchemaFileField`] if this is a [`File`][Self::File]
     /// variant.
-    #[expect(
-        dead_code,
-        reason = "typed accessor reserved for future schema consumers"
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "reserved for future schema consumers")
     )]
     pub(super) fn as_file(&self) -> Option<&SchemaFileField> {
         match self {
@@ -225,386 +225,149 @@ impl SchemaFieldType {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::{BTreeMap, BTreeSet};
 
-    use super::{super::error::SchemaFieldParserError, *};
-    use crate::{field::FieldValue, schema::name::SchemaNameRef};
-
-    /// Parses `reference` into a [`FieldAddress`], panicking on an invalid
-    /// test fixture.
-    fn field_address(reference: &str) -> FieldAddress {
-        FieldAddress::try_from(reference).expect("valid test $ref")
-    }
-
-    /// Builds a resolved [`Schema`] named `name` with one field named `field`
-    /// with the given `kind`, keyed by `name` for a `resolved` map.
-    fn schema_with_field(
-        name: &str,
-        field: &str,
-        kind: SchemaFieldType,
-    ) -> (crate::schema::name::SchemaName, crate::schema::model::Schema) {
-        let mut fields = BTreeMap::new();
-        fields.insert(
-            crate::field::FieldName::try_from(field)
-                .expect("valid test field name"),
-            SchemaFieldDef::new(kind, false, false),
-        );
-        (
-            crate::schema::name::SchemaName::from(name),
-            crate::schema::model::Schema::new(
-                crate::schema::name::SchemaName::from(name),
-                fields,
-                BTreeSet::new(),
-            ),
-        )
-    }
-
-    mod select_parse {
-        use pretty_assertions::assert_eq;
-
+    mod field_def {
         use super::super::*;
 
-        fn address() -> FieldAddress {
-            FieldAddress::try_from("#book/field").expect("valid ref")
-        }
-
-        fn options(
-            pairs: &[(&str, FieldValue)],
-        ) -> BTreeMap<String, FieldValue> {
-            pairs.iter().map(|(k, v)| ((*k).to_owned(), v.clone())).collect()
+        #[test]
+        fn kind_returns_the_field_type() {
+            let def = SchemaFieldDef::new(SchemaFieldType::Input, false, false);
+            assert_eq!(def.kind(), &SchemaFieldType::Input);
         }
 
         #[test]
-        fn collects_declared_values_as_literal_entries() {
-            let opts = options(&[(
-                "values",
-                FieldValue::List(vec![
-                    FieldValue::String("draft".to_owned()),
-                    FieldValue::String("done".to_owned()),
-                ]),
-            )]);
-
-            let addr = address();
-            let mut parser = parser::SchemaFieldParser::new(
-                addr.as_ref(),
-                SchemaFieldType::Select(SchemaSelectField::default()),
+        fn select_values_returns_entries_for_select_type() {
+            let entries =
+                vec![SchemaSelectFieldEntry::literal("draft".to_owned())];
+            let def = SchemaFieldDef::new(
+                SchemaFieldType::Select(SchemaSelectField::for_test(entries)),
+                false,
+                false,
             );
-            let field_type =
-                select::SchemaSelectField::parse(&mut parser, &opts, None);
-            let errors = parser.finish(&opts);
-
-            assert!(errors.is_empty());
-            let SchemaFieldType::Select(def) = field_type else {
-                panic!("expected Select");
-            };
-            assert_eq!(def.values().len(), 2);
-            assert_eq!(
-                def.values()[0].value(),
-                &FieldValue::String("draft".to_owned())
-            );
-            assert_eq!(
-                def.values()[0].label(),
-                &FieldValue::String("draft".to_owned())
-            );
-            assert!(def.values()[0].extra().is_empty());
+            assert_eq!(def.select_values().unwrap().len(), 1);
         }
 
         #[test]
-        fn defaults_to_empty_values_when_options_omit_them() {
-            let opts = options(&[]);
-
-            let addr = address();
-            let mut parser = parser::SchemaFieldParser::new(
-                addr.as_ref(),
-                SchemaFieldType::Select(SchemaSelectField::default()),
-            );
-            let field_type =
-                select::SchemaSelectField::parse(&mut parser, &opts, None);
-            let errors = parser.finish(&opts);
-
-            assert!(errors.is_empty());
-            assert_eq!(
-                field_type,
-                SchemaFieldType::Select(SchemaSelectField::default())
-            );
+        fn select_values_returns_none_for_non_select_type() {
+            let def = SchemaFieldDef::new(SchemaFieldType::Input, false, false);
+            assert!(def.select_values().is_none());
         }
 
         #[test]
-        fn a_non_list_values_key_is_a_type_mismatch() {
-            let opts =
-                options(&[("values", FieldValue::String("draft".to_owned()))]);
-
-            let addr = address();
-            let mut parser = parser::SchemaFieldParser::new(
-                addr.as_ref(),
-                SchemaFieldType::Select(SchemaSelectField::default()),
-            );
-            let _ = select::SchemaSelectField::parse(&mut parser, &opts, None);
-            let errors = parser.finish(&opts);
-
-            assert_eq!(errors.len(), 1);
-            assert!(matches!(
-                errors[0],
-                SchemaFieldParserError::TypeMismatch { .. }
-            ));
-        }
-
-        #[test]
-        fn falls_back_to_bases_values_when_options_omit_them() {
-            let base =
-                SchemaFieldType::Select(SchemaSelectField::for_test(vec![
-                    SchemaSelectFieldEntry::literal("old".to_owned()),
-                ]));
-
-            let addr = address();
-            let mut parser = parser::SchemaFieldParser::new(
-                addr.as_ref(),
-                SchemaFieldType::Select(SchemaSelectField::default()),
-            );
-            let field_type = select::SchemaSelectField::parse(
-                &mut parser,
-                &BTreeMap::new(),
-                Some(&base),
-            );
-            let errors = parser.finish(&BTreeMap::new());
-
-            assert!(errors.is_empty());
-            assert_eq!(field_type, base);
-        }
-
-        #[test]
-        fn ignores_a_mismatched_base_type() {
-            let base = SchemaFieldType::Input;
-
-            let addr = address();
-            let mut parser = parser::SchemaFieldParser::new(
-                addr.as_ref(),
-                SchemaFieldType::Select(SchemaSelectField::default()),
-            );
-            let field_type = select::SchemaSelectField::parse(
-                &mut parser,
-                &BTreeMap::new(),
-                Some(&base),
-            );
-            let errors = parser.finish(&BTreeMap::new());
-
-            assert!(errors.is_empty());
-            assert_eq!(
-                field_type,
-                SchemaFieldType::Select(SchemaSelectField::default())
-            );
-        }
-    }
-
-    mod number_parse {
-        use pretty_assertions::assert_eq;
-
-        use super::super::*;
-
-        fn address() -> FieldAddress {
-            FieldAddress::try_from("#book/field").expect("valid ref")
-        }
-
-        fn options(
-            pairs: &[(&str, FieldValue)],
-        ) -> BTreeMap<String, FieldValue> {
-            pairs.iter().map(|(k, v)| ((*k).to_owned(), v.clone())).collect()
-        }
-
-        #[test]
-        fn a_string_min_is_a_type_mismatch() {
-            let opts =
-                options(&[("min", FieldValue::String("abc".to_owned()))]);
-
-            let addr = address();
-            let mut parser = parser::SchemaFieldParser::new(
-                addr.as_ref(),
-                SchemaFieldType::Number(SchemaNumberField::default()),
-            );
-            let _ = number::SchemaNumberField::parse(&mut parser, &opts, None);
-            let errors = parser.finish(&opts);
-
-            assert_eq!(errors.len(), 1);
-            assert!(matches!(
-                errors[0],
-                SchemaFieldParserError::TypeMismatch { .. }
-            ));
-        }
-
-        #[test]
-        fn accepts_an_integer_min_as_a_float() {
-            let opts = options(&[("min", FieldValue::Int(0))]);
-
-            let addr = address();
-            let mut parser = parser::SchemaFieldParser::new(
-                addr.as_ref(),
-                SchemaFieldType::Number(SchemaNumberField::default()),
-            );
-            let field_type =
-                number::SchemaNumberField::parse(&mut parser, &opts, None);
-            let errors = parser.finish(&opts);
-
-            assert!(errors.is_empty());
-            assert_eq!(
-                field_type,
-                SchemaFieldType::Number(SchemaNumberField::for_test(
-                    Some(0.0),
-                    None,
-                    None
-                ))
-            );
-        }
-
-        #[test]
-        fn an_unknown_key_is_rejected() {
-            let opts = options(&[("values", FieldValue::Int(1))]);
-
-            let addr = address();
-            let mut parser = parser::SchemaFieldParser::new(
-                addr.as_ref(),
-                SchemaFieldType::Number(SchemaNumberField::default()),
-            );
-            let _ = number::SchemaNumberField::parse(&mut parser, &opts, None);
-            let errors = parser.finish(&opts);
-
-            assert_eq!(errors.len(), 1);
-            assert!(matches!(
-                errors[0],
-                SchemaFieldParserError::UnknownKey { .. }
-            ));
-        }
-    }
-
-    mod date_parse {
-        use super::super::*;
-
-        fn address() -> FieldAddress {
-            FieldAddress::try_from("#book/field").expect("valid ref")
-        }
-
-        fn options(
-            pairs: &[(&str, FieldValue)],
-        ) -> BTreeMap<String, FieldValue> {
-            pairs.iter().map(|(k, v)| ((*k).to_owned(), v.clone())).collect()
-        }
-
-        #[test]
-        fn declaring_values_is_an_unknown_key() {
-            let opts = options(&[(
-                "values",
-                FieldValue::List(vec![FieldValue::String("x".to_owned())]),
-            )]);
-
-            let addr = address();
-            let mut parser = parser::SchemaFieldParser::new(
-                addr.as_ref(),
-                SchemaFieldType::Date(SchemaDateField::default()),
-            );
-            let _ = date::SchemaDateField::parse(&mut parser, &opts, None);
-            let errors = parser.finish(&opts);
-
-            assert_eq!(errors.len(), 1);
-            assert!(matches!(
-                errors[0],
-                SchemaFieldParserError::UnknownKey { .. }
-            ));
-        }
-    }
-
-    mod file_parse {
-        use pretty_assertions::assert_eq;
-
-        use super::super::*;
-
-        fn address() -> FieldAddress {
-            FieldAddress::try_from("#book/field").expect("valid ref")
-        }
-
-        fn options(
-            pairs: &[(&str, FieldValue)],
-        ) -> BTreeMap<String, FieldValue> {
-            pairs.iter().map(|(k, v)| ((*k).to_owned(), v.clone())).collect()
-        }
-
-        #[test]
-        fn collects_folders_ext_and_class() {
-            let opts = options(&[
-                (
-                    "folders",
-                    FieldValue::List(vec![FieldValue::String(
-                        "assets".to_owned(),
-                    )]),
-                ),
-                ("ext", FieldValue::String("png".to_owned())),
-                (
-                    "class",
-                    FieldValue::List(vec![FieldValue::String(
-                        "image".to_owned(),
-                    )]),
-                ),
-            ]);
-
-            let addr = address();
-            let mut parser = parser::SchemaFieldParser::new(
-                addr.as_ref(),
+        fn file_filter_returns_some_for_file_type() {
+            let def = SchemaFieldDef::new(
                 SchemaFieldType::File(SchemaFileField::default()),
+                false,
+                false,
             );
-            let field_type =
-                file::SchemaFileField::parse(&mut parser, &opts, None);
-            let errors = parser.finish(&opts);
-
-            assert!(errors.is_empty());
-            assert_eq!(
-                field_type,
-                SchemaFieldType::File(SchemaFileField::for_test(
-                    vec!["assets".to_owned()],
-                    Some("png".to_owned()),
-                    vec!["image".to_owned()],
-                ))
-            );
+            assert!(def.file_filter().is_some());
         }
 
         #[test]
-        fn falls_back_independently_per_subfield() {
-            let base = SchemaFieldType::File(SchemaFileField::for_test(
-                vec!["base-folder".to_owned()],
-                Some("base-ext".to_owned()),
-                vec!["base-class".to_owned()],
-            ));
-            let mut options = BTreeMap::new();
-            options.insert(
-                "folders".to_owned(),
-                FieldValue::List(vec![FieldValue::String(
-                    "raw-folder".to_owned(),
-                )]),
-            );
+        fn file_filter_returns_none_for_non_file_type() {
+            let def = SchemaFieldDef::new(SchemaFieldType::Input, false, false);
+            assert!(def.file_filter().is_none());
+        }
 
-            let addr = address();
-            let mut parser = parser::SchemaFieldParser::new(
-                addr.as_ref(),
-                SchemaFieldType::File(SchemaFileField::default()),
-            );
-            let field_type = file::SchemaFileField::parse(
-                &mut parser,
-                &options,
-                Some(&base),
-            );
-            let errors = parser.finish(&options);
+        #[test]
+        fn is_required_reflects_construction_value() {
+            let def = SchemaFieldDef::new(SchemaFieldType::Input, true, false);
+            assert!(def.is_required());
+            let def = SchemaFieldDef::new(SchemaFieldType::Input, false, false);
+            assert!(!def.is_required());
+        }
 
-            assert!(errors.is_empty());
-            assert_eq!(
-                field_type,
-                SchemaFieldType::File(SchemaFileField::for_test(
-                    vec!["raw-folder".to_owned()],
-                    Some("base-ext".to_owned()),
-                    vec!["base-class".to_owned()],
-                ))
-            );
+        #[test]
+        fn is_multi_reflects_construction_value() {
+            let def = SchemaFieldDef::new(SchemaFieldType::Input, false, true);
+            assert!(def.is_multi());
+            let def = SchemaFieldDef::new(SchemaFieldType::Input, false, false);
+            assert!(!def.is_multi());
         }
     }
 
-    mod simple_parse {
+    mod field_type_display {
         use super::super::*;
+
+        #[test]
+        fn display_returns_lowercase_type_name() {
+            let cases = vec![
+                (SchemaFieldType::Input, "input"),
+                (
+                    SchemaFieldType::Select(SchemaSelectField::default()),
+                    "select",
+                ),
+                (SchemaFieldType::Boolean, "boolean"),
+                (
+                    SchemaFieldType::Number(SchemaNumberField::default()),
+                    "number",
+                ),
+                (SchemaFieldType::Date(SchemaDateField::default()), "date"),
+                (SchemaFieldType::File(SchemaFileField::default()), "file"),
+            ];
+            for (kind, expected) in cases {
+                assert_eq!(kind.to_string(), expected, "Display for {kind:?}");
+            }
+        }
+    }
+
+    mod field_type_accessors {
+        use super::super::*;
+
+        #[test]
+        fn as_select_returns_some_for_select_variant() {
+            let kind = SchemaFieldType::Select(SchemaSelectField::default());
+            assert!(kind.as_select().is_some());
+        }
+
+        #[test]
+        fn as_select_returns_none_for_non_select_variant() {
+            let kind = SchemaFieldType::Input;
+            assert!(kind.as_select().is_none());
+        }
+
+        #[test]
+        fn as_number_returns_some_for_number_variant() {
+            let kind = SchemaFieldType::Number(SchemaNumberField::default());
+            assert!(kind.as_number().is_some());
+        }
+
+        #[test]
+        fn as_number_returns_none_for_non_number_variant() {
+            let kind = SchemaFieldType::Input;
+            assert!(kind.as_number().is_none());
+        }
+
+        #[test]
+        fn as_date_returns_some_for_date_variant() {
+            let kind = SchemaFieldType::Date(SchemaDateField::default());
+            assert!(kind.as_date().is_some());
+        }
+
+        #[test]
+        fn as_date_returns_none_for_non_date_variant() {
+            let kind = SchemaFieldType::Input;
+            assert!(kind.as_date().is_none());
+        }
+
+        #[test]
+        fn as_file_returns_some_for_file_variant() {
+            let kind = SchemaFieldType::File(SchemaFileField::default());
+            assert!(kind.as_file().is_some());
+        }
+
+        #[test]
+        fn as_file_returns_none_for_non_file_variant() {
+            let kind = SchemaFieldType::Input;
+            assert!(kind.as_file().is_none());
+        }
+    }
+
+    mod validation {
+        use std::collections::BTreeMap;
+
+        use super::super::{super::error::SchemaFieldParserError, *};
+        use crate::field::FieldValue;
 
         fn address() -> FieldAddress {
             FieldAddress::try_from("#book/field").expect("valid ref")

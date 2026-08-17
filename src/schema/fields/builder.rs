@@ -224,7 +224,7 @@ impl<'a> RefAddressResolver<'a> {
 
 #[cfg(test)]
 mod tests {
-    use super::{super::SchemaSelectFieldEntry, *};
+    use super::*;
     use crate::schema::name::SchemaNameRef;
 
     /// Parses `reference` into a [`FieldAddress`], panicking on an invalid
