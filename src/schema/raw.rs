@@ -320,7 +320,7 @@ mod tests {
             // this field is (or isn't) a `number` field, or that "abc" is the
             // wrong shape for `min`: both checks are
             // `SchemaFieldBuilder`'s job once the field's resolved type is
-            // known (see `schema::fields`'s `AttributeValueTypeMismatch`).
+            // known (see `SchemaFieldParserError::TypeMismatch`).
             let raw: RawSchemaFieldDef =
                 toml::from_str("type = \"number\"\nmin = \"abc\"")
                     .expect("valid toml: value shape isn't validated here");

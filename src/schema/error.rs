@@ -76,30 +76,10 @@ impl From<SchemaFieldBuilderError> for SchemaError {
 ///
 /// Hard failures for `Direct` fields and `$ref` with a `type` override,
 /// degraded to [`SchemaWarning`] for bare `$ref` overrides:
-/// - [`Self::UnknownAttributeKey`]
-/// - [`Self::AttributeValueTypeMismatch`]
+/// - [`Self::Parser`] with [`SchemaFieldParserError::UnknownKey`]
+/// - [`Self::Parser`] with [`SchemaFieldParserError::TypeMismatch`]
 #[derive(Debug, Error)]
 pub(crate) enum SchemaFieldBuilderError {
-    /// An attribute key is not valid for the field's resolved type.
-    #[error("field {address} of type {kind} has no attribute {key:?}")]
-    UnknownAttributeKey {
-        address: FieldAddress,
-        kind: SchemaFieldType,
-        key: String,
-    },
-    /// An attribute key is valid for the field's type, but its value is
-    /// wrongly shaped.
-    #[error(
-        "field {address} of type {kind}'s {key:?} attribute must be \
-         {expected}, got {value}"
-    )]
-    AttributeValueTypeMismatch {
-        address: FieldAddress,
-        kind: SchemaFieldType,
-        key: String,
-        value: String,
-        expected: &'static str,
-    },
     /// A `$ref` names a Schema that is neither the Global Schema nor a
     /// transitive `extends` ancestor of the referencing Schema.
     #[error(
@@ -116,22 +96,31 @@ pub(crate) enum SchemaFieldBuilderError {
         own: Box<FieldAddress>,
         reference: Box<FieldAddress>,
     },
+    /// A per-key validation failure from parsing a field type's `options`.
+    #[error(transparent)]
+    Parser(Box<SchemaFieldParserError>),
 }
 
 /// One per-key validation failure from parsing a field type's `options`.
 ///
 /// Converts into:
-/// - [`SchemaFieldBuilderError`] (hard failure) for `Direct` fields and `$ref`
-///   with a `type` override.
+/// - [`SchemaFieldBuilderError::Parser`] (hard failure) for `Direct` fields and
+///   `$ref` with a `type` override.
 /// - [`SchemaWarning`] (degraded) for bare `$ref` overrides.
+#[derive(Debug, Error)]
 pub(crate) enum SchemaFieldParserError {
     /// An attribute key was not claimed by any typed extractor.
+    #[error("field {address} of type {kind} has no attribute {key:?}")]
     UnknownKey {
         address: FieldAddress,
         kind: SchemaFieldType,
         key: String,
     },
     /// An attribute key was claimed, but its value is wrongly shaped.
+    #[error(
+        "field {address} of type {kind}'s {key:?} attribute must be \
+         {expected}, got {value}"
+    )]
     TypeMismatch {
         address: FieldAddress,
         kind: SchemaFieldType,
@@ -139,35 +128,6 @@ pub(crate) enum SchemaFieldParserError {
         value: String,
         expected: &'static str,
     },
-}
-
-impl From<SchemaFieldParserError> for SchemaFieldBuilderError {
-    fn from(error: SchemaFieldParserError) -> Self {
-        match error {
-            SchemaFieldParserError::UnknownKey {
-                address,
-                kind,
-                key,
-            } => Self::UnknownAttributeKey {
-                address,
-                kind,
-                key,
-            },
-            SchemaFieldParserError::TypeMismatch {
-                address,
-                kind,
-                key,
-                value,
-                expected,
-            } => Self::AttributeValueTypeMismatch {
-                address,
-                kind,
-                key,
-                value,
-                expected,
-            },
-        }
-    }
 }
 
 impl From<SchemaFieldParserError> for SchemaWarning {
@@ -363,12 +323,14 @@ mod tests {
 
         #[test]
         fn field_builder_delegates_display_to_the_wrapped_error() {
-            let inner = SchemaFieldBuilderError::UnknownAttributeKey {
-                address: FieldAddress::try_from("#book/status")
-                    .expect("valid ref"),
-                kind: SchemaFieldType::Date(SchemaDateField::default()),
-                key: "values".to_owned(),
-            };
+            let inner = SchemaFieldBuilderError::Parser(Box::new(
+                SchemaFieldParserError::UnknownKey {
+                    address: FieldAddress::try_from("#book/status")
+                        .expect("valid ref"),
+                    kind: SchemaFieldType::Date(SchemaDateField::default()),
+                    key: "values".to_owned(),
+                },
+            ));
 
             let error = SchemaError::from(inner);
 
@@ -389,12 +351,12 @@ mod tests {
             // validated `SchemaName` + `FieldName` pair rather than a single
             // `String`. `AmbiguousFieldName` boxes `second` for the same
             // reason: two owned `FieldName`s alongside `schema` would tie it
-            // for the largest variant. `FieldBuilder` boxes the whole wrapped
-            // `SchemaFieldBuilderError`, whose own `AttributeValueTypeMismatch`
-            // variant carries two owned `String`s and would otherwise be this
-            // enum's largest member by far. Keep every variant's payload
-            // small enough that `Result<_, SchemaError>` stays cheap to move
-            // through the resolution call chain.
+            // for the largest variant. `FieldBuilder` wraps a
+            // `SchemaFieldParserError` whose `TypeMismatch` variant carries
+            // two owned `String`s and would otherwise be this enum's largest
+            // member by far. Keep every variant's payload small enough that
+            // `Result<_, SchemaError>` stays cheap to move through the
+            // resolution call chain.
             assert!(
                 std::mem::size_of::<SchemaError>() <= 64,
                 "SchemaError grew to {} bytes; box or trim the offending \
@@ -412,12 +374,14 @@ mod tests {
 
         #[test]
         fn unknown_attribute_key_formats_display_message() {
-            let error = SchemaFieldBuilderError::UnknownAttributeKey {
-                address: FieldAddress::try_from("#book/published")
-                    .expect("valid ref"),
-                kind: SchemaFieldType::Date(SchemaDateField::default()),
-                key: "values".to_owned(),
-            };
+            let error = SchemaFieldBuilderError::Parser(Box::new(
+                SchemaFieldParserError::UnknownKey {
+                    address: FieldAddress::try_from("#book/published")
+                        .expect("valid ref"),
+                    kind: SchemaFieldType::Date(SchemaDateField::default()),
+                    key: "values".to_owned(),
+                },
+            ));
 
             assert_eq!(
                 error.to_string(),
@@ -428,14 +392,16 @@ mod tests {
 
         #[test]
         fn attribute_value_type_mismatch_formats_display_message() {
-            let error = SchemaFieldBuilderError::AttributeValueTypeMismatch {
-                address: FieldAddress::try_from("#book/rating")
-                    .expect("valid ref"),
-                kind: SchemaFieldType::Number(SchemaNumberField::default()),
-                key: "min".to_owned(),
-                value: "\"abc\"".to_owned(),
-                expected: "a number",
-            };
+            let error = SchemaFieldBuilderError::Parser(Box::new(
+                SchemaFieldParserError::TypeMismatch {
+                    address: FieldAddress::try_from("#book/rating")
+                        .expect("valid ref"),
+                    kind: SchemaFieldType::Number(SchemaNumberField::default()),
+                    key: "min".to_owned(),
+                    value: "\"abc\"".to_owned(),
+                    expected: "a number",
+                },
+            ));
 
             assert_eq!(
                 error.to_string(),

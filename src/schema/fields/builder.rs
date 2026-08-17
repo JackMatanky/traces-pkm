@@ -38,17 +38,16 @@ impl SchemaFieldBuilder<'_> {
     ///   nor a transitive `extends` ancestor.
     /// - [`RefFieldNotFound`] if the `$ref` target Schema exists but lacks the
     ///   named field.
-    /// - [`UnknownAttributeKey`] if an option key does not belong to the
-    ///   resolved field type (hard failure for `Direct` fields and `$ref` with
-    ///   `type` override).
-    /// - [`AttributeValueTypeMismatch`] if an option key is valid but its value
-    ///   has the wrong shape (hard failure for `Direct` fields and `$ref` with
-    ///   `type` override).
+    /// - [`Parser`] with [`SchemaFieldParserError::UnknownKey`] if an option
+    ///   key does not belong to the resolved field type (hard failure for
+    ///   `Direct` fields and `$ref` with `type` override).
+    /// - [`Parser`] with [`SchemaFieldParserError::TypeMismatch`] if an option
+    ///   key is valid but its value has the wrong shape (hard failure for
+    ///   `Direct` fields and `$ref` with `type` override).
     ///
     /// [`RefOutOfBounds`]: SchemaFieldBuilderError::RefOutOfBounds
     /// [`RefFieldNotFound`]: SchemaFieldBuilderError::RefFieldNotFound
-    /// [`UnknownAttributeKey`]: SchemaFieldBuilderError::UnknownAttributeKey
-    /// [`AttributeValueTypeMismatch`]: SchemaFieldBuilderError::AttributeValueTypeMismatch
+    /// [`Parser`]: SchemaFieldBuilderError::Parser
     pub(crate) fn build(
         &mut self,
         address: FieldAddressRef<'_>,
@@ -67,7 +66,10 @@ impl SchemaFieldBuilder<'_> {
                     Some(base.kind()),
                 );
                 if let Some(error) = errors.into_iter().next() {
-                    return Err(SchemaFieldBuilderError::from(error).into());
+                    return Err(SchemaFieldBuilderError::Parser(Box::new(
+                        error,
+                    ))
+                    .into());
                 }
                 (
                     field_type,
@@ -102,7 +104,10 @@ impl SchemaFieldBuilder<'_> {
                     None,
                 );
                 if let Some(error) = errors.into_iter().next() {
-                    return Err(SchemaFieldBuilderError::from(error).into());
+                    return Err(SchemaFieldBuilderError::Parser(Box::new(
+                        error,
+                    ))
+                    .into());
                 }
                 (
                     field_type,

@@ -559,7 +559,7 @@ mod tests {
 
     use super::{super::GLOBAL_SCHEMA_NAME, *};
     use crate::schema::{
-        error::SchemaFieldBuilderError,
+        error::{SchemaFieldBuilderError, SchemaFieldParserError},
         fields::{
             SchemaDateField, SchemaFieldType, SchemaFileField,
             SchemaNumberField, SchemaSelectField, SchemaSelectFieldEntry,
@@ -1935,14 +1935,20 @@ mod tests {
                 "unknown attribute key on a type-overriding $ref rejected",
             );
 
-            assert!(matches!(
-                err,
-                SchemaError::FieldBuilder(inner)
-                    if matches!(
-                        *inner,
-                        SchemaFieldBuilderError::UnknownAttributeKey { .. }
-                    )
-            ));
+            if let SchemaError::FieldBuilder(inner) = &err {
+                if let SchemaFieldBuilderError::Parser(parser) = inner.as_ref()
+                {
+                    assert!(
+                        matches!(
+                            **parser,
+                            SchemaFieldParserError::UnknownKey { .. }
+                        ),
+                        "expected UnknownKey, got {parser}"
+                    );
+                    return;
+                }
+            }
+            assert!(false, "expected Parser(UnknownKey), got {err}");
         }
 
         #[test]
@@ -1959,14 +1965,20 @@ mod tests {
             let err =
                 resolve_all(&raw).expect_err("unknown attribute key rejected");
 
-            assert!(matches!(
-                err,
-                SchemaError::FieldBuilder(inner)
-                    if matches!(
-                        *inner,
-                        SchemaFieldBuilderError::UnknownAttributeKey { .. }
-                    )
-            ));
+            if let SchemaError::FieldBuilder(inner) = &err {
+                if let SchemaFieldBuilderError::Parser(parser) = inner.as_ref()
+                {
+                    assert!(
+                        matches!(
+                            **parser,
+                            SchemaFieldParserError::UnknownKey { .. }
+                        ),
+                        "expected UnknownKey, got {parser}"
+                    );
+                    return;
+                }
+            }
+            assert!(false, "expected Parser(UnknownKey), got {err}");
         }
 
         #[test]
@@ -1986,14 +1998,20 @@ mod tests {
             let err = resolve_all(&raw)
                 .expect_err("attribute value type mismatch rejected");
 
-            assert!(matches!(
-                err,
-                SchemaError::FieldBuilder(inner)
-                    if matches!(
-                        *inner,
-                        SchemaFieldBuilderError::AttributeValueTypeMismatch { .. }
-                    )
-            ));
+            if let SchemaError::FieldBuilder(inner) = &err {
+                if let SchemaFieldBuilderError::Parser(parser) = inner.as_ref()
+                {
+                    assert!(
+                        matches!(
+                            **parser,
+                            SchemaFieldParserError::TypeMismatch { .. }
+                        ),
+                        "expected TypeMismatch, got {parser}"
+                    );
+                    return;
+                }
+            }
+            assert!(false, "expected Parser(TypeMismatch), got {err}");
         }
     }
 }
