@@ -163,13 +163,9 @@ impl<'a> SchemaFieldParser<'a> {
     ///
     /// Any key present in `options` that was not accessed via a typed extractor
     /// is treated as invalid and converted into a
-    /// [`SchemaFieldParserError::UnknownKey`].
-    ///
-    /// # Returns
-    ///
-    /// A [`Vec`] containing all accumulated type mismatch errors and unknown
-    /// key violations. If the list is empty, all options were valid and
-    /// recognized.
+    /// [`SchemaFieldParserError::UnknownKey`]. Returns a [`Vec`] containing
+    /// all accumulated type mismatch errors and unknown key violations; an
+    /// empty list means all options were valid and recognized.
     pub(super) fn finish(
         mut self,
         options: &BTreeMap<String, FieldValue>,

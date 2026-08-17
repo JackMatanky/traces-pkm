@@ -145,9 +145,11 @@ pub(crate) enum SchemaFieldType {
     Select(SchemaSelectField),
     /// Boolean value.
     Boolean,
-    /// Numeric value with optional bounds and step.
+    /// Numeric value with optional bounds ([`SchemaNumberField::min`],
+    /// [`SchemaNumberField::max`]) and step ([`SchemaNumberField::step`]).
     Number(SchemaNumberField),
-    /// Date value with an optional display format.
+    /// Date value with an optional display format
+    /// ([`SchemaDateField::format`]).
     Date(SchemaDateField),
     /// A link to files matched by folder, extension, and class filters.
     ///
