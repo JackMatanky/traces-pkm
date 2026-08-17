@@ -169,6 +169,40 @@ impl std::fmt::Display for SchemaFieldType {
     }
 }
 
+impl SchemaFieldType {
+    /// Return the inner [`SchemaSelectField`] if this is a `Select` variant.
+    pub(super) fn as_select(&self) -> Option<&SchemaSelectField> {
+        match self {
+            Self::Select(inner) => Some(inner),
+            _ => None,
+        }
+    }
+
+    /// Return the inner [`SchemaNumberField`] if this is a `Number` variant.
+    pub(super) fn as_number(&self) -> Option<&SchemaNumberField> {
+        match self {
+            Self::Number(inner) => Some(inner),
+            _ => None,
+        }
+    }
+
+    /// Return the inner [`SchemaDateField`] if this is a `Date` variant.
+    pub(super) fn as_date(&self) -> Option<&SchemaDateField> {
+        match self {
+            Self::Date(inner) => Some(inner),
+            _ => None,
+        }
+    }
+
+    /// Return the inner [`SchemaFileField`] if this is a `File` variant.
+    pub(super) fn as_file(&self) -> Option<&SchemaFileField> {
+        match self {
+            Self::File(inner) => Some(inner),
+            _ => None,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeSet;
