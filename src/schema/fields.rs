@@ -156,6 +156,19 @@ pub(crate) enum SchemaFieldType {
     File(SchemaFileField),
 }
 
+impl std::fmt::Display for SchemaFieldType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Input => "input",
+            Self::Select(_) => "select",
+            Self::Boolean => "boolean",
+            Self::Number(_) => "number",
+            Self::Date(_) => "date",
+            Self::File(_) => "file",
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeSet;
