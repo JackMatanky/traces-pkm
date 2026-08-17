@@ -1,9 +1,11 @@
 //! Shared attribute-table parser for per-type field parsing.
 //!
-//! Each per-type `parse` function receives a [`SchemaFieldParser`], claims keys
-//! via typed extractors, and calls [`SchemaFieldParser::finish`] to detect
-//! unknown keys. This replaces the duplicated loop-and-match that previously
-//! existed in `select`, `number`, `date`, and `file`.
+//! Each per-type [`parse`][super::select::SchemaSelectField::parse] function
+//! receives a [`SchemaFieldParser`], claims keys via typed extractors, and
+//! calls [`SchemaFieldParser::finish`] to detect unknown keys. This replaces
+//! the duplicated loop-and-match that previously existed in
+//! [`select`][super::select], [`number`][super::number],
+//! [`date`][super::date], and [`mod@super::file`].
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -14,12 +16,12 @@ use super::{
 };
 use crate::field::FieldValue;
 
-/// Attribute-table parser that tracks claimed keys and emits unknown-key errors
-/// for anything left over.
+/// Attribute-table parser that tracks claimed keys and emits errors.
 ///
-/// Per-type `parse` functions create one of these, call typed extractors for
-/// each known key, then call [`finish`](Self::finish) to get the residual
-/// unknown-key errors.
+/// Per-type [`parse`][super::select::SchemaSelectField::parse] functions create
+/// one of these, call typed extractors ([`string`](Self::string),
+/// [`string_list`](Self::string_list), [`f64`](Self::f64)) for each known key,
+/// then call [`finish`](Self::finish) to get residual unknown-key errors.
 pub(super) struct SchemaFieldParser<'a> {
     address: FieldAddressRef<'a>,
     kind: SchemaFieldType,
@@ -28,7 +30,7 @@ pub(super) struct SchemaFieldParser<'a> {
 }
 
 impl<'a> SchemaFieldParser<'a> {
-    /// Create a new parser for a field at `address` of type `kind`.
+    /// Create a new parser for `address`'s field of type `kind`.
     pub(super) fn new(
         address: FieldAddressRef<'a>,
         kind: SchemaFieldType,
@@ -41,11 +43,11 @@ impl<'a> SchemaFieldParser<'a> {
         }
     }
 
-    /// Extract a `String` value for `key`, falling back to `fallback` when
+    /// Extract a [`String`] value for `key`, falling back to `fallback` when
     /// `options` does not contain the key.
     ///
-    /// Returns `None` when the key is present but its value is not a string
-    /// (a type-mismatch error is pushed to `self.errors`).
+    /// Returns `None` when the key is present but its value is not a string.
+    /// A type-mismatch error is pushed to `self.errors`.
     pub(super) fn string(
         &mut self,
         options: &BTreeMap<String, FieldValue>,
@@ -67,11 +69,11 @@ impl<'a> SchemaFieldParser<'a> {
         }
     }
 
-    /// Extract a `Vec<String>` value for `key`, falling back to `fallback`
+    /// Extract a [`Vec<String>`] value for `key`, falling back to `fallback`
     /// when `options` does not contain the key.
     ///
-    /// Returns `None` when the key is present but its value is not a list of
-    /// strings (a type-mismatch error is pushed to `self.errors`).
+    /// Returns `fallback` when the key is present but its value is not a list
+    /// of strings. A type-mismatch error is pushed to `self.errors`.
     pub(super) fn string_list(
         &mut self,
         options: &BTreeMap<String, FieldValue>,
@@ -121,8 +123,8 @@ impl<'a> SchemaFieldParser<'a> {
     /// Extract an `f64` value for `key`, falling back to `fallback` when
     /// `options` does not contain the key.
     ///
-    /// Returns `None` when the key is present but its value is not numeric (a
-    /// type-mismatch error is pushed to `self.errors`).
+    /// Returns `None` when the key is present but its value is not numeric.
+    /// A type-mismatch error is pushed to `self.errors`.
     pub(super) fn f64(
         &mut self,
         options: &BTreeMap<String, FieldValue>,
