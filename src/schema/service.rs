@@ -16,7 +16,7 @@ use walkdir::WalkDir;
 
 use super::{
     error::{SchemaError, SchemaWarning},
-    fields::{FieldAddressRef, RefResolver, SchemaFieldBuilder},
+    fields::{FieldAddressRef, RefAddressResolver, SchemaFieldBuilder},
     graph::SchemaGraph,
     model::Schema,
     name::{SchemaName, SchemaNameRef},
@@ -488,7 +488,7 @@ fn build_schema(
     // Own fields resolve last (so they override inherited fields above) but
     // need `ancestors` computed above to validate a `$ref`'s bounded target:
     // `#global/<field>` or `#<ancestor-schema>/<field>` only.
-    let refs = RefResolver {
+    let refs = RefAddressResolver {
         ancestors: &ancestors,
         resolved,
     };

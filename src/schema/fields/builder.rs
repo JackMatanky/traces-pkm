@@ -19,7 +19,7 @@ use super::{
 /// Build one [`SchemaFieldDef`] from its raw declaration, resolving `$ref`
 /// targets against already-resolved Schemas.
 pub(crate) struct SchemaFieldBuilder<'a> {
-    pub(crate) refs: &'a RefResolver<'a>,
+    pub(crate) refs: &'a RefAddressResolver<'a>,
     pub(crate) warnings: &'a mut Vec<SchemaWarning>,
 }
 
@@ -28,9 +28,10 @@ impl SchemaFieldBuilder<'_> {
     ///
     /// - `Direct(kind)` or `Ref` with a `type` override: builds fresh from
     ///   `raw.options` against the resolved kind.
-    /// - Bare `Ref` (no override): resolves the base via [`RefResolver`], then
-    ///   merges `raw.options` on top. Unrecognized or wrongly-shaped keys
-    ///   degrade to [`SchemaWarning`] rather than failing.
+    /// - Bare `Ref` (no override): resolves the base via
+    ///   [`RefAddressResolver`], then merges `raw.options` on top. Unrecognized
+    ///   or wrongly-shaped keys degrade to [`SchemaWarning`] rather than
+    ///   failing.
     ///
     /// # Errors
     ///
@@ -153,16 +154,13 @@ fn parse_field(
     kind: SchemaFieldType,
     options: &std::collections::BTreeMap<String, crate::field::FieldValue>,
     base: Option<&SchemaFieldType>,
-) -> (SchemaFieldType, Vec<super::error::SchemaFieldParserError>) {
+) -> (SchemaFieldType, Vec<super::super::error::SchemaFieldParserError>) {
     use super::{date, file, number, select};
     match &kind {
-        SchemaFieldType::Input => {
-            let unknowns = parser::parse_simple(address, kind, options);
-            (SchemaFieldType::Input, unknowns)
-        }
-        SchemaFieldType::Boolean => {
-            let unknowns = parser::parse_simple(address, kind, options);
-            (SchemaFieldType::Boolean, unknowns)
+        SchemaFieldType::Input | SchemaFieldType::Boolean => {
+            let parser = SchemaFieldParser::new(address, kind.clone());
+            let errors = parser.finish(options);
+            (kind, errors)
         }
         SchemaFieldType::Select(_) => {
             select::SchemaSelectField::parse(address, options, base)
@@ -181,12 +179,12 @@ fn parse_field(
 
 /// Resolve `$ref` values to their base [`SchemaFieldDef`]s, bounded to the
 /// Global Schema or the referencing Schema's transitive `extends` ancestors.
-pub(crate) struct RefResolver<'a> {
+pub(crate) struct RefAddressResolver<'a> {
     pub(crate) ancestors: &'a BTreeSet<SchemaName>,
     pub(crate) resolved: &'a BTreeMap<SchemaName, Schema>,
 }
 
-impl<'a> RefResolver<'a> {
+impl<'a> RefAddressResolver<'a> {
     /// Resolve `base_address` to its [`SchemaFieldDef`].
     ///
     /// # Errors
@@ -253,7 +251,7 @@ mod tests {
         )
     }
 
-    mod ref_resolver {
+    mod ref_address_resolver {
         use pretty_assertions::assert_eq;
 
         use super::*;
@@ -266,7 +264,7 @@ mod tests {
             resolved.insert(name.clone(), book);
             let mut ancestors = BTreeSet::new();
             ancestors.insert(name);
-            let refs = RefResolver {
+            let refs = RefAddressResolver {
                 ancestors: &ancestors,
                 resolved: &resolved,
             };
@@ -293,7 +291,7 @@ mod tests {
             let mut resolved = BTreeMap::new();
             resolved.insert(name, global);
             let ancestors = BTreeSet::new();
-            let refs = RefResolver {
+            let refs = RefAddressResolver {
                 ancestors: &ancestors,
                 resolved: &resolved,
             };
@@ -317,7 +315,7 @@ mod tests {
             let mut resolved = BTreeMap::new();
             resolved.insert(name, movie);
             let ancestors = BTreeSet::new();
-            let refs = RefResolver {
+            let refs = RefAddressResolver {
                 ancestors: &ancestors,
                 resolved: &resolved,
             };
@@ -347,7 +345,7 @@ mod tests {
             resolved.insert(name.clone(), book);
             let mut ancestors = BTreeSet::new();
             ancestors.insert(name);
-            let refs = RefResolver {
+            let refs = RefAddressResolver {
                 ancestors: &ancestors,
                 resolved: &resolved,
             };

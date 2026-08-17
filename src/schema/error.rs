@@ -121,6 +121,85 @@ pub(crate) enum SchemaFieldBuilderError {
     },
 }
 
+/// One per-key validation failure from parsing a field type's `options`.
+///
+/// Converts into:
+/// - [`SchemaFieldBuilderError`] (hard failure) for `Direct` fields and `$ref`
+///   with a `type` override.
+/// - [`SchemaWarning`] (degraded) for bare `$ref` overrides.
+pub(crate) enum SchemaFieldParserError {
+    UnknownKey {
+        address: FieldAddress,
+        kind: SchemaFieldType,
+        key: String,
+    },
+    TypeMismatch {
+        address: FieldAddress,
+        kind: SchemaFieldType,
+        key: String,
+        value: String,
+        expected: &'static str,
+    },
+}
+
+impl From<SchemaFieldParserError> for SchemaFieldBuilderError {
+    fn from(error: SchemaFieldParserError) -> Self {
+        match error {
+            SchemaFieldParserError::UnknownKey {
+                address,
+                kind,
+                key,
+            } => Self::UnknownAttributeKey {
+                address,
+                kind,
+                key,
+            },
+            SchemaFieldParserError::TypeMismatch {
+                address,
+                kind,
+                key,
+                value,
+                expected,
+            } => Self::AttributeValueTypeMismatch {
+                address,
+                kind,
+                key,
+                value,
+                expected,
+            },
+        }
+    }
+}
+
+impl From<SchemaFieldParserError> for SchemaWarning {
+    fn from(error: SchemaFieldParserError) -> Self {
+        match error {
+            SchemaFieldParserError::UnknownKey {
+                address,
+                kind,
+                key,
+            } => Self::UnknownOverrideKey {
+                address,
+                kind,
+                key,
+            },
+            SchemaFieldParserError::TypeMismatch {
+                address,
+                kind,
+                key,
+                value,
+                expected,
+            } => Self::OverrideValueTypeMismatch {
+                address,
+                kind,
+                key,
+                value,
+                expected,
+            },
+        }
+    }
+}
+
 /// A recoverable Schema resolution defect.
 ///
 /// Resolution skips the offending key or parent and continues. Every warning

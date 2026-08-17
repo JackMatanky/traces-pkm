@@ -23,8 +23,7 @@ mod address;
 pub(crate) use address::{FieldAddress, FieldAddressRef};
 
 mod builder;
-mod error;
-pub(crate) use builder::{RefResolver, SchemaFieldBuilder};
+pub(crate) use builder::{RefAddressResolver, SchemaFieldBuilder};
 
 mod date;
 pub(crate) use date::SchemaDateField;
@@ -37,9 +36,9 @@ mod select;
 
 use std::collections::BTreeMap;
 
-use error::SchemaFieldParserError;
 pub(crate) use select::{SchemaSelectField, SchemaSelectFieldEntry};
 
+use super::error::SchemaFieldParserError;
 use crate::field::FieldValue;
 
 /// A resolved field definition after inheritance and `$ref` application.
@@ -554,11 +553,11 @@ mod tests {
         fn input_declaring_any_key_is_an_unknown_key() {
             let opts = options(&[("min", FieldValue::Int(1))]);
 
-            let unknowns = parser::parse_simple(
+            let p = parser::SchemaFieldParser::new(
                 address().as_ref(),
-                RawSchemaFieldType::Input,
-                &opts,
+                SchemaFieldType::Input,
             );
+            let unknowns = p.finish(&opts);
 
             assert_eq!(unknowns.len(), 1);
             assert!(matches!(
@@ -571,11 +570,11 @@ mod tests {
         fn boolean_declaring_any_key_is_an_unknown_key() {
             let opts = options(&[("ext", FieldValue::String("x".to_owned()))]);
 
-            let unknowns = parser::parse_simple(
+            let p = parser::SchemaFieldParser::new(
                 address().as_ref(),
-                RawSchemaFieldType::Boolean,
-                &opts,
+                SchemaFieldType::Boolean,
             );
+            let unknowns = p.finish(&opts);
 
             assert_eq!(unknowns.len(), 1);
             assert!(matches!(

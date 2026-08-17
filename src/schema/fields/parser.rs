@@ -8,22 +8,11 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::{
+    super::error::SchemaFieldParserError,
     SchemaFieldType,
-    address::FieldAddressRef,
-    error::{SchemaFieldParserError, type_mismatch, unknown_key},
+    address::{FieldAddress, FieldAddressRef},
 };
 use crate::field::FieldValue;
-
-/// Parse `options` for a simple type (no type-specific keys) and return every
-/// key as an unknown-key error.
-pub(super) fn parse_simple(
-    address: FieldAddressRef<'_>,
-    kind: SchemaFieldType,
-    options: &BTreeMap<String, FieldValue>,
-) -> Vec<SchemaFieldParserError> {
-    let parser = SchemaFieldParser::new(address, kind);
-    parser.finish(options)
-}
 
 /// Attribute-table parser that tracks claimed keys and emits unknown-key errors
 /// for anything left over.
@@ -67,13 +56,7 @@ impl<'a> SchemaFieldParser<'a> {
             Some(value) => match value {
                 FieldValue::String(s) => Some(s.clone()),
                 _ => {
-                    errors.push(type_mismatch(
-                        self.address,
-                        self.kind.clone(),
-                        key,
-                        value,
-                        "a string",
-                    ));
+                    errors.push(self.type_mismatch(key, value, "a string"));
                     None
                 }
             },
@@ -107,9 +90,7 @@ impl<'a> SchemaFieldParser<'a> {
                     match all_strings {
                         Some(list) => list,
                         None => {
-                            errors.push(type_mismatch(
-                                self.address,
-                                self.kind.clone(),
+                            errors.push(self.type_mismatch(
                                 key,
                                 value,
                                 "an array of strings",
@@ -119,9 +100,7 @@ impl<'a> SchemaFieldParser<'a> {
                     }
                 }
                 _ => {
-                    errors.push(type_mismatch(
-                        self.address,
-                        self.kind.clone(),
+                    errors.push(self.type_mismatch(
                         key,
                         value,
                         "an array of strings",
@@ -150,13 +129,7 @@ impl<'a> SchemaFieldParser<'a> {
             Some(value) => match value.as_f64() {
                 Some(number) => Some(number),
                 None => {
-                    errors.push(type_mismatch(
-                        self.address,
-                        self.kind.clone(),
-                        key,
-                        value,
-                        "a number",
-                    ));
+                    errors.push(self.type_mismatch(key, value, "a number"));
                     None
                 }
             },
@@ -173,7 +146,34 @@ impl<'a> SchemaFieldParser<'a> {
         options
             .keys()
             .filter(|key| !self.claimed.contains(key.as_str()))
-            .map(|key| unknown_key(self.address, self.kind.clone(), key))
+            .map(|key| self.unknown_key(key))
             .collect()
+    }
+
+    /// Build a [`SchemaFieldParserError::UnknownKey`] for an unrecognized
+    /// attribute key.
+    fn unknown_key(&self, key: &str) -> SchemaFieldParserError {
+        SchemaFieldParserError::UnknownKey {
+            address: FieldAddress::from(self.address),
+            kind: self.kind.clone(),
+            key: key.to_owned(),
+        }
+    }
+
+    /// Build a [`SchemaFieldParserError::TypeMismatch`] for a wrongly-shaped
+    /// `value`.
+    fn type_mismatch(
+        &self,
+        key: &str,
+        value: &FieldValue,
+        expected: &'static str,
+    ) -> SchemaFieldParserError {
+        SchemaFieldParserError::TypeMismatch {
+            address: FieldAddress::from(self.address),
+            kind: self.kind.clone(),
+            key: key.to_owned(),
+            value: format!("{value:?}"),
+            expected,
+        }
     }
 }
