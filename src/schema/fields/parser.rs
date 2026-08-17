@@ -82,24 +82,26 @@ impl<'a> SchemaFieldParser<'a> {
         match options.get(key) {
             Some(value) => match value {
                 FieldValue::List(items) => {
-                    let all_strings = items
+                    // Validate first, collect only on success.
+                    if items
                         .iter()
-                        .map(|item| match item {
-                            FieldValue::String(s) => Some(s.clone()),
-                            _ => None,
-                        })
-                        .collect::<Option<Vec<_>>>();
-                    match all_strings {
-                        Some(list) => list,
-                        None => {
-                            self.errors.push(self.type_mismatch(
-                                &self.kind,
-                                key,
-                                value,
-                                "an array of strings",
-                            ));
-                            fallback
-                        }
+                        .all(|item| matches!(item, FieldValue::String(_)))
+                    {
+                        items
+                            .iter()
+                            .map(|item| match item {
+                                FieldValue::String(s) => s.clone(),
+                                _ => unreachable!(),
+                            })
+                            .collect()
+                    } else {
+                        self.errors.push(self.type_mismatch(
+                            &self.kind,
+                            key,
+                            value,
+                            "an array of strings",
+                        ));
+                        fallback
                     }
                 }
                 _ => {
@@ -150,17 +152,26 @@ impl<'a> SchemaFieldParser<'a> {
         options: &BTreeMap<String, FieldValue>,
     ) -> Vec<SchemaFieldParserError> {
         let mut errors = std::mem::take(&mut self.errors);
-        let kind = self.kind.clone();
-        errors.extend(
-            options
-                .keys()
-                .filter(|key| !self.claimed.contains(key.as_str()))
-                .map(|key| SchemaFieldParserError::UnknownKey {
+        let mut unknowns: Vec<_> = options
+            .keys()
+            .filter(|key| !self.claimed.contains(key.as_str()))
+            .collect();
+        if let Some(last) = unknowns.pop() {
+            // Move kind into the last error; clone for the rest.
+            let kind = self.kind.clone();
+            for key in unknowns {
+                errors.push(SchemaFieldParserError::UnknownKey {
                     address: FieldAddress::from(self.address),
                     kind: kind.clone(),
                     key: key.to_owned(),
-                }),
-        );
+                });
+            }
+            errors.push(SchemaFieldParserError::UnknownKey {
+                address: FieldAddress::from(self.address),
+                kind: self.kind,
+                key: last.to_owned(),
+            });
+        }
         errors
     }
 
