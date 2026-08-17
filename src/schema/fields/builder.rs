@@ -157,7 +157,7 @@ fn parse_field(
 ) -> (SchemaFieldType, Vec<super::super::error::SchemaFieldParserError>) {
     use super::{date, file, number, parser::SchemaFieldParser, select};
     let mut parser = SchemaFieldParser::new(address, kind.clone());
-    let field_type = match &kind {
+    let field_type = match kind {
         SchemaFieldType::Input | SchemaFieldType::Boolean => kind,
         SchemaFieldType::Select(_) => {
             select::SchemaSelectField::parse(&mut parser, options, base)
