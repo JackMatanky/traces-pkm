@@ -34,8 +34,16 @@ impl SchemaFieldBuilder<'_> {
     ///
     /// # Errors
     ///
-    /// - [`SchemaError::FieldBuilder`]: `$ref` resolution failure, unrecognized
-    ///   attribute key, or wrongly-shaped attribute value.
+    /// - [`SchemaFieldBuilderError::RefOutOfBounds`] if the `$ref` target is
+    ///   neither the Global Schema nor a transitive `extends` ancestor.
+    /// - [`SchemaFieldBuilderError::RefFieldNotFound`] if the `$ref` target
+    ///   Schema exists but lacks the named field.
+    /// - [`SchemaFieldBuilderError::UnknownAttributeKey`] if an option key does
+    ///   not belong to the resolved field type (hard failure for `Direct`
+    ///   fields and `$ref` with `type` override).
+    /// - [`SchemaFieldBuilderError::AttributeValueTypeMismatch`] if an option
+    ///   key is valid but its value has the wrong shape (hard failure for
+    ///   `Direct` fields and `$ref` with `type` override).
     pub(crate) fn build(
         &mut self,
         address: FieldAddressRef<'_>,
