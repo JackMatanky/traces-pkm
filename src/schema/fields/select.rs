@@ -2,10 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use super::{
-    SchemaFieldType, address::FieldAddressRef, error::SchemaFieldParserError,
-    parser::SchemaFieldParser,
-};
+use super::{SchemaFieldType, parser::SchemaFieldParser};
 use crate::field::FieldValue;
 
 /// Resolved `select` field options.
@@ -31,27 +28,19 @@ impl SchemaSelectField {
     }
 
     /// Parse `options` against `select`'s `values` attribute, merging with
-    /// `base` when present. Returns the effective [`SchemaFieldType::Select`]
-    /// and every per-key validation failure.
+    /// `base` when present. Returns the effective [`SchemaFieldType::Select`].
     ///
     /// # Arguments
     ///
-    /// * `address`: field address for error context.
+    /// * `parser`: pre-constructed parser for this field.
     /// * `options`: raw key-value pairs from the TOML definition.
     /// * `base`: inherited field type to fall back to for unset keys.
     pub(super) fn parse(
-        address: FieldAddressRef<'_>,
+        parser: &mut SchemaFieldParser<'_>,
         options: &BTreeMap<String, FieldValue>,
         base: Option<&SchemaFieldType>,
-    ) -> (SchemaFieldType, Vec<SchemaFieldParserError>) {
-        let mut errors = Vec::new();
-        let mut parser = SchemaFieldParser::new(
-            address,
-            SchemaFieldType::Select(SchemaSelectField::default()),
-        );
-
-        let values =
-            parser.string_list(options, "values", Vec::new(), &mut errors);
+    ) -> SchemaFieldType {
+        let values = parser.string_list(options, "values", Vec::new());
         let values = if values.is_empty() {
             match base {
                 Some(SchemaFieldType::Select(base_def)) => {
@@ -63,13 +52,9 @@ impl SchemaSelectField {
             values.into_iter().map(SchemaSelectFieldEntry::literal).collect()
         };
 
-        errors.extend(parser.finish(options));
-        (
-            SchemaFieldType::Select(SchemaSelectField {
-                values,
-            }),
-            errors,
-        )
+        SchemaFieldType::Select(SchemaSelectField {
+            values,
+        })
     }
 }
 

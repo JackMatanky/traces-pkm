@@ -11,10 +11,7 @@
 
 use std::collections::BTreeMap;
 
-use super::{
-    SchemaFieldType, address::FieldAddressRef, error::SchemaFieldParserError,
-    parser::SchemaFieldParser,
-};
+use super::{SchemaFieldType, parser::SchemaFieldParser};
 use crate::field::FieldValue;
 
 /// Resolved `file` field options.
@@ -77,14 +74,14 @@ impl SchemaFileField {
     ///
     /// # Arguments
     ///
-    /// * `address`: field address for error context.
+    /// * `parser`: pre-constructed parser for this field.
     /// * `options`: raw key-value pairs from the TOML definition.
     /// * `base`: inherited field type to fall back to for unset keys.
     pub(super) fn parse(
-        address: FieldAddressRef<'_>,
+        parser: &mut SchemaFieldParser<'_>,
         options: &BTreeMap<String, FieldValue>,
         base: Option<&SchemaFieldType>,
-    ) -> (SchemaFieldType, Vec<SchemaFieldParserError>) {
+    ) -> SchemaFieldType {
         let (base_folders, base_ext, base_class) = match base {
             Some(SchemaFieldType::File(base_def)) => (
                 base_def.folders.clone(),
@@ -94,27 +91,15 @@ impl SchemaFileField {
             _ => (Vec::new(), None, Vec::new()),
         };
 
-        let mut errors = Vec::new();
-        let mut parser = SchemaFieldParser::new(
-            address,
-            SchemaFieldType::File(SchemaFileField::default()),
-        );
+        let folders = parser.string_list(options, "folders", base_folders);
+        let ext = parser.string(options, "ext", base_ext);
+        let class = parser.string_list(options, "class", base_class);
 
-        let folders =
-            parser.string_list(options, "folders", base_folders, &mut errors);
-        let ext = parser.string(options, "ext", base_ext, &mut errors);
-        let class =
-            parser.string_list(options, "class", base_class, &mut errors);
-
-        errors.extend(parser.finish(options));
-        (
-            SchemaFieldType::File(SchemaFileField {
-                folders,
-                ext,
-                class,
-            }),
-            errors,
-        )
+        SchemaFieldType::File(SchemaFileField {
+            folders,
+            ext,
+            class,
+        })
     }
 }
 

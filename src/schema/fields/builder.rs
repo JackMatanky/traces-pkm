@@ -155,26 +155,25 @@ fn parse_field(
     options: &std::collections::BTreeMap<String, crate::field::FieldValue>,
     base: Option<&SchemaFieldType>,
 ) -> (SchemaFieldType, Vec<super::super::error::SchemaFieldParserError>) {
-    use super::{date, file, number, select};
-    match &kind {
-        SchemaFieldType::Input | SchemaFieldType::Boolean => {
-            let parser = SchemaFieldParser::new(address, kind.clone());
-            let errors = parser.finish(options);
-            (kind, errors)
-        }
+    use super::{date, file, number, parser::SchemaFieldParser, select};
+    let mut parser = SchemaFieldParser::new(address, kind.clone());
+    let field_type = match &kind {
+        SchemaFieldType::Input | SchemaFieldType::Boolean => kind,
         SchemaFieldType::Select(_) => {
-            select::SchemaSelectField::parse(address, options, base)
+            select::SchemaSelectField::parse(&mut parser, options, base)
         }
         SchemaFieldType::Number(_) => {
-            number::SchemaNumberField::parse(address, options, base)
+            number::SchemaNumberField::parse(&mut parser, options, base)
         }
         SchemaFieldType::Date(_) => {
-            date::SchemaDateField::parse(address, options, base)
+            date::SchemaDateField::parse(&mut parser, options, base)
         }
         SchemaFieldType::File(_) => {
-            file::SchemaFileField::parse(address, options, base)
+            file::SchemaFileField::parse(&mut parser, options, base)
         }
-    }
+    };
+    let errors = parser.finish(options);
+    (field_type, errors)
 }
 
 /// Resolve `$ref` values to their base [`SchemaFieldDef`]s, bounded to the

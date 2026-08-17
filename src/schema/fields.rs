@@ -262,11 +262,13 @@ mod tests {
                 ]),
             )]);
 
-            let (field_type, errors) = select::SchemaSelectField::parse(
+            let mut parser = parser::SchemaFieldParser::new(
                 address().as_ref(),
-                &opts,
-                None,
+                SchemaFieldType::Select(SchemaSelectField::default()),
             );
+            let field_type =
+                select::SchemaSelectField::parse(&mut parser, &opts, None);
+            let errors = parser.finish(&opts);
 
             assert!(errors.is_empty());
             let SchemaFieldType::Select(def) = field_type else {
@@ -288,11 +290,13 @@ mod tests {
         fn defaults_to_empty_values_when_options_omit_them() {
             let opts = options(&[]);
 
-            let (field_type, errors) = select::SchemaSelectField::parse(
+            let mut parser = parser::SchemaFieldParser::new(
                 address().as_ref(),
-                &opts,
-                None,
+                SchemaFieldType::Select(SchemaSelectField::default()),
             );
+            let field_type =
+                select::SchemaSelectField::parse(&mut parser, &opts, None);
+            let errors = parser.finish(&opts);
 
             assert!(errors.is_empty());
             assert_eq!(
@@ -306,11 +310,12 @@ mod tests {
             let opts =
                 options(&[("values", FieldValue::String("draft".to_owned()))]);
 
-            let (_, errors) = select::SchemaSelectField::parse(
+            let mut parser = parser::SchemaFieldParser::new(
                 address().as_ref(),
-                &opts,
-                None,
+                SchemaFieldType::Select(SchemaSelectField::default()),
             );
+            let _ = select::SchemaSelectField::parse(&mut parser, &opts, None);
+            let errors = parser.finish(&opts);
 
             assert_eq!(errors.len(), 1);
             assert!(matches!(
@@ -326,11 +331,16 @@ mod tests {
                     SchemaSelectFieldEntry::literal("old".to_owned()),
                 ]));
 
-            let (field_type, errors) = select::SchemaSelectField::parse(
+            let mut parser = parser::SchemaFieldParser::new(
                 address().as_ref(),
+                SchemaFieldType::Select(SchemaSelectField::default()),
+            );
+            let field_type = select::SchemaSelectField::parse(
+                &mut parser,
                 &BTreeMap::new(),
                 Some(&base),
             );
+            let errors = parser.finish(&BTreeMap::new());
 
             assert!(errors.is_empty());
             assert_eq!(field_type, base);
@@ -340,11 +350,16 @@ mod tests {
         fn ignores_a_mismatched_base_type() {
             let base = SchemaFieldType::Input;
 
-            let (field_type, errors) = select::SchemaSelectField::parse(
+            let mut parser = parser::SchemaFieldParser::new(
                 address().as_ref(),
+                SchemaFieldType::Select(SchemaSelectField::default()),
+            );
+            let field_type = select::SchemaSelectField::parse(
+                &mut parser,
                 &BTreeMap::new(),
                 Some(&base),
             );
+            let errors = parser.finish(&BTreeMap::new());
 
             assert!(errors.is_empty());
             assert_eq!(
@@ -374,11 +389,12 @@ mod tests {
             let opts =
                 options(&[("min", FieldValue::String("abc".to_owned()))]);
 
-            let (_, errors) = number::SchemaNumberField::parse(
+            let mut parser = parser::SchemaFieldParser::new(
                 address().as_ref(),
-                &opts,
-                None,
+                SchemaFieldType::Number(SchemaNumberField::default()),
             );
+            let _ = number::SchemaNumberField::parse(&mut parser, &opts, None);
+            let errors = parser.finish(&opts);
 
             assert_eq!(errors.len(), 1);
             assert!(matches!(
@@ -391,11 +407,13 @@ mod tests {
         fn accepts_an_integer_min_as_a_float() {
             let opts = options(&[("min", FieldValue::Int(0))]);
 
-            let (field_type, errors) = number::SchemaNumberField::parse(
+            let mut parser = parser::SchemaFieldParser::new(
                 address().as_ref(),
-                &opts,
-                None,
+                SchemaFieldType::Number(SchemaNumberField::default()),
             );
+            let field_type =
+                number::SchemaNumberField::parse(&mut parser, &opts, None);
+            let errors = parser.finish(&opts);
 
             assert!(errors.is_empty());
             assert_eq!(
@@ -412,11 +430,12 @@ mod tests {
         fn an_unknown_key_is_rejected() {
             let opts = options(&[("values", FieldValue::Int(1))]);
 
-            let (_, errors) = number::SchemaNumberField::parse(
+            let mut parser = parser::SchemaFieldParser::new(
                 address().as_ref(),
-                &opts,
-                None,
+                SchemaFieldType::Number(SchemaNumberField::default()),
             );
+            let _ = number::SchemaNumberField::parse(&mut parser, &opts, None);
+            let errors = parser.finish(&opts);
 
             assert_eq!(errors.len(), 1);
             assert!(matches!(
@@ -446,8 +465,12 @@ mod tests {
                 FieldValue::List(vec![FieldValue::String("x".to_owned())]),
             )]);
 
-            let (_, errors) =
-                date::SchemaDateField::parse(address().as_ref(), &opts, None);
+            let mut parser = parser::SchemaFieldParser::new(
+                address().as_ref(),
+                SchemaFieldType::Date(SchemaDateField::default()),
+            );
+            let _ = date::SchemaDateField::parse(&mut parser, &opts, None);
+            let errors = parser.finish(&opts);
 
             assert_eq!(errors.len(), 1);
             assert!(matches!(
@@ -490,8 +513,13 @@ mod tests {
                 ),
             ]);
 
-            let (field_type, errors) =
-                file::SchemaFileField::parse(address().as_ref(), &opts, None);
+            let mut parser = parser::SchemaFieldParser::new(
+                address().as_ref(),
+                SchemaFieldType::File(SchemaFileField::default()),
+            );
+            let field_type =
+                file::SchemaFileField::parse(&mut parser, &opts, None);
+            let errors = parser.finish(&opts);
 
             assert!(errors.is_empty());
             assert_eq!(
@@ -519,11 +547,16 @@ mod tests {
                 )]),
             );
 
-            let (field_type, errors) = file::SchemaFileField::parse(
+            let mut parser = parser::SchemaFieldParser::new(
                 address().as_ref(),
+                SchemaFieldType::File(SchemaFileField::default()),
+            );
+            let field_type = file::SchemaFileField::parse(
+                &mut parser,
                 &options,
                 Some(&base),
             );
+            let errors = parser.finish(&options);
 
             assert!(errors.is_empty());
             assert_eq!(

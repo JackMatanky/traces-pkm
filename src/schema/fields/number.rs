@@ -2,10 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use super::{
-    SchemaFieldType, address::FieldAddressRef, error::SchemaFieldParserError,
-    parser::SchemaFieldParser,
-};
+use super::{SchemaFieldType, parser::SchemaFieldParser};
 use crate::field::FieldValue;
 
 /// Resolved `number` field options.
@@ -57,14 +54,14 @@ impl SchemaNumberField {
     ///
     /// # Arguments
     ///
-    /// * `address`: field address for error context.
+    /// * `parser`: pre-constructed parser for this field.
     /// * `options`: raw key-value pairs from the TOML definition.
     /// * `base`: inherited field type to fall back to for unset keys.
     pub(super) fn parse(
-        address: FieldAddressRef<'_>,
+        parser: &mut SchemaFieldParser<'_>,
         options: &BTreeMap<String, FieldValue>,
         base: Option<&SchemaFieldType>,
-    ) -> (SchemaFieldType, Vec<SchemaFieldParserError>) {
+    ) -> SchemaFieldType {
         let (base_min, base_max, base_step) = match base {
             Some(SchemaFieldType::Number(base_def)) => {
                 (base_def.min, base_def.max, base_def.step)
@@ -72,24 +69,14 @@ impl SchemaNumberField {
             _ => (None, None, None),
         };
 
-        let mut errors = Vec::new();
-        let mut parser = SchemaFieldParser::new(
-            address,
-            SchemaFieldType::Number(SchemaNumberField::default()),
-        );
+        let min = parser.f64(options, "min", base_min);
+        let max = parser.f64(options, "max", base_max);
+        let step = parser.f64(options, "step", base_step);
 
-        let min = parser.f64(options, "min", base_min, &mut errors);
-        let max = parser.f64(options, "max", base_max, &mut errors);
-        let step = parser.f64(options, "step", base_step, &mut errors);
-
-        errors.extend(parser.finish(options));
-        (
-            SchemaFieldType::Number(SchemaNumberField {
-                min,
-                max,
-                step,
-            }),
-            errors,
-        )
+        SchemaFieldType::Number(SchemaNumberField {
+            min,
+            max,
+            step,
+        })
     }
 }

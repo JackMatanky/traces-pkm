@@ -24,6 +24,7 @@ pub(super) struct SchemaFieldParser<'a> {
     address: FieldAddressRef<'a>,
     kind: SchemaFieldType,
     claimed: BTreeSet<&'static str>,
+    errors: Vec<SchemaFieldParserError>,
 }
 
 impl<'a> SchemaFieldParser<'a> {
@@ -36,6 +37,7 @@ impl<'a> SchemaFieldParser<'a> {
             address,
             kind,
             claimed: BTreeSet::new(),
+            errors: Vec::new(),
         }
     }
 
@@ -43,20 +45,20 @@ impl<'a> SchemaFieldParser<'a> {
     /// `options` does not contain the key.
     ///
     /// Returns `None` when the key is present but its value is not a string
-    /// (a type-mismatch error is pushed to `errors`).
+    /// (a type-mismatch error is pushed to `self.errors`).
     pub(super) fn string(
         &mut self,
         options: &BTreeMap<String, FieldValue>,
         key: &'static str,
         fallback: Option<String>,
-        errors: &mut Vec<SchemaFieldParserError>,
     ) -> Option<String> {
         self.claimed.insert(key);
         match options.get(key) {
             Some(value) => match value {
                 FieldValue::String(s) => Some(s.clone()),
                 _ => {
-                    errors.push(self.type_mismatch(key, value, "a string"));
+                    self.errors
+                        .push(self.type_mismatch(key, value, "a string"));
                     None
                 }
             },
@@ -68,13 +70,12 @@ impl<'a> SchemaFieldParser<'a> {
     /// when `options` does not contain the key.
     ///
     /// Returns `None` when the key is present but its value is not a list of
-    /// strings (a type-mismatch error is pushed to `errors`).
+    /// strings (a type-mismatch error is pushed to `self.errors`).
     pub(super) fn string_list(
         &mut self,
         options: &BTreeMap<String, FieldValue>,
         key: &'static str,
         fallback: Vec<String>,
-        errors: &mut Vec<SchemaFieldParserError>,
     ) -> Vec<String> {
         self.claimed.insert(key);
         match options.get(key) {
@@ -90,7 +91,7 @@ impl<'a> SchemaFieldParser<'a> {
                     match all_strings {
                         Some(list) => list,
                         None => {
-                            errors.push(self.type_mismatch(
+                            self.errors.push(self.type_mismatch(
                                 key,
                                 value,
                                 "an array of strings",
@@ -100,7 +101,7 @@ impl<'a> SchemaFieldParser<'a> {
                     }
                 }
                 _ => {
-                    errors.push(self.type_mismatch(
+                    self.errors.push(self.type_mismatch(
                         key,
                         value,
                         "an array of strings",
@@ -116,20 +117,20 @@ impl<'a> SchemaFieldParser<'a> {
     /// `options` does not contain the key.
     ///
     /// Returns `None` when the key is present but its value is not numeric (a
-    /// type-mismatch error is pushed to `errors`).
+    /// type-mismatch error is pushed to `self.errors`).
     pub(super) fn f64(
         &mut self,
         options: &BTreeMap<String, FieldValue>,
         key: &'static str,
         fallback: Option<f64>,
-        errors: &mut Vec<SchemaFieldParserError>,
     ) -> Option<f64> {
         self.claimed.insert(key);
         match options.get(key) {
             Some(value) => match value.as_f64() {
                 Some(number) => Some(number),
                 None => {
-                    errors.push(self.type_mismatch(key, value, "a number"));
+                    self.errors
+                        .push(self.type_mismatch(key, value, "a number"));
                     None
                 }
             },
@@ -137,17 +138,21 @@ impl<'a> SchemaFieldParser<'a> {
         }
     }
 
-    /// Consume the parser and return unknown-key errors for every key in
-    /// `options` that was not claimed by a typed extractor.
+    /// Consume the parser and return errors: type-mismatch errors accumulated
+    /// during extraction, plus unknown-key errors for every key in `options`
+    /// that was not claimed by a typed extractor.
     pub(super) fn finish(
-        self,
+        mut self,
         options: &BTreeMap<String, FieldValue>,
     ) -> Vec<SchemaFieldParserError> {
-        options
-            .keys()
-            .filter(|key| !self.claimed.contains(key.as_str()))
-            .map(|key| self.unknown_key(key))
-            .collect()
+        let mut errors: Vec<_> = self.errors;
+        errors.extend(
+            options
+                .keys()
+                .filter(|key| !self.claimed.contains(key.as_str()))
+                .map(|key| self.unknown_key(key)),
+        );
+        errors
     }
 
     /// Build a [`SchemaFieldParserError::UnknownKey`] for an unrecognized
