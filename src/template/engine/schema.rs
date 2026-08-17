@@ -192,6 +192,7 @@ pub(super) fn cached_schema_set(
 }
 
 impl Object for Schema {
+    #[inline]
     fn get_value(self: &Arc<Self>, key: &Value) -> Option<Value> {
         match key.as_str()? {
             "name" => Some(Value::from(self.name())),
@@ -246,6 +247,7 @@ impl Object for Schema {
         }
     }
 
+    #[inline]
     fn enumerate(self: &Arc<Self>) -> Enumerator {
         Enumerator::Str(SCHEMA_METHODS)
     }

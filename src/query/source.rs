@@ -262,6 +262,7 @@ impl QuerySource {
     /// let source = QuerySource::parse("#book").unwrap();
     /// assert!(!source.has_classes());
     /// ```
+    #[inline]
     pub fn parse(input: &str) -> Result<Self, QueryError> {
         if input.trim().is_empty() {
             Ok(Self::All)
@@ -740,7 +741,7 @@ mod tests {
                 "(#book",
                 "#book #movie",
                 r#""books/dune.md"#,
-                r#"'books/dune.md"#,
+                r"'books/dune.md",
                 "class()",
                 "class(Book, unknown)",
                 "class(Book, children).with_descendants()",

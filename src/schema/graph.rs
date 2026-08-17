@@ -53,11 +53,11 @@ impl<'a> SchemaGraph<'a> {
     /// The Global Schema is forced to the front of its tier.
     pub(super) fn new(
         raw_schemas: &'a BTreeMap<SchemaName, RawSchema>,
-        warnings: &mut Vec<SchemaWarning>,
-    ) -> Self {
+    ) -> (Self, Vec<SchemaWarning>) {
         // `BTreeMap` iteration is name-sorted, so the parent order for a given
         // schema matches declaration order in its own `extends` list while the
         // overall processing order stays deterministic.
+        let mut warnings = Vec::new();
         let mut parents_by_name: BTreeMap<
             SchemaNameRef<'_>,
             Vec<SchemaNameRef<'_>>,
@@ -110,13 +110,16 @@ impl<'a> SchemaGraph<'a> {
             queue.push_front(global);
         }
 
-        Self {
-            parents_by_name,
-            children_by_name,
-            in_degree,
-            queue,
-            visited: BTreeSet::new(),
-        }
+        (
+            Self {
+                parents_by_name,
+                children_by_name,
+                in_degree,
+                queue,
+                visited: BTreeSet::new(),
+            },
+            warnings,
+        )
     }
 
     /// Pop the next Schema whose in-degree reached zero, marking it visited, or
@@ -272,9 +275,7 @@ mod tests {
             let mut raw = BTreeMap::new();
             raw.insert(SchemaName::from(GLOBAL_SCHEMA_NAME), schema(&[]));
             raw.insert(SchemaName::from("author"), schema(&[]));
-            let mut warnings = Vec::new();
-
-            let mut graph = SchemaGraph::new(&raw, &mut warnings);
+            let (mut graph, _warnings) = SchemaGraph::new(&raw);
 
             assert_eq!(
                 graph.next_ready(),
@@ -302,10 +303,7 @@ mod tests {
             raw.insert(SchemaName::from("book"), schema(&["thing"]));
             raw.insert(SchemaName::from("sci_fi"), schema(&["book"]));
             raw.insert(SchemaName::from("memoir"), schema(&["book"]));
-            let mut warnings = Vec::new();
-
-            let children =
-                SchemaGraph::new(&raw, &mut warnings).children_by_name();
+            let children = SchemaGraph::new(&raw).0.children_by_name();
 
             assert_eq!(children.get("thing"), Some(&set(&["book"])));
             assert_eq!(children.get("book"), Some(&set(&["memoir", "sci_fi"])));
@@ -327,10 +325,7 @@ mod tests {
                 SchemaName::from("adaptation"),
                 schema(&["book", "film"]),
             );
-            let mut warnings = Vec::new();
-
-            let children =
-                SchemaGraph::new(&raw, &mut warnings).children_by_name();
+            let children = SchemaGraph::new(&raw).0.children_by_name();
 
             assert_eq!(children.get("book"), Some(&set(&["adaptation"])));
             assert_eq!(children.get("film"), Some(&set(&["adaptation"])));
@@ -342,10 +337,7 @@ mod tests {
             let mut raw = BTreeMap::new();
             raw.insert(SchemaName::from(GLOBAL_SCHEMA_NAME), schema(&[]));
             raw.insert(SchemaName::from("book"), schema(&[GLOBAL_SCHEMA_NAME]));
-            let mut warnings = Vec::new();
-
-            let children =
-                SchemaGraph::new(&raw, &mut warnings).children_by_name();
+            let children = SchemaGraph::new(&raw).0.children_by_name();
 
             assert_eq!(children.get(GLOBAL_SCHEMA_NAME), None);
         }
@@ -371,10 +363,7 @@ mod tests {
                 SchemaName::from("adaptation"),
                 schema(&["book", "film"]),
             );
-            let mut warnings = Vec::new();
-
-            let descendants =
-                SchemaGraph::new(&raw, &mut warnings).descendants_by_name();
+            let descendants = SchemaGraph::new(&raw).0.descendants_by_name();
 
             assert_eq!(
                 descendants.get("thing"),
@@ -389,10 +378,7 @@ mod tests {
             raw.insert(SchemaName::from("book"), schema(&["thing"]));
             raw.insert(SchemaName::from("sci_fi"), schema(&["book"]));
             raw.insert(SchemaName::from("space_opera"), schema(&["sci_fi"]));
-            let mut warnings = Vec::new();
-
-            let descendants =
-                SchemaGraph::new(&raw, &mut warnings).descendants_by_name();
+            let descendants = SchemaGraph::new(&raw).0.descendants_by_name();
 
             assert_eq!(
                 descendants.get("thing"),
@@ -411,10 +397,7 @@ mod tests {
             let mut raw = BTreeMap::new();
             raw.insert(SchemaName::from("book"), schema(&[]));
             raw.insert(SchemaName::from("sci_fi"), schema(&["book"]));
-            let mut warnings = Vec::new();
-
-            let descendants =
-                SchemaGraph::new(&raw, &mut warnings).descendants_by_name();
+            let descendants = SchemaGraph::new(&raw).0.descendants_by_name();
 
             assert_eq!(descendants.get("sci_fi"), None);
         }

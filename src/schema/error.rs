@@ -8,7 +8,7 @@ use std::{fmt, path::PathBuf};
 use thiserror::Error;
 
 use super::{
-    fields::{FieldAddress, SchemaFieldType},
+    fields::{FieldAddress, SchemaFieldBuilderError, SchemaFieldTypeTag},
     name::SchemaName,
 };
 use crate::field::FieldName;
@@ -68,97 +68,6 @@ impl From<SchemaFieldBuilderError> for SchemaError {
     }
 }
 
-/// Why [`super::fields::SchemaFieldBuilder::build`] failed.
-///
-/// Always hard failures:
-/// - [`Self::RefOutOfBounds`]
-/// - [`Self::RefFieldNotFound`]
-///
-/// Hard failures for `Direct` fields and `$ref` with a `type` override,
-/// degraded to [`SchemaWarning`] for bare `$ref` overrides:
-/// - [`Self::Parser`] with [`SchemaFieldParserError::UnknownKey`]
-/// - [`Self::Parser`] with [`SchemaFieldParserError::TypeMismatch`]
-#[derive(Debug, Error)]
-pub(crate) enum SchemaFieldBuilderError {
-    /// A `$ref` names a Schema that is neither the Global Schema nor a
-    /// transitive `extends` ancestor of the referencing Schema.
-    #[error(
-        "$ref {reference} in field {own} is out of bounds: not the Global \
-         Schema or a transitive `extends` ancestor"
-    )]
-    RefOutOfBounds {
-        own: Box<FieldAddress>,
-        reference: Box<FieldAddress>,
-    },
-    /// A `$ref` names an in-bounds Schema that lacks the referenced field.
-    #[error("$ref {reference} in field {own} does not resolve")]
-    RefFieldNotFound {
-        own: Box<FieldAddress>,
-        reference: Box<FieldAddress>,
-    },
-    /// A per-key validation failure from parsing a field type's `options`.
-    #[error(transparent)]
-    Parser(Box<SchemaFieldParserError>),
-}
-
-/// One per-key validation failure from parsing a field type's `options`.
-///
-/// Converts into:
-/// - [`SchemaFieldBuilderError::Parser`] (hard failure) for `Direct` fields and
-///   `$ref` with a `type` override.
-/// - [`SchemaWarning`] (degraded) for bare `$ref` overrides.
-#[derive(Debug, Error)]
-pub(crate) enum SchemaFieldParserError {
-    /// An attribute key was not claimed by any typed extractor.
-    #[error("field {address} of type {kind} has no attribute {key:?}")]
-    UnknownKey {
-        address: FieldAddress,
-        kind: SchemaFieldType,
-        key: String,
-    },
-    /// An attribute key was claimed, but its value is wrongly shaped.
-    #[error(
-        "field {address} of type {kind}'s {key:?} attribute must be \
-         {expected}, got {value}"
-    )]
-    TypeMismatch {
-        address: FieldAddress,
-        kind: SchemaFieldType,
-        key: String,
-        value: String,
-        expected: &'static str,
-    },
-}
-
-impl From<SchemaFieldParserError> for SchemaWarning {
-    fn from(error: SchemaFieldParserError) -> Self {
-        match error {
-            SchemaFieldParserError::UnknownKey {
-                address,
-                kind,
-                key,
-            } => Self::UnknownOverrideKey {
-                address,
-                kind,
-                key,
-            },
-            SchemaFieldParserError::TypeMismatch {
-                address,
-                kind,
-                key,
-                value,
-                expected,
-            } => Self::OverrideValueTypeMismatch {
-                address,
-                kind,
-                key,
-                value,
-                expected,
-            },
-        }
-    }
-}
-
 /// A recoverable Schema resolution defect.
 ///
 /// Resolution skips the offending key or parent and continues. Every warning
@@ -166,6 +75,9 @@ impl From<SchemaFieldParserError> for SchemaWarning {
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum SchemaWarning {
     /// An `extends` target has no corresponding Schema file.
+    ///
+    /// Resolution skips the missing parent; the Schema's own fields still
+    /// resolve, and other valid parents still contribute.
     MissingExtendsTarget {
         schema: SchemaName,
         target: SchemaName,
@@ -174,18 +86,18 @@ pub(crate) enum SchemaWarning {
     StrayGlobalRequired {
         field: String,
     },
-    /// A bare `$ref` override declares an attribute key not belonging to the
-    /// resolved base field's type. The key is dropped.
+    /// A bare `$ref` override declares an attribute key that does not belong
+    /// to the resolved base field's type. The key is dropped.
     UnknownOverrideKey {
         address: FieldAddress,
-        kind: SchemaFieldType,
+        kind: SchemaFieldTypeTag,
         key: String,
     },
-    /// A bare `$ref` override declares a valid key with a wrongly-shaped
-    /// value. The key is dropped, falling back to the base.
+    /// A bare `$ref` override declares a valid attribute key with a
+    /// wrongly-shaped value. The key is dropped, falling back to the base.
     OverrideValueTypeMismatch {
         address: FieldAddress,
-        kind: SchemaFieldType,
+        kind: SchemaFieldTypeTag,
         key: String,
         value: String,
         expected: &'static str,
@@ -237,17 +149,21 @@ impl fmt::Display for SchemaWarning {
 
 #[cfg(test)]
 mod tests {
-    use pretty_assertions::assert_eq;
-
-    fn assert_display(error: &impl std::fmt::Display, expected: &str) {
-        assert_eq!(error.to_string(), expected, "unexpected display output");
-    }
-
     mod schema_error {
         use std::path::PathBuf;
 
-        use super::{super::*, assert_display};
-        use crate::schema::fields::SchemaDateField;
+        use pretty_assertions::assert_eq;
+
+        use super::super::*;
+        use crate::schema::fields::SchemaFieldParserError;
+
+        fn assert_display(error: &SchemaError, expected: &str) {
+            assert_eq!(
+                error.to_string(),
+                expected,
+                "unexpected SchemaError display"
+            );
+        }
 
         #[test]
         fn read_directory_formats_display_message() {
@@ -283,9 +199,6 @@ mod tests {
                 source: Box::new(source),
             };
 
-            // toml embeds source-context lines in its error display,
-            // making the full suffix brittle across versions. Pin the
-            // prefix that conveys the Schema-level context.
             let message = error.to_string();
             assert!(
                 message.starts_with("failed to parse Schema book: "),
@@ -321,21 +234,22 @@ mod tests {
         }
 
         #[test]
-        fn parser_unknown_key_displays_through_field_builder_wrap() {
-            let inner = SchemaFieldBuilderError::Parser(Box::new(
+        fn field_builder_delegates_display_to_the_wrapped_error() {
+            let inner = SchemaFieldBuilderError::Parser(vec![
                 SchemaFieldParserError::UnknownKey {
                     address: FieldAddress::try_from("#book/status")
                         .expect("valid ref"),
-                    kind: SchemaFieldType::Date(SchemaDateField::default()),
+                    kind: SchemaFieldTypeTag::Date,
                     key: "values".to_owned(),
                 },
-            ));
+            ]);
 
             let error = SchemaError::from(inner);
 
-            assert_display(
-                &error,
-                "field #book/status of type date has no attribute \"values\"",
+            let msg = error.to_string();
+            assert!(
+                msg.contains("1 field option error(s)"),
+                "expected wrapped error display, got: {msg}"
             );
         }
 
@@ -350,12 +264,12 @@ mod tests {
             // validated `SchemaName` + `FieldName` pair rather than a single
             // `String`. `AmbiguousFieldName` boxes `second` for the same
             // reason: two owned `FieldName`s alongside `schema` would tie it
-            // for the largest variant. `FieldBuilder` wraps a
-            // `SchemaFieldParserError` whose `TypeMismatch` variant carries
-            // two owned `String`s and would otherwise be this enum's largest
-            // member by far. Keep every variant's payload small enough that
-            // `Result<_, SchemaError>` stays cheap to move through the
-            // resolution call chain.
+            // for the largest variant. `FieldBuilder` boxes the whole wrapped
+            // `SchemaFieldBuilderError`, whose own `AttributeValueTypeMismatch`
+            // variant carries two owned `String`s and would otherwise be this
+            // enum's largest member by far. Keep every variant's payload
+            // small enough that `Result<_, SchemaError>` stays cheap to move
+            // through the resolution call chain.
             assert!(
                 std::mem::size_of::<SchemaError>() <= 64,
                 "SchemaError grew to {} bytes; box or trim the offending \
@@ -365,150 +279,36 @@ mod tests {
         }
     }
 
-    mod schema_field_parser_error {
-        use super::{super::*, assert_display};
-        use crate::schema::fields::{SchemaDateField, SchemaNumberField};
-
-        #[test]
-        fn unknown_key_formats_display_message() {
-            let error = SchemaFieldParserError::UnknownKey {
-                address: FieldAddress::try_from("#book/status")
-                    .expect("valid ref"),
-                kind: SchemaFieldType::Date(SchemaDateField::default()),
-                key: "values".to_owned(),
-            };
-
-            assert_display(
-                &error,
-                "field #book/status of type date has no attribute \"values\"",
-            );
-        }
-
-        #[test]
-        fn type_mismatch_formats_display_message() {
-            let error = SchemaFieldParserError::TypeMismatch {
-                address: FieldAddress::try_from("#book/rating")
-                    .expect("valid ref"),
-                kind: SchemaFieldType::Number(SchemaNumberField::default()),
-                key: "min".to_owned(),
-                value: "\"abc\"".to_owned(),
-                expected: "a number",
-            };
-
-            assert_display(
-                &error,
-                "field #book/rating of type number's \"min\" attribute must \
-                 be a number, got \"abc\"",
-            );
-        }
-    }
-
-    mod conversions {
-        use super::super::*;
-
-        #[test]
-        fn from_field_builder_error_wraps_in_field_builder_variant() {
-            let inner = SchemaFieldBuilderError::RefOutOfBounds {
-                own: Box::new(
-                    FieldAddress::try_from("#movie/status").expect("valid ref"),
-                ),
-                reference: Box::new(
-                    FieldAddress::try_from("#book/status").expect("valid ref"),
-                ),
-            };
-            let error = SchemaError::from(inner);
-
-            assert!(matches!(error, SchemaError::FieldBuilder(_)));
-        }
-
-        #[test]
-        fn parser_unknown_key_converts_to_unknown_override_key_warning() {
-            let error = SchemaFieldParserError::UnknownKey {
-                address: FieldAddress::try_from("#sci_fi/cover")
-                    .expect("valid ref"),
-                kind: SchemaFieldType::Date(
-                    crate::schema::fields::SchemaDateField::default(),
-                ),
-                key: "values".to_owned(),
-            };
-
-            let warning = SchemaWarning::from(error);
-
-            assert!(matches!(
-                warning,
-                SchemaWarning::UnknownOverrideKey {
-                    ref key,
-                    ..
-                } if key == "values"
-            ));
-        }
-
-        #[test]
-        fn parser_type_mismatch_converts_to_override_value_type_mismatch_warning()
-         {
-            let error = SchemaFieldParserError::TypeMismatch {
-                address: FieldAddress::try_from("#sci_fi/rating")
-                    .expect("valid ref"),
-                kind: SchemaFieldType::Number(
-                    crate::schema::fields::SchemaNumberField::default(),
-                ),
-                key: "min".to_owned(),
-                value: "\"abc\"".to_owned(),
-                expected: "a number",
-            };
-
-            let warning = SchemaWarning::from(error);
-
-            assert!(matches!(
-                warning,
-                SchemaWarning::OverrideValueTypeMismatch {
-                    ref key,
-                    ref expected,
-                    ..
-                } if key == "min" && *expected == "a number"
-            ));
-        }
-    }
-
     mod schema_field_builder_error {
+        use pretty_assertions::assert_eq;
+
         use super::super::*;
-        use crate::schema::fields::{SchemaDateField, SchemaNumberField};
+        use crate::schema::fields::SchemaFieldParserError;
 
         #[test]
-        fn unknown_attribute_key_formats_display_message() {
-            let error = SchemaFieldBuilderError::Parser(Box::new(
+        fn parser_wraps_multiple_errors() {
+            let errors = vec![
                 SchemaFieldParserError::UnknownKey {
-                    address: FieldAddress::try_from("#book/published")
+                    address: FieldAddress::try_from("#book/status")
                         .expect("valid ref"),
-                    kind: SchemaFieldType::Date(SchemaDateField::default()),
+                    kind: SchemaFieldTypeTag::Date,
                     key: "values".to_owned(),
                 },
-            ));
-
-            assert_eq!(
-                error.to_string(),
-                "field #book/published of type date has no attribute \
-                 \"values\""
-            );
-        }
-
-        #[test]
-        fn attribute_value_type_mismatch_formats_display_message() {
-            let error = SchemaFieldBuilderError::Parser(Box::new(
                 SchemaFieldParserError::TypeMismatch {
                     address: FieldAddress::try_from("#book/rating")
                         .expect("valid ref"),
-                    kind: SchemaFieldType::Number(SchemaNumberField::default()),
+                    kind: SchemaFieldTypeTag::Number,
                     key: "min".to_owned(),
                     value: "\"abc\"".to_owned(),
                     expected: "a number",
                 },
-            ));
+            ];
+            let error = SchemaFieldBuilderError::Parser(errors);
 
-            assert_eq!(
-                error.to_string(),
-                "field #book/rating of type number's \"min\" attribute must \
-                 be a number, got \"abc\""
+            let msg = error.to_string();
+            assert!(
+                msg.contains("2 field option error(s)"),
+                "expected count in display, got: {msg}"
             );
         }
 
@@ -549,8 +349,9 @@ mod tests {
     }
 
     mod schema_warning {
+        use pretty_assertions::assert_eq;
+
         use super::super::*;
-        use crate::schema::fields::{SchemaNumberField, SchemaSelectField};
 
         #[test]
         fn missing_extends_target_message_names_schema_and_target() {
@@ -585,7 +386,7 @@ mod tests {
             let warning = SchemaWarning::UnknownOverrideKey {
                 address: FieldAddress::try_from("#sci_fi/cover")
                     .expect("valid ref"),
-                kind: SchemaFieldType::Select(SchemaSelectField::default()),
+                kind: SchemaFieldTypeTag::Select,
                 key: "folders".to_owned(),
             };
 
@@ -601,7 +402,7 @@ mod tests {
             let warning = SchemaWarning::OverrideValueTypeMismatch {
                 address: FieldAddress::try_from("#sci_fi/rating")
                     .expect("valid ref"),
-                kind: SchemaFieldType::Number(SchemaNumberField::default()),
+                kind: SchemaFieldTypeTag::Number,
                 key: "min".to_owned(),
                 value: "\"abc\"".to_owned(),
                 expected: "a number",

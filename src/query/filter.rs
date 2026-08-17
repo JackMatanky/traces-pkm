@@ -517,12 +517,15 @@ mod tests {
             #[case] offset: usize,
             #[case] length: usize,
         ) {
-            let Err(QueryError::Syntax(error)) = FilterExpr::parse(expr) else {
-                panic!("expected non-finite literal to fail");
-            };
-
-            assert_eq!(error.expected, "a finite numeric literal");
-            assert_eq!(error.span, SourceSpan::from((offset, length)));
+            let result = FilterExpr::parse(expr);
+            assert!(
+                matches!(result, Err(QueryError::Syntax(_))),
+                "expected syntax error"
+            );
+            if let Err(QueryError::Syntax(error)) = result {
+                assert_eq!(error.expected, "a finite numeric literal");
+                assert_eq!(error.span, SourceSpan::from((offset, length)));
+            }
         }
 
         #[test]

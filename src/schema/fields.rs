@@ -17,10 +17,18 @@
 //! - [`date`] parses `format`.
 //! - [`mod@file`] parses `folders`/`ext`/`class` and provides
 //!   [`SchemaFileFieldRef`] for `FileIndex` queries.
-//! - [`builder`] resolves `$ref` targets and builds [`SchemaFieldDef`]s.
+
+use super::raw::RawSchemaFieldType;
 
 mod address;
 pub(crate) use address::{FieldAddress, FieldAddressRef};
+
+mod error;
+pub(crate) use error::SchemaFieldBuilderError;
+// Needed by schema::error's tests (which can't reach the private
+// fields::error module directly).
+#[cfg(test)]
+pub(crate) use error::SchemaFieldParserError;
 
 mod builder;
 pub(crate) use builder::{RefAddressResolver, SchemaFieldBuilder};
@@ -160,24 +168,28 @@ pub(crate) enum SchemaFieldType {
 
 impl std::fmt::Display for SchemaFieldType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(match self {
-            Self::Input => "input",
-            Self::Select(_) => "select",
-            Self::Boolean => "boolean",
-            Self::Number(_) => "number",
-            Self::Date(_) => "date",
-            Self::File(_) => "file",
-        })
+        self.tag().fmt(f)
     }
 }
 
 impl SchemaFieldType {
+    /// Return this field's tag: which of the six kinds it is, without its
+    /// payload.
+    #[inline]
+    #[must_use]
+    pub(super) fn tag(&self) -> SchemaFieldTypeTag {
+        match self {
+            Self::Input => SchemaFieldTypeTag::Input,
+            Self::Select(_) => SchemaFieldTypeTag::Select,
+            Self::Boolean => SchemaFieldTypeTag::Boolean,
+            Self::Number(_) => SchemaFieldTypeTag::Number,
+            Self::Date(_) => SchemaFieldTypeTag::Date,
+            Self::File(_) => SchemaFieldTypeTag::File,
+        }
+    }
+
     /// Return the inner [`SchemaSelectField`] if this is a
     /// [`Select`][Self::Select] variant.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "reserved for future schema consumers")
-    )]
     pub(super) fn as_select(&self) -> Option<&SchemaSelectField> {
         match self {
             Self::Select(inner) => Some(inner),
@@ -187,10 +199,6 @@ impl SchemaFieldType {
 
     /// Return the inner [`SchemaNumberField`] if this is a
     /// [`Number`][Self::Number] variant.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "reserved for future schema consumers")
-    )]
     pub(super) fn as_number(&self) -> Option<&SchemaNumberField> {
         match self {
             Self::Number(inner) => Some(inner),
@@ -200,10 +208,6 @@ impl SchemaFieldType {
 
     /// Return the inner [`SchemaDateField`] if this is a [`Date`][Self::Date]
     /// variant.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "reserved for future schema consumers")
-    )]
     pub(super) fn as_date(&self) -> Option<&SchemaDateField> {
         match self {
             Self::Date(inner) => Some(inner),
@@ -213,15 +217,57 @@ impl SchemaFieldType {
 
     /// Return the inner [`SchemaFileField`] if this is a [`File`][Self::File]
     /// variant.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "reserved for future schema consumers")
-    )]
     pub(super) fn as_file(&self) -> Option<&SchemaFileField> {
         match self {
             Self::File(inner) => Some(inner),
             _ => None,
         }
+    }
+}
+
+/// Which of the six field kinds a [`SchemaFieldType`] or
+/// [`RawSchemaFieldType`] is, without either's payload.
+///
+/// Constructible from a [`RawSchemaFieldType`] (deserialized wire data, via
+/// [`From`]) or projected from an already-resolved [`SchemaFieldType`] (via
+/// [`SchemaFieldType::tag`]) — never the reverse: this is a domain-layer tag,
+/// not a DTO, so it is never reconstructed back into [`RawSchemaFieldType`].
+/// Used by [`super::error::SchemaFieldParserError`],
+/// [`super::error::SchemaWarning`], and [`parser::SchemaFieldParser`] to name
+/// a field's kind in diagnostics without carrying its resolved options.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub(crate) enum SchemaFieldTypeTag {
+    Input,
+    Select,
+    Boolean,
+    Number,
+    Date,
+    File,
+}
+
+impl From<RawSchemaFieldType> for SchemaFieldTypeTag {
+    fn from(raw: RawSchemaFieldType) -> Self {
+        match raw {
+            RawSchemaFieldType::Input => Self::Input,
+            RawSchemaFieldType::Select => Self::Select,
+            RawSchemaFieldType::Boolean => Self::Boolean,
+            RawSchemaFieldType::Number => Self::Number,
+            RawSchemaFieldType::Date => Self::Date,
+            RawSchemaFieldType::File => Self::File,
+        }
+    }
+}
+
+impl std::fmt::Display for SchemaFieldTypeTag {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Input => "input",
+            Self::Select => "select",
+            Self::Boolean => "boolean",
+            Self::Number => "number",
+            Self::Date => "date",
+            Self::File => "file",
+        })
     }
 }
 
@@ -273,18 +319,22 @@ mod tests {
 
         #[test]
         fn is_required_reflects_construction_value() {
-            let def = SchemaFieldDef::new(SchemaFieldType::Input, true, false);
-            assert!(def.is_required());
-            let def = SchemaFieldDef::new(SchemaFieldType::Input, false, false);
-            assert!(!def.is_required());
+            let required =
+                SchemaFieldDef::new(SchemaFieldType::Input, true, false);
+            assert!(required.is_required());
+            let not_required =
+                SchemaFieldDef::new(SchemaFieldType::Input, false, false);
+            assert!(!not_required.is_required());
         }
 
         #[test]
         fn is_multi_reflects_construction_value() {
-            let def = SchemaFieldDef::new(SchemaFieldType::Input, false, true);
-            assert!(def.is_multi());
-            let def = SchemaFieldDef::new(SchemaFieldType::Input, false, false);
-            assert!(!def.is_multi());
+            let multi =
+                SchemaFieldDef::new(SchemaFieldType::Input, false, true);
+            assert!(multi.is_multi());
+            let not_multi =
+                SchemaFieldDef::new(SchemaFieldType::Input, false, false);
+            assert!(!not_multi.is_multi());
         }
     }
 
@@ -370,7 +420,7 @@ mod tests {
 
         use rstest::rstest;
 
-        use super::super::{super::error::SchemaFieldParserError, *};
+        use super::super::{error::SchemaFieldParserError, *};
         use crate::field::FieldValue;
 
         fn address() -> FieldAddress {
@@ -383,10 +433,10 @@ mod tests {
             pairs.iter().map(|(k, v)| ((*k).to_owned(), v.clone())).collect()
         }
         #[rstest]
-        #[case::input(SchemaFieldType::Input)]
-        #[case::boolean(SchemaFieldType::Boolean)]
+        #[case::input(SchemaFieldTypeTag::Input)]
+        #[case::boolean(SchemaFieldTypeTag::Boolean)]
         fn type_with_no_extractor_treats_all_keys_as_unknown(
-            #[case] kind: SchemaFieldType,
+            #[case] kind: SchemaFieldTypeTag,
         ) {
             let opts = options(&[("min", FieldValue::Int(1))]);
 
@@ -396,7 +446,7 @@ mod tests {
 
             assert_eq!(unknowns.len(), 1);
             assert!(matches!(
-                unknowns[0],
+                unknowns.first().expect("expected error"),
                 SchemaFieldParserError::UnknownKey { .. }
             ));
         }

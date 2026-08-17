@@ -405,6 +405,7 @@ impl QueryOutcome {
     ///
     /// - [`QueryError::Syntax`] if the expression is invalid.
     /// - [`QueryError::FieldPath`] if a field path is malformed.
+    #[inline]
     pub fn filter(mut self, expr: &str) -> Result<Self, QueryError> {
         let expr = FilterExpr::parse(expr)?;
         self.records.retain(|record| expr.matches(record));

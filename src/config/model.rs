@@ -386,9 +386,9 @@ impl FrontmatterConfig {
         reason = "test-only constructor; an invalid literal here is a test \
                   fixture bug, not a recoverable caller error"
     )]
-    pub fn for_test(
-        title: impl Into<String>,
-        aliases: impl Into<String>,
+    pub fn for_test<T: Into<String>, A: Into<String>>(
+        title: T,
+        aliases: A,
     ) -> Self {
         Self {
             title: FieldKey::try_new(title.into())

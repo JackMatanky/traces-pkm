@@ -83,16 +83,12 @@ impl SchemaFileField {
     pub(super) fn parse(
         parser: &mut SchemaFieldParser<'_>,
         options: &BTreeMap<String, FieldValue>,
-        base: Option<&SchemaFieldType>,
+        base: Option<&Self>,
     ) -> SchemaFieldType {
-        let (base_folders, base_ext, base_class) = match base {
-            Some(SchemaFieldType::File(base_def)) => (
-                base_def.folders.clone(),
-                base_def.ext.clone(),
-                base_def.class.clone(),
-            ),
-            _ => (Vec::new(), None, Vec::new()),
-        };
+        let (base_folders, base_ext, base_class) = base
+            .map_or((Vec::new(), None, Vec::new()), |base| {
+                (base.folders.clone(), base.ext.clone(), base.class.clone())
+            });
 
         let folders = parser.string_list(options, "folders", base_folders);
         let ext = parser.string(options, "ext", base_ext);
@@ -124,9 +120,9 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
-    use crate::schema::{
-        error::SchemaFieldParserError,
-        fields::{address::FieldAddress, parser::SchemaFieldParser},
+    use crate::schema::fields::{
+        SchemaFieldTypeTag, address::FieldAddress,
+        error::SchemaFieldParserError, parser::SchemaFieldParser,
     };
 
     fn address() -> FieldAddress {
@@ -152,10 +148,8 @@ mod tests {
         ]);
 
         let addr = address();
-        let mut parser = SchemaFieldParser::new(
-            addr.as_ref(),
-            SchemaFieldType::File(SchemaFileField::default()),
-        );
+        let mut parser =
+            SchemaFieldParser::new(addr.as_ref(), SchemaFieldTypeTag::File);
         let field_type = SchemaFileField::parse(&mut parser, &opts, None);
         let errors = parser.finish(&opts);
 
@@ -172,21 +166,19 @@ mod tests {
 
     #[test]
     fn falls_back_independently_per_subfield() {
-        let base = SchemaFieldType::File(SchemaFileField::for_test(
+        let base = SchemaFileField::for_test(
             vec!["base-folder".to_owned()],
             Some("base-ext".to_owned()),
             vec!["base-class".to_owned()],
-        ));
+        );
         let opts = options(&[(
             "folders",
             FieldValue::List(vec![FieldValue::String("raw-folder".to_owned())]),
         )]);
 
         let addr = address();
-        let mut parser = SchemaFieldParser::new(
-            addr.as_ref(),
-            SchemaFieldType::File(SchemaFileField::default()),
-        );
+        let mut parser =
+            SchemaFieldParser::new(addr.as_ref(), SchemaFieldTypeTag::File);
         let field_type =
             SchemaFileField::parse(&mut parser, &opts, Some(&base));
         let errors = parser.finish(&opts);
@@ -207,15 +199,16 @@ mod tests {
         let opts = options(&[("bogus", FieldValue::String("x".to_owned()))]);
 
         let addr = address();
-        let mut parser = SchemaFieldParser::new(
-            addr.as_ref(),
-            SchemaFieldType::File(SchemaFileField::default()),
-        );
+        let mut parser =
+            SchemaFieldParser::new(addr.as_ref(), SchemaFieldTypeTag::File);
         let _ = SchemaFileField::parse(&mut parser, &opts, None);
         let errors = parser.finish(&opts);
 
         assert_eq!(errors.len(), 1);
-        assert!(matches!(errors[0], SchemaFieldParserError::UnknownKey { .. }));
+        assert!(matches!(
+            errors.first().expect("expected error"),
+            SchemaFieldParserError::UnknownKey { .. }
+        ));
     }
 
     #[rstest]
@@ -228,16 +221,14 @@ mod tests {
         let opts = options(&[(key, value)]);
 
         let addr = address();
-        let mut parser = SchemaFieldParser::new(
-            addr.as_ref(),
-            SchemaFieldType::File(SchemaFileField::default()),
-        );
+        let mut parser =
+            SchemaFieldParser::new(addr.as_ref(), SchemaFieldTypeTag::File);
         let _ = SchemaFileField::parse(&mut parser, &opts, None);
         let errors = parser.finish(&opts);
 
         assert_eq!(errors.len(), 1);
         assert!(matches!(
-            errors[0],
+            errors.first().expect("expected error"),
             SchemaFieldParserError::TypeMismatch { .. }
         ));
     }

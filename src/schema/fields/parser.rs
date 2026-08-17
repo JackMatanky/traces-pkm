@@ -8,9 +8,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::{
-    super::error::SchemaFieldParserError,
-    SchemaFieldType,
+    SchemaFieldTypeTag,
     address::{FieldAddress, FieldAddressRef},
+    error::SchemaFieldParserError,
 };
 use crate::field::FieldValue;
 
@@ -25,22 +25,22 @@ use crate::field::FieldValue;
 /// extraction.
 pub(super) struct SchemaFieldParser<'a> {
     address: FieldAddressRef<'a>,
-    kind: SchemaFieldType,
+    kind: SchemaFieldTypeTag,
     claimed: BTreeSet<&'static str>,
     errors: Vec<SchemaFieldParserError>,
 }
 
 impl<'a> SchemaFieldParser<'a> {
-    /// Creates a new field parser scoped to a specific field address and type.
+    /// Creates a new field parser scoped to a specific field address and tag.
     ///
     /// # Arguments
     ///
     /// * `address`: Path reference identifying the field location within the
     ///   schema hierarchy.
-    /// * `kind`: The expected schema field variant being processed.
+    /// * `kind`: The expected schema field tag being processed.
     pub(super) fn new(
         address: FieldAddressRef<'a>,
-        kind: SchemaFieldType,
+        kind: SchemaFieldTypeTag,
     ) -> Self {
         Self {
             address,
@@ -73,9 +73,8 @@ impl<'a> SchemaFieldParser<'a> {
                 if let FieldValue::String(s) = value {
                     Some(s.clone())
                 } else {
-                    self.errors.push(
-                        self.type_mismatch(&self.kind, key, value, "a string"),
-                    );
+                    self.errors
+                        .push(self.type_mismatch(key, value, "a string"));
                     None
                 }
             }
@@ -118,7 +117,6 @@ impl<'a> SchemaFieldParser<'a> {
                         .collect();
                 }
                 self.errors.push(self.type_mismatch(
-                    &self.kind,
                     key,
                     value,
                     "an array of strings",
@@ -152,9 +150,8 @@ impl<'a> SchemaFieldParser<'a> {
                 if let Some(number) = value.as_f64() {
                     Some(number)
                 } else {
-                    self.errors.push(
-                        self.type_mismatch(&self.kind, key, value, "a number"),
-                    );
+                    self.errors
+                        .push(self.type_mismatch(key, value, "a number"));
                     None
                 }
             }
@@ -171,30 +168,20 @@ impl<'a> SchemaFieldParser<'a> {
     /// all accumulated type mismatch errors and unknown key violations; an
     /// empty list means all options were valid and recognized.
     pub(super) fn finish(
-        mut self,
+        self,
         options: &BTreeMap<String, FieldValue>,
     ) -> Vec<SchemaFieldParserError> {
-        let mut errors = std::mem::take(&mut self.errors);
-        let mut unknowns: Vec<_> = options
-            .keys()
-            .filter(|key| !self.claimed.contains(key.as_str()))
-            .collect();
-        if let Some(last) = unknowns.pop() {
-            // Move kind into the last error; clone for the rest.
-            let kind = self.kind.clone();
-            for key in unknowns {
-                errors.push(SchemaFieldParserError::UnknownKey {
+        let mut errors = self.errors;
+        errors.extend(
+            options
+                .keys()
+                .filter(|key| !self.claimed.contains(key.as_str()))
+                .map(|key| SchemaFieldParserError::UnknownKey {
                     address: FieldAddress::from(self.address),
-                    kind: kind.clone(),
+                    kind: self.kind,
                     key: key.to_owned(),
-                });
-            }
-            errors.push(SchemaFieldParserError::UnknownKey {
-                address: FieldAddress::from(self.address),
-                kind: self.kind,
-                key: last.to_owned(),
-            });
-        }
+                }),
+        );
         errors
     }
 
@@ -202,14 +189,13 @@ impl<'a> SchemaFieldParser<'a> {
     /// value.
     fn type_mismatch(
         &self,
-        kind: &SchemaFieldType,
         key: &str,
         value: &FieldValue,
         expected: &'static str,
     ) -> SchemaFieldParserError {
         SchemaFieldParserError::TypeMismatch {
             address: FieldAddress::from(self.address),
-            kind: kind.clone(),
+            kind: self.kind,
             key: key.to_owned(),
             value: format!("{value:?}"),
             expected,
@@ -222,9 +208,9 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::*;
-    use crate::schema::{
-        error::SchemaFieldParserError,
-        fields::{address::FieldAddress, parser::SchemaFieldParser},
+    use crate::schema::fields::{
+        address::FieldAddress, error::SchemaFieldParserError,
+        parser::SchemaFieldParser,
     };
 
     fn address() -> FieldAddress {
@@ -245,8 +231,10 @@ mod tests {
             let opts =
                 options(&[("name", FieldValue::String("alice".to_owned()))]);
             let addr = address();
-            let mut parser =
-                SchemaFieldParser::new(addr.as_ref(), SchemaFieldType::Input);
+            let mut parser = SchemaFieldParser::new(
+                addr.as_ref(),
+                SchemaFieldTypeTag::Input,
+            );
 
             let result = parser.string(&opts, "name", None);
 
@@ -258,8 +246,10 @@ mod tests {
         fn returns_fallback_when_key_is_absent() {
             let opts = BTreeMap::new();
             let addr = address();
-            let mut parser =
-                SchemaFieldParser::new(addr.as_ref(), SchemaFieldType::Input);
+            let mut parser = SchemaFieldParser::new(
+                addr.as_ref(),
+                SchemaFieldTypeTag::Input,
+            );
 
             let result =
                 parser.string(&opts, "name", Some("default".to_owned()));
@@ -272,8 +262,10 @@ mod tests {
         fn returns_none_and_records_type_mismatch_when_value_is_not_a_string() {
             let opts = options(&[("name", FieldValue::Int(42))]);
             let addr = address();
-            let mut parser =
-                SchemaFieldParser::new(addr.as_ref(), SchemaFieldType::Input);
+            let mut parser = SchemaFieldParser::new(
+                addr.as_ref(),
+                SchemaFieldTypeTag::Input,
+            );
 
             let result = parser.string(&opts, "name", None);
 
@@ -281,7 +273,7 @@ mod tests {
             let errors = parser.finish(&opts);
             assert_eq!(errors.len(), 1);
             assert!(matches!(
-                errors[0],
+                errors.first().expect("expected error"),
                 SchemaFieldParserError::TypeMismatch { .. }
             ));
         }
@@ -302,8 +294,10 @@ mod tests {
                 ]),
             )]);
             let addr = address();
-            let mut parser =
-                SchemaFieldParser::new(addr.as_ref(), SchemaFieldType::Input);
+            let mut parser = SchemaFieldParser::new(
+                addr.as_ref(),
+                SchemaFieldTypeTag::Input,
+            );
 
             let result = parser.string_list(&opts, "tags", Vec::new());
 
@@ -315,8 +309,10 @@ mod tests {
         fn returns_fallback_when_key_is_absent() {
             let opts = BTreeMap::new();
             let addr = address();
-            let mut parser =
-                SchemaFieldParser::new(addr.as_ref(), SchemaFieldType::Input);
+            let mut parser = SchemaFieldParser::new(
+                addr.as_ref(),
+                SchemaFieldTypeTag::Input,
+            );
 
             let result =
                 parser.string_list(&opts, "tags", vec!["default".to_owned()]);
@@ -333,8 +329,10 @@ mod tests {
                 FieldValue::String("not-a-list".to_owned()),
             )]);
             let addr = address();
-            let mut parser =
-                SchemaFieldParser::new(addr.as_ref(), SchemaFieldType::Input);
+            let mut parser = SchemaFieldParser::new(
+                addr.as_ref(),
+                SchemaFieldTypeTag::Input,
+            );
 
             let result =
                 parser.string_list(&opts, "tags", vec!["fb".to_owned()]);
@@ -343,7 +341,7 @@ mod tests {
             let errors = parser.finish(&opts);
             assert_eq!(errors.len(), 1);
             assert!(matches!(
-                errors[0],
+                errors.first().expect("expected error"),
                 SchemaFieldParserError::TypeMismatch { .. }
             ));
         }
@@ -356,8 +354,10 @@ mod tests {
                 FieldValue::List(vec![FieldValue::Int(1), FieldValue::Int(2)]),
             )]);
             let addr = address();
-            let mut parser =
-                SchemaFieldParser::new(addr.as_ref(), SchemaFieldType::Input);
+            let mut parser = SchemaFieldParser::new(
+                addr.as_ref(),
+                SchemaFieldTypeTag::Input,
+            );
 
             let result = parser.string_list(&opts, "tags", Vec::new());
 
@@ -365,7 +365,7 @@ mod tests {
             let errors = parser.finish(&opts);
             assert_eq!(errors.len(), 1);
             assert!(matches!(
-                errors[0],
+                errors.first().expect("expected error"),
                 SchemaFieldParserError::TypeMismatch { .. }
             ));
         }
@@ -374,8 +374,10 @@ mod tests {
         fn returns_an_empty_vec_for_an_empty_list_value() {
             let opts = options(&[("tags", FieldValue::List(Vec::new()))]);
             let addr = address();
-            let mut parser =
-                SchemaFieldParser::new(addr.as_ref(), SchemaFieldType::Input);
+            let mut parser = SchemaFieldParser::new(
+                addr.as_ref(),
+                SchemaFieldTypeTag::Input,
+            );
 
             let result =
                 parser.string_list(&opts, "tags", vec!["fb".to_owned()]);
@@ -394,8 +396,10 @@ mod tests {
         fn converts_an_integer_value_to_f64() {
             let opts = options(&[("min", FieldValue::Int(5))]);
             let addr = address();
-            let mut parser =
-                SchemaFieldParser::new(addr.as_ref(), SchemaFieldType::Input);
+            let mut parser = SchemaFieldParser::new(
+                addr.as_ref(),
+                SchemaFieldTypeTag::Input,
+            );
 
             let result = parser.f64(&opts, "min", None);
 
@@ -405,14 +409,16 @@ mod tests {
 
         #[test]
         fn returns_a_float_value_as_is() {
-            let opts = options(&[("min", FieldValue::Float(3.14))]);
+            let opts = options(&[("min", FieldValue::Float(2.5))]);
             let addr = address();
-            let mut parser =
-                SchemaFieldParser::new(addr.as_ref(), SchemaFieldType::Input);
+            let mut parser = SchemaFieldParser::new(
+                addr.as_ref(),
+                SchemaFieldTypeTag::Input,
+            );
 
             let result = parser.f64(&opts, "min", None);
 
-            assert_eq!(result, Some(3.14));
+            assert_eq!(result, Some(2.5));
             assert!(parser.finish(&opts).is_empty());
         }
 
@@ -420,8 +426,10 @@ mod tests {
         fn returns_fallback_when_key_is_absent() {
             let opts = BTreeMap::new();
             let addr = address();
-            let mut parser =
-                SchemaFieldParser::new(addr.as_ref(), SchemaFieldType::Input);
+            let mut parser = SchemaFieldParser::new(
+                addr.as_ref(),
+                SchemaFieldTypeTag::Input,
+            );
 
             let result = parser.f64(&opts, "min", Some(0.0));
 
@@ -434,8 +442,10 @@ mod tests {
             let opts =
                 options(&[("min", FieldValue::String("abc".to_owned()))]);
             let addr = address();
-            let mut parser =
-                SchemaFieldParser::new(addr.as_ref(), SchemaFieldType::Input);
+            let mut parser = SchemaFieldParser::new(
+                addr.as_ref(),
+                SchemaFieldTypeTag::Input,
+            );
 
             let result = parser.f64(&opts, "min", None);
 
@@ -443,7 +453,7 @@ mod tests {
             let errors = parser.finish(&opts);
             assert_eq!(errors.len(), 1);
             assert!(matches!(
-                errors[0],
+                errors.first().expect("expected error"),
                 SchemaFieldParserError::TypeMismatch { .. }
             ));
         }
@@ -458,8 +468,10 @@ mod tests {
         fn returns_empty_when_no_unknowns_and_no_accumulated_errors() {
             let opts = options(&[("name", FieldValue::String("x".to_owned()))]);
             let addr = address();
-            let mut parser =
-                SchemaFieldParser::new(addr.as_ref(), SchemaFieldType::Input);
+            let mut parser = SchemaFieldParser::new(
+                addr.as_ref(),
+                SchemaFieldTypeTag::Input,
+            );
             let _ = parser.string(&opts, "name", None);
 
             let errors = parser.finish(&opts);
@@ -472,15 +484,17 @@ mod tests {
             let opts =
                 options(&[("min", FieldValue::String("bad".to_owned()))]);
             let addr = address();
-            let mut parser =
-                SchemaFieldParser::new(addr.as_ref(), SchemaFieldType::Input);
+            let mut parser = SchemaFieldParser::new(
+                addr.as_ref(),
+                SchemaFieldTypeTag::Input,
+            );
             let _ = parser.f64(&opts, "min", None);
 
             let errors = parser.finish(&opts);
 
             assert_eq!(errors.len(), 1);
             assert!(matches!(
-                errors[0],
+                errors.first().expect("expected error"),
                 SchemaFieldParserError::TypeMismatch { .. }
             ));
         }
@@ -493,8 +507,10 @@ mod tests {
                 ("c", FieldValue::Int(3)),
             ]);
             let addr = address();
-            let parser =
-                SchemaFieldParser::new(addr.as_ref(), SchemaFieldType::Input);
+            let parser = SchemaFieldParser::new(
+                addr.as_ref(),
+                SchemaFieldTypeTag::Input,
+            );
 
             let errors = parser.finish(&opts);
 
@@ -509,14 +525,16 @@ mod tests {
         fn returns_single_unknown_key_error_for_one_unclaimed_key() {
             let opts = options(&[("only", FieldValue::Int(1))]);
             let addr = address();
-            let parser =
-                SchemaFieldParser::new(addr.as_ref(), SchemaFieldType::Input);
+            let parser = SchemaFieldParser::new(
+                addr.as_ref(),
+                SchemaFieldTypeTag::Input,
+            );
 
             let errors = parser.finish(&opts);
 
             assert_eq!(errors.len(), 1);
             assert!(matches!(
-                &errors[0],
+                errors.first().expect("expected error"),
                 SchemaFieldParserError::UnknownKey { key, .. } if key == "only"
             ));
         }
@@ -528,8 +546,10 @@ mod tests {
                 ("bogus", FieldValue::Int(1)),
             ]);
             let addr = address();
-            let mut parser =
-                SchemaFieldParser::new(addr.as_ref(), SchemaFieldType::Input);
+            let mut parser = SchemaFieldParser::new(
+                addr.as_ref(),
+                SchemaFieldTypeTag::Input,
+            );
             let _ = parser.f64(&opts, "min", None);
 
             let errors = parser.finish(&opts);
@@ -555,8 +575,10 @@ mod tests {
         fn claimed_keys_are_not_reported_as_unknown() {
             let opts = options(&[("a", FieldValue::String("x".to_owned()))]);
             let addr = address();
-            let mut parser =
-                SchemaFieldParser::new(addr.as_ref(), SchemaFieldType::Input);
+            let mut parser = SchemaFieldParser::new(
+                addr.as_ref(),
+                SchemaFieldTypeTag::Input,
+            );
             let _ = parser.string(&opts, "a", None);
 
             let errors = parser.finish(&opts);
@@ -575,8 +597,10 @@ mod tests {
                 ),
             ]);
             let addr = address();
-            let mut parser =
-                SchemaFieldParser::new(addr.as_ref(), SchemaFieldType::Input);
+            let mut parser = SchemaFieldParser::new(
+                addr.as_ref(),
+                SchemaFieldTypeTag::Input,
+            );
             let _ = parser.string(&opts, "name", None);
             let _ = parser.f64(&opts, "min", None);
             let _ = parser.string_list(&opts, "tags", Vec::new());
@@ -593,15 +617,17 @@ mod tests {
                 ("extra", FieldValue::Int(99)),
             ]);
             let addr = address();
-            let mut parser =
-                SchemaFieldParser::new(addr.as_ref(), SchemaFieldType::Input);
+            let mut parser = SchemaFieldParser::new(
+                addr.as_ref(),
+                SchemaFieldTypeTag::Input,
+            );
             let _ = parser.string(&opts, "valid", None);
 
             let errors = parser.finish(&opts);
 
             assert_eq!(errors.len(), 1);
             assert!(matches!(
-                &errors[0],
+                errors.first().expect("expected error"),
                 SchemaFieldParserError::UnknownKey { key, .. } if key == "extra"
             ));
         }

@@ -63,14 +63,10 @@ impl SchemaNumberField {
     pub(super) fn parse(
         parser: &mut SchemaFieldParser<'_>,
         options: &BTreeMap<String, FieldValue>,
-        base: Option<&SchemaFieldType>,
+        base: Option<&Self>,
     ) -> SchemaFieldType {
-        let (base_min, base_max, base_step) = match base {
-            Some(SchemaFieldType::Number(base_def)) => {
-                (base_def.min, base_def.max, base_def.step)
-            }
-            _ => (None, None, None),
-        };
+        let (base_min, base_max, base_step) = base
+            .map_or((None, None, None), |base| (base.min, base.max, base.step));
 
         let min = parser.f64(options, "min", base_min);
         let max = parser.f64(options, "max", base_max);
@@ -92,11 +88,9 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
-    use crate::schema::{
-        error::SchemaFieldParserError,
-        fields::{
-            SchemaNumberField, address::FieldAddress, parser::SchemaFieldParser,
-        },
+    use crate::schema::fields::{
+        SchemaFieldTypeTag, SchemaNumberField, address::FieldAddress,
+        error::SchemaFieldParserError, parser::SchemaFieldParser,
     };
 
     fn address() -> FieldAddress {
@@ -114,16 +108,14 @@ mod tests {
         let opts = options(&[(key, FieldValue::String("abc".to_owned()))]);
 
         let addr = address();
-        let mut parser = SchemaFieldParser::new(
-            addr.as_ref(),
-            SchemaFieldType::Number(SchemaNumberField::default()),
-        );
+        let mut parser =
+            SchemaFieldParser::new(addr.as_ref(), SchemaFieldTypeTag::Number);
         let _ = SchemaNumberField::parse(&mut parser, &opts, None);
         let errors = parser.finish(&opts);
 
         assert_eq!(errors.len(), 1);
         assert!(matches!(
-            errors[0],
+            errors.first().expect("expected error"),
             SchemaFieldParserError::TypeMismatch { .. }
         ));
     }
@@ -133,10 +125,8 @@ mod tests {
         let opts = options(&[("min", FieldValue::Int(0))]);
 
         let addr = address();
-        let mut parser = SchemaFieldParser::new(
-            addr.as_ref(),
-            SchemaFieldType::Number(SchemaNumberField::default()),
-        );
+        let mut parser =
+            SchemaFieldParser::new(addr.as_ref(), SchemaFieldTypeTag::Number);
         let field_type = SchemaNumberField::parse(&mut parser, &opts, None);
         let errors = parser.finish(&opts);
 
@@ -156,15 +146,16 @@ mod tests {
         let opts = options(&[("values", FieldValue::Int(1))]);
 
         let addr = address();
-        let mut parser = SchemaFieldParser::new(
-            addr.as_ref(),
-            SchemaFieldType::Number(SchemaNumberField::default()),
-        );
+        let mut parser =
+            SchemaFieldParser::new(addr.as_ref(), SchemaFieldTypeTag::Number);
         let _ = SchemaNumberField::parse(&mut parser, &opts, None);
         let errors = parser.finish(&opts);
 
         assert_eq!(errors.len(), 1);
-        assert!(matches!(errors[0], SchemaFieldParserError::UnknownKey { .. }));
+        assert!(matches!(
+            errors.first().expect("expected error"),
+            SchemaFieldParserError::UnknownKey { .. }
+        ));
     }
 
     #[test]
@@ -176,10 +167,8 @@ mod tests {
         ]);
 
         let addr = address();
-        let mut parser = SchemaFieldParser::new(
-            addr.as_ref(),
-            SchemaFieldType::Number(SchemaNumberField::default()),
-        );
+        let mut parser =
+            SchemaFieldParser::new(addr.as_ref(), SchemaFieldTypeTag::Number);
         let field_type = SchemaNumberField::parse(&mut parser, &opts, None);
         let errors = parser.finish(&opts);
 
@@ -196,18 +185,13 @@ mod tests {
 
     #[test]
     fn inherits_min_max_step_from_number_base() {
-        let base = SchemaFieldType::Number(SchemaNumberField::for_test(
-            Some(0.0),
-            Some(100.0),
-            Some(5.0),
-        ));
+        let base =
+            SchemaNumberField::for_test(Some(0.0), Some(100.0), Some(5.0));
         let opts = BTreeMap::new();
 
         let addr = address();
-        let mut parser = SchemaFieldParser::new(
-            addr.as_ref(),
-            SchemaFieldType::Number(SchemaNumberField::default()),
-        );
+        let mut parser =
+            SchemaFieldParser::new(addr.as_ref(), SchemaFieldTypeTag::Number);
         let field_type =
             SchemaNumberField::parse(&mut parser, &opts, Some(&base));
         let errors = parser.finish(&opts);
@@ -219,29 +203,6 @@ mod tests {
                 Some(0.0),
                 Some(100.0),
                 Some(5.0),
-            ))
-        );
-    }
-
-    #[test]
-    fn ignores_non_number_base() {
-        let base = SchemaFieldType::Input;
-        let opts = BTreeMap::new();
-
-        let addr = address();
-        let mut parser = SchemaFieldParser::new(
-            addr.as_ref(),
-            SchemaFieldType::Number(SchemaNumberField::default()),
-        );
-        let field_type =
-            SchemaNumberField::parse(&mut parser, &opts, Some(&base));
-        let errors = parser.finish(&opts);
-
-        assert!(errors.is_empty());
-        assert_eq!(
-            field_type,
-            SchemaFieldType::Number(SchemaNumberField::for_test(
-                None, None, None,
             ))
         );
     }

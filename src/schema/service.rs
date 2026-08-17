@@ -412,21 +412,16 @@ type ResolveOutput = (BTreeMap<SchemaName, Schema>, Vec<SchemaWarning>);
 fn resolve_all(
     raw_schemas: &BTreeMap<SchemaName, RawSchema>,
 ) -> Result<ResolveOutput, SchemaError> {
-    let mut warnings = Vec::new();
-    let mut graph = SchemaGraph::new(raw_schemas, &mut warnings);
+    let (mut graph, mut warnings) = SchemaGraph::new(raw_schemas);
     let mut resolved: BTreeMap<SchemaName, Schema> = BTreeMap::new();
 
     while let Some(name) = graph.next_ready() {
         let Some(raw) = raw_schemas.get(name.as_str()) else {
             continue;
         };
-        let schema = build_schema(
-            name,
-            raw,
-            graph.parents_of(name),
-            &resolved,
-            &mut warnings,
-        )?;
+        let (schema, schema_warnings) =
+            build_schema(name, raw, graph.parents_of(name), &resolved)?;
+        warnings.extend(schema_warnings);
         resolved.insert(SchemaName::from(name), schema);
         graph.mark_resolved(name);
     }
@@ -449,7 +444,8 @@ fn resolve_all(
     Ok((resolved, warnings))
 }
 
-/// Resolve one Schema's effective fields and transitive ancestors.
+/// Resolve one Schema's effective fields and transitive ancestors, alongside
+/// every warning degraded validation raised while building its own fields.
 ///
 /// Merges `parents`' fields first-listed-wins, applies `raw.excludes`, then
 /// overrides the result with `raw`'s own (`$ref`-resolved) fields.
@@ -463,8 +459,6 @@ fn resolve_all(
 /// * `raw`: `name`'s own parsed TOML: `extends`, `excludes`, and fields.
 /// * `parents`: `raw.extends`, filtered to targets that resolved.
 /// * `resolved`: Schemas already resolved earlier in Kahn order, keyed by name.
-/// * `warnings`: accumulates degraded-resolution warnings raised while building
-///   `name`'s own fields.
 ///
 /// # Errors
 ///
@@ -480,8 +474,7 @@ fn build_schema(
     raw: &RawSchema,
     parents: &[SchemaNameRef<'_>],
     resolved: &BTreeMap<SchemaName, Schema>,
-    warnings: &mut Vec<SchemaWarning>,
-) -> Result<Schema, SchemaError> {
+) -> Result<(Schema, Vec<SchemaWarning>), SchemaError> {
     let mut fields = BTreeMap::new();
     let mut ancestors = BTreeSet::new();
     for &parent in parents {
@@ -505,21 +498,22 @@ fn build_schema(
         ancestors: &ancestors,
         resolved,
     };
-    let mut builder = SchemaFieldBuilder {
+    let builder = SchemaFieldBuilder {
         refs: &refs,
-        warnings,
     };
+    let mut warnings = Vec::new();
     let mut own_fields = BTreeMap::new();
     for (field_name, raw_field) in &raw.fields {
         let address = FieldAddressRef::new(name, field_name.as_ref());
-        let field = builder.build(address, raw_field)?;
+        let (field, field_warnings) = builder.build(address, raw_field)?;
+        warnings.extend(field_warnings);
         own_fields.insert(field_name.clone(), field);
     }
     fields.extend(own_fields);
 
     reject_ambiguous_canonical_names(name, &fields)?;
 
-    Ok(Schema::new(SchemaName::from(name), fields, ancestors))
+    Ok((Schema::new(SchemaName::from(name), fields, ancestors), warnings))
 }
 
 /// Reject `fields` if two entries share a [`FieldKey`] canonical form:
@@ -559,21 +553,22 @@ mod tests {
 
     use super::{super::GLOBAL_SCHEMA_NAME, *};
     use crate::schema::{
-        error::{SchemaFieldBuilderError, SchemaFieldParserError},
         fields::{
-            SchemaDateField, SchemaFieldType, SchemaFileField,
+            SchemaDateField, SchemaFieldBuilderError, SchemaFieldDef,
+            SchemaFieldParserError, SchemaFieldType, SchemaFileField,
             SchemaNumberField, SchemaSelectField, SchemaSelectFieldEntry,
         },
         raw::{RawFieldSource, RawSchemaFieldDef, RawSchemaFieldType},
     };
 
+    type ResolveResult =
+        Result<(Arc<SchemaRegistry>, Vec<SchemaWarning>), SchemaError>;
+
     /// Resolves every Schema TOML file directly under `dir`, mirroring the
     /// pre-refactor `SchemaRegistry::load(dir)` call shape: `dir` is used
     /// directly as the Schema directory, `root` is unused by resolution
     /// itself.
-    fn resolve_dir(
-        dir: &Path,
-    ) -> Result<(Arc<SchemaRegistry>, Vec<SchemaWarning>), SchemaError> {
+    fn resolve_dir(dir: &Path) -> ResolveResult {
         SchemaService::new(SchemaConfigSpec::for_test(dir, dir)).resolve()
     }
 
@@ -688,10 +683,10 @@ mod tests {
             write_schema(
                 temp.path(),
                 "book",
-                r#"
+                r"
                 [fields.status]
                 required = true
-                "#,
+                ",
             );
 
             let err = resolve_dir(temp.path())
@@ -959,6 +954,7 @@ mod tests {
         }
 
         #[test]
+        #[expect(clippy::panic, reason = "let-else guard on exhaustive match")]
         fn resolve_sources_walks_nested_expressions_and_preserves_unknowns() {
             let temp = tempfile::tempdir().expect("create temp dir");
             let (registry, service) = registry_and_service(&temp);
@@ -967,18 +963,23 @@ mod tests {
 
             resolve_sources(&mut source, &service, &registry);
 
+            assert!(
+                matches!(source, QuerySource::Expr(_)),
+                "expected expression source"
+            );
+            let mut classes = Vec::new();
             let QuerySource::Expr(expression) = &mut source else {
                 panic!("expected expression source");
             };
-            let mut classes = Vec::new();
             expression.visit_atoms_mut(&mut |atom| {
-                if let SourceAtom::Class {
+                let SourceAtom::Class {
                     names,
                     mode,
                 } = atom
-                {
-                    classes.push((names.clone(), mode.classes().clone()));
-                }
+                else {
+                    return;
+                };
+                classes.push((names.clone(), mode.classes().clone()));
             });
             assert_eq!(classes, vec![
                 (vec!["thing".to_owned()], set(&["book", "thing"]),),
@@ -1552,31 +1553,31 @@ mod tests {
             let book = resolved.get("book").expect("book resolved");
 
             assert_eq!(
-                book.field("title").map(|f| f.kind()),
+                book.field("title").map(SchemaFieldDef::kind),
                 Some(&SchemaFieldType::Input)
             );
             assert_eq!(
-                book.field("status").map(|f| f.kind()),
+                book.field("status").map(SchemaFieldDef::kind),
                 Some(&SchemaFieldType::Select(SchemaSelectField::for_test(
                     select_entries(&["draft", "done"])
                 )))
             );
             assert_eq!(
-                book.field("archived").map(|f| f.kind()),
+                book.field("archived").map(SchemaFieldDef::kind),
                 Some(&SchemaFieldType::Boolean)
             );
             assert_eq!(
-                book.field("rating").map(|f| f.kind()),
+                book.field("rating").map(SchemaFieldDef::kind),
                 Some(&SchemaFieldType::Number(SchemaNumberField::for_test(
                     None, None, None
                 )))
             );
             assert_eq!(
-                book.field("published").map(|f| f.kind()),
+                book.field("published").map(SchemaFieldDef::kind),
                 Some(&SchemaFieldType::Date(SchemaDateField::for_test(None)))
             );
             assert_eq!(
-                book.field("cover").map(|f| f.kind()),
+                book.field("cover").map(SchemaFieldDef::kind),
                 Some(&SchemaFieldType::File(SchemaFileField::for_test(
                     vec!["assets/covers".to_owned()],
                     Some("png".to_owned()),
@@ -1819,7 +1820,7 @@ mod tests {
             );
             assert_eq!(warnings.len(), 1);
             assert!(matches!(
-                warnings[0],
+                warnings.first().expect("expected warning"),
                 SchemaWarning::UnknownOverrideKey { .. }
             ));
         }
@@ -1862,7 +1863,7 @@ mod tests {
             );
             assert_eq!(warnings.len(), 1);
             assert!(matches!(
-                warnings[0],
+                warnings.first().expect("expected warning"),
                 SchemaWarning::OverrideValueTypeMismatch { .. }
             ));
         }
@@ -1907,12 +1908,16 @@ mod tests {
             );
             assert_eq!(warnings.len(), 1);
             assert!(matches!(
-                &warnings[0],
+                warnings.first().expect("expected warning"),
                 SchemaWarning::UnknownOverrideKey { key, .. } if key == "bogus"
             ));
         }
 
         #[test]
+        #[expect(
+            clippy::unreachable,
+            reason = "exhaustive error-match fallback"
+        )]
         fn a_ref_with_a_type_override_and_an_unknown_key_is_a_hard_error() {
             let mut raw = BTreeMap::new();
             raw.insert(
@@ -1935,23 +1940,25 @@ mod tests {
                 "unknown attribute key on a type-overriding $ref rejected",
             );
 
-            if let SchemaError::FieldBuilder(inner) = &err {
-                if let SchemaFieldBuilderError::Parser(parser) = inner.as_ref()
-                {
-                    assert!(
-                        matches!(
-                            **parser,
-                            SchemaFieldParserError::UnknownKey { .. }
-                        ),
-                        "expected UnknownKey, got {parser}"
-                    );
-                    return;
-                }
+            if let SchemaError::FieldBuilder(inner) = &err
+                && let SchemaFieldBuilderError::Parser(errors) = inner.as_ref()
+            {
+                assert!(
+                    matches!(errors.as_slice(), [
+                        SchemaFieldParserError::UnknownKey { .. }
+                    ]),
+                    "expected a single UnknownKey, got {errors:?}"
+                );
+            } else {
+                unreachable!("expected Parser(UnknownKey), got {err}");
             }
-            assert!(false, "expected Parser(UnknownKey), got {err}");
         }
 
         #[test]
+        #[expect(
+            clippy::unreachable,
+            reason = "exhaustive error-match fallback"
+        )]
         fn a_direct_field_with_an_unknown_key_is_a_hard_error() {
             let mut raw = BTreeMap::new();
             raw.insert(
@@ -1965,23 +1972,25 @@ mod tests {
             let err =
                 resolve_all(&raw).expect_err("unknown attribute key rejected");
 
-            if let SchemaError::FieldBuilder(inner) = &err {
-                if let SchemaFieldBuilderError::Parser(parser) = inner.as_ref()
-                {
-                    assert!(
-                        matches!(
-                            **parser,
-                            SchemaFieldParserError::UnknownKey { .. }
-                        ),
-                        "expected UnknownKey, got {parser}"
-                    );
-                    return;
-                }
+            if let SchemaError::FieldBuilder(inner) = &err
+                && let SchemaFieldBuilderError::Parser(errors) = inner.as_ref()
+            {
+                assert!(
+                    matches!(errors.as_slice(), [
+                        SchemaFieldParserError::UnknownKey { .. }
+                    ]),
+                    "expected a single UnknownKey, got {errors:?}"
+                );
+            } else {
+                unreachable!("expected Parser(UnknownKey), got {err}");
             }
-            assert!(false, "expected Parser(UnknownKey), got {err}");
         }
 
         #[test]
+        #[expect(
+            clippy::unreachable,
+            reason = "exhaustive error-match fallback"
+        )]
         fn a_direct_field_with_a_type_mismatched_value_is_a_hard_error() {
             let mut raw = BTreeMap::new();
             raw.insert(
@@ -1998,20 +2007,18 @@ mod tests {
             let err = resolve_all(&raw)
                 .expect_err("attribute value type mismatch rejected");
 
-            if let SchemaError::FieldBuilder(inner) = &err {
-                if let SchemaFieldBuilderError::Parser(parser) = inner.as_ref()
-                {
-                    assert!(
-                        matches!(
-                            **parser,
-                            SchemaFieldParserError::TypeMismatch { .. }
-                        ),
-                        "expected TypeMismatch, got {parser}"
-                    );
-                    return;
-                }
+            if let SchemaError::FieldBuilder(inner) = &err
+                && let SchemaFieldBuilderError::Parser(errors) = inner.as_ref()
+            {
+                assert!(
+                    matches!(errors.as_slice(), [
+                        SchemaFieldParserError::TypeMismatch { .. }
+                    ]),
+                    "expected a single TypeMismatch, got {errors:?}"
+                );
+            } else {
+                unreachable!("expected Parser(TypeMismatch), got {err}");
             }
-            assert!(false, "expected Parser(TypeMismatch), got {err}");
         }
     }
 }

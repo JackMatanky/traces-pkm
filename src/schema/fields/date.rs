@@ -42,12 +42,9 @@ impl SchemaDateField {
     pub(super) fn parse(
         parser: &mut SchemaFieldParser<'_>,
         options: &BTreeMap<String, FieldValue>,
-        base: Option<&SchemaFieldType>,
+        base: Option<&Self>,
     ) -> SchemaFieldType {
-        let base_format = match base {
-            Some(SchemaFieldType::Date(base_def)) => base_def.format.clone(),
-            _ => None,
-        };
+        let base_format = base.and_then(|base| base.format.clone());
 
         let format = parser.string(options, "format", base_format);
 
@@ -62,11 +59,9 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::*;
-    use crate::schema::{
-        error::SchemaFieldParserError,
-        fields::{
-            SchemaDateField, address::FieldAddress, parser::SchemaFieldParser,
-        },
+    use crate::schema::fields::{
+        SchemaDateField, SchemaFieldTypeTag, address::FieldAddress,
+        error::SchemaFieldParserError, parser::SchemaFieldParser,
     };
 
     fn address() -> FieldAddress {
@@ -78,65 +73,45 @@ mod tests {
     }
 
     #[test]
+    #[expect(clippy::panic, reason = "test assertion on enum variant")]
     fn parses_a_valid_format_string() {
         let opts =
             options(&[("format", FieldValue::String("YYYY-MM-DD".to_owned()))]);
 
         let addr = address();
-        let mut parser = SchemaFieldParser::new(
-            addr.as_ref(),
-            SchemaFieldType::Date(SchemaDateField::default()),
-        );
+        let mut parser =
+            SchemaFieldParser::new(addr.as_ref(), SchemaFieldTypeTag::Date);
         let field_type = SchemaDateField::parse(&mut parser, &opts, None);
         let errors = parser.finish(&opts);
 
         assert!(errors.is_empty());
-        let SchemaFieldType::Date(def) = field_type else {
-            panic!("expected Date");
-        };
-        assert_eq!(def.format(), Some("YYYY-MM-DD"));
+        match &field_type {
+            SchemaFieldType::Date(def) => {
+                assert_eq!(def.format(), Some("YYYY-MM-DD"));
+            }
+            other => panic!("expected Date, got {other:?}"),
+        }
     }
 
     #[test]
+    #[expect(clippy::panic, reason = "test assertion on enum variant")]
     fn inherits_format_from_date_base() {
-        let base = SchemaFieldType::Date(SchemaDateField::for_test(Some(
-            "YYYY-MM-DD".to_owned(),
-        )));
+        let base = SchemaDateField::for_test(Some("YYYY-MM-DD".to_owned()));
 
         let addr = address();
-        let mut parser = SchemaFieldParser::new(
-            addr.as_ref(),
-            SchemaFieldType::Date(SchemaDateField::default()),
-        );
+        let mut parser =
+            SchemaFieldParser::new(addr.as_ref(), SchemaFieldTypeTag::Date);
         let field_type =
             SchemaDateField::parse(&mut parser, &BTreeMap::new(), Some(&base));
         let errors = parser.finish(&BTreeMap::new());
 
         assert!(errors.is_empty());
-        let SchemaFieldType::Date(def) = field_type else {
-            panic!("expected Date");
-        };
-        assert_eq!(def.format(), Some("YYYY-MM-DD"));
-    }
-
-    #[test]
-    fn ignores_non_date_base() {
-        let base = SchemaFieldType::Input;
-
-        let addr = address();
-        let mut parser = SchemaFieldParser::new(
-            addr.as_ref(),
-            SchemaFieldType::Date(SchemaDateField::default()),
-        );
-        let field_type =
-            SchemaDateField::parse(&mut parser, &BTreeMap::new(), Some(&base));
-        let errors = parser.finish(&BTreeMap::new());
-
-        assert!(errors.is_empty());
-        assert_eq!(
-            field_type,
-            SchemaFieldType::Date(SchemaDateField::default())
-        );
+        match &field_type {
+            SchemaFieldType::Date(def) => {
+                assert_eq!(def.format(), Some("YYYY-MM-DD"));
+            }
+            other => panic!("expected Date, got {other:?}"),
+        }
     }
 
     #[test]
@@ -144,16 +119,14 @@ mod tests {
         let opts = options(&[("format", FieldValue::Int(123))]);
 
         let addr = address();
-        let mut parser = SchemaFieldParser::new(
-            addr.as_ref(),
-            SchemaFieldType::Date(SchemaDateField::default()),
-        );
+        let mut parser =
+            SchemaFieldParser::new(addr.as_ref(), SchemaFieldTypeTag::Date);
         let _ = SchemaDateField::parse(&mut parser, &opts, None);
         let errors = parser.finish(&opts);
 
         assert_eq!(errors.len(), 1);
         assert!(matches!(
-            errors[0],
+            errors.first().expect("expected error"),
             SchemaFieldParserError::TypeMismatch { .. }
         ));
     }
@@ -166,14 +139,15 @@ mod tests {
         )]);
 
         let addr = address();
-        let mut parser = SchemaFieldParser::new(
-            addr.as_ref(),
-            SchemaFieldType::Date(SchemaDateField::default()),
-        );
+        let mut parser =
+            SchemaFieldParser::new(addr.as_ref(), SchemaFieldTypeTag::Date);
         let _ = SchemaDateField::parse(&mut parser, &opts, None);
         let errors = parser.finish(&opts);
 
         assert_eq!(errors.len(), 1);
-        assert!(matches!(errors[0], SchemaFieldParserError::UnknownKey { .. }));
+        assert!(matches!(
+            errors.first().expect("expected error"),
+            SchemaFieldParserError::UnknownKey { .. }
+        ));
     }
 }
