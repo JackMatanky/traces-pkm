@@ -8,18 +8,19 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::{
+    SchemaFieldType,
     address::FieldAddressRef,
-    error::{AttributeError, type_mismatch, unknown_key},
+    error::{SchemaFieldParserError, type_mismatch, unknown_key},
 };
-use crate::{field::FieldValue, schema::raw::RawSchemaFieldType};
+use crate::field::FieldValue;
 
 /// Parse `options` for a simple type (no type-specific keys) and return every
 /// key as an unknown-key error.
 pub(super) fn parse_simple(
     address: FieldAddressRef<'_>,
-    kind: RawSchemaFieldType,
+    kind: SchemaFieldType,
     options: &BTreeMap<String, FieldValue>,
-) -> Vec<AttributeError> {
+) -> Vec<SchemaFieldParserError> {
     let parser = SchemaFieldParser::new(address, kind);
     parser.finish(options)
 }
@@ -32,7 +33,7 @@ pub(super) fn parse_simple(
 /// unknown-key errors.
 pub(super) struct SchemaFieldParser<'a> {
     address: FieldAddressRef<'a>,
-    kind: RawSchemaFieldType,
+    kind: SchemaFieldType,
     claimed: BTreeSet<&'static str>,
 }
 
@@ -40,7 +41,7 @@ impl<'a> SchemaFieldParser<'a> {
     /// Create a new parser for a field at `address` of type `kind`.
     pub(super) fn new(
         address: FieldAddressRef<'a>,
-        kind: RawSchemaFieldType,
+        kind: SchemaFieldType,
     ) -> Self {
         Self {
             address,
@@ -59,7 +60,7 @@ impl<'a> SchemaFieldParser<'a> {
         options: &BTreeMap<String, FieldValue>,
         key: &'static str,
         fallback: Option<String>,
-        errors: &mut Vec<AttributeError>,
+        errors: &mut Vec<SchemaFieldParserError>,
     ) -> Option<String> {
         self.claimed.insert(key);
         match options.get(key) {
@@ -68,7 +69,7 @@ impl<'a> SchemaFieldParser<'a> {
                 _ => {
                     errors.push(type_mismatch(
                         self.address,
-                        self.kind,
+                        self.kind.clone(),
                         key,
                         value,
                         "a string",
@@ -90,7 +91,7 @@ impl<'a> SchemaFieldParser<'a> {
         options: &BTreeMap<String, FieldValue>,
         key: &'static str,
         fallback: Vec<String>,
-        errors: &mut Vec<AttributeError>,
+        errors: &mut Vec<SchemaFieldParserError>,
     ) -> Vec<String> {
         self.claimed.insert(key);
         match options.get(key) {
@@ -108,7 +109,7 @@ impl<'a> SchemaFieldParser<'a> {
                         None => {
                             errors.push(type_mismatch(
                                 self.address,
-                                self.kind,
+                                self.kind.clone(),
                                 key,
                                 value,
                                 "an array of strings",
@@ -120,7 +121,7 @@ impl<'a> SchemaFieldParser<'a> {
                 _ => {
                     errors.push(type_mismatch(
                         self.address,
-                        self.kind,
+                        self.kind.clone(),
                         key,
                         value,
                         "an array of strings",
@@ -142,7 +143,7 @@ impl<'a> SchemaFieldParser<'a> {
         options: &BTreeMap<String, FieldValue>,
         key: &'static str,
         fallback: Option<f64>,
-        errors: &mut Vec<AttributeError>,
+        errors: &mut Vec<SchemaFieldParserError>,
     ) -> Option<f64> {
         self.claimed.insert(key);
         match options.get(key) {
@@ -151,7 +152,7 @@ impl<'a> SchemaFieldParser<'a> {
                 None => {
                     errors.push(type_mismatch(
                         self.address,
-                        self.kind,
+                        self.kind.clone(),
                         key,
                         value,
                         "a number",
@@ -168,11 +169,11 @@ impl<'a> SchemaFieldParser<'a> {
     pub(super) fn finish(
         self,
         options: &BTreeMap<String, FieldValue>,
-    ) -> Vec<AttributeError> {
+    ) -> Vec<SchemaFieldParserError> {
         options
             .keys()
             .filter(|key| !self.claimed.contains(key.as_str()))
-            .map(|key| unknown_key(self.address, self.kind, key))
+            .map(|key| unknown_key(self.address, self.kind.clone(), key))
             .collect()
     }
 }

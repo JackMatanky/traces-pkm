@@ -1,10 +1,8 @@
 //! Per-key field-attribute validation errors.
 
 use super::{
-    super::{
-        error::{SchemaFieldBuilderError, SchemaWarning},
-        raw::RawSchemaFieldType,
-    },
+    super::error::{SchemaFieldBuilderError, SchemaWarning},
+    SchemaFieldType,
     address::{FieldAddress, FieldAddressRef},
 };
 
@@ -14,25 +12,25 @@ use super::{
 /// - [`SchemaFieldBuilderError`] (hard failure) for `Direct` fields and `$ref`
 ///   with a `type` override.
 /// - [`SchemaWarning`] (degraded) for bare `$ref` overrides.
-pub(crate) enum AttributeError {
+pub(crate) enum SchemaFieldParserError {
     UnknownKey {
         address: FieldAddress,
-        kind: RawSchemaFieldType,
+        kind: SchemaFieldType,
         key: String,
     },
     TypeMismatch {
         address: FieldAddress,
-        kind: RawSchemaFieldType,
+        kind: SchemaFieldType,
         key: String,
         value: String,
         expected: &'static str,
     },
 }
 
-impl From<AttributeError> for SchemaFieldBuilderError {
-    fn from(error: AttributeError) -> Self {
+impl From<SchemaFieldParserError> for SchemaFieldBuilderError {
+    fn from(error: SchemaFieldParserError) -> Self {
         match error {
-            AttributeError::UnknownKey {
+            SchemaFieldParserError::UnknownKey {
                 address,
                 kind,
                 key,
@@ -41,7 +39,7 @@ impl From<AttributeError> for SchemaFieldBuilderError {
                 kind,
                 key,
             },
-            AttributeError::TypeMismatch {
+            SchemaFieldParserError::TypeMismatch {
                 address,
                 kind,
                 key,
@@ -58,10 +56,10 @@ impl From<AttributeError> for SchemaFieldBuilderError {
     }
 }
 
-impl From<AttributeError> for SchemaWarning {
-    fn from(error: AttributeError) -> Self {
+impl From<SchemaFieldParserError> for SchemaWarning {
+    fn from(error: SchemaFieldParserError) -> Self {
         match error {
-            AttributeError::UnknownKey {
+            SchemaFieldParserError::UnknownKey {
                 address,
                 kind,
                 key,
@@ -70,7 +68,7 @@ impl From<AttributeError> for SchemaWarning {
                 kind,
                 key,
             },
-            AttributeError::TypeMismatch {
+            SchemaFieldParserError::TypeMismatch {
                 address,
                 kind,
                 key,
@@ -87,28 +85,30 @@ impl From<AttributeError> for SchemaWarning {
     }
 }
 
-/// Build an [`AttributeError::UnknownKey`] for an unrecognized attribute key.
+/// Build a [`SchemaFieldParserError::UnknownKey`] for an unrecognized attribute
+/// key.
 pub(super) fn unknown_key(
     address: FieldAddressRef<'_>,
-    kind: RawSchemaFieldType,
+    kind: SchemaFieldType,
     key: &str,
-) -> AttributeError {
-    AttributeError::UnknownKey {
+) -> SchemaFieldParserError {
+    SchemaFieldParserError::UnknownKey {
         address: FieldAddress::from(address),
         kind,
         key: key.to_owned(),
     }
 }
 
-/// Build an [`AttributeError::TypeMismatch`] for a wrongly-shaped `value`.
+/// Build a [`SchemaFieldParserError::TypeMismatch`] for a wrongly-shaped
+/// `value`.
 pub(super) fn type_mismatch(
     address: FieldAddressRef<'_>,
-    kind: RawSchemaFieldType,
+    kind: SchemaFieldType,
     key: &str,
     value: &crate::field::FieldValue,
     expected: &'static str,
-) -> AttributeError {
-    AttributeError::TypeMismatch {
+) -> SchemaFieldParserError {
+    SchemaFieldParserError::TypeMismatch {
         address: FieldAddress::from(address),
         kind,
         key: key.to_owned(),

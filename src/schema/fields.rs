@@ -37,10 +37,9 @@ mod select;
 
 use std::collections::BTreeMap;
 
-use error::AttributeError;
+use error::SchemaFieldParserError;
 pub(crate) use select::{SchemaSelectField, SchemaSelectFieldEntry};
 
-use super::raw::RawSchemaFieldType;
 use crate::field::FieldValue;
 
 /// A resolved field definition after inheritance and `$ref` application.
@@ -315,7 +314,10 @@ mod tests {
             );
 
             assert_eq!(errors.len(), 1);
-            assert!(matches!(errors[0], AttributeError::TypeMismatch { .. }));
+            assert!(matches!(
+                errors[0],
+                SchemaFieldParserError::TypeMismatch { .. }
+            ));
         }
 
         #[test]
@@ -380,7 +382,10 @@ mod tests {
             );
 
             assert_eq!(errors.len(), 1);
-            assert!(matches!(errors[0], AttributeError::TypeMismatch { .. }));
+            assert!(matches!(
+                errors[0],
+                SchemaFieldParserError::TypeMismatch { .. }
+            ));
         }
 
         #[test]
@@ -415,7 +420,10 @@ mod tests {
             );
 
             assert_eq!(errors.len(), 1);
-            assert!(matches!(errors[0], AttributeError::UnknownKey { .. }));
+            assert!(matches!(
+                errors[0],
+                SchemaFieldParserError::UnknownKey { .. }
+            ));
         }
     }
 
@@ -443,7 +451,10 @@ mod tests {
                 date::SchemaDateField::parse(address().as_ref(), &opts, None);
 
             assert_eq!(errors.len(), 1);
-            assert!(matches!(errors[0], AttributeError::UnknownKey { .. }));
+            assert!(matches!(
+                errors[0],
+                SchemaFieldParserError::UnknownKey { .. }
+            ));
         }
     }
 
@@ -550,7 +561,10 @@ mod tests {
             );
 
             assert_eq!(unknowns.len(), 1);
-            assert!(matches!(unknowns[0], AttributeError::UnknownKey { .. }));
+            assert!(matches!(
+                unknowns[0],
+                SchemaFieldParserError::UnknownKey { .. }
+            ));
         }
 
         #[test]
@@ -564,7 +578,10 @@ mod tests {
             );
 
             assert_eq!(unknowns.len(), 1);
-            assert!(matches!(unknowns[0], AttributeError::UnknownKey { .. }));
+            assert!(matches!(
+                unknowns[0],
+                SchemaFieldParserError::UnknownKey { .. }
+            ));
         }
     }
 }

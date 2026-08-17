@@ -3,8 +3,8 @@
 use std::collections::BTreeMap;
 
 use super::{
-    super::raw::RawSchemaFieldType, SchemaFieldType, address::FieldAddressRef,
-    error::AttributeError, parser::SchemaFieldParser,
+    SchemaFieldType, address::FieldAddressRef, error::SchemaFieldParserError,
+    parser::SchemaFieldParser,
 };
 use crate::field::FieldValue;
 
@@ -64,7 +64,7 @@ impl SchemaNumberField {
         address: FieldAddressRef<'_>,
         options: &BTreeMap<String, FieldValue>,
         base: Option<&SchemaFieldType>,
-    ) -> (SchemaFieldType, Vec<AttributeError>) {
+    ) -> (SchemaFieldType, Vec<SchemaFieldParserError>) {
         let (base_min, base_max, base_step) = match base {
             Some(SchemaFieldType::Number(base_def)) => {
                 (base_def.min, base_def.max, base_def.step)
@@ -73,8 +73,10 @@ impl SchemaNumberField {
         };
 
         let mut errors = Vec::new();
-        let mut parser =
-            SchemaFieldParser::new(address, RawSchemaFieldType::Number);
+        let mut parser = SchemaFieldParser::new(
+            address,
+            SchemaFieldType::Number(SchemaNumberField::default()),
+        );
 
         let min = parser.f64(options, "min", base_min, &mut errors);
         let max = parser.f64(options, "max", base_max, &mut errors);

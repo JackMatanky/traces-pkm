@@ -12,8 +12,8 @@
 use std::collections::BTreeMap;
 
 use super::{
-    super::raw::RawSchemaFieldType, SchemaFieldType, address::FieldAddressRef,
-    error::AttributeError, parser::SchemaFieldParser,
+    SchemaFieldType, address::FieldAddressRef, error::SchemaFieldParserError,
+    parser::SchemaFieldParser,
 };
 use crate::field::FieldValue;
 
@@ -84,7 +84,7 @@ impl SchemaFileField {
         address: FieldAddressRef<'_>,
         options: &BTreeMap<String, FieldValue>,
         base: Option<&SchemaFieldType>,
-    ) -> (SchemaFieldType, Vec<AttributeError>) {
+    ) -> (SchemaFieldType, Vec<SchemaFieldParserError>) {
         let (base_folders, base_ext, base_class) = match base {
             Some(SchemaFieldType::File(base_def)) => (
                 base_def.folders.clone(),
@@ -95,8 +95,10 @@ impl SchemaFileField {
         };
 
         let mut errors = Vec::new();
-        let mut parser =
-            SchemaFieldParser::new(address, RawSchemaFieldType::File);
+        let mut parser = SchemaFieldParser::new(
+            address,
+            SchemaFieldType::File(SchemaFileField::default()),
+        );
 
         let folders =
             parser.string_list(options, "folders", base_folders, &mut errors);

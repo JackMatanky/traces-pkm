@@ -3,8 +3,8 @@
 use std::collections::BTreeMap;
 
 use super::{
-    super::raw::RawSchemaFieldType, SchemaFieldType, address::FieldAddressRef,
-    error::AttributeError, parser::SchemaFieldParser,
+    SchemaFieldType, address::FieldAddressRef, error::SchemaFieldParserError,
+    parser::SchemaFieldParser,
 };
 use crate::field::FieldValue;
 
@@ -42,15 +42,17 @@ impl SchemaDateField {
         address: FieldAddressRef<'_>,
         options: &BTreeMap<String, FieldValue>,
         base: Option<&SchemaFieldType>,
-    ) -> (SchemaFieldType, Vec<AttributeError>) {
+    ) -> (SchemaFieldType, Vec<SchemaFieldParserError>) {
         let base_format = match base {
             Some(SchemaFieldType::Date(base_def)) => base_def.format.clone(),
             _ => None,
         };
 
         let mut errors = Vec::new();
-        let mut parser =
-            SchemaFieldParser::new(address, RawSchemaFieldType::Date);
+        let mut parser = SchemaFieldParser::new(
+            address,
+            SchemaFieldType::Date(SchemaDateField::default()),
+        );
 
         let format = parser.string(options, "format", base_format, &mut errors);
 

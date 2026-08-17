@@ -3,8 +3,8 @@
 use std::collections::BTreeMap;
 
 use super::{
-    super::raw::RawSchemaFieldType, SchemaFieldType, address::FieldAddressRef,
-    error::AttributeError, parser::SchemaFieldParser,
+    SchemaFieldType, address::FieldAddressRef, error::SchemaFieldParserError,
+    parser::SchemaFieldParser,
 };
 use crate::field::FieldValue;
 
@@ -43,10 +43,12 @@ impl SchemaSelectField {
         address: FieldAddressRef<'_>,
         options: &BTreeMap<String, FieldValue>,
         base: Option<&SchemaFieldType>,
-    ) -> (SchemaFieldType, Vec<AttributeError>) {
+    ) -> (SchemaFieldType, Vec<SchemaFieldParserError>) {
         let mut errors = Vec::new();
-        let mut parser =
-            SchemaFieldParser::new(address, RawSchemaFieldType::Select);
+        let mut parser = SchemaFieldParser::new(
+            address,
+            SchemaFieldType::Select(SchemaSelectField::default()),
+        );
 
         let values =
             parser.string_list(options, "values", Vec::new(), &mut errors);
