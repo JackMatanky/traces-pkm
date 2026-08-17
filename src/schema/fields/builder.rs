@@ -13,7 +13,6 @@ use super::{
     SchemaDateField, SchemaFieldDef, SchemaFieldType, SchemaFileField,
     SchemaNumberField, SchemaSelectField,
     address::{FieldAddress, FieldAddressRef},
-    parser,
 };
 
 /// Build one [`SchemaFieldDef`] from its raw declaration, resolving `$ref`

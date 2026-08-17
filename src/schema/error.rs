@@ -8,10 +8,7 @@ use std::{fmt, path::PathBuf};
 use thiserror::Error;
 
 use super::{
-    fields::{
-        FieldAddress, SchemaDateField, SchemaFieldType, SchemaFileField,
-        SchemaNumberField, SchemaSelectField,
-    },
+    fields::{FieldAddress, SchemaFieldType},
     name::SchemaName,
 };
 use crate::field::FieldName;

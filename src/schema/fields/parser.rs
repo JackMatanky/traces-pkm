@@ -53,15 +53,16 @@ impl<'a> SchemaFieldParser<'a> {
     ) -> Option<String> {
         self.claimed.insert(key);
         match options.get(key) {
-            Some(value) => match value {
-                FieldValue::String(s) => Some(s.clone()),
-                _ => {
+            Some(value) => {
+                if let FieldValue::String(s) = value {
+                    Some(s.clone())
+                } else {
                     self.errors.push(
                         self.type_mismatch(&self.kind, key, value, "a string"),
                     );
                     None
                 }
-            },
+            }
             None => fallback,
         }
     }
@@ -79,40 +80,29 @@ impl<'a> SchemaFieldParser<'a> {
     ) -> Vec<String> {
         self.claimed.insert(key);
         match options.get(key) {
-            Some(value) => match value {
-                FieldValue::List(items) => {
-                    // Validate first, collect only on success.
+            Some(value) => {
+                if let FieldValue::List(items) = value {
                     if items
                         .iter()
                         .all(|item| matches!(item, FieldValue::String(_)))
                     {
-                        items
+                        return items
                             .iter()
-                            .map(|item| match item {
-                                FieldValue::String(s) => s.clone(),
-                                _ => unreachable!(),
+                            .filter_map(|item| match item {
+                                FieldValue::String(s) => Some(s.clone()),
+                                _ => None,
                             })
-                            .collect()
-                    } else {
-                        self.errors.push(self.type_mismatch(
-                            &self.kind,
-                            key,
-                            value,
-                            "an array of strings",
-                        ));
-                        fallback
+                            .collect();
                     }
                 }
-                _ => {
-                    self.errors.push(self.type_mismatch(
-                        &self.kind,
-                        key,
-                        value,
-                        "an array of strings",
-                    ));
-                    fallback
-                }
-            },
+                self.errors.push(self.type_mismatch(
+                    &self.kind,
+                    key,
+                    value,
+                    "an array of strings",
+                ));
+                fallback
+            }
             None => fallback,
         }
     }
@@ -129,15 +119,16 @@ impl<'a> SchemaFieldParser<'a> {
     ) -> Option<f64> {
         self.claimed.insert(key);
         match options.get(key) {
-            Some(value) => match value.as_f64() {
-                Some(number) => Some(number),
-                None => {
+            Some(value) => {
+                if let Some(number) = value.as_f64() {
+                    Some(number)
+                } else {
                     self.errors.push(
                         self.type_mismatch(&self.kind, key, value, "a number"),
                     );
                     None
                 }
-            },
+            }
             None => fallback,
         }
     }

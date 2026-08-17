@@ -34,12 +34,7 @@ pub(crate) use number::SchemaNumberField;
 mod parser;
 mod select;
 
-use std::collections::BTreeMap;
-
 pub(crate) use select::{SchemaSelectField, SchemaSelectFieldEntry};
-
-use super::error::SchemaFieldParserError;
-use crate::field::FieldValue;
 
 /// A resolved field definition after inheritance and `$ref` application.
 ///
@@ -177,6 +172,10 @@ impl std::fmt::Display for SchemaFieldType {
 impl SchemaFieldType {
     /// Return the inner [`SchemaSelectField`] if this is a
     /// [`Select`][Self::Select] variant.
+    #[expect(
+        dead_code,
+        reason = "typed accessor reserved for future schema consumers"
+    )]
     pub(super) fn as_select(&self) -> Option<&SchemaSelectField> {
         match self {
             Self::Select(inner) => Some(inner),
@@ -186,6 +185,10 @@ impl SchemaFieldType {
 
     /// Return the inner [`SchemaNumberField`] if this is a
     /// [`Number`][Self::Number] variant.
+    #[expect(
+        dead_code,
+        reason = "typed accessor reserved for future schema consumers"
+    )]
     pub(super) fn as_number(&self) -> Option<&SchemaNumberField> {
         match self {
             Self::Number(inner) => Some(inner),
@@ -195,6 +198,10 @@ impl SchemaFieldType {
 
     /// Return the inner [`SchemaDateField`] if this is a [`Date`][Self::Date]
     /// variant.
+    #[expect(
+        dead_code,
+        reason = "typed accessor reserved for future schema consumers"
+    )]
     pub(super) fn as_date(&self) -> Option<&SchemaDateField> {
         match self {
             Self::Date(inner) => Some(inner),
@@ -204,6 +211,10 @@ impl SchemaFieldType {
 
     /// Return the inner [`SchemaFileField`] if this is a [`File`][Self::File]
     /// variant.
+    #[expect(
+        dead_code,
+        reason = "typed accessor reserved for future schema consumers"
+    )]
     pub(super) fn as_file(&self) -> Option<&SchemaFileField> {
         match self {
             Self::File(inner) => Some(inner),
@@ -214,10 +225,10 @@ impl SchemaFieldType {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeSet;
+    use std::collections::{BTreeMap, BTreeSet};
 
-    use super::*;
-    use crate::schema::name::SchemaNameRef;
+    use super::{super::error::SchemaFieldParserError, *};
+    use crate::{field::FieldValue, schema::name::SchemaNameRef};
 
     /// Parses `reference` into a [`FieldAddress`], panicking on an invalid
     /// test fixture.
