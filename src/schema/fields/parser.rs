@@ -145,7 +145,7 @@ impl<'a> SchemaFieldParser<'a> {
         mut self,
         options: &BTreeMap<String, FieldValue>,
     ) -> Vec<SchemaFieldParserError> {
-        let mut errors: Vec<_> = self.errors;
+        let mut errors = std::mem::take(&mut self.errors);
         errors.extend(
             options
                 .keys()
