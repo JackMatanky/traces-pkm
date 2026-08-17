@@ -30,7 +30,7 @@ pub(super) struct SchemaFieldParser<'a> {
 }
 
 impl<'a> SchemaFieldParser<'a> {
-    /// Create a new parser for `address`'s field of type `kind`.
+    /// Creates a parser that tracks claimed keys for the field at `address`.
     pub(super) fn new(
         address: FieldAddressRef<'a>,
         kind: SchemaFieldType,
@@ -43,11 +43,11 @@ impl<'a> SchemaFieldParser<'a> {
         }
     }
 
-    /// Extract a [`String`] value for `key`, falling back to `fallback` when
-    /// `options` does not contain the key.
+    /// Extracts a [`String`] for `key`, using `fallback` when the key is
+    /// absent.
     ///
-    /// Returns `None` when the key is present but its value is not a string.
-    /// A type-mismatch error is pushed to `self.errors`.
+    /// A type-mismatch error is pushed to `self.errors` when the key is present
+    /// but its value is not a string.
     pub(super) fn string(
         &mut self,
         options: &BTreeMap<String, FieldValue>,
@@ -69,11 +69,11 @@ impl<'a> SchemaFieldParser<'a> {
         }
     }
 
-    /// Extract a [`Vec<String>`] value for `key`, falling back to `fallback`
-    /// when `options` does not contain the key.
+    /// Extracts a [`Vec<String>`] for `key`, using `fallback` when the key is
+    /// absent.
     ///
-    /// Returns `fallback` when the key is present but its value is not a list
-    /// of strings. A type-mismatch error is pushed to `self.errors`.
+    /// A type-mismatch error is pushed to `self.errors` when the key is present
+    /// but its value is not an array of strings.
     pub(super) fn string_list(
         &mut self,
         options: &BTreeMap<String, FieldValue>,
@@ -120,11 +120,10 @@ impl<'a> SchemaFieldParser<'a> {
         }
     }
 
-    /// Extract an `f64` value for `key`, falling back to `fallback` when
-    /// `options` does not contain the key.
+    /// Extracts an `f64` for `key`, using `fallback` when the key is absent.
     ///
-    /// Returns `None` when the key is present but its value is not numeric.
-    /// A type-mismatch error is pushed to `self.errors`.
+    /// A type-mismatch error is pushed to `self.errors` when the key is present
+    /// but its value is not numeric.
     pub(super) fn f64(
         &mut self,
         options: &BTreeMap<String, FieldValue>,
@@ -146,10 +145,9 @@ impl<'a> SchemaFieldParser<'a> {
         }
     }
 
-    /// Consume the parser and return accumulated errors.
-    ///
-    /// Returns type-mismatch errors from extraction, plus unknown-key errors
-    /// for every key in `options` not claimed by a typed extractor.
+    /// Collects accumulated errors and emits an
+    /// [`UnknownKey`](SchemaFieldParserError::UnknownKey) for every key in
+    /// `options` that was not claimed by a typed extractor.
     pub(super) fn finish(
         mut self,
         options: &BTreeMap<String, FieldValue>,
@@ -178,7 +176,8 @@ impl<'a> SchemaFieldParser<'a> {
         errors
     }
 
-    /// Build a [`SchemaFieldParserError::TypeMismatch`] for `key`'s `value`.
+    /// Builds a [`TypeMismatch`](SchemaFieldParserError::TypeMismatch) error
+    /// for an unexpected `value`.
     fn type_mismatch(
         &self,
         kind: &SchemaFieldType,
