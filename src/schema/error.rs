@@ -128,11 +128,13 @@ pub(crate) enum SchemaFieldBuilderError {
 ///   with a `type` override.
 /// - [`SchemaWarning`] (degraded) for bare `$ref` overrides.
 pub(crate) enum SchemaFieldParserError {
+    /// An attribute key was not claimed by any typed extractor.
     UnknownKey {
         address: FieldAddress,
         kind: SchemaFieldType,
         key: String,
     },
+    /// An attribute key was claimed, but its value is wrongly shaped.
     TypeMismatch {
         address: FieldAddress,
         kind: SchemaFieldType,
@@ -207,9 +209,6 @@ impl From<SchemaFieldParserError> for SchemaWarning {
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum SchemaWarning {
     /// An `extends` target has no corresponding Schema file.
-    ///
-    /// Resolution skips the missing parent; the Schema's own fields still
-    /// resolve, and other valid parents still contribute.
     MissingExtendsTarget {
         schema: SchemaName,
         target: SchemaName,
@@ -218,15 +217,15 @@ pub(crate) enum SchemaWarning {
     StrayGlobalRequired {
         field: String,
     },
-    /// A bare `$ref` override declares an attribute key that does not belong
-    /// to the resolved base field's type. The key is dropped.
+    /// A bare `$ref` override declares an attribute key not belonging to the
+    /// resolved base field's type. The key is dropped.
     UnknownOverrideKey {
         address: FieldAddress,
         kind: SchemaFieldType,
         key: String,
     },
-    /// A bare `$ref` override declares a valid attribute key with a
-    /// wrongly-shaped value. The key is dropped, falling back to the base.
+    /// A bare `$ref` override declares a valid key with a wrongly-shaped
+    /// value. The key is dropped, falling back to the base.
     OverrideValueTypeMismatch {
         address: FieldAddress,
         kind: SchemaFieldType,

@@ -75,14 +75,20 @@ impl SchemaFieldDef {
     }
 
     /// Return this field's effective [`SchemaFieldType`].
+    ///
+    /// Use [`select_values`] and [`file_filter`] for type-specific accessors.
+    ///
+    /// [`select_values`]: Self::select_values
+    /// [`file_filter`]: Self::file_filter
     #[inline]
     #[must_use]
     pub(super) fn kind(&self) -> &SchemaFieldType {
         &self.kind
     }
 
-    /// Return the static selectable entries for a `select` or `multi` field, or
-    /// `None` for every other field type.
+    /// Return the static selectable entries for a `select` or `multi` field.
+    ///
+    /// Returns `None` for every other field type.
     #[inline]
     #[must_use]
     pub(crate) fn select_values(&self) -> Option<&[SchemaSelectFieldEntry]> {
@@ -96,8 +102,9 @@ impl SchemaFieldDef {
         }
     }
 
-    /// Return the [`file::SchemaFileFieldRef`] for a `file` field, or `None`
-    /// for every other field type.
+    /// Return the borrowed file filter for a `file` field.
+    ///
+    /// Returns `None` for every other field type.
     #[inline]
     #[must_use]
     pub(crate) fn file_filter(&self) -> Option<file::SchemaFileFieldRef<'_>> {
@@ -139,7 +146,7 @@ impl SchemaFieldDef {
 pub(crate) enum SchemaFieldType {
     /// Free-form text input.
     Input,
-    /// One value from a configured list.
+    /// One value from a configured list of [`SchemaSelectFieldEntry`]s.
     Select(SchemaSelectField),
     /// Boolean value.
     Boolean,
@@ -168,7 +175,8 @@ impl std::fmt::Display for SchemaFieldType {
 }
 
 impl SchemaFieldType {
-    /// Return the inner [`SchemaSelectField`] if this is a `Select` variant.
+    /// Return the inner [`SchemaSelectField`] if this is a
+    /// [`Select`][Self::Select] variant.
     pub(super) fn as_select(&self) -> Option<&SchemaSelectField> {
         match self {
             Self::Select(inner) => Some(inner),
@@ -176,7 +184,8 @@ impl SchemaFieldType {
         }
     }
 
-    /// Return the inner [`SchemaNumberField`] if this is a `Number` variant.
+    /// Return the inner [`SchemaNumberField`] if this is a
+    /// [`Number`][Self::Number] variant.
     pub(super) fn as_number(&self) -> Option<&SchemaNumberField> {
         match self {
             Self::Number(inner) => Some(inner),
@@ -184,7 +193,8 @@ impl SchemaFieldType {
         }
     }
 
-    /// Return the inner [`SchemaDateField`] if this is a `Date` variant.
+    /// Return the inner [`SchemaDateField`] if this is a [`Date`][Self::Date]
+    /// variant.
     pub(super) fn as_date(&self) -> Option<&SchemaDateField> {
         match self {
             Self::Date(inner) => Some(inner),
@@ -192,7 +202,8 @@ impl SchemaFieldType {
         }
     }
 
-    /// Return the inner [`SchemaFileField`] if this is a `File` variant.
+    /// Return the inner [`SchemaFileField`] if this is a [`File`][Self::File]
+    /// variant.
     pub(super) fn as_file(&self) -> Option<&SchemaFileField> {
         match self {
             Self::File(inner) => Some(inner),

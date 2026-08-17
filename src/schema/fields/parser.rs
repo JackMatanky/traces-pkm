@@ -144,9 +144,10 @@ impl<'a> SchemaFieldParser<'a> {
         }
     }
 
-    /// Consume the parser and return errors: type-mismatch errors accumulated
-    /// during extraction, plus unknown-key errors for every key in `options`
-    /// that was not claimed by a typed extractor.
+    /// Consume the parser and return accumulated errors.
+    ///
+    /// Returns type-mismatch errors from extraction, plus unknown-key errors
+    /// for every key in `options` not claimed by a typed extractor.
     pub(super) fn finish(
         mut self,
         options: &BTreeMap<String, FieldValue>,
@@ -175,8 +176,7 @@ impl<'a> SchemaFieldParser<'a> {
         errors
     }
 
-    /// Build a [`SchemaFieldParserError::TypeMismatch`] for a wrongly-shaped
-    /// `value`.
+    /// Build a [`SchemaFieldParserError::TypeMismatch`] for `key`'s `value`.
     fn type_mismatch(
         &self,
         kind: &SchemaFieldType,

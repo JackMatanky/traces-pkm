@@ -107,8 +107,9 @@ impl SchemaFieldBuilder<'_> {
         ))
     }
 
-    /// Degrade `required` to `false` for Global Schema fields, which can never
-    /// be required.
+    /// Degrade `required` to `false` for Global Schema fields.
+    ///
+    /// Global Schema fields can never be required; set values are ignored.
     fn apply_global_degrade(
         &mut self,
         address: FieldAddressRef<'_>,
@@ -176,8 +177,10 @@ fn parse_field(
     (field_type, errors)
 }
 
-/// Resolve `$ref` values to their base [`SchemaFieldDef`]s, bounded to the
-/// Global Schema or the referencing Schema's transitive `extends` ancestors.
+/// Resolve `$ref` values to their base [`SchemaFieldDef`]s.
+///
+/// Bounded to the Global Schema or the referencing Schema's transitive
+/// `extends` ancestors.
 pub(crate) struct RefAddressResolver<'a> {
     pub(crate) ancestors: &'a BTreeSet<SchemaName>,
     pub(crate) resolved: &'a BTreeMap<SchemaName, Schema>,

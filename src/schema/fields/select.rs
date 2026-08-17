@@ -60,8 +60,8 @@ impl SchemaSelectField {
 
 /// One selectable entry a `select`/`multi` field resolves to.
 ///
-/// Rendered as a plain string when `label == value` and `extra` is empty,
-/// otherwise as `{value, label, ...extra}`.
+/// Rendered as a plain string when `label` equals `value` and `extra` is
+/// empty, otherwise as `{value, label, ...extra}`.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct SchemaSelectFieldEntry {
     value: FieldValue,
