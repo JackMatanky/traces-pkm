@@ -237,21 +237,17 @@ impl fmt::Display for SchemaWarning {
 
 #[cfg(test)]
 mod tests {
+    use pretty_assertions::assert_eq;
+
+    fn assert_display(error: &impl std::fmt::Display, expected: &str) {
+        assert_eq!(error.to_string(), expected, "unexpected display output");
+    }
+
     mod schema_error {
         use std::path::PathBuf;
 
-        use pretty_assertions::assert_eq;
-
-        use super::super::*;
+        use super::{super::*, assert_display};
         use crate::schema::fields::SchemaDateField;
-
-        fn assert_display(error: &SchemaError, expected: &str) {
-            assert_eq!(
-                error.to_string(),
-                expected,
-                "unexpected SchemaError display"
-            );
-        }
 
         #[test]
         fn read_directory_formats_display_message() {
@@ -287,6 +283,9 @@ mod tests {
                 source: Box::new(source),
             };
 
+            // toml embeds source-context lines in its error display,
+            // making the full suffix brittle across versions. Pin the
+            // prefix that conveys the Schema-level context.
             let message = error.to_string();
             assert!(
                 message.starts_with("failed to parse Schema book: "),
@@ -322,7 +321,7 @@ mod tests {
         }
 
         #[test]
-        fn field_builder_delegates_display_to_the_wrapped_error() {
+        fn parser_unknown_key_displays_through_field_builder_wrap() {
             let inner = SchemaFieldBuilderError::Parser(Box::new(
                 SchemaFieldParserError::UnknownKey {
                     address: FieldAddress::try_from("#book/status")
@@ -366,9 +365,113 @@ mod tests {
         }
     }
 
-    mod schema_field_builder_error {
-        use pretty_assertions::assert_eq;
+    mod schema_field_parser_error {
+        use super::{super::*, assert_display};
+        use crate::schema::fields::{SchemaDateField, SchemaNumberField};
 
+        #[test]
+        fn unknown_key_formats_display_message() {
+            let error = SchemaFieldParserError::UnknownKey {
+                address: FieldAddress::try_from("#book/status")
+                    .expect("valid ref"),
+                kind: SchemaFieldType::Date(SchemaDateField::default()),
+                key: "values".to_owned(),
+            };
+
+            assert_display(
+                &error,
+                "field #book/status of type date has no attribute \"values\"",
+            );
+        }
+
+        #[test]
+        fn type_mismatch_formats_display_message() {
+            let error = SchemaFieldParserError::TypeMismatch {
+                address: FieldAddress::try_from("#book/rating")
+                    .expect("valid ref"),
+                kind: SchemaFieldType::Number(SchemaNumberField::default()),
+                key: "min".to_owned(),
+                value: "\"abc\"".to_owned(),
+                expected: "a number",
+            };
+
+            assert_display(
+                &error,
+                "field #book/rating of type number's \"min\" attribute must \
+                 be a number, got \"abc\"",
+            );
+        }
+    }
+
+    mod conversions {
+        use super::super::*;
+        use crate::schema::fields::{SchemaDateField, SchemaNumberField};
+
+        #[test]
+        fn from_field_builder_error_wraps_in_field_builder_variant() {
+            let inner = SchemaFieldBuilderError::RefOutOfBounds {
+                own: Box::new(
+                    FieldAddress::try_from("#movie/status").expect("valid ref"),
+                ),
+                reference: Box::new(
+                    FieldAddress::try_from("#book/status").expect("valid ref"),
+                ),
+            };
+            let error = SchemaError::from(inner);
+
+            assert!(matches!(error, SchemaError::FieldBuilder(_)));
+        }
+
+        #[test]
+        fn parser_unknown_key_converts_to_unknown_override_key_warning() {
+            let error = SchemaFieldParserError::UnknownKey {
+                address: FieldAddress::try_from("#sci_fi/cover")
+                    .expect("valid ref"),
+                kind: SchemaFieldType::Date(
+                    crate::schema::fields::SchemaDateField::default(),
+                ),
+                key: "values".to_owned(),
+            };
+
+            let warning = SchemaWarning::from(error);
+
+            assert!(matches!(
+                warning,
+                SchemaWarning::UnknownOverrideKey {
+                    ref key,
+                    ..
+                } if key == "values"
+            ));
+        }
+
+        #[test]
+        fn parser_type_mismatch_converts_to_override_value_type_mismatch_warning()
+         {
+            let error = SchemaFieldParserError::TypeMismatch {
+                address: FieldAddress::try_from("#sci_fi/rating")
+                    .expect("valid ref"),
+                kind: SchemaFieldType::Number(
+                    crate::schema::fields::SchemaNumberField::default(),
+                ),
+                key: "min".to_owned(),
+                value: "\"abc\"".to_owned(),
+                expected: "a number",
+            };
+
+            let warning = SchemaWarning::from(error);
+
+            assert!(matches!(
+                warning,
+                SchemaWarning::OverrideValueTypeMismatch {
+                    ref key,
+                    ref expected,
+                    ..
+                } if key == "min" && *expected == "a number"
+            ));
+        }
+    }
+
+    mod schema_field_builder_error {
         use super::super::*;
         use crate::schema::fields::{SchemaDateField, SchemaNumberField};
 
@@ -447,8 +550,6 @@ mod tests {
     }
 
     mod schema_warning {
-        use pretty_assertions::assert_eq;
-
         use super::super::*;
         use crate::schema::fields::{SchemaNumberField, SchemaSelectField};
 
