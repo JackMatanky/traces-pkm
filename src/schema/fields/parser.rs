@@ -5,7 +5,7 @@
 //! validates expected field types, registers accessed keys, and detects
 //! unrecognized or extraneous configuration options.
 
-use std::collections::BTreeSet;
+use std::collections::HashSet;
 
 use indexmap::IndexMap;
 
@@ -28,7 +28,7 @@ use crate::field::FieldValue;
 pub(super) struct SchemaFieldParser<'a> {
     address: FieldAddressRef<'a>,
     kind: SchemaFieldTypeTag,
-    claimed: BTreeSet<&'static str>,
+    claimed: HashSet<&'static str>,
     errors: Vec<SchemaFieldParserError>,
 }
 
@@ -47,7 +47,7 @@ impl<'a> SchemaFieldParser<'a> {
         Self {
             address,
             kind,
-            claimed: BTreeSet::new(),
+            claimed: HashSet::new(),
             errors: Vec::new(),
         }
     }

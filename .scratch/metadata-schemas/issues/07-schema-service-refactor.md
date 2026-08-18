@@ -476,3 +476,11 @@ Full `mise test`/`mise clippy`/`mise fmt` clean (1547/1547 tests). Migration fro
 - **`resolve_all`'s failures list is a named `SchemaFailure` struct**, not the ad hoc `Vec<(SchemaName, SchemaError)>` tuple it started as mid-implementation.
 - **Two pre-existing broken intra-doc links** left over from `SchemaRegistry`'s deletion (`crate::schema::SchemaRegistry::matches` in `src/index/mod.rs`, an unqualified `TemplateEngine` in `template/engine/schema.rs`) were fixed alongside — `cargo doc --document-private-items` now resolves one fewer broken link than the pre-existing baseline, zero new ones introduced.
 - Full `cargo fmt --check` / `cargo clippy --workspace --all-targets --all-features -- -D warnings` / `cargo test --workspace --all-features` clean: 1577 lib + 4 bin + 18 e2e + 5 integration + 14 doctests passed, 0 failed.
+
+### Final verification (Task 8)
+
+- `cargo clippy --workspace --all-targets --all-features -- -D warnings`: clean, zero warnings
+- `mise run test`: 1607/1607 passed, 0 skipped
+- `BTreeMap`/`BTreeSet` audit: `parser.rs` had `BTreeSet<&'static str>` for `claimed` (no ordering needed) — swapped to `HashSet`. `service.rs` and `name.rs` matches are test-only. Zero `BTreeMap`/`BTreeSet` in schema module production code.
+- Typestate enforcement verified: `children_by_name()` only callable on `SchemaGraph<Resolved>`; `next_ready()` only on `SchemaGraph<Building>` — compile-time enforced.
+- Working tree clean, committed as `5732f79`.
