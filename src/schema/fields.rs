@@ -77,8 +77,7 @@ impl SchemaFieldDef {
         Self::new(kind, required, multi)
     }
 
-    /// Return this field's type (named `kind` because `type` is a reserved
-    /// word).
+    /// Return this field's type.
     ///
     /// Use [`select_values`] and [`file_filter`] for type-specific accessors.
     ///
@@ -174,8 +173,8 @@ impl std::fmt::Display for SchemaFieldType {
 }
 
 impl SchemaFieldType {
-    /// Return this type's tag (named `kind` because `type` is a reserved
-    /// word): which of the six variants it is, without its payload.
+    /// Return this type's tag: which of the six variants it is, without its
+    /// payload.
     #[inline]
     #[must_use]
     pub(super) fn kind(&self) -> SchemaFieldTypeTag {
