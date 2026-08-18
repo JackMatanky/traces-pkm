@@ -168,16 +168,16 @@ pub(crate) enum SchemaFieldType {
 
 impl std::fmt::Display for SchemaFieldType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.tag().fmt(f)
+        self.kind().fmt(f)
     }
 }
 
 impl SchemaFieldType {
-    /// Return this field's tag: which of the six kinds it is, without its
+    /// Return this field's kind: which of the six types it is, without its
     /// payload.
     #[inline]
     #[must_use]
-    pub(super) fn tag(&self) -> SchemaFieldTypeTag {
+    pub(super) fn kind(&self) -> SchemaFieldTypeTag {
         match self {
             Self::Input => SchemaFieldTypeTag::Input,
             Self::Select(_) => SchemaFieldTypeTag::Select,

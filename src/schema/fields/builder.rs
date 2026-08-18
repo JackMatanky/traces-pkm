@@ -145,7 +145,7 @@ impl<'a> SchemaFieldBuilder<'a> {
                               caller error"
                 )]
                 let base = base.expect("bare $ref always resolves a base");
-                base.kind().tag()
+                base.kind().kind()
             }
         };
         Ok((base, tag, degrade_on_error))
