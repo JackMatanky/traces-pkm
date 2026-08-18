@@ -27,6 +27,7 @@ use std::{
     marker::PhantomData,
 };
 
+use bit_vec::BitVec;
 use indexmap::{IndexMap, IndexSet};
 
 use super::{
@@ -247,45 +248,62 @@ impl SchemaGraph<'_, Resolved> {
     /// ancestor that reaches a shared descendant still copies that
     /// descendant's already-materialized set into its own, since each entry
     /// in the returned map must be an independently owned set. Total work is
-    /// `O(V + E + Σ|descendants(v)|)` — `O(V + E)` graph traversal plus the
-    /// unavoidable cost of materializing every entry, which degrades to
-    /// `O(V²)` in the worst case (a single deep `extends` chain). Not
-    /// measured to matter in practice given realistic, human-authored
-    /// Schema counts.
+    /// `O(V²/w)` for the bitset DFS (where `w` is the machine word size,
+    /// typically 64) plus `O(V²)` for expanding bitsets back to name sets.
+    /// Degrades to `O(V²)` in the worst case for the expansion phase.
     #[must_use]
     pub(super) fn descendants_by_name(
         &self,
     ) -> IndexMap<SchemaName, IndexSet<SchemaName>> {
+        let index = SchemaIndex::new(self.parents_by_name.keys().copied());
+        let capacity = index.bit_count();
         let children = &self.children_by_name;
-        let mut memo: IndexMap<SchemaName, IndexSet<SchemaName>> =
-            IndexMap::new();
+
+        let mut memo: IndexMap<SchemaName, BitVec> = IndexMap::new();
         for name in children.keys() {
-            Self::descendants_of(name, children, &mut memo);
+            Self::descendants_of(name, children, &index, capacity, &mut memo);
         }
-        // Drops leaf entries (an empty descendant set) rather than keeping
-        // them: callers treat "no entry" and "an empty entry" identically
-        // (`unwrap_or_default()`), and a smaller map is one less allocation
-        // per Schema with no descendants.
-        memo.retain(|_, descendants| !descendants.is_empty());
-        memo
+
+        memo.into_iter()
+            .filter(|(_, bits)| bits.iter().any(|b| b))
+            .map(|(name, bits)| {
+                let set: IndexSet<SchemaName> = bits
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(i, b)| {
+                        b.then(|| index.name_of(i).cloned().unwrap())
+                    })
+                    .collect();
+                (name, set)
+            })
+            .collect()
     }
 
-    /// Return `name`'s transitive descendant set, computing and memoizing it
-    /// (and every descendant's own set, transitively) on first visit.
     fn descendants_of(
         name: &SchemaNameRef<'_>,
         children: &IndexMap<SchemaNameRef<'_>, Vec<SchemaNameRef<'_>>>,
-        memo: &mut IndexMap<SchemaName, IndexSet<SchemaName>>,
-    ) -> IndexSet<SchemaName> {
+        index: &SchemaIndex,
+        capacity: usize,
+        memo: &mut IndexMap<SchemaName, BitVec>,
+    ) -> BitVec {
         let owned = SchemaName::from(*name);
         if let Some(cached) = memo.get(&owned) {
             return cached.clone();
         }
-        let mut result = IndexSet::new();
-        if let Some(direct) = children.get(name) {
+        let mut result = BitVec::from_elem(capacity, false);
+        if let Some(direct) = children.get(name.as_str()) {
             for &child in direct {
-                result.insert(SchemaName::from(child));
-                result.extend(Self::descendants_of(&child, children, memo));
+                if let Some(bit) = index.bit_of(child.as_str()) {
+                    result.set(bit, true);
+                }
+                let child_bits = Self::descendants_of(
+                    &child, children, index, capacity, memo,
+                );
+                for i in 0..capacity {
+                    if child_bits[i] {
+                        result.set(i, true);
+                    }
+                }
             }
         }
         memo.insert(owned, result.clone());
