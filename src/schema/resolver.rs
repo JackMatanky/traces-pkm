@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use indexmap::{IndexMap, IndexSet};
 
 use super::{
-    RawSchema, SchemaName, SchemaNameRef,
+    GLOBAL_SCHEMA_NAME, RawSchema, SchemaName, SchemaNameRef,
     error::{SchemaError, SchemaWarning},
     fields::{FieldAddressRef, RefAddressResolver, SchemaFieldBuilder},
     graph::SchemaGraph,
@@ -43,9 +43,28 @@ impl<'a> SchemaResolver<'a> {
     }
 
     pub(super) fn resolve(self) -> Result<ResolvedSchemas, SchemaError> {
-        let (mut graph, mut warnings) = SchemaGraph::new(self.raw);
+        let mut warnings = Vec::new();
         let mut resolved: IndexMap<SchemaName, Schema> = IndexMap::new();
         let mut failures: Vec<SchemaFailure> = Vec::new();
+
+        // The Global Schema is a $ref target, not an extends target. Strip it
+        // from the raw map so the graph never sees it, then resolve it first
+        // so later $ref lookups find it in `resolved`.
+        let mut raw = self.raw.clone();
+        let global_raw = raw.shift_remove(GLOBAL_SCHEMA_NAME);
+        if let Some(global) = global_raw {
+            let (schema, w) = merge_fields(
+                SchemaNameRef::from(GLOBAL_SCHEMA_NAME),
+                &global,
+                &[],
+                &resolved,
+            )?;
+            warnings.extend(w);
+            resolved.insert(SchemaName::from(GLOBAL_SCHEMA_NAME), schema);
+        }
+
+        let (mut graph, graph_warnings) = SchemaGraph::new(&raw);
+        warnings.extend(graph_warnings);
 
         while let Some(name) = graph.next_ready() {
             #[expect(

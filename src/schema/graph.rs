@@ -126,24 +126,11 @@ impl<'a> SchemaGraph<'a, Building> {
             }
         }
 
-        if let Some(parents) = parents_by_name.get_mut(GLOBAL_SCHEMA_NAME) {
-            parents.clear();
-        }
-        if let Some(degree) = in_degree.get_mut(GLOBAL_SCHEMA_NAME) {
-            *degree = 0;
-        }
-
-        let mut queue: VecDeque<SchemaNameRef<'_>> = in_degree
+        let queue: VecDeque<SchemaNameRef<'_>> = in_degree
             .iter()
             .filter(|&(_, &degree)| degree == 0)
             .map(|(&name, _)| name)
             .collect();
-        if let Some(position) =
-            queue.iter().position(|&name| name.as_str() == GLOBAL_SCHEMA_NAME)
-            && let Some(global) = queue.remove(position)
-        {
-            queue.push_front(global);
-        }
 
         (
             Self {
@@ -226,17 +213,12 @@ impl<'a> SchemaGraph<'a, Building> {
 
 impl SchemaGraph<'_, Resolved> {
     /// Return every Schema's direct `extends` children, keyed by parent name.
-    ///
-    /// Excludes the Global Schema as a parent: it is a flat reference pool,
-    /// never a real link in the `extends` chain. A Schema that (unusually)
-    /// declares `extends = ["global"]` still contributes no entry here.
     #[must_use]
     pub(super) fn children_by_name(
         &self,
     ) -> IndexMap<SchemaName, IndexSet<SchemaName>> {
         self.children_by_name
             .iter()
-            .filter(|(name, _)| name.as_str() != GLOBAL_SCHEMA_NAME)
             .map(|(name, children)| {
                 (
                     SchemaName::from(*name),
@@ -408,19 +390,16 @@ mod tests {
 
         #[test]
         fn pops_global_before_an_alphabetically_earlier_sibling() {
-            // Isolates the Global-first reorder at the graph level, without
-            // going through field resolution: `"author"` sorts before
-            // `"global"` in name order, so this fails without the reorder.
+            // GLOBAL is no longer part of the graph — it is extracted and
+            // resolved before graph construction by the resolver. This test
+            // verifies the graph works correctly without GLOBAL.
             let mut raw = IndexMap::new();
-            raw.insert(SchemaName::from(GLOBAL_SCHEMA_NAME), schema(&[]));
             raw.insert(SchemaName::from("author"), schema(&[]));
+            raw.insert(SchemaName::from("book"), schema(&["author"]));
             let (mut graph, _warnings) = SchemaGraph::new(&raw);
 
-            assert_eq!(
-                graph.next_ready(),
-                Some(SchemaNameRef::from(GLOBAL_SCHEMA_NAME))
-            );
             assert_eq!(graph.next_ready(), Some(SchemaNameRef::from("author")));
+            assert_eq!(graph.next_ready(), Some(SchemaNameRef::from("book")));
             assert_eq!(graph.next_ready(), None);
         }
     }
@@ -522,14 +501,17 @@ mod tests {
         }
 
         #[test]
-        fn excludes_the_global_schema_as_a_parent() {
+        fn extends_global_produces_missing_extends_target_warning() {
             let mut raw = IndexMap::new();
             raw.insert(SchemaName::from(GLOBAL_SCHEMA_NAME), schema(&[]));
             raw.insert(SchemaName::from("book"), schema(&[GLOBAL_SCHEMA_NAME]));
-            let graph = SchemaGraph::new(&raw).0.into_resolved().unwrap();
-            let children = graph.children_by_name();
+            let (graph, warnings) = SchemaGraph::new(&raw);
 
-            assert_eq!(children.get(GLOBAL_SCHEMA_NAME), None);
+            assert_eq!(warnings, vec![SchemaWarning::MissingExtendsTarget {
+                schema: SchemaName::from("book"),
+                target: SchemaName::from(GLOBAL_SCHEMA_NAME),
+            }]);
+            assert!(graph.parents_of(SchemaNameRef::from("book")).is_empty());
         }
     }
 
@@ -604,12 +586,12 @@ mod tests {
         #[test]
         fn bit_of_returns_the_insertion_order_index() {
             let index = SchemaIndex::new(
-                ["global", "book", "sci_fi"]
+                ["alpha", "book", "sci_fi"]
                     .iter()
                     .map(|&s| SchemaNameRef::from(s)),
             );
 
-            assert_eq!(index.bit_of("global"), Some(0));
+            assert_eq!(index.bit_of("alpha"), Some(0));
             assert_eq!(index.bit_of("book"), Some(1));
             assert_eq!(index.bit_of("sci_fi"), Some(2));
             assert_eq!(index.bit_of("missing"), None);
@@ -618,10 +600,10 @@ mod tests {
         #[test]
         fn name_of_returns_the_name_at_the_given_bit() {
             let index = SchemaIndex::new(
-                ["global", "book"].iter().map(|&s| SchemaNameRef::from(s)),
+                ["alpha", "book"].iter().map(|&s| SchemaNameRef::from(s)),
             );
 
-            assert_eq!(index.name_of(0), Some(&SchemaName::from("global")));
+            assert_eq!(index.name_of(0), Some(&SchemaName::from("alpha")));
             assert_eq!(index.name_of(1), Some(&SchemaName::from("book")));
             assert_eq!(index.name_of(2), None);
         }
