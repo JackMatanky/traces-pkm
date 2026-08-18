@@ -51,6 +51,7 @@ pub(super) struct SchemaGraph<'a, State = Building> {
     /// declaration order. Global's list is force-emptied.
     parents_by_name: IndexMap<SchemaNameRef<'a>, Vec<SchemaNameRef<'a>>>,
     /// Reverse adjacency (parent → children) for decrementing in-degrees.
+    /// Includes all parents; GLOBAL excluded at the public accessor, not here.
     children_by_name: IndexMap<SchemaNameRef<'a>, Vec<SchemaNameRef<'a>>>,
     /// Not-yet-resolved parent count; ready at zero.
     in_degree: HashMap<SchemaNameRef<'a>, usize>,
@@ -121,9 +122,7 @@ impl<'a> SchemaGraph<'a, Building> {
         for (&name, parents) in &parents_by_name {
             in_degree.insert(name, parents.len());
             for &parent in parents {
-                if parent.as_str() != GLOBAL_SCHEMA_NAME {
-                    children_by_name.entry(parent).or_default().push(name);
-                }
+                children_by_name.entry(parent).or_default().push(name);
             }
         }
 
@@ -179,10 +178,9 @@ impl<'a> SchemaGraph<'a, Building> {
     /// Record `name` as resolved, releasing any children whose in-degree just
     /// hit zero into the ready queue.
     pub(super) fn mark_resolved(&mut self, name: SchemaNameRef<'_>) {
-        for (&child, parents) in &self.parents_by_name {
-            if !parents.contains(&name) {
-                continue;
-            }
+        for &child in
+            self.children_by_name.get(name.as_str()).into_iter().flatten()
+        {
             if let Some(degree) = self.in_degree.get_mut(&child) {
                 *degree = degree.saturating_sub(1);
                 if *degree == 0 {
@@ -235,8 +233,20 @@ impl SchemaGraph<'_, Resolved> {
     #[must_use]
     pub(super) fn children_by_name(
         &self,
-    ) -> &IndexMap<SchemaNameRef<'_>, Vec<SchemaNameRef<'_>>> {
-        &self.children_by_name
+    ) -> IndexMap<SchemaName, IndexSet<SchemaName>> {
+        self.children_by_name
+            .iter()
+            .filter(|(name, _)| name.as_str() != GLOBAL_SCHEMA_NAME)
+            .map(|(name, children)| {
+                (
+                    SchemaName::from(*name),
+                    children
+                        .iter()
+                        .map(|&child| SchemaName::from(child))
+                        .collect(),
+                )
+            })
+            .collect()
     }
 
     /// Return every Schema's transitive `extends` descendants, keyed by
@@ -322,6 +332,9 @@ impl SchemaGraph<'_, Resolved> {
 }
 
 /// Bitwise OR `src` into `dst` for the first `capacity` bits.
+// ponytail: manual loop because bit-vec 0.6 doesn't impl
+// BitOrAssign<&BitVec> — `|=` requires a clone. Upgrade path:
+// switch to bitvec crate or await bit-vec 0.7+.
 fn merge_bits(dst: &mut BitVec, src: &BitVec, capacity: usize) {
     for i in 0..capacity {
         if src.get(i).unwrap_or(false) {
@@ -366,9 +379,10 @@ impl SchemaIndex {
     }
 
     /// Bit index → schema name.
-    #[expect(
+    #[allow(
         dead_code,
-        reason = "SchemaIndex API, tested in schema_index tests"
+        reason = "SchemaIndex API tested in schema_index; may be used by \
+                  future callers"
     )]
     fn name_of(&self, bit: usize) -> Option<&SchemaName> {
         self.bit_to_name.get(bit)

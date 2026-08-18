@@ -4,13 +4,13 @@
 
 **Goal:** Deepen `schema/graph.rs` from a shallow protocol into a deep, safe, scalable module via IndexMap/IndexSet migration, typestate pattern, field-merge decomposition, and SchemaResolver.
 
-**Architecture:** Four phases, each independently testable and committable. Phase 1 migrates leaf types to IndexMap/IndexSet (no behavioral change). Phase 2 adds typestate to SchemaGraph. Phase 3 extracts resolution logic into `resolver.rs` (field merging + SchemaResolver). Phase 4 migrates SchemaService to IndexMap. Bitset optimization is deferred as future work.
+**Architecture:** Five phases, each independently testable and committable. Phase 1 migrates leaf types to IndexMap/IndexSet (no behavioral change). Phase 2 adds typestate to SchemaGraph. Phase 3 extracts resolution logic into `resolver.rs` (field merging + SchemaResolver). Phase 4 migrates SchemaService to IndexMap. Phase 5 stores `children_by_name` correctly (stop re-inverting) and optimizes `descendants_by_name` with bit-vec bitsets (O(V²/w) DFS).
 
 **Tech Stack:** Rust, indexmap crate (2.14), existing test infrastructure (1607 tests), mise tasks for build/lint/test.
 
 **Working directory:** `.worktrees/07-schema-service-refactor` (branch: `issue-07-schema-service-refactor`)
 
-**Starting state:** All 1607 tests pass. Clippy clean with `-D warnings`.
+**Starting state:** All 1607 tests pass. Clippy clean. `bit-vec` not yet added.
 
 ---
 
@@ -25,7 +25,7 @@
 ### Files to modify
 | File                              | Changes                                             |
 | --------------------------------- | --------------------------------------------------- |
-| `Cargo.toml`                        | Add `indexmap` dependency                              |
+| `Cargo.toml`                        | Add `indexmap` and `bit-vec` dependencies              |
 | `src/schema/mod.rs`                 | Add `mod resolver;` declaration                        |
 | `src/schema/graph.rs`               | IndexMap/IndexSet internals, typestate (Building/Resolved) |
 | `src/schema/service.rs`             | IndexMap/IndexSet throughout, use resolver::SchemaResolver |
@@ -1300,6 +1300,420 @@ git commit -m "chore(schema): final cleanup for graph deepen refactor"
 
 ---
 
+## Task 9: Store children_by_name correctly and stop re-inverting
+
+**Files:**
+- Modify: `src/schema/graph.rs` (new(), Resolved impl block)
+
+`children_by_name` is already a field on `SchemaGraph`, built in `new()` from filtered `parents_by_name`. Two problems: (a) GLOBAL_SCHEMA_NAME is not excluded as a parent during construction, so GLOBAL's children are in the field; (b) the `Resolved::children_by_name()` method ignores the field and re-inverts `parents_by_name` from scratch, adding the GLOBAL filter at query time. Fix: filter GLOBAL during `new()`, return a reference to the field.
+
+- [ ] **Step 1: Filter GLOBAL out of children_by_name during construction**
+
+In `new()`, add a GLOBAL check to the inner loop that builds `children_by_name`. Change lines 120-125 from:
+
+```rust
+for (&name, parents) in &parents_by_name {
+    in_degree.insert(name, parents.len());
+    for &parent in parents {
+        children_by_name.entry(parent).or_default().push(name);
+    }
+}
+```
+
+to:
+
+```rust
+for (&name, parents) in &parents_by_name {
+    in_degree.insert(name, parents.len());
+    for &parent in parents {
+        if parent.as_str() != GLOBAL_SCHEMA_NAME {
+            children_by_name.entry(parent).or_default().push(name);
+        }
+    }
+}
+```
+
+- [ ] **Step 2: Replace Resolved::children_by_name() re-inversion with a field accessor**
+
+Change the `Resolved` impl's `children_by_name` method from:
+
+```rust
+pub(super) fn children_by_name(
+    &self,
+) -> IndexMap<SchemaName, IndexSet<SchemaName>> {
+    let mut children: IndexMap<SchemaName, IndexSet<SchemaName>> =
+        IndexMap::new();
+    for (&name, parents) in &self.parents_by_name {
+        for &parent in parents {
+            if parent.as_str() != GLOBAL_SCHEMA_NAME {
+                children
+                    .entry(SchemaName::from(parent))
+                    .or_default()
+                    .insert(SchemaName::from(name));
+            }
+        }
+    }
+    children
+}
+```
+
+to:
+
+```rust
+pub(super) fn children_by_name(
+    &self,
+) -> &IndexMap<SchemaNameRef<'_>, Vec<SchemaNameRef<'_>>> {
+    &self.children_by_name
+}
+```
+
+- [ ] **Step 3: Update descendants_by_name to use the field directly**
+
+`descendants_by_name` currently calls `self.children_by_name()` (the method). After Step 2, this returns a borrowed reference. Change `let children = self.children_by_name();` to `let children = &self.children_by_name;`. The DFS logic stays the same.
+
+- [ ] **Step 4: Update resolver.rs callers**
+
+The caller in `resolver.rs` (line 943) does:
+```rust
+let children_by_name = graph.children_by_name();
+```
+This now returns `&IndexMap<SchemaNameRef<'_>, Vec<SchemaNameRef<'_>>>` instead of `IndexMap<SchemaName, IndexSet<SchemaName>>`. The downstream code (line 956-962) does `.get(name).into_iter().flatten().filter(...)` — update the types to match the new borrowed form. The key change: iterate `Vec<SchemaNameRef>` instead of `IndexSet<SchemaName>`.
+
+- [ ] **Step 5: Run clippy and tests**
+
+Run: `mise run clippy && mise run test`
+Expected: All tests pass. Clippy clean.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add src/schema/graph.rs src/schema/resolver.rs
+git commit -m "fix(schema): stop re-inverting children_by_name in Resolved state
+
+Filter GLOBAL_SCHEMA_NAME out during construction in new().
+Return a reference to the stored field instead of recomputing."
+```
+
+---
+
+## Task 10: Add bit-vec dependency
+
+**Files:**
+- Modify: `Cargo.toml`
+
+- [ ] **Step 1: Add bit-vec to dependencies**
+
+```toml
+# In Cargo.toml [dependencies] section, add:
+bit-vec = "0.6"
+```
+
+- [ ] **Step 2: Verify it compiles**
+
+Run: `mise run check`
+Expected: Compiles successfully (no code changes yet).
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add Cargo.toml Cargo.lock
+git commit -m "chore: add bit-vec 0.6 dependency"
+```
+
+---
+
+## Task 11: Add SchemaIndex bidirectional mapping
+
+**Files:**
+- Modify: `src/schema/graph.rs` (add `SchemaIndex` struct and tests)
+
+- [ ] **Step 1: Add SchemaIndex to graph.rs**
+
+Add at the bottom of `graph.rs`, before the `#[cfg(test)]` module:
+
+```rust
+/// Bidirectional mapping between schema names and bit positions.
+///
+/// Built once from the schema set at resolve time. Provides O(1) lookup
+/// in both directions: name → bit index and bit index → name.
+struct SchemaIndex {
+    name_to_bit: IndexMap<SchemaName, usize>,
+    bit_to_name: Vec<SchemaName>,
+}
+
+impl SchemaIndex {
+    /// Build the index from schema names in declaration order.
+    fn new<'a>(
+        names: impl Iterator<Item = SchemaNameRef<'a>>,
+    ) -> Self {
+        let mut name_to_bit = IndexMap::new();
+        let mut bit_to_name = Vec::new();
+        for name in names {
+            let bit = bit_to_name.len();
+            bit_to_name.push(SchemaName::from(name));
+            name_to_bit.insert(SchemaName::from(name), bit);
+        }
+        Self { name_to_bit, bit_to_name }
+    }
+
+    /// Number of schemas (bitset capacity).
+    fn bit_count(&self) -> usize {
+        self.bit_to_name.len()
+    }
+
+    /// Schema name → bit index.
+    fn bit_of(&self, name: &str) -> Option<usize> {
+        self.name_to_bit.get(name).copied()
+    }
+
+    /// Bit index → schema name.
+    fn name_of(&self, bit: usize) -> Option<&SchemaName> {
+        self.bit_to_name.get(bit)
+    }
+}
+```
+
+- [ ] **Step 2: Add SchemaIndex tests inside the existing `#[cfg(test)] mod tests` block**
+
+Add a new submodule at the end of the existing test module:
+
+```rust
+mod schema_index {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn bit_of_returns_the_insertion_order_index() {
+        let index = SchemaIndex::new(
+            ["global", "book", "sci_fi"]
+                .iter()
+                .map(|&s| SchemaNameRef::from(s)),
+        );
+
+        assert_eq!(index.bit_of("global"), Some(0));
+        assert_eq!(index.bit_of("book"), Some(1));
+        assert_eq!(index.bit_of("sci_fi"), Some(2));
+        assert_eq!(index.bit_of("missing"), None);
+    }
+
+    #[test]
+    fn name_of_returns_the_name_at_the_given_bit() {
+        let index = SchemaIndex::new(
+            ["global", "book"]
+                .iter()
+                .map(|&s| SchemaNameRef::from(s)),
+        );
+
+        assert_eq!(index.name_of(0), Some(&SchemaName::from("global")));
+        assert_eq!(index.name_of(1), Some(&SchemaName::from("book")));
+        assert_eq!(index.name_of(2), None);
+    }
+
+    #[test]
+    fn bit_count_matches_the_number_of_names() {
+        let index = SchemaIndex::new(
+            ["a", "b", "c"].iter().map(|&s| SchemaNameRef::from(s)),
+        );
+
+        assert_eq!(index.bit_count(), 3);
+    }
+}
+```
+
+- [ ] **Step 3: Run tests for SchemaIndex**
+
+Run: `mise run test -- --lib schema::graph::tests::schema_index`
+Expected: 3 tests pass.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add src/schema/graph.rs
+git commit -m "feat(schema): add SchemaIndex bidirectional name-bit mapping"
+```
+
+---
+
+## Task 12: Rewrite descendants_by_name DFS to use BitVec
+
+**Files:**
+- Modify: `src/schema/graph.rs` (descendants_by_name, descendants_of)
+- Modify: `src/schema/resolver.rs` (hierarchy filtering)
+
+This replaces the `IndexSet<SchemaName>` memo with `BitVec` during the DFS, then expands back to `IndexSet<SchemaName>` at the end. The union operation drops from O(k) hash-set extend to O(n/w) bitwise OR.
+
+- [ ] **Step 1: Add imports to graph.rs**
+
+Add to the existing imports:
+```rust
+use bit_vec::BitVec;
+```
+
+- [ ] **Step 2: Rewrite descendants_by_name to use SchemaIndex and BitVec**
+
+Replace the `descendants_by_name` method and `descendants_of` helper in the `Resolved` impl block. First, add the `bitset` import at the top of graph.rs:
+
+```rust
+use super::bitset::SchemaIndex;
+```
+
+Then replace `descendants_by_name` and `descendants_of`:
+
+```rust
+pub(super) fn descendants_by_name(
+    &self,
+) -> IndexMap<SchemaName, IndexSet<SchemaName>> {
+    let index = SchemaIndex::new(self.parents_by_name.keys().copied());
+    let capacity = index.bit_count();
+    let children = &self.children_by_name;
+
+    let mut memo: IndexMap<SchemaName, BitVec> = IndexMap::new();
+    for name in children.keys() {
+        Self::descendants_of(name, children, &index, capacity, &mut memo);
+    }
+
+    // Expand bitsets back to IndexSet via BFS from children_by_name to
+    // preserve parent-before-child ordering (required by template consumers
+    // that | join(',') the result).
+    let mut result: IndexMap<SchemaName, IndexSet<SchemaName>> =
+        IndexMap::new();
+    for (name, bits) in memo {
+        if !bits.iter().any(|b| b) {
+            continue;
+        }
+        let mut descendants = IndexSet::new();
+        let mut queue: VecDeque<SchemaNameRef<'_>> = VecDeque::new();
+        if let Some(direct) = children.get(name.as_str()) {
+            for &child in direct {
+                queue.push_back(child);
+            }
+        }
+        while let Some(current) = queue.pop_front() {
+            let owned = SchemaName::from(current);
+            if !descendants.insert(owned) {
+                continue;
+            }
+            if let Some(direct) = children.get(current.as_str()) {
+                queue.extend(direct.iter().copied());
+            }
+        }
+        result.insert(name, descendants);
+    }
+    result
+}
+
+fn descendants_of(
+    name: &SchemaName,
+    children: &IndexMap<SchemaNameRef<'_>, Vec<SchemaNameRef<'_>>>,
+    index: &SchemaIndex,
+    capacity: usize,
+    memo: &mut IndexMap<SchemaName, BitVec>,
+) -> BitVec {
+    if let Some(cached) = memo.get(name) {
+        return cached.clone();
+    }
+    let mut result = BitVec::from_elem(capacity, false);
+    if let Some(direct) = children.get(name.as_str()) {
+        for child in direct {
+            if let Some(bit) = index.bit_of(child.as_str()) {
+                result.set(bit, true);
+            }
+            let child_bits =
+                Self::descendants_of(child, children, index, capacity, memo);
+            result |= &child_bits;
+        }
+    }
+    memo.insert(name.clone(), result.clone());
+    result
+}
+```
+
+- [ ] **Step 3: Run tests to verify DFS still produces correct results**
+
+Run: `mise run test -- --lib schema::graph`
+Expected: All graph tests pass. The existing `descendants_by_name` tests (diamond dedup, three-level chain, leaf schema) exercise the new code.
+
+- [ ] **Step 4: Run full test suite**
+
+Run: `mise run test`
+Expected: All tests pass. The resolver.rs caller (line 943-970) gets the same `IndexMap<SchemaName, IndexSet<SchemaName>>` as before.
+
+- [ ] **Step 5: Run clippy**
+
+Run: `mise run clippy`
+Expected: Clean.
+
+- [ ] **Step 6: Update doc comment on descendants_by_name**
+
+Change the complexity note from:
+
+```
+/// Total work is
+/// `O(V + E + Σ|descendants(v)|)` — `O(V + E)` graph traversal plus the
+/// unavoidable cost of materializing every entry, which degrades to
+/// `O(V²)` in the worst case
+```
+
+to:
+
+```
+/// Total work is `O(V²/w)` for the bitset DFS (where `w` is the
+/// machine word size, typically 64) plus `O(V²)` for expanding bitsets
+/// back to name sets. Degrades to `O(V²)` in the worst case for the
+/// expansion phase.
+```
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add src/schema/graph.rs
+git commit -m "perf(schema): use BitVec for descendants DFS computation
+
+Union operations drop from O(k) hash-set extend to O(n/w) bitwise OR.
+Final expansion to IndexSet<SchemaName> unchanged."
+```
+
+---
+
+## Task 13: Verify bitset correctness and clean up
+
+**Files:**
+- Verify all files compile and pass tests
+
+- [ ] **Step 1: Full clippy pass**
+
+Run: `mise run clippy`
+Expected: Clean, no warnings.
+
+- [ ] **Step 2: Full test suite**
+
+Run: `mise run test`
+Expected: All tests pass.
+
+- [ ] **Step 3: Verify no BTreeMap/BTreeSet in schema production code**
+
+Run: `grep -rn "BTreeMap\|BTreeSet" src/schema/ --include="*.rs" | grep -v "#\[cfg(test)\]" | grep -v "mod tests"`
+Expected: No matches in production code.
+
+- [ ] **Step 4: Verify bit-vec is used correctly**
+
+Run: `grep -rn "BitVec" src/schema/`
+Expected: Only in `graph.rs` (the DFS computation).
+
+- [ ] **Step 5: Update issue doc status**
+
+Update `.scratch/metadata-schemas/issues/07-schema-service-refactor.md` to reflect bitset optimization as completed.
+
+- [ ] **Step 6: Final commit (if any cleanup needed)**
+
+```bash
+git add -A
+git commit -m "chore(schema): verify bitset optimization, final cleanup"
+```
+
+---
+
 ## Side Effects and Risk Mitigation
 
 ### Iteration order changes
@@ -1342,8 +1756,13 @@ Task 1 (add indexmap)
                       └─ Task 6 (create resolver.rs)
                            └─ Task 7 (migrate SchemaService)
                                 └─ Task 8 (final verification)
+                                     └─ Task 9 (store children_by_name correctly)
+                                          └─ Task 10 (add bit-vec)
+                                               └─ Task 11 (SchemaIndex)
+                                                    └─ Task 12 (BitVec DFS)
+                                                         └─ Task 13 (verify + clean)
 ```
 
-Tasks 1-4 are foundational (type migrations). Tasks 5-6 are structural (typestate, resolver). Tasks 7-8 are final migration and verification.
+Tasks 1-8 are foundational (type migrations, typestate, resolver). Task 9 is a correctness fix (stop re-inverting). Tasks 10-13 are the bitset optimization.
 
 Each task produces a working, testable state. Tasks can be committed independently.

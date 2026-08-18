@@ -98,8 +98,8 @@ impl<'a> SchemaResolver<'a> {
                 .get(name.as_str())
                 .into_iter()
                 .flatten()
-                .filter(|child| still_descends_from(&SchemaName::from(**child)))
-                .map(|child| SchemaName::from(*child))
+                .filter(|child| still_descends_from(child))
+                .cloned()
                 .collect();
             let descendants = descendants_by_name
                 .get(name)
