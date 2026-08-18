@@ -30,20 +30,20 @@ use crate::{
 
 /// Schema loading, resolution, and hierarchy/class query facade.
 ///
-/// Resolves every Schema once at construction ([`SchemaService::new`]);
-/// every query method reads the already-resolved Schemas directly, with no
-/// separate registry type or re-resolution.
+/// Resolves every Schema once at construction ([`SchemaService::new`]); every
+/// query method reads the already-resolved Schemas directly, with no separate
+/// registry type or re-resolution.
 #[derive(Debug)]
 pub struct SchemaService {
     spec: SchemaConfigSpec,
     schemas: BTreeMap<SchemaName, Arc<Schema>>,
 }
 
-/// One Schema whose own fields failed to build during resolution,
-/// alongside the [`SchemaError`] it failed with.
+/// One Schema whose own fields failed to build during resolution, alongside the
+/// [`SchemaError`] it failed with.
 ///
-/// Excluded from [`SchemaService`]'s resolved Schemas; any Schema naming it
-/// as a parent inherits none of its fields (see
+/// Excluded from [`SchemaService`]'s resolved Schemas; any Schema naming it as
+/// a parent inherits none of its fields (see
 /// [`SchemaWarning::ParentFailedToResolve`]).
 #[derive(Debug)]
 pub(crate) struct SchemaFailure {
@@ -58,12 +58,11 @@ type SchemaConstruction =
     (SchemaService, Vec<SchemaWarning>, Vec<SchemaFailure>);
 
 impl SchemaService {
-    /// Load every Schema TOML file under
-    /// [`SchemaConfigSpec::directory`], linearize the `extends` DAG, and
-    /// resolve every Schema's effective fields, alongside any
-    /// [`SchemaWarning`]s degraded resolution accumulated and any
-    /// per-Schema [`SchemaError`] failures that excluded that Schema from
-    /// the result (see [`ParentFailedToResolve`]: dependents of a failed
+    /// Load every Schema TOML file under [`SchemaConfigSpec::directory`],
+    /// linearize the `extends` DAG, and resolve every Schema's effective
+    /// fields, alongside any [`SchemaWarning`]s degraded resolution accumulated
+    /// and any per-Schema [`SchemaError`] failures that excluded that Schema
+    /// from the result (see [`ParentFailedToResolve`]: dependents of a failed
     /// Schema still resolve, without its fields).
     ///
     /// A missing directory resolves to an empty registry.
@@ -107,8 +106,8 @@ impl SchemaService {
         &self.spec
     }
 
-    /// Return a reference to the named Schema, or `None` if no Schema by
-    /// that name resolved.
+    /// Return a reference to the named Schema, or `None` if no Schema by that
+    /// name resolved.
     #[inline]
     #[must_use]
     pub(crate) fn get(&self, name: &str) -> Option<&Arc<Schema>> {
@@ -134,8 +133,8 @@ impl SchemaService {
 
     /// Return every Schema that directly or transitively extends `name`.
     ///
-    /// Excludes `name` itself. Empty, not an error, if `name` has no Schema
-    /// or nothing extends it.
+    /// Excludes `name` itself. Empty, not an error, if `name` has no Schema or
+    /// nothing extends it.
     #[must_use]
     pub(crate) fn descendants(&self, name: &str) -> Vec<Arc<Schema>> {
         let Some(schema) = self.schemas.get(name) else {
@@ -149,8 +148,8 @@ impl SchemaService {
             .collect()
     }
 
-    /// Return the set of Schema names matching `classes`, including
-    /// transitive descendants.
+    /// Return the set of Schema names matching `classes`, including transitive
+    /// descendants.
     ///
     /// A class with no corresponding Schema still matches itself. Warns once
     /// per unknown class name.
@@ -312,8 +311,8 @@ fn read_raw_schemas(
     Ok(schemas)
 }
 
-/// Return `true` if `error` reports that the walk's root itself does not
-/// exist, so [`read_raw_schemas`] can degrade to an empty registry.
+/// Return `true` if `error` reports that the walk's root itself does not exist,
+/// so [`read_raw_schemas`] can degrade to an empty registry.
 fn is_missing_root(error: &walkdir::Error) -> bool {
     error.depth() == 0
         && error
@@ -359,10 +358,10 @@ type ResolveOutput =
 /// [`SchemaGraph::children_by_name`]/[`SchemaGraph::descendants_by_name`].
 ///
 /// A Schema whose own fields fail to build (any [`SchemaError`] that
-/// [`SchemaFieldBuilder::build`] returns, or [`AmbiguousFieldName`] if two
-/// of its effective fields share a [`FieldKey`] canonical form) is excluded
-/// from the returned map and reported in the returned failures list instead
-/// of aborting resolution of every other Schema.
+/// [`SchemaFieldBuilder::build`] returns, or [`AmbiguousFieldName`] if two of
+/// its effective fields share a [`FieldKey`] canonical form) is excluded from
+/// the returned map and reported in the returned failures list instead of
+/// aborting resolution of every other Schema.
 ///
 /// # Errors
 ///
@@ -414,13 +413,12 @@ fn resolve_all(
 
     // `graph.children_by_name`/`descendants_by_name` walk the raw `extends`
     // topology, which does not know a link broke: a Schema downstream of a
-    // `ParentFailedToResolve` break (see `build_schema`) is still linked
-    // there, even though it no longer semantically `is_a` that ancestor.
-    // Each resolved Schema's own `ancestors()` is the authoritative,
-    // failure-aware signal, so filter the raw candidate sets against it
-    // before publishing them — a raw-graph candidate is kept only if it
-    // actually resolved *and* its own ancestors include the schema being
-    // populated.
+    // `ParentFailedToResolve` break (see `build_schema`) is still linked there,
+    // even though it no longer semantically `is_a` that ancestor. Each resolved
+    // Schema's own `ancestors()` is the authoritative, failure-aware signal, so
+    // filter the raw candidate sets against it before publishing them — a
+    // raw-graph candidate is kept only if it actually resolved *and* its own
+    // ancestors include the schema being populated.
     let children_by_name = graph.children_by_name();
     let descendants_by_name = graph.descendants_by_name();
     let resolved_ancestors: BTreeMap<SchemaName, BTreeSet<SchemaName>> =
@@ -460,8 +458,8 @@ fn resolve_all(
 /// Merges `parents`' fields first-listed-wins, applies `raw.excludes`, then
 /// overrides the result with `raw`'s own (`$ref`-resolved) fields.
 ///
-/// `parents` must already be resolved in `resolved`: [`resolve_all`]
-/// guarantees this by calling in Kahn topological order.
+/// `parents` must already be resolved in `resolved`: [`resolve_all`] guarantees
+/// this by calling in Kahn topological order.
 ///
 /// # Arguments
 ///
@@ -534,13 +532,12 @@ fn build_schema(
 /// ambiguous field identities would make later note-vs-schema field matching
 /// and unknown-field suggestions unreliable.
 ///
-/// [`FieldKey`]: crate::field::FieldKey
-///
 /// # Errors
 ///
 /// - [`AmbiguousFieldName`] naming the first two (name-sorted) colliding field
 ///   names.
 ///
+/// [`FieldKey`]: crate::field::FieldKey
 /// [`AmbiguousFieldName`]: SchemaError::AmbiguousFieldName
 fn reject_ambiguous_canonical_names(
     name: SchemaNameRef<'_>,
