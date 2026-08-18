@@ -12,16 +12,19 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::{
-    super::{
+    SchemaFieldDef, SchemaFieldType, SchemaFieldTypeTag,
+    address::{FieldAddress, FieldAddressRef},
+    error::{SchemaFieldBuilderError, SchemaFieldParserError},
+};
+use crate::{
+    field::FieldValue,
+    schema::{
         GLOBAL_SCHEMA_NAME,
         error::{SchemaError, SchemaWarning},
         model::Schema,
         name::SchemaName,
         raw::{RawFieldSource, RawSchemaFieldDef},
     },
-    SchemaFieldDef, SchemaFieldType, SchemaFieldTypeTag,
-    address::{FieldAddress, FieldAddressRef},
-    error::SchemaFieldBuilderError,
 };
 
 /// Base field, resolved tag, and degrade flag from
@@ -163,9 +166,9 @@ impl<'a> SchemaFieldBuilder<'a> {
     fn parse_options(
         address: FieldAddressRef<'_>,
         kind: SchemaFieldTypeTag,
-        options: &std::collections::BTreeMap<String, crate::field::FieldValue>,
+        options: &BTreeMap<String, FieldValue>,
         base: Option<&SchemaFieldType>,
-    ) -> (SchemaFieldType, Vec<super::error::SchemaFieldParserError>) {
+    ) -> (SchemaFieldType, Vec<SchemaFieldParserError>) {
         use super::{date, file, number, parser::SchemaFieldParser, select};
         let mut parser = SchemaFieldParser::new(address, kind);
         let field_type = match kind {
@@ -338,7 +341,7 @@ mod tests {
         source: RawFieldSource,
         required: Option<bool>,
         multi: Option<bool>,
-        options: BTreeMap<String, crate::field::FieldValue>,
+        options: BTreeMap<String, FieldValue>,
     ) -> RawSchemaFieldDef {
         RawSchemaFieldDef {
             source,
@@ -523,7 +526,7 @@ mod tests {
             let mut options = BTreeMap::new();
             options.insert(
                 "unknown_key".to_owned(),
-                crate::field::FieldValue::String("value".to_owned()),
+                FieldValue::String("value".to_owned()),
             );
             let raw = raw_field(
                 RawFieldSource::Direct(RawSchemaFieldType::Input),
@@ -552,7 +555,7 @@ mod tests {
             let mut options = BTreeMap::new();
             options.insert(
                 "unknown_key".to_owned(),
-                crate::field::FieldValue::String("value".to_owned()),
+                FieldValue::String("value".to_owned()),
             );
             let raw = raw_field(
                 RawFieldSource::Ref {
