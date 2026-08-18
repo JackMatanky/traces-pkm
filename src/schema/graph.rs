@@ -11,18 +11,21 @@
 //! # Driving resolution
 //!
 //! Build with [`SchemaGraph::new`], then loop [`next_ready`]/[`parents_of`]/
-//! [`mark_resolved`]. After the loop, [`cyclic_remainder`] reports unresolved
-//! Schemas, and [`children_by_name`]/[`descendants_by_name`] give the bulk
-//! hierarchy sets.
+//! [`mark_resolved`] in [`Building`] state. Call [`into_resolved`] to check
+//! for cycles and transition to [`Resolved`], where [`children_by_name`]/
+//! [`descendants_by_name`] give the bulk hierarchy sets.
 //!
 //! [`next_ready`]: SchemaGraph::next_ready
 //! [`parents_of`]: SchemaGraph::parents_of
 //! [`mark_resolved`]: SchemaGraph::mark_resolved
-//! [`cyclic_remainder`]: SchemaGraph::cyclic_remainder
+//! [`into_resolved`]: SchemaGraph::into_resolved
 //! [`children_by_name`]: SchemaGraph::children_by_name
 //! [`descendants_by_name`]: SchemaGraph::descendants_by_name
 
-use std::collections::{HashMap, VecDeque};
+use std::{
+    collections::{HashMap, VecDeque},
+    marker::PhantomData,
+};
 
 use indexmap::{IndexMap, IndexSet};
 
@@ -31,8 +34,18 @@ use super::{
     error::SchemaWarning,
 };
 
+/// Building state: resolution in progress, queue and in_degree active.
+pub(super) struct Building;
+
+/// Resolved state: DAG is acyclic, hierarchy queries available.
+pub(super) struct Resolved;
+
 /// Kahn's-algorithm state for linearizing the `extends` DAG.
-pub(super) struct SchemaGraph<'a> {
+///
+/// `State` enforces valid transitions at compile time:
+/// - [`Building`]: call `next_ready`/`parents_of`/`mark_resolved` in a loop
+/// - [`Resolved`]: call `children_by_name`/`descendants_by_name`
+pub(super) struct SchemaGraph<'a, State = Building> {
     /// Each Schema's `extends` parents, filtered to present targets, in
     /// declaration order. Global's list is force-emptied.
     parents_by_name: IndexMap<SchemaNameRef<'a>, Vec<SchemaNameRef<'a>>>,
@@ -44,9 +57,24 @@ pub(super) struct SchemaGraph<'a> {
     queue: VecDeque<SchemaNameRef<'a>>,
     /// Schemas already popped by [`next_ready`](Self::next_ready).
     visited: IndexSet<SchemaNameRef<'a>>,
+    _marker: PhantomData<State>,
 }
 
-impl<'a> SchemaGraph<'a> {
+impl<'a, State> SchemaGraph<'a, State> {
+    /// Moves the graph into the next lifecycle state.
+    fn transition_to<NextState>(self) -> SchemaGraph<'a, NextState> {
+        SchemaGraph {
+            parents_by_name: self.parents_by_name,
+            children_by_name: self.children_by_name,
+            in_degree: self.in_degree,
+            queue: self.queue,
+            visited: self.visited,
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<'a> SchemaGraph<'a, Building> {
     /// Build the `extends` adjacency and seed the ready queue.
     ///
     /// Missing `extends` targets emit [`SchemaWarning::MissingExtendsTarget`].
@@ -122,6 +150,7 @@ impl<'a> SchemaGraph<'a> {
                 in_degree,
                 queue,
                 visited: IndexSet::new(),
+                _marker: PhantomData,
             },
             warnings,
         )
@@ -160,16 +189,13 @@ impl<'a> SchemaGraph<'a> {
     }
 
     /// Return every Schema name that never reached in-degree zero (a cycle
-    /// member), or `None` if every Schema in `raw_schemas` was visited.
-    pub(super) fn cyclic_remainder(
-        &self,
-        raw_schemas: &IndexMap<SchemaName, RawSchema>,
-    ) -> Option<Vec<SchemaName>> {
-        if self.visited.len() == raw_schemas.len() {
+    /// member), or `None` if every Schema was visited.
+    fn cyclic_remainder(&self) -> Option<Vec<SchemaName>> {
+        if self.visited.len() == self.parents_by_name.len() {
             return None;
         }
         Some(
-            raw_schemas
+            self.parents_by_name
                 .keys()
                 .filter(|name| !self.visited.contains(name.as_str()))
                 .cloned()
@@ -177,15 +203,24 @@ impl<'a> SchemaGraph<'a> {
         )
     }
 
+    /// Consume the building graph, returning a resolved graph if the DAG is
+    /// acyclic, or the cyclic schemas if a cycle exists.
+    pub(super) fn into_resolved(
+        self,
+    ) -> Result<SchemaGraph<'a, Resolved>, Vec<SchemaName>> {
+        if let Some(schemas) = self.cyclic_remainder() {
+            return Err(schemas);
+        }
+        Ok(self.transition_to())
+    }
+}
+
+impl<'a> SchemaGraph<'a, Resolved> {
     /// Return every Schema's direct `extends` children, keyed by parent name.
     ///
     /// Excludes the Global Schema as a parent: it is a flat reference pool,
     /// never a real link in the `extends` chain. A Schema that (unusually)
     /// declares `extends = ["global"]` still contributes no entry here.
-    ///
-    /// Only callable once the DAG is known acyclic (after
-    /// [`cyclic_remainder`](Self::cyclic_remainder) returns `None`):
-    /// the underlying adjacency is otherwise still mid-resolution.
     #[must_use]
     pub(super) fn children_by_name(
         &self,
@@ -219,9 +254,6 @@ impl<'a> SchemaGraph<'a> {
     /// `O(V²)` in the worst case (a single deep `extends` chain). Not
     /// measured to matter in practice given realistic, human-authored
     /// Schema counts.
-    ///
-    /// Only callable once the DAG is known acyclic, same as
-    /// [`children_by_name`](Self::children_by_name).
     #[must_use]
     pub(super) fn descendants_by_name(
         &self,
@@ -337,7 +369,8 @@ mod tests {
             raw.insert(SchemaName::from("book"), schema(&["thing"]));
             raw.insert(SchemaName::from("sci_fi"), schema(&["book"]));
             raw.insert(SchemaName::from("memoir"), schema(&["book"]));
-            let children = SchemaGraph::new(&raw).0.children_by_name();
+            let graph = SchemaGraph::new(&raw).0.into_resolved().unwrap();
+            let children = graph.children_by_name();
 
             assert_eq!(children.get("thing"), Some(&set(&["book"])));
             assert_eq!(children.get("book"), Some(&set(&["memoir", "sci_fi"])));
@@ -349,7 +382,7 @@ mod tests {
         fn a_multi_parent_schema_appears_in_every_parents_direct_children() {
             // thing <- {book, film} <- adaptation (both parents): the
             // genuine diamond shape, distinct from the branching-tree fixture
-            // above — a node with two parents converging, not one parent
+            // above -- a node with two parents converging, not one parent
             // fanning out to two children.
             let mut raw = IndexMap::new();
             raw.insert(SchemaName::from("thing"), schema(&[]));
@@ -359,7 +392,8 @@ mod tests {
                 SchemaName::from("adaptation"),
                 schema(&["book", "film"]),
             );
-            let children = SchemaGraph::new(&raw).0.children_by_name();
+            let graph = SchemaGraph::new(&raw).0.into_resolved().unwrap();
+            let children = graph.children_by_name();
 
             assert_eq!(children.get("book"), Some(&set(&["adaptation"])));
             assert_eq!(children.get("film"), Some(&set(&["adaptation"])));
@@ -371,7 +405,8 @@ mod tests {
             let mut raw = IndexMap::new();
             raw.insert(SchemaName::from(GLOBAL_SCHEMA_NAME), schema(&[]));
             raw.insert(SchemaName::from("book"), schema(&[GLOBAL_SCHEMA_NAME]));
-            let children = SchemaGraph::new(&raw).0.children_by_name();
+            let graph = SchemaGraph::new(&raw).0.into_resolved().unwrap();
+            let children = graph.children_by_name();
 
             assert_eq!(children.get(GLOBAL_SCHEMA_NAME), None);
         }
@@ -397,7 +432,8 @@ mod tests {
                 SchemaName::from("adaptation"),
                 schema(&["book", "film"]),
             );
-            let descendants = SchemaGraph::new(&raw).0.descendants_by_name();
+            let graph = SchemaGraph::new(&raw).0.into_resolved().unwrap();
+            let descendants = graph.descendants_by_name();
 
             assert_eq!(
                 descendants.get("thing"),
@@ -412,7 +448,8 @@ mod tests {
             raw.insert(SchemaName::from("book"), schema(&["thing"]));
             raw.insert(SchemaName::from("sci_fi"), schema(&["book"]));
             raw.insert(SchemaName::from("space_opera"), schema(&["sci_fi"]));
-            let descendants = SchemaGraph::new(&raw).0.descendants_by_name();
+            let graph = SchemaGraph::new(&raw).0.into_resolved().unwrap();
+            let descendants = graph.descendants_by_name();
 
             assert_eq!(
                 descendants.get("thing"),
@@ -431,7 +468,8 @@ mod tests {
             let mut raw = IndexMap::new();
             raw.insert(SchemaName::from("book"), schema(&[]));
             raw.insert(SchemaName::from("sci_fi"), schema(&["book"]));
-            let descendants = SchemaGraph::new(&raw).0.descendants_by_name();
+            let graph = SchemaGraph::new(&raw).0.into_resolved().unwrap();
+            let descendants = graph.descendants_by_name();
 
             assert_eq!(descendants.get("sci_fi"), None);
         }

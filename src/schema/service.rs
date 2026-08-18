@@ -406,11 +406,10 @@ fn resolve_all(
         graph.mark_resolved(name);
     }
 
-    if let Some(schemas) = graph.cyclic_remainder(raw_schemas) {
-        return Err(SchemaError::Cycle {
+    let graph =
+        graph.into_resolved().map_err(|schemas| SchemaError::Cycle {
             schemas,
-        });
-    }
+        })?;
 
     // `graph.children_by_name`/`descendants_by_name` walk the raw `extends`
     // topology, which does not know a link broke: a Schema downstream of a
