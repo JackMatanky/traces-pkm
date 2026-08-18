@@ -1,8 +1,7 @@
 //! Query source selection, field resolution, and result transformation.
 //!
-//! This module powers page-level results from
-//! [`crate::index::FileIndex::query`] and task-level rows from
-//! [`crate::index::FileIndex::query_tasks`]. It provides a pipeline that
+//! This module powers page-level results from [`FileIndex::query`] and
+//! task-level rows from [`FileIndex::query_tasks`]. It provides a pipeline that
 //! selects Notes via [`QuerySource`], pairs each matching Note with its
 //! [`FileRecord`] as an [`IndexRecord`], and applies chained transformations
 //! through [`QueryOutcome`].
@@ -70,7 +69,7 @@
 //! ## Logical Operators
 //!
 //! | Operator | Aliases         | Associativity |
-//! |----------|-----------------|---------------|
+//! | -------- | --------------- | ------------- |
 //! | `NOT`    | `not`, `!`      | unary prefix  |
 //! | `AND`    | `and`, `&&`     | left          |
 //! | `OR`     | `or`, `\|\|`    | left          |
@@ -182,6 +181,8 @@
 //!
 //! [`FieldValue`]: crate::note::FieldValue
 //! [`FileRecord`]: crate::index::FileRecord
+//! [`FileIndex::query`]: crate::index::FileIndex::query
+//! [`FileIndex::query_tasks`]: crate::index::FileIndex::query_tasks
 //! [`Note`]: crate::note::Note
 
 mod choice;
@@ -384,13 +385,13 @@ impl QueryOutcome {
     ///
     /// # Syntax Specification
     ///
-    /// | Element | Syntax Example | Description |
-    /// |:-|:-|:-|
-    /// | **Comparisons** | `rating > 7` | Compares fields using `==`, `!=`, `>=`, `<=`, `>`, `<`. |
-    /// | **Functions** | `contains(tags, "#book")` | Checks list/tag membership or substring containment. |
-    /// | **Logical Operators** | `a and b or not c` | Standard logic (`and`/`&&`, `or`/`||`, `not`/`!`). |
-    /// | **Grouping** | `(rating > 5) and ok` | Overrides operator precedence. |
-    /// | **Literals** | `"text"`, `123`, `true`, `null` | Quoted strings, numbers, booleans, and nulls. |
+    /// | Element               | Syntax Example                  | Description                                             |
+    /// | :-------------------- | :------------------------------ | :------------------------------------------------------ |
+    /// | **Comparisons**       | `rating > 7`                    | Compares fields using `==`, `!=`, `>=`, `<=`, `>`, `<`. |
+    /// | **Functions**         | `contains(tags, "#book")`       | Checks list/tag membership or substring containment.    |
+    /// | **Logical Operators** | `a and b or not c`              | Standard logic (`and`/`&&`, `or`/`|`, `not`/`!`).       |
+    /// | **Grouping**          | `(rating > 5) and ok`           | Overrides operator precedence.                          |
+    /// | **Literals**          | `"text"`, `123`, `true`, `null` | Quoted strings, numbers, booleans, and nulls.           |
     ///
     /// # Matching Rules
     ///
