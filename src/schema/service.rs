@@ -277,14 +277,14 @@ pub(crate) fn resolve_sources(
 /// [`Parse`]: SchemaError::Parse
 fn read_raw_schemas(
     dir: &Path,
-) -> Result<BTreeMap<SchemaName, RawSchema>, SchemaError> {
+) -> Result<IndexMap<SchemaName, RawSchema>, SchemaError> {
     let entries = WalkDir::new(dir).min_depth(1).max_depth(1);
-    let mut schemas = BTreeMap::new();
+    let mut schemas = IndexMap::new();
     for entry in entries {
         let entry = match entry {
             Ok(entry) => entry,
             Err(source) if is_missing_root(&source) => {
-                return Ok(BTreeMap::new());
+                return Ok(IndexMap::new());
             }
             Err(source) => return Err(walk_error(dir, source)),
         };
@@ -372,7 +372,7 @@ type ResolveOutput =
 /// [`AmbiguousFieldName`]: SchemaError::AmbiguousFieldName
 /// [`FieldKey`]: crate::field::FieldKey
 fn resolve_all(
-    raw_schemas: &BTreeMap<SchemaName, RawSchema>,
+    raw_schemas: &IndexMap<SchemaName, RawSchema>,
 ) -> Result<ResolveOutput, SchemaError> {
     let (mut graph, mut warnings) = SchemaGraph::new(raw_schemas);
     let mut resolved: IndexMap<SchemaName, Schema> = IndexMap::new();
@@ -1180,7 +1180,7 @@ mod tests {
 
         #[test]
         fn resolves_a_schema_with_no_extends() {
-            let mut raw = BTreeMap::new();
+            let mut raw = IndexMap::new();
             raw.insert(
                 SchemaName::from("book"),
                 schema(&[], &[("status", select_field(&["draft", "done"]))]),
@@ -1205,7 +1205,7 @@ mod tests {
 
         #[test]
         fn own_fields_override_parent_fields() {
-            let mut raw = BTreeMap::new();
+            let mut raw = IndexMap::new();
             raw.insert(
                 SchemaName::from("book"),
                 schema(&[], &[("status", select_field(&["draft", "done"]))]),
@@ -1234,7 +1234,7 @@ mod tests {
 
         #[test]
         fn first_listed_parent_wins_a_shared_field() {
-            let mut raw = BTreeMap::new();
+            let mut raw = IndexMap::new();
             raw.insert(
                 SchemaName::from("a"),
                 schema(&[], &[("shared", select_field(&["from-a"]))]),
@@ -1261,7 +1261,7 @@ mod tests {
 
         #[test]
         fn excludes_drops_an_inherited_field_by_name() {
-            let mut raw = BTreeMap::new();
+            let mut raw = IndexMap::new();
             raw.insert(
                 SchemaName::from("book"),
                 schema(&[], &[
@@ -1289,7 +1289,7 @@ mod tests {
             // `excludes` uses exact `FieldName` identity, not canonical
             // `FieldKey` matching: `excludes = ["Status"]` must not remove an
             // inherited `status`.
-            let mut raw = BTreeMap::new();
+            let mut raw = IndexMap::new();
             raw.insert(
                 SchemaName::from("book"),
                 schema(&[], &[("status", select_field(&["draft"]))]),
@@ -1310,7 +1310,7 @@ mod tests {
             // `excludes` removes the *inherited* field before the Schema's
             // own fields are merged in, so a Schema that both excludes and
             // redeclares the same field name keeps its own redeclaration.
-            let mut raw = BTreeMap::new();
+            let mut raw = IndexMap::new();
             raw.insert(
                 SchemaName::from("book"),
                 schema(&[], &[("status", select_field(&["draft"]))]),
@@ -1332,7 +1332,7 @@ mod tests {
 
         #[test]
         fn a_missing_extends_target_degrades_with_a_warning() {
-            let mut raw = BTreeMap::new();
+            let mut raw = IndexMap::new();
             raw.insert(
                 SchemaName::from("sci_fi"),
                 schema(&["ghost"], &[("title", input_field())]),
@@ -1354,7 +1354,7 @@ mod tests {
         #[test]
         fn a_schema_with_a_malformed_field_does_not_block_an_unrelated_sibling()
         {
-            let mut raw = BTreeMap::new();
+            let mut raw = IndexMap::new();
             raw.insert(
                 SchemaName::from("book"),
                 schema(&[], &[("status", select_field(&["draft"]))]),
@@ -1379,7 +1379,7 @@ mod tests {
 
         #[test]
         fn a_schema_extending_a_failed_parent_still_resolves_its_own_fields() {
-            let mut raw = BTreeMap::new();
+            let mut raw = IndexMap::new();
             raw.insert(
                 SchemaName::from("broken"),
                 schema(&[], &[
@@ -1416,7 +1416,7 @@ mod tests {
             // `.children()`/`.descendants()`, which read them) must not
             // list `sci_fi` either, even though the raw `extends` topology
             // still structurally links book -> broken -> sci_fi.
-            let mut raw = BTreeMap::new();
+            let mut raw = IndexMap::new();
             raw.insert(
                 SchemaName::from("book"),
                 schema(&[], &[("status", select_field(&["draft"]))]),
@@ -1460,7 +1460,7 @@ mod tests {
 
         #[test]
         fn a_cycle_is_a_hard_error() {
-            let mut raw = BTreeMap::new();
+            let mut raw = IndexMap::new();
             raw.insert(SchemaName::from("a"), schema(&["b"], &[]));
             raw.insert(SchemaName::from("b"), schema(&["a"], &[]));
 
@@ -1477,7 +1477,7 @@ mod tests {
 
         #[test]
         fn is_a_matches_transitively_through_extends() {
-            let mut raw = BTreeMap::new();
+            let mut raw = IndexMap::new();
             raw.insert(SchemaName::from("thing"), schema(&[], &[]));
             raw.insert(SchemaName::from("book"), schema(&["thing"], &[]));
             raw.insert(SchemaName::from("sci_fi"), schema(&["book"], &[]));
@@ -1493,7 +1493,7 @@ mod tests {
 
         #[test]
         fn a_ref_to_an_ancestor_resolves_with_local_overrides() {
-            let mut raw = BTreeMap::new();
+            let mut raw = IndexMap::new();
             raw.insert(
                 SchemaName::from("book"),
                 schema(&[], &[("status", select_field(&["draft", "done"]))]),
@@ -1523,7 +1523,7 @@ mod tests {
 
         #[test]
         fn a_ref_to_global_resolves_with_local_overrides() {
-            let mut raw = BTreeMap::new();
+            let mut raw = IndexMap::new();
             raw.insert(
                 SchemaName::from(GLOBAL_SCHEMA_NAME),
                 schema(&[], &[("priority", select_field(&["low", "high"]))]),
@@ -1553,7 +1553,7 @@ mod tests {
 
         #[test]
         fn a_stray_required_on_global_is_ignored_with_a_warning() {
-            let mut raw = BTreeMap::new();
+            let mut raw = IndexMap::new();
             raw.insert(
                 SchemaName::from(GLOBAL_SCHEMA_NAME),
                 schema(&[], &[("priority", RawSchemaFieldDef {
@@ -1577,7 +1577,7 @@ mod tests {
 
         #[test]
         fn a_ref_to_an_unknown_field_degrades_to_a_failure() {
-            let mut raw = BTreeMap::new();
+            let mut raw = IndexMap::new();
             raw.insert(SchemaName::from("book"), schema(&[], &[]));
             raw.insert(
                 SchemaName::from("sci_fi"),
@@ -1606,7 +1606,7 @@ mod tests {
             // one to the other is out of bounds even though both happen to
             // resolve in the same Kahn tier (spec: "$ref is deliberately
             // bounded to global + ancestors").
-            let mut raw = BTreeMap::new();
+            let mut raw = IndexMap::new();
             raw.insert(
                 SchemaName::from("book"),
                 schema(&[], &[("status", select_field(&["draft"]))]),
@@ -1632,7 +1632,7 @@ mod tests {
         #[test]
         fn defining_both_status_and_status_cased_differently_degrades_to_a_failure()
          {
-            let mut raw = BTreeMap::new();
+            let mut raw = IndexMap::new();
             raw.insert(
                 SchemaName::from("book"),
                 schema(&[], &[
@@ -1650,7 +1650,7 @@ mod tests {
         #[test]
         fn an_own_field_colliding_with_an_inherited_field_degrades_to_a_failure()
          {
-            let mut raw = BTreeMap::new();
+            let mut raw = IndexMap::new();
             raw.insert(
                 SchemaName::from("book"),
                 schema(&[], &[("Due Date", input_field())]),
@@ -1668,7 +1668,7 @@ mod tests {
 
         #[test]
         fn every_field_type_resolves_its_own_options() {
-            let mut raw = BTreeMap::new();
+            let mut raw = IndexMap::new();
             raw.insert(
                 SchemaName::from("book"),
                 schema(&[], &[
@@ -1732,7 +1732,7 @@ mod tests {
 
         #[test]
         fn multi_defaults_to_false_and_honors_a_local_override() {
-            let mut raw = BTreeMap::new();
+            let mut raw = IndexMap::new();
             raw.insert(
                 SchemaName::from("book"),
                 schema(&[], &[
@@ -1753,7 +1753,7 @@ mod tests {
 
         #[test]
         fn a_ref_to_a_file_field_merges_the_filter_with_local_overrides() {
-            let mut raw = BTreeMap::new();
+            let mut raw = IndexMap::new();
             raw.insert(
                 SchemaName::from(GLOBAL_SCHEMA_NAME),
                 schema(&[], &[(
@@ -1796,7 +1796,7 @@ mod tests {
             // chain: a declared `extends` on `global.toml` itself must not be
             // honored, and not even warned about (`book` is a real Schema, so
             // this isn't a `MissingExtendsTarget`).
-            let mut raw = BTreeMap::new();
+            let mut raw = IndexMap::new();
             raw.insert(
                 SchemaName::from("book"),
                 schema(&[], &[("title", input_field())]),
@@ -1829,7 +1829,7 @@ mod tests {
             // `book` - after `poem`, which shares `book`'s tier-0 in-degree.
             // `build_dag` forces `global` to in-degree zero unconditionally,
             // so it must still resolve before `poem` needs it via `$ref`.
-            let mut raw = BTreeMap::new();
+            let mut raw = IndexMap::new();
             raw.insert(
                 SchemaName::from("book"),
                 schema(&[], &[("title", input_field())]),
@@ -1868,10 +1868,10 @@ mod tests {
          {
             // Both Schemas have no `extends`, so both start at Kahn in-degree
             // zero. `"author"` sorts before `"global"` in the name-ordered
-            // `BTreeMap` `resolve_all` iterates, so without the explicit
+            // `IndexMap` `resolve_all` iterates, so without the explicit
             // Global-first queue reorder, `author` would be popped (and
             // resolved) before `global`, and its `$ref` would fail.
-            let mut raw = BTreeMap::new();
+            let mut raw = IndexMap::new();
             raw.insert(
                 SchemaName::from(GLOBAL_SCHEMA_NAME),
                 schema(&[], &[("name", select_field(&["anon"]))]),
@@ -1901,7 +1901,7 @@ mod tests {
             // `type` starts from empty options rather than reusing a
             // mismatched base, so a `select`'s `values` can never leak into
             // an overriding `file` field.
-            let mut raw = BTreeMap::new();
+            let mut raw = IndexMap::new();
             raw.insert(
                 SchemaName::from("book"),
                 schema(&[], &[("status", select_field(&["draft", "done"]))]),
@@ -1936,7 +1936,7 @@ mod tests {
 
         #[test]
         fn a_bare_ref_override_with_an_unknown_key_degrades_with_a_warning() {
-            let mut raw = BTreeMap::new();
+            let mut raw = IndexMap::new();
             raw.insert(
                 SchemaName::from("book"),
                 schema(&[], &[("status", select_field(&["draft", "done"]))]),
@@ -1974,7 +1974,7 @@ mod tests {
         #[test]
         fn a_bare_ref_override_with_a_type_mismatched_value_degrades_with_a_warning()
          {
-            let mut raw = BTreeMap::new();
+            let mut raw = IndexMap::new();
             raw.insert(
                 SchemaName::from("book"),
                 schema(&[], &[(
@@ -2018,7 +2018,7 @@ mod tests {
         #[test]
         fn a_bare_ref_override_still_applies_its_other_valid_keys_alongside_a_dropped_unknown_key()
          {
-            let mut raw = BTreeMap::new();
+            let mut raw = IndexMap::new();
             raw.insert(
                 SchemaName::from(GLOBAL_SCHEMA_NAME),
                 schema(&[], &[(
@@ -2068,7 +2068,7 @@ mod tests {
         )]
         fn a_ref_with_a_type_override_and_an_unknown_key_degrades_to_a_failure()
         {
-            let mut raw = BTreeMap::new();
+            let mut raw = IndexMap::new();
             raw.insert(
                 SchemaName::from("book"),
                 schema(&[], &[("status", select_field(&["draft", "done"]))]),
@@ -2111,7 +2111,7 @@ mod tests {
             reason = "exhaustive error-match fallback"
         )]
         fn a_direct_field_with_an_unknown_key_degrades_to_a_failure() {
-            let mut raw = BTreeMap::new();
+            let mut raw = IndexMap::new();
             raw.insert(
                 SchemaName::from("book"),
                 schema(&[], &[("published", RawSchemaFieldDef {
@@ -2144,7 +2144,7 @@ mod tests {
             reason = "exhaustive error-match fallback"
         )]
         fn a_direct_field_with_a_type_mismatched_value_degrades_to_a_failure() {
-            let mut raw = BTreeMap::new();
+            let mut raw = IndexMap::new();
             raw.insert(
                 SchemaName::from("book"),
                 schema(&[], &[("rating", RawSchemaFieldDef {

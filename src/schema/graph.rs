@@ -22,7 +22,9 @@
 //! [`children_by_name`]: SchemaGraph::children_by_name
 //! [`descendants_by_name`]: SchemaGraph::descendants_by_name
 
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{HashMap, VecDeque};
+
+use indexmap::{IndexMap, IndexSet};
 
 use super::{
     GLOBAL_SCHEMA_NAME, RawSchema, SchemaName, SchemaNameRef,
@@ -33,15 +35,15 @@ use super::{
 pub(super) struct SchemaGraph<'a> {
     /// Each Schema's `extends` parents, filtered to present targets, in
     /// declaration order. Global's list is force-emptied.
-    parents_by_name: BTreeMap<SchemaNameRef<'a>, Vec<SchemaNameRef<'a>>>,
+    parents_by_name: IndexMap<SchemaNameRef<'a>, Vec<SchemaNameRef<'a>>>,
     /// Reverse adjacency (parent → children) for decrementing in-degrees.
-    children_by_name: BTreeMap<SchemaNameRef<'a>, Vec<SchemaNameRef<'a>>>,
+    children_by_name: IndexMap<SchemaNameRef<'a>, Vec<SchemaNameRef<'a>>>,
     /// Not-yet-resolved parent count; ready at zero.
-    in_degree: BTreeMap<SchemaNameRef<'a>, usize>,
+    in_degree: HashMap<SchemaNameRef<'a>, usize>,
     /// Ready queue, with Global forced to the front.
     queue: VecDeque<SchemaNameRef<'a>>,
     /// Schemas already popped by [`next_ready`](Self::next_ready).
-    visited: BTreeSet<SchemaNameRef<'a>>,
+    visited: IndexSet<SchemaNameRef<'a>>,
 }
 
 impl<'a> SchemaGraph<'a> {
@@ -50,19 +52,16 @@ impl<'a> SchemaGraph<'a> {
     /// Missing `extends` targets emit [`SchemaWarning::MissingExtendsTarget`].
     /// The Global Schema is forced to the front of its tier.
     pub(super) fn new(
-        raw_schemas: &'a BTreeMap<SchemaName, RawSchema>,
+        raw_schemas: &'a IndexMap<SchemaName, RawSchema>,
     ) -> (Self, Vec<SchemaWarning>) {
-        // `BTreeMap` iteration is name-sorted, so the parent order for a given
-        // schema matches declaration order in its own `extends` list while the
-        // overall processing order stays deterministic.
         let mut warnings = Vec::new();
-        let mut parents_by_name: BTreeMap<
+        let mut parents_by_name: IndexMap<
             SchemaNameRef<'_>,
             Vec<SchemaNameRef<'_>>,
-        > = BTreeMap::new();
+        > = IndexMap::new();
         for (name, raw) in raw_schemas {
             let mut parents = Vec::with_capacity(raw.extends.len());
-            let mut seen_targets = BTreeSet::new();
+            let mut seen_targets = IndexSet::new();
             for target in &raw.extends {
                 if !raw_schemas.contains_key(target) {
                     warnings.push(SchemaWarning::MissingExtendsTarget {
@@ -85,11 +84,11 @@ impl<'a> SchemaGraph<'a> {
 
         // An edge runs parent -> child, so a child's in-degree is its
         // (filtered) parent count.
-        let mut in_degree: BTreeMap<SchemaNameRef<'_>, usize> = BTreeMap::new();
-        let mut children_by_name: BTreeMap<
+        let mut in_degree: HashMap<SchemaNameRef<'_>, usize> = HashMap::new();
+        let mut children_by_name: IndexMap<
             SchemaNameRef<'_>,
             Vec<SchemaNameRef<'_>>,
-        > = BTreeMap::new();
+        > = IndexMap::new();
         for (&name, parents) in &parents_by_name {
             in_degree.insert(name, parents.len());
             for &parent in parents {
@@ -122,7 +121,7 @@ impl<'a> SchemaGraph<'a> {
                 children_by_name,
                 in_degree,
                 queue,
-                visited: BTreeSet::new(),
+                visited: IndexSet::new(),
             },
             warnings,
         )
@@ -164,7 +163,7 @@ impl<'a> SchemaGraph<'a> {
     /// member), or `None` if every Schema in `raw_schemas` was visited.
     pub(super) fn cyclic_remainder(
         &self,
-        raw_schemas: &BTreeMap<SchemaName, RawSchema>,
+        raw_schemas: &IndexMap<SchemaName, RawSchema>,
     ) -> Option<Vec<SchemaName>> {
         if self.visited.len() == raw_schemas.len() {
             return None;
@@ -190,9 +189,9 @@ impl<'a> SchemaGraph<'a> {
     #[must_use]
     pub(super) fn children_by_name(
         &self,
-    ) -> BTreeMap<SchemaName, BTreeSet<SchemaName>> {
-        let mut children: BTreeMap<SchemaName, BTreeSet<SchemaName>> =
-            BTreeMap::new();
+    ) -> IndexMap<SchemaName, IndexSet<SchemaName>> {
+        let mut children: IndexMap<SchemaName, IndexSet<SchemaName>> =
+            IndexMap::new();
         for (&name, parents) in &self.parents_by_name {
             for &parent in parents {
                 if parent.as_str() != GLOBAL_SCHEMA_NAME {
@@ -226,10 +225,10 @@ impl<'a> SchemaGraph<'a> {
     #[must_use]
     pub(super) fn descendants_by_name(
         &self,
-    ) -> BTreeMap<SchemaName, BTreeSet<SchemaName>> {
+    ) -> IndexMap<SchemaName, IndexSet<SchemaName>> {
         let children = self.children_by_name();
-        let mut memo: BTreeMap<SchemaName, BTreeSet<SchemaName>> =
-            BTreeMap::new();
+        let mut memo: IndexMap<SchemaName, IndexSet<SchemaName>> =
+            IndexMap::new();
         for name in children.keys() {
             Self::descendants_of(name, &children, &mut memo);
         }
@@ -245,13 +244,13 @@ impl<'a> SchemaGraph<'a> {
     /// (and every descendant's own set, transitively) on first visit.
     fn descendants_of(
         name: &SchemaName,
-        children: &BTreeMap<SchemaName, BTreeSet<SchemaName>>,
-        memo: &mut BTreeMap<SchemaName, BTreeSet<SchemaName>>,
-    ) -> BTreeSet<SchemaName> {
+        children: &IndexMap<SchemaName, IndexSet<SchemaName>>,
+        memo: &mut IndexMap<SchemaName, IndexSet<SchemaName>>,
+    ) -> IndexSet<SchemaName> {
         if let Some(cached) = memo.get(name) {
             return cached.clone();
         }
-        let mut result = BTreeSet::new();
+        let mut result = IndexSet::new();
         if let Some(direct) = children.get(name) {
             for child in direct {
                 result.insert(child.clone());
@@ -285,7 +284,7 @@ mod tests {
             // Isolates the Global-first reorder at the graph level, without
             // going through field resolution: `"author"` sorts before
             // `"global"` in name order, so this fails without the reorder.
-            let mut raw = BTreeMap::new();
+            let mut raw = IndexMap::new();
             raw.insert(SchemaName::from(GLOBAL_SCHEMA_NAME), schema(&[]));
             raw.insert(SchemaName::from("author"), schema(&[]));
             let (mut graph, _warnings) = SchemaGraph::new(&raw);
@@ -306,7 +305,7 @@ mod tests {
 
         #[test]
         fn a_duplicate_extends_target_warns_once_and_parents_once() {
-            let mut raw = BTreeMap::new();
+            let mut raw = IndexMap::new();
             raw.insert(SchemaName::from("book"), schema(&[]));
             raw.insert(SchemaName::from("child"), schema(&["book", "book"]));
             let (graph, warnings) = SchemaGraph::new(&raw);
@@ -326,14 +325,14 @@ mod tests {
 
         use super::*;
 
-        fn set(names: &[&str]) -> BTreeSet<SchemaName> {
+        fn set(names: &[&str]) -> IndexSet<SchemaName> {
             names.iter().map(|&name| SchemaName::from(name)).collect()
         }
 
         #[test]
         fn returns_only_direct_extenders_for_a_branching_tree() {
             // thing <- book <- {sci_fi, memoir}
-            let mut raw = BTreeMap::new();
+            let mut raw = IndexMap::new();
             raw.insert(SchemaName::from("thing"), schema(&[]));
             raw.insert(SchemaName::from("book"), schema(&["thing"]));
             raw.insert(SchemaName::from("sci_fi"), schema(&["book"]));
@@ -352,7 +351,7 @@ mod tests {
             // genuine diamond shape, distinct from the branching-tree fixture
             // above — a node with two parents converging, not one parent
             // fanning out to two children.
-            let mut raw = BTreeMap::new();
+            let mut raw = IndexMap::new();
             raw.insert(SchemaName::from("thing"), schema(&[]));
             raw.insert(SchemaName::from("book"), schema(&["thing"]));
             raw.insert(SchemaName::from("film"), schema(&["thing"]));
@@ -369,7 +368,7 @@ mod tests {
 
         #[test]
         fn excludes_the_global_schema_as_a_parent() {
-            let mut raw = BTreeMap::new();
+            let mut raw = IndexMap::new();
             raw.insert(SchemaName::from(GLOBAL_SCHEMA_NAME), schema(&[]));
             raw.insert(SchemaName::from("book"), schema(&[GLOBAL_SCHEMA_NAME]));
             let children = SchemaGraph::new(&raw).0.children_by_name();
@@ -383,14 +382,14 @@ mod tests {
 
         use super::*;
 
-        fn set(names: &[&str]) -> BTreeSet<SchemaName> {
+        fn set(names: &[&str]) -> IndexSet<SchemaName> {
             names.iter().map(|&name| SchemaName::from(name)).collect()
         }
 
         #[test]
         fn deduplicates_a_diamond_dags_shared_descendant() {
             // thing <- {book, film} <- adaptation (both parents)
-            let mut raw = BTreeMap::new();
+            let mut raw = IndexMap::new();
             raw.insert(SchemaName::from("thing"), schema(&[]));
             raw.insert(SchemaName::from("book"), schema(&["thing"]));
             raw.insert(SchemaName::from("film"), schema(&["thing"]));
@@ -408,7 +407,7 @@ mod tests {
 
         #[test]
         fn returns_the_full_transitive_closure_through_a_three_level_chain() {
-            let mut raw = BTreeMap::new();
+            let mut raw = IndexMap::new();
             raw.insert(SchemaName::from("thing"), schema(&[]));
             raw.insert(SchemaName::from("book"), schema(&["thing"]));
             raw.insert(SchemaName::from("sci_fi"), schema(&["book"]));
@@ -429,7 +428,7 @@ mod tests {
 
         #[test]
         fn returns_no_entry_for_a_leaf_schema() {
-            let mut raw = BTreeMap::new();
+            let mut raw = IndexMap::new();
             raw.insert(SchemaName::from("book"), schema(&[]));
             raw.insert(SchemaName::from("sci_fi"), schema(&["book"]));
             let descendants = SchemaGraph::new(&raw).0.descendants_by_name();
