@@ -1,4 +1,13 @@
-//! `$ref` resolution and raw-to-resolved field building.
+//! Build validated field definitions from raw declarations.
+//!
+//! Constructs a [`SchemaFieldDef`] from its raw declaration by resolving `$ref`
+//! targets, merging inherited options, and validating against the resolved
+//! field type.
+//!
+//! # Main types:
+//!
+//! - [`SchemaFieldBuilder`]: builds a field definition from raw input.
+//! - [`RefAddressResolver`]: resolves `$ref` targets against ancestor schemas.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -15,13 +24,18 @@ use super::{
     error::SchemaFieldBuilderError,
 };
 
+/// Base field, resolved tag, and degrade flag from
+/// [`SchemaFieldBuilder::resolve_from_raw`].
+type ResolvedRawField<'a> =
+    (Option<&'a SchemaFieldDef>, SchemaFieldTypeTag, bool);
+
 /// Build one [`SchemaFieldDef`] from its raw declaration, resolving `$ref`
 /// targets against already-resolved Schemas.
 pub(crate) struct SchemaFieldBuilder<'a> {
     pub(crate) refs: &'a RefAddressResolver<'a>,
 }
 
-impl SchemaFieldBuilder<'_> {
+impl<'a> SchemaFieldBuilder<'a> {
     /// Build `address`'s effective [`SchemaFieldDef`] from `raw`, alongside
     /// any warnings a bare `$ref` override's degraded validation raised.
     ///
@@ -31,6 +45,11 @@ impl SchemaFieldBuilder<'_> {
     ///   [`RefAddressResolver`], then merges `raw.options` on top. Unrecognized
     ///   or wrongly-shaped keys degrade to [`SchemaWarning`] rather than
     ///   failing.
+    ///
+    /// # Arguments
+    ///
+    /// * `address` - path identifying the field within the schema hierarchy.
+    /// * `raw` - the raw field declaration to build from.
     ///
     /// # Errors
     ///
@@ -51,6 +70,51 @@ impl SchemaFieldBuilder<'_> {
         raw: &RawSchemaFieldDef,
     ) -> Result<(SchemaFieldDef, Vec<SchemaWarning>), SchemaError> {
         let mut warnings = Vec::new();
+        let (base, tag, degrade_on_error) =
+            self.resolve_from_raw(address, raw)?;
+        let (field_type, errors) = Self::parse_options(
+            address,
+            tag,
+            &raw.options,
+            base.map(SchemaFieldDef::kind),
+        );
+        if !errors.is_empty() {
+            if degrade_on_error {
+                warnings.extend(errors.into_iter().map(Into::into));
+            } else {
+                return Err(SchemaFieldBuilderError::Parser(errors).into());
+            }
+        }
+        let required = raw
+            .required
+            .unwrap_or_else(|| base.is_some_and(SchemaFieldDef::is_required));
+        let multi = raw
+            .multi
+            .unwrap_or_else(|| base.is_some_and(SchemaFieldDef::is_multi));
+        let (required, degrade) =
+            Self::handle_global_required_value(address, required);
+        warnings.extend(degrade);
+        Ok((SchemaFieldDef::new(field_type, required, multi), warnings))
+    }
+
+    /// Resolve `raw` to its base [`SchemaFieldDef`], the effective
+    /// [`SchemaFieldTypeTag`], and whether parser errors should degrade to
+    /// warnings.
+    ///
+    /// # Errors
+    ///
+    /// - [`RefOutOfBounds`] if the `$ref` target is neither the Global Schema
+    ///   nor a transitive `extends` ancestor.
+    /// - [`RefFieldNotFound`] if the `$ref` target Schema exists but lacks the
+    ///   named field.
+    ///
+    /// [`RefOutOfBounds`]: SchemaFieldBuilderError::RefOutOfBounds
+    /// [`RefFieldNotFound`]: SchemaFieldBuilderError::RefFieldNotFound
+    fn resolve_from_raw(
+        &self,
+        address: FieldAddressRef<'_>,
+        raw: &RawSchemaFieldDef,
+    ) -> Result<ResolvedRawField<'a>, SchemaError> {
         let (base, degrade_on_error) = match &raw.source {
             RawFieldSource::Ref {
                 address: base_address,
@@ -84,34 +148,57 @@ impl SchemaFieldBuilder<'_> {
                 base.kind().tag()
             }
         };
-        let (field_type, errors) = parse_field(
-            address,
-            tag,
-            &raw.options,
-            base.map(SchemaFieldDef::kind),
-        );
-        if !errors.is_empty() {
-            if degrade_on_error {
-                warnings.extend(errors.into_iter().map(Into::into));
-            } else {
-                return Err(SchemaFieldBuilderError::Parser(errors).into());
-            }
-        }
-        let required = raw
-            .required
-            .unwrap_or_else(|| base.is_some_and(SchemaFieldDef::is_required));
-        let multi = raw
-            .multi
-            .unwrap_or_else(|| base.is_some_and(SchemaFieldDef::is_multi));
-        let (required, degrade) = Self::apply_global_degrade(address, required);
-        warnings.extend(degrade);
-        Ok((SchemaFieldDef::new(field_type, required, multi), warnings))
+        Ok((base, tag, degrade_on_error))
     }
 
-    /// Degrade `required` to `false` for Global Schema fields.
+    /// Parse `options` into a [`SchemaFieldType`], returning the resolved type
+    /// and any [`SchemaFieldParserError`]s for unknown keys or type mismatches.
     ///
-    /// Global Schema fields can never be required; set values are ignored.
-    fn apply_global_degrade(
+    /// # Arguments
+    ///
+    /// * `address` - path identifying the field within the schema hierarchy.
+    /// * `kind` - the resolved field type tag to parse against.
+    /// * `options` - the raw key-value options to validate and extract from.
+    /// * `base` - inherited field type to merge defaults from, if any.
+    fn parse_options(
+        address: FieldAddressRef<'_>,
+        kind: SchemaFieldTypeTag,
+        options: &std::collections::BTreeMap<String, crate::field::FieldValue>,
+        base: Option<&SchemaFieldType>,
+    ) -> (SchemaFieldType, Vec<super::error::SchemaFieldParserError>) {
+        use super::{date, file, number, parser::SchemaFieldParser, select};
+        let mut parser = SchemaFieldParser::new(address, kind);
+        let field_type = match kind {
+            SchemaFieldTypeTag::Input => SchemaFieldType::Input,
+            SchemaFieldTypeTag::Boolean => SchemaFieldType::Boolean,
+            SchemaFieldTypeTag::Select => select::SchemaSelectField::parse(
+                &mut parser,
+                options,
+                base.and_then(SchemaFieldType::as_select),
+            ),
+            SchemaFieldTypeTag::Number => number::SchemaNumberField::parse(
+                &mut parser,
+                options,
+                base.and_then(SchemaFieldType::as_number),
+            ),
+            SchemaFieldTypeTag::Date => date::SchemaDateField::parse(
+                &mut parser,
+                options,
+                base.and_then(SchemaFieldType::as_date),
+            ),
+            SchemaFieldTypeTag::File => file::SchemaFileField::parse(
+                &mut parser,
+                options,
+                base.and_then(SchemaFieldType::as_file),
+            ),
+        };
+        let errors = parser.finish(options);
+        (field_type, errors)
+    }
+
+    /// Degrade `required` to `false` for Global Schema fields, which can never
+    /// be required.
+    fn handle_global_required_value(
         address: FieldAddressRef<'_>,
         required: bool,
     ) -> (bool, Option<SchemaWarning>) {
@@ -126,43 +213,6 @@ impl SchemaFieldBuilder<'_> {
             (required, None)
         }
     }
-}
-
-/// Dispatch `options` parsing to the appropriate per-type `parse` function.
-fn parse_field(
-    address: FieldAddressRef<'_>,
-    tag: SchemaFieldTypeTag,
-    options: &std::collections::BTreeMap<String, crate::field::FieldValue>,
-    base: Option<&SchemaFieldType>,
-) -> (SchemaFieldType, Vec<super::error::SchemaFieldParserError>) {
-    use super::{date, file, number, parser::SchemaFieldParser, select};
-    let mut parser = SchemaFieldParser::new(address, tag);
-    let field_type = match tag {
-        SchemaFieldTypeTag::Input => SchemaFieldType::Input,
-        SchemaFieldTypeTag::Boolean => SchemaFieldType::Boolean,
-        SchemaFieldTypeTag::Select => select::SchemaSelectField::parse(
-            &mut parser,
-            options,
-            base.and_then(SchemaFieldType::as_select),
-        ),
-        SchemaFieldTypeTag::Number => number::SchemaNumberField::parse(
-            &mut parser,
-            options,
-            base.and_then(SchemaFieldType::as_number),
-        ),
-        SchemaFieldTypeTag::Date => date::SchemaDateField::parse(
-            &mut parser,
-            options,
-            base.and_then(SchemaFieldType::as_date),
-        ),
-        SchemaFieldTypeTag::File => file::SchemaFileField::parse(
-            &mut parser,
-            options,
-            base.and_then(SchemaFieldType::as_file),
-        ),
-    };
-    let errors = parser.finish(options);
-    (field_type, errors)
 }
 
 /// Resolve `$ref` values to their base [`SchemaFieldDef`]s.
