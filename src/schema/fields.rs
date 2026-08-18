@@ -416,8 +416,7 @@ mod tests {
     }
 
     mod validation {
-        use std::collections::BTreeMap;
-
+        use indexmap::IndexMap;
         use rstest::rstest;
 
         use super::super::{error::SchemaFieldParserError, *};
@@ -429,7 +428,7 @@ mod tests {
 
         fn options(
             pairs: &[(&str, FieldValue)],
-        ) -> BTreeMap<String, FieldValue> {
+        ) -> IndexMap<String, FieldValue> {
             pairs.iter().map(|(k, v)| ((*k).to_owned(), v.clone())).collect()
         }
         #[rstest]

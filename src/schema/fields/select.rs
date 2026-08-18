@@ -1,6 +1,6 @@
 //! `select` field type definition, entry type, and parsing.
 
-use std::collections::BTreeMap;
+use indexmap::IndexMap;
 
 use super::{SchemaFieldType, parser::SchemaFieldParser};
 use crate::field::FieldValue;
@@ -37,7 +37,7 @@ impl SchemaSelectField {
     /// * `base`: inherited field type to fall back to for unset keys.
     pub(super) fn parse(
         parser: &mut SchemaFieldParser<'_>,
-        options: &BTreeMap<String, FieldValue>,
+        options: &IndexMap<String, FieldValue>,
         base: Option<&Self>,
     ) -> SchemaFieldType {
         let values = parser.string_list(options, "values", Vec::new());
@@ -61,7 +61,7 @@ impl SchemaSelectField {
 pub(crate) struct SchemaSelectFieldEntry {
     value: FieldValue,
     label: FieldValue,
-    extra: BTreeMap<String, FieldValue>,
+    extra: IndexMap<String, FieldValue>,
 }
 
 impl SchemaSelectFieldEntry {
@@ -70,7 +70,7 @@ impl SchemaSelectFieldEntry {
         Self {
             value: FieldValue::String(value.clone()),
             label: FieldValue::String(value),
-            extra: BTreeMap::new(),
+            extra: IndexMap::new(),
         }
     }
 
@@ -91,15 +91,14 @@ impl SchemaSelectFieldEntry {
     /// Return this entry's passthrough keys beyond `value`/`label`.
     #[inline]
     #[must_use]
-    pub(crate) fn extra(&self) -> &BTreeMap<String, FieldValue> {
+    pub(crate) fn extra(&self) -> &IndexMap<String, FieldValue> {
         &self.extra
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
-
+    use indexmap::IndexMap;
     use pretty_assertions::assert_eq;
 
     use super::*;
@@ -112,7 +111,7 @@ mod tests {
         FieldAddress::try_from("#book/field").expect("valid ref")
     }
 
-    fn options(pairs: &[(&str, FieldValue)]) -> BTreeMap<String, FieldValue> {
+    fn options(pairs: &[(&str, FieldValue)]) -> IndexMap<String, FieldValue> {
         pairs.iter().map(|(k, v)| ((*k).to_owned(), v.clone())).collect()
     }
 
@@ -204,10 +203,10 @@ mod tests {
             SchemaFieldParser::new(addr.as_ref(), SchemaFieldTypeTag::Select);
         let field_type = SchemaSelectField::parse(
             &mut parser,
-            &BTreeMap::new(),
+            &IndexMap::new(),
             Some(&base),
         );
-        let errors = parser.finish(&BTreeMap::new());
+        let errors = parser.finish(&IndexMap::new());
 
         assert!(errors.is_empty());
         assert_eq!(field_type, SchemaFieldType::Select(base));

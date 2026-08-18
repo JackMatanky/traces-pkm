@@ -1,6 +1,6 @@
 //! `number` field type definition and parsing.
 
-use std::collections::BTreeMap;
+use indexmap::IndexMap;
 
 use super::{SchemaFieldType, parser::SchemaFieldParser};
 use crate::field::FieldValue;
@@ -62,7 +62,7 @@ impl SchemaNumberField {
     /// * `base`: inherited field type to fall back to for unset keys.
     pub(super) fn parse(
         parser: &mut SchemaFieldParser<'_>,
-        options: &BTreeMap<String, FieldValue>,
+        options: &IndexMap<String, FieldValue>,
         base: Option<&Self>,
     ) -> SchemaFieldType {
         let (base_min, base_max, base_step) = base
@@ -82,8 +82,7 @@ impl SchemaNumberField {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
-
+    use indexmap::IndexMap;
     use pretty_assertions::assert_eq;
     use rstest::rstest;
 
@@ -97,7 +96,7 @@ mod tests {
         FieldAddress::try_from("#book/field").expect("valid ref")
     }
 
-    fn options(pairs: &[(&str, FieldValue)]) -> BTreeMap<String, FieldValue> {
+    fn options(pairs: &[(&str, FieldValue)]) -> IndexMap<String, FieldValue> {
         pairs.iter().map(|(k, v)| ((*k).to_owned(), v.clone())).collect()
     }
 
@@ -187,7 +186,7 @@ mod tests {
     fn inherits_min_max_step_from_number_base() {
         let base =
             SchemaNumberField::for_test(Some(0.0), Some(100.0), Some(5.0));
-        let opts = BTreeMap::new();
+        let opts = IndexMap::new();
 
         let addr = address();
         let mut parser =

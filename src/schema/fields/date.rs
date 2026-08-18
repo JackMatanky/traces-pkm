@@ -1,6 +1,6 @@
 //! `date` field type definition and parsing.
 
-use std::collections::BTreeMap;
+use indexmap::IndexMap;
 
 use super::{SchemaFieldType, parser::SchemaFieldParser};
 use crate::field::FieldValue;
@@ -41,7 +41,7 @@ impl SchemaDateField {
     /// * `base`: inherited field type to fall back to for unset keys.
     pub(super) fn parse(
         parser: &mut SchemaFieldParser<'_>,
-        options: &BTreeMap<String, FieldValue>,
+        options: &IndexMap<String, FieldValue>,
         base: Option<&Self>,
     ) -> SchemaFieldType {
         let base_format = base.and_then(|base| base.format.clone());
@@ -56,7 +56,7 @@ impl SchemaDateField {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
+    use indexmap::IndexMap;
 
     use super::*;
     use crate::schema::fields::{
@@ -68,7 +68,7 @@ mod tests {
         FieldAddress::try_from("#book/field").expect("valid ref")
     }
 
-    fn options(pairs: &[(&str, FieldValue)]) -> BTreeMap<String, FieldValue> {
+    fn options(pairs: &[(&str, FieldValue)]) -> IndexMap<String, FieldValue> {
         pairs.iter().map(|(k, v)| ((*k).to_owned(), v.clone())).collect()
     }
 
@@ -102,8 +102,8 @@ mod tests {
         let mut parser =
             SchemaFieldParser::new(addr.as_ref(), SchemaFieldTypeTag::Date);
         let field_type =
-            SchemaDateField::parse(&mut parser, &BTreeMap::new(), Some(&base));
-        let errors = parser.finish(&BTreeMap::new());
+            SchemaDateField::parse(&mut parser, &IndexMap::new(), Some(&base));
+        let errors = parser.finish(&IndexMap::new());
 
         assert!(errors.is_empty());
         match &field_type {

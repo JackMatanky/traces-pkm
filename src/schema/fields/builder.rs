@@ -9,7 +9,9 @@
 //! - [`SchemaFieldBuilder`]: builds a field definition from raw input.
 //! - [`RefAddressResolver`]: resolves `$ref` targets against ancestor schemas.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
+
+use indexmap::IndexMap;
 
 use super::{
     SchemaFieldDef, SchemaFieldType, SchemaFieldTypeTag,
@@ -165,7 +167,7 @@ impl<'a> SchemaFieldBuilder<'a> {
     fn parse_options(
         address: FieldAddressRef<'_>,
         kind: SchemaFieldTypeTag,
-        options: &BTreeMap<String, FieldValue>,
+        options: &IndexMap<String, FieldValue>,
         base: Option<&SchemaFieldType>,
     ) -> (SchemaFieldType, Vec<SchemaFieldParserError>) {
         use super::{date, file, number, parser::SchemaFieldParser, select};
@@ -223,7 +225,7 @@ impl<'a> SchemaFieldBuilder<'a> {
 /// `extends` ancestors.
 pub(crate) struct RefAddressResolver<'a> {
     pub(crate) ancestors: &'a BTreeSet<SchemaName>,
-    pub(crate) resolved: &'a BTreeMap<SchemaName, Schema>,
+    pub(crate) resolved: &'a std::collections::BTreeMap<SchemaName, Schema>,
 }
 
 impl<'a> RefAddressResolver<'a> {
@@ -267,6 +269,8 @@ impl<'a> RefAddressResolver<'a> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use super::*;
     use crate::schema::{
         RawSchemaFieldSource, RawSchemaFieldType, SchemaNameRef,
@@ -339,7 +343,7 @@ mod tests {
         source: RawSchemaFieldSource,
         required: Option<bool>,
         multi: Option<bool>,
-        options: BTreeMap<String, FieldValue>,
+        options: IndexMap<String, FieldValue>,
     ) -> RawSchemaFieldDef {
         RawSchemaFieldDef {
             source,
@@ -456,7 +460,7 @@ mod tests {
                 RawSchemaFieldSource::Direct(RawSchemaFieldType::Input),
                 Some(true),
                 Some(false),
-                BTreeMap::new(),
+                IndexMap::new(),
             );
 
             let (field, warnings) = b.build(address, &raw).expect("builds");
@@ -482,7 +486,7 @@ mod tests {
                 },
                 None,
                 None,
-                BTreeMap::new(),
+                IndexMap::new(),
             );
 
             let (field, _warnings) = b.build(address, &raw).expect("builds");
@@ -505,7 +509,7 @@ mod tests {
                 },
                 None,
                 None,
-                BTreeMap::new(),
+                IndexMap::new(),
             );
 
             let (field, _warnings) = b.build(address, &raw).expect("builds");
@@ -521,7 +525,7 @@ mod tests {
                 crate::field::FieldNameRef::try_from("title")
                     .expect("valid field name"),
             );
-            let mut options = BTreeMap::new();
+            let mut options = IndexMap::new();
             options.insert(
                 "unknown_key".to_owned(),
                 FieldValue::String("value".to_owned()),
@@ -550,7 +554,7 @@ mod tests {
                 crate::field::FieldNameRef::try_from("field")
                     .expect("valid field name"),
             );
-            let mut options = BTreeMap::new();
+            let mut options = IndexMap::new();
             options.insert(
                 "unknown_key".to_owned(),
                 FieldValue::String("value".to_owned()),
@@ -586,7 +590,7 @@ mod tests {
                 },
                 None,
                 None,
-                BTreeMap::new(),
+                IndexMap::new(),
             );
 
             let err = b.build(address, &raw).expect_err("out of bounds");
@@ -613,7 +617,7 @@ mod tests {
                 },
                 None,
                 None,
-                BTreeMap::new(),
+                IndexMap::new(),
             );
 
             let err = b.build(address, &raw).expect_err("missing field");
@@ -638,7 +642,7 @@ mod tests {
                 RawSchemaFieldSource::Direct(RawSchemaFieldType::Input),
                 Some(true),
                 None,
-                BTreeMap::new(),
+                IndexMap::new(),
             );
 
             let (field, warnings) = b.build(address, &raw).expect("builds");

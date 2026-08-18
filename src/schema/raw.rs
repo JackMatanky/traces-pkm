@@ -8,8 +8,7 @@
 //! [`SchemaFieldBuilder::build`](super::fields::SchemaFieldBuilder::build)'s
 //! job.
 
-use std::collections::BTreeMap;
-
+use indexmap::IndexMap;
 use serde::{Deserialize, Deserializer};
 use thiserror::Error;
 
@@ -30,7 +29,7 @@ pub(crate) struct RawSchema {
     pub(crate) excludes: Vec<FieldName>,
     /// Field definitions keyed by name.
     #[serde(default)]
-    pub(crate) fields: BTreeMap<FieldName, RawSchemaFieldDef>,
+    pub(crate) fields: IndexMap<FieldName, RawSchemaFieldDef>,
 }
 
 /// A field definition parsed from TOML, before `$ref` resolution.
@@ -44,7 +43,7 @@ pub(crate) struct RawSchemaFieldDef {
     /// Whether the field accepts multiple values.
     pub(crate) multi: Option<bool>,
     /// Type-specific options as raw [`FieldValue`]s, keyed by TOML name.
-    pub(crate) options: BTreeMap<String, FieldValue>,
+    pub(crate) options: IndexMap<String, FieldValue>,
 }
 
 impl RawSchemaFieldDef {
@@ -59,7 +58,7 @@ impl RawSchemaFieldDef {
             source: RawSchemaFieldSource::Direct(kind),
             required: None,
             multi: None,
-            options: BTreeMap::new(),
+            options: IndexMap::new(),
         }
     }
 
@@ -75,7 +74,7 @@ impl RawSchemaFieldDef {
             },
             required: None,
             multi: None,
-            options: BTreeMap::new(),
+            options: IndexMap::new(),
         }
     }
 }
@@ -111,7 +110,7 @@ impl<'de> Deserialize<'de> for RawSchemaFieldDef {
                 ));
             }
         };
-        let mut options = BTreeMap::new();
+        let mut options = IndexMap::new();
         for (key, value) in [
             ("values", wire.values),
             ("folders", wire.folders),

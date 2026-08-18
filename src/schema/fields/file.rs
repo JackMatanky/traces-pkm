@@ -9,7 +9,7 @@
 //!
 //! [`file_filter`]: super::SchemaFieldDef::file_filter
 
-use std::collections::BTreeMap;
+use indexmap::IndexMap;
 
 use super::{SchemaFieldType, parser::SchemaFieldParser};
 use crate::field::FieldValue;
@@ -82,7 +82,7 @@ impl SchemaFileField {
     /// * `base`: inherited field type to fall back to for unset keys.
     pub(super) fn parse(
         parser: &mut SchemaFieldParser<'_>,
-        options: &BTreeMap<String, FieldValue>,
+        options: &IndexMap<String, FieldValue>,
         base: Option<&Self>,
     ) -> SchemaFieldType {
         let (base_folders, base_ext, base_class) = base
@@ -114,8 +114,7 @@ pub(crate) struct SchemaFileFieldRef<'a> {
 }
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
-
+    use indexmap::IndexMap;
     use pretty_assertions::assert_eq;
     use rstest::rstest;
 
@@ -129,7 +128,7 @@ mod tests {
         FieldAddress::try_from("#book/field").expect("valid ref")
     }
 
-    fn options(pairs: &[(&str, FieldValue)]) -> BTreeMap<String, FieldValue> {
+    fn options(pairs: &[(&str, FieldValue)]) -> IndexMap<String, FieldValue> {
         pairs.iter().map(|(k, v)| ((*k).to_owned(), v.clone())).collect()
     }
 

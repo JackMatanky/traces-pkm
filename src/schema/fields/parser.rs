@@ -5,7 +5,9 @@
 //! validates expected field types, registers accessed keys, and detects
 //! unrecognized or extraneous configuration options.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
+
+use indexmap::IndexMap;
 
 use super::{
     SchemaFieldTypeTag,
@@ -64,7 +66,7 @@ impl<'a> SchemaFieldParser<'a> {
     /// [`TypeMismatch`]: SchemaFieldParserError::TypeMismatch
     pub(super) fn string(
         &mut self,
-        options: &BTreeMap<String, FieldValue>,
+        options: &IndexMap<String, FieldValue>,
         key: &'static str,
         fallback: Option<String>,
     ) -> Option<String> {
@@ -98,7 +100,7 @@ impl<'a> SchemaFieldParser<'a> {
     /// [`TypeMismatch`]: SchemaFieldParserError::TypeMismatch
     pub(super) fn string_list(
         &mut self,
-        options: &BTreeMap<String, FieldValue>,
+        options: &IndexMap<String, FieldValue>,
         key: &'static str,
         fallback: Vec<String>,
     ) -> Vec<String> {
@@ -143,7 +145,7 @@ impl<'a> SchemaFieldParser<'a> {
     /// [`TypeMismatch`]: SchemaFieldParserError::TypeMismatch
     pub(super) fn f64(
         &mut self,
-        options: &BTreeMap<String, FieldValue>,
+        options: &IndexMap<String, FieldValue>,
         key: &'static str,
         fallback: Option<f64>,
     ) -> Option<f64> {
@@ -172,7 +174,7 @@ impl<'a> SchemaFieldParser<'a> {
     /// empty list means all options were valid and recognized.
     pub(super) fn finish(
         self,
-        options: &BTreeMap<String, FieldValue>,
+        options: &IndexMap<String, FieldValue>,
     ) -> Vec<SchemaFieldParserError> {
         let mut errors = self.errors;
         errors.extend(
@@ -208,7 +210,7 @@ impl<'a> SchemaFieldParser<'a> {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
+    use indexmap::IndexMap;
 
     use super::*;
     use crate::schema::fields::{
@@ -220,7 +222,7 @@ mod tests {
         FieldAddress::try_from("#book/field").expect("valid ref")
     }
 
-    fn options(pairs: &[(&str, FieldValue)]) -> BTreeMap<String, FieldValue> {
+    fn options(pairs: &[(&str, FieldValue)]) -> IndexMap<String, FieldValue> {
         pairs.iter().map(|(k, v)| ((*k).to_owned(), v.clone())).collect()
     }
 
@@ -247,7 +249,7 @@ mod tests {
 
         #[test]
         fn returns_fallback_when_key_is_absent() {
-            let opts = BTreeMap::new();
+            let opts = IndexMap::new();
             let addr = address();
             let mut parser = SchemaFieldParser::new(
                 addr.as_ref(),
@@ -310,7 +312,7 @@ mod tests {
 
         #[test]
         fn returns_fallback_when_key_is_absent() {
-            let opts = BTreeMap::new();
+            let opts = IndexMap::new();
             let addr = address();
             let mut parser = SchemaFieldParser::new(
                 addr.as_ref(),
@@ -427,7 +429,7 @@ mod tests {
 
         #[test]
         fn returns_fallback_when_key_is_absent() {
-            let opts = BTreeMap::new();
+            let opts = IndexMap::new();
             let addr = address();
             let mut parser = SchemaFieldParser::new(
                 addr.as_ref(),

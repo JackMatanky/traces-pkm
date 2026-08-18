@@ -1076,10 +1076,10 @@ mod tests {
             .expect("valid test $ref")
     }
 
-    /// Builds a `BTreeMap<String, FieldValue>` options bag from `pairs`.
+    /// Builds an `IndexMap<String, FieldValue>` options bag from `pairs`.
     fn options(
         pairs: &[(&str, crate::field::FieldValue)],
-    ) -> BTreeMap<String, crate::field::FieldValue> {
+    ) -> indexmap::IndexMap<String, crate::field::FieldValue> {
         pairs.iter().map(|(k, v)| ((*k).to_owned(), v.clone())).collect()
     }
 

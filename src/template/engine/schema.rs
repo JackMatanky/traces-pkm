@@ -55,8 +55,9 @@
 //! (`State`-cached) registry and reads the target Schema's already-precomputed
 //! `children`/`descendants` set — no per-call registry scan.
 
-use std::{collections::BTreeMap, sync::Arc};
+use std::sync::Arc;
 
+use indexmap::IndexMap;
 use minijinja::{
     Environment, Error, ErrorKind, State,
     value::{Enumerator, Object, Value},
@@ -253,7 +254,7 @@ fn select_entry_value(entry: &SchemaSelectFieldEntry) -> Value {
     if entry.label() == entry.value() && entry.extra().is_empty() {
         return Value::from_serialize(entry.value());
     }
-    let mut object: BTreeMap<String, FieldValue> = entry.extra().clone();
+    let mut object: IndexMap<String, FieldValue> = entry.extra().clone();
     object.insert("value".to_owned(), entry.value().clone());
     object.insert("label".to_owned(), entry.label().clone());
     Value::from_serialize(&object)
