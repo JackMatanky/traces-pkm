@@ -5,13 +5,14 @@
 //! queries over the resolved Schemas for its whole lifetime.
 
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, HashMap},
     ffi::OsStr,
     fs, io,
     path::Path,
     sync::Arc,
 };
 
+use indexmap::{IndexMap, IndexSet};
 use walkdir::WalkDir;
 
 use super::{
@@ -341,7 +342,7 @@ fn walk_error(root: &Path, source: walkdir::Error) -> SchemaError {
 /// [`SchemaWarning::ParentFailedToResolve`]), exactly as an unresolvable
 /// `extends` target already degrades today.
 type ResolveOutput =
-    (BTreeMap<SchemaName, Schema>, Vec<SchemaWarning>, Vec<SchemaFailure>);
+    (IndexMap<SchemaName, Schema>, Vec<SchemaWarning>, Vec<SchemaFailure>);
 
 /// Resolve `raw_schemas` into effective Field Definitions per Schema.
 ///
@@ -374,7 +375,7 @@ fn resolve_all(
     raw_schemas: &BTreeMap<SchemaName, RawSchema>,
 ) -> Result<ResolveOutput, SchemaError> {
     let (mut graph, mut warnings) = SchemaGraph::new(raw_schemas);
-    let mut resolved: BTreeMap<SchemaName, Schema> = BTreeMap::new();
+    let mut resolved: IndexMap<SchemaName, Schema> = IndexMap::new();
     let mut failures: Vec<SchemaFailure> = Vec::new();
 
     while let Some(name) = graph.next_ready() {
@@ -421,7 +422,7 @@ fn resolve_all(
     // ancestors include the schema being populated.
     let children_by_name = graph.children_by_name();
     let descendants_by_name = graph.descendants_by_name();
-    let resolved_ancestors: BTreeMap<SchemaName, BTreeSet<SchemaName>> =
+    let resolved_ancestors: IndexMap<SchemaName, IndexSet<SchemaName>> =
         resolved
             .iter()
             .map(|(name, schema)| (name.clone(), schema.ancestors().clone()))
@@ -481,10 +482,10 @@ fn build_schema(
     name: SchemaNameRef<'_>,
     raw: &RawSchema,
     parents: &[SchemaNameRef<'_>],
-    resolved: &BTreeMap<SchemaName, Schema>,
+    resolved: &IndexMap<SchemaName, Schema>,
 ) -> Result<(Schema, Vec<SchemaWarning>), SchemaError> {
-    let mut fields = BTreeMap::new();
-    let mut ancestors = BTreeSet::new();
+    let mut fields = IndexMap::new();
+    let mut ancestors = IndexSet::new();
     let mut warnings = Vec::new();
     for &parent in parents {
         let Some(parent_schema) = resolved.get(parent.as_str()) else {
@@ -501,7 +502,7 @@ fn build_schema(
         ancestors.extend(parent_schema.ancestors().iter().cloned());
     }
     for excluded in &raw.excludes {
-        fields.remove(excluded);
+        fields.shift_remove(excluded);
     }
 
     // Own fields resolve last (so they override inherited fields above) but
@@ -514,7 +515,7 @@ fn build_schema(
     let builder = SchemaFieldBuilder {
         refs: &refs,
     };
-    let mut own_fields = BTreeMap::new();
+    let mut own_fields = IndexMap::new();
     for (field_name, raw_field) in &raw.fields {
         let address = FieldAddressRef::new(name, field_name.as_ref());
         let (field, field_warnings) = builder.build(address, raw_field)?;
@@ -541,9 +542,9 @@ fn build_schema(
 /// [`AmbiguousFieldName`]: SchemaError::AmbiguousFieldName
 fn reject_ambiguous_canonical_names(
     name: SchemaNameRef<'_>,
-    fields: &BTreeMap<FieldName, super::fields::SchemaFieldDef>,
+    fields: &IndexMap<FieldName, super::fields::SchemaFieldDef>,
 ) -> Result<(), SchemaError> {
-    let mut seen: BTreeMap<String, FieldName> = BTreeMap::new();
+    let mut seen: HashMap<String, FieldName> = HashMap::new();
     for field_name in fields.keys() {
         let canonical = field_name.to_key().canonical().to_owned();
         if let Some(first) = seen.get(&canonical) {

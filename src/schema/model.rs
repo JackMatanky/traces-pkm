@@ -1,6 +1,6 @@
 //! The resolved [`Schema`] domain type and its lookups.
 
-use std::collections::{BTreeMap, BTreeSet};
+use indexmap::{IndexMap, IndexSet};
 
 use super::{SchemaName, fields::SchemaFieldDef};
 use crate::field::{FieldName, closest_match};
@@ -10,13 +10,13 @@ use crate::field::{FieldName, closest_match};
 #[derive(Clone, Debug, PartialEq)]
 pub struct Schema {
     name: SchemaName,
-    fields: BTreeMap<FieldName, SchemaFieldDef>,
+    fields: IndexMap<FieldName, SchemaFieldDef>,
     /// Transitive `extends` targets that resolved.
-    ancestors: BTreeSet<SchemaName>,
+    ancestors: IndexSet<SchemaName>,
     /// Schemas that directly `extends` this one.
-    children: BTreeSet<SchemaName>,
+    children: IndexSet<SchemaName>,
     /// Every Schema that transitively `extends` this one.
-    descendants: BTreeSet<SchemaName>,
+    descendants: IndexSet<SchemaName>,
 }
 
 impl Schema {
@@ -28,23 +28,23 @@ impl Schema {
     /// resolution.
     pub(super) fn new(
         name: SchemaName,
-        fields: BTreeMap<FieldName, SchemaFieldDef>,
-        ancestors: BTreeSet<SchemaName>,
+        fields: IndexMap<FieldName, SchemaFieldDef>,
+        ancestors: IndexSet<SchemaName>,
     ) -> Self {
         Self {
             name,
             fields,
             ancestors,
-            children: BTreeSet::new(),
-            descendants: BTreeSet::new(),
+            children: IndexSet::new(),
+            descendants: IndexSet::new(),
         }
     }
 
     /// Set this Schema's direct and transitive extenders.
     pub(super) fn set_hierarchy(
         &mut self,
-        children: BTreeSet<SchemaName>,
-        descendants: BTreeSet<SchemaName>,
+        children: IndexSet<SchemaName>,
+        descendants: IndexSet<SchemaName>,
     ) {
         self.children = children;
         self.descendants = descendants;
@@ -60,7 +60,7 @@ impl Schema {
     /// Return this Schema's effective Field Definitions, keyed by name.
     #[inline]
     #[must_use]
-    pub(crate) fn fields(&self) -> &BTreeMap<FieldName, SchemaFieldDef> {
+    pub(crate) fn fields(&self) -> &IndexMap<FieldName, SchemaFieldDef> {
         &self.fields
     }
 
@@ -75,21 +75,21 @@ impl Schema {
     /// Return this Schema's transitive `extends` ancestors.
     #[inline]
     #[must_use]
-    pub(super) fn ancestors(&self) -> &BTreeSet<SchemaName> {
+    pub(super) fn ancestors(&self) -> &IndexSet<SchemaName> {
         &self.ancestors
     }
 
     /// Return the Schemas that directly `extends` this one.
     #[inline]
     #[must_use]
-    pub(super) fn children(&self) -> &BTreeSet<SchemaName> {
+    pub(super) fn children(&self) -> &IndexSet<SchemaName> {
         &self.children
     }
 
     /// Return every Schema that transitively `extends` this one.
     #[inline]
     #[must_use]
-    pub(super) fn descendants(&self) -> &BTreeSet<SchemaName> {
+    pub(super) fn descendants(&self) -> &IndexSet<SchemaName> {
         &self.descendants
     }
 
@@ -151,8 +151,7 @@ impl Schema {
 #[cfg(test)]
 mod tests {
     mod schema {
-        use std::collections::{BTreeMap, BTreeSet};
-
+        use indexmap::{IndexMap, IndexSet};
         use pretty_assertions::assert_eq;
 
         use super::super::*;
@@ -164,12 +163,12 @@ mod tests {
 
         #[test]
         fn new_stores_the_given_name_fields_and_ancestors() {
-            let mut fields = BTreeMap::new();
+            let mut fields = IndexMap::new();
             fields.insert(
                 FieldName::try_from("title").expect("valid test field name"),
                 field(SchemaFieldType::Input),
             );
-            let mut ancestors = BTreeSet::new();
+            let mut ancestors = IndexSet::new();
             ancestors.insert(SchemaName::from("thing"));
 
             let schema = Schema::new(
@@ -189,12 +188,12 @@ mod tests {
         fn set_hierarchy_stores_the_given_children_and_descendants() {
             let mut schema = Schema::new(
                 SchemaName::from("thing"),
-                BTreeMap::new(),
-                BTreeSet::new(),
+                IndexMap::new(),
+                IndexSet::new(),
             );
-            let mut children = BTreeSet::new();
+            let mut children = IndexSet::new();
             children.insert(SchemaName::from("book"));
-            let mut descendants = BTreeSet::new();
+            let mut descendants = IndexSet::new();
             descendants.insert(SchemaName::from("book"));
             descendants.insert(SchemaName::from("sci_fi"));
 
@@ -206,13 +205,13 @@ mod tests {
 
         #[test]
         fn field_returns_the_named_definition_when_present() {
-            let mut fields = BTreeMap::new();
+            let mut fields = IndexMap::new();
             fields.insert(
                 FieldName::try_from("title").expect("valid test field name"),
                 field(SchemaFieldType::Input),
             );
             let schema =
-                Schema::new(SchemaName::from("book"), fields, BTreeSet::new());
+                Schema::new(SchemaName::from("book"), fields, IndexSet::new());
 
             assert_eq!(
                 schema.field("title"),
@@ -224,8 +223,8 @@ mod tests {
         fn field_returns_none_when_the_name_is_absent() {
             let schema = Schema::new(
                 SchemaName::from("book"),
-                BTreeMap::new(),
-                BTreeSet::new(),
+                IndexMap::new(),
+                IndexSet::new(),
             );
 
             assert_eq!(schema.field("missing"), None);
@@ -235,8 +234,8 @@ mod tests {
         fn is_a_matches_when_queried_equals_its_own_name() {
             let schema = Schema::new(
                 SchemaName::from("book"),
-                BTreeMap::new(),
-                BTreeSet::new(),
+                IndexMap::new(),
+                IndexSet::new(),
             );
 
             assert!(schema.is_a("book"));
@@ -244,11 +243,11 @@ mod tests {
 
         #[test]
         fn is_a_matches_when_queried_is_a_transitive_ancestor() {
-            let mut ancestors = BTreeSet::new();
+            let mut ancestors = IndexSet::new();
             ancestors.insert(SchemaName::from("thing"));
             let schema = Schema::new(
                 SchemaName::from("book"),
-                BTreeMap::new(),
+                IndexMap::new(),
                 ancestors,
             );
 
@@ -259,8 +258,8 @@ mod tests {
         fn is_a_does_not_match_an_unrelated_name() {
             let schema = Schema::new(
                 SchemaName::from("book"),
-                BTreeMap::new(),
-                BTreeSet::new(),
+                IndexMap::new(),
+                IndexSet::new(),
             );
 
             assert!(!schema.is_a("movie"));
@@ -268,8 +267,7 @@ mod tests {
     }
 
     mod suggest_field {
-        use std::collections::{BTreeMap, BTreeSet};
-
+        use indexmap::{IndexMap, IndexSet};
         use pretty_assertions::assert_eq;
 
         use super::super::*;
@@ -289,8 +287,8 @@ mod tests {
                         ),
                     )
                 })
-                .collect::<BTreeMap<_, _>>();
-            Schema::new(SchemaName::from("book"), fields, BTreeSet::new())
+                .collect::<IndexMap<_, _>>();
+            Schema::new(SchemaName::from("book"), fields, IndexSet::new())
         }
 
         #[test]

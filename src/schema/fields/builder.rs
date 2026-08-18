@@ -9,9 +9,7 @@
 //! - [`SchemaFieldBuilder`]: builds a field definition from raw input.
 //! - [`RefAddressResolver`]: resolves `$ref` targets against ancestor schemas.
 
-use std::collections::BTreeSet;
-
-use indexmap::IndexMap;
+use indexmap::{IndexMap, IndexSet};
 
 use super::{
     SchemaFieldDef, SchemaFieldType, SchemaFieldTypeTag,
@@ -224,8 +222,8 @@ impl<'a> SchemaFieldBuilder<'a> {
 /// Bounded to the Global Schema or the referencing Schema's transitive
 /// `extends` ancestors.
 pub(crate) struct RefAddressResolver<'a> {
-    pub(crate) ancestors: &'a BTreeSet<SchemaName>,
-    pub(crate) resolved: &'a std::collections::BTreeMap<SchemaName, Schema>,
+    pub(crate) ancestors: &'a IndexSet<SchemaName>,
+    pub(crate) resolved: &'a IndexMap<SchemaName, Schema>,
 }
 
 impl<'a> RefAddressResolver<'a> {
@@ -269,8 +267,6 @@ impl<'a> RefAddressResolver<'a> {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
-
     use super::*;
     use crate::schema::{
         RawSchemaFieldSource, RawSchemaFieldType, SchemaNameRef,
@@ -289,7 +285,7 @@ mod tests {
         field: &str,
         kind: SchemaFieldType,
     ) -> (SchemaName, Schema) {
-        let mut fields = BTreeMap::new();
+        let mut fields = IndexMap::new();
         fields.insert(
             crate::field::FieldName::try_from(field)
                 .expect("valid test field name"),
@@ -297,7 +293,7 @@ mod tests {
         );
         (
             SchemaName::from(name),
-            Schema::new(SchemaName::from(name), fields, BTreeSet::new()),
+            Schema::new(SchemaName::from(name), fields, IndexSet::new()),
         )
     }
 
@@ -309,13 +305,13 @@ mod tests {
         schemas: &[(&str, &str, SchemaFieldType)],
         ancestors: &[&str],
     ) -> &'static RefAddressResolver<'static> {
-        let resolved: BTreeMap<SchemaName, Schema> = schemas
+        let resolved: IndexMap<SchemaName, Schema> = schemas
             .iter()
             .map(|(name, field_name, kind)| {
                 schema_with_field(name, field_name, kind.clone())
             })
             .collect();
-        let anc: BTreeSet<SchemaName> =
+        let anc: IndexSet<SchemaName> =
             ancestors.iter().map(|name| SchemaName::from(*name)).collect();
         Box::leak(Box::new(RefAddressResolver {
             ancestors: Box::leak(Box::new(anc)),
