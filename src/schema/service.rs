@@ -15,12 +15,11 @@ use std::{
 use walkdir::WalkDir;
 
 use super::{
-    SchemaName, SchemaNameRef,
+    RawSchema, SchemaName, SchemaNameRef,
     error::{SchemaError, SchemaWarning},
     fields::{FieldAddressRef, RefAddressResolver, SchemaFieldBuilder},
     graph::SchemaGraph,
     model::Schema,
-    raw::RawSchema,
 };
 use crate::{
     BaseNameRef,
@@ -568,12 +567,12 @@ mod tests {
 
     use super::{super::GLOBAL_SCHEMA_NAME, *};
     use crate::schema::{
+        RawSchemaFieldDef, RawSchemaFieldSource, RawSchemaFieldType,
         fields::{
             SchemaDateField, SchemaFieldBuilderError, SchemaFieldDef,
             SchemaFieldParserError, SchemaFieldType, SchemaFileField,
             SchemaNumberField, SchemaSelectField, SchemaSelectFieldEntry,
         },
-        raw::{RawFieldSource, RawSchemaFieldDef, RawSchemaFieldType},
     };
 
     type ResolveResult = Result<SchemaConstruction, SchemaError>;
@@ -1912,7 +1911,7 @@ mod tests {
             raw.insert(
                 SchemaName::from("sci_fi"),
                 schema(&["book"], &[("status", RawSchemaFieldDef {
-                    source: RawFieldSource::Ref {
+                    source: RawSchemaFieldSource::Ref {
                         address: field_address("#book/status"),
                         override_type: Some(RawSchemaFieldType::File),
                     },
@@ -2079,7 +2078,7 @@ mod tests {
             raw.insert(
                 SchemaName::from("sci_fi"),
                 schema(&["book"], &[("status", RawSchemaFieldDef {
-                    source: RawFieldSource::Ref {
+                    source: RawSchemaFieldSource::Ref {
                         address: field_address("#book/status"),
                         override_type: Some(RawSchemaFieldType::Date),
                     },

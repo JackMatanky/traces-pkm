@@ -2,7 +2,7 @@
 //!
 //! These types match `.traces/schemas/<name>.toml` and deny unknown fields.
 //! `$ref` strings and `type`/`$ref` source are parsed into validated shapes
-//! ([`FieldAddress`], [`RawFieldSource`]) at deserialization time.
+//! ([`FieldAddress`], [`RawSchemaFieldSource`]) at deserialization time.
 //! Type-specific keys land in [`RawSchemaFieldDef::options`] as generic
 //! [`FieldValue`]s; their validation is
 //! [`SchemaFieldBuilder::build`](super::fields::SchemaFieldBuilder::build)'s
@@ -37,7 +37,7 @@ pub(crate) struct RawSchema {
 #[derive(Clone, Debug)]
 pub(crate) struct RawSchemaFieldDef {
     /// The field's source: a direct `type` or a `$ref` with optional override.
-    pub(crate) source: RawFieldSource,
+    pub(crate) source: RawSchemaFieldSource,
     /// Whether the field must be set. Ignored (with a warning) on the Global
     /// Schema.
     pub(crate) required: Option<bool>,
@@ -56,7 +56,7 @@ impl RawSchemaFieldDef {
     #[must_use]
     pub(crate) fn direct(kind: RawSchemaFieldType) -> Self {
         Self {
-            source: RawFieldSource::Direct(kind),
+            source: RawSchemaFieldSource::Direct(kind),
             required: None,
             multi: None,
             options: BTreeMap::new(),
@@ -69,7 +69,7 @@ impl RawSchemaFieldDef {
     #[must_use]
     pub(crate) fn reference(address: FieldAddress) -> Self {
         Self {
-            source: RawFieldSource::Ref {
+            source: RawSchemaFieldSource::Ref {
                 address,
                 override_type: None,
             },
@@ -82,8 +82,8 @@ impl RawSchemaFieldDef {
 
 impl<'de> Deserialize<'de> for RawSchemaFieldDef {
     /// Deserialize the `[fields.<name>]` TOML table, converting its
-    /// `type`/`$ref` keys into a validated [`RawFieldSource`] and every other
-    /// present key into [`RawSchemaFieldDef::options`].
+    /// `type`/`$ref` keys into a validated [`RawSchemaFieldSource`] and every
+    /// other present key into [`RawSchemaFieldDef::options`].
     ///
     /// # Errors
     ///
@@ -96,12 +96,12 @@ impl<'de> Deserialize<'de> for RawSchemaFieldDef {
     {
         let wire = RawFieldDefToml::deserialize(deserializer)?;
         let source = match (wire.kind, wire.reference) {
-            (Some(kind), None) => RawFieldSource::Direct(kind),
-            (Some(kind), Some(address)) => RawFieldSource::Ref {
+            (Some(kind), None) => RawSchemaFieldSource::Direct(kind),
+            (Some(kind), Some(address)) => RawSchemaFieldSource::Ref {
                 address,
                 override_type: Some(kind),
             },
-            (None, Some(address)) => RawFieldSource::Ref {
+            (None, Some(address)) => RawSchemaFieldSource::Ref {
                 address,
                 override_type: None,
             },
@@ -169,7 +169,7 @@ impl std::fmt::Display for RawSchemaFieldType {
 /// How a raw field was declared: `type` alone, or `$ref` with optional
 /// `type` override.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) enum RawFieldSource {
+pub(crate) enum RawSchemaFieldSource {
     /// Use a `type` key with no `$ref`.
     Direct(RawSchemaFieldType),
     /// Use a `$ref` address to a base definition, with an optional local `type`
@@ -192,7 +192,7 @@ pub(crate) enum RawFieldDefError {
 ///
 /// `type`/`$ref` are optional and separate; every type-specific key
 /// deserializes as a generic [`FieldValue`]. Converts into a validated
-/// [`RawFieldSource`] plus [`RawSchemaFieldDef::options`] during
+/// [`RawSchemaFieldSource`] plus [`RawSchemaFieldDef::options`] during
 /// deserialization.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -230,7 +230,7 @@ mod tests {
 
             assert_eq!(
                 raw.source,
-                RawFieldSource::Direct(RawSchemaFieldType::Input)
+                RawSchemaFieldSource::Direct(RawSchemaFieldType::Input)
             );
         }
 
@@ -240,7 +240,7 @@ mod tests {
                 toml::from_str(r##""$ref" = "#global/status""##)
                     .expect("valid toml");
 
-            assert_eq!(raw.source, RawFieldSource::Ref {
+            assert_eq!(raw.source, RawSchemaFieldSource::Ref {
                 address: FieldAddress::try_from("#global/status")
                     .expect("valid ref"),
                 override_type: None,
@@ -257,7 +257,7 @@ mod tests {
             )
             .expect("valid toml");
 
-            assert_eq!(raw.source, RawFieldSource::Ref {
+            assert_eq!(raw.source, RawSchemaFieldSource::Ref {
                 address: FieldAddress::try_from("#global/cover")
                     .expect("valid ref"),
                 override_type: Some(RawSchemaFieldType::File),
@@ -339,7 +339,7 @@ mod tests {
 
             assert_eq!(
                 raw.source,
-                RawFieldSource::Direct(RawSchemaFieldType::Number)
+                RawSchemaFieldSource::Direct(RawSchemaFieldType::Number)
             );
             assert_eq!(raw.options.get("step"), Some(&FieldValue::Float(0.5)));
         }

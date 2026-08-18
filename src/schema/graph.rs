@@ -25,8 +25,8 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use super::{
-    GLOBAL_SCHEMA_NAME, SchemaName, SchemaNameRef, error::SchemaWarning,
-    raw::RawSchema,
+    GLOBAL_SCHEMA_NAME, RawSchema, SchemaName, SchemaNameRef,
+    error::SchemaWarning,
 };
 
 /// Kahn's-algorithm state for linearizing the `extends` DAG.

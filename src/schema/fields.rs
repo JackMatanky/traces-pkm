@@ -18,7 +18,7 @@
 //! - [`mod@file`] parses `folders`/`ext`/`class` and provides
 //!   [`SchemaFileFieldRef`] for `FileIndex` queries.
 
-use super::raw::RawSchemaFieldType;
+use super::RawSchemaFieldType;
 
 mod address;
 pub(crate) use address::{FieldAddress, FieldAddressRef};

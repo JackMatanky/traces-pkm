@@ -19,10 +19,10 @@ use super::{
 use crate::{
     field::FieldValue,
     schema::{
-        GLOBAL_SCHEMA_NAME, SchemaName,
+        GLOBAL_SCHEMA_NAME, RawSchemaFieldDef, RawSchemaFieldSource,
+        SchemaName,
         error::{SchemaError, SchemaWarning},
         model::Schema,
-        raw::{RawFieldSource, RawSchemaFieldDef},
     },
 };
 
@@ -118,22 +118,22 @@ impl<'a> SchemaFieldBuilder<'a> {
         raw: &RawSchemaFieldDef,
     ) -> Result<ResolvedRawField<'a>, SchemaError> {
         let (base, degrade_on_error) = match &raw.source {
-            RawFieldSource::Ref {
+            RawSchemaFieldSource::Ref {
                 address: base_address,
                 override_type,
             } => (
                 Some(self.refs.resolve(address, base_address)?),
                 override_type.is_none(),
             ),
-            RawFieldSource::Direct(_) => (None, false),
+            RawSchemaFieldSource::Direct(_) => (None, false),
         };
         let tag = match &raw.source {
-            RawFieldSource::Direct(kind)
-            | RawFieldSource::Ref {
+            RawSchemaFieldSource::Direct(kind)
+            | RawSchemaFieldSource::Ref {
                 override_type: Some(kind),
                 ..
             } => SchemaFieldTypeTag::from(*kind),
-            RawFieldSource::Ref {
+            RawSchemaFieldSource::Ref {
                 override_type: None,
                 ..
             } => {
@@ -269,8 +269,7 @@ impl<'a> RefAddressResolver<'a> {
 mod tests {
     use super::*;
     use crate::schema::{
-        SchemaNameRef,
-        raw::{RawFieldSource, RawSchemaFieldType},
+        RawSchemaFieldSource, RawSchemaFieldType, SchemaNameRef,
     };
 
     /// Parses `reference` into a [`FieldAddress`], panicking on an invalid
@@ -337,7 +336,7 @@ mod tests {
 
     /// Builds a [`RawSchemaFieldDef`] with sensible defaults.
     fn raw_field(
-        source: RawFieldSource,
+        source: RawSchemaFieldSource,
         required: Option<bool>,
         multi: Option<bool>,
         options: BTreeMap<String, FieldValue>,
@@ -454,7 +453,7 @@ mod tests {
                     .expect("valid field name"),
             );
             let raw = raw_field(
-                RawFieldSource::Direct(RawSchemaFieldType::Input),
+                RawSchemaFieldSource::Direct(RawSchemaFieldType::Input),
                 Some(true),
                 Some(false),
                 BTreeMap::new(),
@@ -477,7 +476,7 @@ mod tests {
                     .expect("valid field name"),
             );
             let raw = raw_field(
-                RawFieldSource::Ref {
+                RawSchemaFieldSource::Ref {
                     address: field_address("#book/field"),
                     override_type: None,
                 },
@@ -500,7 +499,7 @@ mod tests {
                     .expect("valid field name"),
             );
             let raw = raw_field(
-                RawFieldSource::Ref {
+                RawSchemaFieldSource::Ref {
                     address: field_address("#book/field"),
                     override_type: Some(RawSchemaFieldType::Boolean),
                 },
@@ -528,7 +527,7 @@ mod tests {
                 FieldValue::String("value".to_owned()),
             );
             let raw = raw_field(
-                RawFieldSource::Direct(RawSchemaFieldType::Input),
+                RawSchemaFieldSource::Direct(RawSchemaFieldType::Input),
                 None,
                 None,
                 options,
@@ -557,7 +556,7 @@ mod tests {
                 FieldValue::String("value".to_owned()),
             );
             let raw = raw_field(
-                RawFieldSource::Ref {
+                RawSchemaFieldSource::Ref {
                     address: field_address("#book/field"),
                     override_type: None,
                 },
@@ -581,7 +580,7 @@ mod tests {
                     .expect("valid field name"),
             );
             let raw = raw_field(
-                RawFieldSource::Ref {
+                RawSchemaFieldSource::Ref {
                     address: field_address("#movie/field"),
                     override_type: None,
                 },
@@ -608,7 +607,7 @@ mod tests {
                     .expect("valid field name"),
             );
             let raw = raw_field(
-                RawFieldSource::Ref {
+                RawSchemaFieldSource::Ref {
                     address: field_address("#book/missing"),
                     override_type: None,
                 },
@@ -636,7 +635,7 @@ mod tests {
                     .expect("valid field name"),
             );
             let raw = raw_field(
-                RawFieldSource::Direct(RawSchemaFieldType::Input),
+                RawSchemaFieldSource::Direct(RawSchemaFieldType::Input),
                 Some(true),
                 None,
                 BTreeMap::new(),
