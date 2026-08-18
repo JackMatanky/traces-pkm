@@ -4,15 +4,9 @@
 //! `extends` DAG, and resolves it once at construction, exposing read-side
 //! queries over the resolved Schemas for its whole lifetime.
 
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    ffi::OsStr,
-    fs, io,
-    path::Path,
-    sync::Arc,
-};
+use std::{ffi::OsStr, fs, io, path::Path, sync::Arc};
 
-use indexmap::IndexMap;
+use indexmap::{IndexMap, IndexSet};
 use walkdir::WalkDir;
 
 use super::{
@@ -35,7 +29,7 @@ use crate::{
 #[derive(Debug)]
 pub struct SchemaService {
     spec: SchemaConfigSpec,
-    schemas: BTreeMap<SchemaName, Arc<Schema>>,
+    schemas: IndexMap<SchemaName, Arc<Schema>>,
 }
 
 /// The triple [`SchemaService::new`] returns: the constructed service, any
@@ -150,9 +144,9 @@ impl SchemaService {
     /// - `matches(&["movie"])` → `{"movie"}`
     /// - `matches(&["ghost"])` → `{"ghost"}`
     #[must_use]
-    pub(crate) fn matches(&self, classes: &[String]) -> BTreeSet<String> {
+    pub(crate) fn matches(&self, classes: &[String]) -> IndexSet<String> {
         warn_unknown_classes(self, classes);
-        let mut matches: BTreeSet<String> = classes.iter().cloned().collect();
+        let mut matches: IndexSet<String> = classes.iter().cloned().collect();
         for class in classes {
             if let Some(schema) = self.get(class) {
                 matches.extend(
@@ -180,7 +174,7 @@ impl SchemaService {
         classes: &[String],
         mode: &mut ClassExpansionMode,
     ) {
-        let mut expanded: BTreeSet<String> = classes.iter().cloned().collect();
+        let mut expanded: IndexSet<String> = classes.iter().cloned().collect();
         match mode {
             ClassExpansionMode::Exact(_) => {
                 warn_unknown_classes(self, classes);
@@ -202,7 +196,7 @@ impl SchemaService {
                 expanded = self.matches(classes);
             }
         }
-        mode.set_classes(expanded);
+        mode.set_classes(expanded.into_iter().collect());
     }
 }
 
@@ -585,13 +579,12 @@ mod tests {
     }
 
     mod matches {
-        use std::collections::BTreeSet;
-
+        use indexmap::IndexSet;
         use pretty_assertions::assert_eq;
 
         use super::*;
 
-        fn set(names: &[&str]) -> BTreeSet<String> {
+        fn set(names: &[&str]) -> IndexSet<String> {
             names.iter().map(|name| (*name).to_owned()).collect()
         }
 

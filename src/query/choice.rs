@@ -33,7 +33,7 @@
 //! assert_eq!(keys.class().as_str(), "class");
 //! ```
 
-use std::collections::BTreeSet;
+use indexmap::IndexSet;
 
 use crate::{
     field::FieldKey,
@@ -126,7 +126,7 @@ impl FileOption {
 pub(crate) struct FileOptionFilter<'a> {
     pub(crate) folders: &'a [String],
     pub(crate) ext: Option<&'a str>,
-    pub(crate) classes: Option<&'a BTreeSet<String>>,
+    pub(crate) classes: Option<&'a IndexSet<String>>,
     pub(crate) keys: &'a FrontmatterFieldKeys,
 }
 impl<'a> FileOptionFilter<'a> {
@@ -136,7 +136,7 @@ impl<'a> FileOptionFilter<'a> {
     pub(crate) const fn new(
         folders: &'a [String],
         ext: Option<&'a str>,
-        classes: Option<&'a BTreeSet<String>>,
+        classes: Option<&'a IndexSet<String>>,
         keys: &'a FrontmatterFieldKeys,
     ) -> Self {
         Self {
