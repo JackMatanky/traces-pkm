@@ -25,9 +25,7 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use super::{
-    GLOBAL_SCHEMA_NAME,
-    error::SchemaWarning,
-    name::{SchemaName, SchemaNameRef},
+    GLOBAL_SCHEMA_NAME, SchemaName, SchemaNameRef, error::SchemaWarning,
     raw::RawSchema,
 };
 

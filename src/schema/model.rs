@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::{fields::SchemaFieldDef, name::SchemaName};
+use super::{SchemaName, fields::SchemaFieldDef};
 use crate::field::{FieldName, closest_match};
 
 /// A resolved Schema with its effective field definitions and position in

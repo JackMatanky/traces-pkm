@@ -13,7 +13,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Deserializer};
 use thiserror::Error;
 
-use super::{fields::FieldAddress, name::SchemaName};
+use super::{SchemaName, fields::FieldAddress};
 use crate::field::{FieldName, FieldValue};
 
 /// One `.traces/schemas/<name>.toml` file, parsed but not yet resolved.

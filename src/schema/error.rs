@@ -8,8 +8,8 @@ use std::{fmt, path::PathBuf};
 use thiserror::Error;
 
 use super::{
+    SchemaName,
     fields::{FieldAddress, SchemaFieldBuilderError, SchemaFieldTypeTag},
-    name::SchemaName,
 };
 use crate::field::FieldName;
 

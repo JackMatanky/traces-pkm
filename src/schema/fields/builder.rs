@@ -19,10 +19,9 @@ use super::{
 use crate::{
     field::FieldValue,
     schema::{
-        GLOBAL_SCHEMA_NAME,
+        GLOBAL_SCHEMA_NAME, SchemaName,
         error::{SchemaError, SchemaWarning},
         model::Schema,
-        name::SchemaName,
         raw::{RawFieldSource, RawSchemaFieldDef},
     },
 };
@@ -270,7 +269,7 @@ impl<'a> RefAddressResolver<'a> {
 mod tests {
     use super::*;
     use crate::schema::{
-        name::SchemaNameRef,
+        SchemaNameRef,
         raw::{RawFieldSource, RawSchemaFieldType},
     };
 

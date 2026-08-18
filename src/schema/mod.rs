@@ -25,6 +25,7 @@ mod service;
 pub(crate) use error::SchemaError;
 pub(crate) use fields::{SchemaFileFieldRef, SchemaSelectFieldEntry};
 pub use model::Schema;
+pub(crate) use name::{SchemaName, SchemaNameRef};
 pub use service::SchemaService;
 pub(crate) use service::resolve_sources;
 

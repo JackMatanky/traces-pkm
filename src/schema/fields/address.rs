@@ -5,7 +5,7 @@ use std::{fmt, str::FromStr};
 use serde::{Deserialize, Deserializer};
 use thiserror::Error;
 
-use super::super::name::{SchemaName, SchemaNameRef};
+use super::super::{SchemaName, SchemaNameRef};
 use crate::field::{FieldName, FieldNameError, FieldNameRef};
 
 /// An owned `#<schema>/<field>` coordinate parsed from a `$ref` string.

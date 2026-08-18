@@ -15,11 +15,11 @@ use std::{
 use walkdir::WalkDir;
 
 use super::{
+    SchemaName, SchemaNameRef,
     error::{SchemaError, SchemaWarning},
     fields::{FieldAddressRef, RefAddressResolver, SchemaFieldBuilder},
     graph::SchemaGraph,
     model::Schema,
-    name::{SchemaName, SchemaNameRef},
     raw::RawSchema,
 };
 use crate::{
