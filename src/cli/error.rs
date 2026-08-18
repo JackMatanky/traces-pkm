@@ -606,6 +606,9 @@ fn template_instantiate_code(source: &TemplateError) -> &'static str {
         TemplateError::Write {
             ..
         } => "traces::cli::template::write_failed",
+        TemplateError::SchemaLoad(_) => {
+            "traces::cli::template::schema_load_failed"
+        }
         TemplateError::Render {
             source,
             ..
@@ -680,6 +683,10 @@ fn template_instantiate_help(source: &TemplateError) -> Box<dyn Display + '_> {
             ..
         } => Box::new(
             "check that the output path and its parent directory are writable",
+        ),
+        TemplateError::SchemaLoad(_) => Box::new(
+            "check that every Schema TOML file under the configured Schema \
+             directory is readable and free of a cycle in `extends`",
         ),
         TemplateError::Render {
             source,
@@ -1056,6 +1063,28 @@ mod tests {
                 error.code().map(|code| code.to_string()),
                 Some("traces::cli::template::read_failed".to_owned())
             );
+            assert!(error.source().is_some());
+        }
+
+        #[test]
+        fn template_instantiate_schema_load() {
+            let name = PathBuf::from("daily");
+            let error = CliError::TemplateInstantiate {
+                name: name.clone(),
+                source: TemplateError::SchemaLoad(SchemaError::ReadDirectory {
+                    directory: PathBuf::from("/project/.traces/schemas"),
+                    source: io::Error::other("boom"),
+                }),
+            };
+            assert_eq!(
+                error.to_string(),
+                "failed to instantiate template daily"
+            );
+            assert_eq!(
+                error.code().map(|code| code.to_string()),
+                Some("traces::cli::template::schema_load_failed".to_owned())
+            );
+            assert!(error.help().is_some());
             assert!(error.source().is_some());
         }
 

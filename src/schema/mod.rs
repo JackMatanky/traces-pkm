@@ -7,7 +7,7 @@
 //! Global Schema or transitive `extends` ancestors.
 //!
 //! The domain's public entry point is [`SchemaService`], which wraps loading
-//! ([`SchemaService::resolve`]) and hierarchy queries ([`SchemaService::get`],
+//! ([`SchemaService::new`]) and hierarchy queries ([`SchemaService::get`],
 //! [`SchemaService::children`], [`SchemaService::descendants`],
 //! [`SchemaService::matches`]) behind a single facade.
 //!
@@ -26,7 +26,7 @@ pub(crate) use error::SchemaError;
 pub(crate) use fields::{SchemaFileFieldRef, SchemaSelectFieldEntry};
 pub use model::Schema;
 pub use service::SchemaService;
-pub(crate) use service::{SchemaRegistry, resolve_sources};
+pub(crate) use service::resolve_sources;
 
 /// The reserved Global Schema file stem: a flat `$ref`-able reference pool.
 ///

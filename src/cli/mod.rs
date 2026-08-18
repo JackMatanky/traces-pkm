@@ -289,16 +289,23 @@ fn parse_source(
     let mut source = QuerySource::parse(from.unwrap_or_default())
         .map_err(|source| query_error(root, source))?;
     if source.has_classes() {
-        let service = SchemaService::new(config.to_schema_spec());
-        let (registry, warnings) =
-            service.resolve().map_err(|error| CliError::SchemaQuery {
-                root: root.to_path_buf(),
-                source: error,
+        let (service, warnings, failures) =
+            SchemaService::new(config.to_schema_spec()).map_err(|error| {
+                CliError::SchemaQuery {
+                    root: root.to_path_buf(),
+                    source: error,
+                }
             })?;
         for warning in warnings {
             tracing::warn!(%warning, "Schema registry resolved with a warning");
         }
-        resolve_sources(&mut source, &service, &registry);
+        for failure in failures {
+            tracing::warn!(
+                schema = %failure.schema, error = %failure.error,
+                "Schema failed to resolve; excluded from the registry"
+            );
+        }
+        resolve_sources(&mut source, &service);
     }
     Ok(source)
 }
@@ -921,7 +928,8 @@ mod tests {
             let service = TemplateService::new(
                 &config,
                 Arc::new(PresetDialogProvider::new()),
-            );
+            )
+            .expect("valid test schema directory");
             let input = TemplatePathInput::parse(Path::new("report"))
                 .expect("valid template input");
             let outcome = service

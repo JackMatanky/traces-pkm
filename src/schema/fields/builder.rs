@@ -51,63 +51,58 @@ impl SchemaFieldBuilder<'_> {
         raw: &RawSchemaFieldDef,
     ) -> Result<(SchemaFieldDef, Vec<SchemaWarning>), SchemaError> {
         let mut warnings = Vec::new();
-        let (field_type, required, multi) = match &raw.source {
+        let (base, degrade_on_error) = match &raw.source {
             RawFieldSource::Ref {
                 address: base_address,
-                override_type: Some(override_type),
-            } => {
-                let base = self.refs.resolve(address, base_address)?;
-                let (field_type, errors) = parse_field(
-                    address,
-                    SchemaFieldTypeTag::from(*override_type),
-                    &raw.options,
-                    Some(base.kind()),
-                );
-                if !errors.is_empty() {
-                    return Err(SchemaFieldBuilderError::Parser(errors).into());
-                }
-                (
-                    field_type,
-                    raw.required.unwrap_or(base.is_required()),
-                    raw.multi.unwrap_or(base.is_multi()),
-                )
-            }
+                override_type,
+            } => (
+                Some(self.refs.resolve(address, base_address)?),
+                override_type.is_none(),
+            ),
+            RawFieldSource::Direct(_) => (None, false),
+        };
+        let tag = match &raw.source {
+            RawFieldSource::Direct(kind)
+            | RawFieldSource::Ref {
+                override_type: Some(kind),
+                ..
+            } => SchemaFieldTypeTag::from(*kind),
             RawFieldSource::Ref {
-                address: base_address,
                 override_type: None,
+                ..
             } => {
-                let base = self.refs.resolve(address, base_address)?;
-                let (field_type, errors) = parse_field(
-                    address,
-                    base.kind().tag(),
-                    &raw.options,
-                    Some(base.kind()),
-                );
-                warnings.extend(errors.into_iter().map(Into::into));
-                (
-                    field_type,
-                    raw.required.unwrap_or(base.is_required()),
-                    raw.multi.unwrap_or(base.is_multi()),
-                )
-            }
-            RawFieldSource::Direct(raw_type) => {
-                let (field_type, errors) = parse_field(
-                    address,
-                    SchemaFieldTypeTag::from(*raw_type),
-                    &raw.options,
-                    None,
-                );
-                if !errors.is_empty() {
-                    return Err(SchemaFieldBuilderError::Parser(errors).into());
-                }
-                (
-                    field_type,
-                    raw.required.unwrap_or(false),
-                    raw.multi.unwrap_or(false),
-                )
+                // `base` is always `Some` here: the `Ref` arms above only
+                // reach this point after `self.refs.resolve` succeeded.
+                #[expect(
+                    clippy::expect_used,
+                    reason = "the Ref match arm above already resolved base \
+                              via self.refs.resolve; this expect only covers \
+                              the impossible None case, not a recoverable \
+                              caller error"
+                )]
+                let base = base.expect("bare $ref always resolves a base");
+                base.kind().tag()
             }
         };
-
+        let (field_type, errors) = parse_field(
+            address,
+            tag,
+            &raw.options,
+            base.map(SchemaFieldDef::kind),
+        );
+        if !errors.is_empty() {
+            if degrade_on_error {
+                warnings.extend(errors.into_iter().map(Into::into));
+            } else {
+                return Err(SchemaFieldBuilderError::Parser(errors).into());
+            }
+        }
+        let required = raw
+            .required
+            .unwrap_or_else(|| base.is_some_and(SchemaFieldDef::is_required));
+        let multi = raw
+            .multi
+            .unwrap_or_else(|| base.is_some_and(SchemaFieldDef::is_multi));
         let (required, degrade) = Self::apply_global_degrade(address, required);
         warnings.extend(degrade);
         Ok((SchemaFieldDef::new(field_type, required, multi), warnings))

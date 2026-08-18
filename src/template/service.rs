@@ -48,18 +48,27 @@ impl<'a> TemplateService<'a> {
     /// `provider` handles all `ui.*` template calls and interactive output
     /// collision prompts. [`WriteMode::DryRun`] skips file writes but does not
     /// skip `ui.*` calls.
+    ///
+    /// # Errors
+    ///
+    /// [`TemplateError::SchemaLoad`] if constructing the underlying
+    /// [`TemplateEngine`] fails to load the Schema registry: the registry
+    /// directory could not be read or listed, a Schema file failed to
+    /// parse, or the `extends` DAG contains a cycle.
     #[inline]
-    #[must_use]
-    pub fn new(config: &'a Config, provider: Arc<dyn DialogProvider>) -> Self {
+    pub fn new(
+        config: &'a Config,
+        provider: Arc<dyn DialogProvider>,
+    ) -> Result<Self, TemplateError> {
         let loader = TemplateLoader::from(config);
         let engine =
-            TemplateEngine::new(&loader, Arc::clone(&provider), config);
-        Self {
+            TemplateEngine::new(&loader, Arc::clone(&provider), config)?;
+        Ok(Self {
             config,
             loader,
             engine,
             provider,
-        }
+        })
     }
 
     /// Lists available template names for a configuration.
@@ -355,7 +364,8 @@ mod tests {
                 None,
                 temp.path().to_path_buf(),
             );
-            let service = TemplateService::new(&config, preset_provider());
+            let service = TemplateService::new(&config, preset_provider())
+                .expect("valid test schema directory");
 
             let outcome = service
                 .render_to_file(
@@ -382,7 +392,8 @@ mod tests {
                 None,
                 PathBuf::from("notes"),
             );
-            let service = TemplateService::new(&config, preset_provider());
+            let service = TemplateService::new(&config, preset_provider())
+                .expect("valid test schema directory");
 
             let outcome = service
                 .render_to_file(
@@ -409,7 +420,8 @@ mod tests {
                 None,
                 temp.path().to_path_buf(),
             );
-            let service = TemplateService::new(&config, preset_provider());
+            let service = TemplateService::new(&config, preset_provider())
+                .expect("valid test schema directory");
 
             let outcome = service
                 .render_to_file(
@@ -440,7 +452,8 @@ mod tests {
                 None,
                 temp.path().to_path_buf(),
             );
-            let service = TemplateService::new(&config, preset_provider());
+            let service = TemplateService::new(&config, preset_provider())
+                .expect("valid test schema directory");
             let expected =
                 WriteOutcome::Written(temp.path().join("notes/daily.md"));
 
@@ -475,7 +488,8 @@ mod tests {
                 None,
                 temp.path().to_path_buf(),
             );
-            let service = TemplateService::new(&config, preset_provider());
+            let service = TemplateService::new(&config, preset_provider())
+                .expect("valid test schema directory");
 
             let error = service
                 .render_to_file(
@@ -504,7 +518,8 @@ mod tests {
                 None,
                 temp.path().to_path_buf(),
             );
-            let service = TemplateService::new(&config, preset_provider());
+            let service = TemplateService::new(&config, preset_provider())
+                .expect("valid test schema directory");
 
             let error = service
                 .render_to_file(
@@ -528,7 +543,8 @@ mod tests {
                 None,
                 temp.path().to_path_buf(),
             );
-            let service = TemplateService::new(&config, preset_provider());
+            let service = TemplateService::new(&config, preset_provider())
+                .expect("valid test schema directory");
 
             let error = service
                 .render_to_file(
@@ -556,7 +572,8 @@ mod tests {
                 None,
                 temp.path().to_path_buf(),
             );
-            let service = TemplateService::new(&config, preset_provider());
+            let service = TemplateService::new(&config, preset_provider())
+                .expect("valid test schema directory");
 
             let error = service
                 .render_to_file(
@@ -591,7 +608,8 @@ mod tests {
                 None,
                 PathBuf::from("notes/output"),
             );
-            let service = TemplateService::new(&config, preset_provider());
+            let service = TemplateService::new(&config, preset_provider())
+                .expect("valid test schema directory");
 
             let error = service
                 .render_to_file(
@@ -616,7 +634,8 @@ mod tests {
                 None,
                 temp.path().to_path_buf(),
             );
-            let service = TemplateService::new(&config, preset_provider());
+            let service = TemplateService::new(&config, preset_provider())
+                .expect("valid test schema directory");
 
             let outcome = service
                 .render_to_file(
@@ -644,7 +663,8 @@ mod tests {
                 None,
                 temp.path().to_path_buf(),
             );
-            let service = TemplateService::new(&config, preset_provider());
+            let service = TemplateService::new(&config, preset_provider())
+                .expect("valid test schema directory");
             let override_path = Path::new("elsewhere.md");
 
             let outcome = service
@@ -674,7 +694,8 @@ mod tests {
                 None,
                 temp.path().to_path_buf(),
             );
-            let service = TemplateService::new(&config, preset_provider());
+            let service = TemplateService::new(&config, preset_provider())
+                .expect("valid test schema directory");
             let outside = temp.path().join("outside.md");
 
             let error = service
@@ -702,7 +723,8 @@ mod tests {
                 None,
                 temp.path().to_path_buf(),
             );
-            let service = TemplateService::new(&config, preset_provider());
+            let service = TemplateService::new(&config, preset_provider())
+                .expect("valid test schema directory");
             let traversal = Path::new("../escape.md");
 
             let error = service
@@ -734,7 +756,8 @@ mod tests {
                 None,
                 temp.path().to_path_buf(),
             );
-            let service = TemplateService::new(&config, preset_provider());
+            let service = TemplateService::new(&config, preset_provider())
+                .expect("valid test schema directory");
 
             let error = service
                 .render_to_file(
@@ -772,7 +795,8 @@ mod tests {
                 None,
                 root.clone(),
             );
-            let service = TemplateService::new(&config, preset_provider());
+            let service = TemplateService::new(&config, preset_provider())
+                .expect("valid test schema directory");
 
             let error = service
                 .render_to_file(
@@ -809,7 +833,8 @@ mod tests {
                 None,
                 temp.path().to_path_buf(),
             );
-            let service = TemplateService::new(&config, preset_provider());
+            let service = TemplateService::new(&config, preset_provider())
+                .expect("valid test schema directory");
             let cli_override = Path::new("from-cli.md");
 
             let outcome = service
@@ -841,7 +866,8 @@ mod tests {
                 None,
                 temp.path().to_path_buf(),
             );
-            let service = TemplateService::new(&config, preset_provider());
+            let service = TemplateService::new(&config, preset_provider())
+                .expect("valid test schema directory");
 
             let outcome = service
                 .render_to_file(
@@ -870,7 +896,8 @@ mod tests {
             );
             let existing = temp.path().join("daily.md");
             fs::write(&existing, "old content").expect("seed existing output");
-            let service = TemplateService::new(&config, preset_provider());
+            let service = TemplateService::new(&config, preset_provider())
+                .expect("valid test schema directory");
 
             let error = service
                 .render_to_file(
@@ -903,7 +930,8 @@ mod tests {
             );
             let existing = temp.path().join("daily.md");
             fs::write(&existing, "old content").expect("seed existing output");
-            let service = TemplateService::new(&config, preset_provider());
+            let service = TemplateService::new(&config, preset_provider())
+                .expect("valid test schema directory");
 
             let outcome = service
                 .render_to_file(
@@ -934,7 +962,8 @@ mod tests {
             let default_output = temp.path().join("daily.md");
             fs::write(&default_output, "old content")
                 .expect("seed existing output");
-            let service = TemplateService::new(&config, preset_provider());
+            let service = TemplateService::new(&config, preset_provider())
+                .expect("valid test schema directory");
 
             let outcome = service
                 .render_to_file(&input("daily"), None, WriteMode::DryRun)
@@ -958,7 +987,8 @@ mod tests {
                 None,
                 temp.path().to_path_buf(),
             );
-            let service = TemplateService::new(&config, preset_provider());
+            let service = TemplateService::new(&config, preset_provider())
+                .expect("valid test schema directory");
             let escaping = Path::new("../../escape.md");
 
             let outcome = service
@@ -1001,7 +1031,8 @@ mod tests {
                     .with_select(1)
                     .with_multi_select([0, 2]),
             );
-            let service = TemplateService::new(&config, provider);
+            let service = TemplateService::new(&config, provider)
+                .expect("valid test schema directory");
 
             let outcome = service
                 .render_to_file(
@@ -1045,7 +1076,8 @@ mod tests {
                     .with_multi_select([0, 1])
                     .with_select(2),
             );
-            let service = TemplateService::new(&config, provider);
+            let service = TemplateService::new(&config, provider)
+                .expect("valid test schema directory");
 
             let outcome = service
                 .render_to_file(
@@ -1090,7 +1122,8 @@ mod tests {
                     .with_select(1)
                     .with_multi_select([0, 1]),
             );
-            let service = TemplateService::new(&config, provider);
+            let service = TemplateService::new(&config, provider)
+                .expect("valid test schema directory");
 
             let outcome = service
                 .render_to_file(
@@ -1129,7 +1162,8 @@ mod tests {
             );
             let provider =
                 Arc::new(PresetDialogProvider::new().with_text("claude"));
-            let service = TemplateService::new(&config, provider);
+            let service = TemplateService::new(&config, provider)
+                .expect("valid test schema directory");
 
             let outcome = service
                 .render_to_file(&input("daily"), None, WriteMode::DryRun)
@@ -1155,7 +1189,8 @@ mod tests {
                 None,
                 temp.path().to_path_buf(),
             );
-            let service = TemplateService::new(&config, preset_provider());
+            let service = TemplateService::new(&config, preset_provider())
+                .expect("valid test schema directory");
 
             let rendered = service.render(&input("daily")).expect("render");
 
@@ -1178,7 +1213,8 @@ mod tests {
                 None,
                 temp.path().to_path_buf(),
             );
-            let service = TemplateService::new(&config, preset_provider());
+            let service = TemplateService::new(&config, preset_provider())
+                .expect("valid test schema directory");
 
             let rendered = service.render(&input("daily")).expect("render");
 
@@ -1199,7 +1235,8 @@ mod tests {
                 None,
                 temp.path().to_path_buf(),
             );
-            let service = TemplateService::new(&config, preset_provider());
+            let service = TemplateService::new(&config, preset_provider())
+                .expect("valid test schema directory");
 
             let error = service
                 .render(&input("missing"))

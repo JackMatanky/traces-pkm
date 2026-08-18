@@ -38,7 +38,8 @@ fn renders_a_query_over_real_indexed_notes_and_writes_the_result() {
         root.clone(),
     );
     let template_service =
-        TemplateService::new(&config, Arc::new(PresetDialogProvider::new()));
+        TemplateService::new(&config, Arc::new(PresetDialogProvider::new()))
+            .expect("valid test schema directory");
     let input = TemplatePathInput::parse(std::path::Path::new("report"))
         .expect("valid template input");
 

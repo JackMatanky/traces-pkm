@@ -51,7 +51,9 @@ use self::{
     string::StrOps,
     ui::UiOps,
 };
-use super::{loader::TemplateLoader, path::DeclaredOutputPath};
+use super::{
+    error::TemplateError, loader::TemplateLoader, path::DeclaredOutputPath,
+};
 use crate::{DialogProvider, config::Config, schema::SchemaService};
 
 /// Renders template source through minijinja, backed by [`TemplateLoader`]'s
@@ -91,12 +93,11 @@ impl TemplateEngine {
     /// [`uuid`]: fn@uuid
     /// [`DialogProvider`]: crate::DialogProvider
     #[inline]
-    #[must_use]
     pub(super) fn new(
         loader: &TemplateLoader,
         provider: Arc<dyn DialogProvider>,
         config: &Config,
-    ) -> Self {
+    ) -> Result<Self, TemplateError> {
         let mut env = Environment::new();
         // Powers `minijinja::Error::range()`/`template_source()`, which
         // `crate::cli::error` uses to compute a line:column location for
@@ -111,11 +112,22 @@ impl TemplateEngine {
         let root: Arc<Path> = Arc::from(config.root());
         let class_field: Arc<str> =
             Arc::from(config.schemas().class_field_name());
-        // Built once and shared with `QueryOps` (below) so `query`/`tasks`
-        // `.from()` and `schema.get()` resolve the identical Schema registry
-        // directory by construction, not by coincidentally-equal config
-        // projection clones: see `cache::SCHEMA_REGISTRY_CACHE_KEY`'s docs.
-        let service = Arc::new(SchemaService::new(config.to_schema_spec()));
+        // Resolved once here and shared with `QueryOps` (below) so
+        // `query`/`tasks` `.from()` and `schema.get()` read the identical,
+        // already-resolved `SchemaService` for this engine's whole lifetime —
+        // no render-scoped re-resolution or caching.
+        let (service, warnings, failures) =
+            SchemaService::new(config.to_schema_spec())?;
+        for warning in &warnings {
+            tracing::warn!(%warning, "Schema registry resolved with a warning");
+        }
+        for failure in &failures {
+            tracing::warn!(
+                schema = %failure.schema, error = %failure.error,
+                "Schema failed to resolve; excluded from the registry"
+            );
+        }
+        let service = Arc::new(service);
         FileOps::new(Arc::clone(&root)).register(&mut env);
         QueryOps::page(
             Arc::clone(&root),
@@ -133,9 +145,9 @@ impl TemplateEngine {
         NumOps::register(&mut env);
         SchemaOps::new(service).register(&mut env);
         env.add_function("uuid", uuid);
-        Self {
+        Ok(Self {
             env,
-        }
+        })
     }
 
     /// Compiles and renders template `source` identified by `name` with an
@@ -231,7 +243,8 @@ mod tests {
                 &loader_from_dir(temp.path()),
                 preset_provider(),
                 &config_for(temp.path()),
-            );
+            )
+            .expect("valid test schema directory");
 
             let rendered = engine
                 .render("{% for n in [1, 2] %}{{ n }}{% endfor %}", "test.md")
@@ -249,7 +262,8 @@ mod tests {
                 &loader_from_dir(temp.path()),
                 preset_provider(),
                 &config_for(temp.path()),
-            );
+            )
+            .expect("valid test schema directory");
 
             let rendered = engine
                 .render("{% include \"partial.md\" %}!", "test.md")
@@ -268,7 +282,8 @@ mod tests {
                 &loader_from_dir(&dir),
                 preset_provider(),
                 &config_for(temp.path()),
-            );
+            )
+            .expect("valid test schema directory");
 
             let rendered = engine
                 .render("{% include \"daily.md\" %}", "test.md")
@@ -286,7 +301,8 @@ mod tests {
                 &loader_from_dir(temp.path()),
                 preset_provider(),
                 &config_for(temp.path()),
-            );
+            )
+            .expect("valid test schema directory");
 
             let rendered = engine
                 .render("{% include \".draft.md\" %}", "test.md")
@@ -308,7 +324,8 @@ mod tests {
                 &TemplateLoader::new(Some(local_dir), Some(global_dir)),
                 preset_provider(),
                 &config_for(temp.path()),
-            );
+            )
+            .expect("valid test schema directory");
 
             let rendered = engine
                 .render("{% include \"shared.md\" %}", "test.md")
@@ -326,7 +343,8 @@ mod tests {
                 &loader_from_dir(temp.path()),
                 preset_provider(),
                 &config_for(temp.path()),
-            );
+            )
+            .expect("valid test schema directory");
 
             let rendered = engine
                 .render("{% include \"daily\" %}", "test.md")
@@ -344,7 +362,8 @@ mod tests {
                 &loader_from_dir(temp.path()),
                 preset_provider(),
                 &config_for(temp.path()),
-            );
+            )
+            .expect("valid test schema directory");
 
             let rendered = engine
                 .render(
@@ -376,7 +395,8 @@ mod tests {
                 &loader_from_dir(temp.path()),
                 preset_provider(),
                 &config_for(temp.path()),
-            );
+            )
+            .expect("valid test schema directory");
 
             let rendered = engine
                 .render("no output path here", "test.md")
@@ -392,7 +412,8 @@ mod tests {
                 &loader_from_dir(temp.path()),
                 preset_provider(),
                 &config_for(temp.path()),
-            );
+            )
+            .expect("valid test schema directory");
 
             let rendered = engine
                 .render("{{ file.write_to(\"notes/daily.md\") }}", "test.md")
@@ -411,7 +432,8 @@ mod tests {
                 &loader_from_dir(temp.path()),
                 preset_provider(),
                 &config_for(temp.path()),
-            );
+            )
+            .expect("valid test schema directory");
             engine
                 .render("{{ file.write_to(\"first.md\") }}", "test.md")
                 .expect("render succeeds");
@@ -430,7 +452,8 @@ mod tests {
                 &loader_from_dir(temp.path()),
                 preset_provider(),
                 &config_for(temp.path()),
-            );
+            )
+            .expect("valid test schema directory");
 
             let error = engine
                 .render("{{ file.move_to(\"x.md\") }}", "test.md")
@@ -459,7 +482,8 @@ mod tests {
                 &loader_from_dir(temp.path()),
                 preset_provider(),
                 &config_for(temp.path()),
-            );
+            )
+            .expect("valid test schema directory");
 
             let rendered = engine
                 .render("{{ file.include(\"snippet.md\") }}", "test.md")
@@ -475,7 +499,8 @@ mod tests {
                 &loader_from_dir(temp.path()),
                 preset_provider(),
                 &config_for(temp.path()),
-            );
+            )
+            .expect("valid test schema directory");
 
             let rendered = engine
                 .render("{{ ui.confirm(\"proceed?\") }}", "test.md")
@@ -491,7 +516,8 @@ mod tests {
                 &loader_from_dir(temp.path()),
                 preset_provider(),
                 &config_for(temp.path()),
-            );
+            )
+            .expect("valid test schema directory");
 
             let rendered = engine
                 .render("{{ date.now(format=\"%Y\") }}", "test.md")
@@ -514,7 +540,8 @@ mod tests {
                 &loader_from_dir(temp.path()),
                 preset_provider(),
                 &config_for(temp.path()),
-            );
+            )
+            .expect("valid test schema directory");
 
             let rendered = engine
                 .render(
@@ -561,7 +588,8 @@ mod tests {
                 &loader_from_dir(temp.path()),
                 preset_provider(),
                 &config,
-            );
+            )
+            .expect("valid test schema directory");
 
             let rendered = engine
                 .render(
@@ -613,7 +641,8 @@ mod tests {
                 &loader_from_dir(temp.path()),
                 preset_provider(),
                 &config,
-            );
+            )
+            .expect("valid test schema directory");
 
             let rendered = engine
                 .render(
@@ -633,7 +662,8 @@ mod tests {
                 &loader_from_dir(temp.path()),
                 preset_provider(),
                 &config_for(temp.path()),
-            );
+            )
+            .expect("valid test schema directory");
 
             let rendered = engine
                 .render("{{ uuid() }}", "test.md")
@@ -651,7 +681,8 @@ mod tests {
                 &loader_from_dir(temp.path()),
                 preset_provider(),
                 &config_for(temp.path()),
-            );
+            )
+            .expect("valid test schema directory");
 
             let rendered = engine
                 .render("{{ \"hello world\" | snake_case }}", "test.md")
@@ -667,7 +698,8 @@ mod tests {
                 &loader_from_dir(temp.path()),
                 preset_provider(),
                 &config_for(temp.path()),
-            );
+            )
+            .expect("valid test schema directory");
 
             let rendered = engine
                 .render(

@@ -17,6 +17,16 @@ use crate::field::FieldName;
 ///
 /// Defects that resolution can recover from are emitted as [`SchemaWarning`]
 /// instead.
+///
+/// Deliberately `pub(crate)`, not `pub`: [`TemplateError::SchemaLoad`]
+/// wraps this transparently for its `Display`/`Error` chain without
+/// exposing the concrete type, via a scoped
+/// `#[expect(private_interfaces)]` — do not "fix" that by making this
+/// `pub`, which would cascade the same requirement onto every field type
+/// below (`SchemaName`, `FieldName`, `SchemaFieldBuilderError`, …), all
+/// otherwise intentionally crate-internal.
+///
+/// [`TemplateError::SchemaLoad`]: crate::template::TemplateError::SchemaLoad
 #[derive(Debug, Error)]
 pub(crate) enum SchemaError {
     /// The registry directory exists but could not be read.
@@ -82,6 +92,18 @@ pub(crate) enum SchemaWarning {
         schema: SchemaName,
         target: SchemaName,
     },
+    /// The same `extends` target is declared more than once.
+    DuplicateExtendsTarget {
+        schema: SchemaName,
+        target: SchemaName,
+    },
+    /// A declared `extends` parent exists but failed to build its own
+    /// fields; this Schema still resolves without that parent's
+    /// contribution.
+    ParentFailedToResolve {
+        schema: SchemaName,
+        parent: SchemaName,
+    },
     /// `required = true` on the Global Schema, which is ignored.
     StrayGlobalRequired {
         field: String,
@@ -114,6 +136,23 @@ impl fmt::Display for SchemaWarning {
                 f,
                 "Schema {schema:?} extends unknown Schema {target:?}; its own \
                  fields still resolve"
+            ),
+            Self::DuplicateExtendsTarget {
+                schema,
+                target,
+            } => write!(
+                f,
+                "Schema {schema:?} declares extends target {target:?} more \
+                 than once; duplicates are ignored"
+            ),
+            Self::ParentFailedToResolve {
+                schema,
+                parent,
+            } => write!(
+                f,
+                "Schema {schema:?} extends {parent:?}, which failed to \
+                 resolve; its own fields still resolve, without {parent:?}'s \
+                 fields"
             ),
             Self::StrayGlobalRequired {
                 field,

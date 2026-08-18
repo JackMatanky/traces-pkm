@@ -1,13 +1,12 @@
 //! Cache render-scoped resources in `State`'s temp storage.
 //!
-//! [`cached`] backs `query.rs`'s [`FileIndex`](crate::index::FileIndex) cache
-//! and the [`SchemaRegistry`](crate::schema::SchemaRegistry) cache shared by
-//! the `query`, `tasks`, and `schema` namespaces: each stashes a load result
-//! behind a fixed key so a render calling into a namespace several times pays
-//! for one load, instead of hand-rolling its own downcastable wrapper and
-//! get-or-load body per resource. [`set_temp`]/[`get_temp`] are the same
-//! stash/retrieve mechanism without a load step, for a value that's cheap to
-//! build (an `Arc` clone) rather than expensive to load: `schema.rs` seeds the
+//! [`cached`] backs `query.rs`'s [`FileIndex`](crate::index::FileIndex)
+//! cache: it stashes a load result behind a fixed key so a render calling
+//! into a namespace several times pays for one load, instead of
+//! hand-rolling its own downcastable wrapper and get-or-load body per
+//! resource. [`set_temp`]/[`get_temp`] are the same stash/retrieve
+//! mechanism without a load step, for a value that's cheap to build (an
+//! `Arc` clone) rather than expensive to load: `schema.rs` seeds the
 //! render's [`SchemaService`](crate::schema::SchemaService) this way so
 //! [`Schema`](crate::schema::Schema)'s own minijinja `Object` impl can reach
 //! it without holding a reference itself.
@@ -18,21 +17,6 @@ use minijinja::{
     State,
     value::{Object, Value},
 };
-
-/// The [`State::set_temp`] key caching one loaded
-/// [`SchemaRegistry`](crate::schema::SchemaRegistry) for the current render.
-///
-/// Shared by the `query`, `tasks`, and `schema` namespaces. This is sound only
-/// because every namespace resolves the identical Schema registry directory:
-/// [`super::TemplateEngine::new`] builds one
-/// [`SchemaService`](crate::schema::SchemaService) and clones its `Arc` into
-/// every namespace that needs it, instead of each namespace independently
-/// constructing its own config projection that merely happens to name the same
-/// directory today. A render touching both a `from_class` query and
-/// `schema.get` pays for one
-/// [`SchemaService::resolve`](crate::schema::SchemaService::resolve), not one
-/// per namespace.
-pub(super) const SCHEMA_REGISTRY_CACHE_KEY: &str = "schema.registry_cache";
 
 /// Wraps any render-scoped cacheable value so it can round-trip through
 /// [`State`]'s temp storage via [`Value::from_object`]/

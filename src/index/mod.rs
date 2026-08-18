@@ -283,13 +283,13 @@ impl FileIndex {
     /// dimension; within `folders`, matching is any-of, a record matches when
     /// its project-relative folder starts with any configured folder. `classes`
     /// is already the transitive is-a match set from
-    /// [`SchemaRegistry::matches`].
+    /// [`SchemaService::matches`].
     ///
     /// Label resolution is not a filter dimension: every matched record gets a
     /// label, trying the configured aliases key, then the configured title key,
     /// then falling back to the filename stem.
     ///
-    /// [`SchemaRegistry::matches`]: crate::schema::SchemaRegistry::matches
+    /// [`SchemaService::matches`]: crate::schema::SchemaService::matches
     #[must_use]
     pub(crate) fn file_options(
         &self,

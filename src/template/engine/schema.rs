@@ -33,18 +33,18 @@
 //! (`from_class`, `file`-field filters) degrade missing class targets to exact
 //! matching with a warning; structural Schema and field names still hard-error.
 //!
-//! # Registry Loading and Caching
+//! # Resolution Timing
 //!
-//! No Schema TOML is read or resolved until a template actually calls
-//! `schema.get(...)`: a Template that never touches the `schema` namespace
-//! never reads the registry directory, so a broken Schema file elsewhere in it
-//! only breaks the Template that reaches into `schema`. Once loaded, the
-//! resolved [`SchemaRegistry`] is cached in [`State`]'s temp storage for the
-//! remainder of the render via [`cached_schema_set`], mirroring
-//! [`super::query::cached_refresh`], so a Template calling `schema.get`
-//! several times pays for one registry load. [`SchemaRegistry`] itself stores
-//! each Schema behind an `Arc`, so `schema.get` shares that Schema's field map
-//! instead of deep-cloning it per call.
+//! Every Schema TOML file is read and resolved once, at
+//! [`super::TemplateEngine`]
+//! construction (`SchemaService::new`) — not lazily on the first
+//! `schema.get(...)` call. Every render for that engine's whole lifetime
+//! shares the identical already-resolved `Arc<SchemaService>`: no
+//! render-scoped registry cache or re-resolution.
+//!
+//! [`Schema`] itself stores each field behind the resolved Schema's shared
+//! [`Arc`], so `schema.get` shares that Schema's field map instead of
+//! deep-cloning it per call.
 //!
 //! [`Schema`]'s own `Object` impl carries no context fields (no per-instance
 //! registry/config bundle, unlike a wrapper type): `.field()`/`.children()`/
@@ -66,8 +66,7 @@ use crate::{
     field::FieldValue,
     query::{FileOption, FileOptionFilter, FrontmatterFieldKeys},
     schema::{
-        Schema, SchemaError, SchemaFileFieldRef, SchemaRegistry,
-        SchemaSelectFieldEntry, SchemaService,
+        Schema, SchemaFileFieldRef, SchemaSelectFieldEntry, SchemaService,
     },
 };
 
@@ -125,9 +124,8 @@ impl Object for SchemaOps {
                             SCHEMA_SERVICE_CACHE_KEY,
                             Arc::clone(&ops.service),
                         );
-                        let registry = cached_schema_set(state, &ops.service)?;
                         ops.service
-                            .get(&registry, name)
+                            .get(name)
                             .cloned()
                             .map(Value::from_dyn_object)
                             .ok_or_else(|| unknown_schema_error(name))
@@ -158,36 +156,6 @@ fn cached_service(state: &State) -> Result<Arc<SchemaService>, Error> {
             ErrorKind::InvalidOperation,
             "internal error: no Schema service cached for this render",
         )
-    })
-}
-
-/// Returns the render's [`SchemaRegistry`] cached via [`super::cache`],
-/// shared with the `query`/`tasks` namespaces so a render touching both pays
-/// for one [`SchemaService::resolve`]. Logs each recovered `SchemaWarning`
-/// once, at load time.
-///
-/// The one `cached_schema_set` helper this module and `query.rs` both call,
-/// replacing what used to be two independently duplicated `cached_registry`
-/// methods.
-///
-/// # Errors
-///
-/// - [`ErrorKind::InvalidOperation`] via [`registry_error`] if
-///   [`SchemaService::resolve`] fails: a malformed Schema file, a resolution
-///   cycle, or an out-of-bounds `$ref`.
-pub(super) fn cached_schema_set(
-    state: &State,
-    service: &SchemaService,
-) -> Result<Arc<SchemaRegistry>, Error> {
-    super::cache::cached(state, super::cache::SCHEMA_REGISTRY_CACHE_KEY, || {
-        let (registry, warnings) = service.resolve().map_err(registry_error)?;
-        for warning in &warnings {
-            tracing::warn!(
-                %warning,
-                "Schema registry resolved with a warning"
-            );
-        }
-        Ok(registry)
     })
 }
 
@@ -255,7 +223,7 @@ impl Object for Schema {
 
 /// A [`SchemaService`] hierarchy query (`children`/`descendants`), shared by
 /// [`bind_related`].
-type RelateFn = fn(&SchemaService, &SchemaRegistry, &str) -> Vec<Arc<Schema>>;
+type RelateFn = fn(&SchemaService, &str) -> Vec<Arc<Schema>>;
 
 /// Binds every Schema `relate` returns for `schema` as a `Value` list of
 /// bound `Schema` objects. Shared by `.children()`/`.descendants()`, which
@@ -266,8 +234,7 @@ fn bind_related(
     relate: RelateFn,
 ) -> Result<Value, Error> {
     let service = cached_service(state)?;
-    let registry = cached_schema_set(state, &service)?;
-    let related = relate(&service, &registry, schema.name());
+    let related = relate(&service, schema.name());
     Ok(Value::from(
         related.into_iter().map(Value::from_dyn_object).collect::<Vec<_>>(),
     ))
@@ -301,8 +268,7 @@ fn file_field_values(
     let class_matches = if classes.is_empty() {
         None
     } else {
-        let registry = cached_schema_set(state, &service)?;
-        Some(service.matches(&registry, classes))
+        Some(service.matches(classes))
     };
     let keys = FrontmatterFieldKeys::new(
         service.spec().class_field().clone(),
@@ -328,16 +294,6 @@ fn file_option_value(option: FileOption) -> Value {
         label => label,
         value => value,
     }
-}
-
-/// Maps a directory-wide [`SchemaError`] into a [`minijinja::Error`].
-///
-/// Keeps the original error as [`source`](std::error::Error::source).
-fn registry_error(source: SchemaError) -> Error {
-    super::error::invalid_operation(
-        "failed to load the Schema registry",
-        source,
-    )
 }
 
 /// Builds the error for `schema.get(name)` naming a Schema that did not
@@ -368,8 +324,8 @@ mod tests {
 
     use minijinja::Environment;
 
-    use super::{super::query::QueryOps, *};
-    use crate::config::SchemaConfigSpec;
+    use super::*;
+    use crate::{config::SchemaConfigSpec, schema::SchemaError};
 
     /// A minimal [`Environment`] with `schema` registered against `directory`.
     fn env(directory: &Path) -> Environment<'static> {
@@ -381,9 +337,10 @@ mod tests {
     fn schema_ops(directory: &Path) -> SchemaOps {
         let root =
             directory.parent().and_then(Path::parent).unwrap_or(directory);
-        SchemaOps::new(Arc::new(SchemaService::new(
-            SchemaConfigSpec::for_test(root, directory),
-        )))
+        let (service, _, _) =
+            SchemaService::new(SchemaConfigSpec::for_test(root, directory))
+                .expect("valid test schema directory");
+        SchemaOps::new(Arc::new(service))
     }
 
     fn render(directory: &Path, source: &str) -> Result<String, Error> {
@@ -537,107 +494,6 @@ mod tests {
             .expect("render succeeds");
 
             assert_eq!(rendered, "reading-reading");
-        }
-    }
-
-    mod caching {
-        use std::fs;
-
-        use pretty_assertions::assert_eq;
-
-        use super::*;
-
-        #[test]
-        fn a_second_call_reuses_the_registry_cached_by_the_first() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            let schemas_dir = temp.path().join(".traces/schemas");
-            write_schema(
-                temp.path(),
-                "book",
-                r#"
-                [fields.status]
-                type = "select"
-                values = ["reading"]
-                "#,
-            );
-            let ops = Arc::new(schema_ops(&schemas_dir));
-            let get = ops
-                .get_value(&Value::from("get"))
-                .expect("get is a known method");
-            let env = Environment::new();
-            let state = env.empty_state();
-
-            // Populates state's cached SchemaRegistry.
-            get.call(&state, &[Value::from("book")])
-                .expect("first call loads and caches the registry");
-            // A missing registry directory degrades to an empty registry
-            // (SchemaService::resolve), not an error: if the second call
-            // below re-read the directory instead of reusing the cache, it
-            // would find no `book` Schema and hard-error.
-            fs::remove_dir_all(&schemas_dir).expect("remove schemas dir");
-
-            let second = get.call(&state, &[Value::from("book")]);
-
-            assert!(
-                second.is_ok(),
-                "a cached registry must not need to reread a now-missing \
-                 directory"
-            );
-        }
-
-        #[test]
-        fn a_query_call_reuses_the_registry_schema_already_cached() {
-            // `sci_fi` transitively is-a `book` via `extends`. An empty,
-            // degraded registry (`SchemaService::resolve` on a missing
-            // directory - see the sibling test above) has no Schemas at
-            // all, so `from("@book*")` would fall back to exact-match and
-            // miss a Note whose File Class is `sci_fi`. Asserting the Note
-            // still matches after the directory is gone proves `query`
-            // reused the registry `schema.get` already cached in this render,
-            // not a fresh (post-deletion) load of its own.
-            let temp = tempfile::tempdir().expect("create temp dir");
-            let schemas_dir = temp.path().join(".traces/schemas");
-            write_schema(temp.path(), "book", "");
-            write_schema(temp.path(), "sci_fi", "extends = [\"book\"]\n");
-            write_note(
-                temp.path(),
-                "dune.md",
-                "---\nclass: sci_fi\n---\n# dune",
-            );
-            let service = Arc::new(SchemaService::new(
-                SchemaConfigSpec::for_test(temp.path(), &schemas_dir),
-            ));
-            let schema_ops = Arc::new(SchemaOps::new(Arc::clone(&service)));
-            let get = schema_ops
-                .get_value(&Value::from("get"))
-                .expect("get is a known method");
-            let query_ops = Arc::new(QueryOps::page(
-                Arc::from(temp.path()),
-                Arc::from("class"),
-                Arc::clone(&service),
-            ));
-            let from = query_ops
-                .get_value(&Value::from("from"))
-                .expect("from is a known method");
-            let env = Environment::new();
-            let state = env.empty_state();
-
-            // Populates state's cached SchemaRegistry under `schema`.
-            get.call(&state, &[Value::from("book")])
-                .expect("schema.get loads and caches the registry");
-            fs::remove_dir_all(&schemas_dir).expect("remove schemas dir");
-
-            let matched = from.call(&state, &[Value::from("@book*")]).expect(
-                "query.from must reuse the cached registry, not reread the \
-                 now-missing directory",
-            );
-
-            assert_eq!(
-                matched.len().expect("from returns a sized sequence"),
-                1,
-                "sci_fi's is-a relationship to book only resolves through the \
-                 registry schema.get already cached"
-            );
         }
     }
 
@@ -1100,31 +956,32 @@ mod tests {
         }
 
         #[test]
-        fn a_malformed_schema_file_surfaces_as_a_render_error_not_a_panic() {
+        fn a_malformed_schema_file_fails_construction_not_a_panic() {
+            // Resolution happens once at `SchemaService::new` (construction
+            // time), not lazily on the first `schema.get` call, so a
+            // malformed Schema TOML now fails construction rather than
+            // surfacing as a render error.
             let temp = tempfile::tempdir().expect("create temp dir");
             write_schema(temp.path(), "book", "not valid toml [[[");
 
-            let error = render(
+            let error = SchemaService::new(SchemaConfigSpec::for_test(
+                temp.path(),
                 &temp.path().join(".traces/schemas"),
-                "{{ schema.get('book') }}",
-            )
-            .expect_err("malformed Schema TOML should error");
-
-            assert!(
-                error
-                    .to_string()
-                    .contains("failed to load the Schema registry")
+            ))
+            .expect_err(
+                "malformed Schema TOML fails construction, not a panic",
             );
+
+            assert!(matches!(error, SchemaError::Parse { .. }));
         }
 
         #[test]
-        fn a_broken_sibling_schema_still_breaks_a_template_that_touches_schema()
-        {
-            // Directory-wide load failure is documented, not hidden: a
-            // template that reaches into `schema` at all pays for every
-            // Schema file in the registry resolving. Lazy loading only
-            // isolates templates that never call `schema.get` in the first
-            // place (see the `register` module below).
+        fn a_broken_sibling_schema_still_breaks_construction() {
+            // Directory-wide load failure is documented, not hidden:
+            // resolution happens once at construction, so one malformed
+            // sibling Schema fails the whole registry — and therefore every
+            // render, regardless of whether the template ever reaches into
+            // `schema` (see the `register` module below).
             let temp = tempfile::tempdir().expect("create temp dir");
             write_schema(
                 temp.path(),
@@ -1137,19 +994,15 @@ mod tests {
             );
             write_schema(temp.path(), "broken", "not valid toml [[[");
 
-            let error = render(
+            let error = SchemaService::new(SchemaConfigSpec::for_test(
+                temp.path(),
                 &temp.path().join(".traces/schemas"),
-                "{{ schema.get('book').field('status') }}",
-            )
+            ))
             .expect_err(
                 "a broken sibling Schema fails the whole registry load",
             );
 
-            assert!(
-                error
-                    .to_string()
-                    .contains("failed to load the Schema registry")
-            );
+            assert!(matches!(error, SchemaError::Parse { .. }));
         }
     }
 
@@ -1181,15 +1034,25 @@ mod tests {
         }
 
         #[test]
-        fn a_broken_schema_never_breaks_a_template_that_never_touches_schema() {
+        fn a_broken_schema_now_breaks_construction_even_when_the_template_never_touches_schema()
+         {
+            // Accepted behavior change: resolution happens once at
+            // construction (`SchemaService::new`), not lazily on the first
+            // `schema.get` call, so a malformed Schema TOML fails
+            // construction even for a template that never references
+            // `schema.*`.
             let temp = tempfile::tempdir().expect("create temp dir");
             write_schema(temp.path(), "broken", "not valid toml [[[");
 
-            let rendered =
-                render(&temp.path().join(".traces/schemas"), "hello")
-                    .expect("a template never calling schema.* never loads it");
+            let error = SchemaService::new(SchemaConfigSpec::for_test(
+                temp.path(),
+                &temp.path().join(".traces/schemas"),
+            ))
+            .expect_err(
+                "a malformed Schema now fails construction unconditionally",
+            );
 
-            assert_eq!(rendered, "hello");
+            assert!(matches!(error, SchemaError::Parse { .. }));
         }
     }
 }

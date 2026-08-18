@@ -66,7 +66,8 @@ fn bench_render(c: &mut Criterion) {
                 let service = TemplateService::new(
                     &config,
                     Arc::new(PresetDialogProvider::new()),
-                );
+                )
+                .expect("valid schema directory");
                 let input =
                     TemplatePathInput::parse(std::path::Path::new("report"))
                         .expect("valid template input");

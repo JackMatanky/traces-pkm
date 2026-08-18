@@ -64,15 +64,23 @@ impl<'a> SchemaGraph<'a> {
         > = BTreeMap::new();
         for (name, raw) in raw_schemas {
             let mut parents = Vec::with_capacity(raw.extends.len());
+            let mut seen_targets = BTreeSet::new();
             for target in &raw.extends {
-                if raw_schemas.contains_key(target) {
-                    parents.push(target.as_ref());
-                } else {
+                if !raw_schemas.contains_key(target) {
                     warnings.push(SchemaWarning::MissingExtendsTarget {
                         schema: name.clone(),
                         target: target.clone(),
                     });
+                    continue;
                 }
+                if !seen_targets.insert(target.as_str()) {
+                    warnings.push(SchemaWarning::DuplicateExtendsTarget {
+                        schema: name.clone(),
+                        target: target.clone(),
+                    });
+                    continue;
+                }
+                parents.push(target.as_ref());
             }
             parents_by_name.insert(name.as_ref(), parents);
         }
@@ -205,8 +213,15 @@ impl<'a> SchemaGraph<'a> {
     ///
     /// Computed as a memoized depth-first walk over
     /// [`children_by_name`](Self::children_by_name): each name's descendant
-    /// set is built once and reused by every ancestor that reaches it through
-    /// a different path, so the whole DAG resolves in `O(V + E)`.
+    /// set is computed once (graph edges are never re-walked), but every
+    /// ancestor that reaches a shared descendant still copies that
+    /// descendant's already-materialized set into its own, since each entry
+    /// in the returned map must be an independently owned set. Total work is
+    /// `O(V + E + Σ|descendants(v)|)` — `O(V + E)` graph traversal plus the
+    /// unavoidable cost of materializing every entry, which degrades to
+    /// `O(V²)` in the worst case (a single deep `extends` chain). Not
+    /// measured to matter in practice given realistic, human-authored
+    /// Schema counts.
     ///
     /// Only callable once the DAG is known acyclic, same as
     /// [`children_by_name`](Self::children_by_name).
@@ -283,6 +298,28 @@ mod tests {
             );
             assert_eq!(graph.next_ready(), Some(SchemaNameRef::from("author")));
             assert_eq!(graph.next_ready(), None);
+        }
+    }
+
+    mod new {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn a_duplicate_extends_target_warns_once_and_parents_once() {
+            let mut raw = BTreeMap::new();
+            raw.insert(SchemaName::from("book"), schema(&[]));
+            raw.insert(SchemaName::from("child"), schema(&["book", "book"]));
+            let (graph, warnings) = SchemaGraph::new(&raw);
+
+            assert_eq!(warnings, vec![SchemaWarning::DuplicateExtendsTarget {
+                schema: SchemaName::from("child"),
+                target: SchemaName::from("book"),
+            }]);
+            assert_eq!(graph.parents_of(SchemaNameRef::from("child")), &[
+                SchemaNameRef::from("book")
+            ]);
         }
     }
 

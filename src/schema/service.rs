@@ -1,8 +1,8 @@
 //! Schema loading, resolution, and query facade.
 //!
 //! [`SchemaService`] loads `.traces/schemas/*.toml` files, linearizes the
-//! `extends` DAG, and exposes read-side queries over the resolved
-//! [`SchemaRegistry`].
+//! `extends` DAG, and resolves it once at construction, exposing read-side
+//! queries over the resolved Schemas for its whole lifetime.
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -29,58 +29,43 @@ use crate::{
     query::{ClassExpansionMode, QuerySource, SourceAtom},
 };
 
-/// Resolved Schemas keyed by name, reference-counted for cheap cloning.
-#[derive(Clone, Debug)]
-pub(crate) struct SchemaRegistry {
-    schemas: BTreeMap<SchemaName, Arc<Schema>>,
-}
-
-impl SchemaRegistry {
-    fn new(schemas: BTreeMap<SchemaName, Arc<Schema>>) -> Self {
-        Self {
-            schemas,
-        }
-    }
-
-    /// Return a reference to the named Schema, or `None` if no Schema by that
-    /// name resolved.
-    #[inline]
-    #[must_use]
-    pub(crate) fn get(&self, name: &str) -> Option<&Arc<Schema>> {
-        self.schemas.get(name)
-    }
-}
-
 /// Schema loading, resolution, and hierarchy/class query facade.
+///
+/// Resolves every Schema once at construction ([`SchemaService::new`]);
+/// every query method reads the already-resolved Schemas directly, with no
+/// separate registry type or re-resolution.
 #[derive(Debug)]
 pub struct SchemaService {
     spec: SchemaConfigSpec,
+    schemas: BTreeMap<SchemaName, Arc<Schema>>,
 }
 
-/// The pair [`SchemaService::resolve`] returns: the resolved registry and
-/// any warnings degraded resolution accumulated along the way.
-type SchemaResolution = (Arc<SchemaRegistry>, Vec<SchemaWarning>);
+/// One Schema whose own fields failed to build during resolution,
+/// alongside the [`SchemaError`] it failed with.
+///
+/// Excluded from [`SchemaService`]'s resolved Schemas; any Schema naming it
+/// as a parent inherits none of its fields (see
+/// [`SchemaWarning::ParentFailedToResolve`]).
+#[derive(Debug)]
+pub(crate) struct SchemaFailure {
+    pub(crate) schema: SchemaName,
+    pub(crate) error: SchemaError,
+}
+
+/// The triple [`SchemaService::new`] returns: the constructed service, any
+/// warnings degraded resolution accumulated along the way, and every Schema
+/// whose own build failed alongside the error it failed with.
+type SchemaConstruction =
+    (SchemaService, Vec<SchemaWarning>, Vec<SchemaFailure>);
 
 impl SchemaService {
-    /// Construct a [`SchemaService`] from its config projection.
-    /// Does no I/O; call [`Self::resolve`] to load Schemas.
-    #[inline]
-    #[must_use]
-    pub(crate) fn new(spec: SchemaConfigSpec) -> Self {
-        Self {
-            spec,
-        }
-    }
-
-    /// Return the config projection this service was built from.
-    #[inline]
-    #[must_use]
-    pub(crate) fn spec(&self) -> &SchemaConfigSpec {
-        &self.spec
-    }
-
     /// Load every Schema TOML file under
-    /// [`SchemaConfigSpec::directory`] and resolve the `extends` DAG.
+    /// [`SchemaConfigSpec::directory`], linearize the `extends` DAG, and
+    /// resolve every Schema's effective fields, alongside any
+    /// [`SchemaWarning`]s degraded resolution accumulated and any
+    /// per-Schema [`SchemaError`] failures that excluded that Schema from
+    /// the result (see [`ParentFailedToResolve`]: dependents of a failed
+    /// Schema still resolve, without its fields).
     ///
     /// A missing directory resolves to an empty registry.
     ///
@@ -91,93 +76,76 @@ impl SchemaService {
     /// - [`ReadFile`] if a `.toml` file cannot be read.
     /// - [`Parse`] if a Schema file's TOML is malformed.
     /// - [`Cycle`] if the `extends` DAG contains a cycle.
-    /// - [`FieldBuilder`] if a field declaration is invalid.
-    /// - [`AmbiguousFieldName`] if two fields share a canonical metadata key.
     ///
     /// [`ReadDirectory`]: SchemaError::ReadDirectory
     /// [`ReadFile`]: SchemaError::ReadFile
     /// [`Parse`]: SchemaError::Parse
     /// [`Cycle`]: SchemaError::Cycle
-    /// [`FieldBuilder`]: SchemaError::FieldBuilder
-    /// [`AmbiguousFieldName`]: SchemaError::AmbiguousFieldName
-    pub(crate) fn resolve(&self) -> Result<SchemaResolution, SchemaError> {
-        let raw = read_raw_schemas(self.spec.directory())?;
-        let (schemas, warnings) = resolve_all(&raw)?;
+    /// [`ParentFailedToResolve`]: SchemaWarning::ParentFailedToResolve
+    pub(crate) fn new(
+        spec: SchemaConfigSpec,
+    ) -> Result<SchemaConstruction, SchemaError> {
+        let raw = read_raw_schemas(spec.directory())?;
+        let (schemas, warnings, failures) = resolve_all(&raw)?;
         let schemas = schemas
             .into_iter()
             .map(|(name, schema)| (name, Arc::new(schema)))
             .collect();
-        Ok((Arc::new(SchemaRegistry::new(schemas)), warnings))
+        Ok((
+            Self {
+                spec,
+                schemas,
+            },
+            warnings,
+            failures,
+        ))
     }
 
-    /// Return a reference to the named Schema in `registry`, or `None` if no
-    /// Schema by that name resolved.
+    /// Return the config projection this service was built from.
     #[inline]
     #[must_use]
-    #[expect(
-        clippy::unused_self,
-        reason = "kept as &self for the uniform SchemaService facade call \
-                  convention (get/children/descendants/matches all take &self \
-                  + &SchemaRegistry), even though this particular method \
-                  never reads spec"
-    )]
-    pub(crate) fn get<'a>(
-        &self,
-        registry: &'a SchemaRegistry,
-        name: &str,
-    ) -> Option<&'a Arc<Schema>> {
-        registry.get(name)
+    pub(crate) fn spec(&self) -> &SchemaConfigSpec {
+        &self.spec
     }
 
-    /// Return every Schema in `registry` that directly extends `name`.
+    /// Return a reference to the named Schema, or `None` if no Schema by
+    /// that name resolved.
+    #[inline]
+    #[must_use]
+    pub(crate) fn get(&self, name: &str) -> Option<&Arc<Schema>> {
+        self.schemas.get(name)
+    }
+
+    /// Return every Schema that directly extends `name`.
     ///
     /// Excludes `name` itself and every transitive descendant. Empty, not an
     /// error, if `name` has no Schema or nothing extends it.
     #[must_use]
-    #[expect(
-        clippy::unused_self,
-        reason = "kept as &self for the uniform SchemaService facade call \
-                  convention; see get()'s doc"
-    )]
-    pub(crate) fn children(
-        &self,
-        registry: &SchemaRegistry,
-        name: &str,
-    ) -> Vec<Arc<Schema>> {
-        let Some(schema) = registry.get(name) else {
+    pub(crate) fn children(&self, name: &str) -> Vec<Arc<Schema>> {
+        let Some(schema) = self.schemas.get(name) else {
             return Vec::new();
         };
         schema
             .children()
             .iter()
-            .filter_map(|child| registry.get(child.as_str()))
+            .filter_map(|child| self.schemas.get(child.as_str()))
             .cloned()
             .collect()
     }
 
-    /// Return every Schema in `registry` that directly or transitively
-    /// extends `name`.
+    /// Return every Schema that directly or transitively extends `name`.
     ///
     /// Excludes `name` itself. Empty, not an error, if `name` has no Schema
     /// or nothing extends it.
     #[must_use]
-    #[expect(
-        clippy::unused_self,
-        reason = "kept as &self for the uniform SchemaService facade call \
-                  convention; see get()'s doc"
-    )]
-    pub(crate) fn descendants(
-        &self,
-        registry: &SchemaRegistry,
-        name: &str,
-    ) -> Vec<Arc<Schema>> {
-        let Some(schema) = registry.get(name) else {
+    pub(crate) fn descendants(&self, name: &str) -> Vec<Arc<Schema>> {
+        let Some(schema) = self.schemas.get(name) else {
             return Vec::new();
         };
         schema
             .descendants()
             .iter()
-            .filter_map(|descendant| registry.get(descendant.as_str()))
+            .filter_map(|descendant| self.schemas.get(descendant.as_str()))
             .cloned()
             .collect()
     }
@@ -196,20 +164,11 @@ impl SchemaService {
     /// - `matches(&["movie"])` → `{"movie"}`
     /// - `matches(&["ghost"])` → `{"ghost"}`
     #[must_use]
-    #[expect(
-        clippy::unused_self,
-        reason = "kept as &self for the uniform SchemaService facade call \
-                  convention; see get()'s doc"
-    )]
-    pub(crate) fn matches(
-        &self,
-        registry: &SchemaRegistry,
-        classes: &[String],
-    ) -> BTreeSet<String> {
-        warn_unknown_classes(registry, classes);
+    pub(crate) fn matches(&self, classes: &[String]) -> BTreeSet<String> {
+        warn_unknown_classes(self, classes);
         let mut matches: BTreeSet<String> = classes.iter().cloned().collect();
         for class in classes {
-            if let Some(schema) = registry.get(class) {
+            if let Some(schema) = self.get(class) {
                 matches.extend(
                     schema
                         .descendants()
@@ -228,25 +187,23 @@ impl SchemaService {
     ///
     /// # Arguments
     ///
-    /// * `registry`: resolved Schema registry to match against.
     /// * `classes`: File Class values to expand.
     /// * `mode`: controls expansion depth (`Exact`, `Children`, `Descendants`).
     pub(crate) fn expand_classes(
         &self,
-        registry: &SchemaRegistry,
         classes: &[String],
         mode: &mut ClassExpansionMode,
     ) {
         let mut expanded: BTreeSet<String> = classes.iter().cloned().collect();
         match mode {
             ClassExpansionMode::Exact(_) => {
-                warn_unknown_classes(registry, classes);
+                warn_unknown_classes(self, classes);
             }
             ClassExpansionMode::Children(_) => {
-                warn_unknown_classes(registry, classes);
+                warn_unknown_classes(self, classes);
                 for class in classes {
                     expanded.extend(
-                        self.children(registry, class)
+                        self.children(class)
                             .iter()
                             .map(|schema| schema.name().to_owned()),
                     );
@@ -256,7 +213,7 @@ impl SchemaService {
                 // `matches` warns internally, so this branch alone would
                 // otherwise skip the warning the other two branches emit
                 // directly above.
-                expanded = self.matches(registry, classes);
+                expanded = self.matches(classes);
             }
         }
         mode.set_classes(expanded);
@@ -264,9 +221,9 @@ impl SchemaService {
 }
 
 /// Warn once per unknown class name in `classes`.
-fn warn_unknown_classes(registry: &SchemaRegistry, classes: &[String]) {
+fn warn_unknown_classes(service: &SchemaService, classes: &[String]) {
     for class in classes {
-        if registry.get(class).is_none() {
+        if service.get(class).is_none() {
             tracing::warn!(
                 class,
                 "query source names an unknown File Class; matching it exactly"
@@ -275,7 +232,7 @@ fn warn_unknown_classes(registry: &SchemaRegistry, classes: &[String]) {
     }
 }
 
-/// Resolve every File Class leaf in `source` against `registry`.
+/// Resolve every File Class leaf in `source` against `service`.
 ///
 /// This caller-side pre-pass keeps query parsing and matching independent of
 /// the Schema registry.
@@ -283,12 +240,10 @@ fn warn_unknown_classes(registry: &SchemaRegistry, classes: &[String]) {
 /// # Arguments
 ///
 /// * `source`: query source expression to expand class atoms in.
-/// * `service`: schema service for class expansion.
-/// * `registry`: resolved Schema registry to match against.
+/// * `service`: resolved schema service to match against.
 pub(crate) fn resolve_sources(
     source: &mut QuerySource,
     service: &SchemaService,
-    registry: &SchemaRegistry,
 ) {
     let QuerySource::Expr(expression) = source else {
         return;
@@ -299,7 +254,7 @@ pub(crate) fn resolve_sources(
             mode,
         } = atom
         {
-            service.expand_classes(registry, names, mode);
+            service.expand_classes(names, mode);
         }
     });
 }
@@ -380,9 +335,15 @@ fn walk_error(root: &Path, source: walkdir::Error) -> SchemaError {
     }
 }
 
-/// Return every Schema resolved by [`resolve_all`], keyed by name, alongside
-/// the [`SchemaWarning`]s degraded resolution accumulated along the way.
-type ResolveOutput = (BTreeMap<SchemaName, Schema>, Vec<SchemaWarning>);
+/// Return every Schema resolved by [`resolve_all`], keyed by name, every
+/// [`SchemaWarning`] degraded resolution accumulated, and every Schema whose
+/// own build failed alongside the [`SchemaError`] it failed with — a failed
+/// Schema is excluded from the first map, resolves no descendants, and any
+/// Schema that names it as a parent inherits none of its fields (with a
+/// [`SchemaWarning::ParentFailedToResolve`]), exactly as an unresolvable
+/// `extends` target already degrades today.
+type ResolveOutput =
+    (BTreeMap<SchemaName, Schema>, Vec<SchemaWarning>, Vec<SchemaFailure>);
 
 /// Resolve `raw_schemas` into effective Field Definitions per Schema.
 ///
@@ -398,13 +359,15 @@ type ResolveOutput = (BTreeMap<SchemaName, Schema>, Vec<SchemaWarning>);
 /// `children`/`descendants` in one pass over the whole DAG via
 /// [`SchemaGraph::children_by_name`]/[`SchemaGraph::descendants_by_name`].
 ///
+/// A Schema whose own fields fail to build (any [`SchemaError`] that
+/// [`SchemaFieldBuilder::build`] returns, or [`AmbiguousFieldName`] if two
+/// of its effective fields share a [`FieldKey`] canonical form) is excluded
+/// from the returned map and reported in the returned failures list instead
+/// of aborting resolution of every other Schema.
+///
 /// # Errors
 ///
 /// - [`Cycle`] if the `extends` DAG contains a cycle.
-/// - Any [`SchemaError`] that [`SchemaFieldBuilder::build`] returns while
-///   resolving a Schema's own fields.
-/// - [`AmbiguousFieldName`] if two of a Schema's effective fields share a
-///   [`FieldKey`] canonical form.
 ///
 /// [`Cycle`]: SchemaError::Cycle
 /// [`AmbiguousFieldName`]: SchemaError::AmbiguousFieldName
@@ -414,15 +377,33 @@ fn resolve_all(
 ) -> Result<ResolveOutput, SchemaError> {
     let (mut graph, mut warnings) = SchemaGraph::new(raw_schemas);
     let mut resolved: BTreeMap<SchemaName, Schema> = BTreeMap::new();
+    let mut failures: Vec<SchemaFailure> = Vec::new();
 
     while let Some(name) = graph.next_ready() {
-        let Some(raw) = raw_schemas.get(name.as_str()) else {
-            continue;
-        };
-        let (schema, schema_warnings) =
-            build_schema(name, raw, graph.parents_of(name), &resolved)?;
-        warnings.extend(schema_warnings);
-        resolved.insert(SchemaName::from(name), schema);
+        #[expect(
+            clippy::expect_used,
+            reason = "SchemaGraph::new builds parents_by_name/in_degree/ \
+                      children_by_name/queue exclusively from raw_schemas's \
+                      own keys, so next_ready() can never yield a name absent \
+                      from raw_schemas; failure here means the graph itself \
+                      is broken, not a recoverable caller error"
+        )]
+        let raw = raw_schemas.get(name.as_str()).expect(
+            "SchemaGraph::next_ready only ever yields names present in \
+             raw_schemas",
+        );
+        match build_schema(name, raw, graph.parents_of(name), &resolved) {
+            Ok((schema, schema_warnings)) => {
+                warnings.extend(schema_warnings);
+                resolved.insert(SchemaName::from(name), schema);
+            }
+            Err(error) => {
+                failures.push(SchemaFailure {
+                    schema: SchemaName::from(name),
+                    error,
+                });
+            }
+        }
         graph.mark_resolved(name);
     }
 
@@ -432,16 +413,46 @@ fn resolve_all(
         });
     }
 
+    // `graph.children_by_name`/`descendants_by_name` walk the raw `extends`
+    // topology, which does not know a link broke: a Schema downstream of a
+    // `ParentFailedToResolve` break (see `build_schema`) is still linked
+    // there, even though it no longer semantically `is_a` that ancestor.
+    // Each resolved Schema's own `ancestors()` is the authoritative,
+    // failure-aware signal, so filter the raw candidate sets against it
+    // before publishing them — a raw-graph candidate is kept only if it
+    // actually resolved *and* its own ancestors include the schema being
+    // populated.
     let children_by_name = graph.children_by_name();
     let descendants_by_name = graph.descendants_by_name();
+    let resolved_ancestors: BTreeMap<SchemaName, BTreeSet<SchemaName>> =
+        resolved
+            .iter()
+            .map(|(name, schema)| (name.clone(), schema.ancestors().clone()))
+            .collect();
     for (name, schema) in &mut resolved {
-        schema.set_hierarchy(
-            children_by_name.get(name).cloned().unwrap_or_default(),
-            descendants_by_name.get(name).cloned().unwrap_or_default(),
-        );
+        let still_descends_from = |candidate: &SchemaName| {
+            resolved_ancestors
+                .get(candidate)
+                .is_some_and(|ancestors| ancestors.contains(name))
+        };
+        let children = children_by_name
+            .get(name)
+            .into_iter()
+            .flatten()
+            .filter(|child| still_descends_from(child))
+            .cloned()
+            .collect();
+        let descendants = descendants_by_name
+            .get(name)
+            .into_iter()
+            .flatten()
+            .filter(|descendant| still_descends_from(descendant))
+            .cloned()
+            .collect();
+        schema.set_hierarchy(children, descendants);
     }
 
-    Ok((resolved, warnings))
+    Ok((resolved, warnings, failures))
 }
 
 /// Resolve one Schema's effective fields and transitive ancestors, alongside
@@ -477,8 +488,13 @@ fn build_schema(
 ) -> Result<(Schema, Vec<SchemaWarning>), SchemaError> {
     let mut fields = BTreeMap::new();
     let mut ancestors = BTreeSet::new();
+    let mut warnings = Vec::new();
     for &parent in parents {
         let Some(parent_schema) = resolved.get(parent.as_str()) else {
+            warnings.push(SchemaWarning::ParentFailedToResolve {
+                schema: SchemaName::from(name),
+                parent: SchemaName::from(parent),
+            });
             continue;
         };
         for (field_name, field) in parent_schema.fields() {
@@ -501,7 +517,6 @@ fn build_schema(
     let builder = SchemaFieldBuilder {
         refs: &refs,
     };
-    let mut warnings = Vec::new();
     let mut own_fields = BTreeMap::new();
     for (field_name, raw_field) in &raw.fields {
         let address = FieldAddressRef::new(name, field_name.as_ref());
@@ -561,15 +576,14 @@ mod tests {
         raw::{RawFieldSource, RawSchemaFieldDef, RawSchemaFieldType},
     };
 
-    type ResolveResult =
-        Result<(Arc<SchemaRegistry>, Vec<SchemaWarning>), SchemaError>;
+    type ResolveResult = Result<SchemaConstruction, SchemaError>;
 
     /// Resolves every Schema TOML file directly under `dir`, mirroring the
     /// pre-refactor `SchemaRegistry::load(dir)` call shape: `dir` is used
     /// directly as the Schema directory, `root` is unused by resolution
     /// itself.
     fn resolve_dir(dir: &Path) -> ResolveResult {
-        SchemaService::new(SchemaConfigSpec::for_test(dir, dir)).resolve()
+        SchemaService::new(SchemaConfigSpec::for_test(dir, dir))
     }
 
     fn write_schema(dir: &Path, name: &str, toml: &str) {
@@ -595,7 +609,7 @@ mod tests {
                 "#,
             );
 
-            let (registry, warnings) =
+            let (registry, warnings, _failures) =
                 resolve_dir(temp.path()).expect("registry loads");
 
             assert!(warnings.is_empty());
@@ -610,7 +624,7 @@ mod tests {
             fs::write(temp.path().join("README.md"), "not a schema")
                 .expect("write non-schema file");
 
-            let (registry, _) =
+            let (registry, _, _) =
                 resolve_dir(temp.path()).expect("registry loads");
 
             assert!(registry.get("README").is_none());
@@ -621,7 +635,7 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             let missing = temp.path().join("does-not-exist");
 
-            let (registry, warnings) =
+            let (registry, warnings, _failures) =
                 resolve_dir(&missing).expect("missing dir is not fatal");
 
             assert!(warnings.is_empty());
@@ -713,10 +727,10 @@ mod tests {
             fs::create_dir(&nested).expect("create nested dir");
             write_schema(&nested, "hidden", "");
 
-            let (registry, _) =
+            let (service, _, _) =
                 resolve_dir(temp.path()).expect("registry loads");
 
-            assert!(registry.get("hidden").is_none());
+            assert!(service.get("hidden").is_none());
         }
 
         #[cfg(unix)]
@@ -785,20 +799,36 @@ mod tests {
                 values = ["draft"]
                 "#,
             );
-            let (registry, _) =
+            let (service, _, _) =
                 resolve_dir(temp.path()).expect("registry loads");
-            let service = SchemaService::new(SchemaConfigSpec::for_test(
-                temp.path(),
-                temp.path(),
-            ));
 
-            let first = service.get(&registry, "book").expect("book resolved");
-            let second = service.get(&registry, "book").expect("book resolved");
+            let first = service.get("book").expect("book resolved");
+            let second = service.get("book").expect("book resolved");
 
             assert!(
                 Arc::ptr_eq(first, second),
                 "repeated lookups must share one Arc-backed Schema, not clone \
                  a fresh one per call"
+            );
+        }
+
+        #[test]
+        fn schemas_are_resolved_once_at_construction_not_reread_later() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let schemas_dir = temp.path().join(".traces/schemas");
+            fs::create_dir_all(&schemas_dir).expect("create schemas dir");
+            write_schema(&schemas_dir, "book", "");
+            let (service, _, _) = SchemaService::new(
+                SchemaConfigSpec::for_test(temp.path(), &schemas_dir),
+            )
+            .expect("registry loads");
+
+            fs::remove_dir_all(&schemas_dir).expect("remove schemas dir");
+
+            assert!(
+                service.get("book").is_some(),
+                "a Schema resolved at construction must not need to reread a \
+                 now-missing directory"
             );
         }
     }
@@ -814,18 +844,13 @@ mod tests {
             names.iter().map(|name| (*name).to_owned()).collect()
         }
 
-        fn service(dir: &Path) -> SchemaService {
-            SchemaService::new(SchemaConfigSpec::for_test(dir, dir))
-        }
-
         #[test]
         fn includes_a_class_with_no_schema() {
             let temp = tempfile::tempdir().expect("create temp dir");
-            let (registry, _) =
+            let (service, _, _) =
                 resolve_dir(temp.path()).expect("registry loads");
 
-            let matches =
-                service(temp.path()).matches(&registry, &["ghost".to_owned()]);
+            let matches = service.matches(&["ghost".to_owned()]);
 
             assert_eq!(matches, set(&["ghost"]));
         }
@@ -836,11 +861,10 @@ mod tests {
             write_schema(temp.path(), "book", "");
             write_schema(temp.path(), "sci_fi", r#"extends = ["book"]"#);
 
-            let (registry, _) =
+            let (service, _, _) =
                 resolve_dir(temp.path()).expect("registry loads");
 
-            let matches =
-                service(temp.path()).matches(&registry, &["book".to_owned()]);
+            let matches = service.matches(&["book".to_owned()]);
 
             assert_eq!(matches, set(&["book", "sci_fi"]));
         }
@@ -851,11 +875,10 @@ mod tests {
             write_schema(temp.path(), "book", "");
             write_schema(temp.path(), "movie", "");
 
-            let (registry, _) =
+            let (service, _, _) =
                 resolve_dir(temp.path()).expect("registry loads");
 
-            let matches =
-                service(temp.path()).matches(&registry, &["book".to_owned()]);
+            let matches = service.matches(&["book".to_owned()]);
 
             assert_eq!(matches, set(&["book"]));
         }
@@ -867,11 +890,11 @@ mod tests {
             write_schema(temp.path(), "sci_fi", r#"extends = ["book"]"#);
             write_schema(temp.path(), "movie", "");
 
-            let (registry, _) =
+            let (service, _, _) =
                 resolve_dir(temp.path()).expect("registry loads");
 
-            let matches = service(temp.path())
-                .matches(&registry, &["book".to_owned(), "movie".to_owned()]);
+            let matches =
+                service.matches(&["book".to_owned(), "movie".to_owned()]);
 
             assert_eq!(matches, set(&["book", "movie", "sci_fi"]));
         }
@@ -881,10 +904,10 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             write_schema(temp.path(), "book", "");
 
-            let (registry, _) =
+            let (service, _, _) =
                 resolve_dir(temp.path()).expect("registry loads");
 
-            let matches = service(temp.path()).matches(&registry, &[]);
+            let matches = service.matches(&[]);
 
             assert!(matches.is_empty());
         }
@@ -901,29 +924,23 @@ mod tests {
             names.iter().map(|name| (*name).to_owned()).collect()
         }
 
-        fn registry_and_service(
-            temp: &tempfile::TempDir,
-        ) -> (Arc<SchemaRegistry>, SchemaService) {
+        fn service(temp: &tempfile::TempDir) -> SchemaService {
             write_schema(temp.path(), "thing", "");
             write_schema(temp.path(), "book", r#"extends = ["thing"]"#);
             write_schema(temp.path(), "sci_fi", r#"extends = ["book"]"#);
             write_schema(temp.path(), "space_opera", r#"extends = ["sci_fi"]"#);
-            let (registry, _) =
+            let (service, _, _) =
                 resolve_dir(temp.path()).expect("registry loads");
-            let service = SchemaService::new(SchemaConfigSpec::for_test(
-                temp.path(),
-                temp.path(),
-            ));
-            (registry, service)
+            service
         }
 
         #[test]
         fn children_returns_only_direct_extenders() {
             let temp = tempfile::tempdir().expect("create temp dir");
-            let (registry, service) = registry_and_service(&temp);
+            let service = service(&temp);
 
             let names: Vec<String> = service
-                .children(&registry, "thing")
+                .children("thing")
                 .into_iter()
                 .map(|schema| schema.name().to_owned())
                 .collect();
@@ -934,16 +951,16 @@ mod tests {
         #[test]
         fn expansion_modes_are_incremental() {
             let temp = tempfile::tempdir().expect("create temp dir");
-            let (registry, service) = registry_and_service(&temp);
+            let service = service(&temp);
             let names = vec!["thing".to_owned()];
             let mut exact = ClassExpansionMode::Exact(BTreeSet::new());
             let mut children = ClassExpansionMode::Children(BTreeSet::new());
             let mut descendants =
                 ClassExpansionMode::Descendants(BTreeSet::new());
 
-            service.expand_classes(&registry, &names, &mut exact);
-            service.expand_classes(&registry, &names, &mut children);
-            service.expand_classes(&registry, &names, &mut descendants);
+            service.expand_classes(&names, &mut exact);
+            service.expand_classes(&names, &mut children);
+            service.expand_classes(&names, &mut descendants);
 
             assert_eq!(exact.classes(), &set(&["thing"]));
             assert_eq!(children.classes(), &set(&["book", "thing"]));
@@ -957,11 +974,11 @@ mod tests {
         #[expect(clippy::panic, reason = "let-else guard on exhaustive match")]
         fn resolve_sources_walks_nested_expressions_and_preserves_unknowns() {
             let temp = tempfile::tempdir().expect("create temp dir");
-            let (registry, service) = registry_and_service(&temp);
+            let service = service(&temp);
             let mut source = QuerySource::parse("@thing+ and not @ghost*")
                 .expect("source parses");
 
-            resolve_sources(&mut source, &service, &registry);
+            resolve_sources(&mut source, &service);
 
             assert!(
                 matches!(source, QuerySource::Expr(_)),
@@ -993,21 +1010,16 @@ mod tests {
 
         use super::*;
 
-        fn service(dir: &Path) -> SchemaService {
-            SchemaService::new(SchemaConfigSpec::for_test(dir, dir))
-        }
-
         #[test]
         fn returns_a_direct_extender() {
             let temp = tempfile::tempdir().expect("create temp dir");
             write_schema(temp.path(), "book", "");
             write_schema(temp.path(), "sci_fi", r#"extends = ["book"]"#);
 
-            let (registry, _) =
+            let (service, _, _) =
                 resolve_dir(temp.path()).expect("registry loads");
 
-            let descendants =
-                service(temp.path()).descendants(&registry, "book");
+            let descendants = service.descendants("book");
             let names: Vec<&str> =
                 descendants.iter().map(|schema| schema.name()).collect();
 
@@ -1021,11 +1033,10 @@ mod tests {
             write_schema(temp.path(), "book", r#"extends = ["thing"]"#);
             write_schema(temp.path(), "sci_fi", r#"extends = ["book"]"#);
 
-            let (registry, _) =
+            let (service, _, _) =
                 resolve_dir(temp.path()).expect("registry loads");
 
-            let descendants =
-                service(temp.path()).descendants(&registry, "thing");
+            let descendants = service.descendants("thing");
             let names: Vec<&str> =
                 descendants.iter().map(|schema| schema.name()).collect();
 
@@ -1038,14 +1049,10 @@ mod tests {
             write_schema(temp.path(), "book", "");
             write_schema(temp.path(), "sci_fi", r#"extends = ["book"]"#);
 
-            let (registry, _) =
+            let (service, _, _) =
                 resolve_dir(temp.path()).expect("registry loads");
 
-            assert!(
-                service(temp.path())
-                    .descendants(&registry, "sci_fi")
-                    .is_empty()
-            );
+            assert!(service.descendants("sci_fi").is_empty());
         }
 
         #[test]
@@ -1053,12 +1060,10 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             write_schema(temp.path(), "book", "");
 
-            let (registry, _) =
+            let (service, _, _) =
                 resolve_dir(temp.path()).expect("registry loads");
 
-            assert!(
-                service(temp.path()).descendants(&registry, "ghost").is_empty()
-            );
+            assert!(service.descendants("ghost").is_empty());
         }
     }
 
@@ -1184,7 +1189,8 @@ mod tests {
                 schema(&[], &[("status", select_field(&["draft", "done"]))]),
             );
 
-            let (resolved, warnings) = resolve_all(&raw).expect("resolves");
+            let (resolved, warnings, _failures) =
+                resolve_all(&raw).expect("resolves");
 
             assert!(warnings.is_empty());
             let book = resolved.get("book").expect("book resolved");
@@ -1215,7 +1221,7 @@ mod tests {
                 )]),
             );
 
-            let (resolved, _) = resolve_all(&raw).expect("resolves");
+            let (resolved, _, _) = resolve_all(&raw).expect("resolves");
 
             let status = resolved
                 .get("sci_fi")
@@ -1242,7 +1248,7 @@ mod tests {
             );
             raw.insert(SchemaName::from("child"), schema(&["a", "b"], &[]));
 
-            let (resolved, _) = resolve_all(&raw).expect("resolves");
+            let (resolved, _, _) = resolve_all(&raw).expect("resolves");
 
             let shared = resolved
                 .get("child")
@@ -1271,7 +1277,7 @@ mod tests {
                 schema_with_excludes(&["book"], &["status"], &[]),
             );
 
-            let (resolved, _) = resolve_all(&raw).expect("resolves");
+            let (resolved, _, _) = resolve_all(&raw).expect("resolves");
 
             let sci_fi = resolved.get("sci_fi").expect("sci_fi resolved");
             assert!(sci_fi.field("status").is_none());
@@ -1296,10 +1302,35 @@ mod tests {
                 schema_with_excludes(&["book"], &["Status"], &[]),
             );
 
-            let (resolved, _) = resolve_all(&raw).expect("resolves");
+            let (resolved, _, _) = resolve_all(&raw).expect("resolves");
 
             let sci_fi = resolved.get("sci_fi").expect("sci_fi resolved");
             assert!(sci_fi.field("status").is_some());
+        }
+
+        #[test]
+        fn own_redeclaration_of_an_excluded_field_survives() {
+            // `excludes` removes the *inherited* field before the Schema's
+            // own fields are merged in, so a Schema that both excludes and
+            // redeclares the same field name keeps its own redeclaration.
+            let mut raw = BTreeMap::new();
+            raw.insert(
+                SchemaName::from("book"),
+                schema(&[], &[("status", select_field(&["draft"]))]),
+            );
+            raw.insert(
+                SchemaName::from("sci_fi"),
+                schema_with_excludes(&["book"], &["status"], &[(
+                    "status",
+                    input_field(),
+                )]),
+            );
+
+            let (resolved, _, _) = resolve_all(&raw).expect("resolves");
+
+            let sci_fi = resolved.get("sci_fi").expect("sci_fi resolved");
+            let status = sci_fi.field("status").expect("own status field");
+            assert_eq!(status.kind(), &SchemaFieldType::Input);
         }
 
         #[test]
@@ -1310,7 +1341,8 @@ mod tests {
                 schema(&["ghost"], &[("title", input_field())]),
             );
 
-            let (resolved, warnings) = resolve_all(&raw).expect("resolves");
+            let (resolved, warnings, _failures) =
+                resolve_all(&raw).expect("resolves");
 
             assert_eq!(warnings, vec![SchemaWarning::MissingExtendsTarget {
                 schema: SchemaName::from("sci_fi"),
@@ -1320,6 +1352,113 @@ mod tests {
                 resolved.get("sci_fi").expect("own fields still render");
             assert!(sci_fi.field("title").is_some());
             assert!(!sci_fi.is_a("ghost"));
+        }
+
+        #[test]
+        fn a_schema_with_a_malformed_field_does_not_block_an_unrelated_sibling()
+        {
+            let mut raw = BTreeMap::new();
+            raw.insert(
+                SchemaName::from("book"),
+                schema(&[], &[("status", select_field(&["draft"]))]),
+            );
+            raw.insert(
+                SchemaName::from("broken"),
+                schema(&[], &[
+                    ("status", input_field()),
+                    ("Status", input_field()),
+                ]),
+            );
+
+            let (resolved, _, failures) =
+                resolve_all(&raw).expect("unrelated failure does not abort");
+
+            assert!(resolved.contains_key("book"));
+            assert!(!resolved.contains_key("broken"));
+            assert_eq!(failures.len(), 1);
+            let failure = failures.first().expect("one failure");
+            assert_eq!(failure.schema, SchemaName::from("broken"));
+        }
+
+        #[test]
+        fn a_schema_extending_a_failed_parent_still_resolves_its_own_fields() {
+            let mut raw = BTreeMap::new();
+            raw.insert(
+                SchemaName::from("broken"),
+                schema(&[], &[
+                    ("status", input_field()),
+                    ("Status", input_field()),
+                ]),
+            );
+            raw.insert(
+                SchemaName::from("child"),
+                schema(&["broken"], &[("title", input_field())]),
+            );
+
+            let (resolved, warnings, failures) =
+                resolve_all(&raw).expect("child still resolves");
+
+            assert_eq!(failures.len(), 1);
+            let failure = failures.first().expect("one failure");
+            assert_eq!(failure.schema, SchemaName::from("broken"));
+            assert!(warnings.contains(&SchemaWarning::ParentFailedToResolve {
+                schema: SchemaName::from("child"),
+                parent: SchemaName::from("broken"),
+            }));
+            let child = resolved.get("child").expect("child still resolves");
+            assert!(child.field("title").is_some());
+        }
+
+        #[test]
+        fn a_schema_downstream_of_a_failed_link_is_not_a_structural_descendant_of_a_healthy_ancestor()
+         {
+            // book <- broken (FAILS: ambiguous fields) <- sci_fi (resolves,
+            // own field only). `sci_fi` no longer inherits book's fields and
+            // must not claim is-a book — so `book`'s own structural
+            // children/descendants (and therefore `SchemaService::matches`/
+            // `.children()`/`.descendants()`, which read them) must not
+            // list `sci_fi` either, even though the raw `extends` topology
+            // still structurally links book -> broken -> sci_fi.
+            let mut raw = BTreeMap::new();
+            raw.insert(
+                SchemaName::from("book"),
+                schema(&[], &[("status", select_field(&["draft"]))]),
+            );
+            raw.insert(
+                SchemaName::from("broken"),
+                schema(&["book"], &[
+                    ("dup", input_field()),
+                    ("Dup", input_field()),
+                ]),
+            );
+            raw.insert(
+                SchemaName::from("sci_fi"),
+                schema(&["broken"], &[("subgenre", input_field())]),
+            );
+
+            let (resolved, _, failures) = resolve_all(&raw).expect("resolves");
+
+            assert_eq!(
+                failures.len(),
+                1,
+                "expected broken to fail: {failures:?}"
+            );
+            let sci_fi = resolved.get("sci_fi").expect("sci_fi still resolves");
+            assert!(sci_fi.field("subgenre").is_some());
+            assert!(
+                sci_fi.field("status").is_none(),
+                "sci_fi must not inherit book's status field"
+            );
+            assert!(!sci_fi.is_a("book"), "the chain broke at broken");
+            assert!(!sci_fi.is_a("broken"), "broken never resolved");
+
+            let book = resolved.get("book").expect("book resolves");
+            assert!(
+                !book.descendants().contains(&SchemaName::from("sci_fi")),
+                "book.descendants() must not list sci_fi: sci_fi no longer \
+                 is-a book"
+            );
+            assert!(!book.descendants().contains(&SchemaName::from("broken")));
         }
 
         #[test]
@@ -1346,7 +1485,7 @@ mod tests {
             raw.insert(SchemaName::from("book"), schema(&["thing"], &[]));
             raw.insert(SchemaName::from("sci_fi"), schema(&["book"], &[]));
 
-            let (resolved, _) = resolve_all(&raw).expect("resolves");
+            let (resolved, _, _) = resolve_all(&raw).expect("resolves");
 
             let sci_fi = resolved.get("sci_fi").expect("sci_fi resolved");
             assert!(sci_fi.is_a("sci_fi"));
@@ -1370,7 +1509,7 @@ mod tests {
                 )]),
             );
 
-            let (resolved, _) = resolve_all(&raw).expect("resolves");
+            let (resolved, _, _) = resolve_all(&raw).expect("resolves");
 
             let status = resolved
                 .get("sci_fi")
@@ -1400,7 +1539,7 @@ mod tests {
                 )]),
             );
 
-            let (resolved, _) = resolve_all(&raw).expect("resolves");
+            let (resolved, _, _) = resolve_all(&raw).expect("resolves");
 
             let priority = resolved
                 .get("task")
@@ -1426,7 +1565,8 @@ mod tests {
                 })]),
             );
 
-            let (resolved, warnings) = resolve_all(&raw).expect("resolves");
+            let (resolved, warnings, _failures) =
+                resolve_all(&raw).expect("resolves");
 
             let priority = resolved
                 .get(GLOBAL_SCHEMA_NAME)
@@ -1439,7 +1579,7 @@ mod tests {
         }
 
         #[test]
-        fn a_ref_to_an_unknown_field_is_a_hard_error() {
+        fn a_ref_to_an_unknown_field_degrades_to_a_failure() {
             let mut raw = BTreeMap::new();
             raw.insert(SchemaName::from("book"), schema(&[], &[]));
             raw.insert(
@@ -1450,7 +1590,9 @@ mod tests {
                 )]),
             );
 
-            let err = resolve_all(&raw).expect_err("unresolved ref rejected");
+            let (_, _, failures) =
+                resolve_all(&raw).expect("unresolved ref degrades, not aborts");
+            let err = failures.into_iter().next().expect("one failure").error;
             assert!(matches!(
                 err,
                 SchemaError::FieldBuilder(inner)
@@ -1462,7 +1604,7 @@ mod tests {
         }
 
         #[test]
-        fn a_ref_to_a_non_ancestor_sibling_is_a_hard_error() {
+        fn a_ref_to_a_non_ancestor_sibling_degrades_to_a_failure() {
             // `movie` and `book` share no `extends` relationship: a `$ref` from
             // one to the other is out of bounds even though both happen to
             // resolve in the same Kahn tier (spec: "$ref is deliberately
@@ -1477,8 +1619,9 @@ mod tests {
                 schema(&[], &[("status", ref_field("#book/status", None))]),
             );
 
-            let err =
-                resolve_all(&raw).expect_err("out-of-bounds ref rejected");
+            let (_, _, failures) = resolve_all(&raw)
+                .expect("out-of-bounds ref degrades, not aborts");
+            let err = failures.into_iter().next().expect("one failure").error;
             assert!(matches!(
                 err,
                 SchemaError::FieldBuilder(inner)
@@ -1490,7 +1633,8 @@ mod tests {
         }
 
         #[test]
-        fn defining_both_status_and_status_cased_differently_is_a_hard_error() {
+        fn defining_both_status_and_status_cased_differently_degrades_to_a_failure()
+         {
             let mut raw = BTreeMap::new();
             raw.insert(
                 SchemaName::from("book"),
@@ -1500,13 +1644,15 @@ mod tests {
                 ]),
             );
 
-            let err =
-                resolve_all(&raw).expect_err("ambiguous field name rejected");
+            let (_, _, failures) = resolve_all(&raw)
+                .expect("ambiguous field name degrades, not aborts");
+            let err = failures.into_iter().next().expect("one failure").error;
             assert!(matches!(err, SchemaError::AmbiguousFieldName { .. }));
         }
 
         #[test]
-        fn an_own_field_colliding_with_an_inherited_field_is_a_hard_error() {
+        fn an_own_field_colliding_with_an_inherited_field_degrades_to_a_failure()
+         {
             let mut raw = BTreeMap::new();
             raw.insert(
                 SchemaName::from("book"),
@@ -1517,8 +1663,9 @@ mod tests {
                 schema(&["book"], &[("due-date", input_field())]),
             );
 
-            let err =
-                resolve_all(&raw).expect_err("ambiguous field name rejected");
+            let (_, _, failures) = resolve_all(&raw)
+                .expect("ambiguous field name degrades, not aborts");
+            let err = failures.into_iter().next().expect("one failure").error;
             assert!(matches!(err, SchemaError::AmbiguousFieldName { .. }));
         }
 
@@ -1549,7 +1696,7 @@ mod tests {
                 ]),
             );
 
-            let (resolved, _) = resolve_all(&raw).expect("resolves");
+            let (resolved, _, _) = resolve_all(&raw).expect("resolves");
             let book = resolved.get("book").expect("book resolved");
 
             assert_eq!(
@@ -1600,7 +1747,7 @@ mod tests {
                 ]),
             );
 
-            let (resolved, _) = resolve_all(&raw).expect("resolves");
+            let (resolved, _, _) = resolve_all(&raw).expect("resolves");
             let book = resolved.get("book").expect("book resolved");
 
             assert!(!book.field("status").expect("status").is_multi());
@@ -1630,7 +1777,7 @@ mod tests {
                 })]),
             );
 
-            let (resolved, _) = resolve_all(&raw).expect("resolves");
+            let (resolved, _, _) = resolve_all(&raw).expect("resolves");
             let cover = resolved
                 .get("book")
                 .and_then(|s| s.field("cover"))
@@ -1665,7 +1812,8 @@ mod tests {
                 )]),
             );
 
-            let (resolved, warnings) = resolve_all(&raw).expect("resolves");
+            let (resolved, warnings, _failures) =
+                resolve_all(&raw).expect("resolves");
 
             assert!(warnings.is_empty());
             let global =
@@ -1704,7 +1852,7 @@ mod tests {
                 )]),
             );
 
-            let (resolved, _) = resolve_all(&raw).expect("resolves");
+            let (resolved, _, _) = resolve_all(&raw).expect("resolves");
 
             let priority = resolved
                 .get("poem")
@@ -1736,7 +1884,7 @@ mod tests {
                 schema(&[], &[("name", ref_field("#global/name", None))]),
             );
 
-            let (resolved, _) = resolve_all(&raw).expect("resolves");
+            let (resolved, _, _) = resolve_all(&raw).expect("resolves");
 
             let name = resolved
                 .get("author")
@@ -1773,7 +1921,7 @@ mod tests {
                 })]),
             );
 
-            let (resolved, _) = resolve_all(&raw).expect("resolves");
+            let (resolved, _, _) = resolve_all(&raw).expect("resolves");
 
             let status = resolved
                 .get("sci_fi")
@@ -1806,7 +1954,8 @@ mod tests {
                 })]),
             );
 
-            let (resolved, warnings) = resolve_all(&raw).expect("resolves");
+            let (resolved, warnings, _failures) =
+                resolve_all(&raw).expect("resolves");
 
             let status = resolved
                 .get("sci_fi")
@@ -1849,7 +1998,8 @@ mod tests {
                 })]),
             );
 
-            let (resolved, warnings) = resolve_all(&raw).expect("resolves");
+            let (resolved, warnings, _failures) =
+                resolve_all(&raw).expect("resolves");
 
             let rating = resolved
                 .get("sci_fi")
@@ -1892,7 +2042,8 @@ mod tests {
                 })]),
             );
 
-            let (resolved, warnings) = resolve_all(&raw).expect("resolves");
+            let (resolved, warnings, _failures) =
+                resolve_all(&raw).expect("resolves");
 
             let cover = resolved
                 .get("book")
@@ -1918,7 +2069,8 @@ mod tests {
             clippy::unreachable,
             reason = "exhaustive error-match fallback"
         )]
-        fn a_ref_with_a_type_override_and_an_unknown_key_is_a_hard_error() {
+        fn a_ref_with_a_type_override_and_an_unknown_key_degrades_to_a_failure()
+        {
             let mut raw = BTreeMap::new();
             raw.insert(
                 SchemaName::from("book"),
@@ -1936,9 +2088,11 @@ mod tests {
                 })]),
             );
 
-            let err = resolve_all(&raw).expect_err(
-                "unknown attribute key on a type-overriding $ref rejected",
+            let (_, _, failures) = resolve_all(&raw).expect(
+                "unknown attribute key on a type-overriding $ref degrades, \
+                 not aborts",
             );
+            let err = failures.into_iter().next().expect("one failure").error;
 
             if let SchemaError::FieldBuilder(inner) = &err
                 && let SchemaFieldBuilderError::Parser(errors) = inner.as_ref()
@@ -1959,7 +2113,7 @@ mod tests {
             clippy::unreachable,
             reason = "exhaustive error-match fallback"
         )]
-        fn a_direct_field_with_an_unknown_key_is_a_hard_error() {
+        fn a_direct_field_with_an_unknown_key_degrades_to_a_failure() {
             let mut raw = BTreeMap::new();
             raw.insert(
                 SchemaName::from("book"),
@@ -1969,8 +2123,9 @@ mod tests {
                 })]),
             );
 
-            let err =
-                resolve_all(&raw).expect_err("unknown attribute key rejected");
+            let (_, _, failures) = resolve_all(&raw)
+                .expect("unknown attribute key degrades, not aborts");
+            let err = failures.into_iter().next().expect("one failure").error;
 
             if let SchemaError::FieldBuilder(inner) = &err
                 && let SchemaFieldBuilderError::Parser(errors) = inner.as_ref()
@@ -1991,7 +2146,7 @@ mod tests {
             clippy::unreachable,
             reason = "exhaustive error-match fallback"
         )]
-        fn a_direct_field_with_a_type_mismatched_value_is_a_hard_error() {
+        fn a_direct_field_with_a_type_mismatched_value_degrades_to_a_failure() {
             let mut raw = BTreeMap::new();
             raw.insert(
                 SchemaName::from("book"),
@@ -2004,8 +2159,9 @@ mod tests {
                 })]),
             );
 
-            let err = resolve_all(&raw)
-                .expect_err("attribute value type mismatch rejected");
+            let (_, _, failures) = resolve_all(&raw)
+                .expect("attribute value type mismatch degrades, not aborts");
+            let err = failures.into_iter().next().expect("one failure").error;
 
             if let SchemaError::FieldBuilder(inner) = &err
                 && let SchemaFieldBuilderError::Parser(errors) = inner.as_ref()

@@ -107,9 +107,9 @@ pub(super) struct QueryOps {
     /// Frontmatter field naming a Note's File Class(es), from `[schemas]
     /// class_field`. Passed to source matching at execution time.
     class_field: Arc<str>,
-    /// Shared with `schema.get()` so both namespaces resolve the same Schema
-    /// registry directory by construction; see
-    /// [`super::cache::SCHEMA_REGISTRY_CACHE_KEY`]'s docs.
+    /// Shared with `schema.get()` so both namespaces resolve the same,
+    /// already-resolved Schema registry, built once at
+    /// [`super::TemplateEngine::new`].
     service: Arc<SchemaService>,
     /// [`FileIndex::query`] for `query`, [`FileIndex::query_tasks`] for
     /// `tasks`.
@@ -201,15 +201,7 @@ impl Object for QueryOps {
                             QuerySource::parse(expr.unwrap_or_default())
                                 .map_err(query_error)?;
                         if source.has_classes() {
-                            let registry = super::schema::cached_schema_set(
-                                state,
-                                &ops.service,
-                            )?;
-                            resolve_sources(
-                                &mut source,
-                                &ops.service,
-                                &registry,
-                            );
+                            resolve_sources(&mut source, &ops.service);
                         }
                         ops.run(state, &source)
                     },
@@ -538,10 +530,12 @@ mod tests {
     /// Schema registry directory (`root/.traces/schemas`), mirroring
     /// [`super::super::TemplateEngine::new`]'s wiring.
     fn schema_service(root: &Path) -> Arc<SchemaService> {
-        Arc::new(SchemaService::new(SchemaConfigSpec::for_test(
+        let (service, _, _) = SchemaService::new(SchemaConfigSpec::for_test(
             root,
             &root.join(".traces/schemas"),
-        )))
+        ))
+        .expect("valid test schema directory");
+        Arc::new(service)
     }
 
     /// Builds a `query` [`QueryOps`] for `root` with the default class field

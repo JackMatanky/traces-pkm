@@ -129,10 +129,14 @@ impl Template {
             return Ok(());
         }
         let effective_provider = self.resolve_provider(provider);
-        let template_service =
-            TemplateService::new(&config, Arc::clone(&effective_provider));
         let input = self.resolve_name(&config, effective_provider.as_ref())?;
         let name = input.as_ref().to_path_buf();
+        let template_service =
+            TemplateService::new(&config, Arc::clone(&effective_provider))
+                .map_err(|source| CliError::TemplateInstantiate {
+                    name: name.clone(),
+                    source,
+                })?;
         let mode = WriteMode::from_flags(self.dry_run, self.force);
         let outcome = template_service
             .render_to_file(&input, self.output.as_deref(), mode)

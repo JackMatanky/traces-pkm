@@ -114,6 +114,29 @@ pub enum TemplateError {
     /// Covers the writer prompt shown before replacing an existing output file.
     #[error(transparent)]
     Prompt(#[from] DialogError),
+
+    /// Loading the Schema registry failed during service construction.
+    ///
+    /// Reached only for registry-wide failures: the registry directory
+    /// could not be read or listed, a Schema file's TOML syntax is
+    /// malformed or has an unknown key, or the `extends` DAG contains a
+    /// cycle — see the wrapped [`SchemaError`](crate::schema::SchemaError)
+    /// for which.
+    ///
+    /// A field-level defect *within* an otherwise well-formed Schema TOML
+    /// file (an invalid attribute value, an out-of-bounds `$ref`, an
+    /// ambiguous field name) never reaches this variant: that Schema alone
+    /// is excluded from the registry and logged as a construction-time
+    /// failure instead, while every other Schema still resolves.
+    #[error(transparent)]
+    #[expect(
+        private_interfaces,
+        reason = "SchemaError is deliberately crate-internal; TemplateError \
+                  is only pub behind the test-utils/test cfg, and transparent \
+                  wrapping only needs Display/Error, never external code \
+                  naming SchemaError itself"
+    )]
+    SchemaLoad(#[from] crate::schema::SchemaError),
 }
 
 /// Classifies a [`TemplateError::Render`] failure for diagnostics.
