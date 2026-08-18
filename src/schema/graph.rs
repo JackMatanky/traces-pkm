@@ -293,6 +293,47 @@ impl SchemaGraph<'_, Resolved> {
     }
 }
 
+/// Bidirectional mapping between schema names and bit positions.
+///
+/// Built once from the schema set at resolve time. Provides O(1) lookup
+/// in both directions: name → bit index and bit index → name.
+struct SchemaIndex {
+    name_to_bit: IndexMap<SchemaName, usize>,
+    bit_to_name: Vec<SchemaName>,
+}
+
+impl SchemaIndex {
+    /// Build the index from schema names in declaration order.
+    fn new<'a>(names: impl Iterator<Item = SchemaNameRef<'a>>) -> Self {
+        let mut name_to_bit = IndexMap::new();
+        let mut bit_to_name = Vec::new();
+        for name in names {
+            let bit = bit_to_name.len();
+            bit_to_name.push(SchemaName::from(name));
+            name_to_bit.insert(SchemaName::from(name), bit);
+        }
+        Self {
+            name_to_bit,
+            bit_to_name,
+        }
+    }
+
+    /// Number of schemas (bitset capacity).
+    fn bit_count(&self) -> usize {
+        self.bit_to_name.len()
+    }
+
+    /// Schema name → bit index.
+    fn bit_of(&self, name: &str) -> Option<usize> {
+        self.name_to_bit.get(name).copied()
+    }
+
+    /// Bit index → schema name.
+    fn name_of(&self, bit: usize) -> Option<&SchemaName> {
+        self.bit_to_name.get(bit)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -497,6 +538,46 @@ mod tests {
             let descendants = graph.descendants_by_name();
 
             assert_eq!(descendants.get("sci_fi"), None);
+        }
+    }
+
+    mod schema_index {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn bit_of_returns_the_insertion_order_index() {
+            let index = SchemaIndex::new(
+                ["global", "book", "sci_fi"]
+                    .iter()
+                    .map(|&s| SchemaNameRef::from(s)),
+            );
+
+            assert_eq!(index.bit_of("global"), Some(0));
+            assert_eq!(index.bit_of("book"), Some(1));
+            assert_eq!(index.bit_of("sci_fi"), Some(2));
+            assert_eq!(index.bit_of("missing"), None);
+        }
+
+        #[test]
+        fn name_of_returns_the_name_at_the_given_bit() {
+            let index = SchemaIndex::new(
+                ["global", "book"].iter().map(|&s| SchemaNameRef::from(s)),
+            );
+
+            assert_eq!(index.name_of(0), Some(&SchemaName::from("global")));
+            assert_eq!(index.name_of(1), Some(&SchemaName::from("book")));
+            assert_eq!(index.name_of(2), None);
+        }
+
+        #[test]
+        fn bit_count_matches_the_number_of_names() {
+            let index = SchemaIndex::new(
+                ["a", "b", "c"].iter().map(|&s| SchemaNameRef::from(s)),
+            );
+
+            assert_eq!(index.bit_count(), 3);
         }
     }
 }
