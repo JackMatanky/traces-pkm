@@ -266,7 +266,10 @@ impl<'a> RefAddressResolver<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::schema::name::SchemaNameRef;
+    use crate::schema::{
+        name::SchemaNameRef,
+        raw::{RawFieldSource, RawSchemaFieldType},
+    };
 
     /// Parses `reference` into a [`FieldAddress`], panicking on an invalid
     /// test fixture.
@@ -293,6 +296,58 @@ mod tests {
         )
     }
 
+    /// Leaks a [`RefAddressResolver`] with `schemas` in its resolved map and
+    /// the given `ancestors`, returning a `'static` reference.
+    ///
+    /// Each schema gets one field named `field_name` with the given `kind`.
+    fn leaked_resolver(
+        schemas: &[(&str, &str, SchemaFieldType)],
+        ancestors: &[&str],
+    ) -> &'static RefAddressResolver<'static> {
+        let resolved: BTreeMap<SchemaName, Schema> = schemas
+            .iter()
+            .map(|(name, field_name, kind)| {
+                schema_with_field(name, field_name, kind.clone())
+            })
+            .collect();
+        let anc: BTreeSet<SchemaName> =
+            ancestors.iter().map(|name| SchemaName::from(*name)).collect();
+        Box::leak(Box::new(RefAddressResolver {
+            ancestors: Box::leak(Box::new(anc)),
+            resolved: Box::leak(Box::new(resolved)),
+        }))
+    }
+
+    /// Builds a [`SchemaFieldBuilder`] backed by a resolver with `schemas` and
+    /// `ancestors`. Each schema gets one field named `"field"`.
+    fn builder(
+        schemas: &[(&str, SchemaFieldType)],
+        ancestors: &[&str],
+    ) -> SchemaFieldBuilder<'static> {
+        let wrapped: Vec<(&str, &str, SchemaFieldType)> = schemas
+            .iter()
+            .map(|(name, kind)| (*name, "field", kind.clone()))
+            .collect();
+        SchemaFieldBuilder {
+            refs: leaked_resolver(&wrapped, ancestors),
+        }
+    }
+
+    /// Builds a [`RawSchemaFieldDef`] with sensible defaults.
+    fn raw_field(
+        source: RawFieldSource,
+        required: Option<bool>,
+        multi: Option<bool>,
+        options: BTreeMap<String, crate::field::FieldValue>,
+    ) -> RawSchemaFieldDef {
+        RawSchemaFieldDef {
+            source,
+            required,
+            multi,
+            options,
+        }
+    }
+
     mod ref_address_resolver {
         use pretty_assertions::assert_eq;
 
@@ -300,16 +355,10 @@ mod tests {
 
         #[test]
         fn resolves_a_field_from_an_ancestor_schema() {
-            let (name, book) =
-                schema_with_field("book", "status", SchemaFieldType::Input);
-            let mut resolved = BTreeMap::new();
-            resolved.insert(name.clone(), book);
-            let mut ancestors = BTreeSet::new();
-            ancestors.insert(name);
-            let refs = RefAddressResolver {
-                ancestors: &ancestors,
-                resolved: &resolved,
-            };
+            let refs = leaked_resolver(
+                &[("book", "status", SchemaFieldType::Input)],
+                &["book"],
+            );
             let address = FieldAddressRef::new(
                 SchemaNameRef::from("sci_fi"),
                 crate::field::FieldNameRef::try_from("status")
@@ -325,18 +374,10 @@ mod tests {
 
         #[test]
         fn resolves_a_field_from_the_global_schema() {
-            let (name, global) = schema_with_field(
-                GLOBAL_SCHEMA_NAME,
-                "priority",
-                SchemaFieldType::Input,
+            let refs = leaked_resolver(
+                &[(GLOBAL_SCHEMA_NAME, "priority", SchemaFieldType::Input)],
+                &[],
             );
-            let mut resolved = BTreeMap::new();
-            resolved.insert(name, global);
-            let ancestors = BTreeSet::new();
-            let refs = RefAddressResolver {
-                ancestors: &ancestors,
-                resolved: &resolved,
-            };
             let address = FieldAddressRef::new(
                 SchemaNameRef::from("task"),
                 crate::field::FieldNameRef::try_from("priority")
@@ -352,15 +393,10 @@ mod tests {
 
         #[test]
         fn rejects_a_reference_outside_the_bound() {
-            let (name, movie) =
-                schema_with_field("movie", "status", SchemaFieldType::Input);
-            let mut resolved = BTreeMap::new();
-            resolved.insert(name, movie);
-            let ancestors = BTreeSet::new();
-            let refs = RefAddressResolver {
-                ancestors: &ancestors,
-                resolved: &resolved,
-            };
+            let refs = leaked_resolver(
+                &[("movie", "status", SchemaFieldType::Input)],
+                &[],
+            );
             let address = FieldAddressRef::new(
                 SchemaNameRef::from("book"),
                 crate::field::FieldNameRef::try_from("status")
@@ -380,25 +416,18 @@ mod tests {
 
         #[test]
         fn rejects_a_reference_to_a_field_that_does_not_exist() {
-            let name = SchemaName::from("book");
-            let book =
-                Schema::new(name.clone(), BTreeMap::new(), BTreeSet::new());
-            let mut resolved = BTreeMap::new();
-            resolved.insert(name.clone(), book);
-            let mut ancestors = BTreeSet::new();
-            ancestors.insert(name);
-            let refs = RefAddressResolver {
-                ancestors: &ancestors,
-                resolved: &resolved,
-            };
+            let refs = leaked_resolver(
+                &[("book", "status", SchemaFieldType::Input)],
+                &["book"],
+            );
             let address = FieldAddressRef::new(
                 SchemaNameRef::from("sci_fi"),
-                crate::field::FieldNameRef::try_from("status")
+                crate::field::FieldNameRef::try_from("missing")
                     .expect("valid field name"),
             );
 
             let err = refs
-                .resolve(address, &field_address("#book/status"))
+                .resolve(address, &field_address("#book/missing"))
                 .expect_err("missing field rejected");
 
             assert!(matches!(
@@ -406,6 +435,219 @@ mod tests {
                 SchemaError::FieldBuilder(inner)
                     if matches!(*inner, SchemaFieldBuilderError::RefFieldNotFound { .. })
             ));
+        }
+    }
+
+    mod build {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn returns_direct_field_with_no_options() {
+            let b = builder(&[], &[]);
+            let address = FieldAddressRef::new(
+                SchemaNameRef::from("sci_fi"),
+                crate::field::FieldNameRef::try_from("title")
+                    .expect("valid field name"),
+            );
+            let raw = raw_field(
+                RawFieldSource::Direct(RawSchemaFieldType::Input),
+                Some(true),
+                Some(false),
+                BTreeMap::new(),
+            );
+
+            let (field, warnings) = b.build(address, &raw).expect("builds");
+
+            assert_eq!(field.kind(), &SchemaFieldType::Input);
+            assert!(field.is_required());
+            assert!(!field.is_multi());
+            assert_eq!(warnings, Vec::new());
+        }
+
+        #[test]
+        fn merges_bare_ref_with_base() {
+            let b = builder(&[("book", SchemaFieldType::Input)], &["book"]);
+            let address = FieldAddressRef::new(
+                SchemaNameRef::from("sci_fi"),
+                crate::field::FieldNameRef::try_from("field")
+                    .expect("valid field name"),
+            );
+            let raw = raw_field(
+                RawFieldSource::Ref {
+                    address: field_address("#book/field"),
+                    override_type: None,
+                },
+                None,
+                None,
+                BTreeMap::new(),
+            );
+
+            let (field, _warnings) = b.build(address, &raw).expect("builds");
+
+            assert_eq!(field.kind(), &SchemaFieldType::Input);
+        }
+
+        #[test]
+        fn applies_type_override_on_ref() {
+            let b = builder(&[("book", SchemaFieldType::Input)], &["book"]);
+            let address = FieldAddressRef::new(
+                SchemaNameRef::from("sci_fi"),
+                crate::field::FieldNameRef::try_from("field")
+                    .expect("valid field name"),
+            );
+            let raw = raw_field(
+                RawFieldSource::Ref {
+                    address: field_address("#book/field"),
+                    override_type: Some(RawSchemaFieldType::Boolean),
+                },
+                None,
+                None,
+                BTreeMap::new(),
+            );
+
+            let (field, _warnings) = b.build(address, &raw).expect("builds");
+
+            assert_eq!(field.kind(), &SchemaFieldType::Boolean);
+        }
+
+        #[test]
+        fn returns_parser_error_for_direct_field_with_bad_option() {
+            let b = builder(&[], &[]);
+            let address = FieldAddressRef::new(
+                SchemaNameRef::from("sci_fi"),
+                crate::field::FieldNameRef::try_from("title")
+                    .expect("valid field name"),
+            );
+            let mut options = BTreeMap::new();
+            options.insert(
+                "unknown_key".to_owned(),
+                crate::field::FieldValue::String("value".to_owned()),
+            );
+            let raw = raw_field(
+                RawFieldSource::Direct(RawSchemaFieldType::Input),
+                None,
+                None,
+                options,
+            );
+
+            let err = b.build(address, &raw).expect_err("rejects bad option");
+
+            assert!(matches!(
+                err,
+                SchemaError::FieldBuilder(ref inner)
+                    if matches!(**inner, SchemaFieldBuilderError::Parser(_))
+            ));
+        }
+
+        #[test]
+        fn degrades_bare_ref_bad_option_to_warning() {
+            let b = builder(&[("book", SchemaFieldType::Input)], &["book"]);
+            let address = FieldAddressRef::new(
+                SchemaNameRef::from("sci_fi"),
+                crate::field::FieldNameRef::try_from("field")
+                    .expect("valid field name"),
+            );
+            let mut options = BTreeMap::new();
+            options.insert(
+                "unknown_key".to_owned(),
+                crate::field::FieldValue::String("value".to_owned()),
+            );
+            let raw = raw_field(
+                RawFieldSource::Ref {
+                    address: field_address("#book/field"),
+                    override_type: None,
+                },
+                None,
+                None,
+                options,
+            );
+
+            let (field, warnings) = b.build(address, &raw).expect("builds");
+
+            assert_eq!(field.kind(), &SchemaFieldType::Input);
+            assert_ne!(warnings, Vec::new());
+        }
+
+        #[test]
+        fn rejects_ref_to_out_of_bounds_target() {
+            let b = builder(&[("movie", SchemaFieldType::Input)], &[]);
+            let address = FieldAddressRef::new(
+                SchemaNameRef::from("book"),
+                crate::field::FieldNameRef::try_from("status")
+                    .expect("valid field name"),
+            );
+            let raw = raw_field(
+                RawFieldSource::Ref {
+                    address: field_address("#movie/field"),
+                    override_type: None,
+                },
+                None,
+                None,
+                BTreeMap::new(),
+            );
+
+            let err = b.build(address, &raw).expect_err("out of bounds");
+
+            assert!(matches!(
+                err,
+                SchemaError::FieldBuilder(ref inner)
+                    if matches!(**inner, SchemaFieldBuilderError::RefOutOfBounds { .. })
+            ));
+        }
+
+        #[test]
+        fn rejects_ref_to_missing_field() {
+            let b = builder(&[("book", SchemaFieldType::Input)], &["book"]);
+            let address = FieldAddressRef::new(
+                SchemaNameRef::from("sci_fi"),
+                crate::field::FieldNameRef::try_from("missing")
+                    .expect("valid field name"),
+            );
+            let raw = raw_field(
+                RawFieldSource::Ref {
+                    address: field_address("#book/missing"),
+                    override_type: None,
+                },
+                None,
+                None,
+                BTreeMap::new(),
+            );
+
+            let err = b.build(address, &raw).expect_err("missing field");
+
+            assert!(matches!(
+                err,
+                SchemaError::FieldBuilder(ref inner)
+                    if matches!(**inner, SchemaFieldBuilderError::RefFieldNotFound { .. })
+            ));
+        }
+
+        #[test]
+        fn strips_required_on_global_schema_with_warning() {
+            let b =
+                builder(&[(GLOBAL_SCHEMA_NAME, SchemaFieldType::Input)], &[]);
+            let address = FieldAddressRef::new(
+                SchemaNameRef::from(GLOBAL_SCHEMA_NAME),
+                crate::field::FieldNameRef::try_from("title")
+                    .expect("valid field name"),
+            );
+            let raw = raw_field(
+                RawFieldSource::Direct(RawSchemaFieldType::Input),
+                Some(true),
+                None,
+                BTreeMap::new(),
+            );
+
+            let (field, warnings) = b.build(address, &raw).expect("builds");
+
+            assert!(!field.is_required());
+            assert!(warnings.iter().any(|w| matches!(
+                w,
+                SchemaWarning::StrayGlobalRequired { field: name }
+                    if name == "title"
+            )));
         }
     }
 }
