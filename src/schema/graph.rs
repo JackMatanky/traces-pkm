@@ -264,19 +264,33 @@ impl SchemaGraph<'_, Resolved> {
             Self::descendants_of(name, children, &index, capacity, &mut memo);
         }
 
-        memo.into_iter()
-            .filter(|(_, bits)| bits.iter().any(|b| b))
-            .map(|(name, bits)| {
-                let set: IndexSet<SchemaName> = bits
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(i, b)| {
-                        b.then(|| index.name_of(i).cloned().unwrap())
-                    })
-                    .collect();
-                (name, set)
-            })
-            .collect()
+        // Expand bitsets back to IndexSet via BFS from children_by_name to
+        // preserve parent-before-child ordering.
+        let mut result: IndexMap<SchemaName, IndexSet<SchemaName>> =
+            IndexMap::new();
+        for (name, bits) in memo {
+            if !bits.iter().any(|b| b) {
+                continue;
+            }
+            let mut descendants = IndexSet::new();
+            let mut queue: VecDeque<SchemaNameRef<'_>> = VecDeque::new();
+            if let Some(direct) = children.get(name.as_str()) {
+                for &child in direct {
+                    queue.push_back(child);
+                }
+            }
+            while let Some(current) = queue.pop_front() {
+                let owned = SchemaName::from(current);
+                if !descendants.insert(owned) {
+                    continue;
+                }
+                if let Some(direct) = children.get(current.as_str()) {
+                    queue.extend(direct.iter().copied());
+                }
+            }
+            result.insert(name, descendants);
+        }
+        result
     }
 
     fn descendants_of(
@@ -299,15 +313,20 @@ impl SchemaGraph<'_, Resolved> {
                 let child_bits = Self::descendants_of(
                     &child, children, index, capacity, memo,
                 );
-                for i in 0..capacity {
-                    if child_bits[i] {
-                        result.set(i, true);
-                    }
-                }
+                merge_bits(&mut result, &child_bits, capacity);
             }
         }
         memo.insert(owned, result.clone());
         result
+    }
+}
+
+/// Bitwise OR `src` into `dst` for the first `capacity` bits.
+fn merge_bits(dst: &mut BitVec, src: &BitVec, capacity: usize) {
+    for i in 0..capacity {
+        if src.get(i).unwrap_or(false) {
+            dst.set(i, true);
+        }
     }
 }
 
@@ -347,6 +366,10 @@ impl SchemaIndex {
     }
 
     /// Bit index → schema name.
+    #[expect(
+        dead_code,
+        reason = "SchemaIndex API, tested in schema_index tests"
+    )]
     fn name_of(&self, bit: usize) -> Option<&SchemaName> {
         self.bit_to_name.get(bit)
     }
