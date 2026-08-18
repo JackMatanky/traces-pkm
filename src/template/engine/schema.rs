@@ -199,7 +199,7 @@ impl Object for Schema {
                 let schema = Arc::clone(self);
                 Some(Value::from_function(
                     move |state: &State| -> Result<Value, Error> {
-                        bind_related(state, &schema, SchemaService::children)
+                        bind_related(state, &schema, SchemaService::children_of)
                     },
                 ))
             }
@@ -207,7 +207,11 @@ impl Object for Schema {
                 let schema = Arc::clone(self);
                 Some(Value::from_function(
                     move |state: &State| -> Result<Value, Error> {
-                        bind_related(state, &schema, SchemaService::descendants)
+                        bind_related(
+                            state,
+                            &schema,
+                            SchemaService::descendants_of,
+                        )
                     },
                 ))
             }

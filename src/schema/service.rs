@@ -119,7 +119,7 @@ impl SchemaService {
     /// Excludes `name` itself and every transitive descendant. Empty, not an
     /// error, if `name` has no Schema or nothing extends it.
     #[must_use]
-    pub(crate) fn children(&self, name: &str) -> Vec<Arc<Schema>> {
+    pub(crate) fn children_of(&self, name: &str) -> Vec<Arc<Schema>> {
         let Some(schema) = self.schemas.get(name) else {
             return Vec::new();
         };
@@ -136,7 +136,7 @@ impl SchemaService {
     /// Excludes `name` itself. Empty, not an error, if `name` has no Schema or
     /// nothing extends it.
     #[must_use]
-    pub(crate) fn descendants(&self, name: &str) -> Vec<Arc<Schema>> {
+    pub(crate) fn descendants_of(&self, name: &str) -> Vec<Arc<Schema>> {
         let Some(schema) = self.schemas.get(name) else {
             return Vec::new();
         };
@@ -201,7 +201,7 @@ impl SchemaService {
                 warn_unknown_classes(self, classes);
                 for class in classes {
                     expanded.extend(
-                        self.children(class)
+                        self.children_of(class)
                             .iter()
                             .map(|schema| schema.name().to_owned()),
                     );
@@ -936,7 +936,7 @@ mod tests {
             let service = service(&temp);
 
             let names: Vec<String> = service
-                .children("thing")
+                .children_of("thing")
                 .into_iter()
                 .map(|schema| schema.name().to_owned())
                 .collect();
@@ -1015,7 +1015,7 @@ mod tests {
             let (service, _, _) =
                 resolve_dir(temp.path()).expect("registry loads");
 
-            let descendants = service.descendants("book");
+            let descendants = service.descendants_of("book");
             let names: Vec<&str> =
                 descendants.iter().map(|schema| schema.name()).collect();
 
@@ -1032,7 +1032,7 @@ mod tests {
             let (service, _, _) =
                 resolve_dir(temp.path()).expect("registry loads");
 
-            let descendants = service.descendants("thing");
+            let descendants = service.descendants_of("thing");
             let names: Vec<&str> =
                 descendants.iter().map(|schema| schema.name()).collect();
 
@@ -1048,7 +1048,7 @@ mod tests {
             let (service, _, _) =
                 resolve_dir(temp.path()).expect("registry loads");
 
-            assert!(service.descendants("sci_fi").is_empty());
+            assert!(service.descendants_of("sci_fi").is_empty());
         }
 
         #[test]
@@ -1059,7 +1059,7 @@ mod tests {
             let (service, _, _) =
                 resolve_dir(temp.path()).expect("registry loads");
 
-            assert!(service.descendants("ghost").is_empty());
+            assert!(service.descendants_of("ghost").is_empty());
         }
     }
 
