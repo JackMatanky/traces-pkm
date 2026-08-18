@@ -120,7 +120,9 @@ impl<'a> SchemaGraph<'a, Building> {
         for (&name, parents) in &parents_by_name {
             in_degree.insert(name, parents.len());
             for &parent in parents {
-                children_by_name.entry(parent).or_default().push(name);
+                if parent.as_str() != GLOBAL_SCHEMA_NAME {
+                    children_by_name.entry(parent).or_default().push(name);
+                }
             }
         }
 
@@ -176,9 +178,10 @@ impl<'a> SchemaGraph<'a, Building> {
     /// Record `name` as resolved, releasing any children whose in-degree just
     /// hit zero into the ready queue.
     pub(super) fn mark_resolved(&mut self, name: SchemaNameRef<'_>) {
-        for &child in
-            self.children_by_name.get(name.as_str()).into_iter().flatten()
-        {
+        for (&child, parents) in &self.parents_by_name {
+            if !parents.contains(&name) {
+                continue;
+            }
             if let Some(degree) = self.in_degree.get_mut(&child) {
                 *degree = degree.saturating_sub(1);
                 if *degree == 0 {
@@ -194,14 +197,13 @@ impl<'a> SchemaGraph<'a, Building> {
         if self.visited.len() == self.parents_by_name.len() {
             return None;
         }
-        Some(
-            self.parents_by_name
-                .keys()
-                .filter(|name| !self.visited.contains(name.as_str()))
-                .copied()
-                .map(SchemaName::from)
-                .collect(),
-        )
+        let mut result = Vec::new();
+        for &name in self.parents_by_name.keys() {
+            if !self.visited.contains(&name) {
+                result.push(SchemaName::from(name));
+            }
+        }
+        Some(result)
     }
 
     /// Consume the building graph, returning a resolved graph if the DAG is
@@ -232,20 +234,8 @@ impl SchemaGraph<'_, Resolved> {
     #[must_use]
     pub(super) fn children_by_name(
         &self,
-    ) -> IndexMap<SchemaName, IndexSet<SchemaName>> {
-        let mut children: IndexMap<SchemaName, IndexSet<SchemaName>> =
-            IndexMap::new();
-        for (&name, parents) in &self.parents_by_name {
-            for &parent in parents {
-                if parent.as_str() != GLOBAL_SCHEMA_NAME {
-                    children
-                        .entry(SchemaName::from(parent))
-                        .or_default()
-                        .insert(SchemaName::from(name));
-                }
-            }
-        }
-        children
+    ) -> &IndexMap<SchemaNameRef<'_>, Vec<SchemaNameRef<'_>>> {
+        &self.children_by_name
     }
 
     /// Return every Schema's transitive `extends` descendants, keyed by
@@ -266,11 +256,11 @@ impl SchemaGraph<'_, Resolved> {
     pub(super) fn descendants_by_name(
         &self,
     ) -> IndexMap<SchemaName, IndexSet<SchemaName>> {
-        let children = self.children_by_name();
+        let children = &self.children_by_name;
         let mut memo: IndexMap<SchemaName, IndexSet<SchemaName>> =
             IndexMap::new();
         for name in children.keys() {
-            Self::descendants_of(name, &children, &mut memo);
+            Self::descendants_of(name, children, &mut memo);
         }
         // Drops leaf entries (an empty descendant set) rather than keeping
         // them: callers treat "no entry" and "an empty entry" identically
@@ -283,21 +273,22 @@ impl SchemaGraph<'_, Resolved> {
     /// Return `name`'s transitive descendant set, computing and memoizing it
     /// (and every descendant's own set, transitively) on first visit.
     fn descendants_of(
-        name: &SchemaName,
-        children: &IndexMap<SchemaName, IndexSet<SchemaName>>,
+        name: &SchemaNameRef<'_>,
+        children: &IndexMap<SchemaNameRef<'_>, Vec<SchemaNameRef<'_>>>,
         memo: &mut IndexMap<SchemaName, IndexSet<SchemaName>>,
     ) -> IndexSet<SchemaName> {
-        if let Some(cached) = memo.get(name) {
+        let owned = SchemaName::from(*name);
+        if let Some(cached) = memo.get(&owned) {
             return cached.clone();
         }
         let mut result = IndexSet::new();
         if let Some(direct) = children.get(name) {
-            for child in direct {
-                result.insert(child.clone());
-                result.extend(Self::descendants_of(child, children, memo));
+            for &child in direct {
+                result.insert(SchemaName::from(child));
+                result.extend(Self::descendants_of(&child, children, memo));
             }
         }
-        memo.insert(name.clone(), result.clone());
+        memo.insert(owned, result.clone());
         result
     }
 }
@@ -365,10 +356,6 @@ mod tests {
 
         use super::*;
 
-        fn set(names: &[&str]) -> IndexSet<SchemaName> {
-            names.iter().map(|&name| SchemaName::from(name)).collect()
-        }
-
         #[test]
         fn returns_only_direct_extenders_for_a_branching_tree() {
             // thing <- book <- {sci_fi, memoir}
@@ -380,8 +367,20 @@ mod tests {
             let graph = SchemaGraph::new(&raw).0.into_resolved().unwrap();
             let children = graph.children_by_name();
 
-            assert_eq!(children.get("thing"), Some(&set(&["book"])));
-            assert_eq!(children.get("book"), Some(&set(&["memoir", "sci_fi"])));
+            let thing_children: Vec<&str> = children
+                .get("thing")
+                .unwrap()
+                .iter()
+                .map(|n| n.as_str())
+                .collect();
+            assert_eq!(thing_children, vec!["book"]);
+            let book_children: Vec<&str> = children
+                .get("book")
+                .unwrap()
+                .iter()
+                .map(|n| n.as_str())
+                .collect();
+            assert_eq!(book_children, vec!["sci_fi", "memoir"]);
             assert_eq!(children.get("sci_fi"), None);
             assert_eq!(children.get("memoir"), None);
         }
@@ -403,9 +402,27 @@ mod tests {
             let graph = SchemaGraph::new(&raw).0.into_resolved().unwrap();
             let children = graph.children_by_name();
 
-            assert_eq!(children.get("book"), Some(&set(&["adaptation"])));
-            assert_eq!(children.get("film"), Some(&set(&["adaptation"])));
-            assert_eq!(children.get("thing"), Some(&set(&["book", "film"])));
+            let book_children: Vec<&str> = children
+                .get("book")
+                .unwrap()
+                .iter()
+                .map(|n| n.as_str())
+                .collect();
+            assert_eq!(book_children, vec!["adaptation"]);
+            let film_children: Vec<&str> = children
+                .get("film")
+                .unwrap()
+                .iter()
+                .map(|n| n.as_str())
+                .collect();
+            assert_eq!(film_children, vec!["adaptation"]);
+            let thing_children: Vec<&str> = children
+                .get("thing")
+                .unwrap()
+                .iter()
+                .map(|n| n.as_str())
+                .collect();
+            assert_eq!(thing_children, vec!["book", "film"]);
         }
 
         #[test]

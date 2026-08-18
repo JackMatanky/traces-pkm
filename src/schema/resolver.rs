@@ -94,12 +94,12 @@ impl<'a> SchemaResolver<'a> {
                     .get(candidate)
                     .is_some_and(|ancestors| ancestors.contains(name))
             };
-            let children = children_by_name
-                .get(name)
+            let children: IndexSet<SchemaName> = children_by_name
+                .get(name.as_str())
                 .into_iter()
                 .flatten()
-                .filter(|child| still_descends_from(child))
-                .cloned()
+                .filter(|child| still_descends_from(&SchemaName::from(**child)))
+                .map(|child| SchemaName::from(*child))
                 .collect();
             let descendants = descendants_by_name
                 .get(name)
