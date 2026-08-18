@@ -206,6 +206,10 @@ impl<'a> SchemaGraph<'a, Building> {
 
     /// Consume the building graph, returning a resolved graph if the DAG is
     /// acyclic, or the cyclic schemas if a cycle exists.
+    ///
+    /// Drives any remaining [`next_ready`] / [`mark_resolved`] steps before
+    /// checking for cycles, so callers get correct results even if the loop
+    /// wasn't fully exhausted.
     pub(super) fn into_resolved(
         mut self,
     ) -> Result<SchemaGraph<'a, Resolved>, Vec<SchemaName>> {
