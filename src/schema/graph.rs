@@ -34,7 +34,7 @@ use super::{
     error::SchemaWarning,
 };
 
-/// Building state: resolution in progress, queue and in_degree active.
+/// Building state: resolution in progress, queue and `in_degree` active.
 pub(super) struct Building;
 
 /// Resolved state: DAG is acyclic, hierarchy queries available.
@@ -198,7 +198,8 @@ impl<'a> SchemaGraph<'a, Building> {
             self.parents_by_name
                 .keys()
                 .filter(|name| !self.visited.contains(name.as_str()))
-                .cloned()
+                .copied()
+                .map(SchemaName::from)
                 .collect(),
         )
     }
@@ -206,8 +207,11 @@ impl<'a> SchemaGraph<'a, Building> {
     /// Consume the building graph, returning a resolved graph if the DAG is
     /// acyclic, or the cyclic schemas if a cycle exists.
     pub(super) fn into_resolved(
-        self,
+        mut self,
     ) -> Result<SchemaGraph<'a, Resolved>, Vec<SchemaName>> {
+        while let Some(parent) = self.next_ready() {
+            self.mark_resolved(parent);
+        }
         if let Some(schemas) = self.cyclic_remainder() {
             return Err(schemas);
         }
@@ -215,7 +219,7 @@ impl<'a> SchemaGraph<'a, Building> {
     }
 }
 
-impl<'a> SchemaGraph<'a, Resolved> {
+impl SchemaGraph<'_, Resolved> {
     /// Return every Schema's direct `extends` children, keyed by parent name.
     ///
     /// Excludes the Global Schema as a parent: it is a flat reference pool,

@@ -20,6 +20,7 @@ mod graph;
 mod model;
 mod name;
 mod raw;
+mod resolver;
 mod service;
 
 pub(crate) use error::SchemaError;
