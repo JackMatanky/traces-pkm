@@ -366,7 +366,87 @@ mod tests {
         }
     }
 
-    mod next_ready {
+    mod constructor {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn returns_a_duplicate_extends_target_warning() {
+            let mut raw = IndexMap::new();
+            raw.insert(SchemaName::from("book"), schema(&[]));
+            raw.insert(SchemaName::from("child"), schema(&["book", "book"]));
+            let (_graph, warnings) = SchemaGraph::new(&raw);
+
+            assert_eq!(warnings, vec![SchemaWarning::DuplicateExtendsTarget {
+                schema: SchemaName::from("child"),
+                target: SchemaName::from("book"),
+            }]);
+        }
+
+        #[test]
+        fn returns_missing_extends_target_warning() {
+            let mut raw = IndexMap::new();
+            raw.insert(SchemaName::from("child"), schema(&["nonexistent"]));
+            let (_graph, warnings) = SchemaGraph::new(&raw);
+
+            assert_eq!(warnings, vec![SchemaWarning::MissingExtendsTarget {
+                schema: SchemaName::from("child"),
+                target: SchemaName::from("nonexistent"),
+            }]);
+        }
+
+        #[test]
+        fn returns_no_warnings_for_empty_input() {
+            let raw = IndexMap::new();
+            let (_graph, warnings) = SchemaGraph::new(&raw);
+
+            assert!(warnings.is_empty());
+        }
+
+        #[test]
+        fn does_not_warn_when_global_is_present_in_raw() {
+            let mut raw = IndexMap::new();
+            raw.insert(SchemaName::from(GLOBAL_SCHEMA_NAME), schema(&[]));
+            raw.insert(SchemaName::from("book"), schema(&[GLOBAL_SCHEMA_NAME]));
+            let (graph, warnings) = SchemaGraph::new(&raw);
+
+            assert!(warnings.is_empty());
+            assert_eq!(graph.parents_of(SchemaNameRef::from("book")), &[
+                SchemaName::from(GLOBAL_SCHEMA_NAME)
+            ]);
+        }
+    }
+
+    mod parents {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn returns_raw_extends_including_duplicates() {
+            let mut raw = IndexMap::new();
+            raw.insert(SchemaName::from("book"), schema(&[]));
+            raw.insert(SchemaName::from("child"), schema(&["book", "book"]));
+            let (graph, _warnings) = SchemaGraph::new(&raw);
+
+            assert_eq!(graph.parents_of(SchemaNameRef::from("child")), &[
+                SchemaName::from("book"),
+                SchemaName::from("book"),
+            ]);
+        }
+
+        #[test]
+        fn returns_empty_slice_for_unknown_schema() {
+            let mut raw = IndexMap::new();
+            raw.insert(SchemaName::from("book"), schema(&[]));
+            let (graph, _warnings) = SchemaGraph::new(&raw);
+
+            assert_eq!(graph.parents_of(SchemaNameRef::from("missing")), &[]);
+        }
+    }
+
+    mod state {
         use pretty_assertions::assert_eq;
 
         use super::*;
@@ -385,38 +465,13 @@ mod tests {
         }
     }
 
-    mod new {
+    mod children {
         use pretty_assertions::assert_eq;
 
         use super::*;
 
         #[test]
-        fn a_duplicate_extends_target_warns_once_but_parents_are_raw() {
-            let mut raw = IndexMap::new();
-            raw.insert(SchemaName::from("book"), schema(&[]));
-            raw.insert(SchemaName::from("child"), schema(&["book", "book"]));
-            let (graph, warnings) = SchemaGraph::new(&raw);
-
-            assert_eq!(warnings, vec![SchemaWarning::DuplicateExtendsTarget {
-                schema: SchemaName::from("child"),
-                target: SchemaName::from("book"),
-            }]);
-            // parents_of returns the raw extends field — duplicates included.
-            // merge_fields handles dedup via entry().or_insert_with().
-            assert_eq!(graph.parents_of(SchemaNameRef::from("child")), &[
-                SchemaName::from("book"),
-                SchemaName::from("book"),
-            ]);
-        }
-    }
-
-    mod children_by_name {
-        use pretty_assertions::assert_eq;
-
-        use super::*;
-
-        #[test]
-        fn returns_only_direct_extenders_for_a_branching_tree() {
+        fn returns_only_direct_extenders() {
             // thing <- book <- {sci_fi, memoir}
             let mut raw = IndexMap::new();
             raw.insert(SchemaName::from("thing"), schema(&[]));
@@ -445,11 +500,8 @@ mod tests {
         }
 
         #[test]
-        fn a_multi_parent_schema_appears_in_every_parents_direct_children() {
-            // thing <- {book, film} <- adaptation (both parents): the
-            // genuine diamond shape, distinct from the branching-tree fixture
-            // above -- a node with two parents converging, not one parent
-            // fanning out to two children.
+        fn includes_schema_in_every_parents_direct_children() {
+            // thing <- {book, film} <- adaptation (both parents)
             let mut raw = IndexMap::new();
             raw.insert(SchemaName::from("thing"), schema(&[]));
             raw.insert(SchemaName::from("book"), schema(&["thing"]));
@@ -485,23 +537,18 @@ mod tests {
         }
 
         #[test]
-        fn extends_global_produces_no_warning_when_global_is_in_raw() {
-            // GLOBAL in raw_schemas → graph sees it as a normal schema target.
-            // The resolver extracts GLOBAL before graph construction; this test
-            // verifies the graph processes raw data faithfully.
+        fn returns_empty_map_when_no_schema_has_children() {
             let mut raw = IndexMap::new();
-            raw.insert(SchemaName::from(GLOBAL_SCHEMA_NAME), schema(&[]));
-            raw.insert(SchemaName::from("book"), schema(&[GLOBAL_SCHEMA_NAME]));
-            let (graph, warnings) = SchemaGraph::new(&raw);
+            raw.insert(SchemaName::from("a"), schema(&[]));
+            raw.insert(SchemaName::from("b"), schema(&[]));
+            let graph = SchemaGraph::new(&raw).0.into_resolved().unwrap();
+            let children = graph.children_by_name();
 
-            assert!(warnings.is_empty());
-            assert_eq!(graph.parents_of(SchemaNameRef::from("book")), &[
-                SchemaName::from(GLOBAL_SCHEMA_NAME)
-            ]);
+            assert!(children.is_empty());
         }
     }
 
-    mod descendants_by_name {
+    mod descendants {
         use pretty_assertions::assert_eq;
 
         use super::*;
@@ -511,7 +558,7 @@ mod tests {
         }
 
         #[test]
-        fn deduplicates_a_diamond_dags_shared_descendant() {
+        fn deduplicates_diamond_shared_descendant() {
             // thing <- {book, film} <- adaptation (both parents)
             let mut raw = IndexMap::new();
             raw.insert(SchemaName::from("thing"), schema(&[]));
@@ -531,7 +578,7 @@ mod tests {
         }
 
         #[test]
-        fn returns_the_full_transitive_closure_through_a_three_level_chain() {
+        fn returns_full_transitive_closure() {
             let mut raw = IndexMap::new();
             raw.insert(SchemaName::from("thing"), schema(&[]));
             raw.insert(SchemaName::from("book"), schema(&["thing"]));
@@ -553,7 +600,7 @@ mod tests {
         }
 
         #[test]
-        fn returns_no_entry_for_a_leaf_schema() {
+        fn excludes_leaf_from_result_map() {
             let mut raw = IndexMap::new();
             raw.insert(SchemaName::from("book"), schema(&[]));
             raw.insert(SchemaName::from("sci_fi"), schema(&["book"]));
@@ -562,9 +609,25 @@ mod tests {
 
             assert_eq!(descendants.get("sci_fi"), None);
         }
+
+        #[test]
+        fn returns_independent_sets_for_multiple_roots() {
+            let mut raw = IndexMap::new();
+            raw.insert(SchemaName::from("a"), schema(&[]));
+            raw.insert(SchemaName::from("b"), schema(&["a"]));
+            raw.insert(SchemaName::from("c"), schema(&[]));
+            raw.insert(SchemaName::from("d"), schema(&["c"]));
+            let graph = SchemaGraph::new(&raw).0.into_resolved().unwrap();
+            let descendants = graph.descendants_by_name();
+
+            assert_eq!(descendants.get("a"), Some(&set(&["b"])));
+            assert_eq!(descendants.get("c"), Some(&set(&["d"])));
+            assert_eq!(descendants.get("b"), None);
+            assert_eq!(descendants.get("d"), None);
+        }
     }
 
-    mod schema_index {
+    mod integrity {
         use pretty_assertions::assert_eq;
 
         use super::*;
