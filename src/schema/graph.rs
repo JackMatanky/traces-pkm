@@ -232,7 +232,40 @@ impl<'a> SchemaGraph<'a, Resolved> {
             Self::descendants_of(name, children, &index, capacity, &mut memo);
         }
 
-        expand_descendants(&memo, children)
+        Self::expand_descendants(&memo, children)
+    }
+
+    /// Expand `BitVec` descendant sets back into owned name sets via BFS from
+    /// `children_by_name`, preserving parent-before-child ordering.
+    fn expand_descendants(
+        memo: &IndexMap<SchemaName, BitVec>,
+        children: &IndexMap<SchemaNameRef<'_>, Vec<SchemaNameRef<'_>>>,
+    ) -> IndexMap<SchemaName, IndexSet<SchemaName>> {
+        let mut result: IndexMap<SchemaName, IndexSet<SchemaName>> =
+            IndexMap::new();
+        for (name, bits) in memo {
+            if bits.none() {
+                continue;
+            }
+            let mut descendants = IndexSet::new();
+            let mut queue: VecDeque<SchemaNameRef<'_>> = VecDeque::new();
+            if let Some(direct) = children.get(name.as_str()) {
+                for &child in direct {
+                    queue.push_back(child);
+                }
+            }
+            while let Some(current) = queue.pop_front() {
+                let owned = SchemaName::from(current);
+                if !descendants.insert(owned) {
+                    continue;
+                }
+                if let Some(direct) = children.get(current.as_str()) {
+                    queue.extend(direct.iter().copied());
+                }
+            }
+            result.insert(name.clone(), descendants);
+        }
+        result
     }
 
     fn descendants_of(
@@ -261,39 +294,6 @@ impl<'a> SchemaGraph<'a, Resolved> {
         memo.insert(owned, result.clone());
         result
     }
-}
-
-/// Expand `BitVec` descendant sets back into owned name sets via BFS from
-/// `children_by_name`, preserving parent-before-child ordering.
-fn expand_descendants(
-    memo: &IndexMap<SchemaName, BitVec>,
-    children: &IndexMap<SchemaNameRef<'_>, Vec<SchemaNameRef<'_>>>,
-) -> IndexMap<SchemaName, IndexSet<SchemaName>> {
-    let mut result: IndexMap<SchemaName, IndexSet<SchemaName>> =
-        IndexMap::new();
-    for (name, bits) in memo {
-        if bits.none() {
-            continue;
-        }
-        let mut descendants = IndexSet::new();
-        let mut queue: VecDeque<SchemaNameRef<'_>> = VecDeque::new();
-        if let Some(direct) = children.get(name.as_str()) {
-            for &child in direct {
-                queue.push_back(child);
-            }
-        }
-        while let Some(current) = queue.pop_front() {
-            let owned = SchemaName::from(current);
-            if !descendants.insert(owned) {
-                continue;
-            }
-            if let Some(direct) = children.get(current.as_str()) {
-                queue.extend(direct.iter().copied());
-            }
-        }
-        result.insert(name.clone(), descendants);
-    }
-    result
 }
 
 /// Bidirectional mapping between schema names and bit positions.
