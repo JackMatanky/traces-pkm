@@ -92,6 +92,7 @@ impl<'a> SchemaResolver<'a> {
     /// [`StrayGlobalRequired`]: SchemaWarning::StrayGlobalRequired
     /// [`UnknownOverrideKey`]: SchemaWarning::UnknownOverrideKey
     /// [`OverrideValueTypeMismatch`]: SchemaWarning::OverrideValueTypeMismatch
+    ///
     /// Inherit fields from resolved parents using first-listed-wins semantics,
     /// collecting transitive ancestors and emitting warnings for missing
     /// parents.
