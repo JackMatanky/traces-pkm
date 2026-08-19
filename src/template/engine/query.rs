@@ -444,7 +444,7 @@ fn task_list_filter(outcome: &QueryOutcome) -> Result<String, Error> {
 }
 
 /// `outcome | count` filter body: the number of records in `outcome`.
-fn count_filter(outcome: &QueryOutcome) -> usize {
+const fn count_filter(outcome: &QueryOutcome) -> usize {
     outcome.len()
 }
 

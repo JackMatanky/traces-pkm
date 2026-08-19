@@ -56,7 +56,7 @@ impl Frontmatter {
     /// Creates frontmatter from parsed metadata fields.
     #[inline]
     #[must_use]
-    pub(crate) fn new(fields: Vec<MetadataField>) -> Self {
+    pub(crate) const fn new(fields: Vec<MetadataField>) -> Self {
         Self {
             fields,
         }
@@ -99,7 +99,7 @@ impl Frontmatter {
                       accessor symmetry with its fields"
         )
     )]
-    pub(crate) fn is_empty(&self) -> bool {
+    pub(crate) const fn is_empty(&self) -> bool {
         self.fields.is_empty()
     }
 }
@@ -166,7 +166,7 @@ impl MetadataField {
     /// Creates a metadata field from an already-validated `key` and `value`.
     #[inline]
     #[must_use]
-    pub(crate) fn from_key(key: FieldKey, value: FieldValue) -> Self {
+    pub(crate) const fn from_key(key: FieldKey, value: FieldValue) -> Self {
         Self {
             key,
             value,
@@ -190,14 +190,14 @@ impl MetadataField {
     /// Returns the field key.
     #[inline]
     #[must_use]
-    pub(crate) fn key(&self) -> &FieldKey {
+    pub(crate) const fn key(&self) -> &FieldKey {
         &self.key
     }
 
     /// Returns the field value.
     #[inline]
     #[must_use]
-    pub(crate) fn value(&self) -> &FieldValue {
+    pub(crate) const fn value(&self) -> &FieldValue {
         &self.value
     }
 }
@@ -214,7 +214,7 @@ impl InlineField {
     /// source syntax.
     #[inline]
     #[must_use]
-    pub(crate) fn from_key(
+    pub(crate) const fn from_key(
         key: FieldKey,
         value: FieldValue,
         form: InlineFieldForm,
@@ -251,7 +251,7 @@ impl InlineField {
                       accessor symmetry with its embedded MetadataField"
         )
     )]
-    pub(crate) fn key(&self) -> &FieldKey {
+    pub(crate) const fn key(&self) -> &FieldKey {
         self.metadata.key()
     }
 
@@ -266,7 +266,7 @@ impl InlineField {
                       accessor symmetry with its embedded MetadataField"
         )
     )]
-    pub(crate) fn value(&self) -> &FieldValue {
+    pub(crate) const fn value(&self) -> &FieldValue {
         self.metadata.value()
     }
 
@@ -282,14 +282,14 @@ impl InlineField {
                       accessor symmetry with its embedded MetadataField"
         )
     )]
-    pub(crate) fn form(&self) -> InlineFieldForm {
+    pub(crate) const fn form(&self) -> InlineFieldForm {
         self.form
     }
 
     /// Returns the underlying key-value metadata without syntax information.
     #[inline]
     #[must_use]
-    pub(crate) fn metadata(&self) -> &MetadataField {
+    pub(crate) const fn metadata(&self) -> &MetadataField {
         &self.metadata
     }
 }
@@ -312,9 +312,9 @@ pub enum FieldValue {
     /// A link parsed from wikilink or Markdown link syntax.
     Link(Link),
     /// Ordered list value.
-    List(Vec<FieldValue>),
+    List(Vec<Self>),
     /// Keyed object value stored in a deterministically ordered map.
-    Object(BTreeMap<String, FieldValue>),
+    Object(BTreeMap<String, Self>),
 }
 
 impl FieldValue {

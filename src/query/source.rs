@@ -207,7 +207,7 @@ impl ClassExpansionMode {
     ///
     /// Empty until populated by [`set_classes`](Self::set_classes).
     #[must_use]
-    pub(crate) fn classes(&self) -> &BTreeSet<String> {
+    pub(crate) const fn classes(&self) -> &BTreeSet<String> {
         match self {
             Self::Exact(classes)
             | Self::Children(classes)
@@ -313,7 +313,7 @@ impl QuerySourceExpr {
 
     /// Wraps a single atom as an expression.
     #[must_use]
-    pub(crate) fn atom(atom: SourceAtom) -> Self {
+    pub(crate) const fn atom(atom: SourceAtom) -> Self {
         Self(LogicalExpr::Atom(atom))
     }
 

@@ -125,7 +125,7 @@ impl TaskShorthands {
     /// Whether this mode recognizes task emoji shorthands.
     #[inline]
     #[must_use]
-    fn is_included(self) -> bool {
+    const fn is_included(self) -> bool {
         matches!(self, Self::Include)
     }
 }
@@ -357,7 +357,7 @@ struct ValueParser<'a> {
 
 impl<'a> ValueParser<'a> {
     #[inline]
-    fn new(text: &'a str) -> Self {
+    const fn new(text: &'a str) -> Self {
         Self {
             text,
             source: SourceText::new(text),

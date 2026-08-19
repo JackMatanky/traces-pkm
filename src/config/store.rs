@@ -53,7 +53,7 @@ impl ConfigTrustCheck {
     /// Returns the status-only view, discarding any trusted content.
     #[inline]
     #[must_use]
-    pub(crate) fn status(&self) -> ConfigTrustStatus {
+    pub(crate) const fn status(&self) -> ConfigTrustStatus {
         match self {
             Self::Untrusted => ConfigTrustStatus::Untrusted,
             Self::Stale => ConfigTrustStatus::Stale,

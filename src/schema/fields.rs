@@ -56,7 +56,7 @@ pub(crate) struct SchemaFieldDef {
 }
 
 impl SchemaFieldDef {
-    fn new(kind: SchemaFieldType, required: bool, multi: bool) -> Self {
+    const fn new(kind: SchemaFieldType, required: bool, multi: bool) -> Self {
         Self {
             kind,
             required,
@@ -69,7 +69,7 @@ impl SchemaFieldDef {
     /// [`SchemaFieldBuilder`].
     #[cfg(test)]
     #[must_use]
-    pub(super) fn for_test(
+    pub(super) const fn for_test(
         kind: SchemaFieldType,
         required: bool,
         multi: bool,
@@ -85,7 +85,7 @@ impl SchemaFieldDef {
     /// [`file_filter`]: Self::file_filter
     #[inline]
     #[must_use]
-    pub(super) fn kind(&self) -> &SchemaFieldType {
+    pub(super) const fn kind(&self) -> &SchemaFieldType {
         &self.kind
     }
 
@@ -124,14 +124,14 @@ impl SchemaFieldDef {
     /// Return `true` if this field must be set.
     #[inline]
     #[must_use]
-    pub(crate) fn is_required(&self) -> bool {
+    pub(crate) const fn is_required(&self) -> bool {
         self.required
     }
 
     /// Return `true` if this field accepts multiple values.
     #[inline]
     #[must_use]
-    pub(crate) fn is_multi(&self) -> bool {
+    pub(crate) const fn is_multi(&self) -> bool {
         self.multi
     }
 }
@@ -177,7 +177,7 @@ impl SchemaFieldType {
     /// payload.
     #[inline]
     #[must_use]
-    pub(super) fn kind(&self) -> SchemaFieldTypeTag {
+    pub(super) const fn kind(&self) -> SchemaFieldTypeTag {
         match self {
             Self::Input => SchemaFieldTypeTag::Input,
             Self::Select(_) => SchemaFieldTypeTag::Select,
@@ -190,7 +190,7 @@ impl SchemaFieldType {
 
     /// Return the inner [`SchemaSelectField`] if this is a
     /// [`Select`][Self::Select] variant.
-    pub(super) fn as_select(&self) -> Option<&SchemaSelectField> {
+    pub(super) const fn as_select(&self) -> Option<&SchemaSelectField> {
         match self {
             Self::Select(inner) => Some(inner),
             _ => None,
@@ -199,7 +199,7 @@ impl SchemaFieldType {
 
     /// Return the inner [`SchemaNumberField`] if this is a
     /// [`Number`][Self::Number] variant.
-    pub(super) fn as_number(&self) -> Option<&SchemaNumberField> {
+    pub(super) const fn as_number(&self) -> Option<&SchemaNumberField> {
         match self {
             Self::Number(inner) => Some(inner),
             _ => None,
@@ -208,7 +208,7 @@ impl SchemaFieldType {
 
     /// Return the inner [`SchemaDateField`] if this is a [`Date`][Self::Date]
     /// variant.
-    pub(super) fn as_date(&self) -> Option<&SchemaDateField> {
+    pub(super) const fn as_date(&self) -> Option<&SchemaDateField> {
         match self {
             Self::Date(inner) => Some(inner),
             _ => None,
@@ -217,7 +217,7 @@ impl SchemaFieldType {
 
     /// Return the inner [`SchemaFileField`] if this is a [`File`][Self::File]
     /// variant.
-    pub(super) fn as_file(&self) -> Option<&SchemaFileField> {
+    pub(super) const fn as_file(&self) -> Option<&SchemaFileField> {
         match self {
             Self::File(inner) => Some(inner),
             _ => None,

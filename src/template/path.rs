@@ -110,7 +110,7 @@ impl TemplatePath {
     /// [`TemplateLoader::find_name_in`]: super::loader::TemplateLoader::find_name_in
     #[inline]
     #[must_use]
-    pub(super) fn verified(
+    pub(super) const fn verified(
         input: TemplatePathInput,
         source_dir: PathBuf,
     ) -> Self {
@@ -127,7 +127,7 @@ impl TemplatePath {
     /// [`TemplateLoader::find`]: super::loader::TemplateLoader::find
     #[cfg(test)]
     #[must_use]
-    pub(super) fn for_test(
+    pub(super) const fn for_test(
         input: TemplatePathInput,
         source_dir: PathBuf,
     ) -> Self {
@@ -175,7 +175,7 @@ pub(super) struct DeclaredOutputPath(PathBuf);
 impl DeclaredOutputPath {
     #[inline]
     #[must_use]
-    pub(super) fn new(path: PathBuf) -> Self {
+    pub(super) const fn new(path: PathBuf) -> Self {
         Self(path)
     }
 

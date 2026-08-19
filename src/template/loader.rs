@@ -60,7 +60,10 @@ impl TemplateLoader {
     /// [`Config`].
     #[inline]
     #[must_use]
-    pub(super) fn new(local: Option<PathBuf>, global: Option<PathBuf>) -> Self {
+    pub(super) const fn new(
+        local: Option<PathBuf>,
+        global: Option<PathBuf>,
+    ) -> Self {
         Self {
             local,
             global,
@@ -157,7 +160,7 @@ impl TemplateLoader {
             }
             Err(source) => {
                 return Err(TemplatePathError::DirectoryRead {
-                    directory: search_dir.clone(),
+                    directory: search_dir,
                     source,
                 });
             }

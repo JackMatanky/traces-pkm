@@ -59,7 +59,7 @@ impl PathOps {
     /// Creates a path helper group rooted at `root`.
     #[inline]
     #[must_use]
-    pub(super) fn new(root: Arc<Path>) -> Self {
+    pub(super) const fn new(root: Arc<Path>) -> Self {
         Self {
             root,
         }

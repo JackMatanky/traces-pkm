@@ -143,7 +143,7 @@ impl<Source, State> ConfigFile<Source, State> {
         &self.path
     }
 
-    fn new(root: PathBuf, path: PathBuf, state: State) -> Self {
+    const fn new(root: PathBuf, path: PathBuf, state: State) -> Self {
         Self {
             root,
             path,
@@ -290,7 +290,7 @@ impl<Source> ConfigFile<Source, Parsed> {
     /// Parsed raw config data.
     #[inline]
     #[must_use]
-    pub(super) fn raw(&self) -> &RawConfig {
+    pub(super) const fn raw(&self) -> &RawConfig {
         &self.state.raw
     }
 
@@ -663,8 +663,7 @@ mod tests {
             std::fs::write(&path, "").unwrap(); // empty config
 
             let parsed = Parsed::read(&path).unwrap();
-            let file =
-                LocalConfigFile::<Parsed>::new(root.clone(), path, parsed);
+            let file = LocalConfigFile::<Parsed>::new(root, path, parsed);
 
             assert_eq!(file.resolved_template_dir(), None);
         }

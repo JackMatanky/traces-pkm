@@ -330,7 +330,7 @@ mod tests {
             let config_file = super::create_empty_config(&root);
             let service = super::service(temp.path());
 
-            super::trust_args(Some(config_file.clone()))
+            super::trust_args(Some(config_file))
                 .run(&service)
                 .expect("trust config file");
 

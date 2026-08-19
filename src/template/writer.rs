@@ -48,7 +48,7 @@ impl WriteMode {
     /// an output file.
     #[inline]
     #[must_use]
-    pub(crate) fn from_flags(dry_run: bool, force: bool) -> Self {
+    pub(crate) const fn from_flags(dry_run: bool, force: bool) -> Self {
         if dry_run {
             Self::DryRun
         } else {
@@ -77,7 +77,7 @@ impl CommitPolicy {
     /// [`Self::CreateNew`] otherwise.
     #[inline]
     #[must_use]
-    fn from_flag(force: bool) -> Self {
+    const fn from_flag(force: bool) -> Self {
         if force {
             Self::Overwrite
         } else {
@@ -144,7 +144,7 @@ impl<'a> TemplateWriteTarget<'a> {
     /// Builds a new target bound to `root`.
     #[inline]
     #[must_use]
-    pub(super) fn new(root: &'a Path) -> Self {
+    pub(super) const fn new(root: &'a Path) -> Self {
         Self {
             root,
             requested: None,
@@ -155,7 +155,7 @@ impl<'a> TemplateWriteTarget<'a> {
     /// Sets the `-o` candidate.
     #[inline]
     #[must_use]
-    pub(super) fn with_requested(
+    pub(super) const fn with_requested(
         mut self,
         requested: Option<&'a Path>,
     ) -> Self {

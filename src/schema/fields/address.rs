@@ -19,14 +19,14 @@ impl FieldAddress {
     /// Return the addressed Schema's name.
     #[inline]
     #[must_use]
-    pub(crate) fn schema(&self) -> &SchemaName {
+    pub(crate) const fn schema(&self) -> &SchemaName {
         &self.schema
     }
 
     /// Return the addressed field's name.
     #[inline]
     #[must_use]
-    pub(crate) fn field(&self) -> &FieldName {
+    pub(crate) const fn field(&self) -> &FieldName {
         &self.field
     }
 
@@ -128,7 +128,7 @@ impl<'a> FieldAddressRef<'a> {
     /// Build a borrowed field address from its schema and field parts.
     #[inline]
     #[must_use]
-    pub(crate) fn new(
+    pub(crate) const fn new(
         schema: SchemaNameRef<'a>,
         field: FieldNameRef<'a>,
     ) -> Self {
@@ -141,14 +141,14 @@ impl<'a> FieldAddressRef<'a> {
     /// Return the addressed Schema's name.
     #[inline]
     #[must_use]
-    pub(crate) fn schema(self) -> SchemaNameRef<'a> {
+    pub(crate) const fn schema(self) -> SchemaNameRef<'a> {
         self.schema
     }
 
     /// Return the addressed field's name.
     #[inline]
     #[must_use]
-    pub(crate) fn field(self) -> FieldNameRef<'a> {
+    pub(crate) const fn field(self) -> FieldNameRef<'a> {
         self.field
     }
 }

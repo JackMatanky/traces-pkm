@@ -81,7 +81,7 @@ impl FileRecord {
     /// Returns the file's name, without its extension.
     #[inline]
     #[must_use]
-    pub(crate) fn name(&self) -> &BaseName {
+    pub(crate) const fn name(&self) -> &BaseName {
         &self.name
     }
 
@@ -96,7 +96,7 @@ impl FileRecord {
     /// Returns whether this file is a markdown note or another regular file.
     #[inline]
     #[must_use]
-    pub(crate) fn format(&self) -> FileFormat {
+    pub(crate) const fn format(&self) -> FileFormat {
         self.format
     }
 
@@ -116,7 +116,7 @@ impl FileRecord {
                       resolution uses"
         )
     )]
-    pub(crate) fn created_at(&self) -> Option<Timestamp> {
+    pub(crate) const fn created_at(&self) -> Option<Timestamp> {
         self.created_at
     }
 
@@ -132,14 +132,14 @@ impl FileRecord {
     /// Returns this file's last modification time.
     #[inline]
     #[must_use]
-    pub(crate) fn modified_at(&self) -> Timestamp {
+    pub(crate) const fn modified_at(&self) -> Timestamp {
         self.modified_at
     }
 
     /// Returns this file's size in bytes.
     #[inline]
     #[must_use]
-    pub(crate) fn size(&self) -> u64 {
+    pub(crate) const fn size(&self) -> u64 {
         self.size
     }
 }

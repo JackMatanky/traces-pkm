@@ -102,7 +102,7 @@ impl<'a> BaseNameRef<'a> {
     /// Returns this stem as a string slice.
     #[inline]
     #[must_use]
-    pub(crate) fn as_str(&self) -> &str {
+    pub(crate) const fn as_str(&self) -> &str {
         self.0
     }
 }

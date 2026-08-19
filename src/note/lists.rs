@@ -20,7 +20,7 @@ impl List {
     /// Creates a list from its ordering flag and direct child items.
     #[inline]
     #[must_use]
-    pub(crate) fn new(is_ordered: bool, items: Vec<ListItem>) -> Self {
+    pub(crate) const fn new(is_ordered: bool, items: Vec<ListItem>) -> Self {
         Self {
             is_ordered,
             items,
@@ -38,7 +38,7 @@ impl List {
                       symmetry with its fields"
         )
     )]
-    pub(crate) fn is_ordered(&self) -> bool {
+    pub(crate) const fn is_ordered(&self) -> bool {
         self.is_ordered
     }
 
@@ -130,21 +130,21 @@ impl ListItem {
                       accessor symmetry with its fields"
         )
     )]
-    pub(crate) fn task_status(&self) -> Option<TaskStatus> {
+    pub(crate) const fn task_status(&self) -> Option<TaskStatus> {
         self.task_status
     }
 
     /// Returns `true` if this item is a task item (`- [ ]` or `- [x]`).
     #[inline]
     #[must_use]
-    pub(crate) fn is_task(&self) -> bool {
+    pub(crate) const fn is_task(&self) -> bool {
         self.task_status.is_some()
     }
 
     /// Returns `true` if this task item is completed (`- [x]`).
     #[inline]
     #[must_use]
-    pub(crate) fn is_completed(&self) -> bool {
+    pub(crate) const fn is_completed(&self) -> bool {
         matches!(self.task_status, Some(TaskStatus::Complete))
     }
 

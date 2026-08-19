@@ -55,7 +55,7 @@ pub(super) struct SchemaResolver<'a> {
 
 impl<'a> SchemaResolver<'a> {
     /// Create a resolver from a borrowed raw-schema map.
-    pub(super) fn new(raw: &'a IndexMap<SchemaName, RawSchema>) -> Self {
+    pub(super) const fn new(raw: &'a IndexMap<SchemaName, RawSchema>) -> Self {
         Self {
             raw,
         }

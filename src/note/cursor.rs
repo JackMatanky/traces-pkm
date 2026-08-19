@@ -12,14 +12,14 @@ impl<'a> SourceText<'a> {
     /// Creates byte-offset helpers for `source`.
     #[inline]
     #[must_use]
-    pub(super) fn new(source: &'a str) -> Self {
+    pub(super) const fn new(source: &'a str) -> Self {
         Self(source)
     }
 
     /// Returns the source length in bytes.
     #[inline]
     #[must_use]
-    pub(super) fn len(&self) -> usize {
+    pub(super) const fn len(&self) -> usize {
         self.0.len()
     }
 

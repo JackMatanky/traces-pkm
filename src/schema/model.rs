@@ -60,7 +60,7 @@ impl Schema {
     /// Return this Schema's effective Field Definitions, keyed by name.
     #[inline]
     #[must_use]
-    pub(crate) fn fields(&self) -> &IndexMap<FieldName, SchemaFieldDef> {
+    pub(crate) const fn fields(&self) -> &IndexMap<FieldName, SchemaFieldDef> {
         &self.fields
     }
 
@@ -75,21 +75,21 @@ impl Schema {
     /// Return this Schema's transitive `extends` ancestors.
     #[inline]
     #[must_use]
-    pub(super) fn ancestors(&self) -> &IndexSet<SchemaName> {
+    pub(super) const fn ancestors(&self) -> &IndexSet<SchemaName> {
         &self.ancestors
     }
 
     /// Return the Schemas that directly `extends` this one.
     #[inline]
     #[must_use]
-    pub(super) fn children(&self) -> &IndexSet<SchemaName> {
+    pub(super) const fn children(&self) -> &IndexSet<SchemaName> {
         &self.children
     }
 
     /// Return every Schema that transitively `extends` this one.
     #[inline]
     #[must_use]
-    pub(super) fn descendants(&self) -> &IndexSet<SchemaName> {
+    pub(super) const fn descendants(&self) -> &IndexSet<SchemaName> {
         &self.descendants
     }
 

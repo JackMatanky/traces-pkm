@@ -141,7 +141,7 @@ impl IndexRecord {
     /// Returns general metadata for the indexed file.
     #[inline]
     #[must_use]
-    pub fn file(&self) -> &FileRecord {
+    pub const fn file(&self) -> &FileRecord {
         &self.file
     }
 

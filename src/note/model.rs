@@ -79,7 +79,7 @@ impl Note {
     /// Returns the parsed YAML frontmatter block, if present.
     #[inline]
     #[must_use]
-    pub fn frontmatter(&self) -> Option<&Frontmatter> {
+    pub const fn frontmatter(&self) -> Option<&Frontmatter> {
         self.frontmatter.as_ref()
     }
 

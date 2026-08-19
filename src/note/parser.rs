@@ -195,11 +195,11 @@ impl ParserContext {
         }
     }
 
-    fn start_code_block(&mut self) {
+    const fn start_code_block(&mut self) {
         self.block = BlockContext::CodeBlock;
     }
 
-    fn end_code_block(&mut self) {
+    const fn end_code_block(&mut self) {
         self.block = BlockContext::None;
     }
 
@@ -334,7 +334,7 @@ struct ActiveLink {
 }
 
 impl ActiveLink {
-    fn new(kind: LinkType, target: String) -> Self {
+    const fn new(kind: LinkType, target: String) -> Self {
         Self {
             target,
             kind,
@@ -371,7 +371,7 @@ impl ListTracker {
     }
 
     /// Returns `true` if there is an active list item.
-    fn is_item_active(&self) -> bool {
+    const fn is_item_active(&self) -> bool {
         !self.item_stack.is_empty()
     }
 

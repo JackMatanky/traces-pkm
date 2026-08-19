@@ -101,7 +101,7 @@ impl SchemaOps {
     /// file-field options.
     #[inline]
     #[must_use]
-    pub(super) fn new(service: Arc<SchemaService>) -> Self {
+    pub(super) const fn new(service: Arc<SchemaService>) -> Self {
         Self {
             service,
         }

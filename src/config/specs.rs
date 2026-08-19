@@ -87,7 +87,7 @@ impl SchemaConfigSpec {
                       reason"
         )
     )]
-    pub(crate) fn class_field(&self) -> &FieldKey {
+    pub(crate) const fn class_field(&self) -> &FieldKey {
         &self.class_field
     }
 
@@ -103,7 +103,7 @@ impl SchemaConfigSpec {
                       reason"
         )
     )]
-    pub(crate) fn title_field(&self) -> &FieldKey {
+    pub(crate) const fn title_field(&self) -> &FieldKey {
         &self.title_field
     }
 
@@ -119,7 +119,7 @@ impl SchemaConfigSpec {
                       reason"
         )
     )]
-    pub(crate) fn aliases_field(&self) -> &FieldKey {
+    pub(crate) const fn aliases_field(&self) -> &FieldKey {
         &self.aliases_field
     }
 

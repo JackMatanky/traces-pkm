@@ -183,7 +183,7 @@ impl ComparisonExpr {
     ///     FieldValue::Number(5.0),
     /// );
     /// ```
-    pub(super) fn new(
+    pub(super) const fn new(
         field: FieldPath,
         op: CompareOp,
         value: FieldValue,

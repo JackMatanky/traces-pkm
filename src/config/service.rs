@@ -492,7 +492,7 @@ mod tests {
         }
 
         fn trust_config(&self, config_path: &Path) {
-            let config = Fixture::discovered_config(config_path);
+            let config = Self::discovered_config(config_path);
             self.service
                 .trust(&TrustRequest::from(&config))
                 .expect("trust candidate root");
@@ -523,7 +523,7 @@ mod tests {
             let trusted = temp.path().join("trusted");
 
             // Act
-            let service = ConfigService::at(tracked.clone(), trusted.clone());
+            let service = ConfigService::at(tracked.clone(), trusted);
 
             // Assert
             assert!(format!("{service:?}").contains(tracked.to_str().unwrap()));
@@ -867,7 +867,7 @@ mod tests {
             let config_path = Fixture::create_config(&cwd, "");
             let local = Fixture::discovered_config(&config_path);
             let candidates = DiscoveryOutcome::new(
-                DiscoveryAnchor::Directory(cwd.clone()),
+                DiscoveryAnchor::Directory(cwd),
                 vec![local],
                 Vec::new(),
             );
@@ -898,7 +898,7 @@ mod tests {
             let config_path = Fixture::create_config(&cwd, "");
             let local = Fixture::discovered_config(&config_path);
             let candidates = DiscoveryOutcome::new(
-                DiscoveryAnchor::Directory(cwd.clone()),
+                DiscoveryAnchor::Directory(cwd),
                 vec![local],
                 Vec::new(),
             );
@@ -924,7 +924,7 @@ mod tests {
             let config_path = Fixture::create_config(&cwd, "");
             let local = Fixture::discovered_config(&config_path);
             let candidates = DiscoveryOutcome::new(
-                DiscoveryAnchor::Directory(cwd.clone()),
+                DiscoveryAnchor::Directory(cwd),
                 vec![local],
                 Vec::new(),
             );

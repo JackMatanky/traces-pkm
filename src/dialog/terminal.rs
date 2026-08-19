@@ -35,7 +35,7 @@ impl TerminalDialogProvider {
     /// Create a [`TerminalDialogProvider`] with default prompt behavior.
     #[inline]
     #[must_use]
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self
     }
 }

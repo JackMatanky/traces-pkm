@@ -206,7 +206,7 @@ impl<'a> FieldNameRef<'a> {
     /// Returns this name as a string slice.
     #[inline]
     #[must_use]
-    pub(crate) fn as_str(self) -> &'a str {
+    pub(crate) const fn as_str(self) -> &'a str {
         self.0
     }
 }
@@ -367,7 +367,7 @@ impl FieldKey {
     /// than being substituted with `-` or stripped: `_`, `-`, ASCII
     /// alphanumeric, or non-ASCII.
     #[inline]
-    fn is_kept(ch: char) -> bool {
+    const fn is_kept(ch: char) -> bool {
         ch == '_' || ch == '-' || ch.is_ascii_alphanumeric() || !ch.is_ascii()
     }
 
@@ -499,9 +499,9 @@ pub(crate) enum FieldValue {
     /// Plain text value.
     String(String),
     /// Ordered list value.
-    List(Vec<FieldValue>),
+    List(Vec<Self>),
     /// Keyed object value, stored in a deterministically ordered map.
-    Object(BTreeMap<String, FieldValue>),
+    Object(BTreeMap<String, Self>),
 }
 
 impl FieldValue {
@@ -514,7 +514,7 @@ impl FieldValue {
     /// a `number`-type field's `min`/`max`/`step`.
     #[inline]
     #[must_use]
-    pub(crate) fn as_f64(&self) -> Option<f64> {
+    pub(crate) const fn as_f64(&self) -> Option<f64> {
         match *self {
             Self::Float(f) => Some(f),
             #[expect(
@@ -612,9 +612,9 @@ pub(crate) enum FieldValueRef<'a> {
     /// Plain text value, borrowed from the source document where possible.
     String(Cow<'a, str>),
     /// Ordered list value.
-    List(Vec<FieldValueRef<'a>>),
+    List(Vec<Self>),
     /// Keyed object value, stored in a deterministically ordered map.
-    Object(BTreeMap<Cow<'a, str>, FieldValueRef<'a>>),
+    Object(BTreeMap<Cow<'a, str>, Self>),
 }
 
 impl FieldValueRef<'_> {
@@ -630,7 +630,7 @@ impl FieldValueRef<'_> {
             reason = "consumer lands with the values-source redesign"
         )
     )]
-    pub(crate) fn as_f64(&self) -> Option<f64> {
+    pub(crate) const fn as_f64(&self) -> Option<f64> {
         match *self {
             Self::Float(f) => Some(f),
             #[expect(

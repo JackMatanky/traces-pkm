@@ -18,7 +18,7 @@ impl SchemaNumberField {
     #[inline]
     #[must_use]
     #[expect(dead_code, reason = "reserved for future schema consumers")]
-    pub(crate) fn min(&self) -> Option<f64> {
+    pub(crate) const fn min(&self) -> Option<f64> {
         self.min
     }
 
@@ -26,7 +26,7 @@ impl SchemaNumberField {
     #[inline]
     #[must_use]
     #[expect(dead_code, reason = "reserved for future schema consumers")]
-    pub(crate) fn max(&self) -> Option<f64> {
+    pub(crate) const fn max(&self) -> Option<f64> {
         self.max
     }
 
@@ -34,13 +34,13 @@ impl SchemaNumberField {
     #[inline]
     #[must_use]
     #[expect(dead_code, reason = "reserved for future schema consumers")]
-    pub(crate) fn step(&self) -> Option<f64> {
+    pub(crate) const fn step(&self) -> Option<f64> {
         self.step
     }
 
     /// Build an instance for tests.
     #[cfg(test)]
-    pub(crate) fn for_test(
+    pub(crate) const fn for_test(
         min: Option<f64>,
         max: Option<f64>,
         step: Option<f64>,
@@ -72,7 +72,7 @@ impl SchemaNumberField {
         let max = parser.f64(options, "max", base_max);
         let step = parser.f64(options, "step", base_step);
 
-        SchemaFieldType::Number(SchemaNumberField {
+        SchemaFieldType::Number(Self {
             min,
             max,
             step,

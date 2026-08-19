@@ -73,7 +73,7 @@ pub(super) struct Template {
 
 impl Template {
     /// Constructs [`Template`] args for `traces -i <name>` dispatch.
-    pub(super) fn new(name: PathBuf) -> Self {
+    pub(super) const fn new(name: PathBuf) -> Self {
         Self {
             name: Some(name),
             input: None,
@@ -86,7 +86,7 @@ impl Template {
     }
 
     /// Constructs [`Template`] args for interactive `traces -i` dispatch.
-    pub(super) fn interactive() -> Self {
+    pub(super) const fn interactive() -> Self {
         Self {
             name: None,
             input: None,

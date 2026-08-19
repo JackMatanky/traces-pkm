@@ -184,7 +184,7 @@ mod tests {
             super::trust_root(&service, &parent);
             super::trust_root(&service, &child);
 
-            super::untrust_args(Some(parent.clone()), true)
+            super::untrust_args(Some(parent), true)
                 .run(&service)
                 .expect("untrust all configs");
 

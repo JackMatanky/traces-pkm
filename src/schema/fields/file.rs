@@ -15,7 +15,7 @@ use super::{SchemaFieldType, parser::SchemaFieldParser};
 use crate::field::FieldValue;
 
 /// Resolved `file` field options.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct SchemaFileField {
     folders: Vec<String>,
     ext: Option<String>,
@@ -60,7 +60,7 @@ impl SchemaFileField {
 
     /// Build an instance for tests.
     #[cfg(test)]
-    pub(crate) fn for_test(
+    pub(crate) const fn for_test(
         folders: Vec<String>,
         ext: Option<String>,
         class: Vec<String>,
@@ -94,7 +94,7 @@ impl SchemaFileField {
         let ext = parser.string(options, "ext", base_ext);
         let class = parser.string_list(options, "class", base_class);
 
-        SchemaFieldType::File(SchemaFileField {
+        SchemaFieldType::File(Self {
             folders,
             ext,
             class,

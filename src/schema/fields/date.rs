@@ -6,7 +6,7 @@ use super::{SchemaFieldType, parser::SchemaFieldParser};
 use crate::field::FieldValue;
 
 /// Resolved `date` field options.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct SchemaDateField {
     format: Option<String>,
 }
@@ -25,7 +25,7 @@ impl SchemaDateField {
 
     /// Build an instance for tests.
     #[cfg(test)]
-    pub(crate) fn for_test(format: Option<String>) -> Self {
+    pub(crate) const fn for_test(format: Option<String>) -> Self {
         Self {
             format,
         }
@@ -48,7 +48,7 @@ impl SchemaDateField {
 
         let format = parser.string(options, "format", base_format);
 
-        SchemaFieldType::Date(SchemaDateField {
+        SchemaFieldType::Date(Self {
             format,
         })
     }

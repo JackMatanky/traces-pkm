@@ -165,7 +165,7 @@ impl DiscoveryOutcome {
     #[cfg(test)]
     #[inline]
     #[must_use]
-    pub(crate) fn kind(&self) -> DiscoveryScope {
+    pub(crate) const fn kind(&self) -> DiscoveryScope {
         self.kind
     }
 
@@ -173,7 +173,7 @@ impl DiscoveryOutcome {
     #[cfg(test)]
     #[inline]
     #[must_use]
-    pub(crate) fn anchor(&self) -> &DiscoveryAnchor {
+    pub(crate) const fn anchor(&self) -> &DiscoveryAnchor {
         &self.anchor
     }
 
@@ -297,7 +297,7 @@ impl DiscoveryEngine {
         anchor: DiscoveryAnchor,
     ) -> Result<TrustRequests, DiscoveryError> {
         let ctx = DiscoveryContext::new(scope, anchor)?;
-        let outcome = DiscoveryEngine::process(ctx)?;
+        let outcome = Self::process(ctx)?;
         let requests: Vec<TrustRequest> =
             outcome.local().iter().map(TrustRequest::from).collect();
         Ok(TrustRequests::from(requests))
@@ -539,7 +539,7 @@ mod tests {
             );
             let result2 = DiscoveryContext::new(
                 DiscoveryScope::NearestLocal,
-                DiscoveryAnchor::File(path.clone()),
+                DiscoveryAnchor::File(path),
             );
 
             // Assert
@@ -589,7 +589,7 @@ mod tests {
 
             let ctx = DiscoveryContext::new(
                 DiscoveryScope::NearestLocal,
-                DiscoveryAnchor::Directory(cwd.clone()),
+                DiscoveryAnchor::Directory(cwd),
             )
             .unwrap();
 

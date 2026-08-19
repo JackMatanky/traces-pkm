@@ -789,12 +789,8 @@ mod tests {
             );
             symlink(outside.path(), root.join("link"))
                 .expect("plant a symlink inside root pointing outside it");
-            let config = Config::for_test(
-                root.clone(),
-                Some(local_dir),
-                None,
-                root.clone(),
-            );
+            let config =
+                Config::for_test(root.clone(), Some(local_dir), None, root);
             let service = TemplateService::new(&config, preset_provider())
                 .expect("valid test schema directory");
 

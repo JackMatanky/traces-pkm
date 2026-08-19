@@ -359,7 +359,7 @@ pub struct QueryOutcome {
 }
 impl QueryOutcome {
     /// Wraps `records` into a new [`QueryOutcome`].
-    pub(super) fn new(records: Vec<IndexRecord>) -> Self {
+    pub(super) const fn new(records: Vec<IndexRecord>) -> Self {
         Self {
             records,
         }
@@ -368,14 +368,14 @@ impl QueryOutcome {
     /// Returns the number of [`IndexRecord`] rows in this outcome.
     #[inline]
     #[must_use]
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         self.records.len()
     }
 
     /// Returns `true` if this outcome contains no [`IndexRecord`] rows.
     #[inline]
     #[must_use]
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.records.is_empty()
     }
 

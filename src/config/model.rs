@@ -49,7 +49,7 @@ impl Config {
     /// Creates a resolved config from builder-owned parts.
     #[inline]
     #[must_use]
-    pub(super) fn new(
+    pub(super) const fn new(
         root: PathBuf,
         templates: TemplateConfig,
         schemas: SchemasConfig,
@@ -105,14 +105,14 @@ impl Config {
     /// Returns the resolved `[schemas]` settings.
     #[inline]
     #[must_use]
-    pub fn schemas(&self) -> &SchemasConfig {
+    pub const fn schemas(&self) -> &SchemasConfig {
         &self.schemas
     }
 
     /// Returns the resolved `[frontmatter]` settings.
     #[inline]
     #[must_use]
-    pub fn frontmatter(&self) -> &FrontmatterConfig {
+    pub const fn frontmatter(&self) -> &FrontmatterConfig {
         &self.frontmatter
     }
 
@@ -163,7 +163,7 @@ impl TemplateConfig {
     /// Creates a template config from builder-owned parts.
     #[inline]
     #[must_use]
-    pub(super) fn new(
+    pub(super) const fn new(
         local: Option<PathBuf>,
         global: Option<PathBuf>,
         output: PathBuf,
@@ -213,7 +213,7 @@ impl SchemasConfig {
     /// Defaults to `class`.
     #[inline]
     #[must_use]
-    pub(crate) fn class_field(&self) -> &FieldKey {
+    pub(crate) const fn class_field(&self) -> &FieldKey {
         &self.class_field
     }
 
@@ -295,7 +295,7 @@ impl FrontmatterConfig {
     /// Used for canonical-form matching against Note frontmatter.
     #[inline]
     #[must_use]
-    pub(crate) fn title(&self) -> &FieldKey {
+    pub(crate) const fn title(&self) -> &FieldKey {
         &self.title
     }
 
@@ -320,7 +320,7 @@ impl FrontmatterConfig {
     /// Used for canonical-form matching against Note frontmatter.
     #[inline]
     #[must_use]
-    pub(crate) fn aliases(&self) -> &FieldKey {
+    pub(crate) const fn aliases(&self) -> &FieldKey {
         &self.aliases
     }
 
@@ -351,7 +351,7 @@ impl FrontmatterConfig {
                       consumer for these values, so nothing reads them yet"
         )
     )]
-    pub fn date_created(&self) -> &DateFieldConfig {
+    pub const fn date_created(&self) -> &DateFieldConfig {
         &self.date_created
     }
 
@@ -367,7 +367,7 @@ impl FrontmatterConfig {
                       consumer for these values, so nothing reads them yet"
         )
     )]
-    pub fn date_modified(&self) -> &DateFieldConfig {
+    pub const fn date_modified(&self) -> &DateFieldConfig {
         &self.date_modified
     }
 

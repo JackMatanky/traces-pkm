@@ -63,7 +63,7 @@ pub(super) struct Spanned<T> {
 
 impl<T> Spanned<T> {
     /// Pairs a token with its original source span.
-    pub(super) fn new(value: T, span: SourceSpan) -> Self {
+    pub(super) const fn new(value: T, span: SourceSpan) -> Self {
         Self {
             value,
             span,

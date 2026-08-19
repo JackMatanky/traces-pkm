@@ -149,7 +149,7 @@ impl Link {
                       symmetry with its fields"
         )
     )]
-    pub(crate) fn kind(&self) -> LinkType {
+    pub(crate) const fn kind(&self) -> LinkType {
         self.kind
     }
 
@@ -164,7 +164,7 @@ impl Link {
                       symmetry with its fields"
         )
     )]
-    pub(crate) fn is_wikilink(&self) -> bool {
+    pub(crate) const fn is_wikilink(&self) -> bool {
         matches!(self.kind, LinkType::Wikilink)
     }
 
@@ -179,7 +179,7 @@ impl Link {
                       symmetry with its fields"
         )
     )]
-    pub(crate) fn is_markdown(&self) -> bool {
+    pub(crate) const fn is_markdown(&self) -> bool {
         matches!(self.kind, LinkType::Markdown)
     }
 
@@ -194,7 +194,7 @@ impl Link {
                       symmetry with its fields"
         )
     )]
-    pub(crate) fn is_embedded(&self) -> bool {
+    pub(crate) const fn is_embedded(&self) -> bool {
         self.embedded
     }
 }
@@ -220,7 +220,7 @@ pub enum LinkTarget<'a> {
 impl<'a> LinkTarget<'a> {
     /// Returns this target's path segment, or `None` for [`Self::AnchorOnly`].
     #[must_use]
-    pub(crate) fn path(self) -> Option<&'a str> {
+    pub(crate) const fn path(self) -> Option<&'a str> {
         match self {
             Self::Path(path) | Self::PathWithAnchor(path, _) => Some(path),
             Self::AnchorOnly(_) => None,
@@ -237,7 +237,7 @@ impl<'a> LinkTarget<'a> {
                       accessor symmetry with its variants"
         )
     )]
-    pub(crate) fn anchor(self) -> Option<&'a str> {
+    pub(crate) const fn anchor(self) -> Option<&'a str> {
         match self {
             Self::PathWithAnchor(_, anchor) | Self::AnchorOnly(anchor) => {
                 Some(anchor)

@@ -225,7 +225,7 @@ impl<'a> SchemaGraph<'a, Resolved> {
     /// Only Schemas that have at least one child appear in the returned map.
     /// Schemas without children are omitted (not mapped to empty vectors).
     #[must_use]
-    pub(super) fn children_by_name(
+    pub(super) const fn children_by_name(
         &self,
     ) -> &IndexMap<SchemaNameRef<'a>, Vec<SchemaNameRef<'a>>> {
         &self.children_by_name
@@ -354,7 +354,7 @@ impl SchemaIndex {
     }
 
     /// Number of schemas in the index (bitset capacity).
-    fn bit_count(&self) -> usize {
+    const fn bit_count(&self) -> usize {
         self.bit_to_name.len()
     }
 

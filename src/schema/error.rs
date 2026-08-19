@@ -82,7 +82,7 @@ impl From<SchemaFieldBuilderError> for SchemaError {
 ///
 /// Resolution skips the offending key or parent and continues. Every warning
 /// is surfaced to the caller as diagnostic context.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum SchemaWarning {
     /// An `extends` target has no corresponding Schema file.
     ///

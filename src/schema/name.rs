@@ -65,7 +65,7 @@ impl<'a> SchemaNameRef<'a> {
     /// Return this name as a string slice.
     #[inline]
     #[must_use]
-    pub(crate) fn as_str(self) -> &'a str {
+    pub(crate) const fn as_str(self) -> &'a str {
         self.0
     }
 }

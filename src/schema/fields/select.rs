@@ -21,7 +21,7 @@ impl SchemaSelectField {
 
     /// Build an instance for tests.
     #[cfg(test)]
-    pub(crate) fn for_test(values: Vec<SchemaSelectFieldEntry>) -> Self {
+    pub(crate) const fn for_test(values: Vec<SchemaSelectFieldEntry>) -> Self {
         Self {
             values,
         }
@@ -47,7 +47,7 @@ impl SchemaSelectField {
             values.into_iter().map(SchemaSelectFieldEntry::literal).collect()
         };
 
-        SchemaFieldType::Select(SchemaSelectField {
+        SchemaFieldType::Select(Self {
             values,
         })
     }
@@ -77,21 +77,21 @@ impl SchemaSelectFieldEntry {
     /// Return this entry's value.
     #[inline]
     #[must_use]
-    pub(crate) fn value(&self) -> &FieldValue {
+    pub(crate) const fn value(&self) -> &FieldValue {
         &self.value
     }
 
     /// Return this entry's display label.
     #[inline]
     #[must_use]
-    pub(crate) fn label(&self) -> &FieldValue {
+    pub(crate) const fn label(&self) -> &FieldValue {
         &self.label
     }
 
     /// Return this entry's passthrough keys beyond `value`/`label`.
     #[inline]
     #[must_use]
-    pub(crate) fn extra(&self) -> &IndexMap<String, FieldValue> {
+    pub(crate) const fn extra(&self) -> &IndexMap<String, FieldValue> {
         &self.extra
     }
 }
