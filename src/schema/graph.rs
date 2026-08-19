@@ -255,7 +255,7 @@ impl<'a> SchemaGraph<'a, Resolved> {
                 let child_bits = Self::descendants_of(
                     &child, children, index, capacity, memo,
                 );
-                merge_bits(&mut result, &child_bits, capacity);
+                result.or(&child_bits);
             }
         }
         memo.insert(owned, result.clone());
@@ -272,7 +272,7 @@ fn expand_descendants(
     let mut result: IndexMap<SchemaName, IndexSet<SchemaName>> =
         IndexMap::new();
     for (name, bits) in memo {
-        if !bits.iter().any(|b| b) {
+        if bits.none() {
             continue;
         }
         let mut descendants = IndexSet::new();
@@ -294,18 +294,6 @@ fn expand_descendants(
         result.insert(name.clone(), descendants);
     }
     result
-}
-
-/// Bitwise OR `src` into `dst` for the first `capacity` bits.
-// ponytail: manual loop because bit-vec 0.6 doesn't impl
-// BitOrAssign<&BitVec> — `|=` requires a clone. Upgrade path:
-// switch to bitvec crate or await bit-vec 0.7+.
-fn merge_bits(dst: &mut BitVec, src: &BitVec, capacity: usize) {
-    for i in 0..capacity {
-        if src.get(i).unwrap_or(false) {
-            dst.set(i, true);
-        }
-    }
 }
 
 /// Bidirectional mapping between schema names and bit positions.
