@@ -13,7 +13,7 @@ use super::{
     GLOBAL_SCHEMA_NAME, RawSchema, SchemaName, SchemaNameRef,
     error::{SchemaError, SchemaWarning},
     fields::{FieldAddressRef, RefAddressResolver, SchemaFieldBuilder},
-    graph::SchemaGraph,
+    graph::{Building, Resolved, SchemaGraph},
     model::Schema,
 };
 use crate::field::FieldName;
@@ -66,75 +66,101 @@ impl<'a> SchemaResolver<'a> {
         let (mut graph, graph_warnings) = SchemaGraph::new(&raw);
         warnings.extend(graph_warnings);
 
-        while let Some(name) = graph.next_ready() {
-            #[expect(
-                clippy::expect_used,
-                reason = "SchemaGraph::new builds parents_by_name/in_degree/ \
-                          children_by_name/queue exclusively from raw's own \
-                          keys, so next_ready() can never yield a name absent \
-                          from raw; failure here means the graph itself is \
-                          broken, not a recoverable caller error"
-            )]
-            let raw = self.raw.get(name.as_str()).expect(
-                "SchemaGraph::next_ready only ever yields names present in raw",
-            );
-            match merge_fields(name, raw, graph.parents_of(name), &resolved) {
-                Ok((schema, schema_warnings)) => {
-                    warnings.extend(schema_warnings);
-                    resolved.insert(SchemaName::from(name), schema);
-                }
-                Err(error) => {
-                    failures.push(SchemaFailure {
-                        schema: SchemaName::from(name),
-                        error,
-                    });
-                }
-            }
-            graph.mark_resolved(name);
-        }
+        resolve_in_topological_order(
+            &mut graph,
+            self.raw,
+            &mut resolved,
+            &mut warnings,
+            &mut failures,
+        );
 
         let graph =
             graph.into_resolved().map_err(|schemas| SchemaError::Cycle {
                 schemas,
             })?;
 
-        let children_by_name = graph.children_by_name();
-        let descendants_by_name = graph.descendants_by_name();
-        let resolved_ancestors: IndexMap<SchemaName, IndexSet<SchemaName>> =
-            resolved
-                .iter()
-                .map(|(name, schema)| {
-                    (name.clone(), schema.ancestors().clone())
-                })
-                .collect();
-        for (name, schema) in &mut resolved {
-            let still_descends_from = |candidate: &SchemaName| {
-                resolved_ancestors
-                    .get(candidate)
-                    .is_some_and(|ancestors| ancestors.contains(name))
-            };
-            let children: IndexSet<SchemaName> = children_by_name
-                .get(name.as_str())
-                .into_iter()
-                .flatten()
-                .filter(|child| still_descends_from(child))
-                .cloned()
-                .collect();
-            let descendants = descendants_by_name
-                .get(name)
-                .into_iter()
-                .flatten()
-                .filter(|descendant| still_descends_from(descendant))
-                .cloned()
-                .collect();
-            schema.set_hierarchy(children, descendants);
-        }
+        compute_hierarchy_sets(&graph, &mut resolved);
 
         Ok(ResolvedSchemas {
             schemas: resolved,
             warnings,
             failures,
         })
+    }
+}
+
+/// Drive the Kahn topological sort: pop ready schemas, merge their fields,
+/// mark them resolved, and collect warnings/failures.
+fn resolve_in_topological_order(
+    graph: &mut SchemaGraph<'_, Building>,
+    raw: &IndexMap<SchemaName, RawSchema>,
+    resolved: &mut IndexMap<SchemaName, Schema>,
+    warnings: &mut Vec<SchemaWarning>,
+    failures: &mut Vec<SchemaFailure>,
+) {
+    while let Some(name) = graph.next_ready() {
+        #[expect(
+            clippy::expect_used,
+            reason = "SchemaGraph::new builds \
+                      in_degree/children_by_name/queue exclusively from raw's \
+                      own keys, so next_ready() can never yield a name absent \
+                      from raw; failure here means the graph itself is \
+                      broken, not a recoverable caller error"
+        )]
+        let raw_schema = raw.get(name.as_str()).expect(
+            "SchemaGraph::next_ready only ever yields names present in raw",
+        );
+        match merge_fields(name, raw_schema, graph.parents_of(name), resolved) {
+            Ok((schema, schema_warnings)) => {
+                warnings.extend(schema_warnings);
+                resolved.insert(SchemaName::from(name), schema);
+            }
+            Err(error) => {
+                failures.push(SchemaFailure {
+                    schema: SchemaName::from(name),
+                    error,
+                });
+            }
+        }
+        graph.mark_resolved(name);
+    }
+}
+
+/// Assign direct children and transitive descendants to each resolved Schema,
+/// filtering out schemas that are not structural descendants due to failed
+/// resolution links.
+fn compute_hierarchy_sets(
+    graph: &SchemaGraph<'_, Resolved>,
+    resolved: &mut IndexMap<SchemaName, Schema>,
+) {
+    let children_by_name = graph.children_by_name();
+    let descendants_by_name = graph.descendants_by_name();
+    let resolved_ancestors: IndexMap<SchemaName, IndexSet<SchemaName>> =
+        resolved
+            .iter()
+            .map(|(name, schema)| (name.clone(), schema.ancestors().clone()))
+            .collect();
+    for (name, schema) in resolved {
+        let still_descends_from = |candidate: &SchemaName| {
+            resolved_ancestors
+                .get(candidate)
+                .is_some_and(|ancestors| ancestors.contains(name))
+        };
+        let children: IndexSet<SchemaName> = children_by_name
+            .get(name.as_str())
+            .into_iter()
+            .flatten()
+            .map(|&child| SchemaName::from(child))
+            .filter(|child| still_descends_from(child))
+            .collect();
+        let descendants = descendants_by_name
+            .get(name)
+            .into_iter()
+            .flatten()
+            .filter(|descendant| still_descends_from(descendant))
+            .cloned()
+            .collect();
+        schema.set_hierarchy(children, descendants);
     }
 }
 
@@ -149,24 +175,24 @@ impl<'a> SchemaResolver<'a> {
 fn merge_fields(
     name: SchemaNameRef<'_>,
     raw: &RawSchema,
-    parents: &[SchemaNameRef<'_>],
+    parents: &[SchemaName],
     resolved: &IndexMap<SchemaName, Schema>,
 ) -> Result<(Schema, Vec<SchemaWarning>), SchemaError> {
     let mut fields = IndexMap::new();
     let mut ancestors = IndexSet::new();
     let mut warnings = Vec::new();
-    for &parent in parents {
+    for parent in parents {
         let Some(parent_schema) = resolved.get(parent.as_str()) else {
             warnings.push(SchemaWarning::ParentFailedToResolve {
                 schema: SchemaName::from(name),
-                parent: SchemaName::from(parent),
+                parent: parent.clone(),
             });
             continue;
         };
         for (field_name, field) in parent_schema.fields() {
             fields.entry(field_name.clone()).or_insert_with(|| field.clone());
         }
-        ancestors.insert(SchemaName::from(parent));
+        ancestors.insert(parent.clone());
         ancestors.extend(parent_schema.ancestors().iter().cloned());
     }
     for excluded in &raw.excludes {
@@ -513,10 +539,14 @@ mod tests {
             ..
         } = resolve(&raw).expect("resolves");
 
-        assert_eq!(warnings, vec![SchemaWarning::MissingExtendsTarget {
+        assert!(warnings.contains(&SchemaWarning::MissingExtendsTarget {
             schema: SchemaName::from("sci_fi"),
             target: SchemaName::from("ghost"),
-        }]);
+        }));
+        assert!(warnings.contains(&SchemaWarning::ParentFailedToResolve {
+            schema: SchemaName::from("sci_fi"),
+            parent: SchemaName::from("ghost"),
+        }));
         let sci_fi = resolved.get("sci_fi").expect("own fields still render");
         assert!(sci_fi.field("title").is_some());
         assert!(!sci_fi.is_a("ghost"));

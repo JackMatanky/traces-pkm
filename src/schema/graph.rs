@@ -30,10 +30,7 @@ use std::{
 use bit_vec::BitVec;
 use indexmap::{IndexMap, IndexSet};
 
-use super::{
-    GLOBAL_SCHEMA_NAME, RawSchema, SchemaName, SchemaNameRef,
-    error::SchemaWarning,
-};
+use super::{RawSchema, SchemaName, SchemaNameRef, error::SchemaWarning};
 
 /// Building state: resolution in progress, queue and `in_degree` active.
 pub(super) struct Building;
@@ -47,15 +44,13 @@ pub(super) struct Resolved;
 /// - [`Building`]: call `next_ready`/`parents_of`/`mark_resolved` in a loop
 /// - [`Resolved`]: call `children_by_name`/`descendants_by_name`
 pub(super) struct SchemaGraph<'a, State = Building> {
-    /// Each Schema's `extends` parents, filtered to present targets, in
-    /// declaration order. Global's list is force-emptied.
-    parents_by_name: IndexMap<SchemaNameRef<'a>, Vec<SchemaNameRef<'a>>>,
+    /// Borrowed raw schemas — source of truth for `extends` parents.
+    raw: &'a IndexMap<SchemaName, RawSchema>,
     /// Reverse adjacency (parent → children) for decrementing in-degrees.
-    /// Includes all parents; GLOBAL excluded at the public accessor, not here.
     children_by_name: IndexMap<SchemaNameRef<'a>, Vec<SchemaNameRef<'a>>>,
     /// Not-yet-resolved parent count; ready at zero.
     in_degree: HashMap<SchemaNameRef<'a>, usize>,
-    /// Ready queue, with Global forced to the front.
+    /// Ready queue.
     queue: VecDeque<SchemaNameRef<'a>>,
     /// Schemas already popped by [`next_ready`](Self::next_ready).
     visited: IndexSet<SchemaNameRef<'a>>,
@@ -66,7 +61,7 @@ impl<'a, State> SchemaGraph<'a, State> {
     /// Moves the graph into the next lifecycle state.
     fn transition_to<NextState>(self) -> SchemaGraph<'a, NextState> {
         SchemaGraph {
-            parents_by_name: self.parents_by_name,
+            raw: self.raw,
             children_by_name: self.children_by_name,
             in_degree: self.in_degree,
             queue: self.queue,
@@ -85,13 +80,18 @@ impl<'a> SchemaGraph<'a, Building> {
         raw_schemas: &'a IndexMap<SchemaName, RawSchema>,
     ) -> (Self, Vec<SchemaWarning>) {
         let mut warnings = Vec::new();
-        let mut parents_by_name: IndexMap<
+
+        // Build reverse adjacency (parent → children) and in-degree directly
+        // from raw schemas' extends fields.
+        let mut in_degree: HashMap<SchemaNameRef<'_>, usize> = HashMap::new();
+        let mut children_by_name: IndexMap<
             SchemaNameRef<'_>,
             Vec<SchemaNameRef<'_>>,
         > = IndexMap::new();
+
         for (name, raw) in raw_schemas {
-            let mut parents = Vec::with_capacity(raw.extends.len());
             let mut seen_targets = IndexSet::new();
+            let mut parent_count = 0usize;
             for target in &raw.extends {
                 if !raw_schemas.contains_key(target) {
                     warnings.push(SchemaWarning::MissingExtendsTarget {
@@ -107,23 +107,13 @@ impl<'a> SchemaGraph<'a, Building> {
                     });
                     continue;
                 }
-                parents.push(target.as_ref());
+                parent_count = parent_count.saturating_add(1);
+                children_by_name
+                    .entry(target.as_ref())
+                    .or_default()
+                    .push(name.as_ref());
             }
-            parents_by_name.insert(name.as_ref(), parents);
-        }
-
-        // An edge runs parent -> child, so a child's in-degree is its
-        // (filtered) parent count.
-        let mut in_degree: HashMap<SchemaNameRef<'_>, usize> = HashMap::new();
-        let mut children_by_name: IndexMap<
-            SchemaNameRef<'_>,
-            Vec<SchemaNameRef<'_>>,
-        > = IndexMap::new();
-        for (&name, parents) in &parents_by_name {
-            in_degree.insert(name, parents.len());
-            for &parent in parents {
-                children_by_name.entry(parent).or_default().push(name);
-            }
+            in_degree.insert(name.as_ref(), parent_count);
         }
 
         let queue: VecDeque<SchemaNameRef<'_>> = in_degree
@@ -134,7 +124,7 @@ impl<'a> SchemaGraph<'a, Building> {
 
         (
             Self {
-                parents_by_name,
+                raw: raw_schemas,
                 children_by_name,
                 in_degree,
                 queue,
@@ -153,13 +143,10 @@ impl<'a> SchemaGraph<'a, Building> {
         Some(name)
     }
 
-    /// Borrow `name`'s filtered `extends` parent list, or an empty slice if
+    /// Borrow `name`'s `extends` parent list, or an empty slice if
     /// `name` is not a known Schema.
-    pub(super) fn parents_of(
-        &self,
-        name: SchemaNameRef<'_>,
-    ) -> &[SchemaNameRef<'a>] {
-        self.parents_by_name.get(name.as_str()).map_or(&[], Vec::as_slice)
+    pub(super) fn parents_of(&self, name: SchemaNameRef<'_>) -> &[SchemaName] {
+        self.raw.get(name.as_str()).map_or(&[], |s| s.extends.as_slice())
     }
 
     /// Record `name` as resolved, releasing any children whose in-degree just
@@ -180,13 +167,13 @@ impl<'a> SchemaGraph<'a, Building> {
     /// Return every Schema name that never reached in-degree zero (a cycle
     /// member), or `None` if every Schema was visited.
     fn cyclic_remainder(&self) -> Option<Vec<SchemaName>> {
-        if self.visited.len() == self.parents_by_name.len() {
+        if self.visited.len() == self.raw.len() {
             return None;
         }
         let mut result = Vec::new();
-        for &name in self.parents_by_name.keys() {
-            if !self.visited.contains(&name) {
-                result.push(SchemaName::from(name));
+        for name in self.raw.keys() {
+            if !self.visited.contains(name.as_str()) {
+                result.push(name.clone());
             }
         }
         Some(result)
@@ -211,24 +198,13 @@ impl<'a> SchemaGraph<'a, Building> {
     }
 }
 
-impl SchemaGraph<'_, Resolved> {
+impl<'a> SchemaGraph<'a, Resolved> {
     /// Return every Schema's direct `extends` children, keyed by parent name.
     #[must_use]
     pub(super) fn children_by_name(
         &self,
-    ) -> IndexMap<SchemaName, IndexSet<SchemaName>> {
-        self.children_by_name
-            .iter()
-            .map(|(name, children)| {
-                (
-                    SchemaName::from(*name),
-                    children
-                        .iter()
-                        .map(|&child| SchemaName::from(child))
-                        .collect(),
-                )
-            })
-            .collect()
+    ) -> &IndexMap<SchemaNameRef<'a>, Vec<SchemaNameRef<'a>>> {
+        &self.children_by_name
     }
 
     /// Return every Schema's transitive `extends` descendants, keyed by
@@ -247,7 +223,7 @@ impl SchemaGraph<'_, Resolved> {
     pub(super) fn descendants_by_name(
         &self,
     ) -> IndexMap<SchemaName, IndexSet<SchemaName>> {
-        let index = SchemaIndex::new(self.parents_by_name.keys().copied());
+        let index = SchemaIndex::new(self.raw.keys().map(|n| n.as_ref()));
         let capacity = index.bit_count();
         let children = &self.children_by_name;
 
@@ -256,33 +232,7 @@ impl SchemaGraph<'_, Resolved> {
             Self::descendants_of(name, children, &index, capacity, &mut memo);
         }
 
-        // Expand bitsets back to IndexSet via BFS from children_by_name to
-        // preserve parent-before-child ordering.
-        let mut result: IndexMap<SchemaName, IndexSet<SchemaName>> =
-            IndexMap::new();
-        for (name, bits) in memo {
-            if !bits.iter().any(|b| b) {
-                continue;
-            }
-            let mut descendants = IndexSet::new();
-            let mut queue: VecDeque<SchemaNameRef<'_>> = VecDeque::new();
-            if let Some(direct) = children.get(name.as_str()) {
-                for &child in direct {
-                    queue.push_back(child);
-                }
-            }
-            while let Some(current) = queue.pop_front() {
-                let owned = SchemaName::from(current);
-                if !descendants.insert(owned) {
-                    continue;
-                }
-                if let Some(direct) = children.get(current.as_str()) {
-                    queue.extend(direct.iter().copied());
-                }
-            }
-            result.insert(name, descendants);
-        }
-        result
+        expand_descendants(&memo, children)
     }
 
     fn descendants_of(
@@ -311,6 +261,39 @@ impl SchemaGraph<'_, Resolved> {
         memo.insert(owned, result.clone());
         result
     }
+}
+
+/// Expand `BitVec` descendant sets back into owned name sets via BFS from
+/// `children_by_name`, preserving parent-before-child ordering.
+fn expand_descendants(
+    memo: &IndexMap<SchemaName, BitVec>,
+    children: &IndexMap<SchemaNameRef<'_>, Vec<SchemaNameRef<'_>>>,
+) -> IndexMap<SchemaName, IndexSet<SchemaName>> {
+    let mut result: IndexMap<SchemaName, IndexSet<SchemaName>> =
+        IndexMap::new();
+    for (name, bits) in memo {
+        if !bits.iter().any(|b| b) {
+            continue;
+        }
+        let mut descendants = IndexSet::new();
+        let mut queue: VecDeque<SchemaNameRef<'_>> = VecDeque::new();
+        if let Some(direct) = children.get(name.as_str()) {
+            for &child in direct {
+                queue.push_back(child);
+            }
+        }
+        while let Some(current) = queue.pop_front() {
+            let owned = SchemaName::from(current);
+            if !descendants.insert(owned) {
+                continue;
+            }
+            if let Some(direct) = children.get(current.as_str()) {
+                queue.extend(direct.iter().copied());
+            }
+        }
+        result.insert(name.clone(), descendants);
+    }
+    result
 }
 
 /// Bitwise OR `src` into `dst` for the first `capacity` bits.
@@ -373,7 +356,7 @@ impl SchemaIndex {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{super::GLOBAL_SCHEMA_NAME, *};
 
     /// Builds an empty [`RawSchema`] extending `extends`.
     fn schema(extends: &[&str]) -> RawSchema {
@@ -389,16 +372,14 @@ mod tests {
         use super::*;
 
         #[test]
-        fn pops_global_before_an_alphabetically_earlier_sibling() {
-            // GLOBAL is no longer part of the graph — it is extracted and
-            // resolved before graph construction by the resolver. This test
-            // verifies the graph works correctly without GLOBAL.
+        fn yields_roots_in_declaration_order() {
             let mut raw = IndexMap::new();
             raw.insert(SchemaName::from("author"), schema(&[]));
             raw.insert(SchemaName::from("book"), schema(&["author"]));
             let (mut graph, _warnings) = SchemaGraph::new(&raw);
 
             assert_eq!(graph.next_ready(), Some(SchemaNameRef::from("author")));
+            graph.mark_resolved(SchemaNameRef::from("author"));
             assert_eq!(graph.next_ready(), Some(SchemaNameRef::from("book")));
             assert_eq!(graph.next_ready(), None);
         }
@@ -410,7 +391,7 @@ mod tests {
         use super::*;
 
         #[test]
-        fn a_duplicate_extends_target_warns_once_and_parents_once() {
+        fn a_duplicate_extends_target_warns_once_but_parents_are_raw() {
             let mut raw = IndexMap::new();
             raw.insert(SchemaName::from("book"), schema(&[]));
             raw.insert(SchemaName::from("child"), schema(&["book", "book"]));
@@ -420,8 +401,11 @@ mod tests {
                 schema: SchemaName::from("child"),
                 target: SchemaName::from("book"),
             }]);
+            // parents_of returns the raw extends field — duplicates included.
+            // merge_fields handles dedup via entry().or_insert_with().
             assert_eq!(graph.parents_of(SchemaNameRef::from("child")), &[
-                SchemaNameRef::from("book")
+                SchemaName::from("book"),
+                SchemaName::from("book"),
             ]);
         }
     }
@@ -501,17 +485,19 @@ mod tests {
         }
 
         #[test]
-        fn extends_global_produces_missing_extends_target_warning() {
+        fn extends_global_produces_no_warning_when_global_is_in_raw() {
+            // GLOBAL in raw_schemas → graph sees it as a normal schema target.
+            // The resolver extracts GLOBAL before graph construction; this test
+            // verifies the graph processes raw data faithfully.
             let mut raw = IndexMap::new();
             raw.insert(SchemaName::from(GLOBAL_SCHEMA_NAME), schema(&[]));
             raw.insert(SchemaName::from("book"), schema(&[GLOBAL_SCHEMA_NAME]));
             let (graph, warnings) = SchemaGraph::new(&raw);
 
-            assert_eq!(warnings, vec![SchemaWarning::MissingExtendsTarget {
-                schema: SchemaName::from("book"),
-                target: SchemaName::from(GLOBAL_SCHEMA_NAME),
-            }]);
-            assert!(graph.parents_of(SchemaNameRef::from("book")).is_empty());
+            assert!(warnings.is_empty());
+            assert_eq!(graph.parents_of(SchemaNameRef::from("book")), &[
+                SchemaName::from(GLOBAL_SCHEMA_NAME)
+            ]);
         }
     }
 
