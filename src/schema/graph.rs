@@ -182,7 +182,7 @@ impl<'a> SchemaGraph<'a, Building> {
     /// Return every Schema name that never reached in-degree zero.
     ///
     /// Returns `None` if every Schema was visited (no cycle).
-    fn cyclic_remainder(&self) -> Option<Vec<SchemaName>> {
+    fn unvisited_schemas(&self) -> Option<Vec<SchemaName>> {
         if self.visited.len() == self.raw.len() {
             return None;
         }
@@ -212,7 +212,7 @@ impl<'a> SchemaGraph<'a, Building> {
         while let Some(parent) = self.next_ready() {
             self.mark_resolved(parent);
         }
-        if let Some(schemas) = self.cyclic_remainder() {
+        if let Some(schemas) = self.unvisited_schemas() {
             return Err(schemas);
         }
         Ok(self.transition_to())
@@ -267,64 +267,11 @@ impl<'a> SchemaGraph<'a, Resolved> {
                 continue;
             };
             for &child in direct {
-                Self::merge_child(name, child, &index, &mut memo);
+                index.merge_child(name, child, &mut memo);
             }
         }
 
-        Self::expand_descendants(&memo, &index)
-    }
-
-    /// OR a single child's bitvec into its parent's.
-    ///
-    /// Sets the direct-child bit and merges the child's transitive descendants.
-    /// One clone per edge, `O(V/w)` each, required by the borrow checker
-    /// (cannot hold an immutable ref to the child entry while mutably borrowing
-    /// the parent entry).
-    fn merge_child(
-        parent: &SchemaNameRef<'_>,
-        child: SchemaNameRef<'_>,
-        index: &SchemaIndex,
-        memo: &mut IndexMap<SchemaName, BitVec>,
-    ) {
-        if let (Some(bit), Some(parent_bits)) =
-            (index.bit_of(child.as_str()), memo.get_mut(parent.as_str()))
-        {
-            parent_bits.set(bit, true);
-        }
-        if let Some(child_bits) = memo.get(child.as_str()) {
-            let child_bits = child_bits.clone();
-            if let Some(parent_bits) = memo.get_mut(parent.as_str()) {
-                parent_bits.or(&child_bits);
-            }
-        }
-    }
-
-    /// Expand `BitVec` descendant sets back into owned name sets.
-    ///
-    /// Scans bit positions via [`SchemaIndex`]. Because bit positions are
-    /// assigned in topological order (parents before children), the resulting
-    /// sets preserve that ordering without re-sorting.
-    ///
-    /// Total work: `O(V^2)`.
-    fn expand_descendants(
-        memo: &IndexMap<SchemaName, BitVec>,
-        index: &SchemaIndex,
-    ) -> IndexMap<SchemaName, IndexSet<SchemaName>> {
-        let mut result: IndexMap<SchemaName, IndexSet<SchemaName>> =
-            IndexMap::new();
-        for (name, bits) in memo {
-            if bits.none() {
-                continue;
-            }
-            let descendants: IndexSet<SchemaName> = bits
-                .iter()
-                .enumerate()
-                .filter(|(_, set)| *set)
-                .filter_map(|(i, _)| index.name_of(i).cloned())
-                .collect();
-            result.insert(name.clone(), descendants);
-        }
-        result
+        index.expand_descendants(&memo)
     }
 }
 
@@ -366,6 +313,60 @@ impl SchemaIndex {
     /// Bit index → schema name.
     fn name_of(&self, bit: usize) -> Option<&SchemaName> {
         self.bit_to_name.get(bit)
+    }
+
+    /// OR a single child's bitvec into its parent's.
+    ///
+    /// Sets the direct-child bit and merges the child's transitive descendants.
+    /// One clone per edge, `O(V/w)` each, required by the borrow checker
+    /// (cannot hold an immutable ref to the child entry while mutably borrowing
+    /// the parent entry).
+    #[inline]
+    fn merge_child(
+        &self,
+        parent: &SchemaNameRef<'_>,
+        child: SchemaNameRef<'_>,
+        memo: &mut IndexMap<SchemaName, BitVec>,
+    ) {
+        if let (Some(bit), Some(parent_bits)) =
+            (self.bit_of(child.as_str()), memo.get_mut(parent.as_str()))
+        {
+            parent_bits.set(bit, true);
+        }
+        if let Some(child_bits) = memo.get(child.as_str()) {
+            let child_bits = child_bits.clone();
+            if let Some(parent_bits) = memo.get_mut(parent.as_str()) {
+                parent_bits.or(&child_bits);
+            }
+        }
+    }
+
+    /// Expand `BitVec` descendant sets back into owned name sets.
+    ///
+    /// Scans bit positions via [`SchemaIndex`]. Because bit positions are
+    /// assigned in topological order (parents before children), the resulting
+    /// sets preserve that ordering without re-sorting.
+    ///
+    /// Total work: `O(V^2)`.
+    fn expand_descendants(
+        &self,
+        memo: &IndexMap<SchemaName, BitVec>,
+    ) -> IndexMap<SchemaName, IndexSet<SchemaName>> {
+        let mut result: IndexMap<SchemaName, IndexSet<SchemaName>> =
+            IndexMap::new();
+        for (name, bits) in memo {
+            if bits.none() {
+                continue;
+            }
+            let descendants: IndexSet<SchemaName> = bits
+                .iter()
+                .enumerate()
+                .filter(|(_, set)| *set)
+                .filter_map(|(i, _)| self.name_of(i).cloned())
+                .collect();
+            result.insert(name.clone(), descendants);
+        }
+        result
     }
 }
 
