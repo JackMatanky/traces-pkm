@@ -1586,15 +1586,11 @@ mod tests {
             let index = FileIndex::build(temp.path()).expect("build index");
             let outcome = index.query(&QuerySource::All);
 
-            let via_iter: Vec<&IndexRecord> = outcome.iter().collect();
-            assert_eq!(via_iter.len(), 1);
+            assert_eq!(outcome.iter().count(), 1);
 
-            let via_ref_into: Vec<&IndexRecord> =
-                (&outcome).into_iter().collect();
-            assert_eq!(via_ref_into.len(), 1);
+            assert_eq!((&outcome).into_iter().count(), 1);
 
-            let via_into: Vec<IndexRecord> = outcome.into_iter().collect();
-            assert_eq!(via_into.len(), 1);
+            assert_eq!(outcome.into_iter().count(), 1);
         }
     }
 }

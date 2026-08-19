@@ -211,7 +211,8 @@ impl DialogProvider for PresetDialogProvider {
         if items.is_empty() {
             return Err(DialogError::EmptySelectionInput);
         }
-        if let Some(queued) = lock(&self.selects).pop_front() {
+        let value = lock(&self.selects).pop_front();
+        if let Some(queued) = value {
             return if queued < items.len() {
                 Ok(queued)
             } else {

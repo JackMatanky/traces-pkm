@@ -838,7 +838,7 @@ mod tests {
         fn config_load_build_wrong_discovery_kind() {
             let cwd = PathBuf::from("/some/project");
             let error = CliError::ConfigLoad {
-                cwd: cwd,
+                cwd,
                 source: ConfigLoadError::Build(
                     crate::config::ConfigBuilderError::WrongDiscoveryKindForBuild {
                         actual: crate::config::DiscoveryScope::NearestLocal,
@@ -870,7 +870,7 @@ mod tests {
         fn config_load_build_config_file() {
             let cwd = PathBuf::from("/some/project");
             let error = CliError::ConfigLoad {
-                cwd: cwd,
+                cwd,
                 source: ConfigLoadError::Build(crate::config::ConfigBuilderError::ConfigFile(
                     crate::config::ConfigFileError::UnsupportedLocalConfigFile {
                         path: PathBuf::from("/some/project/config.toml"),
@@ -896,7 +896,7 @@ mod tests {
         fn config_load_build_merge() {
             let cwd = PathBuf::from("/some/project");
             let error = CliError::ConfigLoad {
-                cwd: cwd,
+                cwd,
                 source: ConfigLoadError::Build(
                     crate::config::ConfigBuilderError::Merge {
                         source: Box::new(figment::Error::from("merge boom")),
@@ -922,7 +922,7 @@ mod tests {
         fn trust() {
             let root = PathBuf::from("/some/project");
             let error = CliError::Trust {
-                root: root,
+                root,
                 source: state_source(),
             };
 
@@ -1010,7 +1010,7 @@ mod tests {
         fn init_already_initialized() {
             let root = PathBuf::from("/some/project");
             let error = CliError::InitAlreadyInitialized {
-                root: root,
+                root,
             };
 
             assert_eq!(
@@ -1070,7 +1070,7 @@ mod tests {
         fn template_instantiate_schema_load() {
             let name = PathBuf::from("daily");
             let error = CliError::TemplateInstantiate {
-                name: name,
+                name,
                 source: TemplateError::SchemaLoad(SchemaError::ReadDirectory {
                     directory: PathBuf::from("/project/.traces/schemas"),
                     source: io::Error::other("boom"),
@@ -1222,7 +1222,7 @@ mod tests {
         fn untrust() {
             let root = PathBuf::from("/some/project");
             let error = CliError::Untrust {
-                root: root,
+                root,
                 source: ConfigStateError::Hash(crate::hash::HashError {
                     path: PathBuf::from("/some/project/.traces/config.toml"),
                     source: io::Error::other("boom"),
@@ -1249,7 +1249,7 @@ mod tests {
         fn trust_show() {
             let root = PathBuf::from("/some/project");
             let error = CliError::TrustShow {
-                root: root,
+                root,
                 source: ConfigStateError::Hash(crate::hash::HashError {
                     path: PathBuf::from("/some/project/.traces/config.toml"),
                     source: io::Error::other("boom"),
@@ -1279,7 +1279,7 @@ mod tests {
         fn init_scaffold() {
             let root = PathBuf::from("/some/project");
             let error = CliError::InitScaffold {
-                root: root,
+                root,
                 source: io::Error::other("boom"),
             };
 
@@ -1306,7 +1306,7 @@ mod tests {
         fn init_write_config() {
             let root = PathBuf::from("/some/project");
             let error = CliError::InitConfigWrite {
-                root: root,
+                root,
                 source: ConfigScaffoldError::Write {
                     source: io::Error::other("boom"),
                 },
@@ -1335,7 +1335,7 @@ mod tests {
         fn init_serialize() {
             let root = PathBuf::from("/some/project");
             let error = CliError::InitConfigWrite {
-                root: root,
+                root,
                 source: ConfigScaffoldError::Serialize {
                     source: toml::ser::Error::custom("serialization failure"),
                 },
@@ -1446,7 +1446,7 @@ mod tests {
         fn directory_read_failure() {
             let name = PathBuf::from("daily");
             let error = CliError::TemplateInstantiate {
-                name: name,
+                name,
                 source: TemplateError::Resolve(
                     TemplatePathError::DirectoryRead {
                         directory: PathBuf::from("/templates"),

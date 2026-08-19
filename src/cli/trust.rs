@@ -104,7 +104,7 @@ impl Trust {
             let root = subject.root_path().to_path_buf();
             let path = subject
                 .config_file()
-                .unwrap_or(subject.root_path())
+                .unwrap_or_else(|| subject.root_path())
                 .to_path_buf();
             let state = service.trust_status(&subject).map_err(|source| {
                 CliError::TrustShow {

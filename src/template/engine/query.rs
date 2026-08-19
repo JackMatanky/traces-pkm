@@ -551,11 +551,13 @@ impl Object for TaskFields {
     fn get_value(self: &Arc<Self>, key: &Value) -> Option<Value> {
         match key.as_str()? {
             "completed" => Some(
-                self.0.task_completed().map_or(Value::from(()), Value::from),
+                self.0
+                    .task_completed()
+                    .map_or_else(|| Value::from(()), Value::from),
             ),
-            "text" => {
-                Some(self.0.task_text().map_or(Value::from(()), Value::from))
-            }
+            "text" => Some(
+                self.0.task_text().map_or_else(|| Value::from(()), Value::from),
+            ),
             _ => None,
         }
     }

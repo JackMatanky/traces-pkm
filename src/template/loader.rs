@@ -534,9 +534,7 @@ mod tests {
                 Some(temp.path().to_path_buf()),
             );
 
-            let searched: Vec<_> = loader.directories().collect();
-
-            assert_eq!(searched.len(), 1);
+            assert_eq!(loader.directories().count(), 1);
         }
         #[test]
         fn still_works_when_local_and_global_are_identical() {
