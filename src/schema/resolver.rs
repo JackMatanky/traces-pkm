@@ -92,6 +92,111 @@ impl<'a> SchemaResolver<'a> {
     /// [`StrayGlobalRequired`]: SchemaWarning::StrayGlobalRequired
     /// [`UnknownOverrideKey`]: SchemaWarning::UnknownOverrideKey
     /// [`OverrideValueTypeMismatch`]: SchemaWarning::OverrideValueTypeMismatch
+    /// Inherit fields from resolved parents using first-listed-wins semantics,
+    /// collecting transitive ancestors and emitting warnings for missing
+    /// parents.
+    #[expect(
+        clippy::type_complexity,
+        reason = "tuple return matches merge_fields callers"
+    )]
+    fn inherit_parent_fields(
+        name: SchemaNameRef<'_>,
+        parents: &[SchemaName],
+        resolved: &IndexMap<SchemaName, Schema>,
+    ) -> (
+        IndexMap<FieldName, super::fields::SchemaFieldDef>,
+        IndexSet<SchemaName>,
+        Vec<SchemaWarning>,
+    ) {
+        let mut fields = IndexMap::new();
+        let mut ancestors = IndexSet::new();
+        let mut warnings = Vec::new();
+        for parent in parents {
+            let Some(parent_schema) = resolved.get(parent.as_str()) else {
+                warnings.push(SchemaWarning::ParentFailedToResolve {
+                    schema: SchemaName::from(name),
+                    parent: parent.clone(),
+                });
+                continue;
+            };
+            for (field_name, field) in parent_schema.fields() {
+                fields
+                    .entry(field_name.clone())
+                    .or_insert_with(|| field.clone());
+            }
+            ancestors.insert(parent.clone());
+            ancestors.extend(parent_schema.ancestors().iter().cloned());
+        }
+        (fields, ancestors, warnings)
+    }
+
+    /// Resolve a schema's own fields via `$ref` resolution, returning the
+    /// resolved fields and any per-field warnings.
+    #[expect(
+        clippy::type_complexity,
+        reason = "tuple return matches merge_fields callers"
+    )]
+    fn resolve_own_fields(
+        name: SchemaNameRef<'_>,
+        raw: &RawSchema,
+        ancestors: &IndexSet<SchemaName>,
+        resolved: &IndexMap<SchemaName, Schema>,
+    ) -> Result<
+        (
+            IndexMap<FieldName, super::fields::SchemaFieldDef>,
+            Vec<SchemaWarning>,
+        ),
+        SchemaError,
+    > {
+        let refs = RefAddressResolver {
+            ancestors,
+            resolved,
+        };
+        let builder = SchemaFieldBuilder {
+            refs: &refs,
+        };
+        let mut own_fields = IndexMap::new();
+        let mut warnings = Vec::new();
+        for (field_name, raw_field) in &raw.fields {
+            let address = FieldAddressRef::new(name, field_name.as_ref());
+            let (field, field_warnings) = builder.build(address, raw_field)?;
+            warnings.extend(field_warnings);
+            own_fields.insert(field_name.clone(), field);
+        }
+        Ok((own_fields, warnings))
+    }
+
+    /// Resolve one Schema's effective fields and transitive ancestors.
+    ///
+    /// Merges `parents`' fields first-listed-wins, applies `raw.excludes`, then
+    /// overrides the result with `raw`'s own (`$ref`-resolved) fields. Every
+    /// warning from degraded validation is collected alongside the result.
+    ///
+    /// `parents` must already be resolved in `resolved`: the Kahn topological
+    /// sort guarantees this ordering.
+    fn merge_fields(
+        name: SchemaNameRef<'_>,
+        raw: &RawSchema,
+        parents: &[SchemaName],
+        resolved: &IndexMap<SchemaName, Schema>,
+    ) -> Result<(Schema, Vec<SchemaWarning>), SchemaError> {
+        let (mut fields, ancestors, mut warnings) =
+            Self::inherit_parent_fields(name, parents, resolved);
+
+        for excluded in &raw.excludes {
+            fields.shift_remove(excluded);
+        }
+
+        let (own_fields, own_warnings) =
+            Self::resolve_own_fields(name, raw, &ancestors, resolved)?;
+        warnings.extend(own_warnings);
+        fields.extend(own_fields);
+
+        reject_ambiguous_canonical_names(name, &fields)?;
+
+        Ok((Schema::new(SchemaName::from(name), fields, ancestors), warnings))
+    }
+
     pub(super) fn resolve(self) -> Result<ResolvedSchemas, SchemaError> {
         let mut warnings = Vec::new();
         let mut resolved: IndexMap<SchemaName, Schema> = IndexMap::new();
@@ -103,7 +208,7 @@ impl<'a> SchemaResolver<'a> {
         let mut raw = self.raw.clone();
         let global_raw = raw.shift_remove(GLOBAL_SCHEMA_NAME);
         if let Some(global) = global_raw {
-            let (schema, w) = merge_fields(
+            let (schema, w) = Self::merge_fields(
                 SchemaNameRef::from(GLOBAL_SCHEMA_NAME),
                 &global,
                 &[],
@@ -160,7 +265,12 @@ fn resolve_in_topological_order(
         let raw_schema = raw.get(name.as_str()).expect(
             "SchemaGraph::next_ready only ever yields names present in raw",
         );
-        match merge_fields(name, raw_schema, graph.parents_of(name), resolved) {
+        match SchemaResolver::merge_fields(
+            name,
+            raw_schema,
+            graph.parents_of(name),
+            resolved,
+        ) {
             Ok((schema, schema_warnings)) => {
                 warnings.extend(schema_warnings);
                 resolved.insert(SchemaName::from(name), schema);
@@ -213,65 +323,6 @@ fn compute_hierarchy_sets(
             .collect();
         schema.set_hierarchy(children, descendants);
     }
-}
-
-/// Resolve one Schema's effective fields and transitive ancestors.
-///
-/// Merges `parents`' fields first-listed-wins, applies `raw.excludes`, then
-/// overrides the result with `raw`'s own (`$ref`-resolved) fields. Every
-/// warning from degraded validation is collected alongside the result.
-///
-/// `parents` must already be resolved in `resolved`: the Kahn topological sort
-/// guarantees this ordering.
-fn merge_fields(
-    name: SchemaNameRef<'_>,
-    raw: &RawSchema,
-    parents: &[SchemaName],
-    resolved: &IndexMap<SchemaName, Schema>,
-) -> Result<(Schema, Vec<SchemaWarning>), SchemaError> {
-    let mut fields = IndexMap::new();
-    let mut ancestors = IndexSet::new();
-    let mut warnings = Vec::new();
-    for parent in parents {
-        let Some(parent_schema) = resolved.get(parent.as_str()) else {
-            warnings.push(SchemaWarning::ParentFailedToResolve {
-                schema: SchemaName::from(name),
-                parent: parent.clone(),
-            });
-            continue;
-        };
-        for (field_name, field) in parent_schema.fields() {
-            fields.entry(field_name.clone()).or_insert_with(|| field.clone());
-        }
-        ancestors.insert(parent.clone());
-        ancestors.extend(parent_schema.ancestors().iter().cloned());
-    }
-    for excluded in &raw.excludes {
-        fields.shift_remove(excluded);
-    }
-
-    // Own fields resolve last (so they override inherited fields above) but
-    // need `ancestors` computed above to validate a `$ref`'s bounded target:
-    // `#global/<field>` or `#<ancestor-schema>/<field>` only.
-    let refs = RefAddressResolver {
-        ancestors: &ancestors,
-        resolved,
-    };
-    let builder = SchemaFieldBuilder {
-        refs: &refs,
-    };
-    let mut own_fields = IndexMap::new();
-    for (field_name, raw_field) in &raw.fields {
-        let address = FieldAddressRef::new(name, field_name.as_ref());
-        let (field, field_warnings) = builder.build(address, raw_field)?;
-        warnings.extend(field_warnings);
-        own_fields.insert(field_name.clone(), field);
-    }
-    fields.extend(own_fields);
-
-    reject_ambiguous_canonical_names(name, &fields)?;
-
-    Ok((Schema::new(SchemaName::from(name), fields, ancestors), warnings))
 }
 
 /// Reject `fields` if two entries share a [`FieldKey`] canonical form.
