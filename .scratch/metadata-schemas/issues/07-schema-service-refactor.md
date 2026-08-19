@@ -4,7 +4,7 @@
 
 **Blocked by:** None — can start immediately.
 
-**Status:** implemented — landed in `.worktrees/07-schema-service-refactor` (branch `issue-07-schema-service-refactor`, commit `4801e90`); hardened by a follow-up pass, commit `179767c` (see Implementation Notes addendum)
+**Status:** implemented + deepened — landed in `.worktrees/07-schema-service-refactor` (branch `issue-07-schema-service-refactor`, commit `4801e90`); hardened by `179767c`; deepened by `d70e7ad`/`9f4f11b`/`5578281` (see Implementation Notes — depth refactor addendum)
 
 ## Agent Brief
 
@@ -484,3 +484,43 @@ Full `mise test`/`mise clippy`/`mise fmt` clean (1547/1547 tests). Migration fro
 - `BTreeMap`/`BTreeSet` audit: `parser.rs` had `BTreeSet<&'static str>` for `claimed` (no ordering needed) — swapped to `HashSet`. `service.rs` and `name.rs` matches are test-only. Zero `BTreeMap`/`BTreeSet` in schema module production code.
 - Typestate enforcement verified: `children_by_name()` only callable on `SchemaGraph<Resolved>`; `next_ready()` only on `SchemaGraph<Building>` — compile-time enforced.
 - Working tree clean, committed as `5732f79`.
+
+### Depth refactor & design improvements (commits `d70e7ad`, `9f4f11b`, `5578281`)
+
+A post-landing design analysis (using codebase-design vocabulary: Module, Interface, Implementation, Depth, Seam, Adapter, Leverage, Locality) identified that `graph.rs` was already deep, `resolver.rs` was mostly deep but had a shallow seam (`merge_fields` — 45-line free function with 4 parameters), and `service.rs` is intentionally a shallow facade. The refactor deepens the two private interfaces without changing any public API.
+
+#### Preparatory work
+
+- **bit-vec upgrade**: `Cargo.toml` `bit-vec = "0.6"` → `bit-vec = "0.10"` (commit `aef2a3f`). Enabled native `.or()` and `.none()` instead of manual loops.
+- **`expand_descendants` moved** into `impl<'a> SchemaGraph<'a, Resolved>` (commit `814b306`).
+- **Topological DP replaces recursive DFS** in `descendants_by_name` (commit `8479590`): iterative Kahn's-order traversal with `BitVec` memoization. 1626/1626 tests.
+- **Doc review: graph.rs and resolver.rs** (commit `c094537`): full doc review, no `# Returns`/`# Errors` on private fns, intra-doc link definitions, no `# Examples` on small private methods.
+- **Clippy auto-fix** (commit `4121a48`): `const fn`, `use_self`, `redundant_clone`, `option_if_let_else`, `needless_pass_by_ref_mut` across 46 files.
+- **Manual lint fixes** (commits `786ee79`, `f68fe67`): `redundant_field_names` (12 in `cli/error.rs`), `needless_collect` (4), `or_fun_call` (3), `significant_drop_in_scrutinee` (1), `needless_pass_by_ref_mut` (2 on logos callbacks), `option_if_let_else` (8).
+- **Cargo.toml lint reorganization** (commit `9137278`): sections by severity (categories → deny → warn → allow), sorted alphabetically within groups. Removed invalid `implicit_return` lint.
+- **Mise clippy task overhaul** (commit `df21601`): `depends = ["fmt"]`, `--all-targets --all-features`, auto-fix default ON, usage field with `--no-fix` flag and `[lints]` positional arg.
+- **Fix list expanded to 12 lints** (commits `2dbe2c2`, `0284c4e`): added `redundant_field_names`, `significant_drop_in_scrutinee`, `use_self`, plus 6 precautionary MachineApplicable lints.
+
+#### Change 1: graph.rs — SchemaIndex owns bitset operations (commit `d70e7ad`)
+
+Moved `merge_child` and `expand_descendants` from free functions on `SchemaGraph<Resolved>` to methods on `SchemaIndex` (the bidirectional name↔bit mapping struct). `SchemaIndex` now owns all bitset operations — `merge_child` (OR one child's bits into parent) and `expand_descendants` (convert `BitVec` memo to `IndexSet<SchemaName>`). `merge_child` gets `#[inline]` (runs in O(V²) loop; hash lookups dominate but function call overhead is noise). Renamed `cyclic_remainder` → `unvisited_schemas` (pure description of result, not inference of intent). Updated callers in `descendants_by_name` to use method syntax (`index.merge_child(...)`, `index.expand_descendants(...)`).
+
+Locality improvement: bitset operations now live with the bitset index, not scattered across the graph module.
+
+#### Change 2: resolver.rs — Decompose merge_fields (commit `9f4f11b`)
+
+Extracted the 45-line `merge_fields` free function into three focused pieces in `impl SchemaResolver`:
+
+- `inherit_parent_fields(name, parents, resolved) → (fields, ancestors, warnings)` — parent field inheritance (first-listed-wins), ancestor collection, missing-parent warnings
+- `resolve_own_fields(name, raw, ancestors, resolved) → Result<(own_fields, warnings), SchemaError>` — `$ref` resolution via `RefAddressResolver`/`SchemaFieldBuilder`
+- `merge_fields(name, raw, parents, resolved) → Result<(Schema, Vec<SchemaWarning>), SchemaError>` — 15-line orchestrator: inherit → excludes → own fields → validate → construct
+
+`merge_fields` is an associated function (no `self`) because it's pure computation on its inputs — no instance state needed. Callers updated: `resolve()` → `Self::merge_fields(...)`, `resolve_in_topological_order()` → `SchemaResolver::merge_fields(...)`. `reject_ambiguous_canonical_names` remains a free function (not moved — it operates on `SchemaFieldDef`, not `SchemaResolver`).
+
+Separation of concerns: each function maps to one responsibility. The orchestrator reads top-to-bottom as a clear pipeline with no hidden state.
+
+#### Verification
+
+- `cargo check -p traces-pkm` ✅
+- `cargo clippy --workspace --all-targets --all-features -- -D warnings` ✅ (zero warnings)
+- `cargo nextest run -p traces-pkm` ✅ (1626/1626 passed)
