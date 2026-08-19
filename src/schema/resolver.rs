@@ -248,12 +248,15 @@ fn reject_ambiguous_canonical_names(
 #[cfg(test)]
 mod tests {
     use super::{super::GLOBAL_SCHEMA_NAME, *};
-    use crate::schema::{
-        RawSchemaFieldDef, RawSchemaFieldSource, RawSchemaFieldType,
-        fields::{
-            SchemaDateField, SchemaFieldBuilderError, SchemaFieldDef,
-            SchemaFieldParserError, SchemaFieldType, SchemaFileField,
-            SchemaNumberField, SchemaSelectField, SchemaSelectFieldEntry,
+    use crate::{
+        field::FieldValue,
+        schema::{
+            RawSchemaFieldDef, RawSchemaFieldSource, RawSchemaFieldType,
+            fields::{
+                FieldAddress, SchemaDateField, SchemaFieldBuilderError,
+                SchemaFieldParserError, SchemaFieldType, SchemaFileField,
+                SchemaNumberField, SchemaSelectField, SchemaSelectFieldEntry,
+            },
         },
     };
 
@@ -267,23 +270,19 @@ mod tests {
         FieldName::try_from(name).expect("valid test field name")
     }
 
-    fn field_address(reference: &str) -> super::super::fields::FieldAddress {
-        super::super::fields::FieldAddress::try_from(reference)
-            .expect("valid test $ref")
+    fn field_address(reference: &str) -> FieldAddress {
+        FieldAddress::try_from(reference).expect("valid test $ref")
     }
 
     fn options(
-        pairs: &[(&str, crate::field::FieldValue)],
-    ) -> indexmap::IndexMap<String, crate::field::FieldValue> {
+        pairs: &[(&str, FieldValue)],
+    ) -> indexmap::IndexMap<String, FieldValue> {
         pairs.iter().map(|(k, v)| ((*k).to_owned(), v.clone())).collect()
     }
 
-    fn string_list(values: &[&str]) -> crate::field::FieldValue {
-        crate::field::FieldValue::List(
-            values
-                .iter()
-                .map(|&v| crate::field::FieldValue::String(v.to_owned()))
-                .collect(),
+    fn string_list(values: &[&str]) -> FieldValue {
+        FieldValue::List(
+            values.iter().map(|&v| FieldValue::String(v.to_owned())).collect(),
         )
     }
 
@@ -308,10 +307,7 @@ mod tests {
             ("class", string_list(class)),
         ];
         if let Some(ext) = ext {
-            pairs.push((
-                "ext",
-                crate::field::FieldValue::String(ext.to_owned()),
-            ));
+            pairs.push(("ext", FieldValue::String(ext.to_owned())));
         }
         RawSchemaFieldDef {
             options: options(&pairs),
@@ -359,1021 +355,1178 @@ mod tests {
             .collect()
     }
 
-    use pretty_assertions::assert_eq;
+    mod merge_fields {
+        use pretty_assertions::assert_eq;
+        use rstest::rstest;
 
-    #[test]
-    fn resolves_a_schema_with_no_extends() {
-        let mut raw = IndexMap::new();
-        raw.insert(
-            SchemaName::from("book"),
-            schema(&[], &[("status", select_field(&["draft", "done"]))]),
-        );
+        use super::*;
 
-        let ResolvedSchemas {
-            schemas: resolved,
-            warnings,
-            ..
-        } = resolve(&raw).expect("resolves");
+        #[test]
+        fn resolves_a_schema_with_no_extends() {
+            let mut raw = IndexMap::new();
+            raw.insert(
+                SchemaName::from("book"),
+                schema(&[], &[("status", select_field(&["draft", "done"]))]),
+            );
 
-        assert!(warnings.is_empty());
-        let book = resolved.get("book").expect("book resolved");
-        assert_eq!(book.name(), "book");
-        let status = book.field("status").expect("status field");
-        assert_eq!(
-            status.kind(),
-            &SchemaFieldType::Select(SchemaSelectField::for_test(
-                select_entries(&["draft", "done"])
-            ))
-        );
-        assert!(!status.is_required());
-        assert!(!status.is_multi());
-    }
+            let ResolvedSchemas {
+                schemas: resolved,
+                warnings,
+                ..
+            } = resolve(&raw).expect("resolves");
 
-    #[test]
-    fn own_fields_override_parent_fields() {
-        let mut raw = IndexMap::new();
-        raw.insert(
-            SchemaName::from("book"),
-            schema(&[], &[("status", select_field(&["draft", "done"]))]),
-        );
-        raw.insert(
-            SchemaName::from("sci_fi"),
-            schema(&["book"], &[(
-                "status",
-                select_field(&["outline", "shipped"]),
-            )]),
-        );
+            assert!(warnings.is_empty());
+            let book = resolved.get("book").expect("book resolved");
+            assert_eq!(book.name(), "book");
+            let status = book.field("status").expect("status field");
+            assert_eq!(
+                status.kind(),
+                &SchemaFieldType::Select(SchemaSelectField::for_test(
+                    select_entries(&["draft", "done"])
+                ))
+            );
+            assert!(!status.is_required());
+            assert!(!status.is_multi());
+        }
 
-        let ResolvedSchemas {
-            schemas: resolved,
-            ..
-        } = resolve(&raw).expect("resolves");
+        #[test]
+        fn own_fields_override_parent_fields() {
+            let mut raw = IndexMap::new();
+            raw.insert(
+                SchemaName::from("book"),
+                schema(&[], &[("status", select_field(&["draft", "done"]))]),
+            );
+            raw.insert(
+                SchemaName::from("sci_fi"),
+                schema(&["book"], &[(
+                    "status",
+                    select_field(&["outline", "shipped"]),
+                )]),
+            );
 
-        let status = resolved
-            .get("sci_fi")
-            .and_then(|s| s.field("status"))
-            .expect("status field");
-        assert_eq!(
-            status.kind(),
-            &SchemaFieldType::Select(SchemaSelectField::for_test(
-                select_entries(&["outline", "shipped"])
-            ))
-        );
-    }
+            let ResolvedSchemas {
+                schemas: resolved,
+                ..
+            } = resolve(&raw).expect("resolves");
 
-    #[test]
-    fn first_listed_parent_wins_a_shared_field() {
-        let mut raw = IndexMap::new();
-        raw.insert(
-            SchemaName::from("a"),
-            schema(&[], &[("shared", select_field(&["from-a"]))]),
-        );
-        raw.insert(
-            SchemaName::from("b"),
-            schema(&[], &[("shared", select_field(&["from-b"]))]),
-        );
-        raw.insert(SchemaName::from("child"), schema(&["a", "b"], &[]));
+            let status = resolved
+                .get("sci_fi")
+                .and_then(|s| s.field("status"))
+                .expect("status field");
+            assert_eq!(
+                status.kind(),
+                &SchemaFieldType::Select(SchemaSelectField::for_test(
+                    select_entries(&["outline", "shipped"])
+                ))
+            );
+        }
 
-        let ResolvedSchemas {
-            schemas: resolved,
-            ..
-        } = resolve(&raw).expect("resolves");
+        #[test]
+        fn first_listed_parent_wins_a_shared_field() {
+            let mut raw = IndexMap::new();
+            raw.insert(
+                SchemaName::from("a"),
+                schema(&[], &[("shared", select_field(&["from-a"]))]),
+            );
+            raw.insert(
+                SchemaName::from("b"),
+                schema(&[], &[("shared", select_field(&["from-b"]))]),
+            );
+            raw.insert(SchemaName::from("child"), schema(&["a", "b"], &[]));
 
-        let shared = resolved
-            .get("child")
-            .and_then(|s| s.field("shared"))
-            .expect("shared field");
-        assert_eq!(
-            shared.kind(),
-            &SchemaFieldType::Select(SchemaSelectField::for_test(
-                select_entries(&["from-a"])
-            ))
-        );
-    }
+            let ResolvedSchemas {
+                schemas: resolved,
+                ..
+            } = resolve(&raw).expect("resolves");
 
-    #[test]
-    fn excludes_drops_an_inherited_field_by_name() {
-        let mut raw = IndexMap::new();
-        raw.insert(
-            SchemaName::from("book"),
-            schema(&[], &[
-                ("status", select_field(&["draft"])),
-                ("author", input_field()),
-            ]),
-        );
-        raw.insert(
-            SchemaName::from("sci_fi"),
-            schema_with_excludes(&["book"], &["status"], &[]),
-        );
+            let shared = resolved
+                .get("child")
+                .and_then(|s| s.field("shared"))
+                .expect("shared field");
+            assert_eq!(
+                shared.kind(),
+                &SchemaFieldType::Select(SchemaSelectField::for_test(
+                    select_entries(&["from-a"])
+                ))
+            );
+        }
 
-        let ResolvedSchemas {
-            schemas: resolved,
-            ..
-        } = resolve(&raw).expect("resolves");
+        #[test]
+        fn excludes_drops_an_inherited_field_by_name() {
+            let mut raw = IndexMap::new();
+            raw.insert(
+                SchemaName::from("book"),
+                schema(&[], &[
+                    ("status", select_field(&["draft"])),
+                    ("author", input_field()),
+                ]),
+            );
+            raw.insert(
+                SchemaName::from("sci_fi"),
+                schema_with_excludes(&["book"], &["status"], &[]),
+            );
 
-        let sci_fi = resolved.get("sci_fi").expect("sci_fi resolved");
-        assert!(sci_fi.field("status").is_none());
-        assert!(sci_fi.field("author").is_some());
-        let field_names: Vec<&str> =
-            sci_fi.fields().keys().map(FieldName::as_str).collect();
-        assert_eq!(field_names, vec!["author"]);
-    }
+            let ResolvedSchemas {
+                schemas: resolved,
+                ..
+            } = resolve(&raw).expect("resolves");
 
-    #[test]
-    fn excludes_is_exact_and_does_not_drop_a_different_case_field() {
-        let mut raw = IndexMap::new();
-        raw.insert(
-            SchemaName::from("book"),
-            schema(&[], &[("status", select_field(&["draft"]))]),
-        );
-        raw.insert(
-            SchemaName::from("sci_fi"),
-            schema_with_excludes(&["book"], &["Status"], &[]),
-        );
+            let sci_fi = resolved.get("sci_fi").expect("sci_fi resolved");
+            assert!(sci_fi.field("status").is_none());
+            assert!(sci_fi.field("author").is_some());
+            let field_names: Vec<&str> =
+                sci_fi.fields().keys().map(FieldName::as_str).collect();
+            assert_eq!(field_names, vec!["author"]);
+        }
 
-        let ResolvedSchemas {
-            schemas: resolved,
-            ..
-        } = resolve(&raw).expect("resolves");
+        #[test]
+        fn excludes_is_exact_and_does_not_drop_a_different_case_field() {
+            let mut raw = IndexMap::new();
+            raw.insert(
+                SchemaName::from("book"),
+                schema(&[], &[("status", select_field(&["draft"]))]),
+            );
+            raw.insert(
+                SchemaName::from("sci_fi"),
+                schema_with_excludes(&["book"], &["Status"], &[]),
+            );
 
-        let sci_fi = resolved.get("sci_fi").expect("sci_fi resolved");
-        assert!(sci_fi.field("status").is_some());
-    }
+            let ResolvedSchemas {
+                schemas: resolved,
+                ..
+            } = resolve(&raw).expect("resolves");
 
-    #[test]
-    fn own_redeclaration_of_an_excluded_field_survives() {
-        let mut raw = IndexMap::new();
-        raw.insert(
-            SchemaName::from("book"),
-            schema(&[], &[("status", select_field(&["draft"]))]),
-        );
-        raw.insert(
-            SchemaName::from("sci_fi"),
-            schema_with_excludes(&["book"], &["status"], &[(
-                "status",
-                input_field(),
-            )]),
-        );
+            let sci_fi = resolved.get("sci_fi").expect("sci_fi resolved");
+            assert!(sci_fi.field("status").is_some());
+        }
 
-        let ResolvedSchemas {
-            schemas: resolved,
-            ..
-        } = resolve(&raw).expect("resolves");
+        #[test]
+        fn own_redeclaration_of_an_excluded_field_survives() {
+            let mut raw = IndexMap::new();
+            raw.insert(
+                SchemaName::from("book"),
+                schema(&[], &[("status", select_field(&["draft"]))]),
+            );
+            raw.insert(
+                SchemaName::from("sci_fi"),
+                schema_with_excludes(&["book"], &["status"], &[(
+                    "status",
+                    input_field(),
+                )]),
+            );
 
-        let sci_fi = resolved.get("sci_fi").expect("sci_fi resolved");
-        let status = sci_fi.field("status").expect("own status field");
-        assert_eq!(status.kind(), &SchemaFieldType::Input);
-    }
+            let ResolvedSchemas {
+                schemas: resolved,
+                ..
+            } = resolve(&raw).expect("resolves");
 
-    #[test]
-    fn a_missing_extends_target_degrades_with_a_warning() {
-        let mut raw = IndexMap::new();
-        raw.insert(
-            SchemaName::from("sci_fi"),
-            schema(&["ghost"], &[("title", input_field())]),
-        );
+            let sci_fi = resolved.get("sci_fi").expect("sci_fi resolved");
+            let status = sci_fi.field("status").expect("own status field");
+            assert_eq!(status.kind(), &SchemaFieldType::Input);
+        }
 
-        let ResolvedSchemas {
-            schemas: resolved,
-            warnings,
-            ..
-        } = resolve(&raw).expect("resolves");
-
-        assert!(warnings.contains(&SchemaWarning::MissingExtendsTarget {
-            schema: SchemaName::from("sci_fi"),
-            target: SchemaName::from("ghost"),
-        }));
-        assert!(warnings.contains(&SchemaWarning::ParentFailedToResolve {
-            schema: SchemaName::from("sci_fi"),
-            parent: SchemaName::from("ghost"),
-        }));
-        let sci_fi = resolved.get("sci_fi").expect("own fields still render");
-        assert!(sci_fi.field("title").is_some());
-        assert!(!sci_fi.is_a("ghost"));
-    }
-
-    #[test]
-    fn a_schema_with_a_malformed_field_does_not_block_an_unrelated_sibling() {
-        let mut raw = IndexMap::new();
-        raw.insert(
-            SchemaName::from("book"),
-            schema(&[], &[("status", select_field(&["draft"]))]),
-        );
-        raw.insert(
-            SchemaName::from("broken"),
-            schema(&[], &[
-                ("status", input_field()),
-                ("Status", input_field()),
-            ]),
-        );
-
-        let ResolvedSchemas {
-            schemas: resolved,
-            failures,
-            ..
-        } = resolve(&raw).expect("unrelated failure does not abort");
-
-        assert!(resolved.contains_key("book"));
-        assert!(!resolved.contains_key("broken"));
-        assert_eq!(failures.len(), 1);
-        let failure = failures.first().expect("one failure");
-        assert_eq!(failure.schema, SchemaName::from("broken"));
-    }
-
-    #[test]
-    fn a_schema_extending_a_failed_parent_still_resolves_its_own_fields() {
-        let mut raw = IndexMap::new();
-        raw.insert(
-            SchemaName::from("broken"),
-            schema(&[], &[
-                ("status", input_field()),
-                ("Status", input_field()),
-            ]),
-        );
-        raw.insert(
-            SchemaName::from("child"),
-            schema(&["broken"], &[("title", input_field())]),
-        );
-
-        let ResolvedSchemas {
-            schemas: resolved,
-            warnings,
-            failures,
-        } = resolve(&raw).expect("child still resolves");
-
-        assert_eq!(failures.len(), 1);
-        let failure = failures.first().expect("one failure");
-        assert_eq!(failure.schema, SchemaName::from("broken"));
-        assert!(warnings.contains(&SchemaWarning::ParentFailedToResolve {
-            schema: SchemaName::from("child"),
-            parent: SchemaName::from("broken"),
-        }));
-        let child = resolved.get("child").expect("child still resolves");
-        assert!(child.field("title").is_some());
-    }
-
-    #[test]
-    fn a_schema_downstream_of_a_failed_link_is_not_a_structural_descendant_of_a_healthy_ancestor()
-     {
-        let mut raw = IndexMap::new();
-        raw.insert(
-            SchemaName::from("book"),
-            schema(&[], &[("status", select_field(&["draft"]))]),
-        );
-        raw.insert(
-            SchemaName::from("broken"),
-            schema(&["book"], &[
-                ("dup", input_field()),
-                ("Dup", input_field()),
-            ]),
-        );
-        raw.insert(
-            SchemaName::from("sci_fi"),
-            schema(&["broken"], &[("subgenre", input_field())]),
-        );
-
-        let ResolvedSchemas {
-            schemas: resolved,
-            failures,
-            ..
-        } = resolve(&raw).expect("resolves");
-
-        assert_eq!(failures.len(), 1, "expected broken to fail: {failures:?}");
-        let sci_fi = resolved.get("sci_fi").expect("sci_fi still resolves");
-        assert!(sci_fi.field("subgenre").is_some());
-        assert!(
-            sci_fi.field("status").is_none(),
-            "sci_fi must not inherit book's status field"
-        );
-        assert!(!sci_fi.is_a("book"), "the chain broke at broken");
-        assert!(!sci_fi.is_a("broken"), "broken never resolved");
-
-        let book = resolved.get("book").expect("book resolves");
-        assert!(
-            !book.descendants().contains(&SchemaName::from("sci_fi")),
-            "book.descendants() must not list sci_fi: sci_fi no longer is-a \
-             book"
-        );
-        assert!(!book.descendants().contains(&SchemaName::from("broken")));
-    }
-
-    #[test]
-    fn a_cycle_is_a_hard_error() {
-        let mut raw = IndexMap::new();
-        raw.insert(SchemaName::from("a"), schema(&["b"], &[]));
-        raw.insert(SchemaName::from("b"), schema(&["a"], &[]));
-
-        let err = resolve(&raw).expect_err("cycle rejected");
-        assert!(
-            matches!(
-                &err,
-                SchemaError::Cycle { schemas }
-                    if schemas == &vec![SchemaName::from("a"), SchemaName::from("b")]
+        #[rstest]
+        #[case::input(input_field(), SchemaFieldType::Input)]
+        #[case::select(
+            select_field(&["draft", "done"]),
+            SchemaFieldType::Select(
+                SchemaSelectField::for_test(select_entries(&["draft", "done"])),
             ),
-            "expected Cycle over [a, b], got {err:?}"
-        );
-    }
-
-    #[test]
-    fn is_a_matches_transitively_through_extends() {
-        let mut raw = IndexMap::new();
-        raw.insert(SchemaName::from("thing"), schema(&[], &[]));
-        raw.insert(SchemaName::from("book"), schema(&["thing"], &[]));
-        raw.insert(SchemaName::from("sci_fi"), schema(&["book"], &[]));
-
-        let ResolvedSchemas {
-            schemas: resolved,
-            ..
-        } = resolve(&raw).expect("resolves");
-
-        let sci_fi = resolved.get("sci_fi").expect("sci_fi resolved");
-        assert!(sci_fi.is_a("sci_fi"));
-        assert!(sci_fi.is_a("book"));
-        assert!(sci_fi.is_a("thing"));
-        assert!(!sci_fi.is_a("movie"));
-    }
-
-    #[test]
-    fn a_ref_to_an_ancestor_resolves_with_local_overrides() {
-        let mut raw = IndexMap::new();
-        raw.insert(
-            SchemaName::from("book"),
-            schema(&[], &[("status", select_field(&["draft", "done"]))]),
-        );
-        raw.insert(
-            SchemaName::from("sci_fi"),
-            schema(&["book"], &[(
-                "status",
-                ref_field("#book/status", Some(true)),
-            )]),
-        );
-
-        let ResolvedSchemas {
-            schemas: resolved,
-            ..
-        } = resolve(&raw).expect("resolves");
-
-        let status = resolved
-            .get("sci_fi")
-            .and_then(|s| s.field("status"))
-            .expect("status field");
-        assert_eq!(
-            status.kind(),
-            &SchemaFieldType::Select(SchemaSelectField::for_test(
-                select_entries(&["draft", "done"])
+        )]
+        #[case::boolean(
+            RawSchemaFieldDef::direct(RawSchemaFieldType::Boolean),
+            SchemaFieldType::Boolean
+        )]
+        #[case::number(
+            RawSchemaFieldDef::direct(RawSchemaFieldType::Number),
+            SchemaFieldType::Number(SchemaNumberField::for_test(
+                None, None, None
             ))
-        );
-        assert!(status.is_required());
-    }
-
-    #[test]
-    fn a_ref_to_global_resolves_with_local_overrides() {
-        let mut raw = IndexMap::new();
-        raw.insert(
-            SchemaName::from(GLOBAL_SCHEMA_NAME),
-            schema(&[], &[("priority", select_field(&["low", "high"]))]),
-        );
-        raw.insert(
-            SchemaName::from("task"),
-            schema(&[], &[(
-                "priority",
-                ref_field("#global/priority", Some(true)),
-            )]),
-        );
-
-        let ResolvedSchemas {
-            schemas: resolved,
-            ..
-        } = resolve(&raw).expect("resolves");
-
-        let priority = resolved
-            .get("task")
-            .and_then(|s| s.field("priority"))
-            .expect("priority field");
-        assert_eq!(
-            priority.kind(),
-            &SchemaFieldType::Select(SchemaSelectField::for_test(
-                select_entries(&["low", "high"])
+        )]
+        #[case::date(
+            RawSchemaFieldDef::direct(RawSchemaFieldType::Date),
+            SchemaFieldType::Date(SchemaDateField::for_test(None))
+        )]
+        #[case::file(
+            file_field(&["assets/covers"], Some("png"), &["image"]),
+            SchemaFieldType::File(SchemaFileField::for_test(
+                vec!["assets/covers".to_owned()],
+                Some("png".to_owned()),
+                vec!["image".to_owned()],
             ))
-        );
-        assert!(priority.is_required());
+        )]
+        fn each_field_type_resolves_its_own_options(
+            #[case] field_def: RawSchemaFieldDef,
+            #[case] expected: SchemaFieldType,
+        ) {
+            let mut raw = IndexMap::new();
+            raw.insert(
+                SchemaName::from("book"),
+                schema(&[], &[("f", field_def)]),
+            );
+
+            let ResolvedSchemas {
+                schemas: resolved,
+                ..
+            } = resolve(&raw).expect("resolves");
+            let book = resolved.get("book").expect("book resolved");
+
+            assert_eq!(
+                book.field("f").expect("field exists").kind(),
+                &expected
+            );
+        }
+
+        #[test]
+        fn multi_defaults_to_false_and_honors_a_local_override() {
+            let mut raw = IndexMap::new();
+            raw.insert(
+                SchemaName::from("book"),
+                schema(&[], &[
+                    ("status", select_field(&["draft"])),
+                    ("authors", RawSchemaFieldDef {
+                        multi: Some(true),
+                        ..select_field(&["ann", "bo"])
+                    }),
+                ]),
+            );
+
+            let ResolvedSchemas {
+                schemas: resolved,
+                ..
+            } = resolve(&raw).expect("resolves");
+            let book = resolved.get("book").expect("book resolved");
+
+            assert!(!book.field("status").expect("status").is_multi());
+            assert!(book.field("authors").expect("authors").is_multi());
+        }
+
+        #[test]
+        fn emits_warning_when_parent_failed_to_resolve() {
+            let mut raw = IndexMap::new();
+            raw.insert(
+                SchemaName::from("broken"),
+                schema(&[], &[
+                    ("status", input_field()),
+                    ("Status", input_field()),
+                ]),
+            );
+            raw.insert(
+                SchemaName::from("good"),
+                schema(&[], &[("label", select_field(&["a"]))]),
+            );
+            raw.insert(
+                SchemaName::from("child"),
+                schema(&["broken", "good"], &[]),
+            );
+
+            let ResolvedSchemas {
+                schemas: resolved,
+                warnings,
+                failures,
+            } = resolve(&raw).expect("resolves");
+
+            assert_eq!(failures.len(), 1);
+            assert_eq!(
+                failures.first().expect("one failure").schema,
+                SchemaName::from("broken")
+            );
+            assert!(warnings.contains(&SchemaWarning::ParentFailedToResolve {
+                schema: SchemaName::from("child"),
+                parent: SchemaName::from("broken"),
+            }));
+            let child = resolved.get("child").expect("child resolves");
+            assert!(
+                child.field("label").is_some(),
+                "child inherits from the good parent"
+            );
+            assert!(
+                child.field("status").is_none(),
+                "child does not inherit from the broken parent"
+            );
+        }
     }
 
-    #[test]
-    fn a_stray_required_on_global_is_ignored_with_a_warning() {
-        let mut raw = IndexMap::new();
-        raw.insert(
-            SchemaName::from(GLOBAL_SCHEMA_NAME),
-            schema(&[], &[("priority", RawSchemaFieldDef {
-                required: Some(true),
-                ..select_field(&["low", "high"])
-            })]),
-        );
+    mod global {
+        use pretty_assertions::assert_eq;
 
-        let ResolvedSchemas {
-            schemas: resolved,
-            warnings,
-            ..
-        } = resolve(&raw).expect("resolves");
+        use super::*;
 
-        let priority = resolved
-            .get(GLOBAL_SCHEMA_NAME)
-            .and_then(|s| s.field("priority"))
-            .expect("priority field");
-        assert!(!priority.is_required());
-        assert_eq!(warnings, vec![SchemaWarning::StrayGlobalRequired {
-            field: "priority".to_owned()
-        }]);
+        #[test]
+        fn does_not_inherit_fields_from_its_own_declared_extends() {
+            let mut raw = IndexMap::new();
+            raw.insert(
+                SchemaName::from("book"),
+                schema(&[], &[("title", input_field())]),
+            );
+            raw.insert(
+                SchemaName::from(GLOBAL_SCHEMA_NAME),
+                schema(&["book"], &[(
+                    "priority",
+                    select_field(&["low", "high"]),
+                )]),
+            );
+
+            let ResolvedSchemas {
+                schemas: resolved,
+                warnings,
+                ..
+            } = resolve(&raw).expect("resolves");
+
+            assert!(warnings.is_empty());
+            let global =
+                resolved.get(GLOBAL_SCHEMA_NAME).expect("global resolved");
+            assert!(
+                global.field("title").is_none(),
+                "global must not inherit from its own declared extends"
+            );
+        }
+
+        #[test]
+        fn resolves_before_a_sibling_that_refs_it_despite_declaring_extends() {
+            let mut raw = IndexMap::new();
+            raw.insert(
+                SchemaName::from("book"),
+                schema(&[], &[("title", input_field())]),
+            );
+            raw.insert(
+                SchemaName::from(GLOBAL_SCHEMA_NAME),
+                schema(&["book"], &[(
+                    "priority",
+                    select_field(&["low", "high"]),
+                )]),
+            );
+            raw.insert(
+                SchemaName::from("poem"),
+                schema(&[], &[(
+                    "priority",
+                    ref_field("#global/priority", None),
+                )]),
+            );
+
+            let ResolvedSchemas {
+                schemas: resolved,
+                ..
+            } = resolve(&raw).expect("resolves");
+
+            let priority = resolved
+                .get("poem")
+                .and_then(|s| s.field("priority"))
+                .expect("priority field resolves via $ref to global");
+            assert_eq!(
+                priority.kind(),
+                &SchemaFieldType::Select(SchemaSelectField::for_test(
+                    select_entries(&["low", "high"])
+                ))
+            );
+        }
+
+        #[test]
+        fn stray_required_on_global_is_ignored_with_a_warning() {
+            let mut raw = IndexMap::new();
+            raw.insert(
+                SchemaName::from(GLOBAL_SCHEMA_NAME),
+                schema(&[], &[("priority", RawSchemaFieldDef {
+                    required: Some(true),
+                    ..select_field(&["low", "high"])
+                })]),
+            );
+
+            let ResolvedSchemas {
+                schemas: resolved,
+                warnings,
+                ..
+            } = resolve(&raw).expect("resolves");
+
+            let priority = resolved
+                .get(GLOBAL_SCHEMA_NAME)
+                .and_then(|s| s.field("priority"))
+                .expect("priority field");
+            assert!(!priority.is_required());
+            assert_eq!(warnings, vec![SchemaWarning::StrayGlobalRequired {
+                field: "priority".to_owned()
+            }]);
+        }
     }
 
-    #[test]
-    fn a_ref_to_an_unknown_field_degrades_to_a_failure() {
-        let mut raw = IndexMap::new();
-        raw.insert(SchemaName::from("book"), schema(&[], &[]));
-        raw.insert(
-            SchemaName::from("sci_fi"),
-            schema(&["book"], &[("status", ref_field("#book/status", None))]),
-        );
+    mod reference {
+        use pretty_assertions::assert_eq;
 
-        let ResolvedSchemas {
-            failures,
-            ..
-        } = resolve(&raw).expect("unresolved ref degrades, not aborts");
-        let err = failures.into_iter().next().expect("one failure").error;
-        assert!(matches!(
-            err,
-            SchemaError::FieldBuilder(inner)
-                if matches!(
-                    *inner,
-                    SchemaFieldBuilderError::RefFieldNotFound { .. }
-                )
-        ));
-    }
+        use super::*;
 
-    #[test]
-    fn a_ref_to_a_non_ancestor_sibling_degrades_to_a_failure() {
-        let mut raw = IndexMap::new();
-        raw.insert(
-            SchemaName::from("book"),
-            schema(&[], &[("status", select_field(&["draft"]))]),
-        );
-        raw.insert(
-            SchemaName::from("movie"),
-            schema(&[], &[("status", ref_field("#book/status", None))]),
-        );
+        #[test]
+        fn to_ancestor_resolves_with_local_overrides() {
+            let mut raw = IndexMap::new();
+            raw.insert(
+                SchemaName::from("book"),
+                schema(&[], &[("status", select_field(&["draft", "done"]))]),
+            );
+            raw.insert(
+                SchemaName::from("sci_fi"),
+                schema(&["book"], &[(
+                    "status",
+                    ref_field("#book/status", Some(true)),
+                )]),
+            );
 
-        let ResolvedSchemas {
-            failures,
-            ..
-        } = resolve(&raw).expect("out-of-bounds ref degrades, not aborts");
-        let err = failures.into_iter().next().expect("one failure").error;
-        assert!(matches!(
-            err,
-            SchemaError::FieldBuilder(inner)
-                if matches!(
-                    *inner,
-                    SchemaFieldBuilderError::RefOutOfBounds { .. }
-                )
-        ));
-    }
+            let ResolvedSchemas {
+                schemas: resolved,
+                ..
+            } = resolve(&raw).expect("resolves");
 
-    #[test]
-    fn defining_both_status_and_status_cased_differently_degrades_to_a_failure()
-    {
-        let mut raw = IndexMap::new();
-        raw.insert(
-            SchemaName::from("book"),
-            schema(&[], &[
-                ("status", input_field()),
-                ("Status", input_field()),
-            ]),
-        );
+            let status = resolved
+                .get("sci_fi")
+                .and_then(|s| s.field("status"))
+                .expect("status field");
+            assert_eq!(
+                status.kind(),
+                &SchemaFieldType::Select(SchemaSelectField::for_test(
+                    select_entries(&["draft", "done"])
+                ))
+            );
+            assert!(status.is_required());
+        }
 
-        let ResolvedSchemas {
-            failures,
-            ..
-        } = resolve(&raw).expect("ambiguous field name degrades, not aborts");
-        let err = failures.into_iter().next().expect("one failure").error;
-        assert!(matches!(err, SchemaError::AmbiguousFieldName { .. }));
-    }
+        #[test]
+        fn to_global_resolves_with_local_overrides() {
+            let mut raw = IndexMap::new();
+            raw.insert(
+                SchemaName::from(GLOBAL_SCHEMA_NAME),
+                schema(&[], &[("priority", select_field(&["low", "high"]))]),
+            );
+            raw.insert(
+                SchemaName::from("task"),
+                schema(&[], &[(
+                    "priority",
+                    ref_field("#global/priority", Some(true)),
+                )]),
+            );
 
-    #[test]
-    fn an_own_field_colliding_with_an_inherited_field_degrades_to_a_failure() {
-        let mut raw = IndexMap::new();
-        raw.insert(
-            SchemaName::from("book"),
-            schema(&[], &[("Due Date", input_field())]),
-        );
-        raw.insert(
-            SchemaName::from("sci_fi"),
-            schema(&["book"], &[("due-date", input_field())]),
-        );
+            let ResolvedSchemas {
+                schemas: resolved,
+                ..
+            } = resolve(&raw).expect("resolves");
 
-        let ResolvedSchemas {
-            failures,
-            ..
-        } = resolve(&raw).expect("ambiguous field name degrades, not aborts");
-        let err = failures.into_iter().next().expect("one failure").error;
-        assert!(matches!(err, SchemaError::AmbiguousFieldName { .. }));
-    }
+            let priority = resolved
+                .get("task")
+                .and_then(|s| s.field("priority"))
+                .expect("priority field");
+            assert_eq!(
+                priority.kind(),
+                &SchemaFieldType::Select(SchemaSelectField::for_test(
+                    select_entries(&["low", "high"])
+                ))
+            );
+            assert!(priority.is_required());
+        }
 
-    #[test]
-    fn every_field_type_resolves_its_own_options() {
-        let mut raw = IndexMap::new();
-        raw.insert(
-            SchemaName::from("book"),
-            schema(&[], &[
-                ("title", input_field()),
-                ("status", select_field(&["draft", "done"])),
-                (
-                    "archived",
-                    RawSchemaFieldDef::direct(RawSchemaFieldType::Boolean),
-                ),
-                (
+        #[test]
+        fn to_global_resolves_regardless_of_insertion_order() {
+            let mut raw = IndexMap::new();
+            raw.insert(
+                SchemaName::from(GLOBAL_SCHEMA_NAME),
+                schema(&[], &[("name", select_field(&["anon"]))]),
+            );
+            raw.insert(
+                SchemaName::from("author"),
+                schema(&[], &[("name", ref_field("#global/name", None))]),
+            );
+
+            let ResolvedSchemas {
+                schemas: resolved,
+                ..
+            } = resolve(&raw).expect("resolves");
+
+            let name = resolved
+                .get("author")
+                .and_then(|s| s.field("name"))
+                .expect("name field resolves via $ref to global");
+            assert_eq!(
+                name.kind(),
+                &SchemaFieldType::Select(SchemaSelectField::for_test(
+                    select_entries(&["anon"])
+                ))
+            );
+        }
+
+        #[test]
+        fn that_switches_field_type_starts_from_empty_base_options() {
+            let mut raw = IndexMap::new();
+            raw.insert(
+                SchemaName::from("book"),
+                schema(&[], &[("status", select_field(&["draft", "done"]))]),
+            );
+            raw.insert(
+                SchemaName::from("sci_fi"),
+                schema(&["book"], &[("status", RawSchemaFieldDef {
+                    source: RawSchemaFieldSource::Ref {
+                        address: field_address("#book/status"),
+                        override_type: Some(RawSchemaFieldType::File),
+                    },
+                    options: options(&[("folders", string_list(&["assets"]))]),
+                    ..RawSchemaFieldDef::direct(RawSchemaFieldType::Input)
+                })]),
+            );
+
+            let ResolvedSchemas {
+                schemas: resolved,
+                ..
+            } = resolve(&raw).expect("resolves");
+
+            let status = resolved
+                .get("sci_fi")
+                .and_then(|s| s.field("status"))
+                .expect("status field");
+            assert_eq!(
+                status.kind(),
+                &SchemaFieldType::File(SchemaFileField::for_test(
+                    vec!["assets".to_owned()],
+                    None,
+                    Vec::new(),
+                ))
+            );
+        }
+
+        #[test]
+        fn to_a_file_field_merges_the_filter_with_local_overrides() {
+            let mut raw = IndexMap::new();
+            raw.insert(
+                SchemaName::from(GLOBAL_SCHEMA_NAME),
+                schema(&[], &[(
+                    "cover",
+                    file_field(&["assets"], Some("png"), &["image"]),
+                )]),
+            );
+            raw.insert(
+                SchemaName::from("book"),
+                schema(&[], &[("cover", RawSchemaFieldDef {
+                    options: options(&[(
+                        "folders",
+                        string_list(&["assets/covers"]),
+                    )]),
+                    ..RawSchemaFieldDef::reference(field_address(
+                        "#global/cover",
+                    ))
+                })]),
+            );
+
+            let ResolvedSchemas {
+                schemas: resolved,
+                ..
+            } = resolve(&raw).expect("resolves");
+            let cover = resolved
+                .get("book")
+                .and_then(|s| s.field("cover"))
+                .expect("cover field");
+
+            assert_eq!(
+                cover.kind(),
+                &SchemaFieldType::File(SchemaFileField::for_test(
+                    vec!["assets/covers".to_owned()],
+                    Some("png".to_owned()),
+                    vec!["image".to_owned()],
+                ))
+            );
+        }
+
+        #[test]
+        fn bare_override_with_unknown_key_degrades_with_a_warning() {
+            let mut raw = IndexMap::new();
+            raw.insert(
+                SchemaName::from("book"),
+                schema(&[], &[("status", select_field(&["draft", "done"]))]),
+            );
+            raw.insert(
+                SchemaName::from("sci_fi"),
+                schema(&["book"], &[("status", RawSchemaFieldDef {
+                    options: options(&[("folders", string_list(&["assets"]))]),
+                    ..RawSchemaFieldDef::reference(field_address(
+                        "#book/status",
+                    ))
+                })]),
+            );
+
+            let ResolvedSchemas {
+                schemas: resolved,
+                warnings,
+                ..
+            } = resolve(&raw).expect("resolves");
+
+            let status = resolved
+                .get("sci_fi")
+                .and_then(|s| s.field("status"))
+                .expect("status field still resolves from the base");
+            assert_eq!(
+                status.kind(),
+                &SchemaFieldType::Select(SchemaSelectField::for_test(
+                    select_entries(&["draft", "done"])
+                ))
+            );
+            assert_eq!(warnings.len(), 1);
+            assert!(matches!(
+                warnings.first().expect("expected warning"),
+                SchemaWarning::UnknownOverrideKey { .. }
+            ));
+        }
+
+        #[test]
+        fn bare_override_with_type_mismatched_value_degrades_with_a_warning() {
+            let mut raw = IndexMap::new();
+            raw.insert(
+                SchemaName::from("book"),
+                schema(&[], &[(
                     "rating",
                     RawSchemaFieldDef::direct(RawSchemaFieldType::Number),
-                ),
-                (
-                    "published",
-                    RawSchemaFieldDef::direct(RawSchemaFieldType::Date),
-                ),
-                (
+                )]),
+            );
+            raw.insert(
+                SchemaName::from("sci_fi"),
+                schema(&["book"], &[("rating", RawSchemaFieldDef {
+                    options: options(&[(
+                        "min",
+                        crate::field::FieldValue::String("abc".to_owned()),
+                    )]),
+                    ..RawSchemaFieldDef::reference(field_address(
+                        "#book/rating",
+                    ))
+                })]),
+            );
+
+            let ResolvedSchemas {
+                schemas: resolved,
+                warnings,
+                ..
+            } = resolve(&raw).expect("resolves");
+
+            let rating = resolved
+                .get("sci_fi")
+                .and_then(|s| s.field("rating"))
+                .expect("rating field still resolves from the base");
+            assert_eq!(
+                rating.kind(),
+                &SchemaFieldType::Number(SchemaNumberField::for_test(
+                    None, None, None
+                ))
+            );
+            assert_eq!(warnings.len(), 1);
+            assert!(matches!(
+                warnings.first().expect("expected warning"),
+                SchemaWarning::OverrideValueTypeMismatch { .. }
+            ));
+        }
+
+        #[test]
+        fn bare_override_applies_valid_keys_alongside_dropped_unknown() {
+            let mut raw = IndexMap::new();
+            raw.insert(
+                SchemaName::from(GLOBAL_SCHEMA_NAME),
+                schema(&[], &[(
                     "cover",
-                    file_field(&["assets/covers"], Some("png"), &["image"]),
+                    file_field(&["assets"], Some("png"), &["image"]),
+                )]),
+            );
+            raw.insert(
+                SchemaName::from("book"),
+                schema(&[], &[("cover", RawSchemaFieldDef {
+                    options: options(&[
+                        ("folders", string_list(&["assets/covers"])),
+                        ("bogus", string_list(&["x"])),
+                    ]),
+                    ..RawSchemaFieldDef::reference(field_address(
+                        "#global/cover",
+                    ))
+                })]),
+            );
+
+            let ResolvedSchemas {
+                schemas: resolved,
+                warnings,
+                ..
+            } = resolve(&raw).expect("resolves");
+
+            let cover = resolved
+                .get("book")
+                .and_then(|s| s.field("cover"))
+                .expect("cover field still resolves from the base");
+            assert_eq!(
+                cover.kind(),
+                &SchemaFieldType::File(SchemaFileField::for_test(
+                    vec!["assets/covers".to_owned()],
+                    Some("png".to_owned()),
+                    vec!["image".to_owned()],
+                ))
+            );
+            assert_eq!(warnings.len(), 1);
+            assert!(matches!(
+                warnings.first().expect("expected warning"),
+                SchemaWarning::UnknownOverrideKey { key, .. } if key == "bogus"
+            ));
+        }
+
+        #[test]
+        fn to_unknown_field_degrades_to_a_failure() {
+            let mut raw = IndexMap::new();
+            raw.insert(SchemaName::from("book"), schema(&[], &[]));
+            raw.insert(
+                SchemaName::from("sci_fi"),
+                schema(&["book"], &[(
+                    "status",
+                    ref_field("#book/status", None),
+                )]),
+            );
+
+            let ResolvedSchemas {
+                failures,
+                ..
+            } = resolve(&raw).expect("unresolved ref degrades, not aborts");
+            let err = failures.into_iter().next().expect("one failure").error;
+            assert!(matches!(
+                err,
+                SchemaError::FieldBuilder(inner)
+                    if matches!(
+                        *inner,
+                        SchemaFieldBuilderError::RefFieldNotFound { .. }
+                    )
+            ));
+        }
+
+        #[test]
+        fn to_non_ancestor_sibling_degrades_to_a_failure() {
+            let mut raw = IndexMap::new();
+            raw.insert(
+                SchemaName::from("book"),
+                schema(&[], &[("status", select_field(&["draft"]))]),
+            );
+            raw.insert(
+                SchemaName::from("movie"),
+                schema(&[], &[("status", ref_field("#book/status", None))]),
+            );
+
+            let ResolvedSchemas {
+                failures,
+                ..
+            } = resolve(&raw).expect("out-of-bounds ref degrades, not aborts");
+            let err = failures.into_iter().next().expect("one failure").error;
+            assert!(matches!(
+                err,
+                SchemaError::FieldBuilder(inner)
+                    if matches!(
+                        *inner,
+                        SchemaFieldBuilderError::RefOutOfBounds { .. }
+                    )
+            ));
+        }
+
+        #[test]
+        fn with_type_override_and_unknown_key_degrades_to_a_failure() {
+            let mut raw = IndexMap::new();
+            raw.insert(
+                SchemaName::from("book"),
+                schema(&[], &[("status", select_field(&["draft", "done"]))]),
+            );
+            raw.insert(
+                SchemaName::from("sci_fi"),
+                schema(&["book"], &[("status", RawSchemaFieldDef {
+                    source: RawSchemaFieldSource::Ref {
+                        address: field_address("#book/status"),
+                        override_type: Some(RawSchemaFieldType::Date),
+                    },
+                    options: options(&[("values", string_list(&["draft"]))]),
+                    ..RawSchemaFieldDef::direct(RawSchemaFieldType::Input)
+                })]),
+            );
+
+            let ResolvedSchemas {
+                failures,
+                ..
+            } = resolve(&raw).expect(
+                "unknown attribute key on a type-overriding $ref degrades, \
+                 not aborts",
+            );
+            let err = failures.into_iter().next().expect("one failure").error;
+            assert!(
+                matches!(
+                    &err,
+                    SchemaError::FieldBuilder(inner)
+                        if matches!(
+                            inner.as_ref(),
+                            SchemaFieldBuilderError::Parser(errors)
+                                if matches!(
+                                    errors.as_slice(),
+                                    [SchemaFieldParserError::UnknownKey { .. }]
+                                )
+                        )
                 ),
-            ]),
-        );
-
-        let ResolvedSchemas {
-            schemas: resolved,
-            ..
-        } = resolve(&raw).expect("resolves");
-        let book = resolved.get("book").expect("book resolved");
-
-        assert_eq!(
-            book.field("title").map(SchemaFieldDef::kind),
-            Some(&SchemaFieldType::Input)
-        );
-        assert_eq!(
-            book.field("status").map(SchemaFieldDef::kind),
-            Some(&SchemaFieldType::Select(SchemaSelectField::for_test(
-                select_entries(&["draft", "done"])
-            )))
-        );
-        assert_eq!(
-            book.field("archived").map(SchemaFieldDef::kind),
-            Some(&SchemaFieldType::Boolean)
-        );
-        assert_eq!(
-            book.field("rating").map(SchemaFieldDef::kind),
-            Some(&SchemaFieldType::Number(SchemaNumberField::for_test(
-                None, None, None
-            )))
-        );
-        assert_eq!(
-            book.field("published").map(SchemaFieldDef::kind),
-            Some(&SchemaFieldType::Date(SchemaDateField::for_test(None)))
-        );
-        assert_eq!(
-            book.field("cover").map(SchemaFieldDef::kind),
-            Some(&SchemaFieldType::File(SchemaFileField::for_test(
-                vec!["assets/covers".to_owned()],
-                Some("png".to_owned()),
-                vec!["image".to_owned()],
-            )))
-        );
-    }
-
-    #[test]
-    fn multi_defaults_to_false_and_honors_a_local_override() {
-        let mut raw = IndexMap::new();
-        raw.insert(
-            SchemaName::from("book"),
-            schema(&[], &[
-                ("status", select_field(&["draft"])),
-                ("authors", RawSchemaFieldDef {
-                    multi: Some(true),
-                    ..select_field(&["ann", "bo"])
-                }),
-            ]),
-        );
-
-        let ResolvedSchemas {
-            schemas: resolved,
-            ..
-        } = resolve(&raw).expect("resolves");
-        let book = resolved.get("book").expect("book resolved");
-
-        assert!(!book.field("status").expect("status").is_multi());
-        assert!(book.field("authors").expect("authors").is_multi());
-    }
-
-    #[test]
-    fn a_ref_to_a_file_field_merges_the_filter_with_local_overrides() {
-        let mut raw = IndexMap::new();
-        raw.insert(
-            SchemaName::from(GLOBAL_SCHEMA_NAME),
-            schema(&[], &[(
-                "cover",
-                file_field(&["assets"], Some("png"), &["image"]),
-            )]),
-        );
-        raw.insert(
-            SchemaName::from("book"),
-            schema(&[], &[("cover", RawSchemaFieldDef {
-                options: options(&[(
-                    "folders",
-                    string_list(&["assets/covers"]),
-                )]),
-                ..RawSchemaFieldDef::reference(field_address("#global/cover"))
-            })]),
-        );
-
-        let ResolvedSchemas {
-            schemas: resolved,
-            ..
-        } = resolve(&raw).expect("resolves");
-        let cover = resolved
-            .get("book")
-            .and_then(|s| s.field("cover"))
-            .expect("cover field");
-
-        assert_eq!(
-            cover.kind(),
-            &SchemaFieldType::File(SchemaFileField::for_test(
-                vec!["assets/covers".to_owned()],
-                Some("png".to_owned()),
-                vec!["image".to_owned()],
-            ))
-        );
-    }
-
-    #[test]
-    fn global_does_not_inherit_fields_from_its_own_declared_extends() {
-        let mut raw = IndexMap::new();
-        raw.insert(
-            SchemaName::from("book"),
-            schema(&[], &[("title", input_field())]),
-        );
-        raw.insert(
-            SchemaName::from(GLOBAL_SCHEMA_NAME),
-            schema(&["book"], &[("priority", select_field(&["low", "high"]))]),
-        );
-
-        let ResolvedSchemas {
-            schemas: resolved,
-            warnings,
-            ..
-        } = resolve(&raw).expect("resolves");
-
-        assert!(warnings.is_empty());
-        let global = resolved.get(GLOBAL_SCHEMA_NAME).expect("global resolved");
-        assert!(
-            global.field("title").is_none(),
-            "global must not inherit from its own declared extends"
-        );
-    }
-
-    #[test]
-    fn global_resolves_before_a_sibling_that_refs_it_despite_declaring_extends()
-    {
-        let mut raw = IndexMap::new();
-        raw.insert(
-            SchemaName::from("book"),
-            schema(&[], &[("title", input_field())]),
-        );
-        raw.insert(
-            SchemaName::from(GLOBAL_SCHEMA_NAME),
-            schema(&["book"], &[("priority", select_field(&["low", "high"]))]),
-        );
-        raw.insert(
-            SchemaName::from("poem"),
-            schema(&[], &[("priority", ref_field("#global/priority", None))]),
-        );
-
-        let ResolvedSchemas {
-            schemas: resolved,
-            ..
-        } = resolve(&raw).expect("resolves");
-
-        let priority = resolved
-            .get("poem")
-            .and_then(|s| s.field("priority"))
-            .expect("priority field resolves via $ref to global");
-        assert_eq!(
-            priority.kind(),
-            &SchemaFieldType::Select(SchemaSelectField::for_test(
-                select_entries(&["low", "high"])
-            ))
-        );
-    }
-
-    #[test]
-    fn a_ref_to_global_resolves_when_the_referrer_sorts_before_it_alphabetically()
-     {
-        let mut raw = IndexMap::new();
-        raw.insert(
-            SchemaName::from(GLOBAL_SCHEMA_NAME),
-            schema(&[], &[("name", select_field(&["anon"]))]),
-        );
-        raw.insert(
-            SchemaName::from("author"),
-            schema(&[], &[("name", ref_field("#global/name", None))]),
-        );
-
-        let ResolvedSchemas {
-            schemas: resolved,
-            ..
-        } = resolve(&raw).expect("resolves");
-
-        let name = resolved
-            .get("author")
-            .and_then(|s| s.field("name"))
-            .expect("name field resolves via $ref to global");
-        assert_eq!(
-            name.kind(),
-            &SchemaFieldType::Select(SchemaSelectField::for_test(
-                select_entries(&["anon"])
-            ))
-        );
-    }
-
-    #[test]
-    fn a_ref_that_switches_field_type_starts_from_empty_base_options() {
-        let mut raw = IndexMap::new();
-        raw.insert(
-            SchemaName::from("book"),
-            schema(&[], &[("status", select_field(&["draft", "done"]))]),
-        );
-        raw.insert(
-            SchemaName::from("sci_fi"),
-            schema(&["book"], &[("status", RawSchemaFieldDef {
-                source: RawSchemaFieldSource::Ref {
-                    address: field_address("#book/status"),
-                    override_type: Some(RawSchemaFieldType::File),
-                },
-                options: options(&[("folders", string_list(&["assets"]))]),
-                ..RawSchemaFieldDef::direct(RawSchemaFieldType::Input)
-            })]),
-        );
-
-        let ResolvedSchemas {
-            schemas: resolved,
-            ..
-        } = resolve(&raw).expect("resolves");
-
-        let status = resolved
-            .get("sci_fi")
-            .and_then(|s| s.field("status"))
-            .expect("status field");
-        assert_eq!(
-            status.kind(),
-            &SchemaFieldType::File(SchemaFileField::for_test(
-                vec!["assets".to_owned()],
-                None,
-                Vec::new(),
-            ))
-        );
-    }
-
-    #[test]
-    fn a_bare_ref_override_with_an_unknown_key_degrades_with_a_warning() {
-        let mut raw = IndexMap::new();
-        raw.insert(
-            SchemaName::from("book"),
-            schema(&[], &[("status", select_field(&["draft", "done"]))]),
-        );
-        raw.insert(
-            SchemaName::from("sci_fi"),
-            schema(&["book"], &[("status", RawSchemaFieldDef {
-                options: options(&[("folders", string_list(&["assets"]))]),
-                ..RawSchemaFieldDef::reference(field_address("#book/status"))
-            })]),
-        );
-
-        let ResolvedSchemas {
-            schemas: resolved,
-            warnings,
-            ..
-        } = resolve(&raw).expect("resolves");
-
-        let status = resolved
-            .get("sci_fi")
-            .and_then(|s| s.field("status"))
-            .expect("status field still resolves from the base");
-        assert_eq!(
-            status.kind(),
-            &SchemaFieldType::Select(SchemaSelectField::for_test(
-                select_entries(&["draft", "done"])
-            ))
-        );
-        assert_eq!(warnings.len(), 1);
-        assert!(matches!(
-            warnings.first().expect("expected warning"),
-            SchemaWarning::UnknownOverrideKey { .. }
-        ));
-    }
-
-    #[test]
-    fn a_bare_ref_override_with_a_type_mismatched_value_degrades_with_a_warning()
-     {
-        let mut raw = IndexMap::new();
-        raw.insert(
-            SchemaName::from("book"),
-            schema(&[], &[(
-                "rating",
-                RawSchemaFieldDef::direct(RawSchemaFieldType::Number),
-            )]),
-        );
-        raw.insert(
-            SchemaName::from("sci_fi"),
-            schema(&["book"], &[("rating", RawSchemaFieldDef {
-                options: options(&[(
-                    "min",
-                    crate::field::FieldValue::String("abc".to_owned()),
-                )]),
-                ..RawSchemaFieldDef::reference(field_address("#book/rating"))
-            })]),
-        );
-
-        let ResolvedSchemas {
-            schemas: resolved,
-            warnings,
-            ..
-        } = resolve(&raw).expect("resolves");
-
-        let rating = resolved
-            .get("sci_fi")
-            .and_then(|s| s.field("rating"))
-            .expect("rating field still resolves from the base");
-        assert_eq!(
-            rating.kind(),
-            &SchemaFieldType::Number(SchemaNumberField::for_test(
-                None, None, None
-            ))
-        );
-        assert_eq!(warnings.len(), 1);
-        assert!(matches!(
-            warnings.first().expect("expected warning"),
-            SchemaWarning::OverrideValueTypeMismatch { .. }
-        ));
-    }
-
-    #[test]
-    fn a_bare_ref_override_still_applies_its_other_valid_keys_alongside_a_dropped_unknown_key()
-     {
-        let mut raw = IndexMap::new();
-        raw.insert(
-            SchemaName::from(GLOBAL_SCHEMA_NAME),
-            schema(&[], &[(
-                "cover",
-                file_field(&["assets"], Some("png"), &["image"]),
-            )]),
-        );
-        raw.insert(
-            SchemaName::from("book"),
-            schema(&[], &[("cover", RawSchemaFieldDef {
-                options: options(&[
-                    ("folders", string_list(&["assets/covers"])),
-                    ("bogus", string_list(&["x"])),
-                ]),
-                ..RawSchemaFieldDef::reference(field_address("#global/cover"))
-            })]),
-        );
-
-        let ResolvedSchemas {
-            schemas: resolved,
-            warnings,
-            ..
-        } = resolve(&raw).expect("resolves");
-
-        let cover = resolved
-            .get("book")
-            .and_then(|s| s.field("cover"))
-            .expect("cover field still resolves from the base");
-        assert_eq!(
-            cover.kind(),
-            &SchemaFieldType::File(SchemaFileField::for_test(
-                vec!["assets/covers".to_owned()],
-                Some("png".to_owned()),
-                vec!["image".to_owned()],
-            ))
-        );
-        assert_eq!(warnings.len(), 1);
-        assert!(matches!(
-            warnings.first().expect("expected warning"),
-            SchemaWarning::UnknownOverrideKey { key, .. } if key == "bogus"
-        ));
-    }
-
-    #[test]
-    #[expect(clippy::unreachable, reason = "exhaustive error-match fallback")]
-    fn a_ref_with_a_type_override_and_an_unknown_key_degrades_to_a_failure() {
-        let mut raw = IndexMap::new();
-        raw.insert(
-            SchemaName::from("book"),
-            schema(&[], &[("status", select_field(&["draft", "done"]))]),
-        );
-        raw.insert(
-            SchemaName::from("sci_fi"),
-            schema(&["book"], &[("status", RawSchemaFieldDef {
-                source: RawSchemaFieldSource::Ref {
-                    address: field_address("#book/status"),
-                    override_type: Some(RawSchemaFieldType::Date),
-                },
-                options: options(&[("values", string_list(&["draft"]))]),
-                ..RawSchemaFieldDef::direct(RawSchemaFieldType::Input)
-            })]),
-        );
-
-        let ResolvedSchemas {
-            failures,
-            ..
-        } = resolve(&raw).expect(
-            "unknown attribute key on a type-overriding $ref degrades, not \
-             aborts",
-        );
-        let err = failures.into_iter().next().expect("one failure").error;
-
-        if let SchemaError::FieldBuilder(inner) = &err
-            && let SchemaFieldBuilderError::Parser(errors) = inner.as_ref()
-        {
-            assert!(
-                matches!(errors.as_slice(), [
-                    SchemaFieldParserError::UnknownKey { .. }
-                ]),
-                "expected a single UnknownKey, got {errors:?}"
+                "expected Parser(UnknownKey), got {err:?}"
             );
-        } else {
-            unreachable!("expected Parser(UnknownKey), got {err}");
+        }
+
+        #[test]
+        fn to_nonexistent_ancestor_field_degrades_to_failure() {
+            let mut raw = IndexMap::new();
+            raw.insert(
+                SchemaName::from("ancestor"),
+                schema(&[], &[("status", select_field(&["draft"]))]),
+            );
+            raw.insert(
+                SchemaName::from("descendant"),
+                schema(&["ancestor"], &[(
+                    "ghost",
+                    ref_field("#ancestor/ghost", None),
+                )]),
+            );
+
+            let ResolvedSchemas {
+                failures,
+                ..
+            } = resolve(&raw).expect("ref to nonexistent field degrades");
+            let err = failures.into_iter().next().expect("one failure").error;
+            assert!(matches!(
+                err,
+                SchemaError::FieldBuilder(inner)
+                    if matches!(
+                        *inner,
+                        SchemaFieldBuilderError::RefFieldNotFound { .. }
+                    )
+            ));
         }
     }
 
-    #[test]
-    #[expect(clippy::unreachable, reason = "exhaustive error-match fallback")]
-    fn a_direct_field_with_an_unknown_key_degrades_to_a_failure() {
-        let mut raw = IndexMap::new();
-        raw.insert(
-            SchemaName::from("book"),
-            schema(&[], &[("published", RawSchemaFieldDef {
-                options: options(&[("values", string_list(&["draft"]))]),
-                ..RawSchemaFieldDef::direct(RawSchemaFieldType::Date)
-            })]),
-        );
+    mod validation {
+        use super::*;
 
-        let ResolvedSchemas {
-            failures,
-            ..
-        } = resolve(&raw).expect("unknown attribute key degrades, not aborts");
-        let err = failures.into_iter().next().expect("one failure").error;
-
-        if let SchemaError::FieldBuilder(inner) = &err
-            && let SchemaFieldBuilderError::Parser(errors) = inner.as_ref()
-        {
-            assert!(
-                matches!(errors.as_slice(), [
-                    SchemaFieldParserError::UnknownKey { .. }
+        #[test]
+        fn rejects_ambiguous_field_names_with_different_case() {
+            let mut raw = IndexMap::new();
+            raw.insert(
+                SchemaName::from("book"),
+                schema(&[], &[
+                    ("status", input_field()),
+                    ("Status", input_field()),
                 ]),
-                "expected a single UnknownKey, got {errors:?}"
             );
-        } else {
-            unreachable!("expected Parser(UnknownKey), got {err}");
+
+            let ResolvedSchemas {
+                failures,
+                ..
+            } = resolve(&raw)
+                .expect("ambiguous field name degrades, not aborts");
+            let err = failures.into_iter().next().expect("one failure").error;
+            assert!(matches!(err, SchemaError::AmbiguousFieldName { .. }));
+        }
+
+        #[test]
+        fn rejects_own_field_colliding_with_inherited_field() {
+            let mut raw = IndexMap::new();
+            raw.insert(
+                SchemaName::from("book"),
+                schema(&[], &[("Due Date", input_field())]),
+            );
+            raw.insert(
+                SchemaName::from("sci_fi"),
+                schema(&["book"], &[("due-date", input_field())]),
+            );
+
+            let ResolvedSchemas {
+                failures,
+                ..
+            } = resolve(&raw)
+                .expect("ambiguous field name degrades, not aborts");
+            let err = failures.into_iter().next().expect("one failure").error;
+            assert!(matches!(err, SchemaError::AmbiguousFieldName { .. }));
+        }
+
+        #[test]
+        fn rejects_direct_field_with_unknown_key() {
+            let mut raw = IndexMap::new();
+            raw.insert(
+                SchemaName::from("book"),
+                schema(&[], &[("published", RawSchemaFieldDef {
+                    options: options(&[("values", string_list(&["draft"]))]),
+                    ..RawSchemaFieldDef::direct(RawSchemaFieldType::Date)
+                })]),
+            );
+
+            let ResolvedSchemas {
+                failures,
+                ..
+            } = resolve(&raw)
+                .expect("unknown attribute key degrades, not aborts");
+            let err = failures.into_iter().next().expect("one failure").error;
+            assert!(
+                matches!(
+                    &err,
+                    SchemaError::FieldBuilder(inner)
+                        if matches!(
+                            inner.as_ref(),
+                            SchemaFieldBuilderError::Parser(errors)
+                                if matches!(
+                                    errors.as_slice(),
+                                    [SchemaFieldParserError::UnknownKey { .. }]
+                                )
+                        )
+                ),
+                "expected Parser(UnknownKey), got {err:?}"
+            );
+        }
+
+        #[test]
+        fn rejects_direct_field_with_type_mismatched_value() {
+            let mut raw = IndexMap::new();
+            raw.insert(
+                SchemaName::from("book"),
+                schema(&[], &[("rating", RawSchemaFieldDef {
+                    options: options(&[(
+                        "min",
+                        crate::field::FieldValue::String("abc".to_owned()),
+                    )]),
+                    ..RawSchemaFieldDef::direct(RawSchemaFieldType::Number)
+                })]),
+            );
+
+            let ResolvedSchemas {
+                failures,
+                ..
+            } = resolve(&raw)
+                .expect("attribute value type mismatch degrades, not aborts");
+            let err = failures.into_iter().next().expect("one failure").error;
+            assert!(
+                matches!(
+                    &err,
+                    SchemaError::FieldBuilder(inner)
+                        if matches!(
+                            inner.as_ref(),
+                            SchemaFieldBuilderError::Parser(errors)
+                                if matches!(
+                                    errors.as_slice(),
+                                    [SchemaFieldParserError::TypeMismatch { .. }]
+                                )
+                        )
+                ),
+                "expected Parser(TypeMismatch), got {err:?}"
+            );
         }
     }
 
-    #[test]
-    #[expect(clippy::unreachable, reason = "exhaustive error-match fallback")]
-    fn a_direct_field_with_a_type_mismatched_value_degrades_to_a_failure() {
-        let mut raw = IndexMap::new();
-        raw.insert(
-            SchemaName::from("book"),
-            schema(&[], &[("rating", RawSchemaFieldDef {
-                options: options(&[(
-                    "min",
-                    crate::field::FieldValue::String("abc".to_owned()),
-                )]),
-                ..RawSchemaFieldDef::direct(RawSchemaFieldType::Number)
-            })]),
-        );
+    mod hierarchy {
+        use pretty_assertions::assert_eq;
 
-        let ResolvedSchemas {
-            failures,
-            ..
-        } = resolve(&raw)
-            .expect("attribute value type mismatch degrades, not aborts");
-        let err = failures.into_iter().next().expect("one failure").error;
+        use super::*;
 
-        if let SchemaError::FieldBuilder(inner) = &err
-            && let SchemaFieldBuilderError::Parser(errors) = inner.as_ref()
-        {
-            assert!(
-                matches!(errors.as_slice(), [
-                    SchemaFieldParserError::TypeMismatch { .. }
-                ]),
-                "expected a single TypeMismatch, got {errors:?}"
+        #[test]
+        fn is_a_matches_transitively_through_extends() {
+            let mut raw = IndexMap::new();
+            raw.insert(SchemaName::from("thing"), schema(&[], &[]));
+            raw.insert(SchemaName::from("book"), schema(&["thing"], &[]));
+            raw.insert(SchemaName::from("sci_fi"), schema(&["book"], &[]));
+
+            let ResolvedSchemas {
+                schemas: resolved,
+                ..
+            } = resolve(&raw).expect("resolves");
+
+            let sci_fi = resolved.get("sci_fi").expect("sci_fi resolved");
+            assert!(sci_fi.is_a("sci_fi"));
+            assert!(sci_fi.is_a("book"));
+            assert!(sci_fi.is_a("thing"));
+            assert!(!sci_fi.is_a("movie"));
+        }
+
+        #[test]
+        fn failed_link_breaks_hierarchy_downstream() {
+            let mut raw = IndexMap::new();
+            raw.insert(
+                SchemaName::from("book"),
+                schema(&[], &[("status", select_field(&["draft"]))]),
             );
-        } else {
-            unreachable!("expected Parser(TypeMismatch), got {err}");
+            raw.insert(
+                SchemaName::from("broken"),
+                schema(&["book"], &[
+                    ("dup", input_field()),
+                    ("Dup", input_field()),
+                ]),
+            );
+            raw.insert(
+                SchemaName::from("sci_fi"),
+                schema(&["broken"], &[("subgenre", input_field())]),
+            );
+
+            let ResolvedSchemas {
+                schemas: resolved,
+                failures,
+                ..
+            } = resolve(&raw).expect("resolves");
+
+            assert_eq!(
+                failures.len(),
+                1,
+                "expected broken to fail: {failures:?}"
+            );
+            let sci_fi = resolved.get("sci_fi").expect("sci_fi still resolves");
+            assert!(sci_fi.field("subgenre").is_some());
+            assert!(
+                sci_fi.field("status").is_none(),
+                "sci_fi must not inherit book's status field"
+            );
+            assert!(!sci_fi.is_a("book"), "the chain broke at broken");
+            assert!(!sci_fi.is_a("broken"), "broken never resolved");
+
+            let book = resolved.get("book").expect("book resolves");
+            assert!(
+                !book.descendants().contains(&SchemaName::from("sci_fi")),
+                "book.descendants() must not list sci_fi: sci_fi no longer \
+                 is-a book"
+            );
+            assert!(!book.descendants().contains(&SchemaName::from("broken")));
+        }
+    }
+
+    mod resilience {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn missing_extends_target_degrades_with_a_warning() {
+            let mut raw = IndexMap::new();
+            raw.insert(
+                SchemaName::from("sci_fi"),
+                schema(&["ghost"], &[("title", input_field())]),
+            );
+
+            let ResolvedSchemas {
+                schemas: resolved,
+                warnings,
+                ..
+            } = resolve(&raw).expect("resolves");
+
+            assert!(warnings.contains(&SchemaWarning::MissingExtendsTarget {
+                schema: SchemaName::from("sci_fi"),
+                target: SchemaName::from("ghost"),
+            }));
+            assert!(warnings.contains(&SchemaWarning::ParentFailedToResolve {
+                schema: SchemaName::from("sci_fi"),
+                parent: SchemaName::from("ghost"),
+            }));
+            let sci_fi =
+                resolved.get("sci_fi").expect("own fields still render");
+            assert!(sci_fi.field("title").is_some());
+            assert!(!sci_fi.is_a("ghost"));
+        }
+
+        #[test]
+        fn malformed_field_does_not_block_unrelated_sibling() {
+            let mut raw = IndexMap::new();
+            raw.insert(
+                SchemaName::from("book"),
+                schema(&[], &[("status", select_field(&["draft"]))]),
+            );
+            raw.insert(
+                SchemaName::from("broken"),
+                schema(&[], &[
+                    ("status", input_field()),
+                    ("Status", input_field()),
+                ]),
+            );
+
+            let ResolvedSchemas {
+                schemas: resolved,
+                failures,
+                ..
+            } = resolve(&raw).expect("unrelated failure does not abort");
+
+            assert!(resolved.contains_key("book"));
+            assert!(!resolved.contains_key("broken"));
+            assert_eq!(failures.len(), 1);
+            let failure = failures.first().expect("one failure");
+            assert_eq!(failure.schema, SchemaName::from("broken"));
+        }
+
+        #[test]
+        fn child_of_failed_parent_resolves_own_fields() {
+            let mut raw = IndexMap::new();
+            raw.insert(
+                SchemaName::from("broken"),
+                schema(&[], &[
+                    ("status", input_field()),
+                    ("Status", input_field()),
+                ]),
+            );
+            raw.insert(
+                SchemaName::from("child"),
+                schema(&["broken"], &[("title", input_field())]),
+            );
+
+            let ResolvedSchemas {
+                schemas: resolved,
+                warnings,
+                failures,
+            } = resolve(&raw).expect("child still resolves");
+
+            assert_eq!(failures.len(), 1);
+            let failure = failures.first().expect("one failure");
+            assert_eq!(failure.schema, SchemaName::from("broken"));
+            assert!(warnings.contains(&SchemaWarning::ParentFailedToResolve {
+                schema: SchemaName::from("child"),
+                parent: SchemaName::from("broken"),
+            }));
+            let child = resolved.get("child").expect("child still resolves");
+            assert!(child.field("title").is_some());
+        }
+
+        #[test]
+        fn rejects_cycle_as_hard_error() {
+            let mut raw = IndexMap::new();
+            raw.insert(SchemaName::from("a"), schema(&["b"], &[]));
+            raw.insert(SchemaName::from("b"), schema(&["a"], &[]));
+
+            let err = resolve(&raw).expect_err("cycle rejected");
+            assert!(
+                matches!(
+                    &err,
+                    SchemaError::Cycle { schemas }
+                        if schemas
+                            == &vec![
+                                SchemaName::from("a"),
+                                SchemaName::from("b")
+                            ]
+                ),
+                "expected Cycle over [a, b], got {err:?}"
+            );
+        }
+
+        #[test]
+        fn multiple_schemas_fail_independently() {
+            let mut raw = IndexMap::new();
+            raw.insert(
+                SchemaName::from("alpha"),
+                schema(&[], &[
+                    ("status", input_field()),
+                    ("Status", input_field()),
+                ]),
+            );
+            raw.insert(
+                SchemaName::from("beta"),
+                schema(&[], &[
+                    ("name", input_field()),
+                    ("Name", input_field()),
+                ]),
+            );
+
+            let ResolvedSchemas {
+                failures,
+                ..
+            } = resolve(&raw).expect("both fail independently");
+
+            assert_eq!(
+                failures.len(),
+                2,
+                "expected two failures: {failures:?}"
+            );
+            let failed_schemas: Vec<&SchemaName> =
+                failures.iter().map(|f| &f.schema).collect();
+            assert!(failed_schemas.contains(&&SchemaName::from("alpha")));
+            assert!(failed_schemas.contains(&&SchemaName::from("beta")));
         }
     }
 }
