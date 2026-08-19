@@ -1,9 +1,18 @@
-//! Schema resolution: linearize the `extends` DAG, merge inherited fields,
-//! and compute hierarchy sets.
+//! Schema resolution: linearize the `extends` DAG, merge inherited fields, and
+//! compute hierarchy sets.
 //!
-//! [`SchemaResolver`] is the single-method entry point. Internally it drives
-//! [`SchemaGraph`]'s typestate protocol, delegates per-Schema field merging to
-//! [`merge_fields`], and filters hierarchy sets against resolution failures.
+//! [`SchemaResolver`] is the single-method entry point. Internally it:
+//!
+//! 1. Strips the Global Schema (a `$ref` target, not an `extends` target) and
+//!    resolves it first so later `$ref` lookups find it.
+//! 2. Drives [`SchemaGraph`]'s typestate protocol: Kahn topological sort yields
+//!    schemas in dependency order.
+//! 3. Delegates per-Schema field merging to `merge_fields`, which applies
+//!    first-listed-wins inheritance, `excludes`, and `$ref` resolution.
+//! 4. Filters hierarchy sets against resolution failures so broken links do not
+//!    propagate to downstream schemas.
+//!
+//! [`SchemaGraph`]: super::graph::SchemaGraph
 
 use std::collections::HashMap;
 
@@ -18,12 +27,17 @@ use super::{
 };
 use crate::field::FieldName;
 
+/// A Schema that failed to resolve, with its [`SchemaError`].
 #[derive(Debug)]
 pub(crate) struct SchemaFailure {
     pub(crate) schema: SchemaName,
     pub(crate) error: SchemaError,
 }
 
+/// Output of a successful resolution pass.
+///
+/// Contains every Schema that resolved without error, alongside warnings for
+/// recoverable defects and failures for hard errors.
 #[derive(Debug)]
 pub(super) struct ResolvedSchemas {
     pub(super) schemas: IndexMap<SchemaName, Schema>,
@@ -31,17 +45,53 @@ pub(super) struct ResolvedSchemas {
     pub(super) failures: Vec<SchemaFailure>,
 }
 
+/// Entry point for resolving a set of raw schemas into [`Schema`] values.
+///
+/// Build with [`new`](Self::new), then call [`resolve`](Self::resolve).
 pub(super) struct SchemaResolver<'a> {
+    /// Raw schemas to resolve, keyed by name.
     raw: &'a IndexMap<SchemaName, RawSchema>,
 }
 
 impl<'a> SchemaResolver<'a> {
+    /// Create a resolver from a borrowed raw-schema map.
     pub(super) fn new(raw: &'a IndexMap<SchemaName, RawSchema>) -> Self {
         Self {
             raw,
         }
     }
 
+    /// Resolve all schemas, returning successes, warnings, and failures.
+    ///
+    /// The Global Schema is stripped from the raw map, resolved first (with its
+    /// `extends` ignored), and reinserted so `$ref` lookups find it. Remaining
+    /// schemas are resolved in Kahn topological order.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SchemaError::Cycle`] if the `extends` DAG contains a cycle.
+    ///
+    /// # Warnings
+    ///
+    /// - [`MissingExtendsTarget`] if an `extends` target has no corresponding
+    ///   Schema file
+    /// - [`DuplicateExtendsTarget`] if the same `extends` target appears more
+    ///   than once
+    /// - [`ParentFailedToResolve`] if a declared parent failed to resolve
+    /// - [`StrayGlobalRequired`] if the Global Schema declares `required =
+    ///   true`
+    /// - [`UnknownOverrideKey`] if a `$ref` override has an unrecognized
+    ///   attribute key
+    /// - [`OverrideValueTypeMismatch`] if a `$ref` override attribute has the
+    ///   wrong value type
+    ///
+    /// [`SchemaError::Cycle`]: super::error::SchemaError::Cycle
+    /// [`MissingExtendsTarget`]: SchemaWarning::MissingExtendsTarget
+    /// [`DuplicateExtendsTarget`]: SchemaWarning::DuplicateExtendsTarget
+    /// [`ParentFailedToResolve`]: SchemaWarning::ParentFailedToResolve
+    /// [`StrayGlobalRequired`]: SchemaWarning::StrayGlobalRequired
+    /// [`UnknownOverrideKey`]: SchemaWarning::UnknownOverrideKey
+    /// [`OverrideValueTypeMismatch`]: SchemaWarning::OverrideValueTypeMismatch
     pub(super) fn resolve(self) -> Result<ResolvedSchemas, SchemaError> {
         let mut warnings = Vec::new();
         let mut resolved: IndexMap<SchemaName, Schema> = IndexMap::new();
@@ -90,7 +140,7 @@ impl<'a> SchemaResolver<'a> {
 }
 
 /// Drive the Kahn topological sort: pop ready schemas, merge their fields,
-/// mark them resolved, and collect warnings/failures.
+/// mark them resolved, and collect warnings and failures.
 fn resolve_in_topological_order(
     graph: &mut SchemaGraph<'_, Building>,
     raw: &IndexMap<SchemaName, RawSchema>,
@@ -126,9 +176,10 @@ fn resolve_in_topological_order(
     }
 }
 
-/// Assign direct children and transitive descendants to each resolved Schema,
-/// filtering out schemas that are not structural descendants due to failed
-/// resolution links.
+/// Assign direct children and transitive descendants to each resolved Schema.
+///
+/// Filters out schemas that are not structural descendants due to failed
+/// resolution links, so broken parent chains do not propagate downstream.
 fn compute_hierarchy_sets(
     graph: &SchemaGraph<'_, Resolved>,
     resolved: &mut IndexMap<SchemaName, Schema>,
@@ -164,14 +215,14 @@ fn compute_hierarchy_sets(
     }
 }
 
-/// Resolve one Schema's effective fields and transitive ancestors, alongside
-/// every warning degraded validation raised while building its own fields.
+/// Resolve one Schema's effective fields and transitive ancestors.
 ///
 /// Merges `parents`' fields first-listed-wins, applies `raw.excludes`, then
-/// overrides the result with `raw`'s own (`$ref`-resolved) fields.
+/// overrides the result with `raw`'s own (`$ref`-resolved) fields. Every
+/// warning from degraded validation is collected alongside the result.
 ///
-/// `parents` must already be resolved in `resolved`: [`SchemaResolver`]
-/// guarantees this by calling in Kahn topological order.
+/// `parents` must already be resolved in `resolved`: the Kahn topological sort
+/// guarantees this ordering.
 fn merge_fields(
     name: SchemaNameRef<'_>,
     raw: &RawSchema,
@@ -223,9 +274,12 @@ fn merge_fields(
     Ok((Schema::new(SchemaName::from(name), fields, ancestors), warnings))
 }
 
-/// Reject `fields` if two entries share a [`FieldKey`] canonical form:
-/// ambiguous field identities would make later note-vs-schema field matching
-/// and unknown-field suggestions unreliable.
+/// Reject `fields` if two entries share a [`FieldKey`] canonical form.
+///
+/// Ambiguous field identities would make later note-vs-schema field
+/// matching and unknown-field suggestions unreliable.
+///
+/// [`FieldKey`]: crate::field::FieldKey
 fn reject_ambiguous_canonical_names(
     name: SchemaNameRef<'_>,
     fields: &IndexMap<FieldName, super::fields::SchemaFieldDef>,

@@ -1,20 +1,23 @@
 //! `extends` DAG linearization via Kahn's topological sort.
 //!
-//! [`SchemaGraph`] owns the DAG bookkeeping so [`super::service`] can drive
+//! [`SchemaGraph`] owns the DAG bookkeeping so [`super::resolver`] can drive
 //! resolution order without tangling graph mechanics into field-merge logic.
 //!
 //! # Ordering
 //!
-//! A Schema is yielded after all its present `extends` parents. Tied in-degree
-//! Schemas yield in name order, with the Global Schema forced first.
+//! A Schema is yielded after all its present `extends` parents. Schemas whose
+//! in-degree reaches zero simultaneously yield in their raw-map insertion
+//! order. The resolver strips the Global Schema from the graph, so it never
+//! competes for queue position.
 //!
 //! # Driving resolution
 //!
-//! Build with [`SchemaGraph::new`], then loop [`next_ready`]/[`parents_of`]/
-//! [`mark_resolved`] in [`Building`] state. Call [`into_resolved`] to check
-//! for cycles and transition to [`Resolved`], where [`children_by_name`]/
-//! [`descendants_by_name`] give the bulk hierarchy sets.
+//! Build with [`SchemaGraph::new`], then loop
+//! [`next_ready`]/[`parents_of`]/[`mark_resolved`] in [`Building`] state. Call
+//! [`into_resolved`] to check for cycles and transition to [`Resolved`], where
+//! [`children_by_name`]/[`descendants_by_name`] give the bulk hierarchy sets.
 //!
+//! [`SchemaGraph::new`]: SchemaGraph::new
 //! [`next_ready`]: SchemaGraph::next_ready
 //! [`parents_of`]: SchemaGraph::parents_of
 //! [`mark_resolved`]: SchemaGraph::mark_resolved
@@ -40,9 +43,9 @@ pub(super) struct Resolved;
 
 /// Kahn's-algorithm state for linearizing the `extends` DAG.
 ///
-/// `State` enforces valid transitions at compile time:
-/// - [`Building`]: call `next_ready`/`parents_of`/`mark_resolved` in a loop
-/// - [`Resolved`]: call `children_by_name`/`descendants_by_name`
+/// `State` enforces valid transitions at compile time via [`PhantomData`]:
+/// - [`Building`] for the resolution loop
+/// - [`Resolved`] for hierarchy queries after cycle-check.
 pub(super) struct SchemaGraph<'a, State = Building> {
     /// Borrowed raw schemas — source of truth for `extends` parents.
     raw: &'a IndexMap<SchemaName, RawSchema>,
@@ -58,7 +61,7 @@ pub(super) struct SchemaGraph<'a, State = Building> {
 }
 
 impl<'a, State> SchemaGraph<'a, State> {
-    /// Moves the graph into the next lifecycle state.
+    /// Move the graph into the next lifecycle state, carrying all fields.
     fn transition_to<NextState>(self) -> SchemaGraph<'a, NextState> {
         SchemaGraph {
             raw: self.raw,
@@ -74,8 +77,18 @@ impl<'a, State> SchemaGraph<'a, State> {
 impl<'a> SchemaGraph<'a, Building> {
     /// Build the `extends` adjacency and seed the ready queue.
     ///
-    /// Missing `extends` targets emit [`SchemaWarning::MissingExtendsTarget`].
-    /// The Global Schema is forced to the front of its tier.
+    /// Scans each schema's `extends` targets, emitting warnings for
+    /// targets absent from `raw_schemas` and for repeated targets.
+    ///
+    /// # Warnings
+    ///
+    /// - [`MissingExtendsTarget`] if an `extends` target has no corresponding
+    ///   Schema file
+    /// - [`DuplicateExtendsTarget`] if the same `extends` target appears more
+    ///   than once
+    ///
+    /// [`MissingExtendsTarget`]: SchemaWarning::MissingExtendsTarget
+    /// [`DuplicateExtendsTarget`]: SchemaWarning::DuplicateExtendsTarget
     pub(super) fn new(
         raw_schemas: &'a IndexMap<SchemaName, RawSchema>,
     ) -> (Self, Vec<SchemaWarning>) {
@@ -135,22 +148,24 @@ impl<'a> SchemaGraph<'a, Building> {
         )
     }
 
-    /// Pop the next Schema whose in-degree reached zero, marking it visited, or
-    /// `None` once the ready queue drains.
+    /// Pop the next Schema whose in-degree reached zero, marking it visited.
+    ///
+    /// Returns `None` once the ready queue drains.
     pub(super) fn next_ready(&mut self) -> Option<SchemaNameRef<'a>> {
         let name = self.queue.pop_front()?;
         self.visited.insert(name);
         Some(name)
     }
 
-    /// Borrow `name`'s `extends` parent list, or an empty slice if
-    /// `name` is not a known Schema.
+    /// Borrow `name`'s raw `extends` parent list.
+    ///
+    /// Returns an empty slice if `name` is not a known Schema.
     pub(super) fn parents_of(&self, name: SchemaNameRef<'_>) -> &[SchemaName] {
         self.raw.get(name.as_str()).map_or(&[], |s| s.extends.as_slice())
     }
 
-    /// Record `name` as resolved, releasing any children whose in-degree just
-    /// hit zero into the ready queue.
+    /// Record `name` as resolved, releasing children whose in-degree hit zero
+    /// into the ready queue.
     pub(super) fn mark_resolved(&mut self, name: SchemaNameRef<'_>) {
         for &child in
             self.children_by_name.get(name.as_str()).into_iter().flatten()
@@ -164,8 +179,9 @@ impl<'a> SchemaGraph<'a, Building> {
         }
     }
 
-    /// Return every Schema name that never reached in-degree zero (a cycle
-    /// member), or `None` if every Schema was visited.
+    /// Return every Schema name that never reached in-degree zero.
+    ///
+    /// Returns `None` if every Schema was visited (no cycle).
     fn cyclic_remainder(&self) -> Option<Vec<SchemaName>> {
         if self.visited.len() == self.raw.len() {
             return None;
@@ -182,9 +198,14 @@ impl<'a> SchemaGraph<'a, Building> {
     /// Consume the building graph, returning a resolved graph if the DAG is
     /// acyclic, or the cyclic schemas if a cycle exists.
     ///
-    /// Drives any remaining [`next_ready`] / [`mark_resolved`] steps before
-    /// checking for cycles, so callers get correct results even if the loop
-    /// wasn't fully exhausted.
+    /// Drives any remaining [`SchemaGraph::next_ready`] /
+    /// [`SchemaGraph::mark_resolved`] steps before checking for cycles, so
+    /// callers get correct results even if the loop was not fully exhausted.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(Vec<SchemaName>)` listing every Schema that never reached
+    /// in-degree zero.
     pub(super) fn into_resolved(
         mut self,
     ) -> Result<SchemaGraph<'a, Resolved>, Vec<SchemaName>> {
@@ -200,6 +221,9 @@ impl<'a> SchemaGraph<'a, Building> {
 
 impl<'a> SchemaGraph<'a, Resolved> {
     /// Return every Schema's direct `extends` children, keyed by parent name.
+    ///
+    /// Only Schemas that have at least one child appear in the returned map.
+    /// Schemas without children are omitted (not mapped to empty vectors).
     #[must_use]
     pub(super) fn children_by_name(
         &self,
@@ -210,16 +234,17 @@ impl<'a> SchemaGraph<'a, Resolved> {
     /// Return every Schema's transitive `extends` descendants, keyed by
     /// ancestor name.
     ///
-    /// Computed via topological dynamic programming: [`SchemaIndex`] bit
-    /// positions are assigned in Kahn's order (parents after children), so
-    /// processing nodes in reverse topological order guarantees every
-    /// child's bitvec is already computed before its parent. Each node's
-    /// bitvec is filled by OR-ing its children's pre-computed bitvecs
-    /// in-place — no recursion, no cloning, no per-call allocation.
+    /// Computed via topological dynamic programming:
     ///
-    /// Total work: `O(V²/w)` for bitset operations (where `w` is the
-    /// machine word size, typically 64) plus `O(V²)` for expanding
-    /// bitvecs back to name sets.
+    /// - [`SchemaIndex`] bit positions are assigned in Kahn's order (parents
+    ///   after children), so processing nodes in reverse topological order
+    ///   guarantees every child's bitvec is already computed before its parent.
+    /// - Each node's bitvec is filled by OR-ing its children's pre-computed
+    ///   bitvecs in place.
+    ///
+    /// Total work: `O(V^2/w)` for bitset operations (where `w` is the machine
+    /// word size, typically 64) plus `O(V^2)` for expanding bitvecs back to
+    /// name sets.
     #[must_use]
     pub(super) fn descendants_by_name(
         &self,
@@ -228,7 +253,7 @@ impl<'a> SchemaGraph<'a, Resolved> {
         let capacity = index.bit_count();
         let children = &self.children_by_name;
 
-        // Pre-allocate one bitvec per schema — O(V²/w) total.
+        // Pre-allocate one bitvec per schema: O(V^2/w) total.
         let mut memo: IndexMap<SchemaName, BitVec> = index
             .bit_to_name
             .iter()
@@ -251,8 +276,10 @@ impl<'a> SchemaGraph<'a, Resolved> {
 
     /// OR a single child's bitvec into its parent's.
     ///
-    /// Sets the direct-child bit and merges the child's transitive
-    /// descendants. The clone is bounded: one per edge, O(V/w) each.
+    /// Sets the direct-child bit and merges the child's transitive descendants.
+    /// One clone per edge, `O(V/w)` each, required by the borrow checker
+    /// (cannot hold an immutable ref to the child entry while mutably borrowing
+    /// the parent entry).
     fn merge_child(
         parent: &SchemaNameRef<'_>,
         child: SchemaNameRef<'_>,
@@ -264,9 +291,6 @@ impl<'a> SchemaGraph<'a, Resolved> {
         {
             parent_bits.set(bit, true);
         }
-        // Clone is required: borrow checker prevents holding an immutable
-        // ref to the child entry while mutably borrowing the parent entry.
-        // One clone per edge, O(V/w) each — optimal for this approach.
         if let Some(child_bits) = memo.get(child.as_str()) {
             let child_bits = child_bits.clone();
             if let Some(parent_bits) = memo.get_mut(parent.as_str()) {
@@ -275,12 +299,13 @@ impl<'a> SchemaGraph<'a, Resolved> {
         }
     }
 
-    /// Expand `BitVec` descendant sets back into owned name sets by scanning
-    /// bit positions directly via [`SchemaIndex`].
+    /// Expand `BitVec` descendant sets back into owned name sets.
     ///
-    /// Because bit positions are assigned in topological order (parents
-    /// before children), the resulting sets naturally preserve that ordering
-    /// without any re-sorting. Total work: `O(V²)`.
+    /// Scans bit positions via [`SchemaIndex`]. Because bit positions are
+    /// assigned in topological order (parents before children), the resulting
+    /// sets preserve that ordering without re-sorting.
+    ///
+    /// Total work: `O(V^2)`.
     fn expand_descendants(
         memo: &IndexMap<SchemaName, BitVec>,
         index: &SchemaIndex,
@@ -305,15 +330,15 @@ impl<'a> SchemaGraph<'a, Resolved> {
 
 /// Bidirectional mapping between schema names and bit positions.
 ///
-/// Built once from the schema set at resolve time. Provides O(1) lookup
-/// in both directions: name → bit index and bit index → name.
+/// Built once from the schema set at resolve time. Provides O(1) lookup in both
+/// directions: name to bit index and bit index to name.
 struct SchemaIndex {
     name_to_bit: IndexMap<SchemaName, usize>,
     bit_to_name: Vec<SchemaName>,
 }
 
 impl SchemaIndex {
-    /// Build the index from schema names in declaration order.
+    /// Build the index from schema names in the given order.
     fn new<'a>(names: impl Iterator<Item = SchemaNameRef<'a>>) -> Self {
         let mut name_to_bit = IndexMap::new();
         let mut bit_to_name = Vec::new();
@@ -328,7 +353,7 @@ impl SchemaIndex {
         }
     }
 
-    /// Number of schemas (bitset capacity).
+    /// Number of schemas in the index (bitset capacity).
     fn bit_count(&self) -> usize {
         self.bit_to_name.len()
     }
