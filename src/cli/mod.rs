@@ -41,8 +41,8 @@ use crate::{
     DialogProvider,
     config::{Config, ConfigService, DiscoveryScope, TrustRequests},
     index::FileIndex,
-    query::{self, QueryError, QueryOutcome, QuerySource},
-    schema::{SchemaService, resolve_sources},
+    query::{self, QueryError, QueryOutcome, QuerySource, resolve_classes},
+    schema::SchemaService,
 };
 
 /// Top-level result of a successful CLI command.
@@ -290,7 +290,7 @@ fn parse_source(
         .map_err(|source| query_error(root, source))?;
     if source.has_classes() {
         let (service, warnings, failures) =
-            SchemaService::new(config.to_schema_spec()).map_err(|error| {
+            SchemaService::new(&config.to_schema_spec()).map_err(|error| {
                 CliError::SchemaQuery {
                     root: root.to_path_buf(),
                     source: error,
@@ -305,7 +305,7 @@ fn parse_source(
                 "Schema failed to resolve; excluded from the registry"
             );
         }
-        resolve_sources(&mut source, &service);
+        resolve_classes(&mut source, &service);
     }
     Ok(source)
 }

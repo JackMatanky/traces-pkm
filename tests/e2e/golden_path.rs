@@ -101,7 +101,10 @@ fn init_trust_index_list_table_task_and_template_chain_through_one_project() {
     let list =
         run(root.path(), state_dir.path(), config_home.path(), &["list"]);
     assert!(list.is_success(), "stderr: {}", list.stderr);
-    assert_eq!(list.stdout, "- notes/golden.md\n");
+    // `list` with no `--from` filter matches every project file, not only
+    // Markdown Notes (Page/Note split, schema-query-decouple#1): `init` +
+    // `trust` already scaffolded `.traces/config.toml` by this point.
+    assert_eq!(list.stdout, "- .traces/config.toml\n- notes/golden.md\n");
 
     let table = run(root.path(), state_dir.path(), config_home.path(), &[
         "table",

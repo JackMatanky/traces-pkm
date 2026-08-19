@@ -17,10 +17,11 @@
 //! Precedence: `NOT` > `AND` > `OR`; parentheses override.
 //! See the [parent module](super) for escaping rules.
 
-use std::{collections::BTreeSet, path::PathBuf};
+use std::{collections::BTreeSet, path::Path};
 
 use logos::{Lexer, Logos};
 use miette::SourceSpan;
+use regex::Regex;
 
 use super::{
     QueryError,
@@ -70,16 +71,16 @@ pub struct QuerySourceExpr(LogicalExpr<SourceAtom>);
 ///
 /// - **[`Tag`]**: matches if the Note carries the named tag or any nested
 ///   sub-tag (`#book` matches `#book/fiction`)
-/// - **[`Path`]**: matches if the file path equals the stored path exactly, or
-///   its folder starts with it (`books/` matches `books/dune.md`)
+/// - **[`Path`]**: matches if the file path matches the compiled glob (`books/`
+///   compiles to `books/**`, matching every file under it)
 /// - **[`Class`]**: matches if any of the Note's class field values appears in
 ///   the resolved [`ClassExpansionMode`] set
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum SourceAtom {
     /// Matches an exact tag or any nested sub-tag.
     Tag(String),
-    /// Matches an exact path or folder prefix.
-    Path(PathBuf),
+    /// Matches a path against a compiled glob pattern.
+    Path(GlobPattern),
     /// Matches any named File Class under the requested expansion mode.
     Class {
         /// Raw class names requested by the user.
@@ -89,26 +90,93 @@ pub(crate) enum SourceAtom {
     },
 }
 
+/// Compiled glob pattern backing [`SourceAtom::Path`].
+///
+/// Dialect: `*` matches any run of characters except `/`; `**` matches any run
+/// of characters including `/`; every other character matches literally. The
+/// compiled regex is anchored to match the whole path and is built once at
+/// construction, not per-match.
+#[derive(Clone)]
+pub(crate) struct GlobPattern {
+    regex: Regex,
+    pattern: String,
+}
+
+impl GlobPattern {
+    /// Compiles `pattern` (glob syntax: `*`, `**`, literal characters) into an
+    /// anchored path matcher.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`regex::Error`] if the translated pattern fails to compile as
+    /// a regex (not expected for this fixed `*`/`**`-only translation, but the
+    /// compile step is fallible in principle).
+    fn compile(pattern: &str) -> Result<Self, regex::Error> {
+        let mut regex_source = String::from("^");
+        let mut rest = pattern;
+        while let Some(index) = rest.find('*') {
+            regex_source.push_str(&regex::escape(&rest[..index]));
+            rest = &rest[index.saturating_add(1)..];
+            if let Some(stripped) = rest.strip_prefix('*') {
+                regex_source.push_str(".*");
+                rest = stripped;
+            } else {
+                regex_source.push_str("[^/]*");
+            }
+        }
+        regex_source.push_str(&regex::escape(rest));
+        regex_source.push('$');
+        Regex::new(&regex_source).map(|regex| Self {
+            regex,
+            pattern: pattern.to_owned(),
+        })
+    }
+
+    /// Returns whether `path` matches this glob.
+    #[must_use]
+    fn is_match(&self, path: &Path) -> bool {
+        self.regex.is_match(&path.to_string_lossy())
+    }
+}
+
+impl std::fmt::Debug for GlobPattern {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("GlobPattern").field(&self.pattern).finish()
+    }
+}
+
+impl PartialEq for GlobPattern {
+    fn eq(&self, other: &Self) -> bool {
+        self.pattern == other.pattern
+    }
+}
+
+impl Eq for GlobPattern {}
+
 impl SourceAtom {
     /// Returns whether `file` and `note` match this atom.
+    ///
+    /// `note` is `None` for files with no parsed [`Note`] (non-Markdown files);
+    /// [`Self::Tag`] and [`Self::Class`] never match a note-less file, while
+    /// [`Self::Path`] never reads `note`.
     fn is_match(
         &self,
         file: &FileRecord,
-        note: &Note,
+        note: Option<&Note>,
         class_field: &str,
     ) -> bool {
         match self {
-            Self::Tag(tag) => {
+            Self::Tag(tag) => note.is_some_and(|note| {
                 note.tags().iter().any(|value| value.is_nested_under(tag))
-            }
-            Self::Path(path) => {
-                file.path() == path || file.folder().starts_with(path)
-            }
+            }),
+            Self::Path(pattern) => pattern.is_match(file.path()),
             Self::Class {
                 mode,
                 ..
-            } => class_values(note, class_field)
-                .any(|value| mode.classes().contains(value)),
+            } => note.is_some_and(|note| {
+                class_values(note, class_field)
+                    .any(|value| mode.classes().contains(value))
+            }),
         }
     }
 }
@@ -122,8 +190,8 @@ impl SourceAtom {
 /// | `Descendants` | Named class and all transitive sub-classes | `@C*` | `class(C, descendants)` |
 ///
 /// The inner [`BTreeSet`] holds precomputed class names. Populate via
-/// [`set_classes`](Self::set_classes) before matching; the set is empty
-/// after parsing and resolved at query execution time.
+/// [`set_classes`](Self::set_classes) before matching; the set is empty after
+/// parsing and resolved at query execution time.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ClassExpansionMode {
     /// Match only the named class.
@@ -174,7 +242,7 @@ impl LogicalExpr<SourceAtom> {
     fn is_match(
         &self,
         file: &FileRecord,
-        note: &Note,
+        note: Option<&Note>,
         class_field: &str,
     ) -> bool {
         match self {
@@ -214,7 +282,7 @@ impl QuerySourceExpr {
     pub(crate) fn is_match(
         &self,
         file: &FileRecord,
-        note: &Note,
+        note: Option<&Note>,
         class_field: &str,
     ) -> bool {
         self.0.is_match(file, note, class_field)
@@ -234,13 +302,57 @@ impl QuerySourceExpr {
     /// Applies `visitor` to every [`SourceAtom`] in the expression tree.
     ///
     /// Used by the query execution pipeline to populate
-    /// [`ClassExpansionMode::set_classes`] on each
-    /// [`Class`](SourceAtom::Class) atom before matching.
+    /// [`ClassExpansionMode::set_classes`] on each [`Class`](SourceAtom::Class)
+    /// atom before matching.
     pub(crate) fn visit_atoms_mut(
         &mut self,
         visitor: &mut impl FnMut(&mut SourceAtom),
     ) {
         self.0.visit_atoms_mut(visitor);
+    }
+
+    /// Wraps a single atom as an expression.
+    #[must_use]
+    pub(crate) fn atom(atom: SourceAtom) -> Self {
+        Self(LogicalExpr::Atom(atom))
+    }
+
+    /// Builds a disjunction (OR) of `first` and `rest`.
+    ///
+    /// Takes a required `first` atom so an empty disjunction is
+    /// unrepresentable — a caller that might have zero atoms handles that
+    /// case itself before calling (see `file_field_source`'s folder
+    /// branch), instead of this constructor asserting it away at runtime.
+    #[must_use]
+    pub(crate) fn disjunction(
+        first: SourceAtom,
+        rest: Vec<SourceAtom>,
+    ) -> Self {
+        if rest.is_empty() {
+            Self::atom(first)
+        } else {
+            let mut atoms = Vec::with_capacity(rest.len().saturating_add(1));
+            atoms.push(LogicalExpr::Atom(first));
+            atoms.extend(rest.into_iter().map(LogicalExpr::Atom));
+            Self(LogicalExpr::Or(atoms))
+        }
+    }
+
+    /// Builds a conjunction (AND) of `first` and `rest`.
+    ///
+    /// Takes a required `first` term for the same reason as
+    /// [`disjunction`](Self::disjunction): an empty conjunction is
+    /// unrepresentable rather than runtime-checked.
+    #[must_use]
+    pub(crate) fn conjunction(first: Self, rest: Vec<Self>) -> Self {
+        if rest.is_empty() {
+            first
+        } else {
+            let mut terms = Vec::with_capacity(rest.len().saturating_add(1));
+            terms.push(first.0);
+            terms.extend(rest.into_iter().map(|term| term.0));
+            Self(LogicalExpr::And(terms))
+        }
     }
 }
 
@@ -278,7 +390,7 @@ impl QuerySource {
     pub(crate) fn is_match(
         &self,
         file: &FileRecord,
-        note: &Note,
+        note: Option<&Note>,
         class_field: &str,
     ) -> bool {
         match self {
@@ -298,6 +410,59 @@ impl QuerySource {
             Self::Expr(expression) => expression.has_classes(),
         }
     }
+}
+
+/// Resolves File Class names against the Schema domain.
+///
+/// Implemented by `schema::SchemaService` in a dedicated composition module
+/// (`crate::file_class_expander`) so neither `query` nor `schema` depends on
+/// the other's types.
+pub(crate) trait FileClassExpander {
+    /// Populates `mode`'s match set from `classes` at its requested depth.
+    fn expand(&self, classes: &[String], mode: &mut ClassExpansionMode);
+}
+
+/// Resolve every File Class leaf in `source` against `expander`.
+///
+/// This caller-side pre-pass keeps parsing and matching independent of any
+/// concrete class-resolving implementation.
+///
+/// # Arguments
+///
+/// * `source`: query source expression to expand class atoms in.
+/// * `expander`: resolves class names against the Schema domain.
+pub(crate) fn resolve_classes<R: FileClassExpander>(
+    source: &mut QuerySource,
+    expander: &R,
+) {
+    let QuerySource::Expr(expression) = source else {
+        return;
+    };
+    expression.visit_atoms_mut(&mut |atom| {
+        if let SourceAtom::Class {
+            names,
+            mode,
+        } = atom
+        {
+            expander.expand(names, mode);
+        }
+    });
+}
+
+/// Compiles `pattern` (glob syntax: `*`, `**`, literal characters) into a
+/// [`SourceAtom::Path`].
+///
+/// For programmatically-built patterns (e.g. Schema `file`-field globs), the
+/// fixed `*`/`**`-only translation this crate uses never actually produces
+/// an invalid regex — but [`GlobPattern::compile`] stays honestly fallible
+/// rather than asserting that invariant with a panic, so callers propagate a
+/// real error instead.
+///
+/// # Errors
+///
+/// Returns a [`regex::Error`] if `pattern` fails to compile as a regex.
+pub(crate) fn compile_glob(pattern: &str) -> Result<SourceAtom, regex::Error> {
+    GlobPattern::compile(pattern).map(SourceAtom::Path)
 }
 
 /// Extracts string File Class values from the frontmatter of a note.
@@ -461,8 +626,17 @@ impl LogicalGrammar for SourceGrammar {
             }) => parse_sigil(input, &sigil, span),
             Some(Spanned {
                 value: SourceToken::Quoted(path) | SourceToken::Bare(path),
-                ..
-            }) => Ok(SourceAtom::Path(PathBuf::from(path))),
+                span,
+            }) => {
+                let glob = if path.ends_with('/') {
+                    format!("{path}**")
+                } else {
+                    path
+                };
+                GlobPattern::compile(&glob)
+                    .map(SourceAtom::Path)
+                    .map_err(|_| syntax_error(input, span, "a valid path glob"))
+            }
             Some(Spanned {
                 value: SourceToken::Class,
                 span,
@@ -640,8 +814,17 @@ mod tests {
             LogicalExpr::Atom(SourceAtom::Tag(value.to_owned()))
         }
 
+        #[expect(
+            clippy::panic,
+            reason = "test helper asserting the parsed shape is a path atom"
+        )]
         fn path(value: &str) -> LogicalExpr<SourceAtom> {
-            LogicalExpr::Atom(SourceAtom::Path(PathBuf::from(value)))
+            match QuerySourceExpr::parse(value).expect("valid path") {
+                QuerySourceExpr(
+                    atom @ LogicalExpr::Atom(SourceAtom::Path(_)),
+                ) => atom,
+                other => panic!("expected a path atom, got {other:?}"),
+            }
         }
 
         fn class(
@@ -750,6 +933,70 @@ mod tests {
                 assert!(QuerySourceExpr::parse(invalid).is_err(), "{invalid}");
             }
         }
+
+        #[test]
+        fn parses_a_single_star_wildcard_path_glob() {
+            assert!(QuerySourceExpr::parse("covers/*.md").is_ok());
+        }
+
+        #[test]
+        fn parses_a_double_star_wildcard_path_glob() {
+            assert!(QuerySourceExpr::parse("**/draft.md").is_ok());
+        }
+    }
+
+    mod constructors {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn disjunction_with_no_rest_collapses_to_a_bare_atom() {
+            let atom = SourceAtom::Tag("book".to_owned());
+            assert_eq!(
+                QuerySourceExpr::disjunction(atom.clone(), Vec::new()),
+                QuerySourceExpr::atom(atom)
+            );
+        }
+
+        #[test]
+        fn disjunction_with_rest_wraps_every_atom_in_order() {
+            let first = SourceAtom::Tag("book".to_owned());
+            let second = SourceAtom::Tag("movie".to_owned());
+            assert_eq!(
+                QuerySourceExpr::disjunction(first.clone(), vec![
+                    second.clone()
+                ]),
+                QuerySourceExpr(LogicalExpr::Or(vec![
+                    LogicalExpr::Atom(first),
+                    LogicalExpr::Atom(second),
+                ]))
+            );
+        }
+
+        #[test]
+        fn conjunction_with_no_rest_collapses_to_the_first_term() {
+            let term =
+                QuerySourceExpr::atom(SourceAtom::Tag("book".to_owned()));
+            assert_eq!(
+                QuerySourceExpr::conjunction(term.clone(), Vec::new()),
+                term
+            );
+        }
+
+        #[test]
+        fn conjunction_with_rest_wraps_every_term_in_order() {
+            let first =
+                QuerySourceExpr::atom(SourceAtom::Tag("book".to_owned()));
+            let second =
+                QuerySourceExpr::atom(SourceAtom::Tag("movie".to_owned()));
+            assert_eq!(
+                QuerySourceExpr::conjunction(first.clone(), vec![
+                    second.clone()
+                ]),
+                QuerySourceExpr(LogicalExpr::And(vec![first.0, second.0]))
+            );
+        }
     }
 
     mod is_match {
@@ -782,7 +1029,7 @@ mod tests {
                 QuerySourceExpr::parse("(#book and books/) and not archive/")
                     .expect("valid source");
 
-            assert!(expression.is_match(file, note, "class"));
+            assert!(expression.is_match(file, Some(note), "class"));
         }
 
         #[test]
@@ -793,16 +1040,14 @@ mod tests {
             let note = index.note(Path::new("books/dune.md")).expect("Note");
 
             assert!(
-                LogicalExpr::Atom(SourceAtom::Path(PathBuf::from(
-                    "books/dune.md"
-                )))
-                .is_match(file, note, "class")
+                QuerySourceExpr::parse("books/dune.md")
+                    .expect("valid source")
+                    .is_match(file, Some(note), "class")
             );
             assert!(
-                !LogicalExpr::Atom(SourceAtom::Path(PathBuf::from(
-                    "books/hyperion.md"
-                )))
-                .is_match(file, note, "class")
+                !QuerySourceExpr::parse("books/hyperion.md")
+                    .expect("valid source")
+                    .is_match(file, Some(note), "class")
             );
         }
 
@@ -819,8 +1064,95 @@ mod tests {
                 ])),
             });
 
-            assert!(expression.is_match(file, note, "kind"));
-            assert!(!expression.is_match(file, note, "class"));
+            assert!(expression.is_match(file, Some(note), "kind"));
+            assert!(!expression.is_match(file, Some(note), "class"));
+        }
+
+        #[test]
+        fn single_star_wildcard_matches_one_folder_level_but_not_a_subfolder() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::create_dir_all(temp.path().join("covers/sub"))
+                .expect("create nested dir");
+            fs::write(temp.path().join("covers/dune.md"), "# Dune")
+                .expect("write direct file");
+            fs::write(temp.path().join("covers/sub/hidden.md"), "# Hidden")
+                .expect("write nested file");
+            let index = FileIndex::build(temp.path()).expect("build index");
+            let expression =
+                QuerySourceExpr::parse("covers/*.md").expect("valid source");
+            let direct =
+                index.record(Path::new("covers/dune.md")).expect("File Record");
+            let nested = index
+                .record(Path::new("covers/sub/hidden.md"))
+                .expect("File Record");
+
+            assert!(expression.is_match(direct, None, "class"));
+            assert!(!expression.is_match(nested, None, "class"));
+        }
+
+        #[test]
+        fn double_star_wildcard_crosses_folder_boundaries() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::create_dir_all(temp.path().join("covers/sub"))
+                .expect("create nested dir");
+            fs::write(temp.path().join("covers/dune.md"), "# Dune")
+                .expect("write direct file");
+            fs::write(temp.path().join("covers/sub/hidden.md"), "# Hidden")
+                .expect("write nested file");
+            let index = FileIndex::build(temp.path()).expect("build index");
+            // Requires an intermediate segment between `covers/` and the
+            // final `*.md`, so a direct child does not match — proving
+            // `**` (unlike `*`) crosses `/` boundaries, not merely that it
+            // behaves like the `covers/` folder shorthand.
+            let expression =
+                QuerySourceExpr::parse("covers/**/*.md").expect("valid source");
+            let direct =
+                index.record(Path::new("covers/dune.md")).expect("File Record");
+            let nested = index
+                .record(Path::new("covers/sub/hidden.md"))
+                .expect("File Record");
+
+            assert!(!expression.is_match(direct, None, "class"));
+            assert!(expression.is_match(nested, None, "class"));
+        }
+    }
+
+    mod resolve_classes {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        /// Test double for [`FileClassExpander`]: records every call and
+        /// resolves each class name to itself, so unresolved (not-yet-a-
+        /// Schema) names are preserved rather than dropped.
+        #[derive(Default)]
+        struct RecordingExpander {
+            calls: std::cell::RefCell<Vec<Vec<String>>>,
+        }
+
+        impl FileClassExpander for RecordingExpander {
+            fn expand(
+                &self,
+                classes: &[String],
+                mode: &mut ClassExpansionMode,
+            ) {
+                self.calls.borrow_mut().push(classes.to_vec());
+                mode.set_classes(classes.iter().cloned().collect());
+            }
+        }
+
+        #[test]
+        fn walks_nested_expressions_and_preserves_unknowns() {
+            let mut source = QuerySource::parse("@thing+ and not @ghost*")
+                .expect("source parses");
+            let expander = RecordingExpander::default();
+
+            super::super::resolve_classes(&mut source, &expander);
+
+            assert_eq!(expander.calls.into_inner(), vec![
+                vec!["thing".to_owned()],
+                vec!["ghost".to_owned()],
+            ]);
         }
     }
 }

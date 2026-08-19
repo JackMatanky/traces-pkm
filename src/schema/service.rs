@@ -15,11 +15,7 @@ use super::{
     model::Schema,
     resolver::{SchemaFailure, SchemaResolver},
 };
-use crate::{
-    BaseNameRef,
-    config::SchemaConfigSpec,
-    query::{ClassExpansionMode, QuerySource, SourceAtom},
-};
+use crate::{BaseNameRef, config::SchemaConfigSpec};
 
 /// Schema loading, resolution, and hierarchy/class query facade.
 ///
@@ -28,7 +24,6 @@ use crate::{
 /// registry type or re-resolution.
 #[derive(Debug)]
 pub struct SchemaService {
-    spec: SchemaConfigSpec,
     schemas: IndexMap<SchemaName, Arc<Schema>>,
 }
 
@@ -62,7 +57,7 @@ impl SchemaService {
     /// [`Cycle`]: SchemaError::Cycle
     /// [`ParentFailedToResolve`]: SchemaWarning::ParentFailedToResolve
     pub(crate) fn new(
-        spec: SchemaConfigSpec,
+        spec: &SchemaConfigSpec,
     ) -> Result<SchemaConstruction, SchemaError> {
         let raw = read_raw_schemas(spec.directory())?;
         let resolved = SchemaResolver::new(&raw).resolve()?;
@@ -73,19 +68,11 @@ impl SchemaService {
             .collect();
         Ok((
             Self {
-                spec,
                 schemas,
             },
             resolved.warnings,
             resolved.failures,
         ))
-    }
-
-    /// Return the config projection this service was built from.
-    #[inline]
-    #[must_use]
-    pub(crate) fn spec(&self) -> &SchemaConfigSpec {
-        &self.spec
     }
 
     /// Return a reference to the named Schema, or `None` if no Schema by that
@@ -145,7 +132,7 @@ impl SchemaService {
     /// - `matches(&["ghost"])` → `{"ghost"}`
     #[must_use]
     pub(crate) fn matches(&self, classes: &[String]) -> IndexSet<String> {
-        warn_unknown_classes(self, classes);
+        self.warn_unknown_classes(classes);
         let mut matches: IndexSet<String> = classes.iter().cloned().collect();
         for class in classes {
             if let Some(schema) = self.get(class) {
@@ -160,83 +147,21 @@ impl SchemaService {
         matches
     }
 
-    /// Populate `mode`'s match set from `classes` at its requested depth.
+    /// Warn once per unknown class name in `classes`.
     ///
-    /// Unknown class names remain in the set so a [`Note`](crate::note::Note)
-    /// may still use them without a corresponding Schema.
-    ///
-    /// # Arguments
-    ///
-    /// * `classes`: File Class values to expand.
-    /// * `mode`: controls expansion depth (`Exact`, `Children`, `Descendants`).
-    pub(crate) fn expand_classes(
-        &self,
-        classes: &[String],
-        mode: &mut ClassExpansionMode,
-    ) {
-        let mut expanded: IndexSet<String> = classes.iter().cloned().collect();
-        match mode {
-            ClassExpansionMode::Exact(_) => {
-                warn_unknown_classes(self, classes);
+    /// Shared by [`Self::matches`] and `file_class_expander`'s
+    /// [`FileClassExpander`](crate::query::FileClassExpander) impl.
+    pub(crate) fn warn_unknown_classes(&self, classes: &[String]) {
+        for class in classes {
+            if self.get(class).is_none() {
+                tracing::warn!(
+                    class,
+                    "query source names an unknown File Class; matching it \
+                     exactly"
+                );
             }
-            ClassExpansionMode::Children(_) => {
-                warn_unknown_classes(self, classes);
-                for class in classes {
-                    expanded.extend(
-                        self.children_of(class)
-                            .iter()
-                            .map(|schema| schema.name().to_owned()),
-                    );
-                }
-            }
-            ClassExpansionMode::Descendants(_) => {
-                // `matches` warns internally, so this branch alone would
-                // otherwise skip the warning the other two branches emit
-                // directly above.
-                expanded = self.matches(classes);
-            }
-        }
-        mode.set_classes(expanded.into_iter().collect());
-    }
-}
-
-/// Warn once per unknown class name in `classes`.
-fn warn_unknown_classes(service: &SchemaService, classes: &[String]) {
-    for class in classes {
-        if service.get(class).is_none() {
-            tracing::warn!(
-                class,
-                "query source names an unknown File Class; matching it exactly"
-            );
         }
     }
-}
-
-/// Resolve every File Class leaf in `source` against `service`.
-///
-/// This caller-side pre-pass keeps query parsing and matching independent of
-/// the Schema registry.
-///
-/// # Arguments
-///
-/// * `source`: query source expression to expand class atoms in.
-/// * `service`: resolved schema service to match against.
-pub(crate) fn resolve_sources(
-    source: &mut QuerySource,
-    service: &SchemaService,
-) {
-    let QuerySource::Expr(expression) = source else {
-        return;
-    };
-    expression.visit_atoms_mut(&mut |atom| {
-        if let SourceAtom::Class {
-            names,
-            mode,
-        } = atom
-        {
-            service.expand_classes(names, mode);
-        }
-    });
 }
 
 /// Read and parse every `*.toml` file directly under `dir` into a [`RawSchema`]
@@ -328,7 +253,7 @@ mod tests {
     /// directly as the Schema directory, `root` is unused by resolution
     /// itself.
     fn resolve_dir(dir: &Path) -> ResolveResult {
-        SchemaService::new(SchemaConfigSpec::for_test(dir, dir))
+        SchemaService::new(&SchemaConfigSpec::for_test(dir, dir))
     }
 
     fn write_schema(dir: &Path, name: &str, toml: &str) {
@@ -564,7 +489,7 @@ mod tests {
             fs::create_dir_all(&schemas_dir).expect("create schemas dir");
             write_schema(&schemas_dir, "book", "");
             let (service, _, _) = SchemaService::new(
-                SchemaConfigSpec::for_test(temp.path(), &schemas_dir),
+                &SchemaConfigSpec::for_test(temp.path(), &schemas_dir),
             )
             .expect("registry loads");
 
@@ -657,95 +582,26 @@ mod tests {
         }
     }
 
-    mod expand_classes {
-        use std::collections::BTreeSet;
-
+    mod children_of {
         use pretty_assertions::assert_eq;
 
         use super::*;
 
-        fn set(names: &[&str]) -> BTreeSet<String> {
-            names.iter().map(|name| (*name).to_owned()).collect()
-        }
-
-        fn service(temp: &tempfile::TempDir) -> SchemaService {
+        #[test]
+        fn returns_only_direct_extenders() {
+            let temp = tempfile::tempdir().expect("create temp dir");
             write_schema(temp.path(), "thing", "");
             write_schema(temp.path(), "book", r#"extends = ["thing"]"#);
             write_schema(temp.path(), "sci_fi", r#"extends = ["book"]"#);
-            write_schema(temp.path(), "space_opera", r#"extends = ["sci_fi"]"#);
+
             let (service, _, _) =
                 resolve_dir(temp.path()).expect("registry loads");
-            service
-        }
 
-        #[test]
-        fn children_returns_only_direct_extenders() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            let service = service(&temp);
+            let children = service.children_of("thing");
+            let names: Vec<&str> =
+                children.iter().map(|schema| schema.name()).collect();
 
-            let names: Vec<String> = service
-                .children_of("thing")
-                .into_iter()
-                .map(|schema| schema.name().to_owned())
-                .collect();
-
-            assert_eq!(names, vec!["book".to_owned()]);
-        }
-
-        #[test]
-        fn expansion_modes_are_incremental() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            let service = service(&temp);
-            let names = vec!["thing".to_owned()];
-            let mut exact = ClassExpansionMode::Exact(BTreeSet::new());
-            let mut children = ClassExpansionMode::Children(BTreeSet::new());
-            let mut descendants =
-                ClassExpansionMode::Descendants(BTreeSet::new());
-
-            service.expand_classes(&names, &mut exact);
-            service.expand_classes(&names, &mut children);
-            service.expand_classes(&names, &mut descendants);
-
-            assert_eq!(exact.classes(), &set(&["thing"]));
-            assert_eq!(children.classes(), &set(&["book", "thing"]));
-            assert_eq!(
-                descendants.classes(),
-                &set(&["book", "sci_fi", "space_opera", "thing"])
-            );
-        }
-
-        #[test]
-        #[expect(clippy::panic, reason = "let-else guard on exhaustive match")]
-        fn resolve_sources_walks_nested_expressions_and_preserves_unknowns() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            let service = service(&temp);
-            let mut source = QuerySource::parse("@thing+ and not @ghost*")
-                .expect("source parses");
-
-            resolve_sources(&mut source, &service);
-
-            assert!(
-                matches!(source, QuerySource::Expr(_)),
-                "expected expression source"
-            );
-            let mut classes = Vec::new();
-            let QuerySource::Expr(expression) = &mut source else {
-                panic!("expected expression source");
-            };
-            expression.visit_atoms_mut(&mut |atom| {
-                let SourceAtom::Class {
-                    names,
-                    mode,
-                } = atom
-                else {
-                    return;
-                };
-                classes.push((names.clone(), mode.classes().clone()));
-            });
-            assert_eq!(classes, vec![
-                (vec!["thing".to_owned()], set(&["book", "thing"]),),
-                (vec!["ghost".to_owned()], set(&["ghost"])),
-            ]);
+            assert_eq!(names, vec!["book"]);
         }
     }
 

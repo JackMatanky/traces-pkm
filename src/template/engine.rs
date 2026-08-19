@@ -117,7 +117,7 @@ impl TemplateEngine {
         // already-resolved `SchemaService` for this engine's whole lifetime —
         // no render-scoped re-resolution or caching.
         let (service, warnings, failures) =
-            SchemaService::new(config.to_schema_spec())?;
+            SchemaService::new(&config.to_schema_spec())?;
         for warning in &warnings {
             tracing::warn!(%warning, "Schema registry resolved with a warning");
         }
@@ -551,108 +551,6 @@ mod tests {
                 .expect("render succeeds");
 
             assert_eq!(rendered.content, "reading");
-        }
-
-        #[test]
-        fn schema_file_field_uses_configured_aliases_field() {
-            use crate::config::FrontmatterConfig;
-
-            let temp = tempfile::tempdir().expect("create temp dir");
-            fs::create_dir_all(temp.path().join(".traces/schemas"))
-                .expect("create schemas dir");
-            fs::write(
-                temp.path().join(".traces/schemas/book.toml"),
-                "[fields.cover]\ntype = \"file\"\nfolders = [\"covers\"]\next \
-                 = \"md\"\nclass = [\"book\"]\n",
-            )
-            .expect("write schema fixture");
-            fs::create_dir_all(temp.path().join("covers"))
-                .expect("create covers dir");
-            // `title` is present with a distinct value so a title/aliases
-            // wiring swap would surface as a wrong rendered label instead of
-            // silently resolving the same way through fallback.
-            fs::write(
-                temp.path().join("covers/custom.md"),
-                "---\ntitle: Wrong Label\naka: Custom Alias\nclass: \
-                 book\n---\n",
-            )
-            .expect("write note fixture");
-            let config = Config::for_test(
-                temp.path().to_path_buf(),
-                None,
-                None,
-                temp.path().to_path_buf(),
-            )
-            .with_frontmatter(FrontmatterConfig::for_test("title", "aka"));
-            let engine = TemplateEngine::new(
-                &loader_from_dir(temp.path()),
-                preset_provider(),
-                &config,
-            )
-            .expect("valid test schema directory");
-
-            let rendered = engine
-                .render(
-                    "{% for item in schema.get('book').field('cover') %}{{ \
-                     item.label }}={{ item.value }}{% endfor %}",
-                    "test.md",
-                )
-                .expect("render succeeds");
-
-            assert_eq!(rendered.content, "Custom Alias=covers/custom.md");
-        }
-
-        #[test]
-        fn schema_file_field_uses_configured_title_field() {
-            use crate::config::FrontmatterConfig;
-
-            let temp = tempfile::tempdir().expect("create temp dir");
-            fs::create_dir_all(temp.path().join(".traces/schemas"))
-                .expect("create schemas dir");
-            fs::write(
-                temp.path().join(".traces/schemas/book.toml"),
-                "[fields.cover]\ntype = \"file\"\nfolders = [\"covers\"]\next \
-                 = \"md\"\nclass = [\"book\"]\n",
-            )
-            .expect("write schema fixture");
-            fs::create_dir_all(temp.path().join("covers"))
-                .expect("create covers dir");
-            // No `aliases:` key present, so label resolution falls through to
-            // the configured *title* key (`heading`, not the default `title`) —
-            // proves title_field wiring specifically, which
-            // `schema_file_field_uses_configured_aliases_field` cannot: that
-            // test's alias always resolves first, so a title/aliases wiring
-            // swap wouldn't be caught by a title-absent scenario alone.
-            fs::write(
-                temp.path().join("covers/custom.md"),
-                "---\nheading: Custom Title\nclass: book\n---\n",
-            )
-            .expect("write note fixture");
-            let config = Config::for_test(
-                temp.path().to_path_buf(),
-                None,
-                None,
-                temp.path().to_path_buf(),
-            )
-            .with_frontmatter(FrontmatterConfig::for_test(
-                "heading", "aliases",
-            ));
-            let engine = TemplateEngine::new(
-                &loader_from_dir(temp.path()),
-                preset_provider(),
-                &config,
-            )
-            .expect("valid test schema directory");
-
-            let rendered = engine
-                .render(
-                    "{% for item in schema.get('book').field('cover') %}{{ \
-                     item.label }}={{ item.value }}{% endfor %}",
-                    "test.md",
-                )
-                .expect("render succeeds");
-
-            assert_eq!(rendered.content, "Custom Title=covers/custom.md");
         }
 
         #[test]

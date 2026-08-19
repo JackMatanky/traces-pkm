@@ -237,7 +237,7 @@ A key in a Field Definition pointing at another definition used as its base: `#g
 
 ### schema namespace
 
-The minijinja global exposing Schemas to templates. `schema.get("book")` binds a Schema, exposing `.name` (its own name) and `.field("status")`, which returns its selectable values — plain strings for `select` fields, label/value objects for `file` fields, and `None` for every other type. Unknown schema or field names are errors. Schemas supply values only — templates choose the interactive function themselves.
+The minijinja global exposing Schemas to templates. `schema.get("book")` binds a Schema, exposing `.name` (its own name) and `.field("status")`. For `select` fields this returns plain strings; for `file` fields it returns a Query Source filter, composable with `query.from(...)` and `| with_children`/`| with_descendants`; for every other type, `None`. Unknown schema or field names are errors. Schemas supply values only — templates choose the interactive function themselves.
 *Avoid*: schema api, metadata menu function
 
 #### children
@@ -252,7 +252,7 @@ The minijinja global exposing Schemas to templates. `schema.get("book")` binds a
 
 ### Source Expression
 
-A query source parsed by the shared CLI/template DSL. Leaves select tags (`#book`), exact files or folder prefixes (`"books/"`), or File Classes (`@Book` exact, `@Book+` with direct children, `@Book*` with transitive descendants). `and`/`&&`, `or`/`||`, `not`/`!`, and parentheses compose leaves. `class(Book)`, `class(Book).with_children()`, and `class(Book).with_descendants()` are equivalent long forms. An unknown File Class degrades to exact matching with a warning.
+A query source parsed by the shared CLI/template DSL. Leaves select tags (`#book`), exact files, folder prefixes (`"books/"`), glob patterns (`"covers/*.jpg"`, `"covers/**/*.jpg"` — `*` excludes `/`, `**` includes it), or File Classes (`@Book` exact, `@Book+` with direct children, `@Book*` with transitive descendants). `and`/`&&`, `or`/`||`, `not`/`!`, and parentheses compose leaves. `class(Book)`, `class(Book).with_children()`, and `class(Book).with_descendants()` are equivalent long forms. An unknown File Class degrades to exact matching with a warning.
 *Avoid*: from_class, from_tags, from_folder, DQL source
 
 ### QueryOutcome

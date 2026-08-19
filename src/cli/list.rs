@@ -229,7 +229,7 @@ mod tests {
                 .expect("write projects/a.md");
             fs::write(temp.path().join("b.md"), "# B\n").expect("write b.md");
             let list = List {
-                from: Some("projects".to_owned()),
+                from: Some("projects/".to_owned()),
                 filter: None,
                 sort: None,
                 order: SortOrder::Ascending,

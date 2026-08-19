@@ -31,7 +31,6 @@ pub(crate) use raw::{
     RawSchema, RawSchemaFieldDef, RawSchemaFieldSource, RawSchemaFieldType,
 };
 pub use service::SchemaService;
-pub(crate) use service::resolve_sources;
 
 /// The reserved Global Schema file stem: a flat `$ref`-able reference pool.
 ///

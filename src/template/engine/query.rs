@@ -76,9 +76,10 @@ use crate::{
     index::{FileIndex, FileIndexError},
     note::FieldValue,
     query::{
-        self, FileField, IndexRecord, QueryError, QueryOutcome, QuerySource,
+        self, ClassExpansionMode, FileField, IndexRecord, QueryError,
+        QueryOutcome, QuerySource, SourceAtom, resolve_classes,
     },
-    schema::{SchemaService, resolve_sources},
+    schema::SchemaService,
 };
 
 /// Method names `query` and `tasks` each expose, for [`QueryOps::enumerate`].
@@ -171,6 +172,8 @@ impl QueryOps {
         env.add_filter("list", list_filter);
         env.add_filter("task_list", task_list_filter);
         env.add_filter("count", count_filter);
+        env.add_filter("with_children", with_children_filter);
+        env.add_filter("with_descendants", with_descendants_filter);
     }
 
     /// Runs this namespace's query method for `source` against `state`'s
@@ -195,13 +198,11 @@ impl Object for QueryOps {
                 let ops = Arc::clone(self);
                 Some(Value::from_function(
                     move |state: &State,
-                          expr: Option<&str>|
+                          expr: Option<Value>|
                           -> Result<Value, Error> {
-                        let mut source =
-                            QuerySource::parse(expr.unwrap_or_default())
-                                .map_err(query_error)?;
+                        let mut source = resolve_from_arg(expr.as_ref())?;
                         if source.has_classes() {
-                            resolve_sources(&mut source, &ops.service);
+                            resolve_classes(&mut source, ops.service.as_ref());
                         }
                         ops.run(state, &source)
                     },
@@ -248,6 +249,44 @@ fn query_error(source: QueryError) -> Error {
     super::error::invalid_operation("query failed", source)
 }
 
+/// Resolves `.from()`'s optional argument into a [`QuerySource`]: `None`
+/// selects every indexed file; a bound `QuerySource` `Value` (a Schema `file`
+/// field, possibly widened by `with_children`/`with_descendants`) is used
+/// as-is; any other value must be a DSL source-expression string.
+///
+/// # Errors
+///
+/// - [`ErrorKind::InvalidOperation`] if `expr` is neither a `QuerySource` nor a
+///   string.
+/// - Propagates [`QueryError::Syntax`] (via [`query_error`]) if `expr` is a
+///   string that fails to parse as a source expression.
+fn resolve_from_arg(expr: Option<&Value>) -> Result<QuerySource, Error> {
+    let Some(value) = expr else {
+        return Ok(QuerySource::All);
+    };
+    if let Some(source) = value.downcast_object_ref::<QuerySource>() {
+        return Ok(source.clone());
+    }
+    let text = value.as_str().ok_or_else(from_arg_type_error)?;
+    QuerySource::parse(text).map_err(query_error)
+}
+
+/// Builds the error for `.from()`'s argument being neither a `QuerySource`
+/// nor a string.
+fn from_arg_type_error() -> Error {
+    Error::new(
+        ErrorKind::InvalidOperation,
+        "from() expects a source expression string or a Schema file field",
+    )
+}
+
+/// Lets `.field()` hand a [`QuerySource`] filter across the minijinja boundary:
+/// `.from()` and the `with_children`/`with_descendants` filters downcast it
+/// back via [`Value::downcast_object_ref`]. No method overrides — mirrors
+/// `cache.rs`'s `Cached<T>`, this crate's other bare `impl Object` used purely
+/// to smuggle a typed value through a `Value`.
+impl Object for QuerySource {}
+
 impl Object for QueryOutcome {
     #[inline]
     fn repr(self: &Arc<Self>) -> ObjectRepr {
@@ -278,9 +317,9 @@ impl Object for QueryOutcome {
     ///   directly; it cannot fail, unlike the other three.
     ///
     /// Every other name falls through to the non-terminal chain: `.where`/
-    /// `.filter`, `.sort`, `.limit`, `.group_by`, and `.flatten`. Each of
-    /// those calls consumes a clone of the current outcome and wraps the
-    /// transformed result in a [`Value`] for further chaining:
+    /// `.filter`, `.sort`, `.limit`, `.group_by`, and `.flatten`. Each of those
+    /// calls consumes a clone of the current outcome and wraps the transformed
+    /// result in a [`Value`] for further chaining:
     ///
     /// - `where` and `filter` both call [`QueryOutcome::filter`]. The Rust-side
     ///   `r#where` alias exists only for Rust callers.
@@ -409,13 +448,52 @@ fn count_filter(outcome: &QueryOutcome) -> usize {
     outcome.len()
 }
 
+/// `field | with_children` filter body: widens a `file` field's `Class` atom
+/// (if any) to direct-children depth.
+fn with_children_filter(source: &QuerySource) -> Value {
+    Value::from_object(set_class_depth(
+        source.clone(),
+        ClassExpansionMode::Children,
+    ))
+}
+
+/// `field | with_descendants` filter body: widens a `file` field's `Class` atom
+/// (if any) to transitive-descendants depth.
+fn with_descendants_filter(source: &QuerySource) -> Value {
+    Value::from_object(set_class_depth(
+        source.clone(),
+        ClassExpansionMode::Descendants,
+    ))
+}
+
+/// Replaces every `Class` atom's [`ClassExpansionMode`] in `source`, keeping
+/// the match set empty (still unresolved; [`resolve_classes`] fills it in at
+/// `.from()` dispatch time, same as DSL-parsed sources).
+fn set_class_depth(
+    mut source: QuerySource,
+    mode: impl Fn(std::collections::BTreeSet<String>) -> ClassExpansionMode,
+) -> QuerySource {
+    if let QuerySource::Expr(expr) = &mut source {
+        expr.visit_atoms_mut(&mut |atom| {
+            if let SourceAtom::Class {
+                mode: existing,
+                ..
+            } = atom
+            {
+                *existing = mode(std::collections::BTreeSet::new());
+            }
+        });
+    }
+    source
+}
+
 impl Object for IndexRecord {
     /// Resolves `record.<key>` or `record["<key>"]`.
     ///
-    /// `"file"` and `"task"` return forwarding wrappers for `record.file.*`
-    /// and `record.task.*`. Every other key resolves through [`IndexRecord`]'s
-    /// field lookup, the same frontmatter, inline-field, and tag lookup
-    /// used by `.where()` and `.sort()`.
+    /// `"file"` and `"task"` return forwarding wrappers for `record.file.*` and
+    /// `record.task.*`. Every other key resolves through [`IndexRecord`]'s
+    /// field lookup, the same frontmatter, inline-field, and tag lookup used by
+    /// `.where()` and `.sort()`.
     ///
     /// A rejected key, such as a dotted, empty, or unknown `file.*`/`task.*`
     /// accessor, resolves to `None` like any other missing attribute instead of
@@ -438,9 +516,9 @@ impl Object for IndexRecord {
 /// minijinja resolves a dotted attribute path one segment at a time:
 /// `record.file` must itself resolve to *something* before `.name` can be
 /// looked up on it. Calls the same [`FileField`] accessor pair
-/// [`IndexRecord::field`] uses for its `file.*` branch, skipping that
-/// method's string-based `file.` prefix handling, which doesn't apply here:
-/// `key` is already a single attribute segment, never a dotted path.
+/// [`IndexRecord::field`] uses for its `file.*` branch, skipping that method's
+/// string-based `file.` prefix handling, which doesn't apply here: `key` is
+/// already a single attribute segment, never a dotted path.
 #[derive(Debug)]
 struct FileFields(Arc<IndexRecord>);
 
@@ -459,12 +537,12 @@ impl Object for FileFields {
 /// [`IndexRecord::task_completed`]/[`IndexRecord::task_text`].
 ///
 /// Mirrors [`FileFields`]: minijinja resolves a dotted attribute path one
-/// segment at a time, so `record.task` must itself resolve to something
-/// before `.completed`/`.text` can be looked up.
+/// segment at a time, so `record.task` must itself resolve to something before
+/// `.completed`/`.text` can be looked up.
 ///
 /// On a page-level record (not built by [`FileIndex::query_tasks`]) both
-/// accessors resolve to minijinja's `none`, a defined empty value rather
-/// than a missing attribute, matching [`field_value`]'s handling of
+/// accessors resolve to minijinja's `none`, a defined empty value rather than a
+/// missing attribute, matching [`field_value`]'s handling of
 /// [`FieldValue::Null`].
 #[derive(Debug)]
 struct TaskFields(Arc<IndexRecord>);
@@ -530,7 +608,7 @@ mod tests {
     /// Schema registry directory (`root/.traces/schemas`), mirroring
     /// [`super::super::TemplateEngine::new`]'s wiring.
     fn schema_service(root: &Path) -> Arc<SchemaService> {
-        let (service, _, _) = SchemaService::new(SchemaConfigSpec::for_test(
+        let (service, _, _) = SchemaService::new(&SchemaConfigSpec::for_test(
             root,
             &root.join(".traces/schemas"),
         ))

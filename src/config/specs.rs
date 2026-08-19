@@ -29,14 +29,15 @@ use crate::field::FieldKey;
 /// Private fields, `pub(crate)` accessors — matches [`Config`]'s own
 /// convention ([`super::model::SchemasConfig`]/
 /// [`super::model::FrontmatterConfig`], each chaining into the next) rather
-/// than a plain-projection style: this spec is constructed once per
-/// [`crate::template::TemplateEngine`] and held by a [`SchemaService`] for a
-/// render's entire lifetime, crossing the `config` -> `schema` ->
-/// `template::engine` module boundary each time something reads it. Full
-/// immutability and hidden internals matter here in a way they wouldn't for a
-/// borrowed, single-call-site filter struct.
+/// than a plain-projection style: full immutability and hidden internals
+/// matter here in a way they wouldn't for a borrowed, single-call-site
+/// filter struct. Constructed once per [`crate::template::TemplateEngine`]
+/// render and consumed immediately by [`SchemaService::new`], which reads
+/// [`Self::directory`] to locate the Schema registry and does not retain
+/// the spec itself.
 ///
 /// [`SchemaService`]: crate::schema::SchemaService
+/// [`SchemaService::new`]: crate::schema::SchemaService::new
 #[derive(Clone, Debug)]
 pub(crate) struct SchemaConfigSpec {
     root: Arc<Path>,
@@ -51,6 +52,18 @@ impl SchemaConfigSpec {
     /// `FileIndex`.
     #[inline]
     #[must_use]
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "no current caller outside tests; the only production \
+                      reader (a `file`-typed Schema field's live FileIndex \
+                      query) was removed by the schema-query decoupling \
+                      refactor, which builds a declarative QuerySource filter \
+                      instead. Kept for `SchemaConfigSpec::from`'s own \
+                      projection test"
+        )
+    )]
     pub(crate) fn root(&self) -> &Path {
         &self.root
     }
@@ -66,6 +79,14 @@ impl SchemaConfigSpec {
     /// Returns the frontmatter key naming a Note's File Class(es).
     #[inline]
     #[must_use]
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "no current caller outside tests; see `Self::root`'s \
+                      reason"
+        )
+    )]
     pub(crate) fn class_field(&self) -> &FieldKey {
         &self.class_field
     }
@@ -74,6 +95,14 @@ impl SchemaConfigSpec {
     /// `file`-field option label fallback.
     #[inline]
     #[must_use]
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "no current caller outside tests; see `Self::root`'s \
+                      reason"
+        )
+    )]
     pub(crate) fn title_field(&self) -> &FieldKey {
         &self.title_field
     }
@@ -82,6 +111,14 @@ impl SchemaConfigSpec {
     /// `file`-field option label source.
     #[inline]
     #[must_use]
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "no current caller outside tests; see `Self::root`'s \
+                      reason"
+        )
+    )]
     pub(crate) fn aliases_field(&self) -> &FieldKey {
         &self.aliases_field
     }

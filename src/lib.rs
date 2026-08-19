@@ -12,6 +12,8 @@
 //!   and persistent state.
 //! - `field` - Validated field-name and field-key primitives shared across note
 //!   metadata and schemas.
+//! - `file_class_expander` - Implements schema-aware File Class expansion for
+//!   the query domain, without either depending on the other.
 //! - `file_name` - File-name newtypes shared by the index, template, and schema
 //!   layers.
 //! - `file_store` - Hash-keyed file and path state store using BLAKE3-named
@@ -52,6 +54,7 @@ mod config;
 mod dialog;
 mod dirs;
 mod field;
+mod file_class_expander;
 mod file_name;
 mod file_store;
 mod hash;

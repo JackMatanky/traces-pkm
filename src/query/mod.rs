@@ -26,18 +26,22 @@
 //!
 //! ### Paths
 //!
-//! A path leaf matches either an exact file path or every file under a folder
-//! prefix. Paths may be bare (unquoted) or enclosed in single or double quotes.
-//! Quoted paths support `\` escape sequences.
+//! A path leaf matches an exact file path, every file under a folder prefix,
+//! or an explicit glob. Paths may be bare (unquoted) or enclosed in single or
+//! double quotes. Quoted paths support `\` escape sequences.
 //!
 //! ```text
 //! books/             — matches every file under books/
 //! books/dune.md      — matches only books/dune.md
 //! "books/dune.md"    — same as above (quoted form)
+//! covers/*.jpg       — matches covers/a.jpg, not covers/sub/a.jpg
+//! covers/**/*.jpg    — matches any depth under covers/, not covers/ itself
 //! ```
 //!
-//! A trailing `/` signals a folder prefix match. Without it, the path matches
-//! only an exact file.
+//! A trailing `/` signals a folder prefix match (`books/` compiles to the
+//! glob `books/**`). A `*` in the path text matches any run of characters
+//! except `/`; `**` matches any run including `/`. Without a trailing `/` or
+//! a `*`/`**`, the path matches only an exact file.
 //!
 //! ### File Classes
 //!
@@ -166,7 +170,6 @@
 //!
 //! # Submodules
 //!
-//! - [`choice`] builds selectable file options and borrowed filters.
 //! - [`comparison`] implements filter comparison operators and expressions.
 //! - [`error`] defines error types for field resolution and query
 //!   transformations.
@@ -185,7 +188,6 @@
 //! [`FileIndex::query_tasks`]: crate::index::FileIndex::query_tasks
 //! [`Note`]: crate::note::Note
 
-mod choice;
 mod comparison;
 mod error;
 mod field;
@@ -197,7 +199,6 @@ mod source;
 
 use std::path::PathBuf;
 
-pub(crate) use choice::{FileOption, FileOptionFilter, FrontmatterFieldKeys};
 #[cfg(test)]
 pub(crate) use error::{FieldPathError, QuerySyntaxError};
 pub use error::{QueryDialect, QueryError};
@@ -208,7 +209,10 @@ pub use record::IndexRecord;
 use sort::SortKey;
 pub(crate) use sort::SortOrder;
 pub use source::{ClassExpansionMode, QuerySource};
-pub(crate) use source::{SourceAtom, class_values};
+pub(crate) use source::{
+    FileClassExpander, QuerySourceExpr, SourceAtom, compile_glob,
+    resolve_classes,
+};
 
 use crate::{
     index::{FileIndex, FileRecord},
@@ -277,9 +281,12 @@ pub(crate) fn query_tasks(
         mut inlinks,
     } = index;
     let mut records = Vec::new();
-    for (file, note) in matched_pairs(files, notes, source, class_field) {
-        let base = record_with_inlinks(file, note, &mut inlinks);
-        let mut tasks = base.note().tasks().peekable();
+    for (file, raw_note) in matched_pairs(files, notes, source, class_field) {
+        let base = record_with_inlinks(file, raw_note, &mut inlinks);
+        let Some(note) = base.note() else {
+            continue;
+        };
+        let mut tasks = note.tasks().peekable();
         while let Some(item) = tasks.next() {
             let completed = item.is_completed();
             let text = item.text().to_owned();
@@ -298,20 +305,26 @@ pub(crate) fn query_tasks(
 /// Zips and filters file records and note contents matching the given query
 /// source.
 ///
+/// Iterates `records` (every indexed file) as the primary sequence, pairing
+/// each with the [`Note`] at the same path when one exists — a `file` may have
+/// no [`Note`] (non-Markdown files matched by a `file`-typed Schema field).
+///
 /// Assumes both vectors are sorted by file path to perform a linear-time scan.
 fn matched_pairs<'a>(
     records: Vec<FileRecord>,
     notes: Vec<Note>,
     source: &'a QuerySource,
     class_field: &'a str,
-) -> impl Iterator<Item = (FileRecord, Note)> + 'a {
-    let mut files = records.into_iter().peekable();
-    notes.into_iter().filter_map(move |note| {
-        while files.peek().is_some_and(|file| file.path() < note.path()) {
-            files.next();
+) -> impl Iterator<Item = (FileRecord, Option<Note>)> + 'a {
+    let mut notes = notes.into_iter().peekable();
+    records.into_iter().filter_map(move |file| {
+        while notes.peek().is_some_and(|note| note.path() < file.path()) {
+            notes.next();
         }
-        let file = files.next_if(|file| file.path() == note.path())?;
-        source.is_match(&file, &note, class_field).then_some((file, note))
+        let note = notes.next_if(|note| note.path() == file.path());
+        source
+            .is_match(&file, note.as_ref(), class_field)
+            .then_some((file, note))
     })
 }
 
@@ -319,7 +332,7 @@ fn matched_pairs<'a>(
 /// `inlinks`.
 fn record_with_inlinks(
     file: FileRecord,
-    note: Note,
+    note: Option<Note>,
     inlinks: &mut std::collections::HashMap<PathBuf, Vec<PathBuf>>,
 ) -> IndexRecord {
     let links = inlinks.remove(file.path()).unwrap_or_default();
@@ -768,7 +781,7 @@ mod tests {
             let file = index.record(Path::new("a.md")).expect("record").clone();
             let note = index.note(Path::new("a.md")).expect("note").clone();
 
-            let record = IndexRecord::new(file.clone(), note);
+            let record = IndexRecord::new(file.clone(), Some(note));
 
             assert_eq!(record.file(), &file);
         }
@@ -782,9 +795,9 @@ mod tests {
             let file = index.record(Path::new("a.md")).expect("record").clone();
             let note = index.note(Path::new("a.md")).expect("note").clone();
 
-            let record = IndexRecord::new(file, note.clone());
+            let record = IndexRecord::new(file, Some(note.clone()));
 
-            assert_eq!(record.note(), &note);
+            assert_eq!(record.note(), Some(&note));
         }
 
         #[test]
@@ -796,7 +809,7 @@ mod tests {
             let note = index.note(Path::new("a.md")).expect("note").clone();
 
             let record =
-                IndexRecord::new(file, note).with_task(true, "Buy milk");
+                IndexRecord::new(file, Some(note)).with_task(true, "Buy milk");
 
             assert_eq!(record.task_completed(), Some(true));
         }
@@ -810,7 +823,7 @@ mod tests {
             let note = index.note(Path::new("a.md")).expect("note").clone();
 
             let record =
-                IndexRecord::new(file, note).with_task(false, "Buy milk");
+                IndexRecord::new(file, Some(note)).with_task(false, "Buy milk");
 
             assert_eq!(record.task_text(), Some("Buy milk"));
         }
@@ -823,7 +836,7 @@ mod tests {
             let file = index.record(Path::new("a.md")).expect("record").clone();
             let note = index.note(Path::new("a.md")).expect("note").clone();
 
-            let record = IndexRecord::new(file, note);
+            let record = IndexRecord::new(file, Some(note));
 
             assert_eq!(record.task_completed(), None);
             assert_eq!(record.task_text(), None);
@@ -837,7 +850,7 @@ mod tests {
             let file = index.record(Path::new("a.md")).expect("record").clone();
             let note = index.note(Path::new("a.md")).expect("note").clone();
 
-            let record = IndexRecord::new(file, note)
+            let record = IndexRecord::new(file, Some(note))
                 .with_inlinks(vec![PathBuf::from("b.md")]);
 
             assert_eq!(record.inlinks(), [PathBuf::from("b.md")]);

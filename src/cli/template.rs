@@ -701,8 +701,9 @@ mod tests {
             let (root, service) = create_test_project(
                 temp.path(),
                 "status={{ schema.get('book').field('status') | join(',') \
-                 }};cover={% for item in schema.get('book').field('cover') \
-                 %}{{ item.label }}={{ item.value }}{% endfor %};query={{ \
+                 }};cover={% for item in \
+                 query.from(schema.get('book').field('cover')) %}{{ \
+                 item.file.name }}={{ item.file.path }}{% endfor %};query={{ \
                  query.from('@book') | length }};tasks={{ tasks.from('@book') \
                  | length }}",
             );
@@ -738,7 +739,7 @@ mod tests {
                 fs::read_to_string(root.join("daily.md")).expect("read output");
             assert_eq!(
                 written,
-                "status=reading,read;cover=Dune=covers/dune.md;query=2;tasks=1"
+                "status=reading,read;cover=dune=covers/dune.md;query=2;tasks=1"
             );
         }
 

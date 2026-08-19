@@ -72,6 +72,15 @@ impl Frontmatter {
     /// Returns the value of the field matching `key`, if present.
     #[inline]
     #[must_use]
+    #[expect(
+        dead_code,
+        reason = "no current caller in production or tests; kept as a \
+                  general-purpose accessor alongside `fields()` — the \
+                  file-field label-resolution consumer that used it was \
+                  removed by the schema-query decoupling refactor, but the \
+                  accessor itself is generically useful for any future \
+                  frontmatter-key lookup"
+    )]
     pub(crate) fn get(&self, key: &FieldKey) -> Option<&FieldValue> {
         self.fields
             .iter()

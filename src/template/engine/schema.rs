@@ -12,12 +12,11 @@
 //! The bound [`Schema`] exposes one plain attribute and three methods:
 //!
 //! - `.name`: the Schema's own name (its source file's stem).
-//! - `.field(name)`: the named field's selectable values, as plain strings for
-//!   a `select` field, label/value objects for a `file` field, or `none` for
-//!   every other type. `file` fields resolve live from the render-scoped
-//!   `FileIndex`: labels use the configured `[frontmatter]` aliases key,
-//!   falling back to the configured title key, then the filename stem; values
-//!   are paths.
+//! - `.field(name)`: the named field's selectable values. For a `select` field,
+//!   plain strings. For a `file` field, a Query Source filter — declarative
+//!   data, built without executing any query itself — composable with
+//!   `query.from(...)` and `| with_children`/`| with_descendants`. `none` for
+//!   every other type.
 //! - `.children()`: every Schema that directly `extends` this one, each itself
 //!   a bound `Schema`. Empty, not an error, when nothing directly extends this
 //!   Schema.
@@ -36,10 +35,9 @@
 //! # Resolution Timing
 //!
 //! Every Schema TOML file is read and resolved once, at
-//! [`super::TemplateEngine`]
-//! construction (`SchemaService::new`) — not lazily on the first
-//! `schema.get(...)` call. Every render for that engine's whole lifetime
-//! shares the identical already-resolved `Arc<SchemaService>`: no
+//! [`super::TemplateEngine`] construction (`SchemaService::new`) — not lazily
+//! on the first `schema.get(...)` call. Every render for that engine's whole
+//! lifetime shares the identical already-resolved `Arc<SchemaService>`: no
 //! render-scoped registry cache or re-resolution.
 //!
 //! [`Schema`] itself stores each field behind the resolved Schema's shared
@@ -55,7 +53,7 @@
 //! (`State`-cached) registry and reads the target Schema's already-precomputed
 //! `children`/`descendants` set — no per-call registry scan.
 
-use std::sync::Arc;
+use std::{collections::BTreeSet, sync::Arc};
 
 use indexmap::IndexMap;
 use minijinja::{
@@ -65,7 +63,10 @@ use minijinja::{
 
 use crate::{
     field::FieldValue,
-    query::{FileOption, FileOptionFilter, FrontmatterFieldKeys},
+    query::{
+        ClassExpansionMode, QuerySource, QuerySourceExpr, SourceAtom,
+        compile_glob,
+    },
     schema::{
         Schema, SchemaFileFieldRef, SchemaSelectFieldEntry, SchemaService,
     },
@@ -74,19 +75,19 @@ use crate::{
 /// Method names `schema` exposes, for [`SchemaOps::enumerate`].
 const METHODS: &[&str] = &["get"];
 
-/// Keys a bound [`Schema`] exposes: `field`/`children`/`descendants` are
-/// called as methods, `name` is a plain attribute. Backs
-/// [`Object::enumerate`] on [`Schema`]'s own `impl Object` below.
+/// Keys a bound [`Schema`] exposes: `field`/`children`/`descendants` are called
+/// as methods, `name` is a plain attribute. Backs [`Object::enumerate`] on
+/// [`Schema`]'s own `impl Object` below.
 const SCHEMA_METHODS: &[&str] = &["children", "descendants", "field", "name"];
 
 /// The [`State::set_temp`] key seeding the render's `Arc<SchemaService>`, so
-/// [`Schema`]'s own [`Object`] impl can reach [`SchemaService::spec`]/
-/// [`SchemaService::matches`]/[`SchemaService::children`]/
-/// [`SchemaService::descendants`] without holding a context field itself.
-/// Seeded by [`SchemaOps::get_value`]'s `"get"` branch before it hands out
-/// any `Schema`-backed value, so every live `Schema` [`Value`] in a render is
-/// guaranteed to have this already stashed by the time `.field()`/
-/// `.children()`/`.descendants()` runs.
+/// [`Schema`]'s own [`Object`] impl can reach [`SchemaService::matches`]/
+/// [`SchemaService::children_of`]/[`SchemaService::descendants_of`] without
+/// holding a context field itself.
+/// Seeded by [`SchemaOps::get_value`]'s `"get"` branch before it hands out any
+/// `Schema`-backed value, so every live `Schema` [`Value`] in a render is
+/// guaranteed to have this already stashed by the time
+/// `.field()`/`.children()`/`.descendants()` runs.
 const SCHEMA_SERVICE_CACHE_KEY: &str = "schema.service_cache";
 
 /// Backs the `schema` namespace object.
@@ -168,19 +169,14 @@ impl Object for Schema {
             "field" => {
                 let schema = Arc::clone(self);
                 Some(Value::from_function(
-                    move |state: &State, name: &str| -> Result<Value, Error> {
+                    move |name: &str| -> Result<Value, Error> {
                         let field = schema.field(name).ok_or_else(|| {
                             unknown_field_error(&schema, name)
                         })?;
-                        if let Some(SchemaFileFieldRef {
-                            folders,
-                            ext,
-                            class: classes,
-                        }) = field.file_filter()
-                        {
-                            return file_field_values(
-                                state, folders, ext, classes,
-                            );
+                        if let Some(filter) = field.file_filter() {
+                            let source = file_field_source(&filter)
+                                .map_err(glob_compile_error)?;
+                            return Ok(Value::from_object(source));
                         }
                         Ok(field.select_values().map_or_else(
                             || Value::from(()),
@@ -230,9 +226,9 @@ impl Object for Schema {
 /// [`bind_related`].
 type RelateFn = fn(&SchemaService, &str) -> Vec<Arc<Schema>>;
 
-/// Binds every Schema `relate` returns for `schema` as a `Value` list of
-/// bound `Schema` objects. Shared by `.children()`/`.descendants()`, which
-/// differ only in which [`SchemaService`] method they call.
+/// Binds every Schema `relate` returns for `schema` as a `Value` list of bound
+/// `Schema` objects. Shared by `.children()`/`.descendants()`, which differ
+/// only in which [`SchemaService`] method they call.
 fn bind_related(
     state: &State,
     schema: &Arc<Schema>,
@@ -260,45 +256,89 @@ fn select_entry_value(entry: &SchemaSelectFieldEntry) -> Value {
     Value::from_serialize(&object)
 }
 
-/// Resolves a file-typed field against the render-scoped `FileIndex`.
-fn file_field_values(
-    state: &State,
-    folders: &[String],
-    ext: Option<&str>,
-    classes: &[String],
-) -> Result<Value, Error> {
-    let service = cached_service(state)?;
-    let index = super::query::cached_refresh(state, service.spec().root())
-        .map_err(super::query::index_error)?;
-    let class_matches = if classes.is_empty() {
-        None
-    } else {
-        Some(service.matches(classes))
-    };
-    let keys = FrontmatterFieldKeys::new(
-        service.spec().class_field().clone(),
-        service.spec().title_field().clone(),
-        service.spec().aliases_field().clone(),
-    );
-    let options = index.file_options(FileOptionFilter::new(
+/// Builds a [`QuerySource`] filter from a `file` field's declaration.
+///
+/// Empty `folders`/`class` are omitted from the built expression rather than
+/// defaulted to always-true, so a class-only field still narrows to Notes of
+/// that class instead of matching every non-Note file. The `Class` atom's match
+/// set stays empty here — the same unresolved shape DSL parsing produces for
+/// `@Book`/`class(Name)` — and is populated later by
+/// [`query::resolve_classes`](crate::query::resolve_classes), the same pass
+/// that resolves DSL-parsed class atoms.
+///
+/// # Errors
+///
+/// Returns a [`regex::Error`] if a folder/extension glob fails to compile
+/// (see [`compile_glob`]'s docs: not expected in practice).
+fn file_field_source(
+    filter: &SchemaFileFieldRef<'_>,
+) -> Result<QuerySource, regex::Error> {
+    let SchemaFileFieldRef {
         folders,
         ext,
-        class_matches.as_ref(),
-        &keys,
-    ));
-    Ok(Value::from(
-        options.into_iter().map(file_option_value).collect::<Vec<_>>(),
+        class,
+    } = *filter;
+    let mut terms = Vec::new();
+    if let [first, rest @ ..] = folders {
+        let first_glob = glob_for(first, ext)?;
+        let rest_globs = rest
+            .iter()
+            .map(|folder| glob_for(folder, ext))
+            .collect::<Result<Vec<_>, _>>()?;
+        terms.push(QuerySourceExpr::disjunction(first_glob, rest_globs));
+    } else if ext.is_some() {
+        terms.push(QuerySourceExpr::atom(glob_for("", ext)?));
+    } else {
+        // Neither folders nor ext restrict the match: no glob term to add.
+    }
+    if !class.is_empty() {
+        terms.push(QuerySourceExpr::atom(SourceAtom::Class {
+            names: class.to_vec(),
+            mode: ClassExpansionMode::Exact(BTreeSet::new()),
+        }));
+    }
+    let mut terms = terms.into_iter();
+    Ok(terms.next().map_or_else(
+        || QuerySource::All,
+        |first| {
+            QuerySource::Expr(QuerySourceExpr::conjunction(
+                first,
+                terms.collect(),
+            ))
+        },
     ))
 }
 
-/// Converts an index-derived file option into the label/value object shape
-/// `ui.select` expects by default.
-fn file_option_value(option: FileOption) -> Value {
-    let (label, value) = option.into_parts();
-    minijinja::context! {
-        label => label,
-        value => value,
-    }
+/// Builds the glob matching every file under `folder` (or, when `folder` is
+/// empty, every file anywhere in the project) with the given `ext`.
+///
+/// Mirrors the DSL's own glob compilation ([`compile_glob`]) so a `file`
+/// field's filter composes identically to hand-written source text.
+///
+/// # Errors
+///
+/// Returns a [`regex::Error`] if the built glob fails to compile.
+fn glob_for(
+    folder: &str,
+    ext: Option<&str>,
+) -> Result<SourceAtom, regex::Error> {
+    let suffix = ext.map_or_else(String::new, |ext| format!(".{ext}"));
+    let glob = if folder.is_empty() {
+        format!("**{suffix}")
+    } else {
+        format!("{folder}/**{suffix}")
+    };
+    compile_glob(&glob)
+}
+
+/// Maps a [`regex::Error`] from a `file` field's glob compilation into a
+/// [`minijinja::Error`].
+///
+/// Keeps the original error as [`source`].
+///
+/// [`source`]: std::error::Error::source
+fn glob_compile_error(source: regex::Error) -> Error {
+    super::error::invalid_operation("failed to compile file field glob", source)
 }
 
 /// Builds the error for `schema.get(name)` naming a Schema that did not
@@ -310,10 +350,9 @@ fn unknown_schema_error(name: &str) -> Error {
 /// Builds the error for `.field(name)` naming a field absent from `schema`'s
 /// resolved fields.
 ///
-/// Appends a `; did you mean "..."?` hint when
-/// [`Schema::suggest_field`] finds exactly one plausible candidate; omits the
-/// hint otherwise. Never changes whether the lookup itself succeeds:
-/// suggestions are diagnostic text only.
+/// Appends a `; did you mean "..."?` hint when [`Schema::suggest_field`] finds
+/// exactly one plausible candidate; omits the hint otherwise. Never changes
+/// whether the lookup itself succeeds: suggestions are diagnostic text only.
 fn unknown_field_error(schema: &Schema, field: &str) -> Error {
     let base = format!("schema {:?} has no field {field:?}", schema.name());
     let message = schema.suggest_field(field).map_or_else(
@@ -343,13 +382,43 @@ mod tests {
         let root =
             directory.parent().and_then(Path::parent).unwrap_or(directory);
         let (service, _, _) =
-            SchemaService::new(SchemaConfigSpec::for_test(root, directory))
+            SchemaService::new(&SchemaConfigSpec::for_test(root, directory))
                 .expect("valid test schema directory");
         SchemaOps::new(Arc::new(service))
     }
 
     fn render(directory: &Path, source: &str) -> Result<String, Error> {
         env(directory).render_str(source, minijinja::context!())
+    }
+
+    /// A fuller [`Environment`] than [`env`]: also registers `query`/`tasks`
+    /// and their terminal filters (`with_children`/`with_descendants` among
+    /// them) alongside `schema`, against `directory`'s schema directory.
+    /// Needed only by tests proving a `file` field's `QuerySource` output
+    /// composes with `query.from(...)`.
+    fn full_env(directory: &Path) -> Environment<'static> {
+        let root: Arc<Path> = Arc::from(
+            directory.parent().and_then(Path::parent).unwrap_or(directory),
+        );
+        let (service, _, _) =
+            SchemaService::new(&SchemaConfigSpec::for_test(&root, directory))
+                .expect("valid test schema directory");
+        let service = Arc::new(service);
+        let class_field: Arc<str> = Arc::from("class");
+        let mut env = Environment::new();
+        crate::template::engine::QueryOps::page(
+            Arc::clone(&root),
+            class_field,
+            Arc::clone(&service),
+        )
+        .register(&mut env);
+        crate::template::engine::QueryOps::register_terminal_filters(&mut env);
+        SchemaOps::new(service).register(&mut env);
+        env
+    }
+
+    fn render_full(directory: &Path, source: &str) -> Result<String, Error> {
+        full_env(directory).render_str(source, minijinja::context!())
     }
 
     mod fixtures {
@@ -562,7 +631,7 @@ mod tests {
         }
 
         #[test]
-        fn file_field_returns_index_derived_label_value_pairs() {
+        fn file_field_composes_with_query_from_to_select_matching_files() {
             let temp = tempfile::tempdir().expect("create temp dir");
             write_schema(
                 temp.path(),
@@ -598,23 +667,93 @@ mod tests {
             );
             write_note(temp.path(), "covers/ignored.txt", "");
 
-            let rendered = render(
+            // `class = ["book"]` matches exactly, the same default depth a
+            // bare `@Book`/`class(Book)` DSL atom gets: `covers/dune.md`
+            // (class `sci_fi`, a `book` descendant) is excluded here, not
+            // widened, proving `.field()` builds an unresolved `Exact` atom
+            // rather than eagerly expanding classes itself. `misc/ignored.md`
+            // (wrong folder) and `covers/ignored.txt` (wrong extension) are
+            // excluded by the glob.
+            let rendered = render_full(
                 &temp.path().join(".traces/schemas"),
-                "{% for item in schema.get('book').field('cover') %}{{ \
-                 item.label }}={{ item.value }}{% if not loop.last %}|{% \
-                 endif %}{% endfor %}",
+                "{% for item in query.from(schema.get('book').field('cover')) \
+                 %}{{ item.file.name }}{% if not loop.last %}|{% endif %}{% \
+                 endfor %}",
             )
             .expect("render succeeds");
 
-            assert_eq!(
-                rendered,
-                "Friendly Dune=covers/dune.md|plain=covers/plain.md|Titled \
-                 Cover=covers/titled.md"
-            );
+            assert_eq!(rendered, "plain|titled");
         }
 
         #[test]
-        fn file_field_options_refresh_between_renders() {
+        fn file_field_reaches_a_non_markdown_file_with_no_note() {
+            // The acceptance case this refactor exists for: a `file` field
+            // matches non-Markdown files (no parsed Note at all), and
+            // `.field()` selects it without executing any query itself —
+            // only `query.from(...)` does, via the shared resolution path.
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_schema(
+                temp.path(),
+                "book",
+                r#"
+                [fields.cover]
+                type = "file"
+                folders = ["covers"]
+                ext = "jpg"
+                "#,
+            );
+            write_note(temp.path(), "covers/a.jpg", "");
+            write_note(temp.path(), "notes/b.md", "# Unrelated Note");
+
+            let rendered = render_full(
+                &temp.path().join(".traces/schemas"),
+                "{% for item in query.from(schema.get('book').field('cover')) \
+                 %}{{ item.file.path }}{% endfor %}",
+            )
+            .expect("render succeeds");
+
+            assert_eq!(rendered, "covers/a.jpg");
+        }
+
+        #[test]
+        fn file_field_widens_to_descendants_via_with_descendants_filter() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_schema(
+                temp.path(),
+                "book",
+                r#"
+                [fields.cover]
+                type = "file"
+                folders = ["covers"]
+                ext = "md"
+                class = ["book"]
+                "#,
+            );
+            write_schema(temp.path(), "sci_fi", r#"extends = ["book"]"#);
+            write_note(
+                temp.path(),
+                "covers/dune.md",
+                "---\nclass: sci_fi\n---\n",
+            );
+            write_note(
+                temp.path(),
+                "covers/plain.md",
+                "---\nclass: book\n---\n",
+            );
+
+            let rendered = render_full(
+                &temp.path().join(".traces/schemas"),
+                "{% for item in query.from(schema.get('book').field('cover') \
+                 | with_descendants) %}{{ item.file.name }}{% if not \
+                 loop.last %}|{% endif %}{% endfor %}",
+            )
+            .expect("render succeeds");
+
+            assert_eq!(rendered, "dune|plain");
+        }
+
+        #[test]
+        fn file_field_refreshes_between_renders() {
             let temp = tempfile::tempdir().expect("create temp dir");
             let schemas_dir = temp.path().join(".traces/schemas");
             write_schema(
@@ -627,9 +766,11 @@ mod tests {
                 ext = "md"
                 "#,
             );
-            let env = env(&schemas_dir);
-            let source = "{{ schema.get('book').field('cover') | \
-                          map(attribute='value') | join(',') }}";
+            let env = full_env(&schemas_dir);
+            let source = "{% for item in \
+                          query.from(schema.get('book').field('cover')) %}{{ \
+                          item.file.path }}{% if not loop.last %},{% endif \
+                          %}{% endfor %}";
             write_note(temp.path(), "covers/first.md", "");
 
             let first = env
@@ -969,7 +1110,7 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             write_schema(temp.path(), "book", "not valid toml [[[");
 
-            let error = SchemaService::new(SchemaConfigSpec::for_test(
+            let error = SchemaService::new(&SchemaConfigSpec::for_test(
                 temp.path(),
                 &temp.path().join(".traces/schemas"),
             ))
@@ -999,7 +1140,7 @@ mod tests {
             );
             write_schema(temp.path(), "broken", "not valid toml [[[");
 
-            let error = SchemaService::new(SchemaConfigSpec::for_test(
+            let error = SchemaService::new(&SchemaConfigSpec::for_test(
                 temp.path(),
                 &temp.path().join(".traces/schemas"),
             ))
@@ -1049,7 +1190,7 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             write_schema(temp.path(), "broken", "not valid toml [[[");
 
-            let error = SchemaService::new(SchemaConfigSpec::for_test(
+            let error = SchemaService::new(&SchemaConfigSpec::for_test(
                 temp.path(),
                 &temp.path().join(".traces/schemas"),
             ))

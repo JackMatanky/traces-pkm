@@ -166,7 +166,7 @@ mod tests {
             fs::write(temp.path().join("b.md"), "- [ ] other task\n")
                 .expect("write b.md");
             let task = Task {
-                from: Some("projects".to_owned()),
+                from: Some("projects/".to_owned()),
                 filter: None,
             };
 

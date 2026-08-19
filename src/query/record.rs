@@ -19,9 +19,8 @@
 //!
 //! use traces_pkm::{index::FileRecord, note::Note, query::IndexRecord};
 //!
-//! let file = FileRecord::new(Path::new("note.md"));
 //! let note = Note::default();
-//! let record = IndexRecord::new(file, note);
+//! let record = IndexRecord::new(file, Some(note));
 //!
 //! assert_eq!(record.file().path().to_str(), Some("note.md"));
 //! ```
@@ -55,9 +54,8 @@ use crate::{
 ///
 /// use traces_pkm::{index::FileRecord, note::Note, query::IndexRecord};
 ///
-/// let file = FileRecord::new(Path::new("note.md"));
 /// let note = Note::default();
-/// let record = IndexRecord::new(file, note);
+/// let record = IndexRecord::new(file, Some(note));
 /// ```
 #[derive(Clone, Debug, PartialEq)]
 pub struct IndexRecord {
@@ -66,7 +64,10 @@ pub struct IndexRecord {
     /// rows (see [`crate::index::FileIndex::query_tasks`] and
     /// [`super::QueryOutcome::flatten`]) shares this field across every row
     /// instead of deep-cloning frontmatter, links, tags, and lists per row.
-    note: Arc<Note>,
+    ///
+    /// `None` when the underlying file has no parsed [`Note`] (for example, an
+    /// image or PDF referenced by a `file`-typed Schema field).
+    note: Option<Arc<Note>>,
     /// Overrides field resolution for exploded rows produced by
     /// [`super::QueryOutcome::flatten`].
     flattened: Vec<(FieldPath, FieldValue)>,
@@ -81,10 +82,13 @@ pub struct IndexRecord {
 
 impl IndexRecord {
     /// Creates a new [`IndexRecord`] pairing `file` with its parsed `note`.
-    pub(super) fn new(file: FileRecord, note: Note) -> Self {
+    ///
+    /// `note` is `None` for files with no parsed [`Note`] (non-Markdown files
+    /// matched by a `file`-typed Schema field).
+    pub(super) fn new(file: FileRecord, note: Option<Note>) -> Self {
         Self {
             file,
-            note: Arc::new(note),
+            note: note.map(Arc::new),
             flattened: Vec::new(),
             task: None,
             inlinks: Vec::new(),
@@ -141,14 +145,16 @@ impl IndexRecord {
         &self.file
     }
 
-    /// Returns parsed [`Note`] metadata for the indexed file.
+    /// Returns parsed [`Note`] metadata for the indexed file, or `None` if the
+    /// file has no parsed Note (a non-Markdown file matched by a `file`-typed
+    /// Schema field).
     ///
     /// The returned reference shares the underlying [`Arc`] allocation with
     /// any task-level rows derived from the same Note.
     #[inline]
     #[must_use]
-    pub(crate) fn note(&self) -> &Note {
-        self.note.as_ref()
+    pub(crate) fn note(&self) -> Option<&Note> {
+        self.note.as_deref()
     }
 
     /// Returns project-relative paths of Notes whose wikilinks resolve to
@@ -207,8 +213,8 @@ impl IndexRecord {
             ),
             FieldPath::Tags => FieldValue::List(
                 self.note
-                    .tags()
                     .iter()
+                    .flat_map(|note| note.tags())
                     .map(|tag| FieldValue::String(tag.as_str().to_owned()))
                     .collect(),
             ),
@@ -224,8 +230,11 @@ impl IndexRecord {
             ),
             FieldPath::Metadata(key) => self
                 .note
-                .fields()
-                .find(|field| field.key().is_match(key.as_str()))
+                .as_deref()
+                .and_then(|note| {
+                    note.fields()
+                        .find(|field| field.key().is_match(key.as_str()))
+                })
                 .map_or(FieldValue::Null, |field| field.value().clone()),
         }
     }

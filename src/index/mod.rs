@@ -45,7 +45,7 @@ use store::IndexStore;
 use crate::query::IndexRecord;
 use crate::{
     note::{Note, parse_markdown},
-    query::{FileOption, FileOptionFilter, QueryOutcome, QuerySource},
+    query::{QueryOutcome, QuerySource},
 };
 
 /// Project-relative path of the persisted [`FileIndex`] database.
@@ -275,58 +275,6 @@ impl FileIndex {
     #[must_use]
     pub fn query_tasks(self, source: &QuerySource) -> QueryOutcome {
         crate::query::query_tasks(self, source, "class")
-    }
-
-    /// Returns file-field options matching an AND-composed Schema filter.
-    ///
-    /// Empty `folders`/`classes`, or an absent `ext`, skips that filter
-    /// dimension; within `folders`, matching is any-of, a record matches when
-    /// its project-relative folder starts with any configured folder. `classes`
-    /// is already the transitive is-a match set from
-    /// [`SchemaService::matches`].
-    ///
-    /// Label resolution is not a filter dimension: every matched record gets a
-    /// label, trying the configured aliases key, then the configured title key,
-    /// then falling back to the filename stem.
-    ///
-    /// [`SchemaService::matches`]: crate::schema::SchemaService::matches
-    #[must_use]
-    pub(crate) fn file_options(
-        &self,
-        filter: FileOptionFilter<'_>,
-    ) -> Vec<FileOption> {
-        let ext = filter.ext.map(|value| value.trim_start_matches('.'));
-        let mut options = Vec::new();
-        for record in &self.records {
-            if !filter.folders.is_empty()
-                && !filter
-                    .folders
-                    .iter()
-                    .any(|folder| record.folder().starts_with(folder))
-            {
-                continue;
-            }
-            if let Some(ext) = ext
-                && record
-                    .path()
-                    .extension()
-                    .and_then(|raw_ext| raw_ext.to_str())
-                    != Some(ext)
-            {
-                continue;
-            }
-            let note = self.note(record.path());
-            if let Some(classes) = filter.classes
-                && !note.is_some_and(|note| {
-                    crate::query::class_values(note, filter.keys.class().name())
-                        .any(|class| classes.contains(class))
-                })
-            {
-                continue;
-            }
-            options.push(FileOption::for_record(record, note, filter.keys));
-        }
-        options
     }
 
     /// Returns indexed [`FileRecord`]s, sorted by path.
@@ -1027,11 +975,14 @@ mod tests {
         use crate::note::Tag;
 
         fn note_paths(outcome: &QueryOutcome) -> Vec<&Path> {
-            outcome.iter().map(|record| record.note().path()).collect()
+            outcome
+                .iter()
+                .filter_map(|record| record.note().map(Note::path))
+                .collect()
         }
 
         #[test]
-        fn returns_every_note_and_excludes_non_markdown_files_when_source_is_all()
+        fn returns_every_file_and_includes_non_markdown_files_when_source_is_all()
          {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("a.md"), "# A").expect("write a");
@@ -1042,13 +993,18 @@ mod tests {
 
             let outcome = index.query(&QuerySource::All);
 
-            assert_eq!(outcome.len(), 2);
+            assert_eq!(outcome.len(), 3);
             assert!(!outcome.is_empty());
             assert_eq!(
-                outcome.get(0).map(|record| record.note().path()),
+                outcome.get(0).map(|record| record.file().path()),
                 Some(Path::new("a.md"))
             );
-            assert!(outcome.get(2).is_none());
+            assert_eq!(
+                outcome.get(2).map(|record| record.file().path()),
+                Some(Path::new("readme.txt"))
+            );
+            assert_eq!(outcome.get(2).and_then(|record| record.note()), None);
+            assert!(outcome.get(3).is_none());
             assert_eq!(note_paths(&outcome), [
                 Path::new("a.md"),
                 Path::new("b.md")
@@ -1056,13 +1012,14 @@ mod tests {
         }
 
         #[test]
-        fn returns_empty_outcome_when_no_notes_match() {
+        fn returns_empty_outcome_when_no_notes_match_a_tag_filter() {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("readme.txt"), "text")
                 .expect("write txt");
             let index = FileIndex::build(temp.path()).expect("build index");
 
-            let outcome = index.query(&QuerySource::All);
+            let outcome = index
+                .query(&QuerySource::parse("#missing").expect("valid source"));
 
             assert!(outcome.is_empty());
             assert_eq!(outcome.len(), 0);
@@ -1154,22 +1111,18 @@ mod tests {
 
             let outcome = index.query(&QuerySource::All);
             let record = outcome.iter().next().expect("one record");
+            let note = record.note().expect("note");
 
             assert_eq!(record.file().path(), Path::new("book.md"));
+            assert_eq!(note.frontmatter().map(|fm| fm.fields().len()), Some(1));
             assert_eq!(
-                record.note().frontmatter().map(|fm| fm.fields().len()),
-                Some(1)
-            );
-            assert_eq!(
-                record
-                    .note()
-                    .inline_fields()
+                note.inline_fields()
                     .iter()
                     .map(|field| field.key().canonical())
                     .collect::<Vec<_>>(),
                 ["genre"]
             );
-            assert_eq!(record.note().tags(), [Tag::new("#book")]);
+            assert_eq!(note.tags(), [Tag::new("#book")]);
         }
 
         #[test]
