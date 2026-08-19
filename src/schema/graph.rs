@@ -210,36 +210,80 @@ impl<'a> SchemaGraph<'a, Resolved> {
     /// Return every Schema's transitive `extends` descendants, keyed by
     /// ancestor name.
     ///
-    /// Computed as a memoized depth-first walk over
-    /// [`children_by_name`](Self::children_by_name): each name's descendant
-    /// set is computed once (graph edges are never re-walked), but every
-    /// ancestor that reaches a shared descendant still copies that
-    /// descendant's already-materialized set into its own, since each entry
-    /// in the returned map must be an independently owned set. Total work is
-    /// `O(V²/w)` for the bitset DFS (where `w` is the machine word size,
-    /// typically 64) plus `O(V²)` for expanding bitsets back to name sets.
-    /// Degrades to `O(V²)` in the worst case for the expansion phase.
+    /// Computed via topological dynamic programming: [`SchemaIndex`] bit
+    /// positions are assigned in Kahn's order (parents after children), so
+    /// processing nodes in reverse topological order guarantees every
+    /// child's bitvec is already computed before its parent. Each node's
+    /// bitvec is filled by OR-ing its children's pre-computed bitvecs
+    /// in-place — no recursion, no cloning, no per-call allocation.
+    ///
+    /// Total work: `O(V²/w)` for bitset operations (where `w` is the
+    /// machine word size, typically 64) plus `O(V²)` for expanding
+    /// bitvecs back to name sets.
     #[must_use]
     pub(super) fn descendants_by_name(
         &self,
     ) -> IndexMap<SchemaName, IndexSet<SchemaName>> {
-        let index = SchemaIndex::new(self.raw.keys().map(|n| n.as_ref()));
+        let index = SchemaIndex::new(self.visited.iter().copied());
         let capacity = index.bit_count();
         let children = &self.children_by_name;
 
-        let mut memo: IndexMap<SchemaName, BitVec> = IndexMap::new();
-        for name in children.keys() {
-            Self::descendants_of(name, children, &index, capacity, &mut memo);
+        // Pre-allocate one bitvec per schema — O(V²/w) total.
+        let mut memo: IndexMap<SchemaName, BitVec> = index
+            .bit_to_name
+            .iter()
+            .map(|name| (name.clone(), BitVec::from_elem(capacity, false)))
+            .collect();
+
+        // Process in reverse topological order (leaves → roots).
+        // Each child's bitvec is already finalized when its parent runs.
+        for name in self.visited.iter().rev() {
+            let Some(direct) = children.get(name.as_str()) else {
+                continue;
+            };
+            for &child in direct {
+                Self::merge_child(name, child, &index, &mut memo);
+            }
         }
 
-        Self::expand_descendants(&memo, children)
+        Self::expand_descendants(&memo, &index)
     }
 
-    /// Expand `BitVec` descendant sets back into owned name sets via BFS from
-    /// `children_by_name`, preserving parent-before-child ordering.
+    /// OR a single child's bitvec into its parent's.
+    ///
+    /// Sets the direct-child bit and merges the child's transitive
+    /// descendants. The clone is bounded: one per edge, O(V/w) each.
+    fn merge_child(
+        parent: &SchemaNameRef<'_>,
+        child: SchemaNameRef<'_>,
+        index: &SchemaIndex,
+        memo: &mut IndexMap<SchemaName, BitVec>,
+    ) {
+        if let (Some(bit), Some(parent_bits)) =
+            (index.bit_of(child.as_str()), memo.get_mut(parent.as_str()))
+        {
+            parent_bits.set(bit, true);
+        }
+        // Clone is required: borrow checker prevents holding an immutable
+        // ref to the child entry while mutably borrowing the parent entry.
+        // One clone per edge, O(V/w) each — optimal for this approach.
+        if let Some(child_bits) = memo.get(child.as_str()) {
+            let child_bits = child_bits.clone();
+            if let Some(parent_bits) = memo.get_mut(parent.as_str()) {
+                parent_bits.or(&child_bits);
+            }
+        }
+    }
+
+    /// Expand `BitVec` descendant sets back into owned name sets by scanning
+    /// bit positions directly via [`SchemaIndex`].
+    ///
+    /// Because bit positions are assigned in topological order (parents
+    /// before children), the resulting sets naturally preserve that ordering
+    /// without any re-sorting. Total work: `O(V²)`.
     fn expand_descendants(
         memo: &IndexMap<SchemaName, BitVec>,
-        children: &IndexMap<SchemaNameRef<'_>, Vec<SchemaNameRef<'_>>>,
+        index: &SchemaIndex,
     ) -> IndexMap<SchemaName, IndexSet<SchemaName>> {
         let mut result: IndexMap<SchemaName, IndexSet<SchemaName>> =
             IndexMap::new();
@@ -247,51 +291,14 @@ impl<'a> SchemaGraph<'a, Resolved> {
             if bits.none() {
                 continue;
             }
-            let mut descendants = IndexSet::new();
-            let mut queue: VecDeque<SchemaNameRef<'_>> = VecDeque::new();
-            if let Some(direct) = children.get(name.as_str()) {
-                for &child in direct {
-                    queue.push_back(child);
-                }
-            }
-            while let Some(current) = queue.pop_front() {
-                let owned = SchemaName::from(current);
-                if !descendants.insert(owned) {
-                    continue;
-                }
-                if let Some(direct) = children.get(current.as_str()) {
-                    queue.extend(direct.iter().copied());
-                }
-            }
+            let descendants: IndexSet<SchemaName> = bits
+                .iter()
+                .enumerate()
+                .filter(|(_, set)| *set)
+                .filter_map(|(i, _)| index.name_of(i).cloned())
+                .collect();
             result.insert(name.clone(), descendants);
         }
-        result
-    }
-
-    fn descendants_of(
-        name: &SchemaNameRef<'_>,
-        children: &IndexMap<SchemaNameRef<'_>, Vec<SchemaNameRef<'_>>>,
-        index: &SchemaIndex,
-        capacity: usize,
-        memo: &mut IndexMap<SchemaName, BitVec>,
-    ) -> BitVec {
-        let owned = SchemaName::from(*name);
-        if let Some(cached) = memo.get(&owned) {
-            return cached.clone();
-        }
-        let mut result = BitVec::from_elem(capacity, false);
-        if let Some(direct) = children.get(name.as_str()) {
-            for &child in direct {
-                if let Some(bit) = index.bit_of(child.as_str()) {
-                    result.set(bit, true);
-                }
-                let child_bits = Self::descendants_of(
-                    &child, children, index, capacity, memo,
-                );
-                result.or(&child_bits);
-            }
-        }
-        memo.insert(owned, result.clone());
         result
     }
 }
@@ -332,11 +339,6 @@ impl SchemaIndex {
     }
 
     /// Bit index → schema name.
-    #[allow(
-        dead_code,
-        reason = "SchemaIndex API tested in schema_index; may be used by \
-                  future callers"
-    )]
     fn name_of(&self, bit: usize) -> Option<&SchemaName> {
         self.bit_to_name.get(bit)
     }
@@ -621,6 +623,30 @@ mod tests {
             assert_eq!(descendants.get("c"), Some(&set(&["d"])));
             assert_eq!(descendants.get("b"), None);
             assert_eq!(descendants.get("d"), None);
+        }
+
+        #[test]
+        fn preserves_declaration_order_in_descendant_sets() {
+            // Raw schemas are declared as: thing, book, film, adaptation
+            // adaptation extends book and film.
+            // The descendant set for "thing" must list names in the order
+            // they appear in the raw index, not in BFS traversal order.
+            let mut raw = IndexMap::new();
+            raw.insert(SchemaName::from("thing"), schema(&[]));
+            raw.insert(SchemaName::from("book"), schema(&["thing"]));
+            raw.insert(SchemaName::from("film"), schema(&["thing"]));
+            raw.insert(
+                SchemaName::from("adaptation"),
+                schema(&["book", "film"]),
+            );
+            let graph = SchemaGraph::new(&raw).0.into_resolved().unwrap();
+            let descendants = graph.descendants_by_name();
+
+            let expected: IndexSet<SchemaName> = ["adaptation", "book", "film"]
+                .iter()
+                .map(|&s| SchemaName::from(s))
+                .collect();
+            assert_eq!(descendants.get("thing"), Some(&expected));
         }
     }
 
