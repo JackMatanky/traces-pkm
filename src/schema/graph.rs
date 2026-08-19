@@ -409,12 +409,9 @@ mod tests {
             let mut raw = IndexMap::new();
             raw.insert(SchemaName::from(GLOBAL_SCHEMA_NAME), schema(&[]));
             raw.insert(SchemaName::from("book"), schema(&[GLOBAL_SCHEMA_NAME]));
-            let (graph, warnings) = SchemaGraph::new(&raw);
+            let (_graph, warnings) = SchemaGraph::new(&raw);
 
             assert!(warnings.is_empty());
-            assert_eq!(graph.parents_of(SchemaNameRef::from("book")), &[
-                SchemaName::from(GLOBAL_SCHEMA_NAME)
-            ]);
         }
     }
 
@@ -422,6 +419,18 @@ mod tests {
         use pretty_assertions::assert_eq;
 
         use super::*;
+
+        #[test]
+        fn returns_raw_extends_for_book_extending_global() {
+            let mut raw = IndexMap::new();
+            raw.insert(SchemaName::from(GLOBAL_SCHEMA_NAME), schema(&[]));
+            raw.insert(SchemaName::from("book"), schema(&[GLOBAL_SCHEMA_NAME]));
+            let (graph, _warnings) = SchemaGraph::new(&raw);
+
+            assert_eq!(graph.parents_of(SchemaNameRef::from("book")), &[
+                SchemaName::from(GLOBAL_SCHEMA_NAME)
+            ]);
+        }
 
         #[test]
         fn returns_raw_extends_including_duplicates() {
@@ -452,7 +461,7 @@ mod tests {
         use super::*;
 
         #[test]
-        fn yields_roots_in_declaration_order() {
+        fn returns_roots_in_declaration_order() {
             let mut raw = IndexMap::new();
             raw.insert(SchemaName::from("author"), schema(&[]));
             raw.insert(SchemaName::from("book"), schema(&["author"]));
@@ -633,7 +642,7 @@ mod tests {
         use super::*;
 
         #[test]
-        fn bit_of_returns_the_insertion_order_index() {
+        fn returns_the_insertion_order_index() {
             let index = SchemaIndex::new(
                 ["alpha", "book", "sci_fi"]
                     .iter()
@@ -647,7 +656,7 @@ mod tests {
         }
 
         #[test]
-        fn name_of_returns_the_name_at_the_given_bit() {
+        fn returns_the_name_at_the_given_bit() {
             let index = SchemaIndex::new(
                 ["alpha", "book"].iter().map(|&s| SchemaNameRef::from(s)),
             );
