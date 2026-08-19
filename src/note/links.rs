@@ -315,10 +315,9 @@ fn find_wikilink_close(s: &str) -> Option<usize> {
 /// treat the alias as identical to the target.
 fn split_wikilink_text(s: &str) -> (&str, &str) {
     let source = SourceText::new(s);
-    match find_unescaped(s, |_, ch| ch == '|') {
-        Some(index) => (&s[..index], &s[source.advance_char(index, '|')..]),
-        None => (s, s),
-    }
+    find_unescaped(s, |_, ch| ch == '|').map_or((s, s), |index| {
+        (&s[..index], &s[source.advance_char(index, '|')..])
+    })
 }
 
 /// Unescapes a wikilink target or alias segment.

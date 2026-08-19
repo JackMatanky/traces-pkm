@@ -203,13 +203,12 @@ impl<'a> TemplateWriteTarget<'a> {
         &self,
         default: impl FnOnce() -> PathBuf,
     ) -> Result<PathBuf, TemplateError> {
-        match self
-            .requested
+        self.requested
             .or_else(|| self.declared.as_ref().map(DeclaredOutputPath::as_path))
-        {
-            Some(candidate) => Self::confine(self.root, candidate),
-            None => Ok(Self::trusted(self.root, default())),
-        }
+            .map_or_else(
+                || Ok(Self::trusted(self.root, default())),
+                |candidate| Self::confine(self.root, candidate),
+            )
     }
 
     /// Resolves the output destination for `policy`:

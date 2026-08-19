@@ -188,10 +188,9 @@ impl SelectOptions {
         for item in items.try_iter()? {
             let attribute_value = get_path(&item, path)?;
             let label = if attribute_value.is_undefined() {
-                match &default {
-                    Some(default) => default.to_string(),
-                    None => item.to_string(),
-                }
+                default
+                    .as_ref()
+                    .map_or_else(|| item.to_string(), ToString::to_string)
             } else {
                 attribute_value.to_string()
             };

@@ -187,10 +187,10 @@ impl Template {
         config: &Config,
         provider: &dyn DialogProvider,
     ) -> Result<TemplatePathInput, CliError> {
-        match self.name() {
-            Some(name) => Self::parse_input(name),
-            None => Self::pick_template(config, provider),
-        }
+        self.name().map_or_else(
+            || Self::pick_template(config, provider),
+            Self::parse_input,
+        )
     }
 
     fn parse_input(name: &Path) -> Result<TemplatePathInput, CliError> {

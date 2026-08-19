@@ -717,10 +717,10 @@ fn template_instantiate_help(source: &TemplateError) -> Box<dyn Display + '_> {
                      referenced values"
                 }
             };
-            Box::new(match render_error_location(source) {
-                Some(location) => format!("{base} (at {location})"),
-                None => base.to_owned(),
-            })
+            Box::new(render_error_location(source).map_or_else(
+                || base.to_owned(),
+                |location| format!("{base} (at {location})"),
+            ))
         }
     }
 }

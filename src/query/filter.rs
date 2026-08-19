@@ -181,6 +181,10 @@ fn tokenize_filter_expr(
 
 /// Unescapes a lexed double-quoted string literal into a
 /// [`FieldValue::String`].
+#[expect(
+    clippy::needless_pass_by_ref_mut,
+    reason = "logos Callback trait requires &mut Lexer"
+)]
 fn string_callback(lex: &mut Lexer<'_, FilterToken>) -> FieldValue {
     let inner = lex
         .slice()

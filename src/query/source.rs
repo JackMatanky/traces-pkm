@@ -528,6 +528,10 @@ enum SourceToken {
     Bare(String),
 }
 
+#[expect(
+    clippy::needless_pass_by_ref_mut,
+    reason = "logos Callback trait requires &mut Lexer"
+)]
 fn quoted_callback(lexer: &mut Lexer<'_, SourceToken>) -> String {
     let raw = lexer.slice();
     let inner = raw.get(1..raw.len().saturating_sub(1)).unwrap_or_default();
@@ -675,13 +679,15 @@ fn parse_sigil(
     let raw = sigil
         .strip_prefix('@')
         .ok_or_else(|| syntax_error(input, span, "a File Class name"))?;
-    let (name, mode) = if let Some(name) = raw.strip_suffix('+') {
-        (name, ClassExpansionMode::Children(BTreeSet::new()))
-    } else if let Some(name) = raw.strip_suffix('*') {
-        (name, ClassExpansionMode::Descendants(BTreeSet::new()))
-    } else {
-        (raw, ClassExpansionMode::Exact(BTreeSet::new()))
-    };
+    let (name, mode) = raw.strip_suffix('+').map_or_else(
+        || {
+            raw.strip_suffix('*').map_or(
+                (raw, ClassExpansionMode::Exact(BTreeSet::new())),
+                |name| (name, ClassExpansionMode::Descendants(BTreeSet::new())),
+            )
+        },
+        |name| (name, ClassExpansionMode::Children(BTreeSet::new())),
+    );
     if name.is_empty() {
         return Err(syntax_error(input, span, "a File Class name"));
     }

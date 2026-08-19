@@ -43,13 +43,13 @@ impl Completions {
     ///   `--list-templates` fails.
     #[inline]
     pub(super) fn run(self, service: &ConfigService) -> Result<(), CliError> {
-        match self.shell {
-            Some(shell) => {
+        self.shell.map_or_else(
+            || Self::list_templates(service),
+            |shell| {
                 Self::print_script(shell);
                 Ok(())
-            }
-            None => Self::list_templates(service),
-        }
+            },
+        )
     }
 
     /// Writes the completion script for `shell` to stdout.

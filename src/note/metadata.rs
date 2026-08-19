@@ -341,20 +341,19 @@ impl From<serde_yaml::Value> for FieldValue {
         match val {
             serde_yaml::Value::Null => Self::Null,
             serde_yaml::Value::Bool(b) => Self::Bool(b),
-            serde_yaml::Value::Number(n) => {
-                if let Some(f) = n.as_f64() {
-                    Self::Number(f)
-                } else if let Some(i) = n.as_i64() {
-                    #[expect(
-                        clippy::as_conversions,
-                        clippy::cast_precision_loss,
-                        reason = "YAML integer numbers converted to f64"
-                    )]
-                    Self::Number(i as f64)
-                } else {
-                    Self::Null
-                }
-            }
+            serde_yaml::Value::Number(n) => n.as_f64().map_or_else(
+                || {
+                    n.as_i64().map_or(Self::Null, |i| {
+                        #[expect(
+                            clippy::as_conversions,
+                            clippy::cast_precision_loss,
+                            reason = "YAML integer numbers converted to f64"
+                        )]
+                        Self::Number(i as f64)
+                    })
+                },
+                Self::Number,
+            ),
             serde_yaml::Value::String(s) => {
                 let trimmed = s.trim();
                 if trimmed.is_empty() {
