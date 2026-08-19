@@ -83,7 +83,7 @@ description = "Strict clippy: workspace, all targets, all features. Auto-fixes k
 depends = ["fmt"]
 usage = '''
 flag "--no-fix" help="Skip auto-fix for known lints"
-arg "[lints]" env="CLIPPY_FIX_LINTS" help="Fix list (comma-separated)" default="redundant_clone,needless_collect,or_fun_call"
+arg "[lints]" env="CLIPPY_FIX_LINTS" help="Fix list (comma-separated)" default="redundant_clone,needless_collect,or_fun_call,redundant_field_names,significant_drop_in_scrutinee,use_self"
 '''
 run = '''
 #!/usr/bin/env bash
