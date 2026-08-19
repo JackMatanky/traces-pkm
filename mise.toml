@@ -79,16 +79,32 @@ alias = "f"
 run = "cargo fmt --all"
 
 [tasks.clippy]
-description = "Run clippy with deny warnings"
-usage = 'flag "-f --fix" help="Auto-apply fixes (--fix --allow-dirty --allow-staged)"'
+description = "Strict clippy: workspace, all targets, all features. Auto-fixes known lints unless --no-fix."
+depends = ["fmt"]
+usage = '''
+flag "--no-fix" help="Skip auto-fix for known lints"
+arg "[lints]" env="CLIPPY_FIX_LINTS" help="Fix list (comma-separated)" default="redundant_clone,needless_collect,or_fun_call"
+'''
 run = '''
 #!/usr/bin/env bash
 set -euo pipefail
-args=(--workspace)
-if [ "${usage_fix:-}" = "true" ]; then
-  args+=(--fix --allow-dirty --allow-staged)
+
+declare -a cargo_args
+declare -a clippy_args
+cargo_args=(--workspace --all-targets --all-features)
+clippy_args=(-D warnings)
+
+if [[ "${usage_no_fix:-false}" != "true" ]]; then
+  cargo_args+=(--fix --allow-dirty --allow-staged)
+
+  IFS=',' read -ra lints <<< "${usage_lints}"
+
+  for lint in "${lints[@]}"; do
+    clippy_args+=(-W "clippy::${lint}")
+  done
 fi
-cargo clippy "${args[@]}" -- -D warnings
+
+cargo clippy "${cargo_args[@]}" -- "${clippy_args[@]}"
 '''
 
 [tasks.audit]
