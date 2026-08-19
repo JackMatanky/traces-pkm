@@ -524,3 +524,19 @@ Separation of concerns: each function maps to one responsibility. The orchestrat
 - `cargo check -p traces-pkm` ✅
 - `cargo clippy --workspace --all-targets --all-features -- -D warnings` ✅ (zero warnings)
 - `cargo nextest run -p traces-pkm` ✅ (1626/1626 passed)
+
+#### Full code review (79 files, ~14k lines diff vs `main`)
+
+Four parallel reviewers covered schema core, template engine, config/CLI, and index/query/misc. No critical issues found. Summary of findings:
+
+**Schema core** (graph.rs, resolver.rs, service.rs, model.rs, error.rs, raw.rs, fields/*): Clean architecture. Typestate enforced at compile time. Error model (SchemaError/SchemaWarning/SchemaFailure) well-designed. Bitset descendants correct — Kahn's order guarantees children before parents, reverse-iteration DP valid. `SchemaIndex` ownership of bitset operations good locality. 90 tests covering diamond DAGs, 3-level chains, cycle detection, parent-failure propagation, ambiguous field names, `$ref` edge cases. Doc comments strong — module-level docs describe resolution pipeline, typestate protocol, `stays_small` regression guard. Minor: `resolver.rs` variable naming (`raw` param vs `raw` local in `resolve()`), mixed `HashMap`/`IndexMap` in `graph.rs`, `merge_child` clones child bitvec per edge (documented, O(V/w), negligible at schema counts).
+
+**Template engine** (engine.rs, engine/schema.rs, engine/query.rs, engine/cache.rs, engine/ui.rs, error.rs, service.rs, loader.rs, writer.rs): `SchemaBinding`/`SchemaContext` deleted, `Schema` implements `Object` directly. Both `cached_registry` copies removed. Class-degrade-and-warn centralized in `SchemaService::matches`. `bind_related` deduplication clean. `.field()` returning `QuerySource` is correct design — declarative, composable with `query.from(...)` and `| with_children`/`| with_descendants`. `TemplateError::SchemaLoad` correctly plumbed. Minor: `select_entry_value` allocates `IndexMap` per call (not a regression), speculative `const fn` additions.
+
+**Config/CLI** (config/specs.rs, config/mod.rs, config/model.rs, cli/mod.rs, cli/template.rs, cli/error.rs, etc.): `SchemaConfigSpec` correct — private fields, `pub(crate)` accessors, `From<&Config>` impl, `Config::to_schema_spec()`. CLI paths correctly build `SchemaService`, call resolve(), pass service to `resolve_classes`. `TemplateService::new` fallibility plumbed through `CliError::TemplateInstantiate`. Important: 4 of 5 `SchemaConfigSpec` accessors are `dead_code` outside tests — struct is wider than callers need. Acceptable — documented `#[expect]`, will narrow when root/class/title/aliases accessors gain production callers.
+
+**Index/Query/Misc** (index/*, query/*, note/*, field.rs, Cargo.toml, mise.toml, lib.rs, benches, tests): `Option<Note>` propagation thorough and correct. `GlobPattern` compile-once design clean. `FileClassExpander` trait clean decoupling seam. Cargo.toml lint reorganization strictly better. `lib.rs` gating correct (`#[cfg(any(test, feature = "test-utils"))]`). `Exact` mode in `file_class_expander.rs` confirmed correct — `expanded` initialized to original classes before match, Exact branch just warns without extending. Minor: `parse_sigil` rewritten to nested `map_or`/`map_or_else` (harder to read, clippy-compliant).
+
+**Spec compliance:** All acceptance criteria satisfied. Minor justified deviations documented in Implementation Notes. `SchemaSelectFieldEntry` with `value`/`label`/`extra` richer than original spec — positive scope expansion supporting labeled entries for ticket 08.
+
+**Verdict:** Ship as-is. `specs.rs` dead-code width and `resolver.rs` naming worth a follow-up pass but don't block merge.
