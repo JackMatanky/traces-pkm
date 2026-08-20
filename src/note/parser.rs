@@ -412,8 +412,10 @@ impl ListTracker {
         // document-order stream every page-level query already relies on. Both
         // outlive this function inside different serialized structs, so neither
         // can borrow from the other.
-        let mut item_fields = IndexMap::new();
-        let mut page_fields = IndexMap::new();
+        let mut item_fields: IndexMap<FieldKey, Vec<super::NoteFieldValue>> =
+            IndexMap::new();
+        let mut page_fields: IndexMap<FieldKey, Vec<super::NoteFieldValue>> =
+            IndexMap::new();
         for (key, value) in raw_fields {
             item_fields.entry(key.clone()).or_default().push(value.clone());
             page_fields.entry(key).or_default().push(value);
@@ -885,8 +887,11 @@ mod tests {
             let note =
                 parse_markdown("note.md", "Status:: Draft\n\nAuthor:: Jane");
 
-            let keys: Vec<&str> =
-                note.inline_fields().keys().map(|k| k.name()).collect();
+            let keys: Vec<&str> = note
+                .inline_fields()
+                .keys()
+                .map(crate::field::FieldKey::name)
+                .collect();
             assert_eq!(keys, ["Status", "Author"]);
         }
 
@@ -941,8 +946,17 @@ mod tests {
                 Some("low")
             );
 
-            // Both fields still surface on the page-level bag, unscoped.
-            assert_eq!(note.inline_fields().len(), 2);
+            // Both fields still surface on the page-level bag, unscoped,
+            // grouped under the same key.
+            assert_eq!(note.inline_fields().len(), 1);
+            assert_eq!(
+                note.inline_fields()
+                    .values()
+                    .next()
+                    .expect("values present")
+                    .len(),
+                2
+            );
         }
 
         #[test]
@@ -965,7 +979,7 @@ mod tests {
                 Some("2026-01-01")
             );
 
-            let (second_key, second_vals) =
+            let (_second_key, second_vals) =
                 second.fields().iter().next().expect("second due field");
             assert_eq!(
                 second_vals.first().and_then(|v| v.as_str()),
@@ -1109,9 +1123,10 @@ mod tests {
                 parse_markdown("note.md", "- Task line\n\n  Status:: Draft\n");
 
             assert_eq!(note.inline_fields().len(), 1);
-            let field = note.inline_fields().first().expect("field present");
-            assert!(field.key().is_canonical_match("status"));
-            assert_eq!(field.value().as_str(), Some("Draft"));
+            let (key, values) =
+                note.inline_fields().iter().next().expect("field present");
+            assert!(key.is_canonical_match("status"));
+            assert_eq!(values.first().and_then(|v| v.as_str()), Some("Draft"));
         }
 
         #[test]
@@ -1122,7 +1137,7 @@ mod tests {
             );
 
             let keys: Vec<&str> =
-                note.inline_fields().iter().map(|f| f.key().name()).collect();
+                note.inline_fields().iter().map(|(k, _)| k.name()).collect();
             assert_eq!(keys, ["Status", "Priority"]);
         }
 
@@ -1134,7 +1149,7 @@ mod tests {
             );
 
             let keys: Vec<&str> =
-                note.inline_fields().iter().map(|f| f.key().name()).collect();
+                note.inline_fields().iter().map(|(k, _)| k.name()).collect();
             assert_eq!(keys, ["Status", "Priority", "Reviewer"]);
         }
 
@@ -1185,9 +1200,13 @@ mod tests {
             assert_eq!(item.text(), "Status:: Draft #urgent");
 
             assert_eq!(note.inline_fields().len(), 1);
-            let field = note.inline_fields().first().expect("field present");
-            assert!(field.key().is_canonical_match("status"));
-            assert_eq!(field.value().as_str(), Some("Draft #urgent"));
+            let (key, values) =
+                note.inline_fields().iter().next().expect("field present");
+            assert!(key.is_canonical_match("status"));
+            assert_eq!(
+                values.first().and_then(|v| v.as_str()),
+                Some("Draft #urgent")
+            );
 
             assert_eq!(note.tags(), [Tag::new("#urgent")]);
         }
@@ -1201,7 +1220,7 @@ mod tests {
             );
 
             let keys: Vec<&str> =
-                note.inline_fields().iter().map(|f| f.key().name()).collect();
+                note.inline_fields().iter().map(|(k, _)| k.name()).collect();
             assert_eq!(keys, ["Status", "Reviewer"]);
         }
 
@@ -1214,7 +1233,7 @@ mod tests {
             );
 
             let keys: Vec<&str> =
-                note.inline_fields().iter().map(|f| f.key().name()).collect();
+                note.inline_fields().iter().map(|(k, _)| k.name()).collect();
             assert_eq!(keys, ["Reviewer", "Status"]);
         }
 
@@ -1225,9 +1244,13 @@ mod tests {
                 parse_markdown("note.md", "Status:: Draft`note` more text");
 
             assert_eq!(note.inline_fields().len(), 1);
-            let field = note.inline_fields().first().expect("field present");
-            assert!(field.key().is_canonical_match("status"));
-            assert_eq!(field.value().as_str(), Some("Draft more text"));
+            let (key, values) =
+                note.inline_fields().iter().next().expect("field present");
+            assert!(key.is_canonical_match("status"));
+            assert_eq!(
+                values.first().and_then(|v| v.as_str()),
+                Some("Draft more text")
+            );
         }
 
         #[test]

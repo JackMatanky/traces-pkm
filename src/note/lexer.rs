@@ -814,8 +814,9 @@ mod tests {
         #[test]
         fn parses_dataview_embed_link_value() {
             let fields = extract_inline_fields("[embed:: ![[hello]]]");
+            let (_, value) = fields.first().expect("field present");
             assert!(matches!(
-                fields.first().expect("field present").1,
+                value,
                 NoteFieldValue::Link(link) if
                     link.target() == "hello" &&
                     link.text() == "hello" &&

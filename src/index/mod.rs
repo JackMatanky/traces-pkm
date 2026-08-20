@@ -1260,7 +1260,7 @@ mod tests {
             assert_eq!(
                 note.inline_fields()
                     .iter()
-                    .map(|field| field.key().canonical())
+                    .map(|(key, _)| key.canonical())
                     .collect::<Vec<_>>(),
                 ["genre"]
             );

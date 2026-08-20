@@ -247,9 +247,8 @@ mod tests {
             let key =
                 FieldKey::try_new("Status").expect("valid test field key");
             let mut fields = IndexMap::new();
-            fields.insert(key.clone(), vec![NoteFieldValue::String(
-                "Draft".to_owned(),
-            )]);
+            fields
+                .insert(key, vec![NoteFieldValue::String("Draft".to_owned())]);
 
             let note = Note::new("notes/a.md", None, Vec::new(), Vec::new())
                 .with_inline_fields(fields.clone());
