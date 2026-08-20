@@ -32,6 +32,7 @@ use std::{
 };
 
 use minijinja::{Error, ErrorKind};
+use walkdir::WalkDir;
 
 use super::path::{TemplatePath, TemplatePathError, TemplatePathInput};
 use crate::config::Config;
@@ -141,7 +142,7 @@ impl TemplateLoader {
     /// - [`TemplatePathError::AmbiguousTemplate`] if more than one file in the
     ///   search directory shares the stem.
     ///
-    /// [`DirEntry::file_type`]: std::fs::DirEntry::file_type
+    /// [`DirEntry::file_type`]: walkdir::DirEntry::file_type
     fn find_name_in(
         dir: &Path,
         name: &TemplatePathInput,
@@ -153,39 +154,21 @@ impl TemplateLoader {
         let subdir = path.parent().filter(|p| !p.as_os_str().is_empty());
         let search_dir =
             subdir.map_or_else(|| dir.to_path_buf(), |parent| dir.join(parent));
-        let entries = match fs::read_dir(&search_dir) {
-            Ok(entries) => entries,
-            Err(source) if source.kind() == io::ErrorKind::NotFound => {
-                return Ok(None);
-            }
-            Err(source) => {
-                return Err(TemplatePathError::DirectoryRead {
-                    directory: search_dir,
-                    source,
-                });
-            }
-        };
         let key = path.file_stem().unwrap_or(path.as_os_str());
         let mut hits = Vec::new();
-        for entry in entries {
-            let entry =
-                entry.map_err(|source| TemplatePathError::DirectoryRead {
-                    directory: search_dir.clone(),
-                    source,
-                })?;
-            let file_type = entry.file_type().map_err(|source| {
-                TemplatePathError::DirectoryRead {
-                    directory: search_dir.clone(),
-                    source,
-                }
-            })?;
+        for entry in WalkDir::new(&search_dir).min_depth(1).max_depth(1) {
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(source) if is_missing_dir(&source) => return Ok(None),
+                Err(source) => return Err(walk_error(&search_dir, source)),
+            };
             let file_name = entry.file_name();
-            if file_type.is_file()
-                && Path::new(&file_name).file_stem() == Some(key)
+            if entry.file_type().is_file()
+                && Path::new(file_name).file_stem() == Some(key)
             {
                 hits.push(subdir.map_or_else(
-                    || PathBuf::from(&file_name),
-                    |parent| parent.join(&file_name),
+                    || PathBuf::from(file_name),
+                    |parent| parent.join(file_name),
                 ));
             }
         }
@@ -275,20 +258,20 @@ impl TemplateLoader {
     /// otherwise-valid `dir` is skipped, not fatal. This never recurses into
     /// subdirectories.
     ///
-    /// [`DirEntry::file_type`]: std::fs::DirEntry::file_type
+    /// [`DirEntry::file_type`]: walkdir::DirEntry::file_type
     fn stems_in(dir: Option<&Path>) -> Vec<String> {
         let Some(dir) = dir else {
             return Vec::new();
         };
-        let Ok(entries) = fs::read_dir(dir) else {
-            return Vec::new();
-        };
-        entries
+        WalkDir::new(dir)
+            .min_depth(1)
+            .max_depth(1)
+            .into_iter()
             .filter_map(Result::ok)
-            .filter(|entry| entry.file_type().is_ok_and(|ty| ty.is_file()))
+            .filter(|entry| entry.file_type().is_file())
             .filter_map(|entry| {
                 let name = entry.file_name();
-                let path = Path::new(&name);
+                let path = Path::new(name);
                 let is_markdown =
                     path.extension().is_some_and(|ext| ext == "md");
                 is_markdown
@@ -299,6 +282,28 @@ impl TemplateLoader {
                     .flatten()
             })
             .collect()
+    }
+}
+
+/// Returns `true` if `error` reports that the searched directory itself does
+/// not exist, so [`TemplateLoader::find_name_in`] can degrade to "no match"
+/// instead of failing.
+fn is_missing_dir(error: &walkdir::Error) -> bool {
+    error.depth() == 0
+        && error
+            .io_error()
+            .is_some_and(|source| source.kind() == io::ErrorKind::NotFound)
+}
+
+/// Wraps a [`walkdir::Error`] with path context as a
+/// [`TemplatePathError::DirectoryRead`].
+///
+/// Falls back to `dir` if the underlying error carries no path of its own.
+fn walk_error(dir: &Path, source: walkdir::Error) -> TemplatePathError {
+    let directory = source.path().unwrap_or(dir).to_path_buf();
+    TemplatePathError::DirectoryRead {
+        directory,
+        source: source.into(),
     }
 }
 
