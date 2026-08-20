@@ -1,6 +1,6 @@
 //! Internal build pipeline for [`super::FileIndex`].
 //!
-//! [`IndexBuilder`] is a **plan** — it holds the scan result and a reuse
+//! [`IndexBuilder`] is a **plan**: it holds the scan result and a reuse
 //! directive, deferring all note parsing, sorting, and inlink derivation
 //! to [`IndexBuilder::build`]. Callers use [`super::FileIndex::build`] and
 //! [`super::FileIndex::refresh`] instead of this type directly.
@@ -21,7 +21,7 @@ use crate::{file::FileRecord, note::parse_markdown};
 /// Build plan for a [`super::FileIndex`].
 ///
 /// Stores the fresh scan result and (optionally) moved notes from a previous
-/// index. All heavy work — note parsing, sorting, inlink derivation — happens
+/// index. All heavy work (note parsing, sorting, inlink derivation) happens
 /// once in [`Self::build`], not across intermediate steps.
 ///
 /// # Invariants
@@ -48,8 +48,7 @@ struct ReusePlan {
 }
 
 impl IndexBuilder {
-    /// Scans `root` for regular files. Does NOT parse markdown yet. Parsing is
-    /// deferred to [`Self::build`].
+    /// Scans `root` for regular files. Parsing is deferred to [`Self::build`].
     ///
     /// # Errors
     ///

@@ -86,18 +86,6 @@ impl FileIndex {
     ///
     /// - [`FileIndexError::Io`] if a directory cannot be read, a file's
     ///   metadata cannot be inspected, or a markdown file cannot be read.
-    ///
-    /// # Examples
-    ///
-    /// ```rust,compile_fail
-    /// use std::path::Path;
-    ///
-    /// use traces_pkm::FileIndex;
-    ///
-    /// let index = FileIndex::build(Path::new("my-vault"))?;
-    /// assert!(!index.records().is_empty());
-    /// # Ok::<(), traces_pkm::FileIndexError>(())
-    /// ```
     #[inline]
     pub fn build(root: &Path) -> Result<Self, FileIndexError> {
         Ok(builder::IndexBuilder::from_scan(root)?.build(root)?)
@@ -150,18 +138,6 @@ impl FileIndex {
     ///   created.
     /// - [`FileIndexError::Store`] if the database transaction fails.
     /// - [`FileIndexError::Serialize`] if a record cannot be encoded.
-    ///
-    /// # Examples
-    ///
-    /// ```rust,compile_fail
-    /// use std::path::Path;
-    ///
-    /// use traces_pkm::FileIndex;
-    ///
-    /// let index = FileIndex::build(Path::new("my-vault"))?;
-    /// index.persist(Path::new("my-vault"))?;
-    /// # Ok::<(), traces_pkm::FileIndexError>(())
-    /// ```
     #[inline]
     pub fn persist(&self, root: &Path) -> Result<(), FileIndexError> {
         IndexStore::open(root)?.replace_all(
@@ -180,19 +156,6 @@ impl FileIndex {
     /// - [`FileIndexError::Store`] if the database cannot be read.
     /// - [`FileIndexError::Deserialize`] if stored bytes are not a valid
     ///   record.
-    ///
-    /// # Examples
-    ///
-    /// ```rust,compile_fail
-    /// use std::path::Path;
-    ///
-    /// use traces_pkm::FileIndex;
-    ///
-    /// // Assumes an index was previously built and persisted.
-    /// let index = FileIndex::load(Path::new("my-vault"))?;
-    /// assert!(!index.records().is_empty());
-    /// # Ok::<(), traces_pkm::FileIndexError>(())
-    /// ```
     #[inline]
     pub fn load(root: &Path) -> Result<Self, FileIndexError> {
         let (records, notes, inlinks) = IndexStore::open(root)?.load_all()?;

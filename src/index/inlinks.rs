@@ -137,7 +137,7 @@ impl Source<'_> {
 /// # Arguments
 ///
 /// * `notes` - path-sorted indexed Notes, searched by [`find_by_path`] for
-///   tiers 1–2.
+///   tiers 1-2.
 /// * `stem_index` - [`build_stem_index`]'s output, giving tier 3 its same-stem
 ///   candidates.
 /// * `from` - the linking Note's path; [`find_nearest_by_stem`]'s proximity
