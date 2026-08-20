@@ -1,17 +1,17 @@
 //! Build, persist, load, and query a file index over a project root.
 //!
 //! [`FileIndex`] is the main entry point. It stores a sorted [`FileRecord`]
-//! (from [`crate::file`]) for every regular file under a project root.
-//! Markdown files also contribute parsed [`Note`] metadata. Persistence
-//! uses a redb-backed database managed by the [`store`] submodule; callers
-//! use [`FileIndex`]'s methods instead of touching redb tables directly.
+//! (from [`crate::file`]) for every regular file under a project root. Markdown
+//! files also contribute parsed [`Note`] metadata. Persistence uses a
+//! redb-backed database managed by the [`store`] submodule; callers use
+//! [`FileIndex`]'s methods instead of touching redb tables directly.
 //!
 //! Inbound links between Notes are derived from outlinks during build and
 //! refresh, then persisted alongside them; see [`inlinks`].
 //!
 //! The build pipeline is composed internally by [`builder::IndexBuilder`],
-//! which provides testable stages: scan, reconcile (merge-join), sort,
-//! and derive inlinks.
+//! which provides testable stages: scan, reconcile (merge-join), sort, and
+//! derive inlinks.
 //!
 //! # Lifecycle
 //!
@@ -56,8 +56,8 @@ use crate::{
 /// Project-relative path of the persisted [`FileIndex`] database.
 const INDEX_FILE: &str = ".traces/index.redb";
 
-/// Persisted cache of file records, parsed Note metadata, and derived
-/// inbound links.
+/// Persisted cache of file records, parsed Note metadata, and derived inbound
+/// links.
 ///
 /// Every regular file under the project root contributes a [`FileRecord`].
 /// Markdown files also contribute a [`Note`], accessible through
@@ -109,10 +109,10 @@ impl FileIndex {
     /// Derived inlinks are recomputed in full whenever any file's content or
     /// metadata changed since the last persist. A full recompute (not a
     /// per-note patch) is required because link target resolution considers
-    /// every indexed Note: an unedited Note's *resolved* target can change
-    /// when an unrelated Note is added or removed. For example, a wikilink
-    /// that was ambiguous becomes resolvable once one of the ambiguous
-    /// candidates is deleted.
+    /// every indexed Note: an unedited Note's *resolved* target can change when
+    /// an unrelated Note is added or removed. For example, a wikilink that was
+    /// ambiguous becomes resolvable once one of the ambiguous candidates is
+    /// deleted.
     ///
     /// # Errors
     ///
@@ -299,8 +299,8 @@ impl FileIndex {
 
     /// Consumes this index and returns its inner components.
     ///
-    /// Used by the query module to pair records with notes and resolve
-    /// inlinks without exposing `FileIndex`'s internal layout.
+    /// Used by the query module to pair records with notes and resolve inlinks
+    /// without exposing `FileIndex`'s internal layout.
     pub(crate) fn into_parts(self) -> (Vec<FileRecord>, Vec<Note>, InlinkMap) {
         (self.records, self.notes, self.inlinks)
     }
