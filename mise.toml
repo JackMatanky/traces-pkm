@@ -148,9 +148,13 @@ depends_post = ["mutants-report"]
 
 [tasks.mutants-report]
 description = "Generate a structured Markdown report from missed mutants"
+usage = '''
+flag "-i --input <input>" help="Path to missed.txt input file" default="mutants.out/missed.txt"
+flag "-o --output <output>" help="Path to mutants-report.md output file" default="mutants-report.md"
+'''
 run = '''
-MISSED_FILE="mutants.out/missed.txt"
-REPORT_FILE="mutants-report.md"
+MISSED_FILE="${usage_input}"
+REPORT_FILE="${usage_output}"
 
 if [ ! -f "$MISSED_FILE" ] || [ ! -s "$MISSED_FILE" ]; then
   cat <<EOF > "$REPORT_FILE"

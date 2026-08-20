@@ -19,6 +19,7 @@ lcov.info
 tarpaulin-report.html
 /mutants.out/
 /mutants.out.old/
+/mutants-report.md
 # ----------------------- Git Worktrees ----------------------- #
 .worktrees/
 
