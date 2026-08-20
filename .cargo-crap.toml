@@ -1,0 +1,8 @@
+# Change Risk Anti-Patterns (CRAP) configuration
+threshold = 20.0
+fail-above = false
+missing = "pessimistic"
+exclude = [
+  "tests/**",
+  "benches/**",
+]

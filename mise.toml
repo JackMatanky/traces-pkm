@@ -18,8 +18,8 @@ gitleaks = "latest"
 "cargo:cargo-nextest" = "latest"
 "cargo:cargo-tarpaulin" = "latest"
 "cargo:cargo-watch" = "latest"
+"cargo:cargo-crap" = "latest"
 "cargo:critcmp" = "latest"
-"cargo:wasm-pack" = "latest"
 "cargo:https://github.com/snowmead/rust-docs-mcp" = { version = "branch:main", crate = "rust-docs-mcp" }
 "cargo:adrs" = { version = "latest", install_env = { RUSTUP_TOOLCHAIN = "nightly" } }
 "cargo:ryl" = { version = "latest", install_env = { RUSTUP_TOOLCHAIN = "nightly" } }
@@ -119,6 +119,13 @@ depends = ["fmt", "lint", "clippy", "test-all", "audit"]
 [tasks.coverage]
 description = "Code coverage with tarpaulin"
 run = "cargo tarpaulin --workspace --out html"
+
+[tasks.crap]
+description = "Run Change Risk Anti-Patterns (CRAP) analysis"
+depends = ["check"]
+run = ["cargo tarpaulin --workspace --out Lcov", "cargo crap --lcov lcov.info"]
+outputs = ["lcov.info"]
+sources = ["src/**/*.rs", "Cargo.toml", "Cargo.lock"]
 
 [tasks.clean]
 description = "Clean build artifacts"
