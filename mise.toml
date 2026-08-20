@@ -137,10 +137,19 @@ flag "-f --file <file>" help="Examine only mutants in this file"
 flag "--iterate" help="Skip mutants that were caught in previous runs"
 '''
 run = '''
-args=()
-if [ -n "${usage_jobs}" ]; then args+=(--jobs "${usage_jobs}"); fi
-if [ -n "${usage_file}" ]; then args+=(--file "${usage_file}"); fi
-if [ "${usage_iterate}" = "true" ]; then args+=(--iterate); fi
+#!/usr/bin/env bash
+set -euo pipefail
+
+declare -a args=()
+if [[ -n "${usage_jobs}" ]]; then
+  args+=(--jobs "${usage_jobs}")
+fi
+if [[ -n "${usage_file}" ]]; then
+  args+=(--file "${usage_file}")
+fi
+if [[ "${usage_iterate}" == "true" ]]; then
+  args+=(--iterate)
+fi
 
 cargo mutants "${args[@]}"
 '''
@@ -153,11 +162,14 @@ flag "-i --input <input>" help="Path to missed.txt input file" default="mutants.
 flag "-o --output <output>" help="Path to mutants-report.md output file" default="mutants-report.md"
 '''
 run = '''
-MISSED_FILE="${usage_input}"
-REPORT_FILE="${usage_output}"
+#!/usr/bin/env bash
+set -euo pipefail
 
-if [ ! -f "$MISSED_FILE" ] || [ ! -s "$MISSED_FILE" ]; then
-  cat <<EOF > "$REPORT_FILE"
+readonly missed_file="${usage_input}"
+readonly report_file="${usage_output}"
+
+if [[ ! -f "${missed_file}" ]] || [[ ! -s "${missed_file}" ]]; then
+  cat <<EOF > "${report_file}"
 # Mutation Testing Report
 **Status:** Completed successfully. All mutants were caught! 🎉
 **Next Action:** No action needed. Test suite coverage is robust.
@@ -165,7 +177,7 @@ EOF
   exit 0
 fi
 
-cat <<EOF > "$REPORT_FILE"
+cat <<EOF > "${report_file}"
 # Mutation Testing Report
 **Status:** Completed. Surviving mutants detected.
 
@@ -176,7 +188,7 @@ cat <<EOF > "$REPORT_FILE"
 
 ## Surviving Mutants List
 \`\`\`text
-$(cat "$MISSED_FILE")
+$(cat "${missed_file}")
 \`\`\`
 EOF
 '''
