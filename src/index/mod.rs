@@ -65,8 +65,8 @@ pub struct FileIndex {
     notes: Vec<Note>,
     /// Inbound links, keyed by target path; see [`inlinks::derive_inlinks`].
     ///
-    /// - Recomputed in full whenever [`Self::refresh`] finds changed content.
-    /// - Reused unchanged from the last persisted computation otherwise.
+    /// Recomputed in full whenever [`Self::refresh`] finds changed content.
+    /// Reused unchanged from the last persisted computation otherwise.
     inlinks: InlinkMap,
 }
 
@@ -101,13 +101,13 @@ impl FileIndex {
     /// Returns the fresh [`FileIndex`] without persisting. Call
     /// [`Self::persist`] to write the result to disk.
     ///
-    /// Derived inlinks are recomputed in full only when something changed;
-    /// otherwise the previously persisted computation is reused unchanged. A
-    /// full recompute (not a per-note patch) is required because link target
-    /// resolution considers every indexed Note: an unedited Note's *resolved*
-    /// target can change when an unrelated Note is added or removed. For
-    /// example, a wikilink that was ambiguous becomes resolvable once one of
-    /// the ambiguous candidates is deleted.
+    /// Derived inlinks are recomputed in full whenever any file's content or
+    /// metadata changed since the last persist. A full recompute (not a
+    /// per-note patch) is required because link target resolution considers
+    /// every indexed Note: an unedited Note's *resolved* target can change
+    /// when an unrelated Note is added or removed. For example, a wikilink
+    /// that was ambiguous becomes resolvable once one of the ambiguous
+    /// candidates is deleted.
     ///
     /// # Errors
     ///
@@ -118,10 +118,15 @@ impl FileIndex {
     #[inline]
     pub fn refresh(root: &Path) -> Result<Self, FileIndexError> {
         let previous = Self::load(root)?;
-        Ok(builder::IndexBuilder::from_scan(root)?
-            .reuse_unchanged(&previous, root)
-            .sort_and_derive_inlinks()
-            .build())
+        let builder = builder::IndexBuilder::from_scan(root)?
+            .reuse_unchanged(&previous, root)?;
+        let dirty = builder.records() != previous.records()
+            || builder.notes() != previous.notes;
+        if dirty {
+            Ok(builder.sort_and_derive_inlinks().build())
+        } else {
+            Ok(builder.build_with_inlinks(previous.inlinks))
+        }
     }
 
     /// Persists this index to `root`, replacing any existing index contents.
@@ -721,6 +726,7 @@ mod tests {
             let index = IndexBuilder::from_scan(temp.path())
                 .expect("scan")
                 .reuse_unchanged(&built, temp.path())
+                .expect("reuse")
                 .sort_and_derive_inlinks()
                 .build();
 
@@ -746,6 +752,7 @@ mod tests {
             let index = IndexBuilder::from_scan(temp.path())
                 .expect("scan")
                 .reuse_unchanged(&built, temp.path())
+                .expect("reuse")
                 .sort_and_derive_inlinks()
                 .build();
 
@@ -977,7 +984,7 @@ mod tests {
         }
 
         #[test]
-        fn reuses_persisted_inlinks_when_nothing_on_disk_changed() {
+        fn inlinks_present_after_noop_refresh() {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("target.md"), "# Target")
                 .expect("write target");
@@ -988,13 +995,6 @@ mod tests {
                 .persist(temp.path())
                 .expect("persist index");
 
-            // Nothing on disk changes between this and the prior build, so
-            // `refresh` takes the `!dirty` path and reuses the persisted
-            // inlinks rather than recomputing. Reuse and a would-be
-            // recompute produce identical values here (nothing changed),
-            // so this test can't distinguish the two by output alone; it
-            // guards against inlinks going missing or stale across a
-            // no-op refresh.
             let refreshed =
                 FileIndex::refresh(temp.path()).expect("refresh index");
             let outcome = refreshed.query(&QuerySource::All);

@@ -6,7 +6,11 @@
 
 use std::path::Path;
 
-use super::{FileFormat, FileIndex, inlinks::derive_inlinks, scan};
+use super::{
+    FileFormat, FileIndex,
+    inlinks::{InlinkMap, derive_inlinks},
+    scan,
+};
 use crate::{file::FileRecord, note::Note};
 
 /// Composable build pipeline for a [`FileIndex`].
@@ -44,7 +48,7 @@ impl IndexBuilder {
         mut self,
         previous: &FileIndex,
         root: &Path,
-    ) -> Self {
+    ) -> Result<Self, super::FileIndexError> {
         let mut new_notes = Vec::with_capacity(self.notes.len());
         let mut prev_iter = previous.records().iter().peekable();
 
@@ -52,25 +56,18 @@ impl IndexBuilder {
             while prev_iter.peek().is_some_and(|p| p.path() < record.path()) {
                 prev_iter.next();
             }
+            if record.format() != FileFormat::Note {
+                continue;
+            }
             let unchanged = prev_iter
                 .peek()
                 .is_some_and(|p| p.path() == record.path() && **p == *record);
-
-            if record.format() == FileFormat::Note {
-                let note = match unchanged {
-                    true => previous
-                        .note(record.path())
-                        .cloned()
-                        .expect("note must exist for matching record"),
-                    false => FileIndex::parse_note_file(root, record)
-                        .expect("parse failed"),
-                };
-                new_notes.push(note);
-            }
+            let note = reuse_or_parse(previous, root, record, unchanged)?;
+            new_notes.push(note);
         }
 
         self.notes = new_notes;
-        self
+        Ok(self)
     }
 
     /// Sorts notes by path and derives inbound link edges.
@@ -87,5 +84,48 @@ impl IndexBuilder {
             notes: self.notes,
             inlinks,
         }
+    }
+
+    /// Consumes the builder and produces a [`FileIndex`] with pre-computed
+    /// inlinks, skipping the [`derive_inlinks`] pass.
+    pub(super) fn build_with_inlinks(self, inlinks: InlinkMap) -> FileIndex {
+        FileIndex {
+            records: self.records,
+            notes: self.notes,
+            inlinks,
+        }
+    }
+
+    /// Returns a reference to the accumulated records.
+    pub(super) fn records(&self) -> &[FileRecord] {
+        &self.records
+    }
+
+    /// Returns a reference to the accumulated notes.
+    pub(super) fn notes(&self) -> &[Note] {
+        &self.notes
+    }
+}
+
+/// Reuses `previous`'s parsed [`Note`] when `record` is unchanged, or
+/// re-parses from disk otherwise.
+fn reuse_or_parse(
+    previous: &FileIndex,
+    root: &Path,
+    record: &FileRecord,
+    unchanged: bool,
+) -> Result<Note, super::FileIndexError> {
+    if unchanged {
+        previous.note(record.path()).cloned().ok_or_else(|| {
+            super::FileIndexError::Io {
+                path: record.path().to_path_buf(),
+                source: std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    "note must exist for matching record",
+                ),
+            }
+        })
+    } else {
+        FileIndex::parse_note_file(root, record)
     }
 }
