@@ -147,19 +147,7 @@ mod tests {
         fn returns_an_io_error_when_a_directory_is_unreadable() {
             use std::os::unix::fs::PermissionsExt as _;
 
-            /// Restores a locked directory's permissions on drop, even if
-            /// the test panics. Otherwise, a `0o000` directory blocks the
-            /// tempdir's own cleanup.
-            struct RestorePermissions<'a>(&'a Path);
-
-            impl Drop for RestorePermissions<'_> {
-                fn drop(&mut self) {
-                    let _ = fs::set_permissions(
-                        self.0,
-                        fs::Permissions::from_mode(0o700),
-                    );
-                }
-            }
+            use super::super::super::tests::fixtures::RestorePermissions;
 
             let temp = tempfile::tempdir().expect("create temp dir");
             let root = temp.path();

@@ -458,19 +458,7 @@ mod tests {
         fn returns_io_error_when_the_parent_directory_cannot_be_created() {
             use std::os::unix::fs::PermissionsExt as _;
 
-            /// Restores a locked directory's permissions on drop, even if
-            /// the test panics. Otherwise, a `0o500` root blocks the tempdir's
-            /// own cleanup.
-            struct RestorePermissions<'a>(&'a Path);
-
-            impl Drop for RestorePermissions<'_> {
-                fn drop(&mut self) {
-                    let _ = fs::set_permissions(
-                        self.0,
-                        fs::Permissions::from_mode(0o700),
-                    );
-                }
-            }
+            use super::super::super::tests::fixtures::RestorePermissions;
 
             let temp = tempfile::tempdir().expect("create temp dir");
             let root = temp.path();
