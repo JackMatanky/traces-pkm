@@ -1,13 +1,17 @@
 //! Build, persist, load, and query a file index over a project root.
 //!
 //! [`FileIndex`] is the main entry point. It stores a sorted [`FileRecord`]
-//! for every regular file under a project root. Markdown files also contribute
-//! parsed [`Note`] metadata. Persistence uses a redb-backed database managed
-//! by the [`store`] submodule; callers use [`FileIndex`]'s methods instead of
-//! touching redb tables directly.
+//! (from [`crate::file`]) for every regular file under a project root.
+//! Markdown files also contribute parsed [`Note`] metadata. Persistence
+//! uses a redb-backed database managed by the [`store`] submodule; callers
+//! use [`FileIndex`]'s methods instead of touching redb tables directly.
 //!
 //! Inbound links between Notes are derived from outlinks during build and
 //! refresh, then persisted alongside them; see [`inlinks`].
+//!
+//! The build pipeline is composed internally by [`builder::IndexBuilder`],
+//! which provides testable stages: scan, reconcile (merge-join), sort,
+//! and derive inlinks.
 //!
 //! # Lifecycle
 //!
@@ -26,6 +30,7 @@
 //!
 //! [`store`]: mod@store
 //! [`inlinks`]: mod@inlinks
+//! [`builder::IndexBuilder`]: mod@builder
 
 mod builder;
 mod error;
