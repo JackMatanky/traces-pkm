@@ -2,12 +2,13 @@
 
 use std::path::{Path, PathBuf};
 
+use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
 use super::{
     links::Link,
     lists::{List, ListItem},
-    metadata::{Frontmatter, InlineField, NoteFieldValue},
+    metadata::{Frontmatter, NoteFieldValue},
     tag::Tag,
 };
 use crate::field::FieldKey;
@@ -23,7 +24,7 @@ pub struct Note {
     frontmatter: Option<Frontmatter>,
     lists: Vec<List>,
     outlinks: Vec<Link>,
-    inline_fields: Vec<InlineField>,
+    inline_fields: IndexMap<FieldKey, Vec<NoteFieldValue>>,
     tags: Vec<Tag>,
 }
 
@@ -46,7 +47,7 @@ impl Note {
             frontmatter,
             lists,
             outlinks,
-            inline_fields: Vec::new(),
+            inline_fields: IndexMap::new(),
             tags: Vec::new(),
         }
     }
@@ -56,7 +57,7 @@ impl Note {
     #[must_use]
     pub fn with_inline_fields(
         mut self,
-        inline_fields: Vec<InlineField>,
+        inline_fields: IndexMap<FieldKey, Vec<NoteFieldValue>>,
     ) -> Self {
         self.inline_fields = inline_fields;
         self
@@ -122,7 +123,7 @@ impl Note {
                       from the fields() iterator that is used"
         )
     )]
-    pub fn inline_fields(&self) -> &[InlineField] {
+    pub fn inline_fields(&self) -> &IndexMap<FieldKey, Vec<NoteFieldValue>> {
         &self.inline_fields
     }
 
@@ -135,7 +136,7 @@ impl Note {
         let inline = self
             .inline_fields
             .iter()
-            .map(|field| (field.key().clone(), field.value()));
+            .flat_map(|(k, values)| values.iter().map(move |v| (k.clone(), v)));
         let mut all: Vec<_> = fm.into_iter().chain(inline).collect();
         all.dedup_by(|(k1, _), (k2, _)| k1 == k2);
         all.into_iter()
@@ -199,7 +200,7 @@ mod tests {
     use indexmap::IndexMap;
 
     use super::*;
-    use crate::note::{InlineFieldForm, LinkType, NoteFieldValue, TaskStatus};
+    use crate::note::{LinkType, NoteFieldValue, TaskStatus};
 
     mod constructor {
         use pretty_assertions::assert_eq;
@@ -243,17 +244,17 @@ mod tests {
 
         #[test]
         fn with_inline_fields_attaches_the_given_fields() {
-            let field = InlineField::try_new(
-                "Status",
-                NoteFieldValue::String("Draft".to_owned()),
-                InlineFieldForm::Body,
-            )
-            .expect("valid test field key");
+            let key =
+                FieldKey::try_new("Status").expect("valid test field key");
+            let mut fields = IndexMap::new();
+            fields.insert(key.clone(), vec![NoteFieldValue::String(
+                "Draft".to_owned(),
+            )]);
 
             let note = Note::new("notes/a.md", None, Vec::new(), Vec::new())
-                .with_inline_fields(vec![field.clone()]);
+                .with_inline_fields(fields.clone());
 
-            assert_eq!(note.inline_fields(), [field]);
+            assert_eq!(note.inline_fields(), &fields);
         }
 
         #[test]
@@ -283,12 +284,11 @@ mod tests {
                 FieldKey::try_new("title").expect("valid test field key"),
                 NoteFieldValue::String("Note".to_owned()),
             )]));
-            let inline_field = InlineField::try_new(
-                "Status",
-                NoteFieldValue::String("Draft".to_owned()),
-                InlineFieldForm::Body,
-            )
-            .expect("valid test field key");
+            let key =
+                FieldKey::try_new("Status").expect("valid test field key");
+            let mut inline_fields = IndexMap::new();
+            inline_fields
+                .insert(key, vec![NoteFieldValue::String("Draft".to_owned())]);
 
             let note = Note::new(
                 "notes/a.md",
@@ -296,7 +296,7 @@ mod tests {
                 Vec::new(),
                 Vec::new(),
             )
-            .with_inline_fields(vec![inline_field]);
+            .with_inline_fields(inline_fields);
 
             let keys: Vec<String> =
                 note.fields().map(|(k, _)| k.name().to_owned()).collect();

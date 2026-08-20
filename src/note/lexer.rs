@@ -16,8 +16,7 @@
 use logos::{Filter, Lexer, Logos};
 
 use super::{
-    InlineField, InlineFieldForm, Link, NoteFieldValue, Tag,
-    cursor::SourceText, metadata::is_iso_date,
+    Link, NoteFieldValue, Tag, cursor::SourceText, metadata::is_iso_date,
 };
 use crate::field::FieldKey;
 
@@ -26,7 +25,9 @@ use crate::field::FieldKey;
 /// Recognizes `Key:: Value`, `[Key:: Value]`, and `(Key:: Value)`. `text` must
 /// already exclude code spans and blocks. Use [`extract_task_inline_fields`]
 /// when task emoji shorthand fields should be recognized.
-pub(super) fn extract_inline_fields(text: &str) -> Vec<InlineField> {
+pub(super) fn extract_inline_fields(
+    text: &str,
+) -> Vec<(FieldKey, NoteFieldValue)> {
     extract_inline_fields_with_task_shorthands(text, TaskShorthands::Exclude)
 }
 
@@ -35,7 +36,9 @@ pub(super) fn extract_inline_fields(text: &str) -> Vec<InlineField> {
 /// Recognizes `Key:: Value`, `[Key:: Value]`, `(Key:: Value)`, and task
 /// shorthand fields such as `🗓️2026-01-01`. `text` must already exclude code
 /// spans and blocks.
-pub(super) fn extract_task_inline_fields(text: &str) -> Vec<InlineField> {
+pub(super) fn extract_task_inline_fields(
+    text: &str,
+) -> Vec<(FieldKey, NoteFieldValue)> {
     extract_inline_fields_with_task_shorthands(text, TaskShorthands::Include)
 }
 
@@ -43,7 +46,7 @@ pub(super) fn extract_task_inline_fields(text: &str) -> Vec<InlineField> {
 fn extract_inline_fields_with_task_shorthands(
     text: &str,
     shorthands: TaskShorthands,
-) -> Vec<InlineField> {
+) -> Vec<(FieldKey, NoteFieldValue)> {
     let lexer = FieldToken::lexer_with_extras(text, shorthands);
     let mut fields = Vec::new();
     for result in lexer {
@@ -86,24 +89,21 @@ where
 /// Byte length of an ISO `YYYY-MM-DD` date, such as `2026-01-01`.
 const ISO_DATE_LEN: usize = 10;
 
-/// Bracket delimiters and their corresponding [`InlineFieldForm`].
+/// Bracket delimiters for wrapped inline fields.
 #[derive(Copy, Clone, Debug)]
 struct BracketPair {
     open: char,
     close: char,
-    form: InlineFieldForm,
 }
 
 impl BracketPair {
     const HIDDEN: Self = Self {
         open: '(',
         close: ')',
-        form: InlineFieldForm::HiddenKey,
     };
     const VISIBLE: Self = Self {
         open: '[',
         close: ']',
-        form: InlineFieldForm::VisibleKey,
     };
 }
 
@@ -132,7 +132,7 @@ impl TaskShorthands {
 
 /// Token stream for inline fields in free-form Markdown text.
 ///
-/// - [`Self::Field`] carries an emitted [`InlineField`].
+/// - [`Self::Field`] carries an emitted `(FieldKey, NoteFieldValue)`.
 /// - [`Self::Ignored`] skips ordinary prose that matches none of the field
 ///   patterns.
 ///
@@ -150,7 +150,7 @@ enum FieldToken {
     #[token("\u{1F6EB}", |lex| task_field_callback(lex, "start"))]
     #[token("\u{23F3}", |lex| task_field_callback(lex, "scheduled"))]
     #[token("\u{2705}", |lex| task_field_callback(lex, "completion"))]
-    Field(InlineField),
+    Field((FieldKey, NoteFieldValue)),
     #[regex(r"[\s\S]", logos::skip, priority = 0)]
     Ignored,
 }
@@ -164,7 +164,9 @@ enum FieldToken {
 /// regex's `^` anchor. The match is rejected, skipping only the matched `Key::`
 /// span rather than the rest of the line, unless it starts right after a
 /// newline or at the start of the text.
-fn body_field_callback(lex: &mut Lexer<'_, FieldToken>) -> Filter<InlineField> {
+fn body_field_callback(
+    lex: &mut Lexer<'_, FieldToken>,
+) -> Filter<(FieldKey, NoteFieldValue)> {
     let at_line_start = char_before(lex).is_none_or(|ch| ch == '\n');
     if !at_line_start {
         return Filter::Skip;
@@ -178,11 +180,7 @@ fn body_field_callback(lex: &mut Lexer<'_, FieldToken>) -> Filter<InlineField> {
     let Ok(key) = FieldKey::try_from(key) else {
         return Filter::Skip;
     };
-    let field = InlineField::from_key(
-        key,
-        parse_inline_value_str(value),
-        InlineFieldForm::Body,
-    );
+    let field = (key, parse_inline_value_str(value));
     lex.bump(value_end);
     Filter::Emit(field)
 }
@@ -198,7 +196,7 @@ fn body_field_callback(lex: &mut Lexer<'_, FieldToken>) -> Filter<InlineField> {
 fn wrapped_field_callback(
     lex: &mut Lexer<'_, FieldToken>,
     pair: BracketPair,
-) -> Filter<InlineField> {
+) -> Filter<(FieldKey, NoteFieldValue)> {
     let remainder = lex.remainder();
     let Some(sep) = remainder.find("::") else {
         return Filter::Skip;
@@ -222,11 +220,7 @@ fn wrapped_field_callback(
         .saturating_add(close)
         .saturating_add(pair.close.len_utf8());
     lex.bump(consumed);
-    Filter::Emit(InlineField::from_key(
-        key,
-        parse_inline_value_str(value),
-        pair.form,
-    ))
+    Filter::Emit((key, parse_inline_value_str(value)))
 }
 
 /// Finds `pair`'s closing delimiter in wrapped field value text.
@@ -272,7 +266,7 @@ fn find_closing_delimiter(after_sep: &str, pair: BracketPair) -> Option<usize> {
 fn task_field_callback(
     lex: &mut Lexer<'_, FieldToken>,
     key: &'static str,
-) -> Filter<InlineField> {
+) -> Filter<(FieldKey, NoteFieldValue)> {
     if !lex.extras.is_included() {
         return Filter::Skip;
     }
@@ -292,11 +286,7 @@ fn task_field_callback(
         return Filter::Skip;
     };
     lex.bump(ws_end.saturating_add(ISO_DATE_LEN));
-    Filter::Emit(InlineField::from_key(
-        key,
-        NoteFieldValue::Date(candidate.to_owned()),
-        InlineFieldForm::Body,
-    ))
+    Filter::Emit((key, NoteFieldValue::Date(candidate.to_owned())))
 }
 
 const DURATION_UNITS: &[&str] = &[
@@ -681,47 +671,31 @@ mod tests {
         use rstest::rstest;
 
         use super::*;
-        use crate::note::{InlineFieldForm, Link, LinkType, NoteFieldValue};
+        use crate::note::{Link, LinkType, NoteFieldValue};
 
         #[rstest]
-        #[case::body(
-            "Author:: Jane Doe",
-            "Author",
-            "Jane Doe",
-            InlineFieldForm::Body
-        )]
+        #[case::body("Author:: Jane Doe", "Author", "Jane Doe")]
         #[case::visible_key(
             "See the [Status:: Draft] note.",
             "Status",
-            "Draft",
-            InlineFieldForm::VisibleKey
+            "Draft"
         )]
-        #[case::hidden_key(
-            "See the (Status:: Draft) note.",
-            "Status",
-            "Draft",
-            InlineFieldForm::HiddenKey
-        )]
+        #[case::hidden_key("See the (Status:: Draft) note.", "Status", "Draft")]
         fn extracts_a_field_in_its_declared_form(
             #[case] input: &str,
             #[case] expected_key: &str,
             #[case] expected_value: &str,
-            #[case] expected_form: InlineFieldForm,
         ) {
             let fields = extract_inline_fields(input);
 
             assert_eq!(fields.len(), 1);
             assert_eq!(
-                fields.first().map(|field| field.key().name()),
+                fields.first().map(|(k, _)| k.name()),
                 Some(expected_key)
             );
             assert_eq!(
-                fields.first().and_then(|field| field.value().as_str()),
+                fields.first().and_then(|(_, v)| v.as_str()),
                 Some(expected_value)
-            );
-            assert_eq!(
-                fields.first().map(InlineField::form),
-                Some(expected_form)
             );
         }
 
@@ -743,11 +717,11 @@ mod tests {
             let fields = extract_inline_fields(input);
 
             assert_eq!(
-                fields.first().map(|field| field.key().name()),
+                fields.first().map(|(k, _)| k.name()),
                 Some(expected_key)
             );
             assert_eq!(
-                fields.first().and_then(|field| field.value().as_str()),
+                fields.first().and_then(|(_, v)| v.as_str()),
                 Some("2024-01-01")
             );
         }
@@ -758,7 +732,7 @@ mod tests {
                 extract_inline_fields("Status:: Draft\nAuthor:: Jane Doe");
 
             let keys: Vec<&str> =
-                fields.iter().map(|field| field.key().name()).collect();
+                fields.iter().map(|(k, _)| k.name()).collect();
             assert_eq!(keys, ["Status", "Author"]);
         }
 
@@ -767,7 +741,7 @@ mod tests {
             let fields = extract_inline_fields("Status::    Draft   ");
 
             assert_eq!(
-                fields.first().and_then(|field| field.value().as_str()),
+                fields.first().and_then(|(_, v)| v.as_str()),
                 Some("Draft")
             );
         }
@@ -777,7 +751,7 @@ mod tests {
             let fields = extract_inline_fields("Status::");
 
             assert_eq!(
-                fields.first().map(InlineField::value),
+                fields.first().map(|(_, v)| v),
                 Some(&NoteFieldValue::Null)
             );
         }
@@ -794,7 +768,7 @@ mod tests {
         ) {
             let fields = extract_inline_fields(input);
 
-            assert_eq!(fields.first().map(InlineField::value), Some(&expected));
+            assert_eq!(fields.first().map(|(_, v)| v), Some(&expected));
         }
 
         #[test]
@@ -802,7 +776,7 @@ mod tests {
             let fields = extract_inline_fields("[link:: [[test]]]");
 
             assert_eq!(
-                fields.first().map(InlineField::value),
+                fields.first().map(|(_, v)| v),
                 Some(&NoteFieldValue::Link(Link::new(
                     "test",
                     "test",
@@ -817,7 +791,7 @@ mod tests {
                 extract_inline_fields("[link:: [[yes, no, and maybe]]]");
 
             assert_eq!(
-                fields.first().map(InlineField::value),
+                fields.first().map(|(_, v)| v),
                 Some(&NoteFieldValue::Link(Link::new(
                     "yes, no, and maybe",
                     "yes, no, and maybe",
@@ -832,7 +806,7 @@ mod tests {
                 extract_inline_fields(r#"[link:: <a href="Page">Value</a>]"#);
 
             assert_eq!(
-                fields.first().and_then(|field| field.value().as_str()),
+                fields.first().and_then(|(_, v)| v.as_str()),
                 Some(r#"<a href="Page">Value</a>"#)
             );
         }
@@ -841,7 +815,7 @@ mod tests {
         fn parses_dataview_embed_link_value() {
             let fields = extract_inline_fields("[embed:: ![[hello]]]");
             assert!(matches!(
-                fields.first().expect("field present").value(),
+                fields.first().expect("field present").1,
                 NoteFieldValue::Link(link) if
                     link.target() == "hello" &&
                     link.text() == "hello" &&
@@ -889,7 +863,7 @@ mod tests {
         ) {
             let fields = extract_inline_fields(input);
 
-            assert_eq!(fields.first().map(InlineField::value), Some(&expected));
+            assert_eq!(fields.first().map(|(_, v)| v), Some(&expected));
         }
 
         #[test]
@@ -897,7 +871,7 @@ mod tests {
             let fields = extract_inline_fields(r#"[str:: "yes,"]"#);
 
             assert_eq!(
-                fields.first().map(InlineField::value),
+                fields.first().map(|(_, v)| v),
                 Some(&NoteFieldValue::String("yes,".to_owned()))
             );
         }
@@ -907,7 +881,7 @@ mod tests {
             let fields = extract_inline_fields(r#"[str:: "yes, \"maybe\""]"#);
 
             assert_eq!(
-                fields.first().map(InlineField::value),
+                fields.first().map(|(_, v)| v),
                 Some(&NoteFieldValue::String(r#"yes, "maybe""#.to_owned()))
             );
         }
@@ -917,9 +891,9 @@ mod tests {
             let fields =
                 extract_inline_fields("This is some text. [key:: [value]]");
 
-            assert_eq!(fields.first().map(|f| f.key().name()), Some("key"));
+            assert_eq!(fields.first().map(|(k, _)| k.name()), Some("key"));
             assert_eq!(
-                fields.first().and_then(|field| field.value().as_str()),
+                fields.first().and_then(|(_, v)| v.as_str()),
                 Some("[value]")
             );
         }
@@ -928,9 +902,9 @@ mod tests {
         fn accepts_punctuation_in_wrapped_keys() {
             let fields = extract_inline_fields(r"Hello? [key! :: \[value]");
 
-            assert_eq!(fields.first().map(|f| f.key().name()), Some("key!"));
+            assert_eq!(fields.first().map(|(k, _)| k.name()), Some("key!"));
             assert_eq!(
-                fields.first().and_then(|field| field.value().as_str()),
+                fields.first().and_then(|(_, v)| v.as_str()),
                 Some(r"\[value")
             );
         }
@@ -946,9 +920,9 @@ mod tests {
         fn keeps_escaped_closing_bracket_inside_visible_value() {
             let fields = extract_inline_fields(r"Hello [key:: \] value]");
 
-            assert_eq!(fields.first().map(|f| f.key().name()), Some("key"));
+            assert_eq!(fields.first().map(|(k, _)| k.name()), Some("key"));
             assert_eq!(
-                fields.first().and_then(|field| field.value().as_str()),
+                fields.first().and_then(|(_, v)| v.as_str()),
                 Some(r"\] value")
             );
         }
@@ -957,9 +931,9 @@ mod tests {
         fn extracts_wrapped_field_after_large_leading_whitespace() {
             let fields = extract_inline_fields("      - [ ] Huh! [p:: 1]");
 
-            assert_eq!(fields.first().map(|f| f.key().name()), Some("p"));
+            assert_eq!(fields.first().map(|(k, _)| k.name()), Some("p"));
             assert_eq!(
-                fields.first().map(InlineField::value),
+                fields.first().map(|(_, v)| v),
                 Some(&NoteFieldValue::Number(1.0))
             );
         }
@@ -983,7 +957,7 @@ mod tests {
             let fields = extract_inline_fields(input);
 
             assert_eq!(
-                fields.first().map(InlineField::value),
+                fields.first().map(|(_, v)| v),
                 Some(&NoteFieldValue::Duration(expected.to_owned()))
             );
         }
@@ -1001,11 +975,11 @@ mod tests {
 
             assert_eq!(fields.len(), 1);
             assert_eq!(
-                fields.first().map(|field| field.key().name()),
+                fields.first().map(|(k, _)| k.name()),
                 Some(expected_key)
             );
             assert_eq!(
-                fields.first().map(InlineField::value),
+                fields.first().map(|(_, v)| v),
                 Some(&NoteFieldValue::Date(expected_date.to_owned()))
             );
         }
@@ -1013,7 +987,7 @@ mod tests {
         fn accepts_a_bare_key_preceded_by_leading_whitespace() {
             let fields = extract_inline_fields("  Status:: Draft");
 
-            assert_eq!(fields.first().map(|f| f.key().name()), Some("Status"));
+            assert_eq!(fields.first().map(|(k, _)| k.name()), Some("Status"));
         }
 
         #[test]
@@ -1023,7 +997,7 @@ mod tests {
             );
 
             let keys: Vec<&str> =
-                fields.iter().map(|field| field.key().name()).collect();
+                fields.iter().map(|(k, _)| k.name()).collect();
             assert_eq!(keys, ["Status", "Reviewer", "Editor"]);
         }
 
@@ -1032,9 +1006,9 @@ mod tests {
             let fields = extract_inline_fields("Status:: Draft [Key:: Value]");
 
             assert_eq!(fields.len(), 1);
-            assert_eq!(fields.first().map(|f| f.key().name()), Some("Status"));
+            assert_eq!(fields.first().map(|(k, _)| k.name()), Some("Status"));
             assert_eq!(
-                fields.first().and_then(|field| field.value().as_str()),
+                fields.first().and_then(|(_, v)| v.as_str()),
                 Some("Draft [Key:: Value]")
             );
         }

@@ -1,8 +1,7 @@
 //! Frontmatter and inline-field metadata values.
 //!
 //! [`RawFrontmatter`] preserves source YAML. [`Frontmatter`] stores parsed YAML
-//! key-value pairs. [`InlineField`] records body metadata together with the
-//! [`InlineFieldForm`] that produced it.
+//! key-value pairs.
 
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
@@ -10,7 +9,7 @@ use tracing::warn;
 use yaml_serde as serde_yaml;
 
 use super::Link;
-use crate::field::{FieldKey, FieldKeyError};
+use crate::field::FieldKey;
 
 /// Raw YAML frontmatter text from a Markdown note.
 ///
@@ -131,88 +130,6 @@ impl From<&RawFrontmatter> for Frontmatter {
             fields.insert(key, NoteFieldValue::from(raw_value));
         }
         Self::new(fields)
-    }
-}
-
-/// The syntax form of an inline field.
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
-pub enum InlineFieldForm {
-    /// `Key:: Value`, filling an entire line.
-    Body,
-    /// `[Key:: Value]`, with the key visible in rendered Markdown.
-    VisibleKey,
-    /// `(Key:: Value)`, with the key hidden in rendered Markdown.
-    HiddenKey,
-}
-
-/// A `Key:: Value` inline field with its source syntax.
-#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
-pub struct InlineField {
-    key: FieldKey,
-    value: NoteFieldValue,
-    form: InlineFieldForm,
-}
-
-impl InlineField {
-    /// Creates an inline field from an already-validated `key`, `value`, and
-    /// source syntax.
-    #[inline]
-    #[must_use]
-    pub(crate) const fn from_key(
-        key: FieldKey,
-        value: NoteFieldValue,
-        form: InlineFieldForm,
-    ) -> Self {
-        Self {
-            key,
-            value,
-            form,
-        }
-    }
-
-    /// Parses `key` into a [`FieldKey`] and creates an inline field.
-    ///
-    /// # Errors
-    ///
-    /// Returns a [`FieldKeyError`] if `key` fails to parse; see
-    /// [`FieldKey::try_new`].
-    #[cfg_attr(not(test), expect(dead_code, reason = "used in tests"))]
-    pub(crate) fn try_new(
-        key: impl Into<String>,
-        value: NoteFieldValue,
-        form: InlineFieldForm,
-    ) -> Result<Self, FieldKeyError> {
-        Ok(Self::from_key(FieldKey::try_new(key)?, value, form))
-    }
-
-    /// Returns the field key.
-    #[inline]
-    #[must_use]
-    pub(crate) const fn key(&self) -> &FieldKey {
-        &self.key
-    }
-
-    /// Returns the field value.
-    #[inline]
-    #[must_use]
-    pub(crate) const fn value(&self) -> &NoteFieldValue {
-        &self.value
-    }
-
-    /// Returns the inline field's source form (body, visible key, or hidden
-    /// key).
-    #[inline]
-    #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "no current caller outside tests; kept for InlineField \
-                      accessor symmetry"
-        )
-    )]
-    pub(crate) const fn form(&self) -> InlineFieldForm {
-        self.form
     }
 }
 
@@ -463,56 +380,6 @@ mod tests {
                     )]))
                 )]))
             );
-        }
-    }
-
-    mod inline_field {
-        use pretty_assertions::assert_eq;
-        use rstest::rstest;
-
-        use super::*;
-
-        #[rstest]
-        #[case::body(InlineFieldForm::Body)]
-        #[case::visible_key(InlineFieldForm::VisibleKey)]
-        #[case::hidden_key(InlineFieldForm::HiddenKey)]
-        fn stores_key_value_and_form(#[case] form: InlineFieldForm) {
-            let field = InlineField::try_new(
-                "Author",
-                NoteFieldValue::String("Jane Doe".to_owned()),
-                form,
-            )
-            .expect("valid test field key");
-
-            assert_eq!(field.key().name(), "Author");
-            assert_eq!(field.key().canonical(), "author");
-            assert_eq!(
-                field.value(),
-                &NoteFieldValue::String("Jane Doe".to_owned())
-            );
-            assert_eq!(field.form(), form);
-        }
-
-        #[rstest]
-        #[case::body(InlineFieldForm::Body)]
-        #[case::visible_key(InlineFieldForm::VisibleKey)]
-        #[case::hidden_key(InlineFieldForm::HiddenKey)]
-        fn round_trips_through_postcard_encoding(
-            #[case] form: InlineFieldForm,
-        ) {
-            let field = InlineField::try_new(
-                "Author",
-                NoteFieldValue::String("Jane Doe".to_owned()),
-                form,
-            )
-            .expect("valid test field key");
-
-            let bytes =
-                postcard::to_allocvec(&field).expect("encode inline field");
-            let decoded: InlineField =
-                postcard::from_bytes(&bytes).expect("decode inline field");
-
-            assert_eq!(decoded, field);
         }
     }
 }

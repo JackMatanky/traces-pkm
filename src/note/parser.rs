@@ -18,15 +18,17 @@
 
 use std::{mem, path::PathBuf};
 
+use indexmap::IndexMap;
 use pulldown_cmark::{
     CowStr, Event, LinkType as CmarkLinkType, Options, Parser, Tag as CmarkTag,
     TagEnd,
 };
 
 use super::{
-    Frontmatter, InlineField, Link, LinkType, List, ListItem, Note,
-    RawFrontmatter, Tag, TaskStatus, lexer,
+    Frontmatter, Link, LinkType, List, ListItem, Note, RawFrontmatter, Tag,
+    TaskStatus, lexer,
 };
+use crate::field::FieldKey;
 
 /// Parses Markdown source into a [`Note`].
 ///
@@ -77,7 +79,8 @@ enum BlockContext {
 }
 
 /// Inline fields and tags flushed from a closed list item's scan buffer.
-type FlushedFields = Option<(Vec<InlineField>, Vec<Tag>)>;
+type FlushedFields =
+    Option<(IndexMap<FieldKey, Vec<super::NoteFieldValue>>, Vec<Tag>)>;
 
 /// State accumulated while walking Markdown events for one note.
 #[derive(Default)]
@@ -90,7 +93,7 @@ struct ParserContext {
     active_link: Option<ActiveLink>,
     list_nesting: ListTracker,
     body_buffer: String,
-    inline_fields: Vec<InlineField>,
+    inline_fields: IndexMap<FieldKey, Vec<super::NoteFieldValue>>,
     tags: Vec<Tag>,
 }
 
@@ -220,8 +223,10 @@ impl ParserContext {
     fn end_text_block(&mut self) {
         self.block = BlockContext::None;
         if !self.list_nesting.is_item_active() {
-            self.inline_fields
-                .extend(lexer::extract_inline_fields(&self.body_buffer));
+            for (key, value) in lexer::extract_inline_fields(&self.body_buffer)
+            {
+                self.inline_fields.entry(key).or_default().push(value);
+            }
             self.tags.extend(lexer::extract_tags(&self.body_buffer));
             self.body_buffer.clear();
         }
@@ -238,7 +243,9 @@ impl ParserContext {
     /// document-order streams, if any were flushed.
     fn extend_from_flush(&mut self, flushed: FlushedFields) {
         if let Some((fields, tags)) = flushed {
-            self.inline_fields.extend(fields);
+            for (key, values) in fields {
+                self.inline_fields.entry(key).or_default().extend(values);
+            }
             self.tags.extend(tags);
         }
     }
@@ -394,7 +401,7 @@ impl ListTracker {
             return None;
         }
         let text = mem::take(&mut item.scan_buffer);
-        let fields = if item.task_status.is_some() {
+        let raw_fields = if item.task_status.is_some() {
             lexer::extract_task_inline_fields(&text)
         } else {
             lexer::extract_inline_fields(&text)
@@ -405,9 +412,15 @@ impl ListTracker {
         // document-order stream every page-level query already relies on. Both
         // outlive this function inside different serialized structs, so neither
         // can borrow from the other.
-        item.fields.extend(fields.clone());
+        let mut item_fields = IndexMap::new();
+        let mut page_fields = IndexMap::new();
+        for (key, value) in raw_fields {
+            item_fields.entry(key.clone()).or_default().push(value.clone());
+            page_fields.entry(key).or_default().push(value);
+        }
+        item.fields = item_fields;
         let tags = lexer::extract_tags(&text);
-        Some((fields, tags))
+        Some((page_fields, tags))
     }
 
     /// Pushes a list frame and flushes any active parent item's scan buffer.
@@ -443,7 +456,7 @@ impl ListTracker {
             task_status: None,
             text_buffer: String::new(),
             scan_buffer: String::new(),
-            fields: Vec::new(),
+            fields: IndexMap::new(),
             children: Vec::new(),
         });
     }
@@ -530,7 +543,7 @@ struct ItemFrame {
     ///
     /// Kept separate from child items' fields so [`ListItem::fields`] resolves
     /// per-item, not per-list.
-    fields: Vec<InlineField>,
+    fields: IndexMap<FieldKey, Vec<super::NoteFieldValue>>,
     children: Vec<List>,
 }
 
@@ -840,40 +853,31 @@ mod tests {
         use rstest::rstest;
 
         use super::*;
-        use crate::note::{InlineFieldForm, Tag};
+        use crate::note::Tag;
 
         #[rstest]
-        #[case::body(
-            "Author:: Jane Doe",
-            "author",
-            "Jane Doe",
-            InlineFieldForm::Body
-        )]
+        #[case::body("Author:: Jane Doe", "author", "Jane Doe")]
         #[case::visible_key(
             "See the [Status:: Draft] note.",
             "status",
-            "Draft",
-            InlineFieldForm::VisibleKey
+            "Draft"
         )]
-        #[case::hidden_key(
-            "See the (Status:: Draft) note.",
-            "status",
-            "Draft",
-            InlineFieldForm::HiddenKey
-        )]
+        #[case::hidden_key("See the (Status:: Draft) note.", "status", "Draft")]
         fn extracts_a_field_in_its_declared_form_from_body_text(
             #[case] input: &str,
             #[case] expected_key: &str,
             #[case] expected_value: &str,
-            #[case] expected_form: InlineFieldForm,
         ) {
             let note = parse_markdown("note.md", input);
 
             assert_eq!(note.inline_fields().len(), 1);
-            let field = note.inline_fields().first().expect("field present");
-            assert!(field.key().is_canonical_match(expected_key));
-            assert_eq!(field.value().as_str(), Some(expected_value));
-            assert_eq!(field.form(), expected_form);
+            let (key, values) =
+                note.inline_fields().iter().next().expect("field present");
+            assert!(key.is_canonical_match(expected_key));
+            assert_eq!(
+                values.first().and_then(|v| v.as_str()),
+                Some(expected_value)
+            );
         }
 
         #[test]
@@ -882,7 +886,7 @@ mod tests {
                 parse_markdown("note.md", "Status:: Draft\n\nAuthor:: Jane");
 
             let keys: Vec<&str> =
-                note.inline_fields().iter().map(|f| f.key().name()).collect();
+                note.inline_fields().keys().map(|k| k.name()).collect();
             assert_eq!(keys, ["Status", "Author"]);
         }
 
@@ -898,10 +902,10 @@ mod tests {
                 .expect("item present");
             assert_eq!(item.text(), "Status:: Draft");
 
-            let field = note.inline_fields().first().expect("field present");
-            assert!(field.key().is_canonical_match("status"));
-            assert_eq!(field.value().as_str(), Some("Draft"));
-            assert_eq!(field.form(), InlineFieldForm::Body);
+            let (key, values) =
+                note.inline_fields().iter().next().expect("field present");
+            assert!(key.is_canonical_match("status"));
+            assert_eq!(values.first().and_then(|v| v.as_str()), Some("Draft"));
         }
 
         #[test]
@@ -920,16 +924,22 @@ mod tests {
             let first_priority = first
                 .fields()
                 .iter()
-                .find(|field| field.key().is_canonical_match("priority"))
+                .find(|(k, _)| k.is_canonical_match("priority"))
                 .expect("first item field present");
-            assert_eq!(first_priority.value().as_str(), Some("high"));
+            assert_eq!(
+                first_priority.1.first().and_then(|v| v.as_str()),
+                Some("high")
+            );
 
             let second_priority = second
                 .fields()
                 .iter()
-                .find(|field| field.key().is_canonical_match("priority"))
+                .find(|(k, _)| k.is_canonical_match("priority"))
                 .expect("second item field present");
-            assert_eq!(second_priority.value().as_str(), Some("low"));
+            assert_eq!(
+                second_priority.1.first().and_then(|v| v.as_str()),
+                Some("low")
+            );
 
             // Both fields still surface on the page-level bag, unscoped.
             assert_eq!(note.inline_fields().len(), 2);
@@ -947,12 +957,20 @@ mod tests {
             let first = items.next().expect("first item present");
             let second = items.next().expect("second item present");
 
-            let first_due = first.fields().first().expect("first due field");
-            assert!(first_due.key().is_canonical_match("due"));
-            assert_eq!(first_due.value().as_str(), Some("2026-01-01"));
+            let (first_key, first_vals) =
+                first.fields().iter().next().expect("first due field");
+            assert!(first_key.is_canonical_match("due"));
+            assert_eq!(
+                first_vals.first().and_then(|v| v.as_str()),
+                Some("2026-01-01")
+            );
 
-            let second_due = second.fields().first().expect("second due field");
-            assert_eq!(second_due.value().as_str(), Some("2026-02-02"));
+            let (second_key, second_vals) =
+                second.fields().iter().next().expect("second due field");
+            assert_eq!(
+                second_vals.first().and_then(|v| v.as_str()),
+                Some("2026-02-02")
+            );
         }
 
         #[test]
@@ -998,13 +1016,13 @@ mod tests {
             let note = parse_markdown("note.md", input);
 
             assert_eq!(note.inline_fields().len(), 1);
-            let field = note.inline_fields().first().expect("field present");
-            assert!(field.key().is_canonical_match(expected_key));
+            let (key, values) =
+                note.inline_fields().iter().next().expect("field present");
+            assert!(key.is_canonical_match(expected_key));
             assert_eq!(
-                field.value(),
-                &NoteFieldValue::Date(expected_date.to_owned())
+                values.first(),
+                Some(&NoteFieldValue::Date(expected_date.to_owned()))
             );
-            assert_eq!(field.form(), InlineFieldForm::Body);
         }
 
         #[test]
@@ -1016,17 +1034,17 @@ mod tests {
 
             let fields = note.inline_fields();
             assert_eq!(fields.len(), 2);
-            assert_eq!(fields.first().map(|f| f.key().name()), Some("due"));
+            let (due_key, due_vals) = fields.iter().next().expect("due field");
+            assert_eq!(due_key.name(), "due");
             assert_eq!(
-                fields.first().map(InlineField::value),
+                due_vals.first(),
                 Some(&NoteFieldValue::Date("2022-07-14".to_owned()))
             );
+            let (sched_key, sched_vals) =
+                fields.iter().nth(1).expect("scheduled field");
+            assert_eq!(sched_key.name(), "scheduled");
             assert_eq!(
-                fields.get(1).map(|f| f.key().name()),
-                Some("scheduled")
-            );
-            assert_eq!(
-                fields.get(1).map(InlineField::value),
+                sched_vals.first(),
                 Some(&NoteFieldValue::Date("2022-07-24".to_owned()))
             );
         }
@@ -1224,9 +1242,10 @@ mod tests {
             let note = parse_markdown("note.md", "# Status:: Draft");
 
             assert_eq!(note.inline_fields().len(), 1);
-            let field = note.inline_fields().first().expect("field present");
-            assert!(field.key().is_canonical_match("status"));
-            assert_eq!(field.value().as_str(), Some("Draft"));
+            let (key, values) =
+                note.inline_fields().iter().next().expect("field present");
+            assert!(key.is_canonical_match("status"));
+            assert_eq!(values.first().and_then(|v| v.as_str()), Some("Draft"));
         }
 
         #[test]
@@ -1238,10 +1257,10 @@ mod tests {
 
             assert_eq!(note.inline_fields().len(), 1);
             assert_eq!(note.outlinks().len(), 1);
-            let field = note.inline_fields().first().expect("field present");
-            assert!(field.key().is_canonical_match("status"));
-            assert_eq!(field.value().as_str(), Some("Draft"));
-            assert_eq!(field.form(), InlineFieldForm::VisibleKey);
+            let (key, values) =
+                note.inline_fields().iter().next().expect("field present");
+            assert!(key.is_canonical_match("status"));
+            assert_eq!(values.first().and_then(|v| v.as_str()), Some("Draft"));
 
             let link = note.outlinks().first().expect("outlink present");
             assert_eq!(link.target(), "http://example.com");
@@ -1256,10 +1275,10 @@ mod tests {
             );
 
             assert_eq!(note.inline_fields().len(), 1);
-            let field = note.inline_fields().first().expect("field present");
-            assert!(field.key().is_canonical_match("status"));
-            assert_eq!(field.value().as_str(), Some("Draft"));
-            assert_eq!(field.form(), InlineFieldForm::VisibleKey);
+            let (key, values) =
+                note.inline_fields().iter().next().expect("field present");
+            assert!(key.is_canonical_match("status"));
+            assert_eq!(values.first().and_then(|v| v.as_str()), Some("Draft"));
         }
     }
 }

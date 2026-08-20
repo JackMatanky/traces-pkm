@@ -431,10 +431,7 @@ mod tests {
         use rstest::rstest;
 
         use super::*;
-        use crate::note::{
-            Frontmatter, InlineField, InlineFieldForm, Link, LinkType,
-            NoteFieldValue, Tag,
-        };
+        use crate::note::{Frontmatter, Link, LinkType, NoteFieldValue, Tag};
 
         #[test]
         fn round_trips_records() {
@@ -525,29 +522,13 @@ mod tests {
         }
 
         #[rstest]
-        #[case::body(
-            "Status:: Draft",
-            "status",
-            "Draft",
-            InlineFieldForm::Body
-        )]
-        #[case::visible_key(
-            "[Status:: Draft]",
-            "status",
-            "Draft",
-            InlineFieldForm::VisibleKey
-        )]
-        #[case::hidden_key(
-            "(Status:: Draft)",
-            "status",
-            "Draft",
-            InlineFieldForm::HiddenKey
-        )]
+        #[case::body("Status:: Draft", "status", "Draft")]
+        #[case::visible_key("[Status:: Draft]", "status", "Draft")]
+        #[case::hidden_key("(Status:: Draft)", "status", "Draft")]
         fn persist_then_load_recovers_inline_fields(
             #[case] source: &str,
             #[case] expected_key: &str,
             #[case] expected_value: &str,
-            #[case] expected_form: InlineFieldForm,
         ) {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("note.md"), source).expect("write note");
@@ -561,13 +542,16 @@ mod tests {
             let built_note =
                 built.note(Path::new("note.md")).expect("built note");
             assert_eq!(loaded_note.inline_fields(), built_note.inline_fields());
-            let field = loaded_note
+            let (key, values) = loaded_note
                 .inline_fields()
-                .first()
+                .iter()
+                .next()
                 .expect("inline field present");
-            assert!(field.key().is_canonical_match(expected_key));
-            assert_eq!(field.value().as_str(), Some(expected_value));
-            assert_eq!(field.form(), expected_form);
+            assert!(key.is_canonical_match(expected_key));
+            assert_eq!(
+                values.first().and_then(|v| v.as_str()),
+                Some(expected_value)
+            );
         }
 
         #[test]
@@ -590,8 +574,8 @@ mod tests {
             assert_eq!(loaded_note.inline_fields(), built_note.inline_fields());
             let values: Vec<&NoteFieldValue> = loaded_note
                 .inline_fields()
-                .iter()
-                .map(InlineField::value)
+                .values()
+                .flat_map(|vals| vals.iter())
                 .collect();
             assert_eq!(values, [
                 &NoteFieldValue::Duration("7 hours".to_owned()),
@@ -844,8 +828,9 @@ mod tests {
 
             let value = refreshed
                 .note(Path::new("note.md"))
-                .and_then(|n| n.inline_fields().first())
-                .and_then(|f| f.value().as_str());
+                .and_then(|n| n.inline_fields().iter().next())
+                .and_then(|(_, vals)| vals.first())
+                .and_then(|v| v.as_str());
             assert_eq!(value, Some("Final"));
         }
 
