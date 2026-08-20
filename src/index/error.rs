@@ -1,17 +1,18 @@
 //! Errors from index scanning, persistence, and loading.
 //!
-//! [`FileIndexError`] preserves path context for filesystem, redb, and postcard
-//! encoding failures so CLI diagnostics can name the affected record or
-//! database.
+//! [`FileIndexError`] covers persistence failures (database, serialization).
+//! [`IndexBuilderError`] covers build-pipeline failures (scan, parse).
+//! The [`From`] impl converts builder errors into file index errors for
+//! callers that use the unified [`FileIndex`] API.
 
 use std::{io, path::PathBuf};
 
 use thiserror::Error;
 
-/// Error type for [`super::FileIndex`] operations.
+/// Error type for [`super::FileIndex`] persistence operations.
 ///
-/// Variants distinguish filesystem access, database storage, and postcard
-/// encoding failures.
+/// Variants distinguish database access, and postcard encoding failures.
+/// Build-time failures are covered by [`IndexBuilderError`].
 #[derive(Debug, Error)]
 pub enum FileIndexError {
     /// A filesystem operation failed during a scan or directory setup.
@@ -61,4 +62,263 @@ pub enum FileIndexError {
         #[source]
         source: postcard::Error,
     },
+}
+
+/// Error type for the [`super::builder::IndexBuilder`] build pipeline.
+///
+/// Distinct from [`FileIndexError`] to separate build-time failures
+/// (filesystem scan, markdown parse) from persistence failures (database,
+/// serialization).
+#[derive(Debug, Error)]
+pub enum IndexBuilderError {
+    /// Filesystem error during directory scan or file metadata read.
+    #[error("failed to scan {path}")]
+    Scan {
+        /// The path that could not be read.
+        path: PathBuf,
+        /// Source I/O error.
+        #[source]
+        source: io::Error,
+    },
+    /// Markdown file could not be read or parsed into a [`crate::note::Note`].
+    #[error("failed to parse note {path}")]
+    NoteParse {
+        /// The markdown file that failed to parse.
+        path: PathBuf,
+        /// Source I/O error.
+        #[source]
+        source: io::Error,
+    },
+    /// Record metadata matched the previous index, but the corresponding
+    /// note was not found in the moved notes map. Indicates a logic bug
+    /// in the reconciliation pipeline.
+    #[error("note missing for record at {path}")]
+    MissingNote {
+        /// The record path whose expected note was absent.
+        path: PathBuf,
+    },
+}
+
+impl From<IndexBuilderError> for FileIndexError {
+    fn from(err: IndexBuilderError) -> Self {
+        match err {
+            IndexBuilderError::Scan {
+                path,
+                source,
+            }
+            | IndexBuilderError::NoteParse {
+                path,
+                source,
+            } => Self::Io {
+                path,
+                source,
+            },
+            IndexBuilderError::MissingNote {
+                path,
+            } => Self::Io {
+                path,
+                source: io::Error::new(
+                    io::ErrorKind::NotFound,
+                    "note missing for matched record",
+                ),
+            },
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    mod index_builder_error_display {
+        use super::*;
+
+        #[test]
+        fn scan_includes_path_in_message() {
+            let err = IndexBuilderError::Scan {
+                path: PathBuf::from("src/main.rs"),
+                source: io::Error::new(io::ErrorKind::NotFound, "missing"),
+            };
+
+            assert!(err.to_string().contains("src/main.rs"));
+        }
+
+        #[test]
+        fn note_parse_includes_path_in_message() {
+            let err = IndexBuilderError::NoteParse {
+                path: PathBuf::from("notes").join("bad.md"),
+                source: io::Error::new(io::ErrorKind::InvalidData, "not utf8"),
+            };
+
+            assert!(err.to_string().contains("bad.md"));
+        }
+
+        #[test]
+        fn missing_note_includes_path_in_message() {
+            let err = IndexBuilderError::MissingNote {
+                path: PathBuf::from("orphan.md"),
+            };
+
+            assert!(err.to_string().contains("orphan.md"));
+        }
+    }
+
+    mod file_index_error_display {
+        use super::*;
+
+        #[test]
+        fn io_includes_path_in_message() {
+            let err = FileIndexError::Io {
+                path: PathBuf::from("data.csv"),
+                source: io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "denied",
+                ),
+            };
+
+            assert!(err.to_string().contains("data.csv"));
+        }
+
+        #[test]
+        fn store_includes_path_in_message() {
+            let err = FileIndexError::Store {
+                path: PathBuf::from(".traces/index.redb"),
+                source: Box::new(redb::Error::DatabaseAlreadyOpen),
+            };
+
+            assert!(err.to_string().contains(".traces/index.redb"));
+        }
+
+        #[test]
+        fn serialize_includes_path_in_message() {
+            let err = FileIndexError::Serialize {
+                path: PathBuf::from("note.md"),
+                source: postcard::Error::DeserializeUnexpectedEnd,
+            };
+
+            assert!(err.to_string().contains("note.md"));
+        }
+
+        #[test]
+        fn deserialize_includes_path_in_message() {
+            let err = FileIndexError::Deserialize {
+                path: PathBuf::from("note.md"),
+                source: postcard::Error::DeserializeUnexpectedEnd,
+            };
+
+            assert!(err.to_string().contains("note.md"));
+        }
+    }
+
+    mod from_index_builder_error {
+        use std::path::Path;
+
+        use super::*;
+
+        #[test]
+        fn scan_converts_to_io() {
+            let source =
+                io::Error::new(io::ErrorKind::NotFound, "no such file");
+            let err = IndexBuilderError::Scan {
+                path: PathBuf::from("missing.rs"),
+                source,
+            };
+
+            let converted: FileIndexError = err.into();
+
+            assert!(
+                matches!(converted, FileIndexError::Io { path, .. } if path == Path::new("missing.rs"))
+            );
+        }
+
+        #[test]
+        fn note_parse_converts_to_io() {
+            let source = io::Error::new(io::ErrorKind::InvalidData, "bad utf8");
+            let err = IndexBuilderError::NoteParse {
+                path: PathBuf::from("notes").join("bad.md"),
+                source,
+            };
+
+            let converted: FileIndexError = err.into();
+
+            assert!(
+                matches!(converted, FileIndexError::Io { path, .. } if path == Path::new("notes/bad.md"))
+            );
+        }
+
+        #[test]
+        fn missing_note_converts_to_io_with_not_found() {
+            let err = IndexBuilderError::MissingNote {
+                path: PathBuf::from("orphan.md"),
+            };
+
+            let converted: FileIndexError = err.into();
+
+            match converted {
+                FileIndexError::Io {
+                    path,
+                    source,
+                } => {
+                    assert_eq!(path, Path::new("orphan.md"));
+                    assert_eq!(source.kind(), io::ErrorKind::NotFound);
+                }
+                other => panic!("expected FileIndexError::Io, got {other:?}"),
+            }
+        }
+    }
+
+    mod error_source_chains {
+        use std::error::Error as StdError;
+
+        use super::*;
+
+        #[test]
+        fn io_preserves_source() {
+            let source = io::Error::new(io::ErrorKind::BrokenPipe, "pipe");
+            let err = FileIndexError::Io {
+                path: PathBuf::from("x"),
+                source,
+            };
+
+            assert!(err.source().is_some());
+            assert_eq!(
+                err.source()
+                    .unwrap()
+                    .downcast_ref::<io::Error>()
+                    .unwrap()
+                    .kind(),
+                io::ErrorKind::BrokenPipe,
+            );
+        }
+
+        #[test]
+        fn store_preserves_source() {
+            let err = FileIndexError::Store {
+                path: PathBuf::from("db"),
+                source: Box::new(redb::Error::DatabaseAlreadyOpen),
+            };
+
+            assert!(err.source().is_some());
+        }
+
+        #[test]
+        fn serialize_preserves_source() {
+            let err = FileIndexError::Serialize {
+                path: PathBuf::from("x"),
+                source: postcard::Error::DeserializeUnexpectedEnd,
+            };
+
+            assert!(err.source().is_some());
+        }
+
+        #[test]
+        fn deserialize_preserves_source() {
+            let err = FileIndexError::Deserialize {
+                path: PathBuf::from("x"),
+                source: postcard::Error::DeserializeUnexpectedEnd,
+            };
+
+            assert!(err.source().is_some());
+        }
+    }
 }

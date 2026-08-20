@@ -59,6 +59,8 @@ fn is_git_dir(path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
+    use crate::index::tests::fixtures::RestorePermissions;
 
     mod scan_root {
         use std::fs;
@@ -146,8 +148,6 @@ mod tests {
         #[test]
         fn returns_an_io_error_when_a_directory_is_unreadable() {
             use std::os::unix::fs::PermissionsExt as _;
-
-            use super::super::super::tests::fixtures::RestorePermissions;
 
             let temp = tempfile::tempdir().expect("create temp dir");
             let root = temp.path();

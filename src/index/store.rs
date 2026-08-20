@@ -277,6 +277,8 @@ impl IndexStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
+    use crate::index::tests::fixtures::RestorePermissions;
     use crate::{index::scan::scan_root, note::parse_markdown};
 
     mod persistence {
@@ -456,8 +458,6 @@ mod tests {
         #[test]
         fn returns_io_error_when_parent_dir_unwritable() {
             use std::os::unix::fs::PermissionsExt as _;
-
-            use super::super::super::tests::fixtures::RestorePermissions;
 
             let temp = tempfile::tempdir().expect("create temp dir");
             let root = temp.path();
