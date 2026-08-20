@@ -131,7 +131,19 @@ sources = ["src/**/*.rs", "Cargo.toml", "Cargo.lock"]
 [tasks.mutants]
 description = "Run parallel mutation testing with cargo-mutants"
 depends = ["check"]
-run = "cargo mutants --jobs 8"
+usage = '''
+flag "-j --jobs <jobs>" help="Number of cargo build/test jobs in parallel" default="8"
+flag "-f --file <file>" help="Examine only mutants in this file"
+flag "--iterate" help="Skip mutants that were caught in previous runs"
+'''
+run = '''
+args=()
+if [ -n "${usage_jobs}" ]; then args+=(--jobs "${usage_jobs}"); fi
+if [ -n "${usage_file}" ]; then args+=(--file "${usage_file}"); fi
+if [ "${usage_iterate}" = "true" ]; then args+=(--iterate); fi
+
+cargo mutants "${args[@]}"
+'''
 depends_post = ["mutants-report"]
 
 [tasks.mutants-report]
