@@ -41,12 +41,6 @@ pub(crate) struct IndexBuilder {
     reuse: Option<ReusePlan>,
 }
 
-struct ReusePlan {
-    previous_records: Vec<FileRecord>,
-    notes: HashMap<PathBuf, crate::note::Note>,
-    inlinks: InlinkMap,
-}
-
 impl IndexBuilder {
     /// Scans `root` for regular files. Parsing is deferred to [`Self::build`].
     ///
@@ -193,6 +187,12 @@ impl IndexBuilder {
             inlinks,
         })
     }
+}
+
+struct ReusePlan {
+    previous_records: Vec<FileRecord>,
+    notes: HashMap<PathBuf, crate::note::Note>,
+    inlinks: InlinkMap,
 }
 
 /// Reads and parses the markdown file for `record`.
