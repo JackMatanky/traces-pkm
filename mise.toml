@@ -34,6 +34,27 @@ lockfile = true
 HK_MISE = "1"
 ADR_DIRECTORY = "docs/adr/"
 
+# =============================================================================
+# Setup & Maintenance
+# =============================================================================
+
+[tasks.setup]
+description = "Install git hooks via hk"
+run = "hk install --mise"
+
+[tasks.clean]
+description = "Clean build artifacts"
+run = "cargo clean"
+
+# =============================================================================
+# Development & Compilation
+# =============================================================================
+
+[tasks.check]
+description = "Fast compilation check"
+run = "cargo check --workspace"
+alias = "c"
+
 [tasks.build]
 description = "Debug build"
 run = "cargo build"
@@ -41,29 +62,18 @@ alias = "b"
 sources = ["src/**/*.rs", "Cargo.toml", "Cargo.lock"]
 outputs = ["target/debug/traces-pkm"]
 
-[tasks.check]
-description = "Fast compilation check"
-run = "cargo check --workspace"
-alias = "c"
+[tasks.watch]
+description = "Watch and auto-check on changes"
+run = "cargo watch -x check -x test"
 
-# Scoping: extra args pass straight through to nextest (no usage spec = unvalidated passthrough).
-#   mise run test -- <name-substring>     filter by test/module path, e.g. index::query
-#   mise run test -- --test <file>        run one integration test file, e.g. init_cli (tests/init_cli.rs)
-#   mise run test -- --bin <name> / --lib run one binary's tests / library unit tests only
-#   mise run test -- -E '<filterset>'     full nextest filterset DSL (https://nexte.st/docs/filtersets)
-[tasks.test]
-description = "Run tests with nextest (pass -- <nextest args> to scope by name, module, file, or filterset)"
-run = "cargo nextest run"
-depends = ["check"]
-alias = "t"
+# =============================================================================
+# Formatting & Linting
+# =============================================================================
 
-[tasks."test-all"]
-description = "Run all tests including doc-tests (test-utils feature enabled so tests/integration.rs and tests/e2e.rs exercise the gated re-export surface)"
-run = "cargo test --workspace --features test-utils"
-
-[tasks.bench]
-description = "Run Criterion benchmarks"
-run = "cargo bench --features test-utils"
+[tasks.fmt]
+description = "Format all Rust code (nightly)"
+alias = "f"
+run = "cargo fmt --all"
 
 [tasks.lint]
 description = "Run all hk linters"
@@ -73,11 +83,6 @@ run = "hk check"
 [tasks.fix]
 description = "Auto-fix all hk lint issues"
 run = "hk fix"
-
-[tasks.fmt]
-description = "Format all Rust code (nightly)"
-alias = "f"
-run = "cargo fmt --all"
 
 [tasks.clippy]
 description = "Strict clippy: workspace, all targets, all features. Auto-fixes known lints unless --no-fix."
@@ -110,10 +115,32 @@ cargo clippy "${cargo_args[@]}" -- "${clippy_args[@]}"
 description = "Run cargo deny audit"
 run = "cargo deny check"
 
-[tasks.verify]
-description = "Full verification gate: format, lint, clippy, tests, doctests, audit"
-alias = "v"
-depends = ["fmt", "lint", "clippy", "test-all", "audit"]
+# =============================================================================
+# Testing & Benchmarking
+# =============================================================================
+
+# Scoping: extra args pass straight through to nextest (no usage spec = unvalidated passthrough).
+#   mise run test -- <name-substring>     filter by test/module path, e.g. index::query
+#   mise run test -- --test <file>        run one integration test file, e.g. init_cli (tests/init_cli.rs)
+#   mise run test -- --bin <name> / --lib run one binary's tests / library unit tests only
+#   mise run test -- -E '<filterset>'     full nextest filterset DSL (https://nexte.st/docs/filtersets)
+[tasks.test]
+description = "Run tests with nextest (pass -- <nextest args> to scope by name, module, file, or filterset)"
+run = "cargo nextest run"
+depends = ["check"]
+alias = "t"
+
+[tasks."test-all"]
+description = "Run all tests including doc-tests (test-utils feature enabled so tests/integration.rs and tests/e2e.rs exercise the gated re-export surface)"
+run = "cargo test --workspace --features test-utils"
+
+[tasks.bench]
+description = "Run Criterion benchmarks"
+run = "cargo bench --features test-utils"
+
+# =============================================================================
+# Quality, Coverage & Mutation
+# =============================================================================
 
 [tasks.coverage]
 description = "Code coverage with tarpaulin"
@@ -191,13 +218,16 @@ $(cat "${missed_file}")
 EOF
 '''
 
-[tasks.clean]
-description = "Clean build artifacts"
-run = "cargo clean"
+# =============================================================================
+# Release & Verification
+# =============================================================================
 
-[tasks.watch]
-description = "Watch and auto-check on changes"
-run = "cargo watch -x check -x test"
+[tasks.release]
+description = "Release build"
+run = "cargo build --release"
+alias = "r"
+sources = ["src/**/*.rs", "Cargo.toml", "Cargo.lock"]
+outputs = ["target/release/traces-pkm"]
 
 [tasks.doc]
 description = "Build documentation (warnings as errors)"
@@ -206,16 +236,14 @@ env = { RUSTDOCFLAGS = "-D warnings" }
 sources = ["src/**/*.rs", "Cargo.toml"]
 outputs = ["target/doc"]
 
-[tasks.setup]
-description = "Install git hooks via hk"
-run = "hk install --mise"
+[tasks.verify]
+description = "Full verification gate: format, lint, clippy, tests, doctests, audit"
+alias = "v"
+depends = ["fmt", "lint", "clippy", "test-all", "audit"]
 
-[tasks.release]
-description = "Release build"
-run = "cargo build --release"
-alias = "r"
-sources = ["src/**/*.rs", "Cargo.toml", "Cargo.lock"]
-outputs = ["target/release/traces-pkm"]
+# =============================================================================
+# Lifecycle Hooks
+# =============================================================================
 
 [hooks]
 postinstall = "hk install --mise"
