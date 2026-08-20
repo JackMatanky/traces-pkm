@@ -23,7 +23,7 @@
 //! ```
 
 use super::error::FieldPathError;
-use crate::{field, field::FieldKey, index::FileRecord, note::FieldValue};
+use crate::{field, field::FieldKey, file::FileRecord, note::FieldValue};
 
 /// A `file.<field>` accessor backed by [`FileRecord`] metadata.
 ///

@@ -54,6 +54,7 @@ mod config;
 mod dialog;
 mod dirs;
 mod field;
+mod file;
 mod file_class_expander;
 mod file_name;
 mod file_store;
@@ -75,6 +76,7 @@ pub use config::{
 pub use dialog::{
     DialogError, DialogProvider, PresetDialogProvider, TerminalDialogProvider,
 };
+pub use file::FileRecord;
 pub(crate) use file_name::{BaseName, BaseNameRef, FileName};
 pub(crate) use file_store::{
     FileStateStore, FileStateStoreError, FileStoreCleanMode,
@@ -84,7 +86,7 @@ pub use hash::{Blake3FileHash, Blake3PathHash};
 #[cfg(not(any(test, feature = "test-utils")))]
 pub(crate) use hash::{Blake3FileHash, Blake3PathHash};
 #[cfg(any(test, feature = "test-utils"))]
-pub use index::{FileIndex, FileIndexError, FileRecord};
+pub use index::{FileIndex, FileIndexError};
 #[cfg(any(test, feature = "test-utils"))]
 pub use note::{
     FieldValue, Frontmatter, InlineField, InlineFieldForm, Link, LinkTarget,

@@ -1,10 +1,21 @@
-//! Filesystem scan for regular project files.
+//! Recursive filesystem scan for a project root.
+//!
+//! [`scan_root`] walks the directory tree, collects every regular file as a
+//! [`FileRecord`], and returns them sorted by project-relative path. Skipped:
+//!
+//! - `.git` directories and their descendants
+//! - The index database file (`.traces/index.redb`)
+//! - Symbolic links
+//!
+//! The sorted output is a precondition for the merge-join reconciliation in
+//! [`super::builder::IndexBuilder`].
 
 use std::path::Path;
 
 use walkdir::WalkDir;
 
-use super::{INDEX_FILE, error::FileIndexError, file::FileRecord};
+use super::{INDEX_FILE, error::FileIndexError};
+use crate::file::FileRecord;
 
 /// Recursively scans `root` for regular files and returns sorted records.
 ///
@@ -58,6 +69,8 @@ fn is_git_dir(path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
+    use crate::index::tests::fixtures::RestorePermissions;
 
     mod scan_root {
         use std::fs;
@@ -145,20 +158,6 @@ mod tests {
         #[test]
         fn returns_an_io_error_when_a_directory_is_unreadable() {
             use std::os::unix::fs::PermissionsExt as _;
-
-            /// Restores a locked directory's permissions on drop, even if
-            /// the test panics. Otherwise, a `0o000` directory blocks the
-            /// tempdir's own cleanup.
-            struct RestorePermissions<'a>(&'a Path);
-
-            impl Drop for RestorePermissions<'_> {
-                fn drop(&mut self) {
-                    let _ = fs::set_permissions(
-                        self.0,
-                        fs::Permissions::from_mode(0o700),
-                    );
-                }
-            }
 
             let temp = tempfile::tempdir().expect("create temp dir");
             let root = temp.path();

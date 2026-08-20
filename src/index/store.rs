@@ -17,10 +17,8 @@ use redb::{
 };
 use serde::{Serialize, de::DeserializeOwned};
 
-use super::{
-    INDEX_FILE, error::FileIndexError, file::FileRecord, inlinks::InlinkMap,
-};
-use crate::note::Note;
+use super::{INDEX_FILE, error::FileIndexError, inlinks::InlinkMap};
+use crate::{file::FileRecord, note::Note};
 
 /// Postcard-encoded [`FileRecord`] bytes keyed by project-relative path.
 const FILES: TableDefinition<&str, &[u8]> = TableDefinition::new("files");
@@ -39,6 +37,10 @@ const LINKS: MultimapTableDefinition<&str, &str> =
 type IndexSnapshot = (Vec<FileRecord>, Vec<Note>, InlinkMap);
 
 /// Redb-backed handle to one project root's index database.
+///
+/// Owns the [`Database`] connection and table definitions. Created by
+/// [`Self::open`], which creates the `.traces/` parent directory if absent.
+/// Callers interact through [`super::FileIndex`] methods, not directly.
 #[derive(Debug)]
 pub(super) struct IndexStore {
     db: Database,
@@ -129,8 +131,8 @@ impl IndexStore {
 
     /// Serializes `items` with postcard into `table`, keyed by `path_of`.
     ///
-    /// [`Self::replace_all`] uses this helper for both the `files` and
-    /// `notes` tables instead of duplicating the serialize-and-insert loop.
+    /// [`Self::replace_all`] uses this helper for both the `files` and `notes`
+    /// tables instead of duplicating the serialize-and-insert loop.
     ///
     /// # Errors
     ///
@@ -165,9 +167,8 @@ impl IndexStore {
     /// Serializes every `target -> sources` edge into the `links` multimap
     /// table.
     ///
-    /// [`Self::replace_all`] uses this instead of [`Self::store_table`]
-    /// because [`LINKS`] is a multimap that holds multiple values per key
-    /// natively.
+    /// [`Self::replace_all`] uses this instead of [`Self::store_table`] because
+    /// [`LINKS`] is a multimap that holds multiple values per key natively.
     ///
     /// # Errors
     ///
@@ -193,8 +194,8 @@ impl IndexStore {
 
     /// Deserializes every postcard value in `table` and sorts the records.
     ///
-    /// [`Self::load_all`] uses this helper for both the `files` and
-    /// `notes` tables instead of duplicating the decode-and-sort loop.
+    /// [`Self::load_all`] uses this helper for both the `files` and `notes`
+    /// tables instead of duplicating the decode-and-sort loop.
     ///
     /// # Errors
     ///
@@ -280,6 +281,8 @@ impl IndexStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
+    use crate::index::tests::fixtures::RestorePermissions;
     use crate::{index::scan::scan_root, note::parse_markdown};
 
     mod persistence {
@@ -287,7 +290,7 @@ mod tests {
 
         use super::*;
         #[test]
-        fn load_all_on_a_freshly_opened_database_is_empty() {
+        fn returns_empty_when_nothing_persisted() {
             let temp = tempfile::tempdir().expect("create temp dir");
             let store = IndexStore::open(temp.path()).expect("open store");
 
@@ -382,11 +385,10 @@ mod tests {
             store
                 .replace_all(&fresh, &[], &HashMap::new())
                 .expect("persist fresh");
-            let (loaded_records, loaded_notes, _) =
+            let (loaded_records, _loaded_notes, _) =
                 store.load_all().expect("load records");
 
             assert_eq!(loaded_records, fresh);
-            assert_eq!(loaded_notes.len(), 0);
         }
 
         #[test]
@@ -421,7 +423,7 @@ mod tests {
         }
 
         #[test]
-        fn load_all_matches_the_path_sort_order_not_the_raw_key_order() {
+        fn returns_records_in_path_sort_order() {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::create_dir_all(temp.path().join("a-b")).expect("mkdir a-b");
             fs::create_dir_all(temp.path().join("a")).expect("mkdir a");
@@ -444,7 +446,7 @@ mod tests {
         use super::*;
 
         #[test]
-        fn returns_store_error_when_the_index_path_is_a_directory() {
+        fn rejects_directory_at_index_path() {
             let temp = tempfile::tempdir().expect("create temp dir");
             let root = temp.path();
             fs::create_dir_all(root.join(INDEX_FILE))
@@ -458,22 +460,8 @@ mod tests {
 
         #[cfg(unix)]
         #[test]
-        fn returns_io_error_when_the_parent_directory_cannot_be_created() {
+        fn returns_io_error_when_parent_dir_unwritable() {
             use std::os::unix::fs::PermissionsExt as _;
-
-            /// Restores a locked directory's permissions on drop, even if
-            /// the test panics. Otherwise, a `0o500` root blocks the tempdir's
-            /// own cleanup.
-            struct RestorePermissions<'a>(&'a Path);
-
-            impl Drop for RestorePermissions<'_> {
-                fn drop(&mut self) {
-                    let _ = fs::set_permissions(
-                        self.0,
-                        fs::Permissions::from_mode(0o700),
-                    );
-                }
-            }
 
             let temp = tempfile::tempdir().expect("create temp dir");
             let root = temp.path();

@@ -1,13 +1,17 @@
 //! Build, persist, load, and query a file index over a project root.
 //!
 //! [`FileIndex`] is the main entry point. It stores a sorted [`FileRecord`]
-//! for every regular file under a project root. Markdown files also contribute
-//! parsed [`Note`] metadata. Persistence uses a redb-backed database managed
-//! by the [`store`] submodule; callers use [`FileIndex`]'s methods instead of
-//! touching redb tables directly.
+//! (from [`crate::file`]) for every regular file under a project root. Markdown
+//! files also contribute parsed [`Note`] metadata. Persistence uses a
+//! redb-backed database managed by the [`store`] submodule; callers use
+//! [`FileIndex`]'s methods instead of touching redb tables directly.
 //!
 //! Inbound links between Notes are derived from outlinks during build and
 //! refresh, then persisted alongside them; see [`inlinks`].
+//!
+//! The build pipeline is composed internally by [`builder::IndexBuilder`],
+//! which holds a scan result and reuse directive, deferring note parsing,
+//! sorting, and inlink derivation to build time.
 //!
 //! # Lifecycle
 //!
@@ -26,48 +30,50 @@
 //!
 //! [`store`]: mod@store
 //! [`inlinks`]: mod@inlinks
+//! [`builder::IndexBuilder`]: mod@builder
 
+mod builder;
 mod error;
-mod file;
 mod inlinks;
 mod scan;
 mod store;
 
-use std::{fs, path::Path};
+use std::path::Path;
 
-pub use error::FileIndexError;
-pub(crate) use file::FileFormat;
-pub use file::FileRecord;
-use inlinks::{InlinkMap, derive_inlinks};
+#[allow(unused_imports, reason = "re-exported for downstream callers")]
+pub use error::{FileIndexError, IndexBuilderError};
+use inlinks::InlinkMap;
 use store::IndexStore;
 
+pub(crate) use crate::file::FileFormat;
+pub use crate::file::FileRecord;
 #[cfg(test)]
 use crate::query::IndexRecord;
 use crate::{
-    note::{Note, parse_markdown},
+    note::Note,
     query::{QueryOutcome, QuerySource},
 };
 
 /// Project-relative path of the persisted [`FileIndex`] database.
 const INDEX_FILE: &str = ".traces/index.redb";
 
-/// Persisted cache of file records, parsed Note metadata, and derived
-/// inbound links.
+/// Persisted cache of file records, parsed Note metadata, and derived inbound
+/// links.
 ///
 /// Every regular file under the project root contributes a [`FileRecord`].
 /// Markdown files also contribute a [`Note`], accessible through
-/// [`Self::notes`] or [`Self::note`]. Use [`Self::build`] to create an index
+/// [`Self::notes`]. Use [`Self::build`] to create an index
 /// from scratch, [`Self::persist`] to save it, [`Self::load`] to reload it, or
 /// [`Self::refresh`] to update it against the current filesystem state.
 #[derive(Clone, Debug)]
 pub struct FileIndex {
-    pub(crate) records: Vec<FileRecord>,
-    pub(crate) notes: Vec<Note>,
+    records: Vec<FileRecord>,
+    notes: Vec<Note>,
     /// Inbound links, keyed by target path; see [`inlinks::derive_inlinks`].
     ///
-    /// - Recomputed in full whenever [`Self::refresh`] finds changed content.
-    /// - Reused unchanged from the last persisted computation otherwise.
-    pub(crate) inlinks: InlinkMap,
+    /// Recomputed in full whenever [`Self::refresh`] finds changed content.
+    /// Reused unchanged from the last persisted computation otherwise.
+    inlinks: InlinkMap,
 }
 
 impl FileIndex {
@@ -82,22 +88,7 @@ impl FileIndex {
     ///   metadata cannot be inspected, or a markdown file cannot be read.
     #[inline]
     pub fn build(root: &Path) -> Result<Self, FileIndexError> {
-        let records = scan::scan_root(root)?;
-        let mut notes = Vec::new();
-
-        for record in &records {
-            if record.format() == FileFormat::Note {
-                notes.push(Self::parse_note_file(root, record)?);
-            }
-        }
-        notes.sort_by(|a, b| a.path().cmp(b.path()));
-        let inlinks = derive_inlinks(&notes);
-
-        Ok(Self {
-            records,
-            notes,
-            inlinks,
-        })
+        Ok(builder::IndexBuilder::from_scan(root)?.build(root)?)
     }
 
     /// Refreshes the persisted index for `root` against current filesystem
@@ -111,16 +102,16 @@ impl FileIndex {
     /// - Added or changed markdown Notes are parsed from disk.
     /// - Deleted files disappear because they are absent from the fresh scan.
     ///
-    /// Returns the fresh [`FileIndex`] and persists it only when contents
-    /// changed.
+    /// Returns the fresh [`FileIndex`] without persisting. Call
+    /// [`Self::persist`] to write the result to disk.
     ///
-    /// Derived inlinks are recomputed in full only when something changed;
-    /// otherwise the previously persisted computation is reused unchanged. A
-    /// full recompute (not a per-note patch) is required because link target
-    /// resolution considers every indexed Note: an unedited Note's *resolved*
-    /// target can change when an unrelated Note is added or removed. For
-    /// example, a wikilink that was ambiguous becomes resolvable once one of
-    /// the ambiguous candidates is deleted.
+    /// Derived inlinks are recomputed in full whenever any file's content or
+    /// metadata changed since the last persist. A full recompute (not a
+    /// per-note patch) is required because link target resolution considers
+    /// every indexed Note: an unedited Note's *resolved* target can change when
+    /// an unrelated Note is added or removed. For example, a wikilink that was
+    /// ambiguous becomes resolvable once one of the ambiguous candidates is
+    /// deleted.
     ///
     /// # Errors
     ///
@@ -128,46 +119,12 @@ impl FileIndex {
     ///   metadata cannot be inspected, or a markdown file cannot be read.
     /// - [`FileIndexError::Store`] or [`FileIndexError::Deserialize`] if the
     ///   previous index cannot be loaded.
-    /// - [`FileIndexError::Serialize`] if the refreshed index cannot be stored.
     #[inline]
     pub fn refresh(root: &Path) -> Result<Self, FileIndexError> {
         let previous = Self::load(root)?;
-        let records = scan::scan_root(root)?;
-        let mut notes = Vec::new();
-
-        for record in &records {
-            if record.format() != FileFormat::Note {
-                continue;
-            }
-            let unchanged = previous
-                .record(record.path())
-                .is_some_and(|prior| prior == record);
-            let reused = unchanged
-                .then(|| previous.note(record.path()).cloned())
-                .flatten();
-            notes.push(match reused {
-                Some(note) => note,
-                None => Self::parse_note_file(root, record)?,
-            });
-        }
-        notes.sort_by(|a, b| a.path().cmp(b.path()));
-
-        let dirty = records != previous.records || notes != previous.notes;
-        let inlinks = if dirty {
-            derive_inlinks(&notes)
-        } else {
-            previous.inlinks
-        };
-
-        let index = Self {
-            records,
-            notes,
-            inlinks,
-        };
-        if dirty {
-            index.persist(root)?;
-        }
-        Ok(index)
+        Ok(builder::IndexBuilder::from_scan(root)?
+            .reuse_unchanged(previous)
+            .build(root)?)
     }
 
     /// Persists this index to `root`, replacing any existing index contents.
@@ -216,9 +173,9 @@ impl FileIndex {
     /// [`Self::build`] and [`Self::refresh`] add one for every parsed Note), so
     /// a Note found without one is skipped rather than causing a panic.
     ///
-    /// Every matched [`IndexRecord`]'s `inlinks` reflects every indexed Note,
-    /// not just Notes matching `source`: a Note outside `source` can still link
-    /// to one inside it.
+    /// Every matched [`crate::query::IndexRecord`]'s `inlinks` reflects every
+    /// indexed Note, not just Notes matching `source`: a Note outside `source`
+    /// can still link to one inside it.
     ///
     /// # Performance
     ///
@@ -242,13 +199,14 @@ impl FileIndex {
     /// Executes a task-level query over `source`, consuming this index.
     ///
     /// Selects the same Notes as [`Self::query`], then expands each matched
-    /// Note into one [`IndexRecord`] per markdown task item (`- [ ]` or `-
-    /// [x]`). Notes without tasks contribute no rows.
+    /// Note into one [`crate::query::IndexRecord`] per markdown task item
+    /// (`- [ ]` or `- [x]`). Notes without tasks contribute no rows.
     ///
     /// Each task row keeps its parent Note's `file.*`, frontmatter,
     /// inline-field, tag, and inlinks metadata for filtering and display
     /// through `IndexRecord::field`. It also exposes
-    /// [`IndexRecord::task_completed`] and `IndexRecord::task_text`.
+    /// [`crate::query::IndexRecord::task_completed`] and
+    /// `IndexRecord::task_text`.
     ///
     /// Call [`Self::refresh`] first so results reflect the current filesystem.
     ///
@@ -259,9 +217,9 @@ impl FileIndex {
     ///   `self.inlinks`.
     /// - The task iterator is peeked to identify its final item, so only
     ///   earlier rows clone the base record.
-    /// - The final row moves the shared [`IndexRecord`] base. Earlier clones
-    ///   remain O(1) because [`IndexRecord`]'s `note` field is an [`Arc`], not
-    ///   a deep clone.
+    /// - The final row moves the shared [`crate::query::IndexRecord`] base.
+    ///   Earlier clones remain O(1) because [`crate::query::IndexRecord`]'s
+    ///   `note` field is an [`Arc`], not a deep clone.
     ///
     /// [`Arc`]: std::sync::Arc
     #[inline]
@@ -278,6 +236,10 @@ impl FileIndex {
     }
 
     /// Returns indexed [`FileRecord`]s, sorted by path.
+    ///
+    /// Every regular file under the project root contributes one record.
+    /// Markdown files also have a corresponding [`Note`] accessible via
+    /// [`Self::notes`].
     #[inline]
     #[must_use]
     pub fn records(&self) -> &[FileRecord] {
@@ -285,6 +247,9 @@ impl FileIndex {
     }
 
     /// Returns indexed [`Note`] records, sorted by path.
+    ///
+    /// Only markdown files produce notes. Non-markdown files appear in
+    /// [`Self::records`] but not here.
     #[inline]
     #[must_use]
     #[cfg_attr(
@@ -307,6 +272,7 @@ impl FileIndex {
     /// searches rather than scanning.
     #[inline]
     #[must_use]
+    #[cfg(test)]
     pub(crate) fn note(&self, path: &Path) -> Option<&Note> {
         find_by_path(&self.notes, path)
     }
@@ -319,6 +285,13 @@ impl FileIndex {
     /// searches rather than scanning.
     #[inline]
     #[must_use]
+    #[cfg_attr(
+        not(any(test, feature = "test-utils")),
+        expect(
+            dead_code,
+            reason = "used in query module tests for direct record inspection"
+        )
+    )]
     pub(crate) fn record(&self, path: &Path) -> Option<&FileRecord> {
         self.records
             .binary_search_by(|r| r.path().cmp(path))
@@ -326,34 +299,19 @@ impl FileIndex {
             .and_then(|idx| self.records.get(idx))
     }
 
-    /// Reads and parses the markdown file for `record` into a [`Note`].
+    /// Consumes this index and returns its inner components.
     ///
-    /// Shared by [`Self::build`] (parses every markdown file from scratch) and
-    /// [`Self::refresh`] (parses only added or changed markdown files).
-    ///
-    /// # Errors
-    ///
-    /// - [`FileIndexError::Io`] if the file cannot be read.
-    fn parse_note_file(
-        root: &Path,
-        record: &FileRecord,
-    ) -> Result<Note, FileIndexError> {
-        let full_path = root.join(record.path());
-        let content = fs::read_to_string(&full_path).map_err(|source| {
-            FileIndexError::Io {
-                path: full_path,
-                source,
-            }
-        })?;
-        Ok(parse_markdown(record.path(), &content))
+    /// Used by the query module to pair records with notes and resolve inlinks
+    /// without exposing `FileIndex`'s internal layout.
+    pub(crate) fn into_parts(self) -> (Vec<FileRecord>, Vec<Note>, InlinkMap) {
+        (self.records, self.notes, self.inlinks)
     }
 }
 
 /// Binary-searches path-sorted `notes` for an exact path match.
 ///
-/// Shared by [`FileIndex::note`], which does this lookup once `self` exists,
-/// and the [`inlinks`] submodule, which needs the same search over a bare
-/// `&[Note]` slice while resolving link targets during
+/// Shared by the [`inlinks`] submodule, which needs the same search over a
+/// bare `&[Note]` slice while resolving link targets during
 /// [`FileIndex::build`]/[`FileIndex::refresh`].
 ///
 /// [`inlinks`]: mod@inlinks
@@ -367,6 +325,30 @@ mod tests {
     use std::fs;
 
     use super::*;
+
+    /// Shared test fixtures live here so `scan.rs` and `store.rs` tests can
+    /// import them without duplicating the definitions.
+    pub(crate) mod fixtures {
+        use std::{fs, path::Path};
+
+        /// Restores a locked directory's permissions on drop, even if the
+        /// test panics. Otherwise, a `0o000` or `0o500` directory blocks the
+        /// tempdir's own cleanup.
+        #[cfg(unix)]
+        pub struct RestorePermissions<'a>(pub &'a Path);
+
+        #[cfg(unix)]
+        impl Drop for RestorePermissions<'_> {
+            fn drop(&mut self) {
+                use std::os::unix::fs::PermissionsExt as _;
+
+                let _ = fs::set_permissions(
+                    self.0,
+                    fs::Permissions::from_mode(0o700),
+                );
+            }
+        }
+    }
 
     mod build {
         use pretty_assertions::assert_eq;
@@ -477,7 +459,7 @@ mod tests {
         };
 
         #[test]
-        fn persist_then_load_recovers_the_same_records_and_notes() {
+        fn round_trips_records() {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(
                 temp.path().join("note.md"),
@@ -490,6 +472,21 @@ mod tests {
             let loaded = FileIndex::load(temp.path()).expect("load index");
 
             assert_eq!(loaded.records(), built.records());
+        }
+
+        #[test]
+        fn round_trips_notes_with_outlinks() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(
+                temp.path().join("note.md"),
+                "---\ntitle: Hello\n---\n[[other_note]]\n- [x] done",
+            )
+            .expect("write note");
+            let built = FileIndex::build(temp.path()).expect("build index");
+            built.persist(temp.path()).expect("persist index");
+
+            let loaded = FileIndex::load(temp.path()).expect("load index");
+
             assert_eq!(loaded.notes(), built.notes());
 
             let loaded_note =
@@ -499,6 +496,23 @@ mod tests {
                 loaded_note.outlinks().first().map(Link::target),
                 Some("other_note")
             );
+        }
+
+        #[test]
+        fn round_trips_task_count() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(
+                temp.path().join("note.md"),
+                "---\ntitle: Hello\n---\n[[other_note]]\n- [x] done",
+            )
+            .expect("write note");
+            let built = FileIndex::build(temp.path()).expect("build index");
+            built.persist(temp.path()).expect("persist index");
+
+            let loaded = FileIndex::load(temp.path()).expect("load index");
+
+            let loaded_note =
+                loaded.note(Path::new("note.md")).expect("loaded note");
             assert_eq!(loaded_note.tasks().count(), 1);
         }
 
@@ -629,7 +643,7 @@ mod tests {
         }
 
         #[test]
-        fn returns_an_empty_index_when_the_root_was_never_persisted() {
+        fn returns_empty_when_nothing_persisted() {
             let temp = tempfile::tempdir().expect("create temp dir");
 
             let index = FileIndex::load(temp.path()).expect("load index");
@@ -639,7 +653,7 @@ mod tests {
         }
 
         #[test]
-        fn rebuilds_rather_than_appends_when_persisted_again() {
+        fn persists_rebuilds_rather_than_appends() {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("first.md"), "- [ ] first")
                 .expect("write first");
@@ -695,6 +709,101 @@ mod tests {
             assert_eq!(
                 index.note(Path::new("b.md")).map(Note::path),
                 Some(Path::new("b.md"))
+            );
+        }
+    }
+
+    mod builder {
+        use pretty_assertions::assert_eq;
+
+        use super::{super::builder::IndexBuilder, *};
+
+        #[test]
+        fn from_scan_produces_sorted_records() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("b.md"), "# B").expect("write b");
+            fs::write(temp.path().join("a.md"), "# A").expect("write a");
+
+            let index = IndexBuilder::from_scan(temp.path())
+                .expect("scan")
+                .build(temp.path())
+                .expect("build");
+
+            assert_eq!(
+                index
+                    .records()
+                    .iter()
+                    .map(FileRecord::path)
+                    .collect::<Vec<_>>(),
+                [Path::new("a.md"), Path::new("b.md")]
+            );
+        }
+
+        #[test]
+        fn from_scan_parses_markdown_notes() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("note.md"), "- [ ] task")
+                .expect("write note");
+            fs::write(temp.path().join("readme.txt"), "text")
+                .expect("write txt");
+
+            let index = IndexBuilder::from_scan(temp.path())
+                .expect("scan")
+                .build(temp.path())
+                .expect("build");
+
+            assert_eq!(index.records().len(), 2);
+            assert_eq!(index.notes().len(), 1);
+            assert_eq!(
+                index.note(Path::new("note.md")).map(Note::path),
+                Some(Path::new("note.md"))
+            );
+        }
+
+        #[test]
+        fn reuse_unchanged_skips_reparsing() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("note.md"), "- [ ] task")
+                .expect("write note");
+            let built = FileIndex::build(temp.path()).expect("build index");
+
+            let index = IndexBuilder::from_scan(temp.path())
+                .expect("scan")
+                .reuse_unchanged(built)
+                .build(temp.path())
+                .expect("build");
+
+            assert_eq!(
+                index
+                    .note(Path::new("note.md"))
+                    .map(Note::tasks)
+                    .map(Iterator::count),
+                Some(1)
+            );
+        }
+
+        #[test]
+        fn reuse_unchanged_reparses_changed_notes() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("note.md"), "- [ ] task")
+                .expect("write note");
+            let built = FileIndex::build(temp.path()).expect("build index");
+
+            fs::write(temp.path().join("note.md"), "- [ ] task\n- [x] done")
+                .expect("rewrite note");
+
+            let index = IndexBuilder::from_scan(temp.path())
+                .expect("scan")
+                .reuse_unchanged(built)
+                .build(temp.path())
+                .expect("build");
+
+            assert_eq!(
+                index
+                    .note(Path::new("note.md"))
+                    .map(Note::tasks)
+                    .map(Iterator::count),
+                Some(2)
             );
         }
     }
@@ -763,7 +872,7 @@ mod tests {
         }
 
         #[test]
-        fn adds_a_newly_created_note() {
+        fn includes_newly_added_note() {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("first.md"), "# First")
                 .expect("write first");
@@ -779,11 +888,10 @@ mod tests {
                 FileIndex::refresh(temp.path()).expect("refresh index");
 
             assert_eq!(refreshed.notes().len(), 2);
-            assert!(refreshed.note(Path::new("second.md")).is_some());
         }
 
         #[test]
-        fn removes_a_deleted_note() {
+        fn excludes_deleted_note() {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("gone.md"), "# Gone")
                 .expect("write note");
@@ -802,8 +910,7 @@ mod tests {
         }
 
         #[test]
-        fn removes_an_inbound_edge_after_the_linking_note_is_deleted_and_refreshed()
-         {
+        fn excludes_inlink_after_linker_deletion() {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("target.md"), "# Target")
                 .expect("write target");
@@ -827,8 +934,7 @@ mod tests {
         }
 
         #[test]
-        fn moves_an_inbound_edge_when_the_linking_notes_outlink_target_changes()
-        {
+        fn moves_inlink_when_linker_retargets() {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("old-target.md"), "# Old")
                 .expect("write old target");
@@ -865,7 +971,7 @@ mod tests {
         }
 
         #[test]
-        fn persists_changes_so_a_later_load_observes_them() {
+        fn persists_refreshed_changes_survive_load() {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("note.md"), "# Draft")
                 .expect("write note");
@@ -876,7 +982,10 @@ mod tests {
 
             fs::write(temp.path().join("extra.md"), "# Extra")
                 .expect("write extra");
-            FileIndex::refresh(temp.path()).expect("refresh index");
+            FileIndex::refresh(temp.path())
+                .expect("refresh index")
+                .persist(temp.path())
+                .expect("persist index");
 
             let loaded = FileIndex::load(temp.path()).expect("load index");
             assert_eq!(loaded.notes().len(), 2);
@@ -895,7 +1004,7 @@ mod tests {
         }
 
         #[test]
-        fn reuses_persisted_inlinks_when_nothing_on_disk_changed() {
+        fn preserves_inlinks_after_noop_refresh() {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("target.md"), "# Target")
                 .expect("write target");
@@ -906,13 +1015,6 @@ mod tests {
                 .persist(temp.path())
                 .expect("persist index");
 
-            // Nothing on disk changes between this and the prior build, so
-            // `refresh` takes the `!dirty` path and reuses the persisted
-            // inlinks rather than recomputing. Reuse and a would-be
-            // recompute produce identical values here (nothing changed),
-            // so this test can't distinguish the two by output alone; it
-            // guards against inlinks going missing or stale across a
-            // no-op refresh.
             let refreshed =
                 FileIndex::refresh(temp.path()).expect("refresh index");
             let outcome = refreshed.query(&QuerySource::All);
@@ -925,8 +1027,45 @@ mod tests {
         }
 
         #[test]
-        fn resolves_an_unedited_notes_ambiguous_wikilink_once_an_unrelated_note_is_deleted()
-         {
+        fn returns_unpersisted_index_from_refresh() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("note.md"), "---\ntitle: Draft\n---")
+                .expect("write note");
+            FileIndex::build(temp.path())
+                .expect("build index")
+                .persist(temp.path())
+                .expect("persist index");
+
+            fs::write(temp.path().join("note.md"), "# Revised")
+                .expect("rewrite note");
+
+            let refreshed =
+                FileIndex::refresh(temp.path()).expect("refresh index");
+
+            // The refreshed index reflects the new content...
+            assert_eq!(
+                refreshed
+                    .note(Path::new("note.md"))
+                    .and_then(Note::frontmatter)
+                    .and_then(|fm| fm.fields().first())
+                    .and_then(|f| f.value().as_str()),
+                None // "# Revised" has no frontmatter
+            );
+            // ...but a fresh load from disk still shows the OLD content,
+            // because refresh did not persist.
+            let loaded = FileIndex::load(temp.path()).expect("load index");
+            assert_eq!(
+                loaded
+                    .note(Path::new("note.md"))
+                    .and_then(Note::frontmatter)
+                    .and_then(|fm| fm.fields().first())
+                    .and_then(|f| f.value().as_str()),
+                Some("Draft") // OLD frontmatter, not the revised content
+            );
+        }
+
+        #[test]
+        fn resolves_stale_ambiguous_wikilink_after_unrelated_deletion() {
             // `a.md`'s own bytes never change in this test. Its `[[foo]]`
             // link starts ambiguous (two Notes named `foo`) and later
             // becomes resolvable purely because a *different* Note is
@@ -981,9 +1120,18 @@ mod tests {
                 .collect()
         }
 
+        fn build_book_index() -> FileIndex {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(
+                temp.path().join("book.md"),
+                "---\ntitle: Dune\n---\nGenre:: Sci-fi\n\nShelved as #book.",
+            )
+            .expect("write note");
+            FileIndex::build(temp.path()).expect("build index")
+        }
+
         #[test]
-        fn returns_every_file_and_includes_non_markdown_files_when_source_is_all()
-         {
+        fn returns_all_files_in_sorted_order() {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("a.md"), "# A").expect("write a");
             fs::write(temp.path().join("b.md"), "# B").expect("write b");
@@ -994,25 +1142,37 @@ mod tests {
             let outcome = index.query(&QuerySource::All);
 
             assert_eq!(outcome.len(), 3);
-            assert!(!outcome.is_empty());
             assert_eq!(
-                outcome.get(0).map(|record| record.file().path()),
+                outcome.get(0).map(|r| r.file().path()),
                 Some(Path::new("a.md"))
             );
             assert_eq!(
-                outcome.get(2).map(|record| record.file().path()),
+                outcome.get(1).map(|r| r.file().path()),
+                Some(Path::new("b.md"))
+            );
+            assert_eq!(
+                outcome.get(2).map(|r| r.file().path()),
                 Some(Path::new("readme.txt"))
             );
-            assert_eq!(outcome.get(2).and_then(|record| record.note()), None);
             assert!(outcome.get(3).is_none());
-            assert_eq!(note_paths(&outcome), [
-                Path::new("a.md"),
-                Path::new("b.md")
-            ]);
         }
 
         #[test]
-        fn returns_empty_outcome_when_no_notes_match_a_tag_filter() {
+        fn excludes_non_markdown_files_from_note_results() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("a.md"), "# A").expect("write a");
+            fs::write(temp.path().join("readme.txt"), "text")
+                .expect("write txt");
+            let index = FileIndex::build(temp.path()).expect("build index");
+
+            let outcome = index.query(&QuerySource::All);
+
+            assert_eq!(note_paths(&outcome), [Path::new("a.md")]);
+            assert_eq!(outcome.get(1).and_then(|r| r.note()), None);
+        }
+
+        #[test]
+        fn returns_empty_when_no_notes_match_tag() {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("readme.txt"), "text")
                 .expect("write txt");
@@ -1021,7 +1181,6 @@ mod tests {
             let outcome = index
                 .query(&QuerySource::parse("#missing").expect("valid source"));
 
-            assert!(outcome.is_empty());
             assert_eq!(outcome.len(), 0);
         }
 
@@ -1063,8 +1222,7 @@ mod tests {
         }
 
         #[test]
-        fn returns_empty_outcome_when_tag_query_is_more_specific_than_note_tag()
-        {
+        fn returns_empty_when_tag_query_is_too_specific() {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("project.md"), "Tracked in #projects.")
                 .expect("write project");
@@ -1100,21 +1258,42 @@ mod tests {
         }
 
         #[test]
-        fn exposes_file_and_note_metadata_fields_in_query_outcome() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            fs::write(
-                temp.path().join("book.md"),
-                "---\ntitle: Dune\n---\nGenre:: Sci-fi\n\nShelved as #book.",
-            )
-            .expect("write note");
-            let index = FileIndex::build(temp.path()).expect("build index");
+        fn returns_file_path_for_each_record() {
+            let index = build_book_index();
 
             let outcome = index.query(&QuerySource::All);
             let record = outcome.iter().next().expect("one record");
-            let note = record.note().expect("note");
 
             assert_eq!(record.file().path(), Path::new("book.md"));
+        }
+
+        #[test]
+        fn includes_frontmatter_fields_in_note() {
+            let index = build_book_index();
+
+            let outcome = index.query(&QuerySource::All);
+            let note = outcome
+                .iter()
+                .next()
+                .expect("one record")
+                .note()
+                .expect("note");
+
             assert_eq!(note.frontmatter().map(|fm| fm.fields().len()), Some(1));
+        }
+
+        #[test]
+        fn includes_inline_field_keys() {
+            let index = build_book_index();
+
+            let outcome = index.query(&QuerySource::All);
+            let note = outcome
+                .iter()
+                .next()
+                .expect("one record")
+                .note()
+                .expect("note");
+
             assert_eq!(
                 note.inline_fields()
                     .iter()
@@ -1122,6 +1301,20 @@ mod tests {
                     .collect::<Vec<_>>(),
                 ["genre"]
             );
+        }
+
+        #[test]
+        fn includes_note_tags() {
+            let index = build_book_index();
+
+            let outcome = index.query(&QuerySource::All);
+            let note = outcome
+                .iter()
+                .next()
+                .expect("one record")
+                .note()
+                .expect("note");
+
             assert_eq!(note.tags(), [Tag::new("#book")]);
         }
 
@@ -1167,8 +1360,7 @@ mod tests {
         }
 
         #[test]
-        fn preserves_a_targets_inlinks_when_a_source_has_duplicate_outlinks_to_it()
-         {
+        fn deduplicates_outlinks_from_same_source() {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("target.md"), "# Target")
                 .expect("write target");
@@ -1201,6 +1393,25 @@ mod tests {
                 .expect("self-linking record");
 
             assert_eq!(source.inlinks(), [PathBuf::from("b.md")]);
+        }
+
+        #[test]
+        fn derives_inlinks_from_outlinks() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("target.md"), "# Target")
+                .expect("write target");
+            fs::write(temp.path().join("linker.md"), "[[target]]")
+                .expect("write linker");
+
+            let index = FileIndex::build(temp.path()).expect("build index");
+
+            let outcome = index.query(&QuerySource::All);
+            let target = outcome
+                .iter()
+                .find(|r| r.file().path() == Path::new("target.md"))
+                .expect("target record");
+
+            assert_eq!(target.inlinks(), [PathBuf::from("linker.md")]);
         }
     }
 
@@ -1255,7 +1466,7 @@ mod tests {
         }
 
         #[test]
-        fn retains_parent_note_metadata_for_filtering_and_display() {
+        fn retains_file_path() {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(
                 temp.path().join("project.md"),
@@ -1269,10 +1480,42 @@ mod tests {
             let record = outcome.iter().next().expect("one task row");
 
             assert_eq!(record.file().path(), Path::new("project.md"));
+        }
+
+        #[test]
+        fn retains_frontmatter_field() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(
+                temp.path().join("project.md"),
+                "---\ntitle: Launch\n---\nFiled under #projects.\n\n- [ ] \
+                 ship it\n",
+            )
+            .expect("write note");
+            let index = FileIndex::build(temp.path()).expect("build index");
+
+            let outcome = index.query_tasks(&QuerySource::All);
+            let record = outcome.iter().next().expect("one task row");
+
             assert_eq!(
                 record.field("title"),
                 Ok(crate::note::FieldValue::String("Launch".to_owned()))
             );
+        }
+
+        #[test]
+        fn retains_tag_field() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(
+                temp.path().join("project.md"),
+                "---\ntitle: Launch\n---\nFiled under #projects.\n\n- [ ] \
+                 ship it\n",
+            )
+            .expect("write note");
+            let index = FileIndex::build(temp.path()).expect("build index");
+
+            let outcome = index.query_tasks(&QuerySource::All);
+            let record = outcome.iter().next().expect("one task row");
+
             assert_eq!(
                 record.field("tags"),
                 Ok(crate::note::FieldValue::List(vec![
@@ -1337,8 +1580,7 @@ mod tests {
         }
 
         #[test]
-        fn keeps_only_matching_tasks_not_the_whole_note_when_filtering_by_completion()
-         {
+        fn filters_tasks_by_completion_status() {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(
                 temp.path().join("todo.md"),

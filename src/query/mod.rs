@@ -215,7 +215,8 @@ pub(crate) use source::{
 };
 
 use crate::{
-    index::{FileIndex, FileRecord},
+    file::FileRecord,
+    index::FileIndex,
     note::{FieldValue, Note},
 };
 
@@ -242,11 +243,7 @@ pub(crate) fn query(
     source: &QuerySource,
     class_field: &str,
 ) -> QueryOutcome {
-    let FileIndex {
-        records,
-        notes,
-        mut inlinks,
-    } = index;
+    let (records, notes, mut inlinks) = index.into_parts();
     let records = matched_pairs(records, notes, source, class_field)
         .map(|(file, note)| record_with_inlinks(file, note, &mut inlinks))
         .collect();
@@ -275,11 +272,7 @@ pub(crate) fn query_tasks(
     source: &QuerySource,
     class_field: &str,
 ) -> QueryOutcome {
-    let FileIndex {
-        records: files,
-        notes,
-        mut inlinks,
-    } = index;
+    let (files, notes, mut inlinks) = index.into_parts();
     let mut records = Vec::new();
     for (file, raw_note) in matched_pairs(files, notes, source, class_field) {
         let base = record_with_inlinks(file, raw_note, &mut inlinks);
