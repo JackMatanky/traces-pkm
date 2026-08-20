@@ -1,4 +1,4 @@
-//! File metadata captured by the index.
+//! File metadata representation for the codebase.
 //!
 //! [`FileRecord`] stores project-relative identity, type classification,
 //! timestamps, and size for every regular file under a project root.
@@ -12,8 +12,7 @@ use std::{
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use super::error::FileIndexError;
-use crate::{BaseName, FileName};
+use crate::{BaseName, FileName, index::FileIndexError};
 
 /// Metadata captured for one regular file under a project root.
 ///
@@ -39,7 +38,7 @@ impl FileRecord {
     /// # Errors
     ///
     /// - [`FileIndexError::Io`] if the file's modification time cannot be read.
-    pub(super) fn from_metadata(
+    pub(crate) fn from_metadata(
         path: &Path,
         root: &Path,
         metadata: &fs::Metadata,

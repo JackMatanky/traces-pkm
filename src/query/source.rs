@@ -32,7 +32,7 @@ use super::{
     },
 };
 use crate::{
-    index::FileRecord,
+    file::FileRecord,
     note::{FieldValue, Note},
 };
 

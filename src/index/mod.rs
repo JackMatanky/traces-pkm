@@ -28,7 +28,6 @@
 //! [`inlinks`]: mod@inlinks
 
 mod error;
-mod file;
 mod inlinks;
 mod scan;
 mod store;
@@ -36,11 +35,11 @@ mod store;
 use std::{fs, path::Path};
 
 pub use error::FileIndexError;
-pub(crate) use file::FileFormat;
-pub use file::FileRecord;
 use inlinks::{InlinkMap, derive_inlinks};
 use store::IndexStore;
 
+pub(crate) use crate::file::FileFormat;
+pub use crate::file::FileRecord;
 #[cfg(test)]
 use crate::query::IndexRecord;
 use crate::{

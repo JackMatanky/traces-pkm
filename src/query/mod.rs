@@ -215,7 +215,8 @@ pub(crate) use source::{
 };
 
 use crate::{
-    index::{FileIndex, FileRecord},
+    file::FileRecord,
+    index::FileIndex,
     note::{FieldValue, Note},
 };
 

@@ -4,7 +4,8 @@ use std::path::Path;
 
 use walkdir::WalkDir;
 
-use super::{INDEX_FILE, error::FileIndexError, file::FileRecord};
+use super::{INDEX_FILE, error::FileIndexError};
+use crate::file::FileRecord;
 
 /// Recursively scans `root` for regular files and returns sorted records.
 ///

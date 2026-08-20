@@ -17,10 +17,8 @@ use redb::{
 };
 use serde::{Serialize, de::DeserializeOwned};
 
-use super::{
-    INDEX_FILE, error::FileIndexError, file::FileRecord, inlinks::InlinkMap,
-};
-use crate::note::Note;
+use super::{INDEX_FILE, error::FileIndexError, inlinks::InlinkMap};
+use crate::{file::FileRecord, note::Note};
 
 /// Postcard-encoded [`FileRecord`] bytes keyed by project-relative path.
 const FILES: TableDefinition<&str, &[u8]> = TableDefinition::new("files");
