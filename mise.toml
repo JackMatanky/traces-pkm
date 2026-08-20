@@ -90,10 +90,8 @@ run = '''
 #!/usr/bin/env bash
 set -euo pipefail
 
-declare -a cargo_args
-declare -a clippy_args
-cargo_args=(--workspace --all-targets --all-features)
-clippy_args=(-D warnings)
+declare -a cargo_args=(--workspace --all-targets --all-features)
+declare -a clippy_args=(-D warnings)
 
 if [[ "${usage_no_fix:-false}" != "true" ]]; then
   cargo_args+=(--fix --allow-dirty --allow-staged)
@@ -126,7 +124,7 @@ description = "Run Change Risk Anti-Patterns (CRAP) analysis"
 depends = ["check"]
 run = ["cargo tarpaulin --workspace", "cargo crap --lcov lcov.info"]
 outputs = ["lcov.info"]
-sources = ["src/**/*.rs", "Cargo.toml", "Cargo.lock"]
+sources = ["src/**/*.rs", "Cargo.toml", "Cargo.lock", "tarpaulin.toml"]
 
 [tasks.mutants]
 description = "Run parallel mutation testing with cargo-mutants"
