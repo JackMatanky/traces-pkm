@@ -4,8 +4,7 @@
 //! key-value pairs. [`InlineField`] records body metadata together with the
 //! [`InlineFieldForm`] that produced it.
 
-use std::collections::BTreeMap;
-
+use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use tracing::warn;
 use yaml_serde as serde_yaml;
@@ -314,7 +313,7 @@ pub enum FieldValue {
     /// Ordered list value.
     List(Vec<Self>),
     /// Keyed object value stored in a deterministically ordered map.
-    Object(BTreeMap<String, Self>),
+    Object(IndexMap<String, Self>),
 }
 
 impl FieldValue {
@@ -370,14 +369,14 @@ impl From<serde_yaml::Value> for FieldValue {
                 Self::List(seq.into_iter().map(Self::from).collect())
             }
             serde_yaml::Value::Mapping(map) => {
-                let mut btree = BTreeMap::new();
+                let mut index_map = IndexMap::new();
                 for (k, v) in map {
                     let Some(key) = yaml_payload_key_to_string(k) else {
                         continue;
                     };
-                    btree.insert(key, Self::from(v));
+                    index_map.insert(key, Self::from(v));
                 }
-                Self::Object(btree)
+                Self::Object(index_map)
             }
             serde_yaml::Value::Tagged(tagged) => Self::from(tagged.value),
         }
@@ -473,7 +472,7 @@ mod tests {
 
             assert_eq!(
                 FieldValue::from(yaml),
-                FieldValue::Object(BTreeMap::from([
+                FieldValue::Object(IndexMap::from_iter([
                     ("bool".to_owned(), FieldValue::Bool(true)),
                     (
                         "date".to_owned(),
@@ -504,7 +503,7 @@ mod tests {
 
             assert_eq!(
                 FieldValue::from(yaml),
-                FieldValue::Object(BTreeMap::from([(
+                FieldValue::Object(IndexMap::from_iter([(
                     "link".to_owned(),
                     FieldValue::Link(Link::new(
                         "Project Alpha",
@@ -527,9 +526,9 @@ mod tests {
 
             assert_eq!(
                 FieldValue::from(yaml),
-                FieldValue::Object(BTreeMap::from([(
+                FieldValue::Object(IndexMap::from_iter([(
                     "outer".to_owned(),
-                    FieldValue::Object(BTreeMap::from([(
+                    FieldValue::Object(IndexMap::from_iter([(
                         "inner".to_owned(),
                         FieldValue::String("value".to_owned())
                     )]))

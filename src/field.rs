@@ -23,12 +23,12 @@
 
 use std::{
     borrow::{Borrow, Cow},
-    collections::BTreeMap,
     fmt,
     marker::PhantomData,
     str::FromStr,
 };
 
+use indexmap::IndexMap;
 use serde::{
     Deserialize, Deserializer, Serialize, Serializer,
     de::{self, Error as _, MapAccess, SeqAccess, Visitor},
@@ -509,7 +509,7 @@ pub(crate) enum FieldValue {
     /// Ordered list value.
     List(Vec<Self>),
     /// Keyed object value, stored in a deterministically ordered map.
-    Object(BTreeMap<String, Self>),
+    Object(IndexMap<String, Self>),
 }
 
 impl FieldValue {
@@ -622,7 +622,7 @@ pub(crate) enum FieldValueRef<'a> {
     /// Ordered list value.
     List(Vec<Self>),
     /// Keyed object value, stored in a deterministically ordered map.
-    Object(BTreeMap<Cow<'a, str>, Self>),
+    Object(IndexMap<Cow<'a, str>, Self>),
 }
 
 impl FieldValueRef<'_> {
@@ -776,13 +776,13 @@ impl<'de: 'a, 'a> Deserialize<'de> for FieldValueRef<'a> {
             where
                 A: MapAccess<'de>,
             {
-                let mut btree = BTreeMap::new();
+                let mut index_map = IndexMap::new();
                 while let Some((key, value)) =
                     map.next_entry::<Cow<'a, str>, FieldValueRef<'a>>()?
                 {
-                    btree.insert(key, value);
+                    index_map.insert(key, value);
                 }
-                Ok(FieldValueRef::Object(btree))
+                Ok(FieldValueRef::Object(index_map))
             }
         }
 
@@ -1284,6 +1284,15 @@ mod tests {
             b.hash(&mut h2);
             // canonical forms differ, so hashes should differ
             assert_ne!(h1.finish(), h2.finish());
+
+            let mut h3 = DefaultHasher::new();
+            let mut h4 = DefaultHasher::new();
+            let c = FieldKey::try_new("Status").unwrap();
+            let d = FieldKey::try_new("Status").unwrap();
+            c.hash(&mut h3);
+            d.hash(&mut h4);
+            // same canonical form, so hashes should match
+            assert_eq!(h3.finish(), h4.finish());
         }
     }
 
@@ -1419,7 +1428,7 @@ mod tests {
                 );
                 assert_eq!(
                     get(&value, "o"),
-                    Some(&FieldValueRef::Object(BTreeMap::new()))
+                    Some(&FieldValueRef::Object(IndexMap::new()))
                 );
             }
 
@@ -1480,7 +1489,7 @@ mod tests {
                 );
                 assert_eq!(
                     get_owned(&value, "b"),
-                    Some(&FieldValue::Object(BTreeMap::from([(
+                    Some(&FieldValue::Object(IndexMap::from([(
                         "k".to_owned(),
                         FieldValue::Bool(true)
                     )])))
@@ -1520,7 +1529,7 @@ mod tests {
                 "[true]"
             )]
             #[case::object(
-                FieldValueRef::Object(BTreeMap::from([(
+                FieldValueRef::Object(IndexMap::from([(
                     Cow::Borrowed("k"),
                     FieldValueRef::Int(1),
                 )])),
@@ -1543,7 +1552,7 @@ mod tests {
 
             #[test]
             fn round_trips_through_json() {
-                let value = FieldValue::Object(BTreeMap::from([
+                let value = FieldValue::Object(IndexMap::from([
                     ("value".to_owned(), FieldValue::String("jan".to_owned())),
                     ("order".to_owned(), FieldValue::Int(-1)),
                     (
