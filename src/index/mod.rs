@@ -512,10 +512,10 @@ mod tests {
                 .and_then(Note::frontmatter)
                 .into_iter()
                 .flat_map(Frontmatter::fields)
-                .find(|field| field.key().is_canonical_match("related"))
+                .find(|(k, _)| k.is_canonical_match("related"))
                 .expect("related field");
             assert_eq!(
-                field.value(),
+                field.1,
                 &NoteFieldValue::Link(Link::new(
                     "Project Alpha",
                     "Alpha",
@@ -1025,8 +1025,8 @@ mod tests {
                 refreshed
                     .note(Path::new("note.md"))
                     .and_then(Note::frontmatter)
-                    .and_then(|fm| fm.fields().first())
-                    .and_then(|f| f.value().as_str()),
+                    .and_then(|fm| fm.fields().values().next())
+                    .and_then(|v| v.as_str()),
                 None // "# Revised" has no frontmatter
             );
             // ...but a fresh load from disk still shows the OLD content,
@@ -1036,8 +1036,8 @@ mod tests {
                 loaded
                     .note(Path::new("note.md"))
                     .and_then(Note::frontmatter)
-                    .and_then(|fm| fm.fields().first())
-                    .and_then(|f| f.value().as_str()),
+                    .and_then(|fm| fm.fields().values().next())
+                    .and_then(|v| v.as_str()),
                 Some("Draft") // OLD frontmatter, not the revised content
             );
         }

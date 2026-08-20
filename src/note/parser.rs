@@ -636,7 +636,7 @@ mod tests {
                 note.frontmatter()
                     .into_iter()
                     .flat_map(Frontmatter::fields)
-                    .map(|field| (field.key().name(), field.value()))
+                    .map(|(k, v)| (k.name(), v))
                     .collect();
             assert_eq!(fields.len(), 5);
             assert_eq!(
@@ -668,10 +668,10 @@ mod tests {
                 .frontmatter()
                 .into_iter()
                 .flat_map(Frontmatter::fields)
-                .find(|field| field.key().is_canonical_match("related"))
+                .find(|(k, _)| k.is_canonical_match("related"))
                 .expect("related field");
             assert_eq!(
-                field.value(),
+                field.1,
                 &NoteFieldValue::Link(Link::new(
                     "Project Alpha",
                     "Alpha",

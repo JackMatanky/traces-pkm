@@ -241,9 +241,10 @@ impl IndexRecord {
                 .as_deref()
                 .and_then(|note| {
                     note.fields()
-                        .find(|field| field.key().is_match(key.as_str()))
+                        .find(|(k, _)| k.is_match(key.as_str()))
+                        .map(|(_, v)| v.clone())
                 })
-                .map_or(NoteFieldValue::Null, |field| field.value().clone()),
+                .unwrap_or(NoteFieldValue::Null),
         }
     }
 

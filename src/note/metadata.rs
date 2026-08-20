@@ -43,19 +43,19 @@ impl RawFrontmatter {
 
 /// Structured frontmatter fields parsed from [`RawFrontmatter`].
 ///
-/// Converts raw YAML into a list of [`MetadataField`] entries. Malformed or
-/// non-mapping YAML produces an empty frontmatter after logging the parse
+/// Converts raw YAML into an [`IndexMap`] of field key-value pairs. Malformed
+/// or non-mapping YAML produces an empty frontmatter after logging the parse
 /// failure.
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 pub struct Frontmatter {
-    fields: Vec<MetadataField>,
+    fields: IndexMap<FieldKey, NoteFieldValue>,
 }
 
 impl Frontmatter {
     /// Creates frontmatter from parsed metadata fields.
     #[inline]
     #[must_use]
-    pub(crate) const fn new(fields: Vec<MetadataField>) -> Self {
+    pub(crate) fn new(fields: IndexMap<FieldKey, NoteFieldValue>) -> Self {
         Self {
             fields,
         }
@@ -64,27 +64,15 @@ impl Frontmatter {
     /// Returns the parsed frontmatter fields.
     #[inline]
     #[must_use]
-    pub(crate) fn fields(&self) -> &[MetadataField] {
+    pub(crate) fn fields(&self) -> &IndexMap<FieldKey, NoteFieldValue> {
         &self.fields
     }
 
     /// Returns the value of the field matching `key`, if present.
     #[inline]
     #[must_use]
-    #[expect(
-        dead_code,
-        reason = "no current caller in production or tests; kept as a \
-                  general-purpose accessor alongside `fields()` — the \
-                  file-field label-resolution consumer that used it was \
-                  removed by the schema-query decoupling refactor, but the \
-                  accessor itself is generically useful for any future \
-                  frontmatter-key lookup"
-    )]
     pub(crate) fn get(&self, key: &FieldKey) -> Option<&NoteFieldValue> {
-        self.fields
-            .iter()
-            .find(|field| field.key() == key)
-            .map(MetadataField::value)
+        self.fields.get(key)
     }
 
     /// Returns `true` if no structured fields were parsed.
@@ -98,7 +86,7 @@ impl Frontmatter {
                       accessor symmetry with its fields"
         )
     )]
-    pub(crate) const fn is_empty(&self) -> bool {
+    pub(crate) fn is_empty(&self) -> bool {
         self.fields.is_empty()
     }
 }
@@ -132,12 +120,15 @@ impl From<&RawFrontmatter> for Frontmatter {
             );
             return Self::default();
         };
-        let mut fields = Vec::with_capacity(map.len());
-        for (k, v) in map {
-            let Ok(key) = FieldKey::try_from(k) else {
+        let mut fields = IndexMap::new();
+        for (raw_key, raw_value) in map {
+            let Some(key_str) = yaml_payload_key_to_string(raw_key) else {
                 continue;
             };
-            fields.push(MetadataField::from_key(key, NoteFieldValue::from(v)));
+            let Ok(key) = FieldKey::try_new(key_str) else {
+                continue;
+            };
+            fields.insert(key, NoteFieldValue::from(raw_value));
         }
         Self::new(fields)
     }
@@ -154,57 +145,11 @@ pub enum InlineFieldForm {
     HiddenKey,
 }
 
-/// Key-value metadata from frontmatter or Markdown body text.
-#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
-pub struct MetadataField {
-    key: FieldKey,
-    value: NoteFieldValue,
-}
-
-impl MetadataField {
-    /// Creates a metadata field from an already-validated `key` and `value`.
-    #[inline]
-    #[must_use]
-    pub(crate) const fn from_key(key: FieldKey, value: NoteFieldValue) -> Self {
-        Self {
-            key,
-            value,
-        }
-    }
-
-    /// Parses `key` into a [`FieldKey`] and creates a metadata field.
-    ///
-    /// # Errors
-    ///
-    /// Returns a [`FieldKeyError`] if `key` fails to parse; see
-    /// [`FieldKey::try_new`].
-    #[cfg_attr(not(test), expect(dead_code, reason = "used in tests"))]
-    pub(crate) fn try_new(
-        key: impl Into<String>,
-        value: NoteFieldValue,
-    ) -> Result<Self, FieldKeyError> {
-        Ok(Self::from_key(FieldKey::try_new(key)?, value))
-    }
-
-    /// Returns the field key.
-    #[inline]
-    #[must_use]
-    pub(crate) const fn key(&self) -> &FieldKey {
-        &self.key
-    }
-
-    /// Returns the field value.
-    #[inline]
-    #[must_use]
-    pub(crate) const fn value(&self) -> &NoteFieldValue {
-        &self.value
-    }
-}
-
 /// A `Key:: Value` inline field with its source syntax.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct InlineField {
-    metadata: MetadataField,
+    key: FieldKey,
+    value: NoteFieldValue,
     form: InlineFieldForm,
 }
 
@@ -219,7 +164,8 @@ impl InlineField {
         form: InlineFieldForm,
     ) -> Self {
         Self {
-            metadata: MetadataField::from_key(key, value),
+            key,
+            value,
             form,
         }
     }
@@ -242,31 +188,15 @@ impl InlineField {
     /// Returns the field key.
     #[inline]
     #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "no current caller outside tests; kept for InlineField \
-                      accessor symmetry with its embedded MetadataField"
-        )
-    )]
     pub(crate) const fn key(&self) -> &FieldKey {
-        self.metadata.key()
+        &self.key
     }
 
     /// Returns the field value.
     #[inline]
     #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "no current caller outside tests; kept for InlineField \
-                      accessor symmetry with its embedded MetadataField"
-        )
-    )]
     pub(crate) const fn value(&self) -> &NoteFieldValue {
-        self.metadata.value()
+        &self.value
     }
 
     /// Returns the inline field's source form (body, visible key, or hidden
@@ -278,18 +208,11 @@ impl InlineField {
         expect(
             dead_code,
             reason = "no current caller outside tests; kept for InlineField \
-                      accessor symmetry with its embedded MetadataField"
+                      accessor symmetry"
         )
     )]
     pub(crate) const fn form(&self) -> InlineFieldForm {
         self.form
-    }
-
-    /// Returns the underlying key-value metadata without syntax information.
-    #[inline]
-    #[must_use]
-    pub(crate) const fn metadata(&self) -> &MetadataField {
-        &self.metadata
     }
 }
 
@@ -432,12 +355,9 @@ mod tests {
             let title = fm
                 .fields()
                 .iter()
-                .find(|f| f.key().is_canonical_match("title"))
+                .find(|(k, _)| k.is_canonical_match("title"))
                 .expect("title");
-            assert_eq!(
-                title.value(),
-                &NoteFieldValue::String("Test".to_owned())
-            );
+            assert_eq!(title.1, &NoteFieldValue::String("Test".to_owned()));
         }
 
         #[test]

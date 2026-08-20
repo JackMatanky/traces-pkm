@@ -475,11 +475,11 @@ pub(crate) fn class_values<'a>(
     class_field: &str,
 ) -> impl Iterator<Item = &'a str> {
     let value = note.frontmatter().and_then(|frontmatter| {
-        let field = frontmatter
+        frontmatter
             .fields()
             .iter()
-            .find(|field| field.key().is_match(class_field))?;
-        Some(field.value())
+            .find(|(k, _)| k.is_match(class_field))
+            .map(|(_, v)| v)
     });
     let list = match value {
         Some(NoteFieldValue::List(items)) => items.as_slice(),
