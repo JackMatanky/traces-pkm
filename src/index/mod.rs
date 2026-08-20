@@ -60,13 +60,13 @@ const INDEX_FILE: &str = ".traces/index.redb";
 /// [`Self::refresh`] to update it against the current filesystem state.
 #[derive(Clone, Debug)]
 pub struct FileIndex {
-    pub(crate) records: Vec<FileRecord>,
-    pub(crate) notes: Vec<Note>,
+    records: Vec<FileRecord>,
+    notes: Vec<Note>,
     /// Inbound links, keyed by target path; see [`inlinks::derive_inlinks`].
     ///
     /// - Recomputed in full whenever [`Self::refresh`] finds changed content.
     /// - Reused unchanged from the last persisted computation otherwise.
-    pub(crate) inlinks: InlinkMap,
+    inlinks: InlinkMap,
 }
 
 impl FileIndex {
@@ -323,6 +323,14 @@ impl FileIndex {
             .binary_search_by(|r| r.path().cmp(path))
             .ok()
             .and_then(|idx| self.records.get(idx))
+    }
+
+    /// Consumes this index and returns its inner components.
+    ///
+    /// Used by the query module to pair records with notes and resolve
+    /// inlinks without exposing `FileIndex`'s internal layout.
+    pub(crate) fn into_parts(self) -> (Vec<FileRecord>, Vec<Note>, InlinkMap) {
+        (self.records, self.notes, self.inlinks)
     }
 
     /// Reads and parses the markdown file for `record` into a [`Note`].
