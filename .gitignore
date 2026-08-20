@@ -17,7 +17,8 @@ __MACOSX/
 /target
 lcov.info
 tarpaulin-report.html
-
+/mutants.out/
+/mutants.out.old/
 # ----------------------- Git Worktrees ----------------------- #
 .worktrees/
 
