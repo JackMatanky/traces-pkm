@@ -38,7 +38,7 @@ pub(crate) struct IndexBuilder {
     /// `None` = fresh build (parse all notes at build time).
     /// `Some(records, notes, inlinks)` = refresh (reuse moved notes for
     /// unchanged records, parse only changed ones at build time).
-    reuse: Option<ReusePlan>,
+    reuse: Option<RefreshCache>,
 }
 
 impl IndexBuilder {
@@ -69,15 +69,15 @@ impl IndexBuilder {
     ///
     /// Parsing of changed or newly added notes is deferred to [`Self::build`].
     pub(super) fn reuse_unchanged(self, previous: super::FileIndex) -> Self {
-        let (previous_records, notes_vec, inlinks) = previous.into_parts();
+        let (previous, notes_vec, inlinks) = previous.into_parts();
         let notes: HashMap<_, _> = notes_vec
             .into_iter()
             .map(|n| (n.path().to_path_buf(), n))
             .collect();
         Self {
             records: self.records,
-            reuse: Some(ReusePlan {
-                previous_records,
+            reuse: Some(RefreshCache {
+                previous,
                 notes,
                 inlinks,
             }),
@@ -134,13 +134,13 @@ impl IndexBuilder {
     fn build_with_reuse(
         records: Vec<FileRecord>,
         root: &Path,
-        mut reuse: ReusePlan,
+        mut reuse: RefreshCache,
     ) -> Result<super::FileIndex, IndexBuilderError> {
         let mut notes = Vec::with_capacity(records.len());
         let mut dirty = false;
-        // Precondition: records and reuse.previous_records are path-sorted
+        // Precondition: records and reuse.previous are path-sorted
         // (guaranteed by scan_root).
-        let mut prev_iter = reuse.previous_records.iter().peekable();
+        let mut prev_iter = reuse.previous.iter().peekable();
 
         for record in &records {
             while prev_iter.peek().is_some_and(|p| p.path() < record.path()) {
@@ -174,7 +174,7 @@ impl IndexBuilder {
         // Inlinks depend on every Note's outlinks (ambiguous link resolution
         // considers the full set). Recompute when the record set changed or any
         // note was reparsed.
-        let records_changed = records != reuse.previous_records;
+        let records_changed = records != reuse.previous;
         let inlinks = if dirty || records_changed {
             derive_inlinks(&notes)
         } else {
@@ -189,8 +189,8 @@ impl IndexBuilder {
     }
 }
 
-struct ReusePlan {
-    previous_records: Vec<FileRecord>,
+struct RefreshCache {
+    previous: Vec<FileRecord>,
     notes: HashMap<PathBuf, crate::note::Note>,
     inlinks: InlinkMap,
 }
