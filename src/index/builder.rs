@@ -68,8 +68,8 @@ impl IndexBuilder {
     ///   file metadata.
     ///
     /// Parsing of changed or newly added notes is deferred to [`Self::build`].
-    pub(super) fn reuse_unchanged(self, previous: super::FileIndex) -> Self {
-        let (previous, notes_vec, inlinks) = previous.into_parts();
+    pub(super) fn reuse_unchanged(self, cache: super::FileIndex) -> Self {
+        let (previous, notes_vec, inlinks) = cache.into_parts();
         let notes: HashMap<_, _> = notes_vec
             .into_iter()
             .map(|n| (n.path().to_path_buf(), n))
