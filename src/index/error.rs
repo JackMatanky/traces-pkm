@@ -3,7 +3,7 @@
 //! [`FileIndexError`] covers persistence failures (database, serialization).
 //! [`IndexBuilderError`] covers build-pipeline failures (scan, parse).
 //! The [`From`] impl converts builder errors into file index errors for
-//! callers that use the unified [`FileIndex`] API.
+//! callers that use the unified [`super::FileIndex`] API.
 
 use std::{io, path::PathBuf};
 
@@ -89,9 +89,12 @@ pub enum IndexBuilderError {
         #[source]
         source: io::Error,
     },
-    /// Record metadata matched the previous index, but the corresponding
-    /// note was not found in the moved notes map. Indicates a logic bug
-    /// in the reconciliation pipeline.
+    /// Record metadata matched the previous index, but the corresponding note
+    /// was not found in the moved notes map.
+    ///
+    /// Indicates a logic bug in the reconciliation pipeline: the record's
+    /// metadata said "unchanged", so the builder tried to reuse its note, but
+    /// the note was never moved into the reuse map.
     #[error("note missing for record at {path}")]
     MissingNote {
         /// The record path whose expected note was absent.

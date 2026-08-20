@@ -229,8 +229,7 @@ fn find_nearest_by_stem<'a>(
 /// [`super::FileRecord`]'s precomputed `folder`/`name` fields, because
 /// this resolution pass only needs `&[Note]` and pulling in a second
 /// sorted collection for folder data that `Note::path()` already provides
-/// would be redundant. See [`super::matched_pairs`] for where `FileRecord`
-/// and `Note` do need joining (page-level query output).
+/// would be redundant.
 fn folder_distance(a: &Path, b: &Path) -> usize {
     let a_folder = a.parent().unwrap_or_else(|| Path::new(""));
     let b_folder = b.parent().unwrap_or_else(|| Path::new(""));

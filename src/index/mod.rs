@@ -62,7 +62,7 @@ const INDEX_FILE: &str = ".traces/index.redb";
 ///
 /// Every regular file under the project root contributes a [`FileRecord`].
 /// Markdown files also contribute a [`Note`], accessible through
-/// [`Self::notes`] or [`Self::note`]. Use [`Self::build`] to create an index
+/// [`Self::notes`]. Use [`Self::build`] to create an index
 /// from scratch, [`Self::persist`] to save it, [`Self::load`] to reload it, or
 /// [`Self::refresh`] to update it against the current filesystem state.
 #[derive(Clone, Debug)]
@@ -86,6 +86,18 @@ impl FileIndex {
     ///
     /// - [`FileIndexError::Io`] if a directory cannot be read, a file's
     ///   metadata cannot be inspected, or a markdown file cannot be read.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,compile_fail
+    /// use std::path::Path;
+    ///
+    /// use traces_pkm::FileIndex;
+    ///
+    /// let index = FileIndex::build(Path::new("my-vault"))?;
+    /// assert!(!index.records().is_empty());
+    /// # Ok::<(), traces_pkm::FileIndexError>(())
+    /// ```
     #[inline]
     pub fn build(root: &Path) -> Result<Self, FileIndexError> {
         Ok(builder::IndexBuilder::from_scan(root)?.build(root)?)
@@ -138,6 +150,18 @@ impl FileIndex {
     ///   created.
     /// - [`FileIndexError::Store`] if the database transaction fails.
     /// - [`FileIndexError::Serialize`] if a record cannot be encoded.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,compile_fail
+    /// use std::path::Path;
+    ///
+    /// use traces_pkm::FileIndex;
+    ///
+    /// let index = FileIndex::build(Path::new("my-vault"))?;
+    /// index.persist(Path::new("my-vault"))?;
+    /// # Ok::<(), traces_pkm::FileIndexError>(())
+    /// ```
     #[inline]
     pub fn persist(&self, root: &Path) -> Result<(), FileIndexError> {
         IndexStore::open(root)?.replace_all(
@@ -156,6 +180,19 @@ impl FileIndex {
     /// - [`FileIndexError::Store`] if the database cannot be read.
     /// - [`FileIndexError::Deserialize`] if stored bytes are not a valid
     ///   record.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,compile_fail
+    /// use std::path::Path;
+    ///
+    /// use traces_pkm::FileIndex;
+    ///
+    /// // Assumes an index was previously built and persisted.
+    /// let index = FileIndex::load(Path::new("my-vault"))?;
+    /// assert!(!index.records().is_empty());
+    /// # Ok::<(), traces_pkm::FileIndexError>(())
+    /// ```
     #[inline]
     pub fn load(root: &Path) -> Result<Self, FileIndexError> {
         let (records, notes, inlinks) = IndexStore::open(root)?.load_all()?;
@@ -173,9 +210,9 @@ impl FileIndex {
     /// [`Self::build`] and [`Self::refresh`] add one for every parsed Note), so
     /// a Note found without one is skipped rather than causing a panic.
     ///
-    /// Every matched [`IndexRecord`]'s `inlinks` reflects every indexed Note,
-    /// not just Notes matching `source`: a Note outside `source` can still link
-    /// to one inside it.
+    /// Every matched [`crate::query::IndexRecord`]'s `inlinks` reflects every
+    /// indexed Note, not just Notes matching `source`: a Note outside `source`
+    /// can still link to one inside it.
     ///
     /// # Performance
     ///
@@ -199,13 +236,14 @@ impl FileIndex {
     /// Executes a task-level query over `source`, consuming this index.
     ///
     /// Selects the same Notes as [`Self::query`], then expands each matched
-    /// Note into one [`IndexRecord`] per markdown task item (`- [ ]` or `-
-    /// [x]`). Notes without tasks contribute no rows.
+    /// Note into one [`crate::query::IndexRecord`] per markdown task item
+    /// (`- [ ]` or `- [x]`). Notes without tasks contribute no rows.
     ///
     /// Each task row keeps its parent Note's `file.*`, frontmatter,
     /// inline-field, tag, and inlinks metadata for filtering and display
     /// through `IndexRecord::field`. It also exposes
-    /// [`IndexRecord::task_completed`] and `IndexRecord::task_text`.
+    /// [`crate::query::IndexRecord::task_completed`] and
+    /// `IndexRecord::task_text`.
     ///
     /// Call [`Self::refresh`] first so results reflect the current filesystem.
     ///
@@ -216,9 +254,9 @@ impl FileIndex {
     ///   `self.inlinks`.
     /// - The task iterator is peeked to identify its final item, so only
     ///   earlier rows clone the base record.
-    /// - The final row moves the shared [`IndexRecord`] base. Earlier clones
-    ///   remain O(1) because [`IndexRecord`]'s `note` field is an [`Arc`], not
-    ///   a deep clone.
+    /// - The final row moves the shared [`crate::query::IndexRecord`] base.
+    ///   Earlier clones remain O(1) because [`crate::query::IndexRecord`]'s
+    ///   `note` field is an [`Arc`], not a deep clone.
     ///
     /// [`Arc`]: std::sync::Arc
     #[inline]
@@ -235,6 +273,10 @@ impl FileIndex {
     }
 
     /// Returns indexed [`FileRecord`]s, sorted by path.
+    ///
+    /// Every regular file under the project root contributes one record.
+    /// Markdown files also have a corresponding [`Note`] accessible via
+    /// [`Self::notes`].
     #[inline]
     #[must_use]
     pub fn records(&self) -> &[FileRecord] {
@@ -242,6 +284,9 @@ impl FileIndex {
     }
 
     /// Returns indexed [`Note`] records, sorted by path.
+    ///
+    /// Only markdown files produce notes. Non-markdown files appear in
+    /// [`Self::records`] but not here.
     #[inline]
     #[must_use]
     #[cfg_attr(
@@ -302,9 +347,8 @@ impl FileIndex {
 
 /// Binary-searches path-sorted `notes` for an exact path match.
 ///
-/// Shared by [`FileIndex::note`], which does this lookup once `self` exists,
-/// and the [`inlinks`] submodule, which needs the same search over a bare
-/// `&[Note]` slice while resolving link targets during
+/// Shared by the [`inlinks`] submodule, which needs the same search over a
+/// bare `&[Note]` slice while resolving link targets during
 /// [`FileIndex::build`]/[`FileIndex::refresh`].
 ///
 /// [`inlinks`]: mod@inlinks

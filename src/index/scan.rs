@@ -1,4 +1,14 @@
-//! Filesystem scan for regular project files.
+//! Recursive filesystem scan for a project root.
+//!
+//! [`scan_root`] walks the directory tree, collects every regular file as a
+//! [`FileRecord`], and returns them sorted by project-relative path. Skipped:
+//!
+//! - `.git` directories and their descendants
+//! - The index database file (`.traces/index.redb`)
+//! - Symbolic links
+//!
+//! The sorted output is a precondition for the merge-join reconciliation in
+//! [`super::builder::IndexBuilder`].
 
 use std::path::Path;
 

@@ -37,6 +37,10 @@ const LINKS: MultimapTableDefinition<&str, &str> =
 type IndexSnapshot = (Vec<FileRecord>, Vec<Note>, InlinkMap);
 
 /// Redb-backed handle to one project root's index database.
+///
+/// Owns the [`Database`] connection and table definitions. Created by
+/// [`Self::open`], which creates the `.traces/` parent directory if absent.
+/// Callers interact through [`super::FileIndex`] methods, not directly.
 #[derive(Debug)]
 pub(super) struct IndexStore {
     db: Database,

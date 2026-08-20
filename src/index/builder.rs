@@ -2,7 +2,7 @@
 //!
 //! [`IndexBuilder`] is a **plan** — it holds the scan result and a reuse
 //! directive, deferring all note parsing, sorting, and inlink derivation
-//! to [`Self::build`]. Callers use [`super::FileIndex::build`] and
+//! to [`IndexBuilder::build`]. Callers use [`super::FileIndex::build`] and
 //! [`super::FileIndex::refresh`] instead of this type directly.
 
 use std::{
@@ -18,7 +18,7 @@ use super::{
 };
 use crate::{file::FileRecord, note::parse_markdown};
 
-/// Build plan for a [`FileIndex`].
+/// Build plan for a [`super::FileIndex`].
 ///
 /// Stores the fresh scan result and (optionally) moved notes from a previous
 /// index. All heavy work — note parsing, sorting, inlink derivation — happens
@@ -30,9 +30,9 @@ use crate::{file::FileRecord, note::parse_markdown};
 ///   [`scan::scan_root`]).
 /// - [`Self::reuse_unchanged`] consumes the previous index, moving its notes
 ///   and inlinks into the plan.
-/// - [`Self::build`] produces a [`FileIndex`] with sorted records and notes,
-///   and correctly derived inlinks (reused when nothing changed, recomputed
-///   otherwise).
+/// - [`Self::build`] produces a [`super::FileIndex`] with sorted records and
+///   notes, and correctly derived inlinks (reused when nothing changed,
+///   recomputed otherwise).
 pub(crate) struct IndexBuilder {
     records: Vec<FileRecord>,
     /// `None` = fresh build (parse all notes at build time).
@@ -48,12 +48,12 @@ struct ReusePlan {
 }
 
 impl IndexBuilder {
-    /// Scans `root` for regular files. Does NOT parse markdown yet — parsing
-    /// is deferred to [`Self::build`].
+    /// Scans `root` for regular files. Does NOT parse markdown yet. Parsing is
+    /// deferred to [`Self::build`].
     ///
     /// # Errors
     ///
-    /// - [`IndexBuilderError::Scan`] if the directory cannot be read or a
+    /// - [`super::FileIndexError::Io`] if a directory cannot be read or a
     ///   file's metadata cannot be inspected.
     pub(super) fn from_scan(
         root: &Path,
@@ -68,7 +68,8 @@ impl IndexBuilder {
     /// Consumes `previous` and plans reuse of its notes for unchanged records.
     ///
     /// Moved (not cloned) from `previous`:
-    /// - All [`Note`]s, indexed by path for O(1) lookup during build.
+    /// - All [`crate::note::Note`]s, indexed by path for O(1) lookup during
+    ///   build.
     /// - The [`InlinkMap`], reused unchanged if build detects no mutations.
     /// - The previous `records` slice, used during build to detect unchanged
     ///   file metadata.
@@ -90,7 +91,7 @@ impl IndexBuilder {
         }
     }
 
-    /// Consumes the plan and produces a [`FileIndex`].
+    /// Consumes the plan and produces a [`super::FileIndex`].
     ///
     /// - **Fresh build** (`reuse: None`): parses every markdown record from
     ///   disk, sorts notes, derives inlinks.
