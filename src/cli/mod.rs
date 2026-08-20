@@ -289,13 +289,13 @@ fn parse_source(
     let mut source = QuerySource::parse(from.unwrap_or_default())
         .map_err(|source| query_error(root, source))?;
     if source.has_classes() {
-        let (service, warnings, failures) =
-            SchemaService::new(&config.to_schema_spec()).map_err(|error| {
-                CliError::SchemaQuery {
-                    root: root.to_path_buf(),
-                    source: error,
-                }
-            })?;
+        let (service, warnings, failures) = SchemaService::new(
+            &config.resolved_schema_directory(),
+        )
+        .map_err(|error| CliError::SchemaQuery {
+            root: root.to_path_buf(),
+            source: error,
+        })?;
         for warning in warnings {
             tracing::warn!(%warning, "Schema registry resolved with a warning");
         }

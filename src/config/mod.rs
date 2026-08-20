@@ -30,7 +30,6 @@ mod file;
 mod model;
 mod raw;
 mod service;
-mod specs;
 mod store;
 mod trust;
 
@@ -49,7 +48,6 @@ pub use model::Config;
 #[cfg(any(test, feature = "test-utils"))]
 pub use model::{DateFieldConfig, FrontmatterConfig, SchemasConfig};
 pub use service::ConfigService;
-pub(crate) use specs::SchemaConfigSpec;
 #[cfg(test)]
 pub(crate) use trust::ConfigTrustStatus;
 pub use trust::TrustRequest;

@@ -36,7 +36,7 @@ use super::{
     },
     file::{
         Discovered as FileDiscovered, GlobalConfigFile, LocalConfigFile,
-        Parsed, Tracked, TrustOutcome,
+        Parsed, Tracked, TrustOutcome, Trusted,
     },
     model::{Config, FrontmatterConfig, SchemasConfig, TemplateConfig},
     raw::{RawConfig, RawTemplateConfig},
@@ -187,8 +187,25 @@ impl ConfigService {
         discovered: DiscoveryOutcome,
     ) -> Result<Config, ConfigBuilderError> {
         let input = ConfigBuilderInput::try_from(discovered)?;
+        let (root, trusted_local) = self.verify_trust(input.local)?;
+        let (templates, schemas, frontmatter) =
+            Self::parse_and_merge(&root, trusted_local, input.global)?;
+        Ok(Config::new(root, templates, schemas, frontmatter))
+    }
+
+    /// Verifies trust for `local`, returning its project root and the trusted
+    /// file ready to parse.
+    ///
+    /// # Errors
+    ///
+    /// [`ConfigBuilderError::Untrusted`] if trust verification halts instead
+    /// of confirming trust.
+    fn verify_trust(
+        &self,
+        local: LocalConfigFile<FileDiscovered>,
+    ) -> Result<(PathBuf, LocalConfigFile<Trusted>), ConfigBuilderError> {
         let tracked_local =
-            LocalConfigFile::<Tracked>::from((input.local, &self.state));
+            LocalConfigFile::<Tracked>::from((local, &self.state));
         let trusted_local = match tracked_local.verify_trust(&self.state)? {
             TrustOutcome::Trusted(trusted) => trusted,
             TrustOutcome::Halted(file, status) => {
@@ -198,12 +215,33 @@ impl ConfigService {
                 });
             }
         };
-
         let root = trusted_local.root().to_path_buf();
+        Ok((root, trusted_local))
+    }
+
+    /// Parses local (and optional global) config, merges local over global
+    /// via Figment, and resolves the merged raw tables into typed settings.
+    ///
+    /// # Errors
+    ///
+    /// - [`ConfigBuilderError::ConfigFile`] if either config file fails to
+    ///   parse.
+    /// - [`ConfigBuilderError::Merge`] if the merged config cannot be
+    ///   re-extracted.
+    /// - [`ConfigBuilderError::InvalidFieldKey`] if a `[frontmatter]` or
+    ///   `[schemas]` key name is invalid.
+    fn parse_and_merge(
+        root: &Path,
+        trusted_local: LocalConfigFile<Trusted>,
+        global: Option<GlobalConfigFile<FileDiscovered>>,
+    ) -> Result<
+        (TemplateConfig, SchemasConfig, FrontmatterConfig),
+        ConfigBuilderError,
+    > {
         let mut figment = Figment::new();
         let mut global_dir = None;
 
-        if let Some(global) = input.global {
+        if let Some(global) = global {
             let parsed = GlobalConfigFile::<Parsed>::try_from(global)?;
             global_dir = parsed.resolved_template_dir();
             figment = figment.merge(Serialized::defaults(parsed.raw()));
@@ -219,7 +257,7 @@ impl ConfigService {
             }
         })?;
         let output =
-            merged.templates.output_dir.unwrap_or_else(|| root.clone());
+            merged.templates.output_dir.unwrap_or_else(|| root.to_path_buf());
 
         let schemas =
             SchemasConfig::try_from(merged.schemas).map_err(|source| {
@@ -234,8 +272,7 @@ impl ConfigService {
                 source,
             })?;
 
-        Ok(Config::new(
-            root,
+        Ok((
             TemplateConfig::new(local_dir, global_dir, output),
             schemas,
             frontmatter,
@@ -1655,6 +1692,30 @@ mod tests {
                 let local_path = fixture.write_config(
                     "project/.traces/config.toml",
                     "[schemas]\nclass_field = \"   \"",
+                );
+                let local =
+                    LocalConfigFile::<FileDiscovered>::try_new(local_path)
+                        .unwrap();
+
+                // Act
+                let result = build(&fixture, local, None);
+
+                // Assert
+                assert!(matches!(
+                    result,
+                    Err(ConfigBuilderError::InvalidFieldKey {
+                        table: "schemas",
+                        ..
+                    })
+                ));
+            }
+
+            #[test]
+            fn rejects_a_class_field_containing_a_slash() {
+                let fixture = Fixture::new();
+                let local_path = fixture.write_config(
+                    "project/.traces/config.toml",
+                    "[schemas]\nclass_field = \"a/b\"",
                 );
                 let local =
                     LocalConfigFile::<FileDiscovered>::try_new(local_path)

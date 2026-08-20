@@ -601,20 +601,15 @@ mod tests {
     use minijinja::Environment;
 
     use super::*;
-    use crate::{
-        DialogProvider, PresetDialogProvider, config::SchemaConfigSpec,
-    };
+    use crate::{DialogProvider, PresetDialogProvider};
 
     /// Builds a shared [`SchemaService`] for `root`, backing both
     /// [`page_ops`] and [`task_ops`] so both namespaces resolve the same
     /// Schema registry directory (`root/.traces/schemas`), mirroring
     /// [`super::super::TemplateEngine::new`]'s wiring.
     fn schema_service(root: &Path) -> Arc<SchemaService> {
-        let (service, _, _) = SchemaService::new(&SchemaConfigSpec::for_test(
-            root,
-            &root.join(".traces/schemas"),
-        ))
-        .expect("valid test schema directory");
+        let (service, _, _) = SchemaService::new(&root.join(".traces/schemas"))
+            .expect("valid test schema directory");
         Arc::new(service)
     }
 

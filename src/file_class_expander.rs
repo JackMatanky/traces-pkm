@@ -45,7 +45,6 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use super::*;
-    use crate::config::SchemaConfigSpec;
 
     fn write_schema(dir: &Path, name: &str, toml: &str) {
         fs::write(dir.join(format!("{name}.toml")), toml)
@@ -58,11 +57,8 @@ mod tests {
         write_schema(temp.path(), "book", r#"extends = ["thing"]"#);
         write_schema(temp.path(), "sci_fi", r#"extends = ["book"]"#);
         write_schema(temp.path(), "space_opera", r#"extends = ["sci_fi"]"#);
-        let (service, _, _) = SchemaService::new(&SchemaConfigSpec::for_test(
-            temp.path(),
-            temp.path(),
-        ))
-        .expect("registry loads");
+        let (service, _, _) =
+            SchemaService::new(temp.path()).expect("registry loads");
         service
     }
 

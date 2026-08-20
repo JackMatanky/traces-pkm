@@ -369,7 +369,7 @@ mod tests {
     use minijinja::Environment;
 
     use super::*;
-    use crate::{config::SchemaConfigSpec, schema::SchemaError};
+    use crate::schema::SchemaError;
 
     /// A minimal [`Environment`] with `schema` registered against `directory`.
     fn env(directory: &Path) -> Environment<'static> {
@@ -379,11 +379,8 @@ mod tests {
     }
 
     fn schema_ops(directory: &Path) -> SchemaOps {
-        let root =
-            directory.parent().and_then(Path::parent).unwrap_or(directory);
         let (service, _, _) =
-            SchemaService::new(&SchemaConfigSpec::for_test(root, directory))
-                .expect("valid test schema directory");
+            SchemaService::new(directory).expect("valid test schema directory");
         SchemaOps::new(Arc::new(service))
     }
 
@@ -401,8 +398,7 @@ mod tests {
             directory.parent().and_then(Path::parent).unwrap_or(directory),
         );
         let (service, _, _) =
-            SchemaService::new(&SchemaConfigSpec::for_test(&root, directory))
-                .expect("valid test schema directory");
+            SchemaService::new(directory).expect("valid test schema directory");
         let service = Arc::new(service);
         let class_field: Arc<str> = Arc::from("class");
         let mut env = Environment::new();
@@ -1110,13 +1106,11 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             write_schema(temp.path(), "book", "not valid toml [[[");
 
-            let error = SchemaService::new(&SchemaConfigSpec::for_test(
-                temp.path(),
-                &temp.path().join(".traces/schemas"),
-            ))
-            .expect_err(
-                "malformed Schema TOML fails construction, not a panic",
-            );
+            let error =
+                SchemaService::new(&temp.path().join(".traces/schemas"))
+                    .expect_err(
+                        "malformed Schema TOML fails construction, not a panic",
+                    );
 
             assert!(matches!(error, SchemaError::Parse { .. }));
         }
@@ -1140,13 +1134,11 @@ mod tests {
             );
             write_schema(temp.path(), "broken", "not valid toml [[[");
 
-            let error = SchemaService::new(&SchemaConfigSpec::for_test(
-                temp.path(),
-                &temp.path().join(".traces/schemas"),
-            ))
-            .expect_err(
-                "a broken sibling Schema fails the whole registry load",
-            );
+            let error =
+                SchemaService::new(&temp.path().join(".traces/schemas"))
+                    .expect_err(
+                        "a broken sibling Schema fails the whole registry load",
+                    );
 
             assert!(matches!(error, SchemaError::Parse { .. }));
         }
@@ -1190,13 +1182,12 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             write_schema(temp.path(), "broken", "not valid toml [[[");
 
-            let error = SchemaService::new(&SchemaConfigSpec::for_test(
-                temp.path(),
-                &temp.path().join(".traces/schemas"),
-            ))
-            .expect_err(
-                "a malformed Schema now fails construction unconditionally",
-            );
+            let error =
+                SchemaService::new(&temp.path().join(".traces/schemas"))
+                    .expect_err(
+                        "a malformed Schema now fails construction \
+                         unconditionally",
+                    );
 
             assert!(matches!(error, SchemaError::Parse { .. }));
         }

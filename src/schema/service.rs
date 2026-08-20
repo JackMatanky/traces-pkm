@@ -15,7 +15,7 @@ use super::{
     model::Schema,
     resolver::{SchemaFailure, SchemaResolver},
 };
-use crate::{BaseNameRef, config::SchemaConfigSpec};
+use crate::BaseNameRef;
 
 /// Schema loading, resolution, and hierarchy/class query facade.
 ///
@@ -34,8 +34,8 @@ type SchemaConstruction =
     (SchemaService, Vec<SchemaWarning>, Vec<SchemaFailure>);
 
 impl SchemaService {
-    /// Load every Schema TOML file under [`SchemaConfigSpec::directory`],
-    /// linearize the `extends` DAG, and resolve every Schema's effective
+    /// Load every Schema TOML file under `directory`, linearize the
+    /// `extends` DAG, and resolve every Schema's effective
     /// fields, alongside any [`SchemaWarning`]s degraded resolution accumulated
     /// and any per-Schema [`SchemaError`] failures that excluded that Schema
     /// from the result (see [`ParentFailedToResolve`]: dependents of a failed
@@ -57,9 +57,9 @@ impl SchemaService {
     /// [`Cycle`]: SchemaError::Cycle
     /// [`ParentFailedToResolve`]: SchemaWarning::ParentFailedToResolve
     pub(crate) fn new(
-        spec: &SchemaConfigSpec,
+        directory: &Path,
     ) -> Result<SchemaConstruction, SchemaError> {
-        let raw = read_raw_schemas(spec.directory())?;
+        let raw = read_raw_schemas(directory)?;
         let resolved = SchemaResolver::new(&raw).resolve()?;
         let schemas = resolved
             .schemas
@@ -253,7 +253,7 @@ mod tests {
     /// directly as the Schema directory, `root` is unused by resolution
     /// itself.
     fn resolve_dir(dir: &Path) -> ResolveResult {
-        SchemaService::new(&SchemaConfigSpec::for_test(dir, dir))
+        SchemaService::new(dir)
     }
 
     fn write_schema(dir: &Path, name: &str, toml: &str) {
@@ -488,10 +488,8 @@ mod tests {
             let schemas_dir = temp.path().join(".traces/schemas");
             fs::create_dir_all(&schemas_dir).expect("create schemas dir");
             write_schema(&schemas_dir, "book", "");
-            let (service, _, _) = SchemaService::new(
-                &SchemaConfigSpec::for_test(temp.path(), &schemas_dir),
-            )
-            .expect("registry loads");
+            let (service, _, _) =
+                SchemaService::new(&schemas_dir).expect("registry loads");
 
             fs::remove_dir_all(&schemas_dir).expect("remove schemas dir");
 

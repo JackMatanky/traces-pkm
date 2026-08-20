@@ -9,10 +9,13 @@
 //! - [`FrontmatterConfig`] resolves `[frontmatter]` key names.
 //! - [`DateFieldConfig`] pairs a date frontmatter key with its format.
 
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use super::raw::{RawDateFieldConfig, RawFrontmatterConfig, RawSchemasConfig};
-use crate::field::{FieldKey, FieldKeyError};
+use crate::field::{FieldName, FieldNameError};
 
 /// Default `[schemas] class_field` when unconfigured.
 const DEFAULT_CLASS_FIELD: &str = "class";
@@ -112,8 +115,43 @@ impl Config {
     /// Returns the resolved `[frontmatter]` settings.
     #[inline]
     #[must_use]
+    #[cfg_attr(
+        not(any(test, feature = "test-utils")),
+        expect(
+            dead_code,
+            reason = "public accessor surface kept for API stability; only \
+                      config/service.rs's config-resolution test suite reads \
+                      it directly (title/aliases/date-field assertions), \
+                      production code reaches [`Config`]'s per-field \
+                      projection methods instead"
+        )
+    )]
     pub const fn frontmatter(&self) -> &FrontmatterConfig {
         &self.frontmatter
+    }
+
+    /// Returns the project root as a cheaply shareable `'static` path, for
+    /// consumers (minijinja namespace objects) that cannot borrow `&Config`.
+    #[inline]
+    #[must_use]
+    pub(crate) fn root_arc(&self) -> Arc<Path> {
+        Arc::from(self.root())
+    }
+
+    /// Returns the `[schemas] class_field` name as a cheaply shareable
+    /// `'static` string, for consumers that cannot borrow `&Config`.
+    #[inline]
+    #[must_use]
+    pub(crate) fn class_field_arc(&self) -> Arc<str> {
+        Arc::from(self.schemas().class_field_name())
+    }
+
+    /// Returns the Schema registry directory resolved against the project
+    /// root.
+    #[inline]
+    #[must_use]
+    pub(crate) fn resolved_schema_directory(&self) -> PathBuf {
+        self.root().join(self.schemas().directory())
     }
 
     /// Builds config directly for tests that do not exercise discovery.
@@ -201,29 +239,18 @@ impl TemplateConfig {
 /// directory for template lookup.
 #[derive(Clone, Debug)]
 pub struct SchemasConfig {
-    class_field: FieldKey,
+    class_field: FieldName,
     directory: PathBuf,
 }
 
 impl SchemasConfig {
-    /// Returns the frontmatter key naming a Note's File Class(es) as a
-    /// validated [`FieldKey`].
-    ///
-    /// Used for canonical-form matching against Note frontmatter.
-    /// Defaults to `class`.
-    #[inline]
-    #[must_use]
-    pub(crate) const fn class_field(&self) -> &FieldKey {
-        &self.class_field
-    }
-
     /// Returns the frontmatter key naming a Note's File Class(es).
     ///
     /// Defaults to `class` when unconfigured.
     #[inline]
     #[must_use]
     pub fn class_field_name(&self) -> &str {
-        self.class_field.name()
+        self.class_field.as_str()
     }
 
     /// Returns the Schema registry directory as configured, unresolved against
@@ -251,7 +278,7 @@ impl Default for SchemasConfig {
     )]
     fn default() -> Self {
         Self {
-            class_field: FieldKey::try_new(DEFAULT_CLASS_FIELD)
+            class_field: FieldName::try_from(DEFAULT_CLASS_FIELD)
                 .expect("DEFAULT_CLASS_FIELD is a valid field key"),
             directory: PathBuf::from(DEFAULT_SCHEMAS_DIR),
         }
@@ -259,15 +286,16 @@ impl Default for SchemasConfig {
 }
 
 impl TryFrom<RawSchemasConfig> for SchemasConfig {
-    type Error = FieldKeyError;
+    type Error = FieldNameError;
 
     /// # Errors
     ///
-    /// See [`FieldKey::try_new`] for when `raw.class_field` fails validation.
+    /// See [`FieldName::try_from`] for when `raw.class_field` fails
+    /// validation.
     #[inline]
     fn try_from(raw: RawSchemasConfig) -> Result<Self, Self::Error> {
         Ok(Self {
-            class_field: FieldKey::try_new(
+            class_field: FieldName::try_from(
                 raw.class_field
                     .unwrap_or_else(|| DEFAULT_CLASS_FIELD.to_owned()),
             )?,
@@ -282,23 +310,13 @@ impl TryFrom<RawSchemasConfig> for SchemasConfig {
 /// and date roles.
 #[derive(Clone, Debug)]
 pub struct FrontmatterConfig {
-    title: FieldKey,
-    aliases: FieldKey,
+    title: FieldName,
+    aliases: FieldName,
     date_created: DateFieldConfig,
     date_modified: DateFieldConfig,
 }
 
 impl FrontmatterConfig {
-    /// Returns the frontmatter key holding a Note's display title as a
-    /// validated [`FieldKey`].
-    ///
-    /// Used for canonical-form matching against Note frontmatter.
-    #[inline]
-    #[must_use]
-    pub(crate) const fn title(&self) -> &FieldKey {
-        &self.title
-    }
-
     /// Returns the frontmatter key holding a Note's display title.
     #[inline]
     #[must_use]
@@ -311,17 +329,7 @@ impl FrontmatterConfig {
         )
     )]
     pub fn title_name(&self) -> &str {
-        self.title.name()
-    }
-
-    /// Returns the frontmatter key holding a Note's aliases as a validated
-    /// [`FieldKey`].
-    ///
-    /// Used for canonical-form matching against Note frontmatter.
-    #[inline]
-    #[must_use]
-    pub(crate) const fn aliases(&self) -> &FieldKey {
-        &self.aliases
+        self.title.as_str()
     }
 
     /// Returns the frontmatter key holding a Note's aliases.
@@ -336,7 +344,7 @@ impl FrontmatterConfig {
         )
     )]
     pub fn aliases_name(&self) -> &str {
-        self.aliases.name()
+        self.aliases.as_str()
     }
 
     /// Returns the creation-timestamp frontmatter key and date format.
@@ -376,7 +384,7 @@ impl FrontmatterConfig {
     ///
     /// # Panics
     ///
-    /// If `title` or `aliases` fails `FieldKey` validation (empty or
+    /// If `title` or `aliases` fails `FieldName` validation (empty or
     /// whitespace-only): a test-fixture bug, not a runtime error path.
     #[cfg(any(test, feature = "test-utils"))]
     #[inline]
@@ -391,9 +399,9 @@ impl FrontmatterConfig {
         aliases: A,
     ) -> Self {
         Self {
-            title: FieldKey::try_new(title.into())
+            title: FieldName::try_from(title.into())
                 .expect("test fixture title is a valid field key"),
-            aliases: FieldKey::try_new(aliases.into())
+            aliases: FieldName::try_from(aliases.into())
                 .expect("test fixture aliases is a valid field key"),
             ..Self::default()
         }
@@ -414,9 +422,9 @@ impl Default for FrontmatterConfig {
     )]
     fn default() -> Self {
         Self {
-            title: FieldKey::try_new(DEFAULT_TITLE_FIELD)
+            title: FieldName::try_from(DEFAULT_TITLE_FIELD)
                 .expect("DEFAULT_TITLE_FIELD is a valid field key"),
-            aliases: FieldKey::try_new(DEFAULT_ALIASES_FIELD)
+            aliases: FieldName::try_from(DEFAULT_ALIASES_FIELD)
                 .expect("DEFAULT_ALIASES_FIELD is a valid field key"),
             date_created: DateFieldConfig::default_for(
                 DEFAULT_DATE_CREATED_FIELD,
@@ -429,19 +437,19 @@ impl Default for FrontmatterConfig {
 }
 
 impl TryFrom<RawFrontmatterConfig> for FrontmatterConfig {
-    type Error = FieldKeyError;
+    type Error = FieldNameError;
 
     /// # Errors
     ///
-    /// See [`FieldKey::try_new`] for when `raw.title` or `raw.aliases` fails
-    /// validation.
+    /// See [`FieldName::try_from`] for when `raw.title` or `raw.aliases`
+    /// fails validation.
     #[inline]
     fn try_from(raw: RawFrontmatterConfig) -> Result<Self, Self::Error> {
         Ok(Self {
-            title: FieldKey::try_new(
+            title: FieldName::try_from(
                 raw.title.unwrap_or_else(|| DEFAULT_TITLE_FIELD.to_owned()),
             )?,
-            aliases: FieldKey::try_new(
+            aliases: FieldName::try_from(
                 raw.aliases.unwrap_or_else(|| DEFAULT_ALIASES_FIELD.to_owned()),
             )?,
             date_created: DateFieldConfig::from_raw_or_default(
@@ -459,7 +467,7 @@ impl TryFrom<RawFrontmatterConfig> for FrontmatterConfig {
 /// A frontmatter key name and its date format string.
 #[derive(Clone, Debug)]
 pub struct DateFieldConfig {
-    name: FieldKey,
+    name: FieldName,
     format: String,
 }
 
@@ -477,7 +485,7 @@ impl DateFieldConfig {
         )
     )]
     pub fn name(&self) -> &str {
-        self.name.name()
+        self.name.as_str()
     }
 
     /// Returns the date format string applied to the key's value.
@@ -512,7 +520,7 @@ impl DateFieldConfig {
     )]
     fn default_for(name: &str) -> Self {
         Self {
-            name: FieldKey::try_new(name)
+            name: FieldName::try_from(name)
                 .expect("role-name constant is a valid field key"),
             format: DEFAULT_DATE_FORMAT.to_owned(),
         }
@@ -523,17 +531,17 @@ impl DateFieldConfig {
     ///
     /// # Errors
     ///
-    /// See [`FieldKey::try_new`] for when a configured `raw.name` fails
+    /// See [`FieldName::try_from`] for when a configured `raw.name` fails
     /// validation.
     #[inline]
     fn from_raw_or_default(
         raw: Option<RawDateFieldConfig>,
         default_name: &str,
-    ) -> Result<Self, FieldKeyError> {
+    ) -> Result<Self, FieldNameError> {
         Ok(match raw {
             None => Self::default_for(default_name),
             Some(raw) => Self {
-                name: FieldKey::try_new(
+                name: FieldName::try_from(
                     raw.name.unwrap_or_else(|| default_name.to_owned()),
                 )?,
                 format: raw
@@ -541,5 +549,31 @@ impl DateFieldConfig {
                     .unwrap_or_else(|| DEFAULT_DATE_FORMAT.to_owned()),
             },
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    mod resolved_schema_directory {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn joins_the_configured_schema_directory_onto_root() {
+            let config = Config::for_test(
+                PathBuf::from("/vault"),
+                None,
+                None,
+                PathBuf::from("/vault"),
+            );
+
+            assert_eq!(
+                config.resolved_schema_directory(),
+                PathBuf::from("/vault/.traces/schemas/")
+            );
+        }
     }
 }

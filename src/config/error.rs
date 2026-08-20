@@ -15,7 +15,7 @@ use super::{
     file::{LocalConfigFile, Tracked},
     trust::ConfigTrustStatus,
 };
-use crate::{FileStateStoreError, field::FieldKeyError, hash::HashError};
+use crate::{FileStateStoreError, field::FieldNameError, hash::HashError};
 
 /// Errors from the full config-loading pipeline.
 #[derive(Debug, Error)]
@@ -126,7 +126,7 @@ pub(crate) enum ConfigBuilderError {
         table: &'static str,
         /// The underlying validation failure.
         #[source]
-        source: FieldKeyError,
+        source: FieldNameError,
     },
 }
 

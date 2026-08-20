@@ -66,8 +66,8 @@ impl FieldName {
     pub(crate) fn to_key(&self) -> FieldKey {
         let canonical = FieldKey::canonicalize(&self.0);
         FieldKey {
-            name: self.0.clone(),
-            canonical,
+            name: self.0.as_str().into(),
+            canonical: canonical.into_boxed_str(),
         }
     }
 
@@ -256,9 +256,9 @@ impl fmt::Display for FieldNameRef<'_> {
 #[derive(Clone, Debug, Eq)]
 pub(crate) struct FieldKey {
     /// Original key text as written by the user.
-    name: String,
+    name: Box<str>,
     /// Canonical form for case-insensitive matching.
-    canonical: String,
+    canonical: Box<str>,
 }
 
 impl FieldKey {
@@ -281,9 +281,9 @@ impl FieldKey {
                 name: raw,
             });
         }
-        let canonical = Self::canonicalize(&raw);
+        let canonical = Self::canonicalize(&raw).into_boxed_str();
         Ok(Self {
-            name: raw,
+            name: raw.into_boxed_str(),
             canonical,
         })
     }
@@ -291,6 +291,7 @@ impl FieldKey {
     /// Returns the original key text.
     #[inline]
     #[must_use]
+    #[cfg_attr(not(test), expect(dead_code, reason = "used in tests"))]
     pub(crate) fn name(&self) -> &str {
         &self.name
     }
@@ -310,7 +311,7 @@ impl FieldKey {
     #[inline]
     #[must_use]
     pub(crate) fn is_match(&self, candidate: &str) -> bool {
-        self.name == candidate || self.is_canonical_match(candidate)
+        self.name.as_ref() == candidate || self.is_canonical_match(candidate)
     }
 
     /// Returns `true` if `candidate` matches this key's canonical form.
@@ -319,8 +320,8 @@ impl FieldKey {
     /// it only if the literal check fails.
     #[must_use]
     pub(crate) fn is_canonical_match(&self, candidate: &str) -> bool {
-        self.canonical == candidate
-            || self.canonical == Self::canonicalize(candidate)
+        self.canonical.as_ref() == candidate
+            || self.canonical.as_ref() == Self::canonicalize(candidate).as_str()
     }
 
     /// Returns `true` if `candidate` exactly matches this key's raw name.
@@ -330,7 +331,7 @@ impl FieldKey {
     #[must_use]
     #[cfg_attr(not(test), expect(dead_code, reason = "used in tests"))]
     pub(crate) fn is_name_match(&self, candidate: &FieldName) -> bool {
-        self.name == candidate.as_str()
+        self.name.as_ref() == candidate.as_str()
     }
 
     /// Canonicalizes a raw key for forgiving field matching.
@@ -384,8 +385,8 @@ impl From<FieldName> for FieldKey {
     fn from(name: FieldName) -> Self {
         let canonical = Self::canonicalize(&name.0);
         Self {
-            name: name.0,
-            canonical,
+            name: name.0.into_boxed_str(),
+            canonical: canonical.into_boxed_str(),
         }
     }
 }

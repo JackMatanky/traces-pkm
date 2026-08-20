@@ -33,10 +33,7 @@ mod schema;
 mod string;
 mod ui;
 
-use std::{
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::{path::PathBuf, sync::Arc};
 
 use minijinja::{Environment, Error};
 use uuid::Uuid;
@@ -109,15 +106,14 @@ impl TemplateEngine {
             let loader = loader.clone();
             move |name| loader.load(name)
         });
-        let root: Arc<Path> = Arc::from(config.root());
-        let class_field: Arc<str> =
-            Arc::from(config.schemas().class_field_name());
+        let root = config.root_arc();
+        let class_field = config.class_field_arc();
         // Resolved once here and shared with `QueryOps` (below) so
         // `query`/`tasks` `.from()` and `schema.get()` read the identical,
         // already-resolved `SchemaService` for this engine's whole lifetime —
         // no render-scoped re-resolution or caching.
         let (service, warnings, failures) =
-            SchemaService::new(&config.to_schema_spec())?;
+            SchemaService::new(&config.resolved_schema_directory())?;
         for warning in &warnings {
             tracing::warn!(%warning, "Schema registry resolved with a warning");
         }
