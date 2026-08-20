@@ -110,8 +110,8 @@ impl FileIndex {
     /// - Added or changed markdown Notes are parsed from disk.
     /// - Deleted files disappear because they are absent from the fresh scan.
     ///
-    /// Returns the fresh [`FileIndex`] and persists it only when contents
-    /// changed.
+    /// Returns the fresh [`FileIndex`] without persisting. Call
+    /// [`Self::persist`] to write the result to disk.
     ///
     /// Derived inlinks are recomputed in full only when something changed;
     /// otherwise the previously persisted computation is reused unchanged. A
@@ -127,7 +127,6 @@ impl FileIndex {
     ///   metadata cannot be inspected, or a markdown file cannot be read.
     /// - [`FileIndexError::Store`] or [`FileIndexError::Deserialize`] if the
     ///   previous index cannot be loaded.
-    /// - [`FileIndexError::Serialize`] if the refreshed index cannot be stored.
     #[inline]
     pub fn refresh(root: &Path) -> Result<Self, FileIndexError> {
         let previous = Self::load(root)?;
@@ -158,15 +157,11 @@ impl FileIndex {
             previous.inlinks
         };
 
-        let index = Self {
+        Ok(Self {
             records,
             notes,
             inlinks,
-        };
-        if dirty {
-            index.persist(root)?;
-        }
-        Ok(index)
+        })
     }
 
     /// Persists this index to `root`, replacing any existing index contents.
@@ -883,7 +878,10 @@ mod tests {
 
             fs::write(temp.path().join("extra.md"), "# Extra")
                 .expect("write extra");
-            FileIndex::refresh(temp.path()).expect("refresh index");
+            FileIndex::refresh(temp.path())
+                .expect("refresh index")
+                .persist(temp.path())
+                .expect("persist index");
 
             let loaded = FileIndex::load(temp.path()).expect("load index");
             assert_eq!(loaded.notes().len(), 2);
@@ -929,6 +927,44 @@ mod tests {
                 .expect("target record");
 
             assert_eq!(target.inlinks(), [PathBuf::from("linker.md")]);
+        }
+
+        #[test]
+        fn does_not_persist_automatically() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("note.md"), "---\ntitle: Draft\n---")
+                .expect("write note");
+            FileIndex::build(temp.path())
+                .expect("build index")
+                .persist(temp.path())
+                .expect("persist index");
+
+            fs::write(temp.path().join("note.md"), "# Revised")
+                .expect("rewrite note");
+
+            let refreshed =
+                FileIndex::refresh(temp.path()).expect("refresh index");
+
+            // The refreshed index reflects the new content...
+            assert_eq!(
+                refreshed
+                    .note(Path::new("note.md"))
+                    .and_then(Note::frontmatter)
+                    .and_then(|fm| fm.fields().first())
+                    .and_then(|f| f.value().as_str()),
+                None // "# Revised" has no frontmatter
+            );
+            // ...but a fresh load from disk still shows the OLD content,
+            // because refresh did not persist.
+            let loaded = FileIndex::load(temp.path()).expect("load index");
+            assert_eq!(
+                loaded
+                    .note(Path::new("note.md"))
+                    .and_then(Note::frontmatter)
+                    .and_then(|fm| fm.fields().first())
+                    .and_then(|f| f.value().as_str()),
+                Some("Draft") // OLD frontmatter, not the revised content
+            );
         }
 
         #[test]
