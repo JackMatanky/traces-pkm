@@ -452,7 +452,7 @@ mod tests {
         };
 
         #[test]
-        fn persist_then_load_recovers_the_same_records_and_notes() {
+        fn round_trips_records() {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(
                 temp.path().join("note.md"),
@@ -465,6 +465,21 @@ mod tests {
             let loaded = FileIndex::load(temp.path()).expect("load index");
 
             assert_eq!(loaded.records(), built.records());
+        }
+
+        #[test]
+        fn round_trips_notes_with_outlinks() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(
+                temp.path().join("note.md"),
+                "---\ntitle: Hello\n---\n[[other_note]]\n- [x] done",
+            )
+            .expect("write note");
+            let built = FileIndex::build(temp.path()).expect("build index");
+            built.persist(temp.path()).expect("persist index");
+
+            let loaded = FileIndex::load(temp.path()).expect("load index");
+
             assert_eq!(loaded.notes(), built.notes());
 
             let loaded_note =
@@ -474,6 +489,23 @@ mod tests {
                 loaded_note.outlinks().first().map(Link::target),
                 Some("other_note")
             );
+        }
+
+        #[test]
+        fn round_trips_task_count() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(
+                temp.path().join("note.md"),
+                "---\ntitle: Hello\n---\n[[other_note]]\n- [x] done",
+            )
+            .expect("write note");
+            let built = FileIndex::build(temp.path()).expect("build index");
+            built.persist(temp.path()).expect("persist index");
+
+            let loaded = FileIndex::load(temp.path()).expect("load index");
+
+            let loaded_note =
+                loaded.note(Path::new("note.md")).expect("loaded note");
             assert_eq!(loaded_note.tasks().count(), 1);
         }
 
@@ -675,8 +707,6 @@ mod tests {
     }
 
     mod builder {
-        use std::path::PathBuf;
-
         use pretty_assertions::assert_eq;
 
         use super::{super::builder::IndexBuilder, *};
@@ -717,6 +747,10 @@ mod tests {
 
             assert_eq!(index.records().len(), 2);
             assert_eq!(index.notes().len(), 1);
+            assert_eq!(
+                index.note(Path::new("note.md")).map(Note::path),
+                Some(Path::new("note.md"))
+            );
         }
 
         #[test]
@@ -764,28 +798,6 @@ mod tests {
                     .map(Iterator::count),
                 Some(2)
             );
-        }
-
-        #[test]
-        fn derives_inlinks_from_outlinks() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            fs::write(temp.path().join("target.md"), "# Target")
-                .expect("write target");
-            fs::write(temp.path().join("linker.md"), "[[target]]")
-                .expect("write linker");
-
-            let index = IndexBuilder::from_scan(temp.path())
-                .expect("scan")
-                .build(temp.path())
-                .expect("build");
-
-            let outcome = index.query(&QuerySource::All);
-            let target = outcome
-                .iter()
-                .find(|r| r.file().path() == Path::new("target.md"))
-                .expect("target record");
-
-            assert_eq!(target.inlinks(), [PathBuf::from("linker.md")]);
         }
     }
 
@@ -1375,6 +1387,25 @@ mod tests {
 
             assert_eq!(source.inlinks(), [PathBuf::from("b.md")]);
         }
+
+        #[test]
+        fn derives_inlinks_from_outlinks() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("target.md"), "# Target")
+                .expect("write target");
+            fs::write(temp.path().join("linker.md"), "[[target]]")
+                .expect("write linker");
+
+            let index = FileIndex::build(temp.path()).expect("build index");
+
+            let outcome = index.query(&QuerySource::All);
+            let target = outcome
+                .iter()
+                .find(|r| r.file().path() == Path::new("target.md"))
+                .expect("target record");
+
+            assert_eq!(target.inlinks(), [PathBuf::from("linker.md")]);
+        }
     }
 
     mod query_tasks {
@@ -1428,7 +1459,7 @@ mod tests {
         }
 
         #[test]
-        fn retains_parent_note_metadata_for_filtering_and_display() {
+        fn retains_file_path() {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(
                 temp.path().join("project.md"),
@@ -1442,10 +1473,42 @@ mod tests {
             let record = outcome.iter().next().expect("one task row");
 
             assert_eq!(record.file().path(), Path::new("project.md"));
+        }
+
+        #[test]
+        fn retains_frontmatter_field() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(
+                temp.path().join("project.md"),
+                "---\ntitle: Launch\n---\nFiled under #projects.\n\n- [ ] \
+                 ship it\n",
+            )
+            .expect("write note");
+            let index = FileIndex::build(temp.path()).expect("build index");
+
+            let outcome = index.query_tasks(&QuerySource::All);
+            let record = outcome.iter().next().expect("one task row");
+
             assert_eq!(
                 record.field("title"),
                 Ok(crate::note::FieldValue::String("Launch".to_owned()))
             );
+        }
+
+        #[test]
+        fn retains_tag_field() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(
+                temp.path().join("project.md"),
+                "---\ntitle: Launch\n---\nFiled under #projects.\n\n- [ ] \
+                 ship it\n",
+            )
+            .expect("write note");
+            let index = FileIndex::build(temp.path()).expect("build index");
+
+            let outcome = index.query_tasks(&QuerySource::All);
+            let record = outcome.iter().next().expect("one task row");
+
             assert_eq!(
                 record.field("tags"),
                 Ok(crate::note::FieldValue::List(vec![
