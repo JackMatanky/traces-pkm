@@ -137,16 +137,7 @@ impl FileIndex {
             if record.format() != FileFormat::Note {
                 continue;
             }
-            let unchanged = previous
-                .record(record.path())
-                .is_some_and(|prior| prior == record);
-            let reused = unchanged
-                .then(|| previous.note(record.path()).cloned())
-                .flatten();
-            notes.push(match reused {
-                Some(note) => note,
-                None => Self::parse_note_file(root, record)?,
-            });
+            notes.push(Self::reconcile_note(&previous, root, record)?);
         }
         notes.sort_by(|a, b| a.path().cmp(b.path()));
 
@@ -326,6 +317,22 @@ impl FileIndex {
     /// inlinks without exposing `FileIndex`'s internal layout.
     pub(crate) fn into_parts(self) -> (Vec<FileRecord>, Vec<Note>, InlinkMap) {
         (self.records, self.notes, self.inlinks)
+    }
+
+    /// Reuses a persisted [`Note`] when the file record is unchanged,
+    /// or re-parses from disk when it has changed.
+    fn reconcile_note(
+        previous: &FileIndex,
+        root: &Path,
+        record: &FileRecord,
+    ) -> Result<Note, FileIndexError> {
+        let unchanged =
+            previous.record(record.path()).is_some_and(|prior| prior == record);
+        match unchanged.then(|| previous.note(record.path()).cloned()).flatten()
+        {
+            Some(note) => Ok(note),
+            None => Self::parse_note_file(root, record),
+        }
     }
 
     /// Reads and parses the markdown file for `record` into a [`Note`].
@@ -698,6 +705,47 @@ mod tests {
                 index.note(Path::new("b.md")).map(Note::path),
                 Some(Path::new("b.md"))
             );
+        }
+    }
+
+    mod reconcile_note {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn reuses_a_note_when_the_record_is_unchanged() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("note.md"), "- [ ] task")
+                .expect("write note");
+            let built = FileIndex::build(temp.path()).expect("build index");
+
+            let record = built.record(Path::new("note.md")).unwrap();
+            let note = FileIndex::reconcile_note(&built, temp.path(), record)
+                .expect("reconcile");
+
+            assert_eq!(note.tasks().count(), 1);
+        }
+
+        #[test]
+        fn reparses_when_the_record_changed() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("note.md"), "- [ ] task")
+                .expect("write note");
+            let built = FileIndex::build(temp.path()).expect("build index");
+
+            fs::write(temp.path().join("note.md"), "- [ ] task\n- [x] done")
+                .expect("rewrite note");
+            let fresh_records = scan::scan_root(temp.path()).expect("scan");
+            let record = fresh_records
+                .iter()
+                .find(|r| r.path() == Path::new("note.md"))
+                .unwrap();
+
+            let note = FileIndex::reconcile_note(&built, temp.path(), record)
+                .expect("reconcile");
+
+            assert_eq!(note.tasks().count(), 2);
         }
     }
 
