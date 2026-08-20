@@ -99,6 +99,7 @@ pub enum IndexBuilderError {
     },
 }
 
+#[expect(clippy::missing_inline_in_public_items, reason = "trait impl")]
 impl From<IndexBuilderError> for FileIndexError {
     fn from(err: IndexBuilderError) -> Self {
         match err {
@@ -254,16 +255,9 @@ mod tests {
 
             let converted: FileIndexError = err.into();
 
-            match converted {
-                FileIndexError::Io {
-                    path,
-                    source,
-                } => {
-                    assert_eq!(path, Path::new("orphan.md"));
-                    assert_eq!(source.kind(), io::ErrorKind::NotFound);
-                }
-                other => panic!("expected FileIndexError::Io, got {other:?}"),
-            }
+            assert!(matches!(converted, FileIndexError::Io { path, source }
+                if path == Path::new("orphan.md")
+                    && source.kind() == io::ErrorKind::NotFound));
         }
     }
 
