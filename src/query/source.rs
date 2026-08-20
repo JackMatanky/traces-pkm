@@ -1011,6 +1011,13 @@ mod tests {
         use super::*;
         use crate::index::FileIndex;
 
+        fn find_record<'a>(
+            records: &'a [crate::file::FileRecord],
+            path: &Path,
+        ) -> &'a crate::file::FileRecord {
+            records.iter().find(|r| r.path() == path).expect("record not found")
+        }
+
         fn indexed_note(
             content: &str,
             path: &str,
@@ -1028,8 +1035,7 @@ mod tests {
         #[test]
         fn matches_boolean_combinations_of_tags_and_paths() {
             let (_temp, index) = indexed_note("#book", "books/dune.md");
-            let file =
-                index.record(Path::new("books/dune.md")).expect("File Record");
+            let file = find_record(index.records(), Path::new("books/dune.md"));
             let note = index.note(Path::new("books/dune.md")).expect("Note");
             let expression =
                 QuerySourceExpr::parse("(#book and books/) and not archive/")
@@ -1041,8 +1047,7 @@ mod tests {
         #[test]
         fn matches_exact_file_path_without_matching_sibling() {
             let (_temp, index) = indexed_note("#book", "books/dune.md");
-            let file =
-                index.record(Path::new("books/dune.md")).expect("File Record");
+            let file = find_record(index.records(), Path::new("books/dune.md"));
             let note = index.note(Path::new("books/dune.md")).expect("Note");
 
             assert!(
@@ -1061,7 +1066,7 @@ mod tests {
         fn reads_classes_from_the_execution_field() {
             let (_temp, index) =
                 indexed_note("---\nkind: Book\n---\n", "book.md");
-            let file = index.record(Path::new("book.md")).expect("File Record");
+            let file = find_record(index.records(), Path::new("book.md"));
             let note = index.note(Path::new("book.md")).expect("Note");
             let expression = LogicalExpr::Atom(SourceAtom::Class {
                 names: vec!["Book".to_owned()],
@@ -1087,10 +1092,9 @@ mod tests {
             let expression =
                 QuerySourceExpr::parse("covers/*.md").expect("valid source");
             let direct =
-                index.record(Path::new("covers/dune.md")).expect("File Record");
-            let nested = index
-                .record(Path::new("covers/sub/hidden.md"))
-                .expect("File Record");
+                find_record(index.records(), Path::new("covers/dune.md"));
+            let nested =
+                find_record(index.records(), Path::new("covers/sub/hidden.md"));
 
             assert!(expression.is_match(direct, None, "class"));
             assert!(!expression.is_match(nested, None, "class"));
@@ -1113,10 +1117,9 @@ mod tests {
             let expression =
                 QuerySourceExpr::parse("covers/**/*.md").expect("valid source");
             let direct =
-                index.record(Path::new("covers/dune.md")).expect("File Record");
-            let nested = index
-                .record(Path::new("covers/sub/hidden.md"))
-                .expect("File Record");
+                find_record(index.records(), Path::new("covers/dune.md"));
+            let nested =
+                find_record(index.records(), Path::new("covers/sub/hidden.md"));
 
             assert!(!expression.is_match(direct, None, "class"));
             assert!(expression.is_match(nested, None, "class"));

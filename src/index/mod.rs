@@ -277,28 +277,6 @@ impl FileIndex {
         find_by_path(&self.notes, path)
     }
 
-    /// Returns the [`FileRecord`] for the file at `path`, if indexed.
-    ///
-    /// # Performance
-    ///
-    /// O(log n): [`Self::records`] is kept sorted by path, so this binary
-    /// searches rather than scanning.
-    #[inline]
-    #[must_use]
-    #[cfg_attr(
-        not(any(test, feature = "test-utils")),
-        expect(
-            dead_code,
-            reason = "used in query module tests for direct record inspection"
-        )
-    )]
-    pub(crate) fn record(&self, path: &Path) -> Option<&FileRecord> {
-        self.records
-            .binary_search_by(|r| r.path().cmp(path))
-            .ok()
-            .and_then(|idx| self.records.get(idx))
-    }
-
     /// Consumes this index and returns its inner components.
     ///
     /// Used by the query module to pair records with notes and resolve inlinks

@@ -757,6 +757,14 @@ mod tests {
         pub(super) fn outcome_for(temp: &Path, content: &str) -> QueryOutcome {
             outcome_for_files(temp, &[("note.md", content)])
         }
+
+        /// Finds a [`FileRecord`] by path in a sorted records slice.
+        pub(super) fn find_record<'a>(
+            records: &'a [crate::file::FileRecord],
+            path: &Path,
+        ) -> &'a crate::file::FileRecord {
+            records.iter().find(|r| r.path() == path).expect("record not found")
+        }
     }
     use fixtures::*;
 
@@ -771,7 +779,7 @@ mod tests {
             fs::write(temp.path().join("a.md"), "Filed under #tag.")
                 .expect("write file");
             let index = FileIndex::build(temp.path()).expect("build index");
-            let file = index.record(Path::new("a.md")).expect("record").clone();
+            let file = find_record(index.records(), Path::new("a.md")).clone();
             let note = index.note(Path::new("a.md")).expect("note").clone();
 
             let record = IndexRecord::new(file.clone(), Some(note));
@@ -785,7 +793,7 @@ mod tests {
             fs::write(temp.path().join("a.md"), "Filed under #tag.")
                 .expect("write file");
             let index = FileIndex::build(temp.path()).expect("build index");
-            let file = index.record(Path::new("a.md")).expect("record").clone();
+            let file = find_record(index.records(), Path::new("a.md")).clone();
             let note = index.note(Path::new("a.md")).expect("note").clone();
 
             let record = IndexRecord::new(file, Some(note.clone()));
@@ -798,7 +806,7 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("a.md"), "body").expect("write file");
             let index = FileIndex::build(temp.path()).expect("build index");
-            let file = index.record(Path::new("a.md")).expect("record").clone();
+            let file = find_record(index.records(), Path::new("a.md")).clone();
             let note = index.note(Path::new("a.md")).expect("note").clone();
 
             let record =
@@ -812,7 +820,7 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("a.md"), "body").expect("write file");
             let index = FileIndex::build(temp.path()).expect("build index");
-            let file = index.record(Path::new("a.md")).expect("record").clone();
+            let file = find_record(index.records(), Path::new("a.md")).clone();
             let note = index.note(Path::new("a.md")).expect("note").clone();
 
             let record =
@@ -826,7 +834,7 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("a.md"), "body").expect("write file");
             let index = FileIndex::build(temp.path()).expect("build index");
-            let file = index.record(Path::new("a.md")).expect("record").clone();
+            let file = find_record(index.records(), Path::new("a.md")).clone();
             let note = index.note(Path::new("a.md")).expect("note").clone();
 
             let record = IndexRecord::new(file, Some(note));
@@ -840,7 +848,7 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("a.md"), "body").expect("write file");
             let index = FileIndex::build(temp.path()).expect("build index");
-            let file = index.record(Path::new("a.md")).expect("record").clone();
+            let file = find_record(index.records(), Path::new("a.md")).clone();
             let note = index.note(Path::new("a.md")).expect("note").clone();
 
             let record = IndexRecord::new(file, Some(note))
