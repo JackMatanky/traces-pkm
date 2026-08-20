@@ -1,0 +1,19 @@
+# tarpaulin.toml
+# Configuration for cargo-tarpaulin (https://github.com/xd009642/tarpaulin)
+
+[default]
+# Exclude CLI interfaces, entry points, and error structures from coverage
+exclude-files = [
+  "src/main.rs",
+  "src/cli/**/*.rs",
+  "src/**/error.rs",
+]
+
+# Do not count assertion panic paths as uncovered code
+ignore-panics = true
+
+# Do not clean build artifacts to keep iterative checks fast
+skip-clean = true
+
+# Default to Lcov output format for CRAP analysis compatibility
+out = ["Lcov"]

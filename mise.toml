@@ -119,12 +119,12 @@ depends = ["fmt", "lint", "clippy", "test-all", "audit"]
 
 [tasks.coverage]
 description = "Code coverage with tarpaulin"
-run = "cargo tarpaulin --workspace --out html"
+run = "cargo tarpaulin --workspace --out Html"
 
 [tasks.crap]
 description = "Run Change Risk Anti-Patterns (CRAP) analysis"
 depends = ["check"]
-run = ["cargo tarpaulin --workspace --out Lcov", "cargo crap --lcov lcov.info"]
+run = ["cargo tarpaulin --workspace", "cargo crap --lcov lcov.info"]
 outputs = ["lcov.info"]
 sources = ["src/**/*.rs", "Cargo.toml", "Cargo.lock"]
 
