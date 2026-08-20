@@ -19,6 +19,7 @@ gitleaks = "latest"
 "cargo:cargo-tarpaulin" = "latest"
 "cargo:cargo-watch" = "latest"
 "cargo:cargo-crap" = "latest"
+"cargo:cargo-mutants" = "latest"
 "cargo:critcmp" = "latest"
 "cargo:https://github.com/snowmead/rust-docs-mcp" = { version = "branch:main", crate = "rust-docs-mcp" }
 "cargo:adrs" = { version = "latest", install_env = { RUSTUP_TOOLCHAIN = "nightly" } }
@@ -126,6 +127,11 @@ depends = ["check"]
 run = ["cargo tarpaulin --workspace --out Lcov", "cargo crap --lcov lcov.info"]
 outputs = ["lcov.info"]
 sources = ["src/**/*.rs", "Cargo.toml", "Cargo.lock"]
+
+[tasks.mutants]
+description = "Run mutation testing with cargo-mutants"
+depends = ["check"]
+run = "cargo mutants"
 
 [tasks.clean]
 description = "Clean build artifacts"

@@ -1,0 +1,32 @@
+# .cargo/mutants.toml
+# Configuration for cargo-mutants (https://mutants.rs)
+
+test_tool = "nextest"
+features = ["test-utils"]
+additional_cargo_args = ["--all-targets"]
+
+# Exclude CLI, main binary, and error definitions to focus on core business logic
+# and avoid mutating code that is primarily boilerplate or presentation.
+exclude_globs = [
+  "src/main.rs",
+  "src/cli/**/*.rs",
+  "src/**/error.rs",
+]
+
+# Exclude boilerplate trait implementations and serialization adapters
+exclude_re = [
+  "fn main",
+  "impl.*Debug",
+  "impl.*Display",
+  "impl.*Default",
+  "impl.*PartialEq",
+  "impl.*From",
+  "impl.*TryFrom",
+  "impl.*Serialize",
+  "impl.*Deserialize",
+  "impl.*Visitor",
+]
+
+# Optimize timeouts for our fast test suite (~6s for 1600+ tests)
+timeout_multiplier = 2
+minimum_test_timeout = 10
