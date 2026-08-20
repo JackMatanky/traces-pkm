@@ -567,7 +567,7 @@ impl ItemFrame {
 
 #[cfg(test)]
 mod tests {
-    use super::{super::FieldValue, *};
+    use super::{super::NoteFieldValue, *};
     mod parse {
         use pretty_assertions::assert_eq;
         use rstest::rstest;
@@ -632,28 +632,28 @@ mod tests {
                          true\nrating: 5.0\ndate: 2026-07-29\n---\nBody text.";
             let note = parse_markdown("note.md", input);
 
-            let fields: std::collections::BTreeMap<&str, &FieldValue> = note
-                .frontmatter()
-                .into_iter()
-                .flat_map(Frontmatter::fields)
-                .map(|field| (field.key().name(), field.value()))
-                .collect();
+            let fields: std::collections::BTreeMap<&str, &NoteFieldValue> =
+                note.frontmatter()
+                    .into_iter()
+                    .flat_map(Frontmatter::fields)
+                    .map(|field| (field.key().name(), field.value()))
+                    .collect();
             assert_eq!(fields.len(), 5);
             assert_eq!(
                 fields.get("title").copied(),
-                Some(&FieldValue::String("Note Title".to_owned()))
+                Some(&NoteFieldValue::String("Note Title".to_owned()))
             );
             assert_eq!(
                 fields.get("draft").copied(),
-                Some(&FieldValue::Bool(true))
+                Some(&NoteFieldValue::Bool(true))
             );
             assert_eq!(
                 fields.get("rating").copied(),
-                Some(&FieldValue::Number(5.0))
+                Some(&NoteFieldValue::Number(5.0))
             );
             assert_eq!(
                 fields.get("date").copied(),
-                Some(&FieldValue::Date("2026-07-29".to_owned()))
+                Some(&NoteFieldValue::Date("2026-07-29".to_owned()))
             );
         }
 
@@ -672,7 +672,7 @@ mod tests {
                 .expect("related field");
             assert_eq!(
                 field.value(),
-                &FieldValue::Link(Link::new(
+                &NoteFieldValue::Link(Link::new(
                     "Project Alpha",
                     "Alpha",
                     LinkType::Wikilink
@@ -1002,7 +1002,7 @@ mod tests {
             assert!(field.key().is_canonical_match(expected_key));
             assert_eq!(
                 field.value(),
-                &FieldValue::Date(expected_date.to_owned())
+                &NoteFieldValue::Date(expected_date.to_owned())
             );
             assert_eq!(field.form(), InlineFieldForm::Body);
         }
@@ -1019,7 +1019,7 @@ mod tests {
             assert_eq!(fields.first().map(|f| f.key().name()), Some("due"));
             assert_eq!(
                 fields.first().map(InlineField::value),
-                Some(&FieldValue::Date("2022-07-14".to_owned()))
+                Some(&NoteFieldValue::Date("2022-07-14".to_owned()))
             );
             assert_eq!(
                 fields.get(1).map(|f| f.key().name()),
@@ -1027,7 +1027,7 @@ mod tests {
             );
             assert_eq!(
                 fields.get(1).map(InlineField::value),
-                Some(&FieldValue::Date("2022-07-24".to_owned()))
+                Some(&NoteFieldValue::Date("2022-07-24".to_owned()))
             );
         }
 

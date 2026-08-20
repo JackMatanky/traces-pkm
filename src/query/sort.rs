@@ -1,4 +1,4 @@
-//! Equality, ordering, and sort-key utilities for resolved [`FieldValue`]
+//! Equality, ordering, and sort-key utilities for resolved [`NoteFieldValue`]
 //! instances.
 //!
 //! This module provides comparison and ordering primitives used by
@@ -10,7 +10,7 @@
 //! Values are ordered according to their comparable kind (numbers by magnitude,
 //! strings/dates/durations lexicographically, booleans with `false < true`).
 //!
-//! [`FieldValue::Null`] acts as the minimum value in sort operations. Under
+//! [`NoteFieldValue::Null`] acts as the minimum value in sort operations. Under
 //! a total order, null values lead ascending sorts and trail descending sorts.
 //!
 //! # Examples
@@ -23,7 +23,7 @@
 
 use std::cmp::Ordering;
 
-use crate::note::FieldValue;
+use crate::note::NoteFieldValue;
 
 /// Sort direction for sorting operations and CLI configuration.
 ///
@@ -57,7 +57,8 @@ impl SortOrder {
     }
 }
 
-/// Compares two resolved [`FieldValue`] instances of the same comparable kind.
+/// Compares two resolved [`NoteFieldValue`] instances of the same comparable
+/// kind.
 ///
 /// Value ordering rules:
 /// - Numbers are ordered by magnitude.
@@ -67,12 +68,14 @@ impl SortOrder {
 /// Returns `Some` with the [`Ordering`] of `a` relative to `b` when they can be
 /// compared, or `None` if they have different kinds or unorderable values.
 pub(super) fn compare_field_values(
-    a: &FieldValue,
-    b: &FieldValue,
+    a: &NoteFieldValue,
+    b: &NoteFieldValue,
 ) -> Option<Ordering> {
     match (a, b) {
-        (FieldValue::Number(x), FieldValue::Number(y)) => x.partial_cmp(y),
-        (FieldValue::Bool(x), FieldValue::Bool(y)) => Some(x.cmp(y)),
+        (NoteFieldValue::Number(x), NoteFieldValue::Number(y)) => {
+            x.partial_cmp(y)
+        }
+        (NoteFieldValue::Bool(x), NoteFieldValue::Bool(y)) => Some(x.cmp(y)),
         _ => match (a.as_str(), b.as_str()) {
             (Some(x), Some(y)) => Some(x.cmp(y)),
             _ => None,
@@ -80,18 +83,19 @@ pub(super) fn compare_field_values(
     }
 }
 
-/// Returns whether two resolved [`FieldValue`] instances represent equal values
-/// under filter comparison (`==` and `!=`).
+/// Returns whether two resolved [`NoteFieldValue`] instances represent equal
+/// values under filter comparison (`==` and `!=`).
 ///
 /// Returns `true` when structural equality (`a == b`) holds, or when
 /// [`compare_field_values`] returns `Some(Ordering::Equal)`. This cross-kind
 /// text normalization allows string literals to match date or duration fields.
-pub(super) fn fields_equal(a: &FieldValue, b: &FieldValue) -> bool {
+pub(super) fn fields_equal(a: &NoteFieldValue, b: &NoteFieldValue) -> bool {
     a == b || compare_field_values(a, b) == Some(Ordering::Equal)
 }
 
-/// Compares two resolved [`FieldValue`] instances to establish a total order
-/// for [`super::QueryOutcome::sort`] and [`super::QueryOutcome::group_by`].
+/// Compares two resolved [`NoteFieldValue`] instances to establish a total
+/// order for [`super::QueryOutcome::sort`] and
+/// [`super::QueryOutcome::group_by`].
 ///
 /// # Arguments
 ///
@@ -100,7 +104,7 @@ pub(super) fn fields_equal(a: &FieldValue, b: &FieldValue) -> bool {
 /// * `descending` - Whether to reverse the comparison result.
 ///
 /// Returns the [`Ordering`] of `a` relative to `b`:
-/// - [`FieldValue::Null`] acts as the minimum value.
+/// - [`NoteFieldValue::Null`] acts as the minimum value.
 /// - `descending` reverses the comparator uniformly, so null leads ascending
 ///   and trails descending.
 /// - Numeric values use [`f64::total_cmp`], including non-finite values and
@@ -109,15 +113,17 @@ pub(super) fn fields_equal(a: &FieldValue, b: &FieldValue) -> bool {
 ///   [`Ordering::Equal`] to preserve stable relative order for incomparable
 ///   kinds.
 pub(super) fn sort_key_cmp(
-    a: &FieldValue,
-    b: &FieldValue,
+    a: &NoteFieldValue,
+    b: &NoteFieldValue,
     descending: bool,
 ) -> Ordering {
     let ord = match (a, b) {
-        (FieldValue::Null, FieldValue::Null) => Ordering::Equal,
-        (FieldValue::Null, _) => Ordering::Less,
-        (_, FieldValue::Null) => Ordering::Greater,
-        (FieldValue::Number(x), FieldValue::Number(y)) => x.total_cmp(y),
+        (NoteFieldValue::Null, NoteFieldValue::Null) => Ordering::Equal,
+        (NoteFieldValue::Null, _) => Ordering::Less,
+        (_, NoteFieldValue::Null) => Ordering::Greater,
+        (NoteFieldValue::Number(x), NoteFieldValue::Number(y)) => {
+            x.total_cmp(y)
+        }
         _ => compare_field_values(a, b).unwrap_or(Ordering::Equal),
     };
     if descending {
@@ -127,15 +133,15 @@ pub(super) fn sort_key_cmp(
     }
 }
 
-/// Wraps a resolved [`FieldValue`] so [`slice::sort_by_cached_key`] can
+/// Wraps a resolved [`NoteFieldValue`] so [`slice::sort_by_cached_key`] can
 /// order by it using [`sort_key_cmp`].
 ///
-/// [`FieldValue`] does not implement [`Ord`] directly because comparison
+/// [`NoteFieldValue`] does not implement [`Ord`] directly because comparison
 /// requires a `descending` flag and null-as-minimum fallback rules that depend
 /// on sort options. `SortKey` provides an [`Ord`] implementation scoped to a
 /// single sorting operation for [`super::QueryOutcome::sort_by_field`].
 pub(super) struct SortKey {
-    pub(super) value: FieldValue,
+    pub(super) value: NoteFieldValue,
     pub(super) descending: bool,
 }
 
@@ -168,7 +174,7 @@ mod tests {
     use std::{cmp::Ordering, fs, path::Path};
 
     use super::{super::*, sort_key_cmp};
-    use crate::{index::FileIndex, note::FieldValue};
+    use crate::{index::FileIndex, note::NoteFieldValue};
 
     fn outcome_for_files(temp: &Path, files: &[(&str, &str)]) -> QueryOutcome {
         for (name, content) in files {
@@ -247,10 +253,10 @@ mod tests {
 
     #[test]
     fn sorts_non_finite_and_signed_zero_numbers_totally() {
-        let nan = FieldValue::Number(f64::NAN);
-        let infinity = FieldValue::Number(f64::INFINITY);
-        let negative_zero = FieldValue::Number(-0.0);
-        let zero = FieldValue::Number(0.0);
+        let nan = NoteFieldValue::Number(f64::NAN);
+        let infinity = NoteFieldValue::Number(f64::INFINITY);
+        let negative_zero = NoteFieldValue::Number(-0.0);
+        let zero = NoteFieldValue::Number(0.0);
 
         assert_eq!(
             sort_key_cmp(&nan, &infinity, false),

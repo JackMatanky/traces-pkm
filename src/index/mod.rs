@@ -432,8 +432,8 @@ mod tests {
 
         use super::*;
         use crate::note::{
-            FieldValue, Frontmatter, InlineField, InlineFieldForm, Link,
-            LinkType, Tag,
+            Frontmatter, InlineField, InlineFieldForm, Link, LinkType,
+            NoteFieldValue, Tag,
         };
 
         #[test]
@@ -516,7 +516,7 @@ mod tests {
                 .expect("related field");
             assert_eq!(
                 field.value(),
-                &FieldValue::Link(Link::new(
+                &NoteFieldValue::Link(Link::new(
                     "Project Alpha",
                     "Alpha",
                     LinkType::Wikilink
@@ -588,16 +588,16 @@ mod tests {
             let built_note =
                 built.note(Path::new("note.md")).expect("built note");
             assert_eq!(loaded_note.inline_fields(), built_note.inline_fields());
-            let values: Vec<&FieldValue> = loaded_note
+            let values: Vec<&NoteFieldValue> = loaded_note
                 .inline_fields()
                 .iter()
                 .map(InlineField::value)
                 .collect();
             assert_eq!(values, [
-                &FieldValue::Duration("7 hours".to_owned()),
-                &FieldValue::List(vec![
-                    FieldValue::Number(1.0),
-                    FieldValue::Number(2.0)
+                &NoteFieldValue::Duration("7 hours".to_owned()),
+                &NoteFieldValue::List(vec![
+                    NoteFieldValue::Number(1.0),
+                    NoteFieldValue::Number(2.0)
                 ])
             ]);
         }
@@ -1476,7 +1476,7 @@ mod tests {
 
             assert_eq!(
                 record.field("title"),
-                Ok(crate::note::FieldValue::String("Launch".to_owned()))
+                Ok(crate::note::NoteFieldValue::String("Launch".to_owned()))
             );
         }
 
@@ -1496,8 +1496,8 @@ mod tests {
 
             assert_eq!(
                 record.field("tags"),
-                Ok(crate::note::FieldValue::List(vec![
-                    crate::note::FieldValue::String("#projects".to_owned())
+                Ok(crate::note::NoteFieldValue::List(vec![
+                    crate::note::NoteFieldValue::String("#projects".to_owned())
                 ]))
             );
         }

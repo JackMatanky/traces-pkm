@@ -36,7 +36,7 @@ use super::{
 };
 use crate::{
     file::FileRecord,
-    note::{FieldValue, Note},
+    note::{Note, NoteFieldValue},
 };
 
 /// A query row pairing a [`FileRecord`] with parsed [`Note`] metadata.
@@ -70,7 +70,7 @@ pub struct IndexRecord {
     note: Option<Arc<Note>>,
     /// Overrides field resolution for exploded rows produced by
     /// [`super::QueryOutcome::flatten`].
-    flattened: Vec<(FieldPath, FieldValue)>,
+    flattened: Vec<(FieldPath, NoteFieldValue)>,
     /// Stores per-task fields set by [`crate::index::FileIndex::query_tasks`],
     /// or `None` for page-level records.
     task: Option<TaskInfo>,
@@ -184,45 +184,53 @@ impl IndexRecord {
     /// - Frontmatter fields take precedence over inline fields sharing the same
     ///   key (see [`Note::fields`]).
     /// - Well-formed paths without values (such as a missing key or a `task.*`
-    ///   accessor on a page-level record) resolve to [`FieldValue::Null`].
+    ///   accessor on a page-level record) resolve to [`NoteFieldValue::Null`].
     ///
     /// # Errors
     ///
     /// - [`QueryError::FieldPath`] if `path` cannot be parsed as a valid field
     ///   path.
     #[inline]
-    pub(crate) fn field(&self, path: &str) -> Result<FieldValue, QueryError> {
+    pub(crate) fn field(
+        &self,
+        path: &str,
+    ) -> Result<NoteFieldValue, QueryError> {
         Ok(self.resolve(&FieldPath::parse(path)?))
     }
 
     /// Resolves a pre-parsed field path against this record, applying
     /// overrides.
-    pub(super) fn resolve(&self, path: &FieldPath) -> FieldValue {
+    pub(super) fn resolve(&self, path: &FieldPath) -> NoteFieldValue {
         if let Some((_, value)) = self.flattened.iter().find(|(p, _)| p == path)
         {
             return value.clone();
         }
         match path {
             FieldPath::File(field) => field.resolve(&self.file),
-            FieldPath::Task(field) => self.task.as_ref().map_or(
-                FieldValue::Null,
-                |task| match field {
-                    TaskField::Completed => FieldValue::Bool(task.completed),
-                    TaskField::Text => FieldValue::String(task.text.clone()),
-                },
-            ),
-            FieldPath::Tags => FieldValue::List(
+            FieldPath::Task(field) => {
+                self.task.as_ref().map_or(NoteFieldValue::Null, |task| {
+                    match field {
+                        TaskField::Completed => {
+                            NoteFieldValue::Bool(task.completed)
+                        }
+                        TaskField::Text => {
+                            NoteFieldValue::String(task.text.clone())
+                        }
+                    }
+                })
+            }
+            FieldPath::Tags => NoteFieldValue::List(
                 self.note
                     .iter()
                     .flat_map(|note| note.tags())
-                    .map(|tag| FieldValue::String(tag.as_str().to_owned()))
+                    .map(|tag| NoteFieldValue::String(tag.as_str().to_owned()))
                     .collect(),
             ),
-            FieldPath::Inlinks => FieldValue::List(
+            FieldPath::Inlinks => NoteFieldValue::List(
                 self.inlinks
                     .iter()
                     .map(|linking_note| {
-                        FieldValue::String(
+                        NoteFieldValue::String(
                             linking_note.to_string_lossy().into_owned(),
                         )
                     })
@@ -235,7 +243,7 @@ impl IndexRecord {
                     note.fields()
                         .find(|field| field.key().is_match(key.as_str()))
                 })
-                .map_or(FieldValue::Null, |field| field.value().clone()),
+                .map_or(NoteFieldValue::Null, |field| field.value().clone()),
         }
     }
 
@@ -247,7 +255,7 @@ impl IndexRecord {
     pub(super) fn with_flattened(
         mut self,
         path: FieldPath,
-        value: FieldValue,
+        value: NoteFieldValue,
     ) -> Self {
         if let Some(entry) = self.flattened.iter_mut().find(|(p, _)| p == &path)
         {

@@ -33,7 +33,7 @@ use super::{
     },
     sort::fields_equal,
 };
-use crate::note::FieldValue;
+use crate::note::NoteFieldValue;
 
 /// A parsed filter expression AST.
 ///
@@ -120,11 +120,11 @@ enum FilterToken {
     #[regex("==|!=|>=|<=|>|<", |lex| CompareOp::try_from(lex.slice()))]
     Op(CompareOp),
     #[regex(r#""([^"\\]|\\.)*""#, string_callback)]
-    #[token("true", |_| FieldValue::Bool(true), priority = 3)]
-    #[token("false", |_| FieldValue::Bool(false), priority = 3)]
-    #[token("null", |_| FieldValue::Null, priority = 3)]
-    #[token("Null", |_| FieldValue::Null, priority = 3)]
-    Literal(FieldValue),
+    #[token("true", |_| NoteFieldValue::Bool(true), priority = 3)]
+    #[token("false", |_| NoteFieldValue::Bool(false), priority = 3)]
+    #[token("null", |_| NoteFieldValue::Null, priority = 3)]
+    #[token("Null", |_| NoteFieldValue::Null, priority = 3)]
+    Literal(NoteFieldValue),
     #[regex(r#"[^\s()",=!<>&|]+"#, |lex| lex.slice().to_owned())]
     Ident(String),
 }
@@ -160,7 +160,7 @@ fn tokenize_filter_expr(
         let token = match value {
             FilterToken::Ident(word) => match word.parse::<f64>() {
                 Ok(number) if number.is_finite() => Spanned::new(
-                    FilterToken::Literal(FieldValue::Number(number)),
+                    FilterToken::Literal(NoteFieldValue::Number(number)),
                     span,
                 ),
                 Ok(_) => {
@@ -180,12 +180,12 @@ fn tokenize_filter_expr(
 }
 
 /// Unescapes a lexed double-quoted string literal into a
-/// [`FieldValue::String`].
+/// [`NoteFieldValue::String`].
 #[expect(
     clippy::needless_pass_by_ref_mut,
     reason = "logos Callback trait requires &mut Lexer"
 )]
-fn string_callback(lex: &mut Lexer<'_, FilterToken>) -> FieldValue {
+fn string_callback(lex: &mut Lexer<'_, FilterToken>) -> NoteFieldValue {
     let inner = lex
         .slice()
         .strip_prefix('"')
@@ -202,7 +202,7 @@ fn string_callback(lex: &mut Lexer<'_, FilterToken>) -> FieldValue {
             value.push(ch);
         }
     }
-    FieldValue::String(value)
+    NoteFieldValue::String(value)
 }
 
 struct FilterGrammar;
@@ -271,7 +271,7 @@ impl LogicalGrammar for FilterGrammar {
 fn parse_literal_arg(
     input: &str,
     tokens: &mut TokenCursor<Spanned<FilterToken>>,
-) -> Result<FieldValue, QueryError> {
+) -> Result<NoteFieldValue, QueryError> {
     match tokens.next() {
         Some(Spanned {
             value: FilterToken::Literal(value),
@@ -371,7 +371,7 @@ pub(super) enum FilterFunction {
     /// - Other field kinds fall back to substring containment.
     Contains {
         field: FieldPath,
-        target: FieldValue,
+        target: NoteFieldValue,
     },
 }
 
@@ -385,7 +385,11 @@ impl FilterFunction {
     /// * `name` - Function name to match, case-insensitively.
     /// * `field` - Already-parsed field path for the built call.
     /// * `target` - Comparison or membership target for the built call.
-    fn build(name: &str, field: FieldPath, target: FieldValue) -> Option<Self> {
+    fn build(
+        name: &str,
+        field: FieldPath,
+        target: NoteFieldValue,
+    ) -> Option<Self> {
         if name.eq_ignore_ascii_case("contains") {
             Some(Self::Contains {
                 field,
@@ -412,9 +416,9 @@ impl FilterFunction {
 /// For list fields, matches by exact value or tag prefix (for example,
 /// `#book` matching `#book/fiction`). For other field kinds, falls back
 /// to substring containment on stringified values.
-fn eval_contains(field_val: &FieldValue, target: &FieldValue) -> bool {
+fn eval_contains(field_val: &NoteFieldValue, target: &NoteFieldValue) -> bool {
     match field_val {
-        FieldValue::List(items) => {
+        NoteFieldValue::List(items) => {
             items.iter().any(|item| tag_or_value_matches(item, target))
         }
         _ => match (field_val.as_str(), target.as_str()) {
@@ -430,7 +434,10 @@ fn eval_contains(field_val: &FieldValue, target: &FieldValue) -> bool {
 /// directly or transitively under `target` (for example, `#book/fiction`
 /// under `#book`). Both parameters must be string values for tag prefix
 /// matching; non-string pairs fall through to exact equality only.
-fn tag_or_value_matches(item: &FieldValue, target: &FieldValue) -> bool {
+fn tag_or_value_matches(
+    item: &NoteFieldValue,
+    target: &NoteFieldValue,
+) -> bool {
     if fields_equal(item, target) {
         return true;
     }

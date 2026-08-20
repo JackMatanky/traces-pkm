@@ -80,7 +80,7 @@ impl Frontmatter {
                   accessor itself is generically useful for any future \
                   frontmatter-key lookup"
     )]
-    pub(crate) fn get(&self, key: &FieldKey) -> Option<&FieldValue> {
+    pub(crate) fn get(&self, key: &FieldKey) -> Option<&NoteFieldValue> {
         self.fields
             .iter()
             .find(|field| field.key() == key)
@@ -137,7 +137,7 @@ impl From<&RawFrontmatter> for Frontmatter {
             let Ok(key) = FieldKey::try_from(k) else {
                 continue;
             };
-            fields.push(MetadataField::from_key(key, FieldValue::from(v)));
+            fields.push(MetadataField::from_key(key, NoteFieldValue::from(v)));
         }
         Self::new(fields)
     }
@@ -158,14 +158,14 @@ pub enum InlineFieldForm {
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct MetadataField {
     key: FieldKey,
-    value: FieldValue,
+    value: NoteFieldValue,
 }
 
 impl MetadataField {
     /// Creates a metadata field from an already-validated `key` and `value`.
     #[inline]
     #[must_use]
-    pub(crate) const fn from_key(key: FieldKey, value: FieldValue) -> Self {
+    pub(crate) const fn from_key(key: FieldKey, value: NoteFieldValue) -> Self {
         Self {
             key,
             value,
@@ -181,7 +181,7 @@ impl MetadataField {
     #[cfg_attr(not(test), expect(dead_code, reason = "used in tests"))]
     pub(crate) fn try_new(
         key: impl Into<String>,
-        value: FieldValue,
+        value: NoteFieldValue,
     ) -> Result<Self, FieldKeyError> {
         Ok(Self::from_key(FieldKey::try_new(key)?, value))
     }
@@ -196,7 +196,7 @@ impl MetadataField {
     /// Returns the field value.
     #[inline]
     #[must_use]
-    pub(crate) const fn value(&self) -> &FieldValue {
+    pub(crate) const fn value(&self) -> &NoteFieldValue {
         &self.value
     }
 }
@@ -215,7 +215,7 @@ impl InlineField {
     #[must_use]
     pub(crate) const fn from_key(
         key: FieldKey,
-        value: FieldValue,
+        value: NoteFieldValue,
         form: InlineFieldForm,
     ) -> Self {
         Self {
@@ -233,7 +233,7 @@ impl InlineField {
     #[cfg_attr(not(test), expect(dead_code, reason = "used in tests"))]
     pub(crate) fn try_new(
         key: impl Into<String>,
-        value: FieldValue,
+        value: NoteFieldValue,
         form: InlineFieldForm,
     ) -> Result<Self, FieldKeyError> {
         Ok(Self::from_key(FieldKey::try_new(key)?, value, form))
@@ -265,7 +265,7 @@ impl InlineField {
                       accessor symmetry with its embedded MetadataField"
         )
     )]
-    pub(crate) const fn value(&self) -> &FieldValue {
+    pub(crate) const fn value(&self) -> &NoteFieldValue {
         self.metadata.value()
     }
 
@@ -295,7 +295,7 @@ impl InlineField {
 
 /// A metadata value parsed from YAML frontmatter or inline field text.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
-pub enum FieldValue {
+pub enum NoteFieldValue {
     /// Empty or missing value.
     Null,
     /// Boolean value (`true` or `false`).
@@ -316,9 +316,10 @@ pub enum FieldValue {
     Object(IndexMap<String, Self>),
 }
 
-impl FieldValue {
-    /// Returns the inner text for [`FieldValue::String`], [`FieldValue::Date`],
-    /// and [`FieldValue::Duration`] variants, or `None` for any other kind.
+impl NoteFieldValue {
+    /// Returns the inner text for [`NoteFieldValue::String`],
+    /// [`NoteFieldValue::Date`], and [`NoteFieldValue::Duration`] variants,
+    /// or `None` for any other kind.
     #[inline]
     #[must_use]
     pub(crate) fn as_str(&self) -> Option<&str> {
@@ -332,9 +333,10 @@ impl FieldValue {
 /// Converts YAML scalars, sequences, mappings, and tags into metadata values.
 ///
 /// Plain strings are classified further: wikilink syntax becomes
-/// [`FieldValue::Link`], an ISO date prefix becomes [`FieldValue::Date`], and
-/// anything else stays [`FieldValue::String`].
-impl From<serde_yaml::Value> for FieldValue {
+/// [`NoteFieldValue::Link`], an ISO date prefix becomes
+/// [`NoteFieldValue::Date`], and anything else stays
+/// [`NoteFieldValue::String`].
+impl From<serde_yaml::Value> for NoteFieldValue {
     #[inline]
     fn from(val: serde_yaml::Value) -> Self {
         match val {
@@ -383,15 +385,16 @@ impl From<serde_yaml::Value> for FieldValue {
     }
 }
 
-/// Coerces a YAML scalar key into a nested [`FieldValue::Object`] payload key.
+/// Coerces a YAML scalar key into a nested [`NoteFieldValue::Object`] payload
+/// key.
 ///
 /// Returns `None` for YAML values that cannot stand as keys: `Null`,
 /// `Sequence`, `Mapping`, and `Tagged`. Callers skip those entries rather than
 /// failing the whole document.
 ///
 /// Top-level frontmatter keys use [`FieldKey`] instead; this helper is only for
-/// keys nested inside a [`FieldValue::Object`] payload, which are structure,
-/// not queryable field identity.
+/// keys nested inside a [`NoteFieldValue::Object`] payload, which are
+/// structure, not queryable field identity.
 fn yaml_payload_key_to_string(key: serde_yaml::Value) -> Option<String> {
     match key {
         serde_yaml::Value::String(s) => Some(s),
@@ -431,7 +434,10 @@ mod tests {
                 .iter()
                 .find(|f| f.key().is_canonical_match("title"))
                 .expect("title");
-            assert_eq!(title.value(), &FieldValue::String("Test".to_owned()));
+            assert_eq!(
+                title.value(),
+                &NoteFieldValue::String("Test".to_owned())
+            );
         }
 
         #[test]
@@ -471,23 +477,26 @@ mod tests {
             .expect("valid yaml");
 
             assert_eq!(
-                FieldValue::from(yaml),
-                FieldValue::Object(IndexMap::from_iter([
-                    ("bool".to_owned(), FieldValue::Bool(true)),
+                NoteFieldValue::from(yaml),
+                NoteFieldValue::Object(IndexMap::from_iter([
+                    ("bool".to_owned(), NoteFieldValue::Bool(true)),
                     (
                         "date".to_owned(),
-                        FieldValue::Date("2026-07-29".to_owned())
+                        NoteFieldValue::Date("2026-07-29".to_owned())
                     ),
                     (
                         "list".to_owned(),
-                        FieldValue::List(vec![
-                            FieldValue::Number(1.0),
-                            FieldValue::Number(2.0)
+                        NoteFieldValue::List(vec![
+                            NoteFieldValue::Number(1.0),
+                            NoteFieldValue::Number(2.0)
                         ]),
                     ),
-                    ("null_val".to_owned(), FieldValue::Null),
-                    ("num".to_owned(), FieldValue::Number(42.5)),
-                    ("str".to_owned(), FieldValue::String("hello".to_owned())),
+                    ("null_val".to_owned(), NoteFieldValue::Null),
+                    ("num".to_owned(), NoteFieldValue::Number(42.5)),
+                    (
+                        "str".to_owned(),
+                        NoteFieldValue::String("hello".to_owned())
+                    ),
                 ]))
             );
         }
@@ -502,10 +511,10 @@ mod tests {
             .expect("valid yaml");
 
             assert_eq!(
-                FieldValue::from(yaml),
-                FieldValue::Object(IndexMap::from_iter([(
+                NoteFieldValue::from(yaml),
+                NoteFieldValue::Object(IndexMap::from_iter([(
                     "link".to_owned(),
-                    FieldValue::Link(Link::new(
+                    NoteFieldValue::Link(Link::new(
                         "Project Alpha",
                         "Alpha",
                         LinkType::Wikilink
@@ -525,12 +534,12 @@ mod tests {
             .expect("valid yaml");
 
             assert_eq!(
-                FieldValue::from(yaml),
-                FieldValue::Object(IndexMap::from_iter([(
+                NoteFieldValue::from(yaml),
+                NoteFieldValue::Object(IndexMap::from_iter([(
                     "outer".to_owned(),
-                    FieldValue::Object(IndexMap::from_iter([(
+                    NoteFieldValue::Object(IndexMap::from_iter([(
                         "inner".to_owned(),
-                        FieldValue::String("value".to_owned())
+                        NoteFieldValue::String("value".to_owned())
                     )]))
                 )]))
             );
@@ -550,7 +559,7 @@ mod tests {
         fn stores_key_value_and_form(#[case] form: InlineFieldForm) {
             let field = InlineField::try_new(
                 "Author",
-                FieldValue::String("Jane Doe".to_owned()),
+                NoteFieldValue::String("Jane Doe".to_owned()),
                 form,
             )
             .expect("valid test field key");
@@ -559,7 +568,7 @@ mod tests {
             assert_eq!(field.key().canonical(), "author");
             assert_eq!(
                 field.value(),
-                &FieldValue::String("Jane Doe".to_owned())
+                &NoteFieldValue::String("Jane Doe".to_owned())
             );
             assert_eq!(field.form(), form);
         }
@@ -573,7 +582,7 @@ mod tests {
         ) {
             let field = InlineField::try_new(
                 "Author",
-                FieldValue::String("Jane Doe".to_owned()),
+                NoteFieldValue::String("Jane Doe".to_owned()),
                 form,
             )
             .expect("valid test field key");

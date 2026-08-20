@@ -192,7 +192,7 @@ impl<'a> Iterator for TaskIter<'a> {
 mod tests {
 
     use super::*;
-    use crate::note::{FieldValue, InlineFieldForm, LinkType, TaskStatus};
+    use crate::note::{InlineFieldForm, LinkType, NoteFieldValue, TaskStatus};
 
     mod constructor {
         use pretty_assertions::assert_eq;
@@ -238,7 +238,7 @@ mod tests {
         fn with_inline_fields_attaches_the_given_fields() {
             let field = InlineField::try_new(
                 "Status",
-                FieldValue::String("Draft".to_owned()),
+                NoteFieldValue::String("Draft".to_owned()),
                 InlineFieldForm::Body,
             )
             .expect("valid test field key");
@@ -275,13 +275,13 @@ mod tests {
             let frontmatter = Frontmatter::new(vec![
                 MetadataField::try_new(
                     "title",
-                    FieldValue::String("Note".to_owned()),
+                    NoteFieldValue::String("Note".to_owned()),
                 )
                 .expect("valid test field key"),
             ]);
             let inline_field = InlineField::try_new(
                 "Status",
-                FieldValue::String("Draft".to_owned()),
+                NoteFieldValue::String("Draft".to_owned()),
                 InlineFieldForm::Body,
             )
             .expect("valid test field key");

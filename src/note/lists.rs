@@ -230,11 +230,11 @@ mod tests {
 
     #[test]
     fn stores_fields_when_attached_with_with_fields() {
-        use crate::note::{FieldValue, InlineFieldForm};
+        use crate::note::{InlineFieldForm, NoteFieldValue};
 
         let field = InlineField::try_new(
             "priority",
-            FieldValue::String("high".to_owned()),
+            NoteFieldValue::String("high".to_owned()),
             InlineFieldForm::VisibleKey,
         )
         .expect("valid test field key");
