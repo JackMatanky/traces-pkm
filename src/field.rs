@@ -399,6 +399,14 @@ impl PartialEq for FieldKey {
     }
 }
 
+/// Hashes the canonical form, consistent with [`PartialEq`].
+impl std::hash::Hash for FieldKey {
+    #[inline]
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.canonical.hash(state);
+    }
+}
+
 impl TryFrom<String> for FieldKey {
     type Error = FieldKeyError;
 
@@ -1259,6 +1267,23 @@ mod tests {
             let key = FieldKey::try_new("Status").expect("valid key");
             let json = serde_json::to_string(&key).expect("serializes");
             assert_eq!(json, "\"Status\"");
+        }
+
+        #[test]
+        fn field_key_hash_matches_equality() {
+            use std::{
+                collections::hash_map::DefaultHasher,
+                hash::{Hash, Hasher},
+            };
+
+            let mut h1 = DefaultHasher::new();
+            let mut h2 = DefaultHasher::new();
+            let a = FieldKey::try_new("Status").unwrap();
+            let b = FieldKey::try_new("Priority").unwrap();
+            a.hash(&mut h1);
+            b.hash(&mut h2);
+            // canonical forms differ, so hashes should differ
+            assert_ne!(h1.finish(), h2.finish());
         }
     }
 
