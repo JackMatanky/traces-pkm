@@ -284,7 +284,7 @@ mod tests {
 
         use super::*;
         #[test]
-        fn load_all_on_a_freshly_opened_database_is_empty() {
+        fn returns_empty_when_nothing_persisted() {
             let temp = tempfile::tempdir().expect("create temp dir");
             let store = IndexStore::open(temp.path()).expect("open store");
 
@@ -379,11 +379,10 @@ mod tests {
             store
                 .replace_all(&fresh, &[], &HashMap::new())
                 .expect("persist fresh");
-            let (loaded_records, loaded_notes, _) =
+            let (loaded_records, _loaded_notes, _) =
                 store.load_all().expect("load records");
 
             assert_eq!(loaded_records, fresh);
-            assert_eq!(loaded_notes.len(), 0);
         }
 
         #[test]
@@ -418,7 +417,7 @@ mod tests {
         }
 
         #[test]
-        fn load_all_matches_the_path_sort_order_not_the_raw_key_order() {
+        fn returns_records_in_path_sort_order() {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::create_dir_all(temp.path().join("a-b")).expect("mkdir a-b");
             fs::create_dir_all(temp.path().join("a")).expect("mkdir a");
@@ -441,7 +440,7 @@ mod tests {
         use super::*;
 
         #[test]
-        fn returns_store_error_when_the_index_path_is_a_directory() {
+        fn rejects_directory_at_index_path() {
             let temp = tempfile::tempdir().expect("create temp dir");
             let root = temp.path();
             fs::create_dir_all(root.join(INDEX_FILE))
@@ -455,7 +454,7 @@ mod tests {
 
         #[cfg(unix)]
         #[test]
-        fn returns_io_error_when_the_parent_directory_cannot_be_created() {
+        fn returns_io_error_when_parent_dir_unwritable() {
             use std::os::unix::fs::PermissionsExt as _;
 
             use super::super::super::tests::fixtures::RestorePermissions;

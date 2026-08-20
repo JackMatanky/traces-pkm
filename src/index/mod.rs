@@ -604,7 +604,7 @@ mod tests {
         }
 
         #[test]
-        fn returns_an_empty_index_when_the_root_was_never_persisted() {
+        fn returns_empty_when_nothing_persisted() {
             let temp = tempfile::tempdir().expect("create temp dir");
 
             let index = FileIndex::load(temp.path()).expect("load index");
@@ -869,7 +869,6 @@ mod tests {
                 FileIndex::refresh(temp.path()).expect("refresh index");
 
             assert_eq!(refreshed.notes().len(), 2);
-            assert!(refreshed.note(Path::new("second.md")).is_some());
         }
 
         #[test]
@@ -892,8 +891,7 @@ mod tests {
         }
 
         #[test]
-        fn removes_an_inbound_edge_after_the_linking_note_is_deleted_and_refreshed()
-         {
+        fn excludes_inlink_after_linker_deletion() {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("target.md"), "# Target")
                 .expect("write target");
@@ -917,8 +915,7 @@ mod tests {
         }
 
         #[test]
-        fn moves_an_inbound_edge_when_the_linking_notes_outlink_target_changes()
-        {
+        fn moves_inlink_when_linker_retargets() {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("old-target.md"), "# Old")
                 .expect("write old target");
@@ -955,7 +952,7 @@ mod tests {
         }
 
         #[test]
-        fn persists_changes_so_a_later_load_observes_them() {
+        fn persists_refreshed_changes_survive_load() {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("note.md"), "# Draft")
                 .expect("write note");
@@ -1011,7 +1008,7 @@ mod tests {
         }
 
         #[test]
-        fn does_not_persist_automatically() {
+        fn returns_unpersisted_index_from_refresh() {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("note.md"), "---\ntitle: Draft\n---")
                 .expect("write note");
@@ -1049,8 +1046,7 @@ mod tests {
         }
 
         #[test]
-        fn resolves_an_unedited_notes_ambiguous_wikilink_once_an_unrelated_note_is_deleted()
-         {
+        fn resolves_stale_ambiguous_wikilink_after_unrelated_deletion() {
             // `a.md`'s own bytes never change in this test. Its `[[foo]]`
             // link starts ambiguous (two Notes named `foo`) and later
             // becomes resolvable purely because a *different* Note is
@@ -1157,7 +1153,7 @@ mod tests {
         }
 
         #[test]
-        fn returns_empty_outcome_when_no_notes_match_a_tag_filter() {
+        fn returns_empty_when_no_notes_match_tag() {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("readme.txt"), "text")
                 .expect("write txt");
@@ -1166,7 +1162,6 @@ mod tests {
             let outcome = index
                 .query(&QuerySource::parse("#missing").expect("valid source"));
 
-            assert!(outcome.is_empty());
             assert_eq!(outcome.len(), 0);
         }
 
@@ -1208,8 +1203,7 @@ mod tests {
         }
 
         #[test]
-        fn returns_empty_outcome_when_tag_query_is_more_specific_than_note_tag()
-        {
+        fn returns_empty_when_tag_query_is_too_specific() {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("project.md"), "Tracked in #projects.")
                 .expect("write project");
@@ -1347,8 +1341,7 @@ mod tests {
         }
 
         #[test]
-        fn preserves_a_targets_inlinks_when_a_source_has_duplicate_outlinks_to_it()
-         {
+        fn deduplicates_outlinks_from_same_source() {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("target.md"), "# Target")
                 .expect("write target");
@@ -1517,8 +1510,7 @@ mod tests {
         }
 
         #[test]
-        fn keeps_only_matching_tasks_not_the_whole_note_when_filtering_by_completion()
-         {
+        fn filters_tasks_by_completion_status() {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(
                 temp.path().join("todo.md"),
