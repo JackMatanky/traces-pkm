@@ -27,6 +27,7 @@
 //! [`store`]: mod@store
 //! [`inlinks`]: mod@inlinks
 
+mod builder;
 mod error;
 mod inlinks;
 mod scan;
@@ -35,7 +36,7 @@ mod store;
 use std::{fs, path::Path};
 
 pub use error::FileIndexError;
-use inlinks::{InlinkMap, derive_inlinks};
+use inlinks::InlinkMap;
 use store::IndexStore;
 
 pub(crate) use crate::file::FileFormat;
@@ -81,22 +82,9 @@ impl FileIndex {
     ///   metadata cannot be inspected, or a markdown file cannot be read.
     #[inline]
     pub fn build(root: &Path) -> Result<Self, FileIndexError> {
-        let records = scan::scan_root(root)?;
-        let mut notes = Vec::new();
-
-        for record in &records {
-            if record.format() == FileFormat::Note {
-                notes.push(Self::parse_note_file(root, record)?);
-            }
-        }
-        notes.sort_by(|a, b| a.path().cmp(b.path()));
-        let inlinks = derive_inlinks(&notes);
-
-        Ok(Self {
-            records,
-            notes,
-            inlinks,
-        })
+        Ok(builder::IndexBuilder::from_scan(root)?
+            .sort_and_derive_inlinks()
+            .build())
     }
 
     /// Refreshes the persisted index for `root` against current filesystem
@@ -130,29 +118,10 @@ impl FileIndex {
     #[inline]
     pub fn refresh(root: &Path) -> Result<Self, FileIndexError> {
         let previous = Self::load(root)?;
-        let records = scan::scan_root(root)?;
-        let mut notes = Vec::new();
-
-        for record in &records {
-            if record.format() != FileFormat::Note {
-                continue;
-            }
-            notes.push(Self::reconcile_note(&previous, root, record)?);
-        }
-        notes.sort_by(|a, b| a.path().cmp(b.path()));
-
-        let dirty = records != previous.records || notes != previous.notes;
-        let inlinks = if dirty {
-            derive_inlinks(&notes)
-        } else {
-            previous.inlinks
-        };
-
-        Ok(Self {
-            records,
-            notes,
-            inlinks,
-        })
+        Ok(builder::IndexBuilder::from_scan(root)?
+            .reuse_unchanged(&previous, root)
+            .sort_and_derive_inlinks()
+            .build())
     }
 
     /// Persists this index to `root`, replacing any existing index contents.
@@ -304,6 +273,13 @@ impl FileIndex {
     /// searches rather than scanning.
     #[inline]
     #[must_use]
+    #[cfg_attr(
+        not(any(test, feature = "test-utils")),
+        expect(
+            dead_code,
+            reason = "used in query module tests for direct record inspection"
+        )
+    )]
     pub(crate) fn record(&self, path: &Path) -> Option<&FileRecord> {
         self.records
             .binary_search_by(|r| r.path().cmp(path))
@@ -317,22 +293,6 @@ impl FileIndex {
     /// inlinks without exposing `FileIndex`'s internal layout.
     pub(crate) fn into_parts(self) -> (Vec<FileRecord>, Vec<Note>, InlinkMap) {
         (self.records, self.notes, self.inlinks)
-    }
-
-    /// Reuses a persisted [`Note`] when the file record is unchanged,
-    /// or re-parses from disk when it has changed.
-    fn reconcile_note(
-        previous: &FileIndex,
-        root: &Path,
-        record: &FileRecord,
-    ) -> Result<Note, FileIndexError> {
-        let unchanged =
-            previous.record(record.path()).is_some_and(|prior| prior == record);
-        match unchanged.then(|| previous.note(record.path()).cloned()).flatten()
-        {
-            Some(note) => Ok(note),
-            None => Self::parse_note_file(root, record),
-        }
     }
 
     /// Reads and parses the markdown file for `record` into a [`Note`].
@@ -708,27 +668,73 @@ mod tests {
         }
     }
 
-    mod reconcile_note {
+    mod builder {
         use pretty_assertions::assert_eq;
 
-        use super::*;
+        use super::{super::builder::IndexBuilder, *};
 
         #[test]
-        fn reuses_a_note_when_the_record_is_unchanged() {
+        fn from_scan_produces_sorted_records() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("b.md"), "# B").expect("write b");
+            fs::write(temp.path().join("a.md"), "# A").expect("write a");
+
+            let index = IndexBuilder::from_scan(temp.path())
+                .expect("scan")
+                .sort_and_derive_inlinks()
+                .build();
+
+            assert_eq!(
+                index
+                    .records()
+                    .iter()
+                    .map(FileRecord::path)
+                    .collect::<Vec<_>>(),
+                [Path::new("a.md"), Path::new("b.md")]
+            );
+        }
+
+        #[test]
+        fn from_scan_parses_markdown_notes() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("note.md"), "- [ ] task")
+                .expect("write note");
+            fs::write(temp.path().join("readme.txt"), "text")
+                .expect("write txt");
+
+            let index = IndexBuilder::from_scan(temp.path())
+                .expect("scan")
+                .sort_and_derive_inlinks()
+                .build();
+
+            assert_eq!(index.records().len(), 2);
+            assert_eq!(index.notes().len(), 1);
+        }
+
+        #[test]
+        fn reuse_unchanged_skips_reparsing() {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("note.md"), "- [ ] task")
                 .expect("write note");
             let built = FileIndex::build(temp.path()).expect("build index");
 
-            let record = built.record(Path::new("note.md")).unwrap();
-            let note = FileIndex::reconcile_note(&built, temp.path(), record)
-                .expect("reconcile");
+            let index = IndexBuilder::from_scan(temp.path())
+                .expect("scan")
+                .reuse_unchanged(&built, temp.path())
+                .sort_and_derive_inlinks()
+                .build();
 
-            assert_eq!(note.tasks().count(), 1);
+            assert_eq!(
+                index
+                    .note(Path::new("note.md"))
+                    .map(Note::tasks)
+                    .map(Iterator::count),
+                Some(1)
+            );
         }
 
         #[test]
-        fn reparses_when_the_record_changed() {
+        fn reuse_unchanged_reparses_changed_notes() {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("note.md"), "- [ ] task")
                 .expect("write note");
@@ -736,16 +742,39 @@ mod tests {
 
             fs::write(temp.path().join("note.md"), "- [ ] task\n- [x] done")
                 .expect("rewrite note");
-            let fresh_records = scan::scan_root(temp.path()).expect("scan");
-            let record = fresh_records
-                .iter()
-                .find(|r| r.path() == Path::new("note.md"))
-                .unwrap();
 
-            let note = FileIndex::reconcile_note(&built, temp.path(), record)
-                .expect("reconcile");
+            let index = IndexBuilder::from_scan(temp.path())
+                .expect("scan")
+                .reuse_unchanged(&built, temp.path())
+                .sort_and_derive_inlinks()
+                .build();
 
-            assert_eq!(note.tasks().count(), 2);
+            assert_eq!(
+                index
+                    .note(Path::new("note.md"))
+                    .map(Note::tasks)
+                    .map(Iterator::count),
+                Some(2)
+            );
+        }
+
+        #[test]
+        fn derive_inlinks_computes_edges() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("target.md"), "# Target")
+                .expect("write target");
+            fs::write(temp.path().join("linker.md"), "[[target]]")
+                .expect("write linker");
+
+            let index = IndexBuilder::from_scan(temp.path())
+                .expect("scan")
+                .sort_and_derive_inlinks()
+                .build();
+
+            assert_eq!(
+                index.note(Path::new("target.md")).map(|n| n.path()),
+                Some(Path::new("target.md"))
+            );
         }
     }
 
