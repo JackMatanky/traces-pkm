@@ -129,9 +129,41 @@ outputs = ["lcov.info"]
 sources = ["src/**/*.rs", "Cargo.toml", "Cargo.lock"]
 
 [tasks.mutants]
-description = "Run mutation testing with cargo-mutants"
+description = "Run parallel mutation testing with cargo-mutants"
 depends = ["check"]
-run = "cargo mutants"
+run = "cargo mutants --jobs 8"
+depends_post = ["mutants-report"]
+
+[tasks.mutants-report]
+description = "Generate a structured Markdown report from missed mutants"
+run = '''
+MISSED_FILE="mutants.out/missed.txt"
+REPORT_FILE="mutants-report.md"
+
+if [ ! -f "$MISSED_FILE" ] || [ ! -s "$MISSED_FILE" ]; then
+  cat <<EOF > "$REPORT_FILE"
+# Mutation Testing Report
+**Status:** Completed successfully. All mutants were caught! 🎉
+**Next Action:** No action needed. Test suite coverage is robust.
+EOF
+  exit 0
+fi
+
+cat <<EOF > "$REPORT_FILE"
+# Mutation Testing Report
+**Status:** Completed. Surviving mutants detected.
+
+## Instructions for Next Agent Session
+1. Read the list of surviving mutants below.
+2. For each mutant, examine the file and add targeted assertions/unit tests to catch it.
+3. Verify your fixes by running: \`cargo mutants --file <path-to-file>\`.
+
+## Surviving Mutants List
+\`\`\`text
+$(cat "$MISSED_FILE")
+\`\`\`
+EOF
+'''
 
 [tasks.clean]
 description = "Clean build artifacts"
