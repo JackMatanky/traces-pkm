@@ -7,10 +7,30 @@
         "mcp",
         "serve"
       ],
-      "cwd": "/Users/jack/Documents/41_personal/traces-pkm/",
       "enabled": true,
       "environment": {
         "ADR_DIRECTORY": "docs/adr/"
+      },
+      "type": "local"
+    },
+    "hk": {
+      "command": [
+        "hk",
+        "mcp",
+        "--root",
+        "."
+      ],
+      "enabled": true,
+      "type": "local"
+    },
+    "mise": {
+      "command": [
+        "mise",
+        "mcp"
+      ],
+      "enabled": true,
+      "environment": {
+        "MISE_EXPERIMENTAL": "1"
       },
       "type": "local"
     },
@@ -21,18 +41,6 @@
       "enabled": true,
       "environment": {
         "RUST_DOCS_MCP_CACHE_DIR": ".rust-docs/cache/"
-      },
-      "type": "local"
-    },
-    "mise": {
-      "command": [
-        "mise",
-        "mcp"
-      ],
-      "cwd": "/Users/jack/Documents/41_personal/traces-pkm/",
-      "enabled": true,
-      "environment": {
-        "MISE_EXPERIMENTAL": "1"
       },
       "type": "local"
     }
