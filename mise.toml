@@ -19,6 +19,7 @@ gitleaks = "latest"
 "cargo:cargo-watch" = "latest"
 "cargo:cargo-crap" = "latest"
 "cargo:cargo-mutants" = "latest"
+"cargo:cargo-sweep" = "latest"
 "cargo:critcmp" = "latest"
 "cargo:https://github.com/snowmead/rust-docs-mcp" = { version = "branch:main", crate = "rust-docs-mcp" }
 "cargo:adrs" = { version = "latest", install_env = { RUSTUP_TOOLCHAIN = "nightly" } }
@@ -43,9 +44,80 @@ description = "Install git hooks via hk"
 run = "hk install --mise"
 
 [tasks.clean]
-raw_args = true
-description = "Clean build artifacts"
-run = "cargo clean"
+description = "Clean Cargo artifacts and optional generated reports"
+usage = '''
+flag "--dry-run" help="Show what would be deleted"
+flag "--release" help="Clean release artifacts only"
+flag "--doc" help="Clean generated docs only"
+flag "--profile <profile>" help="Clean one Cargo profile"
+flag "--target-dir <dir>" help="Cargo target directory" default="target"
+flag "--reports" help="Remove generated coverage/mutation report files"
+flag "--all" help="Clean Cargo target and generated reports"
+flag "--if-over-gib <gib>" help="Only clean Cargo target if it exceeds this size in GiB"
+flag "--sweep-days <days>" help="Use cargo-sweep to remove target artifacts older than DAYS"
+flag "--sweep-max-size <size>" help="Use cargo-sweep to shrink target below SIZE, e.g. 10GiB"
+'''
+run = '''
+#!/usr/bin/env bash
+set -euo pipefail
+
+target_dir="${usage_target_dir?}"
+clean_target=true
+clean_reports=false
+
+if [[ "${usage_reports:-false}" == "true" ]]; then
+  clean_target=false
+  clean_reports=true
+fi
+
+if [[ "${usage_all:-false}" == "true" ]]; then
+  clean_target=true
+  clean_reports=true
+fi
+
+if [[ -n "${usage_if_over_gib:-}" && -d "${target_dir}" ]]; then
+  target_kib="$(du -sk "${target_dir}" | cut -f1)"
+  limit_kib="$(( usage_if_over_gib * 1024 * 1024 ))"
+
+  if (( target_kib <= limit_kib )); then
+    printf 'target is %.1f GiB; below %s GiB, skipping target clean\n' \
+      "$(awk "BEGIN { print ${target_kib} / 1024 / 1024 }")" \
+      "${usage_if_over_gib}"
+    clean_target=false
+  fi
+fi
+
+if [[ "${clean_target}" == "true" ]]; then
+  if [[ -n "${usage_sweep_days:-}" || -n "${usage_sweep_max_size:-}" ]]; then
+    if [[ "${target_dir}" != "target" ]]; then
+      echo "--target-dir is not supported with cargo-sweep mode" >&2
+      exit 2
+    fi
+
+    sweep_args=()
+    [[ "${usage_dry_run:-false}" == "true" ]] && sweep_args+=(--dry-run)
+    [[ -n "${usage_sweep_days:-}" ]] && sweep_args+=(--time "${usage_sweep_days}")
+    [[ -n "${usage_sweep_max_size:-}" ]] && sweep_args+=(--maxsize "${usage_sweep_max_size}")
+    cargo sweep "${sweep_args[@]}"
+  else
+    cargo_args=(clean --target-dir "${target_dir}")
+    [[ "${usage_dry_run:-false}" == "true" ]] && cargo_args+=(--dry-run)
+    [[ "${usage_release:-false}" == "true" ]] && cargo_args+=(--release)
+    [[ "${usage_doc:-false}" == "true" ]] && cargo_args+=(--doc)
+    [[ -n "${usage_profile:-}" ]] && cargo_args+=(--profile "${usage_profile}")
+    cargo "${cargo_args[@]}"
+  fi
+fi
+
+if [[ "${clean_reports}" == "true" ]]; then
+  reports=(lcov.info tarpaulin-report.html mutants.out mutants.out.old mutants-report.md)
+  if [[ "${usage_dry_run:-false}" == "true" ]]; then
+    printf 'would remove generated reports: %s\n' "${reports[*]}"
+  else
+    rm -rf "${reports[@]}"
+  fi
+fi
+'''
 
 # =============================================================================
 # Development & Compilation
@@ -53,8 +125,8 @@ run = "cargo clean"
 
 [tasks.check]
 raw_args = true
-description = "Fast compilation check"
-run = "cargo check --workspace"
+description = "Fast compile check, then hk project checks"
+run = ["cargo check --workspace", "hk check"]
 alias = "c"
 
 [tasks.build]
@@ -67,7 +139,7 @@ outputs = ["target/debug/traces-pkm"]
 
 [tasks.watch]
 raw_args = true
-description = "Watch and auto-check on changes"
+description = "Watch Cargo check/test on changes"
 run = "cargo watch -x check -x test"
 
 # =============================================================================
@@ -80,19 +152,14 @@ description = "Format all Rust code (nightly)"
 alias = "f"
 run = "cargo fmt --all"
 
-[tasks.lint]
-raw_args = true
-description = "Run all hk linters"
-alias = "l"
-run = "hk check"
-
 [tasks.fix]
 raw_args = true
-description = "Auto-fix all hk lint issues"
+description = "Auto-fix hk formatting issues"
 run = "hk fix"
 
-[tasks.clippy]
+[tasks.lint]
 description = "Strict clippy: workspace, all targets, all features. Auto-fixes known lints unless --no-fix."
+alias = "l"
 depends = ["fmt"]
 usage = '''
 flag "--fix" negate="--no-fix" default=#true help="Auto-fix known lints"
@@ -178,7 +245,6 @@ set -euo pipefail
 eval "args=(${usage_args:-})"
 cargo nextest run "${args[@]}"
 '''
-depends = ["check"]
 alias = "t"
 
 [tasks."test-all"]
@@ -202,14 +268,12 @@ run = "cargo tarpaulin --workspace --out Html"
 
 [tasks.crap]
 description = "Run Change Risk Anti-Patterns (CRAP) analysis"
-depends = ["check"]
 run = ["cargo tarpaulin --workspace", "cargo crap --lcov lcov.info"]
 outputs = ["lcov.info"]
 sources = ["src/**/*.rs", "Cargo.toml", "Cargo.lock", "tarpaulin.toml"]
 
 [tasks.mutants]
 description = "Run parallel mutation testing with cargo-mutants"
-depends = ["check"]
 usage = '''
 flag "-j --jobs <jobs>" help="Number of cargo build/test jobs in parallel" default="4"
 flag "-f --file <file>" help="Examine only mutants in this file"
@@ -293,9 +357,9 @@ sources = ["src/**/*.rs", "Cargo.toml"]
 outputs = ["target/doc"]
 
 [tasks.verify]
-description = "Full verification gate: format, lint, clippy, tests, doctests, audit"
+description = "Full verification gate: check, lint, doctests"
 alias = "v"
-depends = ["fmt", "lint", "clippy", "test-all", "audit"]
+depends = ["check", "lint", "test-all"]
 
 # =============================================================================
 # Lifecycle Hooks

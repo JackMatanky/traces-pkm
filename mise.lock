@@ -20,6 +20,10 @@ backend = "cargo:cargo-mutants"
 version = "0.9.143"
 backend = "cargo:cargo-nextest"
 
+[[tools."cargo:cargo-sweep"]]
+version = "0.8.0"
+backend = "cargo:cargo-sweep"
+
 [[tools."cargo:cargo-tarpaulin"]]
 version = "0.37.2"
 backend = "cargo:cargo-tarpaulin"
