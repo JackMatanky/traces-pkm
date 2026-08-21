@@ -28,6 +28,7 @@ gitleaks = "latest"
 # Pin resolved "latest" tool versions (hk, taplo, gitleaks, cargo:* subcommands)
 # into mise.lock so installs are reproducible across machines and CI.
 lockfile = true
+task.disable_spec_from_run_scripts = true
 
 [env]
 HK_MISE = "1"
@@ -42,6 +43,7 @@ description = "Install git hooks via hk"
 run = "hk install --mise"
 
 [tasks.clean]
+raw_args = true
 description = "Clean build artifacts"
 run = "cargo clean"
 
@@ -50,11 +52,13 @@ run = "cargo clean"
 # =============================================================================
 
 [tasks.check]
+raw_args = true
 description = "Fast compilation check"
 run = "cargo check --workspace"
 alias = "c"
 
 [tasks.build]
+raw_args = true
 description = "Debug build"
 run = "cargo build"
 alias = "b"
@@ -62,6 +66,7 @@ sources = ["src/**/*.rs", "Cargo.toml", "Cargo.lock"]
 outputs = ["target/debug/traces-pkm"]
 
 [tasks.watch]
+raw_args = true
 description = "Watch and auto-check on changes"
 run = "cargo watch -x check -x test"
 
@@ -70,16 +75,19 @@ run = "cargo watch -x check -x test"
 # =============================================================================
 
 [tasks.fmt]
+raw_args = true
 description = "Format all Rust code (nightly)"
 alias = "f"
 run = "cargo fmt --all"
 
 [tasks.lint]
+raw_args = true
 description = "Run all hk linters"
 alias = "l"
 run = "hk check"
 
 [tasks.fix]
+raw_args = true
 description = "Auto-fix all hk lint issues"
 run = "hk fix"
 
@@ -87,9 +95,9 @@ run = "hk fix"
 description = "Strict clippy: workspace, all targets, all features. Auto-fixes known lints unless --no-fix."
 depends = ["fmt"]
 usage = '''
-flag "--no-fix" help="Skip auto-fix for known lints"
-flag "--no-deny-warnings" help="Keep Clippy warnings as warnings instead of passing -D warnings"
-arg "[lints]" env="CLIPPY_FIX_LINTS" help="Fix list (comma-separated)" default="redundant_clone,needless_collect,or_fun_call,redundant_field_names,significant_drop_in_scrutinee,use_self,bool_assert_comparison,uninlined_format_args,needless_borrow,useless_conversion,manual_let_else,redundant_closure_for_method_calls"
+flag "--fix" negate="--no-fix" default=#true help="Auto-fix known lints"
+flag "--deny-warnings" negate="--no-deny-warnings" default=#true help="Treat Clippy warnings as errors"
+flag "--fix-lints <lints>" env="CLIPPY_FIX_LINTS" help="Override fix lint list (comma-separated)"
 '''
 run = '''
 #!/usr/bin/env bash
@@ -97,18 +105,40 @@ set -euo pipefail
 
 declare -a cargo_args=(--workspace --all-targets --all-features)
 declare -a clippy_args=()
-
-if [[ "${usage_no_deny_warnings:-false}" != "true" ]]; then
+declare -a default_fix_lints=(
+  redundant_clone
+  needless_collect
+  or_fun_call
+  redundant_field_names
+  significant_drop_in_scrutinee
+  use_self
+  bool_assert_comparison
+  uninlined_format_args
+  needless_borrow
+  useless_conversion
+  manual_let_else
+  redundant_closure_for_method_calls
+  as_pointer_underscore
+  as_underscore
+  dbg_macro
+  search_is_some
+  str_to_string
+  trait_duplication_in_bounds
+)
+if [[ "${usage_deny_warnings?}" == "true" ]]; then
   clippy_args+=(-D warnings)
 fi
 
-if [[ "${usage_no_fix:-false}" != "true" ]]; then
+if [[ "${usage_fix?}" == "true" ]]; then
   cargo_args+=(--fix --allow-dirty --allow-staged)
 
-  IFS=',' read -ra lints <<< "${usage_lints}"
+  declare -a fix_lints=("${default_fix_lints[@]}")
+  if [[ -n "${usage_fix_lints:-}" ]]; then
+    IFS=',' read -ra fix_lints <<< "${usage_fix_lints}"
+  fi
 
-  for lint in "${lints[@]}"; do
-    clippy_args+=(-W "clippy::${lint}")
+  for lint in "${fix_lints[@]}"; do
+    [[ -n "${lint}" ]] && clippy_args+=(-W "clippy::${lint}")
   done
 fi
 
@@ -116,6 +146,7 @@ cargo clippy "${cargo_args[@]}" -- "${clippy_args[@]}"
 '''
 
 [tasks.audit]
+raw_args = true
 description = "Run cargo deny audit"
 run = "cargo deny check"
 
@@ -123,22 +154,40 @@ run = "cargo deny check"
 # Testing & Benchmarking
 # =============================================================================
 
-# Scoping: extra args pass straight through to nextest (no usage spec = unvalidated passthrough).
-#   mise run test -- <name-substring>     filter by test/module path, e.g. index::query
-#   mise run test -- --test <file>        run one integration test file, e.g. init_cli (tests/init_cli.rs)
-#   mise run test -- --bin <name> / --lib run one binary's tests / library unit tests only
-#   mise run test -- -E '<filterset>'     full nextest filterset DSL (https://nexte.st/docs/filtersets)
 [tasks.test]
-description = "Run tests with nextest (pass -- <nextest args> to scope by name, module, file, or filterset)"
-run = "cargo nextest run"
+description = "Run tests with nextest"
+usage = '''
+arg "[args]" var=#true double_dash="required" {
+  help "Arguments forwarded to cargo nextest run"
+  long_help """
+  Arguments after `--` are forwarded to `cargo nextest run`.
+
+  Examples:
+    mise run test -- index::query
+    mise run test -- --test init_cli
+    mise run test -- --bin traces-pkm
+    mise run test -- --lib
+    mise run test -- -E 'test(/^index::/)'
+  """
+}
+'''
+run = '''
+#!/usr/bin/env bash
+set -euo pipefail
+
+eval "args=(${usage_args:-})"
+cargo nextest run "${args[@]}"
+'''
 depends = ["check"]
 alias = "t"
 
 [tasks."test-all"]
+raw_args = true
 description = "Run all tests including doc-tests (test-utils feature enabled so tests/integration.rs and tests/e2e.rs exercise the gated re-export surface)"
 run = "cargo test --workspace --features test-utils"
 
 [tasks.bench]
+raw_args = true
 description = "Run Criterion benchmarks"
 run = "cargo bench --features test-utils"
 
@@ -147,6 +196,7 @@ run = "cargo bench --features test-utils"
 # =============================================================================
 
 [tasks.coverage]
+raw_args = true
 description = "Code coverage with tarpaulin"
 run = "cargo tarpaulin --workspace --out Html"
 
@@ -227,6 +277,7 @@ EOF
 # =============================================================================
 
 [tasks.release]
+raw_args = true
 description = "Release build"
 run = "cargo build --release"
 alias = "r"
@@ -234,6 +285,7 @@ sources = ["src/**/*.rs", "Cargo.toml", "Cargo.lock"]
 outputs = ["target/release/traces-pkm"]
 
 [tasks.doc]
+raw_args = true
 description = "Build documentation (warnings as errors)"
 run = "cargo doc --no-deps"
 env = { RUSTDOCFLAGS = "-D warnings" }
