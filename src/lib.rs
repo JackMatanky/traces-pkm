@@ -38,8 +38,8 @@
 //!
 //! - `Config`, `ConfigService`, `TrustRequest` - project configuration and
 //!   trust verification.
-//! - `Note`, `Frontmatter`, `FieldValue`, `InlineField`, `Link` - parsed note
-//!   data structures.
+//! - `Note`, `Frontmatter`, `NoteFieldValue`, `Link` - parsed note data
+//!   structures.
 //! - `FileIndex`, `QueryOutcome` - persistent index and query execution.
 //! - `TemplateService`, `CommitPolicy`, `WriteMode` - template rendering and
 //!   write operations.
@@ -90,9 +90,8 @@ pub(crate) use hash::{Blake3FileHash, Blake3PathHash};
 pub use index::{FileIndex, FileIndexError, IndexerService};
 #[cfg(any(test, feature = "test-utils"))]
 pub use note::{
-    FieldValue, Frontmatter, InlineField, InlineFieldForm, Link, LinkTarget,
-    LinkType, List, ListItem, Note, RawFrontmatter, Tag, TaskStatus,
-    parse_markdown,
+    Frontmatter, Link, LinkTarget, LinkType, List, ListItem, Note,
+    NoteFieldValue, RawFrontmatter, Tag, TaskStatus, parse_markdown,
 };
 #[cfg(any(test, feature = "test-utils"))]
 pub use query::{QueryRecord, QueryRecordSet, QueryService, QuerySource};

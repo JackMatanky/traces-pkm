@@ -42,7 +42,7 @@ use super::{
 use crate::{
     file::FileRecord,
     index::InlinkMap,
-    note::{FieldValue, Note},
+    note::{Note, NoteFieldValue},
 };
 
 /// A query row pairing a [`FileRecord`] with parsed [`Note`] metadata.
@@ -76,7 +76,7 @@ pub struct QueryRecord {
     note: Option<Arc<Note>>,
     /// Overrides field resolution for exploded rows produced by
     /// [`QueryRecordSet::flatten`].
-    flattened: Vec<(FieldPath, FieldValue)>,
+    flattened: Vec<(FieldPath, NoteFieldValue)>,
     /// Stores per-task fields set by [`super::QueryService::query_tasks`], or
     /// `None` for page-level records.
     task: Option<TaskInfo>,
@@ -204,45 +204,53 @@ impl QueryRecord {
     /// - Frontmatter fields take precedence over inline fields sharing the same
     ///   key (see [`Note::fields`]).
     /// - Well-formed paths without values (such as a missing key or a `task.*`
-    ///   accessor on a page-level record) resolve to [`FieldValue::Null`].
+    ///   accessor on a page-level record) resolve to [`NoteFieldValue::Null`].
     ///
     /// # Errors
     ///
     /// - [`QueryError::FieldPath`] if `path` cannot be parsed as a valid field
     ///   path.
     #[inline]
-    pub(crate) fn field(&self, path: &str) -> Result<FieldValue, QueryError> {
+    pub(crate) fn field(
+        &self,
+        path: &str,
+    ) -> Result<NoteFieldValue, QueryError> {
         Ok(self.resolve(&FieldPath::parse(path)?))
     }
 
     /// Resolves a pre-parsed field path against this record, applying
     /// overrides.
-    pub(super) fn resolve(&self, path: &FieldPath) -> FieldValue {
+    pub(super) fn resolve(&self, path: &FieldPath) -> NoteFieldValue {
         if let Some((_, value)) = self.flattened.iter().find(|(p, _)| p == path)
         {
             return value.clone();
         }
         match path {
             FieldPath::File(field) => field.resolve(&self.file),
-            FieldPath::Task(field) => self.task.as_ref().map_or(
-                FieldValue::Null,
-                |task| match field {
-                    TaskField::Completed => FieldValue::Bool(task.completed),
-                    TaskField::Text => FieldValue::String(task.text.clone()),
-                },
-            ),
-            FieldPath::Tags => FieldValue::List(
+            FieldPath::Task(field) => {
+                self.task.as_ref().map_or(NoteFieldValue::Null, |task| {
+                    match field {
+                        TaskField::Completed => {
+                            NoteFieldValue::Bool(task.completed)
+                        }
+                        TaskField::Text => {
+                            NoteFieldValue::String(task.text.clone())
+                        }
+                    }
+                })
+            }
+            FieldPath::Tags => NoteFieldValue::List(
                 self.note
                     .iter()
                     .flat_map(|note| note.tags())
-                    .map(|tag| FieldValue::String(tag.as_str().to_owned()))
+                    .map(|tag| NoteFieldValue::String(tag.as_str().to_owned()))
                     .collect(),
             ),
-            FieldPath::Inlinks => FieldValue::List(
+            FieldPath::Inlinks => NoteFieldValue::List(
                 self.inlinks
                     .iter()
                     .map(|linking_note| {
-                        FieldValue::String(
+                        NoteFieldValue::String(
                             linking_note.to_string_lossy().into_owned(),
                         )
                     })
@@ -253,9 +261,10 @@ impl QueryRecord {
                 .as_deref()
                 .and_then(|note| {
                     note.fields()
-                        .find(|field| field.key().is_match(key.as_str()))
+                        .find(|(k, _)| k.is_match(key.as_str()))
+                        .map(|(_, v)| v.clone())
                 })
-                .map_or(FieldValue::Null, |field| field.value().clone()),
+                .unwrap_or(NoteFieldValue::Null),
         }
     }
 
@@ -267,7 +276,7 @@ impl QueryRecord {
     pub(super) fn with_flattened(
         mut self,
         path: FieldPath,
-        value: FieldValue,
+        value: NoteFieldValue,
     ) -> Self {
         if let Some(entry) = self.flattened.iter_mut().find(|(p, _)| p == &path)
         {
@@ -436,7 +445,7 @@ impl QueryRecordSet {
         let field_path = FieldPath::parse(path)?;
         let mut records = Vec::with_capacity(self.records.len());
         for record in self.records {
-            let FieldValue::List(mut items) = record.resolve(&field_path)
+            let NoteFieldValue::List(mut items) = record.resolve(&field_path)
             else {
                 records.push(record);
                 continue;
@@ -571,21 +580,21 @@ impl<'a> IntoIterator for &'a QueryRecordSet {
     }
 }
 
-/// Converts a resolved [`FieldValue`] to plain text for list and table
+/// Converts a resolved [`NoteFieldValue`] to plain text for list and table
 /// rendering.
-fn field_text(value: &FieldValue) -> String {
+fn field_text(value: &NoteFieldValue) -> String {
     match value {
-        FieldValue::Null => String::new(),
-        FieldValue::Bool(b) => b.to_string(),
-        FieldValue::Number(n) => n.to_string(),
-        FieldValue::String(s)
-        | FieldValue::Date(s)
-        | FieldValue::Duration(s) => s.clone(),
-        FieldValue::Link(link) => link.target().to_owned(),
-        FieldValue::List(items) => {
+        NoteFieldValue::Null => String::new(),
+        NoteFieldValue::Bool(b) => b.to_string(),
+        NoteFieldValue::Number(n) => n.to_string(),
+        NoteFieldValue::String(s)
+        | NoteFieldValue::Date(s)
+        | NoteFieldValue::Duration(s) => s.clone(),
+        NoteFieldValue::Link(link) => link.target().to_owned(),
+        NoteFieldValue::List(items) => {
             items.iter().map(field_text).collect::<Vec<_>>().join(", ")
         }
-        FieldValue::Object(fields) => fields
+        NoteFieldValue::Object(fields) => fields
             .iter()
             .map(|(key, field)| format!("{key}: {}", field_text(field)))
             .collect::<Vec<_>>()
@@ -599,7 +608,8 @@ fn escape_table_text(text: &str) -> String {
     text.replace('\n', " ").replace('|', "\\|")
 }
 
-/// Formats a [`FieldValue`] into plain text suitable for Markdown table cells.
-fn table_cell_text(value: &FieldValue) -> String {
+/// Formats a [`NoteFieldValue`] into plain text suitable for Markdown table
+/// cells.
+fn table_cell_text(value: &NoteFieldValue) -> String {
     escape_table_text(&field_text(value))
 }

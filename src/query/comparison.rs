@@ -6,9 +6,9 @@
 //! # Semantics and Type Normalization
 //!
 //! - **Equality (`==`, `!=`):** Equality checks are total and compare all types
-//!   (including [`FieldValue::Null`]). If the operands have different types,
-//!   the comparison normalizes them to a common textual representation (e.g.
-//!   comparing a date to its string equivalent evaluates to `true`).
+//!   (including [`NoteFieldValue::Null`]). If the operands have different
+//!   types, the comparison normalizes them to a common textual representation
+//!   (e.g. comparing a date to its string equivalent evaluates to `true`).
 //! - **Ordering (`<`, `<=`, `>`, `>=`):** Ordering checks return `false` if the
 //!   two values are incomparable or of different types (no cross-type
 //!   normalization is performed for inequality).
@@ -18,12 +18,12 @@
 //! ```ignore
 //! # use traces_pkm::query::comparison::{CompareOp, ComparisonExpr};
 //! # use traces_pkm::query::FieldPath;
-//! # use traces_pkm::note::FieldValue;
+//! # use traces_pkm::note::NoteFieldValue;
 //! # use traces_pkm::query::QueryRecord;
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! let field = FieldPath::parse("rating")?;
 //! let op = CompareOp::Gt;
-//! let value = FieldValue::Number(5.0);
+//! let value = NoteFieldValue::Number(5.0);
 //!
 //! let expr = ComparisonExpr::new(field, op, value);
 //! # Ok(())
@@ -34,7 +34,7 @@ use super::{
     FieldPath, QueryRecord,
     sort::{compare_field_values, fields_equal},
 };
-use crate::note::FieldValue;
+use crate::note::NoteFieldValue;
 
 /// A comparison operator parsed from a filter expression.
 ///
@@ -44,15 +44,15 @@ use crate::note::FieldValue;
 ///
 /// ```ignore
 /// # use traces_pkm::query::comparison::CompareOp;
-/// # use traces_pkm::note::FieldValue;
+/// # use traces_pkm::note::NoteFieldValue;
 /// let op = CompareOp::Eq;
-/// assert!(op.is_satisfied_by(&FieldValue::Number(5.0), &FieldValue::Number(5.0)));
+/// assert!(op.is_satisfied_by(&NoteFieldValue::Number(5.0), &NoteFieldValue::Number(5.0)));
 /// ```
 ///
 /// # Operator Rules
 ///
 /// - **Equality (`==`, `!=`):** [`Self::Eq`] and [`Self::Ne`] are total. They
-///   compare every value kind including [`FieldValue::Null`].
+///   compare every value kind including [`NoteFieldValue::Null`].
 /// - **Ordering (`<`, `<=`, `>`, `>=`):** Return `false` for unorderable or
 ///   incomparable value pairs.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -81,9 +81,9 @@ impl CompareOp {
     ///
     /// ```ignore
     /// # use traces_pkm::query::comparison::CompareOp;
-    /// # use traces_pkm::note::FieldValue;
+    /// # use traces_pkm::note::NoteFieldValue;
     /// let op = CompareOp::Eq;
-    /// assert!(op.is_satisfied_by(&FieldValue::Number(5.0), &FieldValue::Number(5.0)));
+    /// assert!(op.is_satisfied_by(&NoteFieldValue::Number(5.0), &NoteFieldValue::Number(5.0)));
     /// ```
     ///
     /// # Behavior
@@ -96,8 +96,8 @@ impl CompareOp {
     ///   returning `false` for mismatched or incomparable kinds.
     pub(super) fn is_satisfied_by(
         self,
-        field: &FieldValue,
-        literal: &FieldValue,
+        field: &NoteFieldValue,
+        literal: &NoteFieldValue,
     ) -> bool {
         match self {
             Self::Eq => fields_equal(field, literal),
@@ -147,25 +147,25 @@ impl TryFrom<&str> for CompareOp {
 /// A parsed `<field> <op> <value>` comparison node in a filter expression.
 ///
 /// Pairs an already-parsed [`FieldPath`] with a [`CompareOp`] and a literal
-/// [`FieldValue`] to evaluate against the resolved field of each record.
+/// [`NoteFieldValue`] to evaluate against the resolved field of each record.
 ///
 /// # Examples
 ///
 /// ```ignore
 /// # use traces_pkm::query::comparison::{CompareOp, ComparisonExpr};
-/// # use traces_pkm::field::FieldPath;
-/// # use traces_pkm::note::FieldValue;
+/// # use traces_pkm::query::FieldPath;
+/// # use traces_pkm::note::NoteFieldValue;
 /// let expr = ComparisonExpr::new(
-///     FieldPath::try_new("rating").unwrap(),
+///     FieldPath::parse("rating").unwrap(),
 ///     CompareOp::Gt,
-///     FieldValue::Number(5.0),
+///     NoteFieldValue::Number(5.0),
 /// );
 /// ```
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct ComparisonExpr {
     field: FieldPath,
     op: CompareOp,
-    value: FieldValue,
+    value: NoteFieldValue,
 }
 
 impl ComparisonExpr {
@@ -175,18 +175,18 @@ impl ComparisonExpr {
     ///
     /// ```ignore
     /// # use traces_pkm::query::comparison::{CompareOp, ComparisonExpr};
-    /// # use traces_pkm::field::FieldPath;
-    /// # use traces_pkm::note::FieldValue;
+    /// # use traces_pkm::query::FieldPath;
+    /// # use traces_pkm::note::NoteFieldValue;
     /// let expr = ComparisonExpr::new(
-    ///     FieldPath::try_new("rating").unwrap(),
+    ///     FieldPath::parse("rating").unwrap(),
     ///     CompareOp::Gt,
-    ///     FieldValue::Number(5.0),
+    ///     NoteFieldValue::Number(5.0),
     /// );
     /// ```
     pub(super) const fn new(
         field: FieldPath,
         op: CompareOp,
-        value: FieldValue,
+        value: NoteFieldValue,
     ) -> Self {
         Self {
             field,
@@ -232,8 +232,8 @@ mod tests {
             #[case] expected: bool,
         ) {
             // Arrange
-            let left_val = FieldValue::Number(left);
-            let right_val = FieldValue::Number(right);
+            let left_val = NoteFieldValue::Number(left);
+            let right_val = NoteFieldValue::Number(right);
 
             // Act
             let result = op.is_satisfied_by(&left_val, &right_val);

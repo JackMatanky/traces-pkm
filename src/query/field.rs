@@ -3,7 +3,7 @@
 //! A query field path string (for example, `file.name`, `task.completed`,
 //! `tags`, or a bare frontmatter key) resolves to a [`FieldPath`] variant that
 //! can be applied to each [`IndexRecord`][`super::IndexRecord`] to extract a
-//! [`FieldValue`].
+//! [`NoteFieldValue`].
 //!
 //! # Supported Accessors
 //!
@@ -23,13 +23,13 @@
 //! ```
 
 use super::error::FieldPathError;
-use crate::{field, field::FieldKey, file::FileRecord, note::FieldValue};
+use crate::{field, field::FieldKey, file::FileRecord, note::NoteFieldValue};
 
 /// A `file.<field>` accessor backed by [`FileRecord`] metadata.
 ///
 /// Each variant maps to a specific accessor name (for example, `file.name`,
-/// `file.mtime`) and resolves to a [`FieldValue`] by reading the corresponding
-/// [`FileRecord`] method.
+/// `file.mtime`) and resolves to a [`NoteFieldValue`] by reading the
+/// corresponding [`FileRecord`] method.
 ///
 /// # Examples
 ///
@@ -103,35 +103,37 @@ impl FileField {
 
     /// Resolves this accessor's value for the given [`FileRecord`].
     ///
-    /// Returns the evaluated [`FieldValue`] from the corresponding
+    /// Returns the evaluated [`NoteFieldValue`] from the corresponding
     /// [`FileRecord`] method.
-    pub(crate) fn resolve(self, file: &FileRecord) -> FieldValue {
+    pub(crate) fn resolve(self, file: &FileRecord) -> NoteFieldValue {
         match self {
-            Self::Path => {
-                FieldValue::String(file.path().to_string_lossy().into_owned())
+            Self::Path => NoteFieldValue::String(
+                file.path().to_string_lossy().into_owned(),
+            ),
+            Self::Name => {
+                NoteFieldValue::String(file.name().as_str().to_owned())
             }
-            Self::Name => FieldValue::String(file.name().as_str().to_owned()),
-            Self::Folder => {
-                FieldValue::String(file.folder().to_string_lossy().into_owned())
-            }
+            Self::Folder => NoteFieldValue::String(
+                file.folder().to_string_lossy().into_owned(),
+            ),
             #[expect(
                 clippy::as_conversions,
                 clippy::cast_precision_loss,
                 reason = "file sizes stay well under 2^53 bytes for PKM-scale \
                           projects, so f64 keeps exact byte counts"
             )]
-            Self::Size => FieldValue::Number(file.size() as f64),
-            Self::CreatedDateTime => FieldValue::Date(
+            Self::Size => NoteFieldValue::Number(file.size() as f64),
+            Self::CreatedDateTime => NoteFieldValue::Date(
                 file.created_at_or_modified().to_datetime_string(),
             ),
-            Self::CreatedDate => {
-                FieldValue::Date(file.created_at_or_modified().to_date_string())
-            }
+            Self::CreatedDate => NoteFieldValue::Date(
+                file.created_at_or_modified().to_date_string(),
+            ),
             Self::ModifiedDateTime => {
-                FieldValue::Date(file.modified_at().to_datetime_string())
+                NoteFieldValue::Date(file.modified_at().to_datetime_string())
             }
             Self::ModifiedDate => {
-                FieldValue::Date(file.modified_at().to_date_string())
+                NoteFieldValue::Date(file.modified_at().to_date_string())
             }
         }
     }
@@ -140,8 +142,8 @@ impl FileField {
 /// A `task.<field>` accessor valid on task-level records.
 ///
 /// Applied to task records produced by
-/// [`crate::index::FileIndex::query_tasks`]. Resolves to [`FieldValue::Null`]
-/// on page-level records.
+/// [`crate::index::FileIndex::query_tasks`]. Resolves to
+/// [`NoteFieldValue::Null`] on page-level records.
 ///
 /// # Examples
 ///
@@ -189,7 +191,7 @@ impl TaskField {
 ///
 /// A `FieldPath` is parsed once per [`QueryOutcome`][`super::QueryOutcome`]
 /// transformation and subsequently applied to each
-/// [`IndexRecord`][`super::IndexRecord`] to extract a [`FieldValue`].
+/// [`IndexRecord`][`super::IndexRecord`] to extract a [`NoteFieldValue`].
 ///
 /// # Examples
 ///
@@ -202,14 +204,14 @@ pub(super) enum FieldPath {
     /// Wraps a `file.<field>` accessor ([`FileField`]).
     File(FileField),
     /// Wraps a `task.<field>` accessor ([`TaskField`]), which resolves to
-    /// [`FieldValue::Null`] on page-level records.
+    /// [`NoteFieldValue::Null`] on page-level records.
     Task(TaskField),
     /// Accesses a frontmatter or inline field key.
     Metadata(String),
-    /// Accesses Note tags as a [`FieldValue::List`] of tag strings.
+    /// Accesses Note tags as a [`NoteFieldValue::List`] of tag strings.
     Tags,
     /// Accesses project-relative paths of Notes linking to this Note as a
-    /// [`FieldValue::List`].
+    /// [`NoteFieldValue::List`].
     ///
     /// Derived dynamically by [`derive_inlinks`] rather than stored directly on
     /// the Note.

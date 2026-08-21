@@ -25,8 +25,7 @@
 //!   `[text](target)` and Obsidian `[[target|alias]]` syntax.
 //! - [`Frontmatter`], [`RawFrontmatter`]: YAML frontmatter as structured fields
 //!   or raw text.
-//! - [`InlineField`], [`InlineFieldForm`], [`FieldValue`]: body metadata parsed
-//!   from `Key:: Value` syntax.
+//! - [`NoteFieldValue`]: body metadata values parsed from `Key:: Value` syntax.
 //! - [`Tag`]: Markdown tags such as `#book` and `#projects/active`.
 
 mod cursor;
@@ -40,9 +39,7 @@ mod tag;
 
 pub use links::{Link, LinkTarget, LinkType};
 pub use lists::{List, ListItem, TaskStatus};
-pub use metadata::{
-    FieldValue, Frontmatter, InlineField, InlineFieldForm, RawFrontmatter,
-};
+pub use metadata::{Frontmatter, NoteFieldValue, RawFrontmatter};
 pub use model::Note;
 pub use parser::parse_markdown;
 pub use tag::Tag;

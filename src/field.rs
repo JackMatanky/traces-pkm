@@ -23,12 +23,12 @@
 
 use std::{
     borrow::{Borrow, Cow},
-    collections::BTreeMap,
     fmt,
     marker::PhantomData,
     str::FromStr,
 };
 
+use indexmap::IndexMap;
 use serde::{
     Deserialize, Deserializer, Serialize, Serializer,
     de::{self, Error as _, MapAccess, SeqAccess, Visitor},
@@ -400,6 +400,14 @@ impl PartialEq for FieldKey {
     }
 }
 
+/// Hashes the canonical form, consistent with [`PartialEq`].
+impl std::hash::Hash for FieldKey {
+    #[inline]
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.canonical.hash(state);
+    }
+}
+
 impl TryFrom<String> for FieldKey {
     type Error = FieldKeyError;
 
@@ -502,7 +510,7 @@ pub(crate) enum FieldValue {
     /// Ordered list value.
     List(Vec<Self>),
     /// Keyed object value, stored in a deterministically ordered map.
-    Object(BTreeMap<String, Self>),
+    Object(IndexMap<String, Self>),
 }
 
 impl FieldValue {
@@ -615,7 +623,7 @@ pub(crate) enum FieldValueRef<'a> {
     /// Ordered list value.
     List(Vec<Self>),
     /// Keyed object value, stored in a deterministically ordered map.
-    Object(BTreeMap<Cow<'a, str>, Self>),
+    Object(IndexMap<Cow<'a, str>, Self>),
 }
 
 impl FieldValueRef<'_> {
@@ -769,13 +777,13 @@ impl<'de: 'a, 'a> Deserialize<'de> for FieldValueRef<'a> {
             where
                 A: MapAccess<'de>,
             {
-                let mut btree = BTreeMap::new();
+                let mut index_map = IndexMap::new();
                 while let Some((key, value)) =
                     map.next_entry::<Cow<'a, str>, FieldValueRef<'a>>()?
                 {
-                    btree.insert(key, value);
+                    index_map.insert(key, value);
                 }
-                Ok(FieldValueRef::Object(btree))
+                Ok(FieldValueRef::Object(index_map))
             }
         }
 
@@ -1261,6 +1269,32 @@ mod tests {
             let json = serde_json::to_string(&key).expect("serializes");
             assert_eq!(json, "\"Status\"");
         }
+
+        #[test]
+        fn field_key_hash_matches_equality() {
+            use std::{
+                collections::hash_map::DefaultHasher,
+                hash::{Hash, Hasher},
+            };
+
+            let mut h1 = DefaultHasher::new();
+            let mut h2 = DefaultHasher::new();
+            let a = FieldKey::try_new("Status").unwrap();
+            let b = FieldKey::try_new("Priority").unwrap();
+            a.hash(&mut h1);
+            b.hash(&mut h2);
+            // canonical forms differ, so hashes should differ
+            assert_ne!(h1.finish(), h2.finish());
+
+            let mut h3 = DefaultHasher::new();
+            let mut h4 = DefaultHasher::new();
+            let c = FieldKey::try_new("Status").unwrap();
+            let d = FieldKey::try_new("Status").unwrap();
+            c.hash(&mut h3);
+            d.hash(&mut h4);
+            // same canonical form, so hashes should match
+            assert_eq!(h3.finish(), h4.finish());
+        }
     }
 
     mod field_value {
@@ -1395,8 +1429,24 @@ mod tests {
                 );
                 assert_eq!(
                     get(&value, "o"),
-                    Some(&FieldValueRef::Object(BTreeMap::new()))
+                    Some(&FieldValueRef::Object(IndexMap::new()))
                 );
+            }
+
+            #[test]
+            fn object_field_preserves_insertion_order() {
+                let json = r#"{"z_last": 1, "a_first": 2, "m_middle": 3}"#;
+                let value: FieldValue = serde_json::from_str(json).unwrap();
+                if let FieldValue::Object(map) = value {
+                    let keys: Vec<_> = map.keys().cloned().collect();
+                    assert_eq!(keys, vec![
+                        String::from("z_last"),
+                        String::from("a_first"),
+                        String::from("m_middle"),
+                    ]);
+                } else {
+                    panic!("expected Object");
+                }
             }
 
             #[test]
@@ -1456,7 +1506,7 @@ mod tests {
                 );
                 assert_eq!(
                     get_owned(&value, "b"),
-                    Some(&FieldValue::Object(BTreeMap::from([(
+                    Some(&FieldValue::Object(IndexMap::from([(
                         "k".to_owned(),
                         FieldValue::Bool(true)
                     )])))
@@ -1496,7 +1546,7 @@ mod tests {
                 "[true]"
             )]
             #[case::object(
-                FieldValueRef::Object(BTreeMap::from([(
+                FieldValueRef::Object(IndexMap::from([(
                     Cow::Borrowed("k"),
                     FieldValueRef::Int(1),
                 )])),
@@ -1519,7 +1569,7 @@ mod tests {
 
             #[test]
             fn round_trips_through_json() {
-                let value = FieldValue::Object(BTreeMap::from([
+                let value = FieldValue::Object(IndexMap::from([
                     ("value".to_owned(), FieldValue::String("jan".to_owned())),
                     ("order".to_owned(), FieldValue::Int(-1)),
                     (

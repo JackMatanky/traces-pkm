@@ -33,7 +33,7 @@ use super::{
 };
 use crate::{
     file::FileRecord,
-    note::{FieldValue, Note},
+    note::{Note, NoteFieldValue},
 };
 
 /// Top-level source selector: every Note or a parsed expression.
@@ -475,21 +475,21 @@ pub(crate) fn class_values<'a>(
     class_field: &str,
 ) -> impl Iterator<Item = &'a str> {
     let value = note.frontmatter().and_then(|frontmatter| {
-        let field = frontmatter
+        frontmatter
             .fields()
             .iter()
-            .find(|field| field.key().is_match(class_field))?;
-        Some(field.value())
+            .find(|(k, _)| k.is_match(class_field))
+            .map(|(_, v)| v)
     });
     let list = match value {
-        Some(FieldValue::List(items)) => items.as_slice(),
+        Some(NoteFieldValue::List(items)) => items.as_slice(),
         _ => &[],
     };
     let scalar = match value {
-        Some(FieldValue::List(_)) | None => None,
+        Some(NoteFieldValue::List(_)) | None => None,
         Some(other) => other.as_str(),
     };
-    scalar.into_iter().chain(list.iter().filter_map(FieldValue::as_str))
+    scalar.into_iter().chain(list.iter().filter_map(NoteFieldValue::as_str))
 }
 
 /// Lexical tokens for the page source expression language.

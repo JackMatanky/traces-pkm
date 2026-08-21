@@ -65,16 +65,16 @@
 //! `dialog_error` and [`super::error::confine_error`]. Query failures carry
 //! template name, line, and column context like every other namespace.
 
-use std::{path::Path, sync::Arc};
+use std::{cmp::Ordering, path::Path, sync::Arc};
 
 use minijinja::{
     Environment, Error, ErrorKind, State,
-    value::{Enumerator, Object, ObjectRepr, Value, from_args},
+    value::{DynObject, Enumerator, Object, ObjectRepr, Value, from_args},
 };
 
 use crate::{
     index::{FileIndex, FileIndexError, IndexerService},
-    note::FieldValue,
+    note::NoteFieldValue,
     query::{
         ClassExpansionMode, FileField, QueryError, QueryRecord, QueryRecordSet,
         QueryService, QuerySource, SourceAtom, resolve_classes,
@@ -515,6 +515,16 @@ impl Object for QueryRecord {
             _ => self.field(key).ok().map(field_value),
         }
     }
+
+    fn custom_cmp(self: &Arc<Self>, other: &DynObject) -> Option<Ordering> {
+        other.downcast_ref::<QueryRecord>().map(|other| {
+            if **self == *other {
+                Ordering::Equal
+            } else {
+                Ordering::Less
+            }
+        })
+    }
 }
 
 /// Forwards `record.file.<field>` to
@@ -551,7 +561,7 @@ impl Object for FileFields {
 /// On a page-level record (not built by [`FileIndex::query_tasks`]) both
 /// accessors resolve to minijinja's `none`, a defined empty value rather than a
 /// missing attribute, matching [`field_value`]'s handling of
-/// [`FieldValue::Null`].
+/// [`NoteFieldValue::Null`].
 #[derive(Debug)]
 struct TaskFields(Arc<QueryRecord>);
 
@@ -575,27 +585,27 @@ impl Object for TaskFields {
     }
 }
 
-/// Converts a resolved [`FieldValue`] into a minijinja [`Value`].
+/// Converts a resolved [`NoteFieldValue`] into a minijinja [`Value`].
 ///
-/// - [`FieldValue::Null`] becomes minijinja's `none` rather than `undefined`:
-///   [`IndexRecord::field`]'s own docs note that a well-formed path with no
-///   value resolves to `Null`, not an error. That's a defined empty value, not
-///   a missing attribute.
-/// - [`FieldValue::Link`] renders as its target path; Traces has no
+/// - [`NoteFieldValue::Null`] becomes minijinja's `none` rather than
+///   `undefined`: [`IndexRecord::field`]'s own docs note that a well-formed
+///   path with no value resolves to `Null`, not an error. That's a defined
+///   empty value, not a missing attribute.
+/// - [`NoteFieldValue::Link`] renders as its target path; Traces has no
 ///   minijinja-facing link type yet.
-fn field_value(value: FieldValue) -> Value {
+fn field_value(value: NoteFieldValue) -> Value {
     match value {
-        FieldValue::Null => Value::from(()),
-        FieldValue::Bool(b) => Value::from(b),
-        FieldValue::Number(n) => Value::from(n),
-        FieldValue::String(s)
-        | FieldValue::Date(s)
-        | FieldValue::Duration(s) => Value::from(s),
-        FieldValue::Link(link) => Value::from(link.target().to_owned()),
-        FieldValue::List(items) => {
+        NoteFieldValue::Null => Value::from(()),
+        NoteFieldValue::Bool(b) => Value::from(b),
+        NoteFieldValue::Number(n) => Value::from(n),
+        NoteFieldValue::String(s)
+        | NoteFieldValue::Date(s)
+        | NoteFieldValue::Duration(s) => Value::from(s),
+        NoteFieldValue::Link(link) => Value::from(link.target().to_owned()),
+        NoteFieldValue::List(items) => {
             Value::from(items.into_iter().map(field_value).collect::<Vec<_>>())
         }
-        FieldValue::Object(fields) => fields
+        NoteFieldValue::Object(fields) => fields
             .into_iter()
             .map(|(key, field)| (key, field_value(field)))
             .collect::<Value>(),

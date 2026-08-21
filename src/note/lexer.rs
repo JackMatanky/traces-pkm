@@ -16,8 +16,7 @@
 use logos::{Filter, Lexer, Logos};
 
 use super::{
-    FieldValue, InlineField, InlineFieldForm, Link, Tag, cursor::SourceText,
-    metadata::is_iso_date,
+    Link, NoteFieldValue, Tag, cursor::SourceText, metadata::is_iso_date,
 };
 use crate::field::FieldKey;
 
@@ -26,7 +25,9 @@ use crate::field::FieldKey;
 /// Recognizes `Key:: Value`, `[Key:: Value]`, and `(Key:: Value)`. `text` must
 /// already exclude code spans and blocks. Use [`extract_task_inline_fields`]
 /// when task emoji shorthand fields should be recognized.
-pub(super) fn extract_inline_fields(text: &str) -> Vec<InlineField> {
+pub(super) fn extract_inline_fields(
+    text: &str,
+) -> Vec<(FieldKey, NoteFieldValue)> {
     extract_inline_fields_with_task_shorthands(text, TaskShorthands::Exclude)
 }
 
@@ -35,7 +36,9 @@ pub(super) fn extract_inline_fields(text: &str) -> Vec<InlineField> {
 /// Recognizes `Key:: Value`, `[Key:: Value]`, `(Key:: Value)`, and task
 /// shorthand fields such as `🗓️2026-01-01`. `text` must already exclude code
 /// spans and blocks.
-pub(super) fn extract_task_inline_fields(text: &str) -> Vec<InlineField> {
+pub(super) fn extract_task_inline_fields(
+    text: &str,
+) -> Vec<(FieldKey, NoteFieldValue)> {
     extract_inline_fields_with_task_shorthands(text, TaskShorthands::Include)
 }
 
@@ -43,7 +46,7 @@ pub(super) fn extract_task_inline_fields(text: &str) -> Vec<InlineField> {
 fn extract_inline_fields_with_task_shorthands(
     text: &str,
     shorthands: TaskShorthands,
-) -> Vec<InlineField> {
+) -> Vec<(FieldKey, NoteFieldValue)> {
     let lexer = FieldToken::lexer_with_extras(text, shorthands);
     let mut fields = Vec::new();
     for result in lexer {
@@ -86,24 +89,21 @@ where
 /// Byte length of an ISO `YYYY-MM-DD` date, such as `2026-01-01`.
 const ISO_DATE_LEN: usize = 10;
 
-/// Bracket delimiters and their corresponding [`InlineFieldForm`].
+/// Bracket delimiters for wrapped inline fields.
 #[derive(Copy, Clone, Debug)]
 struct BracketPair {
     open: char,
     close: char,
-    form: InlineFieldForm,
 }
 
 impl BracketPair {
     const HIDDEN: Self = Self {
         open: '(',
         close: ')',
-        form: InlineFieldForm::HiddenKey,
     };
     const VISIBLE: Self = Self {
         open: '[',
         close: ']',
-        form: InlineFieldForm::VisibleKey,
     };
 }
 
@@ -132,7 +132,7 @@ impl TaskShorthands {
 
 /// Token stream for inline fields in free-form Markdown text.
 ///
-/// - [`Self::Field`] carries an emitted [`InlineField`].
+/// - [`Self::Field`] carries an emitted `(FieldKey, NoteFieldValue)`.
 /// - [`Self::Ignored`] skips ordinary prose that matches none of the field
 ///   patterns.
 ///
@@ -150,7 +150,7 @@ enum FieldToken {
     #[token("\u{1F6EB}", |lex| task_field_callback(lex, "start"))]
     #[token("\u{23F3}", |lex| task_field_callback(lex, "scheduled"))]
     #[token("\u{2705}", |lex| task_field_callback(lex, "completion"))]
-    Field(InlineField),
+    Field((FieldKey, NoteFieldValue)),
     #[regex(r"[\s\S]", logos::skip, priority = 0)]
     Ignored,
 }
@@ -164,7 +164,9 @@ enum FieldToken {
 /// regex's `^` anchor. The match is rejected, skipping only the matched `Key::`
 /// span rather than the rest of the line, unless it starts right after a
 /// newline or at the start of the text.
-fn body_field_callback(lex: &mut Lexer<'_, FieldToken>) -> Filter<InlineField> {
+fn body_field_callback(
+    lex: &mut Lexer<'_, FieldToken>,
+) -> Filter<(FieldKey, NoteFieldValue)> {
     let at_line_start = char_before(lex).is_none_or(|ch| ch == '\n');
     if !at_line_start {
         return Filter::Skip;
@@ -178,11 +180,7 @@ fn body_field_callback(lex: &mut Lexer<'_, FieldToken>) -> Filter<InlineField> {
     let Ok(key) = FieldKey::try_from(key) else {
         return Filter::Skip;
     };
-    let field = InlineField::from_key(
-        key,
-        parse_inline_value_str(value),
-        InlineFieldForm::Body,
-    );
+    let field = (key, parse_inline_value_str(value));
     lex.bump(value_end);
     Filter::Emit(field)
 }
@@ -198,7 +196,7 @@ fn body_field_callback(lex: &mut Lexer<'_, FieldToken>) -> Filter<InlineField> {
 fn wrapped_field_callback(
     lex: &mut Lexer<'_, FieldToken>,
     pair: BracketPair,
-) -> Filter<InlineField> {
+) -> Filter<(FieldKey, NoteFieldValue)> {
     let remainder = lex.remainder();
     let Some(sep) = remainder.find("::") else {
         return Filter::Skip;
@@ -222,11 +220,7 @@ fn wrapped_field_callback(
         .saturating_add(close)
         .saturating_add(pair.close.len_utf8());
     lex.bump(consumed);
-    Filter::Emit(InlineField::from_key(
-        key,
-        parse_inline_value_str(value),
-        pair.form,
-    ))
+    Filter::Emit((key, parse_inline_value_str(value)))
 }
 
 /// Finds `pair`'s closing delimiter in wrapped field value text.
@@ -272,7 +266,7 @@ fn find_closing_delimiter(after_sep: &str, pair: BracketPair) -> Option<usize> {
 fn task_field_callback(
     lex: &mut Lexer<'_, FieldToken>,
     key: &'static str,
-) -> Filter<InlineField> {
+) -> Filter<(FieldKey, NoteFieldValue)> {
     if !lex.extras.is_included() {
         return Filter::Skip;
     }
@@ -292,11 +286,7 @@ fn task_field_callback(
         return Filter::Skip;
     };
     lex.bump(ws_end.saturating_add(ISO_DATE_LEN));
-    Filter::Emit(InlineField::from_key(
-        key,
-        FieldValue::Date(candidate.to_owned()),
-        InlineFieldForm::Body,
-    ))
+    Filter::Emit((key, NoteFieldValue::Date(candidate.to_owned())))
 }
 
 const DURATION_UNITS: &[&str] = &[
@@ -338,10 +328,10 @@ const DURATION_UNITS: &[&str] = &[
 
 /// An atom parsed at some position: its value and the exclusive byte offset
 /// immediately following it.
-type Atom = (FieldValue, usize);
+type Atom = (NoteFieldValue, usize);
 
-/// Parses raw inline value text into a [`FieldValue`].
-fn parse_inline_value_str(raw: &str) -> FieldValue {
+/// Parses raw inline value text into a [`NoteFieldValue`].
+fn parse_inline_value_str(raw: &str) -> NoteFieldValue {
     ValueParser::new(raw).parse()
 }
 
@@ -349,7 +339,7 @@ fn parse_inline_value_str(raw: &str) -> FieldValue {
 ///
 /// [`Self::parse`] is the entry point: it tries a comma-separated list of
 /// atoms, then a single atom spanning the whole value, falling back to a raw
-/// [`FieldValue::String`] when neither matches.
+/// [`NoteFieldValue::String`] when neither matches.
 struct ValueParser<'a> {
     text: &'a str,
     source: SourceText<'a>,
@@ -364,27 +354,27 @@ impl<'a> ValueParser<'a> {
         }
     }
 
-    /// Parses the whole (already-trimmed) value text into a [`FieldValue`].
+    /// Parses the whole (already-trimmed) value text into a [`NoteFieldValue`].
     ///
     /// Tries [`Self::parse_comma_list`] first, then a single
     /// [`Self::parse_atom_at`] spanning the whole text, falling back to
-    /// [`FieldValue::String`] holding the raw text when neither matches.
-    /// Empty text parses as [`FieldValue::Null`].
-    fn parse(&self) -> FieldValue {
+    /// [`NoteFieldValue::String`] holding the raw text when neither matches.
+    /// Empty text parses as [`NoteFieldValue::Null`].
+    fn parse(&self) -> NoteFieldValue {
         let trimmed = self.text.trim();
         if trimmed.is_empty() {
-            return FieldValue::Null;
+            return NoteFieldValue::Null;
         }
         let sub_parser = ValueParser::new(trimmed);
         if let Some(values) = sub_parser.parse_comma_list() {
-            return FieldValue::List(values);
+            return NoteFieldValue::List(values);
         }
         if let Some((value, end)) = sub_parser.parse_atom_at(0)
             && sub_parser.skip_whitespace(end) == sub_parser.source.len()
         {
             return value;
         }
-        FieldValue::String(trimmed.to_owned())
+        NoteFieldValue::String(trimmed.to_owned())
     }
 
     /// Parses one or more `,`-separated atoms starting at position `0`.
@@ -392,7 +382,7 @@ impl<'a> ValueParser<'a> {
     /// Returns `Some` only when a `,` follows the first atom (confirming this
     /// is a list, not a single atom) and every subsequent atom parses
     /// successfully. A trailing `,` followed by whitespace ends the list.
-    fn parse_comma_list(&self) -> Option<Vec<FieldValue>> {
+    fn parse_comma_list(&self) -> Option<Vec<NoteFieldValue>> {
         let (first, mut pos) = self.parse_atom_at(0)?;
         pos = self.skip_whitespace(pos);
         if !self.source.from(pos)?.starts_with(',') {
@@ -452,7 +442,7 @@ impl<'a> ValueParser<'a> {
                 escaped = true;
             } else if ch == '"' {
                 return Some((
-                    FieldValue::String(value),
+                    NoteFieldValue::String(value),
                     self.source.advance(self.source.advance(pos, offset), 2),
                 ));
             } else {
@@ -466,7 +456,7 @@ impl<'a> ValueParser<'a> {
     fn parse_link_at(&self, pos: usize) -> Option<Atom> {
         let (link, consumed) =
             Link::parse_wikilink_prefix(self.source.from(pos)?)?;
-        Some((FieldValue::Link(link), self.source.advance(pos, consumed)))
+        Some((NoteFieldValue::Link(link), self.source.advance(pos, consumed)))
     }
 
     /// Parses a duration atom at `pos`.
@@ -474,14 +464,14 @@ impl<'a> ValueParser<'a> {
     /// Recognizes one or more `<number><unit>` parts, such as `4h15m` or
     /// `4 yrs, 6 wks`. Parts are validated by [`Self::parse_duration_part_end`]
     /// and may be comma- and whitespace-separated. Returns the raw matched text
-    /// as [`FieldValue::Duration`].
+    /// as [`NoteFieldValue::Duration`].
     fn parse_duration_at(&self, pos: usize) -> Option<Atom> {
         let mut end = self.parse_duration_part_end(pos)?;
         loop {
             let separator = self.skip_whitespace(end);
             if separator == self.source.len() {
                 let raw = self.source.get(pos..end)?;
-                return Some((FieldValue::Duration(raw.to_owned()), end));
+                return Some((NoteFieldValue::Duration(raw.to_owned()), end));
             }
             let next = if self.source.from(separator)?.starts_with(',') {
                 self.skip_whitespace(self.source.advance(separator, 1))
@@ -492,7 +482,7 @@ impl<'a> ValueParser<'a> {
                 end = part_end;
             } else if separator == end {
                 let raw = self.source.get(pos..end)?;
-                return Some((FieldValue::Duration(raw.to_owned()), end));
+                return Some((NoteFieldValue::Duration(raw.to_owned()), end));
             } else {
                 return None;
             }
@@ -523,16 +513,17 @@ impl<'a> ValueParser<'a> {
     /// Parses a case-insensitive `true`/`false` keyword atom at `pos`.
     fn parse_bool_at(&self, pos: usize) -> Option<Atom> {
         self.parse_keyword_at(pos, "true")
-            .map(|end| (FieldValue::Bool(true), end))
+            .map(|end| (NoteFieldValue::Bool(true), end))
             .or_else(|| {
                 self.parse_keyword_at(pos, "false")
-                    .map(|end| (FieldValue::Bool(false), end))
+                    .map(|end| (NoteFieldValue::Bool(false), end))
             })
     }
 
     /// Parses a case-insensitive `null` keyword atom at `pos`.
     fn parse_null_at(&self, pos: usize) -> Option<Atom> {
-        self.parse_keyword_at(pos, "null").map(|end| (FieldValue::Null, end))
+        self.parse_keyword_at(pos, "null")
+            .map(|end| (NoteFieldValue::Null, end))
     }
 
     /// Finds the end offset of `keyword` at `pos` on a case-insensitive match
@@ -549,7 +540,7 @@ impl<'a> ValueParser<'a> {
         let end = self.source.advance(pos, 10);
         let date = self.source.get(pos..end)?;
         (is_iso_date(date) && self.is_atom_boundary(end))
-            .then(|| (FieldValue::Date(date.to_owned()), end))
+            .then(|| (NoteFieldValue::Date(date.to_owned()), end))
     }
 
     /// Parses a finite `f64` number atom at `pos`.
@@ -558,7 +549,7 @@ impl<'a> ValueParser<'a> {
         let raw = self.source.get(pos..end)?;
         let num = raw.parse::<f64>().ok()?;
         (num.is_finite() && self.is_atom_boundary(end))
-            .then_some((FieldValue::Number(num), end))
+            .then_some((NoteFieldValue::Number(num), end))
     }
 
     /// Finds the end offset of a numeric token at `pos`: digits and the
@@ -579,8 +570,8 @@ impl<'a> ValueParser<'a> {
     /// Parses a `#tag`-shaped atom (`#book`, `#projects/active`) at `pos`.
     ///
     /// Requires `#` followed by an alphabetic character. The match is returned
-    /// as [`FieldValue::String`] holding the tag text, including the leading
-    /// `#`, since there's no dedicated tag value kind.
+    /// as [`NoteFieldValue::String`] holding the tag text, including the
+    /// leading `#`, since there's no dedicated tag value kind.
     fn parse_tag_at(&self, pos: usize) -> Option<Atom> {
         let rest = self.source.from(pos)?.strip_prefix('#')?;
         let mut chars = rest.chars();
@@ -597,7 +588,7 @@ impl<'a> ValueParser<'a> {
             .last()
             .unwrap_or_else(|| self.source.advance(pos, 1));
         let raw = self.source.get(pos..end)?;
-        Some((FieldValue::String(raw.to_owned()), end))
+        Some((NoteFieldValue::String(raw.to_owned()), end))
     }
 
     /// Whether `pos` is at the end of the text, immediately before whitespace,
@@ -680,47 +671,31 @@ mod tests {
         use rstest::rstest;
 
         use super::*;
-        use crate::note::{FieldValue, InlineFieldForm, Link, LinkType};
+        use crate::note::{Link, LinkType, NoteFieldValue};
 
         #[rstest]
-        #[case::body(
-            "Author:: Jane Doe",
-            "Author",
-            "Jane Doe",
-            InlineFieldForm::Body
-        )]
+        #[case::body("Author:: Jane Doe", "Author", "Jane Doe")]
         #[case::visible_key(
             "See the [Status:: Draft] note.",
             "Status",
-            "Draft",
-            InlineFieldForm::VisibleKey
+            "Draft"
         )]
-        #[case::hidden_key(
-            "See the (Status:: Draft) note.",
-            "Status",
-            "Draft",
-            InlineFieldForm::HiddenKey
-        )]
+        #[case::hidden_key("See the (Status:: Draft) note.", "Status", "Draft")]
         fn extracts_a_field_in_its_declared_form(
             #[case] input: &str,
             #[case] expected_key: &str,
             #[case] expected_value: &str,
-            #[case] expected_form: InlineFieldForm,
         ) {
             let fields = extract_inline_fields(input);
 
             assert_eq!(fields.len(), 1);
             assert_eq!(
-                fields.first().map(|field| field.key().name()),
+                fields.first().map(|(k, _)| k.name()),
                 Some(expected_key)
             );
             assert_eq!(
-                fields.first().and_then(|field| field.value().as_str()),
+                fields.first().and_then(|(_, v)| v.as_str()),
                 Some(expected_value)
-            );
-            assert_eq!(
-                fields.first().map(InlineField::form),
-                Some(expected_form)
             );
         }
 
@@ -742,11 +717,11 @@ mod tests {
             let fields = extract_inline_fields(input);
 
             assert_eq!(
-                fields.first().map(|field| field.key().name()),
+                fields.first().map(|(k, _)| k.name()),
                 Some(expected_key)
             );
             assert_eq!(
-                fields.first().and_then(|field| field.value().as_str()),
+                fields.first().and_then(|(_, v)| v.as_str()),
                 Some("2024-01-01")
             );
         }
@@ -757,7 +732,7 @@ mod tests {
                 extract_inline_fields("Status:: Draft\nAuthor:: Jane Doe");
 
             let keys: Vec<&str> =
-                fields.iter().map(|field| field.key().name()).collect();
+                fields.iter().map(|(k, _)| k.name()).collect();
             assert_eq!(keys, ["Status", "Author"]);
         }
 
@@ -766,7 +741,7 @@ mod tests {
             let fields = extract_inline_fields("Status::    Draft   ");
 
             assert_eq!(
-                fields.first().and_then(|field| field.value().as_str()),
+                fields.first().and_then(|(_, v)| v.as_str()),
                 Some("Draft")
             );
         }
@@ -776,24 +751,24 @@ mod tests {
             let fields = extract_inline_fields("Status::");
 
             assert_eq!(
-                fields.first().map(InlineField::value),
-                Some(&FieldValue::Null)
+                fields.first().map(|(_, v)| v),
+                Some(&NoteFieldValue::Null)
             );
         }
 
         #[rstest]
-        #[case::true_value("flag:: true", FieldValue::Bool(true))]
-        #[case::false_value("flag:: false", FieldValue::Bool(false))]
-        #[case::number("score:: 4.5", FieldValue::Number(4.5))]
-        #[case::date("due:: 2026-07-29", FieldValue::Date("2026-07-29".to_owned()))]
-        #[case::non_finite_number("score:: NaN", FieldValue::String("NaN".to_owned()))]
+        #[case::true_value("flag:: true", NoteFieldValue::Bool(true))]
+        #[case::false_value("flag:: false", NoteFieldValue::Bool(false))]
+        #[case::number("score:: 4.5", NoteFieldValue::Number(4.5))]
+        #[case::date("due:: 2026-07-29", NoteFieldValue::Date("2026-07-29".to_owned()))]
+        #[case::non_finite_number("score:: NaN", NoteFieldValue::String("NaN".to_owned()))]
         fn parses_inline_value_types(
             #[case] input: &str,
-            #[case] expected: FieldValue,
+            #[case] expected: NoteFieldValue,
         ) {
             let fields = extract_inline_fields(input);
 
-            assert_eq!(fields.first().map(InlineField::value), Some(&expected));
+            assert_eq!(fields.first().map(|(_, v)| v), Some(&expected));
         }
 
         #[test]
@@ -801,8 +776,8 @@ mod tests {
             let fields = extract_inline_fields("[link:: [[test]]]");
 
             assert_eq!(
-                fields.first().map(InlineField::value),
-                Some(&FieldValue::Link(Link::new(
+                fields.first().map(|(_, v)| v),
+                Some(&NoteFieldValue::Link(Link::new(
                     "test",
                     "test",
                     LinkType::Wikilink
@@ -816,8 +791,8 @@ mod tests {
                 extract_inline_fields("[link:: [[yes, no, and maybe]]]");
 
             assert_eq!(
-                fields.first().map(InlineField::value),
-                Some(&FieldValue::Link(Link::new(
+                fields.first().map(|(_, v)| v),
+                Some(&NoteFieldValue::Link(Link::new(
                     "yes, no, and maybe",
                     "yes, no, and maybe",
                     LinkType::Wikilink
@@ -831,7 +806,7 @@ mod tests {
                 extract_inline_fields(r#"[link:: <a href="Page">Value</a>]"#);
 
             assert_eq!(
-                fields.first().and_then(|field| field.value().as_str()),
+                fields.first().and_then(|(_, v)| v.as_str()),
                 Some(r#"<a href="Page">Value</a>"#)
             );
         }
@@ -839,9 +814,10 @@ mod tests {
         #[test]
         fn parses_dataview_embed_link_value() {
             let fields = extract_inline_fields("[embed:: ![[hello]]]");
+            let (_, value) = fields.first().expect("field present");
             assert!(matches!(
-                fields.first().expect("field present").value(),
-                FieldValue::Link(link) if
+                value,
+                NoteFieldValue::Link(link) if
                     link.target() == "hello" &&
                     link.text() == "hello" &&
                     link.kind() == LinkType::Wikilink &&
@@ -852,7 +828,7 @@ mod tests {
         #[rstest]
         #[case::trailing_comma(
             "[links:: [[test]],]",
-            FieldValue::List(vec![FieldValue::Link(Link::new(
+            NoteFieldValue::List(vec![NoteFieldValue::Link(Link::new(
                 "test",
                 "test",
                 LinkType::Wikilink
@@ -860,13 +836,13 @@ mod tests {
         )]
         #[case::links(
             "[links:: [[test]], [[test2]]]",
-            FieldValue::List(vec![
-                FieldValue::Link(Link::new(
+            NoteFieldValue::List(vec![
+                NoteFieldValue::Link(Link::new(
                     "test",
                     "test",
                     LinkType::Wikilink
                 )),
-                FieldValue::Link(Link::new(
+                NoteFieldValue::Link(Link::new(
                     "test2",
                     "test2",
                     LinkType::Wikilink
@@ -875,20 +851,20 @@ mod tests {
         )]
         #[case::mixed_atoms(
             r#"[values:: 1, 2, 3, "hello"]"#,
-            FieldValue::List(vec![
-                FieldValue::Number(1.0),
-                FieldValue::Number(2.0),
-                FieldValue::Number(3.0),
-                FieldValue::String("hello".to_owned()),
+            NoteFieldValue::List(vec![
+                NoteFieldValue::Number(1.0),
+                NoteFieldValue::Number(2.0),
+                NoteFieldValue::Number(3.0),
+                NoteFieldValue::String("hello".to_owned()),
             ])
         )]
         fn parses_dataview_comma_lists(
             #[case] input: &str,
-            #[case] expected: FieldValue,
+            #[case] expected: NoteFieldValue,
         ) {
             let fields = extract_inline_fields(input);
 
-            assert_eq!(fields.first().map(InlineField::value), Some(&expected));
+            assert_eq!(fields.first().map(|(_, v)| v), Some(&expected));
         }
 
         #[test]
@@ -896,8 +872,8 @@ mod tests {
             let fields = extract_inline_fields(r#"[str:: "yes,"]"#);
 
             assert_eq!(
-                fields.first().map(InlineField::value),
-                Some(&FieldValue::String("yes,".to_owned()))
+                fields.first().map(|(_, v)| v),
+                Some(&NoteFieldValue::String("yes,".to_owned()))
             );
         }
 
@@ -906,8 +882,8 @@ mod tests {
             let fields = extract_inline_fields(r#"[str:: "yes, \"maybe\""]"#);
 
             assert_eq!(
-                fields.first().map(InlineField::value),
-                Some(&FieldValue::String(r#"yes, "maybe""#.to_owned()))
+                fields.first().map(|(_, v)| v),
+                Some(&NoteFieldValue::String(r#"yes, "maybe""#.to_owned()))
             );
         }
 
@@ -916,9 +892,9 @@ mod tests {
             let fields =
                 extract_inline_fields("This is some text. [key:: [value]]");
 
-            assert_eq!(fields.first().map(|f| f.key().name()), Some("key"));
+            assert_eq!(fields.first().map(|(k, _)| k.name()), Some("key"));
             assert_eq!(
-                fields.first().and_then(|field| field.value().as_str()),
+                fields.first().and_then(|(_, v)| v.as_str()),
                 Some("[value]")
             );
         }
@@ -927,9 +903,9 @@ mod tests {
         fn accepts_punctuation_in_wrapped_keys() {
             let fields = extract_inline_fields(r"Hello? [key! :: \[value]");
 
-            assert_eq!(fields.first().map(|f| f.key().name()), Some("key!"));
+            assert_eq!(fields.first().map(|(k, _)| k.name()), Some("key!"));
             assert_eq!(
-                fields.first().and_then(|field| field.value().as_str()),
+                fields.first().and_then(|(_, v)| v.as_str()),
                 Some(r"\[value")
             );
         }
@@ -945,9 +921,9 @@ mod tests {
         fn keeps_escaped_closing_bracket_inside_visible_value() {
             let fields = extract_inline_fields(r"Hello [key:: \] value]");
 
-            assert_eq!(fields.first().map(|f| f.key().name()), Some("key"));
+            assert_eq!(fields.first().map(|(k, _)| k.name()), Some("key"));
             assert_eq!(
-                fields.first().and_then(|field| field.value().as_str()),
+                fields.first().and_then(|(_, v)| v.as_str()),
                 Some(r"\] value")
             );
         }
@@ -956,10 +932,10 @@ mod tests {
         fn extracts_wrapped_field_after_large_leading_whitespace() {
             let fields = extract_inline_fields("      - [ ] Huh! [p:: 1]");
 
-            assert_eq!(fields.first().map(|f| f.key().name()), Some("p"));
+            assert_eq!(fields.first().map(|(k, _)| k.name()), Some("p"));
             assert_eq!(
-                fields.first().map(InlineField::value),
-                Some(&FieldValue::Number(1.0))
+                fields.first().map(|(_, v)| v),
+                Some(&NoteFieldValue::Number(1.0))
             );
         }
 
@@ -982,8 +958,8 @@ mod tests {
             let fields = extract_inline_fields(input);
 
             assert_eq!(
-                fields.first().map(InlineField::value),
-                Some(&FieldValue::Duration(expected.to_owned()))
+                fields.first().map(|(_, v)| v),
+                Some(&NoteFieldValue::Duration(expected.to_owned()))
             );
         }
 
@@ -1000,19 +976,19 @@ mod tests {
 
             assert_eq!(fields.len(), 1);
             assert_eq!(
-                fields.first().map(|field| field.key().name()),
+                fields.first().map(|(k, _)| k.name()),
                 Some(expected_key)
             );
             assert_eq!(
-                fields.first().map(InlineField::value),
-                Some(&FieldValue::Date(expected_date.to_owned()))
+                fields.first().map(|(_, v)| v),
+                Some(&NoteFieldValue::Date(expected_date.to_owned()))
             );
         }
         #[test]
         fn accepts_a_bare_key_preceded_by_leading_whitespace() {
             let fields = extract_inline_fields("  Status:: Draft");
 
-            assert_eq!(fields.first().map(|f| f.key().name()), Some("Status"));
+            assert_eq!(fields.first().map(|(k, _)| k.name()), Some("Status"));
         }
 
         #[test]
@@ -1022,7 +998,7 @@ mod tests {
             );
 
             let keys: Vec<&str> =
-                fields.iter().map(|field| field.key().name()).collect();
+                fields.iter().map(|(k, _)| k.name()).collect();
             assert_eq!(keys, ["Status", "Reviewer", "Editor"]);
         }
 
@@ -1031,9 +1007,9 @@ mod tests {
             let fields = extract_inline_fields("Status:: Draft [Key:: Value]");
 
             assert_eq!(fields.len(), 1);
-            assert_eq!(fields.first().map(|f| f.key().name()), Some("Status"));
+            assert_eq!(fields.first().map(|(k, _)| k.name()), Some("Status"));
             assert_eq!(
-                fields.first().and_then(|field| field.value().as_str()),
+                fields.first().and_then(|(_, v)| v.as_str()),
                 Some("Draft [Key:: Value]")
             );
         }

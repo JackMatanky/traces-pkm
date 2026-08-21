@@ -423,10 +423,7 @@ mod tests {
         use rstest::rstest;
 
         use super::*;
-        use crate::note::{
-            FieldValue, Frontmatter, InlineField, InlineFieldForm, Link,
-            LinkType, Tag,
-        };
+        use crate::note::{Frontmatter, Link, LinkType, NoteFieldValue, Tag};
 
         #[test]
         fn round_trips_records() {
@@ -504,11 +501,11 @@ mod tests {
                 .and_then(Note::frontmatter)
                 .into_iter()
                 .flat_map(Frontmatter::fields)
-                .find(|field| field.key().is_canonical_match("related"))
+                .find(|(k, _)| k.is_canonical_match("related"))
                 .expect("related field");
             assert_eq!(
-                field.value(),
-                &FieldValue::Link(Link::new(
+                field.1,
+                &NoteFieldValue::Link(Link::new(
                     "Project Alpha",
                     "Alpha",
                     LinkType::Wikilink
@@ -517,29 +514,13 @@ mod tests {
         }
 
         #[rstest]
-        #[case::body(
-            "Status:: Draft",
-            "status",
-            "Draft",
-            InlineFieldForm::Body
-        )]
-        #[case::visible_key(
-            "[Status:: Draft]",
-            "status",
-            "Draft",
-            InlineFieldForm::VisibleKey
-        )]
-        #[case::hidden_key(
-            "(Status:: Draft)",
-            "status",
-            "Draft",
-            InlineFieldForm::HiddenKey
-        )]
+        #[case::body("Status:: Draft", "status", "Draft")]
+        #[case::visible_key("[Status:: Draft]", "status", "Draft")]
+        #[case::hidden_key("(Status:: Draft)", "status", "Draft")]
         fn persist_then_load_recovers_inline_fields(
             #[case] source: &str,
             #[case] expected_key: &str,
             #[case] expected_value: &str,
-            #[case] expected_form: InlineFieldForm,
         ) {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("note.md"), source).expect("write note");
@@ -553,13 +534,16 @@ mod tests {
             let built_note =
                 built.note(Path::new("note.md")).expect("built note");
             assert_eq!(loaded_note.inline_fields(), built_note.inline_fields());
-            let field = loaded_note
+            let (key, values) = loaded_note
                 .inline_fields()
-                .first()
+                .iter()
+                .next()
                 .expect("inline field present");
-            assert!(field.key().is_canonical_match(expected_key));
-            assert_eq!(field.value().as_str(), Some(expected_value));
-            assert_eq!(field.form(), expected_form);
+            assert!(key.is_canonical_match(expected_key));
+            assert_eq!(
+                values.first().and_then(|v| v.as_str()),
+                Some(expected_value)
+            );
         }
 
         #[test]
@@ -580,16 +564,16 @@ mod tests {
             let built_note =
                 built.note(Path::new("note.md")).expect("built note");
             assert_eq!(loaded_note.inline_fields(), built_note.inline_fields());
-            let values: Vec<&FieldValue> = loaded_note
+            let values: Vec<&NoteFieldValue> = loaded_note
                 .inline_fields()
-                .iter()
-                .map(InlineField::value)
+                .values()
+                .flat_map(|vals| vals.iter())
                 .collect();
             assert_eq!(values, [
-                &FieldValue::Duration("7 hours".to_owned()),
-                &FieldValue::List(vec![
-                    FieldValue::Number(1.0),
-                    FieldValue::Number(2.0)
+                &NoteFieldValue::Duration("7 hours".to_owned()),
+                &NoteFieldValue::List(vec![
+                    NoteFieldValue::Number(1.0),
+                    NoteFieldValue::Number(2.0)
                 ])
             ]);
         }
@@ -836,8 +820,9 @@ mod tests {
             let refreshed = indexer.refresh().expect("refresh index");
             let value = refreshed
                 .note(Path::new("note.md"))
-                .and_then(|n| n.inline_fields().first())
-                .and_then(|f| f.value().as_str());
+                .and_then(|n| n.inline_fields().iter().next())
+                .and_then(|(_, vals)| vals.first())
+                .and_then(|v| v.as_str());
             assert_eq!(value, Some("Final"));
         }
 
@@ -1008,8 +993,8 @@ mod tests {
                 refreshed
                     .note(Path::new("note.md"))
                     .and_then(Note::frontmatter)
-                    .and_then(|fm| fm.fields().first())
-                    .and_then(|f| f.value().as_str()),
+                    .and_then(|fm| fm.fields().values().next())
+                    .and_then(|v| v.as_str()),
                 None // "# Revised" has no frontmatter
             );
             // ...but a fresh load from disk still shows the OLD content,
@@ -1019,8 +1004,8 @@ mod tests {
                 loaded
                     .note(Path::new("note.md"))
                     .and_then(Note::frontmatter)
-                    .and_then(|fm| fm.fields().first())
-                    .and_then(|f| f.value().as_str()),
+                    .and_then(|fm| fm.fields().values().next())
+                    .and_then(|v| v.as_str()),
                 Some("Draft") // OLD frontmatter, not the revised content
             );
         }
@@ -1267,7 +1252,7 @@ mod tests {
             assert_eq!(
                 note.inline_fields()
                     .iter()
-                    .map(|field| field.key().canonical())
+                    .map(|(key, _)| key.canonical())
                     .collect::<Vec<_>>(),
                 ["genre"]
             );
@@ -1467,7 +1452,7 @@ mod tests {
 
             assert_eq!(
                 record.field("title"),
-                Ok(crate::note::FieldValue::String("Launch".to_owned()))
+                Ok(crate::note::NoteFieldValue::String("Launch".to_owned()))
             );
         }
 
@@ -1487,8 +1472,8 @@ mod tests {
 
             assert_eq!(
                 record.field("tags"),
-                Ok(crate::note::FieldValue::List(vec![
-                    crate::note::FieldValue::String("#projects".to_owned())
+                Ok(crate::note::NoteFieldValue::List(vec![
+                    crate::note::NoteFieldValue::String("#projects".to_owned())
                 ]))
             );
         }

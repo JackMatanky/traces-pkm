@@ -48,7 +48,7 @@
 //! - [`QueryError`] reports malformed field paths, invalid expressions, and
 //!   transformation constraint violations.
 //!
-//! [`FieldValue`]: crate::note::FieldValue
+//! [`NoteFieldValue`]: crate::note::NoteFieldValue
 //! [`FileRecord`]: crate::file::FileRecord
 //! [`FileIndex`]: crate::index::FileIndex
 //! [`FileIndex::into_parts`]: crate::index::FileIndex::into_parts
@@ -244,7 +244,7 @@ mod tests {
     };
 
     use super::*;
-    use crate::{index::IndexerService, note::FieldValue};
+    use crate::{index::IndexerService, note::NoteFieldValue};
 
     mod fixtures {
         use std::{fs, path::Path};
@@ -400,17 +400,20 @@ mod tests {
 
             assert_eq!(
                 record.field("file.path"),
-                Ok(FieldValue::String("notes/todo.md".to_owned()))
+                Ok(NoteFieldValue::String("notes/todo.md".to_owned()))
             );
             assert_eq!(
                 record.field("file.name"),
-                Ok(FieldValue::String("todo".to_owned()))
+                Ok(NoteFieldValue::String("todo".to_owned()))
             );
             assert_eq!(
                 record.field("file.folder"),
-                Ok(FieldValue::String("notes".to_owned()))
+                Ok(NoteFieldValue::String("notes".to_owned()))
             );
-            assert_eq!(record.field("file.size"), Ok(FieldValue::Number(4.0)));
+            assert_eq!(
+                record.field("file.size"),
+                Ok(NoteFieldValue::Number(4.0))
+            );
         }
 
         #[test]
@@ -422,21 +425,23 @@ mod tests {
 
             assert_eq!(
                 record.field("file.mtime"),
-                Ok(FieldValue::Date(file.modified_at().to_datetime_string()))
+                Ok(NoteFieldValue::Date(
+                    file.modified_at().to_datetime_string()
+                ))
             );
             assert_eq!(
                 record.field("file.mdate"),
-                Ok(FieldValue::Date(file.modified_at().to_date_string()))
+                Ok(NoteFieldValue::Date(file.modified_at().to_date_string()))
             );
             assert_eq!(
                 record.field("file.ctime"),
-                Ok(FieldValue::Date(
+                Ok(NoteFieldValue::Date(
                     file.created_at_or_modified().to_datetime_string()
                 ))
             );
             assert_eq!(
                 record.field("file.cdate"),
-                Ok(FieldValue::Date(
+                Ok(NoteFieldValue::Date(
                     file.created_at_or_modified().to_date_string()
                 ))
             );
@@ -457,10 +462,10 @@ mod tests {
                 outcome_for(temp.path(), "---\nrating: 5\n---\nStatus:: Draft");
             let record = outcome.get(0).expect("record");
 
-            assert_eq!(record.field("rating"), Ok(FieldValue::Number(5.0)));
+            assert_eq!(record.field("rating"), Ok(NoteFieldValue::Number(5.0)));
             assert_eq!(
                 record.field("Status"),
-                Ok(FieldValue::String("Draft".to_owned()))
+                Ok(NoteFieldValue::String("Draft".to_owned()))
             );
         }
 
@@ -475,7 +480,7 @@ mod tests {
 
             assert_eq!(
                 record.field("status"),
-                Ok(FieldValue::String("Approved".to_owned()))
+                Ok(NoteFieldValue::String("Approved".to_owned()))
             );
         }
 
@@ -487,9 +492,9 @@ mod tests {
 
             assert_eq!(
                 record.field("tags"),
-                Ok(FieldValue::List(vec![
-                    FieldValue::String("#book".to_owned()),
-                    FieldValue::String("#read".to_owned()),
+                Ok(NoteFieldValue::List(vec![
+                    NoteFieldValue::String("#book".to_owned()),
+                    NoteFieldValue::String("#read".to_owned()),
                 ]))
             );
         }
@@ -509,9 +514,9 @@ mod tests {
 
             assert_eq!(
                 record.field("inlinks"),
-                Ok(FieldValue::List(vec![
-                    FieldValue::String("a.md".to_owned()),
-                    FieldValue::String("b.md".to_owned()),
+                Ok(NoteFieldValue::List(vec![
+                    NoteFieldValue::String("a.md".to_owned()),
+                    NoteFieldValue::String("b.md".to_owned()),
                 ]))
             );
         }
@@ -522,7 +527,10 @@ mod tests {
             let outcome = outcome_for(temp.path(), "No inbound links here.");
             let record = outcome.get(0).expect("record");
 
-            assert_eq!(record.field("inlinks"), Ok(FieldValue::List(vec![])));
+            assert_eq!(
+                record.field("inlinks"),
+                Ok(NoteFieldValue::List(vec![]))
+            );
         }
 
         #[test]
@@ -531,7 +539,7 @@ mod tests {
             let outcome = outcome_for(temp.path(), "body, no frontmatter");
             let record = outcome.get(0).expect("record");
 
-            assert_eq!(record.field("no_such_field"), Ok(FieldValue::Null));
+            assert_eq!(record.field("no_such_field"), Ok(NoteFieldValue::Null));
         }
 
         #[test]
@@ -545,11 +553,11 @@ mod tests {
 
             assert_eq!(
                 record.field("task.completed"),
-                Ok(FieldValue::Bool(true))
+                Ok(NoteFieldValue::Bool(true))
             );
             assert_eq!(
                 record.field("task.text"),
-                Ok(FieldValue::String("Buy milk".to_owned()))
+                Ok(NoteFieldValue::String("Buy milk".to_owned()))
             );
         }
 
@@ -559,8 +567,11 @@ mod tests {
             let outcome = outcome_for(temp.path(), "body");
             let record = outcome.get(0).expect("record");
 
-            assert_eq!(record.field("task.completed"), Ok(FieldValue::Null));
-            assert_eq!(record.field("task.text"), Ok(FieldValue::Null));
+            assert_eq!(
+                record.field("task.completed"),
+                Ok(NoteFieldValue::Null)
+            );
+            assert_eq!(record.field("task.text"), Ok(NoteFieldValue::Null));
         }
     }
 
@@ -631,14 +642,14 @@ mod tests {
 
             let grouped = outcome.group_by("category").expect("valid group_by");
 
-            let categories: Vec<FieldValue> = grouped
+            let categories: Vec<NoteFieldValue> = grouped
                 .iter()
                 .map(|record| record.field("category").expect("valid path"))
                 .collect();
             assert_eq!(categories, [
-                FieldValue::String("article".to_owned()),
-                FieldValue::String("book".to_owned()),
-                FieldValue::String("book".to_owned()),
+                NoteFieldValue::String("article".to_owned()),
+                NoteFieldValue::String("book".to_owned()),
+                NoteFieldValue::String("book".to_owned()),
             ]);
         }
 
@@ -673,19 +684,19 @@ mod tests {
             let flattened = outcome.flatten("authors").expect("valid flatten");
 
             assert_eq!(flattened.len(), 2);
-            let authors: Vec<FieldValue> = flattened
+            let authors: Vec<NoteFieldValue> = flattened
                 .iter()
                 .map(|record| record.field("authors").expect("valid path"))
                 .collect();
             assert_eq!(authors, [
-                FieldValue::String("Alice".to_owned()),
-                FieldValue::String("Bob".to_owned()),
+                NoteFieldValue::String("Alice".to_owned()),
+                NoteFieldValue::String("Bob".to_owned()),
             ]);
             // Every other field still resolves from the original record.
             for record in &flattened {
                 assert_eq!(
                     record.field("title"),
-                    Ok(FieldValue::String("Multi".to_owned()))
+                    Ok(NoteFieldValue::String("Multi".to_owned()))
                 );
             }
         }
@@ -710,7 +721,7 @@ mod tests {
             assert_eq!(flattened.len(), 1);
             assert_eq!(
                 flattened.get(0).expect("record").field("rating"),
-                Ok(FieldValue::Number(5.0))
+                Ok(NoteFieldValue::Number(5.0))
             );
         }
 
@@ -721,13 +732,13 @@ mod tests {
 
             let flattened = outcome.flatten("tags").expect("valid flatten");
 
-            let tags: Vec<FieldValue> = flattened
+            let tags: Vec<NoteFieldValue> = flattened
                 .iter()
                 .map(|record| record.field("tags").expect("valid path"))
                 .collect();
             assert_eq!(tags, [
-                FieldValue::String("#book".to_owned()),
-                FieldValue::String("#read".to_owned()),
+                NoteFieldValue::String("#book".to_owned()),
+                NoteFieldValue::String("#read".to_owned()),
             ]);
         }
 
@@ -762,7 +773,7 @@ mod tests {
             assert_eq!(filtered.len(), 1);
             assert_eq!(
                 filtered.get(0).expect("record").field("authors"),
-                Ok(FieldValue::String("Bob".to_owned()))
+                Ok(NoteFieldValue::String("Bob".to_owned()))
             );
         }
 
@@ -783,7 +794,7 @@ mod tests {
 
             // 2 authors * 2 tags = 4 rows
             assert_eq!(flattened.len(), 4);
-            let pairs: Vec<(FieldValue, FieldValue)> = flattened
+            let pairs: Vec<(NoteFieldValue, NoteFieldValue)> = flattened
                 .iter()
                 .map(|record| {
                     (
@@ -794,20 +805,20 @@ mod tests {
                 .collect();
             assert_eq!(pairs, [
                 (
-                    FieldValue::String("Alice".to_owned()),
-                    FieldValue::String("#book".to_owned())
+                    NoteFieldValue::String("Alice".to_owned()),
+                    NoteFieldValue::String("#book".to_owned())
                 ),
                 (
-                    FieldValue::String("Alice".to_owned()),
-                    FieldValue::String("#read".to_owned())
+                    NoteFieldValue::String("Alice".to_owned()),
+                    NoteFieldValue::String("#read".to_owned())
                 ),
                 (
-                    FieldValue::String("Bob".to_owned()),
-                    FieldValue::String("#book".to_owned())
+                    NoteFieldValue::String("Bob".to_owned()),
+                    NoteFieldValue::String("#book".to_owned())
                 ),
                 (
-                    FieldValue::String("Bob".to_owned()),
-                    FieldValue::String("#read".to_owned())
+                    NoteFieldValue::String("Bob".to_owned()),
+                    NoteFieldValue::String("#read".to_owned())
                 ),
             ]);
         }

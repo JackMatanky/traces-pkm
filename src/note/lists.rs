@@ -5,9 +5,11 @@
 //!   child lists.
 //! - [`TaskStatus`]: the completion state of a task list item.
 
+use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
-use super::metadata::InlineField;
+use super::metadata::NoteFieldValue;
+use crate::field::FieldKey;
 
 /// An ordered or unordered Markdown list.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
@@ -66,7 +68,7 @@ pub struct ListItem {
     text: String,
     task_status: Option<TaskStatus>,
     children: Vec<List>,
-    fields: Vec<InlineField>,
+    fields: IndexMap<FieldKey, Vec<NoteFieldValue>>,
 }
 
 impl ListItem {
@@ -89,7 +91,7 @@ impl ListItem {
             text: text.into(),
             task_status,
             children: Vec::new(),
-            fields: Vec::new(),
+            fields: IndexMap::new(),
         }
     }
 
@@ -108,7 +110,7 @@ impl ListItem {
             text: text.into(),
             task_status,
             children,
-            fields: Vec::new(),
+            fields: IndexMap::new(),
         }
     }
 
@@ -164,7 +166,10 @@ impl ListItem {
     /// [`Note::inline_fields`]: crate::note::Note::inline_fields
     #[inline]
     #[must_use]
-    pub(crate) fn with_fields(mut self, fields: Vec<InlineField>) -> Self {
+    pub(crate) fn with_fields(
+        mut self,
+        fields: IndexMap<FieldKey, Vec<NoteFieldValue>>,
+    ) -> Self {
         self.fields = fields;
         self
     }
@@ -183,7 +188,7 @@ impl ListItem {
                       accessor symmetry with its fields"
         )
     )]
-    pub(crate) fn fields(&self) -> &[InlineField] {
+    pub(crate) fn fields(&self) -> &IndexMap<FieldKey, Vec<NoteFieldValue>> {
         &self.fields
     }
 }
@@ -230,18 +235,15 @@ mod tests {
 
     #[test]
     fn stores_fields_when_attached_with_with_fields() {
-        use crate::note::{FieldValue, InlineFieldForm};
+        use crate::note::NoteFieldValue;
 
-        let field = InlineField::try_new(
-            "priority",
-            FieldValue::String("high".to_owned()),
-            InlineFieldForm::VisibleKey,
-        )
-        .expect("valid test field key");
+        let key = FieldKey::try_new("priority").expect("valid test field key");
+        let mut fields = IndexMap::new();
+        fields.insert(key, vec![NoteFieldValue::String("high".to_owned())]);
         let item = ListItem::new("task item", Some(TaskStatus::Incomplete))
-            .with_fields(vec![field.clone()]);
+            .with_fields(fields.clone());
 
-        assert_eq!(item.fields(), [field]);
+        assert_eq!(item.fields(), &fields);
     }
 
     #[test]

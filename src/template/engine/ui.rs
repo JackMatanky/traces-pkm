@@ -104,7 +104,7 @@ impl Object for UiOps {
                         let opts = SelectOptions::extract(&items, &kwargs)?;
                         let labels = opts.labels();
                         let index = provider
-                            .select(label, &labels)
+                            .select(label, labels)
                             .map_err(dialog_error)?;
                         opts.recover(index)
                     },
@@ -120,7 +120,7 @@ impl Object for UiOps {
                         let opts = SelectOptions::extract(&items, &kwargs)?;
                         let labels = opts.labels();
                         let indices = provider
-                            .multi_select(label, &labels)
+                            .multi_select(label, labels)
                             .map_err(dialog_error)?;
                         indices
                             .into_iter()
@@ -138,17 +138,11 @@ impl Object for UiOps {
     }
 }
 
-/// A display label paired with the original [`Value`] it was derived from.
-#[derive(Debug)]
-struct SelectItem {
-    label: String,
-    value: Value,
-}
-
 /// Selectable items prepared for [`DialogProvider`].
 #[derive(Debug)]
 struct SelectOptions {
-    items: Vec<SelectItem>,
+    labels: Vec<String>,
+    values: Vec<Value>,
 }
 
 impl SelectOptions {
@@ -184,7 +178,8 @@ impl SelectOptions {
         let path = attribute.unwrap_or(DEFAULT_ATTRIBUTE);
 
         let capacity = items.len().unwrap_or(0);
-        let mut prepared = Vec::with_capacity(capacity);
+        let mut labels = Vec::with_capacity(capacity);
+        let mut values = Vec::with_capacity(capacity);
         for item in items.try_iter()? {
             let attribute_value = get_path(&item, path)?;
             let label = if attribute_value.is_undefined() {
@@ -194,23 +189,28 @@ impl SelectOptions {
             } else {
                 attribute_value.to_string()
             };
-            prepared.push(SelectItem {
-                label,
-                value: item,
-            });
+            labels.push(label);
+            values.push(item);
+        }
+
+        // Deduplicate by value equality (keep first occurrence).
+        let mut new_labels = Vec::with_capacity(labels.len());
+        let mut new_values = Vec::with_capacity(values.len());
+        for (label, value) in labels.into_iter().zip(values) {
+            if !new_values.contains(&value) {
+                new_labels.push(label);
+                new_values.push(value);
+            }
         }
         Ok(Self {
-            items: prepared,
+            labels: new_labels,
+            values: new_values,
         })
     }
 
     /// Returns display labels for all selectable items.
-    fn labels(&self) -> Vec<String> {
-        let mut labels = Vec::with_capacity(self.items.len());
-        for item in &self.items {
-            labels.push(item.label.clone());
-        }
-        labels
+    fn labels(&self) -> &[String] {
+        &self.labels
     }
 
     /// Recovers the original [`Value`] picked by `index`.
@@ -219,7 +219,7 @@ impl SelectOptions {
     ///
     /// - [`ErrorKind::InvalidOperation`] if `index` is out of bounds.
     fn recover(&self, index: usize) -> Result<Value, Error> {
-        self.items.get(index).map(|item| item.value.clone()).ok_or_else(|| {
+        self.values.get(index).cloned().ok_or_else(|| {
             Error::new(
                 ErrorKind::InvalidOperation,
                 "dialog provider returned an index outside the item list",
@@ -856,7 +856,7 @@ mod tests {
                 .expect("extract succeeds");
 
             assert_eq!(opts.labels(), Vec::<String>::new());
-            assert_eq!(opts.items.len(), 0);
+            assert_eq!(opts.labels.len(), 0);
         }
     }
 

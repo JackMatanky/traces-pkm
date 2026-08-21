@@ -2,14 +2,16 @@
 
 use std::path::{Path, PathBuf};
 
+use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
 use super::{
     links::Link,
     lists::{List, ListItem},
-    metadata::{Frontmatter, InlineField, MetadataField},
+    metadata::{Frontmatter, NoteFieldValue},
     tag::Tag,
 };
+use crate::field::FieldKey;
 
 /// A parsed Markdown note.
 ///
@@ -22,7 +24,7 @@ pub struct Note {
     frontmatter: Option<Frontmatter>,
     lists: Vec<List>,
     outlinks: Vec<Link>,
-    inline_fields: Vec<InlineField>,
+    inline_fields: IndexMap<FieldKey, Vec<NoteFieldValue>>,
     tags: Vec<Tag>,
 }
 
@@ -45,7 +47,7 @@ impl Note {
             frontmatter,
             lists,
             outlinks,
-            inline_fields: Vec::new(),
+            inline_fields: IndexMap::new(),
             tags: Vec::new(),
         }
     }
@@ -55,7 +57,7 @@ impl Note {
     #[must_use]
     pub fn with_inline_fields(
         mut self,
-        inline_fields: Vec<InlineField>,
+        inline_fields: IndexMap<FieldKey, Vec<NoteFieldValue>>,
     ) -> Self {
         self.inline_fields = inline_fields;
         self
@@ -121,19 +123,35 @@ impl Note {
                       from the fields() iterator that is used"
         )
     )]
-    pub fn inline_fields(&self) -> &[InlineField] {
+    pub fn inline_fields(&self) -> &IndexMap<FieldKey, Vec<NoteFieldValue>> {
         &self.inline_fields
     }
 
     /// Iterates over frontmatter fields, then body inline fields.
-    #[inline]
-    pub fn fields(&self) -> impl Iterator<Item = &MetadataField> {
-        let empty: &[MetadataField] = &[];
-        let frontmatter_fields =
-            self.frontmatter.as_ref().map_or(empty, Frontmatter::fields);
-        frontmatter_fields
-            .iter()
-            .chain(self.inline_fields.iter().map(InlineField::metadata))
+    ///
+    /// Frontmatter keys take precedence: inline fields whose canonical key
+    /// matches a frontmatter key are skipped. Returns borrowed keys to avoid
+    /// cloning every [`FieldKey`] on each call.
+    pub fn fields(&self) -> impl Iterator<Item = (&FieldKey, &NoteFieldValue)> {
+        use std::collections::HashSet;
+
+        let fm_keys: Option<HashSet<&FieldKey>> =
+            self.frontmatter.as_ref().map(|fm| fm.fields().keys().collect());
+
+        let fm = self.frontmatter.iter().flat_map(|fm| fm.fields().iter());
+
+        let inline = self.inline_fields.iter().flat_map(move |(k, values)| {
+            let fm_keys = fm_keys.clone();
+            values.iter().filter_map(move |v| {
+                if fm_keys.as_ref().is_some_and(|keys| keys.contains(k)) {
+                    None
+                } else {
+                    Some((k, v))
+                }
+            })
+        });
+
+        fm.chain(inline)
     }
 
     /// Returns Markdown tags from paragraphs, headings, and list items, in
@@ -191,8 +209,10 @@ impl<'a> Iterator for TaskIter<'a> {
 #[cfg(test)]
 mod tests {
 
+    use indexmap::IndexMap;
+
     use super::*;
-    use crate::note::{FieldValue, InlineFieldForm, LinkType, TaskStatus};
+    use crate::note::{LinkType, NoteFieldValue, TaskStatus};
 
     mod constructor {
         use pretty_assertions::assert_eq;
@@ -201,7 +221,7 @@ mod tests {
 
         #[test]
         fn constructs_note_with_the_given_path_and_parts() {
-            let frontmatter = Frontmatter::new(Vec::new());
+            let frontmatter = Frontmatter::new(IndexMap::new());
             let list = List::new(false, vec![ListItem::new("item", None)]);
             let outlink = Link::new("target", "text", LinkType::Wikilink);
 
@@ -236,17 +256,16 @@ mod tests {
 
         #[test]
         fn with_inline_fields_attaches_the_given_fields() {
-            let field = InlineField::try_new(
-                "Status",
-                FieldValue::String("Draft".to_owned()),
-                InlineFieldForm::Body,
-            )
-            .expect("valid test field key");
+            let key =
+                FieldKey::try_new("Status").expect("valid test field key");
+            let mut fields = IndexMap::new();
+            fields
+                .insert(key, vec![NoteFieldValue::String("Draft".to_owned())]);
 
             let note = Note::new("notes/a.md", None, Vec::new(), Vec::new())
-                .with_inline_fields(vec![field.clone()]);
+                .with_inline_fields(fields.clone());
 
-            assert_eq!(note.inline_fields(), [field]);
+            assert_eq!(note.inline_fields(), &fields);
         }
 
         #[test]
@@ -272,19 +291,15 @@ mod tests {
 
         #[test]
         fn yields_frontmatter_fields_before_inline_fields() {
-            let frontmatter = Frontmatter::new(vec![
-                MetadataField::try_new(
-                    "title",
-                    FieldValue::String("Note".to_owned()),
-                )
-                .expect("valid test field key"),
-            ]);
-            let inline_field = InlineField::try_new(
-                "Status",
-                FieldValue::String("Draft".to_owned()),
-                InlineFieldForm::Body,
-            )
-            .expect("valid test field key");
+            let frontmatter = Frontmatter::new(IndexMap::from_iter([(
+                FieldKey::try_new("title").expect("valid test field key"),
+                NoteFieldValue::String("Note".to_owned()),
+            )]));
+            let key =
+                FieldKey::try_new("Status").expect("valid test field key");
+            let mut inline_fields = IndexMap::new();
+            inline_fields
+                .insert(key, vec![NoteFieldValue::String("Draft".to_owned())]);
 
             let note = Note::new(
                 "notes/a.md",
@@ -292,11 +307,34 @@ mod tests {
                 Vec::new(),
                 Vec::new(),
             )
-            .with_inline_fields(vec![inline_field]);
+            .with_inline_fields(inline_fields);
 
-            let keys: Vec<&str> =
-                note.fields().map(|field| field.key().name()).collect();
+            let keys: Vec<String> =
+                note.fields().map(|(k, _)| k.name().to_owned()).collect();
             assert_eq!(keys, ["title", "Status"]);
+        }
+
+        #[test]
+        fn fields_dedup_frontmatter_over_inline() {
+            let frontmatter = Frontmatter::new(IndexMap::from_iter([(
+                FieldKey::try_new("status").unwrap(),
+                NoteFieldValue::String("published".into()),
+            )]));
+            let mut inline_fields = IndexMap::new();
+            inline_fields.insert(FieldKey::try_new("status").unwrap(), vec![
+                NoteFieldValue::String("draft".into()),
+            ]);
+            let note =
+                Note::new("notes/a.md", Some(frontmatter), vec![], vec![])
+                    .with_inline_fields(inline_fields);
+
+            let fields: Vec<_> = note.fields().collect();
+            assert_eq!(fields.len(), 1);
+            assert_eq!(fields[0].0, &FieldKey::try_new("status").unwrap());
+            assert_eq!(
+                fields[0].1,
+                &NoteFieldValue::String("published".into())
+            );
         }
     }
 
