@@ -25,13 +25,8 @@ local hygiene = new Mapping<String, Step> {
 
 local config = new Mapping<String, Step> {
     ["check-json"] = Builtins.jq
-    ["check-yaml"] = (Builtins.ryl) {
-        check = "ryl --diff --config-data 'extends: default' {{ files }}"
-        fix = "ryl --fix --config-data 'extends: default' {{ files }}"
-    }
-    ["tombi-format"] = (Builtins.tombi_format) {
-        check = "tombi format --quiet --check {{ files }}"
-    }
+    ["check-yaml"] = Builtins.ryl
+    ["tombi-format"] = Builtins.tombi_format
     ["tombi"] = Builtins.tombi
 }
 
@@ -49,9 +44,7 @@ local vcs = new Mapping<String, Step> {
 local security = new Mapping<String, Step> {
     ["detect-private-key"] = Builtins.detect_private_key
 
-    ["gitleaks"] = (Builtins.gitleaks) {
-        check = "gitleaks git --redact --verbose --no-banner ."
-    }
+    ["gitleaks"] = Builtins.gitleaks
 }
 
 local rust = new Mapping<String, Step> {
