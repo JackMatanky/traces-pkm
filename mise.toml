@@ -166,13 +166,13 @@ run = '''
 set -euo pipefail
 
 declare -a args=()
-if [[ -n "${usage_jobs}" ]]; then
+if [[ -n "${usage_jobs:-}" ]]; then
   args+=(--jobs "${usage_jobs}")
 fi
-if [[ -n "${usage_file}" ]]; then
+if [[ -n "${usage_file:-}" ]]; then
   args+=(--file "${usage_file}")
 fi
-if [[ "${usage_iterate}" == "true" ]]; then
+if [[ "${usage_iterate:-false}" == "true" ]]; then
   args+=(--iterate)
 fi
 
@@ -190,8 +190,8 @@ run = '''
 #!/usr/bin/env bash
 set -euo pipefail
 
-readonly missed_file="${usage_input}"
-readonly report_file="${usage_output}"
+readonly missed_file="${usage_input:-mutants.out/missed.txt}"
+readonly report_file="${usage_output:-mutants-report.md}"
 
 if [[ ! -f "${missed_file}" ]] || [[ ! -s "${missed_file}" ]]; then
   cat <<EOF > "${report_file}"

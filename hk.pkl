@@ -1,10 +1,7 @@
-amends "package://github.com/jdx/hk/releases/download/v1.54.0/hk@1.54.0#/Config.pkl"
-import "package://github.com/jdx/hk/releases/download/v1.54.0/hk@1.54.0#/Builtins.pkl"
+amends "package://github.com/jdx/hk/releases/download/v1.56.0/hk@1.56.0#/Config.pkl"
+import "package://github.com/jdx/hk/releases/download/v1.56.0/hk@1.56.0#/Builtins.pkl"
 
 fail_fast = false
-jobs = 0
-walk_ignore = true
-stash_backup_count = 20
 
 exclude = List(
     "target",
@@ -23,7 +20,7 @@ local hygiene = new Mapping<String, Step> {
     ["mixed-line-ending"] = Builtins.mixed_line_ending
 }
 
-local config = new Mapping<String, Step> {
+local data_formats = new Mapping<String, Step> {
     ["check-json"] = Builtins.jq
     ["check-yaml"] = (Builtins.ryl) {
         check_diff = "ryl --diff -d 'extends: default' {{files}}"
@@ -31,14 +28,12 @@ local config = new Mapping<String, Step> {
         fix = "ryl --fix -d 'extends: default' {{files}}"
     }
     ["tombi-format"] = Builtins.tombi_format
-    ["tombi"] = Builtins.tombi
 }
 
 local vcs = new Mapping<String, Step> {
     ["check-added-large-files"] = (Builtins.check_added_large_files) {
         check = "hk util check-added-large-files --maxkb 500 {{files}}"
     }
-
     ["check-case-conflict"] = Builtins.check_case_conflict
     ["check-executables-have-shebangs"] = Builtins.check_executables_have_shebangs
     ["check-merge-conflict"] = Builtins.check_merge_conflict
@@ -47,7 +42,6 @@ local vcs = new Mapping<String, Step> {
 
 local security = new Mapping<String, Step> {
     ["detect-private-key"] = Builtins.detect_private_key
-
     ["gitleaks"] = Builtins.gitleaks
 }
 
@@ -56,33 +50,37 @@ local rust = new Mapping<String, Step> {
         check = "cargo fmt --check --manifest-path {{workspace_indicator}}"
         fix = "cargo fmt --manifest-path {{workspace_indicator}}"
     }
-
     ["cargo-clippy"] = Builtins.cargo_clippy
-
     ["cargo-test"] = new Step {
         glob = List("**/*.rs", "**/Cargo.toml", "**/Cargo.lock")
-        workspace_indicator = "Cargo.toml"
         check = "cargo test --workspace"
     }
-
     ["cargo-deny"] = new Step {
         glob = List("**/Cargo.toml", "**/Cargo.lock")
-        workspace_indicator = "Cargo.toml"
         check = "cargo deny check"
     }
 }
 
 local formatting =
     hygiene +
-    config +
+    data_formats +
     new Mapping<String, Step> {
         ["cargo-fmt"] = rust["cargo-fmt"]
     }
 
+local prose = new Mapping<String, Step> {
+    ["harper"] = (Builtins.harper) {
+        glob = List("**/*.rs", "**/*.md")
+        exclude = List(".rust-docs/**", ".agents/**")
+        check = "harper-cli lint --user-dict-path dictionary.txt {{files}}"
+    }
+}
+
 local validation =
     vcs +
+    prose +
     new Mapping<String, Step> {
-        ["tombi"] = config["tombi"]
+        ["tombi"] = Builtins.tombi
     }
 
 local quality =
@@ -103,7 +101,11 @@ hooks {
     }
 
     ["pre-push"] {
-        steps = validation + security + quality
+        steps = new Mapping<String, Step | Group> {
+            ["validate"] = new Group { steps = validation }
+            ["security"] = new Group { steps = security }
+            ["quality"] = new Group { steps = quality }
+        }
     }
 
     ["commit-msg"] {

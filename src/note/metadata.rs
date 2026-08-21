@@ -70,6 +70,14 @@ impl Frontmatter {
     /// Returns the value of the field matching `key`, if present.
     #[inline]
     #[must_use]
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "no current caller outside tests; kept for Frontmatter \
+                      accessor symmetry with its fields"
+        )
+    )]
     pub(crate) fn get(&self, key: &FieldKey) -> Option<&NoteFieldValue> {
         self.fields.get(key)
     }
