@@ -263,6 +263,20 @@ mod tests {
         use pretty_assertions::assert_eq;
 
         use super::*;
+
+        #[test]
+        fn last_duplicate_frontmatter_key_wins() {
+            let key = FieldKey::try_new("title").unwrap();
+            let mut fields = IndexMap::new();
+            fields.insert(key.clone(), NoteFieldValue::String("First".into()));
+            fields.insert(key.clone(), NoteFieldValue::String("Second".into()));
+            let fm = Frontmatter::new(fields);
+            assert_eq!(
+                fm.get(&key),
+                Some(&NoteFieldValue::String("Second".into()))
+            );
+        }
+
         #[test]
         fn parses_valid_yaml_into_structured_frontmatter() {
             let raw = RawFrontmatter::new("title: Test\ndraft: true\n");
@@ -291,6 +305,20 @@ mod tests {
             let fm = Frontmatter::from(&raw);
 
             assert_eq!(fm.is_empty(), true);
+        }
+
+        #[test]
+        fn frontmatter_get_matches_canonical_key() {
+            let mut fields = IndexMap::new();
+            fields.insert(
+                FieldKey::try_new("MyTitle").unwrap(),
+                NoteFieldValue::String("hello".into()),
+            );
+            let fm = Frontmatter::new(fields);
+            assert_eq!(
+                fm.get(&FieldKey::try_new("mytitle").unwrap()),
+                Some(&NoteFieldValue::String("hello".into()))
+            );
         }
     }
     mod field_value {

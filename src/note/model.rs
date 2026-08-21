@@ -128,18 +128,30 @@ impl Note {
     }
 
     /// Iterates over frontmatter fields, then body inline fields.
-    #[inline]
-    pub fn fields(&self) -> impl Iterator<Item = (FieldKey, &NoteFieldValue)> {
-        let fm = self.frontmatter.as_ref().map_or_else(Vec::new, |fm| {
-            fm.fields().iter().map(|(k, v)| (k.clone(), v)).collect::<Vec<_>>()
+    ///
+    /// Frontmatter keys take precedence: inline fields whose canonical key
+    /// matches a frontmatter key are skipped. Returns borrowed keys to avoid
+    /// cloning every [`FieldKey`] on each call.
+    pub fn fields(&self) -> impl Iterator<Item = (&FieldKey, &NoteFieldValue)> {
+        use std::collections::HashSet;
+
+        let fm_keys: Option<HashSet<&FieldKey>> =
+            self.frontmatter.as_ref().map(|fm| fm.fields().keys().collect());
+
+        let fm = self.frontmatter.iter().flat_map(|fm| fm.fields().iter());
+
+        let inline = self.inline_fields.iter().flat_map(move |(k, values)| {
+            let fm_keys = fm_keys.clone();
+            values.iter().filter_map(move |v| {
+                if fm_keys.as_ref().is_some_and(|keys| keys.contains(k)) {
+                    None
+                } else {
+                    Some((k, v))
+                }
+            })
         });
-        let inline = self
-            .inline_fields
-            .iter()
-            .flat_map(|(k, values)| values.iter().map(move |v| (k.clone(), v)));
-        let mut all: Vec<_> = fm.into_iter().chain(inline).collect();
-        all.dedup_by(|(k1, _), (k2, _)| k1 == k2);
-        all.into_iter()
+
+        fm.chain(inline)
     }
 
     /// Returns Markdown tags from paragraphs, headings, and list items, in
@@ -300,6 +312,29 @@ mod tests {
             let keys: Vec<String> =
                 note.fields().map(|(k, _)| k.name().to_owned()).collect();
             assert_eq!(keys, ["title", "Status"]);
+        }
+
+        #[test]
+        fn fields_dedup_frontmatter_over_inline() {
+            let frontmatter = Frontmatter::new(IndexMap::from_iter([(
+                FieldKey::try_new("status").unwrap(),
+                NoteFieldValue::String("published".into()),
+            )]));
+            let mut inline_fields = IndexMap::new();
+            inline_fields.insert(FieldKey::try_new("status").unwrap(), vec![
+                NoteFieldValue::String("draft".into()),
+            ]);
+            let note =
+                Note::new("notes/a.md", Some(frontmatter), vec![], vec![])
+                    .with_inline_fields(inline_fields);
+
+            let fields: Vec<_> = note.fields().collect();
+            assert_eq!(fields.len(), 1);
+            assert_eq!(fields[0].0, &FieldKey::try_new("status").unwrap());
+            assert_eq!(
+                fields[0].1,
+                &NoteFieldValue::String("published".into())
+            );
         }
     }
 

@@ -153,10 +153,10 @@ impl TryFrom<&str> for CompareOp {
 ///
 /// ```ignore
 /// # use traces_pkm::query::comparison::{CompareOp, ComparisonExpr};
-/// # use traces_pkm::field::FieldPath;
+/// # use traces_pkm::query::FieldPath;
 /// # use traces_pkm::note::NoteFieldValue;
 /// let expr = ComparisonExpr::new(
-///     FieldPath::try_new("rating").unwrap(),
+///     FieldPath::parse("rating").unwrap(),
 ///     CompareOp::Gt,
 ///     NoteFieldValue::Number(5.0),
 /// );
@@ -175,10 +175,10 @@ impl ComparisonExpr {
     ///
     /// ```ignore
     /// # use traces_pkm::query::comparison::{CompareOp, ComparisonExpr};
-    /// # use traces_pkm::field::FieldPath;
+    /// # use traces_pkm::query::FieldPath;
     /// # use traces_pkm::note::NoteFieldValue;
     /// let expr = ComparisonExpr::new(
-    ///     FieldPath::try_new("rating").unwrap(),
+    ///     FieldPath::parse("rating").unwrap(),
     ///     CompareOp::Gt,
     ///     NoteFieldValue::Number(5.0),
     /// );

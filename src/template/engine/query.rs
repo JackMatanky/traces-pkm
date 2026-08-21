@@ -65,11 +65,11 @@
 //! `dialog_error` and [`super::error::confine_error`]. Query failures carry
 //! template name, line, and column context like every other namespace.
 
-use std::{path::Path, sync::Arc};
+use std::{cmp::Ordering, path::Path, sync::Arc};
 
 use minijinja::{
     Environment, Error, ErrorKind, State,
-    value::{Enumerator, Object, ObjectRepr, Value, from_args},
+    value::{DynObject, Enumerator, Object, ObjectRepr, Value, from_args},
 };
 
 use crate::{
@@ -506,6 +506,16 @@ impl Object for IndexRecord {
             "task" => Some(Value::from_object(TaskFields(Arc::clone(self)))),
             _ => self.field(key).ok().map(field_value),
         }
+    }
+
+    fn custom_cmp(self: &Arc<Self>, other: &DynObject) -> Option<Ordering> {
+        other.downcast_ref::<IndexRecord>().map(|other| {
+            if **self == *other {
+                Ordering::Equal
+            } else {
+                Ordering::Less
+            }
+        })
     }
 }
 

@@ -1433,6 +1433,22 @@ mod tests {
             }
 
             #[test]
+            fn object_field_preserves_insertion_order() {
+                let json = r#"{"z_last": 1, "a_first": 2, "m_middle": 3}"#;
+                let value: FieldValue = serde_json::from_str(json).unwrap();
+                if let FieldValue::Object(map) = value {
+                    let keys: Vec<_> = map.keys().cloned().collect();
+                    assert_eq!(keys, vec![
+                        String::from("z_last"),
+                        String::from("a_first"),
+                        String::from("m_middle"),
+                    ]);
+                } else {
+                    panic!("expected Object");
+                }
+            }
+
+            #[test]
             fn saturates_a_u64_beyond_i64_range_at_i64_max() {
                 let source = r#"{"huge": 18446744073709551615}"#;
                 let value: FieldValueRef<'_> =

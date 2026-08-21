@@ -417,6 +417,7 @@ impl ListTracker {
         let mut page_fields: IndexMap<FieldKey, Vec<super::NoteFieldValue>> =
             IndexMap::new();
         for (key, value) in raw_fields {
+            // ponytail: clone needed for two-out pattern (item + page fields)
             item_fields.entry(key.clone()).or_default().push(value.clone());
             page_fields.entry(key).or_default().push(value);
         }

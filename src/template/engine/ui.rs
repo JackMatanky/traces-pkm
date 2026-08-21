@@ -104,7 +104,7 @@ impl Object for UiOps {
                         let opts = SelectOptions::extract(&items, &kwargs)?;
                         let labels = opts.labels();
                         let index = provider
-                            .select(label, &labels)
+                            .select(label, labels)
                             .map_err(dialog_error)?;
                         opts.recover(index)
                     },
@@ -120,7 +120,7 @@ impl Object for UiOps {
                         let opts = SelectOptions::extract(&items, &kwargs)?;
                         let labels = opts.labels();
                         let indices = provider
-                            .multi_select(label, &labels)
+                            .multi_select(label, labels)
                             .map_err(dialog_error)?;
                         indices
                             .into_iter()
@@ -193,28 +193,24 @@ impl SelectOptions {
             values.push(item);
         }
 
-        // Deduplicate by value equality (keep first occurrence)
-        let mut seen = Vec::new();
-        let mut i = 0;
-        while i < values.len() {
-            if seen.iter().any(|v: &Value| *v == values[i]) {
-                labels.remove(i);
-                values.remove(i);
-            } else {
-                seen.push(values[i].clone());
-                i += 1;
+        // Deduplicate by value equality (keep first occurrence).
+        let mut new_labels = Vec::with_capacity(labels.len());
+        let mut new_values = Vec::with_capacity(values.len());
+        for (label, value) in labels.into_iter().zip(values) {
+            if !new_values.contains(&value) {
+                new_labels.push(label);
+                new_values.push(value);
             }
         }
-
         Ok(Self {
-            labels,
-            values,
+            labels: new_labels,
+            values: new_values,
         })
     }
 
     /// Returns display labels for all selectable items.
-    fn labels(&self) -> Vec<String> {
-        self.labels.clone()
+    fn labels(&self) -> &[String] {
+        &self.labels
     }
 
     /// Recovers the original [`Value`] picked by `index`.
