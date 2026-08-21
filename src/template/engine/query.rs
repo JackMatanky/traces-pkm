@@ -517,7 +517,7 @@ impl Object for QueryRecord {
     }
 
     fn custom_cmp(self: &Arc<Self>, other: &DynObject) -> Option<Ordering> {
-        other.downcast_ref::<QueryRecord>().map(|other| {
+        other.downcast_ref::<Self>().map(|other| {
             if **self == *other {
                 Ordering::Equal
             } else {
