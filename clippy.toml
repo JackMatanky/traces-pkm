@@ -35,16 +35,7 @@ large-error-threshold = 128
 
 # Project Metadata
 msrv = "1.92"
-doc-valid-idents = [
-  "Traces",
-  "Obsidian",
-  "Redb",
-  "rkyv",
-  "CLI",
-  "JSON",
-  "TOML",
-  "YAML"
-]
+doc-valid-idents = ["Traces", "Obsidian", "Redb", "rkyv", "CLI", "JSON", "TOML", "YAML"]
 disallowed-names = ["foo", "bar", "baz", "quux", "tmp"]
 
 # Source Ordering
@@ -92,11 +83,4 @@ allow-unwrap-in-tests = true
 allow-expect-in-tests = true
 
 # Disallowed Methods (Prevent common anti-patterns and unsafe shortcuts)
-disallowed-methods = [
-  { path = "std::process::exit", reason = "Use miette and return Result from main. Abrupt exit skips cleanup/Drop." },
-  { path = "std::mem::forget", reason = "Potential memory leak. Use ManuallyDrop or ensure correct RAII management." },
-  { path = "std::env::current_dir", reason = "Global state and potential for race conditions. Prefer explicit path management." },
-  { path = "std::fs::canonicalize", reason = "Expensive I/O operation. Use only when strictly necessary for path resolution." },
-  { path = "std::thread::sleep", reason = "Blocks the current thread. In async code, use tokio::time::sleep." },
-  { path = "std::panic::catch_unwind", reason = "Prefer Result-based error handling. Catching panics is non-idiomatic for control flow." }
-]
+disallowed-methods = [{ path = "std::process::exit", reason = "Use miette and return Result from main. Abrupt exit skips cleanup/Drop." }, { path = "std::mem::forget", reason = "Potential memory leak. Use ManuallyDrop or ensure correct RAII management." }, { path = "std::env::current_dir", reason = "Global state and potential for race conditions. Prefer explicit path management." }, { path = "std::fs::canonicalize", reason = "Expensive I/O operation. Use only when strictly necessary for path resolution." }, { path = "std::thread::sleep", reason = "Blocks the current thread. In async code, use tokio::time::sleep." }, { path = "std::panic::catch_unwind", reason = "Prefer Result-based error handling. Catching panics is non-idiomatic for control flow." }]

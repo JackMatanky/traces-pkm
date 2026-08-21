@@ -23,17 +23,30 @@ local hygiene = new Mapping<String, Step> {
 local data_formats = new Mapping<String, Step> {
     ["check-json"] = Builtins.jq
     ["check-yaml"] = (Builtins.ryl) {
-        check_diff = "ryl --diff -d 'extends: default' {{files}}"
-        check_list_files = "ryl --list-files -d 'extends: default' {{files}}"
-        fix = "ryl --fix -d 'extends: default' {{files}}"
+        check_diff = new CommandSpec {
+            command = new Command {
+                argv = List("ryl", "--diff", "-d", "extends: default", "{{files}}")
+            }
+            effect = "read"
+        }
+        check_list_files = new CommandSpec {
+            command = new Command {
+                argv = List("ryl", "--list-files", "-d", "extends: default", "{{files}}")
+            }
+            effect = "read"
+        }
+        fix = new CommandSpec {
+            command = new Command {
+                argv = List("ryl", "--fix", "-d", "extends: default", "{{files}}")
+            }
+            effect = "write"
+        }
     }
     ["tombi-format"] = Builtins.tombi_format
 }
 
 local vcs = new Mapping<String, Step> {
-    ["check-added-large-files"] = (Builtins.check_added_large_files) {
-        check = "hk util check-added-large-files --maxkb 500 {{files}}"
-    }
+    ["check-added-large-files"] = Builtins.check_added_large_files
     ["check-case-conflict"] = Builtins.check_case_conflict
     ["check-executables-have-shebangs"] = Builtins.check_executables_have_shebangs
     ["check-merge-conflict"] = Builtins.check_merge_conflict
@@ -42,23 +55,27 @@ local vcs = new Mapping<String, Step> {
 
 local security = new Mapping<String, Step> {
     ["detect-private-key"] = Builtins.detect_private_key
-    ["gitleaks"] = Builtins.gitleaks
+    ["gitleaks"] = (Builtins.gitleaks) {
+        check = new CommandSpec {
+            command = "for file in {{files}}; do gitleaks dir --redact --no-banner --log-level error \"$file\" || exit $?; done"
+            effect = "read"
+        }
+    }
 }
 
 local rust = new Mapping<String, Step> {
-    ["cargo-fmt"] = (Builtins.cargo_fmt) {
-        check = "cargo fmt --check --manifest-path {{workspace_indicator}}"
-        fix = "cargo fmt --manifest-path {{workspace_indicator}}"
-    }
+    ["cargo-fmt"] = Builtins.cargo_fmt
     ["cargo-clippy"] = Builtins.cargo_clippy
     ["cargo-test"] = new Step {
         glob = List("**/*.rs", "**/Cargo.toml", "**/Cargo.lock")
-        check = "cargo test --workspace"
+        check = new CommandSpec {
+            command = new Command {
+                argv = List("cargo", "test", "--workspace", "--features", "test-utils")
+            }
+            effect = "write"
+        }
     }
-    ["cargo-deny"] = new Step {
-        glob = List("**/Cargo.toml", "**/Cargo.lock")
-        check = "cargo deny check"
-    }
+    ["cargo-deny"] = Builtins.cargo_deny
 }
 
 local formatting =
@@ -72,7 +89,19 @@ local prose = new Mapping<String, Step> {
     ["harper"] = (Builtins.harper) {
         glob = List("**/*.rs", "**/*.md")
         exclude = List(".rust-docs/**", ".agents/**")
-        check = "harper-cli lint --user-dict-path dictionary.txt {{files}}"
+        profiles = List("prose")
+        check = new CommandSpec {
+            command = new Command {
+                argv = List(
+                    "harper-cli",
+                    "lint",
+                    "--user-dict-path",
+                    "dictionary.txt",
+                    "{{files}}",
+                )
+            }
+            effect = "read"
+        }
     }
 }
 
@@ -111,7 +140,12 @@ hooks {
     ["commit-msg"] {
         steps = new Mapping<String, Step> {
             ["conventional-commit"] = (Builtins.check_conventional_commit) {
-                check = "hk util check-conventional-commit --verbose {{commit_msg_file}}"
+                check = new CommandSpec {
+                    command = new Command {
+                        argv = List("hk", "util", "check-conventional-commit", "--verbose", "{{commit_msg_file}}")
+                    }
+                    effect = "read"
+                }
             }
         }
     }
