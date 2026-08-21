@@ -75,7 +75,7 @@ run = "cargo mutants"
 
 ---
 
-## 4. CI/CD Integration
+## 4. CI and Delivery Integration
 
 Because mutation testing is resource-intensive, running a full scan on every
 commit in CI can be slow. To integrate mutation testing efficiently in GitHub
@@ -130,6 +130,61 @@ For larger crates or faster feedback loops during development:
 
 4. **Control Parallel Jobs**
 
-   ```bash
-   mise run mutants -- --jobs 4
-   ```
+    ```bash
+    mise run mutants -- --jobs 4
+    ```
+
+---
+
+## 6. `cargo-mutants` 27.1.0 Notes
+
+Primary sources checked on 2026-08-21:
+
+- `cargo mutants --version`: `cargo-mutants 27.1.0`
+- `cargo mutants --help`
+- `cargo mutants --emit-schema config`
+- Rust docs MCP cached crate `cargo-mutants` `27.1.0`
+- `cargo_mutants::config::Config` in `src/config.rs`
+- `cargo_mutants::options::Options::new` in `src/options.rs`
+- `cargo_mutants::timeouts::{test_timeout, build_timeout}` in `src/timeouts.rs`
+
+Important setup facts:
+
+- `.cargo/mutants.toml` uses `#[serde(deny_unknown_fields)]`, so unsupported
+  keys are rejected.
+- `jobs` is not a configuration file key. It is a command-line or environment option only:
+  `--jobs` / `CARGO_MUTANTS_JOBS`.
+- The default test timeout is the greater of `minimum_test_timeout` or baseline
+  test time multiplied by `timeout_multiplier`. In 27.1.0, unset values default
+  to `minimum_test_timeout = 20` and `timeout_multiplier = 5`.
+- Build timeouts are disabled unless `build_timeout` or
+  `build_timeout_multiplier` is set.
+- `test_tool = "nextest"` is valid.
+- `additional_cargo_args` applies to every cargo invocation.
+- `additional_cargo_test_args` applies only to test invocations.
+- `sharding = "slice"` is the 27.1.0 default; `round-robin` is available when
+  more balanced shard runtimes matter more than incremental build locality.
+- `--iterate` reads prior `mutants.out/caught.txt`, `unviable.txt`, and
+  `previously_caught.txt`. Use it for local loops, not final validation.
+
+Recommended baseline for this repo:
+
+```toml
+test_tool = "nextest"
+features = ["test-utils"]
+additional_cargo_test_args = ["--all-targets"]
+
+# Keep this no stricter than cargo-mutants defaults unless local timings prove it.
+timeout_multiplier = 5
+minimum_test_timeout = 30
+```
+
+Keep parallelism in `mise.toml`, not `.cargo/mutants.toml`:
+
+```toml
+flag "-j --jobs <jobs>" help="Number of cargo build/test jobs in parallel" default="4"
+```
+
+Use lower parallelism first. `cargo-mutants` warns above `8`, and each mutant
+job starts cargo, which can start its own build/test workers. If mutants show
+many exact timeout-duration failures, reduce `--jobs` before weakening tests.

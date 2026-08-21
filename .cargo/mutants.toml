@@ -3,7 +3,7 @@
 
 test_tool = "nextest"
 features = ["test-utils"]
-additional_cargo_args = ["--all-targets"]
+additional_cargo_test_args = ["--all-targets"]
 
 # Exclude CLI, main binary, and error definitions to focus on core business logic
 # and avoid mutating code that is primarily boilerplate or presentation.
@@ -27,6 +27,6 @@ exclude_re = [
   "impl.*Visitor",
 ]
 
-# Optimize timeouts for our fast test suite (~6s for 1600+ tests)
-timeout_multiplier = 2
-minimum_test_timeout = 10
+# Keep timeouts close to cargo-mutants defaults, with a wider floor for local load.
+timeout_multiplier = 5
+minimum_test_timeout = 30
