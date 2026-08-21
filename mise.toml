@@ -1,4 +1,3 @@
-#:tombi schema.strict = false
 # -----------------------------------------------------------------------------
 # Filename:    traces-pkm/mise.toml
 # Docs:        https://mise.jdx.dev/
@@ -89,6 +88,7 @@ description = "Strict clippy: workspace, all targets, all features. Auto-fixes k
 depends = ["fmt"]
 usage = '''
 flag "--no-fix" help="Skip auto-fix for known lints"
+flag "--no-deny-warnings" help="Keep Clippy warnings as warnings instead of passing -D warnings"
 arg "[lints]" env="CLIPPY_FIX_LINTS" help="Fix list (comma-separated)" default="redundant_clone,needless_collect,or_fun_call,redundant_field_names,significant_drop_in_scrutinee,use_self,bool_assert_comparison,uninlined_format_args,needless_borrow,useless_conversion,manual_let_else,redundant_closure_for_method_calls"
 '''
 run = '''
@@ -96,7 +96,11 @@ run = '''
 set -euo pipefail
 
 declare -a cargo_args=(--workspace --all-targets --all-features)
-declare -a clippy_args=(-D warnings)
+declare -a clippy_args=()
+
+if [[ "${usage_no_deny_warnings:-false}" != "true" ]]; then
+  clippy_args+=(-D warnings)
+fi
 
 if [[ "${usage_no_fix:-false}" != "true" ]]; then
   cargo_args+=(--fix --allow-dirty --allow-staged)

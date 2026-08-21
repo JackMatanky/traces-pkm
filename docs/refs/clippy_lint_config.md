@@ -15,20 +15,17 @@ Primary sources checked:
 ## Findings
 
 - All lint names configured in `Cargo.toml` are known by the installed Clippy.
-- `mise run clippy` passes `-D warnings`, so every `warn` lint in `Cargo.toml` is a hard gate in normal project use.
-- `cognitive-complexity-threshold = 15` is currently ineffective unless `clippy::cognitive_complexity` is enabled; that lint is in `clippy::restriction`, not in the enabled groups.
-- Source-ordering config is currently ineffective unless `clippy::arbitrary_source_item_ordering` is enabled; that lint is also in `clippy::restriction`.
-- `stack-size-threshold = 4096` is currently ineffective unless `clippy::large_stack_frames` is enabled; that lint is in `clippy::nursery`.
-- `max-trait-bounds = 3` only matters for nursery trait-bound lints such as `trait_duplication_in_bounds` / `type_repetition_in_bounds`, which are not currently enabled.
+- `mise run clippy` passes `-D warnings` by default, so every `warn` lint in `Cargo.toml` is a hard gate unless `--no-deny-warnings` is used for exploration.
+- `cognitive-complexity-threshold = 25` is connected to `clippy::cognitive_complexity`, which is enabled as a warning. Project tasks keep this strict by default with `-D warnings`.
+- Source-ordering config is deliberately reference-only. `clippy::arbitrary_source_item_ordering` conflicts with `docs/refs/canonical_ordering_discipline.md` because it enforces alphabetical ordering in places where this project prefers reader-first/API-tour ordering.
+- `stack-size-threshold = 4096` is connected to `clippy::large_stack_frames`, which is enabled as a warning.
+- `max-trait-bounds = 3` is connected to `trait_duplication_in_bounds` and `type_repetition_in_bounds`, which are enabled as warnings.
 - `too-many-arguments-threshold`, `type-complexity-threshold`, `too-large-for-stack`, `array-size-threshold`, `enum-variant-size-threshold`, `large-error-threshold`, `max-fn-params-bools`, `max-struct-bools`, `doc-valid-idents`, `disallowed-names`, `allow-unwrap-in-tests`, `allow-expect-in-tests`, and `disallowed-methods` are connected to enabled lints.
-- `clippy.toml` says cognitive complexity is kept below 25, but the configured value is 15 and the lint is not enabled.
+- `mise run clippy` is strict by default and supports `--no-deny-warnings` for exploratory runs.
 - `msrv = "1.92"` is configured for Clippy, but `Cargo.toml` has no matching `rust-version`; this makes MSRV policy implicit.
 
-## Suggested Minimal Changes
+## Operating Notes
 
-1. Add `cognitive_complexity = "deny"` if the AI-safeguard comment is policy.
-2. Add `arbitrary_source_item_ordering = "warn"` only if source ordering should really be enforced; otherwise delete the ordering config block.
-3. Delete `stack-size-threshold` unless `large_stack_frames = "warn"` is enabled deliberately.
-4. Delete `max-trait-bounds` unless the nursery trait-bound lints are enabled deliberately.
-5. Either change project-gated `warn` lints to `deny`, or document that `mise run clippy` turns them into errors with `-D warnings`.
-6. Add `rust-version = "1.92"` to `Cargo.toml` if `msrv = "1.92"` is an actual compatibility promise.
+1. Use `mise run clippy -- --no-deny-warnings` only for exploratory cleanup.
+2. Keep source-ordering settings as reference-only unless the project decides to adopt Clippy's mechanical/alphabetical ordering.
+3. Add `rust-version = "1.92"` to `Cargo.toml` if `msrv = "1.92"` is an actual compatibility promise.

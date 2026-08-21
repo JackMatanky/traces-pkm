@@ -116,10 +116,22 @@ unwrap_used = "deny"
 #            Warnings (Best Practices & Suggestions)            #
 # ------------------------------------------------------------- #
 as_conversions = "warn"
+cognitive_complexity = "warn"
 else_if_without_else = "warn"
 format_push_string = "warn"
 impl_trait_in_params = "warn"
+large_stack_frames = "warn"
+literal_string_with_formatting_args = "warn"
 missing_inline_in_public_items = "warn"
+needless_collect = "warn"
+or_fun_call = "warn"
+path_buf_push_overwrite = "warn"
+redundant_clone = "warn"
+search_is_some = "warn"
+significant_drop_in_scrutinee = "warn"
+trait_duplication_in_bounds = "warn"
+type_repetition_in_bounds = "warn"
+use_self = "warn"
 
 # ------------------------------------------------------------- #
 #              Allowed (Exceptions & Relaxations)               #

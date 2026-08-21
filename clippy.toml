@@ -5,12 +5,12 @@
 #              and project-specific valid identifiers.
 #
 # AI Safeguards:
-# - Cognitive complexity < 25 ensures AI-generated functions stay manageable.
+# - Cognitive complexity <= 25 keeps AI-generated functions manageable.
 # - Disallowed methods prevent AI from taking shortcuts like unwrap/expect.
 # -----------------------------------------------------------------------------
 
 # Complexity Thresholds
-cognitive-complexity-threshold = 15
+cognitive-complexity-threshold = 25
 too-many-lines-threshold = 100
 too-many-arguments-threshold = 5
 type-complexity-threshold = 160
@@ -39,8 +39,10 @@ doc-valid-idents = ["Traces", "Obsidian", "Redb", "rkyv", "CLI", "JSON", "TOML",
 disallowed-names = ["foo", "bar", "baz", "quux", "tmp"]
 
 # Source Ordering
-# Enforce coarse source structure (module/import/type/impl/function ordering)
-# without alphabetizing APIs inside `impl` blocks.
+# Reference-only unless `clippy::arbitrary_source_item_ordering` is enabled.
+# Keep this aligned with docs/refs/canonical_ordering_discipline.md, but leave
+# the lint disabled because this project prefers reader-first/API-tour ordering.
+# These settings document the closest mechanical approximation Clippy can offer.
 #
 # NOTE:
 # - Avoid `impl` here: Clippy would alphabetize methods, which fights “tour of the API” ordering.
