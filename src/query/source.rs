@@ -1009,7 +1009,7 @@ mod tests {
         use std::{fs, path::Path};
 
         use super::*;
-        use crate::index::FileIndex;
+        use crate::{FileIndex, index::IndexerService};
 
         fn find_record<'a>(
             records: &'a [crate::file::FileRecord],
@@ -1028,7 +1028,8 @@ mod tests {
                 fs::create_dir_all(parent).expect("create parent");
             }
             fs::write(full_path, content).expect("write Note");
-            let index = FileIndex::build(temp.path()).expect("build index");
+            let index =
+                IndexerService::new(temp.path()).build().expect("build index");
             (temp, index)
         }
 
@@ -1088,7 +1089,8 @@ mod tests {
                 .expect("write direct file");
             fs::write(temp.path().join("covers/sub/hidden.md"), "# Hidden")
                 .expect("write nested file");
-            let index = FileIndex::build(temp.path()).expect("build index");
+            let index =
+                IndexerService::new(temp.path()).build().expect("build index");
             let expression =
                 QuerySourceExpr::parse("covers/*.md").expect("valid source");
             let direct =
@@ -1109,7 +1111,8 @@ mod tests {
                 .expect("write direct file");
             fs::write(temp.path().join("covers/sub/hidden.md"), "# Hidden")
                 .expect("write nested file");
-            let index = FileIndex::build(temp.path()).expect("build index");
+            let index =
+                IndexerService::new(temp.path()).build().expect("build index");
             // Requires an intermediate segment between `covers/` and the
             // final `*.md`, so a direct child does not match — proving
             // `**` (unlike `*`) crosses `/` boundaries, not merely that it

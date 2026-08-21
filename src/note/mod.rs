@@ -46,3 +46,4 @@ pub use metadata::{
 pub use model::Note;
 pub use parser::parse_markdown;
 pub use tag::Tag;
+pub(crate) use tag::is_nested_under;

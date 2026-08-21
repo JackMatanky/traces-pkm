@@ -1,7 +1,7 @@
 //! Parsing and evaluation of record filter expressions.
 //!
 //! This module implements the filter expression language used by
-//! [`super::QueryOutcome::filter`].
+//! [`super::QueryRecordSet::filter`].
 //!
 //! # Record Filter Grammar
 //!
@@ -24,7 +24,7 @@ use logos::{Lexer, Logos};
 use miette::SourceSpan;
 
 use super::{
-    FieldPath, IndexRecord, QueryError,
+    FieldPath, QueryError, QueryRecord,
     comparison::{CompareOp, ComparisonExpr},
     error::{QueryDialect, QuerySyntaxError},
     logic::{
@@ -33,12 +33,12 @@ use super::{
     },
     sort::fields_equal,
 };
-use crate::note::FieldValue;
+use crate::note::{FieldValue, is_nested_under};
 
 /// A parsed filter expression AST.
 ///
 /// Wraps [`LogicalExpr`] with [`FilterAtom`] leaves, providing the concrete
-/// type used by [`super::QueryOutcome::filter`].
+/// type used by [`super::QueryRecordSet::filter`].
 pub(super) type FilterExpr = LogicalExpr<FilterAtom>;
 
 /// Atomic predicate in a filter expression.
@@ -54,7 +54,7 @@ pub(super) enum FilterAtom {
 }
 
 impl FilterAtom {
-    fn matches(&self, record: &IndexRecord) -> bool {
+    fn matches(&self, record: &QueryRecord) -> bool {
         match self {
             Self::Comparison(comparison) => comparison.matches(record),
             Self::Function(function) => function.matches(record),
@@ -84,7 +84,7 @@ impl LogicalExpr<FilterAtom> {
     }
 
     /// Whether `record` satisfies this expression.
-    pub(super) fn matches(&self, record: &IndexRecord) -> bool {
+    pub(super) fn matches(&self, record: &QueryRecord) -> bool {
         match self {
             Self::Atom(atom) => atom.matches(record),
             Self::And(expressions) => {
@@ -397,7 +397,7 @@ impl FilterFunction {
     }
 
     /// Returns whether `record` satisfies this function call.
-    fn matches(&self, record: &IndexRecord) -> bool {
+    fn matches(&self, record: &QueryRecord) -> bool {
         match self {
             Self::Contains {
                 field,
@@ -440,30 +440,38 @@ fn tag_or_value_matches(item: &FieldValue, target: &FieldValue) -> bool {
     };
     item_str.starts_with('#')
         && target_str.starts_with('#')
-        && item_str
-            .strip_prefix(target_str)
-            .is_some_and(|suffix| suffix.starts_with('/'))
+        && is_nested_under(item_str, target_str)
 }
 
 #[cfg(test)]
 mod tests {
     use std::{fs, path::Path};
 
-    use super::super::*;
-    use crate::index::FileIndex;
+    use super::{super::*, FilterExpr};
+    use crate::index::IndexerService;
 
-    fn outcome_for_files(temp: &Path, files: &[(&str, &str)]) -> QueryOutcome {
+    fn outcome_for_files(
+        temp: &Path,
+        files: &[(&str, &str)],
+    ) -> QueryRecordSet {
         for (name, content) in files {
             fs::write(temp.join(name), content).expect("write note");
         }
-        FileIndex::build(temp).expect("build index").query(&QuerySource::All)
+        let index = IndexerService::new(temp).build().expect("build index");
+        let (records, notes, inlinks) = index.into_parts();
+        QueryService::new("class").query(
+            records,
+            notes,
+            inlinks,
+            &QuerySource::All,
+        )
     }
 
-    fn outcome_for(temp: &Path, content: &str) -> QueryOutcome {
+    fn outcome_for(temp: &Path, content: &str) -> QueryRecordSet {
         outcome_for_files(temp, &[("note.md", content)])
     }
 
-    fn rated_outcome(temp: &Path) -> QueryOutcome {
+    fn rated_outcome(temp: &Path) -> QueryRecordSet {
         outcome_for_files(temp, &[
             ("low.md", "---\nrating: 3\nstatus: draft\n---"),
             ("high.md", "---\nrating: 7\nstatus: done\n---"),
@@ -471,7 +479,7 @@ mod tests {
         ])
     }
 
-    fn names(outcome: &QueryOutcome) -> Vec<String> {
+    fn names(outcome: &QueryRecordSet) -> Vec<String> {
         outcome
             .iter()
             .map(|record| record.file().name().as_str().to_owned())

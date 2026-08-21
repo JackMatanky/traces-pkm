@@ -35,12 +35,21 @@ impl Tag {
     #[inline]
     #[must_use]
     pub(crate) fn is_nested_under(&self, other: &str) -> bool {
-        self.0 == other
-            || self
-                .0
-                .strip_prefix(other)
-                .is_some_and(|rest| rest.starts_with('/'))
+        is_nested_under(&self.0, other)
     }
+}
+
+/// Returns `true` if `text` equals `prefix` or is nested below it at a `/`
+/// boundary.
+///
+/// Shared by [`Tag::is_nested_under`] and [`crate::query::filter`]'s tag
+/// containment check (`tag_or_value_matches`) so the nesting rule has one
+/// implementation.
+#[inline]
+#[must_use]
+pub(crate) fn is_nested_under(text: &str, prefix: &str) -> bool {
+    text == prefix
+        || text.strip_prefix(prefix).is_some_and(|rest| rest.starts_with('/'))
 }
 
 #[cfg(test)]

@@ -73,11 +73,11 @@ use minijinja::{
 };
 
 use crate::{
-    index::{FileIndex, FileIndexError},
+    index::{FileIndex, FileIndexError, IndexerService},
     note::FieldValue,
     query::{
-        self, ClassExpansionMode, FileField, IndexRecord, QueryError,
-        QueryOutcome, QuerySource, SourceAtom, resolve_classes,
+        ClassExpansionMode, FileField, QueryError, QueryRecord, QueryRecordSet,
+        QueryService, QuerySource, SourceAtom, resolve_classes,
     },
     schema::SchemaService,
 };
@@ -112,9 +112,8 @@ pub(super) struct QueryOps {
     /// already-resolved Schema registry, built once at
     /// [`super::TemplateEngine::new`].
     service: Arc<SchemaService>,
-    /// [`FileIndex::query`] for `query`, [`FileIndex::query_tasks`] for
-    /// `tasks`.
-    query: fn(FileIndex, &QuerySource, &str) -> QueryOutcome,
+    /// `false` for page-level `query`, `true` for task-level `tasks`.
+    is_task: bool,
 }
 
 impl QueryOps {
@@ -131,7 +130,7 @@ impl QueryOps {
             root,
             class_field,
             service,
-            query: query::query,
+            is_task: false,
         }
     }
 
@@ -149,7 +148,7 @@ impl QueryOps {
             root,
             class_field,
             service,
-            query: query::query_tasks,
+            is_task: true,
         }
     }
 
@@ -187,7 +186,14 @@ impl QueryOps {
     ///   access errors, and TOML (de)serialization errors on stored records.
     fn run(&self, state: &State, source: &QuerySource) -> Result<Value, Error> {
         let index = cached_refresh(state, &self.root).map_err(index_error)?;
-        Ok(Value::from_object((self.query)(index, source, &self.class_field)))
+        let (records, notes, inlinks) = index.into_parts();
+        let service = QueryService::new(&*self.class_field);
+        let outcome = if self.is_task {
+            service.query_tasks(records, notes, inlinks, source)
+        } else {
+            service.query(records, notes, inlinks, source)
+        };
+        Ok(Value::from_object(outcome))
     }
 }
 
@@ -227,7 +233,9 @@ pub(super) fn cached_refresh(
     state: &State,
     root: &Path,
 ) -> Result<FileIndex, FileIndexError> {
-    super::cache::cached(state, INDEX_CACHE_KEY, || FileIndex::refresh(root))
+    super::cache::cached(state, INDEX_CACHE_KEY, || {
+        IndexerService::new(root).refresh()
+    })
 }
 
 /// Maps a [`FileIndexError`] into a [`minijinja::Error`].
@@ -287,7 +295,7 @@ fn from_arg_type_error() -> Error {
 /// to smuggle a typed value through a `Value`.
 impl Object for QuerySource {}
 
-impl Object for QueryOutcome {
+impl Object for QueryRecordSet {
     #[inline]
     fn repr(self: &Arc<Self>) -> ObjectRepr {
         ObjectRepr::Seq
@@ -303,7 +311,7 @@ impl Object for QueryOutcome {
         Enumerator::Seq(self.len())
     }
 
-    /// Dispatches [`QueryOutcome`] methods by template name.
+    /// Dispatches [`QueryRecordSet`] methods by template name.
     ///
     /// The terminal methods `table`, `list`, `task_list`, and `count` render
     /// final output and return early, without touching the non-terminal chain
@@ -311,9 +319,9 @@ impl Object for QueryOutcome {
     ///
     /// - `table(headers, columns)` and `list(path)` render field path strings
     ///   (or, for `table`'s `headers`, display labels), not further
-    ///   [`QueryOutcome`] arguments.
+    ///   [`QueryRecordSet`] arguments.
     /// - `task_list()` takes no arguments.
-    /// - `count()` takes no arguments and returns [`QueryOutcome::len`]
+    /// - `count()` takes no arguments and returns [`QueryRecordSet::len`]
     ///   directly; it cannot fail, unlike the other three.
     ///
     /// Every other name falls through to the non-terminal chain: `.where`/
@@ -321,8 +329,8 @@ impl Object for QueryOutcome {
     /// calls consumes a clone of the current outcome and wraps the transformed
     /// result in a [`Value`] for further chaining:
     ///
-    /// - `where` and `filter` both call [`QueryOutcome::filter`]. The Rust-side
-    ///   `r#where` alias exists only for Rust callers.
+    /// - `where` and `filter` both call [`QueryRecordSet::filter`]. The
+    ///   Rust-side `r#where` alias exists only for Rust callers.
     /// - `sort` defaults to ascending order when the optional `descending`
     ///   argument is omitted.
     ///
@@ -416,7 +424,7 @@ impl Object for QueryOutcome {
               signature; the body only needs to borrow each entry"
 )]
 fn table_filter(
-    outcome: &QueryOutcome,
+    outcome: &QueryRecordSet,
     headers: Vec<String>,
     columns: Vec<String>,
 ) -> Result<String, Error> {
@@ -434,17 +442,17 @@ fn as_str_slice(values: &[String]) -> Vec<&str> {
 }
 
 /// `outcome | list(path)` filter body. See [`QueryOutcome::list`].
-fn list_filter(outcome: &QueryOutcome, path: &str) -> Result<String, Error> {
+fn list_filter(outcome: &QueryRecordSet, path: &str) -> Result<String, Error> {
     outcome.list(path).map_err(query_error)
 }
 
 /// `outcome | task_list` filter body. See [`QueryOutcome::task_list`].
-fn task_list_filter(outcome: &QueryOutcome) -> Result<String, Error> {
+fn task_list_filter(outcome: &QueryRecordSet) -> Result<String, Error> {
     outcome.task_list().map_err(query_error)
 }
 
 /// `outcome | count` filter body: the number of records in `outcome`.
-const fn count_filter(outcome: &QueryOutcome) -> usize {
+const fn count_filter(outcome: &QueryRecordSet) -> usize {
     outcome.len()
 }
 
@@ -487,17 +495,17 @@ fn set_class_depth(
     source
 }
 
-impl Object for IndexRecord {
+impl Object for QueryRecord {
     /// Resolves `record.<key>` or `record["<key>"]`.
     ///
     /// `"file"` and `"task"` return forwarding wrappers for `record.file.*` and
-    /// `record.task.*`. Every other key resolves through [`IndexRecord`]'s
+    /// `record.task.*`. Every other key resolves through [`QueryRecord`]'s
     /// field lookup, the same frontmatter, inline-field, and tag lookup used by
     /// `.where()` and `.sort()`.
     ///
     /// A rejected key, such as a dotted, empty, or unknown `file.*`/`task.*`
     /// accessor, resolves to `None` like any other missing attribute instead of
-    /// surfacing [`QueryError::FieldPath`] as a render error.
+    /// surfacing `QueryError::FieldPath` as a render error.
     #[inline]
     fn get_value(self: &Arc<Self>, key: &Value) -> Option<Value> {
         let key = key.as_str()?;
@@ -520,7 +528,7 @@ impl Object for IndexRecord {
 /// string-based `file.` prefix handling, which doesn't apply here: `key` is
 /// already a single attribute segment, never a dotted path.
 #[derive(Debug)]
-struct FileFields(Arc<IndexRecord>);
+struct FileFields(Arc<QueryRecord>);
 
 impl Object for FileFields {
     fn get_value(self: &Arc<Self>, key: &Value) -> Option<Value> {
@@ -545,7 +553,7 @@ impl Object for FileFields {
 /// missing attribute, matching [`field_value`]'s handling of
 /// [`FieldValue::Null`].
 #[derive(Debug)]
-struct TaskFields(Arc<IndexRecord>);
+struct TaskFields(Arc<QueryRecord>);
 
 impl Object for TaskFields {
     fn get_value(self: &Arc<Self>, key: &Value) -> Option<Value> {
@@ -1387,8 +1395,8 @@ mod tests {
                 task_from.call(&state, &[]).expect("tasks.from succeeds");
 
             let count = tasks
-                .downcast_object_ref::<QueryOutcome>()
-                .expect("value wraps a QueryOutcome")
+                .downcast_object_ref::<QueryRecordSet>()
+                .expect("value wraps a QueryRecordSet")
                 .len();
             assert_eq!(count, 0);
         }

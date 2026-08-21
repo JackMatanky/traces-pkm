@@ -14,7 +14,7 @@
 use criterion::{
     BatchSize, BenchmarkId, Criterion, criterion_group, criterion_main,
 };
-use traces_pkm::FileIndex;
+use traces_pkm::IndexerService;
 
 fn populate(n: usize) -> std::path::PathBuf {
     let temp = tempfile::tempdir().expect("create temp dir");
@@ -50,7 +50,7 @@ fn bench_file_index_build(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::from_parameter(n), &n, |b, &n| {
             b.iter_batched(
                 || populate(n),
-                |root| FileIndex::build(&root).expect("build index"),
+                |root| IndexerService::new(&root).build().expect("build index"),
                 BatchSize::LargeInput,
             );
         });

@@ -24,7 +24,7 @@ use crate::{
 /// Target-keyed inbound link edges: maps every Note path to the paths of every
 /// Note whose outlinks resolve to it. Returned by [`derive_inlinks`]; persisted
 /// and reloaded by [`super::store`].
-pub(super) type InlinkMap = HashMap<PathBuf, Vec<PathBuf>>;
+pub(crate) type InlinkMap = HashMap<PathBuf, Vec<PathBuf>>;
 
 /// Derives inbound links for every indexed Note from its peers' outlinks.
 ///

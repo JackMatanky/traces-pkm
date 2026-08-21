@@ -2,8 +2,8 @@
 //! instances.
 //!
 //! This module provides comparison and ordering primitives used by
-//! [`super::QueryOutcome::filter`], [`super::QueryOutcome::sort`], and
-//! [`super::QueryOutcome::group_by`].
+//! [`super::QueryRecordSet::filter`], [`super::QueryRecordSet::sort`], and
+//! [`super::QueryRecordSet::group_by`].
 //!
 //! # Sorting Ordering and Null Precedence
 //!
@@ -91,7 +91,7 @@ pub(super) fn fields_equal(a: &FieldValue, b: &FieldValue) -> bool {
 }
 
 /// Compares two resolved [`FieldValue`] instances to establish a total order
-/// for [`super::QueryOutcome::sort`] and [`super::QueryOutcome::group_by`].
+/// for [`super::QueryRecordSet::sort`] and [`super::QueryRecordSet::group_by`].
 ///
 /// # Arguments
 ///
@@ -133,7 +133,7 @@ pub(super) fn sort_key_cmp(
 /// [`FieldValue`] does not implement [`Ord`] directly because comparison
 /// requires a `descending` flag and null-as-minimum fallback rules that depend
 /// on sort options. `SortKey` provides an [`Ord`] implementation scoped to a
-/// single sorting operation for [`super::QueryOutcome::sort_by_field`].
+/// single sorting operation for [`super::QueryRecordSet::sort_by_field`].
 pub(super) struct SortKey {
     pub(super) value: FieldValue,
     pub(super) descending: bool,
@@ -168,20 +168,30 @@ mod tests {
     use std::{cmp::Ordering, fs, path::Path};
 
     use super::{super::*, sort_key_cmp};
-    use crate::{index::FileIndex, note::FieldValue};
+    use crate::{index::IndexerService, note::FieldValue};
 
-    fn outcome_for_files(temp: &Path, files: &[(&str, &str)]) -> QueryOutcome {
+    fn outcome_for_files(
+        temp: &Path,
+        files: &[(&str, &str)],
+    ) -> QueryRecordSet {
         for (name, content) in files {
             fs::write(temp.join(name), content).expect("write note");
         }
-        FileIndex::build(temp).expect("build index").query(&QuerySource::All)
+        let index = IndexerService::new(temp).build().expect("build index");
+        let (records, notes, inlinks) = index.into_parts();
+        QueryService::new("class").query(
+            records,
+            notes,
+            inlinks,
+            &QuerySource::All,
+        )
     }
 
-    fn outcome_for(temp: &Path, content: &str) -> QueryOutcome {
+    fn outcome_for(temp: &Path, content: &str) -> QueryRecordSet {
         outcome_for_files(temp, &[("note.md", content)])
     }
 
-    fn names(outcome: &QueryOutcome) -> Vec<String> {
+    fn names(outcome: &QueryRecordSet) -> Vec<String> {
         outcome
             .iter()
             .map(|record| record.file().name().as_str().to_owned())

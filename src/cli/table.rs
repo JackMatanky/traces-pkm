@@ -99,7 +99,7 @@ impl Table {
         let count = outcome.len();
         let columns =
             self.columns.iter().map(String::as_str).collect::<Vec<_>>();
-        // `QueryOutcome::table` escapes both headers and cell values, so a
+        // `QueryRecordSet::table` escapes both headers and cell values, so a
         // `--column` value doubling as its header stays row-safe without the
         // CLI escaping it a second time.
         let rendered = outcome

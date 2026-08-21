@@ -1,10 +1,20 @@
-//! Build, persist, load, and query a file index over a project root.
+//! Scan, persist, load, and refresh a file index over a project root.
 //!
-//! [`FileIndex`] is the main entry point. It stores a sorted [`FileRecord`]
-//! (from [`crate::file`]) for every regular file under a project root. Markdown
-//! files also contribute parsed [`Note`] metadata. Persistence uses a
-//! redb-backed database managed by the [`store`] submodule; callers use
-//! [`FileIndex`]'s methods instead of touching redb tables directly.
+//! [`IndexerService`] owns a project root and drives the index lifecycle:
+//! build, persist, load, and refresh. [`FileIndex`] is the value it
+//! produces — a snapshot of every indexed [`FileRecord`] (from
+//! [`crate::file`]), each Markdown file's parsed [`Note`], and derived
+//! inbound links. `FileIndex` carries no `&Path` of its own; construction and
+//! persistence flow entirely through [`IndexerService`].
+//!
+//! Query execution lives in [`crate::query`]: `QueryService` consumes a
+//! [`FileIndex`]'s decomposed parts ([`FileIndex::into_parts`]) rather than
+//! `FileIndex` depending on the query domain, keeping `index` and `query`
+//! free of a mutual dependency.
+//!
+//! Persistence uses a redb-backed database managed by the [`store`]
+//! submodule; callers use [`IndexerService`]'s methods instead of touching
+//! redb tables directly.
 //!
 //! Inbound links between Notes are derived from outlinks during build and
 //! refresh, then persisted alongside them; see [`inlinks`].
@@ -15,18 +25,17 @@
 //!
 //! # Lifecycle
 //!
-//! - Build the index: [`FileIndex::build`]
-//! - Persist to disk: [`FileIndex::persist`]
-//! - Load from disk: [`FileIndex::load`]
-//! - Refresh against the filesystem: [`FileIndex::refresh`]
+//! - Build a fresh index: [`IndexerService::build`]
+//! - Persist to disk: [`IndexerService::persist`]
+//! - Load from disk: [`IndexerService::load`]
+//! - Refresh against the filesystem: [`IndexerService::refresh`]
 //!
-//! # Querying
+//! # Inspecting a [`FileIndex`]
 //!
-//! - [`FileIndex::query`] runs a page-level query (one row per Note).
-//! - [`FileIndex::query_tasks`] runs a task-level query (one row per task
-//!   item).
 //! - [`FileIndex::records`] and [`FileIndex::notes`] expose sorted indexed data
 //!   for direct inspection.
+//! - [`FileIndex::into_parts`] decomposes a `FileIndex` into its records,
+//!   notes, and inbound-link map for `crate::query::QueryService`.
 //!
 //! [`store`]: mod@store
 //! [`inlinks`]: mod@inlinks
@@ -38,46 +47,51 @@ mod inlinks;
 mod scan;
 mod store;
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 #[allow(unused_imports, reason = "re-exported for downstream callers")]
 pub use error::{FileIndexError, IndexBuilderError};
-use inlinks::InlinkMap;
+pub(crate) use inlinks::InlinkMap;
 use store::IndexStore;
 
 pub(crate) use crate::file::FileFormat;
 pub use crate::file::FileRecord;
-#[cfg(test)]
-use crate::query::IndexRecord;
-use crate::{
-    note::Note,
-    query::{QueryOutcome, QuerySource},
-};
+use crate::note::Note;
 
 /// Project-relative path of the persisted [`FileIndex`] database.
 const INDEX_FILE: &str = ".traces/index.redb";
 
-/// Persisted cache of file records, parsed Note metadata, and derived inbound
-/// links.
+/// Drives the [`FileIndex`] lifecycle for one project root: build, persist,
+/// load, and refresh.
 ///
-/// Every regular file under the project root contributes a [`FileRecord`].
-/// Markdown files also contribute a [`Note`], accessible through
-/// [`Self::notes`]. Use [`Self::build`] to create an index
-/// from scratch, [`Self::persist`] to save it, [`Self::load`] to reload it, or
-/// [`Self::refresh`] to update it against the current filesystem state.
+/// Mirrors `ConfigService`/`SchemaService`: a fixed-configuration service
+/// (here, the project root) with methods that read or write against it,
+/// rather than a bare `root: &Path` parameter repeated at every call site.
+///
+/// # Examples
+///
+/// ```ignore
+/// # use traces_pkm::index::IndexerService;
+/// let indexer = IndexerService::new("/path/to/project");
+/// let index = indexer.build().expect("build index");
+/// indexer.persist(&index).expect("persist index");
+/// ```
 #[derive(Clone, Debug)]
-pub struct FileIndex {
-    records: Vec<FileRecord>,
-    notes: Vec<Note>,
-    /// Inbound links, keyed by target path; see [`inlinks::derive_inlinks`].
-    ///
-    /// Recomputed in full whenever [`Self::refresh`] finds changed content.
-    /// Reused unchanged from the last persisted computation otherwise.
-    inlinks: InlinkMap,
+pub struct IndexerService {
+    root: PathBuf,
 }
 
-impl FileIndex {
-    /// Scans `root` and builds a [`FileIndex`] in memory.
+impl IndexerService {
+    /// Creates a service scoped to `root`.
+    #[inline]
+    #[must_use]
+    pub fn new<P: Into<PathBuf>>(root: P) -> Self {
+        Self {
+            root: root.into(),
+        }
+    }
+
+    /// Scans this service's root and builds a [`FileIndex`] in memory.
     ///
     /// Markdown files are parsed into [`Note`] records. The index is not
     /// persisted until [`Self::persist`] is called.
@@ -87,14 +101,14 @@ impl FileIndex {
     /// - [`FileIndexError::Io`] if a directory cannot be read, a file's
     ///   metadata cannot be inspected, or a markdown file cannot be read.
     #[inline]
-    pub fn build(root: &Path) -> Result<Self, FileIndexError> {
-        Ok(builder::IndexBuilder::from_scan(root)?.build(root)?)
+    pub fn build(&self) -> Result<FileIndex, FileIndexError> {
+        Ok(builder::IndexBuilder::from_scan(&self.root)?.build(&self.root)?)
     }
 
-    /// Refreshes the persisted index for `root` against current filesystem
-    /// state.
+    /// Refreshes the persisted index for this service's root against current
+    /// filesystem state.
     ///
-    /// Re-scans `root` and compares each current file's `(created_at,
+    /// Re-scans the root and compares each current file's `(created_at,
     /// modified_at, size)` tuple against the previously persisted
     /// [`FileRecord`]:
     ///
@@ -105,13 +119,13 @@ impl FileIndex {
     /// Returns the fresh [`FileIndex`] without persisting. Call
     /// [`Self::persist`] to write the result to disk.
     ///
-    /// Derived inlinks are recomputed in full whenever any file's content or
+    /// Derived inlinks are recomputed in full whenever a Note's content or
     /// metadata changed since the last persist. A full recompute (not a
     /// per-note patch) is required because link target resolution considers
-    /// every indexed Note: an unedited Note's *resolved* target can change when
-    /// an unrelated Note is added or removed. For example, a wikilink that was
-    /// ambiguous becomes resolvable once one of the ambiguous candidates is
-    /// deleted.
+    /// every indexed Note: an unedited Note's *resolved* target can change
+    /// when an unrelated Note is added or removed. For example, a wikilink
+    /// that was ambiguous becomes resolvable once one of the ambiguous
+    /// candidates is deleted.
     ///
     /// # Errors
     ///
@@ -120,14 +134,15 @@ impl FileIndex {
     /// - [`FileIndexError::Store`] or [`FileIndexError::Deserialize`] if the
     ///   previous index cannot be loaded.
     #[inline]
-    pub fn refresh(root: &Path) -> Result<Self, FileIndexError> {
-        let previous = Self::load(root)?;
-        Ok(builder::IndexBuilder::from_scan(root)?
+    pub fn refresh(&self) -> Result<FileIndex, FileIndexError> {
+        let previous = self.load()?;
+        Ok(builder::IndexBuilder::from_scan(&self.root)?
             .reuse_unchanged(previous)
-            .build(root)?)
+            .build(&self.root)?)
     }
 
-    /// Persists this index to `root`, replacing any existing index contents.
+    /// Persists `index` to this service's root, replacing any existing index
+    /// contents.
     ///
     /// [`FileRecord`], [`Note`], and derived inlink records are all written
     /// atomically.
@@ -139,15 +154,15 @@ impl FileIndex {
     /// - [`FileIndexError::Store`] if the database transaction fails.
     /// - [`FileIndexError::Serialize`] if a record cannot be encoded.
     #[inline]
-    pub fn persist(&self, root: &Path) -> Result<(), FileIndexError> {
-        IndexStore::open(root)?.replace_all(
-            &self.records,
-            &self.notes,
-            &self.inlinks,
+    pub fn persist(&self, index: &FileIndex) -> Result<(), FileIndexError> {
+        IndexStore::open(&self.root)?.replace_all(
+            &index.records,
+            &index.notes,
+            &index.inlinks,
         )
     }
 
-    /// Loads the index previously persisted for `root`.
+    /// Loads the index previously persisted for this service's root.
     ///
     /// Returns an empty [`FileIndex`] if no index has been persisted yet.
     ///
@@ -157,84 +172,37 @@ impl FileIndex {
     /// - [`FileIndexError::Deserialize`] if stored bytes are not a valid
     ///   record.
     #[inline]
-    pub fn load(root: &Path) -> Result<Self, FileIndexError> {
-        let (records, notes, inlinks) = IndexStore::open(root)?.load_all()?;
-        Ok(Self {
+    pub fn load(&self) -> Result<FileIndex, FileIndexError> {
+        let (records, notes, inlinks) =
+            IndexStore::open(&self.root)?.load_all()?;
+        Ok(FileIndex {
             records,
             notes,
             inlinks,
         })
     }
+}
 
-    /// Executes a page-level query over `source`, consuming this index.
+/// Persisted cache of file records, parsed Note metadata, and derived inbound
+/// links.
+///
+/// Every regular file under the project root contributes a [`FileRecord`].
+/// Markdown files also contribute a [`Note`], accessible through
+/// [`Self::notes`]. A pure value type: [`IndexerService`] produces, persists,
+/// and loads it; `FileIndex` itself carries no `&Path`.
+#[derive(Clone, Debug)]
+pub struct FileIndex {
+    records: Vec<FileRecord>,
+    notes: Vec<Note>,
+    /// Inbound links, keyed by target path; see [`inlinks::derive_inlinks`].
     ///
-    /// Call [`Self::refresh`] first so results reflect the current filesystem.
-    /// Every markdown Note has a matching [`FileRecord`] by construction (both
-    /// [`Self::build`] and [`Self::refresh`] add one for every parsed Note), so
-    /// a Note found without one is skipped rather than causing a panic.
-    ///
-    /// Every matched [`crate::query::IndexRecord`]'s `inlinks` reflects every
-    /// indexed Note, not just Notes matching `source`: a Note outside `source`
-    /// can still link to one inside it.
-    ///
-    /// # Performance
-    ///
-    /// O(n + m): [`Self::refresh`]/[`Self::load`] already produced
-    /// `self.inlinks`, so this is just the single-pass iterator merge-join
-    /// across `records` and `notes`, looking each matched Note's inlinks up by
-    /// moving them out of the map instead of cloning.
-    #[inline]
-    #[cfg_attr(
-        not(any(test, feature = "test-utils")),
-        expect(
-            dead_code,
-            reason = "read-side exit is exported only with the test-utils API"
-        )
-    )]
-    #[must_use]
-    pub fn query(self, source: &QuerySource) -> QueryOutcome {
-        crate::query::query(self, source, "class")
-    }
+    /// Recomputed in full whenever [`IndexerService::refresh`] finds changed
+    /// content. Reused unchanged from the last persisted computation
+    /// otherwise.
+    inlinks: InlinkMap,
+}
 
-    /// Executes a task-level query over `source`, consuming this index.
-    ///
-    /// Selects the same Notes as [`Self::query`], then expands each matched
-    /// Note into one [`crate::query::IndexRecord`] per markdown task item
-    /// (`- [ ]` or `- [x]`). Notes without tasks contribute no rows.
-    ///
-    /// Each task row keeps its parent Note's `file.*`, frontmatter,
-    /// inline-field, tag, and inlinks metadata for filtering and display
-    /// through `IndexRecord::field`. It also exposes
-    /// [`crate::query::IndexRecord::task_completed`] and
-    /// `IndexRecord::task_text`.
-    ///
-    /// Call [`Self::refresh`] first so results reflect the current filesystem.
-    ///
-    /// # Performance
-    ///
-    /// - O(n + m + t), where `t` is the total task-item count across matched
-    ///   Notes. [`Self::refresh`]/[`Self::load`] already produced
-    ///   `self.inlinks`.
-    /// - The task iterator is peeked to identify its final item, so only
-    ///   earlier rows clone the base record.
-    /// - The final row moves the shared [`crate::query::IndexRecord`] base.
-    ///   Earlier clones remain O(1) because [`crate::query::IndexRecord`]'s
-    ///   `note` field is an [`Arc`], not a deep clone.
-    ///
-    /// [`Arc`]: std::sync::Arc
-    #[inline]
-    #[cfg_attr(
-        not(any(test, feature = "test-utils")),
-        expect(
-            dead_code,
-            reason = "read-side exit is exported only with the test-utils API"
-        )
-    )]
-    #[must_use]
-    pub fn query_tasks(self, source: &QuerySource) -> QueryOutcome {
-        crate::query::query_tasks(self, source, "class")
-    }
-
+impl FileIndex {
     /// Returns indexed [`FileRecord`]s, sorted by path.
     ///
     /// Every regular file under the project root contributes one record.
@@ -277,11 +245,15 @@ impl FileIndex {
         find_by_path(&self.notes, path)
     }
 
-    /// Consumes this index and returns its inner components.
+    /// Consumes this index and returns its inner components: sorted
+    /// [`FileRecord`]s, sorted [`Note`]s, and the derived inbound-link map.
     ///
-    /// Used by the query module to pair records with notes and resolve inlinks
-    /// without exposing `FileIndex`'s internal layout.
-    pub(crate) fn into_parts(self) -> (Vec<FileRecord>, Vec<Note>, InlinkMap) {
+    /// `crate::query::QueryService` consumes these directly instead of
+    /// depending on `FileIndex`, keeping `index` and `query` free of a mutual
+    /// dependency.
+    #[inline]
+    #[must_use]
+    pub fn into_parts(self) -> (Vec<FileRecord>, Vec<Note>, InlinkMap) {
         (self.records, self.notes, self.inlinks)
     }
 }
@@ -290,7 +262,7 @@ impl FileIndex {
 ///
 /// Shared by the [`inlinks`] submodule, which needs the same search over a
 /// bare `&[Note]` slice while resolving link targets during
-/// [`FileIndex::build`]/[`FileIndex::refresh`].
+/// [`IndexerService::build`]/[`IndexerService::refresh`].
 ///
 /// [`inlinks`]: mod@inlinks
 fn find_by_path<'a>(notes: &'a [Note], path: &Path) -> Option<&'a Note> {
@@ -303,7 +275,24 @@ mod tests {
     use std::fs;
 
     use super::*;
+    use crate::query::{
+        QueryRecord, QueryRecordSet, QueryService, QuerySource,
+    };
 
+    /// Runs a page-level query via [`QueryService`].
+    fn query_all(index: FileIndex, source: &QuerySource) -> QueryRecordSet {
+        let (records, notes, inlinks) = index.into_parts();
+        QueryService::new("class").query(records, notes, inlinks, source)
+    }
+
+    /// Task-level counterpart to [`query_all`].
+    fn query_tasks_all(
+        index: FileIndex,
+        source: &QuerySource,
+    ) -> QueryRecordSet {
+        let (records, notes, inlinks) = index.into_parts();
+        QueryService::new("class").query_tasks(records, notes, inlinks, source)
+    }
     /// Shared test fixtures live here so `scan.rs` and `store.rs` tests can
     /// import them without duplicating the definitions.
     pub(crate) mod fixtures {
@@ -342,7 +331,8 @@ mod tests {
             fs::write(temp.path().join("readme.txt"), "text content")
                 .expect("write txt");
 
-            let index = FileIndex::build(temp.path()).expect("build index");
+            let index =
+                IndexerService::new(temp.path()).build().expect("build index");
 
             assert_eq!(index.records().len(), 2);
             assert_eq!(index.notes().len(), 1);
@@ -358,7 +348,8 @@ mod tests {
             fs::write(temp.path().join("todo.md"), "---\ntitle: Todo\n---")
                 .expect("write note");
 
-            let index = FileIndex::build(temp.path()).expect("build index");
+            let index =
+                IndexerService::new(temp.path()).build().expect("build index");
 
             assert_eq!(
                 index
@@ -375,7 +366,8 @@ mod tests {
             fs::write(temp.path().join("todo.md"), "- [ ] task 1")
                 .expect("write note");
 
-            let index = FileIndex::build(temp.path()).expect("build index");
+            let index =
+                IndexerService::new(temp.path()).build().expect("build index");
 
             assert_eq!(
                 index
@@ -394,7 +386,7 @@ mod tests {
             fs::write(temp.path().join("note.md"), original)
                 .expect("write note");
 
-            FileIndex::build(temp.path()).expect("build index");
+            IndexerService::new(temp.path()).build().expect("build index");
 
             let after = fs::read_to_string(temp.path().join("note.md"))
                 .expect("read note back");
@@ -407,7 +399,7 @@ mod tests {
             fs::write(temp.path().join("bad.md"), [0xFF, 0xFE])
                 .expect("write invalid utf8");
 
-            let result = FileIndex::build(temp.path());
+            let result = IndexerService::new(temp.path()).build();
 
             assert!(matches!(result, Err(FileIndexError::Io { .. })));
         }
@@ -417,8 +409,8 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("b.md"), "# B").expect("write b");
             fs::write(temp.path().join("a.md"), "# A").expect("write a");
-
-            let index = FileIndex::build(temp.path()).expect("build index");
+            let index =
+                IndexerService::new(temp.path()).build().expect("build index");
 
             let paths: Vec<&Path> =
                 index.notes().iter().map(Note::path).collect();
@@ -444,10 +436,10 @@ mod tests {
                 "---\ntitle: Hello\n---\n[[other_note]]\n- [x] done",
             )
             .expect("write note");
-            let built = FileIndex::build(temp.path()).expect("build index");
-            built.persist(temp.path()).expect("persist index");
-
-            let loaded = FileIndex::load(temp.path()).expect("load index");
+            let indexer = IndexerService::new(temp.path());
+            let built = indexer.build().expect("build index");
+            indexer.persist(&built).expect("persist index");
+            let loaded = indexer.load().expect("load index");
 
             assert_eq!(loaded.records(), built.records());
         }
@@ -460,10 +452,10 @@ mod tests {
                 "---\ntitle: Hello\n---\n[[other_note]]\n- [x] done",
             )
             .expect("write note");
-            let built = FileIndex::build(temp.path()).expect("build index");
-            built.persist(temp.path()).expect("persist index");
-
-            let loaded = FileIndex::load(temp.path()).expect("load index");
+            let indexer = IndexerService::new(temp.path());
+            let built = indexer.build().expect("build index");
+            indexer.persist(&built).expect("persist index");
+            let loaded = indexer.load().expect("load index");
 
             assert_eq!(loaded.notes(), built.notes());
 
@@ -484,10 +476,10 @@ mod tests {
                 "---\ntitle: Hello\n---\n[[other_note]]\n- [x] done",
             )
             .expect("write note");
-            let built = FileIndex::build(temp.path()).expect("build index");
-            built.persist(temp.path()).expect("persist index");
-
-            let loaded = FileIndex::load(temp.path()).expect("load index");
+            let indexer = IndexerService::new(temp.path());
+            let built = indexer.build().expect("build index");
+            indexer.persist(&built).expect("persist index");
+            let loaded = indexer.load().expect("load index");
 
             let loaded_note =
                 loaded.note(Path::new("note.md")).expect("loaded note");
@@ -502,10 +494,10 @@ mod tests {
                 "---\nrelated: \"[[Project Alpha|Alpha]]\"\n---\nBody text.",
             )
             .expect("write note");
-            let built = FileIndex::build(temp.path()).expect("build index");
-            built.persist(temp.path()).expect("persist index");
-
-            let loaded = FileIndex::load(temp.path()).expect("load index");
+            let indexer = IndexerService::new(temp.path());
+            let built = indexer.build().expect("build index");
+            indexer.persist(&built).expect("persist index");
+            let loaded = indexer.load().expect("load index");
 
             let field = loaded
                 .note(Path::new("note.md"))
@@ -551,10 +543,10 @@ mod tests {
         ) {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("note.md"), source).expect("write note");
-            let built = FileIndex::build(temp.path()).expect("build index");
-            built.persist(temp.path()).expect("persist index");
-
-            let loaded = FileIndex::load(temp.path()).expect("load index");
+            let indexer = IndexerService::new(temp.path());
+            let built = indexer.build().expect("build index");
+            indexer.persist(&built).expect("persist index");
+            let loaded = indexer.load().expect("load index");
 
             let loaded_note =
                 loaded.note(Path::new("note.md")).expect("loaded note");
@@ -578,10 +570,10 @@ mod tests {
                 "[duration:: 7 hours]\n[values:: 1, 2]",
             )
             .expect("write note");
-            let built = FileIndex::build(temp.path()).expect("build index");
-            built.persist(temp.path()).expect("persist index");
-
-            let loaded = FileIndex::load(temp.path()).expect("load index");
+            let indexer = IndexerService::new(temp.path());
+            let built = indexer.build().expect("build index");
+            indexer.persist(&built).expect("persist index");
+            let loaded = indexer.load().expect("load index");
 
             let loaded_note =
                 loaded.note(Path::new("note.md")).expect("loaded note");
@@ -607,10 +599,10 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("note.md"), "Filed under #book today.")
                 .expect("write note");
-            let built = FileIndex::build(temp.path()).expect("build index");
-            built.persist(temp.path()).expect("persist index");
-
-            let loaded = FileIndex::load(temp.path()).expect("load index");
+            let indexer = IndexerService::new(temp.path());
+            let built = indexer.build().expect("build index");
+            indexer.persist(&built).expect("persist index");
+            let loaded = indexer.load().expect("load index");
 
             let loaded_note =
                 loaded.note(Path::new("note.md")).expect("loaded note");
@@ -624,7 +616,8 @@ mod tests {
         fn returns_empty_when_nothing_persisted() {
             let temp = tempfile::tempdir().expect("create temp dir");
 
-            let index = FileIndex::load(temp.path()).expect("load index");
+            let index =
+                IndexerService::new(temp.path()).load().expect("load index");
 
             assert_eq!(index.records().len(), 0);
             assert_eq!(index.notes().len(), 0);
@@ -635,20 +628,19 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("first.md"), "- [ ] first")
                 .expect("write first");
-            FileIndex::build(temp.path())
-                .expect("build first index")
-                .persist(temp.path())
+            let indexer = IndexerService::new(temp.path());
+            indexer
+                .persist(&indexer.build().expect("build first index"))
                 .expect("persist first index");
             fs::remove_file(temp.path().join("first.md"))
                 .expect("remove first");
             fs::write(temp.path().join("second.md"), "- [x] second")
                 .expect("write second");
 
-            FileIndex::build(temp.path())
-                .expect("build second index")
-                .persist(temp.path())
+            indexer
+                .persist(&indexer.build().expect("build second index"))
                 .expect("persist second index");
-            let loaded = FileIndex::load(temp.path()).expect("load index");
+            let loaded = indexer.load().expect("load index");
 
             assert_eq!(loaded.records().len(), 1);
             assert_eq!(loaded.notes().len(), 1);
@@ -671,7 +663,8 @@ mod tests {
         #[test]
         fn returns_none_when_note_path_is_not_indexed() {
             let temp = tempfile::tempdir().expect("create temp dir");
-            let index = FileIndex::build(temp.path()).expect("build index");
+            let index =
+                IndexerService::new(temp.path()).build().expect("build index");
 
             assert_eq!(index.note(Path::new("nonexistent.md")), None);
         }
@@ -682,7 +675,8 @@ mod tests {
             fs::write(temp.path().join("a.md"), "# A").expect("write a");
             fs::write(temp.path().join("b.md"), "# B").expect("write b");
             fs::write(temp.path().join("c.md"), "# C").expect("write c");
-            let index = FileIndex::build(temp.path()).expect("build index");
+            let index =
+                IndexerService::new(temp.path()).build().expect("build index");
 
             assert_eq!(
                 index.note(Path::new("b.md")).map(Note::path),
@@ -743,7 +737,8 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("note.md"), "- [ ] task")
                 .expect("write note");
-            let built = FileIndex::build(temp.path()).expect("build index");
+            let built =
+                IndexerService::new(temp.path()).build().expect("build index");
 
             let index = IndexBuilder::from_scan(temp.path())
                 .expect("scan")
@@ -765,7 +760,8 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("note.md"), "- [ ] task")
                 .expect("write note");
-            let built = FileIndex::build(temp.path()).expect("build index");
+            let built =
+                IndexerService::new(temp.path()).build().expect("build index");
 
             fs::write(temp.path().join("note.md"), "- [ ] task\n- [x] done")
                 .expect("rewrite note");
@@ -798,17 +794,15 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("note.md"), "- [ ] task")
                 .expect("write note");
-            FileIndex::build(temp.path())
-                .expect("build index")
-                .persist(temp.path())
+            let indexer = IndexerService::new(temp.path());
+            indexer
+                .persist(&indexer.build().expect("build index"))
                 .expect("persist index");
 
             fs::write(temp.path().join("note.md"), "- [ ] task\n- [x] second")
                 .expect("rewrite note");
 
-            let refreshed =
-                FileIndex::refresh(temp.path()).expect("refresh index");
-
+            let refreshed = indexer.refresh().expect("refresh index");
             assert_eq!(
                 refreshed
                     .note(Path::new("note.md"))
@@ -830,18 +824,16 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("note.md"), "Status:: Draft")
                 .expect("write note");
-            FileIndex::build(temp.path())
-                .expect("build index")
-                .persist(temp.path())
+            let indexer = IndexerService::new(temp.path());
+            indexer
+                .persist(&indexer.build().expect("build index"))
                 .expect("persist index");
 
             std::thread::sleep(std::time::Duration::from_millis(15));
             fs::write(temp.path().join("note.md"), "Status:: Final")
                 .expect("rewrite note with same byte length");
 
-            let refreshed =
-                FileIndex::refresh(temp.path()).expect("refresh index");
-
+            let refreshed = indexer.refresh().expect("refresh index");
             let value = refreshed
                 .note(Path::new("note.md"))
                 .and_then(|n| n.inline_fields().first())
@@ -854,17 +846,15 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("first.md"), "# First")
                 .expect("write first");
-            FileIndex::build(temp.path())
-                .expect("build index")
-                .persist(temp.path())
+            let indexer = IndexerService::new(temp.path());
+            indexer
+                .persist(&indexer.build().expect("build index"))
                 .expect("persist index");
 
             fs::write(temp.path().join("second.md"), "# Second")
                 .expect("write second");
 
-            let refreshed =
-                FileIndex::refresh(temp.path()).expect("refresh index");
-
+            let refreshed = indexer.refresh().expect("refresh index");
             assert_eq!(refreshed.notes().len(), 2);
         }
 
@@ -873,16 +863,14 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("gone.md"), "# Gone")
                 .expect("write note");
-            FileIndex::build(temp.path())
-                .expect("build index")
-                .persist(temp.path())
+            let indexer = IndexerService::new(temp.path());
+            indexer
+                .persist(&indexer.build().expect("build index"))
                 .expect("persist index");
 
             fs::remove_file(temp.path().join("gone.md")).expect("delete note");
 
-            let refreshed =
-                FileIndex::refresh(temp.path()).expect("refresh index");
-
+            let refreshed = indexer.refresh().expect("refresh index");
             assert_eq!(refreshed.notes().len(), 0);
             assert_eq!(refreshed.records().len(), 0);
         }
@@ -894,17 +882,16 @@ mod tests {
                 .expect("write target");
             fs::write(temp.path().join("linker.md"), "[[target]]")
                 .expect("write linker");
-            FileIndex::build(temp.path())
-                .expect("build index")
-                .persist(temp.path())
+            let indexer = IndexerService::new(temp.path());
+            indexer
+                .persist(&indexer.build().expect("build index"))
                 .expect("persist index");
 
             fs::remove_file(temp.path().join("linker.md"))
                 .expect("delete linker");
 
-            let refreshed =
-                FileIndex::refresh(temp.path()).expect("refresh index");
-            let outcome = refreshed.query(&QuerySource::All);
+            let refreshed = indexer.refresh().expect("refresh index");
+            let outcome = query_all(refreshed, &QuerySource::All);
             let target = outcome.iter().next().expect("target record");
 
             assert_eq!(target.file().path(), Path::new("target.md"));
@@ -920,17 +907,16 @@ mod tests {
                 .expect("write new target");
             fs::write(temp.path().join("linker.md"), "[[old-target]]")
                 .expect("write linker");
-            FileIndex::build(temp.path())
-                .expect("build index")
-                .persist(temp.path())
+            let indexer = IndexerService::new(temp.path());
+            indexer
+                .persist(&indexer.build().expect("build index"))
                 .expect("persist index");
 
             fs::write(temp.path().join("linker.md"), "[[new-target]]")
                 .expect("repoint linker");
 
-            let refreshed =
-                FileIndex::refresh(temp.path()).expect("refresh index");
-            let outcome = refreshed.query(&QuerySource::All);
+            let refreshed = indexer.refresh().expect("refresh index");
+            let outcome = query_all(refreshed, &QuerySource::All);
             let old_target = outcome
                 .iter()
                 .find(|record| {
@@ -953,19 +939,18 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("note.md"), "# Draft")
                 .expect("write note");
-            FileIndex::build(temp.path())
-                .expect("build index")
-                .persist(temp.path())
+            let indexer = IndexerService::new(temp.path());
+            indexer
+                .persist(&indexer.build().expect("build index"))
                 .expect("persist index");
 
             fs::write(temp.path().join("extra.md"), "# Extra")
                 .expect("write extra");
-            FileIndex::refresh(temp.path())
-                .expect("refresh index")
-                .persist(temp.path())
+            indexer
+                .persist(&indexer.refresh().expect("refresh index"))
                 .expect("persist index");
 
-            let loaded = FileIndex::load(temp.path()).expect("load index");
+            let loaded = indexer.load().expect("load index");
             assert_eq!(loaded.notes().len(), 2);
         }
 
@@ -975,9 +960,9 @@ mod tests {
             fs::write(temp.path().join("note.md"), "# Note")
                 .expect("write note");
 
-            let refreshed =
-                FileIndex::refresh(temp.path()).expect("refresh index");
-
+            let refreshed = IndexerService::new(temp.path())
+                .refresh()
+                .expect("refresh index");
             assert_eq!(refreshed.notes().len(), 1);
         }
 
@@ -988,14 +973,13 @@ mod tests {
                 .expect("write target");
             fs::write(temp.path().join("linker.md"), "[[target]]")
                 .expect("write linker");
-            FileIndex::build(temp.path())
-                .expect("build index")
-                .persist(temp.path())
+            let indexer = IndexerService::new(temp.path());
+            indexer
+                .persist(&indexer.build().expect("build index"))
                 .expect("persist index");
 
-            let refreshed =
-                FileIndex::refresh(temp.path()).expect("refresh index");
-            let outcome = refreshed.query(&QuerySource::All);
+            let refreshed = indexer.refresh().expect("refresh index");
+            let outcome = query_all(refreshed, &QuerySource::All);
             let target = outcome
                 .iter()
                 .find(|record| record.file().path() == Path::new("target.md"))
@@ -1009,16 +993,15 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("note.md"), "---\ntitle: Draft\n---")
                 .expect("write note");
-            FileIndex::build(temp.path())
-                .expect("build index")
-                .persist(temp.path())
+            let indexer = IndexerService::new(temp.path());
+            indexer
+                .persist(&indexer.build().expect("build index"))
                 .expect("persist index");
 
             fs::write(temp.path().join("note.md"), "# Revised")
                 .expect("rewrite note");
 
-            let refreshed =
-                FileIndex::refresh(temp.path()).expect("refresh index");
+            let refreshed = indexer.refresh().expect("refresh index");
 
             // The refreshed index reflects the new content...
             assert_eq!(
@@ -1031,7 +1014,7 @@ mod tests {
             );
             // ...but a fresh load from disk still shows the OLD content,
             // because refresh did not persist.
-            let loaded = FileIndex::load(temp.path()).expect("load index");
+            let loaded = indexer.load().expect("load index");
             assert_eq!(
                 loaded
                     .note(Path::new("note.md"))
@@ -1061,17 +1044,16 @@ mod tests {
             fs::write(temp.path().join("archive/foo.md"), "# Old Foo")
                 .expect("write archive/foo.md");
             fs::write(temp.path().join("a.md"), "[[foo]]").expect("write a");
-            FileIndex::build(temp.path())
-                .expect("build index")
-                .persist(temp.path())
+            let indexer = IndexerService::new(temp.path());
+            indexer
+                .persist(&indexer.build().expect("build index"))
                 .expect("persist index");
 
             fs::remove_file(temp.path().join("archive/foo.md"))
                 .expect("delete archive/foo.md");
 
-            let refreshed =
-                FileIndex::refresh(temp.path()).expect("refresh index");
-            let outcome = refreshed.query(&QuerySource::All);
+            let refreshed = indexer.refresh().expect("refresh index");
+            let outcome = query_all(refreshed, &QuerySource::All);
             let target = outcome
                 .iter()
                 .find(|record| {
@@ -1091,7 +1073,7 @@ mod tests {
         use super::*;
         use crate::note::Tag;
 
-        fn note_paths(outcome: &QueryOutcome) -> Vec<&Path> {
+        fn note_paths(outcome: &QueryRecordSet) -> Vec<&Path> {
             outcome
                 .iter()
                 .filter_map(|record| record.note().map(Note::path))
@@ -1105,7 +1087,7 @@ mod tests {
                 "---\ntitle: Dune\n---\nGenre:: Sci-fi\n\nShelved as #book.",
             )
             .expect("write note");
-            FileIndex::build(temp.path()).expect("build index")
+            IndexerService::new(temp.path()).build().expect("build index")
         }
 
         #[test]
@@ -1115,9 +1097,9 @@ mod tests {
             fs::write(temp.path().join("b.md"), "# B").expect("write b");
             fs::write(temp.path().join("readme.txt"), "text")
                 .expect("write txt");
-            let index = FileIndex::build(temp.path()).expect("build index");
-
-            let outcome = index.query(&QuerySource::All);
+            let index =
+                IndexerService::new(temp.path()).build().expect("build index");
+            let outcome = query_all(index, &QuerySource::All);
 
             assert_eq!(outcome.len(), 3);
             assert_eq!(
@@ -1141,9 +1123,9 @@ mod tests {
             fs::write(temp.path().join("a.md"), "# A").expect("write a");
             fs::write(temp.path().join("readme.txt"), "text")
                 .expect("write txt");
-            let index = FileIndex::build(temp.path()).expect("build index");
-
-            let outcome = index.query(&QuerySource::All);
+            let index =
+                IndexerService::new(temp.path()).build().expect("build index");
+            let outcome = query_all(index, &QuerySource::All);
 
             assert_eq!(note_paths(&outcome), [Path::new("a.md")]);
             assert_eq!(outcome.get(1).and_then(|r| r.note()), None);
@@ -1154,10 +1136,12 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("readme.txt"), "text")
                 .expect("write txt");
-            let index = FileIndex::build(temp.path()).expect("build index");
-
-            let outcome = index
-                .query(&QuerySource::parse("#missing").expect("valid source"));
+            let index =
+                IndexerService::new(temp.path()).build().expect("build index");
+            let outcome = query_all(
+                index,
+                &QuerySource::parse("#missing").expect("valid source"),
+            );
 
             assert_eq!(outcome.len(), 0);
         }
@@ -1169,10 +1153,12 @@ mod tests {
                 .expect("write book");
             fs::write(temp.path().join("other.md"), "No tags here.")
                 .expect("write other");
-            let index = FileIndex::build(temp.path()).expect("build index");
-
-            let outcome = index
-                .query(&QuerySource::parse("#book").expect("valid source"));
+            let index =
+                IndexerService::new(temp.path()).build().expect("build index");
+            let outcome = query_all(
+                index,
+                &QuerySource::parse("#book").expect("valid source"),
+            );
 
             assert_eq!(note_paths(&outcome), [Path::new("book.md")]);
         }
@@ -1187,13 +1173,16 @@ mod tests {
             .expect("write project");
             fs::write(temp.path().join("other.md"), "No tags here.")
                 .expect("write other");
-            let index = FileIndex::build(temp.path()).expect("build index");
-
-            let exact = index.clone().query(
+            let index =
+                IndexerService::new(temp.path()).build().expect("build index");
+            let exact = query_all(
+                index.clone(),
                 &QuerySource::parse("#projects/active").expect("valid source"),
             );
-            let parent = index
-                .query(&QuerySource::parse("#projects").expect("valid source"));
+            let parent = query_all(
+                index,
+                &QuerySource::parse("#projects").expect("valid source"),
+            );
 
             assert_eq!(note_paths(&exact), [Path::new("project.md")]);
             assert_eq!(note_paths(&parent), [Path::new("project.md")]);
@@ -1204,9 +1193,10 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("project.md"), "Tracked in #projects.")
                 .expect("write project");
-            let index = FileIndex::build(temp.path()).expect("build index");
-
-            let outcome = index.query(
+            let index =
+                IndexerService::new(temp.path()).build().expect("build index");
+            let outcome = query_all(
+                index,
                 &QuerySource::parse("#projects/active").expect("valid source"),
             );
 
@@ -1224,10 +1214,12 @@ mod tests {
                 .expect("write hobbit");
             fs::write(temp.path().join("other.md"), "# Other")
                 .expect("write other");
-            let index = FileIndex::build(temp.path()).expect("build index");
-
-            let outcome = index
-                .query(&QuerySource::parse("books/").expect("valid source"));
+            let index =
+                IndexerService::new(temp.path()).build().expect("build index");
+            let outcome = query_all(
+                index,
+                &QuerySource::parse("books/").expect("valid source"),
+            );
 
             assert_eq!(note_paths(&outcome), [
                 Path::new("books/dune.md"),
@@ -1239,7 +1231,7 @@ mod tests {
         fn returns_file_path_for_each_record() {
             let index = build_book_index();
 
-            let outcome = index.query(&QuerySource::All);
+            let outcome = query_all(index, &QuerySource::All);
             let record = outcome.iter().next().expect("one record");
 
             assert_eq!(record.file().path(), Path::new("book.md"));
@@ -1249,7 +1241,7 @@ mod tests {
         fn includes_frontmatter_fields_in_note() {
             let index = build_book_index();
 
-            let outcome = index.query(&QuerySource::All);
+            let outcome = query_all(index, &QuerySource::All);
             let note = outcome
                 .iter()
                 .next()
@@ -1264,7 +1256,7 @@ mod tests {
         fn includes_inline_field_keys() {
             let index = build_book_index();
 
-            let outcome = index.query(&QuerySource::All);
+            let outcome = query_all(index, &QuerySource::All);
             let note = outcome
                 .iter()
                 .next()
@@ -1285,7 +1277,7 @@ mod tests {
         fn includes_note_tags() {
             let index = build_book_index();
 
-            let outcome = index.query(&QuerySource::All);
+            let outcome = query_all(index, &QuerySource::All);
             let note = outcome
                 .iter()
                 .next()
@@ -1303,9 +1295,9 @@ mod tests {
                 .expect("write target");
             fs::write(temp.path().join("a.md"), "[[target]]").expect("write a");
             fs::write(temp.path().join("b.md"), "[[target]]").expect("write b");
-            let index = FileIndex::build(temp.path()).expect("build index");
-
-            let outcome = index.query(&QuerySource::All);
+            let index =
+                IndexerService::new(temp.path()).build().expect("build index");
+            let outcome = query_all(index, &QuerySource::All);
             let target = outcome
                 .iter()
                 .find(|record| record.file().path() == Path::new("target.md"))
@@ -1324,13 +1316,12 @@ mod tests {
                 .expect("write target");
             fs::write(temp.path().join("linker.md"), "[[target]]")
                 .expect("write linker");
-            let index = FileIndex::build(temp.path()).expect("build index");
-
-            // `linker.md` has no `#book` tag, so it is excluded from this
-            // tag-scoped query; its outlink to `target.md` must still show
-            // up in the target's inlinks.
-            let outcome = index
-                .query(&QuerySource::parse("#book").expect("valid source"));
+            let index =
+                IndexerService::new(temp.path()).build().expect("build index");
+            let outcome = query_all(
+                index,
+                &QuerySource::parse("#book").expect("valid source"),
+            );
             let target = outcome.iter().next().expect("target record");
 
             assert_eq!(target.file().path(), Path::new("target.md"));
@@ -1347,9 +1338,9 @@ mod tests {
                 "[[target]] and [[target]] again",
             )
             .expect("write a");
-            let index = FileIndex::build(temp.path()).expect("build index");
-
-            let outcome = index.query(&QuerySource::All);
+            let index =
+                IndexerService::new(temp.path()).build().expect("build index");
+            let outcome = query_all(index, &QuerySource::All);
             let target = outcome
                 .iter()
                 .find(|record| record.file().path() == Path::new("target.md"))
@@ -1362,9 +1353,9 @@ mod tests {
         fn preserves_a_self_linking_notes_own_inlink() {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("b.md"), "[[b]]").expect("write b");
-            let index = FileIndex::build(temp.path()).expect("build index");
-
-            let outcome = index.query(&QuerySource::All);
+            let index =
+                IndexerService::new(temp.path()).build().expect("build index");
+            let outcome = query_all(index, &QuerySource::All);
             let source = outcome
                 .iter()
                 .find(|record| record.file().path() == Path::new("b.md"))
@@ -1381,9 +1372,9 @@ mod tests {
             fs::write(temp.path().join("linker.md"), "[[target]]")
                 .expect("write linker");
 
-            let index = FileIndex::build(temp.path()).expect("build index");
-
-            let outcome = index.query(&QuerySource::All);
+            let index =
+                IndexerService::new(temp.path()).build().expect("build index");
+            let outcome = query_all(index, &QuerySource::All);
             let target = outcome
                 .iter()
                 .find(|r| r.file().path() == Path::new("target.md"))
@@ -1401,7 +1392,7 @@ mod tests {
         use super::*;
 
         /// `(completed, text)` pairs for every row in `outcome`, in order.
-        fn task_rows(outcome: &QueryOutcome) -> Vec<(Option<bool>, &str)> {
+        fn task_rows(outcome: &QueryRecordSet) -> Vec<(Option<bool>, &str)> {
             outcome
                 .iter()
                 .map(|record| {
@@ -1420,13 +1411,13 @@ mod tests {
                 .expect("write note");
             fs::write(temp.path().join("todo.md"), "- [ ] buy milk\n")
                 .expect("write note");
-            let index = FileIndex::build(temp.path()).expect("build index");
-
-            let outcome = index.query_tasks(&QuerySource::All);
+            let index =
+                IndexerService::new(temp.path()).build().expect("build index");
+            let outcome = query_tasks_all(index, &QuerySource::All);
 
             assert_eq!(outcome.len(), 1);
             assert_eq!(
-                outcome.iter().next().and_then(IndexRecord::task_text),
+                outcome.iter().next().and_then(QueryRecord::task_text),
                 Some("buy milk")
             );
         }
@@ -1436,9 +1427,9 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("readme.txt"), "text")
                 .expect("write txt");
-            let index = FileIndex::build(temp.path()).expect("build index");
-
-            let outcome = index.query_tasks(&QuerySource::All);
+            let index =
+                IndexerService::new(temp.path()).build().expect("build index");
+            let outcome = query_tasks_all(index, &QuerySource::All);
 
             assert!(outcome.is_empty());
         }
@@ -1452,9 +1443,9 @@ mod tests {
                  ship it\n",
             )
             .expect("write note");
-            let index = FileIndex::build(temp.path()).expect("build index");
-
-            let outcome = index.query_tasks(&QuerySource::All);
+            let index =
+                IndexerService::new(temp.path()).build().expect("build index");
+            let outcome = query_tasks_all(index, &QuerySource::All);
             let record = outcome.iter().next().expect("one task row");
 
             assert_eq!(record.file().path(), Path::new("project.md"));
@@ -1469,9 +1460,9 @@ mod tests {
                  ship it\n",
             )
             .expect("write note");
-            let index = FileIndex::build(temp.path()).expect("build index");
-
-            let outcome = index.query_tasks(&QuerySource::All);
+            let index =
+                IndexerService::new(temp.path()).build().expect("build index");
+            let outcome = query_tasks_all(index, &QuerySource::All);
             let record = outcome.iter().next().expect("one task row");
 
             assert_eq!(
@@ -1489,9 +1480,9 @@ mod tests {
                  ship it\n",
             )
             .expect("write note");
-            let index = FileIndex::build(temp.path()).expect("build index");
-
-            let outcome = index.query_tasks(&QuerySource::All);
+            let index =
+                IndexerService::new(temp.path()).build().expect("build index");
+            let outcome = query_tasks_all(index, &QuerySource::All);
             let record = outcome.iter().next().expect("one task row");
 
             assert_eq!(
@@ -1509,9 +1500,9 @@ mod tests {
                 .expect("write target");
             fs::write(temp.path().join("linker.md"), "[[target]]")
                 .expect("write linker");
-            let index = FileIndex::build(temp.path()).expect("build index");
-
-            let outcome = index.query_tasks(&QuerySource::All);
+            let index =
+                IndexerService::new(temp.path()).build().expect("build index");
+            let outcome = query_tasks_all(index, &QuerySource::All);
             let task = outcome.iter().next().expect("one task row");
 
             assert_eq!(task.file().path(), Path::new("target.md"));
@@ -1528,9 +1519,10 @@ mod tests {
             .expect("write a");
             fs::write(temp.path().join("b.md"), "#books\n- [ ] book task\n")
                 .expect("write b");
-            let index = FileIndex::build(temp.path()).expect("build index");
-
-            let outcome = index.query_tasks(
+            let index =
+                IndexerService::new(temp.path()).build().expect("build index");
+            let outcome = query_tasks_all(
+                index,
                 &QuerySource::parse("#projects").expect("valid source"),
             );
 
@@ -1548,9 +1540,10 @@ mod tests {
             .expect("write a");
             fs::write(temp.path().join("b.md"), "- [ ] other task\n")
                 .expect("write b");
-            let index = FileIndex::build(temp.path()).expect("build index");
-
-            let outcome = index.query_tasks(
+            let index =
+                IndexerService::new(temp.path()).build().expect("build index");
+            let outcome = query_tasks_all(
+                index,
                 &QuerySource::parse("projects/").expect("valid source"),
             );
 
@@ -1565,10 +1558,9 @@ mod tests {
                 "- [ ] buy milk\n- [x] pay rent\n",
             )
             .expect("write note");
-            let index = FileIndex::build(temp.path()).expect("build index");
-
-            let outcome = index
-                .query_tasks(&QuerySource::All)
+            let index =
+                IndexerService::new(temp.path()).build().expect("build index");
+            let outcome = query_tasks_all(index, &QuerySource::All)
                 .filter("task.completed == true")
                 .expect("valid filter");
 

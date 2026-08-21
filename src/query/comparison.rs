@@ -19,7 +19,7 @@
 //! # use traces_pkm::query::comparison::{CompareOp, ComparisonExpr};
 //! # use traces_pkm::query::FieldPath;
 //! # use traces_pkm::note::FieldValue;
-//! # use traces_pkm::query::IndexRecord;
+//! # use traces_pkm::query::QueryRecord;
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! let field = FieldPath::parse("rating")?;
 //! let op = CompareOp::Gt;
@@ -31,7 +31,7 @@
 //! ```
 
 use super::{
-    FieldPath, IndexRecord,
+    FieldPath, QueryRecord,
     sort::{compare_field_values, fields_equal},
 };
 use crate::note::FieldValue;
@@ -197,7 +197,7 @@ impl ComparisonExpr {
 
     /// Returns whether the given index record satisfies this comparison
     /// expression.
-    pub(super) fn matches(&self, record: &IndexRecord) -> bool {
+    pub(super) fn matches(&self, record: &QueryRecord) -> bool {
         self.op.is_satisfied_by(&record.resolve(&self.field), &self.value)
     }
 }

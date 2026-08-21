@@ -1,24 +1,15 @@
 //! Redb persistence for [`FileRecord`], [`Note`], and derived inlink records.
 //!
-//! [`IndexStore`] owns table definitions and transactions for the persisted
-//! index database. Callers use [`super::FileIndex`] methods instead of
-//! interacting with redb tables directly.
+//! [`IndexStore`] adapts [`crate::store::DbStore`] for the file-index schema
+//! (`FILES`, `NOTES`, `LINKS` tables). Callers use [`super::IndexerService`]
+//! methods instead of interacting with redb tables directly.
 
-use std::{
-    collections::HashMap,
-    fs,
-    path::{Path, PathBuf},
-};
+use std::path::Path;
 
-use redb::{
-    Database, MultimapTableDefinition, ReadTransaction, ReadableDatabase as _,
-    ReadableMultimapTable as _, ReadableTable as _, TableDefinition,
-    WriteTransaction,
-};
-use serde::{Serialize, de::DeserializeOwned};
+use redb::{MultimapTableDefinition, TableDefinition};
 
 use super::{INDEX_FILE, error::FileIndexError, inlinks::InlinkMap};
-use crate::{file::FileRecord, note::Note};
+use crate::{file::FileRecord, note::Note, store::DbStore};
 
 /// Postcard-encoded [`FileRecord`] bytes keyed by project-relative path.
 const FILES: TableDefinition<&str, &[u8]> = TableDefinition::new("files");
@@ -38,14 +29,12 @@ type IndexSnapshot = (Vec<FileRecord>, Vec<Note>, InlinkMap);
 
 /// Redb-backed handle to one project root's index database.
 ///
-/// Owns the [`Database`] connection and table definitions. Created by
-/// [`Self::open`], which creates the `.traces/` parent directory if absent.
-/// Callers interact through [`super::FileIndex`] methods, not directly.
+/// Wraps [`DbStore`] with the `FILES`/`NOTES`/`LINKS` table definitions.
+/// Created by [`Self::open`]. Callers interact through
+/// [`super::IndexerService`] methods, not directly.
 #[derive(Debug)]
 pub(super) struct IndexStore {
-    db: Database,
-    /// The database's own path, kept for error context.
-    path: PathBuf,
+    db: DbStore,
 }
 
 impl IndexStore {
@@ -57,24 +46,9 @@ impl IndexStore {
     ///   created.
     /// - [`FileIndexError::Store`] if the database file cannot be opened.
     pub(super) fn open(root: &Path) -> Result<Self, FileIndexError> {
-        let path = root.join(INDEX_FILE);
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).map_err(|source| {
-                FileIndexError::Io {
-                    path: parent.to_path_buf(),
-                    source,
-                }
-            })?;
-        }
-        let db = Database::create(&path).map_err(|source| {
-            FileIndexError::Store {
-                path: path.clone(),
-                source: Box::new(source.into()),
-            }
-        })?;
+        let db = DbStore::open(root, INDEX_FILE)?;
         Ok(Self {
             db,
-            path,
         })
     }
 
@@ -95,21 +69,21 @@ impl IndexStore {
         notes: &[Note],
         links: &InlinkMap,
     ) -> Result<(), FileIndexError> {
-        let write_txn =
-            self.db.begin_write().map_err(|source| self.store_error(source))?;
+        let write_txn = self.db.begin_write()?;
         write_txn
             .delete_table(FILES)
-            .map_err(|source| self.store_error(source))?;
+            .map_err(|source| self.db.store_error(source))?;
         write_txn
             .delete_table(NOTES)
-            .map_err(|source| self.store_error(source))?;
+            .map_err(|source| self.db.store_error(source))?;
         write_txn
             .delete_multimap_table(LINKS)
-            .map_err(|source| self.store_error(source))?;
-        self.store_table(&write_txn, FILES, records, FileRecord::path)?;
-        self.store_table(&write_txn, NOTES, notes, Note::path)?;
-        self.store_links(&write_txn, links)?;
-        write_txn.commit().map_err(|source| self.store_error(source))
+            .map_err(|source| self.db.store_error(source))?;
+        self.db.store_table(&write_txn, FILES, records, FileRecord::path)?;
+        self.db.store_table(&write_txn, NOTES, notes, Note::path)?;
+        self.db.store_links(&write_txn, LINKS, links)?;
+        write_txn.commit().map_err(|source| self.db.store_error(source))?;
+        Ok(())
     }
 
     /// Loads every stored [`FileRecord`] and [`Note`] (sorted by path) and
@@ -121,165 +95,21 @@ impl IndexStore {
     /// - [`FileIndexError::Deserialize`] if stored bytes are not a valid
     ///   record.
     pub(super) fn load_all(&self) -> Result<IndexSnapshot, FileIndexError> {
-        let read_txn =
-            self.db.begin_read().map_err(|source| self.store_error(source))?;
-        let records = self.load_table(&read_txn, FILES, FileRecord::path)?;
-        let notes = self.load_table(&read_txn, NOTES, Note::path)?;
-        let links = self.load_links(&read_txn)?;
+        let read_txn = self.db.begin_read()?;
+        let records = self.db.load_table(&read_txn, FILES, FileRecord::path)?;
+        let notes = self.db.load_table(&read_txn, NOTES, Note::path)?;
+        let links = self.db.load_links(&read_txn, LINKS)?;
         Ok((records, notes, links))
     }
-
-    /// Serializes `items` with postcard into `table`, keyed by `path_of`.
-    ///
-    /// [`Self::replace_all`] uses this helper for both the `files` and `notes`
-    /// tables instead of duplicating the serialize-and-insert loop.
-    ///
-    /// # Errors
-    ///
-    /// - [`FileIndexError::Store`] if the table cannot be opened or written.
-    /// - [`FileIndexError::Serialize`] if an item cannot be encoded.
-    fn store_table<T: Serialize>(
-        &self,
-        write_txn: &WriteTransaction,
-        table: TableDefinition<&str, &[u8]>,
-        items: &[T],
-        path_of: impl Fn(&T) -> &Path,
-    ) -> Result<(), FileIndexError> {
-        let mut table = write_txn
-            .open_table(table)
-            .map_err(|source| self.store_error(source))?;
-        for item in items {
-            let path = path_of(item);
-            let key = path.to_string_lossy();
-            let value = postcard::to_allocvec(item).map_err(|source| {
-                FileIndexError::Serialize {
-                    path: path.to_path_buf(),
-                    source,
-                }
-            })?;
-            table
-                .insert(&*key, value.as_slice())
-                .map_err(|source| self.store_error(source))?;
-        }
-        Ok(())
-    }
-
-    /// Serializes every `target -> sources` edge into the `links` multimap
-    /// table.
-    ///
-    /// [`Self::replace_all`] uses this instead of [`Self::store_table`] because
-    /// [`LINKS`] is a multimap that holds multiple values per key natively.
-    ///
-    /// # Errors
-    ///
-    /// - [`FileIndexError::Store`] if the table cannot be opened or written.
-    fn store_links(
-        &self,
-        write_txn: &WriteTransaction,
-        links: &InlinkMap,
-    ) -> Result<(), FileIndexError> {
-        let mut table = write_txn
-            .open_multimap_table(LINKS)
-            .map_err(|source| self.store_error(source))?;
-        for (target, sources) in links {
-            let target_key = target.to_string_lossy();
-            for source in sources {
-                table
-                    .insert(&*target_key, &*source.to_string_lossy())
-                    .map_err(|source| self.store_error(source))?;
-            }
-        }
-        Ok(())
-    }
-
-    /// Deserializes every postcard value in `table` and sorts the records.
-    ///
-    /// [`Self::load_all`] uses this helper for both the `files` and `notes`
-    /// tables instead of duplicating the decode-and-sort loop.
-    ///
-    /// # Errors
-    ///
-    /// - [`FileIndexError::Store`] if the table cannot be read.
-    /// - [`FileIndexError::Deserialize`] if stored bytes are not a valid
-    ///   encoding.
-    fn load_table<T: DeserializeOwned>(
-        &self,
-        read_txn: &ReadTransaction,
-        table: TableDefinition<&str, &[u8]>,
-        path_of: impl Fn(&T) -> &Path,
-    ) -> Result<Vec<T>, FileIndexError> {
-        let mut items: Vec<T> = match read_txn.open_table(table) {
-            Ok(table) => {
-                let mut items = Vec::new();
-                for entry in
-                    table.iter().map_err(|source| self.store_error(source))?
-                {
-                    let (key, value) =
-                        entry.map_err(|source| self.store_error(source))?;
-                    let path = PathBuf::from(key.value());
-                    items.push(postcard::from_bytes(value.value()).map_err(
-                        |source| FileIndexError::Deserialize {
-                            path,
-                            source,
-                        },
-                    )?);
-                }
-                items
-            }
-            Err(redb::TableError::TableDoesNotExist(_)) => Vec::new(),
-            Err(source) => return Err(self.store_error(source)),
-        };
-        items.sort_by(|a, b| path_of(a).cmp(path_of(b)));
-        Ok(items)
-    }
-
-    /// Deserializes every `target -> sources` edge from the `links` multimap
-    /// table.
-    ///
-    /// [`Self::load_all`] uses this instead of [`Self::load_table`] because
-    /// [`redb::ReadableMultimapTable::iter`] already yields each key's values
-    /// sorted, so no per-key deserialize-a-`Vec` step is needed.
-    ///
-    /// # Errors
-    ///
-    /// - [`FileIndexError::Store`] if the table cannot be read.
-    fn load_links(
-        &self,
-        read_txn: &ReadTransaction,
-    ) -> Result<InlinkMap, FileIndexError> {
-        let table = match read_txn.open_multimap_table(LINKS) {
-            Ok(table) => table,
-            Err(redb::TableError::TableDoesNotExist(_)) => {
-                return Ok(HashMap::new());
-            }
-            Err(source) => return Err(self.store_error(source)),
-        };
-        let mut links = HashMap::new();
-        for entry in table.iter().map_err(|source| self.store_error(source))? {
-            let (target, sources) =
-                entry.map_err(|source| self.store_error(source))?;
-            let mut values = Vec::new();
-            for source in sources {
-                let source =
-                    source.map_err(|source| self.store_error(source))?;
-                values.push(PathBuf::from(source.value()));
-            }
-            links.insert(PathBuf::from(target.value()), values);
-        }
-        Ok(links)
-    }
-
-    /// Wraps a redb error with this store's database path.
-    fn store_error(&self, source: impl Into<redb::Error>) -> FileIndexError {
-        FileIndexError::Store {
-            path: self.path.clone(),
-            source: Box::new(source.into()),
-        }
-    }
 }
-
 #[cfg(test)]
 mod tests {
+    use std::{
+        collections::HashMap,
+        fs,
+        path::{Path, PathBuf},
+    };
+
     use super::*;
     #[cfg(unix)]
     use crate::index::tests::fixtures::RestorePermissions;

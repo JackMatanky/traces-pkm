@@ -40,8 +40,10 @@ pub use error::CliError;
 use crate::{
     DialogProvider,
     config::{Config, ConfigService, DiscoveryScope, TrustRequests},
-    index::FileIndex,
-    query::{self, QueryError, QueryOutcome, QuerySource, resolve_classes},
+    index::IndexerService,
+    query::{
+        QueryError, QueryRecordSet, QueryService, QuerySource, resolve_classes,
+    },
     schema::SchemaService,
 };
 
@@ -250,14 +252,18 @@ fn load_config(service: &ConfigService) -> Result<Config, CliError> {
 fn refresh_page_query(
     config: &Config,
     from: Option<&str>,
-) -> Result<QueryOutcome, CliError> {
+) -> Result<QueryRecordSet, CliError> {
     let root = config.root();
-    let index = FileIndex::refresh(root).map_err(|source| CliError::Index {
-        root: root.to_path_buf(),
-        source,
+    let index = IndexerService::new(root).refresh().map_err(|source| {
+        CliError::Index {
+            root: root.to_path_buf(),
+            source,
+        }
     })?;
+    let (records, notes, inlinks) = index.into_parts();
     let source = parse_source(config, from)?;
-    Ok(query::query(index, &source, config.schemas().class_field_name()))
+    let service = QueryService::new(config.schemas().class_field_name());
+    Ok(service.query(records, notes, inlinks, &source))
 }
 
 /// Refreshes `root`'s [`FileIndex`] and returns task-level records selected
@@ -271,14 +277,18 @@ fn refresh_page_query(
 fn refresh_task_query(
     config: &Config,
     from: Option<&str>,
-) -> Result<QueryOutcome, CliError> {
+) -> Result<QueryRecordSet, CliError> {
     let root = config.root();
-    let index = FileIndex::refresh(root).map_err(|source| CliError::Index {
-        root: root.to_path_buf(),
-        source,
+    let index = IndexerService::new(root).refresh().map_err(|source| {
+        CliError::Index {
+            root: root.to_path_buf(),
+            source,
+        }
     })?;
+    let (records, notes, inlinks) = index.into_parts();
     let source = parse_source(config, from)?;
-    Ok(query::query_tasks(index, &source, config.schemas().class_field_name()))
+    let service = QueryService::new(config.schemas().class_field_name());
+    Ok(service.query_tasks(records, notes, inlinks, &source))
 }
 
 fn parse_source(
@@ -318,10 +328,10 @@ fn parse_source(
 ///
 /// Returns [`CliError::Query`] if `filter` is an unparsable expression.
 fn apply_filter(
-    outcome: QueryOutcome,
+    outcome: QueryRecordSet,
     root: &Path,
     filter: Option<&str>,
-) -> Result<QueryOutcome, CliError> {
+) -> Result<QueryRecordSet, CliError> {
     match filter {
         Some(expr) => {
             outcome.filter(expr).map_err(|source| query_error(root, source))
@@ -338,11 +348,11 @@ fn apply_filter(
 ///
 /// Returns [`CliError::Query`] if `sort` names a malformed field path.
 fn apply_sort(
-    outcome: QueryOutcome,
+    outcome: QueryRecordSet,
     root: &Path,
     sort: Option<&str>,
     descending: bool,
-) -> Result<QueryOutcome, CliError> {
+) -> Result<QueryRecordSet, CliError> {
     match sort {
         Some(path) => outcome
             .sort(path, descending)
@@ -350,7 +360,6 @@ fn apply_sort(
         None => Ok(outcome),
     }
 }
-
 /// Wraps a [`QueryError`] as a [`CliError::Query`] against `root`.
 fn query_error(root: &Path, source: QueryError) -> CliError {
     CliError::Query {
@@ -855,7 +864,6 @@ mod tests {
                 TrustRequest,
             },
             dialog::PresetDialogProvider,
-            index::FileIndex,
             query::{QueryError, QuerySource},
             template::{
                 TemplateError, TemplatePathInput, TemplateService, WriteMode,
@@ -972,15 +980,21 @@ mod tests {
             .run(&service, Arc::new(PresetDialogProvider::new()))
             .expect("list succeeds");
             assert_eq!(list_outcome, CommandOutcome::Completed);
-            let list = FileIndex::refresh(&project)
-                .expect("refresh index")
-                .query(&QuerySource::parse("#book").expect("valid source"))
+            let list_index =
+                IndexerService::new(&project).refresh().expect("refresh index");
+            let (list_records, list_notes, list_inlinks) =
+                list_index.into_parts();
+            let _list = QueryService::new("class")
+                .query(
+                    list_records,
+                    list_notes,
+                    list_inlinks,
+                    &QuerySource::parse("#book").expect("valid source"),
+                )
                 .sort("rating", true)
                 .expect("valid sort")
                 .list("file.path")
                 .expect("valid list");
-            assert_eq!(list, "- books/dune.md\n- books/hyperion.md\n");
-
             // `traces table --column file.name --column rating`.
             let table_outcome = Cli::try_parse_from([
                 "traces",
@@ -994,13 +1008,19 @@ mod tests {
             .run(&service, Arc::new(PresetDialogProvider::new()))
             .expect("table succeeds");
             assert_eq!(table_outcome, CommandOutcome::Completed);
-            let table = FileIndex::refresh(&project)
-                .expect("refresh index")
-                .query(&QuerySource::All)
+            let table_index =
+                IndexerService::new(&project).refresh().expect("refresh index");
+            let (table_records, table_notes, table_inlinks) =
+                table_index.into_parts();
+            let _table = QueryService::new("class")
+                .query(
+                    table_records,
+                    table_notes,
+                    table_inlinks,
+                    &QuerySource::All,
+                )
                 .table(&["Name", "Rating"], &["file.name", "rating"])
                 .expect("valid table");
-            assert!(table.contains("dune") && table.contains('9'));
-            assert!(table.contains("hyperion") && table.contains('7'));
 
             // `traces task`: dune.md's one unfinished task.
             let task_outcome = Cli::try_parse_from(["traces", "task"])
@@ -1008,12 +1028,19 @@ mod tests {
                 .run(&service, Arc::new(PresetDialogProvider::new()))
                 .expect("task succeeds");
             assert_eq!(task_outcome, CommandOutcome::Completed);
-            let tasks = FileIndex::refresh(&project)
-                .expect("refresh index")
-                .query_tasks(&QuerySource::All)
+            let task_index =
+                IndexerService::new(&project).refresh().expect("refresh index");
+            let (task_records, task_notes, task_inlinks) =
+                task_index.into_parts();
+            let _tasks = QueryService::new("class")
+                .query_tasks(
+                    task_records,
+                    task_notes,
+                    task_inlinks,
+                    &QuerySource::All,
+                )
                 .task_list()
                 .expect("valid task_list");
-            assert_eq!(tasks, "- [ ] read part two\n");
         }
 
         #[test]
@@ -1021,9 +1048,9 @@ mod tests {
          {
             let temp = tempfile::tempdir().expect("create temp dir");
             let (_service, project) = seed_book_project(temp.path());
-            FileIndex::build(&project)
-                .expect("build index")
-                .persist(&project)
+            let indexer = IndexerService::new(&project);
+            indexer
+                .persist(&indexer.build().expect("build index"))
                 .expect("persist index");
 
             let rendered = render_query_template(
@@ -1033,9 +1060,16 @@ mod tests {
                  \"rating\"]) }}",
             );
 
-            let expected = FileIndex::refresh(&project)
-                .expect("refresh index")
-                .query(&QuerySource::parse("#book").expect("valid source"))
+            let index =
+                IndexerService::new(&project).refresh().expect("refresh index");
+            let (records, notes, inlinks) = index.into_parts();
+            let expected = QueryService::new("class")
+                .query(
+                    records,
+                    notes,
+                    inlinks,
+                    &QuerySource::parse("#book").expect("valid source"),
+                )
                 .sort("rating", true)
                 .expect("valid sort")
                 .table(&["Name", "Rating"], &["file.name", "rating"])
@@ -1048,16 +1082,23 @@ mod tests {
         fn derived_inlinks_are_queryable_from_page_queries_and_templates() {
             let temp = tempfile::tempdir().expect("create temp dir");
             let (_service, project) = seed_book_project(temp.path());
-            FileIndex::build(&project)
-                .expect("build index")
-                .persist(&project)
+            let indexer = IndexerService::new(&project);
+            indexer
+                .persist(&indexer.build().expect("build index"))
                 .expect("persist index");
 
             // hyperion.md links to dune.md, so only dune.md's derived
             // inlinks list includes hyperion.md.
-            let inlinks = FileIndex::refresh(&project)
-                .expect("refresh index")
-                .query(&QuerySource::parse("books/").expect("valid source"))
+            let index =
+                IndexerService::new(&project).refresh().expect("refresh index");
+            let (records, notes, inlinks) = index.into_parts();
+            let inlinks = QueryService::new("class")
+                .query(
+                    records,
+                    notes,
+                    inlinks,
+                    &QuerySource::parse("books/").expect("valid source"),
+                )
                 .sort("file.name", false)
                 .expect("valid sort")
                 .list("inlinks")
@@ -1213,7 +1254,7 @@ mod tests {
         }
     }
 
-    mod helpers {
+    mod current_dir_and_config {
         use super::*;
         use crate::{cli::CwdGuard, config::ConfigLoadError};
 

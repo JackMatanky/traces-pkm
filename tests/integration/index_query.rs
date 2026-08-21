@@ -8,7 +8,7 @@
 use std::{fs, path::Path};
 
 use pretty_assertions::assert_eq;
-use traces_pkm::{FileIndex, QuerySource};
+use traces_pkm::{IndexerService, QueryService, QuerySource};
 
 /// Chains `query` → `filter` → `sort` → `limit` and checks the composed
 /// result matches the expected row.
@@ -25,10 +25,10 @@ fn query_then_filter_then_sort_then_limit_composes_across_the_public_surface() {
         .expect("write b.md");
     fs::write(temp.path().join("c.md"), "---\nrating: 5\n---\n")
         .expect("write c.md");
-    let index = FileIndex::build(temp.path()).expect("build index");
-
-    let outcome = index
-        .query(&QuerySource::All)
+    let index = IndexerService::new(temp.path()).build().expect("build index");
+    let (records, notes, inlinks) = index.into_parts();
+    let outcome = QueryService::new("class")
+        .query(records, notes, inlinks, &QuerySource::All)
         .filter("rating >= 5")
         .expect("valid filter expression")
         .sort("rating", true)
@@ -51,9 +51,14 @@ fn query_tasks_returns_task_level_rows_distinct_from_page_level_query() {
     let temp = tempfile::tempdir().expect("create temp dir");
     fs::write(temp.path().join("todo.md"), "- [ ] one\n- [x] two\n")
         .expect("write todo.md");
-    let index = FileIndex::build(temp.path()).expect("build index");
-
-    let tasks = index.query_tasks(&QuerySource::All);
+    let index = IndexerService::new(temp.path()).build().expect("build index");
+    let (records, notes, inlinks) = index.into_parts();
+    let tasks = QueryService::new("class").query_tasks(
+        records,
+        notes,
+        inlinks,
+        &QuerySource::All,
+    );
     assert_eq!(tasks.len(), 2);
     let completed: Vec<bool> = (0..tasks.len())
         .map(|i| {

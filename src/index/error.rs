@@ -9,6 +9,8 @@ use std::{io, path::PathBuf};
 
 use thiserror::Error;
 
+use crate::store::StoreError;
+
 /// Error type for [`super::FileIndex`] persistence operations.
 ///
 /// Variants distinguish database access, and postcard encoding failures.
@@ -125,6 +127,42 @@ impl From<IndexBuilderError> for FileIndexError {
                     io::ErrorKind::NotFound,
                     "note missing for matched record",
                 ),
+            },
+        }
+    }
+}
+
+#[expect(clippy::missing_inline_in_public_items, reason = "trait impl")]
+impl From<StoreError> for FileIndexError {
+    fn from(err: StoreError) -> Self {
+        match err {
+            StoreError::Io {
+                path,
+                source,
+            } => Self::Io {
+                path,
+                source,
+            },
+            StoreError::Redb {
+                path,
+                source,
+            } => Self::Store {
+                path,
+                source,
+            },
+            StoreError::Serialize {
+                path,
+                source,
+            } => Self::Serialize {
+                path,
+                source,
+            },
+            StoreError::Deserialize {
+                path,
+                source,
+            } => Self::Deserialize {
+                path,
+                source,
             },
         }
     }

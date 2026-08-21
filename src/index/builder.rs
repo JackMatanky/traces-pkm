@@ -144,7 +144,16 @@ impl IndexBuilder {
 
         for record in &records {
             while prev_iter.peek().is_some_and(|p| p.path() < record.path()) {
-                prev_iter.next();
+                // A previously-indexed record no longer exists at this path.
+                // Only a deleted Note changes the inbound-link graph; a
+                // deleted non-Markdown file (image, PDF, ...) never
+                // contributed outlinks.
+                if prev_iter
+                    .next()
+                    .is_some_and(|p| p.format() == FileFormat::Note)
+                {
+                    dirty = true;
+                }
             }
 
             if record.format() != FileFormat::Note {
@@ -169,13 +178,17 @@ impl IndexBuilder {
             }
         }
 
+        // Any previous entries left unconsumed sort after every current
+        // record — trailing deletions. Same Note-only rule as above.
+        dirty |= prev_iter.any(|p| p.format() == FileFormat::Note);
+
         notes.sort_by(|a, b| a.path().cmp(b.path()));
 
         // Inlinks depend on every Note's outlinks (ambiguous link resolution
-        // considers the full set). Recompute when the record set changed or any
-        // note was reparsed.
-        let records_changed = records != reuse.previous;
-        let inlinks = if dirty || records_changed {
+        // considers the full set). Recompute only when a Note was added,
+        // removed, or reparsed; non-Markdown file changes never affect the
+        // link graph, so they must not force a full recompute.
+        let inlinks = if dirty {
             derive_inlinks(&notes)
         } else {
             reuse.inlinks

@@ -7,7 +7,7 @@
 use clap::Args;
 
 use super::error::CliError;
-use crate::{config::ConfigService, index::FileIndex};
+use crate::{config::ConfigService, index::IndexerService};
 
 /// Arguments for `traces index`.
 ///
@@ -44,8 +44,9 @@ impl Index {
             root: root.to_path_buf(),
             source,
         };
-        let index = FileIndex::build(root).map_err(index_error)?;
-        index.persist(root).map_err(index_error)?;
+        let indexer = IndexerService::new(root);
+        let index = indexer.build().map_err(index_error)?;
+        indexer.persist(&index).map_err(index_error)?;
         eprintln!(
             "indexed {} file(s) under {}",
             index.records().len(),
@@ -60,7 +61,7 @@ mod tests {
     use super::*;
 
     mod fixtures {
-        use super::*;
+        use crate::index::FileIndex;
 
         pub(super) fn record_paths(index: &FileIndex) -> Vec<String> {
             index
@@ -84,7 +85,7 @@ mod tests {
         use crate::{
             cli::CwdGuard,
             config::ConfigLoadError,
-            index::{FileIndex, FileIndexError},
+            index::{FileIndexError, IndexerService},
         };
 
         #[test]
@@ -100,7 +101,9 @@ mod tests {
 
             Index.run(&service).expect("run index command");
 
-            let loaded = FileIndex::load(&root).expect("load persisted index");
+            let loaded = IndexerService::new(&root)
+                .load()
+                .expect("load persisted index");
             let paths = record_paths(&loaded);
             assert!(paths.contains(&"notes/todo.md".to_owned()));
             assert!(paths.contains(&".traces/config.toml".to_owned()));
@@ -116,8 +119,9 @@ mod tests {
             let _guard = CwdGuard::enter(&root);
             Index.run(&service).expect("first index run");
 
-            let reloaded =
-                FileIndex::load(&root).expect("reload persisted index");
+            let reloaded = IndexerService::new(&root)
+                .load()
+                .expect("reload persisted index");
 
             assert_eq!(reloaded.records().len(), 2);
         }
@@ -136,7 +140,9 @@ mod tests {
 
             Index.run(&service).expect("second index run");
 
-            let loaded = FileIndex::load(&root).expect("load persisted index");
+            let loaded = IndexerService::new(&root)
+                .load()
+                .expect("load persisted index");
             let paths = record_paths(&loaded);
             assert!(!paths.contains(&"stale.md".to_owned()));
             assert!(paths.contains(&"fresh.md".to_owned()));
