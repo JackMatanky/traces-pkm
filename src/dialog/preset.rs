@@ -386,6 +386,25 @@ mod tests {
         }
     }
 
+    mod empty_and_interactive {
+        use super::*;
+
+        #[test]
+        fn is_empty_returns_true_when_all_queues_empty() {
+            let provider = PresetDialogProvider::new();
+            assert!(provider.is_empty(), "new provider must be empty");
+        }
+
+        #[test]
+        fn is_interactive_returns_true_when_queues_nonempty() {
+            let provider = PresetDialogProvider::new().with_text("response");
+            assert!(
+                provider.is_interactive(),
+                "provider with queued responses must be interactive"
+            );
+        }
+    }
+
     mod multi_select {
         use pretty_assertions::assert_eq;
 
