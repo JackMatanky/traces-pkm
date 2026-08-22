@@ -1616,6 +1616,82 @@ mod tests {
         }
     }
 
+    mod diff_precision {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn uses_float_precision_for_datetime_values() {
+            let rendered = env()
+                .render_str(
+                    r#"{{ "2026-01-01T00:00:00" | date_diff("2026-01-01T00:00:01.500", unit="seconds") }}"#,
+                    minijinja::context!(),
+                )
+                .expect("render succeeds");
+
+            let value: f64 = rendered.parse().expect("numeric result");
+            assert!(
+                (value - 1.5).abs() < 0.01,
+                "datetime diff must use float precision, got: {value}"
+            );
+        }
+
+        #[test]
+        fn uses_integer_division_for_date_only_values() {
+            let rendered = env()
+                .render_str(
+                    r#"{{ "2026-01-01" | date_diff("2026-01-02", unit="days") }}"#,
+                    minijinja::context!(),
+                )
+                .expect("render succeeds");
+
+            assert_eq!(rendered, "1");
+        }
+    }
+
+    mod comparison {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn is_past_returns_true_for_past_date() {
+            let rendered = env()
+                .render_str(
+                    "{{ '2000-01-01' is is_past }}",
+                    minijinja::context!(),
+                )
+                .expect("render succeeds");
+
+            assert_eq!(rendered, "true");
+        }
+
+        #[test]
+        fn is_future_returns_true_for_far_future_date() {
+            let rendered = env()
+                .render_str(
+                    "{{ '2099-12-31' is is_future }}",
+                    minijinja::context!(),
+                )
+                .expect("render succeeds");
+
+            assert_eq!(rendered, "true");
+        }
+
+        #[test]
+        fn is_past_returns_false_for_far_future_date() {
+            let rendered = env()
+                .render_str(
+                    "{{ '2099-12-31' is is_past }}",
+                    minijinja::context!(),
+                )
+                .expect("render succeeds");
+
+            assert_eq!(rendered, "false");
+        }
+    }
+
     mod is_leap_year {
         use pretty_assertions::assert_eq;
         use rstest::rstest;
