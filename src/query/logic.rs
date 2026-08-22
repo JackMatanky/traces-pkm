@@ -71,6 +71,12 @@ impl<T> Spanned<T> {
     }
 }
 
+impl<T> AsRef<T> for Spanned<T> {
+    fn as_ref(&self) -> &T {
+        &self.value
+    }
+}
+
 /// Logical control syntax recognized independently of domain-specific atoms.
 ///
 /// The shared parser uses these to build the expression tree without knowing
@@ -207,12 +213,6 @@ impl<T> TokenCursor<T> {
         } else {
             false
         }
-    }
-}
-
-impl<T> AsRef<T> for Spanned<T> {
-    fn as_ref(&self) -> &T {
-        &self.value
     }
 }
 

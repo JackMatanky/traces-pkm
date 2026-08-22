@@ -273,13 +273,6 @@ pub(super) enum QueryFieldValueRef<'a> {
     Owned(NoteFieldValue),
 }
 
-/// Borrowed list value resolved from a [`QueryRecord`].
-pub(super) enum QueryListValueRef<'a> {
-    Values(&'a [NoteFieldValue]),
-    Tags(&'a [Tag]),
-    Inlinks(&'a [PathBuf]),
-}
-
 impl QueryFieldValueRef<'_> {
     pub(super) fn to_owned_value(&self) -> NoteFieldValue {
         match self {
@@ -325,6 +318,13 @@ impl<'a> From<&'a NoteFieldValue> for QueryFieldValueRef<'a> {
             NoteFieldValue::Object(value) => Self::Object(value),
         }
     }
+}
+
+/// Borrowed list value resolved from a [`QueryRecord`].
+pub(super) enum QueryListValueRef<'a> {
+    Values(&'a [NoteFieldValue]),
+    Tags(&'a [Tag]),
+    Inlinks(&'a [PathBuf]),
 }
 
 impl QueryListValueRef<'_> {

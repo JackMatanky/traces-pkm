@@ -13,16 +13,6 @@ pub struct QueryService<'a> {
     class_expander: Option<&'a dyn FileClassExpander>,
 }
 
-impl std::fmt::Debug for QueryService<'_> {
-    #[inline]
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("QueryService")
-            .field("class_field", &self.class_field)
-            .field("has_class_expander", &self.class_expander.is_some())
-            .finish()
-    }
-}
-
 impl<'a> QueryService<'a> {
     /// Creates a service that reads File Class values from `class_field`.
     #[inline]
@@ -109,6 +99,16 @@ impl<'a> QueryService<'a> {
                 source.is_match(entry.file(), entry.note(), &self.class_field)
             })
             .map(QueryRecord::from_entry)
+    }
+}
+
+impl std::fmt::Debug for QueryService<'_> {
+    #[inline]
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("QueryService")
+            .field("class_field", &self.class_field)
+            .field("has_class_expander", &self.class_expander.is_some())
+            .finish()
     }
 }
 
