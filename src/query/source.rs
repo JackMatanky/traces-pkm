@@ -50,19 +50,6 @@ pub enum QuerySource {
     Expr(QuerySourceExpr),
 }
 
-/// Parsed source expression wrapping a boolean tree of [`SourceAtom`] leaves.
-///
-/// Created by `QuerySourceExpr::parse` from a source expression string. The AST
-/// is opaque to callers; the only way to inspect it is through the provided
-/// methods: [`is_match`](Self::is_match) for evaluation, expansion is needed,
-/// and [`visit_atoms_mut`](Self::visit_atoms_mut) to load class names before
-/// matching.
-///
-/// Operator precedence is `NOT` > `AND` > `OR`; parentheses override.
-/// See the [module-level syntax reference](self) for the full grammar.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct QuerySourceExpr(LogicalExpr<SourceAtom>);
-
 /// Atomic match predicate in a source expression.
 ///
 /// Combined into expression trees by boolean operators (`and`, `or`, `not`).
@@ -259,6 +246,19 @@ impl LogicalExpr<SourceAtom> {
         }
     }
 }
+
+/// Parsed source expression wrapping a boolean tree of [`SourceAtom`] leaves.
+///
+/// Created by `QuerySourceExpr::parse` from a source expression string. The AST
+/// is opaque to callers; the only way to inspect it is through the provided
+/// methods: [`is_match`](Self::is_match) for evaluation, expansion is needed,
+/// and [`visit_atoms_mut`](Self::visit_atoms_mut) to load class names before
+/// matching.
+///
+/// Operator precedence is `NOT` > `AND` > `OR`; parentheses override.
+/// See the [module-level syntax reference](self) for the full grammar.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct QuerySourceExpr(LogicalExpr<SourceAtom>);
 
 impl QuerySourceExpr {
     /// Parses `input` as a source expression.

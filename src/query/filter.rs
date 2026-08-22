@@ -42,27 +42,6 @@ use crate::note::{NoteFieldValue, is_nested_under};
 /// type used by [`super::QueryRecordSet::filter`].
 pub(super) type FilterExpr = LogicalExpr<FilterAtom>;
 
-/// Atomic predicate in a filter expression.
-///
-/// Either a field-to-literal comparison or a recognized function call
-/// (such as `contains(tags, "#book")`).
-#[derive(Clone, Debug, PartialEq)]
-pub(super) enum FilterAtom {
-    /// `<field> <op> <value>` comparison.
-    Comparison(ComparisonExpr),
-    /// Recognized function call, such as `contains(tags, "#book")`.
-    Function(FilterFunction),
-}
-
-impl FilterAtom {
-    fn matches(&self, record: &QueryRecord) -> bool {
-        match self {
-            Self::Comparison(comparison) => comparison.matches(record),
-            Self::Function(function) => function.matches(record),
-        }
-    }
-}
-
 impl LogicalExpr<FilterAtom> {
     /// Parses a filter expression string into a logical expression tree.
     ///
@@ -95,6 +74,27 @@ impl LogicalExpr<FilterAtom> {
                 expressions.iter().any(|expression| expression.matches(record))
             }
             Self::Not(expression) => !expression.matches(record),
+        }
+    }
+}
+
+/// Atomic predicate in a filter expression.
+///
+/// Either a field-to-literal comparison or a recognized function call
+/// (such as `contains(tags, "#book")`).
+#[derive(Clone, Debug, PartialEq)]
+pub(super) enum FilterAtom {
+    /// `<field> <op> <value>` comparison.
+    Comparison(ComparisonExpr),
+    /// Recognized function call, such as `contains(tags, "#book")`.
+    Function(FilterFunction),
+}
+
+impl FilterAtom {
+    fn matches(&self, record: &QueryRecord) -> bool {
+        match self {
+            Self::Comparison(comparison) => comparison.matches(record),
+            Self::Function(function) => function.matches(record),
         }
     }
 }

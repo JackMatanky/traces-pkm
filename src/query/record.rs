@@ -199,6 +199,25 @@ impl QueryRecord {
         self.resolve_ref(path).to_owned_value()
     }
 
+    /// Returns a copy of this record with `path` overridden to `value`.
+    ///
+    /// Used by [`QueryRecordSet::flatten`] to set the resolved value for
+    /// exploded list rows. If `path` already has an override, the value is
+    /// updated in place.
+    pub(super) fn with_flattened(
+        mut self,
+        path: FieldPath,
+        value: NoteFieldValue,
+    ) -> Self {
+        if let Some(entry) = self.flattened.iter_mut().find(|(p, _)| p == &path)
+        {
+            entry.1 = value;
+        } else {
+            self.flattened.push((path, value));
+        }
+        self
+    }
+
     fn resolve_file_ref(&self, field: FileField) -> QueryFieldValueRef<'_> {
         let file = self.file();
         match field {
@@ -237,25 +256,6 @@ impl QueryRecord {
             }
             TaskField::Text => QueryFieldValueRef::Text(&task.text),
         }
-    }
-
-    /// Returns a copy of this record with `path` overridden to `value`.
-    ///
-    /// Used by [`QueryRecordSet::flatten`] to set the resolved value for
-    /// exploded list rows. If `path` already has an override, the value is
-    /// updated in place.
-    pub(super) fn with_flattened(
-        mut self,
-        path: FieldPath,
-        value: NoteFieldValue,
-    ) -> Self {
-        if let Some(entry) = self.flattened.iter_mut().find(|(p, _)| p == &path)
-        {
-            entry.1 = value;
-        } else {
-            self.flattened.push((path, value));
-        }
-        self
     }
 }
 
