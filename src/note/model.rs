@@ -330,11 +330,10 @@ mod tests {
 
             let fields: Vec<_> = note.fields().collect();
             assert_eq!(fields.len(), 1);
-            assert_eq!(fields[0].0, &FieldKey::try_new("status").unwrap());
-            assert_eq!(
-                fields[0].1,
-                &NoteFieldValue::String("published".into())
-            );
+            let first =
+                fields.first().expect("fields has at least one element");
+            assert_eq!(first.0, &FieldKey::try_new("status").unwrap());
+            assert_eq!(first.1, &NoteFieldValue::String("published".into()));
         }
     }
 

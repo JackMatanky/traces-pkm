@@ -62,7 +62,7 @@ fn query_tasks_returns_task_level_rows_distinct_from_page_level_query() {
 /// Checks one borrowed index can answer page and task requests without being
 /// consumed between executions.
 #[test]
-fn reuses_one_index_for_page_and_task_queries() {
+fn query_request_reuses_one_index_for_page_and_task_queries() {
     let temp = tempfile::tempdir().expect("create temp dir");
     fs::write(
         temp.path().join("book.md"),

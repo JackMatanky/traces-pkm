@@ -1437,6 +1437,7 @@ mod tests {
             fn object_field_preserves_insertion_order() {
                 let json = r#"{"z_last": 1, "a_first": 2, "m_middle": 3}"#;
                 let value: FieldValue = serde_json::from_str(json).unwrap();
+                assert!(matches!(value, FieldValue::Object(_)));
                 if let FieldValue::Object(map) = value {
                     let keys: Vec<_> = map.keys().cloned().collect();
                     assert_eq!(keys, vec![
@@ -1444,8 +1445,6 @@ mod tests {
                         String::from("a_first"),
                         String::from("m_middle"),
                     ]);
-                } else {
-                    panic!("expected Object");
                 }
             }
 

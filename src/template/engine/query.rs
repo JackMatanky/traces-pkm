@@ -1409,7 +1409,7 @@ mod tests {
         }
 
         #[test]
-        fn renders_pages_and_tasks_from_one_cached_index() {
+        fn one_render_can_query_pages_and_tasks_from_one_cached_index() {
             let temp = tempfile::tempdir().expect("create temp dir");
             write_note(
                 temp.path(),

@@ -104,7 +104,6 @@ pub enum IndexBuilderError {
     },
 }
 
-#[expect(clippy::missing_inline_in_public_items, reason = "trait impl")]
 impl From<IndexBuilderError> for FileIndexError {
     fn from(err: IndexBuilderError) -> Self {
         match err {
@@ -132,7 +131,6 @@ impl From<IndexBuilderError> for FileIndexError {
     }
 }
 
-#[expect(clippy::missing_inline_in_public_items, reason = "trait impl")]
 impl From<StoreError> for FileIndexError {
     fn from(err: StoreError) -> Self {
         match err {

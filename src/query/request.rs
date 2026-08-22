@@ -28,6 +28,7 @@ pub(super) enum QueryTransform {
 
 impl QueryRequest {
     /// Builds a page-row query request for `source`.
+    #[inline]
     #[must_use]
     pub fn pages(source: QuerySource) -> Self {
         Self {
@@ -38,6 +39,7 @@ impl QueryRequest {
     }
 
     /// Builds a task-row query request for `source`.
+    #[inline]
     #[must_use]
     pub fn tasks(source: QuerySource) -> Self {
         Self {
@@ -141,7 +143,7 @@ mod tests {
         use super::*;
 
         #[test]
-        fn preserves_transform_order_for_query_request() {
+        fn query_request_preserves_transform_order() {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("a.md"), "---\nrating: 1\n---\n")
                 .expect("write a.md");
