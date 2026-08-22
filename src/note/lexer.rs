@@ -1054,4 +1054,201 @@ mod tests {
             assert_eq!(tags, expected);
         }
     }
+
+    mod parse_null {
+        use super::*;
+
+        #[test]
+        fn parses_null_keyword_case_insensitively() {
+            // Arrange
+            let vp = ValueParser::new("null");
+
+            // Act
+            let result = vp.parse_null_at(0);
+
+            // Assert
+            assert!(result.is_some(), "null must be recognized");
+            let (value, end) = result.unwrap();
+            assert_eq!(value, NoteFieldValue::Null);
+            assert_eq!(end, 4);
+        }
+
+        #[test]
+        fn rejects_non_null_keywords() {
+            // Arrange
+            let vp = ValueParser::new("nil");
+
+            // Act
+            let result = vp.parse_null_at(0);
+
+            // Assert
+            assert!(result.is_none(), "nil must not be recognized as null");
+        }
+    }
+
+    mod parse_tag {
+        use super::*;
+
+        #[test]
+        fn parses_tag_with_hash_prefix() {
+            // Arrange
+            let vp = ValueParser::new("#book");
+
+            // Act
+            let result = vp.parse_tag_at(0);
+
+            // Assert
+            assert!(result.is_some(), "#book must be parsed as a tag");
+            let (value, end) = result.unwrap();
+            assert_eq!(value, NoteFieldValue::String("#book".to_owned()));
+            assert_eq!(end, 5);
+        }
+
+        #[test]
+        fn parses_tag_with_slashes_dashes_underscores() {
+            // Arrange
+            let vp = ValueParser::new("#my-tag/project_a");
+
+            // Act
+            let result = vp.parse_tag_at(0);
+
+            // Assert
+            assert!(result.is_some(), "#my-tag/project_a must be parsed");
+            let (value, _) = result.unwrap();
+            assert_eq!(
+                value,
+                NoteFieldValue::String("#my-tag/project_a".to_owned())
+            );
+        }
+
+        #[test]
+        fn rejects_tag_without_hash_prefix() {
+            // Arrange
+            let vp = ValueParser::new("book");
+
+            // Act
+            let result = vp.parse_tag_at(0);
+
+            // Assert
+            assert!(result.is_none(), "tag without # must not parse");
+        }
+    }
+
+    mod parse_number {
+        use super::*;
+
+        #[test]
+        fn rejects_nan_and_infinity() {
+            // Arrange
+            let vp_nan = ValueParser::new("NaN");
+            let vp_inf = ValueParser::new("Infinity");
+
+            // Act
+            let result_nan = vp_nan.parse_number_at(0);
+            let result_inf = vp_inf.parse_number_at(0);
+
+            // Assert
+            assert!(result_nan.is_none(), "NaN must not be parsed as number");
+            assert!(
+                result_inf.is_none(),
+                "Infinity must not be parsed as number"
+            );
+        }
+    }
+
+    mod boundary {
+        use super::*;
+
+        #[test]
+        fn treats_comma_as_atom_boundary() {
+            // Arrange
+            let vp = ValueParser::new("a,b");
+
+            // Act — position 1 is ','
+            let is_boundary = vp.is_atom_boundary(1);
+
+            // Assert
+            assert!(is_boundary, "comma must be an atom boundary");
+        }
+
+        #[test]
+        fn rejects_alphanumeric_as_atom_boundary() {
+            // Arrange
+            let vp = ValueParser::new("ab");
+
+            // Act — position 1 is 'b'
+            let is_boundary = vp.is_atom_boundary(1);
+
+            // Assert
+            assert!(
+                !is_boundary,
+                "alphanumeric char must not be an atom boundary"
+            );
+        }
+    }
+
+    mod parse_duration {
+        use super::*;
+
+        #[test]
+        fn parses_duration_with_space_separator() {
+            // Arrange
+            let vp = ValueParser::new("1h 30m");
+
+            // Act
+            let result = vp.parse_duration_at(0);
+
+            // Assert
+            assert!(result.is_some(), "1h 30m must parse as duration");
+            let (value, _) = result.unwrap();
+            assert_eq!(value, NoteFieldValue::Duration("1h 30m".to_owned()));
+        }
+
+        #[test]
+        fn parses_duration_without_separator() {
+            // Arrange
+            let vp = ValueParser::new("1h30m");
+
+            // Act
+            let result = vp.parse_duration_at(0);
+
+            // Assert
+            assert!(result.is_some(), "1h30m must parse as duration");
+            let (value, _) = result.unwrap();
+            assert_eq!(value, NoteFieldValue::Duration("1h30m".to_owned()));
+        }
+    }
+
+    mod duration_unit {
+        use rstest::rstest;
+
+        use super::*;
+
+        #[rstest]
+        #[case::hours("h")]
+        #[case::minutes("m")]
+        #[case::seconds("s")]
+        #[case::days("d")]
+        #[case::hours_upper("H")]
+        #[case::minutes_upper("M")]
+        #[case::seconds_upper("S")]
+        #[case::days_upper("D")]
+        fn accepts_valid_duration_units(#[case] unit: &str) {
+            assert!(
+                is_duration_unit(unit),
+                "{unit} must be a valid duration unit"
+            );
+        }
+
+        #[rstest]
+        #[case::years("y")]
+        #[case::empty("")]
+        #[case::single_char_invalid("x")]
+        fn rejects_invalid_duration_units(#[case] unit: &str) {
+            assert!(
+                !is_duration_unit(unit),
+                "{unit} must not be a valid duration unit"
+            );
+        }
+    }
 }
