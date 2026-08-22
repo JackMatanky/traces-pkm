@@ -273,6 +273,12 @@ mod tests {
         use super::*;
 
         #[test]
+        fn treats_whitespace_only_as_empty() {
+            let raw = RawFrontmatter::new("   \n  \t  ");
+            assert!(raw.is_empty());
+        }
+
+        #[test]
         fn last_duplicate_frontmatter_key_wins() {
             let key = FieldKey::try_new("title").unwrap();
             let mut fields = IndexMap::new();
@@ -329,6 +335,54 @@ mod tests {
             );
         }
     }
+    mod yaml_key_conversion {
+        use super::*;
+
+        #[test]
+        fn converts_number_key_to_string() {
+            let key = serde_yaml::Value::Number(42.into());
+            assert_eq!(yaml_payload_key_to_string(key), Some("42".to_owned()));
+        }
+
+        #[test]
+        fn converts_bool_key_to_string() {
+            let key = serde_yaml::Value::Bool(true);
+            assert_eq!(
+                yaml_payload_key_to_string(key),
+                Some("true".to_owned())
+            );
+        }
+    }
+
+    mod is_iso_date {
+        use super::*;
+
+        #[test]
+        fn accepts_valid_date() {
+            assert!(is_iso_date("2026-08-22"));
+        }
+        #[test]
+        fn rejects_date_without_dashes() {
+            assert!(!is_iso_date("20260822"));
+        }
+        #[test]
+        fn rejects_short_string() {
+            assert!(!is_iso_date("2026-08"));
+        }
+        #[test]
+        fn rejects_non_digit_in_year() {
+            assert!(!is_iso_date("abcd-08-22"));
+        }
+        #[test]
+        fn rejects_non_digit_in_month() {
+            assert!(!is_iso_date("2026-ab-22"));
+        }
+        #[test]
+        fn rejects_non_digit_in_day() {
+            assert!(!is_iso_date("2026-08-cd"));
+        }
+    }
+
     mod field_value {
         use pretty_assertions::assert_eq;
 
