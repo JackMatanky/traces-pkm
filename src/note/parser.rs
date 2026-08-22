@@ -821,6 +821,46 @@ mod tests {
                 .map(ListItem::text);
             assert_eq!(text, Some("Wrapped\nline"));
         }
+
+        #[test]
+        fn parses_code_block_without_leaking_content_as_metadata() {
+            // Arrange — fenced code block contains YAML-like content that could
+            // be mistaken for frontmatter if block context doesn't switch.
+            let input = "---\ntitle: Real Frontmatter\n---\n\nSome \
+                         text.\n\n```\n---\nfake: value\n```\n\nMore text.";
+            let note = parse_markdown("note.md", input);
+
+            // Act — the real frontmatter has 1 field; the fenced content must
+            // not appear as additional fields.
+            let field_count =
+                note.frontmatter().map(|fm| fm.fields().len()).unwrap_or(0);
+
+            // Assert
+            assert_eq!(
+                field_count, 1,
+                "code block content must not leak into frontmatter"
+            );
+        }
+
+        #[test]
+        fn treats_text_after_closing_fence_as_body() {
+            // Arrange — text after a fenced code block must be treated as body
+            // text, not as code block content (end_code_block
+            // resets BlockContext). Inline fields are extracted from body text,
+            // so verifying they appear after a code block proves the context
+            // reset worked.
+            let input = "```\ncode here\n```\n\nStatus:: Draft";
+            let note = parse_markdown("note.md", input);
+
+            // Act — the parser extracts inline fields from body text
+            let field_count = note.inline_fields().len();
+
+            // Assert
+            assert_eq!(
+                field_count, 1,
+                "inline field after closing fence must be extracted"
+            );
+        }
     }
 
     mod tasks {
