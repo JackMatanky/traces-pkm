@@ -322,4 +322,120 @@ mod tests {
             );
         }
     }
+
+    mod reuse {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn skips_parse_for_unchanged_records() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(
+                temp.path().join("note.md"),
+                "---\ntitle: Test\n---\nBody.",
+            )
+            .expect("write note");
+
+            let first = IndexBuilder::from_scan(temp.path())
+                .expect("scan")
+                .build(temp.path())
+                .expect("build");
+            let first_len = first.notes().len();
+
+            let second = IndexBuilder::from_scan(temp.path())
+                .expect("scan")
+                .reuse_unchanged(first)
+                .build(temp.path())
+                .expect("build");
+
+            assert_eq!(first_len, second.notes().len());
+        }
+
+        #[test]
+        fn reparse_when_record_content_changes() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(
+                temp.path().join("note.md"),
+                "---\ntitle: V1\n---\nBody.",
+            )
+            .expect("write note");
+
+            let first = IndexBuilder::from_scan(temp.path())
+                .expect("scan")
+                .build(temp.path())
+                .expect("build");
+
+            fs::write(
+                temp.path().join("note.md"),
+                "---\ntitle: V2\n---\nBody.",
+            )
+            .expect("rewrite note");
+
+            let second = IndexBuilder::from_scan(temp.path())
+                .expect("scan")
+                .reuse_unchanged(first)
+                .build(temp.path())
+                .expect("build");
+
+            let title = second.notes()[0].frontmatter().and_then(|fm| {
+                fm.get(&crate::field::FieldKey::try_new("title").unwrap())
+                    .cloned()
+            });
+            assert_eq!(
+                title,
+                Some(crate::note::NoteFieldValue::String("V2".to_owned()))
+            );
+        }
+
+        #[test]
+        fn removes_deleted_notes_from_index() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(
+                temp.path().join("note.md"),
+                "---\ntitle: Test\n---\nBody.",
+            )
+            .expect("write note");
+
+            let first = IndexBuilder::from_scan(temp.path())
+                .expect("scan")
+                .build(temp.path())
+                .expect("build");
+            assert_eq!(first.notes().len(), 1);
+
+            fs::remove_file(temp.path().join("note.md")).expect("delete note");
+
+            let second = IndexBuilder::from_scan(temp.path())
+                .expect("scan")
+                .reuse_unchanged(first)
+                .build(temp.path())
+                .expect("build");
+
+            assert_eq!(second.notes().len(), 0, "deleted note must be removed");
+        }
+
+        #[test]
+        fn includes_newly_added_notes() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("a.md"), "---\ntitle: A\n---\nBody.")
+                .expect("write a");
+
+            let first = IndexBuilder::from_scan(temp.path())
+                .expect("scan")
+                .build(temp.path())
+                .expect("build");
+            assert_eq!(first.notes().len(), 1);
+
+            fs::write(temp.path().join("b.md"), "---\ntitle: B\n---\nBody.")
+                .expect("write b");
+
+            let second = IndexBuilder::from_scan(temp.path())
+                .expect("scan")
+                .reuse_unchanged(first)
+                .build(temp.path())
+                .expect("build");
+
+            assert_eq!(second.notes().len(), 2, "new note must be included");
+        }
+    }
 }
