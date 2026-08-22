@@ -557,5 +557,68 @@ mod tests {
             expression.visit_atoms_mut(&mut |atom| *atom += 1);
             assert!(expression.evaluate(|atom| *atom == 2));
         }
+
+        #[test]
+        fn evaluate_returns_false_when_any_atom_fails_in_and() {
+            let expression = LogicalExpr::And(vec![
+                LogicalExpr::Atom(1),
+                LogicalExpr::Atom(2),
+                LogicalExpr::Atom(3),
+            ]);
+
+            let result = expression.evaluate(|atom| *atom != 2);
+
+            assert!(!result, "AND must return false when any atom fails");
+        }
+
+        #[test]
+        fn evaluate_returns_true_when_all_atoms_match_in_and() {
+            let expression = LogicalExpr::And(vec![
+                LogicalExpr::Atom(1),
+                LogicalExpr::Atom(2),
+            ]);
+
+            let result = expression.evaluate(|atom| *atom > 0);
+
+            assert!(result, "AND must return true when all atoms match");
+        }
+
+        #[test]
+        fn evaluate_returns_true_when_any_atom_matches_in_or() {
+            let expression = LogicalExpr::Or(vec![
+                LogicalExpr::Atom(1),
+                LogicalExpr::Atom(2),
+                LogicalExpr::Atom(3),
+            ]);
+
+            let result = expression.evaluate(|atom| *atom == 2);
+
+            assert!(result, "OR must return true when any atom matches");
+        }
+
+        #[test]
+        fn any_atom_returns_false_when_no_atom_matches() {
+            let expression = LogicalExpr::And(vec![
+                LogicalExpr::Atom(1),
+                LogicalExpr::Atom(2),
+            ]);
+
+            let result = expression.any_atom(|atom| *atom == 99);
+
+            assert!(!result, "any_atom must return false when no atom matches");
+        }
+
+        #[test]
+        fn any_atom_returns_true_when_atom_matches_in_nested_expression() {
+            let expression =
+                LogicalExpr::Not(Box::new(LogicalExpr::And(vec![
+                    LogicalExpr::Atom(10),
+                    LogicalExpr::Atom(20),
+                ])));
+
+            let result = expression.any_atom(|atom| *atom == 10);
+
+            assert!(result, "any_atom must find atoms inside NOT wrapper");
+        }
     }
 }
