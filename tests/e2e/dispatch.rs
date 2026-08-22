@@ -109,8 +109,7 @@ mod query_commands {
     /// count on stderr.
     ///
     /// The stdout/stderr split is a CLI-only guarantee scripts pipe on; no
-    /// library type (`QueryOutcome` included) has a stdout/stderr concept
-    /// to unit-test against.
+    /// library query type has a stdout/stderr concept to unit-test against.
     #[test]
     fn list_prints_matching_pages_to_stdout_and_a_count_to_stderr() {
         let sandbox = Sandbox::trusted();

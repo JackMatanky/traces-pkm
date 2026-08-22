@@ -1,26 +1,26 @@
 //! Error types for query parsing, field resolution, and result transformation.
 //!
 //! This module defines the error hierarchy returned by [`super::QuerySource`]
-//! parsing, [`super::QueryOutcome`] transformation methods, and
-//! [`super::IndexRecord`] field resolution.
+//! parsing, [`super::QueryRecordSet`] transformation methods, and
+//! [`super::QueryRecord`] field resolution.
 //!
 //! # Error Hierarchy and Integration
 //!
 //! - [`QueryError`] is the top-level error type.
+//! - [`QueryRequestError`] isolates failures while building a query request.
 //! - [`QuerySyntaxError`] handles syntax errors and integrates with [`miette`]
 //!   using the [`Diagnostic`][`miette::Diagnostic`] trait to render rich
 //!   diagnostics.
 //! - [`FieldPathError`] represents invalid field paths or query namespace
 //!   errors.
-//!
 //! # Examples
 //!
 //! ```ignore
-//! use traces_pkm::query::QueryError;
+//! use traces_pkm::query::{QueryError, QueryRequestError};
 //!
-//! let error = QueryError::LimitOutOfRange {
+//! let error = QueryError::from(QueryRequestError::LimitOutOfRange {
 //!     value: -5,
-//! };
+//! });
 //! assert_eq!(
 //!     error.to_string(),
 //!     "invalid limit -5; expected a non-negative row count"
@@ -174,27 +174,13 @@ impl FieldPathError {
     }
 }
 
-/// Top-level error enum for query parsing and transformation.
+/// Error while building a [`super::QueryRequest`].
 ///
-/// Covers all failure modes from expression parsing through field resolution to
-/// result rendering. Implements [`miette::Diagnostic`] by delegating to the
-/// inner [`QuerySyntaxError`] for syntax errors.
-///
-/// # Examples
-///
-/// ```ignore
-/// use traces_pkm::query::QueryError;
-///
-/// let error = QueryError::LimitOutOfRange {
-///     value: -1,
-/// };
-/// assert_eq!(
-///     error.to_string(),
-///     "invalid limit -1; expected a non-negative row count"
-/// );
-/// ```
+/// Separates request-construction failures from execution/rendering failures
+/// while still embedding into [`QueryError`] for callers that want one query
+/// error type.
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
-pub enum QueryError {
+pub enum QueryRequestError {
     /// A source or filter expression has invalid syntax.
     #[error(transparent)]
     Syntax(#[from] QuerySyntaxError),
@@ -207,15 +193,64 @@ pub enum QueryError {
         /// The rejected limit count.
         value: i64,
     },
-    /// [`super::QueryOutcome::task_list`] received page-level records instead
-    /// of task-level records produced by
-    /// [`crate::index::FileIndex::query_tasks`].
+}
+
+impl QueryRequestError {
+    pub(crate) fn from_query_error(error: QueryError) -> Self {
+        match error {
+            QueryError::Syntax(error) => Self::Syntax(error),
+            QueryError::FieldPath(error) => Self::FieldPath(error),
+            QueryError::Request(error) => error,
+            QueryError::TaskListRequiresTaskRows
+            | QueryError::TableColumnCountMismatch {
+                ..
+            } => Self::Syntax(QuerySyntaxError::new(
+                QueryDialect::Filter,
+                "",
+                (0, 0).into(),
+                "a valid filter expression",
+            )),
+        }
+    }
+}
+
+/// Top-level error enum for query parsing and transformation.
+///
+/// Covers all failure modes from expression parsing through field resolution to
+/// result rendering. Implements [`miette::Diagnostic`] by delegating to the
+/// inner [`QuerySyntaxError`] for syntax errors.
+///
+/// # Examples
+///
+/// ```ignore
+/// use traces_pkm::query::{QueryError, QueryRequestError};
+///
+/// let error = QueryError::from(QueryRequestError::LimitOutOfRange {
+///     value: -1,
+/// });
+/// assert_eq!(
+///     error.to_string(),
+///     "invalid limit -1; expected a non-negative row count"
+/// );
+/// ```
+#[derive(Clone, Debug, Eq, Error, PartialEq)]
+pub enum QueryError {
+    /// A request builder rejected syntax, field paths, or limits.
+    #[error(transparent)]
+    Request(#[from] QueryRequestError),
+    /// A source or filter expression has invalid syntax.
+    #[error(transparent)]
+    Syntax(#[from] QuerySyntaxError),
+    /// A field path cannot be parsed or names an unknown accessor.
+    #[error(transparent)]
+    FieldPath(#[from] FieldPathError),
+    /// [`super::QueryRecordSet::task_list`] received page-level records
     #[error(
         "task_list requires task-level records from the `tasks` namespace; \
          got page-level records with no task fields"
     )]
     TaskListRequiresTaskRows,
-    /// [`super::QueryOutcome::table`] received `headers` and `columns` slices
+    /// [`super::QueryRecordSet::table`] received `headers` and `columns` slices
     /// of unequal length.
     #[error(
         "table headers ({headers}) and columns ({columns}) must have the same \
@@ -233,11 +268,15 @@ pub enum QueryError {
 impl Diagnostic for QueryError {
     fn diagnostic_source(&self) -> Option<&dyn Diagnostic> {
         match self {
-            Self::Syntax(source) => Some(source),
-            Self::FieldPath(_)
-            | Self::LimitOutOfRange {
-                ..
-            }
+            Self::Syntax(source)
+            | Self::Request(QueryRequestError::Syntax(source)) => Some(source),
+            Self::Request(
+                QueryRequestError::FieldPath(_)
+                | QueryRequestError::LimitOutOfRange {
+                    ..
+                },
+            )
+            | Self::FieldPath(_)
             | Self::TaskListRequiresTaskRows
             | Self::TableColumnCountMismatch {
                 ..
@@ -334,9 +373,9 @@ mod tests {
     #[test]
     fn direct_operation_errors_format_display_messages() {
         assert_display(
-            &QueryError::LimitOutOfRange {
+            &QueryError::from(QueryRequestError::LimitOutOfRange {
                 value: -5,
-            },
+            }),
             "invalid limit -5; expected a non-negative row count",
         );
         assert_display(

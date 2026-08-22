@@ -431,7 +431,7 @@ pub(crate) trait FileClassExpander {
 ///
 /// * `source`: query source expression to expand class atoms in.
 /// * `expander`: resolves class names against the Schema domain.
-pub(crate) fn resolve_classes<R: FileClassExpander>(
+pub(crate) fn resolve_classes<R: FileClassExpander + ?Sized>(
     source: &mut QuerySource,
     expander: &R,
 ) {

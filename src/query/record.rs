@@ -8,24 +8,20 @@
 //! # Main Types
 //!
 //! - [`QueryRecord`] is the primary query row, produced by
-//!   [`super::QueryService::query`] or [`super::QueryService::query_tasks`].
+//!   [`super::QueryService::execute`].
 //! - [`QueryRecordSet`] stores result rows and provides chained transformation
 //!   methods (`filter`, `sort`, `limit`, `group_by`, `flatten`) and terminal
 //!   rendering methods (`table`, `list`, `task_list`).
-//! - [`TaskInfo`] carries per-task fields layered onto a [`QueryRecord`] by
-//!   [`super::QueryService::query_tasks`].
+//! - Task rows carry a small overlay with `task.completed` and `task.text`.
 //!
 //! # Examples
 //!
 //! ```ignore
-//! use std::path::Path;
+//! use traces_pkm::{IndexerService, QueryRequest, QueryService, QuerySource};
 //!
-//! use traces_pkm::{file::FileRecord, note::Note, query::QueryRecord};
-//!
-//! let note = Note::default();
-//! let record = QueryRecord::new(file, Some(note));
-//!
-//! assert_eq!(record.file().path().to_str(), Some("note.md"));
+//! let index = IndexerService::new(".").build().unwrap();
+//! let records = QueryService::new("class")
+//!     .execute(&index, QueryRequest::pages(QuerySource::All));
 //! ```
 //!
 //! [`FileRecord`]: crate::file::FileRecord
@@ -34,109 +30,72 @@
 use std::{path::PathBuf, sync::Arc};
 
 use super::{
-    QueryError,
+    FileField, QueryDisplayFormat, QueryError, QueryTransform,
     field::{FieldPath, TaskField},
     filter::FilterExpr,
     sort::SortKey,
 };
 use crate::{
     file::FileRecord,
-    index::InlinkMap,
-    note::{Note, NoteFieldValue},
+    index::FileIndexEntry,
+    note::{Link, ListItem, Note, NoteFieldValue, Tag, TaskStatus},
 };
 
 /// A query row pairing a [`FileRecord`] with parsed [`Note`] metadata.
 ///
 /// Each record resolves `file.*`, `task.*`, frontmatter, inline fields, `tags`,
 /// and derived inlinks for template rendering and CLI output.
-///
-/// The [`Note`] is reference-counted via [`Arc`] to share data efficiently when
-/// expanding one note into multiple task-level rows.
-///
-/// # Examples
-///
-/// ```ignore
-/// use std::path::Path;
-///
-/// use traces_pkm::{file::FileRecord, note::Note, query::QueryRecord};
-///
-/// let note = Note::default();
-/// let record = QueryRecord::new(file, Some(note));
-/// ```
 #[derive(Clone, Debug, PartialEq)]
 pub struct QueryRecord {
-    file: FileRecord,
-    /// Reference-counted, not owned outright: exploding one Note into several
-    /// rows (see [`super::QueryService::query_tasks`] and
-    /// [`QueryRecordSet::flatten`]) shares this field across every row
-    /// instead of deep-cloning frontmatter, links, tags, and lists per row.
-    ///
-    /// `None` when the underlying file has no parsed [`Note`] (for example, an
-    /// image or PDF referenced by a `file`-typed Schema field).
-    note: Option<Arc<Note>>,
+    base: Arc<RecordBase>,
     /// Overrides field resolution for exploded rows produced by
     /// [`QueryRecordSet::flatten`].
     flattened: Vec<(FieldPath, NoteFieldValue)>,
-    /// Stores per-task fields set by [`super::QueryService::query_tasks`], or
-    /// `None` for page-level records.
-    task: Option<TaskInfo>,
-    /// Stores project-relative paths of Notes whose outlinks resolve to this
-    /// row's Note, set by [`super::QueryService::query`] and
-    /// [`super::QueryService::query_tasks`].
-    inlinks: Vec<PathBuf>,
+    kind: RowKind,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct RecordBase {
+    file: FileRecord,
+    note: Option<Arc<Note>>,
+    inlinks: Arc<[PathBuf]>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+enum RowKind {
+    Page,
+    Task(TaskRow),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct TaskRow {
+    status: TaskStatus,
+    text: String,
 }
 
 impl QueryRecord {
-    /// Creates a new [`QueryRecord`] pairing `file` with its parsed `note`.
-    ///
-    /// `note` is `None` for files with no parsed [`Note`] (non-Markdown files
-    /// matched by a `file`-typed Schema field).
-    pub(super) fn new(file: FileRecord, note: Option<Note>) -> Self {
+    /// Constructs a new [`QueryRecord`] from an index entry.
+    pub(super) fn from_entry(entry: FileIndexEntry<'_>) -> Self {
         Self {
-            file,
-            note: note.map(Arc::new),
+            base: Arc::new(RecordBase {
+                file: entry.file.clone(),
+                note: entry.note.cloned().map(Arc::new),
+                inlinks: Arc::<[PathBuf]>::from(entry.inlinks),
+            }),
             flattened: Vec::new(),
-            task: None,
-            inlinks: Vec::new(),
+            kind: RowKind::Page,
         }
     }
 
-    /// Constructs a new [`QueryRecord`] pairing `file` with `note`, with
-    /// inbound link paths populated from `inlinks` (removing `file`'s entry).
-    ///
-    /// Consolidates every construction path used while assembling a query
-    /// pass — see [`super::QueryService::query`]/`query_tasks`.
-    pub(super) fn from_parts(
-        file: FileRecord,
-        note: Option<Note>,
-        inlinks: &mut InlinkMap,
-    ) -> Self {
-        let links = inlinks.remove(file.path()).unwrap_or_default();
-        Self::new(file, note).with_inlinks(links)
-    }
-
     /// Converts this record into a task-level row.
-    ///
-    /// Attaches task completion state and text, used by
-    /// [`super::QueryService::query_tasks`] to expand a page-level record
-    /// into one row per task item while retaining parent Note metadata for
-    /// filtering and display via [`Self::field`].
-    pub(super) fn with_task(
-        mut self,
-        completed: bool,
-        text: impl Into<String>,
-    ) -> Self {
-        self.task = Some(TaskInfo {
-            completed,
-            text: text.into(),
+    pub(super) fn with_task_item(mut self, item: &ListItem) -> Self {
+        let Some(status) = item.task_status() else {
+            return self;
+        };
+        self.kind = RowKind::Task(TaskRow {
+            status,
+            text: item.text().to_owned(),
         });
-        self
-    }
-
-    /// Attaches project-relative paths of Notes whose wikilinks resolve to
-    /// this record's Note.
-    pub(super) fn with_inlinks(mut self, inlinks: Vec<PathBuf>) -> Self {
-        self.inlinks = inlinks;
         self
     }
 
@@ -147,7 +106,12 @@ impl QueryRecord {
     #[inline]
     #[must_use]
     pub fn task_completed(&self) -> Option<bool> {
-        self.task.as_ref().map(|task| task.completed)
+        match &self.kind {
+            RowKind::Page => None,
+            RowKind::Task(task) => {
+                Some(task.status == crate::note::TaskStatus::Complete)
+            }
+        }
     }
 
     /// Returns the task item's text if this is a task-level record, or
@@ -155,56 +119,37 @@ impl QueryRecord {
     #[inline]
     #[must_use]
     pub(crate) fn task_text(&self) -> Option<&str> {
-        self.task.as_ref().map(|task| task.text.as_str())
+        match &self.kind {
+            RowKind::Page => None,
+            RowKind::Task(task) => Some(task.text.as_str()),
+        }
     }
 
     /// Returns general metadata for the indexed file.
     #[inline]
     #[must_use]
-    pub const fn file(&self) -> &FileRecord {
-        &self.file
+    pub fn file(&self) -> &FileRecord {
+        &self.base.file
     }
 
     /// Returns parsed [`Note`] metadata for the indexed file, or `None` if the
     /// file has no parsed Note (a non-Markdown file matched by a `file`-typed
     /// Schema field).
-    ///
-    /// The returned reference shares the underlying [`Arc`] allocation with
-    /// any task-level rows derived from the same Note.
     #[inline]
     #[must_use]
     pub(crate) fn note(&self) -> Option<&Note> {
-        self.note.as_deref()
+        self.base.note.as_deref()
     }
 
     /// Returns project-relative paths of Notes whose wikilinks resolve to
     /// this record's Note, or an empty slice if no Notes link to it.
     #[inline]
     #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "no current caller outside tests; documented deliberate \
-                      API in index-query#10's derived-inlinks design \
-                      (Templates/CLI select or filter inlinks via \
-                      field(\"inlinks\") today; this direct accessor for \
-                      display output is not yet wired to a CLI/Template \
-                      renderer)"
-        )
-    )]
     pub(crate) fn inlinks(&self) -> &[PathBuf] {
-        &self.inlinks
+        &self.base.inlinks
     }
 
     /// Resolves a field path string against this record's metadata.
-    ///
-    /// Resolves `file.*` accessors, `task.*` accessors, frontmatter fields,
-    /// inline fields, `tags`, and `inlinks`. Resolution rules include:
-    /// - Frontmatter fields take precedence over inline fields sharing the same
-    ///   key (see [`Note::fields`]).
-    /// - Well-formed paths without values (such as a missing key or a `task.*`
-    ///   accessor on a page-level record) resolve to [`NoteFieldValue::Null`].
     ///
     /// # Errors
     ///
@@ -215,56 +160,78 @@ impl QueryRecord {
         &self,
         path: &str,
     ) -> Result<NoteFieldValue, QueryError> {
-        Ok(self.resolve(&FieldPath::parse(path)?))
+        Ok(self.resolve_owned(&FieldPath::parse(path)?))
     }
 
-    /// Resolves a pre-parsed field path against this record, applying
-    /// overrides.
-    pub(super) fn resolve(&self, path: &FieldPath) -> NoteFieldValue {
+    /// Resolves a pre-parsed field path into a borrowed value where possible.
+    pub(super) fn resolve_ref(&self, path: &FieldPath) -> ResolvedField<'_> {
         if let Some((_, value)) = self.flattened.iter().find(|(p, _)| p == path)
         {
-            return value.clone();
+            return ResolvedField::from(value);
         }
         match path {
-            FieldPath::File(field) => field.resolve(&self.file),
-            FieldPath::Task(field) => {
-                self.task.as_ref().map_or(NoteFieldValue::Null, |task| {
-                    match field {
-                        TaskField::Completed => {
-                            NoteFieldValue::Bool(task.completed)
-                        }
-                        TaskField::Text => {
-                            NoteFieldValue::String(task.text.clone())
-                        }
-                    }
-                })
+            FieldPath::File(field) => self.resolve_file_ref(*field),
+            FieldPath::Task(field) => self.resolve_task_ref(*field),
+            FieldPath::Tags => {
+                let tags = self.note().map_or(&[][..], Note::tags);
+                ResolvedField::List(ResolvedList::Tags(tags))
             }
-            FieldPath::Tags => NoteFieldValue::List(
-                self.note
-                    .iter()
-                    .flat_map(|note| note.tags())
-                    .map(|tag| NoteFieldValue::String(tag.as_str().to_owned()))
-                    .collect(),
-            ),
-            FieldPath::Inlinks => NoteFieldValue::List(
-                self.inlinks
-                    .iter()
-                    .map(|linking_note| {
-                        NoteFieldValue::String(
-                            linking_note.to_string_lossy().into_owned(),
-                        )
-                    })
-                    .collect(),
-            ),
+            FieldPath::Inlinks => {
+                ResolvedField::List(ResolvedList::Inlinks(self.inlinks()))
+            }
             FieldPath::Metadata(key) => self
-                .note
-                .as_deref()
+                .note()
                 .and_then(|note| {
                     note.fields()
                         .find(|(k, _)| k.is_match(key.as_str()))
-                        .map(|(_, v)| v.clone())
+                        .map(|(_, value)| ResolvedField::from(value))
                 })
-                .unwrap_or(NoteFieldValue::Null),
+                .unwrap_or(ResolvedField::Null),
+        }
+    }
+
+    /// Resolves a pre-parsed field path into the public owned value type.
+    pub(super) fn resolve_owned(&self, path: &FieldPath) -> NoteFieldValue {
+        self.resolve_ref(path).to_owned_value()
+    }
+
+    fn resolve_file_ref(&self, field: FileField) -> ResolvedField<'_> {
+        let file = self.file();
+        match field {
+            FileField::Path => file.path().to_str().map_or_else(
+                || ResolvedField::Owned(field.resolve(file)),
+                ResolvedField::Text,
+            ),
+            FileField::Name => ResolvedField::Text(file.name().as_str()),
+            FileField::Folder => file.folder().to_str().map_or_else(
+                || ResolvedField::Owned(field.resolve(file)),
+                ResolvedField::Text,
+            ),
+            #[expect(
+                clippy::as_conversions,
+                clippy::cast_precision_loss,
+                reason = "file sizes stay well under 2^53 bytes for PKM-scale \
+                          projects, so f64 keeps exact byte counts"
+            )]
+            FileField::Size => ResolvedField::Number(file.size() as f64),
+            FileField::CreatedDateTime
+            | FileField::CreatedDate
+            | FileField::ModifiedDateTime
+            | FileField::ModifiedDate => {
+                ResolvedField::Owned(field.resolve(file))
+            }
+        }
+    }
+
+    fn resolve_task_ref(&self, field: TaskField) -> ResolvedField<'_> {
+        let RowKind::Task(task) = &self.kind else {
+            return ResolvedField::Null;
+        };
+        match field {
+            TaskField::Completed => {
+                ResolvedField::Bool(task.status == TaskStatus::Complete)
+            }
+            TaskField::Text => ResolvedField::Text(&task.text),
         }
     }
 
@@ -288,17 +255,85 @@ impl QueryRecord {
     }
 }
 
-/// Per-task fields layered onto a [`QueryRecord`] by
-/// [`super::QueryService::query_tasks`].
-///
-/// Task-level rows retain parent [`Note`] file and metadata fields for
-/// filtering and display while attaching task completion and text. This is
-/// distinct from [`QueryRecord::flattened`], which overrides existing field
-/// paths rather than adding new ones.
-#[derive(Clone, Debug, PartialEq)]
-struct TaskInfo {
-    completed: bool,
-    text: String,
+/// Borrowed field value resolved from a [`QueryRecord`].
+pub(super) enum ResolvedField<'a> {
+    Null,
+    Bool(bool),
+    Number(f64),
+    Text(&'a str),
+    Link(&'a Link),
+    List(ResolvedList<'a>),
+    Owned(NoteFieldValue),
+}
+
+/// Borrowed list value resolved from a [`QueryRecord`].
+pub(super) enum ResolvedList<'a> {
+    Values(&'a [NoteFieldValue]),
+    Tags(&'a [Tag]),
+    Inlinks(&'a [PathBuf]),
+}
+
+impl ResolvedField<'_> {
+    pub(super) fn to_owned_value(&self) -> NoteFieldValue {
+        match self {
+            Self::Null => NoteFieldValue::Null,
+            Self::Bool(value) => NoteFieldValue::Bool(*value),
+            Self::Number(value) => NoteFieldValue::Number(*value),
+            Self::Text(value) => NoteFieldValue::String((*value).to_owned()),
+            Self::Link(value) => NoteFieldValue::Link((*value).clone()),
+            Self::List(value) => value.to_owned_value(),
+            Self::Owned(value) => value.clone(),
+        }
+    }
+
+    pub(super) fn as_str(&self) -> Option<&str> {
+        match self {
+            Self::Text(value) => Some(value),
+            Self::Owned(value) => value.as_str(),
+            _ => None,
+        }
+    }
+}
+
+impl<'a> From<&'a NoteFieldValue> for ResolvedField<'a> {
+    fn from(value: &'a NoteFieldValue) -> Self {
+        match value {
+            NoteFieldValue::Null => Self::Null,
+            NoteFieldValue::Bool(value) => Self::Bool(*value),
+            NoteFieldValue::Number(value) => Self::Number(*value),
+            NoteFieldValue::String(value) => Self::Text(value),
+            NoteFieldValue::Link(value) => Self::Link(value),
+            NoteFieldValue::List(value) => {
+                Self::List(ResolvedList::Values(value))
+            }
+            NoteFieldValue::Date(_)
+            | NoteFieldValue::Duration(_)
+            | NoteFieldValue::Object(_) => Self::Owned(value.clone()),
+        }
+    }
+}
+
+impl ResolvedList<'_> {
+    fn to_owned_value(&self) -> NoteFieldValue {
+        match self {
+            Self::Values(values) => NoteFieldValue::List((*values).to_vec()),
+            Self::Tags(tags) => NoteFieldValue::List(
+                tags.iter()
+                    .map(|tag| NoteFieldValue::String(tag.as_str().to_owned()))
+                    .collect(),
+            ),
+            Self::Inlinks(inlinks) => NoteFieldValue::List(
+                inlinks
+                    .iter()
+                    .map(|path| {
+                        NoteFieldValue::String(
+                            path.to_string_lossy().into_owned(),
+                        )
+                    })
+                    .collect(),
+            ),
+        }
+    }
 }
 
 /// An ordered collection of [`QueryRecord`] rows produced by an index query.
@@ -362,13 +397,11 @@ impl QueryRecordSet {
     ///
     /// # Errors
     ///
-    /// - [`QueryError::Syntax`] if the expression is invalid.
-    /// - [`QueryError::FieldPath`] if a field path is malformed.
+    /// - [`QueryError::Request`] if the expression is invalid.
     #[inline]
-    pub fn filter(mut self, expr: &str) -> Result<Self, QueryError> {
-        let expr = FilterExpr::parse(expr)?;
-        self.records.retain(|record| expr.matches(record));
-        Ok(self)
+    pub(crate) fn filter(self, expr: &str) -> Result<Self, QueryError> {
+        let transform = QueryTransform::filter(expr)?;
+        Ok(self.apply_transform(&transform))
     }
 
     /// Filters records matching `expr`, serving as an alias for
@@ -376,8 +409,7 @@ impl QueryRecordSet {
     ///
     /// # Errors
     ///
-    /// - [`QueryError::Syntax`] if the expression is invalid.
-    /// - [`QueryError::FieldPath`] if a field path is malformed.
+    /// - [`QueryError::Request`] if the expression is invalid.
     #[inline]
     #[cfg_attr(
         not(test),
@@ -395,43 +427,40 @@ impl QueryRecordSet {
     ///
     /// # Errors
     ///
-    /// - [`QueryError::FieldPath`] if `path` cannot be parsed as a valid field
+    /// - [`QueryError::Request`] if `path` cannot be parsed as a valid field
     ///   path.
     #[inline]
-    pub fn sort(
+    pub(crate) fn sort(
         self,
         path: &str,
         descending: bool,
     ) -> Result<Self, QueryError> {
-        self.sort_by_field(path, descending)
+        let transform = QueryTransform::sort(path, descending)?;
+        Ok(self.apply_transform(&transform))
     }
 
     /// Truncates the outcome to retain at most `n` leading records.
     ///
     /// # Errors
     ///
-    /// - [`QueryError::LimitOutOfRange`] if `n` is negative or exceeds platform
+    /// - [`QueryError::Request`] if `n` is negative or exceeds platform
     ///   pointer-width limits.
     #[inline]
-    pub fn limit(mut self, n: i64) -> Result<Self, QueryError> {
-        let n = usize::try_from(n).map_err(|_source| {
-            QueryError::LimitOutOfRange {
-                value: n,
-            }
-        })?;
-        self.records.truncate(n);
-        Ok(self)
+    pub(crate) fn limit(self, n: i64) -> Result<Self, QueryError> {
+        let transform = QueryTransform::limit(n)?;
+        Ok(self.apply_transform(&transform))
     }
 
     /// Groups records by sorting them ascending on the field at `path`.
     ///
     /// # Errors
     ///
-    /// - [`QueryError::FieldPath`] if `path` cannot be parsed as a valid field
+    /// - [`QueryError::Request`] if `path` cannot be parsed as a valid field
     ///   path.
     #[inline]
     pub(crate) fn group_by(self, path: &str) -> Result<Self, QueryError> {
-        self.sort_by_field(path, false)
+        let transform = QueryTransform::group_by(path)?;
+        Ok(self.apply_transform(&transform))
     }
 
     /// Explodes records containing a list at `path` into one row per list
@@ -439,13 +468,41 @@ impl QueryRecordSet {
     ///
     /// # Errors
     ///
-    /// - [`QueryError::FieldPath`] if `path` cannot be parsed as a valid field
+    /// - [`QueryError::Request`] if `path` cannot be parsed as a valid field
     ///   path.
     pub(crate) fn flatten(self, path: &str) -> Result<Self, QueryError> {
-        let field_path = FieldPath::parse(path)?;
+        let transform = QueryTransform::flatten(path)?;
+        Ok(self.apply_transform(&transform))
+    }
+
+    pub(super) fn apply_transform(self, transform: &QueryTransform) -> Self {
+        match transform {
+            QueryTransform::Filter(expr) => self.apply_filter(expr),
+            QueryTransform::Sort {
+                field,
+                descending,
+            } => self.sort_by_field(field, *descending),
+            QueryTransform::Limit(n) => self.limit_to(*n),
+            QueryTransform::GroupBy(field) => self.sort_by_field(field, false),
+            QueryTransform::Flatten(field) => self.flatten_field(field),
+        }
+    }
+
+    fn apply_filter(mut self, expr: &FilterExpr) -> Self {
+        self.records.retain(|record| expr.matches(record));
+        self
+    }
+
+    fn limit_to(mut self, n: usize) -> Self {
+        self.records.truncate(n);
+        self
+    }
+
+    fn flatten_field(self, field_path: &FieldPath) -> Self {
         let mut records = Vec::with_capacity(self.records.len());
         for record in self.records {
-            let NoteFieldValue::List(mut items) = record.resolve(&field_path)
+            let NoteFieldValue::List(mut items) =
+                record.resolve_owned(field_path)
             else {
                 records.push(record);
                 continue;
@@ -458,7 +515,7 @@ impl QueryRecordSet {
             }));
             records.push(record.with_flattened(field_path.clone(), last));
         }
-        Ok(Self::new(records))
+        Self::new(records)
     }
 
     /// Renders records as a Markdown table matching headers to corresponding
@@ -475,28 +532,7 @@ impl QueryRecordSet {
         headers: &[&str],
         columns: &[&str],
     ) -> Result<String, QueryError> {
-        if headers.len() != columns.len() {
-            return Err(QueryError::TableColumnCountMismatch {
-                headers: headers.len(),
-                columns: columns.len(),
-            });
-        }
-        let paths = columns
-            .iter()
-            .map(|column| FieldPath::parse(column))
-            .collect::<Result<Vec<_>, _>>()?;
-        let mut table = comfy_table::Table::new();
-        table.load_preset(comfy_table::presets::ASCII_MARKDOWN);
-        table
-            .set_header(headers.iter().map(|header| escape_table_text(header)));
-        for record in &self.records {
-            table.add_row(
-                paths.iter().map(|path| table_cell_text(&record.resolve(path))),
-            );
-        }
-        let mut out = table.to_string();
-        out.push('\n');
-        Ok(out)
+        self.format(&QueryDisplayFormat::table(headers, columns))
     }
 
     /// Renders records as a Markdown bullet list formatting the resolved field
@@ -507,14 +543,7 @@ impl QueryRecordSet {
     /// - [`QueryError::FieldPath`] if `path` cannot be parsed as a valid field
     ///   path.
     pub(crate) fn list(&self, path: &str) -> Result<String, QueryError> {
-        let field_path = FieldPath::parse(path)?;
-        let mut out = String::new();
-        for record in &self.records {
-            out.push_str("- ");
-            out.push_str(&field_text(&record.resolve(&field_path)));
-            out.push('\n');
-        }
-        Ok(out)
+        self.format(&QueryDisplayFormat::list(path))
     }
 
     /// Renders task-level records as a Markdown task list (`- [ ]` or `- [x]`).
@@ -524,35 +553,17 @@ impl QueryRecordSet {
     /// - [`QueryError::TaskListRequiresTaskRows`] if any record lacks task
     ///   fields.
     pub(crate) fn task_list(&self) -> Result<String, QueryError> {
-        let mut out = String::new();
-        for record in &self.records {
-            let Some(completed) = record.task_completed() else {
-                return Err(QueryError::TaskListRequiresTaskRows);
-            };
-            out.push_str(if completed {
-                "- [x] "
-            } else {
-                "- [ ] "
-            });
-            out.push_str(record.task_text().unwrap_or_default());
-            out.push('\n');
-        }
-        Ok(out)
+        self.format(&QueryDisplayFormat::task_list())
     }
 
     /// Sorts records stably by the resolved value of `path`.
-    fn sort_by_field(
-        self,
-        path: &str,
-        descending: bool,
-    ) -> Result<Self, QueryError> {
-        let field_path = FieldPath::parse(path)?;
+    fn sort_by_field(self, field_path: &FieldPath, descending: bool) -> Self {
         let mut records = self.records;
         records.sort_by_cached_key(|record| SortKey {
-            value: record.resolve(&field_path),
+            value: record.resolve_owned(field_path),
             descending,
         });
-        Ok(Self::new(records))
+        Self::new(records)
     }
 }
 
@@ -578,38 +589,4 @@ impl<'a> IntoIterator for &'a QueryRecordSet {
     fn into_iter(self) -> Self::IntoIter {
         self.records.iter()
     }
-}
-
-/// Converts a resolved [`NoteFieldValue`] to plain text for list and table
-/// rendering.
-fn field_text(value: &NoteFieldValue) -> String {
-    match value {
-        NoteFieldValue::Null => String::new(),
-        NoteFieldValue::Bool(b) => b.to_string(),
-        NoteFieldValue::Number(n) => n.to_string(),
-        NoteFieldValue::String(s)
-        | NoteFieldValue::Date(s)
-        | NoteFieldValue::Duration(s) => s.clone(),
-        NoteFieldValue::Link(link) => link.target().to_owned(),
-        NoteFieldValue::List(items) => {
-            items.iter().map(field_text).collect::<Vec<_>>().join(", ")
-        }
-        NoteFieldValue::Object(fields) => fields
-            .iter()
-            .map(|(key, field)| format!("{key}: {}", field_text(field)))
-            .collect::<Vec<_>>()
-            .join(", "),
-    }
-}
-
-/// Escapes pipes (`|`) and collapses newlines to spaces to preserve table
-/// formatting.
-fn escape_table_text(text: &str) -> String {
-    text.replace('\n', " ").replace('|', "\\|")
-}
-
-/// Formats a [`NoteFieldValue`] into plain text suitable for Markdown table
-/// cells.
-fn table_cell_text(value: &NoteFieldValue) -> String {
-    escape_table_text(&field_text(value))
 }

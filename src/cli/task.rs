@@ -110,7 +110,7 @@ mod tests {
         use pretty_assertions::assert_eq;
 
         use super::*;
-        use crate::query::QueryError;
+        use crate::query::{QueryError, QueryRequestError};
 
         fn config(root: &Path) -> Config {
             Config::for_test(root.to_path_buf(), None, None, root.to_path_buf())
@@ -210,7 +210,7 @@ mod tests {
                 .expect_err("unparsable filter fails");
 
             assert!(matches!(error, CliError::Query {
-                source: QueryError::Syntax(_),
+                source: QueryError::Request(QueryRequestError::Syntax(_)),
                 ..
             }));
         }

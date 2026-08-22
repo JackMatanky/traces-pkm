@@ -31,6 +31,7 @@ use super::{
         LogicalControl, LogicalExpr, LogicalGrammar, LogicalOp, Spanned,
         TokenCursor, parse_logical_expression,
     },
+    record::{ResolvedField, ResolvedList},
     sort::fields_equal,
 };
 use crate::note::{NoteFieldValue, is_nested_under};
@@ -406,7 +407,7 @@ impl FilterFunction {
             Self::Contains {
                 field,
                 target,
-            } => eval_contains(&record.resolve(field), target),
+            } => eval_contains(&record.resolve_ref(field), target),
         }
     }
 }
@@ -416,9 +417,13 @@ impl FilterFunction {
 /// For list fields, matches by exact value or tag prefix (for example,
 /// `#book` matching `#book/fiction`). For other field kinds, falls back
 /// to substring containment on stringified values.
-fn eval_contains(field_val: &NoteFieldValue, target: &NoteFieldValue) -> bool {
+fn eval_contains(
+    field_val: &ResolvedField<'_>,
+    target: &NoteFieldValue,
+) -> bool {
     match field_val {
-        NoteFieldValue::List(items) => {
+        ResolvedField::List(items) => list_contains(items, target),
+        ResolvedField::Owned(NoteFieldValue::List(items)) => {
             items.iter().any(|item| tag_or_value_matches(item, target))
         }
         _ => match (field_val.as_str(), target.as_str()) {
@@ -426,6 +431,31 @@ fn eval_contains(field_val: &NoteFieldValue, target: &NoteFieldValue) -> bool {
             _ => false,
         },
     }
+}
+
+fn list_contains(items: &ResolvedList<'_>, target: &NoteFieldValue) -> bool {
+    match items {
+        ResolvedList::Values(items) => {
+            items.iter().any(|item| tag_or_value_matches(item, target))
+        }
+        ResolvedList::Tags(tags) => {
+            tags.iter().any(|tag| tag_str_matches(tag.as_str(), target))
+        }
+        ResolvedList::Inlinks(paths) => paths.iter().any(|path| {
+            let path = path.to_string_lossy();
+            tag_str_matches(&path, target)
+        }),
+    }
+}
+
+fn tag_str_matches(item: &str, target: &NoteFieldValue) -> bool {
+    let Some(target) = target.as_str() else {
+        return false;
+    };
+    item == target
+        || item.starts_with('#')
+            && target.starts_with('#')
+            && is_nested_under(item, target)
 }
 
 /// Returns whether list element `item` matches `target`.
@@ -465,13 +495,8 @@ mod tests {
             fs::write(temp.join(name), content).expect("write note");
         }
         let index = IndexerService::new(temp).build().expect("build index");
-        let (records, notes, inlinks) = index.into_parts();
-        QueryService::new("class").query(
-            records,
-            notes,
-            inlinks,
-            &QuerySource::All,
-        )
+        QueryService::new("class")
+            .execute(&index, QueryRequest::pages(QuerySource::All))
     }
 
     fn outcome_for(temp: &Path, content: &str) -> QueryRecordSet {
@@ -511,7 +536,10 @@ mod tests {
             let temp = tempfile::tempdir().expect("create temp dir");
             let outcome = rated_outcome(temp.path());
 
-            assert!(matches!(outcome.filter(expr), Err(QueryError::Syntax(_))));
+            assert!(matches!(
+                outcome.filter(expr),
+                Err(QueryError::Request(QueryRequestError::Syntax(_)))
+            ));
         }
 
         #[rstest]
@@ -554,9 +582,8 @@ mod tests {
 
             assert_eq!(
                 outcome.filter("file.bogus == 1"),
-                Err(QueryError::FieldPath(FieldPathError::new(
-                    "file.bogus",
-                    None
+                Err(QueryError::Request(QueryRequestError::FieldPath(
+                    FieldPathError::new("file.bogus", None)
                 )))
             );
         }

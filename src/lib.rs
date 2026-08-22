@@ -40,7 +40,8 @@
 //!   trust verification.
 //! - `Note`, `Frontmatter`, `NoteFieldValue`, `Link` - parsed note data
 //!   structures.
-//! - `FileIndex`, `QueryOutcome` - persistent index and query execution.
+//! - `FileIndex`, `QueryRequest`, `QueryRecordSet` - persistent index and query
+//!   execution.
 //! - `TemplateService`, `CommitPolicy`, `WriteMode` - template rendering and
 //!   write operations.
 //! - `Blake3FileHash`, `Blake3PathHash` - BLAKE3 hashing primitives.
@@ -94,7 +95,9 @@ pub use note::{
     NoteFieldValue, RawFrontmatter, Tag, TaskStatus, parse_markdown,
 };
 #[cfg(any(test, feature = "test-utils"))]
-pub use query::{QueryRecord, QueryRecordSet, QueryService, QuerySource};
+pub use query::{
+    QueryRecord, QueryRecordSet, QueryRequest, QueryService, QuerySource,
+};
 #[cfg(any(test, feature = "test-utils"))]
 pub use schema::{Schema, SchemaService};
 #[cfg(any(test, feature = "test-utils"))]

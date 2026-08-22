@@ -1,23 +1,16 @@
-//! Proves `FileIndex::build` → `query`/`query_tasks` → `QueryOutcome::{filter,
-//! sort, limit}` compose correctly across real files, through the public
-//! surface alone. The existing `#[cfg(test)]` coverage inside
-//! `src/index/query.rs` tests the same semantics through crate-internal
-//! helpers, so it can't catch a regression in the *external* contract these
-//! methods expose now that they're `pub`.
+//! Proves `FileIndex::build` → `QueryRequest` execution works across real
+//! files through the test-utils surface alone. Unit coverage inside
+//! `src/query/` exercises crate-internal transforms.
 
 use std::{fs, path::Path};
 
 use pretty_assertions::assert_eq;
-use traces_pkm::{IndexerService, QueryService, QuerySource};
+use traces_pkm::{IndexerService, QueryRequest, QueryService, QuerySource};
 
-/// Chains `query` → `filter` → `sort` → `limit` and checks the composed
-/// result matches the expected row.
-///
-/// `src/index/query.rs` unit-tests the same chain internally. `filter`,
-/// `sort`, and `limit` only became `pub` this session; only a test that
-/// imports `traces_pkm` as a library can catch a broken public signature.
+/// Checks a page request returns every indexed note without consuming the
+/// borrowed index.
 #[test]
-fn query_then_filter_then_sort_then_limit_composes_across_the_public_surface() {
+fn page_query_returns_real_indexed_notes() {
     let temp = tempfile::tempdir().expect("create temp dir");
     fs::write(temp.path().join("a.md"), "---\nrating: 3\n---\n")
         .expect("write a.md");
@@ -26,39 +19,33 @@ fn query_then_filter_then_sort_then_limit_composes_across_the_public_surface() {
     fs::write(temp.path().join("c.md"), "---\nrating: 5\n---\n")
         .expect("write c.md");
     let index = IndexerService::new(temp.path()).build().expect("build index");
-    let (records, notes, inlinks) = index.into_parts();
     let outcome = QueryService::new("class")
-        .query(records, notes, inlinks, &QuerySource::All)
-        .filter("rating >= 5")
-        .expect("valid filter expression")
-        .sort("rating", true)
-        .expect("valid sort field")
-        .limit(1)
-        .expect("non-negative limit");
+        .execute(&index, QueryRequest::pages(QuerySource::All));
 
-    assert_eq!(outcome.len(), 1);
-    let top = outcome.get(0).expect("one record");
-    assert_eq!(top.file().path(), Path::new("b.md"));
+    assert_eq!(outcome.len(), 3);
+    let paths: Vec<_> = (&outcome)
+        .into_iter()
+        .map(|row| row.file().path().to_path_buf())
+        .collect();
+    assert_eq!(paths, [
+        Path::new("a.md"),
+        Path::new("b.md"),
+        Path::new("c.md")
+    ]);
 }
 
-/// Checks `query_tasks` flattens two tasks in one note into two rows, each
-/// with the correct completion state.
+/// Checks task queries flatten two tasks in one note into two rows, each with
+/// the correct completion state.
 ///
-/// Proves `IndexRecord::task_completed`, newly `pub`, works from outside
-/// the crate — `src/index/query.rs`'s internal test can't see that boundary.
+/// Proves `QueryRecord::task_completed` works from outside the crate.
 #[test]
 fn query_tasks_returns_task_level_rows_distinct_from_page_level_query() {
     let temp = tempfile::tempdir().expect("create temp dir");
     fs::write(temp.path().join("todo.md"), "- [ ] one\n- [x] two\n")
         .expect("write todo.md");
     let index = IndexerService::new(temp.path()).build().expect("build index");
-    let (records, notes, inlinks) = index.into_parts();
-    let tasks = QueryService::new("class").query_tasks(
-        records,
-        notes,
-        inlinks,
-        &QuerySource::All,
-    );
+    let tasks = QueryService::new("class")
+        .execute(&index, QueryRequest::tasks(QuerySource::All));
     assert_eq!(tasks.len(), 2);
     let completed: Vec<bool> = (0..tasks.len())
         .map(|i| {
@@ -70,4 +57,33 @@ fn query_tasks_returns_task_level_rows_distinct_from_page_level_query() {
         })
         .collect();
     assert_eq!(completed, vec![false, true]);
+}
+
+/// Checks one borrowed index can answer page and task requests without being
+/// consumed between executions.
+#[test]
+fn reuses_one_index_for_page_and_task_queries() {
+    let temp = tempfile::tempdir().expect("create temp dir");
+    fs::write(
+        temp.path().join("book.md"),
+        "---\nrating: 9\n---\n#book [[todo]]\n- [ ] read chapter\n",
+    )
+    .expect("write book.md");
+    fs::write(temp.path().join("todo.md"), "---\nrating: 1\n---\n")
+        .expect("write todo.md");
+    let index = IndexerService::new(temp.path()).build().expect("build index");
+    let service = QueryService::new("class");
+
+    let pages = service.execute(&index, QueryRequest::pages(QuerySource::All));
+    let tasks = service.execute(&index, QueryRequest::tasks(QuerySource::All));
+    let pages_again =
+        service.execute(&index, QueryRequest::pages(QuerySource::All));
+
+    let page_paths: Vec<_> = (&pages)
+        .into_iter()
+        .map(|row| row.file().path().to_path_buf())
+        .collect();
+    assert_eq!(page_paths, [Path::new("book.md"), Path::new("todo.md")]);
+    assert_eq!(tasks.len(), 1);
+    assert_eq!(pages_again.len(), 2);
 }

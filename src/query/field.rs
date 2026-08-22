@@ -2,7 +2,7 @@
 //!
 //! A query field path string (for example, `file.name`, `task.completed`,
 //! `tags`, or a bare frontmatter key) resolves to a [`FieldPath`] variant that
-//! can be applied to each [`IndexRecord`][`super::IndexRecord`] to extract a
+//! can be applied to each [`QueryRecord`][`super::QueryRecord`] to extract a
 //! [`NoteFieldValue`].
 //!
 //! # Supported Accessors
@@ -141,9 +141,8 @@ impl FileField {
 
 /// A `task.<field>` accessor valid on task-level records.
 ///
-/// Applied to task records produced by
-/// [`crate::index::FileIndex::query_tasks`]. Resolves to
-/// [`NoteFieldValue::Null`] on page-level records.
+/// Applied to task records. Resolves to [`NoteFieldValue::Null`] on page-level
+/// records.
 ///
 /// # Examples
 ///
@@ -189,9 +188,9 @@ impl TaskField {
 
 /// A resolved query field path.
 ///
-/// A `FieldPath` is parsed once per [`QueryOutcome`][`super::QueryOutcome`]
+/// A `FieldPath` is parsed once per [`QueryRecordSet`][`super::QueryRecordSet`]
 /// transformation and subsequently applied to each
-/// [`IndexRecord`][`super::IndexRecord`] to extract a [`NoteFieldValue`].
+/// [`QueryRecord`][`super::QueryRecord`] to extract a [`NoteFieldValue`].
 ///
 /// # Examples
 ///

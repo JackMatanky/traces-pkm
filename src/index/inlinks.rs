@@ -5,10 +5,11 @@
 //! per-note patch, because resolving one Note's outlink can depend on every
 //! *other* indexed Note (see [`resolve_target`]'s stem-matching tier).
 //!
-//! - [`super::FileIndex::build`] and [`super::FileIndex::refresh`] (the latter
-//!   only when something changed) call this once and persist the result.
-//! - [`super::FileIndex::query`] and [`super::FileIndex::query_tasks`] read the
-//!   already-computed map instead of calling it.
+//! - [`super::IndexerService::build`] and [`super::IndexerService::refresh`]
+//!   (the latter only when something changed) call this once and persist the
+//!   result.
+//! - query execution reads the already-computed map from
+//!   [`super::FileIndex::entries`] instead of recomputing it.
 
 use std::{
     collections::{BTreeSet, HashMap},
@@ -42,8 +43,8 @@ pub(crate) type InlinkMap = HashMap<PathBuf, Vec<PathBuf>>;
 /// - O(n) to build the stem index once (see [`build_stem_index`]).
 /// - O(l log n) total for `l` outlinks: exact-path resolution binary-searches
 ///   the path-sorted slice `notes` (already sorted by
-///   [`super::FileIndex::build`]/[`super::FileIndex::refresh`]/
-///   [`super::FileIndex::load`]).
+///   [`super::IndexerService::build`]/[`super::IndexerService::refresh`]/
+///   [`super::IndexerService::load`]).
 /// - The wikilink-by-name fallback tier looks its stem up in the index in O(1)
 ///   average time, then scans only that stem's candidates (not all of `notes`)
 ///   to break ties by proximity.

@@ -2,8 +2,8 @@
 //!
 //! [`IndexBuilder`] is a **plan**: it holds the scan result and a reuse
 //! directive, deferring all note parsing, sorting, and inlink derivation
-//! to [`IndexBuilder::build`]. Callers use [`super::FileIndex::build`] and
-//! [`super::FileIndex::refresh`] instead of this type directly.
+//! to [`IndexBuilder::build`]. Callers use [`super::IndexerService::build`]
+//! and [`super::IndexerService::refresh`] instead of this type directly.
 
 use std::{
     collections::HashMap,
@@ -69,7 +69,11 @@ impl IndexBuilder {
     ///
     /// Parsing of changed or newly added notes is deferred to [`Self::build`].
     pub(super) fn reuse_unchanged(self, cache: super::FileIndex) -> Self {
-        let (previous, notes_vec, inlinks) = cache.into_parts();
+        let super::FileIndex {
+            records: previous,
+            notes: notes_vec,
+            inlinks,
+        } = cache;
         let notes: HashMap<_, _> = notes_vec
             .into_iter()
             .map(|n| (n.path().to_path_buf(), n))
@@ -221,4 +225,109 @@ fn parse_note(
         }
     })?;
     Ok(parse_markdown(record.path(), &content))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{fs, path::Path};
+
+    use super::*;
+    use crate::{file::FileRecord, index::IndexerService, note::Note};
+
+    mod builder {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn from_scan_produces_sorted_records() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("b.md"), "# B").expect("write b");
+            fs::write(temp.path().join("a.md"), "# A").expect("write a");
+
+            let index = IndexBuilder::from_scan(temp.path())
+                .expect("scan")
+                .build(temp.path())
+                .expect("build");
+
+            assert_eq!(
+                index
+                    .records()
+                    .iter()
+                    .map(FileRecord::path)
+                    .collect::<Vec<_>>(),
+                [Path::new("a.md"), Path::new("b.md")]
+            );
+        }
+
+        #[test]
+        fn from_scan_parses_markdown_notes() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("note.md"), "- [ ] task")
+                .expect("write note");
+            fs::write(temp.path().join("readme.txt"), "text")
+                .expect("write txt");
+
+            let index = IndexBuilder::from_scan(temp.path())
+                .expect("scan")
+                .build(temp.path())
+                .expect("build");
+
+            assert_eq!(index.records().len(), 2);
+            assert_eq!(index.notes().len(), 1);
+            assert_eq!(
+                index.note(Path::new("note.md")).map(Note::path),
+                Some(Path::new("note.md"))
+            );
+        }
+
+        #[test]
+        fn reuse_unchanged_skips_reparsing() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("note.md"), "- [ ] task")
+                .expect("write note");
+            let built =
+                IndexerService::new(temp.path()).build().expect("build index");
+
+            let index = IndexBuilder::from_scan(temp.path())
+                .expect("scan")
+                .reuse_unchanged(built)
+                .build(temp.path())
+                .expect("build");
+
+            assert_eq!(
+                index
+                    .note(Path::new("note.md"))
+                    .map(Note::tasks)
+                    .map(Iterator::count),
+                Some(1)
+            );
+        }
+
+        #[test]
+        fn reuse_unchanged_reparses_changed_notes() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("note.md"), "- [ ] task")
+                .expect("write note");
+            let built =
+                IndexerService::new(temp.path()).build().expect("build index");
+
+            fs::write(temp.path().join("note.md"), "- [ ] task\n- [x] done")
+                .expect("rewrite note");
+
+            let index = IndexBuilder::from_scan(temp.path())
+                .expect("scan")
+                .reuse_unchanged(built)
+                .build(temp.path())
+                .expect("build");
+
+            assert_eq!(
+                index
+                    .note(Path::new("note.md"))
+                    .map(Note::tasks)
+                    .map(Iterator::count),
+                Some(2)
+            );
+        }
+    }
 }

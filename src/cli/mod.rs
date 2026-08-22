@@ -40,9 +40,9 @@ pub use error::CliError;
 use crate::{
     DialogProvider,
     config::{Config, ConfigService, DiscoveryScope, TrustRequests},
-    index::IndexerService,
+    index::{FileIndex, IndexerService},
     query::{
-        QueryError, QueryRecordSet, QueryService, QuerySource, resolve_classes,
+        QueryError, QueryRecordSet, QueryRequest, QueryService, QuerySource,
     },
     schema::SchemaService,
 };
@@ -260,10 +260,14 @@ fn refresh_page_query(
             source,
         }
     })?;
-    let (records, notes, inlinks) = index.into_parts();
     let source = parse_source(config, from)?;
-    let service = QueryService::new(config.schemas().class_field_name());
-    Ok(service.query(records, notes, inlinks, &source))
+    let has_classes = source.has_classes();
+    execute_query_request(
+        config,
+        &index,
+        QueryRequest::pages(source),
+        has_classes,
+    )
 }
 
 /// Refreshes `root`'s [`FileIndex`] and returns task-level records selected
@@ -285,10 +289,14 @@ fn refresh_task_query(
             source,
         }
     })?;
-    let (records, notes, inlinks) = index.into_parts();
     let source = parse_source(config, from)?;
-    let service = QueryService::new(config.schemas().class_field_name());
-    Ok(service.query_tasks(records, notes, inlinks, &source))
+    let has_classes = source.has_classes();
+    execute_query_request(
+        config,
+        &index,
+        QueryRequest::tasks(source),
+        has_classes,
+    )
 }
 
 fn parse_source(
@@ -296,28 +304,44 @@ fn parse_source(
     from: Option<&str>,
 ) -> Result<QuerySource, CliError> {
     let root = config.root();
-    let mut source = QuerySource::parse(from.unwrap_or_default())
-        .map_err(|source| query_error(root, source))?;
-    if source.has_classes() {
-        let (service, warnings, failures) = SchemaService::new(
-            &config.resolved_schema_directory(),
-        )
-        .map_err(|error| CliError::SchemaQuery {
-            root: root.to_path_buf(),
-            source: error,
-        })?;
-        for warning in warnings {
-            tracing::warn!(%warning, "Schema registry resolved with a warning");
-        }
-        for failure in failures {
-            tracing::warn!(
-                schema = %failure.schema, error = %failure.error,
-                "Schema failed to resolve; excluded from the registry"
-            );
-        }
-        resolve_classes(&mut source, &service);
+    QuerySource::parse(from.unwrap_or_default())
+        .map_err(|source| query_error(root, source))
+}
+
+fn execute_query_request(
+    config: &Config,
+    index: &FileIndex,
+    request: QueryRequest,
+    has_classes: bool,
+) -> Result<QueryRecordSet, CliError> {
+    let service = QueryService::new(config.schemas().class_field_name());
+    if has_classes {
+        let schema_service = load_schema_service(config)?;
+        Ok(service.with_class_expander(&schema_service).execute(index, request))
+    } else {
+        Ok(service.execute(index, request))
     }
-    Ok(source)
+}
+
+fn load_schema_service(config: &Config) -> Result<SchemaService, CliError> {
+    let root = config.root();
+    let (service, warnings, failures) = SchemaService::new(
+        &config.resolved_schema_directory(),
+    )
+    .map_err(|error| CliError::SchemaQuery {
+        root: root.to_path_buf(),
+        source: error,
+    })?;
+    for warning in warnings {
+        tracing::warn!(%warning, "Schema registry resolved with a warning");
+    }
+    for failure in failures {
+        tracing::warn!(
+            schema = %failure.schema, error = %failure.error,
+            "Schema failed to resolve; excluded from the registry"
+        );
+    }
+    Ok(service)
 }
 
 /// Applies an optional `--where` filter expression to `outcome`.
@@ -864,7 +888,7 @@ mod tests {
                 TrustRequest,
             },
             dialog::PresetDialogProvider,
-            query::{QueryError, QuerySource},
+            query::{QueryError, QueryRequestError, QuerySource},
             template::{
                 TemplateError, TemplatePathInput, TemplateService, WriteMode,
                 WriteOutcome,
@@ -957,21 +981,12 @@ mod tests {
             let (service, project) = seed_book_project(temp.path());
             let _guard = CwdGuard::enter(&project);
 
-            // `traces index`: builds and persists the FileIndex through
-            // real CLI dispatch.
             let index_outcome = Cli::try_parse_from(["traces", "index"])
                 .expect("parse index argv")
                 .run(&service, Arc::new(PresetDialogProvider::new()))
                 .expect("index succeeds");
             assert_eq!(index_outcome, CommandOutcome::Completed);
 
-            // `traces list --from "#book" --sort rating --order desc`:
-            // dispatched through real `Cli::run` (proving argv → command →
-            // FileIndex succeeds), then the same query re-run directly
-            // through `FileIndex` — the interface `List::render` itself
-            // calls — to assert on content, since `list`'s primary output
-            // goes to stdout instead of a return value (see
-            // `super::list::List::render`'s docs for why).
             let list_outcome = Cli::try_parse_from([
                 "traces", "list", "--from", "#book", "--sort", "rating",
                 "--order", "desc",
@@ -982,20 +997,18 @@ mod tests {
             assert_eq!(list_outcome, CommandOutcome::Completed);
             let list_index =
                 IndexerService::new(&project).refresh().expect("refresh index");
-            let (list_records, list_notes, list_inlinks) =
-                list_index.into_parts();
             let _list = QueryService::new("class")
-                .query(
-                    list_records,
-                    list_notes,
-                    list_inlinks,
-                    &QuerySource::parse("#book").expect("valid source"),
+                .execute(
+                    &list_index,
+                    QueryRequest::pages(
+                        QuerySource::parse("#book").expect("valid source"),
+                    ),
                 )
                 .sort("rating", true)
                 .expect("valid sort")
                 .list("file.path")
                 .expect("valid list");
-            // `traces table --column file.name --column rating`.
+
             let table_outcome = Cli::try_parse_from([
                 "traces",
                 "table",
@@ -1010,19 +1023,11 @@ mod tests {
             assert_eq!(table_outcome, CommandOutcome::Completed);
             let table_index =
                 IndexerService::new(&project).refresh().expect("refresh index");
-            let (table_records, table_notes, table_inlinks) =
-                table_index.into_parts();
             let _table = QueryService::new("class")
-                .query(
-                    table_records,
-                    table_notes,
-                    table_inlinks,
-                    &QuerySource::All,
-                )
+                .execute(&table_index, QueryRequest::pages(QuerySource::All))
                 .table(&["Name", "Rating"], &["file.name", "rating"])
                 .expect("valid table");
 
-            // `traces task`: dune.md's one unfinished task.
             let task_outcome = Cli::try_parse_from(["traces", "task"])
                 .expect("parse task argv")
                 .run(&service, Arc::new(PresetDialogProvider::new()))
@@ -1030,15 +1035,8 @@ mod tests {
             assert_eq!(task_outcome, CommandOutcome::Completed);
             let task_index =
                 IndexerService::new(&project).refresh().expect("refresh index");
-            let (task_records, task_notes, task_inlinks) =
-                task_index.into_parts();
             let _tasks = QueryService::new("class")
-                .query_tasks(
-                    task_records,
-                    task_notes,
-                    task_inlinks,
-                    &QuerySource::All,
-                )
+                .execute(&task_index, QueryRequest::tasks(QuerySource::All))
                 .task_list()
                 .expect("valid task_list");
         }
@@ -1062,13 +1060,12 @@ mod tests {
 
             let index =
                 IndexerService::new(&project).refresh().expect("refresh index");
-            let (records, notes, inlinks) = index.into_parts();
             let expected = QueryService::new("class")
-                .query(
-                    records,
-                    notes,
-                    inlinks,
-                    &QuerySource::parse("#book").expect("valid source"),
+                .execute(
+                    &index,
+                    QueryRequest::pages(
+                        QuerySource::parse("#book").expect("valid source"),
+                    ),
                 )
                 .sort("rating", true)
                 .expect("valid sort")
@@ -1087,17 +1084,14 @@ mod tests {
                 .persist(&indexer.build().expect("build index"))
                 .expect("persist index");
 
-            // hyperion.md links to dune.md, so only dune.md's derived
-            // inlinks list includes hyperion.md.
             let index =
                 IndexerService::new(&project).refresh().expect("refresh index");
-            let (records, notes, inlinks) = index.into_parts();
             let inlinks = QueryService::new("class")
-                .query(
-                    records,
-                    notes,
-                    inlinks,
-                    &QuerySource::parse("books/").expect("valid source"),
+                .execute(
+                    &index,
+                    QueryRequest::pages(
+                        QuerySource::parse("books/").expect("valid source"),
+                    ),
                 )
                 .sort("file.name", false)
                 .expect("valid sort")
@@ -1128,7 +1122,7 @@ mod tests {
             assert!(matches!(
                 &bad_field,
                 CliError::Query {
-                    source: QueryError::FieldPath(error),
+                    source: QueryError::Request(QueryRequestError::FieldPath(error)),
                     ..
                 } if error.suggestion.as_deref() == Some("file.name")
             ));
@@ -1148,7 +1142,7 @@ mod tests {
             .run(&service, Arc::new(PresetDialogProvider::new()))
             .expect_err("unparsable filter fails");
             assert!(matches!(bad_filter, CliError::Query {
-                source: QueryError::Syntax(_),
+                source: QueryError::Request(QueryRequestError::Syntax(_)),
                 ..
             }));
         }

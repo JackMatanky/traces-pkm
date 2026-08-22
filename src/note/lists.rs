@@ -124,14 +124,6 @@ impl ListItem {
     /// Returns the task completion state, if this item is a task.
     #[inline]
     #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "no current caller outside tests; kept for ListItem \
-                      accessor symmetry with its fields"
-        )
-    )]
     pub(crate) const fn task_status(&self) -> Option<TaskStatus> {
         self.task_status
     }
@@ -146,6 +138,14 @@ impl ListItem {
     /// Returns `true` if this task item is completed (`- [x]`).
     #[inline]
     #[must_use]
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "no current caller outside tests; kept for ListItem \
+                      accessor symmetry with its fields"
+        )
+    )]
     pub(crate) const fn is_completed(&self) -> bool {
         matches!(self.task_status, Some(TaskStatus::Complete))
     }

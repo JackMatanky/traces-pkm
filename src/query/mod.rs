@@ -1,13 +1,10 @@
 //! Query source selection, field resolution, and result transformation.
 //!
-//! [`QueryService`] powers page-level results ([`QueryService::query`]) and
-//! task-level rows ([`QueryService::query_tasks`]). It consumes the sorted
-//! records, notes, and inbound-link map a [`FileIndex`] decomposes into via
-//! [`FileIndex::into_parts`] — `query` never names `FileIndex` itself,
-//! keeping `index` and `query` free of a mutual dependency. The pipeline
-//! selects Notes via [`QuerySource`], pairs each matching Note with its
-//! [`FileRecord`] as a [`QueryRecord`], and applies chained transformations
-//! through [`QueryRecordSet`].
+//! [`QueryService`] powers page-level and task-level results by borrowing a
+//! [`FileIndex`] and executing a [`QueryRequest`]. The pipeline selects Notes
+//! via [`QuerySource`], pairs each matching Note with its [`FileRecord`] as a
+//! [`QueryRecord`], and applies chained transformations through
+//! [`QueryRecordSet`].
 //!
 //! # Source Expression Language
 //!
@@ -34,9 +31,10 @@
 //!
 //! # Main Types
 //!
-//! - [`QueryService`] drives query execution: [`QueryService::query`] and
-//!   [`QueryService::query_tasks`] consume a decomposed [`FileIndex`] and a
-//!   [`QuerySource`], producing a [`QueryRecordSet`].
+//! - [`QueryService`] drives query execution: [`QueryService::execute`] borrows
+//!   a [`FileIndex`] and a [`QueryRequest`], producing a [`QueryRecordSet`].
+//! - [`QueryRequest`] describes page/task mode, source selection, and ordered
+//!   transformations.
 //! - [`QuerySource`] is the top-level entry point: either all Notes or a parsed
 //!   expression.
 //! - [`source::QuerySourceExpr`] wraps the expression AST.
@@ -51,24 +49,32 @@
 //! [`NoteFieldValue`]: crate::note::NoteFieldValue
 //! [`FileRecord`]: crate::file::FileRecord
 //! [`FileIndex`]: crate::index::FileIndex
-//! [`FileIndex::into_parts`]: crate::index::FileIndex::into_parts
 //! [`Note`]: crate::note::Note
 
 mod comparison;
 mod error;
 mod field;
 mod filter;
+mod format;
 mod logic;
 mod record;
+mod request;
+mod service;
 mod sort;
 mod source;
 
+pub(crate) use error::QueryRequestError;
 #[cfg(test)]
 pub(crate) use error::{FieldPathError, QuerySyntaxError};
 pub use error::{QueryDialect, QueryError};
 use field::FieldPath;
 pub(crate) use field::FileField;
+use filter::FilterExpr;
+pub(crate) use format::QueryDisplayFormat;
 pub use record::{QueryRecord, QueryRecordSet};
+pub use request::QueryRequest;
+use request::{QueryMode, QueryTransform};
+pub use service::QueryService;
 pub(crate) use sort::SortOrder;
 pub use source::{ClassExpansionMode, QuerySource};
 pub(crate) use source::{
@@ -76,166 +82,6 @@ pub(crate) use source::{
     resolve_classes,
 };
 
-use crate::{file::FileRecord, index::InlinkMap, note::Note};
-
-/// Executes queries over decomposed [`FileIndex`] data, matching a
-/// [`QuerySource`] against records/notes and resolving File Class values
-/// through a fixed `class_field`.
-///
-/// Mirrors `ConfigService`/`SchemaService`/[`crate::index::IndexerService`]:
-/// fixed configuration (here, the frontmatter class field name) with methods
-/// that read against it, rather than an extra parameter repeated at every
-/// call site. Takes decomposed `records`/`notes`/`inlinks` — never a
-/// [`FileIndex`] — so `query` has no dependency on `index`; callers get these
-/// via [`FileIndex::into_parts`].
-///
-/// [`FileIndex`]: crate::index::FileIndex
-/// [`FileIndex::into_parts`]: crate::index::FileIndex::into_parts
-#[derive(Clone, Debug)]
-pub struct QueryService {
-    class_field: String,
-}
-
-impl QueryService {
-    /// Creates a service that reads File Class values from `class_field`.
-    #[inline]
-    #[must_use]
-    pub fn new<S: Into<String>>(class_field: S) -> Self {
-        Self {
-            class_field: class_field.into(),
-        }
-    }
-
-    /// Executes a page-level query, returning one [`QueryRecord`] per Note
-    /// matching `source`.
-    ///
-    /// Pairs `records`/`notes` and resolves inlinks from `inlinks`. Uses this
-    /// service's `class_field` to read File Class values from each Note's
-    /// frontmatter when `source` contains class atoms.
-    ///
-    /// # Examples
-    ///
-    /// ```ignore
-    /// # use traces_pkm::query::{QueryService, QuerySource};
-    /// # use traces_pkm::index::FileIndex;
-    /// # let (records, notes, inlinks) = FileIndex::default().into_parts();
-    /// # let source = QuerySource::parse("#book").unwrap();
-    /// # let outcome = QueryService::new("class").query(records, notes, inlinks, &source);
-    /// ```
-    #[inline]
-    pub fn query(
-        &self,
-        records: Vec<FileRecord>,
-        notes: Vec<Note>,
-        mut inlinks: InlinkMap,
-        source: &QuerySource,
-    ) -> QueryRecordSet {
-        let records = matched_base_records(
-            records,
-            notes,
-            &mut inlinks,
-            source,
-            &self.class_field,
-        )
-        .collect();
-        QueryRecordSet::new(records)
-    }
-
-    /// Executes a task-level query, returning one [`QueryRecord`] per task
-    /// item across all Notes matching `source`.
-    ///
-    /// Each matching Note is expanded into multiple task-level rows via
-    /// [`QueryRecord::with_task`]. Uses this service's `class_field` to read
-    /// File Class values from each Note's frontmatter when `source` contains
-    /// class atoms.
-    ///
-    /// # Examples
-    ///
-    /// ```ignore
-    /// # use traces_pkm::query::{QueryService, QuerySource};
-    /// # use traces_pkm::index::FileIndex;
-    /// # let (records, notes, inlinks) = FileIndex::default().into_parts();
-    /// # let source = QuerySource::parse("#book").unwrap();
-    /// # let outcome = QueryService::new("class").query_tasks(records, notes, inlinks, &source);
-    /// ```
-    #[inline]
-    pub fn query_tasks(
-        &self,
-        records: Vec<FileRecord>,
-        notes: Vec<Note>,
-        mut inlinks: InlinkMap,
-        source: &QuerySource,
-    ) -> QueryRecordSet {
-        let mut out = Vec::new();
-        for base in matched_base_records(
-            records,
-            notes,
-            &mut inlinks,
-            source,
-            &self.class_field,
-        ) {
-            let Some(note) = base.note() else {
-                continue;
-            };
-            let mut tasks = note.tasks().peekable();
-            while let Some(item) = tasks.next() {
-                let completed = item.is_completed();
-                let text = item.text().to_owned();
-                if tasks.peek().is_some() {
-                    out.push(base.clone().with_task(completed, text));
-                } else {
-                    drop(tasks);
-                    out.push(base.with_task(completed, text));
-                    break;
-                }
-            }
-        }
-        QueryRecordSet::new(out)
-    }
-}
-
-/// Zips and filters file records and note contents matching the given query
-/// source.
-///
-/// Iterates `records` (every indexed file) as the primary sequence, pairing
-/// each with the [`Note`] at the same path when one exists — a `file` may have
-/// no [`Note`] (non-Markdown files matched by a `file`-typed Schema field).
-///
-/// Assumes both vectors are sorted by file path to perform a linear-time scan.
-fn matched_pairs<'a>(
-    records: Vec<FileRecord>,
-    notes: Vec<Note>,
-    source: &'a QuerySource,
-    class_field: &'a str,
-) -> impl Iterator<Item = (FileRecord, Option<Note>)> + 'a {
-    let mut notes = notes.into_iter().peekable();
-    records.into_iter().filter_map(move |file| {
-        while notes.peek().is_some_and(|note| note.path() < file.path()) {
-            notes.next();
-        }
-        let note = notes.next_if(|note| note.path() == file.path());
-        source
-            .is_match(&file, note.as_ref(), class_field)
-            .then_some((file, note))
-    })
-}
-
-/// Pairs matched records/notes ([`matched_pairs`]) and resolves each into a
-/// [`QueryRecord`] with inbound links attached ([`QueryRecord::from_parts`]).
-///
-/// Consolidates the shared setup [`QueryService::query`] and
-/// [`QueryService::query_tasks`] both need, leaving each method's own loop
-/// body as its only distinct contribution.
-fn matched_base_records<'a>(
-    records: Vec<FileRecord>,
-    notes: Vec<Note>,
-    inlinks: &'a mut InlinkMap,
-    source: &'a QuerySource,
-    class_field: &'a str,
-) -> impl Iterator<Item = QueryRecord> + 'a {
-    matched_pairs(records, notes, source, class_field)
-        .map(move |(file, note)| QueryRecord::from_parts(file, note, inlinks))
-}
 #[cfg(test)]
 mod tests {
     use std::{
@@ -251,7 +97,7 @@ mod tests {
 
         use super::*;
 
-        /// Builds a [`QueryOutcome`] over every Markdown Note in `files`
+        /// Builds a [`QueryRecordSet`] over every Markdown Note in `files`
         /// written under `temp`.
         pub(super) fn outcome_for_files(
             temp: &Path,
@@ -261,16 +107,11 @@ mod tests {
                 fs::write(temp.join(name), content).expect("write note");
             }
             let index = IndexerService::new(temp).build().expect("build index");
-            let (records, notes, inlinks) = index.into_parts();
-            QueryService::new("class").query(
-                records,
-                notes,
-                inlinks,
-                &QuerySource::All,
-            )
+            QueryService::new("class")
+                .execute(&index, QueryRequest::pages(QuerySource::All))
         }
 
-        /// Builds a single-record [`QueryOutcome`] from a single Markdown
+        /// Builds a single-record [`QueryRecordSet`] from a single Markdown
         /// Note's content.
         pub(super) fn outcome_for(
             temp: &Path,
@@ -301,12 +142,12 @@ mod tests {
                 .expect("write file");
             let index =
                 IndexerService::new(temp.path()).build().expect("build index");
-            let file = find_record(index.records(), Path::new("a.md")).clone();
-            let note = index.note(Path::new("a.md")).expect("note").clone();
+            let file = find_record(index.records(), Path::new("a.md"));
+            let outcome = QueryService::new("class")
+                .execute(&index, QueryRequest::pages(QuerySource::All));
+            let record = outcome.get(0).expect("record");
 
-            let record = QueryRecord::new(file.clone(), Some(note));
-
-            assert_eq!(record.file(), &file);
+            assert_eq!(record.file(), file);
         }
 
         #[test]
@@ -316,40 +157,38 @@ mod tests {
                 .expect("write file");
             let index =
                 IndexerService::new(temp.path()).build().expect("build index");
-            let file = find_record(index.records(), Path::new("a.md")).clone();
-            let note = index.note(Path::new("a.md")).expect("note").clone();
+            let note = index.note(Path::new("a.md")).expect("note");
+            let outcome = QueryService::new("class")
+                .execute(&index, QueryRequest::pages(QuerySource::All));
+            let record = outcome.get(0).expect("record");
 
-            let record = QueryRecord::new(file, Some(note.clone()));
-
-            assert_eq!(record.note(), Some(&note));
+            assert_eq!(record.note(), Some(note));
         }
 
         #[test]
-        fn with_task_sets_task_completed() {
+        fn with_task_item_sets_task_completed() {
             let temp = tempfile::tempdir().expect("create temp dir");
-            fs::write(temp.path().join("a.md"), "body").expect("write file");
+            fs::write(temp.path().join("a.md"), "- [x] Buy milk")
+                .expect("write file");
             let index =
                 IndexerService::new(temp.path()).build().expect("build index");
-            let file = find_record(index.records(), Path::new("a.md")).clone();
-            let note = index.note(Path::new("a.md")).expect("note").clone();
-
-            let record =
-                QueryRecord::new(file, Some(note)).with_task(true, "Buy milk");
+            let outcome = QueryService::new("class")
+                .execute(&index, QueryRequest::tasks(QuerySource::All));
+            let record = outcome.get(0).expect("record");
 
             assert_eq!(record.task_completed(), Some(true));
         }
 
         #[test]
-        fn with_task_sets_task_text() {
+        fn with_task_item_sets_task_text() {
             let temp = tempfile::tempdir().expect("create temp dir");
-            fs::write(temp.path().join("a.md"), "body").expect("write file");
+            fs::write(temp.path().join("a.md"), "- [ ] Buy milk")
+                .expect("write file");
             let index =
                 IndexerService::new(temp.path()).build().expect("build index");
-            let file = find_record(index.records(), Path::new("a.md")).clone();
-            let note = index.note(Path::new("a.md")).expect("note").clone();
-
-            let record =
-                QueryRecord::new(file, Some(note)).with_task(false, "Buy milk");
+            let outcome = QueryService::new("class")
+                .execute(&index, QueryRequest::tasks(QuerySource::All));
+            let record = outcome.get(0).expect("record");
 
             assert_eq!(record.task_text(), Some("Buy milk"));
         }
@@ -358,28 +197,24 @@ mod tests {
         fn task_accessors_return_none_for_page_level_records() {
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(temp.path().join("a.md"), "body").expect("write file");
-            let index =
-                IndexerService::new(temp.path()).build().expect("build index");
-            let file = find_record(index.records(), Path::new("a.md")).clone();
-            let note = index.note(Path::new("a.md")).expect("note").clone();
-
-            let record = QueryRecord::new(file, Some(note));
+            let outcome = outcome_for(temp.path(), "body");
+            let record = outcome.get(0).expect("record");
 
             assert_eq!(record.task_completed(), None);
             assert_eq!(record.task_text(), None);
         }
 
         #[test]
-        fn with_inlinks_sets_the_inlinks_accessor() {
+        fn inlinks_accessor_returns_the_bundled_inlinks() {
             let temp = tempfile::tempdir().expect("create temp dir");
-            fs::write(temp.path().join("a.md"), "body").expect("write file");
-            let index =
-                IndexerService::new(temp.path()).build().expect("build index");
-            let file = find_record(index.records(), Path::new("a.md")).clone();
-            let note = index.note(Path::new("a.md")).expect("note").clone();
-
-            let record = QueryRecord::new(file, Some(note))
-                .with_inlinks(vec![PathBuf::from("b.md")]);
+            let outcome = outcome_for_files(temp.path(), &[
+                ("target.md", "# Target"),
+                ("b.md", "[[target]]"),
+            ]);
+            let record = outcome
+                .iter()
+                .find(|record| record.file().path() == Path::new("target.md"))
+                .expect("target record");
 
             assert_eq!(record.inlinks(), [PathBuf::from("b.md")]);
         }
@@ -545,11 +380,13 @@ mod tests {
         #[test]
         fn resolves_task_completed_and_task_text_on_task_rows() {
             let temp = tempfile::tempdir().expect("create temp dir");
-            let record = outcome_for(temp.path(), "body")
-                .into_iter()
-                .next()
-                .expect("record")
-                .with_task(true, "Buy milk");
+            fs::write(temp.path().join("a.md"), "- [x] Buy milk")
+                .expect("write file");
+            let index =
+                IndexerService::new(temp.path()).build().expect("build index");
+            let outcome = QueryService::new("class")
+                .execute(&index, QueryRequest::tasks(QuerySource::All));
+            let record = outcome.get(0).expect("record");
 
             assert_eq!(
                 record.field("task.completed"),
@@ -619,9 +456,9 @@ mod tests {
 
             assert_eq!(
                 outcome.limit(-1),
-                Err(QueryError::LimitOutOfRange {
+                Err(QueryError::Request(QueryRequestError::LimitOutOfRange {
                     value: -1
-                })
+                }))
             );
         }
     }
@@ -660,9 +497,8 @@ mod tests {
 
             assert_eq!(
                 outcome.group_by("file.bogus"),
-                Err(QueryError::FieldPath(FieldPathError::new(
-                    "file.bogus",
-                    None
+                Err(QueryError::Request(QueryRequestError::FieldPath(
+                    FieldPathError::new("file.bogus", None)
                 )))
             );
         }
@@ -749,9 +585,8 @@ mod tests {
 
             assert_eq!(
                 outcome.flatten("file.bogus"),
-                Err(QueryError::FieldPath(FieldPathError::new(
-                    "file.bogus",
-                    None
+                Err(QueryError::Request(QueryRequestError::FieldPath(
+                    FieldPathError::new("file.bogus", None)
                 )))
             );
         }
@@ -1026,6 +861,18 @@ mod tests {
 
             assert_eq!(list, "- city: NYC, zip: 10001\n");
         }
+
+        #[test]
+        fn display_format_matches_list_wrapper() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let outcome = outcome_for(temp.path(), "---\nrating: 5\n---");
+
+            let direct = outcome
+                .format(&QueryDisplayFormat::list("rating"))
+                .expect("valid display format");
+
+            assert_eq!(direct, outcome.list("rating").expect("valid list"));
+        }
     }
 
     mod task_list {
@@ -1043,13 +890,8 @@ mod tests {
             .expect("write file");
             let index =
                 IndexerService::new(temp.path()).build().expect("build index");
-            let (records, notes, inlinks) = index.into_parts();
-            let outcome = QueryService::new("class").query_tasks(
-                records,
-                notes,
-                inlinks,
-                &QuerySource::All,
-            );
+            let outcome = QueryService::new("class")
+                .execute(&index, QueryRequest::tasks(QuerySource::All));
 
             let rendered = outcome.task_list().expect("valid task_list");
 

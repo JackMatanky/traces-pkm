@@ -6,7 +6,7 @@
 //!
 //! - `schema.get(name)`: binds the resolved [`Schema`] named `name` directly
 //!   (`Schema` implements minijinja's [`Object`] itself, mirroring
-//!   [`super::query`]'s `impl Object for QueryOutcome`), hard-erroring if no
+//!   [`super::query`]'s `impl Object for QueryRecordSet`), hard-erroring if no
 //!   Schema by that name resolves.
 //!
 //! The bound [`Schema`] exposes one plain attribute and three methods:

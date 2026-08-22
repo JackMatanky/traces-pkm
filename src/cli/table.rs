@@ -120,7 +120,10 @@ mod tests {
         use pretty_assertions::assert_eq;
 
         use super::*;
-        use crate::{index::FileIndexError, query::QueryError};
+        use crate::{
+            index::FileIndexError,
+            query::{QueryError, QueryRequestError},
+        };
 
         fn config(root: &Path) -> Config {
             Config::for_test(root.to_path_buf(), None, None, root.to_path_buf())
@@ -216,7 +219,7 @@ mod tests {
                 .expect_err("malformed sort fails");
 
             assert!(matches!(error, CliError::Query {
-                source: QueryError::FieldPath(_),
+                source: QueryError::Request(QueryRequestError::FieldPath(_)),
                 ..
             }));
         }
@@ -332,7 +335,7 @@ mod tests {
                 .expect_err("unparsable filter fails");
 
             assert!(matches!(error, CliError::Query {
-                source: QueryError::Syntax(_),
+                source: QueryError::Request(QueryRequestError::Syntax(_)),
                 ..
             }));
         }

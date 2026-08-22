@@ -23,6 +23,7 @@
 
 use std::cmp::Ordering;
 
+use super::record::ResolvedField;
 use crate::note::NoteFieldValue;
 
 /// Sort direction for sorting operations and CLI configuration.
@@ -91,6 +92,55 @@ pub(super) fn compare_field_values(
 /// text normalization allows string literals to match date or duration fields.
 pub(super) fn fields_equal(a: &NoteFieldValue, b: &NoteFieldValue) -> bool {
     a == b || compare_field_values(a, b) == Some(Ordering::Equal)
+}
+
+/// Compares a borrowed resolved field against an owned literal.
+pub(super) fn compare_resolved_field(
+    field: &ResolvedField<'_>,
+    literal: &NoteFieldValue,
+) -> Option<Ordering> {
+    match (field, literal) {
+        (ResolvedField::Number(x), NoteFieldValue::Number(y)) => {
+            x.partial_cmp(y)
+        }
+        (ResolvedField::Bool(x), NoteFieldValue::Bool(y)) => Some(x.cmp(y)),
+        (ResolvedField::Owned(value), literal) => {
+            compare_field_values(value, literal)
+        }
+        _ => match (field.as_str(), literal.as_str()) {
+            (Some(x), Some(y)) => Some(x.cmp(y)),
+            _ => None,
+        },
+    }
+}
+
+/// Returns whether a borrowed resolved field equals an owned literal under
+/// filter comparison rules.
+#[expect(
+    clippy::float_cmp,
+    reason = "query numeric equality intentionally uses exact parsed metadata \
+              equality; ordering still uses total_cmp"
+)]
+pub(super) fn resolved_field_equals(
+    field: &ResolvedField<'_>,
+    literal: &NoteFieldValue,
+) -> bool {
+    match field {
+        ResolvedField::Null => matches!(literal, NoteFieldValue::Null),
+        ResolvedField::Bool(value) => {
+            matches!(literal, NoteFieldValue::Bool(other) if value == other)
+        }
+        ResolvedField::Number(value) => {
+            matches!(literal, NoteFieldValue::Number(other) if value == other)
+        }
+        ResolvedField::Text(value) => literal.as_str() == Some(value),
+        ResolvedField::Link(value) => {
+            matches!(literal, NoteFieldValue::Link(other) if *value == other)
+        }
+        ResolvedField::List(_) | ResolvedField::Owned(_) => {
+            fields_equal(&field.to_owned_value(), literal)
+        }
+    }
 }
 
 /// Compares two resolved [`NoteFieldValue`] instances to establish a total
@@ -184,13 +234,8 @@ mod tests {
             fs::write(temp.join(name), content).expect("write note");
         }
         let index = IndexerService::new(temp).build().expect("build index");
-        let (records, notes, inlinks) = index.into_parts();
-        QueryService::new("class").query(
-            records,
-            notes,
-            inlinks,
-            &QuerySource::All,
-        )
+        QueryService::new("class")
+            .execute(&index, QueryRequest::pages(QuerySource::All))
     }
 
     fn outcome_for(temp: &Path, content: &str) -> QueryRecordSet {
@@ -282,7 +327,9 @@ mod tests {
 
         assert_eq!(
             outcome.sort("file.bogus", false),
-            Err(QueryError::FieldPath(FieldPathError::new("file.bogus", None)))
+            Err(QueryError::Request(QueryRequestError::FieldPath(
+                FieldPathError::new("file.bogus", None)
+            )))
         );
     }
 

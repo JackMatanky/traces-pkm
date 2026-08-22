@@ -32,7 +32,7 @@
 
 use super::{
     FieldPath, QueryRecord,
-    sort::{compare_field_values, fields_equal},
+    sort::{compare_resolved_field, resolved_field_equals},
 };
 use crate::note::NoteFieldValue;
 
@@ -96,26 +96,26 @@ impl CompareOp {
     ///   returning `false` for mismatched or incomparable kinds.
     pub(super) fn is_satisfied_by(
         self,
-        field: &NoteFieldValue,
+        field: &super::record::ResolvedField<'_>,
         literal: &NoteFieldValue,
     ) -> bool {
         match self {
-            Self::Eq => fields_equal(field, literal),
-            Self::Ne => !fields_equal(field, literal),
+            Self::Eq => resolved_field_equals(field, literal),
+            Self::Ne => !resolved_field_equals(field, literal),
             Self::Lt => {
-                compare_field_values(field, literal)
+                compare_resolved_field(field, literal)
                     == Some(std::cmp::Ordering::Less)
             }
             Self::Gt => {
-                compare_field_values(field, literal)
+                compare_resolved_field(field, literal)
                     == Some(std::cmp::Ordering::Greater)
             }
             Self::Le => matches!(
-                compare_field_values(field, literal),
+                compare_resolved_field(field, literal),
                 Some(std::cmp::Ordering::Less | std::cmp::Ordering::Equal)
             ),
             Self::Ge => matches!(
-                compare_field_values(field, literal),
+                compare_resolved_field(field, literal),
                 Some(std::cmp::Ordering::Greater | std::cmp::Ordering::Equal)
             ),
         }
@@ -198,7 +198,7 @@ impl ComparisonExpr {
     /// Returns whether the given index record satisfies this comparison
     /// expression.
     pub(super) fn matches(&self, record: &QueryRecord) -> bool {
-        self.op.is_satisfied_by(&record.resolve(&self.field), &self.value)
+        self.op.is_satisfied_by(&record.resolve_ref(&self.field), &self.value)
     }
 }
 
@@ -211,6 +211,7 @@ mod tests {
         use rstest::rstest;
 
         use super::*;
+        use crate::query::record::ResolvedField;
 
         #[rstest]
         #[case(CompareOp::Eq, 5.0, 5.0, true)]
@@ -232,7 +233,7 @@ mod tests {
             #[case] expected: bool,
         ) {
             // Arrange
-            let left_val = NoteFieldValue::Number(left);
+            let left_val = ResolvedField::Number(left);
             let right_val = NoteFieldValue::Number(right);
 
             // Act
