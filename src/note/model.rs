@@ -132,6 +132,7 @@ impl Note {
     /// Frontmatter keys take precedence: inline fields whose canonical key
     /// matches a frontmatter key are skipped. Returns borrowed keys to avoid
     /// cloning every [`FieldKey`] on each call.
+    #[inline]
     pub fn fields(&self) -> impl Iterator<Item = (&FieldKey, &NoteFieldValue)> {
         use std::collections::HashSet;
 

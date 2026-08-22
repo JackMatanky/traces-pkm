@@ -105,6 +105,7 @@ pub enum IndexBuilderError {
 }
 
 impl From<IndexBuilderError> for FileIndexError {
+    #[inline]
     fn from(err: IndexBuilderError) -> Self {
         match err {
             IndexBuilderError::Scan {
@@ -132,6 +133,7 @@ impl From<IndexBuilderError> for FileIndexError {
 }
 
 impl From<StoreError> for FileIndexError {
+    #[inline]
     fn from(err: StoreError) -> Self {
         match err {
             StoreError::Io {
