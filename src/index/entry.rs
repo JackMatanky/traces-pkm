@@ -34,7 +34,7 @@ impl<'a> FileIndexEntry<'a> {
 }
 
 /// Iterator over [`FileIndexEntry`] values.
-struct FileIndexEntryIter<'a> {
+pub(super) struct FileIndexEntryIter<'a> {
     records: std::slice::Iter<'a, FileRecord>,
     notes: std::iter::Peekable<std::slice::Iter<'a, Note>>,
     inlinks: &'a InlinkMap,
@@ -69,16 +69,5 @@ impl<'a> Iterator for FileIndexEntryIter<'a> {
             note,
             inlinks,
         })
-    }
-}
-
-impl FileIndex {
-    /// Returns borrowed entries pairing each file record with its Note and
-    /// inbound links.
-    #[inline]
-    pub(crate) fn entries(
-        &self,
-    ) -> impl Iterator<Item = FileIndexEntry<'_>> + '_ {
-        FileIndexEntryIter::new(self)
     }
 }

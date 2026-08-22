@@ -102,6 +102,7 @@ impl IndexStore {
         Ok((records, notes, links))
     }
 }
+
 #[cfg(test)]
 mod tests {
     use std::{

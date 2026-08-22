@@ -49,6 +49,7 @@ mod store;
 use std::path::Path;
 
 pub(crate) use entry::FileIndexEntry;
+use entry::FileIndexEntryIter;
 #[allow(unused_imports, reason = "re-exported for downstream callers")]
 pub use error::{FileIndexError, IndexBuilderError};
 pub(crate) use inlinks::InlinkMap;
@@ -121,6 +122,15 @@ impl FileIndex {
     #[cfg(test)]
     pub(crate) fn note(&self, path: &Path) -> Option<&Note> {
         find_by_path(&self.notes, path)
+    }
+
+    /// Returns borrowed entries pairing each file record with its Note and
+    /// inbound links.
+    #[inline]
+    pub(crate) fn entries(
+        &self,
+    ) -> impl Iterator<Item = FileIndexEntry<'_>> + '_ {
+        FileIndexEntryIter::new(self)
     }
 }
 
