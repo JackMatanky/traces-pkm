@@ -863,6 +863,55 @@ mod tests {
         }
 
         #[test]
+        fn preserves_body_through_nested_list_text_blocks() {
+            // Arrange — a paragraph followed by a nested list with text,
+            // followed by another paragraph. The
+            // body_buffer.clear() in start_text_block must NOT fire
+            // for nested text blocks (L215 mutant inverts the guard).
+            // We verify indirectly: inline fields from both paragraphs must be
+            // extracted, proving both paragraphs were processed.
+            let input = "Status:: Draft\n\n- Item one.\n- Nested \
+                         item.\n\nAuthor:: Jane";
+            let note = parse_markdown("note.md", input);
+
+            // Act
+            let keys: Vec<&str> =
+                note.inline_fields().iter().map(|(k, _)| k.name()).collect();
+
+            // Assert — both paragraph fields must be extracted
+            assert!(
+                keys.contains(&"Status"),
+                "first paragraph field must be extracted, got: {keys:?}"
+            );
+            assert!(
+                keys.contains(&"Author"),
+                "second paragraph field must be extracted, got: {keys:?}"
+            );
+        }
+
+        #[test]
+        fn emits_breaks_in_body_text() {
+            // Arrange — hard breaks (two trailing spaces) in body text must
+            // produce newlines in the body buffer (L317 mutant removes the
+            // push). We verify indirectly: a field value must be
+            // truncated at the newline, not span across the break.
+            let input = "Key:: value1  \nmore text";
+            let note = parse_markdown("note.md", input);
+
+            // Act
+            let (_key, values) =
+                note.inline_fields().iter().next().expect("field present");
+
+            // Assert — field value must stop at the hard break
+            assert_eq!(
+                values.first().and_then(|v| v.as_str()),
+                Some("value1"),
+                "hard breaks must appear as newlines in body, got: {:?}",
+                values.first()
+            );
+        }
+
+        #[test]
         fn preserves_inline_code_in_list_item_text() {
             // Arrange — inline code inside a list item must appear in the
             // item's display text (text_buffer) but NOT in the scan
