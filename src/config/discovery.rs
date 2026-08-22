@@ -725,6 +725,50 @@ mod tests {
             ));
         }
 
+        mod trust_anchor {
+            use super::*;
+
+            #[test]
+            fn returns_file_anchor_for_local_config_path() {
+                let path = PathBuf::from("/project/.traces/config.toml");
+                let anchor = DiscoveryEngine::trust_anchor(&path);
+                assert!(
+                    matches!(anchor, DiscoveryAnchor::File(p) if p == path)
+                );
+            }
+
+            #[test]
+            fn returns_directory_anchor_for_regular_directory() {
+                let path = PathBuf::from("/project/notes");
+                let anchor = DiscoveryEngine::trust_anchor(&path);
+                assert!(
+                    matches!(anchor, DiscoveryAnchor::Directory(p) if p == path)
+                );
+            }
+        }
+
+        mod is_local_config_path {
+            use super::*;
+
+            #[test]
+            fn returns_true_for_traces_config_toml() {
+                let path = PathBuf::from("/project/.traces/config.toml");
+                assert!(DiscoveryEngine::is_local_config_path(&path));
+            }
+
+            #[test]
+            fn returns_false_for_config_toml_without_traces_parent() {
+                let path = PathBuf::from("/project/config.toml");
+                assert!(!DiscoveryEngine::is_local_config_path(&path));
+            }
+
+            #[test]
+            fn returns_false_for_non_config_file_in_traces() {
+                let path = PathBuf::from("/project/.traces/other.toml");
+                assert!(!DiscoveryEngine::is_local_config_path(&path));
+            }
+        }
+
         #[test]
         fn is_config_file_returns_false_for_missing_path() {
             // Arrange
