@@ -99,9 +99,9 @@ impl IndexerService {
     #[inline]
     pub fn persist(&self, index: &FileIndex) -> Result<(), FileIndexError> {
         IndexStore::open(&self.root)?.replace_all(
-            &index.records,
-            &index.notes,
-            &index.inlinks,
+            index.records(),
+            index.notes(),
+            index.inlinks(),
         )
     }
 
@@ -118,11 +118,7 @@ impl IndexerService {
     pub fn load(&self) -> Result<FileIndex, FileIndexError> {
         let (records, notes, inlinks) =
             IndexStore::open(&self.root)?.load_all()?;
-        Ok(FileIndex {
-            records,
-            notes,
-            inlinks,
-        })
+        Ok(FileIndex::new(records, notes, inlinks))
     }
 }
 

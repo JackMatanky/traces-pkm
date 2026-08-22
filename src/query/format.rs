@@ -8,7 +8,7 @@ use super::{
 use crate::note::NoteFieldValue;
 
 /// Markdown display formats supported by query results.
-pub(crate) enum QueryDisplayFormat {
+pub(super) enum QueryDisplayFormat {
     /// Markdown table with display headers and field-path columns.
     Table {
         headers: Vec<String>,
@@ -25,7 +25,7 @@ pub(crate) enum QueryDisplayFormat {
 impl QueryDisplayFormat {
     /// Builds a table display format.
     #[must_use]
-    pub(crate) fn table(headers: &[&str], columns: &[&str]) -> Self {
+    pub(super) fn table(headers: &[&str], columns: &[&str]) -> Self {
         Self::Table {
             headers: headers
                 .iter()
@@ -40,7 +40,7 @@ impl QueryDisplayFormat {
 
     /// Builds a bullet-list display format.
     #[must_use]
-    pub(crate) fn list(field: &str) -> Self {
+    pub(super) fn list(field: &str) -> Self {
         Self::List {
             field: field.to_owned(),
         }
@@ -48,7 +48,7 @@ impl QueryDisplayFormat {
 
     /// Builds a task-list display format.
     #[must_use]
-    pub(crate) const fn task_list() -> Self {
+    pub(super) const fn task_list() -> Self {
         Self::TaskList
     }
 }
@@ -60,7 +60,7 @@ impl QueryRecordSet {
     ///
     /// Returns existing query errors for malformed field paths, table column
     /// mismatches, or task-list rendering on page rows.
-    pub(crate) fn format(
+    pub(super) fn format(
         &self,
         format: &QueryDisplayFormat,
     ) -> Result<String, QueryError> {

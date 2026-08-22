@@ -70,7 +70,6 @@ pub use error::{QueryDialect, QueryError};
 use field::FieldPath;
 pub(crate) use field::FileField;
 use filter::FilterExpr;
-pub(crate) use format::QueryDisplayFormat;
 pub use record::{QueryRecord, QueryRecordSet};
 pub use request::QueryRequest;
 use request::{QueryMode, QueryTransform};
@@ -89,7 +88,7 @@ mod tests {
         path::{Path, PathBuf},
     };
 
-    use super::*;
+    use super::{format::QueryDisplayFormat, *};
     use crate::{index::IndexerService, note::NoteFieldValue};
 
     mod fixtures {

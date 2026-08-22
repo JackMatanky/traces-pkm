@@ -30,9 +30,10 @@
 use std::{path::PathBuf, sync::Arc};
 
 use super::{
-    FileField, QueryDisplayFormat, QueryError, QueryTransform,
+    FileField, QueryError, QueryTransform,
     field::{FieldPath, TaskField},
     filter::FilterExpr,
+    format::QueryDisplayFormat,
     sort::SortKey,
 };
 use crate::{
@@ -422,7 +423,7 @@ impl QueryRecordSet {
                       direct callers of this crate's Rust API"
         )
     )]
-    pub(crate) fn r#where(self, expr: &str) -> Result<Self, QueryError> {
+    pub(super) fn r#where(self, expr: &str) -> Result<Self, QueryError> {
         self.filter(expr)
     }
 

@@ -128,11 +128,7 @@ impl IndexBuilder {
         }
         notes.sort_by(|a, b| a.path().cmp(b.path()));
         let inlinks = derive_inlinks(&notes);
-        Ok(super::FileIndex {
-            records,
-            notes,
-            inlinks,
-        })
+        Ok(super::FileIndex::new(records, notes, inlinks))
     }
 
     fn build_with_reuse(
@@ -198,11 +194,7 @@ impl IndexBuilder {
             reuse.inlinks
         };
 
-        Ok(super::FileIndex {
-            records,
-            notes,
-            inlinks,
-        })
+        Ok(super::FileIndex::new(records, notes, inlinks))
     }
 }
 

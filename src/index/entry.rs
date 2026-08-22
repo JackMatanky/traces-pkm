@@ -1,9 +1,89 @@
-//! Borrowed entry view over a [`FileIndex`].
+//! [`FileIndex`] data structure and its borrowed entry view.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use super::{FileIndex, InlinkMap};
+use super::InlinkMap;
 use crate::{file::FileRecord, note::Note};
+
+/// Persisted cache of file records, parsed Note metadata, and derived inbound
+/// links.
+///
+/// Every regular file under the project root contributes a [`FileRecord`].
+/// Markdown files also contribute a [`Note`], accessible through
+/// [`Self::notes`]. A pure value type: [`super::IndexerService`] produces,
+/// persists, and loads it; `FileIndex` itself carries no `&Path`.
+#[derive(Clone, Debug)]
+pub struct FileIndex {
+    pub(super) records: Vec<FileRecord>,
+    pub(super) notes: Vec<Note>,
+    pub(super) inlinks: InlinkMap,
+}
+
+impl FileIndex {
+    /// Creates an index from its constituent parts.
+    pub(crate) fn new(
+        records: Vec<FileRecord>,
+        notes: Vec<Note>,
+        inlinks: InlinkMap,
+    ) -> Self {
+        Self {
+            records,
+            notes,
+            inlinks,
+        }
+    }
+
+    /// Returns indexed [`FileRecord`]s, sorted by path.
+    #[inline]
+    #[must_use]
+    pub fn records(&self) -> &[FileRecord] {
+        &self.records
+    }
+
+    /// Returns indexed [`Note`] records, sorted by path.
+    #[inline]
+    #[must_use]
+    pub fn notes(&self) -> &[Note] {
+        &self.notes
+    }
+
+    /// Returns the inbound link map.
+    #[inline]
+    #[must_use]
+    pub(crate) fn inlinks(&self) -> &InlinkMap {
+        &self.inlinks
+    }
+
+    /// Returns the [`Note`] for the note at `path`, if indexed.
+    #[inline]
+    #[must_use]
+    #[cfg(test)]
+    pub(crate) fn note(&self, path: &Path) -> Option<&Note> {
+        find_by_path(&self.notes, path)
+    }
+
+    /// Returns borrowed entries pairing each file record with its Note and
+    /// inbound links.
+    #[inline]
+    pub(crate) fn entries(
+        &self,
+    ) -> impl Iterator<Item = FileIndexEntry<'_>> + '_ {
+        FileIndexEntryIter::new(self)
+    }
+}
+
+/// Binary-searches path-sorted `notes` for an exact path match.
+///
+/// Shared by the [`super::inlinks`] submodule, which needs the same search
+/// over a bare `&[Note]` slice while resolving link targets during
+/// [`super::IndexerService::build`]/[`super::IndexerService::refresh`].
+pub(crate) fn find_by_path<'a>(
+    notes: &'a [Note],
+    path: &Path,
+) -> Option<&'a Note> {
+    let idx = notes.binary_search_by(|note| note.path().cmp(path)).ok()?;
+    notes.get(idx)
+}
 
 /// Borrowed file row paired with optional parsed Note data and inbound links.
 #[derive(Copy, Clone)]
@@ -34,14 +114,14 @@ impl<'a> FileIndexEntry<'a> {
 }
 
 /// Iterator over [`FileIndexEntry`] values.
-pub(super) struct FileIndexEntryIter<'a> {
+struct FileIndexEntryIter<'a> {
     records: std::slice::Iter<'a, FileRecord>,
     notes: std::iter::Peekable<std::slice::Iter<'a, Note>>,
     inlinks: &'a InlinkMap,
 }
 
 impl<'a> FileIndexEntryIter<'a> {
-    pub(super) fn new(index: &'a FileIndex) -> Self {
+    fn new(index: &'a FileIndex) -> Self {
         Self {
             records: index.records.iter(),
             notes: index.notes.iter().peekable(),
@@ -69,5 +149,41 @@ impl<'a> Iterator for FileIndexEntryIter<'a> {
             note,
             inlinks,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::index::service::IndexerService;
+
+    mod lookup {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn returns_none_when_note_path_is_not_indexed() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let index =
+                IndexerService::new(temp.path()).build().expect("build index");
+
+            assert_eq!(index.note(Path::new("nonexistent.md")), None);
+        }
+
+        #[test]
+        fn returns_the_matching_note_when_path_is_indexed() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            std::fs::write(temp.path().join("a.md"), "# A").expect("write a");
+            std::fs::write(temp.path().join("b.md"), "# B").expect("write b");
+            std::fs::write(temp.path().join("c.md"), "# C").expect("write c");
+            let index =
+                IndexerService::new(temp.path()).build().expect("build index");
+
+            assert_eq!(
+                index.note(Path::new("b.md")).map(Note::path),
+                Some(Path::new("b.md"))
+            );
+        }
     }
 }
