@@ -125,6 +125,60 @@ mod tests {
         error::SchemaFieldParserError, parser::SchemaFieldParser,
     };
 
+    mod accessors {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn returns_configured_folders() {
+            let field = SchemaFileField {
+                folders: vec!["notes".to_owned(), "docs".to_owned()],
+                ext: None,
+                class: vec![],
+            };
+            assert_eq!(field.folders(), &["notes", "docs"]);
+        }
+
+        #[test]
+        fn returns_configured_ext() {
+            let field = SchemaFileField {
+                folders: vec![],
+                ext: Some("md".to_owned()),
+                class: vec![],
+            };
+            assert_eq!(field.ext(), Some("md"));
+        }
+
+        #[test]
+        fn returns_configured_class() {
+            let field = SchemaFileField {
+                folders: vec![],
+                ext: None,
+                class: vec!["project".to_owned(), "active".to_owned()],
+            };
+            assert_eq!(field.class(), &["project", "active"]);
+        }
+
+        #[test]
+        fn returns_empty_vec_for_unset_folders() {
+            let field = SchemaFileField::default();
+            assert!(field.folders().is_empty());
+        }
+
+        #[test]
+        fn returns_none_for_unset_ext() {
+            let field = SchemaFileField::default();
+            assert_eq!(field.ext(), None);
+        }
+
+        #[test]
+        fn returns_empty_vec_for_unset_class() {
+            let field = SchemaFileField::default();
+            assert!(field.class().is_empty());
+        }
+    }
+
     fn address() -> FieldAddress {
         FieldAddress::try_from("#book/field").expect("valid ref")
     }
