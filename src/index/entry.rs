@@ -8,9 +8,29 @@ use crate::{file::FileRecord, note::Note};
 /// Borrowed file row paired with optional parsed Note data and inbound links.
 #[derive(Copy, Clone)]
 pub(crate) struct FileIndexEntry<'a> {
-    pub(crate) file: &'a FileRecord,
-    pub(crate) note: Option<&'a Note>,
-    pub(crate) inlinks: &'a [PathBuf],
+    file: &'a FileRecord,
+    note: Option<&'a Note>,
+    inlinks: &'a [PathBuf],
+}
+
+impl<'a> FileIndexEntry<'a> {
+    /// Returns the indexed file record.
+    #[inline]
+    pub(crate) const fn file(&self) -> &'a FileRecord {
+        self.file
+    }
+
+    /// Returns parsed Note data when this entry is a Markdown file.
+    #[inline]
+    pub(crate) const fn note(&self) -> Option<&'a Note> {
+        self.note
+    }
+
+    /// Returns project-relative paths for Notes linking to this entry.
+    #[inline]
+    pub(crate) const fn inlinks(&self) -> &'a [PathBuf] {
+        self.inlinks
+    }
 }
 
 /// Iterator over [`FileIndexEntry`] values.

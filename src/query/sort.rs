@@ -23,7 +23,7 @@
 
 use std::cmp::Ordering;
 
-use super::record::ResolvedField;
+use super::record::QueryFieldValueRef;
 use crate::note::NoteFieldValue;
 
 /// Sort direction for sorting operations and CLI configuration.
@@ -96,15 +96,17 @@ pub(super) fn fields_equal(a: &NoteFieldValue, b: &NoteFieldValue) -> bool {
 
 /// Compares a borrowed resolved field against an owned literal.
 pub(super) fn compare_resolved_field(
-    field: &ResolvedField<'_>,
+    field: &QueryFieldValueRef<'_>,
     literal: &NoteFieldValue,
 ) -> Option<Ordering> {
     match (field, literal) {
-        (ResolvedField::Number(x), NoteFieldValue::Number(y)) => {
+        (QueryFieldValueRef::Number(x), NoteFieldValue::Number(y)) => {
             x.partial_cmp(y)
         }
-        (ResolvedField::Bool(x), NoteFieldValue::Bool(y)) => Some(x.cmp(y)),
-        (ResolvedField::Owned(value), literal) => {
+        (QueryFieldValueRef::Bool(x), NoteFieldValue::Bool(y)) => {
+            Some(x.cmp(y))
+        }
+        (QueryFieldValueRef::Owned(value), literal) => {
             compare_field_values(value, literal)
         }
         _ => match (field.as_str(), literal.as_str()) {
@@ -122,22 +124,22 @@ pub(super) fn compare_resolved_field(
               equality; ordering still uses total_cmp"
 )]
 pub(super) fn resolved_field_equals(
-    field: &ResolvedField<'_>,
+    field: &QueryFieldValueRef<'_>,
     literal: &NoteFieldValue,
 ) -> bool {
     match field {
-        ResolvedField::Null => matches!(literal, NoteFieldValue::Null),
-        ResolvedField::Bool(value) => {
+        QueryFieldValueRef::Null => matches!(literal, NoteFieldValue::Null),
+        QueryFieldValueRef::Bool(value) => {
             matches!(literal, NoteFieldValue::Bool(other) if value == other)
         }
-        ResolvedField::Number(value) => {
+        QueryFieldValueRef::Number(value) => {
             matches!(literal, NoteFieldValue::Number(other) if value == other)
         }
-        ResolvedField::Text(value) => literal.as_str() == Some(value),
-        ResolvedField::Link(value) => {
+        QueryFieldValueRef::Text(value) => literal.as_str() == Some(value),
+        QueryFieldValueRef::Link(value) => {
             matches!(literal, NoteFieldValue::Link(other) if *value == other)
         }
-        ResolvedField::List(_) | ResolvedField::Owned(_) => {
+        QueryFieldValueRef::List(_) | QueryFieldValueRef::Owned(_) => {
             fields_equal(&field.to_owned_value(), literal)
         }
     }

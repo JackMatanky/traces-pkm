@@ -31,7 +31,7 @@ use super::{
         LogicalControl, LogicalExpr, LogicalGrammar, LogicalOp, Spanned,
         TokenCursor, parse_logical_expression,
     },
-    record::{ResolvedField, ResolvedList},
+    record::{QueryFieldValueRef, QueryListValueRef},
     sort::fields_equal,
 };
 use crate::note::{NoteFieldValue, is_nested_under};
@@ -418,12 +418,12 @@ impl FilterFunction {
 /// `#book` matching `#book/fiction`). For other field kinds, falls back
 /// to substring containment on stringified values.
 fn eval_contains(
-    field_val: &ResolvedField<'_>,
+    field_val: &QueryFieldValueRef<'_>,
     target: &NoteFieldValue,
 ) -> bool {
     match field_val {
-        ResolvedField::List(items) => list_contains(items, target),
-        ResolvedField::Owned(NoteFieldValue::List(items)) => {
+        QueryFieldValueRef::List(items) => list_contains(items, target),
+        QueryFieldValueRef::Owned(NoteFieldValue::List(items)) => {
             items.iter().any(|item| tag_or_value_matches(item, target))
         }
         _ => match (field_val.as_str(), target.as_str()) {
@@ -433,15 +433,18 @@ fn eval_contains(
     }
 }
 
-fn list_contains(items: &ResolvedList<'_>, target: &NoteFieldValue) -> bool {
+fn list_contains(
+    items: &QueryListValueRef<'_>,
+    target: &NoteFieldValue,
+) -> bool {
     match items {
-        ResolvedList::Values(items) => {
+        QueryListValueRef::Values(items) => {
             items.iter().any(|item| tag_or_value_matches(item, target))
         }
-        ResolvedList::Tags(tags) => {
+        QueryListValueRef::Tags(tags) => {
             tags.iter().any(|tag| tag_str_matches(tag.as_str(), target))
         }
-        ResolvedList::Inlinks(paths) => paths.iter().any(|path| {
+        QueryListValueRef::Inlinks(paths) => paths.iter().any(|path| {
             let path = path.to_string_lossy();
             tag_str_matches(&path, target)
         }),

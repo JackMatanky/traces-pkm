@@ -78,9 +78,9 @@ impl QueryRecord {
     pub(super) fn from_entry(entry: FileIndexEntry<'_>) -> Self {
         Self {
             base: Arc::new(RecordBase {
-                file: entry.file.clone(),
-                note: entry.note.cloned().map(Arc::new),
-                inlinks: Arc::<[PathBuf]>::from(entry.inlinks),
+                file: entry.file().clone(),
+                note: entry.note().cloned().map(Arc::new),
+                inlinks: Arc::<[PathBuf]>::from(entry.inlinks()),
             }),
             flattened: Vec::new(),
             kind: RowKind::Page,
@@ -164,29 +164,32 @@ impl QueryRecord {
     }
 
     /// Resolves a pre-parsed field path into a borrowed value where possible.
-    pub(super) fn resolve_ref(&self, path: &FieldPath) -> ResolvedField<'_> {
+    pub(super) fn resolve_ref(
+        &self,
+        path: &FieldPath,
+    ) -> QueryFieldValueRef<'_> {
         if let Some((_, value)) = self.flattened.iter().find(|(p, _)| p == path)
         {
-            return ResolvedField::from(value);
+            return QueryFieldValueRef::from(value);
         }
         match path {
             FieldPath::File(field) => self.resolve_file_ref(*field),
             FieldPath::Task(field) => self.resolve_task_ref(*field),
             FieldPath::Tags => {
                 let tags = self.note().map_or(&[][..], Note::tags);
-                ResolvedField::List(ResolvedList::Tags(tags))
+                QueryFieldValueRef::List(QueryListValueRef::Tags(tags))
             }
-            FieldPath::Inlinks => {
-                ResolvedField::List(ResolvedList::Inlinks(self.inlinks()))
-            }
+            FieldPath::Inlinks => QueryFieldValueRef::List(
+                QueryListValueRef::Inlinks(self.inlinks()),
+            ),
             FieldPath::Metadata(key) => self
                 .note()
                 .and_then(|note| {
                     note.fields()
                         .find(|(k, _)| k.is_match(key.as_str()))
-                        .map(|(_, value)| ResolvedField::from(value))
+                        .map(|(_, value)| QueryFieldValueRef::from(value))
                 })
-                .unwrap_or(ResolvedField::Null),
+                .unwrap_or(QueryFieldValueRef::Null),
         }
     }
 
@@ -195,17 +198,17 @@ impl QueryRecord {
         self.resolve_ref(path).to_owned_value()
     }
 
-    fn resolve_file_ref(&self, field: FileField) -> ResolvedField<'_> {
+    fn resolve_file_ref(&self, field: FileField) -> QueryFieldValueRef<'_> {
         let file = self.file();
         match field {
             FileField::Path => file.path().to_str().map_or_else(
-                || ResolvedField::Owned(field.resolve(file)),
-                ResolvedField::Text,
+                || QueryFieldValueRef::Owned(field.resolve(file)),
+                QueryFieldValueRef::Text,
             ),
-            FileField::Name => ResolvedField::Text(file.name().as_str()),
+            FileField::Name => QueryFieldValueRef::Text(file.name().as_str()),
             FileField::Folder => file.folder().to_str().map_or_else(
-                || ResolvedField::Owned(field.resolve(file)),
-                ResolvedField::Text,
+                || QueryFieldValueRef::Owned(field.resolve(file)),
+                QueryFieldValueRef::Text,
             ),
             #[expect(
                 clippy::as_conversions,
@@ -213,25 +216,25 @@ impl QueryRecord {
                 reason = "file sizes stay well under 2^53 bytes for PKM-scale \
                           projects, so f64 keeps exact byte counts"
             )]
-            FileField::Size => ResolvedField::Number(file.size() as f64),
+            FileField::Size => QueryFieldValueRef::Number(file.size() as f64),
             FileField::CreatedDateTime
             | FileField::CreatedDate
             | FileField::ModifiedDateTime
             | FileField::ModifiedDate => {
-                ResolvedField::Owned(field.resolve(file))
+                QueryFieldValueRef::Owned(field.resolve(file))
             }
         }
     }
 
-    fn resolve_task_ref(&self, field: TaskField) -> ResolvedField<'_> {
+    fn resolve_task_ref(&self, field: TaskField) -> QueryFieldValueRef<'_> {
         let RowKind::Task(task) = &self.kind else {
-            return ResolvedField::Null;
+            return QueryFieldValueRef::Null;
         };
         match field {
             TaskField::Completed => {
-                ResolvedField::Bool(task.status == TaskStatus::Complete)
+                QueryFieldValueRef::Bool(task.status == TaskStatus::Complete)
             }
-            TaskField::Text => ResolvedField::Text(&task.text),
+            TaskField::Text => QueryFieldValueRef::Text(&task.text),
         }
     }
 
@@ -256,24 +259,24 @@ impl QueryRecord {
 }
 
 /// Borrowed field value resolved from a [`QueryRecord`].
-pub(super) enum ResolvedField<'a> {
+pub(super) enum QueryFieldValueRef<'a> {
     Null,
     Bool(bool),
     Number(f64),
     Text(&'a str),
     Link(&'a Link),
-    List(ResolvedList<'a>),
+    List(QueryListValueRef<'a>),
     Owned(NoteFieldValue),
 }
 
 /// Borrowed list value resolved from a [`QueryRecord`].
-pub(super) enum ResolvedList<'a> {
+pub(super) enum QueryListValueRef<'a> {
     Values(&'a [NoteFieldValue]),
     Tags(&'a [Tag]),
     Inlinks(&'a [PathBuf]),
 }
 
-impl ResolvedField<'_> {
+impl QueryFieldValueRef<'_> {
     pub(super) fn to_owned_value(&self) -> NoteFieldValue {
         match self {
             Self::Null => NoteFieldValue::Null,
@@ -295,7 +298,7 @@ impl ResolvedField<'_> {
     }
 }
 
-impl<'a> From<&'a NoteFieldValue> for ResolvedField<'a> {
+impl<'a> From<&'a NoteFieldValue> for QueryFieldValueRef<'a> {
     fn from(value: &'a NoteFieldValue) -> Self {
         match value {
             NoteFieldValue::Null => Self::Null,
@@ -304,7 +307,7 @@ impl<'a> From<&'a NoteFieldValue> for ResolvedField<'a> {
             NoteFieldValue::String(value) => Self::Text(value),
             NoteFieldValue::Link(value) => Self::Link(value),
             NoteFieldValue::List(value) => {
-                Self::List(ResolvedList::Values(value))
+                Self::List(QueryListValueRef::Values(value))
             }
             NoteFieldValue::Date(_)
             | NoteFieldValue::Duration(_)
@@ -313,7 +316,7 @@ impl<'a> From<&'a NoteFieldValue> for ResolvedField<'a> {
     }
 }
 
-impl ResolvedList<'_> {
+impl QueryListValueRef<'_> {
     fn to_owned_value(&self) -> NoteFieldValue {
         match self {
             Self::Values(values) => NoteFieldValue::List((*values).to_vec()),

@@ -3,7 +3,7 @@
 use super::{
     QueryError, QueryRecordSet,
     field::FieldPath,
-    record::{ResolvedField, ResolvedList},
+    record::{QueryFieldValueRef, QueryListValueRef},
 };
 use crate::note::NoteFieldValue;
 
@@ -136,33 +136,33 @@ impl QueryRecordSet {
     }
 }
 
-fn field_text(value: &ResolvedField<'_>) -> String {
+fn field_text(value: &QueryFieldValueRef<'_>) -> String {
     let mut out = String::new();
     append_field_text(&mut out, value);
     out
 }
 
-fn append_field_text(out: &mut String, value: &ResolvedField<'_>) {
+fn append_field_text(out: &mut String, value: &QueryFieldValueRef<'_>) {
     match value {
-        ResolvedField::Null => {}
-        ResolvedField::Bool(value) => out.push_str(&value.to_string()),
-        ResolvedField::Number(value) => out.push_str(&value.to_string()),
-        ResolvedField::Text(value) => out.push_str(value),
-        ResolvedField::Link(link) => out.push_str(link.target()),
-        ResolvedField::List(list) => append_list_text(out, list),
-        ResolvedField::Owned(value) => append_owned_field_text(out, value),
+        QueryFieldValueRef::Null => {}
+        QueryFieldValueRef::Bool(value) => out.push_str(&value.to_string()),
+        QueryFieldValueRef::Number(value) => out.push_str(&value.to_string()),
+        QueryFieldValueRef::Text(value) => out.push_str(value),
+        QueryFieldValueRef::Link(link) => out.push_str(link.target()),
+        QueryFieldValueRef::List(list) => append_list_text(out, list),
+        QueryFieldValueRef::Owned(value) => append_owned_field_text(out, value),
     }
 }
 
-fn append_list_text(out: &mut String, list: &ResolvedList<'_>) {
+fn append_list_text(out: &mut String, list: &QueryListValueRef<'_>) {
     match list {
-        ResolvedList::Values(values) => {
+        QueryListValueRef::Values(values) => {
             append_joined(out, values, append_owned_field_text);
         }
-        ResolvedList::Tags(tags) => {
+        QueryListValueRef::Tags(tags) => {
             append_joined(out, tags, |out, tag| out.push_str(tag.as_str()));
         }
-        ResolvedList::Inlinks(inlinks) => {
+        QueryListValueRef::Inlinks(inlinks) => {
             append_joined(out, inlinks, |out, path| {
                 out.push_str(&path.to_string_lossy());
             });
@@ -212,6 +212,6 @@ fn escape_table_text(text: &str) -> String {
     text.replace('\n', " ").replace('|', "\\|")
 }
 
-fn table_cell_text(value: &ResolvedField<'_>) -> String {
+fn table_cell_text(value: &QueryFieldValueRef<'_>) -> String {
     escape_table_text(&field_text(value))
 }

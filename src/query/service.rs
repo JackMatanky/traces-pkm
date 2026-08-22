@@ -106,7 +106,7 @@ fn matched_base_records<'a>(
     index
         .entries()
         .filter(move |entry| {
-            source.is_match(entry.file, entry.note, class_field)
+            source.is_match(entry.file(), entry.note(), class_field)
         })
         .map(QueryRecord::from_entry)
 }

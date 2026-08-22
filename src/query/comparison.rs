@@ -96,7 +96,7 @@ impl CompareOp {
     ///   returning `false` for mismatched or incomparable kinds.
     pub(super) fn is_satisfied_by(
         self,
-        field: &super::record::ResolvedField<'_>,
+        field: &super::record::QueryFieldValueRef<'_>,
         literal: &NoteFieldValue,
     ) -> bool {
         match self {
@@ -211,7 +211,7 @@ mod tests {
         use rstest::rstest;
 
         use super::*;
-        use crate::query::record::ResolvedField;
+        use crate::query::record::QueryFieldValueRef;
 
         #[rstest]
         #[case(CompareOp::Eq, 5.0, 5.0, true)]
@@ -233,7 +233,7 @@ mod tests {
             #[case] expected: bool,
         ) {
             // Arrange
-            let left_val = ResolvedField::Number(left);
+            let left_val = QueryFieldValueRef::Number(left);
             let right_val = NoteFieldValue::Number(right);
 
             // Act
