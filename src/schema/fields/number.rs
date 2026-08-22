@@ -182,6 +182,38 @@ mod tests {
         );
     }
 
+    mod accessors {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn returns_configured_min_value() {
+            let field = SchemaNumberField::for_test(Some(0.0), None, None);
+            assert_eq!(field.min(), Some(0.0));
+        }
+
+        #[test]
+        fn returns_configured_max_value() {
+            let field = SchemaNumberField::for_test(None, Some(100.0), None);
+            assert_eq!(field.max(), Some(100.0));
+        }
+
+        #[test]
+        fn returns_configured_step_value() {
+            let field = SchemaNumberField::for_test(None, None, Some(5.0));
+            assert_eq!(field.step(), Some(5.0));
+        }
+
+        #[test]
+        fn returns_none_for_unset_fields() {
+            let field = SchemaNumberField::for_test(None, None, None);
+            assert_eq!(field.min(), None);
+            assert_eq!(field.max(), None);
+            assert_eq!(field.step(), None);
+        }
+    }
+
     #[test]
     fn inherits_min_max_step_from_number_base() {
         let base =
