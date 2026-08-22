@@ -968,8 +968,10 @@ mod tests {
             tracker.end_list();
 
             // end_item pops LIFO: item2 is index 0, item1 is index 1
-            let item1_text = tracker.lists[0].items()[1].text();
-            let item2_text = tracker.lists[0].items()[0].text();
+            let list = tracker.lists.first().expect("list must exist");
+            let items = list.items();
+            let item1_text = items.get(1).expect("item 1 must exist").text();
+            let item2_text = items.first().expect("item 2 must exist").text();
             assert!(
                 !item1_text.contains("code"),
                 "inline code must not leak to item 1, got: {item1_text:?}"

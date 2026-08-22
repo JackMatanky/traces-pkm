@@ -378,10 +378,15 @@ mod tests {
                 .build(temp.path())
                 .expect("build");
 
-            let title = second.notes()[0].frontmatter().and_then(|fm| {
-                fm.get(&crate::field::FieldKey::try_new("title").unwrap())
-                    .cloned()
-            });
+            let title = second
+                .notes()
+                .first()
+                .expect("note must exist")
+                .frontmatter()
+                .and_then(|fm| {
+                    fm.get(&crate::field::FieldKey::try_new("title").unwrap())
+                        .cloned()
+                });
             assert_eq!(
                 title,
                 Some(crate::note::NoteFieldValue::String("V2".to_owned()))
