@@ -1129,6 +1129,58 @@ mod tests {
         }
     }
 
+    mod has_classes {
+        use super::*;
+
+        #[test]
+        fn returns_true_when_expression_contains_class_atom() {
+            let expr = QuerySourceExpr::atom(SourceAtom::Class {
+                names: vec!["project".to_owned()],
+                mode: ClassExpansionMode::Children(BTreeSet::new()),
+            });
+            assert!(
+                expr.has_classes(),
+                "expression with Class atom must return true"
+            );
+        }
+
+        #[test]
+        fn returns_false_for_all_source() {
+            let source = QuerySource::All;
+            assert!(
+                !source.has_classes(),
+                "QuerySource::All must return false"
+            );
+        }
+    }
+
+    mod class_values_extraction {
+        use super::*;
+
+        #[test]
+        fn extracts_values_from_list_field() {
+            let note = crate::note::parse_markdown(
+                "test.md",
+                "---\ntags:\n  - rust\n  - pkm\n---\nBody.",
+            );
+            let values: Vec<&str> = class_values(&note, "tags").collect();
+            assert_eq!(values, vec!["rust", "pkm"]);
+        }
+    }
+
+    mod parse_class_function {
+        use super::*;
+
+        #[test]
+        fn parses_descendants_expansion_mode() {
+            let result = QuerySourceExpr::parse("class(Book, descendants)");
+            assert!(
+                result.is_ok(),
+                "class(Book, descendants) must parse: {result:?}"
+            );
+        }
+    }
+
     mod resolve_classes {
         use pretty_assertions::assert_eq;
 
