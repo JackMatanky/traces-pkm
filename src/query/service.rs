@@ -78,7 +78,7 @@ impl<'a> QueryService<'a> {
         index: &FileIndex,
         source: &QuerySource,
     ) -> Vec<QueryRecord> {
-        matched_base_records(index, source, &self.class_field).collect()
+        self.matched_base_records(index, source).collect()
     }
 
     fn task_records(
@@ -87,7 +87,7 @@ impl<'a> QueryService<'a> {
         source: &QuerySource,
     ) -> Vec<QueryRecord> {
         let mut out = Vec::new();
-        for base in matched_base_records(index, source, &self.class_field) {
+        for base in self.matched_base_records(index, source) {
             let Some(note) = base.note() else {
                 continue;
             };
@@ -97,20 +97,19 @@ impl<'a> QueryService<'a> {
         }
         out
     }
-}
 
-/// Pairs matched index entries and resolves each into a [`QueryRecord`].
-fn matched_base_records<'a>(
-    index: &'a FileIndex,
-    source: &'a QuerySource,
-    class_field: &'a str,
-) -> impl Iterator<Item = QueryRecord> + 'a {
-    index
-        .entries()
-        .filter(move |entry| {
-            source.is_match(entry.file(), entry.note(), class_field)
-        })
-        .map(QueryRecord::from_entry)
+    fn matched_base_records<'b>(
+        &'b self,
+        index: &'b FileIndex,
+        source: &'b QuerySource,
+    ) -> impl Iterator<Item = QueryRecord> + 'b {
+        index
+            .entries()
+            .filter(move |entry| {
+                source.is_match(entry.file(), entry.note(), &self.class_field)
+            })
+            .map(QueryRecord::from_entry)
+    }
 }
 
 #[cfg(test)]
