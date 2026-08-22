@@ -861,6 +861,30 @@ mod tests {
                 "inline field after closing fence must be extracted"
             );
         }
+
+        #[test]
+        fn preserves_inline_code_in_list_item_text() {
+            // Arrange — inline code inside a list item must appear in the
+            // item's display text (text_buffer) but NOT in the scan
+            // buffer (for field/tag scanning). The push_code method
+            // writes only to text_buffer.
+            let input = "- Item with `inline code` here\n";
+            let note = parse_markdown("note.md", input);
+
+            // Act
+            let lists = note.lists();
+            let item_text = lists
+                .first()
+                .and_then(|l| l.items().first())
+                .map(|item| item.text())
+                .unwrap_or_default();
+
+            // Assert
+            assert!(
+                item_text.contains("inline code"),
+                "inline code must appear in list item text, got: {item_text:?}"
+            );
+        }
     }
 
     mod tasks {
