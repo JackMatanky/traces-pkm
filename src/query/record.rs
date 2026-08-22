@@ -266,6 +266,9 @@ pub(super) enum QueryFieldValueRef<'a> {
     Number(f64),
     Text(&'a str),
     Link(&'a Link),
+    Date(&'a str),
+    Duration(&'a str),
+    Object(&'a indexmap::IndexMap<String, NoteFieldValue>),
     List(QueryListValueRef<'a>),
     Owned(NoteFieldValue),
 }
@@ -285,6 +288,11 @@ impl QueryFieldValueRef<'_> {
             Self::Number(value) => NoteFieldValue::Number(*value),
             Self::Text(value) => NoteFieldValue::String((*value).to_owned()),
             Self::Link(value) => NoteFieldValue::Link((*value).clone()),
+            Self::Date(value) => NoteFieldValue::Date((*value).to_owned()),
+            Self::Duration(value) => {
+                NoteFieldValue::Duration((*value).to_owned())
+            }
+            Self::Object(value) => NoteFieldValue::Object((*value).clone()),
             Self::List(value) => value.to_owned_value(),
             Self::Owned(value) => value.clone(),
         }
@@ -292,7 +300,9 @@ impl QueryFieldValueRef<'_> {
 
     pub(super) fn as_str(&self) -> Option<&str> {
         match self {
-            Self::Text(value) => Some(value),
+            Self::Text(value) | Self::Date(value) | Self::Duration(value) => {
+                Some(value)
+            }
             Self::Owned(value) => value.as_str(),
             _ => None,
         }
@@ -306,13 +316,13 @@ impl<'a> From<&'a NoteFieldValue> for QueryFieldValueRef<'a> {
             NoteFieldValue::Bool(value) => Self::Bool(*value),
             NoteFieldValue::Number(value) => Self::Number(*value),
             NoteFieldValue::String(value) => Self::Text(value),
+            NoteFieldValue::Date(value) => Self::Date(value),
+            NoteFieldValue::Duration(value) => Self::Duration(value),
             NoteFieldValue::Link(value) => Self::Link(value),
             NoteFieldValue::List(value) => {
                 Self::List(QueryListValueRef::Values(value))
             }
-            NoteFieldValue::Date(_)
-            | NoteFieldValue::Duration(_)
-            | NoteFieldValue::Object(_) => Self::Owned(value.clone()),
+            NoteFieldValue::Object(value) => Self::Object(value),
         }
     }
 }

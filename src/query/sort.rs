@@ -106,6 +106,13 @@ pub(super) fn compare_resolved_field(
         (QueryFieldValueRef::Bool(x), NoteFieldValue::Bool(y)) => {
             Some(x.cmp(y))
         }
+        (QueryFieldValueRef::Date(x), NoteFieldValue::Date(y))
+        | (QueryFieldValueRef::Duration(x), NoteFieldValue::Duration(y)) => {
+            Some(x.cmp(&y.as_str()))
+        }
+        (QueryFieldValueRef::Object(x), NoteFieldValue::Object(_)) => {
+            compare_field_values(&NoteFieldValue::Object((*x).clone()), literal)
+        }
         (QueryFieldValueRef::Owned(value), literal) => {
             compare_field_values(value, literal)
         }
@@ -138,6 +145,13 @@ pub(super) fn resolved_field_equals(
         QueryFieldValueRef::Text(value) => literal.as_str() == Some(value),
         QueryFieldValueRef::Link(value) => {
             matches!(literal, NoteFieldValue::Link(other) if *value == other)
+        }
+        QueryFieldValueRef::Date(value)
+        | QueryFieldValueRef::Duration(value) => {
+            literal.as_str() == Some(value)
+        }
+        QueryFieldValueRef::Object(value) => {
+            matches!(literal, NoteFieldValue::Object(other) if *value == other)
         }
         QueryFieldValueRef::List(_) | QueryFieldValueRef::Owned(_) => {
             fields_equal(&field.to_owned_value(), literal)

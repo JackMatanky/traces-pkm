@@ -147,8 +147,20 @@ fn append_field_text(out: &mut String, value: &QueryFieldValueRef<'_>) {
         QueryFieldValueRef::Null => {}
         QueryFieldValueRef::Bool(value) => out.push_str(&value.to_string()),
         QueryFieldValueRef::Number(value) => out.push_str(&value.to_string()),
-        QueryFieldValueRef::Text(value) => out.push_str(value),
+        QueryFieldValueRef::Text(value)
+        | QueryFieldValueRef::Date(value)
+        | QueryFieldValueRef::Duration(value) => out.push_str(value),
         QueryFieldValueRef::Link(link) => out.push_str(link.target()),
+        QueryFieldValueRef::Object(fields) => {
+            for (idx, (key, field)) in fields.iter().enumerate() {
+                if idx > 0 {
+                    out.push_str(", ");
+                }
+                out.push_str(key);
+                out.push_str(": ");
+                append_field_text(out, &QueryFieldValueRef::from(field));
+            }
+        }
         QueryFieldValueRef::List(list) => append_list_text(out, list),
         QueryFieldValueRef::Owned(value) => append_owned_field_text(out, value),
     }
