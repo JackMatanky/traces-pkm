@@ -168,6 +168,42 @@ impl SourceAtom {
     }
 }
 
+/// Lexical tokens for the page source expression language.
+#[derive(Logos, Clone, Debug, PartialEq)]
+#[logos(skip r"[ \t\n\r\f]+")]
+enum SourceToken {
+    #[token("(")]
+    LParen,
+    #[token(")")]
+    RParen,
+    #[token(",")]
+    Comma,
+    #[regex(
+        "&&|and|\\|\\||or",
+        |lex| LogicalOp::try_from(lex.slice()),
+        ignore(case)
+    )]
+    Logical(LogicalOp),
+    #[token("!", priority = 3)]
+    #[token("not", priority = 3, ignore(case))]
+    Not,
+    #[token("class", priority = 3, ignore(case))]
+    Class,
+    #[token(".with_children()", priority = 4)]
+    WithChildren,
+    #[token(".with_descendants()", priority = 4)]
+    WithDescendants,
+    #[regex(r"#[a-zA-Z0-9_\-./]+", |lex| lex.slice().to_owned())]
+    Tag(String),
+    #[regex(r"@[a-zA-Z0-9_\-./]+[+*]?", |lex| lex.slice().to_owned())]
+    ClassSigil(String),
+    #[regex(r#"\"([^\"\\]|\\.)*\""#, quoted_callback)]
+    #[regex(r#"'([^'\\]|\\.)*'"#, quoted_callback)]
+    Quoted(String),
+    #[regex(r#"[^\s(),!&|#@'"]+"#, |lex| lex.slice().to_owned())]
+    Bare(String),
+}
+
 /// Expansion depth for a File Class match.
 ///
 /// | Mode          | Matches                                    | Sigil | Function                |
@@ -490,42 +526,6 @@ pub(crate) fn class_values<'a>(
         Some(other) => other.as_str(),
     };
     scalar.into_iter().chain(list.iter().filter_map(NoteFieldValue::as_str))
-}
-
-/// Lexical tokens for the page source expression language.
-#[derive(Logos, Clone, Debug, PartialEq)]
-#[logos(skip r"[ \t\n\r\f]+")]
-enum SourceToken {
-    #[token("(")]
-    LParen,
-    #[token(")")]
-    RParen,
-    #[token(",")]
-    Comma,
-    #[regex(
-        "&&|and|\\|\\||or",
-        |lex| LogicalOp::try_from(lex.slice()),
-        ignore(case)
-    )]
-    Logical(LogicalOp),
-    #[token("!", priority = 3)]
-    #[token("not", priority = 3, ignore(case))]
-    Not,
-    #[token("class", priority = 3, ignore(case))]
-    Class,
-    #[token(".with_children()", priority = 4)]
-    WithChildren,
-    #[token(".with_descendants()", priority = 4)]
-    WithDescendants,
-    #[regex(r"#[a-zA-Z0-9_\-./]+", |lex| lex.slice().to_owned())]
-    Tag(String),
-    #[regex(r"@[a-zA-Z0-9_\-./]+[+*]?", |lex| lex.slice().to_owned())]
-    ClassSigil(String),
-    #[regex(r#"\"([^\"\\]|\\.)*\""#, quoted_callback)]
-    #[regex(r#"'([^'\\]|\\.)*'"#, quoted_callback)]
-    Quoted(String),
-    #[regex(r#"[^\s(),!&|#@'"]+"#, |lex| lex.slice().to_owned())]
-    Bare(String),
 }
 
 #[expect(

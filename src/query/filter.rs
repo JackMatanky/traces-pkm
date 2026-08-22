@@ -99,6 +99,66 @@ impl FilterAtom {
     }
 }
 
+/// A recognized filter function call.
+///
+/// Adding a function requires adding a variant here, a name check in
+/// [`Self::build`], and matching logic in [`Self::matches`].
+///
+/// # Examples
+///
+/// ```ignore
+/// # use traces_pkm::query::filter::FilterFunction;
+/// // e.g., FilterFunction::Contains
+/// ```
+#[derive(Clone, Debug, PartialEq)]
+pub(super) enum FilterFunction {
+    /// `contains(field, target)`.
+    ///
+    /// - Lists match by exact value or tag prefix, such as `#book` matching
+    ///   `#book/fiction`.
+    /// - Other field kinds fall back to substring containment.
+    Contains {
+        field: FieldPath,
+        target: NoteFieldValue,
+    },
+}
+
+impl FilterFunction {
+    /// Builds the function call named `name` if it names a known function.
+    ///
+    /// Returns `None` if the name does not match any known function.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - Function name to match, case-insensitively.
+    /// * `field` - Already-parsed field path for the built call.
+    /// * `target` - Comparison or membership target for the built call.
+    fn build(
+        name: &str,
+        field: FieldPath,
+        target: NoteFieldValue,
+    ) -> Option<Self> {
+        if name.eq_ignore_ascii_case("contains") {
+            Some(Self::Contains {
+                field,
+                target,
+            })
+        } else {
+            None
+        }
+    }
+
+    /// Returns whether `record` satisfies this function call.
+    fn matches(&self, record: &QueryRecord) -> bool {
+        match self {
+            Self::Contains {
+                field,
+                target,
+            } => eval_contains(&record.resolve_ref(field), target),
+        }
+    }
+}
+
 /// Lexical tokens parsed from a filter expression.
 #[derive(Logos, Clone, Debug, PartialEq)]
 #[logos(skip r"[ \t\n\r\f]+")]
@@ -206,69 +266,6 @@ fn string_callback(lex: &mut Lexer<'_, FilterToken>) -> NoteFieldValue {
     NoteFieldValue::String(value)
 }
 
-struct FilterGrammar;
-
-impl LogicalGrammar for FilterGrammar {
-    type Atom = FilterAtom;
-    type Token = FilterToken;
-
-    fn control(&self, token: &Self::Token) -> Option<LogicalControl> {
-        match token {
-            FilterToken::Logical(operator) => {
-                Some(LogicalControl::Operator(*operator))
-            }
-            FilterToken::Not => Some(LogicalControl::Not),
-            FilterToken::LParen => Some(LogicalControl::LeftParen),
-            FilterToken::RParen => Some(LogicalControl::RightParen),
-            FilterToken::Comma
-            | FilterToken::Op(_)
-            | FilterToken::Literal(_)
-            | FilterToken::Ident(_) => None,
-        }
-    }
-
-    fn parse_atom(
-        &self,
-        input: &str,
-        tokens: &mut TokenCursor<Spanned<Self::Token>>,
-    ) -> Result<Self::Atom, QueryError> {
-        match tokens.next() {
-            Some(Spanned {
-                value: FilterToken::Ident(name),
-                ..
-            }) if tokens
-                .peek()
-                .is_some_and(|token| token.value == FilterToken::LParen) =>
-            {
-                parse_function_call(input, tokens, &name)
-                    .map(FilterAtom::Function)
-            }
-            Some(Spanned {
-                value: FilterToken::Ident(name),
-                ..
-            }) => parse_comparison(input, tokens, &name)
-                .map(FilterAtom::Comparison),
-            Some(token) => {
-                Err(syntax_error(input, token.span, "a filter term"))
-            }
-            None => Err(syntax_error(
-                input,
-                SourceSpan::from((input.len(), 0)),
-                "a filter term",
-            )),
-        }
-    }
-
-    fn syntax_error(
-        &self,
-        input: &str,
-        span: SourceSpan,
-        expected: &'static str,
-    ) -> QuerySyntaxError {
-        QuerySyntaxError::new(QueryDialect::Filter, input, span, expected)
-    }
-}
-
 fn parse_literal_arg(
     input: &str,
     tokens: &mut TokenCursor<Spanned<FilterToken>>,
@@ -352,63 +349,66 @@ fn parse_comparison(
     Ok(ComparisonExpr::new(field, operator, value))
 }
 
-/// A recognized filter function call.
-///
-/// Adding a function requires adding a variant here, a name check in
-/// [`Self::build`], and matching logic in [`Self::matches`].
-///
-/// # Examples
-///
-/// ```ignore
-/// # use traces_pkm::query::filter::FilterFunction;
-/// // e.g., FilterFunction::Contains
-/// ```
-#[derive(Clone, Debug, PartialEq)]
-pub(super) enum FilterFunction {
-    /// `contains(field, target)`.
-    ///
-    /// - Lists match by exact value or tag prefix, such as `#book` matching
-    ///   `#book/fiction`.
-    /// - Other field kinds fall back to substring containment.
-    Contains {
-        field: FieldPath,
-        target: NoteFieldValue,
-    },
-}
+struct FilterGrammar;
 
-impl FilterFunction {
-    /// Builds the function call named `name` if it names a known function.
-    ///
-    /// Returns `None` if the name does not match any known function.
-    ///
-    /// # Arguments
-    ///
-    /// * `name` - Function name to match, case-insensitively.
-    /// * `field` - Already-parsed field path for the built call.
-    /// * `target` - Comparison or membership target for the built call.
-    fn build(
-        name: &str,
-        field: FieldPath,
-        target: NoteFieldValue,
-    ) -> Option<Self> {
-        if name.eq_ignore_ascii_case("contains") {
-            Some(Self::Contains {
-                field,
-                target,
-            })
-        } else {
-            None
+impl LogicalGrammar for FilterGrammar {
+    type Atom = FilterAtom;
+    type Token = FilterToken;
+
+    fn control(&self, token: &Self::Token) -> Option<LogicalControl> {
+        match token {
+            FilterToken::Logical(operator) => {
+                Some(LogicalControl::Operator(*operator))
+            }
+            FilterToken::Not => Some(LogicalControl::Not),
+            FilterToken::LParen => Some(LogicalControl::LeftParen),
+            FilterToken::RParen => Some(LogicalControl::RightParen),
+            FilterToken::Comma
+            | FilterToken::Op(_)
+            | FilterToken::Literal(_)
+            | FilterToken::Ident(_) => None,
         }
     }
 
-    /// Returns whether `record` satisfies this function call.
-    fn matches(&self, record: &QueryRecord) -> bool {
-        match self {
-            Self::Contains {
-                field,
-                target,
-            } => eval_contains(&record.resolve_ref(field), target),
+    fn parse_atom(
+        &self,
+        input: &str,
+        tokens: &mut TokenCursor<Spanned<Self::Token>>,
+    ) -> Result<Self::Atom, QueryError> {
+        match tokens.next() {
+            Some(Spanned {
+                value: FilterToken::Ident(name),
+                ..
+            }) if tokens
+                .peek()
+                .is_some_and(|token| token.value == FilterToken::LParen) =>
+            {
+                parse_function_call(input, tokens, &name)
+                    .map(FilterAtom::Function)
+            }
+            Some(Spanned {
+                value: FilterToken::Ident(name),
+                ..
+            }) => parse_comparison(input, tokens, &name)
+                .map(FilterAtom::Comparison),
+            Some(token) => {
+                Err(syntax_error(input, token.span, "a filter term"))
+            }
+            None => Err(syntax_error(
+                input,
+                SourceSpan::from((input.len(), 0)),
+                "a filter term",
+            )),
         }
+    }
+
+    fn syntax_error(
+        &self,
+        input: &str,
+        span: SourceSpan,
+        expected: &'static str,
+    ) -> QuerySyntaxError {
+        QuerySyntaxError::new(QueryDialect::Filter, input, span, expected)
     }
 }
 

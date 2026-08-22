@@ -833,7 +833,7 @@ mod tests {
             // Act — the real frontmatter has 1 field; the fenced content must
             // not appear as additional fields.
             let field_count =
-                note.frontmatter().map(|fm| fm.fields().len()).unwrap_or(0);
+                note.frontmatter().map_or(0, |fm| fm.fields().len());
 
             // Assert
             assert_eq!(
@@ -876,13 +876,68 @@ mod tests {
             let item_text = lists
                 .first()
                 .and_then(|l| l.items().first())
-                .map(|item| item.text())
+                .map(crate::note::lists::ListItem::text)
                 .unwrap_or_default();
 
             // Assert
             assert!(
                 item_text.contains("inline code"),
                 "inline code must appear in list item text, got: {item_text:?}"
+            );
+        }
+    }
+
+    mod list_tracker {
+        use super::*;
+
+        #[test]
+        fn is_item_active_returns_true_when_stack_nonempty() {
+            let mut tracker = ListTracker::default();
+            assert!(!tracker.is_item_active());
+
+            tracker.start_list(false);
+            tracker.start_item();
+
+            assert!(
+                tracker.is_item_active(),
+                "is_item_active must return true after start_item"
+            );
+        }
+
+        #[test]
+        fn inline_code_pushes_to_last_item_not_first() {
+            let mut tracker = ListTracker::default();
+            tracker.start_list(false);
+            tracker.start_item();
+            tracker.push_text("before ", false);
+            tracker.start_item();
+
+            tracker.inline_code("code");
+
+            tracker.end_item();
+            tracker.end_item();
+            tracker.end_list();
+
+            // end_item pops LIFO: item2 is index 0, item1 is index 1
+            let item1_text = tracker.lists[0].items()[1].text();
+            let item2_text = tracker.lists[0].items()[0].text();
+            assert!(
+                !item1_text.contains("code"),
+                "inline code must not leak to item 1, got: {item1_text:?}"
+            );
+            assert!(
+                item2_text.contains("code"),
+                "inline code must be in item 2, got: {item2_text:?}"
+            );
+        }
+
+        #[test]
+        fn push_scan_char_returns_false_when_no_item_active() {
+            let mut tracker = ListTracker::default();
+            let result = tracker.push_scan_char('a');
+            assert!(
+                !result,
+                "push_scan_char must return false when no item is active"
             );
         }
     }
