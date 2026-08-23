@@ -58,6 +58,7 @@ mod record;
 mod request;
 mod service;
 mod sort;
+mod value;
 
 pub(crate) use error::QueryRequestError;
 #[cfg(test)]

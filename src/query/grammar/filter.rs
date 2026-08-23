@@ -9,12 +9,11 @@ use super::{
     lex::{Spanned, TokenStream},
 };
 use crate::{
-    note::{NoteFieldValue, is_nested_under},
+    note::NoteFieldValue,
     query::{
         QueryError, QueryRecord,
         error::{QueryDialect, QuerySyntaxError},
-        record::{QueryFieldValueRef, QueryListValueRef},
-        sort::fields_equal,
+        value::QueryFieldValueRef,
     },
 };
 
@@ -235,93 +234,8 @@ impl FilterFunction {
             Self::Contains {
                 field,
                 target,
-            } => Self::is_containing(&record.resolve_ref(field), target),
+            } => record.resolve_ref(field).is_containing(target),
         }
-    }
-
-    /// Evaluates a `contains(field_val, target)` call.
-    ///
-    /// For list fields, matches by exact value or tag prefix (for example,
-    /// `#book` matching `#book/fiction`). For other field kinds, falls back
-    /// to substring containment on stringified values.
-    fn is_containing(
-        field_val: &QueryFieldValueRef<'_>,
-        target: &NoteFieldValue,
-    ) -> bool {
-        match field_val {
-            QueryFieldValueRef::List(items) => {
-                Self::is_list_containing(items, target)
-            }
-            QueryFieldValueRef::Owned(NoteFieldValue::List(items)) => {
-                Self::is_list_containing(
-                    &QueryListValueRef::Values(items),
-                    target,
-                )
-            }
-            _ => match (field_val.as_str(), target.as_str()) {
-                (Some(haystack), Some(needle)) => haystack.contains(needle),
-                _ => false,
-            },
-        }
-    }
-
-    fn is_list_containing(
-        items: &QueryListValueRef<'_>,
-        target: &NoteFieldValue,
-    ) -> bool {
-        let target_str = target.as_str();
-        match items {
-            QueryListValueRef::Values(items) => items.iter().any(|item| {
-                Self::is_tag_or_value_matching(item, target, target_str)
-            }),
-            QueryListValueRef::Tags(tags) => {
-                let Some(target_str) = target_str else {
-                    return false;
-                };
-                tags.iter().any(|tag| {
-                    Self::is_tag_str_matching(tag.as_str(), target_str)
-                })
-            }
-            QueryListValueRef::Inlinks(paths) => {
-                let Some(target_str) = target_str else {
-                    return false;
-                };
-                paths.iter().any(|path| {
-                    let path = path.to_string_lossy();
-                    Self::is_tag_str_matching(&path, target_str)
-                })
-            }
-        }
-    }
-
-    fn is_tag_str_matching(item: &str, target_str: &str) -> bool {
-        item == target_str
-            || item.starts_with('#')
-                && target_str.starts_with('#')
-                && is_nested_under(item, target_str)
-    }
-
-    /// Returns whether list element `item` matches `target`.
-    ///
-    /// Values match exactly. Tag values also match when `item` is nested
-    /// directly or transitively under `target` (for example, `#book/fiction`
-    /// under `#book`). Both parameters must be string values for tag prefix
-    /// matching; non-string pairs fall through to exact equality only.
-    fn is_tag_or_value_matching(
-        item: &NoteFieldValue,
-        target: &NoteFieldValue,
-        target_str: Option<&str>,
-    ) -> bool {
-        if fields_equal(item, target) {
-            return true;
-        }
-        let (Some(item_str), Some(target_str)) = (item.as_str(), target_str)
-        else {
-            return false;
-        };
-        item_str.starts_with('#')
-            && target_str.starts_with('#')
-            && is_nested_under(item_str, target_str)
     }
 }
 
@@ -934,10 +848,7 @@ mod tests {
 
         use crate::{
             note::NoteFieldValue,
-            query::{
-                grammar::filter::FilterFunction,
-                record::{QueryFieldValueRef, QueryListValueRef},
-            },
+            query::value::{QueryFieldValueRef, QueryListValueRef},
         };
 
         #[test]
@@ -950,14 +861,11 @@ mod tests {
                 vec![NoteFieldValue::String("#book/fiction".to_owned())];
             let target = NoteFieldValue::String("#book".to_owned());
 
-            let borrowed = FilterFunction::is_containing(
-                &QueryFieldValueRef::List(QueryListValueRef::Values(&items)),
-                &target,
-            );
-            let owned = FilterFunction::is_containing(
-                &QueryFieldValueRef::Owned(NoteFieldValue::List(items)),
-                &target,
-            );
+            let borrowed =
+                QueryFieldValueRef::List(QueryListValueRef::Values(&items))
+                    .is_containing(&target);
+            let owned = QueryFieldValueRef::Owned(NoteFieldValue::List(items))
+                .is_containing(&target);
 
             assert_eq!(borrowed, owned);
             assert!(borrowed, "#book must match #book/fiction by tag prefix");

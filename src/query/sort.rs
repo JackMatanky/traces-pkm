@@ -23,7 +23,6 @@
 
 use std::cmp::Ordering;
 
-use super::record::QueryFieldValueRef;
 use crate::note::NoteFieldValue;
 
 /// Sort direction for sorting operations and CLI configuration.
@@ -81,74 +80,6 @@ pub(super) fn compare_field_values(
             (Some(x), Some(y)) => Some(x.cmp(y)),
             _ => None,
         },
-    }
-}
-
-/// Returns whether two resolved [`NoteFieldValue`] instances represent equal
-/// values under filter comparison (`==` and `!=`).
-///
-/// Returns `true` when structural equality (`a == b`) holds, or when
-/// [`compare_field_values`] returns `Some(Ordering::Equal)`. This cross-kind
-/// text normalization allows string literals to match date or duration fields.
-pub(super) fn fields_equal(a: &NoteFieldValue, b: &NoteFieldValue) -> bool {
-    a == b || compare_field_values(a, b) == Some(Ordering::Equal)
-}
-
-impl QueryFieldValueRef<'_> {
-    /// Compares this resolved field against an owned literal to establish
-    /// ordering for `<`, `<=`, `>`, `>=` filter comparisons.
-    pub(super) fn compare_to_literal(
-        &self,
-        literal: &NoteFieldValue,
-    ) -> Option<Ordering> {
-        match (self, literal) {
-            (Self::Number(x), NoteFieldValue::Number(y)) => x.partial_cmp(y),
-            (Self::Bool(x), NoteFieldValue::Bool(y)) => Some(x.cmp(y)),
-            (Self::Date(x), NoteFieldValue::Date(y))
-            | (Self::Duration(x), NoteFieldValue::Duration(y)) => {
-                Some(x.cmp(&y.as_str()))
-            }
-            (Self::Object(_), NoteFieldValue::Object(_)) => None,
-            (Self::Owned(value), literal) => {
-                compare_field_values(value, literal)
-            }
-            _ => match (self.as_str(), literal.as_str()) {
-                (Some(x), Some(y)) => Some(x.cmp(y)),
-                _ => None,
-            },
-        }
-    }
-
-    /// Returns whether this resolved field equals an owned literal under
-    /// filter comparison rules (`==`, `!=`).
-    #[expect(
-        clippy::float_cmp,
-        reason = "query numeric equality intentionally uses exact parsed \
-                  metadata equality; ordering still uses total_cmp"
-    )]
-    pub(super) fn is_equal_to_literal(&self, literal: &NoteFieldValue) -> bool {
-        match self {
-            Self::Null => matches!(literal, NoteFieldValue::Null),
-            Self::Bool(value) => {
-                matches!(literal, NoteFieldValue::Bool(other) if value == other)
-            }
-            Self::Number(value) => {
-                matches!(literal, NoteFieldValue::Number(other) if value == other)
-            }
-            Self::Text(value) => literal.as_str() == Some(value),
-            Self::Link(value) => {
-                matches!(literal, NoteFieldValue::Link(other) if *value == other)
-            }
-            Self::Date(value) | Self::Duration(value) => {
-                literal.as_str() == Some(value)
-            }
-            Self::Object(value) => {
-                matches!(literal, NoteFieldValue::Object(other) if *value == other)
-            }
-            Self::List(_) | Self::Owned(_) => {
-                fields_equal(&self.to_owned_value(), literal)
-            }
-        }
     }
 }
 

@@ -34,11 +34,12 @@ use super::{
     format::QueryDisplayFormat,
     grammar::{FieldPath, FileField, FilterExpr, TaskField},
     sort::SortKey,
+    value::{QueryFieldValueRef, QueryListValueRef},
 };
 use crate::{
     file::FileRecord,
     index::FileIndexEntry,
-    note::{Link, ListItem, Note, NoteFieldValue, Tag, TaskStatus},
+    note::{ListItem, Note, NoteFieldValue, TaskStatus},
 };
 
 /// A query row pairing a [`FileRecord`] with parsed [`Note`] metadata.
@@ -270,97 +271,6 @@ impl QueryRecord {
                 QueryFieldValueRef::Bool(task.status == TaskStatus::Complete)
             }
             TaskField::Text => QueryFieldValueRef::Text(&task.text),
-        }
-    }
-}
-
-/// Borrowed field value resolved from a [`QueryRecord`].
-pub(super) enum QueryFieldValueRef<'a> {
-    Null,
-    Bool(bool),
-    Number(f64),
-    Text(&'a str),
-    Link(&'a Link),
-    Date(&'a str),
-    Duration(&'a str),
-    Object(&'a indexmap::IndexMap<String, NoteFieldValue>),
-    List(QueryListValueRef<'a>),
-    Owned(NoteFieldValue),
-}
-
-impl QueryFieldValueRef<'_> {
-    pub(super) fn to_owned_value(&self) -> NoteFieldValue {
-        match self {
-            Self::Null => NoteFieldValue::Null,
-            Self::Bool(value) => NoteFieldValue::Bool(*value),
-            Self::Number(value) => NoteFieldValue::Number(*value),
-            Self::Text(value) => NoteFieldValue::String((*value).to_owned()),
-            Self::Link(value) => NoteFieldValue::Link((*value).clone()),
-            Self::Date(value) => NoteFieldValue::Date((*value).to_owned()),
-            Self::Duration(value) => {
-                NoteFieldValue::Duration((*value).to_owned())
-            }
-            Self::Object(value) => NoteFieldValue::Object((*value).clone()),
-            Self::List(value) => value.to_owned_value(),
-            Self::Owned(value) => value.clone(),
-        }
-    }
-
-    pub(super) fn as_str(&self) -> Option<&str> {
-        match self {
-            Self::Text(value) | Self::Date(value) | Self::Duration(value) => {
-                Some(value)
-            }
-            Self::Owned(value) => value.as_str(),
-            _ => None,
-        }
-    }
-}
-
-impl<'a> From<&'a NoteFieldValue> for QueryFieldValueRef<'a> {
-    fn from(value: &'a NoteFieldValue) -> Self {
-        match value {
-            NoteFieldValue::Null => Self::Null,
-            NoteFieldValue::Bool(value) => Self::Bool(*value),
-            NoteFieldValue::Number(value) => Self::Number(*value),
-            NoteFieldValue::String(value) => Self::Text(value),
-            NoteFieldValue::Date(value) => Self::Date(value),
-            NoteFieldValue::Duration(value) => Self::Duration(value),
-            NoteFieldValue::Link(value) => Self::Link(value),
-            NoteFieldValue::List(value) => {
-                Self::List(QueryListValueRef::Values(value))
-            }
-            NoteFieldValue::Object(value) => Self::Object(value),
-        }
-    }
-}
-
-/// Borrowed list value resolved from a [`QueryRecord`].
-pub(super) enum QueryListValueRef<'a> {
-    Values(&'a [NoteFieldValue]),
-    Tags(&'a [Tag]),
-    Inlinks(&'a [PathBuf]),
-}
-
-impl QueryListValueRef<'_> {
-    fn to_owned_value(&self) -> NoteFieldValue {
-        match self {
-            Self::Values(values) => NoteFieldValue::List((*values).to_vec()),
-            Self::Tags(tags) => NoteFieldValue::List(
-                tags.iter()
-                    .map(|tag| NoteFieldValue::String(tag.as_str().to_owned()))
-                    .collect(),
-            ),
-            Self::Inlinks(inlinks) => NoteFieldValue::List(
-                inlinks
-                    .iter()
-                    .map(|path| {
-                        NoteFieldValue::String(
-                            path.to_string_lossy().into_owned(),
-                        )
-                    })
-                    .collect(),
-            ),
         }
     }
 }
