@@ -12,23 +12,6 @@ pub struct QueryRequest {
     pub(super) transforms: Vec<QueryTransform>,
 }
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub(super) enum QueryMode {
-    Pages,
-    Tasks,
-}
-
-pub(super) enum QueryTransform {
-    Filter(FilterExpr),
-    Sort {
-        field: FieldPath,
-        descending: bool,
-    },
-    Limit(usize),
-    GroupBy(FieldPath),
-    Flatten(FieldPath),
-}
-
 impl QueryRequest {
     /// Builds a page-row query request for `source`.
     #[inline]
@@ -92,6 +75,23 @@ impl QueryRequest {
         self.transforms.push(QueryTransform::limit(n)?);
         Ok(self)
     }
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub(super) enum QueryMode {
+    Pages,
+    Tasks,
+}
+
+pub(super) enum QueryTransform {
+    Filter(FilterExpr),
+    Sort {
+        field: FieldPath,
+        descending: bool,
+    },
+    Limit(usize),
+    GroupBy(FieldPath),
+    Flatten(FieldPath),
 }
 
 impl QueryTransform {

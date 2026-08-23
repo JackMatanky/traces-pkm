@@ -168,8 +168,6 @@ pub(crate) trait FileClassExpander {
     fn expand(&self, classes: &[String], mode: &mut ClassExpansionMode);
 }
 
-struct SourceGrammar;
-
 impl GlobPattern {
     /// Compiles `pattern` (glob syntax: `*`, `**`, literal characters) into an
     /// anchored path matcher.
@@ -539,6 +537,8 @@ impl SourceGrammar {
         })
     }
 }
+
+struct SourceGrammar;
 
 impl AtomParser for SourceGrammar {
     type Atom = SourceAtom;

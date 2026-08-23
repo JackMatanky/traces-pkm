@@ -67,6 +67,23 @@ pub(super) enum CompareOp {
     Ge,
 }
 
+impl TryFrom<&str> for CompareOp {
+    type Error = ();
+
+    /// Attempts to parse a comparison operator from its string representation.
+    fn try_from(spelling: &str) -> Result<Self, Self::Error> {
+        match spelling {
+            "==" => Ok(Self::Eq),
+            "!=" => Ok(Self::Ne),
+            ">=" => Ok(Self::Ge),
+            "<=" => Ok(Self::Le),
+            ">" => Ok(Self::Gt),
+            "<" => Ok(Self::Lt),
+            _ => Err(()),
+        }
+    }
+}
+
 /// A recognized filter function call.
 ///
 /// Adding a function requires adding a variant here, a name check in
@@ -193,23 +210,6 @@ impl CompareOp {
                 field.compare_to_literal(literal),
                 Some(std::cmp::Ordering::Greater | std::cmp::Ordering::Equal)
             ),
-        }
-    }
-}
-
-impl TryFrom<&str> for CompareOp {
-    type Error = ();
-
-    /// Attempts to parse a comparison operator from its string representation.
-    fn try_from(spelling: &str) -> Result<Self, Self::Error> {
-        match spelling {
-            "==" => Ok(Self::Eq),
-            "!=" => Ok(Self::Ne),
-            ">=" => Ok(Self::Ge),
-            "<=" => Ok(Self::Le),
-            ">" => Ok(Self::Gt),
-            "<" => Ok(Self::Lt),
-            _ => Err(()),
         }
     }
 }

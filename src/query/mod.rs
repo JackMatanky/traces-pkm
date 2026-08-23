@@ -37,7 +37,7 @@
 //!   transformations.
 //! - [`SourceSelector`] is the top-level entry point: either all Notes or a
 //!   parsed expression.
-//! - [`SourceSelectorExpr`] wraps the expression AST.
+//! - [`SourceExpr`] wraps the expression AST.
 //! - [`QueryRecord`] pairs a [`FileRecord`] with its parsed [`Note`] and
 //!   resolves `file.*`, `task.*`, frontmatter, tag, and inlinks fields.
 //! - [`QueryRecordSet`] stores result rows and provides chained transformation

@@ -15,6 +15,20 @@ pub(super) enum LogicalOp {
     Or,
 }
 
+impl TryFrom<&str> for LogicalOp {
+    type Error = ();
+
+    fn try_from(spelling: &str) -> Result<Self, Self::Error> {
+        if spelling == "&&" || spelling.eq_ignore_ascii_case("and") {
+            Ok(Self::And)
+        } else if spelling == "||" || spelling.eq_ignore_ascii_case("or") {
+            Ok(Self::Or)
+        } else {
+            Err(())
+        }
+    }
+}
+
 /// Logical control syntax recognized independently of domain-specific atoms.
 ///
 /// The shared parser uses these to build the expression tree without knowing
@@ -245,20 +259,6 @@ impl<'input, G: AtomParser> BooleanExprParser<'input, G> {
         expected: &'static str,
     ) -> QuerySyntaxError {
         self.grammar.syntax_error(self.input, span, expected)
-    }
-}
-
-impl TryFrom<&str> for LogicalOp {
-    type Error = ();
-
-    fn try_from(spelling: &str) -> Result<Self, Self::Error> {
-        if spelling == "&&" || spelling.eq_ignore_ascii_case("and") {
-            Ok(Self::And)
-        } else if spelling == "||" || spelling.eq_ignore_ascii_case("or") {
-            Ok(Self::Or)
-        } else {
-            Err(())
-        }
     }
 }
 
