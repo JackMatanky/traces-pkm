@@ -94,67 +94,60 @@ pub(super) fn fields_equal(a: &NoteFieldValue, b: &NoteFieldValue) -> bool {
     a == b || compare_field_values(a, b) == Some(Ordering::Equal)
 }
 
-/// Compares a borrowed resolved field against an owned literal.
-pub(super) fn compare_resolved_field(
-    field: &QueryFieldValueRef<'_>,
-    literal: &NoteFieldValue,
-) -> Option<Ordering> {
-    match (field, literal) {
-        (QueryFieldValueRef::Number(x), NoteFieldValue::Number(y)) => {
-            x.partial_cmp(y)
+impl QueryFieldValueRef<'_> {
+    /// Compares this resolved field against an owned literal to establish
+    /// ordering for `<`, `<=`, `>`, `>=` filter comparisons.
+    pub(super) fn compare_to_literal(
+        &self,
+        literal: &NoteFieldValue,
+    ) -> Option<Ordering> {
+        match (self, literal) {
+            (Self::Number(x), NoteFieldValue::Number(y)) => x.partial_cmp(y),
+            (Self::Bool(x), NoteFieldValue::Bool(y)) => Some(x.cmp(y)),
+            (Self::Date(x), NoteFieldValue::Date(y))
+            | (Self::Duration(x), NoteFieldValue::Duration(y)) => {
+                Some(x.cmp(&y.as_str()))
+            }
+            (Self::Object(_), NoteFieldValue::Object(_)) => None,
+            (Self::Owned(value), literal) => {
+                compare_field_values(value, literal)
+            }
+            _ => match (self.as_str(), literal.as_str()) {
+                (Some(x), Some(y)) => Some(x.cmp(y)),
+                _ => None,
+            },
         }
-        (QueryFieldValueRef::Bool(x), NoteFieldValue::Bool(y)) => {
-            Some(x.cmp(y))
-        }
-        (QueryFieldValueRef::Date(x), NoteFieldValue::Date(y))
-        | (QueryFieldValueRef::Duration(x), NoteFieldValue::Duration(y)) => {
-            Some(x.cmp(&y.as_str()))
-        }
-        (QueryFieldValueRef::Object(x), NoteFieldValue::Object(_)) => {
-            compare_field_values(&NoteFieldValue::Object((*x).clone()), literal)
-        }
-        (QueryFieldValueRef::Owned(value), literal) => {
-            compare_field_values(value, literal)
-        }
-        _ => match (field.as_str(), literal.as_str()) {
-            (Some(x), Some(y)) => Some(x.cmp(y)),
-            _ => None,
-        },
     }
-}
 
-/// Returns whether a borrowed resolved field equals an owned literal under
-/// filter comparison rules.
-#[expect(
-    clippy::float_cmp,
-    reason = "query numeric equality intentionally uses exact parsed metadata \
-              equality; ordering still uses total_cmp"
-)]
-pub(super) fn resolved_field_equals(
-    field: &QueryFieldValueRef<'_>,
-    literal: &NoteFieldValue,
-) -> bool {
-    match field {
-        QueryFieldValueRef::Null => matches!(literal, NoteFieldValue::Null),
-        QueryFieldValueRef::Bool(value) => {
-            matches!(literal, NoteFieldValue::Bool(other) if value == other)
-        }
-        QueryFieldValueRef::Number(value) => {
-            matches!(literal, NoteFieldValue::Number(other) if value == other)
-        }
-        QueryFieldValueRef::Text(value) => literal.as_str() == Some(value),
-        QueryFieldValueRef::Link(value) => {
-            matches!(literal, NoteFieldValue::Link(other) if *value == other)
-        }
-        QueryFieldValueRef::Date(value)
-        | QueryFieldValueRef::Duration(value) => {
-            literal.as_str() == Some(value)
-        }
-        QueryFieldValueRef::Object(value) => {
-            matches!(literal, NoteFieldValue::Object(other) if *value == other)
-        }
-        QueryFieldValueRef::List(_) | QueryFieldValueRef::Owned(_) => {
-            fields_equal(&field.to_owned_value(), literal)
+    /// Returns whether this resolved field equals an owned literal under
+    /// filter comparison rules (`==`, `!=`).
+    #[expect(
+        clippy::float_cmp,
+        reason = "query numeric equality intentionally uses exact parsed \
+                  metadata equality; ordering still uses total_cmp"
+    )]
+    pub(super) fn is_equal_to_literal(&self, literal: &NoteFieldValue) -> bool {
+        match self {
+            Self::Null => matches!(literal, NoteFieldValue::Null),
+            Self::Bool(value) => {
+                matches!(literal, NoteFieldValue::Bool(other) if value == other)
+            }
+            Self::Number(value) => {
+                matches!(literal, NoteFieldValue::Number(other) if value == other)
+            }
+            Self::Text(value) => literal.as_str() == Some(value),
+            Self::Link(value) => {
+                matches!(literal, NoteFieldValue::Link(other) if *value == other)
+            }
+            Self::Date(value) | Self::Duration(value) => {
+                literal.as_str() == Some(value)
+            }
+            Self::Object(value) => {
+                matches!(literal, NoteFieldValue::Object(other) if *value == other)
+            }
+            Self::List(_) | Self::Owned(_) => {
+                fields_equal(&self.to_owned_value(), literal)
+            }
         }
     }
 }
@@ -237,10 +230,10 @@ impl Ord for SortKey {
 
 #[cfg(test)]
 mod tests {
-    use std::{cmp::Ordering, fs, path::Path};
+    use std::{fs, path::Path};
 
-    use super::{super::*, sort_key_cmp};
-    use crate::{index::IndexerService, note::NoteFieldValue};
+    use super::super::*;
+    use crate::index::IndexerService;
 
     fn outcome_for_files(
         temp: &Path,
@@ -265,166 +258,80 @@ mod tests {
             .collect()
     }
 
-    #[test]
-    fn orders_ascending_by_default() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let outcome = outcome_for_files(temp.path(), &[
-            ("b.md", "---\nrating: 7\n---"),
-            ("a.md", "---\nrating: 3\n---"),
-        ]);
-
-        let sorted = outcome.sort("rating", false).expect("valid sort");
-
-        assert_eq!(names(&sorted), ["a", "b"]);
-    }
-
-    #[test]
-    fn orders_descending_when_requested() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let outcome = outcome_for_files(temp.path(), &[
-            ("b.md", "---\nrating: 7\n---"),
-            ("a.md", "---\nrating: 3\n---"),
-        ]);
-
-        let sorted = outcome.sort("rating", true).expect("valid sort");
-
-        assert_eq!(names(&sorted), ["b", "a"]);
-    }
-
-    #[test]
-    fn missing_field_sorts_as_the_minimum_value() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let outcome = outcome_for_files(temp.path(), &[
-            ("rated.md", "---\nrating: 3\n---"),
-            ("unrated.md", "no frontmatter"),
-        ]);
-
-        let ascending =
-            outcome.clone().sort("rating", false).expect("valid sort");
-        let descending = outcome.sort("rating", true).expect("valid sort");
-
-        // Matches Dataview: Null is the minimum value, so it leads
-        // ascending and trails descending, like any other value would.
-        assert_eq!(names(&ascending), ["unrated", "rated"]);
-        assert_eq!(names(&descending), ["rated", "unrated"]);
-    }
-
-    #[test]
-    fn ties_keep_original_relative_order() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let outcome = outcome_for_files(temp.path(), &[
-            ("a.md", "---\nrating: 5\n---"),
-            ("b.md", "---\nrating: 5\n---"),
-        ]);
-
-        let sorted = outcome.sort("rating", false).expect("valid sort");
-
-        assert_eq!(names(&sorted), ["a", "b"]);
-    }
-
-    #[test]
-    fn sorts_non_finite_and_signed_zero_numbers_totally() {
-        let nan = NoteFieldValue::Number(f64::NAN);
-        let infinity = NoteFieldValue::Number(f64::INFINITY);
-        let negative_zero = NoteFieldValue::Number(-0.0);
-        let zero = NoteFieldValue::Number(0.0);
-
-        assert_eq!(
-            sort_key_cmp(&nan, &infinity, false),
-            f64::NAN.total_cmp(&f64::INFINITY)
-        );
-        assert_eq!(sort_key_cmp(&negative_zero, &zero, false), Ordering::Less);
-    }
-
-    #[test]
-    fn rejects_malformed_field_path() {
-        let temp = tempfile::tempdir().expect("create temp dir");
-        let outcome = outcome_for(temp.path(), "body");
-
-        assert_eq!(
-            outcome.sort("file.bogus", false),
-            Err(QueryError::Request(QueryRequestError::FieldPath(
-                FieldPathError::new("file.bogus", None)
-            )))
-        );
-    }
-
-    mod sort_order {
+    mod sort {
         use pretty_assertions::assert_eq;
 
-        use super::super::SortOrder;
-
-        #[test]
-        fn default_is_ascending() {
-            assert_eq!(SortOrder::default(), SortOrder::Ascending);
-        }
-
-        #[test]
-        fn only_descending_is_descending() {
-            assert!(!SortOrder::Ascending.is_descending());
-            assert!(SortOrder::Descending.is_descending());
-        }
-    }
-
-    mod compare_field_values_bools {
-        use pretty_assertions::assert_eq;
-
-        use super::super::compare_field_values;
-        use crate::note::NoteFieldValue;
-
-        #[test]
-        fn orders_false_before_true() {
-            let a = NoteFieldValue::Bool(false);
-            let b = NoteFieldValue::Bool(true);
-
-            assert_eq!(
-                compare_field_values(&a, &b),
-                Some(std::cmp::Ordering::Less)
-            );
-        }
-    }
-
-    mod sort_key_cmp_nulls {
-        use pretty_assertions::assert_eq;
-
-        use super::super::sort_key_cmp;
-        use crate::note::NoteFieldValue;
-
-        #[test]
-        fn null_is_less_than_any_value() {
-            let null = NoteFieldValue::Null;
-            let number = NoteFieldValue::Number(1.0);
-            let string = NoteFieldValue::String("hello".to_owned());
-            let boolean = NoteFieldValue::Bool(true);
-
-            assert_eq!(
-                sort_key_cmp(&null, &number, false),
-                std::cmp::Ordering::Less
-            );
-            assert_eq!(
-                sort_key_cmp(&null, &string, false),
-                std::cmp::Ordering::Less
-            );
-            assert_eq!(
-                sort_key_cmp(&null, &boolean, false),
-                std::cmp::Ordering::Less
-            );
-        }
-
-        #[test]
-        fn null_trails_in_descending_order() {
-            let null = NoteFieldValue::Null;
-            let number = NoteFieldValue::Number(1.0);
-
-            assert_eq!(
-                sort_key_cmp(&null, &number, true),
-                std::cmp::Ordering::Greater
-            );
-        }
-    }
-
-    mod sort_notes_by_bool_field {
         use super::*;
+
+        #[test]
+        fn orders_ascending_by_default() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let outcome = outcome_for_files(temp.path(), &[
+                ("b.md", "---\nrating: 7\n---"),
+                ("a.md", "---\nrating: 3\n---"),
+            ]);
+
+            let sorted = outcome.sort("rating", false).expect("valid sort");
+
+            assert_eq!(names(&sorted), ["a", "b"]);
+        }
+
+        #[test]
+        fn orders_descending_when_requested() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let outcome = outcome_for_files(temp.path(), &[
+                ("b.md", "---\nrating: 7\n---"),
+                ("a.md", "---\nrating: 3\n---"),
+            ]);
+
+            let sorted = outcome.sort("rating", true).expect("valid sort");
+
+            assert_eq!(names(&sorted), ["b", "a"]);
+        }
+
+        #[test]
+        fn missing_field_sorts_as_the_minimum_value() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let outcome = outcome_for_files(temp.path(), &[
+                ("rated.md", "---\nrating: 3\n---"),
+                ("unrated.md", "no frontmatter"),
+            ]);
+
+            let ascending =
+                outcome.clone().sort("rating", false).expect("valid sort");
+            let descending = outcome.sort("rating", true).expect("valid sort");
+
+            // Matches Dataview: Null is the minimum value, so it leads
+            // ascending and trails descending, like any other value would.
+            assert_eq!(names(&ascending), ["unrated", "rated"]);
+            assert_eq!(names(&descending), ["rated", "unrated"]);
+        }
+
+        #[test]
+        fn ties_keep_original_relative_order() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let outcome = outcome_for_files(temp.path(), &[
+                ("a.md", "---\nrating: 5\n---"),
+                ("b.md", "---\nrating: 5\n---"),
+            ]);
+
+            let sorted = outcome.sort("rating", false).expect("valid sort");
+
+            assert_eq!(names(&sorted), ["a", "b"]);
+        }
+
+        #[test]
+        fn rejects_malformed_field_path() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let outcome = outcome_for(temp.path(), "body");
+
+            assert_eq!(
+                outcome.sort("file.bogus", false),
+                Err(QueryError::Request(QueryRequestError::FieldPath(
+                    FieldPathError::new("file.bogus", None)
+                )))
+            );
+        }
 
         #[test]
         fn sorts_boolean_field_false_before_true() {
@@ -450,6 +357,86 @@ mod tests {
             let sorted = outcome.sort("active", false).expect("valid sort");
 
             assert_eq!(names(&sorted), ["none", "true"]);
+        }
+    }
+
+    mod sort_order {
+        use pretty_assertions::assert_eq;
+
+        use super::super::SortOrder;
+
+        #[test]
+        fn default_is_ascending() {
+            assert_eq!(SortOrder::default(), SortOrder::Ascending);
+        }
+
+        #[test]
+        fn only_descending_is_descending() {
+            assert!(!SortOrder::Ascending.is_descending());
+            assert!(SortOrder::Descending.is_descending());
+        }
+    }
+
+    mod compare_field_values {
+        use pretty_assertions::assert_eq;
+
+        use super::super::compare_field_values;
+        use crate::note::NoteFieldValue;
+
+        #[test]
+        fn orders_false_before_true() {
+            let a = NoteFieldValue::Bool(false);
+            let b = NoteFieldValue::Bool(true);
+
+            assert_eq!(
+                compare_field_values(&a, &b),
+                Some(std::cmp::Ordering::Less)
+            );
+        }
+    }
+
+    mod sort_key_cmp {
+        use std::cmp::Ordering;
+
+        use pretty_assertions::assert_eq;
+
+        use super::super::sort_key_cmp;
+        use crate::note::NoteFieldValue;
+        #[test]
+        fn null_is_less_than_any_value() {
+            let null = NoteFieldValue::Null;
+            let number = NoteFieldValue::Number(1.0);
+            let string = NoteFieldValue::String("hello".to_owned());
+            let boolean = NoteFieldValue::Bool(true);
+
+            assert_eq!(sort_key_cmp(&null, &number, false), Ordering::Less);
+            assert_eq!(sort_key_cmp(&null, &string, false), Ordering::Less);
+            assert_eq!(sort_key_cmp(&null, &boolean, false), Ordering::Less);
+        }
+
+        #[test]
+        fn null_trails_in_descending_order() {
+            let null = NoteFieldValue::Null;
+            let number = NoteFieldValue::Number(1.0);
+
+            assert_eq!(sort_key_cmp(&null, &number, true), Ordering::Greater);
+        }
+
+        #[test]
+        fn sorts_non_finite_and_signed_zero_numbers_totally() {
+            let nan = NoteFieldValue::Number(f64::NAN);
+            let infinity = NoteFieldValue::Number(f64::INFINITY);
+            let negative_zero = NoteFieldValue::Number(-0.0);
+            let zero = NoteFieldValue::Number(0.0);
+
+            assert_eq!(
+                sort_key_cmp(&nan, &infinity, false),
+                f64::NAN.total_cmp(&f64::INFINITY)
+            );
+            assert_eq!(
+                sort_key_cmp(&negative_zero, &zero, false),
+                Ordering::Less
+            );
         }
     }
 }

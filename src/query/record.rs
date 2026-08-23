@@ -30,10 +30,9 @@
 use std::{path::PathBuf, sync::Arc};
 
 use super::{
-    FileField, QueryError, QueryTransform,
-    field::{FieldPath, TaskField},
-    filter::FilterExpr,
+    QueryError, QueryTransform,
     format::QueryDisplayFormat,
+    grammar::{FieldPath, FileField, FilterExpr, TaskField},
     sort::SortKey,
 };
 use crate::{

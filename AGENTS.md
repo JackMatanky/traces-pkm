@@ -29,7 +29,7 @@ Single-context — one `CONTEXT.md` + `docs/adr/` at repo root. See `docs/agents
 | Resource | Use for |
 | -------- | ------- |
 | `mise://tools` | List managed tools and their versions |
-| `mise://tasks` | List all available project tasks (including those in `.mise/tasks/`) and dependencies |
+| `mise://tasks` | List all tasks with names, descriptions, dependencies, and command definitions |
 | `mise://env` | View environment variables defined in mise |
 | `mise://config` | View active mise configuration and project root |
 
@@ -43,12 +43,12 @@ Single-context — one `CONTEXT.md` + `docs/adr/` at repo root. See `docs/agents
 
 | Task | Alias | Use for |
 | ---- | ----- | ------- |
-| `check` | `c` | Fastest compile signal — run after every edit |
+| `check` | `c` | Cargo compile check + hk project checks — run after every edit |
 | `test` | `t` | Prove it works; scope with `-- --lib <module>`, `-- --test <file>`, or a name substring |
-| `clippy` | — | Deny-warnings lint gate; `--fix` auto-applies |
+| `lint` | `l` | Strict clippy: workspace, all targets, all features. `--fix` applies known lints; depends on `fmt` |
 | `fmt` | `f` | Format before diffing/committing |
 | `fix` | — | Auto-fix hygiene/formatting `hk` catches; `-- --unstaged` scopes to files just edited |
-| `verify` | `v` | Full gate (fmt→lint→clippy→test-all→audit) — run before yielding/committing non-trivial changes |
+| `verify` | `v` | Full gate (fmt→lint→clippy→test-all) — run before yielding/committing non-trivial changes |
 <!-- mise:end -->
 
 <!-- hk:start -->
@@ -64,7 +64,7 @@ Single-context — one `CONTEXT.md` + `docs/adr/` at repo root. See `docs/agents
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
- @theirs
+This project is indexed by GitNexus as **traces-pkm** (5027 symbols, 13579 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > Index stale? Run `node .gitnexus/run.cjs analyze` from the project root — it auto-selects an available runner. No `.gitnexus/run.cjs` yet? `npx gitnexus analyze` (npm 11 crash → `npm i -g gitnexus`; #1939).
 

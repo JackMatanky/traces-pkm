@@ -22,8 +22,10 @@
 //! let path = FieldPath::parse("file.name").unwrap();
 //! ```
 
-use super::error::FieldPathError;
-use crate::{field, field::FieldKey, file::FileRecord, note::NoteFieldValue};
+use crate::{
+    field, field::FieldKey, file::FileRecord, note::NoteFieldValue,
+    query::error::FieldPathError,
+};
 
 /// A `file.<field>` accessor backed by [`FileRecord`] metadata.
 ///
@@ -152,7 +154,7 @@ impl FileField {
 /// assert_eq!(accessor, Some(TaskField::Completed));
 /// ```
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub(super) enum TaskField {
+pub(crate) enum TaskField {
     /// Accesses task completion state (`- [ ]` versus `- [x]`).
     Completed,
     /// Accesses task item text.
@@ -199,7 +201,7 @@ impl TaskField {
 /// let path = FieldPath::parse("file.name").unwrap();
 /// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) enum FieldPath {
+pub(crate) enum FieldPath {
     /// Wraps a `file.<field>` accessor ([`FileField`]).
     File(FileField),
     /// Wraps a `task.<field>` accessor ([`TaskField`]), which resolves to
@@ -237,7 +239,7 @@ impl FieldPath {
     /// let path = FieldPath::parse("file.name");
     /// assert!(path.is_ok());
     /// ```
-    pub(super) fn parse(path: &str) -> Result<Self, FieldPathError> {
+    pub(crate) fn parse(path: &str) -> Result<Self, FieldPathError> {
         let path = path.trim();
         let invalid = || FieldPathError::new(path, None);
         if let Some(field) = path.strip_prefix("file.") {

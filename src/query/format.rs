@@ -1,8 +1,10 @@
 //! Display formatting for query results.
 
+use std::fmt::Write as _;
+
 use super::{
     QueryError, QueryRecordSet,
-    field::FieldPath,
+    grammar::FieldPath,
     record::{QueryFieldValueRef, QueryListValueRef},
 };
 use crate::note::NoteFieldValue;
@@ -99,7 +101,7 @@ impl QueryRecordSet {
             table.add_row(
                 paths
                     .iter()
-                    .map(|path| table_cell_text(&record.resolve_ref(path))),
+                    .map(|path| record.resolve_ref(path).table_cell_text()),
             );
         }
         let mut out = table.to_string();
@@ -112,7 +114,7 @@ impl QueryRecordSet {
         let mut out = String::new();
         for record in self {
             out.push_str("- ");
-            append_field_text(&mut out, &record.resolve_ref(&field_path));
+            record.resolve_ref(&field_path).append_text(&mut out);
             out.push('\n');
         }
         Ok(out)
@@ -136,48 +138,62 @@ impl QueryRecordSet {
     }
 }
 
-fn field_text(value: &QueryFieldValueRef<'_>) -> String {
-    let mut out = String::new();
-    append_field_text(&mut out, value);
-    out
-}
-
-fn append_field_text(out: &mut String, value: &QueryFieldValueRef<'_>) {
-    match value {
-        QueryFieldValueRef::Null => {}
-        QueryFieldValueRef::Bool(value) => out.push_str(&value.to_string()),
-        QueryFieldValueRef::Number(value) => out.push_str(&value.to_string()),
-        QueryFieldValueRef::Text(value)
-        | QueryFieldValueRef::Date(value)
-        | QueryFieldValueRef::Duration(value) => out.push_str(value),
-        QueryFieldValueRef::Link(link) => out.push_str(link.target()),
-        QueryFieldValueRef::Object(fields) => {
-            for (idx, (key, field)) in fields.iter().enumerate() {
-                if idx > 0 {
-                    out.push_str(", ");
-                }
-                out.push_str(key);
-                out.push_str(": ");
-                append_field_text(out, &QueryFieldValueRef::from(field));
+impl QueryFieldValueRef<'_> {
+    fn append_text(&self, out: &mut String) {
+        match self {
+            Self::Null => {}
+            Self::Bool(value) => out.push_str(if *value {
+                "true"
+            } else {
+                "false"
+            }),
+            Self::Number(value) => {
+                let _ = write!(out, "{value}");
             }
+            Self::Text(value) | Self::Date(value) | Self::Duration(value) => {
+                out.push_str(value);
+            }
+            Self::Link(link) => out.push_str(link.target()),
+            Self::Object(fields) => {
+                for (idx, (key, field)) in fields.iter().enumerate() {
+                    if idx > 0 {
+                        out.push_str(", ");
+                    }
+                    out.push_str(key);
+                    out.push_str(": ");
+                    Self::from(field).append_text(out);
+                }
+            }
+            Self::List(list) => list.append_text(out),
+            Self::Owned(value) => append_owned_field_text(out, value),
         }
-        QueryFieldValueRef::List(list) => append_list_text(out, list),
-        QueryFieldValueRef::Owned(value) => append_owned_field_text(out, value),
+    }
+
+    fn text(&self) -> String {
+        let mut out = String::new();
+        self.append_text(&mut out);
+        out
+    }
+
+    fn table_cell_text(&self) -> String {
+        escape_table_text(&self.text())
     }
 }
 
-fn append_list_text(out: &mut String, list: &QueryListValueRef<'_>) {
-    match list {
-        QueryListValueRef::Values(values) => {
-            append_joined(out, values, append_owned_field_text);
-        }
-        QueryListValueRef::Tags(tags) => {
-            append_joined(out, tags, |out, tag| out.push_str(tag.as_str()));
-        }
-        QueryListValueRef::Inlinks(inlinks) => {
-            append_joined(out, inlinks, |out, path| {
-                out.push_str(&path.to_string_lossy());
-            });
+impl QueryListValueRef<'_> {
+    fn append_text(&self, out: &mut String) {
+        match self {
+            Self::Values(values) => {
+                append_joined(out, values, append_owned_field_text);
+            }
+            Self::Tags(tags) => {
+                append_joined(out, tags, |out, tag| out.push_str(tag.as_str()));
+            }
+            Self::Inlinks(inlinks) => {
+                append_joined(out, inlinks, |out, path| {
+                    out.push_str(&path.to_string_lossy());
+                });
+            }
         }
     }
 }
@@ -222,8 +238,4 @@ fn append_owned_field_text(out: &mut String, value: &NoteFieldValue) {
 
 fn escape_table_text(text: &str) -> String {
     text.replace('\n', " ").replace('|', "\\|")
-}
-
-fn table_cell_text(value: &QueryFieldValueRef<'_>) -> String {
-    escape_table_text(&field_text(value))
 }

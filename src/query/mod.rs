@@ -37,7 +37,7 @@
 //!   transformations.
 //! - [`QuerySource`] is the top-level entry point: either all Notes or a parsed
 //!   expression.
-//! - [`source::QuerySourceExpr`] wraps the expression AST.
+//! - [`QuerySourceExpr`] wraps the expression AST.
 //! - [`QueryRecord`] pairs a [`FileRecord`] with its parsed [`Note`] and
 //!   resolves `file.*`, `task.*`, frontmatter, tag, and inlinks fields.
 //! - [`QueryRecordSet`] stores result rows and provides chained transformation
@@ -51,35 +51,27 @@
 //! [`FileIndex`]: crate::index::FileIndex
 //! [`Note`]: crate::note::Note
 
-mod comparison;
 mod error;
-mod field;
-mod filter;
 mod format;
-mod logic;
+mod grammar;
 mod record;
 mod request;
 mod service;
 mod sort;
-mod source;
 
 pub(crate) use error::QueryRequestError;
 #[cfg(test)]
 pub(crate) use error::{FieldPathError, QuerySyntaxError};
 pub use error::{QueryDialect, QueryError};
-use field::FieldPath;
-pub(crate) use field::FileField;
-use filter::FilterExpr;
+pub use grammar::{ClassExpansionMode, QuerySource};
+pub(crate) use grammar::{
+    FileClassExpander, FileField, QuerySourceExpr, SourceAtom, compile_glob,
+};
 pub use record::{QueryRecord, QueryRecordSet};
 pub use request::QueryRequest;
 use request::{QueryMode, QueryTransform};
 pub use service::QueryService;
 pub(crate) use sort::SortOrder;
-pub use source::{ClassExpansionMode, QuerySource};
-pub(crate) use source::{
-    FileClassExpander, QuerySourceExpr, SourceAtom, compile_glob,
-    resolve_classes,
-};
 
 #[cfg(test)]
 mod tests {

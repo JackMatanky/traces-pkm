@@ -1,7 +1,7 @@
 //! Comparison operators and expressions for filter evaluation.
 //!
-//! This module implements the six comparison operators (`==`, `!=`, `<`,
-//! `<=`, `>`, `>=`) used in filter expressions.
+//! This module implements the six comparison operators (`==`, `!=`, `<`, `<=`,
+//! `>`, `>=`) used in filter expressions.
 //!
 //! # Semantics and Type Normalization
 //!
@@ -30,11 +30,11 @@
 //! # }
 //! ```
 
-use super::{
-    FieldPath, QueryRecord,
-    sort::{compare_resolved_field, resolved_field_equals},
+use super::FieldPath;
+use crate::{
+    note::NoteFieldValue,
+    query::{QueryRecord, record::QueryFieldValueRef},
 };
-use crate::note::NoteFieldValue;
 
 /// A comparison operator parsed from a filter expression.
 ///
@@ -89,33 +89,33 @@ impl CompareOp {
     /// # Behavior
     ///
     /// - **Equality (`==`, `!=`):** Uses
-    ///   [`fields_equal`][`super::sort::fields_equal`] to normalize values
-    ///   across different data types (such as comparing a date to a string).
+    ///   [`QueryFieldValueRef::is_equal_to_literal`] to normalize values across
+    ///   different data types (such as comparing a date to a string).
     /// - **Ordering (`<`, `<=`, `>`, `>=`):** Compares values via
-    ///   [`compare_field_values`][`super::sort::compare_field_values`],
-    ///   returning `false` for mismatched or incomparable kinds.
+    ///   [`QueryFieldValueRef::compare_to_literal`], returning `false` for
+    ///   mismatched or incomparable kinds.
     pub(super) fn is_satisfied_by(
         self,
-        field: &super::record::QueryFieldValueRef<'_>,
+        field: &QueryFieldValueRef<'_>,
         literal: &NoteFieldValue,
     ) -> bool {
         match self {
-            Self::Eq => resolved_field_equals(field, literal),
-            Self::Ne => !resolved_field_equals(field, literal),
+            Self::Eq => field.is_equal_to_literal(literal),
+            Self::Ne => !field.is_equal_to_literal(literal),
             Self::Lt => {
-                compare_resolved_field(field, literal)
+                field.compare_to_literal(literal)
                     == Some(std::cmp::Ordering::Less)
             }
             Self::Gt => {
-                compare_resolved_field(field, literal)
+                field.compare_to_literal(literal)
                     == Some(std::cmp::Ordering::Greater)
             }
             Self::Le => matches!(
-                compare_resolved_field(field, literal),
+                field.compare_to_literal(literal),
                 Some(std::cmp::Ordering::Less | std::cmp::Ordering::Equal)
             ),
             Self::Ge => matches!(
-                compare_resolved_field(field, literal),
+                field.compare_to_literal(literal),
                 Some(std::cmp::Ordering::Greater | std::cmp::Ordering::Equal)
             ),
         }
@@ -162,7 +162,7 @@ impl TryFrom<&str> for CompareOp {
 /// );
 /// ```
 #[derive(Clone, Debug, PartialEq)]
-pub(super) struct ComparisonExpr {
+pub(crate) struct ComparisonExpr {
     field: FieldPath,
     op: CompareOp,
     value: NoteFieldValue,
@@ -241,6 +241,20 @@ mod tests {
 
             // Assert
             assert_eq!(result, expected);
+        }
+
+        #[test]
+        fn returns_false_for_object_ordering_comparisons() {
+            // Arrange
+            let left_map = indexmap::IndexMap::new();
+            let left_val = QueryFieldValueRef::Object(&left_map);
+            let right_val = NoteFieldValue::Object(indexmap::IndexMap::new());
+
+            // Act
+            let result = CompareOp::Gt.is_satisfied_by(&left_val, &right_val);
+
+            // Assert
+            assert!(!result);
         }
     }
 

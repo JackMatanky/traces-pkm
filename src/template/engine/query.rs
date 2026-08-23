@@ -937,6 +937,7 @@ mod tests {
 
     mod terminal_rendering {
         use pretty_assertions::assert_eq;
+        use rstest::rstest;
 
         use super::*;
 
@@ -1031,6 +1032,27 @@ mod tests {
                 render(temp.path(), "{{ query.from().table([], []) }}")
                     .expect("render succeeds");
             assert_eq!(rendered, "||\n");
+        }
+
+        #[rstest]
+        #[case::true_value("true", "true")]
+        #[case::false_value("false", "false")]
+        fn list_renders_boolean_field_values_as_true_or_false(
+            #[case] frontmatter_value: &str,
+            #[case] expected_line: &str,
+        ) {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_note(
+                temp.path(),
+                "note.md",
+                &format!("---\nactive: {frontmatter_value}\n---"),
+            );
+
+            let rendered =
+                render(temp.path(), r#"{{ query.from().list("active") }}"#)
+                    .expect("render succeeds");
+
+            assert_eq!(rendered, format!("- {expected_line}\n"));
         }
     }
 

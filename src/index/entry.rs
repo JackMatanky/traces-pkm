@@ -77,7 +77,7 @@ impl FileIndex {
 /// Shared by the [`super::inlinks`] submodule, which needs the same search
 /// over a bare `&[Note]` slice while resolving link targets during
 /// [`super::IndexerService::build`]/[`super::IndexerService::refresh`].
-pub(crate) fn find_by_path<'a>(
+pub(super) fn find_by_path<'a>(
     notes: &'a [Note],
     path: &Path,
 ) -> Option<&'a Note> {

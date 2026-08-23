@@ -3,7 +3,7 @@
 //! [`derive_inlinks`] runs as a post-processing pass over already-parsed
 //! [`Note`] outlinks. It is a full recompute over every indexed Note, never a
 //! per-note patch, because resolving one Note's outlink can depend on every
-//! *other* indexed Note (see [`resolve_target`]'s stem-matching tier).
+//! *other* indexed Note (see [`LinkResolver::resolve`]'s stem-matching tier).
 //!
 //! - [`super::IndexerService::build`] and [`super::IndexerService::refresh`]
 //!   (the latter only when something changed) call this once and persist the
@@ -16,7 +16,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use super::find_by_path;
+use super::entry::find_by_path;
 use crate::{
     BaseNameRef,
     note::{LinkTarget, Note},
@@ -30,8 +30,8 @@ pub(crate) type InlinkMap = HashMap<PathBuf, Vec<PathBuf>>;
 /// Derives inbound links for every indexed Note from its peers' outlinks.
 ///
 /// For each outlink in each Note, resolves the link target against `notes` (see
-/// [`resolve_target`]) and records an inbound edge from the linking Note to the
-/// resolved target Note. Unresolvable targets (external URLs, links to
+/// [`LinkResolver::resolve`]) and records an inbound edge from the linking Note
+/// to the resolved target Note. Unresolvable targets (external URLs, links to
 /// non-Notes, or links with no matching Note) contribute no edge.
 ///
 /// Duplicate outlinks to the same target within one Note, and self-links,
@@ -40,7 +40,7 @@ pub(crate) type InlinkMap = HashMap<PathBuf, Vec<PathBuf>>;
 ///
 /// # Performance
 ///
-/// - O(n) to build the stem index once (see [`build_stem_index`]).
+/// - O(n) to build the stem index once (see [`LinkResolver::new`]).
 /// - O(l log n) total for `l` outlinks: exact-path resolution binary-searches
 ///   the path-sorted slice `notes` (already sorted by
 ///   [`super::IndexerService::build`]/[`super::IndexerService::refresh`]/
@@ -49,16 +49,13 @@ pub(crate) type InlinkMap = HashMap<PathBuf, Vec<PathBuf>>;
 ///   average time, then scans only that stem's candidates (not all of `notes`)
 ///   to break ties by proximity.
 pub(super) fn derive_inlinks(notes: &[Note]) -> InlinkMap {
-    let stem_index = build_stem_index(notes);
+    let resolver = LinkResolver::new(notes);
     let mut edges: HashMap<Target<'_>, BTreeSet<Source<'_>>> = HashMap::new();
     for source in notes {
         for outlink in source.outlinks() {
-            if let Some(target) = resolve_target(
-                notes,
-                &stem_index,
-                source.path(),
-                outlink.target_parts(),
-            ) {
+            if let Some(target) =
+                resolver.resolve(source.path(), outlink.target_parts())
+            {
                 edges.entry(target).or_default().insert(Source(source.path()));
             }
         }
@@ -74,21 +71,108 @@ pub(super) fn derive_inlinks(notes: &[Note]) -> InlinkMap {
         .collect()
 }
 
-/// Maps every indexed Note's file stem to the paths of every Note sharing it.
-///
-/// Built once per [`derive_inlinks`] call and threaded through
-/// [`resolve_target`] and [`find_nearest_by_stem`]. Replaces a rescan of
-/// `notes` per unresolved wikilink outlink with an O(1)-average lookup, plus a
-/// scan bounded by the matched stem's own candidate count.
-fn build_stem_index(notes: &[Note]) -> HashMap<BaseNameRef<'_>, Vec<&Path>> {
-    let mut index: HashMap<BaseNameRef<'_>, Vec<&Path>> =
-        HashMap::with_capacity(notes.len());
-    for note in notes {
-        if let Some(stem) = BaseNameRef::from_path(note.path()) {
-            index.entry(stem).or_default().push(note.path());
+/// Snapshot of indexed Notes plus a precomputed file-stem index, built
+/// once per [`derive_inlinks`] call and reused across every outlink
+/// resolution in that call.
+struct LinkResolver<'a> {
+    notes: &'a [Note],
+    stem_index: HashMap<BaseNameRef<'a>, Vec<&'a Path>>,
+}
+
+impl<'a> LinkResolver<'a> {
+    /// Builds the resolver, indexing every Note's file stem in one O(n)
+    /// pass.
+    fn new(notes: &'a [Note]) -> Self {
+        let mut stem_index: HashMap<BaseNameRef<'a>, Vec<&'a Path>> =
+            HashMap::with_capacity(notes.len());
+        for note in notes {
+            if let Some(stem) = BaseNameRef::from_path(note.path()) {
+                stem_index.entry(stem).or_default().push(note.path());
+            }
+        }
+        Self {
+            notes,
+            stem_index,
         }
     }
-    index
+
+    /// Resolves an already-split [`LinkTarget`] to an indexed Note's path.
+    ///
+    /// Tries, in order:
+    ///
+    /// 1. An exact project-relative path match (Markdown-style links).
+    /// 2. The same path with a `.md` extension appended, when `target` has no
+    ///    extension of its own (Markdown-style links that omit the extension).
+    /// 3. The Note nearest `from` among every indexed Note sharing `target`'s
+    ///    file stem (Obsidian wikilink-by-name resolution), attempted only when
+    ///    [`LinkTarget::is_basename`] says `target`'s path has no directory
+    ///    prefix.
+    ///
+    /// A qualified path (such as `archive/foo`) that fails the first two
+    /// attempts resolves to `None` rather than falling back to a
+    /// whole-index name search that could match an unrelated same-named
+    /// Note elsewhere. Ambiguity among same-stem candidates resolves by
+    /// [`Self::nearest_by_stem`]'s proximity rule; a genuine tie still
+    /// resolves to `None` rather than guessing.
+    ///
+    /// `target`'s anchor half, if any, plays no part in resolution: only
+    /// the path segment is matched, so a link into a heading still
+    /// resolves to the Note that owns it.
+    fn resolve(
+        &self,
+        from: &Path,
+        target: LinkTarget<'_>,
+    ) -> Option<Target<'a>> {
+        if !target.has_path() {
+            return None;
+        }
+        let path_part = target.path()?;
+        let candidate = Path::new(path_part);
+        if let Some(note) = find_by_path(self.notes, candidate) {
+            return Some(Target(note.path()));
+        }
+        if candidate.extension().is_none() {
+            let with_extension = candidate.with_extension("md");
+            if let Some(note) = find_by_path(self.notes, &with_extension) {
+                return Some(Target(note.path()));
+            }
+        }
+        if !target.is_basename() {
+            return None;
+        }
+        let stem =
+            candidate.file_stem().and_then(|s| s.to_str()).unwrap_or(path_part);
+        self.nearest_by_stem(stem, from).map(Target)
+    }
+
+    /// Finds the Note nearest `from` among every indexed Note sharing
+    /// `stem`, by Obsidian's shortest-unique-path rule.
+    ///
+    /// A single candidate resolves outright. Two or more resolve to
+    /// whichever has the smallest [`folder_distance`] from `from`; a
+    /// genuine tie (no single nearest candidate) resolves to `None` rather
+    /// than guessing. Zero candidates also resolve to `None`.
+    fn nearest_by_stem(&self, stem: &str, from: &Path) -> Option<&'a Path> {
+        let candidates = self.stem_index.get(stem)?;
+        let mut nearest: Option<(usize, &Path)> = None;
+        let mut tied = false;
+        for &candidate in candidates {
+            let distance = folder_distance(from, candidate);
+            match nearest {
+                Some((best, _)) if distance > best => {}
+                Some((best, _)) if distance == best => tied = true,
+                _ => {
+                    nearest = Some((distance, candidate));
+                    tied = false;
+                }
+            }
+        }
+        if tied {
+            None
+        } else {
+            nearest.map(|(_, path)| path)
+        }
+    }
 }
 
 /// A resolved link target: the path of the Note an outlink points to.
@@ -118,113 +202,13 @@ impl Source<'_> {
     }
 }
 
-/// Resolves an already-split [`LinkTarget`] to an indexed Note's path.
-///
-/// Tries, in order:
-///
-/// 1. An exact project-relative path match (Markdown-style links).
-/// 2. The same path with a `.md` extension appended, when `target` has no
-///    extension of its own (Markdown-style links that omit the extension).
-/// 3. The Note nearest `from` among every indexed Note sharing `target`'s file
-///    stem (Obsidian wikilink-by-name resolution), attempted only when
-///    [`LinkTarget::is_basename`] says `target`'s path has no directory prefix.
-///
-/// A qualified path (such as `archive/foo`) that fails the first two attempts
-/// resolves to `None` rather than falling back to a whole-index name search
-/// that could match an unrelated same-named Note elsewhere. Ambiguity among
-/// same-stem candidates resolves by [`find_nearest_by_stem`]'s proximity rule;
-/// a genuine tie still resolves to `None` rather than guessing.
-///
-/// # Arguments
-///
-/// * `notes` - path-sorted indexed Notes, searched by [`find_by_path`] for
-///   tiers 1-2.
-/// * `stem_index` - [`build_stem_index`]'s output, giving tier 3 its same-stem
-///   candidates.
-/// * `from` - the linking Note's path; [`find_nearest_by_stem`]'s proximity
-///   anchor for breaking stem ambiguity.
-/// * `target` - the already-split link target to resolve.
-///
-/// `target`'s anchor half, if any, plays no part in resolution: only the path
-/// segment is matched, so a link into a heading still resolves to the Note that
-/// owns it.
-///
-/// This does not resolve note-directory-relative paths (`../sibling.md`); add
-/// that if real vaults need it.
-fn resolve_target<'a>(
-    notes: &'a [Note],
-    stem_index: &HashMap<BaseNameRef<'a>, Vec<&'a Path>>,
-    from: &Path,
-    target: LinkTarget<'_>,
-) -> Option<Target<'a>> {
-    if !target.has_path() {
-        return None;
-    }
-    let path_part = target.path()?;
-    let candidate = Path::new(path_part);
-    if let Some(note) = find_by_path(notes, candidate) {
-        return Some(Target(note.path()));
-    }
-    if candidate.extension().is_none() {
-        let with_extension = candidate.with_extension("md");
-        if let Some(note) = find_by_path(notes, &with_extension) {
-            return Some(Target(note.path()));
-        }
-    }
-    if !target.is_basename() {
-        return None;
-    }
-    let stem =
-        candidate.file_stem().and_then(|s| s.to_str()).unwrap_or(path_part);
-    find_nearest_by_stem(stem_index, stem, from).map(Target)
-}
-
-/// Finds the Note nearest `from` among every indexed Note sharing `stem`, by
-/// Obsidian's shortest-unique-path rule.
-///
-/// A single candidate resolves outright. Two or more resolve to whichever has
-/// the smallest [`folder_distance`] from `from`; a genuine tie (no single
-/// nearest candidate) resolves to `None` rather than guessing. Zero candidates
-/// also resolve to `None`.
-///
-/// # Arguments
-///
-/// * `stem_index` - [`build_stem_index`]'s output, keyed by file stem.
-/// * `stem` - the file stem to look up.
-/// * `from` - the linking Note's path, this tie-break's proximity anchor.
-fn find_nearest_by_stem<'a>(
-    stem_index: &HashMap<BaseNameRef<'a>, Vec<&'a Path>>,
-    stem: &str,
-    from: &Path,
-) -> Option<&'a Path> {
-    let candidates = stem_index.get(stem)?;
-    let mut nearest: Option<(usize, &Path)> = None;
-    let mut tied = false;
-    for &candidate in candidates {
-        let distance = folder_distance(from, candidate);
-        match nearest {
-            Some((best, _)) if distance > best => {}
-            Some((best, _)) if distance == best => tied = true,
-            _ => {
-                nearest = Some((distance, candidate));
-                tied = false;
-            }
-        }
-    }
-    if tied {
-        None
-    } else {
-        nearest.map(|(_, path)| path)
-    }
-}
-
 /// Computes the path-segment distance between `a`'s and `b`'s containing
 /// folders.
 ///
 /// Steps up from `a`'s folder to its nearest shared ancestor with `b`'s
 /// folder, then back down to `b`'s folder; files in the same folder are
-/// distance `0`. This is [`resolve_target`]'s proximity tie-break for
-/// ambiguous wikilink stem matches.
+/// distance `0`. This is [`LinkResolver::nearest_by_stem`]'s proximity
+/// tie-break for ambiguous wikilink stem matches.
 ///
 /// Reads folder placement from each Note's own `path()` rather than
 /// [`super::FileRecord`]'s precomputed `folder`/`name` fields, because
@@ -260,7 +244,7 @@ mod tests {
         parse_markdown(path, &src)
     }
 
-    mod resolve_target {
+    mod resolve {
         use pretty_assertions::assert_eq;
 
         use super::*;
@@ -272,8 +256,7 @@ mod tests {
             from: &str,
             target: LinkTarget<'_>,
         ) -> Option<Target<'a>> {
-            let stem_index = build_stem_index(notes);
-            resolve_target(notes, &stem_index, Path::new(from), target)
+            LinkResolver::new(notes).resolve(Path::new(from), target)
         }
 
         #[test]

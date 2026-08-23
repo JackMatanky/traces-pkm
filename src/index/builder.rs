@@ -126,7 +126,17 @@ impl IndexBuilder {
                 notes.push(parse_note(root, record)?);
             }
         }
-        notes.sort_by(|a, b| a.path().cmp(b.path()));
+        debug_assert!(
+            notes.windows(2).all(|pair| {
+                let [a, b] = pair else {
+                    return true;
+                };
+                a.path() <= b.path()
+            }),
+            "notes must already be sorted by path: scan_root sorts records, \
+             and this loop preserves that order while filtering to \
+             Note-format entries"
+        );
         let inlinks = derive_inlinks(&notes);
         Ok(super::FileIndex::new(records, notes, inlinks))
     }
@@ -143,46 +153,38 @@ impl IndexBuilder {
         let mut prev_iter = reuse.previous.iter().peekable();
 
         for record in &records {
-            while prev_iter.peek().is_some_and(|p| p.path() < record.path()) {
-                // A previously-indexed record no longer exists at this path.
-                // Only a deleted Note changes the inbound-link graph; a
-                // deleted non-Markdown file (image, PDF, ...) never
-                // contributed outlinks.
-                if prev_iter
-                    .next()
-                    .is_some_and(|p| p.format() == FileFormat::Note)
-                {
-                    dirty = true;
-                }
-            }
+            dirty |= Self::has_deleted_note(&mut prev_iter, record.path());
 
             if record.format() != FileFormat::Note {
                 continue;
             }
 
-            let unchanged = prev_iter
-                .peek()
-                .is_some_and(|p| p.path() == record.path() && **p == *record);
-
-            if unchanged {
-                let note =
-                    reuse.notes.remove(record.path()).ok_or_else(|| {
-                        IndexBuilderError::MissingNote {
-                            path: record.path().to_path_buf(),
-                        }
-                    })?;
-                notes.push(note);
-            } else {
-                dirty = true;
-                notes.push(parse_note(root, record)?);
-            }
+            let (note, reparsed) = Self::reconcile_note(
+                record,
+                &mut prev_iter,
+                &mut reuse.notes,
+                root,
+            )?;
+            dirty |= reparsed;
+            notes.push(note);
         }
 
         // Any previous entries left unconsumed sort after every current
-        // record — trailing deletions. Same Note-only rule as above.
+        // record — trailing deletions. Same Note-only rule as
+        // has_deleted_note.
         dirty |= prev_iter.any(|p| p.format() == FileFormat::Note);
 
-        notes.sort_by(|a, b| a.path().cmp(b.path()));
+        debug_assert!(
+            notes.windows(2).all(|pair| {
+                let [a, b] = pair else {
+                    return true;
+                };
+                a.path() <= b.path()
+            }),
+            "notes must already be sorted by path: scan_root sorts records, \
+             and this loop preserves that order while filtering to \
+             Note-format entries"
+        );
 
         // Inlinks depend on every Note's outlinks (ambiguous link resolution
         // considers the full set). Recompute only when a Note was added,
@@ -195,6 +197,64 @@ impl IndexBuilder {
         };
 
         Ok(super::FileIndex::new(records, notes, inlinks))
+    }
+
+    /// Advances `prev_iter` past every previously-indexed record with a path
+    /// strictly less than `current_path` (records deleted since the last
+    /// index). Returns `true` if any skipped record was a Note — only a
+    /// deleted Note changes the inbound-link graph; a deleted non-Markdown
+    /// file (image, PDF, ...) never contributed outlinks.
+    fn has_deleted_note(
+        prev_iter: &mut std::iter::Peekable<std::slice::Iter<'_, FileRecord>>,
+        current_path: &Path,
+    ) -> bool {
+        let mut deleted_note = false;
+        while prev_iter.peek().is_some_and(|p| p.path() < current_path) {
+            if prev_iter.next().is_some_and(|p| p.format() == FileFormat::Note)
+            {
+                deleted_note = true;
+            }
+        }
+        deleted_note
+    }
+
+    /// Reuses `record`'s previously-parsed Note if a previously-indexed
+    /// record at the same path has unchanged metadata, otherwise parses it
+    /// fresh from disk. Returns the resolved Note and whether it was
+    /// reparsed (`true`) or reused unchanged (`false`).
+    ///
+    /// Consumes `prev_iter`'s peeked entry whenever its path matches
+    /// `record`'s path (whether reused or superseded) so the entry is never
+    /// also counted as a deletion by a later `has_deleted_note` call or the
+    /// trailing-deletion check — the previous version of this logic only
+    /// peeked and never consumed a matched entry, so every matched Note was
+    /// spuriously counted as deleted on the next call, forcing an
+    /// unnecessary `derive_inlinks` recompute on almost every refresh.
+    fn reconcile_note(
+        record: &FileRecord,
+        prev_iter: &mut std::iter::Peekable<std::slice::Iter<'_, FileRecord>>,
+        prev_notes: &mut HashMap<PathBuf, crate::note::Note>,
+        root: &Path,
+    ) -> Result<(crate::note::Note, bool), IndexBuilderError> {
+        let previous_matches_path =
+            prev_iter.peek().is_some_and(|p| p.path() == record.path());
+        let unchanged = previous_matches_path
+            && prev_iter.peek().is_some_and(|p| **p == *record);
+
+        if previous_matches_path {
+            prev_iter.next();
+        }
+
+        if unchanged {
+            let note = prev_notes.remove(record.path()).ok_or_else(|| {
+                IndexBuilderError::MissingNote {
+                    path: record.path().to_path_buf(),
+                }
+            })?;
+            Ok((note, false))
+        } else {
+            Ok((parse_note(root, record)?, true))
+        }
     }
 }
 
@@ -226,7 +286,7 @@ mod tests {
     use super::*;
     use crate::{file::FileRecord, index::IndexerService, note::Note};
 
-    mod builder {
+    mod constructor {
         use pretty_assertions::assert_eq;
 
         use super::*;
@@ -272,58 +332,9 @@ mod tests {
                 Some(Path::new("note.md"))
             );
         }
-
-        #[test]
-        fn reuse_unchanged_skips_reparsing() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            fs::write(temp.path().join("note.md"), "- [ ] task")
-                .expect("write note");
-            let built =
-                IndexerService::new(temp.path()).build().expect("build index");
-
-            let index = IndexBuilder::from_scan(temp.path())
-                .expect("scan")
-                .reuse_unchanged(built)
-                .build(temp.path())
-                .expect("build");
-
-            assert_eq!(
-                index
-                    .note(Path::new("note.md"))
-                    .map(Note::tasks)
-                    .map(Iterator::count),
-                Some(1)
-            );
-        }
-
-        #[test]
-        fn reuse_unchanged_reparses_changed_notes() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            fs::write(temp.path().join("note.md"), "- [ ] task")
-                .expect("write note");
-            let built =
-                IndexerService::new(temp.path()).build().expect("build index");
-
-            fs::write(temp.path().join("note.md"), "- [ ] task\n- [x] done")
-                .expect("rewrite note");
-
-            let index = IndexBuilder::from_scan(temp.path())
-                .expect("scan")
-                .reuse_unchanged(built)
-                .build(temp.path())
-                .expect("build");
-
-            assert_eq!(
-                index
-                    .note(Path::new("note.md"))
-                    .map(Note::tasks)
-                    .map(Iterator::count),
-                Some(2)
-            );
-        }
     }
 
-    mod reuse_boundary {
+    mod inlink_reuse {
         use pretty_assertions::assert_eq;
 
         use super::*;
@@ -519,6 +530,120 @@ mod tests {
                 .expect("build");
 
             assert_eq!(second.notes().len(), 2, "new note must be included");
+        }
+
+        #[test]
+        fn preserves_task_content_for_unchanged_records() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("note.md"), "- [ ] task")
+                .expect("write note");
+            let built =
+                IndexerService::new(temp.path()).build().expect("build index");
+
+            let index = IndexBuilder::from_scan(temp.path())
+                .expect("scan")
+                .reuse_unchanged(built)
+                .build(temp.path())
+                .expect("build");
+
+            assert_eq!(
+                index
+                    .note(Path::new("note.md"))
+                    .map(Note::tasks)
+                    .map(Iterator::count),
+                Some(1)
+            );
+        }
+
+        #[test]
+        fn reparses_task_content_when_record_changes() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("note.md"), "- [ ] task")
+                .expect("write note");
+            let built =
+                IndexerService::new(temp.path()).build().expect("build index");
+
+            fs::write(temp.path().join("note.md"), "- [ ] task\n- [x] done")
+                .expect("rewrite note");
+
+            let index = IndexBuilder::from_scan(temp.path())
+                .expect("scan")
+                .reuse_unchanged(built)
+                .build(temp.path())
+                .expect("build");
+
+            assert_eq!(
+                index
+                    .note(Path::new("note.md"))
+                    .map(Note::tasks)
+                    .map(Iterator::count),
+                Some(2)
+            );
+        }
+    }
+
+    mod reconcile_note {
+        use super::*;
+
+        #[test]
+        fn consumes_the_matched_previous_entry_so_it_is_not_double_counted() {
+            // Arrange: one previously-indexed Note, unchanged in the fresh
+            // scan.
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("a.md"), "content").expect("write note");
+            let previous = scan::scan_root(temp.path()).expect("scan root");
+            let record = previous.first().expect("one record");
+            let mut prev_iter = previous.iter().peekable();
+            let mut prev_notes = HashMap::from([(
+                record.path().to_path_buf(),
+                crate::note::parse_markdown("a.md", "content"),
+            )]);
+
+            // Act
+            let (_, reparsed) = IndexBuilder::reconcile_note(
+                record,
+                &mut prev_iter,
+                &mut prev_notes,
+                temp.path(),
+            )
+            .expect("reconcile succeeds");
+
+            // Assert: unchanged, and the matched entry is consumed, not left
+            // for the next has_deleted_note/trailing check to miscount as
+            // deleted.
+            assert!(!reparsed);
+            assert!(prev_iter.peek().is_none());
+        }
+
+        #[test]
+        fn consumes_the_matched_previous_entry_even_when_the_record_changed() {
+            // Arrange: previously-indexed Note whose content (and thus size)
+            // differs in the fresh scan, at the same path.
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(temp.path().join("a.md"), "content").expect("write note");
+            let previous = scan::scan_root(temp.path()).expect("scan root");
+
+            fs::write(temp.path().join("a.md"), "different content")
+                .expect("rewrite note");
+            let current = scan::scan_root(temp.path()).expect("rescan root");
+            let record = current.first().expect("one record");
+            let mut prev_iter = previous.iter().peekable();
+            let mut prev_notes = HashMap::new();
+
+            // Act
+            let (_, reparsed) = IndexBuilder::reconcile_note(
+                record,
+                &mut prev_iter,
+                &mut prev_notes,
+                temp.path(),
+            )
+            .expect("reconcile succeeds");
+
+            // Assert: reparsed, and the matched (now-stale) previous entry
+            // is still consumed — the doc comment's "whether reused or
+            // superseded" claim, exercised on the superseded branch.
+            assert!(reparsed);
+            assert!(prev_iter.peek().is_none());
         }
     }
 }

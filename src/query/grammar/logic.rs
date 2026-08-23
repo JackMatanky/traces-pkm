@@ -21,7 +21,7 @@ use std::{iter::Peekable, vec};
 
 use miette::SourceSpan;
 
-use super::{QueryError, error::QuerySyntaxError};
+use crate::query::{QueryError, error::QuerySyntaxError};
 
 /// Binary logical operators shared by source and filter expressions.
 ///
@@ -384,7 +384,8 @@ impl<'input, G: LogicalGrammar> LogicalParser<'input, G> {
 #[cfg(test)]
 mod tests {
 
-    use super::{super::QueryDialect, *};
+    use super::*;
+    use crate::query::QueryDialect;
 
     #[derive(Clone, Debug, Eq, PartialEq)]
     enum TestToken {

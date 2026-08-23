@@ -42,7 +42,14 @@ pub(super) fn scan_root(
         }
         let metadata =
             entry.metadata().map_err(|source| io_error(root, source))?;
-        records.push(FileRecord::from_metadata(path, root, &metadata)?);
+        records.push(
+            FileRecord::from_metadata(path, root, &metadata).map_err(
+                |source| FileIndexError::Io {
+                    path: path.to_path_buf(),
+                    source,
+                },
+            )?,
+        );
     }
 
     records.sort_by(|a, b| a.path().cmp(b.path()));

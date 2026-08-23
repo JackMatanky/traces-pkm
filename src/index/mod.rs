@@ -47,7 +47,7 @@ mod service;
 mod store;
 
 pub use entry::FileIndex;
-pub(crate) use entry::{FileIndexEntry, find_by_path};
+pub(crate) use entry::FileIndexEntry;
 #[allow(unused_imports, reason = "re-exported for downstream callers")]
 pub use error::{FileIndexError, IndexBuilderError};
 pub(crate) use inlinks::InlinkMap;

@@ -39,8 +39,6 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::index::FileIndexError;
-
 /// Metadata captured for one regular file under a project root.
 ///
 /// Stored paths are project-root-relative so the index can move with the
@@ -66,20 +64,14 @@ impl FileRecord {
     ///
     /// # Errors
     ///
-    /// - [`FileIndexError::Io`] if the file's modification time cannot be read.
+    /// - [`std::io::Error`] if the file's modification time cannot be read.
     pub(crate) fn from_metadata(
         path: &Path,
         root: &Path,
         metadata: &fs::Metadata,
-    ) -> Result<Self, FileIndexError> {
+    ) -> Result<Self, std::io::Error> {
         let relative = path.strip_prefix(root).unwrap_or(path).to_path_buf();
-        let modified_at =
-            metadata.modified().map(Timestamp::from).map_err(|source| {
-                FileIndexError::Io {
-                    path: path.to_path_buf(),
-                    source,
-                }
-            })?;
+        let modified_at = metadata.modified().map(Timestamp::from)?;
         let created_at = metadata.created().map(Timestamp::from).ok();
         let file_name =
             FileName::try_from(relative.as_path()).unwrap_or_default();

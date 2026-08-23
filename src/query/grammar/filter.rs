@@ -24,23 +24,28 @@ use logos::{Lexer, Logos};
 use miette::SourceSpan;
 
 use super::{
-    FieldPath, QueryError, QueryRecord,
+    FieldPath,
     comparison::{CompareOp, ComparisonExpr},
-    error::{QueryDialect, QuerySyntaxError},
     logic::{
         LogicalControl, LogicalExpr, LogicalGrammar, LogicalOp, Spanned,
         TokenCursor, parse_logical_expression,
     },
-    record::{QueryFieldValueRef, QueryListValueRef},
-    sort::fields_equal,
 };
-use crate::note::{NoteFieldValue, is_nested_under};
+use crate::{
+    note::{NoteFieldValue, is_nested_under},
+    query::{
+        QueryError, QueryRecord,
+        error::{QueryDialect, QuerySyntaxError},
+        record::{QueryFieldValueRef, QueryListValueRef},
+        sort::fields_equal,
+    },
+};
 
 /// A parsed filter expression AST.
 ///
 /// Wraps [`LogicalExpr`] with [`FilterAtom`] leaves, providing the concrete
 /// type used by [`super::QueryRecordSet::filter`].
-pub(super) type FilterExpr = LogicalExpr<FilterAtom>;
+pub(crate) type FilterExpr = LogicalExpr<FilterAtom>;
 
 impl LogicalExpr<FilterAtom> {
     /// Parses a filter expression string into a logical expression tree.
@@ -55,7 +60,7 @@ impl LogicalExpr<FilterAtom> {
     /// # use traces_pkm::query::FilterExpr;
     /// let expr = FilterExpr::parse("rating > 5").unwrap();
     /// ```
-    pub(super) fn parse(input: &str) -> Result<Self, QueryError> {
+    pub(crate) fn parse(input: &str) -> Result<Self, QueryError> {
         parse_logical_expression(
             input,
             tokenize_filter_expr(input)?,
@@ -64,7 +69,7 @@ impl LogicalExpr<FilterAtom> {
     }
 
     /// Whether `record` satisfies this expression.
-    pub(super) fn matches(&self, record: &QueryRecord) -> bool {
+    pub(crate) fn matches(&self, record: &QueryRecord) -> bool {
         match self {
             Self::Atom(atom) => atom.matches(record),
             Self::And(expressions) => {
@@ -83,7 +88,7 @@ impl LogicalExpr<FilterAtom> {
 /// Either a field-to-literal comparison or a recognized function call
 /// (such as `contains(tags, "#book")`).
 #[derive(Clone, Debug, PartialEq)]
-pub(super) enum FilterAtom {
+pub(crate) enum FilterAtom {
     /// `<field> <op> <value>` comparison.
     Comparison(ComparisonExpr),
     /// Recognized function call, such as `contains(tags, "#book")`.
@@ -111,7 +116,7 @@ impl FilterAtom {
 /// // e.g., FilterFunction::Contains
 /// ```
 #[derive(Clone, Debug, PartialEq)]
-pub(super) enum FilterFunction {
+pub(crate) enum FilterFunction {
     /// `contains(field, target)`.
     ///
     /// - Lists match by exact value or tag prefix, such as `#book` matching
@@ -424,7 +429,7 @@ fn eval_contains(
     match field_val {
         QueryFieldValueRef::List(items) => list_contains(items, target),
         QueryFieldValueRef::Owned(NoteFieldValue::List(items)) => {
-            items.iter().any(|item| tag_or_value_matches(item, target))
+            list_contains(&QueryListValueRef::Values(items), target)
         }
         _ => match (field_val.as_str(), target.as_str()) {
             (Some(haystack), Some(needle)) => haystack.contains(needle),
@@ -487,8 +492,8 @@ fn tag_or_value_matches(
 mod tests {
     use std::{fs, path::Path};
 
-    use super::{super::*, FilterExpr};
-    use crate::index::IndexerService;
+    use super::FilterExpr;
+    use crate::{index::IndexerService, query::*};
 
     fn outcome_for_files(
         temp: &Path,
@@ -881,6 +886,39 @@ mod tests {
                 .filter("contains(tags, \"#book\")")
                 .expect("valid filter");
             assert_eq!(names(&tag_match), ["book"]);
+        }
+    }
+
+    mod eval_contains {
+        use pretty_assertions::assert_eq;
+
+        use super::super::eval_contains;
+        use crate::{
+            note::NoteFieldValue,
+            query::record::{QueryFieldValueRef, QueryListValueRef},
+        };
+
+        #[test]
+        fn matches_identically_for_borrowed_and_owned_list_values() {
+            // Regression: the Owned(List) arm used to re-implement
+            // list_contains's matching inline instead of delegating to it;
+            // both arms must now produce identical results for the same
+            // logical list.
+            let items =
+                vec![NoteFieldValue::String("#book/fiction".to_owned())];
+            let target = NoteFieldValue::String("#book".to_owned());
+
+            let borrowed = eval_contains(
+                &QueryFieldValueRef::List(QueryListValueRef::Values(&items)),
+                &target,
+            );
+            let owned = eval_contains(
+                &QueryFieldValueRef::Owned(NoteFieldValue::List(items)),
+                &target,
+            );
+
+            assert_eq!(borrowed, owned);
+            assert!(borrowed, "#book must match #book/fiction by tag prefix");
         }
     }
 }

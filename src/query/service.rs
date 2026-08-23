@@ -1,8 +1,8 @@
 //! Query execution service.
 
 use super::{
-    FileClassExpander, QueryMode, QueryRecord, QueryRecordSet, QueryRequest,
-    QuerySource, resolve_classes,
+    QueryMode, QueryRecord, QueryRecordSet, QueryRequest,
+    grammar::{FileClassExpander, QuerySource, resolve_classes},
 };
 use crate::index::FileIndex;
 

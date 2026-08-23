@@ -1,6 +1,9 @@
 //! Query execution request and transform plan.
 
-use super::{FieldPath, FilterExpr, QueryRequestError, QuerySource};
+use super::{
+    QueryRequestError,
+    grammar::{FieldPath, FilterExpr, QuerySource},
+};
 
 /// Query execution request.
 pub struct QueryRequest {

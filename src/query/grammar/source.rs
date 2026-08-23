@@ -23,17 +23,17 @@ use logos::{Lexer, Logos};
 use miette::SourceSpan;
 use regex::Regex;
 
-use super::{
-    QueryError,
-    error::{QueryDialect, QuerySyntaxError},
-    logic::{
-        LogicalControl, LogicalExpr, LogicalGrammar, LogicalOp, Spanned,
-        TokenCursor, parse_logical_expression,
-    },
+use super::logic::{
+    LogicalControl, LogicalExpr, LogicalGrammar, LogicalOp, Spanned,
+    TokenCursor, parse_logical_expression,
 };
 use crate::{
     file::FileRecord,
     note::{Note, NoteFieldValue},
+    query::{
+        QueryError,
+        error::{QueryDialect, QuerySyntaxError},
+    },
 };
 
 /// Top-level source selector: every Note or a parsed expression.
@@ -820,17 +820,14 @@ mod tests {
             LogicalExpr::Atom(SourceAtom::Tag(value.to_owned()))
         }
 
-        #[expect(
-            clippy::panic,
-            reason = "test helper asserting the parsed shape is a path atom"
-        )]
         fn path(value: &str) -> LogicalExpr<SourceAtom> {
-            match QuerySourceExpr::parse(value).expect("valid path") {
-                QuerySourceExpr(
-                    atom @ LogicalExpr::Atom(SourceAtom::Path(_)),
-                ) => atom,
-                other => panic!("expected a path atom, got {other:?}"),
+            let QuerySourceExpr(parsed) =
+                QuerySourceExpr::parse(value).expect("valid path");
+            match parsed {
+                atom @ LogicalExpr::Atom(SourceAtom::Path(_)) => Some(atom),
+                _ => None,
             }
+            .expect("parsed value must be a path atom")
         }
 
         fn class(
@@ -1155,6 +1152,8 @@ mod tests {
     }
 
     mod class_values_extraction {
+        use pretty_assertions::assert_eq;
+
         use super::*;
 
         #[test]
