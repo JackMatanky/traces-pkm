@@ -610,12 +610,8 @@ pub(crate) fn class_values<'a, 'b>(
 where
     'a: 'b,
 {
-    let values = note.frontmatter().map(|fm| {
-        fm.fields()
-            .iter()
-            .filter(move |(k, _)| k.canonical() == canonical_class_field)
-            .flat_map(move |(k, _)| fm.get_values(k))
-    });
+    let values =
+        note.frontmatter().map(|fm| fm.get_values(canonical_class_field));
     values.into_iter().flatten().filter_map(NoteFieldValue::as_str)
 }
 

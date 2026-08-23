@@ -155,6 +155,22 @@ impl Note {
         fm.chain(inline)
     }
 
+    /// Returns the first value of a metadata field (frontmatter or inline)
+    /// matching `key`, with frontmatter taking precedence.
+    #[inline]
+    #[must_use]
+    pub(crate) fn get(&self, key: &str) -> Option<&NoteFieldValue> {
+        if let Some(value) =
+            self.frontmatter.as_ref().and_then(|fm| fm.get(key))
+        {
+            return Some(value);
+        }
+        self.inline_fields
+            .iter()
+            .find(|(k, _)| k.is_match(key))
+            .and_then(|(_, values)| values.first())
+    }
+
     /// Returns Markdown tags from paragraphs, headings, and list items, in
     /// document order.
     #[inline]

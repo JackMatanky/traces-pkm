@@ -67,6 +67,14 @@ impl Frontmatter {
         &self.fields
     }
 
+    /// Returns the value of the field matching `key` by string lookup, if
+    /// present.
+    #[inline]
+    #[must_use]
+    pub(crate) fn get(&self, key: &str) -> Option<&NoteFieldValue> {
+        self.fields.iter().find(|(k, _)| k.is_match(key)).map(|(_, v)| v)
+    }
+
     /// Returns the value of the field matching `key`, if present.
     #[inline]
     #[must_use]
@@ -78,17 +86,17 @@ impl Frontmatter {
                       accessor symmetry with its fields"
         )
     )]
-    pub(crate) fn get(&self, key: &FieldKey) -> Option<&NoteFieldValue> {
+    pub(crate) fn get_by_key(&self, key: &FieldKey) -> Option<&NoteFieldValue> {
         self.fields.get(key)
     }
 
     /// Returns a flat iterator over the scalar value or list elements of the
-    /// field matching `key`, if present.
+    /// field matching `key` by string lookup, if present.
     pub(crate) fn get_values(
         &self,
-        key: &FieldKey,
+        key: &str,
     ) -> impl Iterator<Item = &NoteFieldValue> {
-        let value = self.fields.get(key);
+        let value = self.get(key);
         let list = match value {
             Some(NoteFieldValue::List(items)) => items.as_slice(),
             _ => &[],
@@ -304,7 +312,7 @@ mod tests {
             fields.insert(key.clone(), NoteFieldValue::String("Second".into()));
             let fm = Frontmatter::new(fields);
             assert_eq!(
-                fm.get(&key),
+                fm.get_by_key(&key),
                 Some(&NoteFieldValue::String("Second".into()))
             );
         }
@@ -348,7 +356,7 @@ mod tests {
             );
             let fm = Frontmatter::new(fields);
             assert_eq!(
-                fm.get(&FieldKey::try_new("mytitle").unwrap()),
+                fm.get("mytitle"),
                 Some(&NoteFieldValue::String("hello".into()))
             );
         }

@@ -185,9 +185,7 @@ impl QueryRecord {
             FieldPath::Metadata(key) => self
                 .note()
                 .and_then(|note| {
-                    note.fields()
-                        .find(|(k, _)| k.is_match(key.as_str()))
-                        .map(|(_, value)| QueryFieldValueRef::from(value))
+                    note.get(key.as_str()).map(QueryFieldValueRef::from)
                 })
                 .unwrap_or(QueryFieldValueRef::Null),
         }

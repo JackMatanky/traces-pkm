@@ -8,6 +8,10 @@ use crate::index::FileIndex;
 
 /// Executes queries over a borrowed [`FileIndex`].
 #[derive(Clone)]
+#[expect(
+    clippy::struct_field_names,
+    reason = "fields refer to the configured file class field and expander"
+)]
 pub struct QueryService<'a> {
     class_field: String,
     class_field_canonical: String,

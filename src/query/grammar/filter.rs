@@ -260,28 +260,36 @@ impl FilterFunction {
         items: &QueryListValueRef<'_>,
         target: &NoteFieldValue,
     ) -> bool {
+        let target_str = target.as_str();
         match items {
-            QueryListValueRef::Values(items) => items
-                .iter()
-                .any(|item| Self::is_tag_or_value_matching(item, target)),
-            QueryListValueRef::Tags(tags) => tags
-                .iter()
-                .any(|tag| Self::is_tag_str_matching(tag.as_str(), target)),
-            QueryListValueRef::Inlinks(paths) => paths.iter().any(|path| {
-                let path = path.to_string_lossy();
-                Self::is_tag_str_matching(&path, target)
+            QueryListValueRef::Values(items) => items.iter().any(|item| {
+                Self::is_tag_or_value_matching(item, target, target_str)
             }),
+            QueryListValueRef::Tags(tags) => {
+                let Some(target_str) = target_str else {
+                    return false;
+                };
+                tags.iter().any(|tag| {
+                    Self::is_tag_str_matching(tag.as_str(), target_str)
+                })
+            }
+            QueryListValueRef::Inlinks(paths) => {
+                let Some(target_str) = target_str else {
+                    return false;
+                };
+                paths.iter().any(|path| {
+                    let path = path.to_string_lossy();
+                    Self::is_tag_str_matching(&path, target_str)
+                })
+            }
         }
     }
 
-    fn is_tag_str_matching(item: &str, target: &NoteFieldValue) -> bool {
-        let Some(target) = target.as_str() else {
-            return false;
-        };
-        item == target
+    fn is_tag_str_matching(item: &str, target_str: &str) -> bool {
+        item == target_str
             || item.starts_with('#')
-                && target.starts_with('#')
-                && is_nested_under(item, target)
+                && target_str.starts_with('#')
+                && is_nested_under(item, target_str)
     }
 
     /// Returns whether list element `item` matches `target`.
@@ -293,12 +301,12 @@ impl FilterFunction {
     fn is_tag_or_value_matching(
         item: &NoteFieldValue,
         target: &NoteFieldValue,
+        target_str: Option<&str>,
     ) -> bool {
         if fields_equal(item, target) {
             return true;
         }
-        let (Some(item_str), Some(target_str)) =
-            (item.as_str(), target.as_str())
+        let (Some(item_str), Some(target_str)) = (item.as_str(), target_str)
         else {
             return false;
         };
@@ -307,7 +315,6 @@ impl FilterFunction {
             && is_nested_under(item_str, target_str)
     }
 }
-
 impl FilterGrammar {
     fn parse_literal_arg(
         input: &str,

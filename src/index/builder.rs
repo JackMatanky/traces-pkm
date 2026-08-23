@@ -469,10 +469,7 @@ mod tests {
                 .first()
                 .expect("note must exist")
                 .frontmatter()
-                .and_then(|fm| {
-                    fm.get(&crate::field::FieldKey::try_new("title").unwrap())
-                        .cloned()
-                });
+                .and_then(|fm| fm.get("title").cloned());
             assert_eq!(
                 title,
                 Some(crate::note::NoteFieldValue::String("V2".to_owned()))
