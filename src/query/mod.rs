@@ -73,6 +73,7 @@ pub use request::QueryRequest;
 use request::{QueryMode, QueryTransform};
 pub use service::QueryService;
 pub(crate) use sort::SortOrder;
+pub(super) use value::{QueryFieldValueRef, QueryListValueRef};
 
 #[cfg(test)]
 mod tests {

@@ -20,7 +20,7 @@ use super::sort::compare_field_values;
 use crate::note::{Link, NoteFieldValue, Tag, is_nested_under};
 
 /// Borrowed field value resolved from a [`super::QueryRecord`].
-pub(super) enum QueryFieldValueRef<'a> {
+pub enum QueryFieldValueRef<'a> {
     Null,
     Bool(bool),
     Number(f64),
@@ -301,7 +301,7 @@ impl QueryFieldValueRef<'_> {
 }
 
 /// Borrowed list value resolved from a [`super::QueryRecord`].
-pub(super) enum QueryListValueRef<'a> {
+pub enum QueryListValueRef<'a> {
     Values(&'a [NoteFieldValue]),
     Tags(&'a [Tag]),
     Inlinks(&'a [PathBuf]),
