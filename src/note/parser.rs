@@ -809,7 +809,6 @@ mod tests {
             assert_eq!(list.items().len(), 2);
         }
 
-        #[rstest]
         #[test]
         fn preserves_soft_breaks_inside_list_item_text() {
             let note = parse_markdown("note.md", "- Wrapped\n  line");

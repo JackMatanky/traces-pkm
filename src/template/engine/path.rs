@@ -34,7 +34,7 @@ use minijinja::{Environment, Error};
 
 use super::error::confine_error;
 use crate::{
-    file_name::{BaseName, FileName},
+    BaseName, FileName,
     path::{PathError, RootConfinedPath},
 };
 

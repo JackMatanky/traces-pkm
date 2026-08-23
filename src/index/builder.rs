@@ -330,6 +330,7 @@ mod tests {
 
         #[test]
         fn skips_parse_for_unchanged_records() {
+            // Arrange
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(
                 temp.path().join("note.md"),
@@ -343,17 +344,20 @@ mod tests {
                 .expect("build");
             let first_len = first.notes().len();
 
+            // Act
             let second = IndexBuilder::from_scan(temp.path())
                 .expect("scan")
                 .reuse_unchanged(first)
                 .build(temp.path())
                 .expect("build");
 
+            // Assert
             assert_eq!(first_len, second.notes().len());
         }
 
         #[test]
         fn reparse_when_record_content_changes() {
+            // Arrange
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(
                 temp.path().join("note.md"),
@@ -372,12 +376,14 @@ mod tests {
             )
             .expect("rewrite note");
 
+            // Act
             let second = IndexBuilder::from_scan(temp.path())
                 .expect("scan")
                 .reuse_unchanged(first)
                 .build(temp.path())
                 .expect("build");
 
+            // Assert
             let title = second
                 .notes()
                 .first()
@@ -395,6 +401,7 @@ mod tests {
 
         #[test]
         fn removes_deleted_notes_from_index() {
+            // Arrange
             let temp = tempfile::tempdir().expect("create temp dir");
             fs::write(
                 temp.path().join("note.md"),
@@ -410,12 +417,14 @@ mod tests {
 
             fs::remove_file(temp.path().join("note.md")).expect("delete note");
 
+            // Act
             let second = IndexBuilder::from_scan(temp.path())
                 .expect("scan")
                 .reuse_unchanged(first)
                 .build(temp.path())
                 .expect("build");
 
+            // Assert
             assert_eq!(second.notes().len(), 0, "deleted note must be removed");
         }
 

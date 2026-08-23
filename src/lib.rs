@@ -12,10 +12,10 @@
 //!   and persistent state.
 //! - `field` - Validated field-name and field-key primitives shared across note
 //!   metadata and schemas.
+//! - `file` - File metadata and file-name newtypes shared by the index,
+//!   template, and schema layers.
 //! - `file_class_expander` - Implements schema-aware File Class expansion for
 //!   the query domain, without either depending on the other.
-//! - `file_name` - File-name newtypes shared by the index, template, and schema
-//!   layers.
 //! - `file_store` - Hash-keyed file and path state store using BLAKE3-named
 //!   entries.
 //! - `hash` - BLAKE3 hashing for file contents and canonicalized paths.
@@ -57,7 +57,6 @@ mod dirs;
 mod field;
 mod file;
 mod file_class_expander;
-mod file_name;
 mod file_store;
 mod hash;
 mod index;
@@ -79,7 +78,7 @@ pub use dialog::{
     DialogError, DialogProvider, PresetDialogProvider, TerminalDialogProvider,
 };
 pub use file::FileRecord;
-pub(crate) use file_name::{BaseName, BaseNameRef, FileName};
+pub(crate) use file::{BaseName, BaseNameRef, FileName};
 pub(crate) use file_store::{
     FileStateStore, FileStateStoreError, FileStoreCleanMode,
 };

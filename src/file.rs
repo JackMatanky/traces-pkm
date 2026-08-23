@@ -1,7 +1,17 @@
-//! File metadata representation for the codebase.
+//! File metadata and file-name newtypes for the codebase.
 //!
 //! [`FileRecord`] stores project-relative identity, type classification,
 //! timestamps, and size for every regular file under a project root.
+//!
+//! # File-name newtypes
+//!
+//! - [`FileName`] - Final path component including any extension
+//! - [`BaseName`] - Owned file stem with any extension stripped
+//! - [`BaseNameRef`] - Borrowed file stem
+//! - [`MissingFileName`] - Error for paths without a final component
+//!
+//! Dotfiles follow [`Path::file_stem`]: `.gitignore` has no extension and keeps
+//! `.gitignore` as its base name.
 
 use std::{
     fs,
@@ -11,8 +21,9 @@ use std::{
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 
-use crate::{BaseName, FileName, index::FileIndexError};
+use crate::index::FileIndexError;
 
 /// Metadata captured for one regular file under a project root.
 ///
@@ -140,6 +151,105 @@ impl FileRecord {
     #[must_use]
     pub(crate) const fn size(&self) -> u64 {
         self.size
+    }
+}
+
+/// Stores a file's final path component.
+///
+/// Keeps the name exactly as returned by [`Path::file_name`], including any
+/// extension. For `todo.md`, stores `todo.md`.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct FileName(String);
+
+impl FileName {
+    /// Returns this name's extension.
+    ///
+    /// Dotfiles without another extension return [`None`]. For example,
+    /// `.gitignore` has no extension, while `.env.local` returns `local`.
+    #[must_use]
+    pub(crate) fn extension(&self) -> Option<&str> {
+        Path::new(&self.0).extension().and_then(|ext| ext.to_str())
+    }
+}
+
+/// Reports that a path has no final component.
+#[derive(Debug, Error)]
+#[error("path has no file name")]
+pub(crate) struct MissingFileName;
+
+impl TryFrom<&Path> for FileName {
+    type Error = MissingFileName;
+
+    /// Builds a [`FileName`] from `path`'s final component.
+    ///
+    /// # Errors
+    ///
+    /// - [`MissingFileName`] if `path` has no final component, such as `/`,
+    ///   `..`, or an empty path
+    fn try_from(path: &Path) -> Result<Self, Self::Error> {
+        path.file_name()
+            .map(|name| Self(name.to_string_lossy().into_owned()))
+            .ok_or(MissingFileName)
+    }
+}
+
+/// Stores a file name with any extension stripped.
+///
+/// Uses [`Path::file_stem`] on [`FileName`]'s stored text. For `todo.md`,
+/// stores `todo`. Dotfiles such as `.gitignore` keep their full text as the
+/// stem.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct BaseName(String);
+
+impl BaseName {
+    /// Returns this name as a string slice.
+    #[inline]
+    #[must_use]
+    pub(crate) fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<&FileName> for BaseName {
+    fn from(name: &FileName) -> Self {
+        Self(
+            Path::new(&name.0)
+                .file_stem()
+                .map(|stem| stem.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+        )
+    }
+}
+
+/// Borrows a file name with any extension stripped.
+///
+/// Use this instead of [`BaseName`] when one comparison or hash lookup can
+/// borrow directly from a [`Path`]. Dotfile behavior matches
+/// [`Path::file_stem`].
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+pub(crate) struct BaseNameRef<'a>(&'a str);
+
+impl<'a> BaseNameRef<'a> {
+    /// Borrows `path`'s file stem.
+    ///
+    /// Returns [`None`] when `path` has no final component or the stem is not
+    /// valid UTF-8.
+    #[must_use]
+    pub(crate) fn from_path(path: &'a Path) -> Option<Self> {
+        path.file_stem().and_then(|stem| stem.to_str()).map(Self)
+    }
+
+    /// Returns this stem as a string slice.
+    #[inline]
+    #[must_use]
+    pub(crate) const fn as_str(&self) -> &str {
+        self.0
+    }
+}
+
+impl std::borrow::Borrow<str> for BaseNameRef<'_> {
+    fn borrow(&self) -> &str {
+        self.0
     }
 }
 
@@ -294,7 +404,203 @@ mod tests {
         }
     }
 
-    mod from_name {
+    mod file_record {
+        use super::*;
+
+        mod from_metadata {
+            use pretty_assertions::assert_eq;
+
+            use super::*;
+
+            fn metadata_for(path: &Path) -> fs::Metadata {
+                fs::metadata(path).expect("read metadata")
+            }
+
+            #[test]
+            fn splits_the_name_from_the_extension() {
+                let temp = tempfile::tempdir().expect("create temp dir");
+                let file = temp.path().join("notes").join("todo.md");
+                fs::create_dir_all(file.parent().expect("parent"))
+                    .expect("mkdir");
+                fs::write(&file, "content").expect("write file");
+
+                let record = FileRecord::from_metadata(
+                    &file,
+                    temp.path(),
+                    &metadata_for(&file),
+                )
+                .expect("build record");
+
+                assert_eq!(record.name().as_str(), "todo");
+                assert_eq!(record.path(), Path::new("notes/todo.md"));
+                assert_eq!(record.folder(), Path::new("notes"));
+                assert_eq!(record.format(), FileFormat::Note);
+                assert_eq!(record.size(), 7);
+                assert_eq!(record.modified_at().0 <= Utc::now(), true);
+            }
+
+            #[test]
+            fn returns_an_empty_folder_when_the_file_is_directly_under_root() {
+                let temp = tempfile::tempdir().expect("create temp dir");
+                let file = temp.path().join("readme.md");
+                fs::write(&file, "hi").expect("write file");
+
+                let record = FileRecord::from_metadata(
+                    &file,
+                    temp.path(),
+                    &metadata_for(&file),
+                )
+                .expect("build record");
+
+                assert_eq!(record.name().as_str(), "readme");
+                assert_eq!(record.path(), Path::new("readme.md"));
+                assert_eq!(record.folder(), Path::new(""));
+                assert_eq!(record.format(), FileFormat::Note);
+                assert_eq!(record.size(), 2);
+            }
+        }
+
+        mod created_at {
+            use pretty_assertions::assert_eq;
+
+            use super::*;
+
+            #[test]
+            fn returns_none_when_creation_time_is_unsupported() {
+                let record = record_with(None, Timestamp::now());
+
+                assert_eq!(record.created_at(), None);
+            }
+
+            #[test]
+            fn returns_some_when_creation_time_is_reported() {
+                let modified_at = Timestamp::now();
+                let reported =
+                    Timestamp(modified_at.0 - chrono::Duration::days(1));
+                let record = record_with(Some(reported), modified_at);
+
+                assert_eq!(record.created_at(), Some(reported));
+            }
+        }
+
+        mod created_at_or_modified {
+            use pretty_assertions::assert_eq;
+
+            use super::*;
+
+            #[test]
+            fn returns_created_when_present() {
+                let modified_at = Timestamp::now();
+                let reported =
+                    Timestamp(modified_at.0 - chrono::Duration::days(1));
+                let record = record_with(Some(reported), modified_at);
+
+                assert_eq!(record.created_at_or_modified(), reported);
+            }
+
+            #[test]
+            fn falls_back_to_modified_when_created_is_none() {
+                let modified_at = Timestamp::now();
+                let record = record_with(None, modified_at);
+
+                assert_eq!(record.created_at_or_modified(), modified_at);
+            }
+        }
+    }
+
+    mod file_name {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn keeps_the_extension() {
+            let name = FileName::try_from(Path::new("todo.md"))
+                .expect("valid file name");
+
+            assert_eq!(name.extension(), Some("md"));
+        }
+
+        #[test]
+        fn fails_when_the_path_has_no_final_component() {
+            let error = FileName::try_from(Path::new(".."))
+                .expect_err("path with no file name is rejected");
+
+            assert!(matches!(error, MissingFileName));
+        }
+    }
+
+    mod base_name {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn strips_the_extension() {
+            let name = FileName::try_from(Path::new("todo.md"))
+                .expect("valid file name");
+
+            assert_eq!(BaseName::from(&name).as_str(), "todo");
+        }
+
+        #[test]
+        fn keeps_the_whole_name_when_there_is_no_extension() {
+            let name = FileName::try_from(Path::new("LICENSE"))
+                .expect("valid file name");
+
+            assert_eq!(BaseName::from(&name).as_str(), "LICENSE");
+        }
+
+        #[test]
+        fn treats_a_leading_dot_as_part_of_the_stem() {
+            let name = FileName::try_from(Path::new(".gitignore"))
+                .expect("valid file name");
+
+            assert_eq!(BaseName::from(&name).as_str(), ".gitignore");
+        }
+    }
+
+    mod base_name_ref {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn borrows_the_stem_without_the_extension() {
+            let stem = BaseNameRef::from_path(Path::new("todo.md"))
+                .expect("valid path");
+
+            assert_eq!(stem.as_str(), "todo");
+        }
+
+        #[test]
+        fn returns_none_when_the_path_has_no_final_component() {
+            assert_eq!(BaseNameRef::from_path(Path::new("..")), None);
+        }
+
+        #[test]
+        fn compares_equal_for_the_same_stem_across_different_paths() {
+            let a = BaseNameRef::from_path(Path::new("a/todo.md"))
+                .expect("valid path");
+            let b = BaseNameRef::from_path(Path::new("b/todo.markdown"))
+                .expect("valid path");
+
+            assert_eq!(a, b);
+        }
+
+        #[test]
+        #[cfg(unix)]
+        fn returns_none_when_the_stem_is_not_valid_utf8() {
+            use std::{ffi::OsStr, os::unix::ffi::OsStrExt};
+
+            let invalid = OsStr::from_bytes(&[0x66, 0x6f, 0x80, 0x6f]); // "fo\x80o"
+            let path = Path::new(invalid);
+
+            assert_eq!(BaseNameRef::from_path(path), None);
+        }
+    }
+
+    mod format {
         use pretty_assertions::assert_eq;
         use rstest::rstest;
 
@@ -316,104 +622,7 @@ mod tests {
         }
     }
 
-    mod from_metadata {
-        use pretty_assertions::assert_eq;
-
-        use super::*;
-
-        fn metadata_for(path: &Path) -> fs::Metadata {
-            fs::metadata(path).expect("read metadata")
-        }
-
-        #[test]
-        fn splits_the_name_from_the_extension() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            let file = temp.path().join("notes").join("todo.md");
-            fs::create_dir_all(file.parent().expect("parent")).expect("mkdir");
-            fs::write(&file, "content").expect("write file");
-
-            let record = FileRecord::from_metadata(
-                &file,
-                temp.path(),
-                &metadata_for(&file),
-            )
-            .expect("build record");
-
-            assert_eq!(record.name().as_str(), "todo");
-            assert_eq!(record.path(), Path::new("notes/todo.md"));
-            assert_eq!(record.folder(), Path::new("notes"));
-            assert_eq!(record.format(), FileFormat::Note);
-            assert_eq!(record.size(), 7);
-            assert_eq!(record.modified_at().0 <= Utc::now(), true);
-        }
-
-        #[test]
-        fn returns_an_empty_folder_when_the_file_is_directly_under_root() {
-            let temp = tempfile::tempdir().expect("create temp dir");
-            let file = temp.path().join("readme.md");
-            fs::write(&file, "hi").expect("write file");
-
-            let record = FileRecord::from_metadata(
-                &file,
-                temp.path(),
-                &metadata_for(&file),
-            )
-            .expect("build record");
-
-            assert_eq!(record.name().as_str(), "readme");
-            assert_eq!(record.path(), Path::new("readme.md"));
-            assert_eq!(record.folder(), Path::new(""));
-            assert_eq!(record.format(), FileFormat::Note);
-            assert_eq!(record.size(), 2);
-        }
-    }
-
-    mod created_at {
-        use pretty_assertions::assert_eq;
-
-        use super::*;
-
-        #[test]
-        fn returns_none_when_creation_time_is_unsupported() {
-            let record = record_with(None, Timestamp::now());
-
-            assert_eq!(record.created_at(), None);
-        }
-
-        #[test]
-        fn returns_some_when_creation_time_is_reported() {
-            let modified_at = Timestamp::now();
-            let reported = Timestamp(modified_at.0 - chrono::Duration::days(1));
-            let record = record_with(Some(reported), modified_at);
-
-            assert_eq!(record.created_at(), Some(reported));
-        }
-    }
-
-    mod created_at_or_modified {
-        use pretty_assertions::assert_eq;
-
-        use super::*;
-
-        #[test]
-        fn returns_created_when_present() {
-            let modified_at = Timestamp::now();
-            let reported = Timestamp(modified_at.0 - chrono::Duration::days(1));
-            let record = record_with(Some(reported), modified_at);
-
-            assert_eq!(record.created_at_or_modified(), reported);
-        }
-
-        #[test]
-        fn falls_back_to_modified_when_created_is_none() {
-            let modified_at = Timestamp::now();
-            let record = record_with(None, modified_at);
-
-            assert_eq!(record.created_at_or_modified(), modified_at);
-        }
-    }
-
-    mod formatting {
+    mod timestamps {
         use chrono::TimeZone;
         use pretty_assertions::assert_eq;
 

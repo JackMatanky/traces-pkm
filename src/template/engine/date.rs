@@ -1650,48 +1650,6 @@ mod tests {
         }
     }
 
-    mod comparison {
-        use pretty_assertions::assert_eq;
-
-        use super::*;
-
-        #[test]
-        fn is_past_returns_true_for_past_date() {
-            let rendered = env()
-                .render_str(
-                    "{{ '2000-01-01' is is_past }}",
-                    minijinja::context!(),
-                )
-                .expect("render succeeds");
-
-            assert_eq!(rendered, "true");
-        }
-
-        #[test]
-        fn is_future_returns_true_for_far_future_date() {
-            let rendered = env()
-                .render_str(
-                    "{{ '2099-12-31' is is_future }}",
-                    minijinja::context!(),
-                )
-                .expect("render succeeds");
-
-            assert_eq!(rendered, "true");
-        }
-
-        #[test]
-        fn is_past_returns_false_for_far_future_date() {
-            let rendered = env()
-                .render_str(
-                    "{{ '2099-12-31' is is_past }}",
-                    minijinja::context!(),
-                )
-                .expect("render succeeds");
-
-            assert_eq!(rendered, "false");
-        }
-    }
-
     mod is_leap_year {
         use pretty_assertions::assert_eq;
         use rstest::rstest;

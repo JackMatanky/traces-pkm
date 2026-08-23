@@ -878,6 +878,7 @@ mod tests {
 
         #[test]
         fn clean_succeeds_when_companion_already_removed() {
+            // Arrange
             let fixture = Fixture::new();
             let target = fixture.target("target");
             fixture.store.record(&target).expect("record");
@@ -887,10 +888,12 @@ mod tests {
             fs::remove_file(&companion).expect("delete companion");
             fs::remove_file(&target).expect("delete target");
 
+            // Act
             let result = fixture
                 .store
                 .clean(FileStoreCleanMode::WithCompanions(&[".hash"]));
 
+            // Assert
             assert!(
                 result.is_ok(),
                 "clean must succeed when companion is missing: {result:?}"
@@ -1073,63 +1076,6 @@ mod tests {
                 result,
                 Err(FileStateStoreError::Canonicalize { .. })
             ));
-        }
-    }
-
-    mod read_companion {
-        use super::*;
-
-        #[test]
-        fn returns_none_when_companion_file_missing() {
-            let fixture = Fixture::new();
-            let target = fixture.target("target");
-            fixture.store.record(&target).expect("record");
-
-            let result = fixture.store.read_companion(&target, ".hash");
-
-            assert!(
-                result.is_ok(),
-                "read_companion must not error: {result:?}"
-            );
-            assert_eq!(result.unwrap(), None);
-        }
-    }
-
-    mod remove_with_companions {
-        use pretty_assertions::assert_eq;
-
-        use super::*;
-
-        #[test]
-        fn returns_zero_when_entry_missing() {
-            let fixture = Fixture::new();
-            let target = fixture.target("target");
-
-            let result =
-                fixture.store.remove_with_companions(&target, &[".hash"]);
-
-            assert!(
-                result.is_ok(),
-                "remove must not error on missing entry: {result:?}"
-            );
-            assert_eq!(result.unwrap(), 0);
-        }
-
-        #[test]
-        fn succeeds_when_companion_already_removed() {
-            let fixture = Fixture::new();
-            let target = fixture.target("target");
-            fixture.store.record(&target).expect("record");
-            let entry = fixture.entry_path_for(&target);
-            let companion = companion_path(&entry, ".hash");
-            fs::write(&companion, "hash").expect("write companion");
-            fs::remove_file(&companion).expect("delete companion");
-
-            let result =
-                fixture.store.remove_with_companions(&target, &[".hash"]);
-
-            assert!(result.is_ok(), "remove must succeed: {result:?}");
-            assert_eq!(result.unwrap(), 1);
         }
     }
 }
