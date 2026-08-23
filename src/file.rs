@@ -1,17 +1,33 @@
-//! File metadata and file-name newtypes for the codebase.
+//! File metadata and file-name newtypes.
 //!
-//! [`FileRecord`] stores project-relative identity, type classification,
-//! timestamps, and size for every regular file under a project root.
+//! This module provides two families of types for working with files in a
+//! project:
 //!
-//! # File-name newtypes
+//! - [`FileRecord`] captures filesystem metadata (path, timestamps, size) for
+//!   every regular file under a project root.
+//! - The file-name newtypes ([`FileName`], [`BaseName`], [`BaseNameRef`])
+//!   represent different views of a path's final component: full name, owned
+//!   stem, and borrowed stem respectively.
 //!
-//! - [`FileName`] - Final path component including any extension
-//! - [`BaseName`] - Owned file stem with any extension stripped
-//! - [`BaseNameRef`] - Borrowed file stem
-//! - [`MissingFileName`] - Error for paths without a final component
+//! # File-name decomposition
 //!
-//! Dotfiles follow [`Path::file_stem`]: `.gitignore` has no extension and keeps
-//! `.gitignore` as its base name.
+//! Given a path like `notes/todo.md`:
+//!
+//! - [`FileName`] stores `todo.md` (the final component, including extension).
+//! - [`BaseName`] stores `todo` (the stem, extension stripped).
+//! - [`BaseNameRef`] borrows the same `todo` without allocation.
+//!
+//! Dotfiles follow [`Path::file_stem`]: `.gitignore` has no extension, so both
+//! [`FileName`] and [`BaseName`] store `.gitignore`.
+//!
+//! # Timestamps
+//!
+//! [`Timestamp`] wraps [`DateTime<Utc>`] to unify formatting and ordering
+//! across the index layer. It provides several format helpers for query field
+//! values (e.g., `ctime`, `mdate`).
+//!
+//! [`DateTime<Utc>`]: chrono::DateTime
+//! [`DateTime<Utc>`]: chrono::Utc
 
 use std::{
     fs,
@@ -44,7 +60,9 @@ impl FileRecord {
     /// Builds a [`FileRecord`] from filesystem metadata.
     ///
     /// `path` is the absolute file path under `root`; both are used to store a
-    /// project-relative path in the record.
+    /// project-relative path in the record. The modification time is read from
+    /// `metadata`; creation time is captured if the host OS reports it, and
+    /// [`None`] otherwise.
     ///
     /// # Errors
     ///
@@ -95,8 +113,9 @@ impl FileRecord {
         &self.name
     }
 
-    /// Returns the file's parent directory, relative to the project root. Empty
-    /// for files directly under the project root.
+    /// Returns the file's parent directory, relative to the project root.
+    ///
+    /// Returns an empty [`Path`] for files directly under the project root.
     #[inline]
     #[must_use]
     pub(crate) fn folder(&self) -> &Path {
@@ -132,7 +151,7 @@ impl FileRecord {
 
     /// Returns [`Self::created_at`] when available, falling back to
     /// [`Self::modified_at`] when creation time is unsupported on the host
-    /// OS/filesystem.
+    /// OS or filesystem.
     #[inline]
     #[must_use]
     pub(crate) fn created_at_or_modified(&self) -> Timestamp {
@@ -154,18 +173,19 @@ impl FileRecord {
     }
 }
 
-/// Stores a file's final path component.
+/// Final path component of a file, including any extension.
 ///
-/// Keeps the name exactly as returned by [`Path::file_name`], including any
-/// extension. For `todo.md`, stores `todo.md`.
+/// Wraps the text returned by [`Path::file_name`]. For `todo.md`, stores
+/// `todo.md`. For `.gitignore`, stores `.gitignore`.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct FileName(String);
 
 impl FileName {
-    /// Returns this name's extension.
+    /// Returns this name's extension, if any.
     ///
     /// Dotfiles without another extension return [`None`]. For example,
-    /// `.gitignore` has no extension, while `.env.local` returns `local`.
+    /// `.gitignore` has no extension, while `.env.local` returns
+    /// `Some("local")`.
     #[must_use]
     pub(crate) fn extension(&self) -> Option<&str> {
         Path::new(&self.0).extension().and_then(|ext| ext.to_str())
@@ -185,7 +205,7 @@ impl TryFrom<&Path> for FileName {
     /// # Errors
     ///
     /// - [`MissingFileName`] if `path` has no final component, such as `/`,
-    ///   `..`, or an empty path
+    ///   `..`, or an empty path.
     fn try_from(path: &Path) -> Result<Self, Self::Error> {
         path.file_name()
             .map(|name| Self(name.to_string_lossy().into_owned()))
@@ -193,7 +213,7 @@ impl TryFrom<&Path> for FileName {
     }
 }
 
-/// Stores a file name with any extension stripped.
+/// Owned file name with any extension stripped.
 ///
 /// Uses [`Path::file_stem`] on [`FileName`]'s stored text. For `todo.md`,
 /// stores `todo`. Dotfiles such as `.gitignore` keep their full text as the
@@ -221,9 +241,9 @@ impl From<&FileName> for BaseName {
     }
 }
 
-/// Borrows a file name with any extension stripped.
+/// Borrowed file name with any extension stripped.
 ///
-/// Use this instead of [`BaseName`] when one comparison or hash lookup can
+/// Use this instead of [`BaseName`] when a comparison or hash lookup can
 /// borrow directly from a [`Path`]. Dotfile behavior matches
 /// [`Path::file_stem`].
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
@@ -291,6 +311,9 @@ impl FileFormat {
 ///
 /// Wraps [`DateTime<Utc>`] so index code uses one formatting and ordering type
 /// instead of leaking filesystem clock details.
+///
+/// [`DateTime<Utc>`]: chrono::DateTime
+/// [`Utc`]: chrono::Utc
 #[derive(
     Copy, Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Deserialize, Serialize,
 )]
@@ -436,7 +459,7 @@ mod tests {
                 assert_eq!(record.folder(), Path::new("notes"));
                 assert_eq!(record.format(), FileFormat::Note);
                 assert_eq!(record.size(), 7);
-                assert_eq!(record.modified_at().0 <= Utc::now(), true);
+                assert!(record.modified_at().0 <= Utc::now());
             }
 
             #[test]
