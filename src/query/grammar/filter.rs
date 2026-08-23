@@ -315,6 +315,7 @@ impl FilterFunction {
             && is_nested_under(item_str, target_str)
     }
 }
+
 impl FilterGrammar {
     fn parse_literal_arg(
         input: &str,
@@ -413,6 +414,7 @@ impl TryFrom<&str> for CompareOp {
         }
     }
 }
+
 impl AtomParser for FilterGrammar {
     type Atom = FilterAtom;
     type Token = FilterToken;

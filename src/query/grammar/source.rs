@@ -85,6 +85,20 @@ pub(crate) struct GlobPattern {
     pattern: String,
 }
 
+impl std::fmt::Debug for GlobPattern {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("GlobPattern").field(&self.pattern).finish()
+    }
+}
+
+impl PartialEq for GlobPattern {
+    fn eq(&self, other: &Self) -> bool {
+        self.pattern == other.pattern
+    }
+}
+
+impl Eq for GlobPattern {}
+
 /// Expansion depth for a File Class match.
 ///
 /// | Mode          | Matches                                    | Sigil | Function                |
@@ -322,6 +336,7 @@ impl SourceExpr {
         }
     }
 
+    /// Builds a conjunction (AND) of `first` and `rest`.
     #[must_use]
     pub(crate) fn conjunction(first: Self, rest: Vec<Self>) -> Self {
         if rest.is_empty() {
@@ -395,92 +410,6 @@ impl SourceSelector {
                 }
             });
         }
-    }
-}
-
-impl std::fmt::Debug for GlobPattern {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_tuple("GlobPattern").field(&self.pattern).finish()
-    }
-}
-
-impl PartialEq for GlobPattern {
-    fn eq(&self, other: &Self) -> bool {
-        self.pattern == other.pattern
-    }
-}
-
-impl Eq for GlobPattern {}
-
-impl AtomParser for SourceGrammar {
-    type Atom = SourceAtom;
-    type Token = SourceToken;
-
-    fn control(&self, token: &Self::Token) -> Option<LogicalControl> {
-        match token {
-            SourceToken::Logical(operator) => {
-                Some(LogicalControl::Operator(*operator))
-            }
-            SourceToken::Not => Some(LogicalControl::Not),
-            SourceToken::LParen => Some(LogicalControl::LeftParen),
-            SourceToken::RParen => Some(LogicalControl::RightParen),
-            SourceToken::Comma
-            | SourceToken::Class
-            | SourceToken::WithChildren
-            | SourceToken::WithDescendants
-            | SourceToken::Tag(_)
-            | SourceToken::ClassSigil(_)
-            | SourceToken::Quoted(_)
-            | SourceToken::Bare(_) => None,
-        }
-    }
-
-    fn parse_atom(
-        &self,
-        input: &str,
-        tokens: &mut TokenStream<Spanned<Self::Token>>,
-    ) -> Result<Self::Atom, QueryError> {
-        let next_span = tokens.next_span(input);
-        match tokens.next() {
-            Some(Spanned {
-                value: SourceToken::Tag(tag),
-                ..
-            }) => Ok(SourceAtom::Tag(tag)),
-            Some(Spanned {
-                value: SourceToken::ClassSigil(sigil),
-                span,
-            }) => Self::parse_sigil(input, &sigil, span),
-            Some(Spanned {
-                value: SourceToken::Quoted(path) | SourceToken::Bare(path),
-                span,
-            }) => {
-                let glob = if path.ends_with('/') {
-                    format!("{path}**")
-                } else {
-                    path
-                };
-                GlobPattern::compile(&glob)
-                    .map(SourceAtom::Path)
-                    .map_err(|_| syntax_error(input, span, "a valid path glob"))
-            }
-            Some(Spanned {
-                value: SourceToken::Class,
-                span,
-            }) => Self::parse_class_function(input, tokens, span),
-            Some(token) => {
-                Err(syntax_error(input, token.span, "a source term"))
-            }
-            None => Err(syntax_error(input, next_span, "a source term")),
-        }
-    }
-
-    fn syntax_error(
-        &self,
-        input: &str,
-        span: SourceSpan,
-        expected: &'static str,
-    ) -> QuerySyntaxError {
-        QuerySyntaxError::new(QueryDialect::Source, input, span, expected)
     }
 }
 
@@ -599,6 +528,78 @@ impl SourceGrammar {
             names: vec![name_spanned.value],
             mode,
         })
+    }
+}
+
+impl AtomParser for SourceGrammar {
+    type Atom = SourceAtom;
+    type Token = SourceToken;
+
+    fn control(&self, token: &Self::Token) -> Option<LogicalControl> {
+        match token {
+            SourceToken::Logical(operator) => {
+                Some(LogicalControl::Operator(*operator))
+            }
+            SourceToken::Not => Some(LogicalControl::Not),
+            SourceToken::LParen => Some(LogicalControl::LeftParen),
+            SourceToken::RParen => Some(LogicalControl::RightParen),
+            SourceToken::Comma
+            | SourceToken::Class
+            | SourceToken::WithChildren
+            | SourceToken::WithDescendants
+            | SourceToken::Tag(_)
+            | SourceToken::ClassSigil(_)
+            | SourceToken::Quoted(_)
+            | SourceToken::Bare(_) => None,
+        }
+    }
+
+    fn parse_atom(
+        &self,
+        input: &str,
+        tokens: &mut TokenStream<Spanned<Self::Token>>,
+    ) -> Result<Self::Atom, QueryError> {
+        let next_span = tokens.next_span(input);
+        match tokens.next() {
+            Some(Spanned {
+                value: SourceToken::Tag(tag),
+                ..
+            }) => Ok(SourceAtom::Tag(tag)),
+            Some(Spanned {
+                value: SourceToken::ClassSigil(sigil),
+                span,
+            }) => Self::parse_sigil(input, &sigil, span),
+            Some(Spanned {
+                value: SourceToken::Quoted(path) | SourceToken::Bare(path),
+                span,
+            }) => {
+                let glob = if path.ends_with('/') {
+                    format!("{path}**")
+                } else {
+                    path
+                };
+                GlobPattern::compile(&glob)
+                    .map(SourceAtom::Path)
+                    .map_err(|_| syntax_error(input, span, "a valid path glob"))
+            }
+            Some(Spanned {
+                value: SourceToken::Class,
+                span,
+            }) => Self::parse_class_function(input, tokens, span),
+            Some(token) => {
+                Err(syntax_error(input, token.span, "a source term"))
+            }
+            None => Err(syntax_error(input, next_span, "a source term")),
+        }
+    }
+
+    fn syntax_error(
+        &self,
+        input: &str,
+        span: SourceSpan,
+        expected: &'static str,
+    ) -> QuerySyntaxError {
+        QuerySyntaxError::new(QueryDialect::Source, input, span, expected)
     }
 }
 
