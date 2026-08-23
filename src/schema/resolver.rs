@@ -25,7 +25,7 @@ use super::{
     graph::{Building, Resolved, SchemaGraph},
     model::Schema,
 };
-use crate::field::FieldName;
+use crate::field::{FieldKey, FieldName};
 
 /// A Schema that failed to resolve, with its [`SchemaError`].
 #[derive(Debug)]
@@ -336,17 +336,17 @@ fn reject_ambiguous_canonical_names(
     name: SchemaNameRef<'_>,
     fields: &IndexMap<FieldName, super::fields::SchemaFieldDef>,
 ) -> Result<(), SchemaError> {
-    let mut seen: HashMap<String, FieldName> = HashMap::new();
+    let mut seen: HashMap<String, &FieldName> = HashMap::new();
     for field_name in fields.keys() {
-        let canonical = field_name.to_key().canonical().to_owned();
-        if let Some(first) = seen.get(&canonical) {
+        let canonical = FieldKey::canonicalize(field_name.as_str());
+        if let Some(&first) = seen.get(&canonical) {
             return Err(SchemaError::AmbiguousFieldName {
                 schema: SchemaName::from(name),
                 first: first.clone(),
                 second: Box::new(field_name.clone()),
             });
         }
-        seen.insert(canonical, field_name.clone());
+        seen.insert(canonical, field_name);
     }
     Ok(())
 }

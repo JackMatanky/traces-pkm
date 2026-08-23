@@ -59,18 +59,6 @@ impl FieldName {
         FieldNameRef(&self.0)
     }
 
-    /// Converts this name into a forgiving [`FieldKey`].
-    ///
-    /// Allocates the canonical form while preserving the exact name text.
-    #[must_use]
-    pub(crate) fn to_key(&self) -> FieldKey {
-        let canonical = FieldKey::canonicalize(&self.0);
-        FieldKey {
-            name: self.0.as_str().into(),
-            canonical: canonical.into_boxed_str(),
-        }
-    }
-
     /// Validates `raw` as a field name.
     ///
     /// # Errors
@@ -347,7 +335,8 @@ impl FieldKey {
     ///
     /// Consecutive whitespace produces consecutive `-` characters. Existing `-`
     /// characters are not collapsed with substituted whitespace.
-    fn canonicalize(raw: &str) -> String {
+    #[must_use]
+    pub(crate) fn canonicalize(raw: &str) -> String {
         let mut result = String::with_capacity(raw.len());
         for ch in raw.chars() {
             if ch.is_ascii_whitespace() {
@@ -1047,12 +1036,6 @@ mod tests {
             let lower = FieldName::try_from("status").expect("valid");
             let upper = FieldName::try_from("Status").expect("valid");
             assert_ne!(lower, upper);
-        }
-
-        #[test]
-        fn to_key_computes_the_canonical_form() {
-            let name = FieldName::try_from("Time Played").expect("valid");
-            assert_eq!(name.to_key().canonical(), "time-played");
         }
 
         #[test]
