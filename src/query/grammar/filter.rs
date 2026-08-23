@@ -201,6 +201,23 @@ impl CompareOp {
     }
 }
 
+impl TryFrom<&str> for CompareOp {
+    type Error = ();
+
+    /// Attempts to parse a comparison operator from its string representation.
+    fn try_from(spelling: &str) -> Result<Self, Self::Error> {
+        match spelling {
+            "==" => Ok(Self::Eq),
+            "!=" => Ok(Self::Ne),
+            ">=" => Ok(Self::Ge),
+            "<=" => Ok(Self::Le),
+            ">" => Ok(Self::Gt),
+            "<" => Ok(Self::Lt),
+            _ => Err(()),
+        }
+    }
+}
+
 impl FilterFunction {
     /// Builds the function call named `name` if it names a known function.
     ///
@@ -395,23 +412,6 @@ impl FilterGrammar {
         let field = FieldPath::parse(field_ident)?;
         let value = Self::parse_literal_arg(input, tokens)?;
         Ok(ComparisonExpr::new(field, op_spanned.value, value))
-    }
-}
-
-impl TryFrom<&str> for CompareOp {
-    type Error = ();
-
-    /// Attempts to parse a comparison operator from its string representation.
-    fn try_from(spelling: &str) -> Result<Self, Self::Error> {
-        match spelling {
-            "==" => Ok(Self::Eq),
-            "!=" => Ok(Self::Ne),
-            ">=" => Ok(Self::Ge),
-            "<=" => Ok(Self::Le),
-            ">" => Ok(Self::Gt),
-            "<" => Ok(Self::Lt),
-            _ => Err(()),
-        }
     }
 }
 

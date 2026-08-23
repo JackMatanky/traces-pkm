@@ -34,8 +34,8 @@ pub(super) enum LogicalControl {
 /// A parsed logical expression tree over domain-local atom type `A`.
 ///
 /// The tree preserves the original precedence and grouping of the parsed
-/// expression. Domain-specific evaluation is delegated to atom predicates
-/// via [`Self::is_matching`], [`Self::has_any_atom`], and
+/// expression. Domain-specific evaluation is delegated to atom predicates via
+/// [`Self::is_matching`], [`Self::has_any_atom`], and
 /// [`Self::visit_atoms_mut`].
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum BooleanExpr<A> {
@@ -52,8 +52,8 @@ pub(crate) enum BooleanExpr<A> {
 /// Domain-specific atom parsing hooks for the shared logical grammar.
 ///
 /// Implement this trait to plug a domain-specific token type and atom parser
-/// into [`parse_boolean_expr`]. The shared parser handles operator
-/// precedence, grouping, and error recovery, delegating atom recognition to the
+/// into [`parse_boolean_expr`]. The shared parser handles operator precedence,
+/// grouping, and error recovery, delegating atom recognition to the
 /// implementer.
 pub(super) trait AtomParser {
     /// The source/filter token type.
