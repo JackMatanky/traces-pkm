@@ -130,11 +130,14 @@ mod tests {
     use crate::{
         file::FileRecord,
         note::Note,
-        query::{QueryRecordSet, QueryRequest, QueryService, QuerySource},
+        query::{QueryRecordSet, QueryRequest, QueryService, SourceSelector},
     };
 
     /// Runs a page-level query via [`QueryService`].
-    fn query_pages(index: &FileIndex, source: &QuerySource) -> QueryRecordSet {
+    fn query_pages(
+        index: &FileIndex,
+        source: &SourceSelector,
+    ) -> QueryRecordSet {
         QueryService::new("class")
             .execute(index, QueryRequest::pages(source.clone()))
     }
@@ -571,7 +574,7 @@ mod tests {
                 .expect("delete linker");
 
             let refreshed = indexer.refresh().expect("refresh index");
-            let outcome = query_pages(&refreshed, &QuerySource::All);
+            let outcome = query_pages(&refreshed, &SourceSelector::All);
             let target = outcome.iter().next().expect("target record");
 
             assert_eq!(target.file().path(), Path::new("target.md"));
@@ -596,7 +599,7 @@ mod tests {
                 .expect("repoint linker");
 
             let refreshed = indexer.refresh().expect("refresh index");
-            let outcome = query_pages(&refreshed, &QuerySource::All);
+            let outcome = query_pages(&refreshed, &SourceSelector::All);
             let old_target = outcome
                 .iter()
                 .find(|record| {
@@ -659,7 +662,7 @@ mod tests {
                 .expect("persist index");
 
             let refreshed = indexer.refresh().expect("refresh index");
-            let outcome = query_pages(&refreshed, &QuerySource::All);
+            let outcome = query_pages(&refreshed, &SourceSelector::All);
             let target = outcome
                 .iter()
                 .find(|record| record.file().path() == Path::new("target.md"))
@@ -733,7 +736,7 @@ mod tests {
                 .expect("delete archive/foo.md");
 
             let refreshed = indexer.refresh().expect("refresh index");
-            let outcome = query_pages(&refreshed, &QuerySource::All);
+            let outcome = query_pages(&refreshed, &SourceSelector::All);
             let target = outcome
                 .iter()
                 .find(|record| {

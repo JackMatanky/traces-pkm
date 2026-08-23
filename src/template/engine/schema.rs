@@ -63,10 +63,7 @@ use minijinja::{
 
 use crate::{
     field::FieldValue,
-    query::{
-        ClassExpansionMode, QuerySource, QuerySourceExpr, SourceAtom,
-        compile_glob,
-    },
+    query::{ClassExpansionMode, SourceAtom, SourceExpr, SourceSelector},
     schema::{
         Schema, SchemaFileFieldRef, SchemaSelectFieldEntry, SchemaService,
     },
@@ -256,7 +253,7 @@ fn select_entry_value(entry: &SchemaSelectFieldEntry) -> Value {
     Value::from_serialize(&object)
 }
 
-/// Builds a [`QuerySource`] filter from a `file` field's declaration.
+/// Builds a [`SourceSelector`] filter from a `file` field's declaration.
 ///
 /// Empty `folders`/`class` are omitted from the built expression rather than
 /// defaulted to always-true, so a class-only field still narrows to Notes of
@@ -272,7 +269,7 @@ fn select_entry_value(entry: &SchemaSelectFieldEntry) -> Value {
 /// (see [`compile_glob`]'s docs: not expected in practice).
 fn file_field_source(
     filter: &SchemaFileFieldRef<'_>,
-) -> Result<QuerySource, regex::Error> {
+) -> Result<SourceSelector, regex::Error> {
     let SchemaFileFieldRef {
         folders,
         ext,
@@ -285,23 +282,23 @@ fn file_field_source(
             .iter()
             .map(|folder| glob_for(folder, ext))
             .collect::<Result<Vec<_>, _>>()?;
-        terms.push(QuerySourceExpr::disjunction(first_glob, rest_globs));
+        terms.push(SourceExpr::disjunction(first_glob, rest_globs));
     } else if ext.is_some() {
-        terms.push(QuerySourceExpr::atom(glob_for("", ext)?));
+        terms.push(SourceExpr::atom(glob_for("", ext)?));
     } else {
         // Neither folders nor ext restrict the match: no glob term to add.
     }
     if !class.is_empty() {
-        terms.push(QuerySourceExpr::atom(SourceAtom::Class {
+        terms.push(SourceExpr::atom(SourceAtom::Class {
             names: class.to_vec(),
             mode: ClassExpansionMode::Exact(BTreeSet::new()),
         }));
     }
     let mut terms = terms.into_iter();
     Ok(terms.next().map_or_else(
-        || QuerySource::All,
+        || SourceSelector::All,
         |first| {
-            QuerySource::Expr(QuerySourceExpr::conjunction(
+            SourceSelector::Expr(SourceExpr::conjunction(
                 first,
                 terms.collect(),
             ))
@@ -328,7 +325,7 @@ fn glob_for(
     } else {
         format!("{folder}/**{suffix}")
     };
-    compile_glob(&glob)
+    SourceAtom::path(&glob)
 }
 
 /// Maps a [`regex::Error`] from a `file` field's glob compilation into a
@@ -391,7 +388,7 @@ mod tests {
     /// A fuller [`Environment`] than [`env`]: also registers `query`/`tasks`
     /// and their terminal filters (`with_children`/`with_descendants` among
     /// them) alongside `schema`, against `directory`'s schema directory.
-    /// Needed only by tests proving a `file` field's `QuerySource` output
+    /// Needed only by tests proving a `file` field's `SourceSelector` output
     /// composes with `query.from(...)`.
     fn full_env(directory: &Path) -> Environment<'static> {
         let root: Arc<Path> = Arc::from(

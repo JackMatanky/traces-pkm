@@ -1,8 +1,8 @@
 //! Error types for query parsing, field resolution, and result transformation.
 //!
-//! This module defines the error hierarchy returned by [`super::QuerySource`]
-//! parsing, [`super::QueryRecordSet`] transformation methods, and
-//! [`super::QueryRecord`] field resolution.
+//! This module defines the error hierarchy returned by
+//! [`super::SourceSelector`] parsing, [`super::QueryRecordSet`] transformation
+//! methods, and [`super::QueryRecord`] field resolution.
 //!
 //! # Error Hierarchy and Integration
 //!

@@ -82,6 +82,24 @@ impl Frontmatter {
         self.fields.get(key)
     }
 
+    /// Returns a flat iterator over the scalar value or list elements of the
+    /// field matching `key`, if present.
+    pub(crate) fn get_values(
+        &self,
+        key: &FieldKey,
+    ) -> impl Iterator<Item = &NoteFieldValue> {
+        let value = self.fields.get(key);
+        let list = match value {
+            Some(NoteFieldValue::List(items)) => items.as_slice(),
+            _ => &[],
+        };
+        let scalar = match value {
+            Some(NoteFieldValue::List(_) | NoteFieldValue::Null) | None => None,
+            Some(other) => Some(other),
+        };
+        scalar.into_iter().chain(list.iter())
+    }
+
     /// Returns `true` if no structured fields were parsed.
     #[inline]
     #[must_use]

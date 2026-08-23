@@ -2,8 +2,8 @@
 //!
 //! [`QueryService`] powers page-level and task-level results by borrowing a
 //! [`FileIndex`] and executing a [`QueryRequest`]. The pipeline selects Notes
-//! via [`QuerySource`], pairs each matching Note with its [`FileRecord`] as a
-//! [`QueryRecord`], and applies chained transformations through
+//! via [`SourceSelector`], pairs each matching Note with its [`FileRecord`] as
+//! a [`QueryRecord`], and applies chained transformations through
 //! [`QueryRecordSet`].
 //!
 //! # Source Expression Language
@@ -35,9 +35,9 @@
 //!   a [`FileIndex`] and a [`QueryRequest`], producing a [`QueryRecordSet`].
 //! - [`QueryRequest`] describes page/task mode, source selection, and ordered
 //!   transformations.
-//! - [`QuerySource`] is the top-level entry point: either all Notes or a parsed
-//!   expression.
-//! - [`QuerySourceExpr`] wraps the expression AST.
+//! - [`SourceSelector`] is the top-level entry point: either all Notes or a
+//!   parsed expression.
+//! - [`SourceSelectorExpr`] wraps the expression AST.
 //! - [`QueryRecord`] pairs a [`FileRecord`] with its parsed [`Note`] and
 //!   resolves `file.*`, `task.*`, frontmatter, tag, and inlinks fields.
 //! - [`QueryRecordSet`] stores result rows and provides chained transformation
@@ -63,9 +63,9 @@ pub(crate) use error::QueryRequestError;
 #[cfg(test)]
 pub(crate) use error::{FieldPathError, QuerySyntaxError};
 pub use error::{QueryDialect, QueryError};
-pub use grammar::{ClassExpansionMode, QuerySource};
+pub use grammar::{ClassExpansionMode, SourceSelector};
 pub(crate) use grammar::{
-    FileClassExpander, FileField, QuerySourceExpr, SourceAtom, compile_glob,
+    FieldPath, FileClassExpander, FileField, SourceAtom, SourceExpr,
 };
 pub use record::{QueryRecord, QueryRecordSet};
 pub use request::QueryRequest;
@@ -99,7 +99,7 @@ mod tests {
             }
             let index = IndexerService::new(temp).build().expect("build index");
             QueryService::new("class")
-                .execute(&index, QueryRequest::pages(QuerySource::All))
+                .execute(&index, QueryRequest::pages(SourceSelector::All))
         }
 
         /// Builds a single-record [`QueryRecordSet`] from a single Markdown
@@ -135,9 +135,8 @@ mod tests {
                 IndexerService::new(temp.path()).build().expect("build index");
             let file = find_record(index.records(), Path::new("a.md"));
             let outcome = QueryService::new("class")
-                .execute(&index, QueryRequest::pages(QuerySource::All));
+                .execute(&index, QueryRequest::pages(SourceSelector::All));
             let record = outcome.get(0).expect("record");
-
             assert_eq!(record.file(), file);
         }
 
@@ -150,9 +149,8 @@ mod tests {
                 IndexerService::new(temp.path()).build().expect("build index");
             let note = index.note(Path::new("a.md")).expect("note");
             let outcome = QueryService::new("class")
-                .execute(&index, QueryRequest::pages(QuerySource::All));
+                .execute(&index, QueryRequest::pages(SourceSelector::All));
             let record = outcome.get(0).expect("record");
-
             assert_eq!(record.note(), Some(note));
         }
 
@@ -164,9 +162,8 @@ mod tests {
             let index =
                 IndexerService::new(temp.path()).build().expect("build index");
             let outcome = QueryService::new("class")
-                .execute(&index, QueryRequest::tasks(QuerySource::All));
+                .execute(&index, QueryRequest::tasks(SourceSelector::All));
             let record = outcome.get(0).expect("record");
-
             assert_eq!(record.task_completed(), Some(true));
         }
 
@@ -178,9 +175,8 @@ mod tests {
             let index =
                 IndexerService::new(temp.path()).build().expect("build index");
             let outcome = QueryService::new("class")
-                .execute(&index, QueryRequest::tasks(QuerySource::All));
+                .execute(&index, QueryRequest::tasks(SourceSelector::All));
             let record = outcome.get(0).expect("record");
-
             assert_eq!(record.task_text(), Some("Buy milk"));
         }
 
@@ -376,9 +372,8 @@ mod tests {
             let index =
                 IndexerService::new(temp.path()).build().expect("build index");
             let outcome = QueryService::new("class")
-                .execute(&index, QueryRequest::tasks(QuerySource::All));
+                .execute(&index, QueryRequest::tasks(SourceSelector::All));
             let record = outcome.get(0).expect("record");
-
             assert_eq!(
                 record.field("task.completed"),
                 Ok(NoteFieldValue::Bool(true))
@@ -882,8 +877,7 @@ mod tests {
             let index =
                 IndexerService::new(temp.path()).build().expect("build index");
             let outcome = QueryService::new("class")
-                .execute(&index, QueryRequest::tasks(QuerySource::All));
-
+                .execute(&index, QueryRequest::tasks(SourceSelector::All));
             let rendered = outcome.task_list().expect("valid task_list");
 
             assert_eq!(rendered, "- [ ] Buy milk\n- [x] Walk dog\n");

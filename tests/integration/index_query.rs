@@ -5,7 +5,7 @@
 use std::{fs, path::Path};
 
 use pretty_assertions::assert_eq;
-use traces_pkm::{IndexerService, QueryRequest, QueryService, QuerySource};
+use traces_pkm::{IndexerService, QueryRequest, QueryService, SourceSelector};
 
 /// Checks a page request returns every indexed note without consuming the
 /// borrowed index.
@@ -20,7 +20,7 @@ fn page_query_returns_real_indexed_notes() {
         .expect("write c.md");
     let index = IndexerService::new(temp.path()).build().expect("build index");
     let outcome = QueryService::new("class")
-        .execute(&index, QueryRequest::pages(QuerySource::All));
+        .execute(&index, QueryRequest::pages(SourceSelector::All));
 
     assert_eq!(outcome.len(), 3);
     let paths: Vec<_> = (&outcome)
@@ -45,7 +45,7 @@ fn query_tasks_returns_task_level_rows_distinct_from_page_level_query() {
         .expect("write todo.md");
     let index = IndexerService::new(temp.path()).build().expect("build index");
     let tasks = QueryService::new("class")
-        .execute(&index, QueryRequest::tasks(QuerySource::All));
+        .execute(&index, QueryRequest::tasks(SourceSelector::All));
     assert_eq!(tasks.len(), 2);
     let completed: Vec<bool> = (0..tasks.len())
         .map(|i| {
@@ -74,10 +74,12 @@ fn query_request_reuses_one_index_for_page_and_task_queries() {
     let index = IndexerService::new(temp.path()).build().expect("build index");
     let service = QueryService::new("class");
 
-    let pages = service.execute(&index, QueryRequest::pages(QuerySource::All));
-    let tasks = service.execute(&index, QueryRequest::tasks(QuerySource::All));
+    let pages =
+        service.execute(&index, QueryRequest::pages(SourceSelector::All));
+    let tasks =
+        service.execute(&index, QueryRequest::tasks(SourceSelector::All));
     let pages_again =
-        service.execute(&index, QueryRequest::pages(QuerySource::All));
+        service.execute(&index, QueryRequest::pages(SourceSelector::All));
 
     let page_paths: Vec<_> = (&pages)
         .into_iter()

@@ -42,7 +42,7 @@ use crate::{
     config::{Config, ConfigService, DiscoveryScope, TrustRequests},
     index::{FileIndex, IndexerService},
     query::{
-        QueryError, QueryRecordSet, QueryRequest, QueryService, QuerySource,
+        QueryError, QueryRecordSet, QueryRequest, QueryService, SourceSelector,
     },
     schema::SchemaService,
 };
@@ -302,9 +302,9 @@ fn refresh_task_query(
 fn parse_source(
     config: &Config,
     from: Option<&str>,
-) -> Result<QuerySource, CliError> {
+) -> Result<SourceSelector, CliError> {
     let root = config.root();
-    QuerySource::parse(from.unwrap_or_default())
+    SourceSelector::parse(from.unwrap_or_default())
         .map_err(|source| query_error(root, source))
 }
 
@@ -888,7 +888,7 @@ mod tests {
                 TrustRequest,
             },
             dialog::PresetDialogProvider,
-            query::{QueryError, QueryRequestError, QuerySource},
+            query::{QueryError, QueryRequestError, SourceSelector},
             template::{
                 TemplateError, TemplatePathInput, TemplateService, WriteMode,
                 WriteOutcome,
@@ -1001,7 +1001,7 @@ mod tests {
                 .execute(
                     &list_index,
                     QueryRequest::pages(
-                        QuerySource::parse("#book").expect("valid source"),
+                        SourceSelector::parse("#book").expect("valid source"),
                     ),
                 )
                 .sort("rating", true)
@@ -1024,7 +1024,7 @@ mod tests {
             let table_index =
                 IndexerService::new(&project).refresh().expect("refresh index");
             let _table = QueryService::new("class")
-                .execute(&table_index, QueryRequest::pages(QuerySource::All))
+                .execute(&table_index, QueryRequest::pages(SourceSelector::All))
                 .table(&["Name", "Rating"], &["file.name", "rating"])
                 .expect("valid table");
 
@@ -1036,7 +1036,7 @@ mod tests {
             let task_index =
                 IndexerService::new(&project).refresh().expect("refresh index");
             let _tasks = QueryService::new("class")
-                .execute(&task_index, QueryRequest::tasks(QuerySource::All))
+                .execute(&task_index, QueryRequest::tasks(SourceSelector::All))
                 .task_list()
                 .expect("valid task_list");
         }
@@ -1064,7 +1064,7 @@ mod tests {
                 .execute(
                     &index,
                     QueryRequest::pages(
-                        QuerySource::parse("#book").expect("valid source"),
+                        SourceSelector::parse("#book").expect("valid source"),
                     ),
                 )
                 .sort("rating", true)
@@ -1090,7 +1090,7 @@ mod tests {
                 .execute(
                     &index,
                     QueryRequest::pages(
-                        QuerySource::parse("books/").expect("valid source"),
+                        SourceSelector::parse("books/").expect("valid source"),
                     ),
                 )
                 .sort("file.name", false)

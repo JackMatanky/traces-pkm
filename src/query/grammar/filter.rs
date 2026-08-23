@@ -1,35 +1,12 @@
-//! Parsing and evaluation of record filter expressions.
-//!
-//! This module implements the filter expression language used by
-//! [`super::QueryRecordSet::filter`].
-//!
-//! # Record Filter Grammar
-//!
-//! Expressions combine comparisons, function calls, and logical operators:
-//! - **Comparisons:** e.g., `rating > 5`, `status == "done"`, using `==`, `!=`,
-//!   `<`, `<=`, `>`, `>=`.
-//! - **Function Calls:** e.g., `contains(tags, "#book")` checks list/tag
-//!   membership or substring containment.
-//! - **Logical Operators:** `AND`/`and`/`&&`, `OR`/`or`/`||`, `NOT`/`not`/`!`,
-//!   and parentheses for grouping.
-//!
-//! # Examples
-//!
-//! ```ignore
-//! # use traces_pkm::query::FilterExpr;
-//! let expr = FilterExpr::parse("rating > 5 and status == \"done\"").unwrap();
-//! ```
-
 use logos::{Lexer, Logos};
 use miette::SourceSpan;
 
 use super::{
     FieldPath,
-    comparison::{CompareOp, ComparisonExpr},
-    logic::{
-        LogicalControl, LogicalExpr, LogicalGrammar, LogicalOp, Spanned,
-        TokenCursor, parse_logical_expression,
+    expr::{
+        AtomParser, BooleanExpr, LogicalControl, LogicalOp, parse_boolean_expr,
     },
+    lex::{Spanned, TokenStream},
 };
 use crate::{
     note::{NoteFieldValue, is_nested_under},
@@ -43,45 +20,10 @@ use crate::{
 
 /// A parsed filter expression AST.
 ///
-/// Wraps [`LogicalExpr`] with [`FilterAtom`] leaves, providing the concrete
+/// Wraps [`BooleanExpr`] with [`FilterAtom`] leaves, providing the concrete
 /// type used by [`super::QueryRecordSet::filter`].
-pub(crate) type FilterExpr = LogicalExpr<FilterAtom>;
-
-impl LogicalExpr<FilterAtom> {
-    /// Parses a filter expression string into a logical expression tree.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`QueryError::Syntax`] if the expression syntax is invalid.
-    ///
-    /// # Examples
-    ///
-    /// ```ignore
-    /// # use traces_pkm::query::FilterExpr;
-    /// let expr = FilterExpr::parse("rating > 5").unwrap();
-    /// ```
-    pub(crate) fn parse(input: &str) -> Result<Self, QueryError> {
-        parse_logical_expression(
-            input,
-            tokenize_filter_expr(input)?,
-            FilterGrammar,
-        )
-    }
-
-    /// Whether `record` satisfies this expression.
-    pub(crate) fn matches(&self, record: &QueryRecord) -> bool {
-        match self {
-            Self::Atom(atom) => atom.matches(record),
-            Self::And(expressions) => {
-                expressions.iter().all(|expression| expression.matches(record))
-            }
-            Self::Or(expressions) => {
-                expressions.iter().any(|expression| expression.matches(record))
-            }
-            Self::Not(expression) => !expression.matches(record),
-        }
-    }
-}
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct FilterExpr(BooleanExpr<FilterAtom>);
 
 /// Atomic predicate in a filter expression.
 ///
@@ -95,26 +37,40 @@ pub(crate) enum FilterAtom {
     Function(FilterFunction),
 }
 
-impl FilterAtom {
-    fn matches(&self, record: &QueryRecord) -> bool {
-        match self {
-            Self::Comparison(comparison) => comparison.matches(record),
-            Self::Function(function) => function.matches(record),
-        }
-    }
+/// A parsed `<field> <op> <value>` comparison node in a filter expression.
+///
+/// Pairs an already-parsed [`FieldPath`] with a [`CompareOp`] and a literal
+/// [`NoteFieldValue`] to evaluate against the resolved field of each record.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct ComparisonExpr {
+    field: FieldPath,
+    op: CompareOp,
+    value: NoteFieldValue,
+}
+
+/// A comparison operator parsed from a filter expression.
+///
+/// Each variant maps to a syntactic operator in the filter language.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub(super) enum CompareOp {
+    /// `==`
+    Eq,
+    /// `!=`
+    Ne,
+    /// `<`
+    Lt,
+    /// `<=`
+    Le,
+    /// `>`
+    Gt,
+    /// `>=`
+    Ge,
 }
 
 /// A recognized filter function call.
 ///
 /// Adding a function requires adding a variant here, a name check in
-/// [`Self::build`], and matching logic in [`Self::matches`].
-///
-/// # Examples
-///
-/// ```ignore
-/// # use traces_pkm::query::filter::FilterFunction;
-/// // e.g., FilterFunction::Contains
-/// ```
+/// [`Self::build`], and matching logic in [`Self::is_matching`].
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum FilterFunction {
     /// `contains(field, target)`.
@@ -126,42 +82,6 @@ pub(crate) enum FilterFunction {
         field: FieldPath,
         target: NoteFieldValue,
     },
-}
-
-impl FilterFunction {
-    /// Builds the function call named `name` if it names a known function.
-    ///
-    /// Returns `None` if the name does not match any known function.
-    ///
-    /// # Arguments
-    ///
-    /// * `name` - Function name to match, case-insensitively.
-    /// * `field` - Already-parsed field path for the built call.
-    /// * `target` - Comparison or membership target for the built call.
-    fn build(
-        name: &str,
-        field: FieldPath,
-        target: NoteFieldValue,
-    ) -> Option<Self> {
-        if name.eq_ignore_ascii_case("contains") {
-            Some(Self::Contains {
-                field,
-                target,
-            })
-        } else {
-            None
-        }
-    }
-
-    /// Returns whether `record` satisfies this function call.
-    fn matches(&self, record: &QueryRecord) -> bool {
-        match self {
-            Self::Contains {
-                field,
-                target,
-            } => eval_contains(&record.resolve_ref(field), target),
-        }
-    }
 }
 
 /// Lexical tokens parsed from a filter expression.
@@ -195,21 +115,357 @@ enum FilterToken {
     Ident(String),
 }
 
+struct FilterGrammar;
+
+impl FilterExpr {
+    /// Parses a filter expression string into a logical expression tree.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`QueryError::Syntax`] if the expression syntax is invalid.
+    pub(crate) fn parse(input: &str) -> Result<Self, QueryError> {
+        parse_boolean_expr(
+            input,
+            TokenStream::new(tokenize_filter_expr(input)?),
+            FilterGrammar,
+        )
+        .map(Self)
+    }
+
+    /// Whether `record` satisfies this expression.
+    pub(crate) fn is_matching(&self, record: &QueryRecord) -> bool {
+        self.0.is_satisfied_by(|atom| atom.is_matching(record))
+    }
+}
+
+impl FilterAtom {
+    fn is_matching(&self, record: &QueryRecord) -> bool {
+        match self {
+            Self::Comparison(comparison) => comparison.is_matching(record),
+            Self::Function(function) => function.is_matching(record),
+        }
+    }
+}
+
+impl ComparisonExpr {
+    /// Constructs a new [`ComparisonExpr`].
+    pub(super) const fn new(
+        field: FieldPath,
+        op: CompareOp,
+        value: NoteFieldValue,
+    ) -> Self {
+        Self {
+            field,
+            op,
+            value,
+        }
+    }
+
+    /// Returns whether the given index record satisfies this comparison
+    /// expression.
+    pub(super) fn is_matching(&self, record: &QueryRecord) -> bool {
+        self.op.is_satisfied_by(&record.resolve_ref(&self.field), &self.value)
+    }
+}
+
+impl CompareOp {
+    /// Returns whether a field value satisfies this operator against a literal.
+    ///
+    /// Checks the operator conditions using the provided field value and
+    /// literal.
+    pub(super) fn is_satisfied_by(
+        self,
+        field: &QueryFieldValueRef<'_>,
+        literal: &NoteFieldValue,
+    ) -> bool {
+        match self {
+            Self::Eq => field.is_equal_to_literal(literal),
+            Self::Ne => !field.is_equal_to_literal(literal),
+            Self::Lt => {
+                field.compare_to_literal(literal)
+                    == Some(std::cmp::Ordering::Less)
+            }
+            Self::Gt => {
+                field.compare_to_literal(literal)
+                    == Some(std::cmp::Ordering::Greater)
+            }
+            Self::Le => matches!(
+                field.compare_to_literal(literal),
+                Some(std::cmp::Ordering::Less | std::cmp::Ordering::Equal)
+            ),
+            Self::Ge => matches!(
+                field.compare_to_literal(literal),
+                Some(std::cmp::Ordering::Greater | std::cmp::Ordering::Equal)
+            ),
+        }
+    }
+}
+
+impl FilterFunction {
+    /// Builds the function call named `name` if it names a known function.
+    ///
+    /// Returns `None` if the name does not match any known function.
+    fn build(
+        name: &str,
+        field: FieldPath,
+        target: NoteFieldValue,
+    ) -> Option<Self> {
+        if name.eq_ignore_ascii_case("contains") {
+            Some(Self::Contains {
+                field,
+                target,
+            })
+        } else {
+            None
+        }
+    }
+
+    /// Returns whether `record` satisfies this function call.
+    fn is_matching(&self, record: &QueryRecord) -> bool {
+        match self {
+            Self::Contains {
+                field,
+                target,
+            } => Self::is_containing(&record.resolve_ref(field), target),
+        }
+    }
+
+    /// Evaluates a `contains(field_val, target)` call.
+    ///
+    /// For list fields, matches by exact value or tag prefix (for example,
+    /// `#book` matching `#book/fiction`). For other field kinds, falls back
+    /// to substring containment on stringified values.
+    fn is_containing(
+        field_val: &QueryFieldValueRef<'_>,
+        target: &NoteFieldValue,
+    ) -> bool {
+        match field_val {
+            QueryFieldValueRef::List(items) => {
+                Self::is_list_containing(items, target)
+            }
+            QueryFieldValueRef::Owned(NoteFieldValue::List(items)) => {
+                Self::is_list_containing(
+                    &QueryListValueRef::Values(items),
+                    target,
+                )
+            }
+            _ => match (field_val.as_str(), target.as_str()) {
+                (Some(haystack), Some(needle)) => haystack.contains(needle),
+                _ => false,
+            },
+        }
+    }
+
+    fn is_list_containing(
+        items: &QueryListValueRef<'_>,
+        target: &NoteFieldValue,
+    ) -> bool {
+        match items {
+            QueryListValueRef::Values(items) => items
+                .iter()
+                .any(|item| Self::is_tag_or_value_matching(item, target)),
+            QueryListValueRef::Tags(tags) => tags
+                .iter()
+                .any(|tag| Self::is_tag_str_matching(tag.as_str(), target)),
+            QueryListValueRef::Inlinks(paths) => paths.iter().any(|path| {
+                let path = path.to_string_lossy();
+                Self::is_tag_str_matching(&path, target)
+            }),
+        }
+    }
+
+    fn is_tag_str_matching(item: &str, target: &NoteFieldValue) -> bool {
+        let Some(target) = target.as_str() else {
+            return false;
+        };
+        item == target
+            || item.starts_with('#')
+                && target.starts_with('#')
+                && is_nested_under(item, target)
+    }
+
+    /// Returns whether list element `item` matches `target`.
+    ///
+    /// Values match exactly. Tag values also match when `item` is nested
+    /// directly or transitively under `target` (for example, `#book/fiction`
+    /// under `#book`). Both parameters must be string values for tag prefix
+    /// matching; non-string pairs fall through to exact equality only.
+    fn is_tag_or_value_matching(
+        item: &NoteFieldValue,
+        target: &NoteFieldValue,
+    ) -> bool {
+        if fields_equal(item, target) {
+            return true;
+        }
+        let (Some(item_str), Some(target_str)) =
+            (item.as_str(), target.as_str())
+        else {
+            return false;
+        };
+        item_str.starts_with('#')
+            && target_str.starts_with('#')
+            && is_nested_under(item_str, target_str)
+    }
+}
+
+impl FilterGrammar {
+    fn parse_literal_arg(
+        input: &str,
+        tokens: &mut TokenStream<Spanned<FilterToken>>,
+    ) -> Result<NoteFieldValue, QueryError> {
+        tokens
+            .expect_map(
+                input,
+                "a literal value",
+                QueryDialect::Filter,
+                |token| match token {
+                    FilterToken::Literal(value) => Some(value),
+                    _ => None,
+                },
+            )
+            .map(|spanned| spanned.value)
+    }
+
+    fn parse_function_call(
+        input: &str,
+        tokens: &mut TokenStream<Spanned<FilterToken>>,
+        name: &str,
+    ) -> Result<FilterFunction, QueryError> {
+        tokens.expect(
+            input,
+            &FilterToken::LParen,
+            "`(` after a function name",
+            QueryDialect::Filter,
+        )?;
+
+        let field_ident = tokens.expect_map(
+            input,
+            "a field path",
+            QueryDialect::Filter,
+            |token| match token {
+                FilterToken::Ident(ident) => Some(ident),
+                _ => None,
+            },
+        )?;
+        let field = FieldPath::parse(&field_ident.value)?;
+
+        tokens.expect(
+            input,
+            &FilterToken::Comma,
+            "`,` after the field path",
+            QueryDialect::Filter,
+        )?;
+
+        let target = Self::parse_literal_arg(input, tokens)?;
+
+        tokens.expect(
+            input,
+            &FilterToken::RParen,
+            "`)` after the function arguments",
+            QueryDialect::Filter,
+        )?;
+
+        FilterFunction::build(name, field, target).ok_or_else(|| {
+            syntax_error(input, SourceSpan::from((0, name.len())), "`contains`")
+        })
+    }
+
+    fn parse_comparison(
+        input: &str,
+        tokens: &mut TokenStream<Spanned<FilterToken>>,
+        field_ident: &str,
+    ) -> Result<ComparisonExpr, QueryError> {
+        let op_spanned = tokens.expect_map(
+            input,
+            "a comparison operator",
+            QueryDialect::Filter,
+            |token| match token {
+                FilterToken::Op(op) => Some(op),
+                _ => None,
+            },
+        )?;
+        let field = FieldPath::parse(field_ident)?;
+        let value = Self::parse_literal_arg(input, tokens)?;
+        Ok(ComparisonExpr::new(field, op_spanned.value, value))
+    }
+}
+
+impl TryFrom<&str> for CompareOp {
+    type Error = ();
+
+    /// Attempts to parse a comparison operator from its string representation.
+    fn try_from(spelling: &str) -> Result<Self, Self::Error> {
+        match spelling {
+            "==" => Ok(Self::Eq),
+            "!=" => Ok(Self::Ne),
+            ">=" => Ok(Self::Ge),
+            "<=" => Ok(Self::Le),
+            ">" => Ok(Self::Gt),
+            "<" => Ok(Self::Lt),
+            _ => Err(()),
+        }
+    }
+}
+impl AtomParser for FilterGrammar {
+    type Atom = FilterAtom;
+    type Token = FilterToken;
+
+    fn control(&self, token: &Self::Token) -> Option<LogicalControl> {
+        match token {
+            FilterToken::Logical(operator) => {
+                Some(LogicalControl::Operator(*operator))
+            }
+            FilterToken::Not => Some(LogicalControl::Not),
+            FilterToken::LParen => Some(LogicalControl::LeftParen),
+            FilterToken::RParen => Some(LogicalControl::RightParen),
+            FilterToken::Comma
+            | FilterToken::Op(_)
+            | FilterToken::Literal(_)
+            | FilterToken::Ident(_) => None,
+        }
+    }
+
+    fn parse_atom(
+        &self,
+        input: &str,
+        tokens: &mut TokenStream<Spanned<Self::Token>>,
+    ) -> Result<Self::Atom, QueryError> {
+        let spanned_ident = tokens.expect_map(
+            input,
+            "a filter term",
+            QueryDialect::Filter,
+            |token| match token {
+                FilterToken::Ident(name) => Some(name),
+                _ => None,
+            },
+        )?;
+
+        if tokens.peek().is_some_and(|token| token.value == FilterToken::LParen)
+        {
+            Self::parse_function_call(input, tokens, &spanned_ident.value)
+                .map(FilterAtom::Function)
+        } else {
+            Self::parse_comparison(input, tokens, &spanned_ident.value)
+                .map(FilterAtom::Comparison)
+        }
+    }
+
+    fn syntax_error(
+        &self,
+        input: &str,
+        span: SourceSpan,
+        expected: &'static str,
+    ) -> QuerySyntaxError {
+        QuerySyntaxError::new(QueryDialect::Filter, input, span, expected)
+    }
+}
+
 fn syntax_error(
     input: &str,
     span: SourceSpan,
     expected: &'static str,
 ) -> QueryError {
     QuerySyntaxError::new(QueryDialect::Filter, input, span, expected).into()
-}
-
-fn cursor_span(
-    input: &str,
-    tokens: &mut TokenCursor<Spanned<FilterToken>>,
-) -> SourceSpan {
-    tokens
-        .peek()
-        .map_or_else(|| SourceSpan::from((input.len(), 0)), |token| token.span)
 }
 
 /// Tokenizes `input`, preserving each token's original byte span.
@@ -271,223 +527,6 @@ fn string_callback(lex: &mut Lexer<'_, FilterToken>) -> NoteFieldValue {
     NoteFieldValue::String(value)
 }
 
-fn parse_literal_arg(
-    input: &str,
-    tokens: &mut TokenCursor<Spanned<FilterToken>>,
-) -> Result<NoteFieldValue, QueryError> {
-    match tokens.next() {
-        Some(Spanned {
-            value: FilterToken::Literal(value),
-            ..
-        }) => Ok(value),
-        Some(token) => Err(syntax_error(input, token.span, "a literal value")),
-        None => Err(syntax_error(
-            input,
-            SourceSpan::from((input.len(), 0)),
-            "a literal value",
-        )),
-    }
-}
-
-fn parse_function_call(
-    input: &str,
-    tokens: &mut TokenCursor<Spanned<FilterToken>>,
-    name: &str,
-) -> Result<FilterFunction, QueryError> {
-    if !tokens.take(&FilterToken::LParen) {
-        return Err(syntax_error(
-            input,
-            cursor_span(input, tokens),
-            "`(` after a function name",
-        ));
-    }
-    let Some(Spanned {
-        value: FilterToken::Ident(field_ident),
-        ..
-    }) = tokens.next()
-    else {
-        return Err(syntax_error(
-            input,
-            cursor_span(input, tokens),
-            "a field path",
-        ));
-    };
-    let field = FieldPath::parse(&field_ident)?;
-    if !tokens.take(&FilterToken::Comma) {
-        return Err(syntax_error(
-            input,
-            cursor_span(input, tokens),
-            "`,` after the field path",
-        ));
-    }
-    let target = parse_literal_arg(input, tokens)?;
-    if !tokens.take(&FilterToken::RParen) {
-        return Err(syntax_error(
-            input,
-            cursor_span(input, tokens),
-            "`)` after the function arguments",
-        ));
-    }
-    FilterFunction::build(name, field, target).ok_or_else(|| {
-        syntax_error(input, SourceSpan::from((0, name.len())), "`contains`")
-    })
-}
-
-fn parse_comparison(
-    input: &str,
-    tokens: &mut TokenCursor<Spanned<FilterToken>>,
-    field_ident: &str,
-) -> Result<ComparisonExpr, QueryError> {
-    let Some(Spanned {
-        value: FilterToken::Op(operator),
-        ..
-    }) = tokens.next()
-    else {
-        return Err(syntax_error(
-            input,
-            cursor_span(input, tokens),
-            "a comparison operator",
-        ));
-    };
-    let field = FieldPath::parse(field_ident)?;
-    let value = parse_literal_arg(input, tokens)?;
-    Ok(ComparisonExpr::new(field, operator, value))
-}
-
-struct FilterGrammar;
-
-impl LogicalGrammar for FilterGrammar {
-    type Atom = FilterAtom;
-    type Token = FilterToken;
-
-    fn control(&self, token: &Self::Token) -> Option<LogicalControl> {
-        match token {
-            FilterToken::Logical(operator) => {
-                Some(LogicalControl::Operator(*operator))
-            }
-            FilterToken::Not => Some(LogicalControl::Not),
-            FilterToken::LParen => Some(LogicalControl::LeftParen),
-            FilterToken::RParen => Some(LogicalControl::RightParen),
-            FilterToken::Comma
-            | FilterToken::Op(_)
-            | FilterToken::Literal(_)
-            | FilterToken::Ident(_) => None,
-        }
-    }
-
-    fn parse_atom(
-        &self,
-        input: &str,
-        tokens: &mut TokenCursor<Spanned<Self::Token>>,
-    ) -> Result<Self::Atom, QueryError> {
-        match tokens.next() {
-            Some(Spanned {
-                value: FilterToken::Ident(name),
-                ..
-            }) if tokens
-                .peek()
-                .is_some_and(|token| token.value == FilterToken::LParen) =>
-            {
-                parse_function_call(input, tokens, &name)
-                    .map(FilterAtom::Function)
-            }
-            Some(Spanned {
-                value: FilterToken::Ident(name),
-                ..
-            }) => parse_comparison(input, tokens, &name)
-                .map(FilterAtom::Comparison),
-            Some(token) => {
-                Err(syntax_error(input, token.span, "a filter term"))
-            }
-            None => Err(syntax_error(
-                input,
-                SourceSpan::from((input.len(), 0)),
-                "a filter term",
-            )),
-        }
-    }
-
-    fn syntax_error(
-        &self,
-        input: &str,
-        span: SourceSpan,
-        expected: &'static str,
-    ) -> QuerySyntaxError {
-        QuerySyntaxError::new(QueryDialect::Filter, input, span, expected)
-    }
-}
-
-/// Evaluates a `contains(field_val, target)` call.
-///
-/// For list fields, matches by exact value or tag prefix (for example,
-/// `#book` matching `#book/fiction`). For other field kinds, falls back
-/// to substring containment on stringified values.
-fn eval_contains(
-    field_val: &QueryFieldValueRef<'_>,
-    target: &NoteFieldValue,
-) -> bool {
-    match field_val {
-        QueryFieldValueRef::List(items) => list_contains(items, target),
-        QueryFieldValueRef::Owned(NoteFieldValue::List(items)) => {
-            list_contains(&QueryListValueRef::Values(items), target)
-        }
-        _ => match (field_val.as_str(), target.as_str()) {
-            (Some(haystack), Some(needle)) => haystack.contains(needle),
-            _ => false,
-        },
-    }
-}
-
-fn list_contains(
-    items: &QueryListValueRef<'_>,
-    target: &NoteFieldValue,
-) -> bool {
-    match items {
-        QueryListValueRef::Values(items) => {
-            items.iter().any(|item| tag_or_value_matches(item, target))
-        }
-        QueryListValueRef::Tags(tags) => {
-            tags.iter().any(|tag| tag_str_matches(tag.as_str(), target))
-        }
-        QueryListValueRef::Inlinks(paths) => paths.iter().any(|path| {
-            let path = path.to_string_lossy();
-            tag_str_matches(&path, target)
-        }),
-    }
-}
-
-fn tag_str_matches(item: &str, target: &NoteFieldValue) -> bool {
-    let Some(target) = target.as_str() else {
-        return false;
-    };
-    item == target
-        || item.starts_with('#')
-            && target.starts_with('#')
-            && is_nested_under(item, target)
-}
-
-/// Returns whether list element `item` matches `target`.
-///
-/// Values match exactly. Tag values also match when `item` is nested
-/// directly or transitively under `target` (for example, `#book/fiction`
-/// under `#book`). Both parameters must be string values for tag prefix
-/// matching; non-string pairs fall through to exact equality only.
-fn tag_or_value_matches(
-    item: &NoteFieldValue,
-    target: &NoteFieldValue,
-) -> bool {
-    if fields_equal(item, target) {
-        return true;
-    }
-    let (Some(item_str), Some(target_str)) = (item.as_str(), target.as_str())
-    else {
-        return false;
-    };
-    item_str.starts_with('#')
-        && target_str.starts_with('#')
-        && is_nested_under(item_str, target_str)
-}
-
 #[cfg(test)]
 mod tests {
     use std::{fs, path::Path};
@@ -504,7 +543,7 @@ mod tests {
         }
         let index = IndexerService::new(temp).build().expect("build index");
         QueryService::new("class")
-            .execute(&index, QueryRequest::pages(QuerySource::All))
+            .execute(&index, QueryRequest::pages(SourceSelector::All))
     }
 
     fn outcome_for(temp: &Path, content: &str) -> QueryRecordSet {
@@ -889,13 +928,15 @@ mod tests {
         }
     }
 
-    mod eval_contains {
+    mod is_containing {
         use pretty_assertions::assert_eq;
 
-        use super::super::eval_contains;
         use crate::{
             note::NoteFieldValue,
-            query::record::{QueryFieldValueRef, QueryListValueRef},
+            query::{
+                grammar::filter::FilterFunction,
+                record::{QueryFieldValueRef, QueryListValueRef},
+            },
         };
 
         #[test]
@@ -908,11 +949,11 @@ mod tests {
                 vec![NoteFieldValue::String("#book/fiction".to_owned())];
             let target = NoteFieldValue::String("#book".to_owned());
 
-            let borrowed = eval_contains(
+            let borrowed = FilterFunction::is_containing(
                 &QueryFieldValueRef::List(QueryListValueRef::Values(&items)),
                 &target,
             );
-            let owned = eval_contains(
+            let owned = FilterFunction::is_containing(
                 &QueryFieldValueRef::Owned(NoteFieldValue::List(items)),
                 &target,
             );

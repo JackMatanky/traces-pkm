@@ -22,10 +22,7 @@
 //! let path = FieldPath::parse("file.name").unwrap();
 //! ```
 
-use crate::{
-    field, field::FieldKey, file::FileRecord, note::NoteFieldValue,
-    query::error::FieldPathError,
-};
+use crate::{field, field::FieldKey, query::error::FieldPathError};
 
 /// A `file.<field>` accessor backed by [`FileRecord`] metadata.
 ///
@@ -102,45 +99,7 @@ impl FileField {
             _ => None,
         }
     }
-
-    /// Resolves this accessor's value for the given [`FileRecord`].
-    ///
-    /// Returns the evaluated [`NoteFieldValue`] from the corresponding
-    /// [`FileRecord`] method.
-    pub(crate) fn resolve(self, file: &FileRecord) -> NoteFieldValue {
-        match self {
-            Self::Path => NoteFieldValue::String(
-                file.path().to_string_lossy().into_owned(),
-            ),
-            Self::Name => {
-                NoteFieldValue::String(file.name().as_str().to_owned())
-            }
-            Self::Folder => NoteFieldValue::String(
-                file.folder().to_string_lossy().into_owned(),
-            ),
-            #[expect(
-                clippy::as_conversions,
-                clippy::cast_precision_loss,
-                reason = "file sizes stay well under 2^53 bytes for PKM-scale \
-                          projects, so f64 keeps exact byte counts"
-            )]
-            Self::Size => NoteFieldValue::Number(file.size() as f64),
-            Self::CreatedDateTime => NoteFieldValue::Date(
-                file.created_at_or_modified().to_datetime_string(),
-            ),
-            Self::CreatedDate => NoteFieldValue::Date(
-                file.created_at_or_modified().to_date_string(),
-            ),
-            Self::ModifiedDateTime => {
-                NoteFieldValue::Date(file.modified_at().to_datetime_string())
-            }
-            Self::ModifiedDate => {
-                NoteFieldValue::Date(file.modified_at().to_date_string())
-            }
-        }
-    }
 }
-
 /// A `task.<field>` accessor valid on task-level records.
 ///
 /// Applied to task records. Resolves to [`NoteFieldValue::Null`] on page-level

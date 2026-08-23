@@ -17,11 +17,11 @@
 //! # Examples
 //!
 //! ```ignore
-//! use traces_pkm::{IndexerService, QueryRequest, QueryService, QuerySource};
+//! use traces_pkm::{IndexerService, QueryRequest, QueryService, SourceSelector};
 //!
 //! let index = IndexerService::new(".").build().unwrap();
 //! let records = QueryService::new("class")
-//!     .execute(&index, QueryRequest::pages(QuerySource::All));
+//!     .execute(&index, QueryRequest::pages(SourceSelector::All));
 //! ```
 //!
 //! [`FileRecord`]: crate::file::FileRecord
@@ -194,7 +194,7 @@ impl QueryRecord {
     }
 
     /// Resolves a pre-parsed field path into the public owned value type.
-    pub(super) fn resolve_owned(&self, path: &FieldPath) -> NoteFieldValue {
+    pub(crate) fn resolve_owned(&self, path: &FieldPath) -> NoteFieldValue {
         self.resolve_ref(path).to_owned_value()
     }
 
@@ -221,12 +221,20 @@ impl QueryRecord {
         let file = self.file();
         match field {
             FileField::Path => file.path().to_str().map_or_else(
-                || QueryFieldValueRef::Owned(field.resolve(file)),
+                || {
+                    QueryFieldValueRef::Owned(NoteFieldValue::String(
+                        file.path().to_string_lossy().into_owned(),
+                    ))
+                },
                 QueryFieldValueRef::Text,
             ),
             FileField::Name => QueryFieldValueRef::Text(file.name().as_str()),
             FileField::Folder => file.folder().to_str().map_or_else(
-                || QueryFieldValueRef::Owned(field.resolve(file)),
+                || {
+                    QueryFieldValueRef::Owned(NoteFieldValue::String(
+                        file.folder().to_string_lossy().into_owned(),
+                    ))
+                },
                 QueryFieldValueRef::Text,
             ),
             #[expect(
@@ -236,12 +244,22 @@ impl QueryRecord {
                           projects, so f64 keeps exact byte counts"
             )]
             FileField::Size => QueryFieldValueRef::Number(file.size() as f64),
-            FileField::CreatedDateTime
-            | FileField::CreatedDate
-            | FileField::ModifiedDateTime
-            | FileField::ModifiedDate => {
-                QueryFieldValueRef::Owned(field.resolve(file))
+            FileField::CreatedDateTime => {
+                QueryFieldValueRef::Owned(NoteFieldValue::Date(
+                    file.created_at_or_modified().to_datetime_string(),
+                ))
             }
+            FileField::CreatedDate => {
+                QueryFieldValueRef::Owned(NoteFieldValue::Date(
+                    file.created_at_or_modified().to_date_string(),
+                ))
+            }
+            FileField::ModifiedDateTime => QueryFieldValueRef::Owned(
+                NoteFieldValue::Date(file.modified_at().to_datetime_string()),
+            ),
+            FileField::ModifiedDate => QueryFieldValueRef::Owned(
+                NoteFieldValue::Date(file.modified_at().to_date_string()),
+            ),
         }
     }
 
@@ -502,7 +520,7 @@ impl QueryRecordSet {
     }
 
     fn apply_filter(mut self, expr: &FilterExpr) -> Self {
-        self.records.retain(|record| expr.matches(record));
+        self.records.retain(|record| expr.is_matching(record));
         self
     }
 

@@ -2,13 +2,13 @@
 
 use super::{
     QueryRequestError,
-    grammar::{FieldPath, FilterExpr, QuerySource},
+    grammar::{FieldPath, FilterExpr, SourceSelector},
 };
 
 /// Query execution request.
 pub struct QueryRequest {
     pub(super) mode: QueryMode,
-    pub(super) source: QuerySource,
+    pub(super) source: SourceSelector,
     pub(super) transforms: Vec<QueryTransform>,
 }
 
@@ -33,7 +33,7 @@ impl QueryRequest {
     /// Builds a page-row query request for `source`.
     #[inline]
     #[must_use]
-    pub fn pages(source: QuerySource) -> Self {
+    pub fn pages(source: SourceSelector) -> Self {
         Self {
             mode: QueryMode::Pages,
             source,
@@ -44,7 +44,7 @@ impl QueryRequest {
     /// Builds a task-row query request for `source`.
     #[inline]
     #[must_use]
-    pub fn tasks(source: QuerySource) -> Self {
+    pub fn tasks(source: SourceSelector) -> Self {
         Self {
             mode: QueryMode::Tasks,
             source,
@@ -156,7 +156,7 @@ mod tests {
                 .expect("write c.md");
             let index =
                 IndexerService::new(temp.path()).build().expect("build index");
-            let request = QueryRequest::pages(QuerySource::All)
+            let request = QueryRequest::pages(SourceSelector::All)
                 .limit(2)
                 .expect("valid limit")
                 .filter("rating >= 5")
@@ -174,11 +174,11 @@ mod tests {
         #[test]
         fn wraps_request_builder_errors() {
             assert!(matches!(
-                QueryRequest::pages(QuerySource::All).filter("rating >"),
+                QueryRequest::pages(SourceSelector::All).filter("rating >"),
                 Err(QueryRequestError::Syntax(_))
             ));
             assert_eq!(
-                QueryRequest::pages(QuerySource::All)
+                QueryRequest::pages(SourceSelector::All)
                     .sort("file.bogus", false)
                     .err(),
                 Some(QueryRequestError::FieldPath(FieldPathError::new(
@@ -187,7 +187,7 @@ mod tests {
                 )))
             );
             assert_eq!(
-                QueryRequest::pages(QuerySource::All).limit(-1).err(),
+                QueryRequest::pages(SourceSelector::All).limit(-1).err(),
                 Some(QueryRequestError::LimitOutOfRange {
                     value: -1
                 })
@@ -202,7 +202,7 @@ mod tests {
             let index =
                 IndexerService::new(temp.path()).build().expect("build index");
             let request = QueryRequest::pages(
-                QuerySource::parse("@book").expect("source"),
+                SourceSelector::parse("@book").expect("source"),
             );
 
             let outcome = QueryService::new("class").execute(&index, request);

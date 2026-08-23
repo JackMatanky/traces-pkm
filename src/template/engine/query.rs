@@ -1,10 +1,12 @@
 //! Register the `query` and `tasks` namespaces for templates.
 //!
 //! Both namespaces are backed by [`QueryOps`], registered twice by
-//! [`super::TemplateEngine::new`]: [`QueryOps::page`] creates the `query`
-//! global and [`QueryOps::task`] creates the `tasks` global. Each namespace
-//! starts a query with one of four methods, matching [`QuerySource`]'s
-//! variants:
+//! [`super::TemplateEngine::new`]:
+//! - [`QueryOps::page`] creates the `query` global
+//! - [`QueryOps::task`] creates the `tasks` global.
+//!
+//! Each namespace starts a query with one of four methods, matching
+//! [`SourceSelector`]'s variants:
 //!
 //! - `.from()`: every indexed Note.
 //! - `.from("#tag")`: Notes with an exact or nested tag.
@@ -76,8 +78,8 @@ use crate::{
     index::{FileIndex, FileIndexError, IndexerService},
     note::NoteFieldValue,
     query::{
-        ClassExpansionMode, FileField, QueryError, QueryRecord, QueryRecordSet,
-        QueryRequest, QueryService, QuerySource, SourceAtom,
+        ClassExpansionMode, FieldPath, FileField, QueryError, QueryRecord,
+        QueryRecordSet, QueryRequest, QueryService, SourceAtom, SourceSelector,
     },
     schema::SchemaService,
 };
@@ -183,7 +185,11 @@ impl QueryOps {
     /// - [`ErrorKind::InvalidOperation`] via [`index_error`] if refreshing the
     ///   index fails, including I/O errors while scanning `root`, database
     ///   access errors, and TOML (de)serialization errors on stored records.
-    fn run(&self, state: &State, source: QuerySource) -> Result<Value, Error> {
+    fn run(
+        &self,
+        state: &State,
+        source: SourceSelector,
+    ) -> Result<Value, Error> {
         let index = cached_refresh(state, &self.root).map_err(index_error)?;
         let request = if self.is_task {
             QueryRequest::tasks(source)
@@ -254,29 +260,29 @@ fn query_error(source: QueryError) -> Error {
     super::error::invalid_operation("query failed", source)
 }
 
-/// Resolves `.from()`'s optional argument into a [`QuerySource`]: `None`
-/// selects every indexed file; a bound `QuerySource` `Value` (a Schema `file`
-/// field, possibly widened by `with_children`/`with_descendants`) is used
-/// as-is; any other value must be a DSL source-expression string.
+/// Resolves `.from()`'s optional argument into a [`SourceSelector`]: `None`
+/// selects every indexed file; a bound `SourceSelector` `Value` (a Schema
+/// `file` field, possibly widened by `with_children`/`with_descendants`) is
+/// used as-is; any other value must be a DSL source-expression string.
 ///
 /// # Errors
 ///
-/// - [`ErrorKind::InvalidOperation`] if `expr` is neither a `QuerySource` nor a
-///   string.
+/// - [`ErrorKind::InvalidOperation`] if `expr` is neither a `SourceSelector`
+///   nor a string.
 /// - Propagates [`QueryError::Syntax`] (via [`query_error`]) if `expr` is a
 ///   string that fails to parse as a source expression.
-fn resolve_from_arg(expr: Option<&Value>) -> Result<QuerySource, Error> {
+fn resolve_from_arg(expr: Option<&Value>) -> Result<SourceSelector, Error> {
     let Some(value) = expr else {
-        return Ok(QuerySource::All);
+        return Ok(SourceSelector::All);
     };
-    if let Some(source) = value.downcast_object_ref::<QuerySource>() {
+    if let Some(source) = value.downcast_object_ref::<SourceSelector>() {
         return Ok(source.clone());
     }
     let text = value.as_str().ok_or_else(from_arg_type_error)?;
-    QuerySource::parse(text).map_err(query_error)
+    SourceSelector::parse(text).map_err(query_error)
 }
 
-/// Builds the error for `.from()`'s argument being neither a `QuerySource`
+/// Builds the error for `.from()`'s argument being neither a `SourceSelector`
 /// nor a string.
 fn from_arg_type_error() -> Error {
     Error::new(
@@ -285,12 +291,12 @@ fn from_arg_type_error() -> Error {
     )
 }
 
-/// Lets `.field()` hand a [`QuerySource`] filter across the minijinja boundary:
-/// `.from()` and the `with_children`/`with_descendants` filters downcast it
-/// back via [`Value::downcast_object_ref`]. No method overrides; mirrors
-/// `cache.rs`'s `Cached<T>`, this crate's other bare `impl Object` used purely
-/// to smuggle a typed value through a `Value`.
-impl Object for QuerySource {}
+/// Lets `.field()` hand a [`SourceSelector`] filter across the minijinja
+/// boundary: `.from()` and the `with_children`/`with_descendants` filters
+/// downcast it back via [`Value::downcast_object_ref`]. No method overrides;
+/// mirrors `cache.rs`'s `Cached<T>`, this crate's other bare `impl Object` used
+/// purely to smuggle a typed value through a `Value`.
+impl Object for SourceSelector {}
 
 impl Object for QueryRecordSet {
     #[inline]
@@ -455,7 +461,7 @@ const fn count_filter(outcome: &QueryRecordSet) -> usize {
 
 /// `field | with_children` filter body: widens a `file` field's `Class` atom
 /// (if any) to direct-children depth.
-fn with_children_filter(source: &QuerySource) -> Value {
+fn with_children_filter(source: &SourceSelector) -> Value {
     Value::from_object(set_class_depth(
         source.clone(),
         ClassExpansionMode::Children,
@@ -464,7 +470,7 @@ fn with_children_filter(source: &QuerySource) -> Value {
 
 /// `field | with_descendants` filter body: widens a `file` field's `Class` atom
 /// (if any) to transitive-descendants depth.
-fn with_descendants_filter(source: &QuerySource) -> Value {
+fn with_descendants_filter(source: &SourceSelector) -> Value {
     Value::from_object(set_class_depth(
         source.clone(),
         ClassExpansionMode::Descendants,
@@ -475,10 +481,10 @@ fn with_descendants_filter(source: &QuerySource) -> Value {
 /// the match set empty (still unresolved; [`resolve_classes`] fills it in at
 /// `.from()` dispatch time, same as DSL-parsed sources).
 fn set_class_depth(
-    mut source: QuerySource,
+    mut source: SourceSelector,
     mode: impl Fn(std::collections::BTreeSet<String>) -> ClassExpansionMode,
-) -> QuerySource {
-    if let QuerySource::Expr(expr) = &mut source {
+) -> SourceSelector {
+    if let SourceSelector::Expr(expr) = &mut source {
         expr.visit_atoms_mut(&mut |atom| {
             if let SourceAtom::Class {
                 mode: existing,
@@ -541,7 +547,7 @@ struct FileFields(Arc<QueryRecord>);
 impl Object for FileFields {
     fn get_value(self: &Arc<Self>, key: &Value) -> Option<Value> {
         let field = FileField::parse(key.as_str()?)?;
-        Some(field_value(field.resolve(self.0.file())))
+        Some(field_value(self.0.resolve_owned(&FieldPath::File(field))))
     }
 
     fn enumerate(self: &Arc<Self>) -> Enumerator {

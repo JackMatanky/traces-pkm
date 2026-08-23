@@ -5,16 +5,13 @@
 //! comparison-operator and field-path accessor grammars each DSL builds
 //! on.
 
-mod comparison;
+mod expr;
 mod field;
 mod filter;
-mod logic;
+mod lex;
 mod source;
 
 pub(crate) use field::{FieldPath, FileField, TaskField};
 pub(crate) use filter::FilterExpr;
-pub use source::{ClassExpansionMode, QuerySource};
-pub(crate) use source::{
-    FileClassExpander, QuerySourceExpr, SourceAtom, compile_glob,
-    resolve_classes,
-};
+pub use source::{ClassExpansionMode, SourceSelector};
+pub(crate) use source::{FileClassExpander, SourceAtom, SourceExpr};

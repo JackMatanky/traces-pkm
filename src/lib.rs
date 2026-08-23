@@ -95,7 +95,7 @@ pub use note::{
 };
 #[cfg(any(test, feature = "test-utils"))]
 pub use query::{
-    QueryRecord, QueryRecordSet, QueryRequest, QueryService, QuerySource,
+    QueryRecord, QueryRecordSet, QueryRequest, QueryService, SourceSelector,
 };
 #[cfg(any(test, feature = "test-utils"))]
 pub use schema::{Schema, SchemaService};

@@ -244,7 +244,7 @@ mod tests {
         }
         let index = IndexerService::new(temp).build().expect("build index");
         QueryService::new("class")
-            .execute(&index, QueryRequest::pages(QuerySource::All))
+            .execute(&index, QueryRequest::pages(SourceSelector::All))
     }
 
     fn outcome_for(temp: &Path, content: &str) -> QueryRecordSet {

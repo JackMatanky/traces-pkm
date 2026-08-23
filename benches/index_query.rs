@@ -10,7 +10,7 @@
 )]
 use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
 use traces_pkm::{
-    FileIndex, IndexerService, QueryRequest, QueryService, QuerySource,
+    FileIndex, IndexerService, QueryRequest, QueryService, SourceSelector,
 };
 
 fn built_index() -> FileIndex {
@@ -44,7 +44,7 @@ fn bench_execute_pages(c: &mut Criterion) {
             built_index,
             |index| {
                 QueryService::new("class")
-                    .execute(&index, QueryRequest::pages(QuerySource::All))
+                    .execute(&index, QueryRequest::pages(SourceSelector::All))
             },
             BatchSize::LargeInput,
         );
@@ -60,7 +60,7 @@ fn bench_execute_tasks(c: &mut Criterion) {
             built_task_index,
             |index| {
                 QueryService::new("class")
-                    .execute(&index, QueryRequest::tasks(QuerySource::All))
+                    .execute(&index, QueryRequest::tasks(SourceSelector::All))
             },
             BatchSize::LargeInput,
         );

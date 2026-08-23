@@ -2,7 +2,7 @@
 
 use super::{
     QueryMode, QueryRecord, QueryRecordSet, QueryRequest,
-    grammar::{FileClassExpander, QuerySource, resolve_classes},
+    grammar::{FileClassExpander, SourceSelector},
 };
 use crate::index::FileIndex;
 
@@ -10,6 +10,7 @@ use crate::index::FileIndex;
 #[derive(Clone)]
 pub struct QueryService<'a> {
     class_field: String,
+    class_field_canonical: String,
     class_expander: Option<&'a dyn FileClassExpander>,
 }
 
@@ -18,8 +19,15 @@ impl<'a> QueryService<'a> {
     #[inline]
     #[must_use]
     pub fn new<S: Into<String>>(class_field: S) -> Self {
+        let class_field = class_field.into();
+        let class_field_canonical =
+            crate::field::FieldKey::try_new(&class_field).map_or_else(
+                |_| class_field.to_lowercase(),
+                |key| key.canonical().to_owned(),
+            );
         Self {
-            class_field: class_field.into(),
+            class_field,
+            class_field_canonical,
             class_expander: None,
         }
     }
@@ -50,7 +58,7 @@ impl<'a> QueryService<'a> {
         if source.has_classes()
             && let Some(expander) = self.class_expander
         {
-            resolve_classes(&mut source, expander);
+            source.resolve_classes(expander);
         }
         let records = match mode {
             QueryMode::Pages => self.page_records(index, &source),
@@ -66,7 +74,7 @@ impl<'a> QueryService<'a> {
     fn page_records(
         &self,
         index: &FileIndex,
-        source: &QuerySource,
+        source: &SourceSelector,
     ) -> Vec<QueryRecord> {
         self.matched_base_records(index, source).collect()
     }
@@ -74,7 +82,7 @@ impl<'a> QueryService<'a> {
     fn task_records(
         &self,
         index: &FileIndex,
-        source: &QuerySource,
+        source: &SourceSelector,
     ) -> Vec<QueryRecord> {
         let mut out = Vec::new();
         for base in self.matched_base_records(index, source) {
@@ -91,12 +99,16 @@ impl<'a> QueryService<'a> {
     fn matched_base_records<'b>(
         &'b self,
         index: &'b FileIndex,
-        source: &'b QuerySource,
+        source: &'b SourceSelector,
     ) -> impl Iterator<Item = QueryRecord> + 'b {
         index
             .entries()
             .filter(move |entry| {
-                source.is_match(entry.file(), entry.note(), &self.class_field)
+                source.is_match(
+                    entry.file(),
+                    entry.note(),
+                    &self.class_field_canonical,
+                )
             })
             .map(QueryRecord::from_entry)
     }
@@ -120,17 +132,23 @@ mod tests {
     use crate::{
         index::{FileIndex, IndexerService},
         note::Note,
-        query::{QueryRecord, QueryRecordSet, QueryRequest, QuerySource},
+        query::{QueryRecord, QueryRecordSet, QueryRequest, SourceSelector},
     };
 
     /// Runs a page-level query via [`QueryService`].
-    fn query_pages(index: &FileIndex, source: &QuerySource) -> QueryRecordSet {
+    fn query_pages(
+        index: &FileIndex,
+        source: &SourceSelector,
+    ) -> QueryRecordSet {
         QueryService::new("class")
             .execute(index, QueryRequest::pages(source.clone()))
     }
 
     /// Task-level counterpart to [`query_pages`].
-    fn query_tasks(index: &FileIndex, source: &QuerySource) -> QueryRecordSet {
+    fn query_tasks(
+        index: &FileIndex,
+        source: &SourceSelector,
+    ) -> QueryRecordSet {
         QueryService::new("class")
             .execute(index, QueryRequest::tasks(source.clone()))
     }
@@ -169,7 +187,7 @@ mod tests {
                 .expect("write txt");
             let index =
                 IndexerService::new(temp.path()).build().expect("build index");
-            let outcome = query_pages(&index, &QuerySource::All);
+            let outcome = query_pages(&index, &SourceSelector::All);
 
             assert_eq!(outcome.len(), 3);
             assert_eq!(
@@ -195,7 +213,7 @@ mod tests {
                 .expect("write txt");
             let index =
                 IndexerService::new(temp.path()).build().expect("build index");
-            let outcome = query_pages(&index, &QuerySource::All);
+            let outcome = query_pages(&index, &SourceSelector::All);
 
             assert_eq!(note_paths(&outcome), [Path::new("a.md")]);
             assert_eq!(outcome.get(1).and_then(|r| r.note()), None);
@@ -210,7 +228,7 @@ mod tests {
                 IndexerService::new(temp.path()).build().expect("build index");
             let outcome = query_pages(
                 &index,
-                &QuerySource::parse("#missing").expect("valid source"),
+                &SourceSelector::parse("#missing").expect("valid source"),
             );
 
             assert_eq!(outcome.len(), 0);
@@ -227,7 +245,7 @@ mod tests {
                 IndexerService::new(temp.path()).build().expect("build index");
             let outcome = query_pages(
                 &index,
-                &QuerySource::parse("#book").expect("valid source"),
+                &SourceSelector::parse("#book").expect("valid source"),
             );
 
             assert_eq!(note_paths(&outcome), [Path::new("book.md")]);
@@ -247,11 +265,12 @@ mod tests {
                 IndexerService::new(temp.path()).build().expect("build index");
             let exact = query_pages(
                 &index,
-                &QuerySource::parse("#projects/active").expect("valid source"),
+                &SourceSelector::parse("#projects/active")
+                    .expect("valid source"),
             );
             let parent = query_pages(
                 &index,
-                &QuerySource::parse("#projects").expect("valid source"),
+                &SourceSelector::parse("#projects").expect("valid source"),
             );
 
             assert_eq!(note_paths(&exact), [Path::new("project.md")]);
@@ -267,7 +286,8 @@ mod tests {
                 IndexerService::new(temp.path()).build().expect("build index");
             let outcome = query_pages(
                 &index,
-                &QuerySource::parse("#projects/active").expect("valid source"),
+                &SourceSelector::parse("#projects/active")
+                    .expect("valid source"),
             );
 
             assert!(outcome.is_empty());
@@ -288,7 +308,7 @@ mod tests {
                 IndexerService::new(temp.path()).build().expect("build index");
             let outcome = query_pages(
                 &index,
-                &QuerySource::parse("books/").expect("valid source"),
+                &SourceSelector::parse("books/").expect("valid source"),
             );
 
             assert_eq!(note_paths(&outcome), [
@@ -301,7 +321,7 @@ mod tests {
         fn returns_file_path_for_each_record() {
             let index = build_book_index();
 
-            let outcome = query_pages(&index, &QuerySource::All);
+            let outcome = query_pages(&index, &SourceSelector::All);
             let record = outcome.iter().next().expect("one record");
 
             assert_eq!(record.file().path(), Path::new("book.md"));
@@ -311,7 +331,7 @@ mod tests {
         fn includes_frontmatter_fields_in_note() {
             let index = build_book_index();
 
-            let outcome = query_pages(&index, &QuerySource::All);
+            let outcome = query_pages(&index, &SourceSelector::All);
             let note = outcome
                 .iter()
                 .next()
@@ -326,7 +346,7 @@ mod tests {
         fn includes_inline_field_keys() {
             let index = build_book_index();
 
-            let outcome = query_pages(&index, &QuerySource::All);
+            let outcome = query_pages(&index, &SourceSelector::All);
             let note = outcome
                 .iter()
                 .next()
@@ -347,7 +367,7 @@ mod tests {
         fn includes_note_tags() {
             let index = build_book_index();
 
-            let outcome = query_pages(&index, &QuerySource::All);
+            let outcome = query_pages(&index, &SourceSelector::All);
             let note = outcome
                 .iter()
                 .next()
@@ -367,7 +387,7 @@ mod tests {
             fs::write(temp.path().join("b.md"), "[[target]]").expect("write b");
             let index =
                 IndexerService::new(temp.path()).build().expect("build index");
-            let outcome = query_pages(&index, &QuerySource::All);
+            let outcome = query_pages(&index, &SourceSelector::All);
             let target = outcome
                 .iter()
                 .find(|record| record.file().path() == Path::new("target.md"))
@@ -390,7 +410,7 @@ mod tests {
                 IndexerService::new(temp.path()).build().expect("build index");
             let outcome = query_pages(
                 &index,
-                &QuerySource::parse("#book").expect("valid source"),
+                &SourceSelector::parse("#book").expect("valid source"),
             );
             let target = outcome.iter().next().expect("target record");
 
@@ -410,7 +430,7 @@ mod tests {
             .expect("write a");
             let index =
                 IndexerService::new(temp.path()).build().expect("build index");
-            let outcome = query_pages(&index, &QuerySource::All);
+            let outcome = query_pages(&index, &SourceSelector::All);
             let target = outcome
                 .iter()
                 .find(|record| record.file().path() == Path::new("target.md"))
@@ -425,7 +445,7 @@ mod tests {
             fs::write(temp.path().join("b.md"), "[[b]]").expect("write b");
             let index =
                 IndexerService::new(temp.path()).build().expect("build index");
-            let outcome = query_pages(&index, &QuerySource::All);
+            let outcome = query_pages(&index, &SourceSelector::All);
             let source = outcome
                 .iter()
                 .find(|record| record.file().path() == Path::new("b.md"))
@@ -444,7 +464,7 @@ mod tests {
 
             let index =
                 IndexerService::new(temp.path()).build().expect("build index");
-            let outcome = query_pages(&index, &QuerySource::All);
+            let outcome = query_pages(&index, &SourceSelector::All);
             let target = outcome
                 .iter()
                 .find(|r| r.file().path() == Path::new("target.md"))
@@ -483,7 +503,7 @@ mod tests {
                 .expect("write note");
             let index =
                 IndexerService::new(temp.path()).build().expect("build index");
-            let outcome = query_tasks(&index, &QuerySource::All);
+            let outcome = query_tasks(&index, &SourceSelector::All);
 
             assert_eq!(outcome.len(), 1);
             assert_eq!(
@@ -499,7 +519,7 @@ mod tests {
                 .expect("write txt");
             let index =
                 IndexerService::new(temp.path()).build().expect("build index");
-            let outcome = query_tasks(&index, &QuerySource::All);
+            let outcome = query_tasks(&index, &SourceSelector::All);
 
             assert!(outcome.is_empty());
         }
@@ -515,7 +535,7 @@ mod tests {
             .expect("write note");
             let index =
                 IndexerService::new(temp.path()).build().expect("build index");
-            let outcome = query_tasks(&index, &QuerySource::All);
+            let outcome = query_tasks(&index, &SourceSelector::All);
             let record = outcome.iter().next().expect("one task row");
 
             assert_eq!(record.file().path(), Path::new("project.md"));
@@ -532,7 +552,7 @@ mod tests {
             .expect("write note");
             let index =
                 IndexerService::new(temp.path()).build().expect("build index");
-            let outcome = query_tasks(&index, &QuerySource::All);
+            let outcome = query_tasks(&index, &SourceSelector::All);
             let record = outcome.iter().next().expect("one task row");
 
             assert_eq!(
@@ -552,7 +572,7 @@ mod tests {
             .expect("write note");
             let index =
                 IndexerService::new(temp.path()).build().expect("build index");
-            let outcome = query_tasks(&index, &QuerySource::All);
+            let outcome = query_tasks(&index, &SourceSelector::All);
             let record = outcome.iter().next().expect("one task row");
 
             assert_eq!(
@@ -572,7 +592,7 @@ mod tests {
                 .expect("write linker");
             let index =
                 IndexerService::new(temp.path()).build().expect("build index");
-            let outcome = query_tasks(&index, &QuerySource::All);
+            let outcome = query_tasks(&index, &SourceSelector::All);
             let task = outcome.iter().next().expect("one task row");
 
             assert_eq!(task.file().path(), Path::new("target.md"));
@@ -593,7 +613,7 @@ mod tests {
                 IndexerService::new(temp.path()).build().expect("build index");
             let outcome = query_tasks(
                 &index,
-                &QuerySource::parse("#projects").expect("valid source"),
+                &SourceSelector::parse("#projects").expect("valid source"),
             );
 
             assert_eq!(task_rows(&outcome), [(Some(false), "project task")]);
@@ -614,7 +634,7 @@ mod tests {
                 IndexerService::new(temp.path()).build().expect("build index");
             let outcome = query_tasks(
                 &index,
-                &QuerySource::parse("projects/").expect("valid source"),
+                &SourceSelector::parse("projects/").expect("valid source"),
             );
 
             assert_eq!(task_rows(&outcome), [(Some(false), "project task")]);
@@ -630,7 +650,7 @@ mod tests {
             .expect("write note");
             let index =
                 IndexerService::new(temp.path()).build().expect("build index");
-            let outcome = query_tasks(&index, &QuerySource::All)
+            let outcome = query_tasks(&index, &SourceSelector::All)
                 .filter("task.completed == true")
                 .expect("valid filter");
 
