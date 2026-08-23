@@ -34,6 +34,8 @@ pub(super) enum QueryFieldValueRef<'a> {
 }
 
 impl QueryFieldValueRef<'_> {
+    // -- resolution --
+
     pub(super) fn to_owned_value(&self) -> NoteFieldValue {
         match self {
             Self::Null => NoteFieldValue::Null,
@@ -51,138 +53,8 @@ impl QueryFieldValueRef<'_> {
         }
     }
 
-    pub(super) fn as_str(&self) -> Option<&str> {
-        match self {
-            Self::Text(value) | Self::Date(value) | Self::Duration(value) => {
-                Some(value)
-            }
-            Self::Owned(value) => value.as_str(),
-            _ => None,
-        }
-    }
-}
+    // -- display --
 
-impl<'a> From<&'a NoteFieldValue> for QueryFieldValueRef<'a> {
-    fn from(value: &'a NoteFieldValue) -> Self {
-        match value {
-            NoteFieldValue::Null => Self::Null,
-            NoteFieldValue::Bool(value) => Self::Bool(*value),
-            NoteFieldValue::Number(value) => Self::Number(*value),
-            NoteFieldValue::String(value) => Self::Text(value),
-            NoteFieldValue::Date(value) => Self::Date(value),
-            NoteFieldValue::Duration(value) => Self::Duration(value),
-            NoteFieldValue::Link(value) => Self::Link(value),
-            NoteFieldValue::List(value) => {
-                Self::List(QueryListValueRef::Values(value))
-            }
-            NoteFieldValue::Object(value) => Self::Object(value),
-        }
-    }
-}
-
-/// Returns whether two resolved [`NoteFieldValue`] instances represent equal
-/// values under filter comparison (`==` and `!=`).
-///
-/// Returns `true` when structural equality (`a == b`) holds, or when
-/// [`compare_field_values`] returns `Some(Ordering::Equal)`. This cross-kind
-/// text normalization allows string literals to match date or duration fields.
-pub(super) fn fields_equal(a: &NoteFieldValue, b: &NoteFieldValue) -> bool {
-    a == b || compare_field_values(a, b) == Some(Ordering::Equal)
-}
-
-fn is_tag_str_matching(item: &str, target_str: &str) -> bool {
-    item == target_str
-        || item.starts_with('#')
-            && target_str.starts_with('#')
-            && is_nested_under(item, target_str)
-}
-
-fn is_tag_or_value_matching(
-    item: &NoteFieldValue,
-    target: &NoteFieldValue,
-    target_str: Option<&str>,
-) -> bool {
-    if fields_equal(item, target) {
-        return true;
-    }
-    let (Some(item_str), Some(target_str)) = (item.as_str(), target_str) else {
-        return false;
-    };
-    item_str.starts_with('#')
-        && target_str.starts_with('#')
-        && is_nested_under(item_str, target_str)
-}
-
-pub(super) fn is_list_containing(
-    items: &QueryListValueRef<'_>,
-    target: &NoteFieldValue,
-) -> bool {
-    let target_str = target.as_str();
-    match items {
-        QueryListValueRef::Values(items) => items
-            .iter()
-            .any(|item| is_tag_or_value_matching(item, target, target_str)),
-        QueryListValueRef::Tags(tags) => {
-            let Some(target_str) = target_str else {
-                return false;
-            };
-            tags.iter().any(|tag| is_tag_str_matching(tag.as_str(), target_str))
-        }
-        QueryListValueRef::Inlinks(paths) => {
-            let Some(target_str) = target_str else {
-                return false;
-            };
-            paths.iter().any(|path| {
-                let path = path.to_string_lossy();
-                is_tag_str_matching(&path, target_str)
-            })
-        }
-    }
-}
-
-pub(super) fn escape_table_text(text: &str) -> String {
-    text.replace('\n', " ").replace('|', "\\|")
-}
-
-fn append_joined<T>(
-    out: &mut String,
-    values: &[T],
-    mut append: impl FnMut(&mut String, &T),
-) {
-    for (idx, value) in values.iter().enumerate() {
-        if idx > 0 {
-            out.push_str(", ");
-        }
-        append(out, value);
-    }
-}
-
-fn append_owned_field_text(out: &mut String, value: &NoteFieldValue) {
-    match value {
-        NoteFieldValue::Null => {}
-        NoteFieldValue::Bool(value) => out.push_str(&value.to_string()),
-        NoteFieldValue::Number(value) => out.push_str(&value.to_string()),
-        NoteFieldValue::String(value)
-        | NoteFieldValue::Date(value)
-        | NoteFieldValue::Duration(value) => out.push_str(value),
-        NoteFieldValue::Link(link) => out.push_str(link.target()),
-        NoteFieldValue::List(items) => {
-            append_joined(out, items, append_owned_field_text);
-        }
-        NoteFieldValue::Object(fields) => {
-            for (idx, (key, field)) in fields.iter().enumerate() {
-                if idx > 0 {
-                    out.push_str(", ");
-                }
-                out.push_str(key);
-                out.push_str(": ");
-                append_owned_field_text(out, field);
-            }
-        }
-    }
-}
-
-impl QueryFieldValueRef<'_> {
     pub(super) fn append_text(&self, out: &mut String) {
         match self {
             Self::Null => {}
@@ -220,11 +92,21 @@ impl QueryFieldValueRef<'_> {
     }
 
     pub(super) fn table_cell_text(&self) -> String {
-        escape_table_text(&self.text())
+        self.text().replace('\n', " ").replace('|', "\\|")
     }
-}
 
-impl QueryFieldValueRef<'_> {
+    pub(super) fn as_str(&self) -> Option<&str> {
+        match self {
+            Self::Text(value) | Self::Date(value) | Self::Duration(value) => {
+                Some(value)
+            }
+            Self::Owned(value) => value.as_str(),
+            _ => None,
+        }
+    }
+
+    // -- comparison --
+
     /// Compares this resolved field against an owned literal to establish
     /// ordering for `<`, `<=`, `>`, `>=` filter comparisons.
     pub(super) fn compare_to_literal(
@@ -281,6 +163,8 @@ impl QueryFieldValueRef<'_> {
         }
     }
 
+    // -- contains --
+
     /// Evaluates a `contains(field_val, target)` call.
     ///
     /// For list fields, matches by exact value or tag prefix (for example,
@@ -300,6 +184,24 @@ impl QueryFieldValueRef<'_> {
     }
 }
 
+impl<'a> From<&'a NoteFieldValue> for QueryFieldValueRef<'a> {
+    fn from(value: &'a NoteFieldValue) -> Self {
+        match value {
+            NoteFieldValue::Null => Self::Null,
+            NoteFieldValue::Bool(value) => Self::Bool(*value),
+            NoteFieldValue::Number(value) => Self::Number(*value),
+            NoteFieldValue::String(value) => Self::Text(value),
+            NoteFieldValue::Date(value) => Self::Date(value),
+            NoteFieldValue::Duration(value) => Self::Duration(value),
+            NoteFieldValue::Link(value) => Self::Link(value),
+            NoteFieldValue::List(value) => {
+                Self::List(QueryListValueRef::Values(value))
+            }
+            NoteFieldValue::Object(value) => Self::Object(value),
+        }
+    }
+}
+
 /// Borrowed list value resolved from a [`super::QueryRecord`].
 pub(super) enum QueryListValueRef<'a> {
     Values(&'a [NoteFieldValue]),
@@ -308,6 +210,8 @@ pub(super) enum QueryListValueRef<'a> {
 }
 
 impl QueryListValueRef<'_> {
+    // -- display --
+
     pub(super) fn append_text(&self, out: &mut String) {
         match self {
             Self::Values(values) => {
@@ -323,6 +227,8 @@ impl QueryListValueRef<'_> {
             }
         }
     }
+
+    // -- resolution --
 
     fn to_owned_value(&self) -> NoteFieldValue {
         match self {
@@ -345,6 +251,112 @@ impl QueryListValueRef<'_> {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/// Returns whether two resolved [`NoteFieldValue`] instances represent equal
+/// values under filter comparison (`==` and `!=`).
+///
+/// Returns `true` when structural equality (`a == b`) holds, or when
+/// [`compare_field_values`] returns `Some(Ordering::Equal)`. This cross-kind
+/// text normalization allows string literals to match date or duration fields.
+fn fields_equal(a: &NoteFieldValue, b: &NoteFieldValue) -> bool {
+    a == b || compare_field_values(a, b) == Some(Ordering::Equal)
+}
+
+fn is_tag_str_matching(item: &str, target_str: &str) -> bool {
+    item == target_str
+        || item.starts_with('#')
+            && target_str.starts_with('#')
+            && is_nested_under(item, target_str)
+}
+
+fn is_tag_or_value_matching(
+    item: &NoteFieldValue,
+    target: &NoteFieldValue,
+    target_str: Option<&str>,
+) -> bool {
+    if fields_equal(item, target) {
+        return true;
+    }
+    let (Some(item_str), Some(target_str)) = (item.as_str(), target_str) else {
+        return false;
+    };
+    item_str.starts_with('#')
+        && target_str.starts_with('#')
+        && is_nested_under(item_str, target_str)
+}
+
+pub(super) fn is_list_containing(
+    items: &QueryListValueRef<'_>,
+    target: &NoteFieldValue,
+) -> bool {
+    let target_str = target.as_str();
+    match items {
+        QueryListValueRef::Values(items) => items
+            .iter()
+            .any(|item| is_tag_or_value_matching(item, target, target_str)),
+        QueryListValueRef::Tags(tags) => {
+            let Some(target_str) = target_str else {
+                return false;
+            };
+            tags.iter().any(|tag| is_tag_str_matching(tag.as_str(), target_str))
+        }
+        QueryListValueRef::Inlinks(paths) => {
+            let Some(target_str) = target_str else {
+                return false;
+            };
+            paths.iter().any(|path| {
+                let path = path.to_string_lossy();
+                is_tag_str_matching(&path, target_str)
+            })
+        }
+    }
+}
+
+fn append_joined<T>(
+    out: &mut String,
+    values: &[T],
+    mut append: impl FnMut(&mut String, &T),
+) {
+    for (idx, value) in values.iter().enumerate() {
+        if idx > 0 {
+            out.push_str(", ");
+        }
+        append(out, value);
+    }
+}
+
+fn append_owned_field_text(out: &mut String, value: &NoteFieldValue) {
+    match value {
+        NoteFieldValue::Null => {}
+        NoteFieldValue::Bool(value) => out.push_str(&value.to_string()),
+        NoteFieldValue::Number(value) => out.push_str(&value.to_string()),
+        NoteFieldValue::String(value)
+        | NoteFieldValue::Date(value)
+        | NoteFieldValue::Duration(value) => out.push_str(value),
+        NoteFieldValue::Link(link) => out.push_str(link.target()),
+        NoteFieldValue::List(items) => {
+            append_joined(out, items, append_owned_field_text);
+        }
+        NoteFieldValue::Object(fields) => {
+            for (idx, (key, field)) in fields.iter().enumerate() {
+                if idx > 0 {
+                    out.push_str(", ");
+                }
+                out.push_str(key);
+                out.push_str(": ");
+                append_owned_field_text(out, field);
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {

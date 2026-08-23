@@ -1,8 +1,6 @@
 //! Display formatting for query results.
 
-use super::{
-    QueryError, QueryRecordSet, grammar::FieldPath, value::escape_table_text,
-};
+use super::{QueryError, grammar::FieldPath, record::QueryRecord};
 
 /// Markdown display formats supported by query results.
 pub(super) enum QueryDisplayFormat {
@@ -48,35 +46,33 @@ impl QueryDisplayFormat {
     pub(super) const fn task_list() -> Self {
         Self::TaskList
     }
-}
 
-impl QueryRecordSet {
-    /// Formats this record set for display.
+    /// Renders `records` according to this display format.
     ///
     /// # Errors
     ///
-    /// Returns existing query errors for malformed field paths, table column
+    /// Returns query errors for malformed field paths, table column
     /// mismatches, or task-list rendering on page rows.
-    pub(super) fn format(
+    pub(super) fn render(
         &self,
-        format: &QueryDisplayFormat,
+        records: &[QueryRecord],
     ) -> Result<String, QueryError> {
-        match format {
-            QueryDisplayFormat::Table {
+        match self {
+            Self::Table {
                 headers,
                 columns,
-            } => self.format_table(headers, columns),
-            QueryDisplayFormat::List {
+            } => Self::render_table(headers, columns, records),
+            Self::List {
                 field,
-            } => self.format_list(field),
-            QueryDisplayFormat::TaskList => self.format_task_list(),
+            } => Self::render_list(field, records),
+            Self::TaskList => Self::render_task_list(records),
         }
     }
 
-    fn format_table(
-        &self,
+    fn render_table(
         headers: &[String],
         columns: &[String],
+        records: &[QueryRecord],
     ) -> Result<String, QueryError> {
         if headers.len() != columns.len() {
             return Err(QueryError::TableColumnCountMismatch {
@@ -92,7 +88,7 @@ impl QueryRecordSet {
         table.load_preset(comfy_table::presets::ASCII_MARKDOWN);
         table
             .set_header(headers.iter().map(|header| escape_table_text(header)));
-        for record in self {
+        for record in records {
             table.add_row(
                 paths
                     .iter()
@@ -104,10 +100,13 @@ impl QueryRecordSet {
         Ok(out)
     }
 
-    fn format_list(&self, field: &str) -> Result<String, QueryError> {
+    fn render_list(
+        field: &str,
+        records: &[QueryRecord],
+    ) -> Result<String, QueryError> {
         let field_path = FieldPath::parse(field)?;
         let mut out = String::new();
-        for record in self {
+        for record in records {
             out.push_str("- ");
             record.resolve_ref(&field_path).append_text(&mut out);
             out.push('\n');
@@ -115,9 +114,9 @@ impl QueryRecordSet {
         Ok(out)
     }
 
-    fn format_task_list(&self) -> Result<String, QueryError> {
+    fn render_task_list(records: &[QueryRecord]) -> Result<String, QueryError> {
         let mut out = String::new();
-        for record in self {
+        for record in records {
             let Some(completed) = record.task_completed() else {
                 return Err(QueryError::TaskListRequiresTaskRows);
             };
@@ -131,4 +130,8 @@ impl QueryRecordSet {
         }
         Ok(out)
     }
+}
+
+pub(super) fn escape_table_text(text: &str) -> String {
+    text.replace('\n', " ").replace('|', "\\|")
 }

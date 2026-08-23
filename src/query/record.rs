@@ -495,6 +495,19 @@ impl QueryRecordSet {
         self.format(&QueryDisplayFormat::task_list())
     }
 
+    /// Formats this record set for display.
+    ///
+    /// # Errors
+    ///
+    /// Returns existing query errors for malformed field paths, table column
+    /// mismatches, or task-list rendering on page rows.
+    pub(super) fn format(
+        &self,
+        format: &QueryDisplayFormat,
+    ) -> Result<String, QueryError> {
+        format.render(&self.records)
+    }
+
     /// Sorts records stably by the resolved value of `path`.
     fn sort_by_field(self, field_path: &FieldPath, descending: bool) -> Self {
         let mut records = self.records;
