@@ -208,11 +208,7 @@ impl GlobPattern {
 }
 
 impl SourceAtom {
-    /// Constructs a path atom from a glob pattern.
-    ///
-    /// # Errors
-    ///
-    /// Returns a [`regex::Error`] if the pattern fails to compile.
+    /// Constructs a path atom from a compiled glob `pattern`.
     pub(crate) fn path(pattern: &str) -> Result<Self, regex::Error> {
         GlobPattern::compile(pattern).map(Self::Path)
     }

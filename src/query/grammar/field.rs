@@ -75,15 +75,6 @@ impl FileField {
     /// Returns `None` when `name` is unknown, allowing the caller to retain the
     /// full `file.<field>` path for a [`FieldPathError`].
     ///
-    /// Recognized names include `path`, `name`, `folder`, `size`, `created_at`
-    /// (alias `ctime`), `cdate`, `modified_at` (alias `mtime`), and `mdate`.
-    ///
-    /// # Errors
-    ///
-    /// This method is infallible; it returns `None` on unrecognized names
-    /// rather than returning a [`FieldPathError`]. Callers that need
-    /// diagnostic suggestions should use [`FieldPath::parse`] instead.
-    ///
     /// [`FieldPathError`]: crate::query::error::FieldPathError
     pub(crate) fn parse(name: &str) -> Option<Self> {
         match name {
@@ -103,8 +94,7 @@ impl FileField {
 /// A `task.<field>` accessor valid on task-level records.
 ///
 /// Resolves to [`crate::note::NoteFieldValue::Null`] on page-level records.
-/// The full set of accepted accessor names is
-/// [`completed`](TaskField::Completed) and [`text`](TaskField::Text).
+/// Accepted names: `completed`, `text`.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(crate) enum TaskField {
     /// Accesses task completion state (`- [ ]` versus `- [x]`).
@@ -123,14 +113,6 @@ impl TaskField {
     /// Returns `None` if `name` is not a recognized accessor name, allowing
     /// the caller to retain the full `task.<field>` path for a
     /// [`FieldPathError`].
-    ///
-    /// Recognized names are `completed` and `text`.
-    ///
-    /// # Errors
-    ///
-    /// This method is infallible; it returns `None` on unrecognized names
-    /// rather than returning a [`FieldPathError`]. Callers that need
-    /// diagnostic suggestions should use [`FieldPath::parse`] instead.
     ///
     /// [`FieldPathError`]: crate::query::error::FieldPathError
     pub(super) fn parse(name: &str) -> Option<Self> {

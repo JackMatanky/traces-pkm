@@ -148,7 +148,6 @@ impl FilterAtom {
 }
 
 impl ComparisonExpr {
-    /// Constructs a new [`ComparisonExpr`].
     pub(super) const fn new(
         field: FieldPath,
         op: CompareOp,
@@ -216,9 +215,6 @@ impl TryFrom<&str> for CompareOp {
 }
 
 impl FilterFunction {
-    /// Builds the function call named `name` if it names a known function.
-    ///
-    /// Returns `None` if the name does not match any known function.
     fn build(
         name: &str,
         field: FieldPath,
@@ -234,7 +230,6 @@ impl FilterFunction {
         }
     }
 
-    /// Returns whether `record` satisfies this function call.
     fn is_matching(&self, record: &QueryRecord) -> bool {
         match self {
             Self::Contains {
@@ -456,7 +451,6 @@ impl AtomParser for FilterGrammar {
         }
     }
 
-    /// Constructs a [`QueryError::Syntax`] diagnostic for the filter dialect.
     fn syntax_error(
         &self,
         input: &str,
