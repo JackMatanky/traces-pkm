@@ -21,7 +21,7 @@ use crate::{
 /// A parsed filter expression AST.
 ///
 /// Wraps [`BooleanExpr`] with [`FilterAtom`] leaves, providing the concrete
-/// type used by [`super::QueryRecordSet::filter`].
+/// type used by [`crate::query::QueryRecordSet::filter`].
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct FilterExpr(BooleanExpr<FilterAtom>);
 
@@ -170,9 +170,6 @@ impl ComparisonExpr {
 
 impl CompareOp {
     /// Returns whether a field value satisfies this operator against a literal.
-    ///
-    /// Checks the operator conditions using the provided field value and
-    /// literal.
     pub(super) fn is_satisfied_by(
         self,
         field: &QueryFieldValueRef<'_>,
@@ -459,6 +456,7 @@ impl AtomParser for FilterGrammar {
         }
     }
 
+    /// Constructs a [`QueryError::Syntax`] diagnostic for the filter dialect.
     fn syntax_error(
         &self,
         input: &str,

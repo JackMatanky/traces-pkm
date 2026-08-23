@@ -35,7 +35,7 @@ pub(super) enum LogicalControl {
 ///
 /// The tree preserves the original precedence and grouping of the parsed
 /// expression. Domain-specific evaluation is delegated to atom predicates via
-/// [`Self::is_matching`], [`Self::has_any_atom`], and
+/// [`Self::is_satisfied_by`], [`Self::has_any_atom`], and
 /// [`Self::visit_atoms_mut`].
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum BooleanExpr<A> {
@@ -267,6 +267,12 @@ impl TryFrom<&str> for LogicalOp {
 /// Accepts a pre-tokenized stream and a domain-specific [`AtomParser`] that
 /// handles atom recognition. Returns a [`BooleanExpr`] tree, or a
 /// [`QueryError::Syntax`] diagnostic when the expression is malformed.
+///
+/// # Errors
+///
+/// Returns [`QueryError::Syntax`] if the token stream is empty, contains
+/// unexpected tokens, has unbalanced parentheses, or if the domain
+/// [`AtomParser`] rejects a token.
 pub(super) fn parse_boolean_expr<G>(
     input: &str,
     tokens: TokenStream<Spanned<G::Token>>,

@@ -2,7 +2,7 @@
 //!
 //! A query field path string (for example, `file.name`, `task.completed`,
 //! `tags`, or a bare frontmatter key) resolves to a [`FieldPath`] variant that
-//! can be applied to each [`QueryRecord`][`super::QueryRecord`] to extract a
+//! can be applied to each [`crate::query::QueryRecord`] to extract a
 //! [`NoteFieldValue`].
 //!
 //! # Supported Accessors
@@ -15,12 +15,8 @@
 //! - `inlinks`: Project-relative paths of Notes linking to this Note.
 //! - Bare keys: frontmatter or inline metadata field keys.
 //!
-//! # Examples
-//!
-//! ```ignore
-//! # use traces_pkm::query::FieldPath;
-//! let path = FieldPath::parse("file.name").unwrap();
-//! ```
+//! [`NoteFieldValue`]: crate::note::NoteFieldValue
+//! [`FileRecord`]: crate::file::FileRecord
 
 use crate::{field, field::FieldKey, query::error::FieldPathError};
 
@@ -30,31 +26,31 @@ use crate::{field, field::FieldKey, query::error::FieldPathError};
 /// `file.mtime`) and resolves to a [`NoteFieldValue`] by reading the
 /// corresponding [`FileRecord`] method.
 ///
-/// # Examples
+/// The full set of accepted accessor names (including aliases like `ctime`
+/// for `created_at`) is listed in [`ACCESSOR_NAMES`](Self::ACCESSOR_NAMES).
 ///
-/// ```ignore
-/// # use traces_pkm::query::field::FileField;
-/// let accessor = FileField::parse("name");
-/// assert_eq!(accessor, Some(FileField::Name));
-/// ```
+/// [`FileRecord`]: crate::file::FileRecord
+/// [`NoteFieldValue`]: crate::note::NoteFieldValue
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(crate) enum FileField {
-    /// Accesses [`FileRecord::path`].
+    /// Accesses [`crate::file::FileRecord::path`].
     Path,
-    /// Accesses [`FileRecord::name`].
+    /// Accesses [`crate::file::FileRecord::name`].
     Name,
-    /// Accesses [`FileRecord::folder`].
+    /// Accesses [`crate::file::FileRecord::folder`].
     Folder,
-    /// Accesses [`FileRecord::size`].
+    /// Accesses [`crate::file::FileRecord::size`].
     Size,
-    /// Accesses [`FileRecord::created_at_or_modified`] as a datetime without a
-    /// UTC offset.
+    /// Accesses [`crate::file::FileRecord::created_at_or_modified`] as a
+    /// datetime without a UTC offset.
     CreatedDateTime,
-    /// Accesses [`FileRecord::created_at_or_modified`] as a bare date.
+    /// Accesses [`crate::file::FileRecord::created_at_or_modified`] as a bare
+    /// date.
     CreatedDate,
-    /// Accesses [`FileRecord::modified_at`] as a datetime without a UTC offset.
+    /// Accesses [`crate::file::FileRecord::modified_at`] as a datetime without
+    /// a UTC offset.
     ModifiedDateTime,
-    /// Accesses [`FileRecord::modified_at`] as a bare date.
+    /// Accesses [`crate::file::FileRecord::modified_at`] as a bare date.
     ModifiedDate,
 }
 
@@ -79,13 +75,16 @@ impl FileField {
     /// Returns `None` when `name` is unknown, allowing the caller to retain the
     /// full `file.<field>` path for a [`FieldPathError`].
     ///
-    /// # Examples
+    /// Recognized names include `path`, `name`, `folder`, `size`, `created_at`
+    /// (alias `ctime`), `cdate`, `modified_at` (alias `mtime`), and `mdate`.
     ///
-    /// ```ignore
-    /// # use traces_pkm::query::field::FileField;
-    /// let field = FileField::parse("name");
-    /// assert_eq!(field, Some(FileField::Name));
-    /// ```
+    /// # Errors
+    ///
+    /// This method is infallible; it returns `None` on unrecognized names
+    /// rather than returning a [`FieldPathError`]. Callers that need
+    /// diagnostic suggestions should use [`FieldPath::parse`] instead.
+    ///
+    /// [`FieldPathError`]: crate::query::error::FieldPathError
     pub(crate) fn parse(name: &str) -> Option<Self> {
         match name {
             "path" => Some(Self::Path),
@@ -103,16 +102,9 @@ impl FileField {
 
 /// A `task.<field>` accessor valid on task-level records.
 ///
-/// Applied to task records. Resolves to [`NoteFieldValue::Null`] on page-level
-/// records.
-///
-/// # Examples
-///
-/// ```ignore
-/// # use traces_pkm::query::field::TaskField;
-/// let accessor = TaskField::parse("completed");
-/// assert_eq!(accessor, Some(TaskField::Completed));
-/// ```
+/// Resolves to [`crate::note::NoteFieldValue::Null`] on page-level records.
+/// The full set of accepted accessor names is
+/// [`completed`](TaskField::Completed) and [`text`](TaskField::Text).
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(crate) enum TaskField {
     /// Accesses task completion state (`- [ ]` versus `- [x]`).
@@ -132,13 +124,15 @@ impl TaskField {
     /// the caller to retain the full `task.<field>` path for a
     /// [`FieldPathError`].
     ///
-    /// # Examples
+    /// Recognized names are `completed` and `text`.
     ///
-    /// ```ignore
-    /// # use traces_pkm::query::field::TaskField;
-    /// let field = TaskField::parse("completed");
-    /// assert_eq!(field, Some(TaskField::Completed));
-    /// ```
+    /// # Errors
+    ///
+    /// This method is infallible; it returns `None` on unrecognized names
+    /// rather than returning a [`FieldPathError`]. Callers that need
+    /// diagnostic suggestions should use [`FieldPath::parse`] instead.
+    ///
+    /// [`FieldPathError`]: crate::query::error::FieldPathError
     pub(super) fn parse(name: &str) -> Option<Self> {
         match name {
             "completed" => Some(Self::Completed),
@@ -150,34 +144,32 @@ impl TaskField {
 
 /// A resolved query field path.
 ///
-/// A `FieldPath` is parsed once per [`QueryRecordSet`][`super::QueryRecordSet`]
+/// A `FieldPath` is parsed once per [`crate::query::QueryRecordSet`]
 /// transformation and subsequently applied to each
-/// [`QueryRecord`][`super::QueryRecord`] to extract a [`NoteFieldValue`].
+/// [`crate::query::QueryRecord`] to extract a [`NoteFieldValue`].
 ///
-/// # Examples
+/// Recognized path forms: `file.<field>`, `task.<field>`, `tags`, `inlinks`,
+/// or a bare frontmatter key. Unknown `file.*` or `task.*` accessors produce
+/// a [`FieldPathError`] with an optional "did you mean" suggestion.
 ///
-/// ```ignore
-/// # use traces_pkm::query::FieldPath;
-/// let path = FieldPath::parse("file.name").unwrap();
-/// ```
+/// [`NoteFieldValue`]: crate::note::NoteFieldValue
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum FieldPath {
     /// Wraps a `file.<field>` accessor ([`FileField`]).
     File(FileField),
     /// Wraps a `task.<field>` accessor ([`TaskField`]), which resolves to
-    /// [`NoteFieldValue::Null`] on page-level records.
+    /// [`crate::note::NoteFieldValue::Null`] on page-level records.
     Task(TaskField),
     /// Accesses a frontmatter or inline field key.
     Metadata(String),
-    /// Accesses Note tags as a [`NoteFieldValue::List`] of tag strings.
+    /// Accesses Note tags as a [`crate::note::NoteFieldValue::List`] of tag
+    /// strings.
     Tags,
     /// Accesses project-relative paths of Notes linking to this Note as a
-    /// [`NoteFieldValue::List`].
+    /// [`crate::note::NoteFieldValue::List`].
     ///
-    /// Derived dynamically by [`derive_inlinks`] rather than stored directly on
+    /// Derived dynamically by `derive_inlinks` rather than stored directly on
     /// the Note.
-    ///
-    /// [`derive_inlinks`]: super::super::inlinks::derive_inlinks
     Inlinks,
 }
 
@@ -185,20 +177,15 @@ impl FieldPath {
     /// Parses a query field path string into a [`FieldPath`].
     ///
     /// Resolves `path` to one of the supported accessors or a metadata key.
+    /// Leading and trailing whitespace is trimmed.
     ///
     /// # Errors
     ///
     /// Returns [`FieldPathError`] if `path` is empty, has invalid `.`
-    /// structure, or names an unknown `file.<field>` or `task.<field>`
-    /// accessor.
+    /// structure (for example, `file.` or `a.b`), or names an unknown
+    /// `file.<field>` or `task.<field>` accessor.
     ///
-    /// # Examples
-    ///
-    /// ```ignore
-    /// # use traces_pkm::query::FieldPath;
-    /// let path = FieldPath::parse("file.name");
-    /// assert!(path.is_ok());
-    /// ```
+    /// [`FieldPathError`]: crate::query::error::FieldPathError
     pub(crate) fn parse(path: &str) -> Result<Self, FieldPathError> {
         let path = path.trim();
         let invalid = || FieldPathError::new(path, None);

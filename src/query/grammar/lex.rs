@@ -7,7 +7,7 @@ use crate::query::{QueryDialect, QueryError, error::QuerySyntaxError};
 /// A token paired with its original byte span in the source expression.
 ///
 /// Used throughout the parser to produce span-aware error diagnostics via
-/// [`super::error::QuerySyntaxError`].
+/// [`crate::query::error::QuerySyntaxError`].
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct Spanned<T> {
     /// The parsed token value.
@@ -18,8 +18,8 @@ pub(super) struct Spanned<T> {
 
 /// Owning one-token-lookahead cursor over a materialized token stream.
 ///
-/// Wraps a `Vec<T>` into a [`Peekable`] iterator, providing [`peek`], [`next`],
-/// and [`is_taken`] for the recursive-descent parser.
+/// Wraps a [`Vec`] into a [`Peekable`] iterator, providing [`Self::peek`],
+/// [`Self::next`], and [`Self::is_taken`] for the recursive-descent parser.
 pub(super) struct TokenStream<T> {
     tokens: Peekable<vec::IntoIter<T>>,
 }
@@ -79,6 +79,11 @@ impl<T> TokenStream<Spanned<T>> {
 
     /// Consumes the next token only if it matches the expected value, returning
     /// its span.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`QueryError::Syntax`] diagnostic if the next token does not
+    /// match `expected` or the stream is empty.
     pub(super) fn expect<U>(
         &mut self,
         input: &str,
@@ -104,6 +109,11 @@ impl<T> TokenStream<Spanned<T>> {
 
     /// Consumes the next token and applies a mapper function, returning the
     /// mapped spanned result.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`QueryError::Syntax`] diagnostic if the stream is empty or
+    /// the mapper returns `None`.
     pub(super) fn expect_map<F, R>(
         &mut self,
         input: &str,

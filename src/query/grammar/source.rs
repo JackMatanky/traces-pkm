@@ -35,14 +35,16 @@ pub enum SourceSelector {
 
 /// Parsed source expression wrapping a boolean tree of [`SourceAtom`] leaves.
 ///
-/// Created by `SourceExpr::parse` from a source expression string. The AST
+/// Created by [`SourceExpr::parse`] from a source expression string. The AST
 /// is opaque to callers; the only way to inspect it is through the provided
-/// methods: [`is_match`](Self::is_match) for evaluation, expansion is needed,
-/// and [`visit_atoms_mut`](Self::visit_atoms_mut) to load class names before
-/// matching.
+/// methods: [`is_match`](Self::is_match) for evaluation,
+/// [`has_classes`](Self::has_classes) to check whether class expansion is
+/// needed, and [`visit_atoms_mut`](Self::visit_atoms_mut) to load class
+/// names before matching.
 ///
 /// Operator precedence is `NOT` > `AND` > `OR`; parentheses override.
-/// See the [module-level syntax reference](self) for the full grammar.
+/// See the [source expression language](super::super) documentation for the
+/// full grammar.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SourceExpr(BooleanExpr<SourceAtom>);
 
@@ -52,12 +54,12 @@ pub struct SourceExpr(BooleanExpr<SourceAtom>);
 ///
 /// # Matching rules
 ///
-/// - **[`Tag`]**: matches if the Note carries the named tag or any nested
-///   sub-tag (`#book` matches `#book/fiction`)
-/// - **[`Path`]**: matches if the file path matches the compiled glob (`books/`
-///   compiles to `books/**`, matching every file under it)
-/// - **[`Class`]**: matches if any of the Note's class field values appears in
-///   the resolved [`ClassExpansionMode`] set
+/// - **[`SourceAtom::Tag`]**: matches if the Note carries the named tag or any
+///   nested sub-tag (`#book` matches `#book/fiction`)
+/// - **[`SourceAtom::Path`]**: matches if the file path matches the compiled
+///   glob (`books/` compiles to `books/**`, matching every file under it)
+/// - **[`SourceAtom::Class`]**: matches if any of the Note's class field values
+///   appears in the resolved [`ClassExpansionMode`] set
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum SourceAtom {
     /// Matches an exact tag or any nested sub-tag.
@@ -416,6 +418,11 @@ impl SourceSelector {
 impl SourceGrammar {
     /// Parses a sigil-form File Class term (e.g., `@Class`, `@Class+`,
     /// `@Class*`).
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`QueryError::Syntax`] diagnostic if the sigil is empty or
+    /// malformed.
     fn parse_sigil(
         input: &str,
         sigil: &str,
@@ -446,6 +453,12 @@ impl SourceGrammar {
 
     /// Parses a function-form File Class term (e.g., `class(Name)`,
     /// `class(Name, children)`).
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`QueryError::Syntax`] diagnostic if the function form is
+    /// malformed, the class name is empty, an unknown expansion mode is
+    /// given, or both an argument and a method modifier are present.
     fn parse_class_function(
         input: &str,
         tokens: &mut TokenStream<Spanned<SourceToken>>,
