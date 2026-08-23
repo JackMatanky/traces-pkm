@@ -664,4 +664,28 @@ mod tests {
             assert!(service.descendants_of("ghost").is_empty());
         }
     }
+
+    mod warn_unknown_classes {
+        use super::*;
+
+        #[test]
+        fn does_not_panic_for_unknown_classes() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_schema(
+                temp.path(),
+                "book",
+                r#"
+                [fields.status]
+                type = "select"
+                values = ["draft"]
+                "#,
+            );
+
+            let (service, _, _) =
+                resolve_dir(temp.path()).expect("registry loads");
+
+            service
+                .warn_unknown_classes(&["book".to_owned(), "ghost".to_owned()]);
+        }
+    }
 }

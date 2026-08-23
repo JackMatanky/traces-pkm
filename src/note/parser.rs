@@ -990,6 +990,74 @@ mod tests {
                 "push_scan_char must return false when no item is active"
             );
         }
+
+        #[test]
+        fn start_nested_text_block_returns_false_when_no_item() {
+            let mut tracker = ListTracker::default();
+            assert!(
+                !tracker.start_nested_text_block(),
+                "start_nested_text_block must return false with no item"
+            );
+        }
+
+        #[test]
+        fn start_nested_text_block_returns_true_with_active_item() {
+            let mut tracker = ListTracker::default();
+            tracker.start_list(false);
+            tracker.start_item();
+            assert!(
+                tracker.start_nested_text_block(),
+                "start_nested_text_block must return true with active item"
+            );
+        }
+
+        #[test]
+        fn start_list_flushes_active_item_scan_buffer() {
+            let mut tracker = ListTracker::default();
+            tracker.start_list(false);
+            tracker.start_item();
+            tracker.push_text("Status:: Draft", false);
+
+            let flushed = tracker.start_list(false);
+
+            assert!(
+                flushed.is_some(),
+                "start_list must flush active item scan buffer"
+            );
+            let (fields, _) = flushed.unwrap();
+            let has_status =
+                fields.keys().any(|k| k.is_canonical_match("status"));
+            assert!(has_status, "flushed fields must contain Status");
+        }
+
+        #[test]
+        fn end_item_flushes_scan_buffer() {
+            let mut tracker = ListTracker::default();
+            tracker.start_list(false);
+            tracker.start_item();
+            tracker.push_text("Author:: Jane", false);
+
+            let flushed = tracker.end_item();
+
+            assert!(flushed.is_some(), "end_item must flush scan buffer");
+            let (fields, _) = flushed.unwrap();
+            let has_author =
+                fields.keys().any(|k| k.is_canonical_match("author"));
+            assert!(has_author, "flushed fields must contain Author");
+        }
+
+        #[test]
+        fn push_text_and_push_break_return_false_when_no_item_active() {
+            let mut tracker = ListTracker::default();
+            assert!(
+                !tracker.push_text("hello", false),
+                "push_text must return false when no item active"
+            );
+            assert!(
+                !tracker.push_break(),
+                "push_break must return false when no item active"
+            );
+        }
     }
 
     mod tasks {

@@ -1614,6 +1614,21 @@ mod tests {
 
             assert_eq!(error.kind(), ErrorKind::InvalidOperation);
         }
+
+        #[test]
+        fn current_timestamp_is_neither_past_nor_future() {
+            let now = Utc::now();
+            let formatted = now.format("%Y-%m-%dT%H:%M:%S").to_string();
+
+            let past = is_past(&formatted).expect("parse succeeds");
+            let future = is_future(&formatted).expect("parse succeeds");
+
+            assert!(
+                !past || !future,
+                "is_past and is_future must be mutually exclusive, got \
+                 past={past}, future={future}"
+            );
+        }
     }
 
     mod diff_precision {

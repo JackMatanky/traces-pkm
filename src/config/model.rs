@@ -576,4 +576,18 @@ mod tests {
             );
         }
     }
+
+    mod frontmatter_for_test {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn sets_the_expected_title_and_aliases() {
+            let config = FrontmatterConfig::for_test("heading", "also_known");
+
+            assert_eq!(config.title_name(), "heading");
+            assert_eq!(config.aliases_name(), "also_known");
+        }
+    }
 }

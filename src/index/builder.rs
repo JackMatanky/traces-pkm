@@ -323,6 +323,75 @@ mod tests {
         }
     }
 
+    mod reuse_boundary {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn reused_index_preserves_inlinks_when_nothing_changes() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(
+                temp.path().join("a.md"),
+                "---\ntitle: A\n---\nLink to [[b]].",
+            )
+            .expect("write a");
+            fs::write(temp.path().join("b.md"), "---\ntitle: B\n---\nBody.")
+                .expect("write b");
+
+            let first = IndexBuilder::from_scan(temp.path())
+                .expect("scan")
+                .build(temp.path())
+                .expect("build");
+            let first_inlinks = first.inlinks().len();
+
+            let second = IndexBuilder::from_scan(temp.path())
+                .expect("scan")
+                .reuse_unchanged(first)
+                .build(temp.path())
+                .expect("build");
+
+            assert_eq!(
+                second.inlinks().len(),
+                first_inlinks,
+                "inlinks must be reused when nothing changed"
+            );
+        }
+
+        #[test]
+        fn deleted_non_note_file_does_not_mark_dirty() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            fs::write(
+                temp.path().join("note.md"),
+                "---\ntitle: Note\n---\nBody.",
+            )
+            .expect("write note");
+            fs::write(temp.path().join("image.png"), "fake")
+                .expect("write image");
+
+            let first = IndexBuilder::from_scan(temp.path())
+                .expect("scan")
+                .build(temp.path())
+                .expect("build");
+            let first_inlinks = first.inlinks().len();
+
+            fs::remove_file(temp.path().join("image.png"))
+                .expect("delete image");
+
+            let second = IndexBuilder::from_scan(temp.path())
+                .expect("scan")
+                .reuse_unchanged(first)
+                .build(temp.path())
+                .expect("build");
+
+            assert_eq!(
+                second.inlinks().len(),
+                first_inlinks,
+                "deleting non-note file must not recompute inlinks"
+            );
+        }
+    }
+
     mod reuse {
         use pretty_assertions::assert_eq;
 

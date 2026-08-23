@@ -800,5 +800,21 @@ mod tests {
                 Err(DiscoveryError::PathInaccessible { .. })
             ));
         }
+
+        #[test]
+        fn is_local_config_path_requires_both_filename_and_parent() {
+            // Both conditions satisfied
+            assert!(DiscoveryEngine::is_local_config_path(&PathBuf::from(
+                "/project/.traces/config.toml"
+            )));
+            // Only filename matches, parent does not
+            assert!(!DiscoveryEngine::is_local_config_path(&PathBuf::from(
+                "/project/other/config.toml"
+            )));
+            // Only parent matches, filename does not
+            assert!(!DiscoveryEngine::is_local_config_path(&PathBuf::from(
+                "/project/.traces/other.toml"
+            )));
+        }
     }
 }

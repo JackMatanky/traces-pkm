@@ -1192,4 +1192,47 @@ mod tests {
             assert!(matches!(error, SchemaError::Parse { .. }));
         }
     }
+
+    mod select_entry_value {
+        use pretty_assertions::assert_eq;
+        use rstest::rstest;
+
+        use super::*;
+
+        #[test]
+        fn literal_entry_returns_plain_string_value() {
+            let entry = SchemaSelectFieldEntry::literal("draft".to_owned());
+
+            let value = select_entry_value(&entry);
+
+            assert_eq!(value.as_str(), Some("draft"));
+        }
+
+        #[rstest]
+        #[case::different_label("draft", "Draft", IndexMap::new())]
+        #[case::with_extra(
+            "draft",
+            "draft",
+            IndexMap::from([("color".to_owned(), FieldValue::String("blue".to_owned()))])
+        )]
+        fn non_literal_entry_returns_object(
+            #[case] val: &str,
+            #[case] lbl: &str,
+            #[case] extra: IndexMap<String, FieldValue>,
+        ) {
+            let entry = SchemaSelectFieldEntry::with_label(
+                val.to_owned(),
+                lbl.to_owned(),
+                extra,
+            );
+
+            let value = select_entry_value(&entry);
+
+            assert!(
+                matches!(value.kind(), minijinja::value::ValueKind::Map),
+                "expected map, got {:?}",
+                value.kind()
+            );
+        }
+    }
 }

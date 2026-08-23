@@ -250,4 +250,17 @@ mod tests {
             assert!(p.multi_select("pick", &items).unwrap().is_empty());
         }
     }
+
+    mod is_interactive {
+        use super::*;
+
+        #[test]
+        fn returns_false_when_not_a_tty() {
+            if skip_if_tty("returns_false_when_not_a_tty") {
+                return;
+            }
+            let p = TerminalDialogProvider::new();
+            assert!(!p.is_interactive());
+        }
+    }
 }

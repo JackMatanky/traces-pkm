@@ -1074,6 +1074,13 @@ mod tests {
                 FieldNameRef::try_from(r#"say "hi""#).expect("valid name");
             assert_eq!(format!("{name:?}"), format!("{:?}", r#"say "hi""#));
         }
+
+        #[test]
+        fn field_name_ref_borrow_str_returns_the_inner_string() {
+            let name = FieldNameRef::try_from("Status").expect("valid name");
+            let borrowed: &str = std::borrow::Borrow::borrow(&name);
+            assert_eq!(borrowed, "Status");
+        }
     }
 
     mod field_key {

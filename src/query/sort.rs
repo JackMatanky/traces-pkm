@@ -365,4 +365,91 @@ mod tests {
             assert!(SortOrder::Descending.is_descending());
         }
     }
+
+    mod compare_field_values_bools {
+        use pretty_assertions::assert_eq;
+
+        use super::super::compare_field_values;
+        use crate::note::NoteFieldValue;
+
+        #[test]
+        fn orders_false_before_true() {
+            let a = NoteFieldValue::Bool(false);
+            let b = NoteFieldValue::Bool(true);
+
+            assert_eq!(
+                compare_field_values(&a, &b),
+                Some(std::cmp::Ordering::Less)
+            );
+        }
+    }
+
+    mod sort_key_cmp_nulls {
+        use pretty_assertions::assert_eq;
+
+        use super::super::sort_key_cmp;
+        use crate::note::NoteFieldValue;
+
+        #[test]
+        fn null_is_less_than_any_value() {
+            let null = NoteFieldValue::Null;
+            let number = NoteFieldValue::Number(1.0);
+            let string = NoteFieldValue::String("hello".to_owned());
+            let boolean = NoteFieldValue::Bool(true);
+
+            assert_eq!(
+                sort_key_cmp(&null, &number, false),
+                std::cmp::Ordering::Less
+            );
+            assert_eq!(
+                sort_key_cmp(&null, &string, false),
+                std::cmp::Ordering::Less
+            );
+            assert_eq!(
+                sort_key_cmp(&null, &boolean, false),
+                std::cmp::Ordering::Less
+            );
+        }
+
+        #[test]
+        fn null_trails_in_descending_order() {
+            let null = NoteFieldValue::Null;
+            let number = NoteFieldValue::Number(1.0);
+
+            assert_eq!(
+                sort_key_cmp(&null, &number, true),
+                std::cmp::Ordering::Greater
+            );
+        }
+    }
+
+    mod sort_notes_by_bool_field {
+        use super::*;
+
+        #[test]
+        fn sorts_boolean_field_false_before_true() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let outcome = outcome_for_files(temp.path(), &[
+                ("true.md", "---\nactive: true\n---"),
+                ("false.md", "---\nactive: false\n---"),
+            ]);
+
+            let sorted = outcome.sort("active", false).expect("valid sort");
+
+            assert_eq!(names(&sorted), ["false", "true"]);
+        }
+
+        #[test]
+        fn sorts_null_field_alongside_boolean_field() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let outcome = outcome_for_files(temp.path(), &[
+                ("true.md", "---\nactive: true\n---"),
+                ("none.md", "no frontmatter"),
+            ]);
+
+            let sorted = outcome.sort("active", false).expect("valid sort");
+
+            assert_eq!(names(&sorted), ["none", "true"]);
+        }
+    }
 }

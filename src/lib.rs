@@ -212,6 +212,21 @@ mod test_support {
         std::fs::write(root.join("templates").join(name), source)
             .expect("write template");
     }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn fixture_service_returns_a_usable_config_service() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let service = fixture_service(temp.path());
+
+            // Verify the service can discover config (empty dir → no config).
+            let result = service.load(temp.path());
+            assert!(result.is_err(), "empty dir should fail discovery");
+        }
+    }
 }
 
 #[cfg(any(test, feature = "test-utils"))]

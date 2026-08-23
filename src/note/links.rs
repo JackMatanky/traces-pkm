@@ -473,6 +473,13 @@ mod tests {
     }
 
     #[test]
+    fn non_embedded_link_reports_false_for_is_embedded() {
+        let link = Link::new("target", "text", LinkType::Markdown);
+
+        assert_eq!(link.is_embedded(), false);
+    }
+
+    #[test]
     fn parses_escaped_pipe_in_wikilink_target() {
         let link = Link::parse_wikilink(r"[[Hello \| There]]")
             .expect("valid wikilink");

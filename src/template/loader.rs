@@ -730,6 +730,19 @@ mod tests {
 
             assert_eq!(source, Some("content".to_owned()));
         }
+
+        #[test]
+        fn returns_none_when_read_fails_with_not_found() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let loader =
+                TemplateLoader::new(Some(temp.path().to_path_buf()), None);
+
+            // "missing" with no extension → find_name_in searches dir,
+            // finds nothing → TemplateNotFound → load returns None.
+            let source = loader.load("missing").expect("load succeeds");
+
+            assert_eq!(source, None);
+        }
     }
 
     mod conversions {

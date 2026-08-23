@@ -758,6 +758,27 @@ mod tests {
 
             assert_eq!(resolved, root.join("explicit.md"));
         }
+
+        #[test]
+        fn returns_current_path_when_user_enters_the_same_path() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            let root = temp.path();
+            let initial_file = root.join("daily.md");
+            fs::write(&initial_file, "existing content")
+                .expect("seed existing note");
+
+            let provider: Arc<dyn DialogProvider> =
+                Arc::new(PresetDialogProvider::new().with_text("daily.md"));
+
+            let target = TemplateWriteTarget::new(root);
+            let resolved = target
+                .resolve(CommitPolicy::CreateNew, provider.as_ref(), || {
+                    root.join("daily.md")
+                })
+                .expect("same path returns current");
+
+            assert_eq!(resolved, root.join("daily.md"));
+        }
     }
 
     mod trusted {

@@ -94,6 +94,19 @@ impl SchemaSelectFieldEntry {
     pub(crate) const fn extra(&self) -> &IndexMap<String, FieldValue> {
         &self.extra
     }
+
+    #[cfg(test)]
+    pub(crate) fn with_label(
+        value: String,
+        label: String,
+        extra: IndexMap<String, FieldValue>,
+    ) -> Self {
+        Self {
+            value: FieldValue::String(value),
+            label: FieldValue::String(label),
+            extra,
+        }
+    }
 }
 
 #[cfg(test)]

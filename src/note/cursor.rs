@@ -85,3 +85,38 @@ impl AsRef<str> for SourceText<'_> {
         self.0
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn len_returns_the_byte_length() {
+        assert_eq!(SourceText::new("hello").len(), 5);
+        assert_eq!(SourceText::new("").len(), 0);
+    }
+
+    #[test]
+    fn starts_with_matches_at_the_given_position() {
+        let source = SourceText::new("hello world");
+
+        assert!(source.starts_with(6, "world"));
+        assert!(source.starts_with(0, "hello"));
+    }
+
+    #[test]
+    fn starts_with_returns_false_when_needle_does_not_match() {
+        let source = SourceText::new("hello world");
+
+        assert!(!source.starts_with(0, "goodbye"));
+    }
+
+    #[test]
+    fn as_ref_returns_the_inner_string() {
+        let source = SourceText::new("test content");
+
+        assert_eq!(source.as_ref(), "test content");
+    }
+}

@@ -381,6 +381,16 @@ mod tests {
         fn rejects_non_digit_in_day() {
             assert!(!is_iso_date("2026-08-cd"));
         }
+
+        #[test]
+        fn rejects_correct_length_but_missing_first_dash() {
+            assert!(!is_iso_date("202608-22"));
+        }
+
+        #[test]
+        fn rejects_correct_length_but_missing_second_dash() {
+            assert!(!is_iso_date("2026-0822"));
+        }
     }
 
     mod field_value {

@@ -177,4 +177,46 @@ mod tests {
         assert_send_sync::<TerminalDialogProvider>();
         assert_send_sync::<std::sync::Arc<dyn DialogProvider>>();
     }
+
+    #[test]
+    fn is_interactive_default_returns_true() {
+        struct DummyProvider;
+
+        impl DialogProvider for DummyProvider {
+            fn confirm(
+                &self,
+                _: &str,
+                _: Option<bool>,
+            ) -> Result<bool, DialogError> {
+                Ok(false)
+            }
+
+            fn multi_select(
+                &self,
+                _: &str,
+                _: &[String],
+            ) -> Result<Vec<usize>, DialogError> {
+                Ok(vec![])
+            }
+
+            fn select(
+                &self,
+                _: &str,
+                _: &[String],
+            ) -> Result<usize, DialogError> {
+                Ok(0)
+            }
+
+            fn text(
+                &self,
+                _: &str,
+                _: Option<&str>,
+            ) -> Result<String, DialogError> {
+                Ok(String::new())
+            }
+        }
+
+        let p = DummyProvider;
+        assert!(p.is_interactive());
+    }
 }

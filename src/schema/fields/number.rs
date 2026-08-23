@@ -237,4 +237,23 @@ mod tests {
             ))
         );
     }
+
+    #[test]
+    fn getters_return_stored_min_max_step_values() {
+        let field =
+            SchemaNumberField::for_test(Some(1.5), Some(9.5), Some(0.5));
+
+        assert_eq!(field.min(), Some(1.5));
+        assert_eq!(field.max(), Some(9.5));
+        assert_eq!(field.step(), Some(0.5));
+    }
+
+    #[test]
+    fn getters_return_none_when_fields_are_unset() {
+        let field = SchemaNumberField::for_test(None, None, None);
+
+        assert_eq!(field.min(), None);
+        assert_eq!(field.max(), None);
+        assert_eq!(field.step(), None);
+    }
 }
