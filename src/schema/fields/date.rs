@@ -15,10 +15,7 @@ impl SchemaDateField {
     /// Return the display/parse format, if set.
     #[inline]
     #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "reserved for future schema consumers")
-    )]
+    #[cfg(test)]
     pub(crate) fn format(&self) -> Option<&str> {
         self.format.as_deref()
     }

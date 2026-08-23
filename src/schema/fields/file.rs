@@ -26,10 +26,7 @@ impl SchemaFileField {
     /// Return the matched folder paths.
     #[inline]
     #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "reserved for future schema consumers")
-    )]
+    #[cfg(test)]
     pub(crate) fn folders(&self) -> &[String] {
         &self.folders
     }
@@ -37,10 +34,7 @@ impl SchemaFileField {
     /// Return the matched file extension, if set.
     #[inline]
     #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "reserved for future schema consumers")
-    )]
+    #[cfg(test)]
     pub(crate) fn ext(&self) -> Option<&str> {
         self.ext.as_deref()
     }
@@ -48,10 +42,7 @@ impl SchemaFileField {
     /// Return the matched class tags.
     #[inline]
     #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "reserved for future schema consumers")
-    )]
+    #[cfg(test)]
     pub(crate) fn class(&self) -> &[String] {
         &self.class
     }

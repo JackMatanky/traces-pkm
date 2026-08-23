@@ -26,7 +26,7 @@
 //! [`descendants_by_name`]: SchemaGraph::descendants_by_name
 
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     marker::PhantomData,
 };
 
@@ -36,9 +36,11 @@ use indexmap::{IndexMap, IndexSet};
 use super::{RawSchema, SchemaName, SchemaNameRef, error::SchemaWarning};
 
 /// Building state: resolution in progress, queue and `in_degree` active.
+#[derive(Debug)]
 pub(super) struct Building;
 
 /// Resolved state: DAG is acyclic, hierarchy queries available.
+#[derive(Debug)]
 pub(super) struct Resolved;
 
 /// Kahn's-algorithm state for linearizing the `extends` DAG.
@@ -46,6 +48,7 @@ pub(super) struct Resolved;
 /// `State` enforces valid transitions at compile time via [`PhantomData`]:
 /// - [`Building`] for the resolution loop
 /// - [`Resolved`] for hierarchy queries after cycle-check.
+#[derive(Debug)]
 pub(super) struct SchemaGraph<'a, State = Building> {
     /// Borrowed raw schemas — source of truth for `extends` parents.
     raw: &'a IndexMap<SchemaName, RawSchema>,
@@ -77,8 +80,8 @@ impl<'a, State> SchemaGraph<'a, State> {
 impl<'a> SchemaGraph<'a, Building> {
     /// Build the `extends` adjacency and seed the ready queue.
     ///
-    /// Scans each schema's `extends` targets, emitting warnings for
-    /// targets absent from `raw_schemas` and for repeated targets.
+    /// Scans each schema's `extends` targets, emitting warnings for targets
+    /// absent from `raw_schemas` and for repeated targets.
     ///
     /// # Warnings
     ///
@@ -129,10 +132,10 @@ impl<'a> SchemaGraph<'a, Building> {
             in_degree.insert(name.as_ref(), parent_count);
         }
 
-        let queue: VecDeque<SchemaNameRef<'_>> = in_degree
-            .iter()
-            .filter(|&(_, &degree)| degree == 0)
-            .map(|(&name, _)| name)
+        let queue: VecDeque<SchemaNameRef<'_>> = raw_schemas
+            .keys()
+            .map(SchemaName::as_ref)
+            .filter(|name| in_degree.get(name).copied() == Some(0))
             .collect();
 
         (
@@ -179,41 +182,105 @@ impl<'a> SchemaGraph<'a, Building> {
         }
     }
 
-    /// Return every Schema name that never reached in-degree zero.
+    /// Return every unvisited Schema that participates in a cycle: each Schema
+    /// from which a nonempty `extends` path, staying within the unvisited set,
+    /// leads back to itself.
     ///
-    /// Returns `None` if every Schema was visited (no cycle).
-    fn unvisited_schemas(&self) -> Option<Vec<SchemaName>> {
+    /// Excludes Schemas that never reached in-degree zero only because they
+    /// `extends` into a cycle without being cyclic themselves (e.g. `c extends
+    /// a` where `a` cycles with `b`: `c` is excluded, `a`/`b` are not).
+    ///
+    /// Returns an empty `Vec` if every Schema was visited (no cycle).
+    ///
+    /// `O(V·(V+E))` over the unvisited subgraph: one reachability walk per
+    /// unvisited Schema. Iterative (queue-based, no recursion), so it cannot
+    /// stack-overflow regardless of `extends`-chain depth.
+    fn cyclic_schemas(&self) -> Vec<SchemaName> {
         if self.visited.len() == self.raw.len() {
-            return None;
+            return Vec::new();
         }
-        let mut result = Vec::new();
-        for name in self.raw.keys() {
-            if !self.visited.contains(name.as_str()) {
-                result.push(name.clone());
+        let unvisited: HashSet<&str> = self
+            .raw
+            .keys()
+            .map(SchemaName::as_str)
+            .filter(|name| !self.visited.contains(*name))
+            .collect();
+
+        let mut cyclic = Vec::new();
+        for start in self.raw.keys().map(SchemaName::as_str) {
+            if !unvisited.contains(start) {
+                continue;
+            }
+            let mut queue: VecDeque<&str> = VecDeque::new();
+            let mut seen: HashSet<&str> = HashSet::new();
+            Self::enqueue_unvisited_parents(
+                self.parents_of(SchemaNameRef::from(start)),
+                &unvisited,
+                &mut queue,
+                &mut seen,
+            );
+            let mut in_cycle = false;
+            while let Some(node) = queue.pop_front() {
+                if node == start {
+                    in_cycle = true;
+                    break;
+                }
+                Self::enqueue_unvisited_parents(
+                    self.parents_of(SchemaNameRef::from(node)),
+                    &unvisited,
+                    &mut queue,
+                    &mut seen,
+                );
+            }
+            if in_cycle {
+                cyclic.push(SchemaName::from(start));
             }
         }
-        Some(result)
+        cyclic
+    }
+
+    /// Push every name in `parents` onto `queue` that is both in `unvisited`
+    /// and not already `seen`, marking it seen.
+    ///
+    /// Shared by [`cyclic_schemas`](Self::cyclic_schemas)'s BFS seed step and
+    /// its per-node expansion step.
+    fn enqueue_unvisited_parents<'s>(
+        parents: &'s [SchemaName],
+        unvisited: &HashSet<&'s str>,
+        queue: &mut VecDeque<&'s str>,
+        seen: &mut HashSet<&'s str>,
+    ) {
+        for parent in parents.iter().map(SchemaName::as_str) {
+            if unvisited.contains(parent) && seen.insert(parent) {
+                queue.push_back(parent);
+            }
+        }
     }
 
     /// Consume the building graph, returning a resolved graph if the DAG is
-    /// acyclic, or the cyclic schemas if a cycle exists.
+    /// acyclic, or the cyclic Schemas if a cycle exists.
     ///
-    /// Drives any remaining [`SchemaGraph::next_ready`] /
-    /// [`SchemaGraph::mark_resolved`] steps before checking for cycles, so
-    /// callers get correct results even if the loop was not fully exhausted.
+    /// Drives any remaining [`next_ready`] / [`mark_resolved`] steps before
+    /// checking for cycles, so callers get correct results even if the loop was
+    /// not fully exhausted.
     ///
     /// # Errors
     ///
-    /// Returns `Err(Vec<SchemaName>)` listing every Schema that never reached
-    /// in-degree zero.
+    /// Returns `Err(Vec<SchemaName>)` listing only the Schemas that participate
+    /// in a cycle. A Schema that merely `extends` into a cycle without being
+    /// part of one itself is excluded.
+    ///
+    /// [`next_ready`]: SchemaGraph::next_ready
+    /// [`mark_resolved`]: SchemaGraph::mark_resolved
     pub(super) fn into_resolved(
         mut self,
     ) -> Result<SchemaGraph<'a, Resolved>, Vec<SchemaName>> {
         while let Some(parent) = self.next_ready() {
             self.mark_resolved(parent);
         }
-        if let Some(schemas) = self.unvisited_schemas() {
-            return Err(schemas);
+        let cyclic = self.cyclic_schemas();
+        if !cyclic.is_empty() {
+            return Err(cyclic);
         }
         Ok(self.transition_to())
     }
@@ -488,6 +555,20 @@ mod tests {
             assert_eq!(graph.next_ready(), Some(SchemaNameRef::from("book")));
             assert_eq!(graph.next_ready(), None);
         }
+
+        #[test]
+        fn releases_multiple_simultaneous_roots_in_raw_map_insertion_order() {
+            let mut raw = IndexMap::new();
+            raw.insert(SchemaName::from("zebra"), schema(&[]));
+            raw.insert(SchemaName::from("apple"), schema(&[]));
+            raw.insert(SchemaName::from("mango"), schema(&[]));
+            let (mut graph, _warnings) = SchemaGraph::new(&raw);
+
+            assert_eq!(graph.next_ready(), Some(SchemaNameRef::from("zebra")));
+            assert_eq!(graph.next_ready(), Some(SchemaNameRef::from("apple")));
+            assert_eq!(graph.next_ready(), Some(SchemaNameRef::from("mango")));
+            assert_eq!(graph.next_ready(), None);
+        }
     }
 
     mod children {
@@ -713,6 +794,45 @@ mod tests {
             );
 
             assert_eq!(index.bit_count(), 3);
+        }
+    }
+
+    mod cycles {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn into_resolved_rejects_a_direct_two_node_cycle() {
+            let mut raw = IndexMap::new();
+            raw.insert(SchemaName::from("a"), schema(&["b"]));
+            raw.insert(SchemaName::from("b"), schema(&["a"]));
+            let (graph, _warnings) = SchemaGraph::new(&raw);
+
+            let err = graph.into_resolved().expect_err("cycle rejected");
+            assert_eq!(err, vec![SchemaName::from("a"), SchemaName::from("b")]);
+        }
+
+        #[test]
+        fn into_resolved_excludes_a_schema_that_only_extends_into_the_cycle() {
+            let mut raw = IndexMap::new();
+            raw.insert(SchemaName::from("a"), schema(&["b"]));
+            raw.insert(SchemaName::from("b"), schema(&["a"]));
+            raw.insert(SchemaName::from("c"), schema(&["a"]));
+            let (graph, _warnings) = SchemaGraph::new(&raw);
+
+            let err = graph.into_resolved().expect_err("cycle rejected");
+            assert_eq!(err, vec![SchemaName::from("a"), SchemaName::from("b")]);
+        }
+
+        #[test]
+        fn into_resolved_rejects_a_self_loop() {
+            let mut raw = IndexMap::new();
+            raw.insert(SchemaName::from("a"), schema(&["a"]));
+            let (graph, _warnings) = SchemaGraph::new(&raw);
+
+            let err = graph.into_resolved().expect_err("self-loop rejected");
+            assert_eq!(err, vec![SchemaName::from("a")]);
         }
     }
 }

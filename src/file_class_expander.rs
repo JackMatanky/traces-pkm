@@ -21,9 +21,7 @@ impl FileClassExpander for SchemaService {
                 self.warn_unknown_classes(classes);
                 for class in classes {
                     expanded.extend(
-                        self.children_of(class)
-                            .iter()
-                            .map(|schema| schema.name().to_owned()),
+                        self.children_names_of(class).map(str::to_owned),
                     );
                 }
             }

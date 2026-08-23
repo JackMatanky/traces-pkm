@@ -5,8 +5,8 @@ use indexmap::{IndexMap, IndexSet};
 use super::{SchemaName, fields::SchemaFieldDef};
 use crate::field::{FieldName, closest_match};
 
-/// A resolved Schema with its effective field definitions and position in
-/// the `extends` DAG.
+/// A resolved Schema with its effective field definitions and position in the
+/// `extends` DAG.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Schema {
     name: SchemaName,
@@ -104,17 +104,7 @@ impl Schema {
     /// - `sci_fi.is_a("movie")` → `false` (unrelated)
     #[inline]
     #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "is-a matching for class queries now goes through the \
-                      bulk SchemaService::matches()/descendants(), which read \
-                      the precomputed descendants set instead of calling \
-                      is_a() per Schema; kept as a per-instance domain check \
-                      for API completeness and direct is-a assertions"
-        )
-    )]
+    #[cfg(test)]
     pub(crate) fn is_a(&self, class: &str) -> bool {
         self.name.as_str() == class || self.ancestors.contains(class)
     }

@@ -17,10 +17,7 @@ impl SchemaNumberField {
     /// Return the inclusive minimum bound, if set.
     #[inline]
     #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "reserved for future schema consumers")
-    )]
+    #[cfg(test)]
     pub(crate) const fn min(&self) -> Option<f64> {
         self.min
     }
@@ -28,10 +25,7 @@ impl SchemaNumberField {
     /// Return the inclusive maximum bound, if set.
     #[inline]
     #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "reserved for future schema consumers")
-    )]
+    #[cfg(test)]
     pub(crate) const fn max(&self) -> Option<f64> {
         self.max
     }
@@ -39,10 +33,7 @@ impl SchemaNumberField {
     /// Return the increment step, if set.
     #[inline]
     #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "reserved for future schema consumers")
-    )]
+    #[cfg(test)]
     pub(crate) const fn step(&self) -> Option<f64> {
         self.step
     }

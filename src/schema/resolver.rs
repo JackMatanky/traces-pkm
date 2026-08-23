@@ -85,6 +85,10 @@ impl<'a> SchemaResolver<'a> {
     /// - [`OverrideValueTypeMismatch`] if a `$ref` override attribute has the
     ///   wrong value type
     ///
+    /// Inherit fields from resolved parents using first-listed-wins semantics,
+    /// collecting transitive ancestors and emitting warnings for missing
+    /// parents.
+    ///
     /// [`SchemaError::Cycle`]: super::error::SchemaError::Cycle
     /// [`MissingExtendsTarget`]: SchemaWarning::MissingExtendsTarget
     /// [`DuplicateExtendsTarget`]: SchemaWarning::DuplicateExtendsTarget
@@ -92,10 +96,6 @@ impl<'a> SchemaResolver<'a> {
     /// [`StrayGlobalRequired`]: SchemaWarning::StrayGlobalRequired
     /// [`UnknownOverrideKey`]: SchemaWarning::UnknownOverrideKey
     /// [`OverrideValueTypeMismatch`]: SchemaWarning::OverrideValueTypeMismatch
-    ///
-    /// Inherit fields from resolved parents using first-listed-wins semantics,
-    /// collecting transitive ancestors and emitting warnings for missing
-    /// parents.
     #[expect(
         clippy::type_complexity,
         reason = "tuple return matches merge_fields callers"
@@ -245,8 +245,8 @@ impl<'a> SchemaResolver<'a> {
     }
 }
 
-/// Drive the Kahn topological sort: pop ready schemas, merge their fields,
-/// mark them resolved, and collect warnings and failures.
+/// Drive the Kahn topological sort: pop ready schemas, merge their fields, mark
+/// them resolved, and collect warnings and failures.
 fn resolve_in_topological_order(
     graph: &mut SchemaGraph<'_, Building>,
     raw: &IndexMap<SchemaName, RawSchema>,
@@ -328,8 +328,8 @@ fn compute_hierarchy_sets(
 
 /// Reject `fields` if two entries share a [`FieldKey`] canonical form.
 ///
-/// Ambiguous field identities would make later note-vs-schema field
-/// matching and unknown-field suggestions unreliable.
+/// Ambiguous field identities would make later note-vs-schema field matching
+/// and unknown-field suggestions unreliable.
 ///
 /// [`FieldKey`]: crate::field::FieldKey
 fn reject_ambiguous_canonical_names(
@@ -1598,6 +1598,29 @@ mod tests {
                             ]
                 ),
                 "expected Cycle over [a, b], got {err:?}"
+            );
+        }
+
+        #[test]
+        fn cycle_error_excludes_a_non_cyclic_dependent() {
+            let mut raw = IndexMap::new();
+            raw.insert(SchemaName::from("a"), schema(&["b"], &[]));
+            raw.insert(SchemaName::from("b"), schema(&["a"], &[]));
+            raw.insert(SchemaName::from("c"), schema(&["a"], &[]));
+
+            let err = resolve(&raw).expect_err("cycle rejected");
+            assert!(
+                matches!(
+                    &err,
+                    SchemaError::Cycle { schemas }
+                        if schemas
+                            == &vec![
+                                SchemaName::from("a"),
+                                SchemaName::from("b")
+                            ]
+                ),
+                "expected Cycle over [a, b] only, excluding non-cyclic \
+                 dependent c; got {err:?}"
             );
         }
 

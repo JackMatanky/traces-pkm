@@ -34,12 +34,12 @@ type SchemaConstruction =
     (SchemaService, Vec<SchemaWarning>, Vec<SchemaFailure>);
 
 impl SchemaService {
-    /// Load every Schema TOML file under `directory`, linearize the
-    /// `extends` DAG, and resolve every Schema's effective
-    /// fields, alongside any [`SchemaWarning`]s degraded resolution accumulated
-    /// and any per-Schema [`SchemaError`] failures that excluded that Schema
-    /// from the result (see [`ParentFailedToResolve`]: dependents of a failed
-    /// Schema still resolve, without its fields).
+    /// Load every Schema TOML file under `directory`, linearize the `extends`
+    /// DAG, and resolve every Schema's effective fields, alongside any
+    /// [`SchemaWarning`]s degraded resolution accumulated and any per-Schema
+    /// [`SchemaError`] failures that excluded that Schema from the result (see
+    /// [`ParentFailedToResolve`]: dependents of a failed Schema still resolve,
+    /// without its fields).
     ///
     /// A missing directory resolves to an empty registry.
     ///
@@ -98,6 +98,20 @@ impl SchemaService {
             .filter_map(|child| self.schemas.get(child.as_str()))
             .cloned()
             .collect()
+    }
+
+    /// Borrowed names of every Schema that directly extends `name`.
+    ///
+    /// Empty iterator, not an error, if `name` has no Schema or nothing extends
+    /// it.
+    pub(crate) fn children_names_of<'a>(
+        &'a self,
+        name: &str,
+    ) -> impl Iterator<Item = &'a str> {
+        self.schemas
+            .get(name)
+            .into_iter()
+            .flat_map(|schema| schema.children().iter().map(SchemaName::as_str))
     }
 
     /// Return every Schema that directly or transitively extends `name`.
@@ -600,6 +614,49 @@ mod tests {
                 children.iter().map(|schema| schema.name()).collect();
 
             assert_eq!(names, vec!["book"]);
+        }
+    }
+
+    mod children_names_of {
+        use pretty_assertions::assert_eq;
+
+        use super::*;
+
+        #[test]
+        fn returns_only_direct_extenders_as_borrowed_names() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_schema(temp.path(), "thing", "");
+            write_schema(temp.path(), "book", r#"extends = ["thing"]"#);
+            write_schema(temp.path(), "sci_fi", r#"extends = ["book"]"#);
+
+            let (service, _, _) =
+                resolve_dir(temp.path()).expect("registry loads");
+
+            let names: Vec<&str> = service.children_names_of("thing").collect();
+
+            assert_eq!(names, vec!["book"]);
+        }
+
+        #[test]
+        fn returns_no_names_for_a_leaf_schema() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_schema(temp.path(), "book", "");
+
+            let (service, _, _) =
+                resolve_dir(temp.path()).expect("registry loads");
+
+            assert_eq!(service.children_names_of("book").next(), None);
+        }
+
+        #[test]
+        fn returns_no_names_for_an_unknown_schema() {
+            let temp = tempfile::tempdir().expect("create temp dir");
+            write_schema(temp.path(), "book", "");
+
+            let (service, _, _) =
+                resolve_dir(temp.path()).expect("registry loads");
+
+            assert_eq!(service.children_names_of("missing").next(), None);
         }
     }
 
