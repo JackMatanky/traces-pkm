@@ -87,8 +87,15 @@ impl TemplateEngine {
     ///   `query.from_class`/`tasks.from_class`, and the Schema registry
     ///   directory for the `schema` namespace.
     ///
+    /// # Errors
+    ///
+    /// - [`TemplateError::SchemaLoad`] if the Schema registry cannot be loaded:
+    ///   the registry directory could not be read or listed, a Schema file
+    ///   failed to parse, or the `extends` DAG contains a cycle.
+    ///
     /// [`uuid`]: fn@uuid
     /// [`DialogProvider`]: crate::DialogProvider
+    /// [`TemplateLoader`]: super::loader::TemplateLoader
     #[inline]
     pub(super) fn new(
         loader: &TemplateLoader,
@@ -184,7 +191,7 @@ impl TemplateEngine {
 }
 
 /// Contains the output of a template render operation and optional declared
-/// output paths.
+/// output path.
 #[derive(Debug)]
 pub(super) struct RenderOutput {
     /// The rendered template content.

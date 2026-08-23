@@ -4,7 +4,7 @@
 //! records the failing pipeline stage and preserves source errors. CLI code
 //! adds diagnostic codes and help text outside this module.
 //!
-//! Main types:
+//! Public API:
 //!
 //! - [`TemplateError`] - Resolve, read, render, output-path, write, and prompt
 //!   failures.
@@ -117,17 +117,16 @@ pub enum TemplateError {
 
     /// Loading the Schema registry failed during service construction.
     ///
-    /// Reached only for registry-wide failures: the registry directory
-    /// could not be read or listed, a Schema file's TOML syntax is
-    /// malformed or has an unknown key, or the `extends` DAG contains a
-    /// cycle — see the wrapped [`SchemaError`](crate::schema::SchemaError)
-    /// for which.
+    /// Reached only for registry-wide failures: the registry directory could
+    /// not be read or listed, a Schema file's TOML syntax is malformed or has
+    /// an unknown key, or the `extends` DAG contains a cycle; see the wrapped
+    /// [`SchemaError`](crate::schema::SchemaError) for which.
     ///
-    /// A field-level defect *within* an otherwise well-formed Schema TOML
-    /// file (an invalid attribute value, an out-of-bounds `$ref`, an
-    /// ambiguous field name) never reaches this variant: that Schema alone
-    /// is excluded from the registry and logged as a construction-time
-    /// failure instead, while every other Schema still resolves.
+    /// A field-level defect *within* an otherwise well-formed Schema TOML file
+    /// (an invalid attribute value, an out-of-bounds `$ref`, an ambiguous field
+    /// name) never reaches this variant: that Schema alone is excluded from the
+    /// registry and logged as a construction-time failure instead, while every
+    /// other Schema still resolves.
     #[error(transparent)]
     #[expect(
         private_interfaces,
@@ -143,23 +142,21 @@ pub enum TemplateError {
 ///
 /// Provides just enough detail for `crate::cli::error` to choose a stable
 /// diagnostic code and help text. Classification inspects
-/// [`minijinja::Error::kind`] and the retained source chain instead of
-/// parsing display text, so new custom functions don't need to update
-/// string-matching logic in the CLI diagnostic layer.
+/// [`minijinja::Error::kind`] and the retained source chain instead of parsing
+/// display text, so new custom functions don't need to update string-matching
+/// logic in the CLI diagnostic layer.
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum RenderFailureKind {
     /// The template's own minijinja syntax is invalid.
     Syntax,
-    /// An interactive `ui.*` prompt failed for a reason other than a
-    /// deliberate user abort (handled separately, upstream of this
-    /// classification).
+    /// An interactive `ui.*` prompt failed for a reason other than a deliberate
+    /// user abort (handled separately, upstream of this classification).
     Prompt,
     /// A `query.*` call failed on a malformed field path, filter expression,
     /// sort path, or `.table()` header/column mismatch.
     Query,
     /// Refreshing the file index for a `query.*` call failed: a filesystem,
-    /// database, or (de)serialization error, not a template authoring
-    /// mistake.
+    /// database, or (de)serialization error, not a template authoring mistake.
     Index,
     /// A `file.include()` (or other Custom Function) I/O operation failed.
     Io,

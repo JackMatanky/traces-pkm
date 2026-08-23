@@ -1,6 +1,6 @@
 //! Validate and label path values in the template pipeline.
 //!
-//! Main types:
+//! Public API:
 //!
 //! - [`TemplatePathInput`] - Relative template identifier accepted at CLI and
 //!   include boundaries.

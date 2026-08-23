@@ -100,23 +100,29 @@ impl<'a> TemplateService<'a> {
     ///
     /// # Errors
     ///
-    /// - [`TemplateError::Resolve`] if `name` is invalid, ambiguous, unreadable
-    ///   during directory lookup, or not found.
-    /// - [`TemplateError::Read`] if the resolved template source cannot be
-    ///   read.
-    /// - [`TemplateError::Render`] if parsing, rendering, includes, helper
-    ///   calls, queries, schema access, file includes, or `ui.*` calls fail.
-    /// - [`TemplateError::OutputPathEscapesRoot`] if committed output from
-    ///   `output` or `file.write_to()` escapes the project root.
-    /// - [`TemplateError::OutputPathUnverifiable`] if committed output
-    ///   confinement cannot be verified.
-    /// - [`TemplateError::Prompt`] if an interactive collision prompt fails or
-    ///   is cancelled.
-    /// - [`TemplateError::OutputFileAlreadyExists`] if commit mode uses
+    /// - [`Resolve`] if `name` is invalid, ambiguous, unreadable during
+    ///   directory lookup, or not found.
+    /// - [`Read`] if the resolved template source cannot be read.
+    /// - [`Render`] if parsing, rendering, includes, helper calls, queries,
+    ///   schema access, file includes, or `ui.*` calls fail.
+    /// - [`OutputPathEscapesRoot`] if committed output from `output` or
+    ///   `file.write_to()` escapes the project root.
+    /// - [`OutputPathUnverifiable`] if committed output confinement cannot be
+    ///   verified.
+    /// - [`Prompt`] if an interactive collision prompt fails or is cancelled.
+    /// - [`OutputFileAlreadyExists`] if commit mode uses
     ///   [`CommitPolicy::CreateNew`] and the target exists.
-    /// - [`TemplateError::Write`] if creating parent directories, creating the
-    ///   output file, or writing rendered content fails.
+    /// - [`Write`] if creating parent directories, creating the output file, or
+    ///   writing rendered content fails.
     ///
+    /// [`Resolve`]: TemplateError::Resolve
+    /// [`Read`]: TemplateError::Read
+    /// [`Render`]: TemplateError::Render
+    /// [`OutputPathEscapesRoot`]: TemplateError::OutputPathEscapesRoot
+    /// [`OutputPathUnverifiable`]: TemplateError::OutputPathUnverifiable
+    /// [`Prompt`]: TemplateError::Prompt
+    /// [`OutputFileAlreadyExists`]: TemplateError::OutputFileAlreadyExists
+    /// [`Write`]: TemplateError::Write
     /// [`CommitPolicy::CreateNew`]: super::writer::CommitPolicy::CreateNew
     #[inline]
     pub fn render_to_file(
@@ -283,6 +289,8 @@ impl<'a> TemplateService<'a> {
     /// templates with identical stems in different directories from colliding.
     /// Treats [`Config::output_dir`] as a trusted base directory rather than an
     /// untrusted user path.
+    ///
+    /// [`Config::output_dir`]: crate::config::Config::output_dir
     fn default_output_path(&self, resolved: &TemplatePath) -> PathBuf {
         self.config.output_dir().join(resolved.default_output_filename())
     }

@@ -287,7 +287,7 @@ fn from_arg_type_error() -> Error {
 
 /// Lets `.field()` hand a [`QuerySource`] filter across the minijinja boundary:
 /// `.from()` and the `with_children`/`with_descendants` filters downcast it
-/// back via [`Value::downcast_object_ref`]. No method overrides — mirrors
+/// back via [`Value::downcast_object_ref`]. No method overrides; mirrors
 /// `cache.rs`'s `Cached<T>`, this crate's other bare `impl Object` used purely
 /// to smuggle a typed value through a `Value`.
 impl Object for QuerySource {}

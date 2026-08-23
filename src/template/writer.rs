@@ -118,10 +118,10 @@ impl CommitPolicy {
     }
 }
 
-/// Reports what happened to rendered content.
+/// Reports what happened to rendered content after a [`WriteMode`] decision.
 #[derive(Debug, Eq, PartialEq)]
 pub enum WriteOutcome {
-    /// Wrote rendered content to this path.
+    /// Wrote rendered content to the resolved output path.
     Written(PathBuf),
     /// Returned rendered content without writing it to disk.
     Previewed(String),

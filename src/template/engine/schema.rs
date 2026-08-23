@@ -13,8 +13,8 @@
 //!
 //! - `.name`: the Schema's own name (its source file's stem).
 //! - `.field(name)`: the named field's selectable values. For a `select` field,
-//!   plain strings. For a `file` field, a Query Source filter — declarative
-//!   data, built without executing any query itself — composable with
+//!   plain strings. For a `file` field, a Query Source filter, declarative data
+//!   built without executing any query itself, composable with
 //!   `query.from(...)` and `| with_children`/`| with_descendants`. `none` for
 //!   every other type.
 //! - `.children()`: every Schema that directly `extends` this one, each itself
@@ -35,8 +35,8 @@
 //! # Resolution Timing
 //!
 //! Every Schema TOML file is read and resolved once, at
-//! [`super::TemplateEngine`] construction (`SchemaService::new`) — not lazily
-//! on the first `schema.get(...)` call. Every render for that engine's whole
+//! [`super::TemplateEngine`] construction (`SchemaService::new`), not lazily on
+//! the first `schema.get(...)` call. Every render for that engine's whole
 //! lifetime shares the identical already-resolved `Arc<SchemaService>`: no
 //! render-scoped registry cache or re-resolution.
 //!
@@ -51,7 +51,7 @@
 //! [`cached_service`]). `.descendants()`/`.children()` themselves are *not*
 //! memoized across calls within a render: each call re-fetches the
 //! (`State`-cached) registry and reads the target Schema's already-precomputed
-//! `children`/`descendants` set — no per-call registry scan.
+//! `children`/`descendants` set, with no per-call registry scan.
 
 use std::{collections::BTreeSet, sync::Arc};
 
@@ -150,7 +150,7 @@ impl Object for SchemaOps {
 /// # Errors
 ///
 /// [`ErrorKind::InvalidOperation`] if no `Schema` value produced this render
-/// ever went through `schema.get` — cannot happen for a `Schema` bound the
+/// ever went through `schema.get`; cannot happen for a `Schema` bound the
 /// documented way, since that is the only route to one.
 fn cached_service(state: &State) -> Result<Arc<SchemaService>, Error> {
     super::cache::get_temp(state, SCHEMA_SERVICE_CACHE_KEY).ok_or_else(|| {
@@ -243,7 +243,7 @@ fn bind_related(
 
 /// Converts a resolved `select`-field entry into the minijinja `Value` shape
 /// `.field()` returns: a plain string when `label == value` and `extra` is
-/// empty (always true under this ticket — see
+/// empty (always true under this ticket; see
 /// [`SchemaSelectFieldEntry`](crate::schema::SchemaSelectFieldEntry)'s docs),
 /// else a `{value, label, ...extra}` object for a future structured source.
 fn select_entry_value(entry: &SchemaSelectFieldEntry) -> Value {
@@ -261,8 +261,8 @@ fn select_entry_value(entry: &SchemaSelectFieldEntry) -> Value {
 /// Empty `folders`/`class` are omitted from the built expression rather than
 /// defaulted to always-true, so a class-only field still narrows to Notes of
 /// that class instead of matching every non-Note file. The `Class` atom's match
-/// set stays empty here — the same unresolved shape DSL parsing produces for
-/// `@Book`/`class(Name)` — and is populated later by
+/// set stays empty here, the same unresolved shape DSL parsing produces for
+/// `@Book`/`class(Name)`, and is populated later by
 /// [`query::resolve_classes`](crate::query::resolve_classes), the same pass
 /// that resolves DSL-parsed class atoms.
 ///

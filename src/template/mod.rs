@@ -9,13 +9,18 @@
 //! - Resolve and write the output through [`writer`], honoring dry-run and
 //!   commit modes.
 //!
-//! Main types:
+//! Public API:
 //!
 //! - [`TemplateService`] - Entry point that chains resolution, rendering, and
 //!   writing for the CLI.
 //! - [`TemplatePathInput`] - Validated relative template identifier.
+//! - [`TemplatePathError`] - Validation and lookup failures for template
+//!   identifiers.
 //! - [`TemplateError`] - User-facing error for resolve, read, render, and write
 //!   failures.
+//! - [`RenderFailureKind`] - Coarse render-error category for diagnostics.
+//! - [`classify_render_error`] - Classifies a [`TemplateError::Render`]
+//!   failure.
 //! - [`WriteMode`] - Choice between previewing rendered content and committing
 //!   it to disk.
 //! - [`WriteOutcome`] - Output produced by a write-mode decision.
@@ -33,10 +38,6 @@
 //!   writes.
 //! - [`service`] coordinates the full pipeline for callers.
 //! - [`error`] defines template-level errors and render-error classification.
-//!
-//! [`TemplatePath`]: path::TemplatePath
-//! [`DeclaredOutputPath`]: path::DeclaredOutputPath
-//! [`CommitPolicy`]: writer::CommitPolicy
 
 mod engine;
 mod error;
