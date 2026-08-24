@@ -292,11 +292,6 @@ fi
 '''
 alias = "t"
 
-[tasks.test-all]
-description = "Run all tests including doc-tests"
-hide = true
-run = "mise run test"
-
 [tasks.bench]
 raw_args = true
 description = "Run Criterion benchmarks"
@@ -429,7 +424,7 @@ rust_cache = true
 [tasks.verify]
 description = "Full verification gate: check, lint, all tests"
 alias = "v"
-depends = ["check", "lint", "test-all"]
+depends = ["check", "lint", "test"]
 
 # ------------------------------------------------------------- #
 #                        Lifecycle Hooks                        #
