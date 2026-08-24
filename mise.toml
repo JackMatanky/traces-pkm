@@ -176,7 +176,7 @@ description = "Auto-fix hk formatting issues"
 run = "hk fix"
 
 [tasks.lint]
-description = "Strict clippy: workspace, all targets, all features. Auto-fixes known lints unless --no-fix."
+description = "Strict clippy: workspace, all targets, all features. Auto-fixes 18 common lints unless --no-fix."
 alias = "l"
 depends = ["fmt"]
 usage = '''
@@ -248,8 +248,7 @@ flag "--all" {
   help "Run all tests including doc-tests with cargo test"
   long_help """
   Switches from nextest to `cargo test` with the `test-utils` feature,
-  which exercises doc-tests and the gated re-export surface in
-  tests/integration.rs and tests/e2e.rs.
+  which exercises doc-tests and integration/e2e test suites.
 
   Use this after public API changes or when nextest skips a test.
   """
@@ -261,21 +260,12 @@ flag "--mod <module>" {
 arg "[args]" var=#true {
   help "Filter expression forwarded to cargo nextest run"
   long_help """
-  Arguments are forwarded to `cargo nextest run`.
+  Forwarded to `cargo nextest run`. Examples:
 
-  Scope by name (substring match):
-    mise run test index::query
-
-  Scope by binary:
-    mise run test --test init_cli
-
-  Scope by crate target:
-    mise run test --lib
-    mise run test --bin traces-pkm
-
-  Nextest expression filter (-E):
-    mise run test -E 'test(/^index::/)'
-    mise run test -E 'test(my_test) + test(another)'
+    mise run test index::query          # substring match
+    mise run test --test init_cli       # by binary
+    mise run test --lib                 # by target
+    mise run test -E 'test(/^index::/)' # nextest expression
   """
 }
 '''
@@ -311,7 +301,7 @@ run = "cargo bench --features test-utils"
 # ------------------------------------------------------------- #
 
 [tasks.coverage]
-description = "Code coverage with tarpaulin"
+description = "Code coverage with tarpaulin (outputs tarpaulin-report.html)"
 usage = '''
 flag "--mod <module>" {
   help "Run coverage for a specific module only"
@@ -341,10 +331,10 @@ sources = ["@group:rust", "tarpaulin.toml"]
 description = "Run parallel mutation testing with cargo-mutants"
 usage = '''
 flag "-j --jobs <jobs>" help="Number of cargo build/test jobs in parallel" default="4"
-flag "-f --file <file>" help="Examine only mutants in this file"
+flag "-f --file <file>" help="Run mutants in a specific file only"
 flag "--iterate" help="Skip mutants that were caught in previous runs"
 flag "--mod <module>" {
-  help "Examine mutants in a specific module only"
+  help "Run mutants in a specific module only"
   choices "cli" "config" "dialog" "index" "note" "query" "schema" "template"
 }
 '''
