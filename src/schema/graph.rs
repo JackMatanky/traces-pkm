@@ -1,5 +1,5 @@
-//! DAG bookkeeping for the `extends` relationship, linearized via topological
-//! sort.
+//! DAG bookkeeping for the `extends` relationship, linearized via Kahn's
+//! topological sort.
 //!
 //! [`SchemaGraph`] owns graph mechanics so [`super::resolver`] can drive
 //! resolution order without tangling traversal into field-merge logic.
@@ -19,7 +19,7 @@
 //! 1. [`SchemaGraphBuilder::new`] validates every `extends` edge; `excluded`
 //!    (the Global Schema) never becomes a node.
 //! 2. [`SchemaGraphBuilder::build`] runs topological sort to completion and
-//!    checks for a cycle, entirely internally; there is no stepwise driving
+//!    checks for a cycle, entirely internally. There is no stepwise driving
 //!    API. Returns a [`SchemaGraph`] on success, or the list of cyclic Schemas
 //!    on failure.
 //! 3. Query the resulting [`SchemaGraph`]: [`topological_order`],
@@ -196,8 +196,8 @@ impl<'a> SchemaGraphBuilder<'a> {
         )
     }
 
-    /// Drain any remaining `next_ready`/`mark_resolved` steps, check for a
-    /// cycle via [`CycleDetector`], and, if acyclic, sort every node's CSR
+    /// Drain any remaining `next_ready`/`mark_resolved` steps, then check for
+    /// a cycle via [`CycleDetector`]. If acyclic, sort every node's CSR
     /// children into topological-rank order (a precondition
     /// [`SchemaGraph::descendants_by_name`]'s closure sweep relies on).
     ///
@@ -273,14 +273,14 @@ impl<'a> SchemaGraphBuilder<'a> {
 /// graph over dense [`DenseIndex`]es: array accesses replace hash-keyed lookups
 /// on every graph operation.
 ///
-/// `excluded` is never assigned a node: the Global Schema participates via
-/// `$ref`, never `extends`, so it must never compete for topological position
-/// or appear in any hierarchy query.
+/// The Global Schema (`excluded`) is never assigned a node. It participates
+/// via `$ref`, never `extends`, so it must never compete for topological
+/// position or appear in any hierarchy query.
 #[derive(Debug)]
 struct SchemaAdjacency<'a> {
     /// Every raw Schema, including `excluded`, kept unfiltered (not a
     /// clone-then-strip copy) so building this adjacency never deep-clones the
-    /// registry; `excluded` is skipped by index, not by omission from this
+    /// registry. `excluded` is skipped by index, not by omission from this
     /// map. [`parents_of`](Self::parents_of) guards against `excluded`
     /// explicitly, since a lookup here would otherwise still find its raw
     /// `extends` list.
@@ -303,16 +303,16 @@ struct SchemaAdjacency<'a> {
 
 impl<'a> SchemaAdjacency<'a> {
     /// Build the `extends` adjacency, skipping `excluded` entirely: it never
-    /// becomes a node, and an edge naming it as an `extends` target is silently
-    /// ignored, never a [`MissingExtendsTarget`] warning, since the Global
-    /// Schema is referenced via `$ref`, never `extends`.
+    /// becomes a node, and an edge naming it as an `extends` target is
+    /// silently ignored. This is never a [`MissingExtendsTarget`] warning,
+    /// since the Global Schema is referenced via `$ref`, never `extends`.
     ///
     /// # Warnings
     ///
     /// - [`DuplicateExtendsTarget`] if the same `extends` target appears more
     ///   than once, checked before target-existence; a repeated unresolvable
     ///   target warns `Missing` on its first occurrence and `Duplicate` on
-    ///   every occurrence after
+    ///   every subsequent occurrence
     /// - [`MissingExtendsTarget`] if an `extends` target has no corresponding
     ///   Schema file (other than `excluded`)
     ///
@@ -479,8 +479,8 @@ impl<'a> SchemaAdjacency<'a> {
 /// rest of the graph uses. `O(V + E)` over the unvisited subgraph.
 struct CycleDetector<'a, 'b> {
     adjacency: &'b SchemaAdjacency<'a>,
-    /// The Schemas the topological sort already resolved; the search only
-    /// explores what's left.
+    /// The Schemas Kahn's sort already resolved; the search only explores
+    /// what's left.
     visited: &'b IndexSet<SchemaNameRef<'a>>,
     search: CycleSearchState,
     cyclic: Vec<SchemaName>,
@@ -517,7 +517,7 @@ impl<'a> CycleDetector<'a, '_> {
         self.cyclic
     }
 
-    /// Whether `node` was already resolved by the topological sort.
+    /// Whether `node` was already resolved by Kahn's sort.
     fn is_kahn_visited(&self, node: DenseIndex) -> bool {
         self.adjacency
             .name_of(node)
@@ -543,7 +543,7 @@ impl<'a> CycleDetector<'a, '_> {
     }
 
     /// Scan `node`'s raw `extends` list from `from`, skipping unknown or
-    /// topologically-resolved targets, returning the first
+    /// Kahn-visited targets, returning the first
     /// unvisited-and-known parent and the position to resume from. `O(V + E)`
     /// total via the monotonically-advancing `from`.
     fn next_unvisited_parent(
@@ -738,10 +738,11 @@ impl CycleSearchState {
 }
 
 /// Per-node transitive-descendant accumulator for
-/// [`SchemaGraph::descendants_by_name`]'s reverse-topological sweep. `seen` is
-/// scratch, cleared before each node's `accumulate` call returns, so
-/// deduplication costs `O(|descendants(node)|)` rather than a full-array clear
-/// per node.
+/// [`SchemaGraph::descendants_by_name`]'s reverse-topological sweep.
+///
+/// `seen` is scratch, cleared before each node's `accumulate` call returns,
+/// so deduplication costs `O(|descendants(node)|)` rather than a
+/// full-array clear per node.
 struct DescendantAccumulator {
     seen: BitVec,
     /// `descendants[i]` is dense index `i`'s accumulated descendant list,
@@ -750,7 +751,7 @@ struct DescendantAccumulator {
     descendants: Vec<Vec<DenseIndex>>,
     /// Topological rank per node, used to keep each finalized descendant
     /// list in globally topological order rather than
-    /// child-processing-interleaved order; downstream callers (e.g.
+    /// child-processing-interleaved order. Downstream callers (e.g.
     /// Template `.descendants() | map(attribute='name') | join(',')`)
     /// observe this order directly.
     rank: Vec<u32>,

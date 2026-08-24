@@ -2,15 +2,16 @@
 //! frontmatter-driven file classification.
 //!
 //! Reads `.traces/schemas/*.toml` files, linearizes the `extends` DAG via
-//! topological sort ([`graph::SchemaGraph`]), and resolves each Schema's
-//! effective [`fields::SchemaFieldDef`]s by merging parent fields, applying
-//! `excludes`, and building own fields with `$ref` resolution bounded to the
-//! Global Schema or transitive `extends` ancestors.
+//! Kahn's topological sort ([`graph::SchemaGraph`]), and resolves each
+//! Schema's effective [`fields::SchemaFieldDef`]s by merging parent fields,
+//! applying `excludes`, and building own fields with `$ref` resolution
+//! bounded to the Global Schema or transitive `extends` ancestors.
 //!
 //! The domain's public entry point is [`SchemaService`], which wraps loading
-//! ([`SchemaService::new`]) and hierarchy queries ([`SchemaService::get`],
-//! [`SchemaService::children_of`], [`SchemaService::descendants_of`],
-//! [`SchemaService::matches`]) behind a single facade.
+//! ([`SchemaService::new`]) and hierarchy queries
+//! ([`SchemaService::get`], [`SchemaService::children_of`],
+//! [`SchemaService::descendants_of`], [`SchemaService::matches`])
+//! behind a single facade.
 //!
 //! Template exposure, `file` field filtering, and class queries consume
 //! [`SchemaService`] and [`Schema`] from outside this module.

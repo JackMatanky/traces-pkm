@@ -185,11 +185,11 @@ impl<'a> SchemaFieldParser<'a> {
     /// Finalizes parsing by detecting unclaimed keys and returning all
     /// accumulated errors.
     ///
-    /// Any key present in `options` that was not accessed via a typed extractor
-    /// is treated as invalid and converted into a
+    /// Any key present in `options` that was not accessed via a typed
+    /// extractor is treated as invalid and converted into a
     /// [`SchemaFieldParserError::UnknownKey`]. Returns a [`Vec`] containing
-    /// all accumulated type mismatch errors and unknown key violations; an
-    /// empty list means all options were valid and recognized.
+    /// all accumulated type mismatch errors and unknown key violations.
+    /// An empty list means all options were valid and recognized.
     pub(super) fn finish(
         self,
         options: &IndexMap<String, FieldValue>,

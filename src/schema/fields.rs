@@ -1,7 +1,7 @@
 //! Resolved field definitions, type-specific options, and `$ref` building.
 //!
-//! Each raw field's `type` and `options` bag are validated and merged into a
-//! [`SchemaFieldType`] by the per-type `parse` functions in submodules.
+//! Each raw field's `type` and `options` bag are validated and merged into
+//! a [`SchemaFieldType`] by the per-type `parse` functions in submodules.
 //!
 //! Two severities back the same validation:
 //! - **Hard failure** for `Direct` fields and `$ref` with a `type` override.

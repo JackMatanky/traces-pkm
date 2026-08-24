@@ -5,7 +5,7 @@
 //!
 //! 1. Resolves the Global Schema first (a `$ref` target, not an `extends`
 //!    target) so later `$ref` lookups find it.
-//! 2. Drives [`SchemaGraphBuilder`]/[`SchemaGraph`]: topological sort yields
+//! 2. Drives [`SchemaGraphBuilder`]/[`SchemaGraph`]: Kahn's topological sort
 //!    yields schemas in dependency order, with the Global Schema excluded from
 //!    the graph entirely.
 //! 3. Delegates per-Schema field merging to [`SchemaMerger`], which applies
@@ -79,10 +79,10 @@ impl<'a> SchemaBuilder<'a> {
 
     /// Resolve every Schema, returning successes, warnings, and failures.
     ///
-    /// The Global Schema is resolved first (with its `extends` ignored) so
+    /// The Global Schema is resolved first (its `extends` is ignored) so
     /// later `$ref` lookups find it. Remaining schemas are resolved in
-    /// topological order, with the Global Schema excluded from the graph
-    /// entirely.
+    /// Kahn topological order, with the Global Schema excluded from the
+    /// graph entirely.
     ///
     /// # Errors
     ///
@@ -125,9 +125,9 @@ impl<'a> SchemaBuilder<'a> {
         Ok(self.finish())
     }
 
-    /// Merge the Global Schema first (its `extends`, if declared, is ignored;
-    /// it is a `$ref` target, never a DAG participant), so later `$ref` lookups
-    /// against it succeed regardless of raw-map order.
+    /// Merge the Global Schema first, so later `$ref` lookups against it
+    /// succeed regardless of raw-map order. Its `extends`, if declared, is
+    /// ignored: it is a `$ref` target, never a DAG participant.
     fn resolve_global(&mut self) -> Result<(), SchemaError> {
         let Some(global_raw) = self.raw.get(GLOBAL_SCHEMA_NAME) else {
             return Ok(());
@@ -188,10 +188,12 @@ impl<'a> SchemaBuilder<'a> {
     }
 
     /// Assign direct children and transitive descendants to each resolved
-    /// Schema, filtering out schemas that are not structural descendants due to
-    /// failed resolution links. Two passes (compute, then apply) avoid needing
-    /// a full-registry ancestor-set snapshot: the first pass only reads
-    /// `self.resolved`, the second only writes to it.
+    /// Schema, filtering out schemas that are not structural descendants due
+    /// to failed resolution links.
+    ///
+    /// Two passes (compute, then apply) avoid needing a full-registry
+    /// ancestor-set snapshot: the first pass only reads `self.resolved`,
+    /// the second only writes to it.
     fn compute_hierarchy(&mut self, graph: &SchemaGraph<'a>) {
         let children_by_name = graph.children_by_name();
         let descendants_by_name = graph.descendants_by_name();
@@ -272,7 +274,7 @@ impl<'a> SchemaMerger<'a> {
     /// One-shot entry point: inherit from `parents`, apply `raw.excludes`,
     /// resolve `raw`'s own fields, and yield the merged [`Schema`].
     ///
-    /// `parents` must already be resolved in `resolved`: the topological
+    /// `parents` must already be resolved in `resolved`: Kahn's topological
     /// sort guarantees this ordering.
     ///
     /// # Arguments

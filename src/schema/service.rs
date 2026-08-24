@@ -36,10 +36,11 @@ impl SchemaService {
     /// Load every Schema TOML file under `directory` and resolve their
     /// effective fields, building a single read-only [`SchemaService`].
     ///
-    /// The `extends` DAG is linearized and each Schema's fields are merged from
-    /// its parents. A missing directory resolves to an empty registry.
-    /// Per-Schema [`SchemaError`]s exclude that Schema from the result; its
-    /// dependents still resolve without its fields ([`ParentFailedToResolve`]).
+    /// The `extends` DAG is linearized and each Schema's fields are merged
+    /// from its parents. A missing directory resolves to an empty registry.
+    /// Per-Schema [`SchemaError`]s exclude that Schema from the result;
+    /// its dependents still resolve without its fields
+    /// ([`ParentFailedToResolve`]).
     ///
     /// # Errors
     ///
@@ -180,9 +181,9 @@ impl SchemaService {
 /// Read and parse every `*.toml` file directly under `dir` into a [`RawSchema`]
 /// keyed by filename stem.
 ///
-/// Walks only `dir`'s immediate entries (`min_depth(1).max_depth(1)`): Schemas
-/// do not nest. A `dir` that does not exist yields an empty map rather than
-/// [`SchemaError::ReadDirectory`].
+/// Walks only `dir`'s immediate entries (`min_depth(1).max_depth(1)`):
+/// Schemas do not nest. A `dir` that does not exist yields an empty map
+/// rather than [`SchemaError::ReadDirectory`].
 ///
 /// # Errors
 ///

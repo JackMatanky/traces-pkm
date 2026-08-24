@@ -55,8 +55,8 @@ impl<'a> SchemaFieldBuilder<'a> {
         }
     }
 
-    /// Build `address`'s effective [`SchemaFieldDef`] from `raw`, alongside any
-    /// warnings a bare `$ref` override's degraded validation raised.
+    /// Build `address`'s effective [`SchemaFieldDef`] from `raw`, alongside
+    /// any warnings a bare `$ref` override's degraded validation raised.
     ///
     /// - `Direct(kind)` or `Ref` with a `type` override: builds fresh from
     ///   `raw.options` against the resolved kind.
@@ -76,8 +76,8 @@ impl<'a> SchemaFieldBuilder<'a> {
     /// - [`RefFieldNotFound`] if the `$ref` target Schema exists but lacks the
     ///   named field.
     /// - [`Parser`] if an option key does not belong to the resolved field
-    ///   type, or is valid but its value has the wrong shape (hard failure for
-    ///   `Direct` fields and `$ref` with `type` override).
+    ///   type, or is valid but its value has the wrong shape. Hard failure for
+    ///   `Direct` fields and `$ref` with `type` override.
     ///
     /// [`RefOutOfBounds`]: SchemaFieldBuilderError::RefOutOfBounds
     /// [`RefFieldNotFound`]: SchemaFieldBuilderError::RefFieldNotFound
