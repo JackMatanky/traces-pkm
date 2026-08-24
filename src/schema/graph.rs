@@ -1,5 +1,5 @@
-//! DAG bookkeeping for the `extends` relationship, linearized via Kahn's
-//! topological sort.
+//! DAG bookkeeping for the `extends` relationship, linearized via topological
+//! sort.
 //!
 //! [`SchemaGraph`] owns graph mechanics so [`super::resolver`] can drive
 //! resolution order without tangling traversal into field-merge logic.
@@ -479,8 +479,8 @@ impl<'a> SchemaAdjacency<'a> {
 /// rest of the graph uses. `O(V + E)` over the unvisited subgraph.
 struct CycleDetector<'a, 'b> {
     adjacency: &'b SchemaAdjacency<'a>,
-    /// The Schemas Kahn's sort already resolved; the search only explores
-    /// what's left.
+    /// The Schemas the topological sort already resolved; the search only
+    /// explores what's left.
     visited: &'b IndexSet<SchemaNameRef<'a>>,
     search: CycleSearchState,
     cyclic: Vec<SchemaName>,
@@ -517,7 +517,7 @@ impl<'a> CycleDetector<'a, '_> {
         self.cyclic
     }
 
-    /// Whether `node` was already resolved by Kahn's sort.
+    /// Whether `node` was already resolved by the topological sort.
     fn is_kahn_visited(&self, node: DenseIndex) -> bool {
         self.adjacency
             .name_of(node)
@@ -543,9 +543,9 @@ impl<'a> CycleDetector<'a, '_> {
     }
 
     /// Scan `node`'s raw `extends` list from `from`, skipping unknown or
-    /// Kahn-visited targets, returning the first unvisited-and-known parent and
-    /// the position to resume from. `O(V + E)` total via the
-    /// monotonically-advancing `from`.
+    /// topologically-resolved targets, returning the first
+    /// unvisited-and-known parent and the position to resume from. `O(V + E)`
+    /// total via the monotonically-advancing `from`.
     fn next_unvisited_parent(
         &self,
         node: DenseIndex,

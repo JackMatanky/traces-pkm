@@ -5,7 +5,7 @@
 //!
 //! 1. Resolves the Global Schema first (a `$ref` target, not an `extends`
 //!    target) so later `$ref` lookups find it.
-//! 2. Drives [`SchemaGraphBuilder`]/[`SchemaGraph`]: Kahn topological sort
+//! 2. Drives [`SchemaGraphBuilder`]/[`SchemaGraph`]: topological sort yields
 //!    yields schemas in dependency order, with the Global Schema excluded from
 //!    the graph entirely.
 //! 3. Delegates per-Schema field merging to [`SchemaMerger`], which applies
@@ -80,7 +80,7 @@ impl<'a> SchemaBuilder<'a> {
     /// Resolve every Schema, returning successes, warnings, and failures.
     ///
     /// The Global Schema is resolved first (with its `extends` ignored) so
-    /// later `$ref` lookups find it. Remaining schemas are resolved in Kahn
+    /// later `$ref` lookups find it. Remaining schemas are resolved in
     /// topological order, with the Global Schema excluded from the graph
     /// entirely.
     ///
@@ -272,7 +272,7 @@ impl<'a> SchemaMerger<'a> {
     /// One-shot entry point: inherit from `parents`, apply `raw.excludes`,
     /// resolve `raw`'s own fields, and yield the merged [`Schema`].
     ///
-    /// `parents` must already be resolved in `resolved`: the Kahn topological
+    /// `parents` must already be resolved in `resolved`: the topological
     /// sort guarantees this ordering.
     ///
     /// # Arguments
