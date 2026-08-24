@@ -101,7 +101,7 @@ fi
 if [[ "${clean_target}" == "true" ]]; then
   if [[ -n "${usage_sweep_days:-}" || -n "${usage_sweep_max_size:-}" ]]; then
     if [[ "${target_dir}" != "target" ]]; then
-      echo "--target-dir is not supported with cargo-sweep mode" >&2
+      printf '%s\n' "--target-dir is not supported with cargo-sweep mode" >&2
       exit 2
     fi
 
@@ -158,10 +158,17 @@ run = "cargo watch -x check -x test"
 # ------------------------------------------------------------- #
 
 [tasks.fmt]
-raw_args = true
 description = "Format all Rust code (nightly)"
 alias = "f"
-run = "cargo fmt --all"
+usage = 'flag "--check" help="Check formatting without modifying files"'
+run = '''
+#!/usr/bin/env bash
+set -euo pipefail
+
+args=(--all)
+[[ "${usage_check:-false}" == "true" ]] && args+=(-- --check)
+cargo fmt "${args[@]}"
+'''
 
 [tasks.fix]
 raw_args = true
@@ -183,25 +190,25 @@ set -euo pipefail
 
 declare -a cargo_args=(--workspace --all-targets --all-features)
 declare -a clippy_args=()
-declare -a default_fix_lints=(
-  redundant_clone
-  needless_collect
-  or_fun_call
-  redundant_field_names
-  significant_drop_in_scrutinee
-  use_self
-  bool_assert_comparison
-  uninlined_format_args
-  needless_borrow
-  useless_conversion
-  manual_let_else
-  redundant_closure_for_method_calls
+readonly -a default_fix_lints=(
   as_pointer_underscore
   as_underscore
+  bool_assert_comparison
   dbg_macro
+  manual_let_else
+  needless_borrow
+  needless_collect
+  or_fun_call
+  redundant_clone
+  redundant_closure_for_method_calls
+  redundant_field_names
   search_is_some
+  significant_drop_in_scrutinee
   str_to_string
   trait_duplication_in_bounds
+  uninlined_format_args
+  use_self
+  useless_conversion
 )
 if [[ "${usage_deny_warnings?}" == "true" ]]; then
   clippy_args+=(-D warnings)
