@@ -1,21 +1,26 @@
-//! `extends` DAG linearization via Kahn's topological sort.
+//! DAG bookkeeping for the `extends` relationship, linearized via Kahn's
+//! topological sort.
 //!
-//! [`SchemaGraph`] owns the DAG bookkeeping so [`super::resolver`] can drive
-//! resolution order without tangling graph mechanics into field-merge logic.
+//! [`SchemaGraph`] owns graph mechanics so [`super::resolver`] can drive
+//! resolution order without tangling traversal into field-merge logic.
+//! Adjacency is stored as a CSR (compressed sparse row) graph over dense
+//! [`u32`] indices, making lookups array accesses rather than hash probes.
 //!
 //! # Ordering
 //!
-//! A Schema is yielded after all its present `extends` parents. Schemas whose
-//! in-degree reaches zero simultaneously yield in their raw-map insertion
-//! order. The resolver strips the Global Schema from the graph, so it never
-//! competes for queue position.
+//! A Schema is yielded only after every one of its present `extends` parents
+//! has already been yielded. Schemas whose in-degree reaches zero
+//! simultaneously yield in raw-map insertion order. The resolver strips the
+//! Global Schema from the graph, so it never competes for queue position.
 //!
 //! # Driving resolution
 //!
-//! Build with [`SchemaGraph::new`], then loop
-//! [`next_ready`]/[`parents_of`]/[`mark_resolved`] in [`Building`] state. Call
-//! [`into_resolved`] to check for cycles and transition to [`Resolved`], where
-//! [`children_by_name`]/[`descendants_by_name`] give the bulk hierarchy sets.
+//! 1. Build with [`SchemaGraph::new`].
+//! 2. Loop [`next_ready`]/[`parents_of`]/[`mark_resolved`] in [`Building`]
+//!    state.
+//! 3. Call [`into_resolved`] to check for cycles and transition to
+//!    [`Resolved`].
+//! 4. Query [`children_by_name`]/[`descendants_by_name`] for hierarchy sets.
 //!
 //! [`SchemaGraph::new`]: SchemaGraph::new
 //! [`next_ready`]: SchemaGraph::next_ready
@@ -33,28 +38,27 @@ use indexmap::{IndexMap, IndexSet};
 use super::{RawSchema, SchemaName, SchemaNameRef, error::SchemaWarning};
 
 /// Dense per-schema array index, assigned once at construction in raw-map
-/// insertion order. Private to this module: it never appears in any
-/// signature `super::resolver` can see. Array indexing replaces
-/// string-hashed `HashMap`/`IndexMap` lookups on every graph operation.
+/// insertion order. Array indexing replaces string-hashed
+/// [`HashMap`]/[`IndexMap`] lookups on every graph operation.
 ///
-/// Caps a schema set at `u32::MAX` (roughly 4 billion) entries, which is not
-/// a real constraint for a filesystem-enumerated `.traces/schemas/*.toml`
+/// Caps a schema set at `u32::MAX` (roughly 4 billion) entries, which is not a
+/// real constraint for a filesystem-enumerated `.traces/schemas/*.toml`
 /// registry.
+///
+/// [`HashMap`]: std::collections::HashMap
+/// [`IndexMap`]: indexmap::IndexMap
 #[derive(Copy, Clone, Debug, Eq, Hash, PartialEq)]
 struct DenseIndex(u32);
 
 /// Narrows `n` to `u32`, saturating to `u32::MAX` on overflow. Values this
-/// module narrows (schema counts, dense indices, topological ranks) stay far
-/// below `u32::MAX` for any real schema registry; see [`DenseIndex`]'s own
-/// doc for the accepted cap.
+/// module narrows stay far below `u32::MAX` for any real schema registry.
 fn saturating_u32(n: usize) -> u32 {
     u32::try_from(n).unwrap_or(u32::MAX)
 }
 
 /// Widens `n` to `usize`. `usize` is at least as wide as `u32` on every
 /// platform this crate targets, so `try_from` failing here is unreachable in
-/// practice; it saturates to `usize::MAX` rather than panicking on the off
-/// chance it ever isn't.
+/// practice; it saturates to `usize::MAX` rather than panicking.
 fn widen_usize(n: u32) -> usize {
     usize::try_from(n).unwrap_or(usize::MAX)
 }
@@ -76,7 +80,7 @@ impl DenseIndex {
 /// queue). Dropped on transition to [`Resolved`].
 #[derive(Debug)]
 pub(super) struct Building {
-    /// index -> remaining unresolved-parent count.
+    /// Index -> remaining unresolved-parent count.
     in_degree: Vec<u32>,
     /// Ready queue, dense-indexed.
     queue: VecDeque<DenseIndex>,
@@ -84,7 +88,7 @@ pub(super) struct Building {
 
 /// Resolved state: the DAG is confirmed acyclic. Retains the topological order
 /// [`descendants_by_name`](SchemaGraph::descendants_by_name)'s reverse-order
-/// pass needs; drops `in_degree`/`queue`.
+/// pass needs.
 #[derive(Debug)]
 pub(super) struct Resolved<'a> {
     /// Topological order, parents before children.
@@ -96,7 +100,7 @@ pub(super) struct Resolved<'a> {
         OnceCell<IndexMap<SchemaNameRef<'a>, Vec<SchemaNameRef<'a>>>>,
 }
 
-/// Kahn's-algorithm state for linearizing the `extends` DAG.
+/// Kahn's-algorithm state machine for linearizing the `extends` DAG.
 ///
 /// `State` enforces valid transitions at compile time:
 /// - [`Building`] for the resolution loop
@@ -109,19 +113,23 @@ pub(super) struct SchemaGraph<'a, State> {
     names: Vec<SchemaNameRef<'a>>,
     /// Name -> dense index, built once at construction.
     index_of: IndexMap<SchemaNameRef<'a>, DenseIndex>,
-    /// CSR adjacency (parent → children): node `i`'s children occupy
+    /// CSR adjacency (parent -> children) offsets: node `i`'s children occupy
     /// `child_targets[child_offsets[i]..child_offsets[i + 1]]`.
     child_offsets: Vec<u32>,
+    /// CSR adjacency (parent -> children) targets, indexed via
+    /// [`child_offsets`](Self::child_offsets).
     child_targets: Vec<DenseIndex>,
     /// Schemas already popped by [`next_ready`](Self::next_ready).
     visited: IndexSet<SchemaNameRef<'a>>,
+    /// [`Building`] scratch or [`Resolved`] output, per `State`.
     state: State,
 }
 
 impl<State> SchemaGraph<'_, State> {
-    /// `v`'s CSR children slice (its direct `extends` reverse-adjacency), or an
-    /// empty slice if `v` is out of range (never happens for a `DenseIndex`
-    /// this module produced, but avoids raw indexing).
+    /// Returns `v`'s CSR children slice (its direct `extends`
+    /// reverse-adjacency), or an empty slice if `v` is out of range.
+    ///
+    /// `v` is the dense index of the parent node whose children to retrieve.
     fn children_slice(&self, v: DenseIndex) -> &[DenseIndex] {
         let idx = v.index();
         let bounds = self
@@ -155,8 +163,8 @@ impl<State> SchemaGraph<'_, State> {
 impl<'a> SchemaGraph<'a, Building> {
     /// Build the `extends` adjacency (as CSR) and seed the ready queue.
     ///
-    /// Scans each schema's `extends` targets, emitting warnings for targets
-    /// absent from `raw_schemas` and for repeated targets.
+    /// Validates each schema's `extends` targets, emitting warnings for absent
+    /// targets and repeated targets.
     ///
     /// # Warnings
     ///
@@ -288,10 +296,10 @@ impl<'a> SchemaGraph<'a, Building> {
             return;
         };
         let idx = index.index();
-        // Reads `child_offsets`/`child_targets` directly (not through
-        // `children_slice`, which borrows all of `self`) so the borrow checker
+        // Reads child_offsets/child_targets directly (not through
+        // children_slice, which borrows all of `self`) so the borrow checker
         // can see this as disjoint from the `self.state` mutation below,
-        // avoiding a per-call `Vec` allocation.
+        // avoiding a per-call Vec allocation.
         let bounds = self
             .child_offsets
             .get(idx)
@@ -325,9 +333,10 @@ impl<'a> SchemaGraph<'a, Building> {
     ///
     /// # Errors
     ///
-    /// Returns `Err(Vec<SchemaName>)` listing only the Schemas that participate
-    /// in a cycle. A Schema that merely `extends` into a cycle without being
-    /// part of one itself is excluded.
+    /// - Returns `Err(`[`Vec<SchemaName>`]`)` if the `extends` DAG contains a
+    ///   cycle, listing every Schema that participates in it. A Schema that
+    ///   merely `extends` into a cycle without being part of one itself is
+    ///   excluded.
     ///
     /// [`next_ready`]: SchemaGraph::next_ready
     /// [`mark_resolved`]: SchemaGraph::mark_resolved
@@ -342,11 +351,9 @@ impl<'a> SchemaGraph<'a, Building> {
             return Err(cyclic);
         }
 
-        // Kahn's sort fully drained (no cycle): `self.visited` holds every
-        // schema in topological order (parents before children). Rank each
-        // node, then sort every CSR children slice into rank order (the
-        // precondition `descendants_by_name`'s closure algorithm requires)
-        // before dropping `in_degree`/`queue` by not carrying them forward.
+        // Kahn's sort fully drained: `visited` holds every schema in
+        // topological order. Rank each node, then sort every CSR children slice
+        // into rank order before dropping `in_degree`/`queue`.
         let order: Vec<DenseIndex> = self
             .visited
             .iter()
@@ -379,23 +386,23 @@ impl<'a> SchemaGraph<'a, Building> {
         })
     }
 
-    /// Whether `v` was already resolved by Kahn's sort (provably acyclic).
+    /// Whether `v` was already resolved by Kahn's sort.
     fn is_kahn_visited(&self, v: DenseIndex) -> bool {
         self.names
             .get(v.index())
             .is_some_and(|name| self.visited.contains(name.as_str()))
     }
 
-    /// Scans `v`'s raw `extends` list starting at raw position `from`, skipping
-    /// unknown or Kahn-visited targets, and returns the first
-    /// unvisited-and-known target found alongside the raw position to resume
-    /// scanning from on the next call. `None` once the list is exhausted.
+    /// Scan `v`'s raw `extends` list starting at position `from`, skipping
+    /// unknown or Kahn-visited targets, returning the first unvisited-and-known
+    /// target alongside the position to resume from. `None` once exhausted.
     ///
-    /// Each raw `extends` entry is examined at most once across the whole life
-    /// of one [`run_tarjan_from`](Self::run_tarjan_from) call, because `from`
-    /// always advances monotonically between calls for the same `v`: the
-    /// traversal never rescans a prefix, giving `O(V + E)` total work instead
-    /// of the `O(degree²)` a full re-filter on every step would pay.
+    /// `v` is the node whose parents to scan; `from` is the index to resume
+    /// scanning from (monotonically increasing).
+    ///
+    /// Each raw `extends` entry is examined at most once per
+    /// [`run_tarjan_from`](Self::run_tarjan_from) call. `from` advances
+    /// monotonically: `O(V + E)` total work instead of `O(degree²)`.
     fn next_unvisited_parent(
         &self,
         v: DenseIndex,
@@ -416,7 +423,7 @@ impl<'a> SchemaGraph<'a, Building> {
         None
     }
 
-    /// Whether `v`'s raw `extends` list contains a valid (known, unvisited)
+    /// Whether `v`'s raw `extends` list contains a valid, unvisited
     /// reference back to itself.
     fn has_self_extend(&self, v: DenseIndex) -> bool {
         let Some(&name) = self.names.get(v.index()) else {
@@ -433,19 +440,12 @@ impl<'a> SchemaGraph<'a, Building> {
     /// plus any node with a direct self-`extends`.
     ///
     /// Excludes Schemas that never reached in-degree zero only because they
-    /// `extends` into a cycle without being cyclic themselves. For example,
-    /// given `c extends a` where `a` cycles with `b`, `c` is excluded and
-    /// `a`/`b` are not, a direct consequence of mutual reachability (the SCC
-    /// definition), not special-cased logic.
+    /// `extends` into a cycle without being cyclic themselves. Returns an empty
+    /// `Vec` if every Schema was visited (no cycle).
     ///
-    /// Returns an empty `Vec` if every Schema was visited (no cycle).
-    ///
-    /// Iterative Tarjan's SCC (explicit work-stack simulating the call stack,
-    /// no recursion), so it cannot stack-overflow regardless of `extends`-chain
-    /// depth. Scoped to the unvisited node subset only: visited nodes are
-    /// provably acyclic (Kahn's convergence to in-degree zero proves it), an
-    /// early-exit optimization over a full-graph scan. `O(V + E)` over the
-    /// unvisited subgraph.
+    /// Iterative Tarjan's SCC (explicit work-stack, no recursion), scoped to
+    /// the unvisited node subset: visited nodes are provably acyclic (Kahn's
+    /// convergence to in-degree zero). `O(V + E)` over the unvisited subgraph.
     fn cyclic_schemas(&self) -> Vec<SchemaName> {
         if self.visited.len() == self.raw.len() {
             return Vec::new();
@@ -465,12 +465,13 @@ impl<'a> SchemaGraph<'a, Building> {
     }
 
     /// Explicit work-stack DFS (no recursion) rooted at `start`, extracting
-    /// every nontrivial SCC (or self-loop) it discovers into `cyclic`.
+    /// every nontrivial SCC (or self-loop) into `cyclic`.
     ///
-    /// Each stack frame's `usize` is a raw `extends`-list scan position, not a
-    /// filtered child index: see [`next_unvisited_parent`].
+    /// # Arguments
     ///
-    /// [`next_unvisited_parent`]: Self::next_unvisited_parent
+    /// * `start` - Root node for this DFS traversal
+    /// * `tarjan` - SCC bookkeeping state (discovery indices, lowlinks, stack)
+    /// * `cyclic` - Output buffer for cyclic [`SchemaName`]s found
     fn run_tarjan_from(
         &self,
         start: DenseIndex,
@@ -498,8 +499,16 @@ impl<'a> SchemaGraph<'a, Building> {
     }
 
     /// Advance `v`'s frame to scan position `next_pos`, then descend into `w`
-    /// if undiscovered, otherwise fold `w`'s index into `v`'s lowlink if `w` is
-    /// a live back edge (still on the Tarjan stack).
+    /// if undiscovered, or fold `w`'s index into `v`'s lowlink if `w` is a live
+    /// back edge.
+    ///
+    /// # Arguments
+    ///
+    /// * `work_stack` - DFS traversal stack of `(node, scan_position)` frames
+    /// * `tarjan` - SCC bookkeeping state
+    /// * `v` - Current node being explored
+    /// * `w` - Child node to descend into or fold
+    /// * `next_pos` - Updated scan position for `v`'s frame
     fn advance_child(
         work_stack: &mut Vec<(DenseIndex, usize)>,
         tarjan: &mut TarjanState,
@@ -523,8 +532,14 @@ impl<'a> SchemaGraph<'a, Building> {
     }
 
     /// `v` is fully explored: if it is an SCC root, pop and record its
-    /// component (if nontrivial), then pop `v`'s own frame and propagate its
-    /// lowlink to its caller.
+    /// component (if nontrivial), then propagate its lowlink to its caller.
+    ///
+    /// # Arguments
+    ///
+    /// * `work_stack` - DFS traversal stack (popped after processing)
+    /// * `tarjan` - SCC bookkeeping state
+    /// * `v` - Node whose exploration is complete
+    /// * `cyclic` - Output buffer for cyclic [`SchemaName`]s
     fn finish_node(
         &self,
         work_stack: &mut Vec<(DenseIndex, usize)>,
@@ -538,7 +553,7 @@ impl<'a> SchemaGraph<'a, Building> {
             let is_cyclic = scc.len() > 1 || self.has_self_extend(v);
             if is_cyclic {
                 // Insertion order, not Tarjan pop order: matches the resolver's
-                // error-reporting convention and this module's own cycle tests.
+                // error-reporting convention.
                 scc.sort_by_key(|idx| idx.0);
                 cyclic.extend(scc.iter().filter_map(|&idx| {
                     self.names
@@ -557,9 +572,9 @@ impl<'a> SchemaGraph<'a, Building> {
     }
 }
 
-/// Iterative Tarjan's-SCC bookkeeping over the unvisited (Kahn-unresolved)
-/// dense-index subgraph. Arrays sized to the full node count; entries for nodes
-/// this traversal never reaches stay at their initial value.
+/// Iterative Tarjan's-SCC bookkeeping over the unvisited dense-index subgraph.
+/// Arrays sized to the full node count; entries for unreached nodes stay at
+/// their initial value.
 struct TarjanState {
     /// Discovery order, assigned once per node on first visit.
     index: Vec<Option<u32>>,
@@ -574,6 +589,8 @@ struct TarjanState {
 }
 
 impl TarjanState {
+    /// Allocates per-node bookkeeping for `count` nodes, all initially
+    /// undiscovered.
     fn new(count: usize) -> Self {
         Self {
             index: vec![None; count],
@@ -584,24 +601,29 @@ impl TarjanState {
         }
     }
 
+    /// Whether `v` has been assigned a Tarjan discovery index.
     fn is_discovered(&self, v: DenseIndex) -> bool {
         self.index.get(v.index()).copied().flatten().is_some()
     }
 
+    /// `v`'s Tarjan discovery index, or `None` if undiscovered.
     fn index_of(&self, v: DenseIndex) -> Option<u32> {
         self.index.get(v.index()).copied().flatten()
     }
 
+    /// `v`'s current lowlink value, or `None` if undiscovered.
     fn lowlink_of(&self, v: DenseIndex) -> Option<u32> {
         self.lowlink.get(v.index()).copied()
     }
 
+    /// Whether `v` is currently on the Tarjan stack (SCC-accumulation
+    /// stack, not the traversal work-stack).
     fn is_on_stack(&self, v: DenseIndex) -> bool {
         self.on_stack.get(v.index()).copied().unwrap_or(false)
     }
 
     /// Assign `v` its Tarjan discovery index/lowlink and push it onto the
-    /// Tarjan stack.
+    /// SCC stack.
     fn discover(&mut self, v: DenseIndex) {
         let rank = self.counter;
         self.counter = self.counter.saturating_add(1);
@@ -617,14 +639,15 @@ impl TarjanState {
         }
     }
 
+    /// Fold `candidate` into `v`'s lowlink, keeping the smaller value.
     fn merge_lowlink(&mut self, v: DenseIndex, candidate: u32) {
         if let Some(slot) = self.lowlink.get_mut(v.index()) {
             *slot = (*slot).min(candidate);
         }
     }
 
-    /// Pops the strongly-connected component rooted at `root` off the Tarjan
-    /// stack (LIFO order: most-recently-discovered first).
+    /// Pop the SCC rooted at `root` off the stack (most-recently-discovered
+    /// first).
     fn pop_scc(&mut self, root: DenseIndex) -> Vec<DenseIndex> {
         let mut scc = Vec::new();
         while let Some(popped) = self.stack.pop() {
@@ -644,12 +667,9 @@ impl TarjanState {
 impl<'a> SchemaGraph<'a, Resolved<'a>> {
     /// Return every Schema's direct `extends` children, keyed by parent name.
     ///
-    /// Only Schemas that have at least one child appear in the returned map.
-    /// Schemas without children are omitted (not mapped to empty vectors).
-    ///
-    /// Built lazily from the CSR adjacency on first call and cached for the
-    /// lifetime of this resolved graph. [`super::resolver`]'s hierarchy-set
-    /// computation is this method's only caller, once per `resolve()` call.
+    /// Only Schemas with at least one child appear in the returned map. Built
+    /// lazily from the CSR adjacency on first call and cached for the lifetime
+    /// of this resolved graph.
     #[must_use]
     pub(super) fn children_by_name(
         &self,
@@ -675,15 +695,15 @@ impl<'a> SchemaGraph<'a, Resolved<'a>> {
     /// Return every Schema's transitive `extends` descendants, keyed by
     /// ancestor name.
     ///
-    /// Output-sensitive transitive closure (Habib–Morvan–Rampon, adapted from
-    /// `petgraph 0.8.3`'s `algo::tred::dag_transitive_reduction_closure`,
-    /// closure half only; this module has no use for the reduction half):
-    /// `O(V + E + Σ|closure(x)|)`, proportional to the closure's actual size,
-    /// rather than the `O(V²/w)` a bitset DP pays unconditionally regardless
-    /// of how sparse the real closure is. Requires children iterated in
-    /// topological-rank order, which
-    /// [`into_resolved`](SchemaGraph::into_resolved) already sorted
-    /// `child_targets` into.
+    /// Output-sensitive transitive closure using the Habib-Morvan-Rampon
+    /// algorithm.
+    ///
+    /// - Complexity: `O(V + E + Σ|closure(x)|)`, proportional to the closure's
+    ///   actual size, rather than the `O(V²/w)` a bitset DP pays
+    ///   unconditionally.
+    /// - Precondition: requires children iterated in topological-rank order,
+    ///   which [`into_resolved`](SchemaGraph::into_resolved) already sorted
+    ///   `child_targets` into.
     #[must_use]
     pub(super) fn descendants_by_name(
         &self,
@@ -697,20 +717,18 @@ impl<'a> SchemaGraph<'a, Resolved<'a>> {
         }
 
         // Scratch, reused across the whole outer loop: `mark[y]` is only ever
-        // `true` transiently while `closure[i]` (the current node) is being
-        // built, then cleared, bounded by `|closure[i]|` rather than a
-        // full-array clear per node.
+        // `true` transiently while `closure[i]` is being built, then cleared,
+        // bounded by `|closure[i]|` rather than a full-array clear per node.
         let mut mark = BitVec::from_elem(count, false);
         let mut closure: Vec<Vec<DenseIndex>> = vec![Vec::new(); count];
 
-        // Leaves first, roots last: each child's closure is already
-        // finalized (later topological position) before its parent runs.
+        // Leaves first, roots last: each child's closure is already finalized
+        // (later topological position) before its parent runs.
         for &i in self.state.order.iter().rev() {
             self.accumulate_descendants(i, &mut mark, &mut closure);
-            // Required, not optional: without this, closure[i]'s order is
+            // Required: without this, closure[i]'s order is
             // child-processing-interleaved, not globally topological, and
-            // downstream callers observe this order directly (it becomes
-            // `Schema::descendants()`'s `IndexSet` iteration order).
+            // downstream callers observe this order directly.
             if let Some(node_closure) = closure.get_mut(i.index()) {
                 node_closure.sort_by_key(|d| {
                     topo_rank.get(d.index()).copied().unwrap_or(u32::MAX)
@@ -738,9 +756,14 @@ impl<'a> SchemaGraph<'a, Resolved<'a>> {
         result
     }
 
-    /// Accumulate node `i`'s direct-plus-inherited-from-children descendants
-    /// into `closure[i]`. `mark` is scratch, reused across the whole outer
-    /// loop and cleared back to all-`false` before returning.
+    /// Accumulate node `i`'s direct-plus-inherited descendants into
+    /// `closure[i]`. `mark` is scratch, cleared before returning.
+    ///
+    /// # Arguments
+    ///
+    /// * `i` - Node whose descendants to accumulate
+    /// * `mark` - Scratch [`BitVec`] for deduplication, cleared before return
+    /// * `closure` - Per-node descendant sets; `closure[i]` is written
     fn accumulate_descendants(
         &self,
         i: DenseIndex,
@@ -760,6 +783,14 @@ impl<'a> SchemaGraph<'a, Resolved<'a>> {
 
     /// Fold child `x`'s already-finalized closure into `closure[i]`,
     /// deduplicating via `mark`.
+    ///
+    /// # Arguments
+    ///
+    /// * `i` - Parent node receiving the merged descendants
+    /// * `x` - Child node whose closure to merge
+    /// * `mark` - Scratch [`BitVec`] tracking which nodes are already in
+    ///   `closure[i]`
+    /// * `closure` - Per-node descendant sets
     fn merge_child_closure(
         i: DenseIndex,
         x: DenseIndex,
@@ -784,6 +815,12 @@ impl<'a> SchemaGraph<'a, Resolved<'a>> {
 }
 
 /// Append `value` to `closure[i]`, a no-op if `i` is out of range.
+///
+/// # Arguments
+///
+/// * `closure` - Per-node descendant sets
+/// * `i` - Parent node receiving the descendant
+/// * `value` - Dense index of the descendant to append
 fn push_descendant(
     closure: &mut [Vec<DenseIndex>],
     i: DenseIndex,

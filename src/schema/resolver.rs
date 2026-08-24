@@ -1,5 +1,5 @@
-//! Schema resolution: linearize the `extends` DAG, merge inherited fields, and
-//! compute hierarchy sets.
+//! Schema resolution: linearize the `extends` DAG, merge inherited fields,
+//! and compute hierarchy sets.
 //!
 //! [`SchemaSetResolver`] is the single-method entry point. Internally it:
 //!
@@ -8,11 +8,9 @@
 //! 2. Drives [`SchemaGraph`]'s typestate protocol: Kahn topological sort yields
 //!    schemas in dependency order.
 //! 3. Delegates per-Schema field merging to [`SchemaMerger`], which applies
-//!    first-listed-wins inheritance, `excludes`, and `$ref` resolution. Called
-//!    once per schema from the topological loop, and once for the Global Schema
-//!    up front.
+//!    first-listed-wins inheritance, `excludes`, and `$ref` resolution.
 //! 4. Filters hierarchy sets against resolution failures so broken links do not
-//!    propagate to downstream schemas.
+//!    propagate downstream.
 //!
 //! [`SchemaGraph`]: super::graph::SchemaGraph
 
@@ -32,18 +30,24 @@ use crate::field::{FieldKey, FieldName};
 /// A Schema that failed to resolve, with its [`SchemaError`].
 #[derive(Debug)]
 pub(crate) struct SchemaFailure {
+    /// The Schema that failed to resolve.
     pub(crate) schema: SchemaName,
+    /// Why it failed.
     pub(crate) error: SchemaError,
 }
 
 /// Output of a successful resolution pass.
 ///
-/// Contains every Schema that resolved without error, alongside warnings for
-/// recoverable defects and failures for hard errors.
+/// Contains every Schema that resolved without error, alongside warnings
+/// for recoverable defects and failures for hard errors.
 #[derive(Debug)]
 pub(super) struct ResolvedSchemas {
+    /// Every Schema that resolved without error.
     pub(super) schemas: IndexMap<SchemaName, Schema>,
+    /// Recoverable defects encountered across the whole set.
     pub(super) warnings: Vec<SchemaWarning>,
+    /// Schemas that failed to resolve, each paired with the error that
+    /// caused the failure.
     pub(super) failures: Vec<SchemaFailure>,
 }
 
@@ -71,7 +75,7 @@ impl<'a> SchemaSetResolver<'a> {
     ///
     /// # Errors
     ///
-    /// Returns [`SchemaError::Cycle`] if the `extends` DAG contains a cycle.
+    /// - [`Cycle`] if the `extends` DAG contains a cycle
     ///
     /// # Warnings
     ///
@@ -87,7 +91,7 @@ impl<'a> SchemaSetResolver<'a> {
     /// - [`OverrideValueTypeMismatch`] if a `$ref` override attribute has the
     ///   wrong value type
     ///
-    /// [`SchemaError::Cycle`]: super::error::SchemaError::Cycle
+    /// [`Cycle`]: super::error::SchemaError::Cycle
     /// [`MissingExtendsTarget`]: SchemaWarning::MissingExtendsTarget
     /// [`DuplicateExtendsTarget`]: SchemaWarning::DuplicateExtendsTarget
     /// [`ParentFailedToResolve`]: SchemaWarning::ParentFailedToResolve
@@ -99,9 +103,8 @@ impl<'a> SchemaSetResolver<'a> {
         let mut resolved: IndexMap<SchemaName, Schema> = IndexMap::new();
         let mut failures: Vec<SchemaFailure> = Vec::new();
 
-        // The Global Schema is a $ref target, not an extends target. Strip it
-        // from the raw map so the graph never sees it, then resolve it first
-        // so later $ref lookups find it in `resolved`.
+        // Strip the Global Schema so the graph never sees it, then resolve it
+        // first so later $ref lookups find it in `resolved`.
         let mut raw = self.raw.clone();
         let global_raw = raw.shift_remove(GLOBAL_SCHEMA_NAME);
         if let Some(global) = global_raw {
@@ -142,6 +145,13 @@ impl<'a> SchemaSetResolver<'a> {
 
     /// Drive the Kahn topological sort: pop ready schemas, merge their fields,
     /// mark them resolved, and collect warnings and failures.
+    ///
+    /// # Panics
+    ///
+    /// Never in practice. [`SchemaGraph::new`](super::graph::SchemaGraph::new)
+    /// builds the queue exclusively from `raw`'s own keys, so every name
+    /// [`next_ready`](super::graph::SchemaGraph::next_ready) yields is present
+    /// in `raw`.
     fn resolve_in_topological_order(
         graph: &mut SchemaGraph<'_, Building>,
         raw: &IndexMap<SchemaName, RawSchema>,
@@ -186,7 +196,7 @@ impl<'a> SchemaSetResolver<'a> {
     /// Schema.
     ///
     /// Filters out schemas that are not structural descendants due to failed
-    /// resolution links, so broken parent chains do not propagate downstream.
+    /// resolution links, so broken parent chains do not propagate.
     fn compute_hierarchy_sets<'b>(
         graph: &SchemaGraph<'b, Resolved<'b>>,
         resolved: &mut IndexMap<SchemaName, Schema>,
@@ -227,12 +237,18 @@ impl<'a> SchemaSetResolver<'a> {
 
 /// Merges one schema's effective field map: parent inheritance
 /// (first-listed-wins), `excludes`, and own `$ref`-resolved fields, into a
-/// resolved [`Schema`]. Scoped to a single schema. Contrast with
-/// [`SchemaSetResolver`], which orchestrates every schema in the set.
+/// resolved [`Schema`]. Contrast with [`SchemaSetResolver`], which orchestrates
+/// every schema in the set.
 struct SchemaMerger<'a> {
+    /// The Schema being merged.
     name: SchemaNameRef<'a>,
+    /// Effective field map accumulated so far: inherited fields, then own
+    /// fields on top.
     fields: IndexMap<FieldName, super::fields::SchemaFieldDef>,
+    /// Direct parents plus their own transitive ancestors.
     ancestors: IndexSet<SchemaName>,
+    /// Recoverable defects accumulated across inheritance and field
+    /// resolution.
     warnings: Vec<SchemaWarning>,
 }
 
@@ -245,8 +261,14 @@ impl<'a> SchemaMerger<'a> {
     ///
     /// # Errors
     ///
-    /// Propagates [`Self::resolve_own_fields`]'s and
-    /// [`Self::into_schema`]'s errors.
+    /// - [`FieldBuilder`] if a `$ref` in `raw.fields` fails to resolve or
+    ///   validate
+    /// - [`AmbiguousFieldName`] if two effective fields canonicalize to the
+    ///   same [`FieldKey`]
+    ///
+    /// [`FieldBuilder`]: SchemaError::FieldBuilder
+    /// [`AmbiguousFieldName`]: SchemaError::AmbiguousFieldName
+    /// [`FieldKey`]: crate::field::FieldKey
     fn merge(
         name: SchemaNameRef<'a>,
         raw: &RawSchema,
@@ -260,6 +282,7 @@ impl<'a> SchemaMerger<'a> {
         merger.into_schema()
     }
 
+    /// Starts an empty merger for `name` with no inherited fields or ancestors.
     fn new(name: SchemaNameRef<'a>) -> Self {
         Self {
             name,
@@ -303,15 +326,15 @@ impl<'a> SchemaMerger<'a> {
 
     /// `$ref`-resolves and validates own fields via [`SchemaFieldBuilder`].
     ///
-    /// Must run after [`Self::inherit_from`] (reads `self.ancestors` for
-    /// `$ref` bounds-checking).
+    /// Must run after [`Self::inherit_from`] (reads `self.ancestors` for `$ref`
+    /// bounds-checking).
     ///
     /// # Errors
     ///
-    /// Propagates any [`SchemaFieldBuilderError`] a `$ref` in `raw.fields`
-    /// fails to resolve or validate.
+    /// - [`FieldBuilder`] if a `$ref` target is out of bounds, missing, or has
+    ///   unrecognised attribute keys or type-mismatched values
     ///
-    /// [`SchemaFieldBuilderError`]: super::fields::SchemaFieldBuilderError
+    /// [`FieldBuilder`]: SchemaError::FieldBuilder
     fn resolve_own_fields(
         &mut self,
         raw: &RawSchema,
@@ -327,16 +350,17 @@ impl<'a> SchemaMerger<'a> {
         Ok(())
     }
 
-    /// Rejects a field map where two entries share a canonical
-    /// ([`FieldKey`]) form.
+    /// Rejects a field map where two entries canonicalize to the same
+    /// [`FieldKey`] (case-folded, hyphen/underscore-normalized form).
     ///
-    /// Ambiguous field identities would make later note-vs-schema field
-    /// matching and unknown-field suggestions unreliable.
+    /// Ambiguous field identities would make note-vs-schema field matching
+    /// unreliable.
     ///
     /// # Errors
     ///
-    /// Returns [`SchemaError::AmbiguousFieldName`] if two fields canonicalize
-    /// to the same [`FieldKey`].
+    /// - [`AmbiguousFieldName`] if a collision is found
+    ///
+    /// [`AmbiguousFieldName`]: SchemaError::AmbiguousFieldName
     fn reject_ambiguous_canonical_names(&self) -> Result<(), SchemaError> {
         let mut seen: HashMap<String, &FieldName> = HashMap::new();
         for field_name in self.fields.keys() {
@@ -353,13 +377,16 @@ impl<'a> SchemaMerger<'a> {
         Ok(())
     }
 
-    /// Consumes the merger, rejecting ambiguous field names and yielding the
+    /// Consume the merger, rejecting ambiguous field names and yielding the
     /// resolved [`Schema`].
     ///
     /// # Errors
     ///
-    /// Returns [`SchemaError::AmbiguousFieldName`]; see
-    /// [`Self::reject_ambiguous_canonical_names`].
+    /// - [`AmbiguousFieldName`] if two effective fields canonicalize to the
+    ///   same [`FieldKey`]
+    ///
+    /// [`AmbiguousFieldName`]: SchemaError::AmbiguousFieldName
+    /// [`FieldKey`]: crate::field::FieldKey
     fn into_schema(self) -> Result<(Schema, Vec<SchemaWarning>), SchemaError> {
         self.reject_ambiguous_canonical_names()?;
         Ok((
